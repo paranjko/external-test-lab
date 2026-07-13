@@ -1,0 +1,68 @@
+name: Defect report
+description: A bug, regression, or operational finding (non-security). For vulnerabilities use the private security channel — see SECURITY.md.
+title: "[defect] "
+labels: ["defect"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security-sensitive?** Stop — report privately per [SECURITY.md](../blob/main/SECURITY.md) instead.
+  - type: input
+    id: component
+    attributes:
+      label: Affected component
+      placeholder: "e.g. inference-chain, dapi, devshard gateway, MLNode, DevNet node ops"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit / environment
+      placeholder: "e.g. v0.2.14-rc1, DevNet, mainnet height 5,001,234"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Exact steps, commands, or requests. Attach logs where possible.
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual behavior
+      placeholder: |
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact assessment
+      description: Who/what is affected and how badly.
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - critical (network/funds at risk, no workaround)
+        - high (major function broken, workaround difficult)
+        - medium (function impaired, workaround exists)
+        - low (minor, cosmetic, or documentation)
+    validations:
+      required: true
+  - type: dropdown
+    id: release-blocking
+    attributes:
+      label: Release-blocking?
+      description: Should this block the release candidate it was found in?
+      options:
+        - "yes"
+        - "no"
+        - "n/a (not tied to a release)"
+    validations:
+      required: true

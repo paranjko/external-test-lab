@@ -1,0 +1,44 @@
+name: Validation request
+description: Request Test Lab validation of a release candidate, DevShard, or other testable artifact.
+title: "[validation] "
+labels: ["validation-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Handoff expectations (per the approved proposal): protocol releases — RC, upgrade notes, affected components, and test focus **at least 7 days** before the planned vote/rollout where feasible; DevShard validation — **at least 3 days** before the expected result. Late or incomplete handoff may reduce validation scope, which will be stated in the report.
+  - type: input
+    id: artifact
+    attributes:
+      label: What should be validated
+      placeholder: "e.g. v0.2.15-rc1, DevShard vX, PR #NNNN"
+    validations:
+      required: true
+  - type: textarea
+    id: materials
+    attributes:
+      label: Handoff materials
+      description: Links to the release candidate, upgrade notes, affected components, deployment instructions.
+    validations:
+      required: true
+  - type: textarea
+    id: focus
+    attributes:
+      label: Expected test focus
+      description: What areas matter most; known risky changes.
+    validations:
+      required: true
+  - type: input
+    id: deadline
+    attributes:
+      label: Target date (governance vote / rollout)
+      placeholder: "YYYY-MM-DD, or n/a"
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: Contact for questions
+      placeholder: "GitHub handle / Discord"
+    validations:
+      required: true

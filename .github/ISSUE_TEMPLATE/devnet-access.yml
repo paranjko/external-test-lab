@@ -1,0 +1,30 @@
+name: DevNet access request
+description: Request access to project-managed DevNet resources (managed nodes, burst GPU capacity, monitoring).
+title: "[access] "
+labels: ["devnet-access"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Connecting your own node to the DevNet does not require permission** — join instructions will be published in `devnet/` as soon as the network accepts external nodes (milestone M2). This form is only for access to project-managed resources where cost, abuse, or stability risks are involved.
+  - type: input
+    id: who
+    attributes:
+      label: Who you are
+      placeholder: "Name/handle, team or project, relation to Gonka ecosystem"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What access you need
+      placeholder: "e.g. inference access to managed DevNet nodes, burst GPU time slot, dashboard access"
+    validations:
+      required: true
+  - type: textarea
+    id: purpose
+    attributes:
+      label: Purpose and duration
+      description: What you plan to test and for how long.
+    validations:
+      required: true
