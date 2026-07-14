@@ -61,6 +61,6 @@ Final compensation will depend on relevant experience and interview results.
 
 ## How to apply
 
-Send your CV or LinkedIn/GitHub profile, together with a short description of your most relevant project involving distributed systems, infrastructure, blockchain, or QA, to **Sergii Paranko, Project Lead**, at [paranko@dahl.global](mailto:paranko@dahl.global).
+Send your CV or LinkedIn/GitHub profile, together with a short description of your most relevant project involving distributed systems, infrastructure, blockchain, or QA, to **Sergii Paranko, Project Lead**, at [paranko@dahl.global](mailto:paranko@dahl.global) or on Telegram: [@paranko](https://t.me/paranko).
 
 A link to a test plan, defect report, or runbook you have written is optional but appreciated.
