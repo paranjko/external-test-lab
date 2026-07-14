@@ -64,4 +64,6 @@ This repository is community-owned by intent. It is planned to be transferred to
 
 ## License
 
-[Apache-2.0](LICENSE). This repository contains only artifacts authored by the Test Lab (plans, runbooks, reports, scripts). It contains no Gonka source code; the Gonka network itself is licensed under its own [terms](https://github.com/gonka-ai/gonka/blob/main/LICENSE.md).
+[Apache-2.0](LICENSE) applies **only to Test Lab artifacts** in this repository (plans, runbooks, reports, scripts, and other materials authored by the pilot).
+
+It does **not** apply to Gonka network software, protocol code, or chain state. This repository contains no Gonka source code. The Gonka network and its codebase are licensed under separate [terms](https://github.com/gonka-ai/gonka/blob/main/LICENSE.md).
