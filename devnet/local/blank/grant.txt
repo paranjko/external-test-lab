@@ -1,0 +1,50 @@
+~/Crypto/gonka.ai/servers/prometheus/grant.sh \
+WALLET_NAME=wallleeee1 \
+GONKA_WARM_ADDRESS=gonka1wvv656pt2d8x2khcvytqeessck5uzjnxzmmm
+
+# Разрешить майнить теплому ключу ноды от имени холодного
+./inferenced tx inference grant-ml-ops-permissions \
+    <WALLET_NAME> \
+    <GONKA_WARM_ADDRESS> \
+    --from <WALLET_NAME> \
+    --keyring-backend file \
+    --gas 2000000 \
+    --node http://node1.gonka.ai:8000/chain-rpc/
+
+# Внести залог
+./inferenced tx collateral deposit-collateral 1000000ngonka \
+  --from <WALLET_NAME> \
+  --keyring-backend file \
+  --node http://node1.gonka.ai:8000/chain-rpc/ \
+  --chain-id gonka-mainnet \
+  --yes
+
+# проверить залог
+./inferenced query collateral show-collateral gonka16r08lhm50zwjddmslfw2344z67r70vqul0dus6 \ 
+--node http://node1.gonka.ai:8000/chain-rpc/
+
+#Добавить домен в Description
+./inferenced tx staking edit-validator \
+ --chain-id="gonka-mainnet" \
+ --from <WALLET_NAME>  \
+ --new-moniker "Gonka.Top (Mitch)" \
+ --website https://gonka.top \
+ --keyring-backend file \
+ --node http://node1.gonka.ai:8000/chain-rpc/ \
+ --yes
+
+
+
+# делегация на Миколу
+./inferenced tx inference set-poc-delegation moonshotai/Kimi-K2.6 gonka1d694r00czmq75txghwjcuk07lxvc8d4ekgsha0 \
+  --from vyacheslav1 \
+  --node https://node3.gonka.ai/chain-rpc/ \
+  --chain-id gonka-mainnet \
+  --keyring-backend file \
+  --gas auto \
+  --gas-adjustment 1.3 \
+  -y
+
+  # проверика делегаций
+./inferenced query inference poc-delegation "gonka1gtdrqh9jpkqxdaskxkpwjpy2q284q8qnvg58uj" \
+--node "https://node3.gonka.ai/chain-rpc/" -o json

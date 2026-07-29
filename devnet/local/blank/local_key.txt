@@ -1,0 +1,2 @@
+./inferenced keys add net4_gonzo --keyring-backend file
+
