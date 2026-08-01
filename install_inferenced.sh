@@ -1,11 +1,13 @@
 #!/bin/sh
-# Install the newest published OS-specific inferenced CLI from Gonka releases.
+# Install an OS-specific inferenced CLI from Gonka releases
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/paranjko/external-test-lab/refs/heads/main/install_inferenced.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/paranjko/external-test-lab/refs/heads/main/install_inferenced.sh | sh -s -- 0.2.15
 #
 # Optional:
 #   INSTALL_DIR=/usr/local/bin sh install_inferenced.sh
+#   INFERENCED_VERSION=0.2.15 sh install_inferenced.sh
 
 set -eu
 
@@ -17,6 +19,9 @@ MACHINE=$(uname -m)
 WORKDIR=''
 ARCHIVE=''
 TEMP_BINARY=''
+REQUESTED_VERSION=${1:-${INFERENCED_VERSION:-}}
+
+[ "$#" -le 1 ] || fail 'usage: install_inferenced.sh [VERSION]'
 
 fail() {
   printf '%s\n' "error: $*" >&2
@@ -63,24 +68,31 @@ case "$MACHINE" in
 esac
 
 WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/inferenced-install.XXXXXX")
-RELEASES_PAGE="$WORKDIR/releases.json"
+if [ -n "$REQUESTED_VERSION" ]; then
+  case "$REQUESTED_VERSION" in
+    release/v[0-9]*.[0-9]*.[0-9]*) RELEASE_TAG="$REQUESTED_VERSION" ;;
+    v[0-9]*.[0-9]*.[0-9]*) RELEASE_TAG="release/$REQUESTED_VERSION" ;;
+    [0-9]*.[0-9]*.[0-9]*) RELEASE_TAG="release/v$REQUESTED_VERSION" ;;
+    *) fail "invalid version: $REQUESTED_VERSION (expected 0.2.15, v0.2.15, or release/v0.2.15)" ;;
+  esac
+else
+  RELEASES_PAGE="$WORKDIR/releases.json"
+  printf '%s\n' 'Resolving the newest published inferenced release...'
+  curl -fsSL --retry 3 --retry-delay 1 -o "$RELEASES_PAGE" "$RELEASES_URL"
 
-printf '%s\n' 'Resolving the newest published inferenced release...'
-curl -fsSL --retry 3 --retry-delay 1 -o "$RELEASES_PAGE" "$RELEASES_URL"
-
-# GitHub returns releases newest-first. Keep prereleases with a normal
-# release/vX.Y.Z tag: the current CLI release can be marked prerelease.
-RELEASE_TAG=$(awk -F '"' '
-  /"tag_name"/ {
-    tag = $4
-    if (tag ~ /^release\/v[0-9]+\.[0-9]+\.[0-9]+$/) {
-      print tag
-      exit
+  # GitHub returns releases newest-first. Keep prereleases with a normal
+  # release/vX.Y.Z tag: the current CLI release can be marked prerelease.
+  RELEASE_TAG=$(awk -F '"' '
+    /"tag_name"/ {
+      tag = $4
+      if (tag ~ /^release\/v[0-9]+\.[0-9]+\.[0-9]+$/) {
+        print tag
+        exit
+      }
     }
-  }
-' "$RELEASES_PAGE")
-
-[ -n "$RELEASE_TAG" ] || fail 'no published release/vX.Y.Z tag was found'
+  ' "$RELEASES_PAGE")
+  [ -n "$RELEASE_TAG" ] || fail 'no published release/vX.Y.Z tag was found'
+fi
 
 ASSET="inferenced-$PLATFORM-$ARCH.zip"
 DOWNLOAD_URL="https://github.com/gonka-ai/gonka/releases/download/$RELEASE_TAG/$ASSET"
