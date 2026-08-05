@@ -55,6 +55,8 @@ Create .env from .env.example, then run:
   ./gdc.sh join node2
   ./gdc.sh join node3
   ./gdc.sh join node4
+  ./gdc.sh handoff create node2
+  ./gdc.sh handoff approve node2 <activation-request.json>
   ./gdc.sh governance devshard
   ./gdc.sh vote <proposal-id> [yes|no|abstain|no_with_veto]
   ./gdc.sh ops gateway
@@ -179,6 +181,20 @@ case "$COMMAND" in
   join)
     [[ $# -eq 1 ]] || { usage; exit 2; }
     run_phase "join-$1" "$ROOT/scripts/phase-join.sh" "$1"
+    ;;
+  handoff)
+    [[ $# -ge 2 ]] || { usage; exit 2; }
+    case "$1" in
+      create)
+        [[ $# -eq 2 ]] || { usage; exit 2; }
+        run_phase "handoff-create-$2" "$ROOT/scripts/phase-handoff-create.sh" "$2"
+        ;;
+      approve)
+        [[ $# -eq 3 ]] || { usage; exit 2; }
+        run_phase "handoff-approve-$2" "$ROOT/scripts/phase-handoff-approve.sh" "$2" "$3"
+        ;;
+      *) usage; exit 2 ;;
+    esac
     ;;
   help|-h|--help) usage ;;
   *) echo "Unknown phase: $COMMAND" >&2; usage; exit 2 ;;

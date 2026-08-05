@@ -7,6 +7,22 @@ record_phase_profile "join-${1:-unknown}"
 NODE="$(node_name "${1:-}")"
 host_is_skipped "$NODE" && die "$NODE is excluded by GDC_SKIP_HOSTS"
 INDEX="${NODE#gdc-node}"
+HANDOFF_DIR="${GDC_NODE_HANDOFF_DIR:-}"
+if [[ -n "$HANDOFF_DIR" ]]; then
+  HANDOFF_DIR="$(cd "$HANDOFF_DIR" && pwd)"
+  [[ -s "$HANDOFF_DIR/manifest.sha256" ]] || die "handoff bundle lacks manifest.sha256: $HANDOFF_DIR"
+  (cd "$HANDOFF_DIR" && sha256sum -c manifest.sha256) || die 'handoff bundle checksum verification failed'
+  [[ "$(<"$HANDOFF_DIR/node")" == "$NODE" ]] || die "handoff bundle is not for $NODE"
+  [[ "$(<"$HANDOFF_DIR/chain-id")" == "$CHAIN_ID" ]] || die 'handoff bundle chain ID differs from local configuration'
+  step "Import the verified $NODE handoff bundle"
+  install -d -m 0700 "$SECRETS" "$GENESIS" "$ACCOUNTS"
+  install -m 0600 "$HANDOFF_DIR/secrets/$NODE.keyring" "$SECRETS/$NODE.keyring"
+  install -m 0600 "$HANDOFF_DIR/secrets/$NODE.postgres" "$SECRETS/$NODE.postgres"
+  install -m 0600 "$HANDOFF_DIR/accounts/$NODE-cold.json" "$ACCOUNTS/$NODE-cold.json"
+  install -m 0600 "$HANDOFF_DIR/genesis/genesis.json" "$GENESIS/genesis.json"
+  install -m 0600 "$HANDOFF_DIR/genesis/genesis.sha256" "$GENESIS/genesis.sha256"
+  install -m 0600 "$HANDOFF_DIR/genesis/genesis-seeds.txt" "$GENESIS/genesis-seeds.txt"
+fi
 if [[ "$INDEX" == 4 ]]; then
   require_ml_qualification gdc-node4-ml
 else
@@ -96,6 +112,20 @@ ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./register-participant.sh .env >registe
 if ! "$ROOT/03-join/wait-registered.sh" "https://$NODE0_PUBLIC_HOST" "$ADDRESS"; then
   ssh "$NODE" "tail -100 /srv/dai/deploy/$NODE/register-participant.log" >&2
   exit 1
+fi
+if [[ -n "$HANDOFF_DIR" ]]; then
+  REQUEST_DIR="$ROOT/artifacts/operator-requests"
+  REQUEST="$REQUEST_DIR/$NODE-activation-request.json"
+  install -d -m 0700 "$REQUEST_DIR"
+  jq -n \
+    --arg schema gonka-devnet-community-node-handoff-v1 \
+    --arg node "$NODE" --arg chain_id "$CHAIN_ID" --arg address "$ADDRESS" \
+    --slurpfile identity "$IDENTITY" \
+    '{schema: $schema, node: $node, chain_id: $chain_id, cold_address: $address, identity: $identity[0]}' \
+    >"$REQUEST"
+  chmod 600 "$REQUEST"
+  printf '\n%s is registered but intentionally not activated. Transfer this request to the controller operator:\n%s\n' "$NODE" "$REQUEST"
+  exit 0
 fi
 step "Fund $NODE and grant ML operational permissions"
 "$ROOT/03-join/fund-account.sh" "$ACCOUNT" "$INVENTORY"

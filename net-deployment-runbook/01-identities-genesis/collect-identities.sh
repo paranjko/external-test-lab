@@ -8,7 +8,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; BOOT="$(mktemp -d)"; tr
 LOGS="$ROOT/state/logs/identities"
 umask 077
 mkdir -p "$OUT" "$MNEMONICS" "$LOGS"
-"$ROOT/scripts/render-bootstrap-envs.sh" "$INVENTORY" "$SECRETS" "$BOOT" >/dev/null
 failed=0
 for HOST in "${NODES[@]}"; do
   [[ "$HOST" =~ ^gdc-node[0-4]$ ]] || { echo "Invalid node: $HOST" >&2; failed=1; continue; }
@@ -18,6 +17,9 @@ for HOST in "${NODES[@]}"; do
     failed=1
     continue
   fi
+  "$ROOT/02-node/render-node-env.sh" --inventory "$INVENTORY" --node-name "$HOST" \
+    --account-public "$ROOT/artifacts/accounts/$HOST-cold.json" --bootstrap \
+    --secrets-dir "$SECRETS" --output "$BOOT/$HOST.env" >/dev/null
   ssh "$HOST" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
   rsync -a --delete "$ROOT/02-node/" "$HOST:$REMOTE/02-node/"
   scp -q "$BOOT/$HOST.env" "$HOST:$REMOTE/bootstrap.env"

@@ -61,4 +61,12 @@ jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
 ' "$genesis_out" >/dev/null
 rm -f "$genesis_out"
 unset genesis_out
+grep -Fq 'GDC_NODE_HANDOFF_DIR' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'operator.keyring' "$ROOT/scripts/phase-handoff-approve.sh"
+if grep -Fq 'operator.keyring' "$ROOT/scripts/phase-handoff-create.sh"; then
+  echo 'handoff bundle creator must not transfer the controller operator key' >&2
+  exit 1
+fi
+grep -Fq 'sha256sum -c manifest.sha256' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'cold address does not match controller-created account' "$ROOT/scripts/phase-handoff-approve.sh"
 printf 'PASS release/model profile invariants\n'

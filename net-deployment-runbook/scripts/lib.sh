@@ -29,6 +29,15 @@ load_project() {
   ROOT="$(kit_root)"
   ENV_FILE="${GDC_ENV:-$ROOT/.env}"
   [[ -s "$ENV_FILE" ]] || die "create $ROOT/.env from .env.example"
+  # A shell invocation is the explicit per-rehearsal override.  Do not let an
+  # empty example value in .env silently re-include an intentionally skipped
+  # host (for example: GDC_SKIP_HOSTS='gdc-node2 gdc-node3' ./gdc.sh prepare).
+  local caller_skip_hosts=''
+  local caller_skip_hosts_set=false
+  if [[ ${GDC_SKIP_HOSTS+x} ]]; then
+    caller_skip_hosts="$GDC_SKIP_HOSTS"
+    caller_skip_hosts_set=true
+  fi
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
@@ -39,6 +48,9 @@ load_project() {
   fi
   load_profiles
   set +a
+  if [[ "$caller_skip_hosts_set" == true ]]; then
+    export GDC_SKIP_HOSTS="$caller_skip_hosts"
+  fi
 
   # Keep a fresh Community DevNet recognisable across its reproducible
   # baseline and upgrade rehearsals. An explicit deployment override remains
@@ -84,7 +96,7 @@ load_project() {
   # The node4 Network Node and its Blackwell ML host are different machines.
   # Resolve the latter from the operator's SSH inventory, never from the
   # node4 public DNS name: port 5000 on node4 is Tendermint P2P, not MLNode.
-  NODE4_ML_ENDPOINT="$(ssh -G gdc-node4-ml 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+  NODE4_ML_ENDPOINT="${GDC_NODE4_ML_ENDPOINT:-$(ssh -G gdc-node4-ml 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')}"
   [[ -n "$NODE4_ML_ENDPOINT" ]] || die 'cannot determine gdc-node4-ml endpoint from SSH configuration'
   [[ "$NODE4_ML_ENDPOINT" != "$NODE4_PUBLIC_HOST" ]] || die 'gdc-node4-ml endpoint must differ from node4 public host'
   NODE4_ML_MONITOR_HOST="$NODE4_ML_ENDPOINT"

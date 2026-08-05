@@ -53,6 +53,54 @@ lifecycle testing practical; it is not a claim about production timing. The
 validation slot must remain non-zero: zero disables PoC validation and makes a
 chain-accounted gateway impossible to verify.
 
+## Independent operator node join
+
+An additional GPU Network Node may be operated by a different person or
+organization. They must never receive `state/secrets/operator.keyring`, the
+controller's mnemonic backups, gateway credentials, or any unrelated node
+secret. The controller creates a target-specific encrypted handoff after
+Genesis; the independent operator qualifies, deploys and registers that node;
+the controller then confirms the on-chain registration and grants the minimum
+funding and ML operational permission.
+
+Controller workstation:
+
+```bash
+./gdc.sh handoff create node2
+```
+
+Transfer the emitted `artifacts/operator-handoffs/gdc-node2/` directory through
+an encrypted out-of-band channel. The recipient clones the same runbook
+release, adds its own `ACME_EMAIL` to the received `operator.env`, and provides
+only the SSH alias for its host. It first produces local model evidence, then
+deploys and registers its node:
+
+```bash
+GDC_ENV=/secure/gdc-node2/operator.env \
+GDC_QUALIFY_HOSTS=gdc-node2 \
+  ./gdc.sh qualify-ml
+
+GDC_ENV=/secure/gdc-node2/operator.env \
+GDC_NODE_HANDOFF_DIR=/secure/gdc-node2 \
+  ./gdc.sh join node2
+```
+
+The second command ends in the registered-but-not-active state and writes an
+`artifacts/operator-requests/gdc-node2-activation-request.json` file. Transfer
+that public activation request to the controller, which performs the only
+privileged action:
+
+```bash
+./gdc.sh handoff approve node2 /received/gdc-node2-activation-request.json
+```
+
+`handoff approve` verifies the expected chain ID, controller-created cold
+address and on-chain registration before it funds the account or grants ML
+permission. It records `state/joined/gdc-node2` only after the chain reports
+`ACTIVE`. This is the required rehearsal for adding a node after bootstrap:
+start a fresh baseline with `GDC_SKIP_HOSTS="gdc-node2 gdc-node3"`, then use
+the handoff flow for node2.
+
 ## Gateway and observability overlays
 
 DevShard versions and the dedicated gateway creator are approved through chain governance before a gateway is started:
