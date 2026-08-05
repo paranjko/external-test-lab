@@ -29,6 +29,19 @@ The operator workstation needs Bash, Docker, SSH, `jq`, `rsync`, `scp` and SSH a
 cp .env.example .env
 ```
 
+### Host storage prerequisite
+
+Every machine is supplied by its operator with `/srv` and writable
+`/srv/dai` already in place. Before running the runbook, the filesystem that
+backs `/srv/dai` must have at least **50 GiB free** for a Network Node and at
+least **40 GiB free** for a standalone MLNode. Docker and containerd storage
+must have the same usable headroom; they may be on that filesystem or another
+operator-managed filesystem. `prepare` verifies these conditions but never
+migrates data, modifies `/etc/fstab`, remounts a disk, or creates symlinks.
+
+For node2 this prerequisite is already met: `/srv/dai`, Docker and containerd
+are backed by its 440 GiB data disk with 365 GiB currently free.
+
 `GDC_SKIP_HOSTS=gdc-node3` is the supported way to intentionally exclude a participant. An excluded host is recorded as `SKIP`, never silently counted as an active participant, and can be qualified and joined later.
 
 ## Baseline: 0.2.14

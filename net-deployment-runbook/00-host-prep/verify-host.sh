@@ -17,14 +17,24 @@ docker compose version >/dev/null 2>&1 && pass 'docker compose plugin' || fail '
 systemctl is-active --quiet chrony && pass chrony || fail chrony
 fail2ban-client status sshd >/dev/null 2>&1 && pass 'fail2ban sshd jail' || fail 'fail2ban sshd jail'
 chronyc tracking 2>/dev/null | grep -q 'Leap status.*Normal' && pass 'NTP synchronized' || fail 'NTP not synchronized'
-if [[ -d /srv/dai && -w /srv/dai ]]; then
-  pass '/srv/dai writable'
-  free_kb=$(df -Pk /srv/dai | awk 'NR==2{print $4}')
-  min_kb=$((40*1024*1024)); [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]] && min_kb=$((50*1024*1024))
-  (( free_kb >= min_kb )) && pass 'disk free threshold' || fail 'insufficient free disk'
+min_kb=$((40*1024*1024)); [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]] && min_kb=$((50*1024*1024))
+if [[ -d /srv && -d /srv/dai && -w /srv/dai ]]; then
+  pass '/srv and /srv/dai writable'
 else
-  fail '/srv/dai not writable'
+  fail '/srv or /srv/dai is missing or not writable'
 fi
+for storage_path in /srv/dai /var/lib/docker /var/lib/containerd; do
+  if [[ -d "$storage_path" ]]; then
+    free_kb=$(df -Pk "$storage_path" | awk 'NR==2{print $4}')
+    if [[ "$free_kb" =~ ^[0-9]+$ ]] && (( free_kb >= min_kb )); then
+      pass "$storage_path free space threshold"
+    else
+      fail "$storage_path has insufficient free disk"
+    fi
+  else
+    fail "$storage_path missing"
+  fi
+done
 if [[ "$ROLE" == network-gpu || "$ROLE" == ml-only ]]; then
   if nvidia-smi >/dev/null 2>&1; then
     version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n1)

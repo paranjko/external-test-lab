@@ -10,7 +10,6 @@ EOF
 [[ $EUID -eq 0 ]] || { echo "Run with sudo" >&2; exit 1; }
 ROLE=""; MONITORING_CIDR=""; METER_EDGE_CIDR=""; SSH_PORT=""; DRIVER_CHANGED=false
 OPERATOR_USER="${SUDO_USER:-}"; MIN_DRIVER=580; ML_CLIENT_CIDR="${ML_CLIENT_CIDR:-}"; ML_CALLBACK_CIDR="${ML_CALLBACK_CIDR:-}"
-DATA_ROOT_BACKING="${GONKA_DATA_ROOT_BACKING:-}"
 while (($#)); do
   case "$1" in
     --role) ROLE="$2"; shift 2;;
@@ -148,59 +147,6 @@ systemctl restart docker.service
 
 id "$OPERATOR_USER" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$OPERATOR_USER"
 usermod -aG docker "$OPERATOR_USER"
-if [[ -n "$DATA_ROOT_BACKING" ]]; then
-  [[ "$DATA_ROOT_BACKING" =~ ^/[-A-Za-z0-9_./]+$ && "$DATA_ROOT_BACKING" != /srv/dai ]] || {
-    echo 'GONKA_DATA_ROOT_BACKING must be a safe absolute path other than /srv/dai' >&2; exit 2;
-  }
-  backing_mount="$(findmnt -n -o TARGET -T "$(dirname "$DATA_ROOT_BACKING")" || true)"
-  [[ -n "$backing_mount" && "$backing_mount" != / ]] || {
-    echo "GONKA_DATA_ROOT_BACKING is not on a separate mounted filesystem: $DATA_ROOT_BACKING" >&2; exit 1;
-  }
-  if ! mountpoint -q /srv/dai; then
-    install -d -m 0750 "$DATA_ROOT_BACKING"
-    if [[ ! -e "$DATA_ROOT_BACKING/.gdc-data-root" ]] && find "$DATA_ROOT_BACKING" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
-      echo "refusing to migrate into non-empty unowned backing directory: $DATA_ROOT_BACKING" >&2; exit 1
-    fi
-    rsync -aHAX --numeric-ids /srv/dai/ "$DATA_ROOT_BACKING/"
-    touch "$DATA_ROOT_BACKING/.gdc-data-root"
-    backing_uuid="$(findmnt -n -o UUID -T "$backing_mount")"
-    backing_fstype="$(findmnt -n -o FSTYPE -T "$backing_mount")"
-    [[ -n "$backing_uuid" && -n "$backing_fstype" ]] || { echo 'cannot determine backing filesystem identity' >&2; exit 1; }
-    grep -Fq " $backing_mount " /etc/fstab || printf 'UUID=%s %s %s defaults,nofail 0 2\n' "$backing_uuid" "$backing_mount" "$backing_fstype" >> /etc/fstab
-    grep -Fq " $DATA_ROOT_BACKING /srv/dai none bind" /etc/fstab || \
-      printf '%s /srv/dai none bind,nofail,x-systemd.requires-mounts-for=%s 0 0\n' "$DATA_ROOT_BACKING" "$backing_mount" >> /etc/fstab
-    mount --bind "$DATA_ROOT_BACKING" /srv/dai
-    status "MIGRATED  /srv/dai onto $DATA_ROOT_BACKING"
-  fi
-
-  # Docker's current containerd installation stores layers under
-  # /var/lib/containerd independently of DockerRootDir. Moving only
-  # /var/lib/docker would therefore leave large ML image layers on the root
-  # filesystem. Preserve both stores on the persistent data disk instead of
-  # pruning images or the Hugging Face cache.
-  if ! mountpoint -q /var/lib/docker || ! mountpoint -q /var/lib/containerd; then
-    systemctl stop docker.service docker.socket containerd.service || true
-    install -d -m 0711 /srv/dai/docker /srv/dai/containerd
-    rsync -aHAX --numeric-ids /var/lib/docker/ /srv/dai/docker/
-    rsync -aHAX --numeric-ids /var/lib/containerd/ /srv/dai/containerd/
-    [[ -d /srv/dai/containerd/io.containerd.content.v1.content ]] || {
-      echo 'containerd storage copy verification failed' >&2; exit 1;
-    }
-    # The sources have been copied and verified above while both daemons are
-    # stopped. Remove only these exact duplicate directories before their bind
-    # mounts make the root-space recovery effective.
-    rm -rf /var/lib/docker /var/lib/containerd
-    install -d -m 0711 /var/lib/docker /var/lib/containerd
-    grep -Fq ' /srv/dai/docker /var/lib/docker none bind' /etc/fstab || \
-      printf '/srv/dai/docker /var/lib/docker none bind,nofail,x-systemd.requires-mounts-for=/srv/dai 0 0\n' >> /etc/fstab
-    grep -Fq ' /srv/dai/containerd /var/lib/containerd none bind' /etc/fstab || \
-      printf '/srv/dai/containerd /var/lib/containerd none bind,nofail,x-systemd.requires-mounts-for=/srv/dai 0 0\n' >> /etc/fstab
-    mount --bind /srv/dai/docker /var/lib/docker
-    mount --bind /srv/dai/containerd /var/lib/containerd
-    systemctl start containerd.service docker.service
-    status 'MIGRATED  Docker and containerd storage onto /srv/dai'
-  fi
-fi
 install -d -m 0750 -o "$OPERATOR_USER" -g "$OPERATOR_USER" \
   /srv/dai /srv/dai/shared /srv/dai/hf-cache /srv/dai/backups
 install -m 0644 "$(dirname "$0")/sysctl-gonka.conf" /etc/sysctl.d/99-gonka.conf

@@ -34,14 +34,6 @@ for host in gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4 gdc-node4-ml; do
   role=network-gpu
   [[ "$host" == gdc-node4 ]] && role=network-only
   [[ "$host" == gdc-node4-ml ]] && role=ml-only
-  index="${host#gdc-node}"
-  [[ "$host" == gdc-node4-ml ]] && index=4
-  data_root_var="GDC_NODE${index}_DATA_ROOT"
-  storage_check='true'
-  if [[ -n "${!data_root_var:-}" ]]; then
-    [[ "${!data_root_var}" =~ ^/[-A-Za-z0-9_./]+$ ]] || die "$data_root_var must be an absolute safe path"
-    storage_check='mountpoint -q /var/lib/docker && mountpoint -q /var/lib/containerd'
-  fi
   callback_check='true'
   [[ "$host" == gdc-node4 ]] && callback_check="sudo grep -qx 'ML_CALLBACK_CIDR=$node4_ml_callback_cidr' /etc/gonka/host.env"
   ssh_port="$(ssh -G "$host" 2>/dev/null | awk '$1 == "port" {print $2; exit}')"
@@ -56,7 +48,7 @@ for host in gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4 gdc-node4-ml; do
     failed_hosts+=("$host")
     continue
   fi
-  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && $callback_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role' && sudo sh -c '$storage_check'" >/dev/null 2>&1; then
+  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && $callback_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
     continue
@@ -64,9 +56,6 @@ for host in gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4 gdc-node4-ml; do
   remote_env=()
   [[ "$role" == ml-only ]] && remote_env+=("ML_CLIENT_CIDR='$node4_ml_client_cidr'")
   [[ "$host" == gdc-node4 ]] && remote_env+=("ML_CALLBACK_CIDR='$node4_ml_callback_cidr'")
-  if [[ -n "${!data_root_var:-}" ]]; then
-    remote_env+=("GONKA_DATA_ROOT_BACKING='${!data_root_var}'")
-  fi
   if ssh -T "$host" "sudo ${remote_env[*]} /tmp/gdc-host-prep/prepare-host.sh --role '$role' --monitoring-cidr '$MONITORING_CIDR' --meter-edge-cidr '$METER_EDGE_CIDR' --ssh-port '$ssh_port'"; then
     prepare_rc=0
   else
