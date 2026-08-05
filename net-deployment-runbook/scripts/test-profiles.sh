@@ -56,6 +56,7 @@ jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
   and .app_state.inference.params.epoch_params.epoch_shift == "0"
   and .app_state.inference.params.epoch_params.poc_stage_duration == "4"
   and .app_state.inference.params.epoch_params.poc_validation_duration == "4"
+  and .app_state.inference.params.poc_params.validation_slots == 1
   and .app_state.gov.params.voting_period == "30s"
 ' "$genesis_out" >/dev/null
 rm -f "$genesis_out"

@@ -47,7 +47,11 @@ exclusive local lifecycle lock, so a second phase cannot race an active one:
 ./gdc.sh --release testnet-0.2.14 verify
 ```
 
-The baseline uses the primary fast rehearsal profile: 50-block epochs and short governance windows. Its purpose is to make lifecycle testing practical; it is not a claim about production timing.
+The baseline uses the primary fast rehearsal profile: 50-block epochs, short
+governance windows and one PoC validation slot. Its purpose is to make
+lifecycle testing practical; it is not a claim about production timing. The
+validation slot must remain non-zero: zero disables PoC validation and makes a
+chain-accounted gateway impossible to verify.
 
 ## Gateway and observability overlays
 

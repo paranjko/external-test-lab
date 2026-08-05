@@ -101,7 +101,7 @@
               "exponent": -2
             }
           },
-          "validation_slots": 0,
+          "validation_slots": 1,
           "poc_normalization_enabled": true,
           "poc_stronger_rng_enabled": false,
           "models": [
