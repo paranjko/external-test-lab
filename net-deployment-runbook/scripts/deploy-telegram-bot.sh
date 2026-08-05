@@ -5,11 +5,11 @@ set -Eeuo pipefail
 # on node0; only the finite pre-authorised pool is copied from there. Never
 # overwrite node4's live idempotence database with a stale node0 copy.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BOT_SOURCE="${GDC_TELEGRAM_BOT_SOURCE:-$ROOT/../gonka-devnet-bot}"
+BOT_SOURCE="$ROOT/scripts/telegram-bot"
 BOT_DIR=/srv/dai/gonka-devnet-bot
 
-[[ -f "$BOT_SOURCE/compose.yaml" && -s "$BOT_SOURCE/.env" ]] || {
-  echo "Telegram bot source or .env is missing: $BOT_SOURCE" >&2; exit 1;
+[[ -f "$BOT_SOURCE/compose.yaml" && -f "$BOT_SOURCE/bot.py" ]] || {
+  echo "embedded Telegram bot source is incomplete: $BOT_SOURCE" >&2; exit 1;
 }
 
 ssh -T gdc-node0 "test -s '$BOT_DIR/.env' && test -s '$BOT_DIR/gateway-key-pool.json' && test -d '$BOT_DIR/data'"

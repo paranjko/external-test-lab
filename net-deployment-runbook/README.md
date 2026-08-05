@@ -66,6 +66,24 @@ DevShard versions and the dedicated gateway creator are approved through chain g
 
 `ops gateway` must report an active unblocked DevShard before the public OpenAI-compatible access surface is considered ready. A successful direct MLNode response alone is not proof of chain-accounted gateway inference.
 
+## Telegram key issuer
+
+The bot implementation is part of this release at
+[`scripts/telegram-bot/`](scripts/telegram-bot/). The BotFather token and the
+finite `gateway-key-pool.json` are root-owned runtime files on the gateway host
+and never belong in this repository or the operator `.env`.
+
+After those two files have been provisioned and the gateway is active, deploy
+the bot to the secondary-services host:
+
+```bash
+./gdc.sh telegram-bot
+```
+
+The deployment keeps the durable issuance database on that host, stops any
+gateway-host poller, and verifies both the Telegram identity and an
+authenticated key before reporting success.
+
 ## Single-node operations
 
 Use these commands for a controlled node recovery rehearsal. `verify` waits for synchronization and checks common-height consistency; a running container is not sufficient evidence of recovery.
@@ -122,4 +140,3 @@ make shellcheck
 ```
 
 Runtime evidence is written under `artifacts/runs/<UTC timestamp>/` and remains local unless it has been reviewed and sanitized for publication.
-

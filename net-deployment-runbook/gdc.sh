@@ -55,6 +55,7 @@ Create .env from .env.example, then run:
   ./gdc.sh ops site
   ./gdc.sh ops meter
   ./gdc.sh ops explorer
+  ./gdc.sh telegram-bot
   ./gdc.sh node stop node1
   ./gdc.sh node start node1
   ./gdc.sh node verify node1
@@ -92,12 +93,14 @@ done
 COMMAND="${1:-help}"
 shift || true
 case "$COMMAND" in
-  prepare|identities|verify|reset|settle|qualify-ml|audit)
+  prepare|identities|verify|reset|settle|qualify-ml|audit|telegram-bot)
     [[ "$COMMAND" == reset || $# -eq 0 ]] || { usage; exit 2; }
     if [[ "$COMMAND" == reset ]]; then
       exec "$ROOT/scripts/phase-reset.sh" "$@"
     fi
-    if [[ "$COMMAND" == audit ]]; then
+    if [[ "$COMMAND" == telegram-bot ]]; then
+      run_phase telegram-bot "$ROOT/scripts/deploy-telegram-bot.sh"
+    elif [[ "$COMMAND" == audit ]]; then
       run_phase lifecycle-audit "$ROOT/scripts/phase-audit-lifecycle.sh"
     else
       run_phase "$COMMAND" "$ROOT/scripts/phase-$COMMAND.sh" "$@"
