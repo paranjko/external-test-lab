@@ -2,6 +2,13 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCK_FILE="$ROOT/state/.gdc.lock"
+mkdir -p "$ROOT/state"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo 'another gdc lifecycle phase is already running; wait for it to finish before starting a new one' >&2
+  exit 1
+fi
 
 run_phase() {
   local phase="$1"

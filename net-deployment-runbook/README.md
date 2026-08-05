@@ -33,7 +33,8 @@ cp .env.example .env
 
 ## Baseline: 0.2.14
 
-Run each phase only after the preceding one returns `PASS`:
+Run each phase only after the preceding one returns `PASS`. The CLI holds an
+exclusive local lifecycle lock, so a second phase cannot race an active one:
 
 ```bash
 ./gdc.sh --release testnet-0.2.14 --model qwen3-0.6b prepare
