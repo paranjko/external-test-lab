@@ -1,0 +1,23 @@
+# P2 overlay, enabled only by the explicit bridge phase after measured headroom.
+services:
+  bridge:
+    image: ${BRIDGE_IMAGE:?BRIDGE_IMAGE is required}
+    restart: unless-stopped
+    environment:
+      GETH_DATA_DIR: /data/geth
+      PRYSM_DATA_DIR: /data/prysm
+      JWT_SECRET_PATH: /data/jwt/jwt.hex
+      BRIDGE_POSTBLOCK: http://api:9200/admin/v1/bridge/block
+      BRIDGE_GETADDRESSES: http://api:9000/v1/bridge/addresses
+      BRIDGE_GETLASTBLOCK: http://api:9000/v1/bridge/block/latest
+      BRIDGE_CACHE_RANGES: "4"
+      BEACON_STATE_URL: ${GDC_SEPOLIA_BEACON_STATE_URL:?GDC_SEPOLIA_BEACON_STATE_URL is required}
+      ETHEREUM_NETWORK: sepolia
+      PERSISTENT_DB_DIR: /persistent-db
+    volumes:
+      - ${DATA_DIR}/bridge/geth:/data/geth
+      - ${DATA_DIR}/bridge/prysm:/data/prysm
+      - ${DATA_DIR}/bridge/jwt:/data/jwt
+      - ${DATA_DIR}/bridge/logs:/var/log
+      - ${DATA_DIR}/bridge/persistent-db:/persistent-db
+    depends_on: [api]

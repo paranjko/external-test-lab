@@ -1,0 +1,33 @@
+name: gdc-node4-ml
+services:
+  mlnode:
+    image: ${MLNODE_IMAGE:-ghcr.io/product-science/mlnode:3.0.12-post6-blackwell}
+    restart: always
+    hostname: mlnode
+    environment:
+      HF_HOME: /root/.cache
+      VLLM_ATTENTION_BACKEND: ${VLLM_ATTENTION_BACKEND:-FLASHINFER}
+      POC_BATCH_SIZE_DEFAULT: ${POC_BATCH_SIZE_DEFAULT:-32}
+    volumes:
+      - ${HF_HOME:?HF_HOME is required}:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ipc: host
+    command: uvicorn api.app:app --host=0.0.0.0 --port=8080
+
+  inference:
+    image: ${MLNODE_PROXY_IMAGE:-nginx:1.28.0}
+    restart: always
+    hostname: inference
+    volumes:
+      - ../nginx-mlnode.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "${ML_BIND_IP:?ML_BIND_IP is required}:8080:8080/tcp"
+      - "${ML_BIND_IP}:5000:5000/tcp"
+    depends_on:
+      - mlnode

@@ -1,0 +1,30 @@
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+upstream versiond_ha_pool {
+  zone versiond_ha_pool 64k;
+  hash $sticky_key consistent;
+  server versiond:8080 resolve max_fails=1 fail_timeout=10s;
+  server versiond-2:8080 resolve max_fails=1 fail_timeout=10s;
+}
+
+server {
+  listen 8080;
+  set $sticky_key $request_uri;
+  if ($request_uri ~ "^/(?:devshard/)?[^/]+/sessions/([^/]+)") { set $sticky_key $1; }
+  location / {
+    rewrite ^/devshard/(.*)$ /$1 break;
+    proxy_pass http://versiond_ha_pool;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Devshard-Ha true;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_connect_timeout 2s;
+    proxy_next_upstream error timeout http_502;
+    proxy_next_upstream_tries 2;
+    add_header X-Versiond-Backend versiond_ha_pool always;
+    add_header X-Upstream-Addr $upstream_addr always;
+  }
+}

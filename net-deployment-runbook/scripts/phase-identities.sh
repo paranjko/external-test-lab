@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/lib.sh"
+load_project
+assert_baseline_release
+record_phase_profile identities
+
+MNEMONICS="$ROOT/artifacts/mnemonics"
+step 'Local secrets and account backups'
+"$ROOT/scripts/make-secrets.sh" "$SECRETS"
+step 'Cold accounts'
+"$ROOT/01-identities-genesis/create-cold-accounts.sh" "$SECRETS/operator.keyring"
+step 'Genesis participant identity'
+"$ROOT/01-identities-genesis/collect-identities.sh" "$INVENTORY" "$SECRETS" "$IDENTITIES" "$MNEMONICS" gdc-node0 \
+  || die 'the Genesis participant identity could not be created'
+printf 'BACKUP  %s mnemonic files in %s\n' \
+  "$(find "$MNEMONICS" -maxdepth 1 -type f -name '*.mnemonic' | wc -l)" "$MNEMONICS"

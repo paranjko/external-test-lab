@@ -1,0 +1,32 @@
+# Runtime configuration and secrets
+inventory.env
+wireguard.env
+VERSION.runtime.lock
+state/
+generated/
+vendor/
+artifacts/accounts/
+artifacts/identities/
+artifacts/genesis/
+artifacts/mnemonics/
+artifacts/wireguard-public-keys/
+
+# Runtime exports and reports
+*.tar.zst
+*.key
+*.pem
+*.mnemonic
+*.secret
+*.issued-keys.log
+
+# Local caches
+__pycache__/
+*.pyc
+.DS_Store
+
+# Packaging products
+MANIFEST.sha256
+TREE.txt
+SHA256SUMS
+*.zip
+*.tar.gz

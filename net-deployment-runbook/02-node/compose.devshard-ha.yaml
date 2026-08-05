@@ -1,0 +1,59 @@
+# P2 overlay: one participant's v4 session pool only. Both versiond replicas
+# deliberately share this participant key and Postgres session state.
+services:
+  versiond:
+    environment:
+      PGHOST: payload-postgres
+      PGPORT: "5432"
+      PGDATABASE: payloads
+      PGUSER: payloads
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      DEVSHARD_STORAGE_MODE: postgres
+
+  versiond-2:
+    image: ${VERSIOND_IMAGE:?VERSIOND_IMAGE is required}
+    restart: always
+    environment:
+      VERSIOND_ORACLE_URL: http://api:9100/versions
+      VERSIOND_BINARY_NAME: devshardd
+      NODE_MANAGER_ADDR: api:${NODE_MANAGER_GRPC_PORT:-9400}
+      NODE_HOST: node
+      NODE_GRPC_URL: node:9090
+      NODE_RPC_URL: http://node:26657
+      KEY_NAME: ${KEY_NAME}
+      ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY}
+      KEYRING_BACKEND: file
+      KEYRING_PASSWORD: ${KEYRING_PASSWORD}
+      KEYRING_DIR: /root/.inference
+      PGHOST: payload-postgres
+      PGPORT: "5432"
+      PGDATABASE: payloads
+      PGUSER: payloads
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      DEVSHARD_STORAGE_MODE: postgres
+      DEVSHARD_OTEL_ENABLED: "false"
+    volumes:
+      - ${DATA_DIR}/inference:/root/.inference:ro
+      # Runtime binaries and local supervisor data stay replica-local; shared
+      # participant identity and DevShard session state are the keyring and
+      # Postgres respectively.
+      - ${DATA_DIR}/devshards-2/bin:/opt/versiond/bin
+      - ${DATA_DIR}/devshards-2/data:/opt/versiond/data
+    depends_on: [api, payload-postgres]
+
+  versiond-router:
+    image: ${MLNODE_PROXY_IMAGE:?MLNODE_PROXY_IMAGE is required}
+    restart: always
+    environment:
+      VERSIOND_HOSTS: versiond versiond-2
+      VERSIOND_LEGACY_HOST: versiond
+      VERSIOND_NON_HA_VERSIONS: ""
+      VERSIOND_PORT: "8080"
+    volumes:
+      - ./versiond-router/nginx.conf.template:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [versiond, versiond-2]
+
+  proxy:
+    environment:
+      VERSIOND_SERVICE_NAME: versiond-router
+    depends_on: [versiond-router]

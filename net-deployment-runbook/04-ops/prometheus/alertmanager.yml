@@ -1,0 +1,9 @@
+route:
+  receiver: local-log
+  group_by: [alertname, host, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+receivers:
+  - name: local-log
+# Add smtp_configs, webhook_configs, telegram_configs or another receiver before production acceptance.

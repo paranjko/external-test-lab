@@ -1,0 +1,58 @@
+{
+  email {$ACME_EMAIL}
+  admin 127.0.0.1:2019
+}
+
+# node4 is the public edge and its Network Node endpoint. The public site and
+# API intentionally preserve node0 as their application origin while DNS and
+# TLS terminate here.
+{$PUBLIC_HOST} {
+  encode zstd gzip
+  @root path /
+  redir @root /dashboard/gonka/gov 308
+  reverse_proxy 127.0.0.1:8000
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+  }
+}
+
+# Canonical public status origin. DNS may use a direct A record or a CNAME to
+# node4, but www must terminate TLS here before redirecting to the apex.
+www.{$SITE_HOST} {
+  redir https://{$SITE_HOST}{uri} permanent
+}
+
+{$SITE_HOST} {
+  encode zstd gzip
+  @legacy-meter path /meter /meter/*
+  respond @legacy-meter 404
+  @meter-api path_regexp meter_api ^/meter-api/(.*)$
+  handle @meter-api {
+    rewrite * /api/{re.meter_api.1}
+    reverse_proxy http://{$NODE0_PUBLIC_HOST}:18000 {
+      header_up Host {$NODE0_PUBLIC_HOST}
+    }
+  }
+  # The status site is an operations service on node0, not the Network Node
+  # proxy's default dashboard. Node4 remains the only public TLS edge.
+  reverse_proxy http://{$NODE0_PUBLIC_HOST}:8081 {
+    header_up Host {$NODE0_PUBLIC_HOST}
+  }
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+  }
+}
+
+{$API_HOST} {
+  encode zstd gzip
+  reverse_proxy http://{$NODE0_PUBLIC_HOST}:18080 {
+    header_up Host {$NODE0_PUBLIC_HOST}
+  }
+}
+
+{$GRAFANA_HOST} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:3001
+}

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ $# -ge 5 ]] || { echo "Usage: $0 inventory.env secrets-dir output-identities-dir mnemonic-dir gdc-nodeN [...]" >&2; exit 2; }
+INVENTORY="$1"; SECRETS="$2"; OUT="$3"; MNEMONICS="$4"
+shift 4
+NODES=("$@")
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; BOOT="$(mktemp -d)"; trap 'rm -rf "$BOOT"' EXIT
+LOGS="$ROOT/state/logs/identities"
+umask 077
+mkdir -p "$OUT" "$MNEMONICS" "$LOGS"
+"$ROOT/scripts/render-bootstrap-envs.sh" "$INVENTORY" "$SECRETS" "$BOOT" >/dev/null
+failed=0
+for HOST in "${NODES[@]}"; do
+  [[ "$HOST" =~ ^gdc-node[0-4]$ ]] || { echo "Invalid node: $HOST" >&2; failed=1; continue; }
+  REMOTE="/srv/dai/identity-bootstrap"
+  if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$HOST" true; then
+    echo "FAILED  $HOST is unreachable" >&2
+    failed=1
+    continue
+  fi
+  ssh "$HOST" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
+  rsync -a --delete "$ROOT/02-node/" "$HOST:$REMOTE/02-node/"
+  scp -q "$BOOT/$HOST.env" "$HOST:$REMOTE/bootstrap.env"
+  remote_mnemonic="$REMOTE/$HOST-warm.mnemonic"
+  log="$LOGS/$HOST.log"
+  if ! ssh -T "$HOST" "chmod 600 '$REMOTE/bootstrap.env'; trap 'rm -f \"$REMOTE/bootstrap.env\"' EXIT; cd '$REMOTE/02-node' && ./init-identity.sh --env '$REMOTE/bootstrap.env' --output '$REMOTE/$HOST.json' --mnemonic-output '$remote_mnemonic'" >"$log" 2>&1; then
+    echo "FAILED  $HOST identity bootstrap; details: $log" >&2
+    failed=1
+    continue
+  fi
+  scp -q "$HOST:$REMOTE/$HOST.json" "$OUT/$HOST.json"
+  local_mnemonic="$MNEMONICS/$HOST-warm.mnemonic"
+  if ssh -T "$HOST" "test -s '$remote_mnemonic'"; then
+    if [[ -e "$local_mnemonic" ]]; then
+      mv "$local_mnemonic" "$MNEMONICS/$HOST-warm.previous.$(date -u +%Y%m%dT%H%M%SZ).mnemonic"
+    fi
+    scp -q "$HOST:$remote_mnemonic" "$local_mnemonic"
+    chmod 600 "$local_mnemonic"
+  elif [[ ! -s "$local_mnemonic" ]]; then
+    echo "FAILED  $HOST warm key exists without $local_mnemonic; rotate the warm key" >&2
+    failed=1
+    continue
+  fi
+  ssh -T "$HOST" "rm -f '$REMOTE/$HOST.json' '$remote_mnemonic'"
+  jq -r '"READY  \(.node_name) node_id=\(.node_id) warm=\(.warm_address)"' "$OUT/$HOST.json"
+done
+exit "$failed"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ $# -eq 1 && $EUID -eq 0 ]] || { echo "Usage: sudo $0 rendered-gdc-node4-ml.env" >&2; exit 2; }
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST=/srv/dai/deploy/gdc-node4-ml
+mkdir -p "$DEST"; install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"; install -m 0644 "$HERE/../nginx-mlnode.conf" "$DEST/nginx-mlnode.conf"
+# Compose refers to ../nginx-mlnode.conf in source layout; normalize the installed copy.
+sed -i 's#../nginx-mlnode.conf#./nginx-mlnode.conf#' "$DEST/compose.yaml"
+install -m 0600 "$1" "$DEST/.env"; install -m 0755 "$HERE/start-ml.sh" "$DEST/start-ml.sh"
+chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$DEST"
+printf 'READY installed ML-only stack in %s\n' "$DEST"

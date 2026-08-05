@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Gonka External Test Lab Community DevNet: live public network status and test evidence">
+  <title>Gonka DevNet Community</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/JetBrainsMono-Bold.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/overrides.css">
+  <link rel="stylesheet" href="/contract.css">
+  <link rel="stylesheet" href="/readability.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+</head>
+<body>
+  <main>
+    <header id="top" class="hero">
+      <div class="hero-copy"><span class="eyebrow">EXTERNAL TEST LAB</span><h1>Test network changes<br><em>before they ship</em></h1><p>A test environment for protocol upgrades, DevShards, inference flows, integrations and operational changes – before governance decisions or production rollout</p><div class="hero-actions"><a id="grafana" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-overview/gonka-devnet-community-overview?orgId=1&amp;from=now-6h&amp;to=now" target="_blank" rel="noopener">View monitoring ↗</a></div></div>
+    </header>
+    <section class="summary" aria-label="Network summary">
+      <article><span>Chain ID</span><strong id="chain-id">–</strong><small>Shared ledger</small></article>
+      <article><span>Common model</span><strong id="model-id">–</strong><small>Active group</small></article>
+      <article><span>Latest height</span><strong id="best-height">–</strong><small>Advancing live</small></article>
+      <article><span>Largest voting share</span><strong id="power-share">–</strong><small>Consensus distribution</small></article>
+    </section>
+    <section id="network" class="network-section">
+      <div class="section-title"><div><span class="eyebrow">LIVE DEVNET</span><h2>Participant status</h2></div><time id="updated">Waiting for status refresh</time></div>
+      <div id="nodes" class="nodes compact"></div>
+    </section>
+    <section class="network-map-section" aria-labelledby="network-map-title">
+      <div class="section-title"><div><span class="eyebrow">VALIDATOR MAP</span><h2 id="network-map-title">Validator locations</h2></div><p class="map-note">Approximate public IP locations</p></div>
+      <div id="validator-map-shell" class="validator-map-shell">
+        <div id="validator-map" class="validator-map" aria-label="Interactive map of active validators by approximate public IP location"></div>
+        <button id="validator-map-fullscreen" class="validator-map-fullscreen" type="button" aria-label="Open validator map fullscreen" aria-pressed="false">Fullscreen</button>
+      </div>
+    </section>
+    <section id="gateway-quality" class="quality" aria-live="polite">
+      <div class="section-title"><div><span class="eyebrow">LIVE GATEWAY LOAD</span><h2>Inference traffic</h2></div><time id="quality-updated">Loading gateway metrics…</time></div>
+      <div id="quality-metrics" class="quality-metrics">
+        <article><span>Active requests</span><strong>–</strong><small>currently in flight</small></article>
+        <article><span>Input tokens</span><strong>–</strong><small>currently in flight</small></article>
+        <article><span>Accepted requests</span><strong>–</strong><small>gateway process counter</small></article>
+        <article><span>Limit rejections</span><strong>–</strong><small>gateway process counter</small></article>
+        <article><span>Network capacity</span><strong>–</strong><small>available model weight</small></article>
+      </div>
+      <div id="quality-health" class="quality-health" aria-label="Gateway traffic state">
+        <span>Gateway traffic</span><strong id="quality-health-state">CHECKING</strong>
+        <div class="quality-health-counts"><span><b id="quality-active">0</b> In flight</span><span><b id="quality-accepted">0</b> Accepted</span><span><b id="quality-rejected">0</b> Rejected</span></div>
+      </div>
+    </section>
+    <section id="gateway-access" class="access" hidden aria-live="polite">
+      <div class="access-copy">
+        <span class="eyebrow">OPENAI-COMPATIBLE ACCESS</span>
+        <div class="access-heading"><h2>Inference gateway</h2><span class="gateway-live"><i></i>LIVE</span></div>
+        <p id="gateway-detail">Status: checking gateway endpoint…</p>
+        <p class="access-intro">Send standard chat-completions requests – each accepted request is tied to the active DevShard escrow</p>
+        <ol class="access-steps">
+          <li><b>Get a key</b><span>Issued by the community Telegram bot</span></li>
+          <li><b>Use the public endpoint</b><span>Drop it into any OpenAI-compatible client</span></li>
+          <li><b>Observe settlement</b><span>Inference is accounted for on the chain</span></li>
+        </ol>
+        <a id="contact" class="key-link" href="#">Get an API key <span aria-hidden="true">↗</span></a>
+        <small class="access-note">Keys are broker credentials, not GNK tokens – direct MLNode responses are diagnostic only</small>
+      </div>
+    </section>
+  <footer><a class="wordmark" href="#top">EXTERNAL TEST LAB</a><span>Public operational evidence</span><a href="https://github.com/gonka-ai/gonka/discussions/1388" target="_blank" rel="noopener">Why this test lab exists ↗</a><span>State changes – hashes remain</span></footer>
+  </main>
+  <script src="/config.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

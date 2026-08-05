@@ -40,7 +40,7 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | M1 | DevNet architecture note | [`devnet/architecture.md`](devnet/architecture.md) | draft |
 | M1 | QA hiring | [`jobs/`](jobs/) | **open** |
 | M1 | Initial test strategy | `test-plans/strategy.md` | planned |
-| M1 | Draft node deployment runbook | `runbooks/node-deployment.md` | planned |
+| M1 | Node deployment runbook | [`net-deployment-runbook/`](net-deployment-runbook/) | published — `1.0.0-alpah.0` |
 | M1→M2 | Monthly public report #1 | `reports/monthly/` | planned — before the Aug 13 unlock |
 | M2 | Published deployment runbook, regional layout | `runbooks/`, `devnet/regions.md` | planned |
 | M2 | Smoke & regression checklists, live task board | `test-plans/` | planned |

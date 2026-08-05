@@ -1,0 +1,220 @@
+name: ${COMPOSE_PROJECT_NAME:-gdc-node}
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "100m"
+    max-file: "5"
+
+services:
+  tmkms:
+    image: ${TMKMS_IMAGE:-ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15}
+    restart: unless-stopped
+    entrypoint: ["sh", "/usr/local/bin/gdc-tmkms-entrypoint"]
+    environment:
+      CHAIN_ID: ${CHAIN_ID:?CHAIN_ID is required}
+      VALIDATOR_LISTEN_ADDRESS: tcp://node:${TMKMS_PORT:-26658}
+    volumes:
+      - ${DATA_DIR:?DATA_DIR is required}/tmkms:/root/.tmkms
+      - ./tmkms-entrypoint.sh:/usr/local/bin/gdc-tmkms-entrypoint:ro
+    logging: *logging
+
+  node:
+    image: ${INFERENCED_IMAGE:-ghcr.io/product-science/inferenced:0.2.15}
+    restart: always
+    command: ["sh", "/usr/local/bin/gdc-node-entrypoint"]
+    volumes:
+      - ${DATA_DIR}/inference:/root/.inference
+      - ${GENESIS_FILE:?GENESIS_FILE is required}:/root/genesis.json:ro
+      - ./node-entrypoint.sh:/usr/local/bin/gdc-node-entrypoint:ro
+    environment:
+      KEY_NAME: ${KEY_NAME:?KEY_NAME is required}
+      CHAIN_ID: ${CHAIN_ID:?CHAIN_ID is required}
+      COIN_DENOM: ${BASE_DENOM:-ngonka}
+      KEYRING_BACKEND: file
+      SEED_NODE_RPC_URL: ${SEED_NODE_RPC_URL:?SEED_NODE_RPC_URL is required}
+      SEED_NODE_P2P_URL: ${SEED_NODE_P2P_URL:?SEED_NODE_P2P_URL is required}
+      RPC_SERVER_URL_1: ${RPC_SERVER_URL_1:?RPC_SERVER_URL_1 is required}
+      RPC_SERVER_URL_2: ${RPC_SERVER_URL_2:?RPC_SERVER_URL_2 is required}
+      SYNC_WITH_SNAPSHOTS: ${SYNC_WITH_SNAPSHOTS:-false}
+      TRUSTED_BLOCK_PERIOD: ${TRUSTED_BLOCK_PERIOD:-2000}
+      SNAPSHOT_INTERVAL: ${SNAPSHOT_INTERVAL:-1000}
+      SNAPSHOT_KEEP_RECENT: ${SNAPSHOT_KEEP_RECENT:-5}
+      P2P_EXTERNAL_ADDRESS: ${P2P_EXTERNAL_ADDRESS:?P2P_EXTERNAL_ADDRESS is required}
+      GENESIS_SEEDS: ${GENESIS_SEEDS:?GENESIS_SEEDS is required}
+      INIT_ONLY: ${INIT_ONLY:-false}
+      IS_GENESIS: ${IS_GENESIS:-false}
+      REST_API_ACTIVE: "true"
+      QUERY_GAS_LIMIT: ${QUERY_GAS_LIMIT:-10000000}
+      TMKMS_PORT: ${TMKMS_PORT:-26658}
+      CONFIG_p2p__allow_duplicate_ip: "false"
+      CONFIG_p2p__handshake_timeout: 30s
+      CONFIG_p2p__dial_timeout: 30s
+      CONFIG_instrumentation__prometheus: "true"
+      GONKA_SLOW_QUERY_THRESHOLD_MS: ${GONKA_SLOW_QUERY_THRESHOLD_MS:-500}
+    ports:
+      - "0.0.0.0:${P2P_PORT:-5000}:26656/tcp"
+      - "127.0.0.1:26657:26657/tcp"
+      - "0.0.0.0:26660:26660/tcp"
+      - "127.0.0.1:9090:9090/tcp"
+      - "127.0.0.1:1317:1317/tcp"
+    expose:
+      - "${TMKMS_PORT:-26658}"
+    depends_on:
+      - tmkms
+    logging: *logging
+
+  payload-postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16.9-bookworm}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: payloads
+      POSTGRES_USER: payloads
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - ${DATA_DIR}/payload-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payloads -d payloads"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  api:
+    image: ${DAPI_IMAGE:-ghcr.io/product-science/api:0.2.15}
+    restart: always
+    volumes:
+      - ${DATA_DIR}/inference:/root/.inference
+      - ${DATA_DIR}/dapi:/root/.dapi
+      - ${NODE_CONFIG_FILE:?NODE_CONFIG_FILE is required}:/root/node_config.json:ro
+    environment:
+      KEY_NAME: ${KEY_NAME}
+      ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY:?ACCOUNT_PUBKEY is required}
+      KEYRING_BACKEND: file
+      KEYRING_PASSWORD: ${KEYRING_PASSWORD:?KEYRING_PASSWORD is required}
+      # Local MLNodes reach this over the Compose network. A split ML host
+      # receives an explicit, firewall-restricted callback URL in .env.
+      DAPI_API__POC_CALLBACK_URL: ${DAPI_API__POC_CALLBACK_URL:-http://api:9100}
+      DAPI_API__PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL is required}
+      DAPI_API__PUBLIC_SERVER_PORT: "9000"
+      DAPI_API__ML_SERVER_PORT: "9100"
+      DAPI_API__ADMIN_SERVER_PORT: "9200"
+      DAPI_API__NODE_MANAGER_GRPC_PORT: ${NODE_MANAGER_GRPC_PORT:-9400}
+      DAPI_API__NODE_MANAGER_LOCK_TTL_SECONDS: ${NODE_MANAGER_LOCK_TTL_SECONDS:-1200}
+      DAPI_CHAIN_NODE__IS_GENESIS: ${IS_GENESIS:-false}
+      DAPI_CHAIN_NODE__SEED_API_URL: ${SEED_API_URL:?SEED_API_URL is required}
+      DAPI_CHAIN_NODE__URL: http://node:26657
+      DAPI_CHAIN_NODE__P2P_URL: http://node:26656
+      DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA: "0"
+      DAPI_TX_BATCHING__DISABLED: "true"
+      NODE_CONFIG_PATH: /root/node_config.json
+      DAPI_OTEL_ENABLED: "false"
+      PGHOST: payload-postgres
+      PGPORT: "5432"
+      PGDATABASE: payloads
+      PGUSER: payloads
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:9000:9000/tcp"
+      - "${ML_CALLBACK_BIND:-127.0.0.1}:9100:9100/tcp"
+      - "127.0.0.1:9200:9200/tcp"
+      # The gateway runs in host networking on node0.  It uses this internal
+      # Node Manager gRPC endpoint to discover active DevShard runtimes; keep
+      # it loopback-only so it is never a public management interface.
+      - "127.0.0.1:9400:9400/tcp"
+    depends_on:
+      node:
+        condition: service_started
+      payload-postgres:
+        condition: service_healthy
+    logging: *logging
+
+  edge-api:
+    image: ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.15}
+    profiles: [edge-api]
+    restart: unless-stopped
+    environment:
+      EDGE_API_PORT: "18080"
+      CHAIN_GRPC_URL: node:9090
+      CHAIN_RPC_URL: http://node:26657
+      EDGE_API_OTEL_ENABLED: "false"
+    depends_on:
+      - node
+    logging: *logging
+
+  versiond:
+    image: ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15}
+    restart: always
+    environment:
+      VERSIOND_ORACLE_URL: http://api:9100/versions
+      VERSIOND_BINARY_NAME: devshardd
+      NODE_MANAGER_ADDR: api:${NODE_MANAGER_GRPC_PORT:-9400}
+      NODE_HOST: node
+      NODE_GRPC_URL: node:9090
+      NODE_RPC_URL: http://node:26657
+      KEY_NAME: ${KEY_NAME}
+      ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY}
+      KEYRING_BACKEND: file
+      KEYRING_PASSWORD: ${KEYRING_PASSWORD}
+      KEYRING_DIR: /root/.inference
+      DEVSHARD_OTEL_ENABLED: "false"
+    volumes:
+      - ${DATA_DIR}/inference:/root/.inference:ro
+      - ${DATA_DIR}/devshards/bin:/opt/versiond/bin
+      - ${DATA_DIR}/devshards/data:/opt/versiond/data
+    depends_on:
+      - api
+    logging: *logging
+
+  explorer:
+    image: ${EXPLORER_IMAGE:?EXPLORER_IMAGE is required}
+    restart: unless-stopped
+    expose:
+      - "${DASHBOARD_PORT:-5173}"
+    logging: *logging
+
+  proxy:
+    image: ${PROXY_IMAGE:-ghcr.io/product-science/proxy:0.2.15}
+    restart: unless-stopped
+    ports:
+      - "${PROXY_BIND_ADDRESS:-127.0.0.1}:${LOCAL_PROXY_PORT:-8000}:80/tcp"
+    environment:
+      NGINX_MODE: http
+      SERVER_NAME: ${PUBLIC_HOST:?PUBLIC_HOST is required}
+      GONKA_API_PORT: "9000"
+      GONKA_API_EXEMPT_ROUTES: chat inference poc/proofs subnet devshard
+      EXEMPT_CONN_LIMIT: "200"
+      GONKA_API_BLOCKED_ROUTES: poc-batches training
+      CHAIN_RPC_PORT: "26657"
+      CHAIN_API_PORT: "1317"
+      CHAIN_GRPC_PORT: "9090"
+      DASHBOARD_PORT: "${DASHBOARD_PORT:-5173}"
+      PROXY_REAL_IP_FROM: 172.16.0.0/12
+      PROXY_ADD_NODE_PREFIX: "false"
+      DISABLE_GONKA_API: "false"
+      DISABLE_CHAIN_API: "false"
+      DISABLE_CHAIN_RPC: "false"
+      DISABLE_CHAIN_GRPC: "true"
+      DISABLE_VALIDATOR_WHITELIST: "true"
+      DISABLE_FAIL2BAN: "true"
+      EDGE_API_SERVICE_NAME: ${EDGE_API_SERVICE_NAME:-}
+      EDGE_API_PORT: "18080"
+    depends_on:
+      node:
+        condition: service_started
+      api:
+        condition: service_started
+      edge-api:
+        condition: service_started
+        required: false
+      versiond:
+        condition: service_started
+      explorer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging: *logging

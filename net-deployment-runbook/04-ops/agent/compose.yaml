@@ -1,0 +1,27 @@
+name: gdc-monitoring-agent
+services:
+  node-exporter:
+    image: ${NODE_EXPORTER_IMAGE:-quay.io/prometheus/node-exporter:v1.9.1}
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=0.0.0.0:9101
+      - --collector.textfile.directory=/textfile
+    volumes:
+      - /:/host:ro,rslave
+      - /var/lib/node_exporter/textfile_collector:/textfile:ro
+
+  cadvisor:
+    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.54.1}
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - 0.0.0.0:8088:8080
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro

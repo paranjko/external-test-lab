@@ -1,0 +1,71 @@
+groups:
+  - name: gdc-hosts
+    rules:
+      - alert: GdcTargetDown
+        expr: up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Target {{ $labels.job }}/{{ $labels.instance }} is down"
+      - alert: GdcDiskLow
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) < 0.15
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Disk below 15% on {{ $labels.host }} {{ $labels.mountpoint }}"
+      - alert: GdcDiskCritical
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) < 0.08
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Disk below 8% on {{ $labels.host }} {{ $labels.mountpoint }}"
+      - alert: GdcHostMemoryHigh
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.92
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Memory pressure on {{ $labels.host }}"
+      - alert: GdcNvidiaUnavailable
+        expr: gdc_nvidia_available == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "NVIDIA stack unavailable on {{ $labels.host }}"
+      - alert: GdcNvidiaMetricsStale
+        expr: time() - node_textfile_mtime_seconds{file=~".*nvidia\\.prom"} > 120
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "NVIDIA metrics stale on {{ $labels.host }}"
+      - alert: GdcGpuTemperatureHigh
+        expr: gdc_nvidia_temperature_celsius > 85
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "GPU hot on {{ $labels.host }} ({{ $value }} °C)"
+  - name: gdc-chain
+    rules:
+      - alert: GdcChainHeightStalled
+        expr: changes(cometbft_consensus_height[5m]) == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "No new blocks on {{ $labels.host }}"
+      - alert: GdcChainHeightDivergence
+        expr: (max(cometbft_consensus_height) - min(cometbft_consensus_height)) > 5
+        for: 3m
+        labels: {severity: warning}
+        annotations:
+          summary: "Chain height spread exceeds 5 blocks"
+      - alert: GdcLowPeerCount
+        expr: cometbft_p2p_peers < 2
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Low P2P peer count on {{ $labels.host }}"
+      - alert: GdcPublicEndpointDown
+        expr: probe_success{job="public-https"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Public endpoint {{ $labels.instance }} is unavailable"

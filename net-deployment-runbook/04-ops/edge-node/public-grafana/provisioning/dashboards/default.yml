@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: Public GDC
+    orgId: 1
+    folder: Gonka DevNet Community
+    type: file
+    disableDeletion: true
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,0 +1,53 @@
+# The three application origins terminate on node4/one-net in
+# edge-node/PublicCaddyfile.  Node0 still needs its own TLS name: DAPI peers
+# use the configured node URL for PoC proof exchange and chain RPC.  Keeping
+# this narrowly scoped to NODE0_PUBLIC_HOST preserves that protocol callback
+# without making node0 an alternative edge for the site, gateway, or Grafana.
+{$NODE0_PUBLIC_HOST} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8000
+}
+
+http://:8082 {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8080
+}
+
+http://:8081 {
+  encode zstd gzip
+
+  handle_path /status/node0/* {
+    reverse_proxy 127.0.0.1:8000
+  }
+  handle_path /status/node1/* {
+    reverse_proxy https://{$NODE1_PUBLIC_HOST} {
+      header_up Host {$NODE1_PUBLIC_HOST}
+    }
+  }
+  handle_path /status/node2/* {
+    reverse_proxy https://{$NODE2_PUBLIC_HOST} {
+      header_up Host {$NODE2_PUBLIC_HOST}
+    }
+  }
+  handle_path /status/node3/* {
+    reverse_proxy https://{$NODE3_PUBLIC_HOST} {
+      header_up Host {$NODE3_PUBLIC_HOST}
+    }
+  }
+  handle_path /status/node4/* {
+    reverse_proxy https://{$NODE4_PUBLIC_HOST} {
+      header_up Host {$NODE4_PUBLIC_HOST}
+    }
+  }
+  handle_path /status/gateway/* {
+    reverse_proxy 127.0.0.1:18080
+  }
+
+  root * /srv
+  file_server
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+}
