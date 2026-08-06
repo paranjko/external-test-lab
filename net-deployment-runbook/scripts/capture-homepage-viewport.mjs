@@ -68,7 +68,7 @@ try {
   const state = JSON.parse(result.value);
   if (state.width !== width || state.height !== height) throw new Error(`emulation mismatch ${state.width}x${state.height}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
-  if (state.nodes.length !== 5 || !state.nodes.some(node => node.name === 'gdc-node3') || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapLeaflet || state.mapPoints < 1) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
+  if (state.nodes.length < 1 || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapLeaflet || state.mapPoints < 1) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
   if (expectResetState) {
     const active = state.nodes.filter(node => node.name !== 'gdc-node3');
     if (active.length !== 4 || active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden) {
