@@ -57,11 +57,9 @@ for i in 0 1 2 3 4; do
     nodes="$(jq --arg name "gdc-node$i" --arg address "$address" --arg host "${!host}" --arg status "/status/node$i" --argjson geo "$geo" '. + [{name:$name,address:$address,publicHost:$host,statusBase:$status,mode:"active",geo:$geo}]' <<<"$nodes")"
     # Gonka exposes participant ownership rather than a license count; zero is
     # an explicit non-applicable value, never an invented entitlement count.
-    validators="$(jq --arg owner "$address" --arg ip "$ip" --argjson geo "$geo" '. + [{ownerAddress:$owner,ip:$ip,licenseCount:0,geo:{lat:$geo.latitude,lon:$geo.longitude,city:$geo.city,country:$geo.country,isp:"unverified"}}]' <<<"$validators")"
-  elif [[ "$i" == 3 ]]; then
-    # Keep the intended topology visible. This is a truthful operational
-    # exclusion, not a fifth healthy endpoint or an omitted participant.
-    nodes="$(jq --arg name "gdc-node$i" --arg host "${!host}" --argjson geo "$geo" '. + [{name:$name,address:"–",publicHost:$host,statusBase:null,mode:"skip",reason:"Temporarily excluded; requalification and join required",geo:$geo}]' <<<"$nodes")"
+    validators="$(jq --arg owner "$address" --arg ip "$ip" --argjson geo "$geo" '. + [{ownerAddress:$owner,ip:$ip,licenseCount:0,geo:{lat:$geo.latitude,lon:$geo.longitude,city:$geo.city,country:$geo.country,isp:"unverified"}}]' <<<"$validators")'
+  elif host_is_skipped "gdc-node$i"; then
+    nodes="$(jq --arg name "gdc-node$i" --arg host "${!host}" --argjson geo "$geo" '. + [{name:$name,address:"–",publicHost:$host,statusBase:null,mode:"skip",reason:"Temporarily excluded by operator decision",geo:$geo}]' <<<"$nodes")"
   fi
 done
 jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$API_HOST/v1" --arg direct "http://$NODE0_PUBLIC_HOST:8082/v1" --arg telegram "$TELEGRAM_BOT_URL" --arg grafana "https://$GRAFANA_HOST/d/gdc-overview/gonka-devnet-community-overview?orgId=1&from=now-6h&to=now" --argjson nodes "$nodes" --argjson validators "$validators" \

@@ -42,7 +42,7 @@ migrates data, modifies `/etc/fstab`, remounts a disk, or creates symlinks.
 For node2 this prerequisite is already met: `/srv/dai`, Docker and containerd
 are backed by its 440 GiB data disk with 365 GiB currently free.
 
-`GDC_SKIP_HOSTS=gdc-node3` is the supported way to intentionally exclude a participant. An excluded host is recorded as `SKIP`, never silently counted as an active participant, and can be qualified and joined later.
+`GDC_SKIP_HOSTS` is the supported way to intentionally exclude a participant. An excluded host is recorded as `SKIP`, never silently counted as an active participant, and can be qualified and joined later.
 
 ## Baseline: 0.2.14
 

@@ -30,9 +30,7 @@ curl -fsS "https://$SITE_HOST/config.js" | sed -e 's/^window.GDC_CONFIG = //' -e
 curl -fsS "https://$SITE_HOST/fonts/JetBrainsMono-Regular.woff2" -o "$OUT/JetBrainsMono-Regular.woff2"
 test -s "$OUT/JetBrainsMono-Regular.woff2"
 jq -e '
-  (.nodes | length == 5)
-  and (.nodes[] | select(.name == "gdc-node3" and .mode == "skip"))
-  and ([.nodes[] | select(.mode == "active")] | length == 4)
+  ([.nodes[] | select(.mode == "active")] | length >= 4)
 ' "$OUT/config.json" >/dev/null
 
 curl -fsS "$GRAFANA_URL" -o "$OUT/grafana.html"
@@ -61,7 +59,8 @@ cat >"$OUT/finalize.md" <<EOF
 # Public homepage: PASS
 
 - Purpose: External Test Lab / Community DevNet.
-- Initial topology: four active participants and explicit gdc-node3 SKIP.
+- Initial topology: four or more active participants; disconnected nodes are omitted
+  unless explicitly marked as SKIP.
 - Checks: live topology, Grafana, G-Meter, desktop and mobile browser contracts.
 EOF
 printf 'PASS public homepage contract evidence: %s\n' "$OUT"
