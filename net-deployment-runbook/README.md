@@ -167,6 +167,16 @@ DevShard versions and the dedicated gateway creator are approved through chain g
 
 `ops gateway` must report an active unblocked DevShard before the public OpenAI-compatible access surface is considered ready. A successful direct MLNode response alone is not proof of chain-accounted gateway inference.
 
+`ops monitoring` provisions three reproducible dashboards. The compact
+`gdc-overview` remains available for operational triage; the public entry point
+is `gdc-network` with a 24-hour chain, validator and host view, and
+`gdc-inference` provides a seven-day gateway, executor, latency and capacity
+view. Prometheus scrapes the gateway metrics over the Docker host gateway, so
+the inference dashboard uses the same `/metrics` endpoint as the public API
+runtime without exposing an additional public collector. Run
+`04-ops/grafana/generate-dashboards.sh` after editing the dashboard source so
+the authenticated node0 and anonymous node4 copies remain identical.
+
 Gateway escrow rotation is enabled by default. The gateway prepares a
 replacement escrow before the short test-lab epoch transition and keeps the
 same client API keys while routing later requests through the replacement.

@@ -24,18 +24,27 @@ REMOTE="/tmp/gdc-ops-$$"
 step 'Render monitoring and public status configuration'
 "$ROOT/04-ops/render-ops.sh" --inventory "$INVENTORY" --accounts-dir "$ACCOUNTS" --secrets-dir "$SECRETS" --output-dir "$OPS_RENDER" >/dev/null
 
+reconcile_public_grafana() {
+  local start_caddy="${1:-false}" node=gdc-node4 edge_env edge_remote
+  edge_env="$GENERATED/edge/$node.env"
+  edge_remote="${REMOTE}-edge"
+  mkdir -p "$(dirname "$edge_env")"
+  "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$node" --output "$edge_env" >/dev/null
+  ssh "$node" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
+  rsync -a "$ROOT/04-ops/edge-node/" "$node:$edge_remote/edge/"
+  scp -q "$edge_env" "$node:$edge_remote/edge.env"
+  if [[ "$start_caddy" == true ]]; then
+    ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana caddy >/srv/dai/edge/start-edge.log 2>&1"
+  else
+    ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana >/srv/dai/edge/start-public-grafana.log 2>&1"
+  fi
+}
+
 GATEWAY_OPTION=''
 CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
 if [[ "$COMPONENT" == edge ]]; then
   step 'Install the public node4 edge configuration without changing chain state'
-  node=gdc-node4
-  edge_env="$GENERATED/edge/$node.env"
-  mkdir -p "$(dirname "$edge_env")"
-  "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$node" --output "$edge_env" >/dev/null
-  ssh "$node" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
-  rsync -a "$ROOT/04-ops/edge-node/" "$node:$REMOTE/edge/"
-  scp -q "$edge_env" "$node:$REMOTE/edge.env"
-  ssh -T "$node" "sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; rm -rf '$REMOTE'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana caddy >/srv/dai/edge/start-edge.log 2>&1"
+  reconcile_public_grafana true
   step 'Verify the status site is served through node4 TLS'
   curl -fsS "https://$SITE_HOST/" | grep -q 'EXTERNAL TEST LAB' || die 'public node4 edge does not serve the current homepage contract'
   "$ROOT/scripts/verify-public-grafana.sh"
@@ -187,6 +196,8 @@ if [[ "$COMPONENT" == gateway ]]; then
 fi
 
 if [[ "$COMPONENT" == monitoring ]]; then
+  step 'Reconcile the anonymous node4 dashboards with the monitoring source'
+  reconcile_public_grafana false
   step 'Verify the separate node4 public Grafana runtime'
   # The operator Grafana on node0 remains authenticated. Public monitoring is
   # the independently provisioned anonymous-Viewer runtime on node4; sharing

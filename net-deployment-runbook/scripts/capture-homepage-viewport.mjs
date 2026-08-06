@@ -91,12 +91,12 @@ try {
   const access = JSON.parse(accessResult.value);
   if (access.code || access.scroll) throw new Error('access card contains code or a nested scroll area');
   const { result: grafanaResult } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({href:document.querySelector("#grafana")?.href,target:document.querySelector("#grafana")?.target})',
+    expression: 'JSON.stringify(["grafana-network","grafana-inference"].map(id=>{const e=document.getElementById(id);return {id,href:e?.href,target:e?.target}}))',
     returnByValue: true,
   }, sessionId);
   const grafana = JSON.parse(grafanaResult.value);
-  const grafanaUrl = new URL(grafana.href);
-  if (grafanaUrl.hostname !== "grafana.gonka-dev.net" || !grafanaUrl.pathname.startsWith("/d/gdc-overview/") || grafana.target !== "_blank") throw new Error(`invalid public Grafana link ${JSON.stringify(grafana)}`);
+  const expectedGrafanaPaths = ["/d/gdc-network/", "/d/gdc-inference/"];
+  if (grafana.length !== 2 || grafana.some((link,index)=>{const url=new URL(link.href);return url.hostname!=="grafana.gonka-dev.net"||!url.pathname.startsWith(expectedGrafanaPaths[index])||!url.searchParams.has("kiosk")||link.target!=="_blank"})) throw new Error(`invalid public Grafana links ${JSON.stringify(grafana)}`);
   const { result: meterResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify({metrics:[...document.querySelectorAll("#quality-metrics article")].map(e=>e.textContent),health:document.querySelector("#quality-health-state")?.textContent,counts:["quality-active","quality-accepted","quality-rejected"].map(id=>document.getElementById(id)?.textContent)})',
     returnByValue: true,

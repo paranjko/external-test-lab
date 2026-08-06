@@ -16,7 +16,7 @@ services:
       # the public edge renderer always supplies the canonical hostname.
       GF_SERVER_DOMAIN: ${GRAFANA_HOST:-localhost}
       GF_SERVER_ROOT_URL: https://${GRAFANA_HOST:-localhost}/
-      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/gdc-overview.json
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/gdc-network.json
     volumes:
       - ./public-grafana/provisioning:/etc/grafana/provisioning:ro
       - ./public-grafana/dashboards:/var/lib/grafana/dashboards:ro

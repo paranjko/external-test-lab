@@ -62,9 +62,9 @@ for i in 0 1 2 3 4; do
     validators="$(jq --arg owner "$address" --arg ip "$ip" --argjson geo "$geo" '. + [{ownerAddress:$owner,ip:$ip,licenseCount:0,geo:{lat:$geo.latitude,lon:$geo.longitude,city:$geo.city,country:$geo.country,isp:"unverified"}}]' <<<"$validators")"
   fi
 done
-jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$API_HOST/v1" --arg direct "http://$NODE0_PUBLIC_HOST:8082/v1" --arg telegram "$TELEGRAM_BOT_URL" --arg grafana "https://$GRAFANA_HOST/d/gdc-overview/gonka-devnet-community-overview?orgId=1&from=now-6h&to=now" --argjson nodes "$nodes" --argjson validators "$validators" \
+jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$API_HOST/v1" --arg direct "http://$NODE0_PUBLIC_HOST:8082/v1" --arg telegram "$TELEGRAM_BOT_URL" --arg grafanaNetwork "https://$GRAFANA_HOST/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" --arg grafanaInference "https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-7d&to=now&timezone=utc&kiosk" --argjson nodes "$nodes" --argjson validators "$validators" \
   --argjson nodeCatalog "$node_catalog" \
-  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafana:$grafana,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
+  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
 {
   cat <<'YAML'
 global:
@@ -107,5 +107,12 @@ YAML
     static_configs:
 YAML
   for i in "${node_indexes[@]}"; do host="NODE${i}_PUBLIC_HOST"; target="${!host}"; printf "      - targets: ['%s:26660']\n        labels: {host: 'gdc-node%s'}\n" "$target" "$i"; done
+  cat <<'YAML'
+  - job_name: gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:18080']
+        labels: {host: 'gdc-node0'}
+YAML
 } >"$OUTPUT/prometheus.yml"
 echo "$OUTPUT"

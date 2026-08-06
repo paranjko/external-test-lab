@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SITE_HOST="${GDC_SITE_HOST:-gonka-dev.net}"
-GRAFANA_URL="${GDC_GRAFANA_URL:-https://grafana.gonka-dev.net/d/gdc-overview/gonka-devnet-community-overview?orgId=1&from=now-6h&to=now}"
+GRAFANA_NETWORK_URL="${GDC_GRAFANA_NETWORK_URL:-https://grafana.gonka-dev.net/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk}"
+GRAFANA_INFERENCE_URL="${GDC_GRAFANA_INFERENCE_URL:-https://grafana.gonka-dev.net/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-7d&to=now&timezone=utc&kiosk}"
 RUN_ID="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-homepage}"
 OUT="${GDC_HOMEPAGE_EVIDENCE_DIR:-$ROOT/artifacts/runs/$RUN_ID-homepage}"
 CHROME="${CHROME_BIN:-google-chrome}"
@@ -21,7 +22,8 @@ grep -q 'JetBrainsMono-Regular.woff2' "$OUT/homepage.html"
 ! grep -q '—' "$OUT/homepage.html"
 ! grep -qi 'LIVE DEVNET CHECK\|active endpoints online\|gateway-summary' "$OUT/homepage.html"
 ! grep -q 'Live status' "$OUT/homepage.html"
-test "$(grep -o 'grafana.gonka-dev.net/d/gdc-overview' "$OUT/homepage.html" | wc -l)" -eq 1
+test "$(grep -o 'grafana.gonka-dev.net/d/gdc-network' "$OUT/homepage.html" | wc -l)" -eq 1
+test "$(grep -o 'grafana.gonka-dev.net/d/gdc-inference' "$OUT/homepage.html" | wc -l)" -eq 1
 ! grep -qi 'proxy\.gonka\.gg\|node0\.gonka-dev\.net:3000' "$OUT/homepage.html"
 ! grep -Eq '<(pre|code)([[:space:]>])|curl-example|request-example' "$OUT/homepage.html"
 grep -q 'github.com/gonka-ai/gonka/discussions/1388' "$OUT/homepage.html"
@@ -31,11 +33,16 @@ curl -fsS "https://$SITE_HOST/fonts/JetBrainsMono-Regular.woff2" -o "$OUT/JetBra
 test -s "$OUT/JetBrainsMono-Regular.woff2"
 jq -e '
   ([.nodes[] | select(.mode == "active")] | length >= 1)
+  and (.grafanaNetwork | contains("/d/gdc-network/"))
+  and (.grafanaInference | contains("/d/gdc-inference/"))
 ' "$OUT/config.json" >/dev/null
 
-curl -fsS "$GRAFANA_URL" -o "$OUT/grafana.html"
-grep -qi '<!doctype html>' "$OUT/grafana.html"
-curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-overview' | jq -e '.dashboard.title == "Gonka DevNet Community Overview"' >"$OUT/grafana-dashboard.json"
+curl -fsS "$GRAFANA_NETWORK_URL" -o "$OUT/grafana-network.html"
+curl -fsS "$GRAFANA_INFERENCE_URL" -o "$OUT/grafana-inference.html"
+grep -qi '<!doctype html>' "$OUT/grafana-network.html"
+grep -qi '<!doctype html>' "$OUT/grafana-inference.html"
+curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-network' | jq -e '.dashboard.title == "Gonka DevNet Network"' >"$OUT/grafana-dashboard.json"
+curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-inference' | jq -e '.dashboard.title == "Gonka DevNet Inference"' >"$OUT/grafana-inference-dashboard.json"
 curl -fsS "https://$SITE_HOST/meter-api/health" | jq -e '.status == "ok" or .ok == true' >"$OUT/meter-health.json"
 curl -fsS "https://$SITE_HOST/meter-api/metrics/dashboard/detail" >"$OUT/gateway-quality.json"
 jq -e '

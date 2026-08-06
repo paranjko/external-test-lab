@@ -3,7 +3,8 @@ const $=id=>document.getElementById(id);
 const chainRpcHost=cfg.nodes.find(node=>node.name==='gdc-node4')?.publicHost||cfg.nodes.find(node=>node.name==='gdc-node0')?.publicHost;
 $('chain-id').textContent=cfg.chainId;$('model-id').textContent=cfg.model;
 if(cfg.telegramBot){$('contact').textContent='Open Telegram bot';$('contact').href=cfg.telegramBot}else{$('contact').textContent='Telegram bot is not configured yet';$('contact').removeAttribute('href')}
-$('grafana').href=cfg.grafana;
+$('grafana-network').href=cfg.grafanaNetwork||cfg.grafana;
+$('grafana-inference').href=cfg.grafanaInference;
 const cards=new Map();
 let observedNodes=cfg.nodes.map(node=>({...node}));
 function nodeKey(node){return node.address||node.name}
