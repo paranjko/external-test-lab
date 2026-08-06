@@ -2,7 +2,7 @@ services:
   bot:
     build: .
     restart: unless-stopped
-    env_file: [.env]
+    env_file: [./bot.env]
     volumes:
       - ./data:/data
       - ${KEY_POOL_HOST_PATH:?set KEY_POOL_HOST_PATH}:/run/secrets/gateway-key-pool.json:ro

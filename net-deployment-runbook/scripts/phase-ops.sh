@@ -13,6 +13,8 @@ fi
 if [[ "$COMPONENT" == gateway ]]; then
   GDC_GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
   [[ "$GDC_GATEWAY_VERSION" =~ ^v[34]$ ]] || die 'GDC_GATEWAY_VERSION must be v3 or v4'
+  GDC_GATEWAY_PUBLIC_URL="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
+  GDC_GATEWAY_PUBLIC_URL="${GDC_GATEWAY_PUBLIC_URL%/}"
   export GDC_GATEWAY_VERSION
 fi
 OPS_RENDER="$GENERATED/ops"
@@ -50,12 +52,22 @@ case "$COMPONENT" in
     [[ "$gateway_default_max_tokens" =~ ^[1-9][0-9]*$ ]] || die 'gateway default max tokens is missing or invalid'
     gateway_rotation_escrow_amount="$(awk -F= '$1 == "DEVSHARD_ROTATION_ESCROW_AMOUNT" { print $2 }' "$GATEWAY_ENV")"
     [[ "$gateway_rotation_escrow_amount" =~ ^[1-9][0-9]*$ ]] || die 'gateway rotation escrow amount is missing or invalid'
+    gateway_max_concurrent_requests="$(awk -F= '$1 == "GATEWAY_MAX_CONCURRENT_REQUESTS" { print $2 }' "$GATEWAY_ENV")"
+    gateway_max_concurrent_per_weight="${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-400}"
+    gateway_max_input_tokens="$(awk -F= '$1 == "GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT" { print $2 }' "$GATEWAY_ENV")"
+    gateway_pre_poc_blocks="${GDC_GATEWAY_PRE_POC_BLOCKS:-5}"
+    gateway_rotation_enabled="${GDC_GATEWAY_ESCROW_ROTATION_ENABLED:-false}"
+    [[ "$gateway_max_concurrent_requests" =~ ^[1-9][0-9]*$ ]] || die 'gateway max concurrent requests is missing or invalid'
+    [[ "$gateway_max_concurrent_per_weight" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT must be positive'
+    [[ "$gateway_max_input_tokens" =~ ^[1-9][0-9]*$ ]] || die 'gateway max input tokens in flight is missing or invalid'
+    [[ "$gateway_pre_poc_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_PRE_POC_BLOCKS must be positive'
+    [[ "$gateway_rotation_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED must be true or false'
     GATEWAY_OPTION="--gateway-env '$REMOTE/rendered/gateway.env'"
     # `gateway.env` is both container input and Compose interpolation input:
     # it selects the protocol-isolated state volume before the service is
     # created. `env_file:` alone is too late for `${...}` in compose.yaml.
     START_COMMAND='docker compose --env-file .env --env-file gateway.env up -d devshard-gateway'
-    ENDPOINT="http://$NODE0_PUBLIC_HOST:18080"
+    ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"
     ;;
   monitoring)
     # Prometheus and Grafana mount generated provisioning/configuration files.
@@ -97,10 +109,18 @@ if [[ "$COMPONENT" == gateway ]]; then
   ssh gdc-node0 'set -Eeuo pipefail
     set -a; . /srv/dai/ops/gateway.env; set +a
     payload="$(jq -cn --arg id "$DEVSHARD_ESCROW_ID" --arg key "$DEVSHARD_PRIVATE_KEY" --arg model "$DEVSHARD_MODEL" --arg route "$DEVSHARD_ROUTE_PREFIX" "{id:\$id,private_key:\$key,model:\$model,route_prefix:\$route}")"
-    curl -fsS -X POST http://127.0.0.1:18080/v1/admin/devshards \
+    body="$(mktemp)"; trap "rm -f \"$body\"" EXIT
+    status="$(curl -sS -o "$body" -w "%{http_code}" -X POST http://127.0.0.1:18080/v1/admin/devshards \
       -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
-      -H "Content-Type: application/json" --data "$payload" \
-      | jq -e --arg id "$DEVSHARD_ESCROW_ID" ".id == \$id and .active == true" >/dev/null'
+      -H "Content-Type: application/json" --data "$payload")"
+    if [[ "$status" == 200 || "$status" == 201 ]]; then
+      jq -e --arg id "$DEVSHARD_ESCROW_ID" ".id == \$id and .active == true" "$body" >/dev/null
+    elif [[ "$status" == 409 ]]; then
+      curl -fsS http://127.0.0.1:18080/v1/admin/devshards -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
+        | jq -e --arg id "$DEVSHARD_ESCROW_ID" ".devshards[] | select(.id == \$id and .active == true)" >/dev/null
+    else
+      cat "$body" >&2; exit 1
+    fi'
   step 'Configure authenticated access for the governed model'
   # A new per-protocol gateway state volume intentionally starts without
   # persisted model access settings.  The runtime defaults to admin_only,
@@ -109,12 +129,26 @@ if [[ "$COMPONENT" == gateway ]]; then
   # These settings persist in gateway.db.  Apply the environment-derived
   # default explicitly so an existing state volume cannot retain an unsafe
   # value from a previous deployment.
-  ssh gdc-node0 "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":true,\"settlement_enabled\":false,\"pre_poc_blocks\":300,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":1,\"target_count\":1,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .access_mode == \"api_key\")) and .escrow_rotation.enabled == true and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
+  ssh gdc-node0 "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"poc_max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":$gateway_rotation_enabled,\"settlement_enabled\":false,\"pre_poc_blocks\":$gateway_pre_poc_blocks,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":1,\"target_count\":1,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .poc_max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .max_input_tokens_in_flight == $gateway_max_input_tokens and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_input_tokens_in_flight == $gateway_max_input_tokens and .access_mode == \"api_key\")) and .escrow_rotation.enabled == $gateway_rotation_enabled and .escrow_rotation.pre_poc_blocks == $gateway_pre_poc_blocks and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
   step 'Verify gateway runtime, client authentication, and public route'
   gateway_ready=false
   deadline=$((SECONDS + 180))
   while (( SECONDS < deadline )); do
-    if ssh gdc-node0 'set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS http://127.0.0.1:18080/v1/status | jq -e ".phase == \"active\" and .requests_blocked == false and (.escrow_id | tostring | test(\"^[1-9][0-9]*$\"))" >/dev/null'; then
+    if ssh gdc-node0 'set -Eeuo pipefail
+      set -a; . /srv/dai/ops/gateway.env; set +a
+      curl -fsS http://127.0.0.1:18080/v1/status \
+        | jq -e "(.devshards // [.]) | any((.active // true) == true and .phase == \"active\" and .requests_blocked == false and .chain_phase == \"Inference\")" >/dev/null
+      curl -fsS http://127.0.0.1:18080/v1/admin/devshards -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
+        | jq -e --arg model "$DEVSHARD_MODEL" ".limiter.models[\$model].effective_max_concurrent_requests > 0" >/dev/null
+      height="$(curl -fsS http://127.0.0.1:26657/status | jq -er ".result.sync_info.latest_block_height | tonumber")"
+      read -r epoch_length poc_duration validation_delay validation_duration validators_delay < <(
+        curl -fsS http://127.0.0.1:1317/productscience/inference/inference/params \
+          | jq -r ".params.epoch_params | [.epoch_length,.poc_stage_duration,.poc_validation_delay,.poc_validation_duration,.set_new_validators_delay] | map(tonumber) | @tsv"
+      )
+      position=$((height % epoch_length))
+      safe_start=$((poc_duration + validation_delay + validation_duration + validators_delay + 1))
+      safe_end=$((epoch_length - 10))
+      (( position >= safe_start && position <= safe_end ))'; then
       gateway_ready=true
       break
     fi
@@ -125,18 +159,19 @@ if [[ "$COMPONENT" == gateway ]]; then
   ssh gdc-node0 'test "$(stat -c %a /srv/dai/ops/gateway.env)" = 600'
   admin_key="$(<"$SECRETS/gateway.admin-key")"
   client_key="$(cut -d, -f1 "$SECRETS/gateway.client-keys")"
-  unauth_status="$(curl -sk -o /dev/null -w '%{http_code}' "https://$API_HOST/v1/chat/completions" -H 'Content-Type: application/json' -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"health"}]}')"
+  unauth_status="$(curl -sk -o /dev/null -w '%{http_code}' "$GDC_GATEWAY_PUBLIC_URL/v1/chat/completions" -H 'Content-Type: application/json' -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"health"}]}')"
   [[ "$unauth_status" == 401 ]] || die "unauthenticated gateway request returned $unauth_status, expected 401"
-  curl -fsS "https://$API_HOST/v1/status" -H "Authorization: Bearer $client_key" | jq -e '.phase == "active" and .requests_blocked == false and (.escrow_id | tostring | test("^[1-9][0-9]*$"))' >/dev/null
+  curl -fsS "$GDC_GATEWAY_PUBLIC_URL/v1/status" -H "Authorization: Bearer $client_key" | jq -e '.phase == "active" and .requests_blocked == false and (.escrow_id | tostring | test("^[1-9][0-9]*$"))' >/dev/null
   # Gateway status is a local runtime view.  Prove that its selected escrow
   # still exists in committed chain state before reporting the gateway ready.
-  active_escrow="$(curl -fsS "https://$API_HOST/v1/status" -H "Authorization: Bearer $client_key" | jq -er '.escrow_id | tostring | select(test("^[1-9][0-9]*$"))')"
+  active_escrow="$(curl -fsS "$GDC_GATEWAY_PUBLIC_URL/v1/status" -H "Authorization: Bearer $client_key" | jq -er '.escrow_id | tostring | select(test("^[1-9][0-9]*$"))')"
+  chain_rpc="${GDC_CHAIN_RPC_URL:-https://${NODE4_PUBLIC_HOST}/chain-rpc/}"
   "$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$active_escrow" \
-    --node "https://${NODE4_PUBLIC_HOST}/chain-rpc/" --chain-id "$CHAIN_ID" --output json \
+    --node "$chain_rpc" --chain-id "$CHAIN_ID" --output json \
     | jq -e --arg id "$active_escrow" '.found == true and (.escrow.id | tostring) == $id' >/dev/null \
     || die "gateway escrow $active_escrow is absent from committed chain state"
   ssh gdc-node0 "set -Eeuo pipefail; curl -fsS http://127.0.0.1:18080/v1/status -H 'Authorization: Bearer $admin_key' >/dev/null"
-  "$ROOT/04-ops/test-inference.sh" "https://$API_HOST" "$client_key" >/dev/null
+  "$ROOT/04-ops/test-inference.sh" "$GDC_GATEWAY_PUBLIC_URL" "$client_key" >/dev/null
   printf 'PASS gateway status and authentication checks\n'
 fi
 

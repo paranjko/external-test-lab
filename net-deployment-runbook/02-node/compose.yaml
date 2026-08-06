@@ -186,7 +186,13 @@ services:
       EXEMPT_CONN_LIMIT: "200"
       GONKA_API_BLOCKED_ROUTES: poc-batches training
       CHAIN_RPC_PORT: "26657"
+      # Public status traffic is aggregated by the node4 edge into one source
+      # IP. The upstream default is 20 requests per minute, which makes normal
+      # dashboard polling return intermittent 503s. Keep the same numeric
+      # limit but use seconds for this controlled test network.
+      CHAIN_RPC_RATE_UNIT: s
       CHAIN_API_PORT: "1317"
+      CHAIN_API_RATE_UNIT: s
       CHAIN_GRPC_PORT: "9090"
       DASHBOARD_PORT: "${DASHBOARD_PORT:-5173}"
       PROXY_REAL_IP_FROM: 172.16.0.0/12

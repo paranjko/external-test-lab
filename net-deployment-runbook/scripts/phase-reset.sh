@@ -3,6 +3,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 load_env "${GDC_ENV:-$ROOT/.env}"
+load_public_observability_hosts
 STATE="$ROOT/state"
 [[ "${1:-}" == --yes ]] || die 'reset destroys the rehearsal; run ./gdc.sh reset --yes'
 CHROME_BIN="${CHROME_BIN:-google-chrome}"

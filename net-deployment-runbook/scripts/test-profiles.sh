@@ -2,6 +2,47 @@
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/profile.sh"
+source "$ROOT/scripts/lib.sh"
+
+(
+  unset SITE_HOST GRAFANA_HOST GDC_SITE_HOST GDC_GRAFANA_HOST
+  load_public_observability_hosts
+  [[ "$SITE_HOST" == gonka-dev.net ]]
+  [[ "$GRAFANA_HOST" == grafana.gonka-dev.net ]]
+
+  GDC_SITE_HOST=status.example.test
+  GDC_GRAFANA_HOST=monitoring.example.test
+  load_public_observability_hosts
+  [[ "$SITE_HOST" == status.example.test ]]
+  [[ "$GRAFANA_HOST" == monitoring.example.test ]]
+)
+grep -Fq 'load_public_observability_hosts' "$ROOT/scripts/phase-reset.sh"
+grep -Fq 'status.json.tmp' "$ROOT/scripts/qualify-ml-remote.sh"
+grep -Fq '2>>"$WORK/control.log"' "$ROOT/scripts/qualify-ml-remote.sh"
+grep -Fq 'phase-bootstrap-access.sh' "$ROOT/gdc.sh"
+grep -Fq 'GDC_CHAIN_RPC_URL' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'GDC_GATEWAY_PUBLIC_URL="https://${NODE0_PUBLIC_HOST}/gateway"' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'GDC_TELEGRAM_BOT_HOST=gdc-node0' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'GDC_TELEGRAM_BOT_API_BASE_URL="$GDC_GATEWAY_PUBLIC_URL/v1"' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'GDC_GOVERNANCE_AUTO_VOTE=true' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'ensure-genesis-validation-weight.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'AMOUNT="${AMOUNT:-$MIN_AMOUNT}"' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'AMOUNT <= SPENDABLE_AMOUNT' "$ROOT/04-ops/create-gateway.sh"
+if grep -Fq 'GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-10000000000' "$ROOT/04-ops/create-gateway.sh"; then
+  echo 'gateway escrow must not default to the full Genesis allocation' >&2
+  exit 1
+fi
+grep -Fq 'poc_validation_delay = $poc_validation_delay' "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq 'validation_weights' "$ROOT/scripts/ensure-genesis-validation-weight.sh"
+grep -Fq 'test-inference.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'handle_path /gateway/*' "$ROOT/04-ops/Caddyfile"
+grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
+grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
+[[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
+if grep -Fq 'ssh_ready gdc-node4' "$ROOT/scripts/phase-bootstrap-access.sh"; then
+  echo 'bootstrap-access must not require gdc-node4' >&2
+  exit 1
+fi
 
 for release in testnet-0.2.14 testnet-0.2.15; do
   GDC_RELEASE_PROFILE="$release" GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
@@ -55,6 +96,8 @@ jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
   and .app_state.inference.params.epoch_params.epoch_length == "50"
   and .app_state.inference.params.epoch_params.epoch_shift == "0"
   and .app_state.inference.params.epoch_params.poc_stage_duration == "4"
+  and .app_state.inference.params.epoch_params.poc_exchange_duration == "1"
+  and .app_state.inference.params.epoch_params.poc_validation_delay == "10"
   and .app_state.inference.params.epoch_params.poc_validation_duration == "4"
   and .app_state.inference.params.poc_params.validation_slots == 1
   and .app_state.gov.params.voting_period == "30s"

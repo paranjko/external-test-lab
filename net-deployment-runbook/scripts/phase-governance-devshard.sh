@@ -7,9 +7,9 @@ RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-governance-devshard"
 mkdir -p "$RUN"
 record_phase_profile governance-devshard
 creator="$(jq -er .address "$ACCOUNTS/gdc-gateway.json")"
-# Public chain RPC terminates on the physical node4/one-net edge.  node0 is an
-# internal application backend and no longer owns public TLS.
-rpc="https://$NODE4_PUBLIC_HOST/chain-rpc/"
+# Public chain RPC terminates on node4 after the distributed topology is
+# available. bootstrap-access overrides this with the sole Genesis participant.
+rpc="${GDC_CHAIN_RPC_URL:-https://$NODE4_PUBLIC_HOST/chain-rpc/}"
 authority="${GDC_INFERENCE_GOV_AUTHORITY:-gonka10d07y265gmmuvt4z0w9aw880jnsr700j2h5m33}"
 [[ "$authority" =~ ^gonka1[0-9a-z]{20,90}$ ]] || die 'GDC_INFERENCE_GOV_AUTHORITY is invalid'
 
@@ -24,6 +24,7 @@ deposit="${GDC_GOVERNANCE_DEPOSIT:-$min_deposit}"
 
 step 'Render the full, state-preserving DevShard params proposal'
 jq --arg authority "$authority" --arg creator "$creator" \
+  --arg poc_exchange_duration "1" --arg poc_validation_delay "10" \
   --arg v3_url "$DEVSHARD_V3_URL" --arg v3_sha "$DEVSHARD_V3_SHA256" \
   --arg v4_url "$DEVSHARD_V4_URL" --arg v4_sha "$DEVSHARD_V4_SHA256" --arg deposit "$deposit" '
   (.params // .) as $params
@@ -34,9 +35,11 @@ jq --arg authority "$authority" --arg creator "$creator" \
       {name:"v4", binary:$v4_url, sha256:$v4_sha}
     ]
   | .devshard_escrow_params.devshard_requests_enabled = true
+  | .epoch_params.poc_exchange_duration = $poc_exchange_duration
+  | .epoch_params.poc_validation_delay = $poc_validation_delay
   | {messages:[{"@type":"/inference.inference.MsgUpdateParams",authority:$authority,params:.}],
-     metadata:"",title:"GDC: approve DevShard v3 and v4 plus gateway creator",deposit:$deposit,
-     summary:"Registers immutable DevShard v3/v4 archives and allows the dedicated GDC gateway creator."}
+     metadata:"",title:"GDC: stabilize PoC weight distribution before validation",deposit:$deposit,
+     summary:"Registers immutable DevShard v3/v4 archives, allows the dedicated gateway creator, and leaves enough test-lab blocks for the 0.2.14 DAPI distribution retry to observe the final PoC commit before validation starts."}
 ' "$RUN/params-before.json" >"$RUN/proposal.json"
 jq -e --arg creator "$creator" '
   .messages[0].params.devshard_escrow_params as $p
@@ -46,7 +49,39 @@ jq -e --arg creator "$creator" '
   and ($p.max_nonce | tonumber > 0)
 ' "$RUN/proposal.json" >/dev/null
 
+if jq -e --arg creator "$creator" --arg v3 "$DEVSHARD_V3_SHA256" --arg v4 "$DEVSHARD_V4_SHA256" '
+  (.params // .).devshard_escrow_params as $p
+  | ($p.allowed_creator_addresses | index($creator) != null)
+  and ($p.devshard_requests_enabled == true)
+  and ([ $p.approved_versions[].name ] | sort) == ["v3", "v4"]
+  and ($p.approved_versions[] | select(.name == "v3").sha256 == $v3)
+  and ($p.approved_versions[] | select(.name == "v4").sha256 == $v4)
+  and (((.params // .).epoch_params.poc_exchange_duration | tonumber) == 1)
+  and (((.params // .).epoch_params.poc_validation_delay | tonumber) >= 10)
+' "$RUN/params-before.json" >/dev/null; then
+  cp "$RUN/params-before.json" "$RUN/params-after.json"
+  cat >"$RUN/verdict.md" <<EOF
+# DevShard governance: PASS
+
+The effective chain parameters already authorize the pinned v3/v4 binaries and
+the dedicated gateway creator. No duplicate proposal was submitted.
+EOF
+  printf 'PASS governance already effective: %s\n' "$RUN"
+  exit 0
+fi
+
 proposal_id="${GDC_GOVERNANCE_PROPOSAL_ID:-}"
+if [[ -z "$proposal_id" ]]; then
+  ssh gdc-node0 'curl -fsS "http://127.0.0.1:1317/cosmos/gov/v1/proposals?pagination.limit=100"' >"$RUN/proposals.json"
+  proposal_id="$(jq -r '
+    [.proposals[]?
+      | select(.title == "GDC: stabilize PoC weight distribution before validation")
+      | select(.status == "PROPOSAL_STATUS_VOTING_PERIOD" or .status == "PROPOSAL_STATUS_PASSED")
+      | (.id | tonumber)]
+    | if length == 0 then "" else max | tostring end
+  ' "$RUN/proposals.json")"
+  [[ -z "$proposal_id" ]] || printf 'READY reuse DevShard governance proposal %s\n' "$proposal_id"
+fi
 if [[ -z "$proposal_id" && "${GDC_GOVERNANCE_SUBMIT:-false}" == true ]]; then
   step 'Submit governance proposal from the dedicated operator account'
   password="$(<"$SECRETS/operator.keyring")"
@@ -65,6 +100,10 @@ if [[ -z "$proposal_id" && "${GDC_GOVERNANCE_SUBMIT:-false}" == true ]]; then
   done
 fi
 
+if [[ "$proposal_id" =~ ^[0-9]+$ ]]; then
+  printf '%s\n' "$proposal_id" >"$RUN/proposal-id.txt"
+fi
+
 if [[ ! "$proposal_id" =~ ^[0-9]+$ ]]; then
   cat >"$RUN/verdict.md" <<EOF
 # DevShard governance: BLOCKED
@@ -79,6 +118,19 @@ fi
 
 step "Verify passed governance proposal $proposal_id"
 ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-status.json"
+proposal_status="$(jq -er '.proposal.status' "$RUN/proposal-status.json")"
+if [[ "$proposal_status" == PROPOSAL_STATUS_VOTING_PERIOD && "${GDC_GOVERNANCE_AUTO_VOTE:-false}" == true ]]; then
+  "$ROOT/scripts/phase-vote-proposal.sh" "$proposal_id" yes
+  deadline=$((SECONDS + 120))
+  while (( SECONDS < deadline )); do
+    ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-status.json"
+    proposal_status="$(jq -er '.proposal.status' "$RUN/proposal-status.json")"
+    [[ "$proposal_status" == PROPOSAL_STATUS_PASSED ]] && break
+    [[ "$proposal_status" == PROPOSAL_STATUS_REJECTED || "$proposal_status" == PROPOSAL_STATUS_FAILED ]] && break
+    printf 'WAIT  DevShard proposal %s status=%s\n' "$proposal_id" "$proposal_status"
+    sleep 2
+  done
+fi
 jq -e '.proposal.status == "PROPOSAL_STATUS_PASSED"' "$RUN/proposal-status.json" >/dev/null || {
   cat >"$RUN/verdict.md" <<EOF
 # DevShard governance: BLOCKED
@@ -99,6 +151,8 @@ jq -e --arg creator "$creator" --arg v3 "$DEVSHARD_V3_SHA256" --arg v4 "$DEVSHAR
   and ($p.approved_versions[] | select(.name == "v4").sha256 == $v4)
   and ($p.min_amount | tonumber > 0)
   and ($p.max_nonce | tonumber > 0)
+  and (((.params // .).epoch_params.poc_exchange_duration | tonumber) == 1)
+  and (((.params // .).epoch_params.poc_validation_delay | tonumber) >= 10)
 ' "$RUN/params-after.json" >/dev/null
 cat >"$RUN/verdict.md" <<EOF
 # DevShard governance: PASS

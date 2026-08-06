@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 usage(){ echo "Usage: $0 inventory.env secrets-dir output-gateway.env [escrow-amount-ngonka]" >&2; }
 [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 2; }
-INVENTORY="$1"; SECRETS="$2"; OUT="$3"; AMOUNT="${4:-${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-10000000000}}"
+INVENTORY="$1"; SECRETS="$2"; OUT="$3"; AMOUNT="${4:-${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1090
 source "$INVENTORY"
@@ -10,11 +10,16 @@ source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$GATEWAY_VERSION" =~ ^v[34]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3 or v4' >&2; exit 2; }
-[[ "$AMOUNT" =~ ^[0-9]+$ ]] || exit 2
+[[ -z "$AMOUNT" || "$AMOUNT" =~ ^[0-9]+$ ]] || exit 2
 PASSWORD="$(<"$SECRETS/operator.keyring")"; ADMIN_KEY="$(<"$SECRETS/gateway.admin-key")"; CLIENT_KEYS="$(<"$SECRETS/gateway.client-keys")"
+MAX_CONCURRENT_REQUESTS="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-8}"
+MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-16384}"
+[[ "$MAX_CONCURRENT_REQUESTS" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be positive' >&2; exit 2; }
+[[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be positive' >&2; exit 2; }
 CREATOR="$(jq -er .address "$ROOT/artifacts/accounts/gdc-gateway.json")"
-# node4/one-net owns public chain RPC; node0 is an internal backend.
-RPC="https://${NODE4_PUBLIC_HOST}/chain-rpc/"
+# node4 owns public chain RPC after the distributed topology is available;
+# bootstrap-access overrides this with the sole live Genesis participant.
+RPC="${GDC_CHAIN_RPC_URL:-https://${NODE4_PUBLIC_HOST}/chain-rpc/}"
 
 # The later settlement evidence must demonstrate the whole economic path, not
 # only its final state.  Capture the creator balance before the escrow funding
@@ -25,8 +30,19 @@ BALANCE_BEFORE="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1b
 # convenience state or a local versiond configuration substitute.
 PARAMS="$("$ROOT/scripts/inferenced.sh" query inference params --node "$RPC" --chain-id "$CHAIN_ID" --output json)"
 MIN_AMOUNT="$(jq -er '(.params // .).devshard_escrow_params.min_amount' <<<"$PARAMS")"
-[[ "$MIN_AMOUNT" =~ ^[0-9]+$ && "$AMOUNT" =~ ^[0-9]+$ ]] || { echo 'invalid live escrow min_amount' >&2; exit 1; }
+[[ "$MIN_AMOUNT" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid live escrow min_amount' >&2; exit 1; }
+# The governance account pays proposal deposits before access is bootstrapped.
+# Therefore its original Genesis allocation is not a safe escrow default.  Use
+# the live governance minimum unless the operator deliberately requests more.
+AMOUNT="${AMOUNT:-$MIN_AMOUNT}"
+[[ "$AMOUNT" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid escrow amount' >&2; exit 1; }
 (( AMOUNT >= MIN_AMOUNT )) || { echo "escrow amount $AMOUNT is below live governance minimum $MIN_AMOUNT" >&2; exit 1; }
+SPENDABLE_AMOUNT="$(jq -r '[.balances[]? | select(.denom == "ngonka") | .amount][0] // "0"' <<<"$BALANCE_BEFORE")"
+[[ "$SPENDABLE_AMOUNT" =~ ^[0-9]+$ ]] || { echo 'invalid spendable ngonka balance' >&2; exit 1; }
+(( AMOUNT <= SPENDABLE_AMOUNT )) || {
+  echo "escrow amount $AMOUNT exceeds spendable balance $SPENDABLE_AMOUNT; omit GDC_GATEWAY_ESCROW_AMOUNT_NGONKA to use the live minimum $MIN_AMOUNT" >&2
+  exit 1
+}
 jq -e --arg creator "$CREATOR" '
   (.params // .).devshard_escrow_params as $p
   | ($p.allowed_creator_addresses | index($creator) != null)
@@ -64,12 +80,12 @@ if [[ -n "$EXISTING_ESCROW_ID" ]]; then
 else
 TX="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" tx inference create-devshard-escrow \
   "$AMOUNT" "$MODEL_ID" --from gdc-gateway --keyring-backend file --chain-id "$CHAIN_ID" \
-  --node "https://${NODE4_PUBLIC_HOST}/chain-rpc/" --gas auto --gas-adjustment 1.5 \
+  --node "$RPC" --gas auto --gas-adjustment 1.5 \
   --gas-prices 0ngonka --broadcast-mode sync --output json --yes)"
 HASH="$(jq -r '.txhash // .tx_response.txhash // empty' <<<"$TX")"
 [[ "$HASH" =~ ^[0-9A-Fa-f]{64}$ ]] || { echo "$TX" | jq . >&2; echo 'Cannot obtain tx hash' >&2; exit 1; }
 for _ in $(seq 1 60); do
-  RESULT="$("$ROOT/scripts/inferenced.sh" query tx "$HASH" --node "https://${NODE4_PUBLIC_HOST}/chain-rpc/" --output json 2>/dev/null || true)"
+  RESULT="$("$ROOT/scripts/inferenced.sh" query tx "$HASH" --node "$RPC" --output json 2>/dev/null || true)"
   [[ -n "$RESULT" ]] && break
   sleep 2
 done
@@ -116,8 +132,10 @@ DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-${GATEWAY_VERSION}
 DEVSHARD_ROTATION_ESCROW_AMOUNT=${AMOUNT}
 DEVSHARD_POC_REQUEST_MODE=relaxed
 DEVSHARD_CAPACITY_AWARE_LIMITS=on
-GATEWAY_MAX_CONCURRENT_REQUESTS=0
-GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=0
+GATEWAY_MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS}
+GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-400}
+GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-400}
+GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=${MAX_INPUT_TOKENS_IN_FLIGHT}
 # The Qwen profile has a 2048-token context window.  A default equal to the
 # whole window makes every non-empty OpenAI-compatible request invalid when a
 # client omits max_tokens.  Keep room for the prompt by default.

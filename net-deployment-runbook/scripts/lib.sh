@@ -15,6 +15,11 @@ load_env() {
   set +a
 }
 
+load_public_observability_hosts() {
+  SITE_HOST="${GDC_SITE_HOST:-gonka-dev.net}"
+  GRAFANA_HOST="${GDC_GRAFANA_HOST:-grafana.gonka-dev.net}"
+}
+
 write_env() {
   local file="$1"
   shift
@@ -58,9 +63,8 @@ load_project() {
   CHAIN_ID="${CHAIN_ID:-gonka-devnet-community}"
   BASE_DENOM=ngonka
   BASE_DOMAIN=gonka-dev.net
-  SITE_HOST=gonka-dev.net
+  load_public_observability_hosts
   API_HOST=api.gonka-dev.net
-  GRAFANA_HOST=grafana.gonka-dev.net
   TELEGRAM_BOT_URL="${GDC_TELEGRAM_BOT_URL:-}"
   if [[ -n "$TELEGRAM_BOT_URL" && ! "$TELEGRAM_BOT_URL" =~ ^https://t\.me/[A-Za-z0-9_]{5,32}$ ]]; then
     die 'GDC_TELEGRAM_BOT_URL must be https://t.me/<bot_username>; never put a BotFather token here'

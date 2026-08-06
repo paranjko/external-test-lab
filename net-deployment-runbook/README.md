@@ -54,6 +54,7 @@ exclusive local lifecycle lock, so a second phase cannot race an active one:
 ./gdc.sh --release testnet-0.2.14 identities
 ./gdc.sh --release testnet-0.2.14 qualify-ml
 ./gdc.sh --release testnet-0.2.14 genesis
+./gdc.sh --release testnet-0.2.14 bootstrap-access
 ./gdc.sh --release testnet-0.2.14 join node1
 ./gdc.sh --release testnet-0.2.14 join node2
 ./gdc.sh --release testnet-0.2.14 join node4
@@ -65,6 +66,36 @@ governance windows and one PoC validation slot. Its purpose is to make
 lifecycle testing practical; it is not a claim about production timing. The
 validation slot must remain non-zero: zero disables PoC validation and makes a
 chain-accounted gateway impossible to verify.
+
+### One-participant access bootstrap
+
+Immediately after Genesis, the optional `bootstrap-access` phase makes the
+single active participant usable through the same authenticated,
+chain-accounted access contract as the later distributed network:
+
+```bash
+./gdc.sh --release testnet-0.2.14 bootstrap-access
+```
+
+The command uses the live node0 RPC while node4 has not joined yet, submits or
+reuses the DevShard v3/v4 governance proposal, records the sole validator's
+vote, waits for the proposal to pass, creates an escrow, starts the gateway,
+generates and verifies a finite key pool, and deploys the Telegram bot on
+node0. The authenticated bootstrap endpoint is
+`https://node0.gonka-dev.net/gateway/v1`; neither node4 nor its public edge is
+required. The ten-block PoC validation delay is an intentional primary test
+parameter: official DAPI 0.2.14 can submit its first MLNode distribution in
+the same block as a newer store commit. The extra test-lab window lets its
+30-second retry observe the final committed count and record a matching
+distribution before the validation snapshot. The phase waits for a positive
+chain-computed validation weight before creating the escrow. It is idempotent
+and does not treat a direct MLNode response as gateway proof. This bootstrap is
+intentionally a one-validator availability mode;
+distributed-governance evidence begins only after the other participants join.
+By default the escrow uses the live governance minimum instead of the original
+Genesis allocation, because governance deposits have already reduced the
+gateway account's spendable balance. An explicit
+`GDC_GATEWAY_ESCROW_AMOUNT_NGONKA` must fit the current spendable balance.
 
 ## Independent operator node join
 
@@ -135,12 +166,12 @@ DevShard versions and the dedicated gateway creator are approved through chain g
 ## Telegram key issuer
 
 The bot implementation is part of this release at
-[`scripts/telegram-bot/`](scripts/telegram-bot/). The BotFather token and the
-finite `gateway-key-pool.json` are root-owned runtime files on the gateway host
-and never belong in this repository or the operator `.env`.
+[`scripts/telegram-bot/`](scripts/telegram-bot/). The BotFather token belongs
+in the ignored root `.env`; the finite `gateway-key-pool.json` remains a
+root-owned runtime file on the gateway host. Neither secret is committed.
 
 After those two files have been provisioned and the gateway is active, deploy
-the bot to the secondary-services host:
+or move the bot to the secondary-services host after node4 is available:
 
 ```bash
 ./gdc.sh telegram-bot

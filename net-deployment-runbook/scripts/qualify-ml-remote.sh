@@ -15,8 +15,13 @@ body="$(jq -nc --arg model "$MODEL" --arg dtype "$DTYPE" --arg revision "$REVISI
 # The nginx inference proxy is intentionally for OpenAI traffic. Control-plane
 # calls go directly to the MLNode container so the /api/v1 prefix is preserved.
 ensure_inference_started() {
-  docker compose --env-file "$ENV_FILE" -f compose.ml-local.yaml exec -T mlnode \
-    curl -fsS http://127.0.0.1:8080/api/v1/inference/up/status >"$WORK/status.json" || return 0
+  local status_tmp="$WORK/status.json.tmp"
+  if ! docker compose --env-file "$ENV_FILE" -f compose.ml-local.yaml exec -T mlnode \
+    curl -fsS http://127.0.0.1:8080/api/v1/inference/up/status >"$status_tmp" 2>>"$WORK/control.log"; then
+    rm -f "$status_tmp"
+    return 0
+  fi
+  mv "$status_tmp" "$WORK/status.json"
   if jq -e '.status == "not_started"' "$WORK/status.json" >/dev/null 2>&1; then
     printf '%s' "$body" | docker compose --env-file "$ENV_FILE" -f compose.ml-local.yaml exec -T mlnode \
       curl -fsS -X POST http://127.0.0.1:8080/api/v1/inference/up/async -H 'Content-Type: application/json' \
@@ -29,7 +34,11 @@ while (( SECONDS < deadline )); do
   printf 'WAIT  ML qualification elapsed=%ss\n' "$((1800 - deadline + SECONDS))"
   sleep 15
 done
-jq -e '.is_running == true and (.error == null or .error == "")' "$WORK/status.json" >/dev/null
+if ! jq -e '.is_running == true and (.error == null or .error == "")' "$WORK/status.json" >/dev/null 2>&1; then
+  printf 'FAILED MLNode control endpoint did not report a running model within 1800s\n' >&2
+  tail -100 "$WORK/control.log" >&2 2>/dev/null || true
+  exit 1
+fi
 # Query VLLM directly inside MLNode. The host's port 5050 proxy is an
 # integration surface, but its upstream can briefly lag MLNode's ready state.
 # `is_running` also becomes true shortly before VLLM opens its listener, so

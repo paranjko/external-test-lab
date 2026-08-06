@@ -18,6 +18,16 @@ for container in "${containers[@]}"; do
   project_is_resettable "$project" && docker rm -f "$container" >/dev/null
 done
 
+# Public observability is preserved, but gateway state is tied to a specific
+# chain and its escrow IDs. Never carry it into a freshly reset network.
+mapfile -t gateway_containers < <(docker ps -aq \
+  --filter label=com.docker.compose.project=gdc-ops \
+  --filter label=com.docker.compose.service=devshard-gateway)
+(( ${#gateway_containers[@]} == 0 )) || docker rm -f "${gateway_containers[@]}" >/dev/null
+mapfile -t gateway_volumes < <(docker volume ls -q --filter label=com.docker.compose.project=gdc-ops | grep -E 'gateway-data' || true)
+(( ${#gateway_volumes[@]} == 0 )) || docker volume rm -f "${gateway_volumes[@]}" >/dev/null
+rm -f /srv/dai/ops/gateway.env
+
 mapfile -t volumes < <(docker volume ls -q --filter label=com.docker.compose.project)
 for volume in "${volumes[@]}"; do
   project="$(docker volume inspect -f '{{ index .Labels "com.docker.compose.project" }}' "$volume")"
