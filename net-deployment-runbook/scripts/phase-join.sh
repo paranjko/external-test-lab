@@ -34,6 +34,11 @@ getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve
 ACCOUNT="$ACCOUNTS/$NODE-cold.json"
 IDENTITY="$IDENTITIES/$NODE.json"
 [[ -s "$GENESIS/genesis.json" && -s "$GENESIS/genesis-seeds.txt" ]] || die 'run genesis first'
+if [[ ! -s "$ACCOUNT" ]]; then
+  step "Create $NODE cold account"
+  "$ROOT/01-identities-genesis/create-cold-accounts.sh" "$SECRETS/operator.keyring" "$NODE"
+fi
+[[ -s "$ACCOUNT" ]] || die "missing public cold account for $NODE"
 
 if [[ ! -s "$IDENTITY" ]]; then
   step "Create $NODE identity"

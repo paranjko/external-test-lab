@@ -4,12 +4,39 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSWORD_FILE="${1:-$ROOT/state/secrets/operator.keyring}"
 [[ -s "$PASSWORD_FILE" ]] || { echo "Missing $PASSWORD_FILE; run scripts/make-secrets.sh" >&2; exit 1; }
 PASSWORD="$(<"$PASSWORD_FILE")"
+shift || true
 BACKUP_DIR="$ROOT/artifacts/mnemonics"
+normalize_account_name() {
+  local input="$1" base
+  case "$input" in
+    gdc-node[0-4]-cold|gdc-node[0-4]) base="${input%-cold}" ;;
+    node[0-4]-cold) base="gdc-${input%-cold}" ;;
+    node[0-4]) base="gdc-$input" ;;
+    gdc-gateway-cold|gdc-gateway) base="gdc-gateway" ;;
+    *) echo "Unknown account target: $input" >&2; return 1 ;;
+  esac
+  printf '%s\n' "$base-cold"
+}
+
+if [[ "$#" -gt 0 ]]; then
+  TARGETS=()
+  for input in "$@"; do
+    TARGETS+=( "$(normalize_account_name "$input")" )
+  done
+else
+  TARGETS=(gdc-node0-cold gdc-node1-cold gdc-node2-cold gdc-node3-cold gdc-node4-cold gdc-gateway)
+fi
+
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 umask 077
 mkdir -p "$BACKUP_DIR"
 new_count=0 keep_count=0
-for name in gdc-node0-cold gdc-node1-cold gdc-node2-cold gdc-node3-cold gdc-node4-cold gdc-gateway; do
+declare -A seen=()
+for name in "${TARGETS[@]}"; do
+  if [[ -n "${seen[$name]:-}" ]]; then
+    continue
+  fi
+  seen[$name]=1
   backup="$BACKUP_DIR/$name.mnemonic"
   if printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys show "$name" --keyring-backend file -a >/dev/null 2>&1; then
     [[ -s "$backup" ]] || { echo "FAILED  $name exists without $backup; rotate the account" >&2; exit 1; }
