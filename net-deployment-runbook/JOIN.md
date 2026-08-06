@@ -47,12 +47,16 @@ From an operator host that already ran genesis:
 The `join` phase now:
 
 - creates a missing cold account for the requested node on demand;
+- ensures ML capability evidence for this node is available. If qualification evidence is missing or stale, it is produced automatically, then reused;
 - renders node/edge/agent artifacts from current inventory;
 - installs and starts the node services;
 - waits for chain synchronization;
 - registers the participant;
 - funds and grants ML permission;
 - waits for ACTIVE status.
+
+To disable auto-qualification in exceptional cases (for example, when you want
+to run manual pre-staging), set `GDC_AUTO_QUALIFY_ML=false`.
 
 For `node4`, the script also installs and starts the dedicated Blackwell ML host.
 

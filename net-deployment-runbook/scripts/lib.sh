@@ -148,6 +148,26 @@ require_ml_qualification() {
   jq -e '.choices[0].message.content | type == "string"' "$report/completion.json" >/dev/null || die "$host qualification lacks a completion"
 }
 
+ensure_ml_qualification() {
+  local host="$1" warn
+  if latest_ml_qualification_report "$host" >/dev/null; then
+    if require_ml_qualification "$host" >/dev/null 2>&1; then
+      return 0
+    fi
+    warn="qualification for $host exists but is not valid for current model or completion"
+  else
+    warn='no successful ML qualification evidence found'
+  fi
+
+  if [[ "${GDC_AUTO_QUALIFY_ML:-1}" == 0 || "${GDC_AUTO_QUALIFY_ML}" == false ]]; then
+    die "${warn}; run ./gdc.sh qualify-ml before creating its chain participant"
+  fi
+
+  step "${warn^}, running qualification for $host automatically"
+  GDC_QUALIFY_HOSTS="$host" "$ROOT/scripts/phase-qualify-ml.sh"
+  require_ml_qualification "$host"
+}
+
 # Qualification attempts may fail after creating their report directory. Select
 # the newest complete evidence bundle instead of letting an incomplete later
 # attempt hide a prior successful qualification for the same pinned model.

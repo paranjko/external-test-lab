@@ -24,10 +24,11 @@ if [[ -n "$HANDOFF_DIR" ]]; then
   install -m 0600 "$HANDOFF_DIR/genesis/genesis-seeds.txt" "$GENESIS/genesis-seeds.txt"
 fi
 if [[ "$INDEX" == 4 ]]; then
-  require_ml_qualification gdc-node4-ml
+  ML_TARGET='gdc-node4-ml'
 else
-  require_ml_qualification "$NODE"
+  ML_TARGET="$NODE"
 fi
+ensure_ml_qualification "$ML_TARGET"
 URL="$(node_url "$NODE")"
 PUBLIC_HOST="${URL#https://}"
 getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve to IPv4"
