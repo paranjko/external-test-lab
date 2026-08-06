@@ -1,28 +1,79 @@
 const cfg=window.GDC_CONFIG;
 const $=id=>document.getElementById(id);
-const chainRpcHost=cfg.nodes.find(node=>node.name==='gdc-node4')?.publicHost;
+const chainRpcHost=cfg.nodes.find(node=>node.name==='gdc-node4')?.publicHost||cfg.nodes.find(node=>node.name==='gdc-node0')?.publicHost;
 $('chain-id').textContent=cfg.chainId;$('model-id').textContent=cfg.model;
 if(cfg.telegramBot){$('contact').textContent='Open Telegram bot';$('contact').href=cfg.telegramBot}else{$('contact').textContent='Telegram bot is not configured yet';$('contact').removeAttribute('href')}
 $('grafana').href=cfg.grafana;
 const cards=new Map();
-for(const n of cfg.nodes){const el=document.createElement('article');el.className=`node ${n.mode||'active'}`;el.innerHTML=`<h3>${n.name}</h3><div class="status" data-k="status">${n.mode==='skip'?'SKIP':'checking…'}</div><small data-k="scope">${n.mode==='skip'?n.reason:n.address}</small><div class="metric"><span>height</span><b data-k="height">${n.mode==='skip'?'–':'…'}</b></div><div class="metric"><span>syncing</span><b data-k="sync">${n.mode==='skip'?'not joined':'…'}</b></div><div class="metric"><span>peers</span><b data-k="peers">${n.mode==='skip'?'–':'…'}</b></div>`;if(n.mode==='skip'){el.querySelector('[data-k="status"]').className='status skip'}$('nodes').append(el);cards.set(n.name,el)}
+let observedNodes=cfg.nodes.map(node=>({...node}));
+function nodeKey(node){return node.address||node.name}
+function createCard(node){
+  const el=document.createElement('article');
+  el.className=`node ${node.mode||'active'}`;
+  el.innerHTML=`<h3></h3><div class="status" data-k="status"></div><small data-k="scope"></small><div class="metric"><span>height</span><b data-k="height"></b></div><div class="metric"><span>chain sync</span><b data-k="sync"></b></div><div class="metric"><span>peers</span><b data-k="peers"></b></div>`;
+  el.querySelector('h3').textContent=node.name;
+  set(el,'status',node.mode==='skip'?'SKIP':'checking…');
+  set(el,'scope',node.mode==='skip'?node.reason:node.address);
+  set(el,'height',node.mode==='skip'?'–':'…');
+  set(el,'sync',node.mode==='skip'?'not joined':'…');
+  set(el,'peers',node.mode==='skip'?'–':'…');
+  if(node.mode==='skip')el.querySelector('[data-k="status"]').className='status skip';
+  $('nodes').append(el);
+  cards.set(nodeKey(node),el);
+  return el;
+}
+for(const node of observedNodes)createCard(node);
 async function json(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`${r.status}`);return r.json()}
 async function text(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(`${r.status}`);return r.text()}
 function set(card,key,value){card.querySelector(`[data-k="${key}"]`).textContent=value}
 function setUtcTime(id,date,label){const el=$(id);el.dateTime=date.toISOString();const value=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(date).replace(',','');el.textContent=`${label} ${value} UTC`}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]))}
 function syncStatus(value){
-  if (value === true || value === 'true') return 'catching up';
-  if (value === false || value === 'false') return 'synced';
+  const normalized = value === null || value === undefined ? '' : String(value).trim().toLowerCase();
+  if (normalized === 'true' || value === true) return 'sync in progress';
+  if (normalized === 'false' || value === false) return 'in sync';
   return 'checking';
+}
+
+function participantNode(participant){
+  let endpoint;
+  try{endpoint=new URL(participant.inference_url)}catch{endpoint=null}
+  const host=endpoint?.hostname||'';
+  const catalog=(cfg.nodeCatalog||cfg.nodes).find(node=>node.address===participant.address||node.publicHost===host);
+  const knownHost=host.match(/^node([0-4])\.gonka-dev\.net$/);
+  return {
+    ...(catalog||{}),
+    name:catalog?.name||(knownHost?`gdc-node${knownHost[1]}`:host||`${participant.address.slice(0,10)}…`),
+    address:participant.address,
+    publicHost:catalog?.publicHost||host,
+    statusBase:catalog?.statusBase||(knownHost?`/status/node${knownHost[1]}`:''),
+    participantStatus:String(participant.status||'UNKNOWN'),
+  };
+}
+
+async function reconcileParticipants(){
+  const state=await json('/status/participants');
+  const participants=Array.isArray(state.participant)?state.participant:[];
+  const next=participants.map(participantNode).sort((left,right)=>left.name.localeCompare(right.name));
+  const liveKeys=new Set(next.map(nodeKey));
+  for(const [key,card] of cards){if(!liveKeys.has(key)){card.remove();cards.delete(key)}}
+  for(const node of next){
+    let card=cards.get(nodeKey(node));
+    if(!card)card=createCard(node);
+    card.querySelector('h3').textContent=node.name;
+    set(card,'scope',node.address);
+  }
+  observedNodes=next;
+  return Number(state.block_height)||0;
 }
 
 async function initValidatorMap(){if(typeof window==='undefined')return;const container=$('validator-map'),shell=$('validator-map-shell'),button=$('validator-map-fullscreen');if(!container||!shell||!button)return;const module=await import('https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.esm.js');const L=module.default??module;const bounds=[[-58,-175],[84,175]],darkTiles='https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',lightTiles='https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',isLight=()=>getComputedStyle(document.documentElement).colorScheme.includes('light'),map=L.map(container,{center:[20,0],zoom:2,minZoom:1,maxZoom:10,zoomSnap:.1,maxBounds:bounds,maxBoundsViscosity:1,worldCopyJump:true,zoomControl:true,attributionControl:false}),tiles=L.tileLayer(isLight()?lightTiles:darkTiles,{subdomains:'abcd',maxZoom:20}).addTo(map),primary=getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim();const groups=new Map();for(const validator of cfg.validators||[]){if(!validator.geo||!Number.isFinite(validator.geo.lat)||!Number.isFinite(validator.geo.lon))continue;const key=`${validator.geo.lat.toFixed(1)},${validator.geo.lon.toFixed(1)}`;(groups.get(key)||groups.set(key,[]).get(key)).push(validator)}for(const validators of groups.values()){const first=validators[0],count=validators.length,radius=Math.min(5+Math.sqrt(count)*3,18),rows=validators.map(v=>`<li><span>${escapeHtml(v.ip)}</span><span>${escapeHtml(v.ownerAddress.slice(0,10))}</span><span>${escapeHtml(v.licenseCount)}</span></li>`).join('');const popup=`<section class="validator-popup"><strong>${escapeHtml(first.geo.city)}, ${escapeHtml(first.geo.country)}</strong><p>${count} validator${count===1?'':'s'} at this location</p><ul>${rows}</ul></section>`;L.circleMarker([first.geo.lat,first.geo.lon],{radius,color:primary,weight:1,opacity:.95,fillColor:primary,fillOpacity:.7,className:'validator-marker'}).addTo(map).bindPopup(popup,{closeButton:true,maxWidth:340})}const fit=()=>{map.invalidateSize({animate:false,pan:false});map.fitBounds(bounds,{animate:false})};map.on('zoomend',()=>{map.panInsideBounds(bounds,{animate:false});map.invalidateSize({animate:false,pan:false});tiles.redraw()});const observer=new ResizeObserver(fit);observer.observe(container);const setFullscreen=open=>{shell.classList.toggle('is-fullscreen',open);button.setAttribute('aria-pressed',String(open));button.textContent=open?'Close':'Fullscreen';fit();setTimeout(fit,240)};button.addEventListener('click',()=>setFullscreen(!shell.classList.contains('is-fullscreen')));const onKeydown=event=>{if(event.key==='Escape'&&shell.classList.contains('is-fullscreen'))setFullscreen(false)};document.addEventListener('keydown',onKeydown);const theme=window.matchMedia('(prefers-color-scheme: light)'),onTheme=()=>tiles.setUrl(isLight()?lightTiles:darkTiles);theme.addEventListener('change',onTheme);window.addEventListener('pagehide',()=>{observer.disconnect();theme.removeEventListener('change',onTheme);document.removeEventListener('keydown',onKeydown);map.remove()},{once:true});fit()}
 initValidatorMap().catch(()=>{$('validator-map').textContent='Validator map is unavailable'})
 async function refresh(){let healthy=0,best=0;
-  await Promise.all(cfg.nodes.filter(n=>n.mode!=='skip').map(async n=>{const card=cards.get(n.name);try{const [s,net]=await Promise.all([json(`${n.statusBase}/chain-rpc/status`),json(`${n.statusBase}/chain-rpc/net_info`)]);const h=Number(s.result.sync_info.latest_block_height),peers=Number(net.result.n_peers);best=Math.max(best,h);set(card,'height',h.toLocaleString());set(card,'sync',syncStatus(s.result.sync_info.catching_up));set(card,'peers',peers);if(peers===0){set(card,'status','online (no peers)');card.querySelector('[data-k="status"]').className='status bad'}else{set(card,'status','online');card.querySelector('[data-k="status"]').className='status ok'};healthy++}catch(e){set(card,'status',`offline (${e.message})`);card.querySelector('[data-k="status"]').className='status bad'}}));
+  try{best=await reconcileParticipants()}catch{}
+  await Promise.all(observedNodes.filter(n=>n.mode!=='skip').map(async n=>{const card=cards.get(nodeKey(n));if(!card)return;if(!n.statusBase){set(card,'status',`${n.participantStatus.toLowerCase()} (chain)`);card.querySelector('[data-k="status"]').className=n.participantStatus==='ACTIVE'?'status ok':'status bad';set(card,'height',best?best.toLocaleString():'–');set(card,'sync','endpoint not proxied');set(card,'peers','–');return}try{const [s,net]=await Promise.all([json(`${n.statusBase}/chain-rpc/status`),json(`${n.statusBase}/chain-rpc/net_info`)]);const h=Number(s.result.sync_info.latest_block_height),peers=Number(net.result.n_peers);best=Math.max(best,h);set(card,'height',h.toLocaleString());set(card,'sync',syncStatus(s.result.sync_info.catching_up));set(card,'peers',peers);if(peers===0){set(card,'status','online (no peers)');card.querySelector('[data-k="status"]').className='status bad'}else{set(card,'status','online');card.querySelector('[data-k="status"]').className='status ok'};healthy++}catch(e){set(card,'status',`offline (${e.message})`);card.querySelector('[data-k="status"]').className='status bad'}}));
  $('best-height').textContent=best?best.toLocaleString():'–';setUtcTime('updated',new Date(),'Updated');
- try{if(!chainRpcHost)throw new Error('node4 chain RPC host is missing');const v=await json(`https://${chainRpcHost}/chain-rpc/validators?per_page=100`);const vals=v.result.validators||[];const powers=vals.map(x=>BigInt(x.voting_power));const total=powers.reduce((a,b)=>a+b,0n);const max=powers.reduce((a,b)=>a>b?a:b,0n);const share=total?Number(max*10000n/total)/100:0;const unsafe=total>0n&&max*3n>=total;$('power-share').textContent=`${share.toFixed(2)}%`;$('power-share').style.color=unsafe?'var(--bad)':'var(--ok)'}catch{$('power-share').textContent='–'}
+ try{if(!chainRpcHost)throw new Error('chain RPC host is missing');const v=await json(`https://${chainRpcHost}/chain-rpc/validators?per_page=100`);const vals=v.result.validators||[];const powers=vals.map(x=>BigInt(x.voting_power));const total=powers.reduce((a,b)=>a+b,0n);const max=powers.reduce((a,b)=>a>b?a:b,0n);const share=total?Number(max*10000n/total)/100:0;const unsafe=total>0n&&max*3n>=total;$('power-share').textContent=`${share.toFixed(2)}%`;$('power-share').style.color=unsafe?'var(--bad)':'var(--ok)'}catch{$('power-share').textContent='–'}
  try{const gateway=await json('/status/gateway/v1/status');const runtime=gateway.escrow_id?gateway:(gateway.devshards||[]).find(item=>item.active&&item.phase==='active'&&!item.requests_blocked);if(!runtime?.id&&!runtime?.escrow_id)throw new Error('no active unblocked escrow');const escrowId=runtime.id||runtime.escrow_id;$('gateway-access').hidden=false;$('gateway-detail').textContent=`Escrow #${escrowId} is ACTIVE – authenticated chain-accounted inference is accepting requests`}catch(error){$('gateway-access').hidden=true}
  let gatewayState;try{gatewayState=await json('/status/gateway/v1/status');if(!((gatewayState.escrow_id&&gatewayState.phase==='active'&&!gatewayState.requests_blocked)||gatewayState.runtimes>0||(gatewayState.devshards||[]).some(item=>item.active&&!item.requests_blocked)))throw new Error('no active DevShard runtime');const metricText=await text('/status/gateway/metrics'),metricValue=name=>[...metricText.matchAll(new RegExp(`^${name}(?:\\{[^}]*\\})?\\s+([0-9.e+-]+)$`,'gm'))].reduce((total,match)=>total+Number(match[1]),0),inflight=metricValue('devshard_gateway_inflight_requests'),tokens=metricValue('devshard_gateway_inflight_input_tokens'),accepted=metricValue('devshard_gateway_requests_total'),rejected=metricValue('devshard_gateway_limit_rejections_total'),capacity=metricValue('devshard_gateway_capacity_scale');const values=[String(inflight),tokens.toLocaleString(),accepted.toLocaleString(),rejected.toLocaleString(),`${Math.round(capacity*100)}%`];[...$('quality-metrics').children].forEach((card,index)=>card.querySelector('strong').textContent=values[index]);$('quality-active').textContent=inflight;$('quality-accepted').textContent=accepted;$('quality-rejected').textContent=rejected;const health=$('quality-health'),state=inflight>0?'active':'idle';health.dataset.state=state;$('quality-health-state').textContent=state.toUpperCase();setUtcTime('quality-updated',new Date(),'Updated')}catch(error){const offline=healthy===0,pending=!offline&&Boolean(gatewayState)&&gatewayState.mode==='gateway'&&gatewayState.runtimes===0&&(gatewayState.devshards||[]).length===0,state=offline?'OFFLINE':pending?'PENDING':'UNAVAILABLE';$('quality-health-state').textContent=state;$('quality-health').dataset.state=pending?'degraded':'down';$('quality-updated').textContent=offline?'Network reset – no nodes online':pending?'Awaiting governance approval and an active DevShard':'Gateway unavailable – no active DevShard'}
 }

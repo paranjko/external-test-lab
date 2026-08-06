@@ -28,6 +28,14 @@ grep -Fq 'GDC_GOVERNANCE_AUTO_VOTE=true' "$ROOT/scripts/phase-bootstrap-access.s
 grep -Fq 'ensure-genesis-validation-weight.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'AMOUNT="${AMOUNT:-$MIN_AMOUNT}"' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'AMOUNT <= SPENDABLE_AMOUNT' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED=true' "$ROOT/.env.example"
+grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=true' "$ROOT/.env.example"
+grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED:-true' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED:-true' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS=0' "$ROOT/.env.example"
+grep -Fq 'GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT=1000000000' "$ROOT/.env.example"
+grep -Fq 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=0' "$ROOT/.env.example"
+grep -Fq '.settings.max_concurrent_requests == 0 and .settings.max_concurrent_requests_per_10000_weight <= 0' "$ROOT/scripts/phase-ops.sh"
 if grep -Fq 'GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-10000000000' "$ROOT/04-ops/create-gateway.sh"; then
   echo 'gateway escrow must not default to the full Genesis allocation' >&2
   exit 1
@@ -36,6 +44,9 @@ grep -Fq 'poc_validation_delay = $poc_validation_delay' "$ROOT/scripts/phase-gov
 grep -Fq 'validation_weights' "$ROOT/scripts/ensure-genesis-validation-weight.sh"
 grep -Fq 'test-inference.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'handle_path /gateway/*' "$ROOT/04-ops/Caddyfile"
+grep -Fq 'handle /status/participants' "$ROOT/04-ops/Caddyfile"
+grep -Fq "json('/status/participants')" "$ROOT/04-ops/site/app.js"
+grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
@@ -107,9 +118,9 @@ unset genesis_out
 grep -Fq 'GDC_NODE_HANDOFF_DIR' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'operator.keyring' "$ROOT/scripts/phase-handoff-approve.sh"
 if grep -Fq 'operator.keyring' "$ROOT/scripts/phase-handoff-create.sh"; then
-  echo 'handoff bundle creator must not transfer the controller operator key' >&2
+  echo 'handoff bundle creator must not transfer the coordinator operator key' >&2
   exit 1
 fi
 grep -Fq 'sha256sum -c manifest.sha256' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'cold address does not match controller-created account' "$ROOT/scripts/phase-handoff-approve.sh"
+grep -Fq 'cold address does not match coordinator-created account' "$ROOT/scripts/phase-handoff-approve.sh"
 printf 'PASS release/model profile invariants\n'

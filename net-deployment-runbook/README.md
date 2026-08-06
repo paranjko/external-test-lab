@@ -55,9 +55,9 @@ exclusive local lifecycle lock, so a second phase cannot race an active one:
 ./gdc.sh --release testnet-0.2.14 qualify-ml
 ./gdc.sh --release testnet-0.2.14 genesis
 ./gdc.sh --release testnet-0.2.14 bootstrap-access
-./gdc.sh --release testnet-0.2.14 join node1
-./gdc.sh --release testnet-0.2.14 join node2
-./gdc.sh --release testnet-0.2.14 join node4
+./gdc.sh --release testnet-0.2.14 join gdc-node1
+./gdc.sh --release testnet-0.2.14 join gdc-node2
+./gdc.sh --release testnet-0.2.14 join gdc-node4
 ./gdc.sh --release testnet-0.2.14 verify
 ```
 
@@ -66,6 +66,10 @@ governance windows and one PoC validation slot. Its purpose is to make
 lifecycle testing practical; it is not a claim about production timing. The
 validation slot must remain non-zero: zero disables PoC validation and makes a
 chain-accounted gateway impossible to verify.
+
+Every `join` treats the target node as an independent validator. Genesis can be
+started by one operator, while other nodes can be added by the same operator or
+delegated operators via handoff.
 
 ### One-participant access bootstrap
 
@@ -97,20 +101,20 @@ Genesis allocation, because governance deposits have already reduced the
 gateway account's spendable balance. An explicit
 `GDC_GATEWAY_ESCROW_AMOUNT_NGONKA` must fit the current spendable balance.
 
-## Independent operator node join
+## Operator handoff onboarding
 
 An additional GPU Network Node may be operated by a different person or
-organization. They must never receive `state/secrets/operator.keyring`, the
-controller's mnemonic backups, gateway credentials, or any unrelated node
-secret. The controller creates a target-specific encrypted handoff after
-Genesis; the independent operator qualifies, deploys and registers that node;
-the controller then confirms the on-chain registration and grants the minimum
-funding and ML operational permission.
+organization. They must never receive `state/secrets/operator.keyring`, coordinator
+mnemonic backups, gateway credentials, or any unrelated node secret. The
+coordinator creates a target-specific encrypted handoff after Genesis; the
+operator qualifies, deploys and registers that node; the coordinator then
+confirms the on-chain registration and grants the minimum funding and ML
+operational permission.
 
-Controller workstation:
+Coordinator workstation:
 
 ```bash
-./gdc.sh handoff create node2
+./gdc.sh handoff create gdc-node2
 ```
 
 Transfer the emitted `artifacts/operator-handoffs/gdc-node2/` directory through
@@ -126,19 +130,19 @@ GDC_QUALIFY_HOSTS=gdc-node2 \
 
 GDC_ENV=/secure/gdc-node2/operator.env \
 GDC_NODE_HANDOFF_DIR=/secure/gdc-node2 \
-  ./gdc.sh join node2
+  ./gdc.sh join gdc-node2
 ```
 
 The second command ends in the registered-but-not-active state and writes an
 `artifacts/operator-requests/gdc-node2-activation-request.json` file. Transfer
-that public activation request to the controller, which performs the only
+that public activation request to the coordinator, which performs the only
 privileged action:
 
 ```bash
-./gdc.sh handoff approve node2 /received/gdc-node2-activation-request.json
+./gdc.sh handoff approve gdc-node2 /received/gdc-node2-activation-request.json
 ```
 
-`handoff approve` verifies the expected chain ID, controller-created cold
+`handoff approve` verifies the expected chain ID, coordinator-created cold
 address and on-chain registration before it funds the account or grants ML
 permission. It records `state/joined/gdc-node2` only after the chain reports
 `ACTIVE`. This is the required rehearsal for adding a node after bootstrap:
@@ -163,6 +167,26 @@ DevShard versions and the dedicated gateway creator are approved through chain g
 
 `ops gateway` must report an active unblocked DevShard before the public OpenAI-compatible access surface is considered ready. A successful direct MLNode response alone is not proof of chain-accounted gateway inference.
 
+Gateway escrow rotation is enabled by default. The gateway prepares a
+replacement escrow before the short test-lab epoch transition and keeps the
+same client API keys while routing later requests through the replacement.
+This is required because settled or pruned escrows cannot accept new
+inferences. Automatic settlement is also enabled so rotated escrows return
+their unused balance instead of exhausting the gateway account. Set both
+`GDC_GATEWAY_ESCROW_ROTATION_ENABLED=false` and
+`GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=false` only for the bounded
+manual settlement rehearsal; that is not an always-on access mode.
+
+Issued API keys have no request-count or lifetime quota. The test-lab defaults
+use the gateway's `0` (unlimited) values for concurrent requests and input
+tokens in flight. Capacity-derived concurrency uses an intentionally
+non-limiting value because the gateway normalizes zero there to its
+conservative default. An arbitrary eight-request ceiling therefore cannot make
+otherwise valid keys appear exhausted.
+Protocol phases, a missing active escrow, unavailable ML capacity and the
+model context window remain real service boundaries and must be reported as
+such.
+
 ## Telegram key issuer
 
 The bot implementation is part of this release at
@@ -186,9 +210,10 @@ authenticated key before reporting success.
 Use these commands for a controlled node recovery rehearsal. `verify` waits for synchronization and checks common-height consistency; a running container is not sufficient evidence of recovery.
 
 ```bash
-./gdc.sh node stop node1
-./gdc.sh node start node1
-./gdc.sh node verify node1
+./gdc.sh node stop gdc-node1
+./gdc.sh node start gdc-node1
+./gdc.sh node verify gdc-node1
+./gdc.sh node reset gdc-node1
 ```
 
 ## Governed upgrade: 0.2.14 to 0.2.15

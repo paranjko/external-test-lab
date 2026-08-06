@@ -52,12 +52,12 @@ Create .env from .env.example, then run:
   ./gdc.sh --release testnet-0.2.14 genesis
   ./gdc.sh --release testnet-0.2.14 bootstrap-access
   ./gdc.sh --release testnet-0.2.14 genesis --time=+5m
-  ./gdc.sh --release testnet-0.2.14 join node1
-  ./gdc.sh join node2
-  ./gdc.sh join node3
-  ./gdc.sh join node4
-  ./gdc.sh handoff create node2
-  ./gdc.sh handoff approve node2 <activation-request.json>
+  ./gdc.sh --release testnet-0.2.14 join gdc-node1
+  ./gdc.sh join gdc-node2
+  ./gdc.sh join gdc-node3
+  ./gdc.sh join gdc-node4
+  ./gdc.sh handoff create gdc-node2
+  ./gdc.sh handoff approve gdc-node2 <activation-request.json>
   ./gdc.sh governance devshard
   ./gdc.sh vote <proposal-id> [yes|no|abstain|no_with_veto]
   ./gdc.sh ops gateway
@@ -66,9 +66,10 @@ Create .env from .env.example, then run:
   ./gdc.sh ops meter
   ./gdc.sh ops explorer
   ./gdc.sh telegram-bot
-  ./gdc.sh node stop node1
-  ./gdc.sh node start node1
-  ./gdc.sh node verify node1
+  ./gdc.sh node stop gdc-node1
+  ./gdc.sh node start gdc-node1
+  ./gdc.sh node verify gdc-node1
+  ./gdc.sh node reset gdc-node1
   ./gdc.sh ops edge
   ./gdc.sh --release testnet-0.2.14 verify
   ./gdc.sh settle
@@ -162,7 +163,7 @@ case "$COMMAND" in
     run_phase "ops-$1" "$ROOT/scripts/phase-ops.sh" "$1"
     ;;
   node)
-    [[ $# -eq 2 && "$1" =~ ^(stop|start|verify)$ ]] || { usage; exit 2; }
+    [[ $# -eq 2 && "$1" =~ ^(stop|start|verify|reset)$ ]] || { usage; exit 2; }
     run_phase "node-$1-$2" "$ROOT/scripts/phase-node.sh" "$1" "$2"
     ;;
   governance)

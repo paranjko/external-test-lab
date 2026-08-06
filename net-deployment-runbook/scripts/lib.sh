@@ -150,6 +150,7 @@ require_ml_qualification() {
 
 ensure_ml_qualification() {
   local host="$1" warn
+  local auto_qualify="${GDC_AUTO_QUALIFY_ML:-1}"
   if latest_ml_qualification_report "$host" >/dev/null; then
     if require_ml_qualification "$host" >/dev/null 2>&1; then
       return 0
@@ -159,7 +160,7 @@ ensure_ml_qualification() {
     warn='no successful ML qualification evidence found'
   fi
 
-  if [[ "${GDC_AUTO_QUALIFY_ML:-1}" == 0 || "${GDC_AUTO_QUALIFY_ML}" == false ]]; then
+  if [[ "$auto_qualify" == 0 || "$auto_qualify" == false ]]; then
     die "${warn}; run ./gdc.sh qualify-ml before creating its chain participant"
   fi
 
@@ -246,7 +247,7 @@ EOF
 }
 
 node_name() {
-  [[ "${1:-}" =~ ^(node[1-4]|gdc-node[1-4])$ ]] || die "expected node1, node2, node3, or node4"
+  [[ "${1:-}" =~ ^(node[1-4]|gdc-node[1-4])$ ]] || die "expected node1, gdc-node1, node2, gdc-node2, node3, gdc-node3, node4, or gdc-node4"
   [[ "$1" == gdc-* ]] && printf '%s\n' "$1" || printf 'gdc-%s\n' "$1"
 }
 

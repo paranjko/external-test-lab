@@ -130,7 +130,7 @@ if [[ -n "$HANDOFF_DIR" ]]; then
     '{schema: $schema, node: $node, chain_id: $chain_id, cold_address: $address, identity: $identity[0]}' \
     >"$REQUEST"
   chmod 600 "$REQUEST"
-  printf '\n%s is registered but intentionally not activated. Transfer this request to the controller operator:\n%s\n' "$NODE" "$REQUEST"
+  printf '\n%s is registered but intentionally not activated. Transfer this request to the coordinator:\n%s\n' "$NODE" "$REQUEST"
   exit 0
 fi
 step "Fund $NODE and grant ML operational permissions"

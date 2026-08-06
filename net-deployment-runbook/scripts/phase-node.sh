@@ -5,9 +5,9 @@ load_project
 
 ACTION="${1:-}"
 NODE_INPUT="${2:-}"
-[[ "$NODE_INPUT" =~ ^(node[0-4]|gdc-node[0-4])$ ]] || die 'expected node0, node1, node2, node3, or node4'
+[[ "$NODE_INPUT" =~ ^(node[0-4]|gdc-node[0-4])$ ]] || die 'expected node0, gdc-node0, node1, gdc-node1, node2, gdc-node2, node3, gdc-node3, node4, or gdc-node4'
 if [[ "$NODE_INPUT" == gdc-* ]]; then NODE="$NODE_INPUT"; else NODE="gdc-$NODE_INPUT"; fi
-[[ "$ACTION" =~ ^(stop|start|verify)$ ]] || die 'expected: node stop|start|verify nodeN'
+[[ "$ACTION" =~ ^(stop|start|verify|reset)$ ]] || die 'expected: node stop|start|verify|reset nodeN (or gdc-nodeN)'
 host_is_skipped "$NODE" && die "$NODE is excluded by GDC_SKIP_HOSTS"
 ssh_ready "$NODE" || die "$NODE is unreachable"
 
@@ -63,6 +63,41 @@ wait_for_node_sync() {
   die "$NODE did not catch up within ${GDC_NODE_START_WAIT_SECONDS:-300}s"
 }
 
+reset_node() {
+  step "Reset $NODE deployment state and remove deployed containers"
+  ssh -T "$NODE" "NODE='$NODE' bash -s" <<'REMOTE'
+set -Eeuo pipefail
+
+compose_down_dir() {
+  local dir="$1"
+  [[ -d "$dir" ]] || return 0
+
+  if [[ ! -f "$dir/compose.yaml" ]]; then
+    return 0
+  fi
+
+  if [[ -f "$dir/.env" ]]; then
+    docker compose --env-file "$dir/.env" -f "$dir/compose.yaml" down -v --remove-orphans || true
+  else
+    docker compose -f "$dir/compose.yaml" down -v --remove-orphans || true
+  fi
+}
+
+compose_down_dir "/srv/dai/monitoring-agent"
+compose_down_dir "/srv/dai/edge"
+compose_down_dir "/srv/dai/deploy/$NODE"
+
+rm -rf -- \
+  "/srv/dai/deploy/$NODE" \
+  "/tmp/gdc-deploy-"*-"$NODE" \
+  "/tmp/gdc-reset-"*-"$NODE"
+REMOTE
+  if [[ -e "$STATE/joined/$NODE" ]]; then
+    rm -f "$STATE/joined/$NODE"
+  fi
+  printf 'PASS %s reset\n' "$NODE"
+}
+
 case "$ACTION" in
   stop)
     step "Stop Network Node services on $NODE without deleting state"
@@ -76,4 +111,5 @@ case "$ACTION" in
     verify_node
     ;;
   verify) verify_node ;;
+  reset) reset_node ;;
 esac

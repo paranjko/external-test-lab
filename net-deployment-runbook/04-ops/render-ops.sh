@@ -27,6 +27,7 @@ write_env "$OUTPUT/.env" "SITE_HOST=$SITE_HOST" "API_HOST=$API_HOST" "GRAFANA_HO
   "GRAFANA_IMAGE=$GRAFANA_IMAGE" "LOCAL_GATEWAY_IMAGE=$LOCAL_GATEWAY_IMAGE" "CADDY_IMAGE=$CADDY_IMAGE"
 nodes='[]'
 validators='[]'
+node_catalog='[]'
 node_indexes=()
 geo_labels() {
   case "$1" in
@@ -49,6 +50,7 @@ geo_json() {
 for i in 0 1 2 3 4; do
   host="NODE${i}_PUBLIC_HOST"
   geo="$(geo_json "$i")"
+  node_catalog="$(jq --arg name "gdc-node$i" --arg host "${!host}" --arg status "/status/node$i" --argjson geo "$geo" '. + [{name:$name,publicHost:$host,statusBase:$status,geo:$geo}]' <<<"$node_catalog")"
   if [[ -e "$ROOT/state/joined/gdc-node$i" ]]; then
     node_indexes+=("$i")
     address="$(jq -r .address "$ACCOUNTS/gdc-node$i-cold.json")"
@@ -61,7 +63,8 @@ for i in 0 1 2 3 4; do
   fi
 done
 jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$API_HOST/v1" --arg direct "http://$NODE0_PUBLIC_HOST:8082/v1" --arg telegram "$TELEGRAM_BOT_URL" --arg grafana "https://$GRAFANA_HOST/d/gdc-overview/gonka-devnet-community-overview?orgId=1&from=now-6h&to=now" --argjson nodes "$nodes" --argjson validators "$validators" \
-  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafana:$grafana,nodes:$nodes,validators:$validators}' | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
+  --argjson nodeCatalog "$node_catalog" \
+  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafana:$grafana,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
 {
   cat <<'YAML'
 global:
