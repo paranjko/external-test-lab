@@ -25,15 +25,6 @@ www.{$SITE_HOST} {
 
 {$SITE_HOST} {
   encode zstd gzip
-  @legacy-meter path /meter /meter/*
-  respond @legacy-meter 404
-  @meter-api path_regexp meter_api ^/meter-api/(.*)$
-  handle @meter-api {
-    rewrite * /api/{re.meter_api.1}
-    reverse_proxy http://{$NODE0_PUBLIC_HOST}:18000 {
-      header_up Host {$NODE0_PUBLIC_HOST}
-    }
-  }
   # The status site is an operations service on node0, not the Network Node
   # proxy's default dashboard. Node4 remains the only public TLS edge.
   reverse_proxy http://{$NODE0_PUBLIC_HOST}:8081 {

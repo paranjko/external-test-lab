@@ -54,7 +54,7 @@
           "epoch_multiplier": "1",
           "epoch_shift": "0",
           "poc_stage_duration": "4",
-          "poc_exchange_duration": "1",
+          "poc_exchange_duration": "8",
           "poc_validation_delay": "10",
           "poc_validation_duration": "4",
           "set_new_validators_delay": "1",
@@ -164,7 +164,7 @@
           "allowed_transfer_addresses": []
         },
         "genesis_guardian_params": {
-          "network_maturity_threshold": "0",
+          "network_maturity_threshold": "2000000",
           "network_maturity_min_height": "0",
           "guardian_addresses": []
         },
@@ -250,11 +250,11 @@
           "value": "25",
           "exponent": -2
         },
-        "genesis_guardian_enabled": false,
-        "genesis_guardian_network_maturity_threshold": "0",
+        "genesis_guardian_enabled": true,
+        "genesis_guardian_network_maturity_threshold": "2000000",
         "genesis_guardian_multiplier": {
-          "value": "0",
-          "exponent": 0
+          "value": "52",
+          "exponent": -2
         },
         "genesis_guardian_addresses": []
       }

@@ -10,6 +10,7 @@ option="${2:-yes}"
 
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-vote-proposal-$proposal_id"
 mkdir -p "$RUN"
+install_evidence_exit_trap 'Governance vote'
 record_phase_profile vote-proposal
 rpc="${GDC_CHAIN_RPC_URL:-https://$NODE4_PUBLIC_HOST/chain-rpc/}"
 
@@ -18,11 +19,34 @@ ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal
 jq -e '.proposal.status == "PROPOSAL_STATUS_VOTING_PERIOD" or .proposal.status == "PROPOSAL_STATUS_PASSED"' "$RUN/proposal-before.json" >/dev/null || die "proposal $proposal_id is not votable or passed"
 ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id/votes" >"$RUN/votes-before.json"
 
+# Cosmos may discard the individual vote list when the short test-lab voting
+# period closes. A rerun must not try to vote on an inactive proposal or claim
+# that every configured account voted. Record only the final chain outcome.
+proposal_status="$(jq -er '.proposal.status' "$RUN/proposal-before.json")"
+if [[ "$proposal_status" == PROPOSAL_STATUS_PASSED ]]; then
+  tally_field="${option}_count"
+  tally="$(jq -er --arg field "$tally_field" '.proposal.final_tally_result[$field] | tonumber' "$RUN/proposal-before.json")"
+  (( tally > 0 )) || die "passed proposal $proposal_id has no $option voting power in its final tally"
+  cp "$RUN/proposal-before.json" "$RUN/proposal-after.json"
+  cp "$RUN/votes-before.json" "$RUN/votes-after.json"
+  cat >"$RUN/verdict.md" <<EOF
+# Governance vote: PASSED OUTCOME
+
+Proposal $proposal_id had already closed with status
+\`PROPOSAL_STATUS_PASSED\` and final \`$option\` voting power $tally. The
+individual post-period vote list is not treated as participant-level evidence.
+EOF
+  printf 'RECORDED passed governance outcome: %s (proposal=%s tally=%s)\n' "$RUN" "$proposal_id" "$tally"
+  exit 0
+fi
+
 mapfile -t indexes < <(configured_node_indexes)
 (( ${#indexes[@]} > 0 )) || die 'no joined participants are available to vote'
 password="$(<"$SECRETS/operator.keyring")"
 printf '[]' >"$RUN/vote-transactions.json"
 submitted=0
+pending_names=()
+pending_hashes=()
 for index in "${indexes[@]}"; do
   name="gdc-node$index-cold"
   address="$(jq -er .address "$ACCOUNTS/$name.json")"
@@ -36,6 +60,18 @@ for index in "${indexes[@]}"; do
     --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --broadcast-mode sync --output json --yes)"
   jq -e '.code == 0 and (.txhash | test("^[A-F0-9]{64}$"))' <<<"$tx" >/dev/null || die "vote transaction from $name failed"
   txhash="$(jq -er '.txhash' <<<"$tx")"
+  jq --arg voter "$address" --arg name "$name" --argjson tx "$tx" '. + [{voter:$voter,name:$name,tx:$tx}]' "$RUN/vote-transactions.json" >"$RUN/vote-transactions.tmp"
+  mv "$RUN/vote-transactions.tmp" "$RUN/vote-transactions.json"
+  pending_names+=("$name")
+  pending_hashes+=("$txhash")
+  submitted=$((submitted + 1))
+done
+
+# Broadcast every configured account first. Waiting for one receipt before
+# submitting the next vote consumed most of the 30-second rehearsal period.
+for position in "${!pending_hashes[@]}"; do
+  name="${pending_names[$position]}"
+  txhash="${pending_hashes[$position]}"
   receipt=''
   for _ in $(seq 1 60); do
     receipt="$("$ROOT/scripts/inferenced.sh" query tx "$txhash" --node "$rpc" --output json 2>/dev/null || true)"
@@ -48,9 +84,6 @@ for index in "${indexes[@]}"; do
   jq -e '(.code // .tx_response.code // -1) == 0 and ((.height // .tx_response.height // "0") | tonumber) > 0' <<<"$receipt" >/dev/null 2>&1 || \
     die "vote transaction from $name was not committed successfully"
   printf '%s\n' "$receipt" >"$RUN/vote-receipt-$name.json"
-  jq --arg voter "$address" --arg name "$name" --argjson tx "$tx" '. + [{voter:$voter,name:$name,tx:$tx}]' "$RUN/vote-transactions.json" >"$RUN/vote-transactions.tmp"
-  mv "$RUN/vote-transactions.tmp" "$RUN/vote-transactions.json"
-  submitted=$((submitted + 1))
 done
 
 expected="${#indexes[@]}"

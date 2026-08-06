@@ -16,10 +16,8 @@ write_once() {
     new_count=$((new_count + 1))
   fi
 }
-for i in 0 1 2 3 4; do
-  write_once "$OUT/gdc-node${i}.keyring" "$(random)"
-  write_once "$OUT/gdc-node${i}.postgres" "$(random)"
-done
+write_once "$OUT/gdc-node0.keyring" "$(random)"
+write_once "$OUT/gdc-node0.postgres" "$(random)"
 write_once "$OUT/operator.keyring" "$(random)"
 write_once "$OUT/grafana.admin" "$(random)"
 write_once "$OUT/gateway.admin-key" "sk-admin-$(openssl rand -hex 24)"

@@ -304,7 +304,7 @@
       },
       "targets": [
         {
-          "expr": "sum(cometbft_p2p_peers)",
+          "expr": "sum(cometbft_p2p_peers) or vector(0)",
           "refId": "A",
           "instant": true
         }
@@ -1666,10 +1666,33 @@
       },
       "targets": [
         {
-          "expr": "node_uname_info",
+          "expr": "gdc_component_info",
           "refId": "A",
           "format": "table",
           "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "job": true,
+              "instance": true
+            },
+            "renameByName": {
+              "host": "Host",
+              "component": "Component",
+              "component_instance": "Instance",
+              "version": "Version",
+              "commit": "Commit",
+              "image": "Image",
+              "source": "Source"
+            }
+          }
         }
       ]
     },

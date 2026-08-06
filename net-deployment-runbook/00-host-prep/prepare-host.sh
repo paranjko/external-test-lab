@@ -8,13 +8,13 @@ ROLE: network-gpu | network-only | ml-only
 EOF
 }
 [[ $EUID -eq 0 ]] || { echo "Run with sudo" >&2; exit 1; }
-ROLE=""; MONITORING_CIDR=""; METER_EDGE_CIDR=""; SSH_PORT=""; DRIVER_CHANGED=false
+ROLE=""; MONITORING_CIDR=""; PUBLIC_EDGE_CIDR=""; SSH_PORT=""; DRIVER_CHANGED=false
 OPERATOR_USER="${SUDO_USER:-}"; MIN_DRIVER=580; ML_CLIENT_CIDR="${ML_CLIENT_CIDR:-}"; ML_CALLBACK_CIDR="${ML_CALLBACK_CIDR:-}"
 while (($#)); do
   case "$1" in
     --role) ROLE="$2"; shift 2;;
     --monitoring-cidr) MONITORING_CIDR="$2"; shift 2;;
-    --meter-edge-cidr) METER_EDGE_CIDR="$2"; shift 2;;
+    --public-edge-cidr) PUBLIC_EDGE_CIDR="$2"; shift 2;;
     --ssh-port) SSH_PORT="$2"; shift 2;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown option: $1" >&2; usage; exit 2;;
@@ -29,8 +29,8 @@ case "$VERSION_ID" in 22.04|24.04|26.04) ;; *) echo "Supported: Ubuntu 22.04, 24
 [[ "$(dpkg --print-architecture)" == amd64 ]] || { echo "amd64 required" >&2; exit 1; }
 [[ "$MONITORING_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] \
   || { echo "Invalid IPv4 CIDR: $MONITORING_CIDR" >&2; exit 2; }
-[[ -z "$METER_EDGE_CIDR" || "$METER_EDGE_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] \
-  || { echo "Invalid meter edge IPv4 CIDR: $METER_EDGE_CIDR" >&2; exit 2; }
+[[ -z "$PUBLIC_EDGE_CIDR" || "$PUBLIC_EDGE_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] \
+  || { echo "Invalid public edge IPv4 CIDR: $PUBLIC_EDGE_CIDR" >&2; exit 2; }
 [[ "$ROLE" != ml-only || "$ML_CLIENT_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] \
   || { echo 'ML client IPv4 CIDR was not derived' >&2; exit 2; }
 [[ -z "$ML_CALLBACK_CIDR" || "$ML_CALLBACK_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] \
@@ -162,7 +162,7 @@ install -d -m 0755 /etc/gonka
 cat >/etc/gonka/host.env <<EOF
 ROLE=$ROLE
 MONITORING_CIDR=$MONITORING_CIDR
-METER_EDGE_CIDR=$METER_EDGE_CIDR
+PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR
 ML_CLIENT_CIDR=$ML_CLIENT_CIDR
 ML_CALLBACK_CIDR=$ML_CALLBACK_CIDR
 SSH_PORT=$SSH_PORT
@@ -195,7 +195,10 @@ systemctl daemon-reload
 systemctl stop gonka-firewall-rollback.timer gonka-firewall-rollback.service 2>/dev/null || true
 systemctl reset-failed gonka-firewall-rollback.service 2>/dev/null || true
 systemd-run --unit=gonka-firewall-rollback --on-active=2m /usr/local/sbin/gonka-firewall-rollback
-systemctl enable --now gonka-firewall.service
+systemctl enable gonka-firewall.service
+# The service is oneshot with RemainAfterExit. `enable --now` does not rerun it
+# when host.env changes, leaving the live pre-DNAT rules stale.
+systemctl restart gonka-firewall.service
 
 status "PREPARED  $HOST_NAME"
 

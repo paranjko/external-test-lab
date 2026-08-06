@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Gonka component runtime versions
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=gdc-version-collector.service
+
+[Install]
+WantedBy=timers.target

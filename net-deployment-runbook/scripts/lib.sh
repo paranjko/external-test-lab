@@ -6,6 +6,24 @@ kit_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 die() { echo "error: $*" >&2; exit 1; }
 step() { printf '\n== %s ==\n' "$*"; }
 
+evidence_exit_trap() {
+  local rc=$?
+  if (( rc != 0 )) && [[ -n "${RUN:-}" && -d "$RUN" && ! -s "$RUN/verdict.md" ]]; then
+    cat >"$RUN/verdict.md" <<EOF
+# ${EVIDENCE_VERDICT_HEADING:-Lifecycle phase}: INCONCLUSIVE
+
+The phase stopped with exit code $rc before it could write its final verdict.
+Inspect the run log and evidence in this directory. No PASS is implied.
+EOF
+  fi
+}
+
+install_evidence_exit_trap() {
+  [[ $# -eq 1 && -n "$1" ]] || die 'evidence verdict heading is required'
+  EVIDENCE_VERDICT_HEADING="$1"
+  trap evidence_exit_trap EXIT
+}
+
 load_env() {
   local file="$1"
   [[ -s "$file" ]] || die "missing environment file: $file"
@@ -26,6 +44,25 @@ write_env() {
   install -d -m 0700 "$(dirname "$file")"
   umask 077
   printf '%s\n' "$@" >"$file"
+}
+
+capture_canonical_genesis() {
+  local endpoint="$1" output="$2" raw
+  raw="$(mktemp)"
+  if ! curl -fsS --max-time 15 "$endpoint" >"$raw"; then
+    rm -f "$raw"
+    return 1
+  fi
+  if ! jq -eS '.result.genesis' "$raw" >"$output"; then
+    rm -f "$raw" "$output"
+    return 1
+  fi
+  rm -f "$raw"
+}
+
+genesis_sha256() {
+  [[ -s "$1" ]] || return 1
+  sha256sum "$1" | awk '{print $1}'
 }
 
 # Variables initialized here are consumed by scripts that source this library.
@@ -95,7 +132,7 @@ load_project() {
   MONITORING_CIDR="${node0_addresses[0]}/32"
   mapfile -t node4_edge_addresses < <(getent ahostsv4 "$NODE4_PUBLIC_HOST" | awk '{print $1}' | sort -u)
   (( ${#node4_edge_addresses[@]} == 1 )) || die "$NODE4_PUBLIC_HOST must resolve to exactly one IPv4 address"
-  METER_EDGE_CIDR="${node4_edge_addresses[0]}/32"
+  PUBLIC_EDGE_CIDR="${node4_edge_addresses[0]}/32"
 
   # The node4 Network Node and its Blackwell ML host are different machines.
   # Resolve the latter from the operator's SSH inventory, never from the
@@ -143,7 +180,7 @@ require_ml_qualification() {
   local host="$1" report
   report="$(latest_ml_qualification_report "$host" || true)"
   [[ -n "$report" ]] || \
-    die "no successful ML qualification for $host; run ./gdc.sh qualify-ml before creating its chain participant"
+    die "no successful ML qualification for $host; run ./gdc.sh qualify-ml ${host%-ml} before creating its chain participant"
   jq -e --arg model "$MODEL_ID" '.data[] | select(.id == $model)' "$report/models.json" >/dev/null || die "$host qualification does not prove $MODEL_ID"
   jq -e '.choices[0].message.content | type == "string"' "$report/completion.json" >/dev/null || die "$host qualification lacks a completion"
 }
@@ -161,7 +198,7 @@ ensure_ml_qualification() {
   fi
 
   if [[ "$auto_qualify" == 0 || "$auto_qualify" == false ]]; then
-    die "${warn}; run ./gdc.sh qualify-ml before creating its chain participant"
+    die "${warn}; run ./gdc.sh qualify-ml ${host%-ml} before creating its chain participant"
   fi
 
   step "${warn^}, running qualification for $host automatically"
@@ -218,7 +255,7 @@ API_HOST=$API_HOST
 GRAFANA_HOST=$GRAFANA_HOST
 ACME_EMAIL=$ACME_EMAIL
 MONITORING_CIDR=$MONITORING_CIDR
-METER_EDGE_CIDR=$METER_EDGE_CIDR
+PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR
 NODE0_PUBLIC_HOST=$NODE0_PUBLIC_HOST
 NODE0_P2P_PORT=5000
 NODE0_GPU_PROFILE=$NODE0_GPU_PROFILE
@@ -247,14 +284,62 @@ EOF
 }
 
 node_name() {
-  [[ "${1:-}" =~ ^(node[1-4]|gdc-node[1-4])$ ]] || die "expected node1, gdc-node1, node2, gdc-node2, node3, gdc-node3, node4, or gdc-node4"
-  [[ "$1" == gdc-* ]] && printf '%s\n' "$1" || printf 'gdc-%s\n' "$1"
+  [[ "${1:-}" =~ ^gdc-node[1-4]$ ]] || die "expected SSH alias gdc-node1, gdc-node2, gdc-node3, or gdc-node4"
+  printf '%s\n' "$1"
 }
 
 node_url() {
   local index="${1#gdc-node}" variable="NODE${1#gdc-node}_PUBLIC_HOST"
   [[ "$index" =~ ^[0-4]$ ]] || die "invalid node: $1"
   printf 'https://%s\n' "${!variable}"
+}
+
+participant_onboarding_state() {
+  case "${1:-}" in
+    ACTIVE|PARTICIPANT_STATUS_ACTIVE|1) printf '%s\n' active ;;
+    INVALID|PARTICIPANT_STATUS_INVALID|3) printf '%s\n' invalid ;;
+    '') printf '%s\n' new ;;
+    *) printf '%s\n' registered ;;
+  esac
+}
+
+reset_evidence_bundle_is_valid() {
+  local bundle="$1"
+  shift
+  [[ -d "$bundle" && -s "$bundle/public-reset-state.png" ]] || return 1
+  [[ "$(od -An -tx1 -N8 "$bundle/public-reset-state.png" | tr -d ' \n')" == 89504e470d0a1a0a ]] || return 1
+  [[ -s "$bundle/verdict.md" ]] && grep -qx '# DevNet reset preservation: PASS' "$bundle/verdict.md" || return 1
+  [[ -s "$bundle/pre-reset.env" ]] || return 1
+  grep -Eq '^pre_reset_chain_id=[a-zA-Z0-9._-]+$' "$bundle/pre-reset.env" || return 1
+  grep -Eq '^pre_reset_genesis_sha256=[0-9a-f]{64}$' "$bundle/pre-reset.env" || return 1
+  [[ -f "$bundle/artifacts-runs.before.sha256" && -f "$bundle/artifacts-runs.after.sha256" ]] || return 1
+  cmp -s "$bundle/artifacts-runs.before.sha256" "$bundle/artifacts-runs.after.sha256" || return 1
+
+  local host
+  for host in "$@"; do
+    [[ -s "$bundle/$host.before" && -s "$bundle/$host.after" ]] || return 1
+    cmp -s "$bundle/$host.before" "$bundle/$host.after" || return 1
+  done
+}
+
+write_upgrade_blocked_verdict() {
+  local file="$1" stage="${2:-unknown}" node="${3:-none}" completed="${4:-none}" rc="${5:-1}"
+  cat >"$file" <<EOF
+# DevNet upgrade: BLOCKED
+
+- Failed stage: $stage
+- Failed node: $node
+- Completed target nodes: $completed
+- Exit status: $rc
+
+Do not reset Genesis and do not downgrade a node after the approved upgrade
+height. Preserve this bundle, diagnose the failed node, restore its pinned
+target deployment, and rerun the same command:
+./gdc.sh --release testnet-0.2.15 upgrade
+The command permits a
+resume only when every already changed node has the exact target profile
+marker; a third or mixed release remains a hard failure.
+EOF
 }
 
 ssh_ready() {
@@ -267,6 +352,78 @@ configured_node_indexes() {
   for i in 0 1 2 3 4; do
     [[ -e "$STATE/joined/gdc-node$i" ]] && printf '%s\n' "$i"
   done
+}
+
+latest_baseline_pass_bundle() {
+  local verdict bundle environment genesis_profile_hash
+  genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env" 2>/dev/null || true)"
+  [[ -n "$genesis_profile_hash" ]] || return 1
+  while IFS= read -r verdict; do
+    grep -qx '# DevNet verification: PASS' "$verdict" || continue
+    bundle="$(dirname "$verdict")"
+    environment="$bundle/environment.txt"
+    [[ -s "$environment" && -s "$bundle/node-sync.json" && -s "$bundle/participants.json" ]] || continue
+    grep -qx 'release_profile=testnet-0.2.14' "$environment" || continue
+    grep -qx "chain_id=$CHAIN_ID" "$environment" || continue
+    grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$environment" || continue
+    grep -qx "profile_hash=$genesis_profile_hash" "$environment" || continue
+    printf '%s\n' "$bundle"
+    return 0
+  done < <(find "$ROOT/artifacts/runs" -mindepth 2 -maxdepth 2 -name verdict.md -print 2>/dev/null | LC_ALL=C sort -r)
+  return 1
+}
+
+# An old Genesis marker is not proof that the current live topology passed the
+# P0 baseline gate. Before any upgrade action, require a matching verify bundle
+# and reconcile it with local joined state, committed chain participants, live
+# node services and caught-up public RPC endpoints.
+require_current_baseline_pass() {
+  local bundle index node address marker status node_height node_catching
+  local reference_height lag genesis_profile_hash
+  local -a indexes expected_addresses live_addresses evidence_nodes
+
+  step 'Require a current 0.2.14 baseline PASS before the upgrade lifecycle'
+  bundle="$(latest_baseline_pass_bundle || true)"
+  [[ -n "$bundle" ]] || die 'no matching 0.2.14 verification PASS; restore every intended participant and run ./gdc.sh --release testnet-0.2.14 verify'
+
+  mapfile -t indexes < <(configured_node_indexes)
+  (( ${#indexes[@]} > 0 )) || die 'no joined participants are recorded for the verified baseline'
+  mapfile -t evidence_nodes < <(jq -er '.[].node' "$bundle/node-sync.json" | LC_ALL=C sort)
+  ((${#evidence_nodes[@]} == ${#indexes[@]})) || die 'baseline PASS participant count differs from current joined state; run verify again'
+
+  expected_addresses=()
+  reference_height="$(ssh gdc-node0 'curl -fsS http://127.0.0.1:26657/status' | jq -er '.result.sync_info.latest_block_height | tonumber')"
+  genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env")"
+  for index in "${indexes[@]}"; do
+    node="gdc-node$index"
+    grep -qx "$node" <(printf '%s\n' "${evidence_nodes[@]}") || die "$node is absent from the baseline PASS bundle; run verify again"
+    address="$(jq -er .address "$ACCOUNTS/$node-cold.json")"
+    expected_addresses+=("$address")
+    marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release 2>/dev/null || true")"
+    [[ "$marker" == "testnet-0.2.14 $genesis_profile_hash" ]] || die "$node does not have the verified 0.2.14 deployment marker"
+    ssh -T "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env ps node api proxy explorer --format '{{.Service}} {{.State}}'" \
+      | awk '
+          $1 == "node" || $1 == "api" || $1 == "proxy" || $1 == "explorer" { seen[$1]=1; if ($2 != "running") bad=1 }
+          END { exit bad || !(seen["node"] && seen["api"] && seen["proxy"] && seen["explorer"]) }
+        ' || die "$node does not have all required Network Node services running"
+    status="$(curl -fsS "$(node_url "$node")/chain-rpc/status")"
+    node_height="$(jq -er '.result.sync_info.latest_block_height | tonumber' <<<"$status")"
+    node_catching="$(jq -r '.result.sync_info.catching_up | tostring' <<<"$status")"
+    lag=$(( reference_height > node_height ? reference_height - node_height : node_height - reference_height ))
+    [[ "$node_catching" == false && "$lag" -le "${GDC_MAX_NODE_LAG_BLOCKS:-5}" ]] \
+      || die "$node is not currently synchronized (height=$node_height reference=$reference_height lag=$lag catching_up=$node_catching)"
+  done
+
+  mapfile -t expected_addresses < <(printf '%s\n' "${expected_addresses[@]}" | LC_ALL=C sort -u)
+  mapfile -t live_addresses < <(
+    ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
+      | jq -er '.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1") | .address' \
+      | LC_ALL=C sort -u
+  )
+  [[ "$(printf '%s\n' "${expected_addresses[@]}")" == "$(printf '%s\n' "${live_addresses[@]}")" ]] \
+    || die 'ACTIVE chain participants differ from current joined state; restore/reset the topology and run verify again'
+
+  printf 'PASS current baseline evidence: %s (%s participants)\n' "$bundle" "${#indexes[@]}"
 }
 
 start_stack() {

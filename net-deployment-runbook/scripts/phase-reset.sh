@@ -11,6 +11,30 @@ command -v "$CHROME_BIN" >/dev/null || die 'reset requires google-chrome for pub
 MANIFEST_DIR="$ROOT/artifacts/reset-manifests/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$MANIFEST_DIR"
 
+snapshot_run_evidence() {
+  local output="$1"
+  (
+    cd "$ROOT"
+    find artifacts/runs -type f -print0 2>/dev/null \
+      | LC_ALL=C sort -z \
+      | xargs -0 -r sha256sum
+  ) >"$output"
+}
+
+reset_started_at="$(date -u +%FT%TZ)"
+pre_reset_chain_id=UNAVAILABLE
+pre_reset_genesis_sha256=UNAVAILABLE
+if capture_canonical_genesis "https://${NODE0_PUBLIC_HOST}/chain-rpc/genesis" "$MANIFEST_DIR/pre-reset-genesis.json"; then
+  pre_reset_chain_id="$(jq -er '.chain_id' "$MANIFEST_DIR/pre-reset-genesis.json")"
+  pre_reset_genesis_sha256="$(genesis_sha256 "$MANIFEST_DIR/pre-reset-genesis.json")"
+fi
+{
+  printf 'reset_started_at=%s\n' "$reset_started_at"
+  printf 'pre_reset_chain_id=%s\n' "$pre_reset_chain_id"
+  printf 'pre_reset_genesis_sha256=%s\n' "$pre_reset_genesis_sha256"
+} >"$MANIFEST_DIR/pre-reset.env"
+snapshot_run_evidence "$MANIFEST_DIR/artifacts-runs.before.sha256"
+
 preservation_manifest() {
   local host="$1" phase="$2"
   ssh "$host" 'set -Eeuo pipefail
@@ -20,9 +44,6 @@ preservation_manifest() {
       find /srv/dai/hf-cache -type f -printf "%P %s %T@\n" | LC_ALL=C sort
     fi
     printf "%s\n" "-- preserved-secondary-state --"
-    if [[ -d /srv/dai/gmeter ]]; then
-      find /srv/dai/gmeter -maxdepth 2 -type f -printf "gmeter/%P %s %m\n" | LC_ALL=C sort
-    fi
     if [[ -d /srv/dai/gonka-devnet-bot ]]; then
       find /srv/dai/gonka-devnet-bot -maxdepth 2 -type f \( -name gateway-key-pool.json -o -name "*.db" \) -printf "telegram/%P %s %m\n" | LC_ALL=C sort
       sha256sum /srv/dai/gonka-devnet-bot/gateway-key-pool.json 2>/dev/null || true
@@ -57,7 +78,10 @@ else
   echo 'SKIP  gdc-node4-ml is unreachable'
 fi
 [[ "$genesis_reset" == true ]] || die 'gdc-node0 was not reset; preserving local rehearsal state'
-rm -rf "$STATE" "$ROOT/artifacts/accounts" "$ROOT/artifacts/genesis" "$ROOT/artifacts/runs"
+rm -rf "$STATE" "$ROOT/artifacts/accounts" "$ROOT/artifacts/genesis"
+snapshot_run_evidence "$MANIFEST_DIR/artifacts-runs.after.sha256"
+cmp -s "$MANIFEST_DIR/artifacts-runs.before.sha256" "$MANIFEST_DIR/artifacts-runs.after.sha256" \
+  || die "reset changed prior lifecycle evidence; see $MANIFEST_DIR"
 step 'Verify public observability remains reachable after chain reset'
 curl -fsS "https://$SITE_HOST/" | grep -q 'EXTERNAL TEST LAB' \
   || die 'public status site is unavailable after reset'
@@ -65,5 +89,16 @@ curl -fsS "https://$GRAFANA_HOST/api/health" | jq -e '.database == "ok"' >/dev/n
   || die 'public Grafana is unavailable after reset'
 GDC_EXPECT_RESET_STATE=true CHROME_BIN="$CHROME_BIN" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
   "https://$SITE_HOST/" 1440 900 "$MANIFEST_DIR/public-reset-state.png" 0
+cat >"$MANIFEST_DIR/verdict.md" <<EOF
+# DevNet reset preservation: PASS
+
+- Public site: https://$SITE_HOST/
+- Public Grafana: https://$GRAFANA_HOST/
+- Browser evidence: public-reset-state.png
+- Preservation manifests: exact before/after comparison passed for every contacted host
+- Prior run evidence: preserved under artifacts/runs for cross-reset audit
+- Pre-reset chain ID: $pre_reset_chain_id
+- Pre-reset Genesis SHA-256: $pre_reset_genesis_sha256
+EOF
 printf '\nRehearsal state removed. Host packages, Docker, Docker images/cache, drivers, firewall and Fail2ban were preserved.\n'
 printf 'PASS preservation manifests: %s\n' "$MANIFEST_DIR"

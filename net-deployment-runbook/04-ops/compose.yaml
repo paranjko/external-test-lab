@@ -65,10 +65,18 @@ services:
       - ${DEVSHARD_GATEWAY_DATA_VOLUME:-gateway-data-v4}:/root/.devshardctl
     network_mode: host
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18080/v1/status"]
+      # A listening gateway with an empty runtime set returns a successful
+      # status response but cannot accept inference. Treat it as unhealthy
+      # until at least one model is genuinely routable.
+      test:
+        - CMD-SHELL
+        - >-
+          wget -qO- http://127.0.0.1:18080/v1/status
+          | grep -Eq '"routable"[[:space:]]*:[[:space:]]*true'
       interval: 30s
       timeout: 5s
       retries: 5
+      start_period: 5s
 
   caddy:
     image: ${CADDY_IMAGE:-caddy:2.11.4-alpine}
@@ -87,6 +95,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./site:/srv:ro
+      - ./status:/status:ro
       - /srv/dai/caddy/data:/data
       - /srv/dai/caddy/config:/config
 

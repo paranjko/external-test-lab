@@ -50,13 +50,13 @@ geo_json() {
 for i in 0 1 2 3 4; do
   host="NODE${i}_PUBLIC_HOST"
   geo="$(geo_json "$i")"
-  node_catalog="$(jq --arg name "gdc-node$i" --arg host "${!host}" --arg status "/status/node$i" --argjson geo "$geo" '. + [{name:$name,publicHost:$host,statusBase:$status,geo:$geo}]' <<<"$node_catalog")"
+  ip="$(getent ahostsv4 "${!host}" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+  node_catalog="$(jq --arg name "gdc-node$i" --arg host "${!host}" --arg status "/status/node$i" --arg ip "$ip" --argjson geo "$geo" '. + [{name:$name,publicHost:$host,statusBase:$status,ip:$ip,geo:$geo}]' <<<"$node_catalog")"
   if [[ -e "$ROOT/state/joined/gdc-node$i" ]]; then
     node_indexes+=("$i")
     address="$(jq -r .address "$ACCOUNTS/gdc-node$i-cold.json")"
-    ip="$(getent ahostsv4 "${!host}" | awk 'NR == 1 {print $1}')"
     [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "cannot resolve public IPv4 for gdc-node$i" >&2; exit 1; }
-    nodes="$(jq --arg name "gdc-node$i" --arg address "$address" --arg host "${!host}" --arg status "/status/node$i" --argjson geo "$geo" '. + [{name:$name,address:$address,publicHost:$host,statusBase:$status,mode:"active",geo:$geo}]' <<<"$nodes")"
+    nodes="$(jq --arg name "gdc-node$i" --arg address "$address" --arg host "${!host}" --arg status "/status/node$i" --arg ip "$ip" --argjson geo "$geo" '. + [{name:$name,address:$address,publicHost:$host,statusBase:$status,ip:$ip,mode:"active",geo:$geo}]' <<<"$nodes")"
     # Gonka exposes participant ownership rather than a license count; zero is
     # an explicit non-applicable value, never an invented entitlement count.
     validators="$(jq --arg owner "$address" --arg ip "$ip" --argjson geo "$geo" '. + [{ownerAddress:$owner,ip:$ip,licenseCount:0,geo:{lat:$geo.latitude,lon:$geo.longitude,city:$geo.city,country:$geo.country,isp:"unverified"}}]' <<<"$validators")"

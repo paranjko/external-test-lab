@@ -15,3 +15,11 @@ shellcheck:
 
 test:
 	@./scripts/test-profiles.sh
+	@./scripts/test-participant-state.sh
+	@./scripts/test-reset-evidence.sh
+	@./scripts/test-upgrade-blocked-verdict.sh
+	@./scripts/test-upgrade-state-comparison.sh
+	@./scripts/test-gateway-continuity-verdict.sh
+	@node ./scripts/test-gateway-site-state.js
+	@./scripts/test-gateway-health-probe.sh
+	@./scripts/test-genesis-identity-contract.sh

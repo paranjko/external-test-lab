@@ -28,6 +28,8 @@ grep -Fq 'GDC_GOVERNANCE_AUTO_VOTE=true' "$ROOT/scripts/phase-bootstrap-access.s
 grep -Fq 'ensure-genesis-validation-weight.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'AMOUNT="${AMOUNT:-$MIN_AMOUNT}"' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'AMOUNT <= SPENDABLE_AMOUNT' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq -- '--from gdc-gateway-cold' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'keys export gdc-gateway-cold' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED=true' "$ROOT/.env.example"
 grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=true' "$ROOT/.env.example"
 grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED:-true' "$ROOT/scripts/phase-ops.sh"
@@ -35,17 +37,40 @@ grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED:-true' "$ROOT/scripts/p
 grep -Fq 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS=0' "$ROOT/.env.example"
 grep -Fq 'GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT=1000000000' "$ROOT/.env.example"
 grep -Fq 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=0' "$ROOT/.env.example"
+grep -Fq 'GDC_GATEWAY_ROTATION_TEMP_COUNT=2' "$ROOT/.env.example"
+grep -Fq 'GDC_GATEWAY_ROTATION_TARGET_COUNT=2' "$ROOT/.env.example"
+grep -Fq 'GDC_GATEWAY_MIN_SPENDABLE_NGONKA=100000000000' "$ROOT/.env.example"
+grep -Fq 'GDC_GATEWAY_MIN_SPENDABLE_NGONKA:-100000000000' "$ROOT/scripts/phase-ops.sh"
+grep -Fq '\"temp_count\":$gateway_rotation_temp_count' "$ROOT/scripts/phase-ops.sh"
+grep -Fq '\"target_count\":$gateway_rotation_target_count' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'DEVSHARD_CAPACITY_AWARE_LIMITS=off' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq '.settings.max_concurrent_requests == 0 and .settings.max_concurrent_requests_per_10000_weight <= 0' "$ROOT/scripts/phase-ops.sh"
 if grep -Fq 'GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-10000000000' "$ROOT/04-ops/create-gateway.sh"; then
   echo 'gateway escrow must not default to the full Genesis allocation' >&2
   exit 1
 fi
 grep -Fq 'poc_validation_delay = $poc_validation_delay' "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq 'GDC_POC_EXCHANGE_DURATION:-8' "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq '.epoch_params.poc_slot_allocation = {value:"5", exponent:-1}' "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq 'systemctl restart gonka-firewall.service' "$ROOT/00-host-prep/prepare-host.sh"
+grep -Fq 'ML callback ingress source is stale' "$ROOT/00-host-prep/verify-host.sh"
+grep -Fq 'ensure-gateway-reserve.sh' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'validation_weights' "$ROOT/scripts/ensure-genesis-validation-weight.sh"
 grep -Fq 'test-inference.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'sum(cometbft_p2p_peers) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
+grep -Fq '[[ ! -e "$STATE/joined/$node" ]]' "$ROOT/scripts/phase-explorer.sh"
+grep -Fq 'is not joined to the current chain' "$ROOT/scripts/phase-explorer.sh"
+grep -Fq '.devshards[]?' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq '.devshards[]?' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'handle_path /gateway/*' "$ROOT/04-ops/Caddyfile"
 grep -Fq 'handle /status/participants' "$ROOT/04-ops/Caddyfile"
 grep -Fq "json('/status/participants')" "$ROOT/04-ops/site/app.js"
+grep -Fq 'validatorMapController?.update(observedNodes)' "$ROOT/04-ops/site/app.js"
+grep -Fq '/v1/versions' "$ROOT/04-ops/site/app.js"
+grep -Fq 'mapValidators !== mappedNodes.length' "$ROOT/scripts/capture-homepage-viewport.mjs"
+grep -Fq 'GDC_MONITOR_HOST=$HOST' "$ROOT/04-ops/agent/render-env.sh"
+grep -Fq 'gdc_component_info' "$ROOT/04-ops/agent/collect-versions.sh"
+grep -Fq 'gdc_component_info' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
@@ -73,6 +98,12 @@ for release in testnet-0.2.14 testnet-0.2.15; do
     [[ "$INFERENCED_UPGRADE_SHA256" == 91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e ]]
     [[ "$DAPI_UPGRADE_SHA256" == c9cf1bfa2c994beca8a528d0ee3ad7197a582144769711600ec9df41faf4c9f7 ]]
   fi
+  summary="$(profile_summary)"
+  grep -qx "inferenced_image=$INFERENCED_IMAGE" <<<"$summary"
+  grep -qx "dapi_image=$DAPI_IMAGE" <<<"$summary"
+  grep -qx "mlnode_generic_image=$MLNODE_GENERIC_IMAGE" <<<"$summary"
+  grep -qx "explorer_image=$EXPLORER_IMAGE" <<<"$summary"
+  grep -qx "bridge_image=$BRIDGE_IMAGE" <<<"$summary"
 done
 
 GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
@@ -94,8 +125,9 @@ trap 'rm -f "${genesis_out:-}"' EXIT
 GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b \
   "$ROOT/01-identities-genesis/render-genesis-overrides.sh" \
   --gateway-account gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq \
+  --genesis-guardian gonka1rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr \
   --output "$genesis_out" >/dev/null
-jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
+jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" --arg guardian gonka1rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr '
   .app_state.inference.model_list[0] as $model_config
   | $model_config.id == $model
   and $model_config.hf_commit == $revision
@@ -107,20 +139,116 @@ jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
   and .app_state.inference.params.epoch_params.epoch_length == "50"
   and .app_state.inference.params.epoch_params.epoch_shift == "0"
   and .app_state.inference.params.epoch_params.poc_stage_duration == "4"
-  and .app_state.inference.params.epoch_params.poc_exchange_duration == "1"
+  and .app_state.inference.params.epoch_params.poc_exchange_duration == "8"
   and .app_state.inference.params.epoch_params.poc_validation_delay == "10"
   and .app_state.inference.params.epoch_params.poc_validation_duration == "4"
+  and .app_state.inference.params.epoch_params.poc_slot_allocation == {"value":"5","exponent":-1}
   and .app_state.inference.params.poc_params.validation_slots == 1
+  and .app_state.inference.params.genesis_guardian_params.guardian_addresses == [$guardian]
+  and .app_state.inference.params.genesis_guardian_params.network_maturity_threshold == "2000000"
+  and .app_state.inference.genesis_only_params.genesis_guardian_enabled == true
+  and .app_state.inference.genesis_only_params.genesis_guardian_addresses == [$guardian]
   and .app_state.gov.params.voting_period == "30s"
 ' "$genesis_out" >/dev/null
 rm -f "$genesis_out"
 unset genesis_out
 grep -Fq 'GDC_NODE_HANDOFF_DIR' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'GDC_STOP_POC_AT_WINDDOWN' "$ROOT/02-node/render-node-env.sh"
+grep -Fq 'PoCGenerateWindDown' "$ROOT/02-node/poc-winddown-watch.sh"
+grep -Fq 'gdc-poc-winddown-watch@' "$ROOT/02-node/install-node.sh"
+grep -Fq 'gdc-poc-winddown-watch@' "$ROOT/02-node/ml-only/install-ml.sh"
+grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-propose-upgrade.sh"
+grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade.sh"
+grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade-worker.sh"
+grep -Fq '# DevNet verification: PASS' "$ROOT/scripts/lib.sh"
+grep -Fq 'expected SSH alias gdc-node1' "$ROOT/scripts/lib.sh"
+if (source "$ROOT/scripts/lib.sh"; node_name node2) >/dev/null 2>&1; then
+  echo 'short node aliases must be rejected by the operator command contract' >&2
+  exit 1
+fi
+[[ "$(source "$ROOT/scripts/lib.sh"; node_name gdc-node2)" == gdc-node2 ]]
+grep -Fq 'ACTIVE chain participants differ from joined state' "$ROOT/scripts/phase-verify.sh"
+grep -Fq 'trap on_exit EXIT' "$ROOT/scripts/phase-verify.sh"
+for evidence_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-sepolia.sh phase-governance-devshard.sh phase-propose-upgrade.sh phase-vote-proposal.sh phase-audit-lifecycle.sh; do
+  grep -Fq 'install_evidence_exit_trap' "$ROOT/scripts/$evidence_phase"
+done
+grep -Fq 'skip duplicate registration' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'skip duplicate funding and ML permission transactions' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'upgrade proposal: MISSING' "$ROOT/scripts/phase-audit-lifecycle.sh"
+grep -Fq "'gateway continuity|*-gateway-continuity/*|# Gateway continuity: PASS'" "$ROOT/scripts/phase-audit-lifecycle.sh"
+grep -Fq 'genesis_sha256=$live_genesis_sha256' "$ROOT/scripts/phase-audit-lifecycle.sh"
+grep -Fq 'genesis_sha256=$genesis_sha256' "$ROOT/scripts/phase-verify.sh"
+grep -Fq "printf 'genesis_sha256=%s\\n' \"\$genesis_sha256\"" "$ROOT/scripts/phase-gateway-continuity.sh"
+for genesis_bound_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-sepolia.sh; do
+  grep -Fq "printf 'genesis_sha256=%s\\n' \"\$genesis_sha256\"" "$ROOT/scripts/$genesis_bound_phase"
+done
+grep -Fq 'genesis_sha256=$live_genesis_sha256' "$ROOT/scripts/phase-audit-lifecycle.sh"
+grep -Fq 'genesis_overrides_sha256' "$ROOT/01-identities-genesis/build-genesis.sh"
+grep -Fq 'PROFILE phase=genesis' "$ROOT/scripts/phase-genesis.sh"
+grep -Fq '"routable"[[:space:]]*:[[:space:]]*true' "$ROOT/04-ops/compose.yaml"
 grep -Fq 'operator.keyring' "$ROOT/scripts/phase-handoff-approve.sh"
 if grep -Fq 'operator.keyring' "$ROOT/scripts/phase-handoff-create.sh"; then
   echo 'handoff bundle creator must not transfer the coordinator operator key' >&2
   exit 1
 fi
+if grep -Eq 'secrets/|accounts/' "$ROOT/scripts/phase-handoff-create.sh"; then
+  echo 'handoff bundle must not transfer operator-owned keys or accounts' >&2
+  exit 1
+fi
+if grep -Fq 'grant-ml-ops.sh' "$ROOT/scripts/phase-handoff-approve.sh"; then
+  echo 'coordinator approval must not sign ML permissions with an operator key' >&2
+  exit 1
+fi
 grep -Fq 'sha256sum -c manifest.sha256' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'cold address does not match coordinator-created account' "$ROOT/scripts/phase-handoff-approve.sh"
+grep -Fq 'gonka-devnet-community-node-handoff-v2' "$ROOT/scripts/phase-handoff-approve.sh"
+grep -Fq 'is already registered; restore that operator' "$ROOT/scripts/phase-handoff-create.sh"
+grep -Fq 'GDC_SKIP_HOSTS=' "$ROOT/scripts/phase-handoff-create.sh"
+grep -Fq 'registered participant does not match the activation request address and consensus key' "$ROOT/scripts/phase-handoff-approve.sh"
+grep -Fq 'Grant ML operational permissions with the operator-owned' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'devshard_version=' "$ROOT/scripts/phase-settle.sh"
+grep -Fq "grep -qx 'devshard_version=v4'" "$ROOT/scripts/phase-ha-v4.sh"
+grep -Fq 'base-inputs-before.sha256' "$ROOT/scripts/phase-ha-v4.sh"
+grep -Fq 'settlement_bundle=' "$ROOT/scripts/phase-ha-v4.sh"
+grep -Fq 'Latest HA evidence does not belong to the current' "$ROOT/scripts/phase-bridge-sepolia.sh"
+grep -Fq 'beacon_state_url_sha256=' "$ROOT/scripts/phase-bridge-sepolia.sh"
+grep -Fq 'GDC_SEPOLIA_PRIVATE_KEY_FILE' "$ROOT/scripts/phase-bridge-deploy-sepolia.sh"
+grep -Fq 'GDC_BRIDGE_GOVERNANCE_SUBMIT' "$ROOT/scripts/phase-bridge-register-sepolia.sh"
+grep -Fq 'MsgRegisterBridgeAddresses' "$ROOT/scripts/phase-bridge-register-sepolia.sh"
+grep -Fq 'configured beacon-state endpoint did not return JSON' "$ROOT/scripts/phase-bridge-sepolia.sh"
+grep -Fq "'Sepolia bridge|*-bridge-sepolia/*|# Sepolia bridge: PASS'" "$ROOT/scripts/phase-audit-lifecycle.sh"
+grep -Fq "require_pass_bundle '*-bridge-register-sepolia/*' '# Sepolia bridge governance registration: PASS'" "$ROOT/scripts/phase-audit-lifecycle.sh"
+grep -Fq 'bridge runtime bundle lacks beacon preflight evidence' "$ROOT/scripts/phase-audit-lifecycle.sh"
+grep -Fq "release_profile=testnet-0.2.15" "$ROOT/scripts/phase-audit-lifecycle.sh"
+if grep -Fq 'install-node.sh' "$ROOT/scripts/phase-ha-v4.sh"; then
+  echo 'HA must install only its overlay and must not reinstall the Network Node' >&2
+  exit 1
+fi
+
+node_secret_dir="$(mktemp -d)"
+trap 'rm -rf "${node_secret_dir:-}"' EXIT
+"$ROOT/scripts/make-node-operator-secrets.sh" gdc-node2 "$node_secret_dir" >/dev/null
+mapfile -t node_secret_files < <(find "$node_secret_dir" -maxdepth 1 -type f -printf '%f\n' | sort)
+[[ "${node_secret_files[*]}" == 'gdc-node2.keyring gdc-node2.postgres operator.keyring' ]]
+node_secret_hash_before="$(find "$node_secret_dir" -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum)"
+"$ROOT/scripts/make-node-operator-secrets.sh" gdc-node2 "$node_secret_dir" >/dev/null
+node_secret_hash_after="$(find "$node_secret_dir" -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum)"
+[[ "$node_secret_hash_before" == "$node_secret_hash_after" ]]
+rm -rf "$node_secret_dir"
+unset node_secret_dir
+
+trap_test_dir="$(mktemp -d)"
+set +e
+(
+  source "$ROOT/scripts/lib.sh"
+  RUN="$trap_test_dir"
+  install_evidence_exit_trap 'Contract test'
+  exit 7
+)
+trap_test_rc=$?
+set -e
+[[ "$trap_test_rc" == 7 ]]
+grep -qx '# Contract test: INCONCLUSIVE' "$trap_test_dir/verdict.md"
+grep -q 'exit code 7' "$trap_test_dir/verdict.md"
+rm -rf "$trap_test_dir"
+unset trap_test_dir
 printf 'PASS release/model profile invariants\n'

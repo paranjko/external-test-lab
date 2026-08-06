@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Gonka DevShard gateway inference health
+
+[Timer]
+OnBootSec=5s
+OnUnitInactiveSec=10s
+AccuracySec=1s
+Unit=gdc-gateway-health-probe.service
+
+[Install]
+WantedBy=timers.target

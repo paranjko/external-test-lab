@@ -5,6 +5,7 @@ load_project
 
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-escrow-pending"
 mkdir -p "$RUN"
+install_evidence_exit_trap 'Chain-accounted inference'
 record_phase_profile settlement
 
 blocked() {
@@ -29,8 +30,20 @@ source "$GATEWAY_ENV"
 [[ "$DEVSHARD_ESCROW_ID" =~ ^[0-9]+$ ]] || blocked 'Rendered gateway escrow ID is invalid.'
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-escrow-${DEVSHARD_ESCROW_ID}"
 mkdir -p "$RUN"
+devshard_version="${DEVSHARD_ROUTE_PREFIX##*/}"
+[[ "$devshard_version" =~ ^v[34]$ ]] || blocked 'Rendered gateway route does not identify DevShard v3 or v4.'
+capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
+{
+  profile_summary
+  printf 'profile_hash=%s\n' "$(profile_hash)"
+  printf 'chain_id=%s\n' "$CHAIN_ID"
+  printf 'genesis_sha256=%s\n' "$genesis_sha256"
+  printf 'devshard_version=%s\n' "$devshard_version"
+  printf 'escrow_id=%s\n' "$DEVSHARD_ESCROW_ID"
+} >"$RUN/context.env"
 
-creator="$(jq -r .address "$ROOT/artifacts/accounts/gdc-gateway.json")"
+creator="$(jq -r .address "$ROOT/artifacts/accounts/gdc-gateway-cold.json")"
 rpc="https://$NODE4_PUBLIC_HOST/chain-rpc/"
 step "Record funding evidence and creator balance before settlement for escrow $DEVSHARD_ESCROW_ID"
 cp "$ESCROW_CREATE" "$RUN/escrow-create.json"
@@ -85,5 +98,6 @@ Escrow $DEVSHARD_ESCROW_ID was finalized through its per-escrow gateway path,
 settled on chain, and queried as \`settled: true\`. The evidence captures the
 funding receipt, authenticated public chat request ID/model/response, and
 creator balances before funding, after funding, and after settlement.
+DevShard protocol: $devshard_version. Release profile: $GDC_RELEASE_PROFILE.
 EOF
 printf 'PASS settlement evidence: %s\n' "$RUN"

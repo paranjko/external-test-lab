@@ -47,23 +47,18 @@ Gonka DevNet Community manual deployment
 
 Create .env from .env.example, then run:
   ./gdc.sh --release testnet-0.2.14 --model qwen3-0.6b prepare
-  ./gdc.sh --release testnet-0.2.14 identities
-  ./gdc.sh --release testnet-0.2.14 qualify-ml
+  ./gdc.sh --release testnet-0.2.14 qualify-ml [gdc-nodeN]
   ./gdc.sh --release testnet-0.2.14 genesis
   ./gdc.sh --release testnet-0.2.14 bootstrap-access
-  ./gdc.sh --release testnet-0.2.14 genesis --time=+5m
+  ./gdc.sh --release testnet-0.2.14 gateway-continuity
   ./gdc.sh --release testnet-0.2.14 join gdc-node1
-  ./gdc.sh join gdc-node2
-  ./gdc.sh join gdc-node3
-  ./gdc.sh join gdc-node4
-  ./gdc.sh handoff create gdc-node2
-  ./gdc.sh handoff approve gdc-node2 <activation-request.json>
-  ./gdc.sh governance devshard
-  ./gdc.sh vote <proposal-id> [yes|no|abstain|no_with_veto]
-  ./gdc.sh ops gateway
+  ./gdc.sh --release testnet-0.2.14 join gdc-node2
+  ./gdc.sh --release testnet-0.2.14 join gdc-node3
+  ./gdc.sh --release testnet-0.2.14 join gdc-node4
+  ./gdc.sh --release testnet-0.2.14 handoff create gdc-node2
+  ./gdc.sh --release testnet-0.2.14 handoff approve gdc-node2 <activation-request.json>
   ./gdc.sh ops monitoring
   ./gdc.sh ops site
-  ./gdc.sh ops meter
   ./gdc.sh ops explorer
   ./gdc.sh telegram-bot
   ./gdc.sh node stop gdc-node1
@@ -72,14 +67,21 @@ Create .env from .env.example, then run:
   ./gdc.sh node reset gdc-node1
   ./gdc.sh ops edge
   ./gdc.sh --release testnet-0.2.14 verify
-  ./gdc.sh settle
   ./gdc.sh --release testnet-0.2.15 upgrade-proposal
   ./gdc.sh --release testnet-0.2.15 upgrade-worker <proposal-id>
   ./gdc.sh --release testnet-0.2.15 advance-after-upgrade <proposal-id>
   ./gdc.sh --release testnet-0.2.15 advance-after-upgrade-worker <proposal-id>
   ./gdc.sh --release testnet-0.2.15 upgrade
-  ./gdc.sh ha v4
-  ./gdc.sh bridge sepolia
+  ./gdc.sh --release testnet-0.2.15 governance devshard
+  ./gdc.sh --release testnet-0.2.15 vote <proposal-id> [yes|no|abstain|no_with_veto]
+  GDC_GATEWAY_VERSION=v3 GDC_GATEWAY_ESCROW_ROTATION_ENABLED=false GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=false ./gdc.sh --release testnet-0.2.15 ops gateway
+  ./gdc.sh --release testnet-0.2.15 settle
+  GDC_GATEWAY_VERSION=v4 GDC_GATEWAY_ESCROW_ROTATION_ENABLED=false GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=false ./gdc.sh --release testnet-0.2.15 ops gateway
+  ./gdc.sh --release testnet-0.2.15 settle
+  ./gdc.sh --release testnet-0.2.15 ha v4
+  ./gdc.sh --release testnet-0.2.15 bridge-deploy sepolia
+  ./gdc.sh --release testnet-0.2.15 bridge-register sepolia
+  ./gdc.sh --release testnet-0.2.15 bridge sepolia
   ./gdc.sh audit
 
 Start a clean rehearsal with:
@@ -104,7 +106,7 @@ done
 COMMAND="${1:-help}"
 shift || true
 case "$COMMAND" in
-  prepare|identities|verify|reset|settle|qualify-ml|bootstrap-access|audit|telegram-bot)
+  prepare|verify|reset|settle|bootstrap-access|gateway-continuity|audit|telegram-bot)
     [[ "$COMMAND" == reset || $# -eq 0 ]] || { usage; exit 2; }
     if [[ "$COMMAND" == reset ]]; then
       exec "$ROOT/scripts/phase-reset.sh" "$@"
@@ -113,11 +115,24 @@ case "$COMMAND" in
       run_phase telegram-bot "$ROOT/scripts/deploy-telegram-bot.sh"
     elif [[ "$COMMAND" == bootstrap-access ]]; then
       run_phase bootstrap-access "$ROOT/scripts/phase-bootstrap-access.sh"
+    elif [[ "$COMMAND" == gateway-continuity ]]; then
+      run_phase gateway-continuity "$ROOT/scripts/phase-gateway-continuity.sh"
     elif [[ "$COMMAND" == audit ]]; then
       run_phase lifecycle-audit "$ROOT/scripts/phase-audit-lifecycle.sh"
     else
       run_phase "$COMMAND" "$ROOT/scripts/phase-$COMMAND.sh" "$@"
     fi
+    ;;
+  qualify-ml)
+    [[ $# -le 1 ]] || { usage; exit 2; }
+    qualification_target="${1:-gdc-node0}"
+    case "$qualification_target" in
+      gdc-node0|gdc-node1|gdc-node2|gdc-node3) ;;
+      gdc-node4) qualification_target=gdc-node4-ml ;;
+      *) echo 'qualify-ml expects gdc-node0, gdc-node1, gdc-node2, gdc-node3, or gdc-node4' >&2; exit 2 ;;
+    esac
+    export GDC_QUALIFY_HOSTS="$qualification_target"
+    run_phase qualify-ml "$ROOT/scripts/phase-qualify-ml.sh"
     ;;
   genesis)
     [[ $# -le 1 && ( $# -eq 0 || "$1" == --time=* ) ]] || { usage; exit 2; }
@@ -159,7 +174,7 @@ case "$COMMAND" in
     run_phase "advance-after-upgrade-worker-$1" "$ROOT/scripts/phase-advance-after-upgrade-worker.sh" "$1"
     ;;
   ops)
-    [[ $# -eq 1 && "$1" =~ ^(gateway|monitoring|site|meter|explorer|edge)$ ]] || { usage; exit 2; }
+    [[ $# -eq 1 && "$1" =~ ^(gateway|monitoring|site|explorer|edge)$ ]] || { usage; exit 2; }
     run_phase "ops-$1" "$ROOT/scripts/phase-ops.sh" "$1"
     ;;
   node)
@@ -177,6 +192,21 @@ case "$COMMAND" in
   ha)
     [[ $# -eq 1 && "$1" == v4 ]] || { usage; exit 2; }
     run_phase ha-v4 "$ROOT/scripts/phase-ha-v4.sh"
+    ;;
+  bridge-deploy)
+    [[ $# -eq 1 && "$1" == sepolia ]] || { usage; exit 2; }
+    [[ "${GDC_RELEASE_PROFILE:-}" == testnet-0.2.15 ]] || {
+      echo 'bridge-deploy requires --release testnet-0.2.15' >&2; exit 2;
+    }
+    run_phase bridge-deploy-sepolia "$ROOT/scripts/phase-bridge-deploy-sepolia.sh"
+    ;;
+  bridge-register)
+    [[ "${1:-}" == sepolia ]] || { echo 'usage: ./gdc.sh --release testnet-0.2.15 bridge-register sepolia' >&2; exit 2; }
+    shift
+    [[ "$RELEASE_PROFILE" == testnet-0.2.15 ]] || {
+      echo 'bridge-register requires --release testnet-0.2.15' >&2; exit 2;
+    }
+    run_phase bridge-register-sepolia "$ROOT/scripts/phase-bridge-register-sepolia.sh"
     ;;
   bridge)
     [[ $# -eq 1 && "$1" == sepolia ]] || { usage; exit 2; }

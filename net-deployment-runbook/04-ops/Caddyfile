@@ -57,10 +57,20 @@ http://:8081 {
   handle_path /status/gateway/* {
     reverse_proxy 127.0.0.1:18080
   }
+  handle /status/gateway-health {
+    root * /status
+    rewrite * /gateway-health.json
+    header Cache-Control "no-store"
+    file_server
+  }
 
   root * /srv
   file_server
   header {
+    # The homepage is a live status surface and its JavaScript owns topology
+    # reconciliation.  Never let an older app.js keep showing a stale map
+    # after a joined node or a site fix is deployed.
+    Cache-Control "no-store"
     X-Content-Type-Options nosniff
     Referrer-Policy no-referrer
     Permissions-Policy "camera=(), microphone=(), geolocation=()"

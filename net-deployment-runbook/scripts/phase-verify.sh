@@ -6,9 +6,9 @@ record_phase_profile verify
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$RUN"
 VERDICT_WRITTEN=false
-on_error() {
+on_exit() {
   local rc=$?
-  if [[ "$VERDICT_WRITTEN" == false ]]; then
+  if (( rc != 0 )) && [[ "$VERDICT_WRITTEN" == false ]]; then
     cat >"$RUN/verdict.md" <<EOF
 # DevNet verification: INCONCLUSIVE
 
@@ -16,14 +16,16 @@ Verification stopped with exit code $rc. Inspect the phase output and evidence
 bundle; no successful verdict is implied.
 EOF
   fi
-  exit "$rc"
 }
-trap on_error ERR
+trap on_exit EXIT
 
 step 'Record environment and topology'
+capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 {
   echo "timestamp=$(date -u +%FT%TZ)"
   echo "chain_id=$CHAIN_ID"
+  echo "genesis_sha256=$genesis_sha256"
   echo "gonka_commit=$GONKA_COMMIT"
   echo "release_profile=$GDC_RELEASE_PROFILE"
   echo "model_profile=$GDC_MODEL_PROFILE"
@@ -45,6 +47,31 @@ while (( SECONDS < deadline )); do
   sleep 2
 done
 (( current > first )) || die "block height did not advance from $first"
+
+mapfile -t node_indexes < <(configured_node_indexes)
+expected=${#node_indexes[@]}
+(( expected > 0 )) || die 'no configured participant accounts found'
+
+# Fail before the full-epoch wait when local operator state omits an ACTIVE
+# chain participant. Otherwise a reset runtime could disappear from the
+# evidence set merely because its local joined marker was removed.
+step 'Reconcile the complete ACTIVE chain participant set with joined state'
+printf '[]' >"$RUN/expected-participant-addresses.json"
+for i in "${node_indexes[@]}"; do
+  address="$(jq -er .address "$ACCOUNTS/gdc-node$i-cold.json")"
+  jq --arg address "$address" '. + [$address]' "$RUN/expected-participant-addresses.json" \
+    >"$RUN/expected-participant-addresses.tmp"
+  mv "$RUN/expected-participant-addresses.tmp" "$RUN/expected-participant-addresses.json"
+done
+ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
+  >"$RUN/participants-chain.json"
+jq -e --slurpfile expected "$RUN/expected-participant-addresses.json" '
+  ([.participant[]
+    | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")
+    | .address] | sort)
+  == ($expected[0] | sort)
+' "$RUN/participants-chain.json" >/dev/null \
+  || die 'ACTIVE chain participants differ from joined state; restore or reset the topology before verify'
 
 epoch_blocks="${GDC_VERIFY_EPOCH_BLOCKS:-$GENESIS_EPOCH_LENGTH}"
 epoch_timeout="${GDC_EPOCH_WAIT_TIMEOUT_SECONDS:-2400}"
@@ -72,9 +99,6 @@ while (( SECONDS < deadline )); do
 done
 (( current >= epoch_target )) || die "chain did not reach the next epoch-group activation from $first"
 
-mapfile -t node_indexes < <(configured_node_indexes)
-expected=${#node_indexes[@]}
-(( expected > 0 )) || die 'no configured participant accounts found'
 step "Prove exactly $expected ACTIVE participants"
 printf '[]' >"$RUN/participants.json"
 for i in "${node_indexes[@]}"; do

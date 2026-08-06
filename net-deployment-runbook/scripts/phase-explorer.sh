@@ -9,7 +9,14 @@ REMOTE="/tmp/gdc-explorer-$$"
 # Keep the unavailable bootstrap host last: a node0 access outage must not
 # prevent the independently reachable nodes from receiving the dashboard.
 for node in gdc-node1 gdc-node2 gdc-node4 gdc-node0; do
-  host_is_skipped "$node" && continue
+  if host_is_skipped "$node"; then
+    printf 'SKIP  explorer %s is excluded by GDC_SKIP_HOSTS\n' "$node"
+    continue
+  fi
+  if [[ ! -e "$STATE/joined/$node" ]]; then
+    printf 'SKIP  explorer %s is not joined to the current chain\n' "$node"
+    continue
+  fi
   step "Install pinned explorer dashboard on $node"
   ssh "$node" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
   rsync -a "$ROOT/02-node/compose.yaml" "$ROOT/02-node/start-node.sh" "$ROOT/02-node/install-explorer.sh" "$node:$REMOTE/"

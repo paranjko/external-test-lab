@@ -24,7 +24,7 @@ if [[ "$#" -gt 0 ]]; then
     TARGETS+=( "$(normalize_account_name "$input")" )
   done
 else
-  TARGETS=(gdc-node0-cold gdc-node1-cold gdc-node2-cold gdc-node3-cold gdc-node4-cold gdc-gateway)
+  TARGETS=(gdc-node0-cold gdc-node1-cold gdc-node2-cold gdc-node3-cold gdc-node4-cold gdc-gateway-cold)
 fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

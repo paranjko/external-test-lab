@@ -18,6 +18,20 @@ body * {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.nodes.compact .metric.software {
+  display: block;
+}
+
+.nodes.compact .metric.software b {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .network-map-section {
   margin: 26px 0;
 }

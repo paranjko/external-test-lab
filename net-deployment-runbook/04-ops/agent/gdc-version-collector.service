@@ -1,0 +1,7 @@
+[Unit]
+Description=Collect Gonka component runtime versions for node-exporter
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/gdc-collect-versions

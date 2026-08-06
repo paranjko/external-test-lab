@@ -1,0 +1,10 @@
+[Unit]
+Description=Probe Gonka DevShard gateway inference
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/srv/dai/ops/gateway-health-probe.sh
+User=root
+Group=root

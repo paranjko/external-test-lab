@@ -15,13 +15,11 @@ if [[ -n "$HANDOFF_DIR" ]]; then
   [[ "$(<"$HANDOFF_DIR/node")" == "$NODE" ]] || die "handoff bundle is not for $NODE"
   [[ "$(<"$HANDOFF_DIR/chain-id")" == "$CHAIN_ID" ]] || die 'handoff bundle chain ID differs from local configuration'
   step "Import the verified $NODE handoff bundle"
-  install -d -m 0700 "$SECRETS" "$GENESIS" "$ACCOUNTS"
-  install -m 0600 "$HANDOFF_DIR/secrets/$NODE.keyring" "$SECRETS/$NODE.keyring"
-  install -m 0600 "$HANDOFF_DIR/secrets/$NODE.postgres" "$SECRETS/$NODE.postgres"
-  install -m 0600 "$HANDOFF_DIR/accounts/$NODE-cold.json" "$ACCOUNTS/$NODE-cold.json"
+  install -d -m 0700 "$GENESIS" "$ACCOUNTS"
   install -m 0600 "$HANDOFF_DIR/genesis/genesis.json" "$GENESIS/genesis.json"
   install -m 0600 "$HANDOFF_DIR/genesis/genesis.sha256" "$GENESIS/genesis.sha256"
   install -m 0600 "$HANDOFF_DIR/genesis/genesis-seeds.txt" "$GENESIS/genesis-seeds.txt"
+  "$ROOT/scripts/make-node-operator-secrets.sh" "$NODE" "$SECRETS"
 fi
 if [[ "$INDEX" == 4 ]]; then
   ML_TARGET='gdc-node4-ml'
@@ -88,6 +86,8 @@ if [[ "$INDEX" == 4 ]]; then
   AGENT_ENV="$GENERATED/agents/gdc-node4-ml.env"
   cat >"$ML_ENV" <<EOF
 ML_BIND_IP=0.0.0.0
+PUBLIC_URL=https://$NODE4_PUBLIC_HOST
+GDC_STOP_POC_AT_WINDDOWN=${GDC_STOP_POC_AT_WINDDOWN:-true}
 HF_HOME=$HF_CACHE_ROOT
 MLNODE_IMAGE=$MLNODE_BLACKWELL_IMAGE
 MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE
@@ -112,32 +112,83 @@ ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
 
 step "Wait until $NODE is synchronized"
 "$ROOT/03-join/wait-synced.sh" "$URL/chain-rpc" "https://$NODE0_PUBLIC_HOST/chain-rpc"
-step "Register $NODE before funding"
 ADDRESS="$(jq -r .address "$ACCOUNT")"
-ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./register-participant.sh .env >register-participant.log 2>&1" || true
-if ! "$ROOT/03-join/wait-registered.sh" "https://$NODE0_PUBLIC_HOST" "$ADDRESS"; then
-  ssh "$NODE" "tail -100 /srv/dai/deploy/$NODE/register-participant.log" >&2
-  exit 1
+participant_body="$(curl --connect-timeout 5 --max-time 10 -fsS "https://$NODE0_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"
+participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null || true)"
+participant_state="$(participant_onboarding_state "$participant_status")"
+case "$participant_state" in
+  active)
+    already_registered=true
+    already_active=true
+    ;;
+  new)
+    already_registered=false
+    already_active=false
+    ;;
+  registered)
+    already_registered=true
+    already_active=false
+    ;;
+  invalid)
+    die "$NODE participant is INVALID; recovery requires an explicit chain-state decision, not duplicate funding"
+    ;;
+esac
+
+if [[ "$already_registered" == true ]]; then
+  printf 'READY %s participant already registered with status=%s; skip duplicate registration\n' "$NODE" "$participant_status"
+else
+  step "Register $NODE before funding"
+  ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./register-participant.sh .env >register-participant.log 2>&1" || true
+  if ! "$ROOT/03-join/wait-registered.sh" "https://$NODE0_PUBLIC_HOST" "$ADDRESS"; then
+    ssh "$NODE" "tail -100 /srv/dai/deploy/$NODE/register-participant.log" >&2
+    exit 1
+  fi
 fi
 if [[ -n "$HANDOFF_DIR" ]]; then
+  if [[ "$already_active" == true ]]; then
+    mkdir -p "$STATE/joined"
+    touch "$STATE/joined/$NODE"
+    printf '\n%s is already ACTIVE and its local joined marker is restored.\n' "$NODE"
+    exit 0
+  fi
+
+  spendable_body="$(curl --connect-timeout 5 --max-time 10 -fsS \
+    "https://$NODE0_PUBLIC_HOST/chain-api/cosmos/bank/v1beta1/spendable_balances/$ADDRESS")"
+  spendable_ngonka="$(jq -r '[.balances[]? | select(.denom == "ngonka") | (.amount | tonumber)] | add // 0' <<<"$spendable_body")"
+  [[ "$spendable_ngonka" =~ ^[0-9]+$ ]] || die "cannot determine funded balance for $NODE"
+  if (( spendable_ngonka > 0 )); then
+    step "Grant ML operational permissions with the operator-owned $NODE cold key"
+    "$ROOT/03-join/grant-ml-ops.sh" "$NODE" "$IDENTITY" "$INVENTORY"
+    step "Wait until $NODE is ACTIVE"
+    "$ROOT/03-join/wait-active.sh" "https://$NODE0_PUBLIC_HOST" "$ADDRESS"
+    mkdir -p "$STATE/joined"
+    touch "$STATE/joined/$NODE"
+    printf '\n%s independently joined and activated successfully.\n' "$NODE"
+    exit 0
+  fi
+
   REQUEST_DIR="$ROOT/artifacts/operator-requests"
   REQUEST="$REQUEST_DIR/$NODE-activation-request.json"
   install -d -m 0700 "$REQUEST_DIR"
   jq -n \
-    --arg schema gonka-devnet-community-node-handoff-v1 \
+    --arg schema gonka-devnet-community-node-handoff-v2 \
     --arg node "$NODE" --arg chain_id "$CHAIN_ID" --arg address "$ADDRESS" \
     --slurpfile identity "$IDENTITY" \
     '{schema: $schema, node: $node, chain_id: $chain_id, cold_address: $address, identity: $identity[0]}' \
     >"$REQUEST"
   chmod 600 "$REQUEST"
-  printf '\n%s is registered but intentionally not activated. Transfer this request to the coordinator:\n%s\n' "$NODE" "$REQUEST"
+  printf '\n%s is registered with operator-owned keys but has not been funded. Transfer this activation request to the coordinator:\n%s\nAfter approval, run the same join command again to sign the ML permission with the operator-owned cold key.\n' "$NODE" "$REQUEST"
   exit 0
 fi
-step "Fund $NODE and grant ML operational permissions"
-"$ROOT/03-join/fund-account.sh" "$ACCOUNT" "$INVENTORY"
-"$ROOT/03-join/grant-ml-ops.sh" "$NODE" "$IDENTITY" "$INVENTORY"
-step "Wait until $NODE is ACTIVE"
-"$ROOT/03-join/wait-active.sh" "https://$NODE0_PUBLIC_HOST" "$ADDRESS"
+if [[ "$already_active" == true ]]; then
+  printf 'READY %s is already ACTIVE; skip duplicate funding and ML permission transactions\n' "$NODE"
+else
+  step "Fund $NODE and grant ML operational permissions"
+  "$ROOT/03-join/fund-account.sh" "$ACCOUNT" "$INVENTORY"
+  "$ROOT/03-join/grant-ml-ops.sh" "$NODE" "$IDENTITY" "$INVENTORY"
+  step "Wait until $NODE is ACTIVE"
+  "$ROOT/03-join/wait-active.sh" "https://$NODE0_PUBLIC_HOST" "$ADDRESS"
+fi
 mkdir -p "$STATE/joined"
 touch "$STATE/joined/$NODE"
 printf '\n%s joined successfully.\n' "$NODE"

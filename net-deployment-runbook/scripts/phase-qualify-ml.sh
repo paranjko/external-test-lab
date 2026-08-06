@@ -7,7 +7,7 @@ record_phase_profile ml-qualification
 
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-ml-qualification"
 mkdir -p "$RUN"
-hosts=(gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4-ml)
+hosts=(gdc-node0)
 if [[ -n "${GDC_QUALIFY_HOSTS:-}" ]]; then
   read -r -a hosts <<<"$GDC_QUALIFY_HOSTS"
   for host in "${hosts[@]}"; do

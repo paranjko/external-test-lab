@@ -3,13 +3,19 @@ set -Eeuo pipefail
 
 [[ $EUID -eq 0 ]] || { echo 'reset-remote-host.sh must run as root' >&2; exit 1; }
 
+mapfile -t poc_watch_units < <(systemctl list-units --all --plain --no-legend \
+  'gdc-poc-winddown-watch@*.service' 2>/dev/null | awk '{print $1}')
+for unit in "${poc_watch_units[@]}"; do
+  systemctl disable --now "$unit" >/dev/null 2>&1 || true
+done
+
 project_is_resettable() {
-  # G-Meter probe history and the node4 Telegram issuer are secondary
-  # services. A chain rehearsal reset must not destroy their persistent state,
-  # finite pre-authorised key pool, or the only active long-poll consumer.
+  # The node4 Telegram issuer is a secondary service. A chain rehearsal reset
+  # must not destroy its finite pre-authorised key pool or the only active
+  # long-poll consumer.
   # The public status and observability plane must remain available after a
   # chain reset so it can show the reset/offline state rather than vanish.
-  [[ "$1" != gmeter && "$1" != gonka-devnet-bot && "$1" != gdc-ops && "$1" != gdc-edge ]]
+  [[ "$1" != gonka-devnet-bot && "$1" != gdc-ops && "$1" != gdc-edge ]]
 }
 
 mapfile -t containers < <(docker ps -aq --filter label=com.docker.compose.project)
@@ -46,7 +52,7 @@ if [[ -d /srv/dai ]]; then
   # leaves containerd unable to start.  A chain reset removes only deployment
   # artifacts, never the host container runtime or its image cache.
   find /srv/dai -mindepth 1 -maxdepth 1 \
-    ! -name docker ! -name containerd ! -name hf-cache ! -name gmeter \
+    ! -name docker ! -name containerd ! -name hf-cache \
     ! -name gonka-devnet-bot ! -name ops ! -name edge ! -name caddy \
     -exec rm -rf -- {} +
 fi

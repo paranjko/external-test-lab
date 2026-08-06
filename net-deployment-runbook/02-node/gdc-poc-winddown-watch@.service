@@ -1,0 +1,13 @@
+[Unit]
+Description=Stop Gonka MLNode PoC generation at the exchange wind-down boundary for %i
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=simple
+ExecStart=/srv/dai/deploy/%i/poc-winddown-watch.sh /srv/dai/deploy/%i/.env
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

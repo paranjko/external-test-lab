@@ -16,7 +16,7 @@ MAX_CONCURRENT_REQUESTS="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-0}"
 MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-0}"
 [[ "$MAX_CONCURRENT_REQUESTS" =~ ^[0-9]+$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a non-negative integer' >&2; exit 2; }
 [[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[0-9]+$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a non-negative integer' >&2; exit 2; }
-CREATOR="$(jq -er .address "$ROOT/artifacts/accounts/gdc-gateway.json")"
+CREATOR="$(jq -er .address "$ROOT/artifacts/accounts/gdc-gateway-cold.json")"
 # node4 owns public chain RPC after the distributed topology is available;
 # bootstrap-access overrides this with the sole live Genesis participant.
 RPC="${GDC_CHAIN_RPC_URL:-https://${NODE4_PUBLIC_HOST}/chain-rpc/}"
@@ -24,7 +24,7 @@ RPC="${GDC_CHAIN_RPC_URL:-https://${NODE4_PUBLIC_HOST}/chain-rpc/}"
 # The later settlement evidence must demonstrate the whole economic path, not
 # only its final state.  Capture the creator balance before the escrow funding
 # transaction and persist the receipt beside the rendered gateway environment.
-BALANCE_BEFORE="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$CREATOR")"
+BALANCE_BEFORE="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
 
 # v3/v4 and the creator are intentionally a governance gate, never Genesis
 # convenience state or a local versiond configuration substitute.
@@ -79,7 +79,7 @@ if [[ -n "$EXISTING_ESCROW_ID" ]]; then
   BALANCE_AFTER_FUNDING="$BALANCE_BEFORE"
 else
 TX="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" tx inference create-devshard-escrow \
-  "$AMOUNT" "$MODEL_ID" --from gdc-gateway --keyring-backend file --chain-id "$CHAIN_ID" \
+  "$AMOUNT" "$MODEL_ID" --from gdc-gateway-cold --keyring-backend file --chain-id "$CHAIN_ID" \
   --node "$RPC" --gas auto --gas-adjustment 1.5 \
   --gas-prices 0ngonka --broadcast-mode sync --output json --yes)"
 HASH="$(jq -r '.txhash // .tx_response.txhash // empty' <<<"$TX")"
@@ -107,9 +107,9 @@ jq -e --arg id "$ESCROW_ID" --arg creator "$CREATOR" --arg model "$MODEL_ID" '
   echo "new escrow $ESCROW_ID was not found in committed chain state" >&2
   exit 1
 }
-BALANCE_AFTER_FUNDING="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$CREATOR")"
+BALANCE_AFTER_FUNDING="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
 fi
-PRIVATE="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys export gdc-gateway --keyring-backend file --unarmored-hex --unsafe --yes | grep -Eo '[0-9a-fA-F]{64}' | tail -n1)"
+PRIVATE="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys export gdc-gateway-cold --keyring-backend file --unarmored-hex --unsafe --yes | grep -Eo '[0-9a-fA-F]{64}' | tail -n1)"
 [[ "$PRIVATE" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Cannot export gateway private key' >&2; exit 1; }
 umask 077; mkdir -p "$(dirname "$OUT")"
 cat >"$OUT" <<EOF
@@ -131,7 +131,10 @@ DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-${GATEWAY_VERSION}
 # and replacement escrows instead of treating this deployment as one-shot.
 DEVSHARD_ROTATION_ESCROW_AMOUNT=${AMOUNT}
 DEVSHARD_POC_REQUEST_MODE=relaxed
-DEVSHARD_CAPACITY_AWARE_LIMITS=on
+# The short test-lab PoC phases temporarily expose no current validation
+# weight. Relaxed mode must keep using the preserved participant set instead
+# of converting that expected transition into a zero-capacity rejection.
+DEVSHARD_CAPACITY_AWARE_LIMITS=off
 GATEWAY_MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS}
 GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-1000000000}
 GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-1000000000}

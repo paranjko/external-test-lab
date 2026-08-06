@@ -45,9 +45,16 @@ The `join` phase now:
 - renders node/edge/agent artifacts from current inventory;
 - installs and starts the node services;
 - waits for chain synchronization;
-- registers the participant;
-- funds and grants ML permission;
+- registers the participant only when its cold address is absent from chain
+  state;
+- funds and grants ML permission only when that participant is not already
+  ACTIVE;
 - waits for ACTIVE status.
+
+This distinction makes `node reset` followed by `join` a runtime recovery, not
+a second economic onboarding. An already ACTIVE participant retains its chain
+account and permissions; the command restores its deployment, synchronizes it,
+and recreates the local joined marker without duplicate funding transactions.
 
 To disable auto-qualification in exceptional cases (for example, when you want
 to run manual pre-staging), set `GDC_AUTO_QUALIFY_ML=false`.
@@ -56,7 +63,8 @@ For `node4`, the script also installs and starts the dedicated Blackwell ML host
 
 ## 2. Operator handoff flow
 
-An external operator should not receive coordinator secrets. Use the handoff flow:
+An external operator owns both the cold and warm validator keys. The
+coordinator transfers only public Genesis, seed, and topology data.
 
 - Coordinator:
   ```bash
@@ -70,7 +78,8 @@ An external operator should not receive coordinator secrets. Use the handoff flo
     ./gdc.sh --release testnet-0.2.14 join gdc-node2
 ```
 
-This produces:
+The first operator-side `join` creates the cold and warm identities locally,
+installs the node, registers it, and produces:
 
 - `artifacts/operator-requests/gdc-node2-activation-request.json` (registration request).
 
@@ -80,12 +89,26 @@ Coordinator:
 ./gdc.sh handoff approve gdc-node2 /received/gdc-node2-activation-request.json
 ```
 
+Approval verifies the registered address and consensus key, then funds the
+registered account. It cannot sign with the operator's cold key. The operator
+finishes activation by rerunning the same command:
+
+```bash
+GDC_ENV=/secure/gdc-node2/operator.env \
+GDC_NODE_HANDOFF_DIR=/secure/gdc-node2 \
+  ./gdc.sh --release testnet-0.2.14 join gdc-node2
+```
+
+The second run detects committed funding, grants ML permissions with the
+operator-owned cold key, waits for ACTIVE, and writes the local joined marker.
+
 ## 3. Onboarding predefined nodes
 
 Primary commands use SSH aliases `gdc-node1`, `gdc-node2`, `gdc-node3`, and
-`gdc-node4`. Short forms `node1`..`node4` are accepted for convenience.
-If an alias is prepared for another host name, set it in SSH with an equivalent
-`gdc-nodeN` label used by `.env` and runbook phases.
+`gdc-node4`. Short forms such as `node2` are rejected because they hide the
+actual SSH target expected by the runbook. If an alias is prepared for another
+host name, expose it in SSH with the corresponding `gdc-nodeN` label used by
+`.env` and runbook phases.
 
 ## 4. Single-node operations
 

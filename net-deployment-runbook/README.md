@@ -21,7 +21,7 @@ It contains orchestration and configuration only. It contains neither Gonka sour
 
 ## Safety boundary
 
-Run this only against an isolated DevNet with dedicated accounts and hosts. Never use mainnet keys, funds, endpoints or chain state. Do not commit `.env`, `state/`, `generated/`, `artifacts/`, mnemonic backups, tokens or SSH configuration. Store the mnemonic backups produced by `identities` offline.
+Run this only against an isolated DevNet with dedicated accounts and hosts. Never use mainnet keys, funds, endpoints or chain state. Do not commit `.env`, `state/`, `generated/`, `artifacts/`, mnemonic backups, tokens or SSH configuration. Store the node0 mnemonic backup produced by `genesis` offline. Every later validator operator owns and stores that validator's backups.
 
 The operator workstation needs Bash, Docker, SSH, `jq`, `rsync`, `scp` and SSH aliases for the selected hosts. Copy the example configuration and set only the operator values it asks for:
 
@@ -51,14 +51,14 @@ exclusive local lifecycle lock, so a second phase cannot race an active one:
 
 ```bash
 ./gdc.sh --release testnet-0.2.14 --model qwen3-0.6b prepare
-./gdc.sh --release testnet-0.2.14 identities
-./gdc.sh --release testnet-0.2.14 qualify-ml
+./gdc.sh --release testnet-0.2.14 qualify-ml gdc-node0
 ./gdc.sh --release testnet-0.2.14 genesis
 ./gdc.sh --release testnet-0.2.14 bootstrap-access
 ./gdc.sh --release testnet-0.2.14 join gdc-node1
 ./gdc.sh --release testnet-0.2.14 join gdc-node2
 ./gdc.sh --release testnet-0.2.14 join gdc-node4
 ./gdc.sh --release testnet-0.2.14 verify
+./gdc.sh --release testnet-0.2.14 gateway-continuity
 ```
 
 The baseline uses the primary fast rehearsal profile: 50-block epochs, short
@@ -66,6 +66,16 @@ governance windows and one PoC validation slot. Its purpose is to make
 lifecycle testing practical; it is not a claim about production timing. The
 validation slot must remain non-zero: zero disables PoC validation and makes a
 chain-accounted gateway impossible to verify.
+
+`genesis` creates only the Genesis operator's node0 secrets and identities plus
+the dedicated gateway account. It does not create passwords, cold accounts,
+warm keys, or consensus identities for later validators. Each validator
+operator creates that material during its own `join` flow.
+
+`qualify-ml` without a target checks only node0. A named diagnostic run accepts
+one SSH alias, for example `qualify-ml gdc-node2`; it never scans the other
+operators' hosts. `join gdc-nodeN` runs the same qualification automatically
+for its own inference host when matching evidence does not already exist.
 
 Every `join` treats the target node as an independent validator. Genesis can be
 started by one operator, while other nodes can be added by the same operator or
@@ -87,12 +97,13 @@ vote, waits for the proposal to pass, creates an escrow, starts the gateway,
 generates and verifies a finite key pool, and deploys the Telegram bot on
 node0. The authenticated bootstrap endpoint is
 `https://node0.gonka-dev.net/gateway/v1`; neither node4 nor its public edge is
-required. The ten-block PoC validation delay is an intentional primary test
-parameter: official DAPI 0.2.14 can submit its first MLNode distribution in
-the same block as a newer store commit. The extra test-lab window lets its
-30-second retry observe the final committed count and record a matching
-distribution before the validation snapshot. The phase waits for a positive
-chain-computed validation weight before creating the escrow. It is idempotent
+required. The eight-block PoC exchange window and ten-block validation delay
+are intentional primary test parameters. Official DAPI 0.2.14 can submit its
+first MLNode distribution in the same block as a newer store commit. The
+exchange window remains open for its 30-second retry to observe the final
+committed count and record a matching distribution before the validation
+snapshot. The phase waits for a positive chain-computed validation weight
+before creating the escrow. It is idempotent
 and does not treat a direct MLNode response as gateway proof. This bootstrap is
 intentionally a one-validator availability mode;
 distributed-governance evidence begins only after the other participants join.
@@ -100,16 +111,29 @@ By default the escrow uses the live governance minimum instead of the original
 Genesis allocation, because governance deposits have already reduced the
 gateway account's spendable balance. An explicit
 `GDC_GATEWAY_ESCROW_AMOUNT_NGONKA` must fit the current spendable balance.
+Before gateway creation, the runbook restores
+`GDC_GATEWAY_MIN_SPENDABLE_NGONKA` as a reserve target for automatic escrow
+rotation. This is test-chain funding, not a client request quota.
+
+`gateway-continuity` sends authenticated requests before, during and after the
+next live PoC window. A PASS requires a non-empty preserved runtime set and no
+failed request in any of the three windows. The evidence is tied to the current
+chain ID, Genesis hash, release and model profile, so a PASS from a chain that
+was later reset cannot authorize an upgrade. With node0 as the sole participant
+and Genesis guardian, this check is expected to report BLOCKED: Gonka excludes
+the guardian from the preserved non-voting runtime set. That topology cannot
+provide continuous chain-accounted inference through PoC; additional eligible
+non-guardian capacity must join first.
 
 ## Operator handoff onboarding
 
 An additional GPU Network Node may be operated by a different person or
 organization. They must never receive `state/secrets/operator.keyring`, coordinator
 mnemonic backups, gateway credentials, or any unrelated node secret. The
-coordinator creates a target-specific encrypted handoff after Genesis; the
-operator qualifies, deploys and registers that node; the coordinator then
-confirms the on-chain registration and grants the minimum funding and ML
-operational permission.
+coordinator creates a target-specific public handoff after Genesis. The
+operator creates both validator identities, qualifies, deploys, and registers
+the node. The coordinator confirms the on-chain identity and supplies only the
+minimum test-chain funding.
 
 Coordinator workstation:
 
@@ -117,52 +141,66 @@ Coordinator workstation:
 ./gdc.sh handoff create gdc-node2
 ```
 
-Transfer the emitted `artifacts/operator-handoffs/gdc-node2/` directory through
-an encrypted out-of-band channel. The recipient clones the same runbook
-release, adds its own `ACME_EMAIL` to the received `operator.env`, and provides
-only the SSH alias for its host. It first produces local model evidence, then
-deploys and registers its node:
+Transfer the emitted `artifacts/operator-handoffs/gdc-node2/` directory. Its
+manifest protects integrity; it contains no secrets. The recipient clones the
+same runbook release, adds its own `ACME_EMAIL` to `operator.env`, and provides
+the `gdc-node2` SSH alias. `join` produces missing model qualification evidence
+automatically, then deploys and registers the node:
 
 ```bash
-GDC_ENV=/secure/gdc-node2/operator.env \
-GDC_QUALIFY_HOSTS=gdc-node2 \
-  ./gdc.sh qualify-ml
-
 GDC_ENV=/secure/gdc-node2/operator.env \
 GDC_NODE_HANDOFF_DIR=/secure/gdc-node2 \
-  ./gdc.sh join gdc-node2
+  ./gdc.sh --release testnet-0.2.14 join gdc-node2
 ```
 
-The second command ends in the registered-but-not-active state and writes an
+The first command ends in the registered-but-not-active state and writes an
 `artifacts/operator-requests/gdc-node2-activation-request.json` file. Transfer
-that public activation request to the coordinator, which performs the only
-privileged action:
+that public activation request to the coordinator, which verifies the
+committed address and consensus key and funds the account:
 
 ```bash
-./gdc.sh handoff approve gdc-node2 /received/gdc-node2-activation-request.json
+./gdc.sh --release testnet-0.2.14 handoff approve gdc-node2 /received/gdc-node2-activation-request.json
 ```
 
-`handoff approve` verifies the expected chain ID, coordinator-created cold
-address and on-chain registration before it funds the account or grants ML
-permission. It records `state/joined/gdc-node2` only after the chain reports
-`ACTIVE`. This is the required rehearsal for adding a node after bootstrap:
-start a fresh baseline with `GDC_SKIP_HOSTS="gdc-node2 gdc-node3"`, then use
-the handoff flow for node2.
+The operator then repeats the same command:
+
+```bash
+GDC_ENV=/secure/gdc-node2/operator.env \
+GDC_NODE_HANDOFF_DIR=/secure/gdc-node2 \
+  ./gdc.sh --release testnet-0.2.14 join gdc-node2
+```
+
+`handoff create` contains no validator or account secrets. The operator creates
+the cold and warm keys and registers the participant on the first `join` run.
+`handoff approve` verifies that the registered address and consensus key match
+the request, then funds that address; it cannot sign ML permissions. The
+operator reruns the same `join` command, signs with the operator-owned cold
+key, waits for ACTIVE, and records the local joined marker. This is the
+required rehearsal for adding a node after bootstrap: start a fresh baseline
+with `GDC_SKIP_HOSTS="gdc-node2 gdc-node3"`, then use the handoff flow for
+node2.
 
 ## Gateway and observability overlays
 
 DevShard versions and the dedicated gateway creator are approved through chain governance before a gateway is started:
 
 ```bash
-./gdc.sh governance devshard
-./gdc.sh vote <proposal-id> yes
-./gdc.sh ops gateway
+./gdc.sh --release testnet-0.2.15 governance devshard
+./gdc.sh --release testnet-0.2.15 vote <proposal-id> yes
+GDC_GATEWAY_VERSION=v3 \
+GDC_GATEWAY_ESCROW_ROTATION_ENABLED=false \
+GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=false \
+  ./gdc.sh --release testnet-0.2.15 ops gateway
+./gdc.sh --release testnet-0.2.15 settle
+GDC_GATEWAY_VERSION=v4 \
+GDC_GATEWAY_ESCROW_ROTATION_ENABLED=false \
+GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=false \
+  ./gdc.sh --release testnet-0.2.15 ops gateway
+./gdc.sh --release testnet-0.2.15 settle
 ./gdc.sh ops monitoring
 ./gdc.sh ops site
 ./gdc.sh ops edge
-./gdc.sh ops meter
 ./gdc.sh ops explorer
-./gdc.sh verify
 ```
 
 `ops gateway` must report an active unblocked DevShard before the public OpenAI-compatible access surface is considered ready. A successful direct MLNode response alone is not proof of chain-accounted gateway inference.
@@ -177,9 +215,12 @@ runtime without exposing an additional public collector. Run
 `04-ops/grafana/generate-dashboards.sh` after editing the dashboard source so
 the authenticated node0 and anonymous node4 copies remain identical.
 
-Gateway escrow rotation is enabled by default. The gateway prepares a
-replacement escrow before the short test-lab epoch transition and keeps the
-same client API keys while routing later requests through the replacement.
+Gateway escrow rotation is enabled by default. The gateway keeps two temporary
+and two regular escrows per model around the short test-lab epoch transition
+and keeps the same client API keys while routing later requests through the
+replacement set. Configure the reserve with
+`GDC_GATEWAY_ROTATION_TEMP_COUNT` and
+`GDC_GATEWAY_ROTATION_TARGET_COUNT`; both must remain positive.
 This is required because settled or pruned escrows cannot accept new
 inferences. Automatic settlement is also enabled so rotated escrows return
 their unused balance instead of exhausting the gateway account. Set both
@@ -196,6 +237,12 @@ otherwise valid keys appear exhausted.
 Protocol phases, a missing active escrow, unavailable ML capacity and the
 model context window remain real service boundaries and must be reported as
 such.
+
+The always-on lab gateway uses relaxed PoC request handling with
+`DEVSHARD_CAPACITY_AWARE_LIMITS=off`. During the short PoC window, the gateway
+continues with the preserved participant set instead of interpreting the
+expected empty current-weight snapshot as zero service capacity. Outside PoC,
+normal runtime availability and participant health checks still apply.
 
 ## Telegram key issuer
 
@@ -243,16 +290,37 @@ GDC_UPGRADE_SUBMIT=true \
 
 The worker waits for the passed proposal and activation height, verifies disk headroom and pre-pulls pinned images before changing node containers. It uses a 30-block minimum lead by default. Do not use the foreground `upgrade` command before the activation height.
 
+If a target node fails during rollout, the upgrade bundle ends in `BLOCKED`
+and records the failed stage, failed node, completed target nodes, and exit
+status. Do not reset Genesis and do not downgrade any node after the approved
+height. Correct the failed target deployment and resume only with the same
+pinned command:
+
+```bash
+./gdc.sh --release testnet-0.2.15 upgrade
+```
+
+The resume preflight accepts nodes still on the recorded `0.2.14` baseline or
+already on this exact `0.2.15` profile. Any third or mixed release is rejected
+before another host changes.
+
 ## Optional overlays after upgrade evidence
 
 ```bash
-./gdc.sh ha v4
+./gdc.sh --release testnet-0.2.15 ha v4
+./gdc.sh --release testnet-0.2.15 bridge-deploy sepolia
 GDC_SEPOLIA_CONTRACT=<authorized-contract-address> \
 GDC_SEPOLIA_BEACON_STATE_URL=<beacon-state-endpoint> \
-  ./gdc.sh bridge sepolia
+  ./gdc.sh --release testnet-0.2.15 bridge sepolia
 ```
 
-The HA phase checks traffic through loss and recovery of one v4 `versiond` replica. The bridge phase is intentionally blocked until both values are supplied; it does not guess Ethereum configuration.
+The HA phase checks traffic through loss and recovery of one v4 `versiond`
+replica. `bridge-deploy sepolia` creates a fresh Genesis-bound contract after
+validating Sepolia chain ID `11155111`; it reads the mode-0600
+`GDC_SEPOLIA_PRIVATE_KEY_FILE` and never accepts a private key in argv. Complete
+Community DevNet governance registration and set a separately preflighted
+beacon checkpoint URL before `bridge sepolia`. The runtime bridge phase stays
+blocked without those values and never guesses Ethereum configuration.
 
 ## Reset and prove public truth
 
@@ -260,7 +328,7 @@ The HA phase checks traffic through loss and recovery of one v4 `versiond` repli
 ./gdc.sh reset --yes
 ```
 
-Reset removes only resettable DevNet containers, volumes, networks, deployment state and rehearsal artifacts. It preserves Docker images, model cache, Telegram issuer, public edge and public Grafana. The reset contract includes browser evidence that the status site shows every stopped node as offline and reports gateway traffic as `OFFLINE` with `Network reset – no nodes online`. It must never report `PENDING` when the network itself is down.
+Reset removes only resettable DevNet containers, volumes, networks, deployment state, generated accounts and Genesis artifacts. It preserves prior run evidence, Docker images, model cache, Telegram issuer, public edge and public Grafana. The reset contract includes browser evidence that the status site shows every stopped node as offline and reports gateway traffic as `OFFLINE` with `Network reset – no nodes online`. It must never report `PENDING` when the network itself is down. Chain-dependent PASS bundles record their chain ID and Genesis SHA-256, so preserved evidence from an earlier Genesis remains historical and cannot satisfy a current-chain gate.
 
 After reset, repeat the baseline from `prepare`. Public observability must show the actual reset state, not stale metrics.
 
@@ -268,7 +336,7 @@ After reset, repeat the baseline from `prepare`. Public observability must show 
 
 ```bash
 make shellcheck
-./scripts/test-profiles.sh
+make test
 ```
 
 Runtime evidence is written under `artifacts/runs/<UTC timestamp>/` and remains local unless it has been reviewed and sanitized for publication.

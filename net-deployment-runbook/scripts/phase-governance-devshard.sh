@@ -5,8 +5,11 @@ load_project
 
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-governance-devshard"
 mkdir -p "$RUN"
+install_evidence_exit_trap 'DevShard governance'
 record_phase_profile governance-devshard
-creator="$(jq -er .address "$ACCOUNTS/gdc-gateway.json")"
+creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
+poc_exchange_duration="${GDC_POC_EXCHANGE_DURATION:-8}"
+[[ "$poc_exchange_duration" =~ ^[1-9][0-9]*$ ]] || die 'GDC_POC_EXCHANGE_DURATION must be positive'
 # Public chain RPC terminates on node4 after the distributed topology is
 # available. bootstrap-access overrides this with the sole Genesis participant.
 rpc="${GDC_CHAIN_RPC_URL:-https://$NODE4_PUBLIC_HOST/chain-rpc/}"
@@ -24,7 +27,7 @@ deposit="${GDC_GOVERNANCE_DEPOSIT:-$min_deposit}"
 
 step 'Render the full, state-preserving DevShard params proposal'
 jq --arg authority "$authority" --arg creator "$creator" \
-  --arg poc_exchange_duration "1" --arg poc_validation_delay "10" \
+  --arg poc_exchange_duration "$poc_exchange_duration" --arg poc_validation_delay "10" \
   --arg v3_url "$DEVSHARD_V3_URL" --arg v3_sha "$DEVSHARD_V3_SHA256" \
   --arg v4_url "$DEVSHARD_V4_URL" --arg v4_sha "$DEVSHARD_V4_SHA256" --arg deposit "$deposit" '
   (.params // .) as $params
@@ -37,9 +40,10 @@ jq --arg authority "$authority" --arg creator "$creator" \
   | .devshard_escrow_params.devshard_requests_enabled = true
   | .epoch_params.poc_exchange_duration = $poc_exchange_duration
   | .epoch_params.poc_validation_delay = $poc_validation_delay
+  | .epoch_params.poc_slot_allocation = {value:"5", exponent:-1}
   | {messages:[{"@type":"/inference.inference.MsgUpdateParams",authority:$authority,params:.}],
-     metadata:"",title:"GDC: stabilize PoC weight distribution before validation",deposit:$deposit,
-     summary:"Registers immutable DevShard v3/v4 archives, allows the dedicated gateway creator, and leaves enough test-lab blocks for the 0.2.14 DAPI distribution retry to observe the final PoC commit before validation starts."}
+     metadata:"",title:"GDC: DevShard access and protocol PoC allocation",deposit:$deposit,
+     summary:"Registers immutable DevShard v3/v4 archives, allows the dedicated gateway creator, keeps the 0.2.14 PoC distribution retry window open, and preserves the protocol default 50 percent PoC slot allocation."}
 ' "$RUN/params-before.json" >"$RUN/proposal.json"
 jq -e --arg creator "$creator" '
   .messages[0].params.devshard_escrow_params as $p
@@ -47,17 +51,20 @@ jq -e --arg creator "$creator" '
   and ([ $p.approved_versions[].name ] | sort) == ["v3", "v4"]
   and ($p.approved_versions[] | .sha256 | test("^[0-9a-f]{64}$"))
   and ($p.max_nonce | tonumber > 0)
+  and (.messages[0].params.epoch_params.poc_slot_allocation == {value:"5", exponent:-1})
 ' "$RUN/proposal.json" >/dev/null
 
-if jq -e --arg creator "$creator" --arg v3 "$DEVSHARD_V3_SHA256" --arg v4 "$DEVSHARD_V4_SHA256" '
+if jq -e --arg creator "$creator" --arg v3 "$DEVSHARD_V3_SHA256" --arg v4 "$DEVSHARD_V4_SHA256" --arg exchange "$poc_exchange_duration" '
   (.params // .).devshard_escrow_params as $p
   | ($p.allowed_creator_addresses | index($creator) != null)
   and ($p.devshard_requests_enabled == true)
   and ([ $p.approved_versions[].name ] | sort) == ["v3", "v4"]
   and ($p.approved_versions[] | select(.name == "v3").sha256 == $v3)
   and ($p.approved_versions[] | select(.name == "v4").sha256 == $v4)
-  and (((.params // .).epoch_params.poc_exchange_duration | tonumber) == 1)
+  and (((.params // .).epoch_params.poc_exchange_duration | tonumber) == ($exchange | tonumber))
   and (((.params // .).epoch_params.poc_validation_delay | tonumber) >= 10)
+  and ((((.params // .).epoch_params.poc_slot_allocation.value // "0") | tonumber) == 5)
+  and ((((.params // .).epoch_params.poc_slot_allocation.exponent // 0) | tonumber) == -1)
 ' "$RUN/params-before.json" >/dev/null; then
   cp "$RUN/params-before.json" "$RUN/params-after.json"
   cat >"$RUN/verdict.md" <<EOF
@@ -75,7 +82,7 @@ if [[ -z "$proposal_id" ]]; then
   ssh gdc-node0 'curl -fsS "http://127.0.0.1:1317/cosmos/gov/v1/proposals?pagination.limit=100"' >"$RUN/proposals.json"
   proposal_id="$(jq -r '
     [.proposals[]?
-      | select(.title == "GDC: stabilize PoC weight distribution before validation")
+      | select(.title == "GDC: DevShard access and protocol PoC allocation")
       | select(.status == "PROPOSAL_STATUS_VOTING_PERIOD" or .status == "PROPOSAL_STATUS_PASSED")
       | (.id | tonumber)]
     | if length == 0 then "" else max | tostring end
@@ -143,7 +150,7 @@ EOF
 
 step 'Verify effective versions, creator allowlist, and live escrow limits'
 "$ROOT/scripts/inferenced.sh" query inference params --node "$rpc" --chain-id "$CHAIN_ID" --output json >"$RUN/params-after.json"
-jq -e --arg creator "$creator" --arg v3 "$DEVSHARD_V3_SHA256" --arg v4 "$DEVSHARD_V4_SHA256" '
+jq -e --arg creator "$creator" --arg v3 "$DEVSHARD_V3_SHA256" --arg v4 "$DEVSHARD_V4_SHA256" --arg exchange "$poc_exchange_duration" '
   (.params // .).devshard_escrow_params as $p
   | ($p.allowed_creator_addresses | index($creator) != null)
   and ($p.approved_versions | length == 2)
@@ -151,13 +158,16 @@ jq -e --arg creator "$creator" --arg v3 "$DEVSHARD_V3_SHA256" --arg v4 "$DEVSHAR
   and ($p.approved_versions[] | select(.name == "v4").sha256 == $v4)
   and ($p.min_amount | tonumber > 0)
   and ($p.max_nonce | tonumber > 0)
-  and (((.params // .).epoch_params.poc_exchange_duration | tonumber) == 1)
+  and (((.params // .).epoch_params.poc_exchange_duration | tonumber) == ($exchange | tonumber))
   and (((.params // .).epoch_params.poc_validation_delay | tonumber) >= 10)
+  and ((((.params // .).epoch_params.poc_slot_allocation.value // "0") | tonumber) == 5)
+  and ((((.params // .).epoch_params.poc_slot_allocation.exponent // 0) | tonumber) == -1)
 ' "$RUN/params-after.json" >/dev/null
 cat >"$RUN/verdict.md" <<EOF
 # DevShard governance: PASS
 
 Proposal $proposal_id passed. The chain now authorizes only v3 and v4 with
-recorded SHA-256 values and allows the dedicated gateway creator $creator.
+recorded SHA-256 values, allows the dedicated gateway creator $creator, and
+preserves the protocol default 50 percent PoC slot allocation.
 EOF
 printf 'PASS governance evidence: %s\n' "$RUN"

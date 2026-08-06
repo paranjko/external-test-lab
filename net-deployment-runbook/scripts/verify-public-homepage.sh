@@ -27,12 +27,33 @@ test "$(grep -o 'grafana.gonka-dev.net/d/gdc-inference' "$OUT/homepage.html" | w
 ! grep -qi 'proxy\.gonka\.gg\|node0\.gonka-dev\.net:3000' "$OUT/homepage.html"
 ! grep -Eq '<(pre|code)([[:space:]>])|curl-example|request-example' "$OUT/homepage.html"
 grep -q 'github.com/gonka-ai/gonka/discussions/1388' "$OUT/homepage.html"
+grep -q 'Successful requests' "$OUT/homepage.html"
+grep -q 'completed since gateway restart' "$OUT/homepage.html"
+grep -q 'Rate-limited requests' "$OUT/homepage.html"
+grep -q 'rejected since gateway restart' "$OUT/homepage.html"
+! grep -q 'Accepted requests\|Limit rejections\|gateway process counter' "$OUT/homepage.html"
+grep -q 'gateway-state.js' "$OUT/homepage.html"
+curl -fsS "https://$SITE_HOST/gateway-state.js" -o "$OUT/gateway-state.js"
+cmp "$ROOT/04-ops/site/gateway-state.js" "$OUT/gateway-state.js"
+curl -fsS "https://$SITE_HOST/status/gateway-health" -o "$OUT/gateway-health.json"
+jq -e '
+  ((keys | sort) == ["checked_at","http_status","latency_ms","reason","state"])
+  and (.state == "READY" or .state == "UNAVAILABLE")
+  and (.checked_at | fromdateiso8601 > 0)
+  and (.http_status | type == "number")
+  and (.latency_ms | type == "number")
+  and (.reason | type == "string")
+' "$OUT/gateway-health.json" >/dev/null
 
 curl -fsS "https://$SITE_HOST/config.js" | sed -e 's/^window.GDC_CONFIG = //' -e 's/;$//' >"$OUT/config.json"
+curl -fsS "https://$SITE_HOST/status/participants" >"$OUT/participants.json"
+live_participant_count="$(jq -er '[.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")] | length' "$OUT/participants.json")"
+(( live_participant_count > 0 ))
 curl -fsS "https://$SITE_HOST/fonts/JetBrainsMono-Regular.woff2" -o "$OUT/JetBrainsMono-Regular.woff2"
 test -s "$OUT/JetBrainsMono-Regular.woff2"
 jq -e '
   ([.nodes[] | select(.mode == "active")] | length >= 1)
+  and ([.nodeCatalog[] | select((.ip | test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")) and (.geo.latitude | type == "number") and (.geo.longitude | type == "number"))] | length >= 4)
   and (.grafanaNetwork | contains("/d/gdc-network/"))
   and (.grafanaInference | contains("/d/gdc-inference/"))
 ' "$OUT/config.json" >/dev/null
@@ -43,20 +64,10 @@ grep -qi '<!doctype html>' "$OUT/grafana-network.html"
 grep -qi '<!doctype html>' "$OUT/grafana-inference.html"
 curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-network' | jq -e '.dashboard.title == "Gonka DevNet Network"' >"$OUT/grafana-dashboard.json"
 curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-inference' | jq -e '.dashboard.title == "Gonka DevNet Inference"' >"$OUT/grafana-inference-dashboard.json"
-curl -fsS "https://$SITE_HOST/meter-api/health" | jq -e '.status == "ok" or .ok == true' >"$OUT/meter-health.json"
-curl -fsS "https://$SITE_HOST/meter-api/metrics/dashboard/detail" >"$OUT/gateway-quality.json"
-jq -e '
-  .aggregate.api_uptime_pct >= 0
-  and .aggregate.latency_s >= 0
-  and .aggregate.output_speed_tps >= 0
-  and .aggregate.real_world_gen_pct >= 0
-  and ([.providers[0].metrics[].key] as $keys | ["api_uptime", "failed_probes", "latency", "output_speed", "real_world_gen"] | all(. as $key | $keys | index($key)))
-  and (.providers[0].metrics[] | select(.key == "real_world_gen") | .raw.capability_matrix | type == "array")
-' "$OUT/gateway-quality.json" >/dev/null
 ! grep -Eqi 'token price|price comparison|real spend|cost per' "$OUT/homepage.html"
 
 CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
-  "https://$SITE_HOST/" 1440 900 "$OUT/homepage-1440x900.png" "$(jq -r '[.nodes[] | select(.mode == "active")] | length' "$OUT/config.json")"
+  "https://$SITE_HOST/" 1440 900 "$OUT/homepage-1440x900.png" "$live_participant_count"
 CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
   "https://$SITE_HOST/" 390 844 "$OUT/homepage-390x844.png"
 identify "$OUT/homepage-1440x900.png" | grep -q '1440x900'
@@ -68,6 +79,6 @@ cat >"$OUT/finalize.md" <<EOF
 - Purpose: External Test Lab / Community DevNet.
 - Initial topology: at least one active participant; disconnected nodes are
   omitted unless explicitly marked as SKIP.
-- Checks: live topology, Grafana, G-Meter, desktop and mobile browser contracts.
+- Checks: live topology, native gateway metrics, Grafana, desktop and mobile browser contracts.
 EOF
 printf 'PASS public homepage contract evidence: %s\n' "$OUT"

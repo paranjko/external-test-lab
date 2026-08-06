@@ -31,9 +31,8 @@ install_ipv4() {
   fi
   if [[ "$(hostname)" == gdc-node0 ]]; then
     iptables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 3000,8000,8081,8082,18080 -j RETURN
-    if [[ -n "${METER_EDGE_CIDR:-}" ]]; then
-      iptables -w -t mangle -A "$CHAIN" -s "$METER_EDGE_CIDR" -p tcp --dport 18000 -j RETURN
-      iptables -w -t mangle -A "$CHAIN" -s "$METER_EDGE_CIDR" -p tcp --dport 9099 -j RETURN
+    if [[ -n "${PUBLIC_EDGE_CIDR:-}" ]]; then
+      iptables -w -t mangle -A "$CHAIN" -s "$PUBLIC_EDGE_CIDR" -p tcp --dport 9099 -j RETURN
     fi
   fi
   iptables -w -t mangle -A "$CHAIN" -s "$MONITORING_CIDR" -p tcp \

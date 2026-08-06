@@ -30,6 +30,10 @@ install -m 0755 "$(dirname "$0")/node-entrypoint.sh" "$DEST/node-entrypoint.sh"
 install -m 0755 "$(dirname "$0")/tmkms-entrypoint.sh" "$DEST/tmkms-entrypoint.sh"
 install -m 0755 "$(dirname "$0")/start-node.sh" "$DEST/start-node.sh"
 install -m 0755 "$(dirname "$0")/sync-node-config.sh" "$DEST/sync-node-config.sh"
+if [[ "$LOCAL_ML" == true ]]; then
+  install -m 0755 "$(dirname "$0")/poc-winddown-watch.sh" "$DEST/poc-winddown-watch.sh"
+  install -m 0644 "$(dirname "$0")/gdc-poc-winddown-watch@.service" /etc/systemd/system/gdc-poc-winddown-watch@.service
+fi
 if [[ -f "$(dirname "$0")/../03-join/register-participant.sh" ]]; then
   install -m 0755 "$(dirname "$0")/../03-join/register-participant.sh" "$DEST/register-participant.sh"
 fi
@@ -42,4 +46,8 @@ install -m 0444 "$GENESIS" /srv/dai/shared/genesis.json
 (cd /srv/dai/shared && sha256sum genesis.json > genesis.sha256)
 printf '%s\n' "$LOCAL_ML" > "$DEST/.local-ml"
 chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$DEST"
+if [[ "$LOCAL_ML" == true ]]; then
+  systemctl daemon-reload
+  systemctl enable --now "gdc-poc-winddown-watch@$NODE.service" >/dev/null
+fi
 printf 'READY installed %s deployment in %s\n' "$NODE" "$DEST"

@@ -12,6 +12,7 @@ case "$COMPONENT" in
 esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST=/srv/dai/ops
 mkdir -p "$DEST"; cp -a "$HERE"/. "$DEST"/
+mkdir -p "$DEST/status"
 install -m 0600 "$RENDER/.env" "$DEST/.env"
 if [[ "$COMPONENT" == gateway ]]; then
   install -m 0600 "$GATEWAY" "$DEST/gateway.env"
@@ -25,4 +26,10 @@ fi
 # public Grafana link as '#'.
 [[ -s "$RENDER/config.js" ]] && install -m 0644 "$RENDER/config.js" "$DEST/site/config.js"
 chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$DEST"
+install -m 0755 "$HERE/gateway-health-probe.sh" "$DEST/gateway-health-probe.sh"
+install -m 0644 "$HERE/gdc-gateway-health-probe.service" /etc/systemd/system/gdc-gateway-health-probe.service
+install -m 0644 "$HERE/gdc-gateway-health-probe.timer" /etc/systemd/system/gdc-gateway-health-probe.timer
+systemctl daemon-reload
+systemctl enable --now gdc-gateway-health-probe.timer >/dev/null
+systemctl start gdc-gateway-health-probe.service || true
 printf 'READY installed %s operations component in %s\n' "$COMPONENT" "$DEST"

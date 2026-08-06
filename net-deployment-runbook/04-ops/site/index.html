@@ -41,13 +41,13 @@
       <div id="quality-metrics" class="quality-metrics">
         <article><span>Active requests</span><strong>–</strong><small>currently in flight</small></article>
         <article><span>Input tokens</span><strong>–</strong><small>currently in flight</small></article>
-        <article><span>Accepted requests</span><strong>–</strong><small>gateway process counter</small></article>
-        <article><span>Limit rejections</span><strong>–</strong><small>gateway process counter</small></article>
+        <article><span>Successful requests</span><strong>–</strong><small>completed since gateway restart</small></article>
+        <article><span>Rate-limited requests</span><strong>–</strong><small>rejected since gateway restart</small></article>
         <article><span>Network capacity</span><strong>–</strong><small>available model weight</small></article>
       </div>
       <div id="quality-health" class="quality-health" aria-label="Gateway traffic state">
         <span>Gateway traffic</span><strong id="quality-health-state">CHECKING</strong>
-        <div class="quality-health-counts"><span><b id="quality-active">0</b> In flight</span><span><b id="quality-accepted">0</b> Accepted</span><span><b id="quality-rejected">0</b> Rejected</span></div>
+        <div class="quality-health-counts"><span><b id="quality-active">0</b> active now</span><span><b id="quality-accepted">0</b> successful since restart</span><span><b id="quality-rejected">0</b> rate-limited since restart</span></div>
       </div>
     </section>
     <section id="gateway-access" class="access" hidden aria-live="polite">
@@ -68,6 +68,7 @@
   <footer><a class="wordmark" href="#top">EXTERNAL TEST LAB</a><span>Public operational evidence</span><a href="https://github.com/gonka-ai/gonka/discussions/1388" target="_blank" rel="noopener">Why this test lab exists ↗</a><a href="https://github.com/paranjko/external-test-lab" target="_blank" rel="noopener">Test Lab repository ↗</a><a href="https://github.com/users/paranjko/projects/1" target="_blank" rel="noopener">Task board ↗</a></footer>
   </main>
   <script src="/config.js"></script>
+  <script src="/gateway-state.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

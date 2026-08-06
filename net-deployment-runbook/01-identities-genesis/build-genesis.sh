@@ -26,7 +26,7 @@ NOW_EPOCH="$(date -u +%s)"
 }
 [[ -s "$IDENTITIES/gdc-node0.json" ]] || { echo 'Missing identity gdc-node0.json' >&2; exit 1; }
 NODE0_ACCOUNT="$ROOT/artifacts/accounts/gdc-node0-cold.json"
-GATEWAY_ACCOUNT="$ROOT/artifacts/accounts/gdc-gateway.json"
+GATEWAY_ACCOUNT="$ROOT/artifacts/accounts/gdc-gateway-cold.json"
 [[ -s "$NODE0_ACCOUNT" && -s "$GATEWAY_ACCOUNT" ]] || { echo 'Create cold accounts first' >&2; exit 1; }
 NODE0_ADDRESS="$(jq -r .address "$NODE0_ACCOUNT")"
 GATEWAY_ADDRESS="$(jq -r .address "$GATEWAY_ACCOUNT")"
@@ -49,7 +49,9 @@ rm -rf "$HOME_DIR/config" "$HOME_DIR/data"
 
 run_logged "$ROOT/scripts/inferenced.sh" init gdc-node0 --chain-id "$CHAIN_ID" --default-denom "${BASE_DENOM:-ngonka}" --overwrite
 OVERLAY="$(mktemp)"; trap 'rm -f "$OVERLAY"' EXIT
-"$ROOT/01-identities-genesis/render-genesis-overrides.sh" --gateway-account "$GATEWAY_ADDRESS" --output "$OVERLAY" >/dev/null
+"$ROOT/01-identities-genesis/render-genesis-overrides.sh" \
+  --gateway-account "$GATEWAY_ADDRESS" --genesis-guardian "$NODE0_ADDRESS" --output "$OVERLAY" >/dev/null
+OVERLAY_SHA256="$(sha256sum "$OVERLAY" | awk '{print $1}')"
 "$ROOT/01-identities-genesis/deep-merge-json.sh" "$HOME_DIR/config/genesis.json" "$OVERLAY" "$HOME_DIR/config/genesis.merged.json"
 mv "$HOME_DIR/config/genesis.merged.json" "$HOME_DIR/config/genesis.json"
 
@@ -84,6 +86,9 @@ jq -e --arg node0 "$NODE0_ADDRESS" --arg gateway "$GATEWAY_ADDRESS" --arg chain 
   and .app_state.inference.params.devshard_escrow_params.allowed_creator_addresses == []
   and .app_state.inference.params.devshard_escrow_params.approved_versions == []
   and .app_state.inference.params.poc_params.poc_v2_enabled == true
+  and .app_state.inference.params.genesis_guardian_params.guardian_addresses == [$node0]
+  and .app_state.inference.genesis_only_params.genesis_guardian_enabled == true
+  and .app_state.inference.genesis_only_params.genesis_guardian_addresses == [$node0]
   and (.app_state.genutil.gen_txs | length) == 1
 ' "$OUTPUT/genesis.json" >/dev/null
 echo 'Genesis invariants: PASS'
@@ -92,10 +97,12 @@ jq -n \
  --arg chain_id "$CHAIN_ID" --arg genesis_time "$GENESIS_TIME" \
  --arg node0 "$NODE0_ADDRESS" --arg gateway "$GATEWAY_ADDRESS" \
  --arg hash "$(cut -d' ' -f1 "$OUTPUT/genesis.sha256")" \
- '{chain_id:$chain_id,genesis_time:$genesis_time,genesis_validator:$node0,gateway_account:$gateway,genesis_sha256:$hash}' \
+ --arg overrides_hash "$OVERLAY_SHA256" \
+ '{chain_id:$chain_id,genesis_time:$genesis_time,genesis_validator:$node0,gateway_account:$gateway,genesis_sha256:$hash,genesis_overrides_sha256:$overrides_hash}' \
  > "$OUTPUT/ceremony-record.json"
 if [[ "$(readlink -f "$OUTPUT")" != "$(readlink -f "$ROOT/artifacts/genesis")" ]]; then
   cp -f "$OUTPUT"/* "$ROOT/artifacts/genesis/"
 fi
 printf '\nFINAL GENESIS SHA-256: '; cat "$OUTPUT/genesis.sha256"
+printf 'GENESIS OVERRIDES SHA-256: %s\n' "$OVERLAY_SHA256"
 printf 'Distribute genesis.json, genesis.sha256 and genesis-seeds.txt to all network hosts before genesis_time.\n'

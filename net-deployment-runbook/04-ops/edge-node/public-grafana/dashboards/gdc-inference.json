@@ -317,7 +317,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Limit rejections",
+      "title": "Rate-limited requests since restart",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -598,7 +598,7 @@
         "uid": "prometheus"
       },
       "type": "table",
-      "title": "Visible wins by executor",
+      "title": "Current model executors",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -631,10 +631,25 @@
       },
       "targets": [
         {
-          "expr": "sum by (participant_key,model) (devshard_gateway_user_visible_wins_total)",
+          "expr": "max by (participant_key,model) (devshard_gateway_participant_quarantine_state)",
           "refId": "A",
           "format": "table",
           "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            },
+            "renameByName": {
+              "participant_key": "Executor",
+              "model": "Model"
+            }
+          }
         }
       ]
     },
@@ -987,7 +1002,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (participant_key,model,reason) (devshard_gateway_attempt_failures_total)",
+          "expr": "sum by (participant_key,model,reason) (devshard_gateway_attempt_failures_total) or vector(0)",
           "refId": "A",
           "format": "table",
           "instant": true
@@ -1544,7 +1559,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Tracked executors",
+      "title": "Current executors",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -1586,7 +1601,7 @@
       },
       "targets": [
         {
-          "expr": "count(count by (participant_key) (devshard_gateway_attempts_started_total)) or vector(0)",
+          "expr": "count(count by (participant_key) (devshard_gateway_participant_quarantine_state)) or vector(0)",
           "refId": "A",
           "instant": true
         }

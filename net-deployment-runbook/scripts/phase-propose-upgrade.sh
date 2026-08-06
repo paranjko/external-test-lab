@@ -8,6 +8,7 @@ BASELINE="$STATE/phase-profiles/genesis.env"
 [[ -s "$BASELINE" ]] || die 'no baseline Genesis profile recorded; run the 0.2.14 baseline first'
 grep -qx 'release_profile=testnet-0.2.14' "$BASELINE" || die 'Genesis was not formed from testnet-0.2.14'
 grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$BASELINE" || die 'model overlay differs from baseline; model migration is a separate exercise'
+require_current_baseline_pass
 
 require GDC_UPGRADE_HEIGHT GDC_UPGRADE_DEPOSIT
 [[ "$GDC_UPGRADE_HEIGHT" =~ ^[1-9][0-9]*$ ]] || die 'GDC_UPGRADE_HEIGHT must be a positive integer'
@@ -17,6 +18,7 @@ require GDC_UPGRADE_HEIGHT GDC_UPGRADE_DEPOSIT
 
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-propose-upgrade"
 mkdir -p "$RUN"
+install_evidence_exit_trap 'Software upgrade proposal'
 record_phase_profile propose-upgrade
 # The operator CLI uses JSON-RPC POSTs. Route those through the public node4
 # edge, whose `handle_path` strips `/chain-rpc/`; node0's protocol callback

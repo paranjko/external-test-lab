@@ -40,8 +40,15 @@ client_key="$(cut -d, -f1 "$SECRETS/gateway.client-keys")"
 gateway_active=false
 active_escrow=''
 gateway_status="$(curl -fsS "$GDC_GATEWAY_PUBLIC_URL/v1/status" -H "Authorization: Bearer $client_key" 2>/dev/null || true)"
-if jq -e '.phase == "active" and .requests_blocked == false and (.escrow_id | tostring | test("^[1-9][0-9]*$"))' <<<"$gateway_status" >/dev/null 2>&1; then
-  active_escrow="$(jq -er '.escrow_id | tostring' <<<"$gateway_status")"
+active_escrow="$(jq -r '
+  ([.devshards[]?
+    | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)
+    | .id]
+   + [if .phase == "active" and (.requests_blocked // false) == false then .escrow_id? else empty end])
+  | map(select(. != null and (tostring | test("^[1-9][0-9]*$"))))
+  | first // empty | tostring
+' <<<"$gateway_status" 2>/dev/null || true)"
+if [[ "$active_escrow" =~ ^[1-9][0-9]*$ ]]; then
   chain_escrow="$("$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$active_escrow" \
     --node "$GDC_CHAIN_RPC_URL" --chain-id "$CHAIN_ID" --output json 2>/dev/null || true)"
   jq -e --arg id "$active_escrow" '.found == true and (.escrow.id | tostring) == $id' <<<"$chain_escrow" >/dev/null 2>&1 \
@@ -90,4 +97,5 @@ GDC_TELEGRAM_BOT_API_BASE_URL="$GDC_GATEWAY_PUBLIC_URL/v1" \
 
 step 'Verify final authenticated inference access'
 "$ROOT/04-ops/test-inference.sh" "$GDC_GATEWAY_PUBLIC_URL" "$client_key" >/dev/null
-printf 'PASS bootstrap access on gdc-node0: governed DevShard, active gateway, verified key pool and Telegram issuer\n'
+printf 'PASS phase-local bootstrap access on gdc-node0: governed DevShard, active gateway, verified key pool and Telegram issuer\n'
+printf 'READY run ./gdc.sh --release testnet-0.2.14 gateway-continuity after independent operators add eligible non-guardian model capacity\n'

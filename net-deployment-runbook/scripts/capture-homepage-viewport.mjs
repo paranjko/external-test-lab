@@ -9,6 +9,7 @@ const width = Number(widthText);
 const height = Number(heightText);
 const visibleNodes = Number(visibleNodesText);
 const expectResetState = process.env.GDC_EXPECT_RESET_STATE === 'true';
+const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
 if (!url || !Number.isInteger(width) || !Number.isInteger(height) || !output || !Number.isInteger(visibleNodes) || visibleNodes < 0) {
   throw new Error('usage: capture-homepage-viewport.mjs URL WIDTH HEIGHT OUTPUT.png [MIN_VISIBLE_NODES]');
 }
@@ -62,18 +63,25 @@ try {
     await delay(1000);
   }
   const { result } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapLeaflet:document.querySelector("#validator-map")?.classList.contains("leaflet-container"),gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,nodes:[...document.querySelectorAll("#nodes .node")].map(n=>({name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,top:n.getBoundingClientRect().top,bottom:n.getBoundingClientRect().bottom}))})',
+    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapMarkers:Number(document.querySelector("#validator-map")?.dataset.markerCount||0),mapValidators:Number(document.querySelector("#validator-map")?.dataset.validatorCount||0),mapLeaflet:document.querySelector("#validator-map")?.classList.contains("leaflet-container"),gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,nodes:[...document.querySelectorAll("#nodes .node")].map(n=>({name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,versions:n.querySelector("[data-k=versions]")?.textContent,top:n.getBoundingClientRect().top,bottom:n.getBoundingClientRect().bottom}))})',
     returnByValue: true,
   }, sessionId);
   const state = JSON.parse(result.value);
   if (state.width !== width || state.height !== height) throw new Error(`emulation mismatch ${state.width}x${state.height}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
   if (state.nodes.length < 1 || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapLeaflet || state.mapPoints < 1) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
+  const mappedNodes = state.nodes.filter(node => node.name !== 'gdc-node3');
+  if (state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
+  if (state.mapMarkers < 1 || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
+  if (mappedNodes.some(node => !node.versions || node.versions === 'checking')) throw new Error(`participant software versions did not resolve ${JSON.stringify(state)}`);
   if (expectResetState) {
     const active = state.nodes.filter(node => node.name !== 'gdc-node3');
-    if (active.length !== 4 || active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden) {
+    if (active.length < 1 || active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden) {
       throw new Error(`homepage does not show the real reset/offline state ${JSON.stringify(state)}`);
     }
+  }
+  if (expectedGatewayState === 'UNAVAILABLE' && !state.gatewayAccessHidden) {
+    throw new Error(`gateway access card must be hidden while unavailable ${JSON.stringify(state)}`);
   }
   await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map .leaflet-control-zoom-in")?.click()' }, sessionId);
   await delay(300);
@@ -97,13 +105,14 @@ try {
   const grafana = JSON.parse(grafanaResult.value);
   const expectedGrafanaPaths = ["/d/gdc-network/", "/d/gdc-inference/"];
   if (grafana.length !== 2 || grafana.some((link,index)=>{const url=new URL(link.href);return url.hostname!=="grafana.gonka-dev.net"||!url.pathname.startsWith(expectedGrafanaPaths[index])||!url.searchParams.has("kiosk")||link.target!=="_blank"})) throw new Error(`invalid public Grafana links ${JSON.stringify(grafana)}`);
-  const { result: meterResult } = await call('Runtime.evaluate', {
+  const { result: gatewayResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify({metrics:[...document.querySelectorAll("#quality-metrics article")].map(e=>e.textContent),health:document.querySelector("#quality-health-state")?.textContent,counts:["quality-active","quality-accepted","quality-rejected"].map(id=>document.getElementById(id)?.textContent)})',
     returnByValue: true,
   }, sessionId);
-  const meter = JSON.parse(meterResult.value);
-  if (meter.metrics.length !== 5 || !meter.metrics.some(text => text.includes("Active requests")) || !["ACTIVE", "IDLE", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(meter.health) || (!expectResetState && meter.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(meter)}`);
-  if (expectResetState && meter.health !== 'OFFLINE') throw new Error(`gateway must be OFFLINE after reset ${JSON.stringify(meter)}`);
+  const gateway = JSON.parse(gatewayResult.value);
+  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["ACTIVE", "IDLE", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
+  if (expectResetState && gateway.health !== 'OFFLINE') throw new Error(`gateway must be OFFLINE after reset ${JSON.stringify(gateway)}`);
+  if (expectedGatewayState && gateway.health !== expectedGatewayState) throw new Error(`gateway state ${gateway.health} does not match expected ${expectedGatewayState}`);
   const { result: typeResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify({heading:(s=>s==="normal"?0:Number.parseFloat(s))(getComputedStyle(document.querySelector(".hero h1")).letterSpacing),prose:Number.parseFloat(getComputedStyle(document.querySelector(".hero p")).wordSpacing),footer:Number.parseFloat(getComputedStyle(document.querySelector("footer")).wordSpacing),footerSize:Number.parseFloat(getComputedStyle(document.querySelector("footer")).fontSize),negativeTracking:[...document.querySelectorAll("body *")].filter(e=>{const s=getComputedStyle(e).letterSpacing;return s!=="normal"&&Number.parseFloat(s)<0}).map(e=>e.tagName+"."+e.className),footerChildren:[...document.querySelector("footer").children].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}})})',
     returnByValue: true,

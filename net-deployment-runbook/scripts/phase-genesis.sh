@@ -7,12 +7,36 @@ record_phase_profile genesis
 require_ml_qualification gdc-node0
 TIME_SPEC="${1:---time=+1m}"
 [[ "$TIME_SPEC" =~ ^--time=\+([1-9][0-9]*)m$ ]] || die 'expected --time=+Nm'
-GENESIS_TIME="$(date -u -d "+${BASH_REMATCH[1]} minutes" +%Y-%m-%dT%H:%M:%SZ)"
-[[ -s "$IDENTITIES/gdc-node0.json" ]] || die 'run identities first'
+GENESIS_LEAD_MINUTES="${BASH_REMATCH[1]}"
+genesis_identity_inputs=(
+  "$SECRETS/operator.keyring"
+  "$SECRETS/gdc-node0.keyring"
+  "$SECRETS/gdc-node0.postgres"
+  "$ACCOUNTS/gdc-node0-cold.json"
+  "$ACCOUNTS/gdc-gateway-cold.json"
+  "$IDENTITIES/gdc-node0.json"
+)
+identity_inputs_ready=true
+for input in "${genesis_identity_inputs[@]}"; do
+  [[ -s "$input" ]] || identity_inputs_ready=false
+done
+if [[ "$identity_inputs_ready" != true ]]; then
+  step 'Create Genesis operator secrets, node0 identities, and gateway account'
+  "$ROOT/scripts/phase-identities.sh"
+fi
+for input in "${genesis_identity_inputs[@]}"; do
+  [[ -s "$input" ]] || die "Genesis identity input was not created: $input"
+done
+GENESIS_TIME="$(date -u -d "+${GENESIS_LEAD_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ)"
 
 step "Build and verify the one-participant Genesis at $GENESIS_TIME"
 "$ROOT/01-identities-genesis/build-genesis.sh" --inventory "$INVENTORY" --identities-dir "$IDENTITIES" --secrets-dir "$SECRETS" --genesis-time "$GENESIS_TIME" --output-dir "$GENESIS"
 "$ROOT/01-identities-genesis/verify-genesis.sh" "$GENESIS/genesis.json" "$GENESIS/genesis.sha256" "$CHAIN_ID"
+for profile_field in genesis_sha256 genesis_overrides_sha256; do
+  profile_value="$(jq -er --arg field "$profile_field" '.[$field]' "$GENESIS/ceremony-record.json")"
+  printf '%s=%s\n' "$profile_field" "$profile_value" >>"$STATE/phase-profiles/genesis.env"
+  printf 'PROFILE phase=genesis %s=%s\n' "$profile_field" "$profile_value"
+done
 
 step 'Render only gdc-node0'
 NODE=gdc-node0

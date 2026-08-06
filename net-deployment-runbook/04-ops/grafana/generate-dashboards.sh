@@ -42,7 +42,7 @@ render() {
         stat(2;"Nodes online";"sum(up{job=\"gonka-node\"} == 1)";"none";4;1;4),
         stat(3;"Nodes down";"count(up{job=\"gonka-node\"} == 0) or vector(0)";"none";8;1;4),
         stat(4;"Validators";"max(cometbft_consensus_validators)";"none";12;1;4),
-        stat(5;"P2P peers";"sum(cometbft_p2p_peers)";"none";16;1;4),
+        stat(5;"P2P peers";"sum(cometbft_p2p_peers) or vector(0)";"none";16;1;4),
         stat(6;"Sample age";"time() - max(timestamp(cometbft_consensus_height))";"s";20;1;4),
 
         row(110;"Chain vitals and consensus";5),
@@ -67,7 +67,8 @@ render() {
 
         row(140;"Host inventory";44),
         table(41;"Locations and scrape state";"up{job=\"host\",city!=\"\"}";0;45;12;8),
-        table(42;"Software inventory";"node_uname_info";12;45;12;8),
+        (table(42;"Software inventory";"gdc_component_info";12;45;12;8)
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",component:"Component",component_instance:"Instance",version:"Version",commit:"Commit",image:"Image",source:"Source"}}}]),
         textpanel(49;"Data contract";"This board adapts the structure of **Gonka Network Pulse v4** to the Community DevNet metrics that are actually collected. It uses live CometBFT, host, GPU and blackbox-exporter series. Archive-only epoch economics, rewards and historical transaction decoding are intentionally not fabricated.";53)
       ])
     else
@@ -78,20 +79,21 @@ render() {
         stat(53;"Requests in flight";"sum(devshard_gateway_inflight_requests) or vector(0)";"none";8;1;4),
         stat(54;"Input tokens in flight";"sum(devshard_gateway_inflight_input_tokens) or vector(0)";"none";12;1;4),
         stat(55;"Capacity available";"max(devshard_gateway_capacity_scale) * 100 or vector(0)";"percent";16;1;4),
-        stat(56;"Limit rejections";"sum(devshard_gateway_limit_rejections_total) or vector(0)";"none";20;1;4),
+        stat(56;"Rate-limited requests since restart";"sum(devshard_gateway_limit_rejections_total) or vector(0)";"none";20;1;4),
 
         row(210;"Live flow";5),
         ts(61;"Request rate by outcome";"sum by (outcome) (rate(devshard_gateway_requests_total[5m])) or vector(0)";"{{outcome}}";"reqps";0;6;12;8),
         ts(62;"Attempts started by role";"sum by (role) (rate(devshard_gateway_attempts_started_total[5m])) or vector(0)";"{{role}}";"reqps";12;6;12;8),
         table(63;"Requests by outcome";"sum by (outcome,reason) (devshard_gateway_requests_total)";0;14;12;8),
-        table(64;"Visible wins by executor";"sum by (participant_key,model) (devshard_gateway_user_visible_wins_total)";12;14;12;8),
+        (table(64;"Current model executors";"max by (participant_key,model) (devshard_gateway_participant_quarantine_state)";12;14;12;8)
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true},renameByName:{participant_key:"Executor",model:"Model"}}}]),
 
         row(220;"Executor latency and quality";22),
         ts(71;"First content latency p50";"histogram_quantile(0.50, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[15m]))) or vector(0)";"p50";"s";0;23;8;7),
         ts(72;"First content latency p95";"histogram_quantile(0.95, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[15m]))) or vector(0)";"p95";"s";8;23;8;7),
         ts(73;"Attempt latency by executor";"sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_sum) / sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_count)";"{{participant_key}}";"s";16;23;8;7),
         table(74;"Executor wins";"sum by (participant_key,model) (devshard_gateway_user_visible_wins_total)";0;30;8;8),
-        table(75;"Executor failures";"sum by (participant_key,model,reason) (devshard_gateway_attempt_failures_total)";8;30;8;8),
+        table(75;"Executor failures";"sum by (participant_key,model,reason) (devshard_gateway_attempt_failures_total) or vector(0)";8;30;8;8),
         table(76;"Quarantine state";"devshard_gateway_participant_quarantine_state";16;30;8;8),
 
         row(230;"Capacity and escrow routing";38),
@@ -103,7 +105,7 @@ render() {
 
         row(240;"Data passport";54),
         stat(91;"Gateway sample age";"time() - max(timestamp(devshard_gateway_requests_total))";"s";0;55;6),
-        stat(92;"Tracked executors";"count(count by (participant_key) (devshard_gateway_attempts_started_total)) or vector(0)";"none";6;55;6),
+        stat(92;"Current executors";"count(count by (participant_key) (devshard_gateway_participant_quarantine_state)) or vector(0)";"none";6;55;6),
         stat(93;"Models observed";"count(count by (model) (devshard_gateway_requests_total)) or vector(0)";"none";12;55;6),
         stat(94;"Transport errors";"sum(devshard_gateway_participant_transport_errors_total) or vector(0)";"none";18;55;6),
         textpanel(99;"Data contract";"This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Per-request token archives, GNK notional value and archive-node SQL are not available, so the board does not invent those panels.";59)

@@ -5,6 +5,7 @@ load_project
 
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-ha-v4"
 mkdir -p "$RUN"
+install_evidence_exit_trap 'DevShard v4 HA'
 record_phase_profile ha-v4
 
 blocked() {
@@ -23,18 +24,54 @@ EOF
 settlement="$(find "$ROOT/artifacts/runs" -mindepth 2 -maxdepth 2 -name verdict.md -path '*-escrow-*/*' -print 2>/dev/null | LC_ALL=C sort | tail -n1)"
 [[ -n "$settlement" ]] && grep -qx '# Chain-accounted inference: PASS' "$settlement" \
   || blocked 'v4 HA requires a completed single-instance settlement first.'
+settlement_dir="$(dirname "$settlement")"
+settlement_context="$settlement_dir/context.env"
+[[ -s "$settlement_context" ]] \
+  || blocked 'Latest settlement predates the release/protocol evidence contract; rerun v4 settlement.'
+grep -qx "release_profile=$GDC_RELEASE_PROFILE" "$settlement_context" \
+  || blocked "Latest settlement does not belong to the current $GDC_RELEASE_PROFILE profile."
+grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$settlement_context" \
+  || blocked 'Latest settlement used a different model profile.'
+capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
+grep -qx "chain_id=$CHAIN_ID" "$settlement_context" \
+  || blocked 'Latest settlement belongs to another chain ID.'
+grep -qx "genesis_sha256=$genesis_sha256" "$settlement_context" \
+  || blocked 'Latest settlement belongs to a previous Genesis; rerun v4 settlement.'
+grep -qx 'devshard_version=v4' "$settlement_context" \
+  || blocked 'Latest settlement is not a DevShard v4 settlement.'
+{
+  profile_summary
+  printf 'profile_hash=%s\n' "$(profile_hash)"
+  printf 'chain_id=%s\n' "$CHAIN_ID"
+  printf 'genesis_sha256=%s\n' "$genesis_sha256"
+  printf 'devshard_version=v4\n'
+  printf 'settlement_bundle=%s\n' "$settlement_dir"
+} >"$RUN/context.env"
 node=gdc-node0
-node_dir="$GENERATED/nodes/$node"
-[[ -s "$node_dir/.env" && -s "$node_dir/node-config.json" && -s "$GENESIS/genesis.json" ]] || die 'missing node0 rendered deployment inputs'
+expected_release="$GDC_RELEASE_PROFILE $(profile_hash)"
+ssh "$node" "grep -qx '$expected_release' /srv/dai/deploy/$node/.gdc-release" \
+  || die "node0 release marker does not match $GDC_RELEASE_PROFILE"
 
 step 'Install two-replica v4 HA overlay on the already-settled participant'
 remote="/tmp/gdc-ha-$$"
 ssh "$node" "rm -rf '$remote' && mkdir -p '$remote'"
-rsync -a "$ROOT/02-node/" "$node:$remote/02-node/"
-scp -q "$node_dir/.env" "$node:$remote/node.env"
-scp -q "$node_dir/node-config.json" "$node:$remote/node-config.json"
-scp -q "$GENESIS/genesis.json" "$node:$remote/genesis.json"
-ssh -T "$node" "sudo '$remote/02-node/install-node.sh' --node-name '$node' --env '$remote/node.env' --node-config '$remote/node-config.json' --genesis '$remote/genesis.json'; sudo touch /srv/dai/deploy/$node/.ha-enabled; sudo chown \$(id -u):\$(id -g) /srv/dai/deploy/$node/.ha-enabled; rm -rf '$remote'; cd /srv/dai/deploy/$node && ./start-node.sh"
+scp -q "$ROOT/02-node/compose.devshard-ha.yaml" "$node:$remote/compose.devshard-ha.yaml"
+scp -q "$ROOT/02-node/vendor-router/nginx.conf.template" "$node:$remote/nginx.conf.template"
+ssh "$node" "sha256sum /srv/dai/deploy/$node/.env /srv/dai/shared/genesis.json /srv/dai/deploy/$node/.gdc-release" >"$RUN/base-inputs-before.sha256"
+ssh -T "$node" "set -Eeuo pipefail
+  dest=/srv/dai/deploy/$node
+  sudo install -m 0644 '$remote/compose.devshard-ha.yaml' \"\$dest/compose.devshard-ha.yaml\"
+  sudo install -d -m 0755 \"\$dest/versiond-router\"
+  sudo install -m 0644 '$remote/nginx.conf.template' \"\$dest/versiond-router/nginx.conf.template\"
+  sudo touch \"\$dest/.ha-enabled\"
+  sudo chown \$(id -u):\$(id -g) \"\$dest/.ha-enabled\"
+  rm -rf '$remote'
+  cd \"\$dest\"
+  ./start-node.sh"
+ssh "$node" "sha256sum /srv/dai/deploy/$node/.env /srv/dai/shared/genesis.json /srv/dai/deploy/$node/.gdc-release" >"$RUN/base-inputs-after.sha256"
+cmp -s "$RUN/base-inputs-before.sha256" "$RUN/base-inputs-after.sha256" \
+  || die 'HA overlay changed node env, Genesis, or release identity'
 
 step 'Verify shared-key/Postgres HA topology and sticky router'
 ssh "$node" "cd /srv/dai/deploy/$node && docker compose -f compose.yaml -f compose.devshard-ha.yaml ps --format json" >"$RUN/compose-ps.jsonl"
@@ -62,6 +99,7 @@ Two versiond replicas shared node0's participant key and Postgres session
 state while keeping replica-local supervisor data. The sticky router survived a versiond-2 stop, authenticated
 gateway traffic succeeded during the outage, and the replica returned without
 manual state copy. No duplicate validation-submission signature appeared in the
-captured replica logs.
+captured replica logs. The overlay preserved the existing node environment,
+canonical Genesis, and release marker byte-for-byte.
 EOF
 printf 'PASS HA evidence: %s\n' "$RUN"

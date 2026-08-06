@@ -5,6 +5,7 @@ load_project
 
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-bridge-sepolia"
 mkdir -p "$RUN"
+install_evidence_exit_trap 'Sepolia bridge'
 record_phase_profile bridge-sepolia
 
 blocked() {
@@ -25,9 +26,41 @@ EOF
 [[ -n "${GDC_SEPOLIA_BEACON_STATE_URL:-}" && "$GDC_SEPOLIA_BEACON_STATE_URL" =~ ^https:// ]] \
   || blocked 'Set GDC_SEPOLIA_BEACON_STATE_URL to the authorized HTTPS beacon-state endpoint.'
 [[ "$BRIDGE_IMAGE" == *@sha256:* ]] || die 'bridge image must be pinned by digest'
+step 'Preflight the configured Sepolia beacon checkpoint endpoint'
+curl -fsS --max-time "${GDC_BEACON_PREFLIGHT_TIMEOUT_SECONDS:-20}" \
+  "$GDC_SEPOLIA_BEACON_STATE_URL" >"$RUN/beacon-checkpoint.json" \
+  || blocked 'configured beacon-state endpoint did not return a successful response'
+jq -e . "$RUN/beacon-checkpoint.json" >/dev/null \
+  || blocked 'configured beacon-state endpoint did not return JSON'
 ha_verdict="$(find "$ROOT/artifacts/runs" -mindepth 2 -maxdepth 2 -name verdict.md -path '*-ha-v4/*' -print 2>/dev/null | LC_ALL=C sort | tail -n1)"
 [[ -n "$ha_verdict" ]] && grep -qx '# DevShard v4 HA: PASS' "$ha_verdict" \
   || blocked 'Sepolia bridge requires a successful v4 HA evidence bundle first.'
+ha_context="$(dirname "$ha_verdict")/context.env"
+[[ -s "$ha_context" ]] \
+  || blocked 'Latest HA evidence predates the release/profile contract; rerun v4 HA.'
+grep -qx "release_profile=$GDC_RELEASE_PROFILE" "$ha_context" \
+  || blocked "Latest HA evidence does not belong to the current $GDC_RELEASE_PROFILE profile."
+grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$ha_context" \
+  || blocked 'Latest HA evidence used a different model profile.'
+capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
+grep -qx "chain_id=$CHAIN_ID" "$ha_context" \
+  || blocked 'Latest HA evidence belongs to another chain ID.'
+grep -qx "genesis_sha256=$genesis_sha256" "$ha_context" \
+  || blocked 'Latest HA evidence belongs to a previous Genesis; rerun v4 HA.'
+grep -qx 'devshard_version=v4' "$ha_context" \
+  || blocked 'Latest HA evidence is not the required v4 overlay.'
+{
+  profile_summary
+  printf 'profile_hash=%s\n' "$(profile_hash)"
+  printf 'chain_id=%s\n' "$CHAIN_ID"
+  printf 'genesis_sha256=%s\n' "$genesis_sha256"
+  printf 'devshard_version=v4\n'
+  printf 'ha_bundle=%s\n' "$(dirname "$ha_verdict")"
+  printf 'sepolia_contract=%s\n' "$GDC_SEPOLIA_CONTRACT"
+  printf 'beacon_state_url_sha256=%s\n' \
+    "$(printf '%s' "$GDC_SEPOLIA_BEACON_STATE_URL" | sha256sum | awk '{print $1}')"
+} >"$RUN/context.env"
 node=gdc-node0
 
 step 'Measure node0 headroom before choosing Genesis placement'

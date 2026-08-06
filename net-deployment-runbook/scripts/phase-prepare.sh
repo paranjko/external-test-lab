@@ -56,7 +56,7 @@ for host in gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4 gdc-node4-ml; do
   remote_env=()
   [[ "$role" == ml-only ]] && remote_env+=("ML_CLIENT_CIDR='$node4_ml_client_cidr'")
   [[ "$host" == gdc-node4 ]] && remote_env+=("ML_CALLBACK_CIDR='$node4_ml_callback_cidr'")
-  if ssh -T "$host" "sudo ${remote_env[*]} /tmp/gdc-host-prep/prepare-host.sh --role '$role' --monitoring-cidr '$MONITORING_CIDR' --meter-edge-cidr '$METER_EDGE_CIDR' --ssh-port '$ssh_port'"; then
+  if ssh -T "$host" "sudo ${remote_env[*]} /tmp/gdc-host-prep/prepare-host.sh --role '$role' --monitoring-cidr '$MONITORING_CIDR' --public-edge-cidr '$PUBLIC_EDGE_CIDR' --ssh-port '$ssh_port'"; then
     prepare_rc=0
   else
     prepare_rc=$?
