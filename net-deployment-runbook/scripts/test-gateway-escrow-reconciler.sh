@@ -36,6 +36,22 @@ if [[ "$url" == *'/v1/admin/devshards' ]]; then
   printf '%s\n' "$ADMIN_STATE"
   exit 0
 fi
+if [[ "$url" == *'/v1/status' ]]; then
+  if [[ "$CASE_NAME" == poc ]]; then
+    printf '%s\n' '{"devshards":[{"chain_phase":"PoCValidate"}]}'
+  else
+    printf '%s\n' '{"devshards":[{"chain_phase":"Inference"}]}'
+  fi
+  exit 0
+fi
+if [[ "$url" == *'preserved_nodes_snapshot' ]]; then
+  if [[ "$CASE_NAME" == poc ]]; then
+    printf '%s\n' '{"snapshot":{"model_preserved_nodes":[{"model_id":"Qwen/Qwen3-0.6B","participants":[{"participant_id":"preserved"}]}]}}'
+  else
+    printf '%s\n' '{"snapshot":{"model_preserved_nodes":[]}}'
+  fi
+  exit 0
+fi
 if [[ "$url" == *'devshard_escrow/'* ]]; then
   id="${url##*/}"
   case "${CASE_NAME}:${id}" in
@@ -44,6 +60,8 @@ if [[ "$url" == *'devshard_escrow/'* ]]; then
     inactive:7) printf '%s\n' '{"found":true,"escrow":{"id":"7","settled":false}}' ;;
     inactive:8) printf '%s\n' '{"found":true,"escrow":{"id":"8","settled":true}}' ;;
     inactive:9) printf '%s\n' '{"found":true,"escrow":{"id":"9","settled":false}}' ;;
+    poc:7) printf '%s\n' '{"found":true,"escrow":{"id":"7","settled":false,"slots":["blocked"]}}' ;;
+    poc:9) printf '%s\n' '{"found":true,"escrow":{"id":"9","settled":false,"slots":["preserved"]}}' ;;
     *) exit 7 ;;
   esac
   exit 0
@@ -91,6 +109,10 @@ jq -e '.state == "RECOVERING" and .reason == "waiting_for_chain_confirmation" an
 run_case inactive '{"devshards":[{"id":"7","active":false,"phase":"inactive","requests_blocked":false},{"id":"8","active":true,"phase":"active","requests_blocked":false}]}'
 jq -e '.state == "READY" and .reason == "replacement_routable" and .replacement_escrow == "9"' "$WORK/inactive/status.json" >/dev/null
 grep -Fq '/v1/admin/escrows' "$WORK/inactive/curl.log"
+
+run_case poc '{"devshards":[{"id":"7","active":true,"phase":"active","requests_blocked":false},{"id":"9","active":true,"phase":"active","requests_blocked":false}]}'
+jq -e '.state == "READY" and .replacement_escrow == "9"' "$WORK/poc/status.json" >/dev/null
+grep -Fq '/v1/admin/devshards/7/deactivate' "$WORK/poc/curl.log"
 
 # A shell payload in an operator-owned configuration must remain inert when
 # the root-owned timer reads its credentials.

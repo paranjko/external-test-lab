@@ -112,6 +112,32 @@ bind_and_open_replacement() {
 admin_state="$(admin_get /v1/admin/devshards 2>/dev/null || true)"
 [[ -n "$admin_state" ]] || { write_status RECOVERING gateway_admin_unavailable; exit 0; }
 
+# During PoC the chain intentionally allows only the preserved participant
+# set to run inference.  A chain-valid escrow whose slots do not contain one
+# of those participants is not public capacity for that window: leaving it
+# active lets the pooled router select it and return a misleading 502.  Keep
+# that decision in this external controller rather than changing node code.
+gateway_status="$(admin_get /v1/status 2>/dev/null || true)"
+poc_active=false
+if jq -e '([.devshards[]? | .chain_phase] + [.chain_phase?] | any(. != null and . != "" and . != "Inference"))' \
+  <<<"$gateway_status" >/dev/null 2>&1; then
+  poc_active=true
+fi
+preserved_participants='[]'
+if [[ "$poc_active" == true ]]; then
+  preserved_snapshot="$(curl -fsS --connect-timeout 3 --max-time 15 \
+    "$chain_rest/productscience/inference/inference/preserved_nodes_snapshot" 2>/dev/null || true)"
+  preserved_participants="$(jq -c --arg model "$DEVSHARD_MODEL" '
+    [.snapshot.model_preserved_nodes[]?
+      | select(.model_id == $model)
+      | .participants[]?.participant_id] | unique
+  ' <<<"$preserved_snapshot" 2>/dev/null || printf '[]')"
+  if [[ "$preserved_participants" == '[]' ]]; then
+    write_status RECOVERING waiting_for_poc_preserved_runtime
+    exit 0
+  fi
+fi
+
 pending_id="$(jq -r 'select(.state == "RECOVERING" and .reason == "waiting_for_chain_confirmation") | .replacement_escrow // empty' "$status_file" 2>/dev/null || true)"
 valid_active_ids=()
 unknown_ids=()
@@ -130,6 +156,14 @@ while IFS=$'\t' read -r id active phase blocked; do
       exit 0
     fi
     if [[ "$active" == true && "$phase" == active && "$blocked" != true ]]; then
+      if [[ "$poc_active" == true ]] && ! jq -e --argjson preserved "$preserved_participants" '
+        [(.escrow.slots // [])[]? as $slot | select($preserved | index($slot))] | length > 0
+      ' <<<"$escrow" >/dev/null 2>&1; then
+        # Preserve the runtime locally for the next inference phase, but keep
+        # it out of the public pool until it has a chain-permitted host.
+        admin_post "/v1/admin/devshards/$id/deactivate" '{}' >/dev/null 2>&1 || true
+        continue
+      fi
       valid_active_ids+=("$id")
     fi
     continue
@@ -158,9 +192,15 @@ while IFS=$'\t' read -r id active phase blocked; do
 done < <(jq -r '.devshards[]? | [(.id // empty), (.active == true), (.phase // ""), (.requests_blocked // false)] | @tsv' <<<"$admin_state")
 
 if ((${#valid_active_ids[@]} > 0)); then
-  # An old chain-valid but inactive record is history, not capacity.  READY
-  # requires a currently routable runtime and a targeted completion probe.
-  bind_and_open_replacement "${valid_active_ids[0]}" || exit 0
+  # A gateway pool must not route a request to a second, merely chain-valid
+  # escrow while the chosen runtime is being replaced or PoC has narrowed the
+  # allowed hosts.  Keep one drain-safe public runtime; historical runtimes
+  # remain registered for settlement and can be reactivated by reconciliation.
+  selected_id="${valid_active_ids[0]}"
+  for id in "${valid_active_ids[@]:1}"; do
+    admin_post "/v1/admin/devshards/$id/deactivate" '{}' >/dev/null 2>&1 || true
+  done
+  bind_and_open_replacement "$selected_id" || exit 0
   exit 0
 fi
 
