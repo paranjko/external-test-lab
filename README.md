@@ -13,6 +13,8 @@ This repository hosts the public artifacts of the 4-month pilot approved by Gonk
 | Escrow contract (funds) | [`gonka1g57f45qjvn0529vpgj8x8mzt8r5k4audchm3pp9pezywxwf4rexqlj8ayw`](https://gonka.gg/address/gonka1g57f45qjvn0529vpgj8x8mzt8r5k4audchm3pp9pezywxwf4rexqlj8ayw) |
 | Escrow source & verification | [paranjko/testlab-devnet-escrow](https://github.com/paranjko/testlab-devnet-escrow) |
 | Issue tracker | [Issues](../../issues) — defects, validation requests, DevNet access |
+| Task board | [Gonka External Test Lab](https://github.com/users/paranjko/projects/1) — planned, active, and completed work |
+| DevNet status & dashboards | [gonka-dev.net](https://gonka-dev.net) · [grafana.gonka-dev.net](https://grafana.gonka-dev.net/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc) |
 | Security reports | See [SECURITY.md](SECURITY.md) — **do not open public issues for vulnerabilities** |
 
 ## What is being built
@@ -37,14 +39,14 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 
 | Milestone | Artifact | Location | Status |
 |---|---|---|---|
-| M1 | DevNet architecture note | [`devnet/architecture.md`](devnet/architecture.md) | draft |
+| M1 | DevNet architecture note | [`devnet/architecture.md`](devnet/architecture.md) | published |
 | M1 | QA hiring | [`jobs/`](jobs/) | **open** |
-| M1 | Initial test strategy | `test-plans/strategy.md` | planned |
+| M1 | Initial test strategy | [`testing/test-strategy.md`](testing/test-strategy.md) | published |
 | M1 | Node deployment runbook | [`net-deployment-runbook/`](net-deployment-runbook/) | published — `1.0.0-alpha.0` |
 | M1→M2 | Monthly public report #1 | `reports/monthly/` | planned — before the Aug 13 unlock |
-| M2 | Published deployment runbook, regional layout | `runbooks/`, `devnet/regions.md` | planned |
-| M2 | Smoke & regression checklists, live task board | `test-plans/` | planned |
-| M2 | DevNet join guide (genesis, seeds) | `devnet/` | planned |
+| M2 | Join guide, regional layout | [`net-deployment-runbook/JOIN.md`](net-deployment-runbook/JOIN.md), `devnet/regions.md` | join guide published — regional layout planned |
+| M2 | Smoke & regression checklists, live task board | [`testing/`](testing/), [task board](https://github.com/users/paranjko/projects/1) | task board **live** — checklists planned |
+| M2 | External join opening (genesis params, seeds) | `devnet/` | planned — gates on M2 stability |
 | M3 | Test automation scripts (smoke-level) | `automation/` | planned |
 | M3 | Incident log, participant onboarding guide | `runbooks/incidents/`, `devnet/` | planned |
 | M4 | Final reports, lessons learned, handoff package | `reports/`, `docs/` | planned |
