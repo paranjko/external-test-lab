@@ -33,6 +33,10 @@ GATEWAY_ADDRESS="$(jq -r .address "$GATEWAY_ACCOUNT")"
 NODE0_ID="$(jq -r .node_id "$IDENTITIES/gdc-node0.json")"
 NODE0_CONSENSUS="$(jq -r .consensus_pubkey "$IDENTITIES/gdc-node0.json")"
 NODE0_WARM="$(jq -r .warm_address "$IDENTITIES/gdc-node0.json")"
+GENESIS_GUARDIAN_ENABLED="${GDC_GENESIS_GUARDIAN_ENABLED:-false}"
+[[ "$GENESIS_GUARDIAN_ENABLED" =~ ^(true|false)$ ]] || { echo 'GDC_GENESIS_GUARDIAN_ENABLED must be true or false' >&2; exit 2; }
+GENESIS_GUARDIAN_ADDRESSES='[]'
+[[ "$GENESIS_GUARDIAN_ENABLED" == true ]] && GENESIS_GUARDIAN_ADDRESSES="[\"$NODE0_ADDRESS\"]"
 PASSWORD_FILE="$SECRETS/operator.keyring"; [[ -s "$PASSWORD_FILE" ]] || exit 1; PASSWORD="$(<"$PASSWORD_FILE")"
 HOME_DIR="${GDC_OPERATOR_HOME:-$ROOT/state/operator-home}"
 mkdir -p "$HOME_DIR" "$OUTPUT" "$ROOT/artifacts/genesis"
@@ -78,7 +82,8 @@ printf '%s@%s:%s\n' "$NODE0_ID" "$NODE0_PUBLIC_HOST" "$NODE0_P2P_PORT" >"$OUTPUT
 install -m 0444 "$HOME_DIR/config/genesis.json" "$OUTPUT/genesis.json"
 sha256sum "$OUTPUT/genesis.json" | awk '{print $1"  genesis.json"}' > "$OUTPUT/genesis.sha256"
 
-jq -e --arg node0 "$NODE0_ADDRESS" --arg gateway "$GATEWAY_ADDRESS" --arg chain "$CHAIN_ID" '
+jq -e --arg node0 "$NODE0_ADDRESS" --arg gateway "$GATEWAY_ADDRESS" --arg chain "$CHAIN_ID" \
+  --argjson guardian_enabled "$GENESIS_GUARDIAN_ENABLED" --argjson guardian_addresses "$GENESIS_GUARDIAN_ADDRESSES" '
   .chain_id == $chain
   and (.app_state.inference.participant_list | length) == 1
   and .app_state.inference.participant_list[0].address == $node0
@@ -86,9 +91,9 @@ jq -e --arg node0 "$NODE0_ADDRESS" --arg gateway "$GATEWAY_ADDRESS" --arg chain 
   and .app_state.inference.params.devshard_escrow_params.allowed_creator_addresses == []
   and .app_state.inference.params.devshard_escrow_params.approved_versions == []
   and .app_state.inference.params.poc_params.poc_v2_enabled == true
-  and .app_state.inference.params.genesis_guardian_params.guardian_addresses == [$node0]
-  and .app_state.inference.genesis_only_params.genesis_guardian_enabled == true
-  and .app_state.inference.genesis_only_params.genesis_guardian_addresses == [$node0]
+  and .app_state.inference.params.genesis_guardian_params.guardian_addresses == $guardian_addresses
+  and .app_state.inference.genesis_only_params.genesis_guardian_enabled == $guardian_enabled
+  and .app_state.inference.genesis_only_params.genesis_guardian_addresses == $guardian_addresses
   and (.app_state.genutil.gen_txs | length) == 1
 ' "$OUTPUT/genesis.json" >/dev/null
 echo 'Genesis invariants: PASS'

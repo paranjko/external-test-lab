@@ -3,7 +3,19 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 
-participant="$(jq -er .address "$ACCOUNTS/gdc-node0-cold.json")"
+# A guardian is intentionally absent from PoC-preserved model capacity.  The
+# bootstrap proof must therefore accept any configured, joined model
+# participant rather than assuming that the Genesis validator itself receives
+# a validation weight.  This also keeps non-guardian Genesis deployments
+# valid: gdc-node0 remains the first candidate there.
+candidates=()
+for account in "$ACCOUNTS"/gdc-node*-cold.json; do
+  [[ -s "$account" ]] || continue
+  node="$(basename "$account" -cold.json)"
+  [[ "$node" == gdc-node0 || -e "$STATE/joined/$node" ]] || continue
+  candidates+=("$(jq -er .address "$account")")
+done
+(( ${#candidates[@]} > 0 )) || die 'no configured Genesis or joined participant account is available for validation-weight verification'
 run="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-genesis-validation-weight"
 mkdir -p "$run"
 
@@ -12,14 +24,20 @@ deadline=$((SECONDS + 600))
 while (( SECONDS < deadline )); do
   group="$(ssh -T gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data')"
   printf '%s\n' "$group" >"$run/current-epoch-group.json"
-  if jq -e --arg participant "$participant" --arg model "$MODEL_ID" '
+  if jq -e --argjson candidates "$(printf '%s\n' "${candidates[@]}" | jq -R . | jq -s .)" --arg model "$MODEL_ID" '
     .epoch_group_data as $group
     | ($group.epoch_index | tonumber) > 0
     and ($group.sub_group_models | index($model) != null)
     and ($group.validation_weights
-      | any(.member_address == $participant and (.weight | tonumber) > 0))
+      | any(.member_address as $address
+            | ($candidates | index($address) != null)
+            and (.weight | tonumber) > 0))
   ' <<<"$group" >/dev/null; then
-    printf 'PASS Genesis participant model validation weight is active; evidence: %s\n' "$run"
+    jq --argjson candidates "$(printf '%s\n' "${candidates[@]}" | jq -R . | jq -s .)" '
+      .epoch_group_data.validation_weights
+      | map(select(.member_address as $address | ($candidates | index($address) != null) and (.weight | tonumber) > 0))
+    ' "$run/current-epoch-group.json" >"$run/eligible-validation-weights.json"
+    printf 'PASS a configured model participant has an active chain-computed validation weight; evidence: %s\n' "$run"
     exit 0
   fi
   epoch="$(jq -er '.epoch_group_data.epoch_index' <<<"$group")"

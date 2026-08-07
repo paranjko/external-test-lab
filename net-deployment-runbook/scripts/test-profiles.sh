@@ -44,6 +44,10 @@ grep -Fq 'GDC_GATEWAY_MIN_SPENDABLE_NGONKA:-100000000000' "$ROOT/scripts/phase-o
 grep -Fq '\"temp_count\":$gateway_rotation_temp_count' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '\"target_count\":$gateway_rotation_target_count' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'DEVSHARD_CAPACITY_AWARE_LIMITS=off' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
+grep -Fq 'waiting_for_versiond_session' "$ROOT/04-ops/gateway-escrow-reconciler.sh"
+grep -Fq 'productscience/inference/inference/devshard_escrow' "$ROOT/04-ops/gateway-escrow-reconciler.sh"
 grep -Fq '.settings.max_concurrent_requests == 0 and .settings.max_concurrent_requests_per_10000_weight <= 0' "$ROOT/scripts/phase-ops.sh"
 if grep -Fq 'GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-10000000000' "$ROOT/04-ops/create-gateway.sh"; then
   echo 'gateway escrow must not default to the full Genesis allocation' >&2
@@ -82,6 +86,14 @@ grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
+grep -Fq 'telegram-key-probe' "$ROOT/gdc.sh"
+grep -Fq 'docker exec -i' "$ROOT/scripts/phase-telegram-key-probe.sh"
+grep -Fq 'GDC_ASSURANCE_SLA_MS' "$ROOT/scripts/phase-telegram-key-probe.sh"
+grep -Fq 'temporary_assignment_cleaned' "$ROOT/scripts/phase-telegram-key-probe.sh"
+if grep -Fq 'DELETE FROM keys WHERE telegram_id' "$ROOT/scripts/phase-telegram-key-probe.sh"; then
+  echo 'telegram-key-probe phase must not blindly delete an assignment before collision checks' >&2
+  exit 1
+fi
 if grep -Fq 'ssh_ready gdc-node4' "$ROOT/scripts/phase-bootstrap-access.sh"; then
   echo 'bootstrap-access must not require gdc-node4' >&2
   exit 1
@@ -113,16 +125,28 @@ for release in testnet-0.2.14 testnet-0.2.15; do
   [[ "$(profile_hash)" == "$expected_network_hash" ]]
   [[ "$(operator_profile_hash)" == "$expected_operator_hash" ]]
   if [[ "$release" == testnet-0.2.15 ]]; then
+    [[ "$GONKA_HOST_STACK_COMMIT" == ce33c851282b8f4c0f63d78d46ddd4d8bb248207 ]]
+    [[ "$GONKA_HOST_STACK_DOC_SHA256" == 5a69a2d82f77b4ecd1e207af1119063f32693afdc01bca58433f71ffe4061f82 ]]
+    [[ "$GONKA_HOST_STACK_COMPOSE_SHA256" == d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94 ]]
+    [[ "$DAPI_SOURCE_REF" == release/v0.2.15-post3 ]]
+    [[ "$DAPI_COMMIT" == 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 ]]
+    [[ "$DAPI_IMAGE" == ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c ]]
+    [[ "$BRIDGE_IMAGE" == ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d ]]
     [[ "$INFERENCED_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-amd64.zip ]]
-    [[ "$DAPI_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/decentralized-api-amd64.zip ]]
+    [[ "$DAPI_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-post3/decentralized-api-amd64.zip ]]
     [[ "$INFERENCED_UPGRADE_SHA256" == 91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e ]]
-    [[ "$DAPI_UPGRADE_SHA256" == c9cf1bfa2c994beca8a528d0ee3ad7197a582144769711600ec9df41faf4c9f7 ]]
+    [[ "$DAPI_UPGRADE_SHA256" == 8cfa7345f5b7f968d5a1b765837b8319084c02d3dd2691b698c368774e20b55e ]]
   fi
   summary="$(profile_summary)"
   grep -qx "inferenced_image=$INFERENCED_IMAGE" <<<"$summary"
   grep -qx "dapi_image=$DAPI_IMAGE" <<<"$summary"
   grep -qx "mlnode_generic_image=$MLNODE_GENERIC_IMAGE" <<<"$summary"
   grep -qx "bridge_image=$BRIDGE_IMAGE" <<<"$summary"
+  if [[ "$release" == testnet-0.2.15 ]]; then
+    grep -qx "gonka_host_stack_commit=$GONKA_HOST_STACK_COMMIT" <<<"$summary"
+    grep -qx "dapi_source_ref=$DAPI_SOURCE_REF" <<<"$summary"
+    grep -qx "dapi_commit=$DAPI_COMMIT" <<<"$summary"
+  fi
   grep -qx "operator_explorer_image=$EXPLORER_IMAGE" <<<"$summary"
   grep -qx "operator_caddy_image=$CADDY_IMAGE" <<<"$summary"
   grep -qx "operator_grafana_image=$GRAFANA_IMAGE" <<<"$summary"
@@ -153,7 +177,7 @@ for profile in a5000-24g t4-16g 4090-24g 3090-24g blackwell-16g; do
 done
 genesis_out="$(mktemp)"
 trap 'rm -f "${genesis_out:-}"' EXIT
-GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b \
+GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b GDC_GENESIS_GUARDIAN_ENABLED=true \
   "$ROOT/01-identities-genesis/render-genesis-overrides.sh" \
   --gateway-account gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq \
   --genesis-guardian gonka1rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr \
@@ -185,6 +209,9 @@ rm -f "$genesis_out"
 unset genesis_out
 grep -Fq 'GDC_NODE_HANDOFF_DIR' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'GDC_STOP_POC_AT_WINDDOWN' "$ROOT/02-node/render-node-env.sh"
+grep -Fq 'GDC_GENESIS_GUARDIAN_ENABLED' "$ROOT/01-identities-genesis/render-genesis-overrides.sh"
+grep -Fq 'one joined non-guardian model participant' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'Create scoped operator secrets for $NODE' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'PoCGenerateWindDown' "$ROOT/02-node/poc-winddown-watch.sh"
 grep -Fq 'gdc-poc-winddown-watch@' "$ROOT/02-node/install-node.sh"
 grep -Fq 'gdc-poc-winddown-watch@' "$ROOT/02-node/ml-only/install-ml.sh"
@@ -210,6 +237,10 @@ grep -Fq "'gateway continuity|*-gateway-continuity/*|# Gateway continuity: PASS'
 grep -Fq 'genesis_sha256=$live_genesis_sha256' "$ROOT/scripts/phase-audit-lifecycle.sh"
 grep -Fq 'genesis_sha256=$genesis_sha256' "$ROOT/scripts/phase-verify.sh"
 grep -Fq "printf 'genesis_sha256=%s\\n' \"\$genesis_sha256\"" "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'GDC_GATEWAY_CONTINUITY_KEY_SOURCE:-telegram-pool' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'GDC_GATEWAY_PARTICIPANT_REQUEST_BURST=1000000000' "$ROOT/.env.example"
+grep -Fq 'GATEWAY_PARTICIPANT_REQUEST_BURST=${GDC_GATEWAY_PARTICIPANT_REQUEST_BURST:-1000000000}' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'participant_throttle' "$ROOT/scripts/phase-ops.sh"
 for genesis_bound_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-sepolia.sh; do
   grep -Fq "printf 'genesis_sha256=%s\\n' \"\$genesis_sha256\"" "$ROOT/scripts/$genesis_bound_phase"
 done

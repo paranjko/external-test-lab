@@ -143,11 +143,17 @@ rotation. This is test-chain funding, not a client request quota.
 next live PoC window. A PASS requires a non-empty preserved runtime set and no
 failed request in any of the three windows. The evidence is tied to the current
 chain ID, Genesis hash, release and model profile, so a PASS from a chain that
-was later reset cannot authorize an upgrade. With node0 as the sole participant
-and Genesis guardian, this check is expected to report BLOCKED: Gonka excludes
-the guardian from the preserved non-voting runtime set. That topology cannot
-provide continuous chain-accounted inference through PoC; additional eligible
-non-guardian capacity must join first.
+was later reset cannot authorize an upgrade. The Community assurance profile
+disables the Genesis guardian because Gonka excludes guardian capacity from the
+preserved non-voting runtime set. This is Genesis-only: set
+`GDC_GENESIS_GUARDIAN_ENABLED=true` only for a one-validator bootstrap
+experiment that intentionally cannot pass the PoC-continuity gate. A normal
+continuity rehearsal still requires joined, eligible model capacity.
+
+With the default non-guardian Community profile, do not call
+`bootstrap-access` immediately after one-node Genesis. First qualify and join
+one model participant, then run `bootstrap-access`; this lets the chain compute
+the first validation weight without relying on guardian-only capacity.
 
 ## Operator handoff onboarding
 

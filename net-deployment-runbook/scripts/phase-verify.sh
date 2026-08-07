@@ -3,6 +3,8 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 record_phase_profile verify
+CHAIN_BASE="${GDC_CHAIN_PUBLIC_BASE:-https://$NODE4_PUBLIC_HOST}"
+CHAIN_BASE="${CHAIN_BASE%/}"
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$RUN"
 VERDICT_WRITTEN=false
@@ -20,7 +22,7 @@ EOF
 trap on_exit EXIT
 
 step 'Record environment and topology'
-capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+capture_canonical_genesis "$CHAIN_BASE/chain-rpc/genesis" "$RUN/genesis.json"
 genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 {
   echo "timestamp=$(date -u +%FT%TZ)"
@@ -35,10 +37,10 @@ genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 
 step 'Prove block progress with two state observations'
 deadline=$((SECONDS + 120))
-curl -fsS "https://$NODE0_PUBLIC_HOST/chain-rpc/status" >"$RUN/chain-status-first.json"
+curl -fsS "$CHAIN_BASE/chain-rpc/status" >"$RUN/chain-status-first.json"
 first="$(jq -er .result.sync_info.latest_block_height "$RUN/chain-status-first.json")"
 while (( SECONDS < deadline )); do
-  status="$(curl -fsS "https://$NODE0_PUBLIC_HOST/chain-rpc/status")"
+  status="$(curl -fsS "$CHAIN_BASE/chain-rpc/status")"
   current="$(jq -r .result.sync_info.latest_block_height <<<"$status")"
   if (( current > first )); then
     jq . <<<"$status" >"$RUN/chain-status-second.json"
@@ -88,7 +90,7 @@ group_target=$((initial_group_effective + epoch_blocks))
 step "Prove a complete $epoch_blocks-block interval and the next epoch-group activation from height $first to $epoch_target"
 deadline=$((SECONDS + epoch_timeout))
 while (( SECONDS < deadline )); do
-  status="$(curl -fsS "https://$NODE0_PUBLIC_HOST/chain-rpc/status")"
+  status="$(curl -fsS "$CHAIN_BASE/chain-rpc/status")"
   current="$(jq -r .result.sync_info.latest_block_height <<<"$status")"
   if (( current >= epoch_target )); then
     jq . <<<"$status" >"$RUN/chain-status-epoch.json"
@@ -103,7 +105,7 @@ step "Prove exactly $expected ACTIVE participants"
 printf '[]' >"$RUN/participants.json"
 for i in "${node_indexes[@]}"; do
   address="$(jq -r .address "$ACCOUNTS/gdc-node$i-cold.json")"
-  body="$(curl -fsS "https://$NODE0_PUBLIC_HOST/v2/participants/$address")"
+  body="$(curl -fsS "$CHAIN_BASE/v2/participants/$address")"
   status="$(jq -r '.participant.status // empty' <<<"$body")"
   [[ "$status" =~ ^(ACTIVE|PARTICIPANT_STATUS_ACTIVE|1)$ ]] || die "gdc-node$i is not ACTIVE: $status"
   jq --argjson item "$body" '. + [$item]' "$RUN/participants.json" >"$RUN/participants.tmp"
@@ -136,7 +138,7 @@ for i in "${node_indexes[@]}"; do
   mv "$RUN/node-sync.tmp" "$RUN/node-sync.json"
 done
 jq -e '[.[].common_height_hash] | unique | length == 1' "$RUN/node-sync.json" >/dev/null || die 'nodes disagree on common-height block hash'
-curl -fsS "https://$NODE0_PUBLIC_HOST/v1/models" >"$RUN/models-chain.json"
+curl -fsS "$CHAIN_BASE/v1/models" >"$RUN/models-chain.json"
 jq -e --arg model "$MODEL_ID" '.data[] | select(.id == $model)' "$RUN/models-chain.json" >/dev/null || die "model $MODEL_ID is absent from the live API"
 # The 0.2.14 decentralized API intentionally exposes the model catalog at
 # /v1/models, while current epoch group and committed weights are chain REST

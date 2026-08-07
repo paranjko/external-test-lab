@@ -8,7 +8,25 @@ BASELINE="$STATE/phase-profiles/genesis.env"
 [[ -s "$BASELINE" ]] || die 'no baseline Genesis profile recorded; run the 0.2.14 baseline first'
 grep -qx 'release_profile=testnet-0.2.14' "$BASELINE" || die 'Genesis was not formed from testnet-0.2.14'
 grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$BASELINE" || die 'model overlay differs from baseline; model migration is a separate exercise'
-require_current_baseline_pass
+
+# A repaired/repeated evidence pass may run after the chain has already
+# activated the approved target. In that state current nodes no longer carry
+# 0.2.14 markers, so require the immutable pre-upgrade PASS bundle rather
+# than incorrectly demanding that a completed upgrade look like its baseline.
+target_runtime_active=true
+while IFS= read -r target_index; do
+  target_node="gdc-node$target_index"
+  target_versions="$(curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$target_node")/v1/versions" 2>/dev/null || true)"
+  jq -e --arg commit "$GONKA_COMMIT" '
+    (.node_version.version | ltrimstr("v")) == "0.2.15"
+    and .node_version.commit == $commit
+  ' <<<"$target_versions" >/dev/null 2>&1 || target_runtime_active=false
+done < <(configured_node_indexes)
+if [[ "$target_runtime_active" == true ]]; then
+  step 'Reuse immutable 0.2.14 baseline evidence for the already activated target runtime'
+else
+  require_current_baseline_pass
+fi
 baseline_pass_bundle="$(latest_baseline_pass_bundle)"
 [[ -s "$baseline_pass_bundle/current-epoch-group.json" ]] \
   || die 'accepted baseline PASS has no complete epoch-group evidence'
@@ -66,13 +84,34 @@ capture_compose_state() {
   done
 }
 
+fetch_node_versions() {
+  local node="$1" runtime_file="$2" candidate deadline
+  candidate="${runtime_file}.tmp"
+  deadline=$((SECONDS + ${GDC_UPGRADE_RUNTIME_READY_WAIT_SECONDS:-180}))
+  while (( SECONDS < deadline )); do
+    if curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$node")/v1/versions" >"$candidate" 2>/dev/null \
+      && jq -e '.node_version.version | type == "string"' "$candidate" >/dev/null 2>&1; then
+      mv "$candidate" "$runtime_file"
+      return 0
+    fi
+    rm -f "$candidate"
+    printf 'WAIT  %s public version endpoint after Cosmovisor restart\n' "$node"
+    sleep 3
+  done
+  rm -f "$candidate"
+  die "$node public version endpoint did not recover after Cosmovisor restart"
+}
+
 capture_runtime_state() {
   local index node runtime_file node_current api_current node_process api_process
   mkdir -p "$RUN/runtime"
   for index in "${nodes[@]}"; do
     node="gdc-node$index"
     runtime_file="$RUN/runtime/$node.json"
-    curl -fsS "$(node_url "$node")/v1/versions" >"$runtime_file"
+    # A node's public Caddy proxy can return a short 502 while the API
+    # container is being restarted by Cosmovisor. That is a transition to
+    # wait through, not evidence that the upgrade itself failed.
+    fetch_node_versions "$node" "$runtime_file"
     jq -e --arg commit "$GONKA_COMMIT" '
       (.node_version.version | ltrimstr("v")) == "0.2.15"
       and .node_version.commit == $commit
@@ -101,11 +140,11 @@ proposal="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposa
 printf '%s\n' "$proposal" >"$RUN/upgrade-proposal.json"
 jq -e '.proposal.status == "PROPOSAL_STATUS_PASSED"' "$RUN/upgrade-proposal.json" >/dev/null || die 'upgrade proposal has not passed'
 upgrade_name="v$GONKA_RELEASE"
-plan_height="$(jq -er --arg name "$upgrade_name" '
-  [.. | objects | select(.["@type"]? == "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade")
-   | .plan? | select(.name == $name) | .height | tonumber][0]
-' "$RUN/upgrade-proposal.json")"
-[[ "$plan_height" =~ ^[1-9][0-9]*$ ]] || die 'passed proposal has no valid target height'
+plan_height="$("$ROOT/scripts/verify-upgrade-proposal-binding.sh" \
+  "$RUN/upgrade-proposal.json" "$upgrade_name" \
+  "$INFERENCED_UPGRADE_URL" "$INFERENCED_UPGRADE_SHA256" \
+  "$DAPI_UPGRADE_URL" "$DAPI_UPGRADE_SHA256")" \
+  || die 'passed proposal is not immutably bound to the pinned target release artifacts'
 
 step 'Locate pre-upgrade evidence from before the approved plan height'
 pre_source=''
@@ -121,7 +160,9 @@ if [[ -z "$pre_source" ]]; then
   (( current_height < plan_height )) || die 'upgrade already activated, but no pre-upgrade evidence bundle exists'
   capture_chain_state pre
   capture_compose_state pre
-  capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/live-genesis.json"
+  # node4 is the canonical public edge. node0's own hostname is a participant
+  # callback route and can retain a stale edge configuration across a reset.
+  capture_canonical_genesis "https://$NODE4_PUBLIC_HOST/chain-rpc/genesis" "$RUN/live-genesis.json"
   pre_source="$RUN"
 else
   for name in status validators models participants epoch-group balances; do
@@ -156,6 +197,21 @@ while (( SECONDS < deadline )); do
     found="$(jq -r '.found // false' <<<"$body" 2>/dev/null || true)"
     if [[ "$found" == true && "$height" == "$plan_height" ]]; then
       printf '%s\n' "$body" >"$RUN/last-upgrade-height/$node.json"
+      applied=$((applied + 1))
+      continue
+    fi
+    # The chain endpoint records the activation only while its transient
+    # upgrade record is retained.  A resumed evidence pass can run after that
+    # record has expired; the pinned running version and commit then provide
+    # the durable proof that this node applied the already-passed plan.
+    version_body="$(curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$node")/v1/versions" 2>/dev/null || true)"
+    if jq -e --arg commit "$GONKA_COMMIT" '
+      (.node_version.version | ltrimstr("v")) == "0.2.15"
+      and .node_version.commit == $commit
+    ' <<<"$version_body" >/dev/null 2>&1; then
+      jq -n --argjson runtime "$version_body" --argjson height "$plan_height" \
+        '{found:false,last_upgrade_height:$height,observed_via:"runtime-version",runtime:$runtime}' \
+        >"$RUN/last-upgrade-height/$node.json"
       applied=$((applied + 1))
     fi
   done
@@ -192,7 +248,7 @@ done
 step 'Capture and compare post-upgrade state'
 capture_chain_state post
 capture_compose_state post
-capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/post-genesis.json"
+capture_canonical_genesis "https://$NODE4_PUBLIC_HOST/chain-rpc/genesis" "$RUN/post-genesis.json"
 [[ "$(genesis_sha256 "$RUN/post-genesis.json")" == "$live_genesis_hash" ]] || die 'Genesis changed during upgrade'
 [[ "$(jq -r .result.node_info.network "$RUN/pre-status.json")" == "$(jq -r .result.node_info.network "$RUN/post-status.json")" ]] || die 'chain ID changed during upgrade'
 jq -e --slurpfile before "$RUN/pre-participants.json" '

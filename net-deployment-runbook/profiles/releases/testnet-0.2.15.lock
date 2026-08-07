@@ -1,10 +1,17 @@
-# Upstream network release. Verified against code/gonka tag release/v0.2.15.
+# Core chain release plus the immutable upstream host-stack snapshot documented
+# at docs/host-stack-latest.md. The chain stays on release/v0.2.15 while DAPI
+# and container pins follow the 2026-08-06 stack snapshot.
 GONKA_SOURCE_REF=release/v0.2.15
 GONKA_COMMIT=4d687ed6782bcea3931d2d9135bf322f84e190ab
 GONKA_RELEASE=0.2.15
+GONKA_HOST_STACK_COMMIT=ce33c851282b8f4c0f63d78d46ddd4d8bb248207
+GONKA_HOST_STACK_DOC_SHA256=5a69a2d82f77b4ecd1e207af1119063f32693afdc01bca58433f71ffe4061f82
+GONKA_HOST_STACK_COMPOSE_SHA256=d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94
+DAPI_SOURCE_REF=release/v0.2.15-post3
+DAPI_COMMIT=5dbb53ddf3ddc42655fc04dc39d96003169bdbb0
 TMKMS_IMAGE=ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21
 INFERENCED_IMAGE=ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112
-DAPI_IMAGE=ghcr.io/product-science/api:0.2.15@sha256:72a16fedbe84aff93e15c442d9dbe2d83aea2654321d23c08f44a4566dcb4678
+DAPI_IMAGE=ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c
 EDGE_API_IMAGE=ghcr.io/product-science/edge-api:0.2.15@sha256:4f98b337ea837d711bdd7e0d0e3172a0034f37a5f7fb9764251b7155bb727025
 EDGE_API_ENABLED=true
 EDGE_API_COMPOSE_PROFILE=edge-api
@@ -18,8 +25,6 @@ MLNODE_PROXY_IMAGE=nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c
 # passed proposal can be independently reproduced and verified.
 INFERENCED_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-amd64.zip
 INFERENCED_UPGRADE_SHA256=91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e
-DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/decentralized-api-amd64.zip
-DAPI_UPGRADE_SHA256=c9cf1bfa2c994beca8a528d0ee3ad7197a582144769711600ec9df41faf4c9f7
-# Reuse the tested, digest-pinned bridge artifact until a 0.2.15 bridge is
-# separately authorized. It is an explicit P2 qualification input, not latest.
-BRIDGE_IMAGE=ghcr.io/product-science/bridge:0.2.14-post3@sha256:06f1c8750941cd31c6f46ff037e0b43f71a9ba5a5e4c6b81da8c4d6748af67b5
+DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-post3/decentralized-api-amd64.zip
+DAPI_UPGRADE_SHA256=8cfa7345f5b7f968d5a1b765837b8319084c02d3dd2691b698c368774e20b55e
+BRIDGE_IMAGE=ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d

@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 
 const [url, widthText, heightText, output, visibleNodesText = '0'] = process.argv.slice(2);
 const width = Number(widthText);
@@ -15,7 +16,17 @@ if (!url || !Number.isInteger(width) || !Number.isInteger(height) || !output || 
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'gdc-homepage-chrome-'));
-const port = 19222;
+// A fixed DevTools port can be owned by another concurrent browser check,
+// which leaves reset waiting forever for the wrong Chrome instance. Reserve an
+// ephemeral loopback port for this invocation instead.
+const port = await new Promise((resolve, reject) => {
+  const server = createServer();
+  server.once('error', reject);
+  server.listen(0, '127.0.0.1', () => {
+    const address = server.address();
+    server.close(error => error ? reject(error) : resolve(address.port));
+  });
+});
 const chrome = process.env.CHROME_BIN || 'google-chrome';
 const browser = spawn(chrome, [
   '--headless=new', '--no-sandbox', '--disable-gpu', `--remote-debugging-port=${port}`,
@@ -55,7 +66,7 @@ try {
   await call('Page.navigate', { url }, sessionId);
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const { result } = await call('Runtime.evaluate', {
-      expression: 'Boolean(document.querySelector("#updated")?.dateTime && /^Updated .* UTC$/.test(document.querySelector("#updated")?.textContent || "") && ["ACTIVE","IDLE","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || ""))',
+      expression: 'Boolean(document.querySelector("#updated")?.dateTime && /^Updated .* UTC$/.test(document.querySelector("#updated")?.textContent || "") && ["READY – processing requests","READY – no requests in flight","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || ""))',
       returnByValue: true,
     }, sessionId);
     if (result.value) break;
@@ -110,7 +121,7 @@ try {
     returnByValue: true,
   }, sessionId);
   const gateway = JSON.parse(gatewayResult.value);
-  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["ACTIVE", "IDLE", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
+  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["READY – processing requests", "READY – no requests in flight", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
   if (expectResetState && gateway.health !== 'OFFLINE') throw new Error(`gateway must be OFFLINE after reset ${JSON.stringify(gateway)}`);
   if (expectedGatewayState && gateway.health !== expectedGatewayState) throw new Error(`gateway state ${gateway.health} does not match expected ${expectedGatewayState}`);
   const { result: typeResult } = await call('Runtime.evaluate', {

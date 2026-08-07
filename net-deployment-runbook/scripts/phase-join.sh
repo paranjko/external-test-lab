@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
-assert_baseline_release
+BASELINE="$STATE/phase-profiles/genesis.env"
+[[ -s "$BASELINE" ]] || die 'no baseline Genesis profile recorded; run the 0.2.14 genesis phase first'
+grep -qx 'release_profile=testnet-0.2.14' "$BASELINE" || die 'join requires a Genesis formed from testnet-0.2.14'
 record_phase_profile "join-${1:-unknown}"
 NODE="$(node_name "${1:-}")"
 host_is_skipped "$NODE" && die "$NODE is excluded by GDC_SKIP_HOSTS"
@@ -38,6 +40,15 @@ if [[ ! -s "$ACCOUNT" ]]; then
   "$ROOT/01-identities-genesis/create-cold-accounts.sh" "$SECRETS/operator.keyring" "$NODE"
 fi
 [[ -s "$ACCOUNT" ]] || die "missing public cold account for $NODE"
+
+# A clean coordinator-side join creates the public cold account on demand, but
+# render-node-env also needs this participant's private keyring and database
+# secret.  Handoff operators bring their own target-specific secrets; the
+# local rehearsal path must create the same scoped material before rendering.
+if [[ ! -s "$SECRETS/$NODE.keyring" || ! -s "$SECRETS/$NODE.postgres" ]]; then
+  step "Create scoped operator secrets for $NODE"
+  "$ROOT/scripts/make-node-operator-secrets.sh" "$NODE" "$SECRETS"
+fi
 
 if [[ ! -s "$IDENTITY" ]]; then
   step "Create $NODE identity"

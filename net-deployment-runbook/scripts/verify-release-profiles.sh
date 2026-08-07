@@ -75,6 +75,7 @@ for item in \
 do
   IFS='|' read -r profile ref <<<"$item"
   GDC_RELEASE_PROFILE="$profile" load_profiles
+  stack_ref="$ref"
 
   [[ "$GONKA_SOURCE_REF" == "$ref" ]] || {
     echo "$profile source ref is $GONKA_SOURCE_REF, expected $ref" >&2
@@ -86,26 +87,43 @@ do
     exit 1
   }
 
+  if [[ -n "${GONKA_HOST_STACK_COMMIT:-}" ]]; then
+    [[ "$GONKA_HOST_STACK_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+      || { echo "$profile has an invalid host-stack commit" >&2; exit 1; }
+    git -C "$UPSTREAM" cat-file -e "$GONKA_HOST_STACK_COMMIT^{commit}" \
+      || { echo "$profile host-stack commit is unavailable: $GONKA_HOST_STACK_COMMIT" >&2; exit 1; }
+    actual_doc_sha256="$(git -C "$UPSTREAM" show "$GONKA_HOST_STACK_COMMIT:docs/host-stack-latest.md" | sha256sum | awk '{print $1}')"
+    actual_compose_sha256="$(git -C "$UPSTREAM" show "$GONKA_HOST_STACK_COMMIT:deploy/join/docker-compose.yml" | sha256sum | awk '{print $1}')"
+    [[ "$actual_doc_sha256" == "$GONKA_HOST_STACK_DOC_SHA256" ]] \
+      || { echo "$profile host-stack document hash mismatch" >&2; exit 1; }
+    [[ "$actual_compose_sha256" == "$GONKA_HOST_STACK_COMPOSE_SHA256" ]] \
+      || { echo "$profile host-stack Compose hash mismatch" >&2; exit 1; }
+    dapi_commit="$(git -C "$UPSTREAM" rev-parse "$DAPI_SOURCE_REF^{commit}")"
+    [[ "$dapi_commit" == "$DAPI_COMMIT" ]] \
+      || { echo "$profile DAPI commit $DAPI_COMMIT does not match $DAPI_SOURCE_REF commit $dapi_commit" >&2; exit 1; }
+    stack_ref="$GONKA_HOST_STACK_COMMIT"
+  fi
+
   compose=deploy/join/docker-compose.yml
-  assert_service_image "$ref" "$compose" tmkms TMKMS_IMAGE
-  assert_service_image "$ref" "$compose" node INFERENCED_IMAGE
-  assert_service_image "$ref" "$compose" api DAPI_IMAGE
-  assert_service_image "$ref" "$compose" versiond VERSIOND_IMAGE
-  assert_service_image "$ref" "$compose" proxy PROXY_IMAGE
-  assert_service_image "$ref" "$compose" explorer EXPLORER_IMAGE
-  assert_service_image "$ref" "$compose" bridge BRIDGE_IMAGE
+  assert_service_image "$stack_ref" "$compose" tmkms TMKMS_IMAGE
+  assert_service_image "$stack_ref" "$compose" node INFERENCED_IMAGE
+  assert_service_image "$stack_ref" "$compose" api DAPI_IMAGE
+  assert_service_image "$stack_ref" "$compose" versiond VERSIOND_IMAGE
+  assert_service_image "$stack_ref" "$compose" proxy PROXY_IMAGE
+  assert_service_image "$stack_ref" "$compose" explorer EXPLORER_IMAGE
+  assert_service_image "$stack_ref" "$compose" bridge BRIDGE_IMAGE
   if [[ "$EDGE_API_ENABLED" == true ]]; then
-    assert_service_image "$ref" "$compose" edge-api EDGE_API_IMAGE
+    assert_service_image "$stack_ref" "$compose" edge-api EDGE_API_IMAGE
   else
-    [[ -z "$(upstream_service_image "$ref" "$compose" edge-api)" ]] || {
+    [[ -z "$(upstream_service_image "$stack_ref" "$compose" edge-api)" ]] || {
       echo "$ref contains edge-api but $profile disables it" >&2
       exit 1
     }
   fi
 
   ml_compose=deploy/join/docker-compose.mlnode.yml
-  assert_service_image "$ref" "$ml_compose" mlnode-308 MLNODE_GENERIC_IMAGE
-  assert_service_image "$ref" "$ml_compose" inference MLNODE_PROXY_IMAGE
+  assert_service_image "$stack_ref" "$ml_compose" mlnode-308 MLNODE_GENERIC_IMAGE
+  assert_service_image "$stack_ref" "$ml_compose" inference MLNODE_PROXY_IMAGE
   if [[ "$VERIFY_REGISTRY" == true ]]; then
     registry_vars=(TMKMS_IMAGE INFERENCED_IMAGE DAPI_IMAGE VERSIOND_IMAGE PROXY_IMAGE BRIDGE_IMAGE MLNODE_GENERIC_IMAGE MLNODE_PROXY_IMAGE)
     [[ "$EDGE_API_ENABLED" != true ]] || registry_vars+=(EDGE_API_IMAGE)
@@ -113,7 +131,12 @@ do
       assert_registry_digest "$variable"
     done
   fi
-  printf 'PASS %s matches %s (%s)\n' "$profile" "$ref" "$GONKA_COMMIT"
+  if [[ -n "${GONKA_HOST_STACK_COMMIT:-}" ]]; then
+    printf 'PASS %s core=%s (%s) host-stack=%s dapi=%s (%s)\n' \
+      "$profile" "$ref" "$GONKA_COMMIT" "$GONKA_HOST_STACK_COMMIT" "$DAPI_SOURCE_REF" "$DAPI_COMMIT"
+  else
+    printf 'PASS %s matches %s (%s)\n' "$profile" "$ref" "$GONKA_COMMIT"
+  fi
 done
 
 operator_vars='EXPLORER_IMAGE DASHBOARD_PORT CADDY_IMAGE PROMETHEUS_IMAGE GRAFANA_IMAGE ALERTMANAGER_IMAGE BLACKBOX_IMAGE NODE_EXPORTER_IMAGE CADVISOR_IMAGE'

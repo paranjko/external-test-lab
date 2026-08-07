@@ -292,6 +292,13 @@ node_name() {
 node_url() {
   local index="${1#gdc-node}" variable="NODE${1#gdc-node}_PUBLIC_HOST"
   [[ "$index" =~ ^[0-4]$ ]] || die "invalid node: $1"
+  # node4 is the stable public TLS edge for chain traffic.  Addressing node0
+  # through its own public hostname hairpins back into its proxy and is not a
+  # valid operator path after the edge split.
+  if [[ "$index" == 0 && "${GDC_NODE0_PUBLIC_VIA_EDGE:-true}" == true ]]; then
+    printf 'https://%s\n' "$NODE4_PUBLIC_HOST"
+    return
+  fi
   printf 'https://%s\n' "${!variable}"
 }
 
