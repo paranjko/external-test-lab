@@ -17,6 +17,7 @@ fi
 OPS_RENDER="$GENERATED/ops"
 GATEWAY_ENV="$OPS_RENDER/gateway.env"
 REMOTE="/tmp/gdc-ops-$$"
+SITE_INDEX_RENDER=''
 
 step 'Render monitoring and public status configuration'
 "$ROOT/04-ops/render-ops.sh" --inventory "$INVENTORY" --accounts-dir "$ACCOUNTS" --secrets-dir "$SECRETS" --output-dir "$OPS_RENDER" >/dev/null
@@ -144,6 +145,8 @@ case "$COMPONENT" in
     ENDPOINT="http://$NODE0_PUBLIC_HOST:3000"
     ;;
   site)
+    SITE_INDEX_RENDER="$OPS_RENDER/site/index.html"
+    "$ROOT/scripts/render-site-revision.sh" "$ROOT/04-ops/site/index.html" "$SITE_INDEX_RENDER"
     START_COMMAND=true
     # Static files and Caddyfile are bind-mounted. Reload the existing process
     # so cache policy changes apply without recreating Caddy and causing a
@@ -156,6 +159,7 @@ esac
 step "Install $COMPONENT operations component on gdc-node0"
 ssh gdc-node0 "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
 rsync -a "$ROOT/04-ops/" "gdc-node0:$REMOTE/04-ops/"
+[[ -z "$SITE_INDEX_RENDER" ]] || rsync -a "$SITE_INDEX_RENDER" "gdc-node0:$REMOTE/04-ops/site/index.html"
 rsync -a "$OPS_RENDER/" "gdc-node0:$REMOTE/rendered/"
 printf 'WAIT  start %s operations component\n' "$COMPONENT"
 if ssh -T gdc-node0 "sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION; rm -rf '$REMOTE'; { cd /srv/dai/edge && docker compose down; cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND; } >/srv/dai/ops/start-$COMPONENT.log 2>&1"; then
