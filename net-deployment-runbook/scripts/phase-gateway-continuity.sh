@@ -15,7 +15,10 @@ chain_base="${chain_base%/}"
 timeout_seconds="${GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS:-900}"
 pre_blocks="${GDC_GATEWAY_CONTINUITY_PRE_BLOCKS:-3}"
 post_success_target="${GDC_GATEWAY_CONTINUITY_POST_SUCCESSES:-2}"
-request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-20}"
+# The gateway's non-stream response floor is 20 seconds.  The observer must
+# outlive that floor; an equal client timeout fabricates HTTP 000 at the exact
+# boundary while a valid completion is still permitted.
+request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-45}"
 [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS must be positive'
 [[ "$pre_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_PRE_BLOCKS must be positive'
 [[ "$post_success_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_POST_SUCCESSES must be positive'
