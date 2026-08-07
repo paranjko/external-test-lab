@@ -1,6 +1,6 @@
 # Community DevNet — Architecture Note
 
-**Status: DRAFT (Milestone 1).** This document is being refined as infrastructure sourcing and initial deployment proceed. Numbers below reflect the approved proposal; concrete regions, providers, and node counts will be filled in as nodes come online.
+**Status: LIVE, first generation (`gonka-devnet-community`).** Milestone 1 is complete: the network is deployed, reproducible end-to-end from the [net-deployment-runbook](../net-deployment-runbook/README.md), with public observability online. This note tracks the running architecture; deployment mechanics, exact image pins and phase commands live in the runbook.
 
 ## Purpose
 
@@ -9,35 +9,74 @@ A small, always-on, geographically distributed Gonka network for protocol, node,
 ## Architecture decisions
 
 - **Clean genesis.** The persistent Community DevNet starts from a clean genesis. Stateful network copies may be launched from application-state exports as temporary, isolated shadow environments for upgrade, migration, and regression testing.
-- **Long-lived network.** `gonka-devnet-1` is intended to persist across routine protocol upgrades. A new chain ID is introduced when the network must be relaunched from a new genesis; any such reset is announced in advance.
-- **Bootstrap profile first.** The first generation runs shortened epochs and governance periods to validate lifecycle quickly, then moves to realistic steady-state values.
+- **Long-lived network.** The network is intended to persist across routine protocol upgrades (the `0.2.14 → 0.2.15` governed upgrade is rehearsed on it). A new chain ID is introduced when the network must be relaunched from a new genesis; any such reset is announced in advance.
+- **Bootstrap profile first.** The first generation runs a fast rehearsal profile — 50-block epochs, short governance windows, one PoC validation slot — to make lifecycle testing practical. It is not a claim about production timing; realistic steady-state values come later.
 - **Key isolation.** All DevNet keys and credentials are unique to the DevNet; nothing is shared with mainnet.
+- **Independent validators.** Every node join is treated as onboarding an independent validator. Additional nodes can be operated by delegated operators via an encrypted handoff flow that never shares coordinator secrets (see runbook `handoff create` / `handoff approve`).
+- **Reproducible deployments.** All images and DevShard binaries are pinned by digest in release profiles; a reset preserves only the public observability runtimes and the network is rebuilt from `prepare` up.
 
-## Design principles
+## Current topology
 
-1. **Distributed behavior over throughput.** Many small nodes across regions beat few large ones. Inference nodes run lightweight instruct models (target: [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) or equivalent), so consumer-grade GPUs (16 GB VRAM, CUDA 13.0 compatible stack) are sufficient.
-2. **Realistic topology.** Part of the DevNet runs as Network Nodes with multiple attached MLNodes, reproducing real multi-MLNode host configurations. Some Network Nodes run on CPU-only servers.
-3. **Open by default.** External hosts connecting their own nodes are welcome once the initial bootstrap and join procedure are validated. Join instructions will be published in this folder. Access gating applies only to project-managed resources (managed nodes, burst GPU capacity), via a [lightweight request](../../../issues/new/choose).
+```
+├── gonka-dev.net          static network/status site
+├── api.gonka-dev.net      authenticated OpenAI-compatible gateway
+├── grafana.gonka-dev.net  public dashboards
+│
+├── node0.gonka-dev.net ─┐ genesis dbsmart-a5000
+├── node1.gonka-dev.net ─┤ join    one-nelsinki
+├── node2.gonka-dev.net ─┤ join    leadergpu-4090
+├── node3.gonka-dev.net ─┤ join    gigagpu1
+└── node4.gonka-dev.net ─┘ join    one-net
+                                   │
+                                   ▼
+                                   dbsmart-rtx-2000 (dedicated MLNode host)
+```
 
-## Target shape (per proposal)
+| Node | Chain role | Host | GPU profile | Extra services |
+|---|---|---|---|---|
+| node0 | genesis validator | dbsmart-a5000 | A5000 24 GB | DevShard gateway, Prometheus + authenticated Grafana + alerting, status site origin, G-Meter, `/gateway/*` bootstrap route |
+| node1 | join validator | one-nelsinki | T4 16 GB | — |
+| node2 | join validator | leadergpu-4090 | RTX 4090 24 GB | operator-handoff rehearsal target (440 GiB data disk) |
+| node3 | join validator | gigagpu1 | RTX 3090 24 GB | — |
+| node4 | join validator | one-net | Blackwell 16 GB (dedicated ML host) | public TLS edge (Caddy), anonymous public Grafana, explorer entry, Telegram key-issuer bot |
 
-| Parameter | Target |
+- **node4's MLNode runs on a separate machine** (`dbsmart-rtx-2000`, RTX PRO 2000 Blackwell). The network node and the ML host are deliberately different hosts; the ML endpoint is resolved from operator SSH inventory, never from public DNS. Blackwell (compute capability 12.0) requires a newer MLNode runtime image than the 0.2.14 generic one — a pinned hardware-runtime exception in the release profile.
+- **node0 keeps its own TLS name** because DAPI peers use the configured node URL for PoC proof exchange and chain RPC; all other public application origins terminate on the node4 edge.
+
+## Public surfaces
+
+| Endpoint | What it serves | Where it terminates |
+|---|---|---|
+| `https://gonka-dev.net` | static network/status site (per-node status cards, participant list from committed chain state, gateway status) | TLS on node4 edge → site origin on node0 |
+| `https://api.gonka-dev.net/v1` | authenticated OpenAI-compatible inference via the chain-accounted DevShard v4 gateway | TLS on node4 edge → gateway on node0 |
+| `https://grafana.gonka-dev.net` | public dashboards: `gdc-network` (24 h chain/validator/host view), `gdc-inference` (7-day gateway/executor/latency/capacity), `gdc-overview` (triage) | anonymous Grafana copy on node4 |
+| `https://nodeN.gonka-dev.net` | per-node status/proxy endpoints (`node0` additionally exposes the one-participant bootstrap gateway route) | each node |
+| Telegram key bot | self-service issuance of gateway API keys from a finite pre-generated pool | node4 (node0 during bootstrap) |
+
+Access model: API keys are issued through the Telegram bot and have no artificial request-count or lifetime quota — protocol phases, escrow state, ML capacity and the model context window are the only real service boundaries. The gateway rotates its escrow automatically before each short DevNet epoch transition (with auto-settlement), so issued keys survive epoch switches.
+
+## Network profile (first generation)
+
+| Parameter | Value |
 |---|---|
-| MLNodes | 9–13 always-on, plus required Network Node services |
-| Regions (indicative) | North America East/West, UK, Germany, France, Finland, Asia — subject to network quality and hosting availability |
-| MLNode profile | NVIDIA GPU, 16 GB VRAM, CUDA 13.0 compatible |
-| Model profile | Lightweight instruct models (Qwen3-0.6B class) |
-| Monitoring | Public dashboard for node availability (tooling under evaluation, incl. coordination with existing explorer/dashboard maintainers) |
+| Chain ID | `gonka-devnet-community` |
+| Baseline release | `testnet-0.2.14` (pinned commit + image digests in `profiles/releases/`) |
+| Upgrade rehearsal | governed on-chain upgrade to `testnet-0.2.15` (state-preserving, not a new baseline) |
+| Epochs | 50 blocks, one PoC validation slot (must stay non-zero for a chain-accounted gateway) |
+| Model | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) on every MLNode |
+| Inference access | DevShard v4 gateway (v3/v4 approved via chain governance), escrow rotation + auto-settlement |
+| Optional overlays | DevShard v4 HA (versiond replica loss/recovery), Sepolia bridge |
+| Monitoring | Prometheus + Grafana + Alertmanager + blackbox probes on node0; anonymous public copy on node4; NVIDIA GPU metrics agents on ML hosts |
 
-## Milestone path
+## Milestone path (per proposal)
 
-- **M1 (current):** DevNet architecture agreed; infrastructure sourcing and initial deployment underway; at least 5 nodes online; blockers documented.
-- **M2:** at least 9 nodes across target regions; monitoring live; join guide + deployment runbook published.
+- **M1 — done:** architecture agreed; 5 nodes online across 5 providers; deployment reproducible via the runbook; public status site, gateway and dashboards live.
+- **M2 — in progress:** grow towards 9+ MLNodes across target regions; join guide published ([JOIN.md](../net-deployment-runbook/JOIN.md)) and operator-handoff flow rehearsed; monitoring polish.
 - **M3:** stable operation; incident log; onboarding guide for external participants.
 - **M4:** final infrastructure and cost report; handoff package.
 
 ## Open questions being worked
 
-- Final region/provider mix within the monthly infrastructure cap.
-- Dashboard: reuse of existing community explorer infrastructure vs dedicated Grafana-style deployment.
-- Chain parameters for the DevNet genesis (to be published here before external join opens).
+- Final region/provider mix within the monthly infrastructure cap (path to 9+ MLNodes).
+- When to open external joins: the handoff flow works; public join instructions gate on M2 stability.
+- Moving from the fast rehearsal profile (50-block epochs) to realistic steady-state chain parameters.
