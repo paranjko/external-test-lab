@@ -42,7 +42,7 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | M1 | DevNet architecture note | [`devnet/architecture.md`](devnet/architecture.md) | published |
 | M1 | QA hiring | [`jobs/`](jobs/) | **open** |
 | M1 | Initial test strategy | [`testing/test-strategy.md`](testing/test-strategy.md) | published |
-| M1 | Node deployment runbook | [`net-deployment-runbook/`](net-deployment-runbook/) | published — `1.0.0-alpah.0` |
+| M1 | Node deployment runbook | [`net-deployment-runbook/`](net-deployment-runbook/) | published — `1.0.0-alpha.0` |
 | M1→M2 | Monthly public report #1 | `reports/monthly/` | planned — before the Aug 13 unlock |
 | M2 | Join guide, regional layout | [`net-deployment-runbook/JOIN.md`](net-deployment-runbook/JOIN.md), `devnet/regions.md` | join guide published — regional layout planned |
 | M2 | Smoke & regression checklists, live task board | [`testing/`](testing/), [task board](https://github.com/users/paranjko/projects/1) | task board **live** — checklists planned |
