@@ -81,12 +81,12 @@ try {
   if (state.width !== width || state.height !== height) throw new Error(`emulation mismatch ${state.width}x${state.height}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
   if (state.nodes.length < 1 || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapLeaflet || state.mapPoints < 1) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
-  const mappedNodes = state.nodes.filter(node => node.name !== 'gdc-node3');
+  const mappedNodes = state.nodes;
   if (state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if (state.mapMarkers < 1 || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
   if (mappedNodes.some(node => !node.versions || node.versions === 'checking')) throw new Error(`participant software versions did not resolve ${JSON.stringify(state)}`);
   if (expectResetState) {
-    const active = state.nodes.filter(node => node.name !== 'gdc-node3');
+    const active = state.nodes;
     if (active.length < 1 || active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden) {
       throw new Error(`homepage does not show the real reset/offline state ${JSON.stringify(state)}`);
     }
