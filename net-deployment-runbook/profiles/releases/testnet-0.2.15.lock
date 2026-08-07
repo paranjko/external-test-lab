@@ -1,13 +1,9 @@
-# Explicit upgrade target. Its commit is vendored and recorded in every run.
+# Upstream network release. Verified against code/gonka tag release/v0.2.15.
+GONKA_SOURCE_REF=release/v0.2.15
 GONKA_COMMIT=4d687ed6782bcea3931d2d9135bf322f84e190ab
 GONKA_RELEASE=0.2.15
-GENESIS_EPOCH_LENGTH=50
-GENESIS_EPOCH_SHIFT=0
 TMKMS_IMAGE=ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21
 INFERENCED_IMAGE=ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112
-# Pin the operator CLI independently of the node image tag so governance
-# proposal and vote transactions remain reproducible.
-GDC_INFERENCED_TOOL_IMAGE=ghcr.io/product-science/inferenced@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112
 DAPI_IMAGE=ghcr.io/product-science/api:0.2.15@sha256:72a16fedbe84aff93e15c442d9dbe2d83aea2654321d23c08f44a4566dcb4678
 EDGE_API_IMAGE=ghcr.io/product-science/edge-api:0.2.15@sha256:4f98b337ea837d711bdd7e0d0e3172a0034f37a5f7fb9764251b7155bb727025
 EDGE_API_ENABLED=true
@@ -15,15 +11,8 @@ EDGE_API_COMPOSE_PROFILE=edge-api
 EDGE_API_SERVICE_NAME=edge-api
 VERSIOND_IMAGE=ghcr.io/product-science/versiond:0.2.15@sha256:3cd7abb49e04dc779411858adb446deccfb68fd6a69553365ed503ab000e0fb2
 PROXY_IMAGE=ghcr.io/product-science/proxy:0.2.15@sha256:88a392f2300e4f303df6c7dde4660944c3f99df1e7d959bb451bd62e2f846d49
-POSTGRES_IMAGE=postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
 MLNODE_GENERIC_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5
-MLNODE_BLACKWELL_IMAGE=ghcr.io/product-science/mlnode:3.0.12-post6-blackwell@sha256:35131eb9ba4abfa8ea92fbfce5255739ab2be80091d21e2fc7a42c2e4f1622f5
 MLNODE_PROXY_IMAGE=nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
-# Explorer is part of the Network Node deployment in both the baseline and
-# upgrade target. Upstream only provides a mutable `latest`, so retain the
-# verified linux/amd64 manifest digest used by the baseline profile.
-EXPLORER_IMAGE=ghcr.io/product-science/explorer@sha256:11a6fca78c0de8acd58f6cb88ca9bc17704d83c4b9b25d7c8470520a1062a003
-DASHBOARD_PORT=5173
 # Software-upgrade proposal inputs.  These are release assets consumed by
 # Cosmovisor, not container images.  Keep URLs and hashes immutable so a
 # passed proposal can be independently reproduced and verified.
@@ -31,20 +20,6 @@ INFERENCED_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/relea
 INFERENCED_UPGRADE_SHA256=91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e
 DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/decentralized-api-amd64.zip
 DAPI_UPGRADE_SHA256=c9cf1bfa2c994beca8a528d0ee3ad7197a582144769711600ec9df41faf4c9f7
-DEVSHARD_V3_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.13-devshard-v3.0.0/devshardd.zip
-DEVSHARD_V3_SHA256=ca1294fc8db3f0907a01f362eb4b13665f66d0fd12cfc6f01468b1e27f0bab63
-DEVSHARD_V4_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-devshard-v4.0.1/devshardd.zip
-DEVSHARD_V4_SHA256=c80d098941fd18caf0159910c1b6c23140fce871f7ce903ceaad134cfe626b25
-DEVSHARD_V4_SOURCE_REF=release/v0.2.15-devshard-v4.0.1
-DEVSHARD_PROTOCOL_VERSION=v4
-LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v4
-CADDY_IMAGE=caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
-PROMETHEUS_IMAGE=prom/prometheus:v3.11.3@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
-GRAFANA_IMAGE=grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
-ALERTMANAGER_IMAGE=prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286
-BLACKBOX_IMAGE=prom/blackbox-exporter:v0.27.0@sha256:a50c4c0eda297baa1678cd4dc4712a67fdea713b832d43ce7fcc5f9bea05094d
-NODE_EXPORTER_IMAGE=quay.io/prometheus/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a
-CADVISOR_IMAGE=gcr.io/cadvisor/cadvisor:v0.54.1@sha256:bc8acf1ad463294f25f3ad34262bc524cb9ec8401d1442953045d59fb8e9119a
 # Reuse the tested, digest-pinned bridge artifact until a 0.2.15 bridge is
 # separately authorized. It is an explicit P2 qualification input, not latest.
 BRIDGE_IMAGE=ghcr.io/product-science/bridge:0.2.14-post3@sha256:06f1c8750941cd31c6f46ff037e0b43f71a9ba5a5e4c6b81da8c4d6748af67b5

@@ -74,7 +74,7 @@ load_project() {
   # A shell invocation is the explicit per-rehearsal override.  Do not let an
   # empty example value in .env silently re-include an intentionally skipped
   # host (for example: GDC_SKIP_HOSTS='gdc-node2 gdc-node3' ./gdc.sh prepare).
-  local caller_skip_hosts=''
+  local caller_skip_hosts='' resolved_profile_key
   local caller_skip_hosts_set=false
   if [[ ${GDC_SKIP_HOSTS+x} ]]; then
     caller_skip_hosts="$GDC_SKIP_HOSTS"
@@ -85,8 +85,9 @@ load_project() {
   source "$ENV_FILE"
   # shellcheck disable=SC1091
   source "$ROOT/scripts/profile.sh"
-  if [[ -z "${GDC_RESOLVED_IMAGE_LOCK:-}" && -r "$ROOT/state/resolved-images/${GDC_RELEASE_PROFILE:-testnet-0.2.14}.lock" ]]; then
-    export GDC_RESOLVED_IMAGE_LOCK="$ROOT/state/resolved-images/${GDC_RELEASE_PROFILE:-testnet-0.2.14}.lock"
+  resolved_profile_key="${GDC_RELEASE_PROFILE:-testnet-0.2.14}+${GDC_DEPLOYMENT_PROFILE:-community-lab}+${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
+  if [[ -z "${GDC_RESOLVED_IMAGE_LOCK:-}" && -r "$ROOT/state/resolved-images/$resolved_profile_key.lock" ]]; then
+    export GDC_RESOLVED_IMAGE_LOCK="$ROOT/state/resolved-images/$resolved_profile_key.lock"
   fi
   load_profiles
   set +a

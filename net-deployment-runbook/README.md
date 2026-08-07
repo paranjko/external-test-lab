@@ -7,6 +7,30 @@ This package creates a reproducible Gonka Community DevNet for release and distr
 
 It contains orchestration and configuration only. It contains neither Gonka source code nor chain state, private keys, mnemonics, API keys, host inventory, or operator configuration.
 
+## Profile boundaries
+
+The selected software is split by ownership:
+
+- `profiles/releases/` contains only the Gonka network components verified
+  against the corresponding upstream release tag;
+- `profiles/deployments/` contains lab-owned chain timing, storage, hardware
+  compatibility and separately governed DevShard inputs;
+- `profiles/models/` contains model and PoC parameters; and
+- `profiles/operator-services/` contains Caddy, monitoring and exporters
+  used by operators but not part of the network release under test.
+
+The network profile hash covers release + deployment + model. Operator support
+has a separate hash. See [profiles/README.md](profiles/README.md) and run:
+
+```bash
+make verify-upstream-profiles
+./scripts/verify-release-profiles.sh --registry
+```
+
+The first command compares local profiles with the tags in `code/gonka`.
+The optional registry gate also proves that every immutable digest still
+matches the image tag declared by upstream.
+
 ## What it does
 
 - prepares Network Node and MLNode hosts;

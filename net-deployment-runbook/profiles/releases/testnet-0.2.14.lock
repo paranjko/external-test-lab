@@ -1,14 +1,9 @@
-# Baseline: Gonka testnet/main 169caf08275725c6025e3685b54d9fe3fa5bed8e.
-GONKA_COMMIT=169caf08275725c6025e3685b54d9fe3fa5bed8e
+# Upstream network release. Verified against code/gonka tag release/v0.2.14.
+GONKA_SOURCE_REF=release/v0.2.14
+GONKA_COMMIT=2bfd85c958732992c7a9c5be1d796affe29f3ab4
 GONKA_RELEASE=0.2.14
-GENESIS_EPOCH_LENGTH=50
-GENESIS_EPOCH_SHIFT=0
-TMKMS_IMAGE=ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.11-testnet@sha256:cb718231f3ffeebd035b443ee97da1fcd17ff7bce9f18e56e7e86075b3e0eb45
+TMKMS_IMAGE=ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.14@sha256:d07537caf5a7cb87d49866cdf2dd7a233b9e0b790771b1a8798b6413f04b2d81
 INFERENCED_IMAGE=ghcr.io/product-science/inferenced:0.2.14@sha256:9d0db1ba02d2b661c6e1add1a32467ccd1a23572639d90ded19c3c31d272851e
-# The operator CLI submits and queries governance transactions.  Pin it
-# separately: a mutable image tag would make a future lifecycle rehearsal
-# non-reproducible even when the node runtime profile itself is unchanged.
-GDC_INFERENCED_TOOL_IMAGE=ghcr.io/product-science/inferenced@sha256:9d0db1ba02d2b661c6e1add1a32467ccd1a23572639d90ded19c3c31d272851e
 DAPI_IMAGE=ghcr.io/product-science/api:0.2.14@sha256:1854484f27313b7b643a60ee723dc7b6aab59c20fd55de25a6694ea31a92d318
 # edge-api did not exist at the pinned baseline commit.  Keep proxy reads on
 # decentralized-api for 0.2.14; the 0.2.15 upgrade enables edge-api explicitly.
@@ -18,32 +13,6 @@ EDGE_API_SERVICE_NAME=
 EDGE_API_IMAGE=disabled
 VERSIOND_IMAGE=ghcr.io/product-science/versiond:0.2.14@sha256:70ba2d49c6e9ee6af65cbbb7c9ca3c9b0c09eac200c07e7ab0ddeffbb45951dc
 PROXY_IMAGE=ghcr.io/product-science/proxy:0.2.14@sha256:79e21ca2e435e463199a29940b5b93b2088e5b79e4fe5ea44d0dd0843f13da69
-POSTGRES_IMAGE=postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
-MLNODE_GENERIC_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.12-post4@sha256:b8e235451f91a973a105f132cf2ed4e212edd062dca406f14666e877a13cc45e
-# The 3.0.12 generic and explicitly named Blackwell images both lack a CUDA
-# kernel for this RTX PRO 2000 Blackwell (compute capability 12.0). This
-# hardware-runtime exception keeps the 0.2.14 chain release and Qwen overlay,
-# while using the newer upstream MLNode runtime with Blackwell support.
-MLNODE_BLACKWELL_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5
+MLNODE_GENERIC_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5
 MLNODE_PROXY_IMAGE=nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
-# Upstream currently publishes explorer only as `latest`.  Pin the verified
-# linux/amd64 manifest so repeat deployments do not drift with that tag.
-EXPLORER_IMAGE=ghcr.io/product-science/explorer@sha256:11a6fca78c0de8acd58f6cb88ca9bc17704d83c4b9b25d7c8470520a1062a003
-DASHBOARD_PORT=5173
-DEVSHARD_V3_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.13-devshard-v3.0.0/devshardd.zip
-DEVSHARD_V3_SHA256=ca1294fc8db3f0907a01f362eb4b13665f66d0fd12cfc6f01468b1e27f0bab63
-DEVSHARD_V4_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-devshard-v4.0.1/devshardd.zip
-DEVSHARD_V4_SHA256=c80d098941fd18caf0159910c1b6c23140fce871f7ce903ceaad134cfe626b25
-# Gateway and versiond must execute the same v4 implementation.  The chain
-# baseline stays 0.2.14; this is the separately governed DevShard patch.
-DEVSHARD_V4_SOURCE_REF=release/v0.2.15-devshard-v4.0.1
-DEVSHARD_PROTOCOL_VERSION=v4
-LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v4
-CADDY_IMAGE=caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
-PROMETHEUS_IMAGE=prom/prometheus:v3.11.3@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
-GRAFANA_IMAGE=grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
-ALERTMANAGER_IMAGE=prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286
-BLACKBOX_IMAGE=prom/blackbox-exporter:v0.27.0@sha256:a50c4c0eda297baa1678cd4dc4712a67fdea713b832d43ce7fcc5f9bea05094d
-NODE_EXPORTER_IMAGE=quay.io/prometheus/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a
-CADVISOR_IMAGE=gcr.io/cadvisor/cadvisor:v0.54.1@sha256:bc8acf1ad463294f25f3ad34262bc524cb9ec8401d1442953045d59fb8e9119a
 BRIDGE_IMAGE=ghcr.io/product-science/bridge:0.2.14-post3@sha256:06f1c8750941cd31c6f46ff037e0b43f71a9ba5a5e4c6b81da8c4d6748af67b5

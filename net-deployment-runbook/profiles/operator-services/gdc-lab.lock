@@ -1,0 +1,13 @@
+# Operator-owned support software. These images observe, publish or route the
+# lab, but they do not define the Gonka network release under test.
+# Upstream embeds Explorer as mutable latest. Keep the lab's qualified digest
+# here so Explorer changes do not redefine the network release profile.
+EXPLORER_IMAGE=ghcr.io/product-science/explorer@sha256:11a6fca78c0de8acd58f6cb88ca9bc17704d83c4b9b25d7c8470520a1062a003
+DASHBOARD_PORT=5173
+CADDY_IMAGE=caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+PROMETHEUS_IMAGE=prom/prometheus:v3.11.3@sha256:e4254400b85610324913f0dc4acf92603d9984e7519414c5a12811aa6146acc3
+GRAFANA_IMAGE=grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+ALERTMANAGER_IMAGE=prom/alertmanager:v0.32.1@sha256:51a825c2a40acc3e338fdd00d622e01ec090f72be2b3ea46be0839cd47a4d286
+BLACKBOX_IMAGE=prom/blackbox-exporter:v0.27.0@sha256:a50c4c0eda297baa1678cd4dc4712a67fdea713b832d43ce7fcc5f9bea05094d
+NODE_EXPORTER_IMAGE=quay.io/prometheus/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a
+CADVISOR_IMAGE=gcr.io/cadvisor/cadvisor:v0.54.1@sha256:bc8acf1ad463294f25f3ad34262bc524cb9ec8401d1442953045d59fb8e9119a

@@ -18,7 +18,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Gonka source
+        uses: actions/checkout@v4
+        with:
+          repository: gonka-ai/gonka
+          path: net-deployment-runbook/vendor/gonka
+          fetch-depth: 0
       - name: Check runbook shell scripts
         run: make -C net-deployment-runbook shellcheck
       - name: Test runbook contracts
-        run: make -C net-deployment-runbook test
+        run: >-
+          GONKA_UPSTREAM_WORKTREE="$GITHUB_WORKSPACE/net-deployment-runbook/vendor/gonka"
+          make -C net-deployment-runbook test

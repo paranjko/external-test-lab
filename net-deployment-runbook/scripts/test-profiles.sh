@@ -82,7 +82,10 @@ fi
 
 for release in testnet-0.2.14 testnet-0.2.15; do
   GDC_RELEASE_PROFILE="$release" GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
+  [[ "$GDC_DEPLOYMENT_PROFILE" == community-lab ]]
+  [[ "$GDC_OPERATOR_SERVICES_PROFILE" == gdc-lab ]]
   [[ "$GONKA_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$GONKA_SOURCE_REF" == "release/v$GONKA_RELEASE" ]]
   [[ "$GENESIS_EPOCH_LENGTH" == 50 && "$GENESIS_EPOCH_SHIFT" == 0 ]]
   images=("$TMKMS_IMAGE" "$INFERENCED_IMAGE" "$DAPI_IMAGE" "$VERSIOND_IMAGE" "$PROXY_IMAGE" "$POSTGRES_IMAGE" "$MLNODE_GENERIC_IMAGE" "$MLNODE_BLACKWELL_IMAGE" "$MLNODE_PROXY_IMAGE")
   [[ "$EDGE_API_ENABLED" == false || "$EDGE_API_ENABLED" == true ]] || { echo "invalid EDGE_API_ENABLED in $release" >&2; exit 1; }
@@ -92,6 +95,16 @@ for release in testnet-0.2.14 testnet-0.2.15; do
   done
   [[ "$DEVSHARD_V3_SHA256" =~ ^[0-9a-f]{64}$ && "$DEVSHARD_V4_SHA256" =~ ^[0-9a-f]{64}$ ]]
   [[ "$BRIDGE_IMAGE" == *@sha256:* ]]
+  [[ "$GDC_INFERENCED_TOOL_IMAGE" == "$INFERENCED_IMAGE" ]]
+  expected_network_hash="$(sha256sum \
+    "$ROOT/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
+    "$ROOT/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
+    "$ROOT/profiles/models/$GDC_MODEL_PROFILE.lock" | sha256sum | awk '{print $1}')"
+  expected_operator_hash="$(sha256sum \
+    "$ROOT/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" \
+    | sha256sum | awk '{print $1}')"
+  [[ "$(profile_hash)" == "$expected_network_hash" ]]
+  [[ "$(operator_profile_hash)" == "$expected_operator_hash" ]]
   if [[ "$release" == testnet-0.2.15 ]]; then
     [[ "$INFERENCED_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-amd64.zip ]]
     [[ "$DAPI_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/decentralized-api-amd64.zip ]]
@@ -102,9 +115,20 @@ for release in testnet-0.2.14 testnet-0.2.15; do
   grep -qx "inferenced_image=$INFERENCED_IMAGE" <<<"$summary"
   grep -qx "dapi_image=$DAPI_IMAGE" <<<"$summary"
   grep -qx "mlnode_generic_image=$MLNODE_GENERIC_IMAGE" <<<"$summary"
-  grep -qx "explorer_image=$EXPLORER_IMAGE" <<<"$summary"
   grep -qx "bridge_image=$BRIDGE_IMAGE" <<<"$summary"
+  grep -qx "operator_explorer_image=$EXPLORER_IMAGE" <<<"$summary"
+  grep -qx "operator_caddy_image=$CADDY_IMAGE" <<<"$summary"
+  grep -qx "operator_grafana_image=$GRAFANA_IMAGE" <<<"$summary"
+  grep -qx "network_profile_hash=$expected_network_hash" <<<"$summary"
+  grep -qx "operator_services_profile_hash=$expected_operator_hash" <<<"$summary"
 done
+
+for variable in EXPLORER_IMAGE DASHBOARD_PORT CADDY_IMAGE PROMETHEUS_IMAGE GRAFANA_IMAGE ALERTMANAGER_IMAGE BLACKBOX_IMAGE NODE_EXPORTER_IMAGE CADVISOR_IMAGE; do
+  ! grep -q "^$variable=" "$ROOT"/profiles/releases/*.lock
+done
+! grep -q '^GDC_INFERENCED_TOOL_IMAGE=' "$ROOT"/profiles/releases/*.lock
+grep -Fq 'GDC_DEPLOYMENT_PROFILE:-community-lab' "$ROOT/scripts/lib.sh"
+grep -Fq 'GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab' "$ROOT/scripts/lib.sh"
 
 GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
 for profile in a5000-24g t4-16g 4090-24g 3090-24g blackwell-16g; do

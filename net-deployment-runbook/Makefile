@@ -2,7 +2,10 @@ SHELLCHECK_VERSION ?= v0.11.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:$(SHELLCHECK_VERSION)
 SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './vendor/*' -print | LC_ALL=C sort)
 
-.PHONY: shellcheck test
+.PHONY: shellcheck test verify-upstream-profiles
+
+verify-upstream-profiles:
+	@./scripts/verify-release-profiles.sh
 
 shellcheck:
 	@docker run --rm \
@@ -14,6 +17,7 @@ shellcheck:
 		$(SHELL_SCRIPTS)
 
 test:
+	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh
 	@./scripts/test-participant-state.sh
 	@./scripts/test-reset-evidence.sh
