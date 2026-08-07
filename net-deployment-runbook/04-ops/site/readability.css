@@ -121,7 +121,7 @@ body * {
 
 footer {
   display: grid;
-  grid-template-columns: max-content minmax(240px, 1fr) max-content max-content max-content;
+  grid-template-columns: max-content minmax(180px, 1fr) max-content max-content max-content max-content;
   align-items: center;
   gap: 14px 28px;
   font-size: 13px;
