@@ -1,6 +1,6 @@
 # Community DevNet node deployment runbook
 
-**Version:** `1.0.0-alpah.0`  
+**Version:** `1.0.0-alpha.0`  
 **Status:** initial public release
 
 This package creates a reproducible Gonka Community DevNet for release and distributed-behaviour testing. A clean rehearsal always starts on `testnet-0.2.14` with chain ID `gonka-devnet-community`. The `0.2.15` workflow is a state-preserving upgrade test, not a replacement baseline.
