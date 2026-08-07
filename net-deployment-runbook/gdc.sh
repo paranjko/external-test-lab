@@ -50,6 +50,7 @@ Create .env from .env.example, then run:
   ./gdc.sh --release testnet-0.2.14 qualify-ml [gdc-nodeN]
   ./gdc.sh --release testnet-0.2.14 genesis
   ./gdc.sh --release testnet-0.2.14 bootstrap-access
+  ./gdc.sh telegram-key-probe Qwen/Qwen3-0.6B 60s
   ./gdc.sh --release testnet-0.2.14 gateway-continuity
   ./gdc.sh --release testnet-0.2.14 join gdc-node1
   ./gdc.sh --release testnet-0.2.14 join gdc-node2
@@ -106,13 +107,16 @@ done
 COMMAND="${1:-help}"
 shift || true
 case "$COMMAND" in
-  prepare|verify|reset|settle|bootstrap-access|gateway-continuity|audit|telegram-bot)
-    [[ "$COMMAND" == reset || $# -eq 0 ]] || { usage; exit 2; }
+  prepare|verify|reset|settle|bootstrap-access|gateway-continuity|audit|telegram-bot|telegram-key-probe)
+    [[ "$COMMAND" == reset || "$COMMAND" == telegram-key-probe || $# -eq 0 ]] || { usage; exit 2; }
     if [[ "$COMMAND" == reset ]]; then
       exec "$ROOT/scripts/phase-reset.sh" "$@"
     fi
     if [[ "$COMMAND" == telegram-bot ]]; then
       run_phase telegram-bot "$ROOT/scripts/deploy-telegram-bot.sh"
+    elif [[ "$COMMAND" == telegram-key-probe ]]; then
+      [[ $# -eq 2 ]] || { usage; exit 2; }
+      run_phase telegram-key-probe "$ROOT/scripts/phase-telegram-key-probe.sh" "$@"
     elif [[ "$COMMAND" == bootstrap-access ]]; then
       run_phase bootstrap-access "$ROOT/scripts/phase-bootstrap-access.sh"
     elif [[ "$COMMAND" == gateway-continuity ]]; then
@@ -174,8 +178,14 @@ case "$COMMAND" in
     run_phase "advance-after-upgrade-worker-$1" "$ROOT/scripts/phase-advance-after-upgrade-worker.sh" "$1"
     ;;
   ops)
-    [[ $# -eq 1 && "$1" =~ ^(gateway|monitoring|site|explorer|edge)$ ]] || { usage; exit 2; }
-    run_phase "ops-$1" "$ROOT/scripts/phase-ops.sh" "$1"
+    [[ $# -ge 1 ]] || { usage; exit 2; }
+    if [[ "$1" == edge-node ]]; then
+      [[ $# -eq 2 && "$2" =~ ^gdc-node[0-4]$ ]] || { usage; exit 2; }
+      run_phase "ops-edge-node-$2" "$ROOT/scripts/phase-ops.sh" "$1" "$2"
+    else
+      [[ $# -eq 1 && "$1" =~ ^(gateway|monitoring|site|explorer|edge)$ ]] || { usage; exit 2; }
+      run_phase "ops-$1" "$ROOT/scripts/phase-ops.sh" "$1"
+    fi
     ;;
   node)
     [[ $# -eq 2 && "$1" =~ ^(stop|start|verify|reset)$ ]] || { usage; exit 2; }

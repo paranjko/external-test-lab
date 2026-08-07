@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const state = require('../04-ops/site/gateway-state.js');
 const now = Date.parse('2026-08-06T10:30:00Z');
 const readyProbe = { state: 'READY', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
 const failedProbe = { state: 'UNAVAILABLE', checked_at: '2026-08-06T10:29:50Z', http_status: 429 };
+const recoveringProbe = { state: 'RECOVERING', reason: 'waiting_for_versiond_session', checked_at: '2026-08-06T10:29:50Z', http_status: 0 };
 
 const activeShard = {
   id: '52',
@@ -21,6 +23,9 @@ assert.deepEqual(state.classify(undefined, 0), {
 
 assert.equal(state.classify({ mode: 'gateway', runtimes: 0, devshards: [] }, 1, readyProbe, now).state, 'PENDING');
 assert.equal(state.classify({ mode: 'gateway', runtimes: 1, devshards: [] }, 1, readyProbe, now).state, 'UNAVAILABLE');
+assert.deepEqual(state.classify({ mode: 'gateway', runtimes: 1, devshards: [] }, 1, recoveringProbe, now), {
+  state: 'RECOVERING', available: false, message: 'Gateway recovering – waiting for versiond session',
+});
 
 const zeroCapacity = {
   mode: 'gateway',
@@ -43,5 +48,10 @@ assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, checked_at: '2026-
 
 const legacy = { escrow_id: '7', phase: 'active', requests_blocked: false };
 assert.equal(state.classify(legacy, 1, readyProbe, now).state, 'AVAILABLE');
+
+const siteApp = fs.readFileSync(`${__dirname}/../04-ops/site/app.js`, 'utf8');
+assert.match(siteApp, /READY – processing requests/);
+assert.match(siteApp, /READY – no requests in flight/);
+assert.doesNotMatch(siteApp, /quality-health-state'\)\.textContent=state\.toUpperCase/);
 
 console.log('PASS gateway public-site state contract');

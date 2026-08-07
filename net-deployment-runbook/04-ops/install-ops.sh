@@ -29,7 +29,12 @@ chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$DEST"
 install -m 0755 "$HERE/gateway-health-probe.sh" "$DEST/gateway-health-probe.sh"
 install -m 0644 "$HERE/gdc-gateway-health-probe.service" /etc/systemd/system/gdc-gateway-health-probe.service
 install -m 0644 "$HERE/gdc-gateway-health-probe.timer" /etc/systemd/system/gdc-gateway-health-probe.timer
+install -m 0755 "$HERE/gateway-escrow-reconciler.sh" "$DEST/gateway-escrow-reconciler.sh"
+install -m 0644 "$HERE/gdc-gateway-escrow-reconciler.service" /etc/systemd/system/gdc-gateway-escrow-reconciler.service
+install -m 0644 "$HERE/gdc-gateway-escrow-reconciler.timer" /etc/systemd/system/gdc-gateway-escrow-reconciler.timer
 systemctl daemon-reload
 systemctl enable --now gdc-gateway-health-probe.timer >/dev/null
+systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null
 systemctl start gdc-gateway-health-probe.service || true
+systemctl start gdc-gateway-escrow-reconciler.service || true
 printf 'READY installed %s operations component in %s\n' "$COMPONENT" "$DEST"

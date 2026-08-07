@@ -64,7 +64,7 @@ if [[ "$NODE" == gdc-node4 ]]; then
     "NODE0_PUBLIC_HOST=$NODE0_PUBLIC_HOST"
   )
 else
-  values+=("PUBLIC_EDGE=false")
+  values+=("PUBLIC_EDGE=false" "NODE4_PUBLIC_HOST=$NODE4_PUBLIC_HOST")
 fi
 
 write_env "$OUTPUT" "${values[@]}"

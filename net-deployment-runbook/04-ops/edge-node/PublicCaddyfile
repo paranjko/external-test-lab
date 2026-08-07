@@ -10,7 +10,11 @@
   encode zstd gzip
   @root path /
   redir @root /dashboard/gonka/gov 308
-  reverse_proxy 127.0.0.1:8000
+  # node4 owns public TLS but is not necessarily a chain participant. Keep
+  # its public hostname stable while forwarding Network Node paths to node0.
+  reverse_proxy http://{$NODE0_PUBLIC_HOST}:8000 {
+    header_up Host {$NODE0_PUBLIC_HOST}
+  }
   header {
     X-Content-Type-Options nosniff
     Referrer-Policy no-referrer

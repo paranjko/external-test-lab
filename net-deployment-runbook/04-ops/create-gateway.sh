@@ -130,6 +130,7 @@ DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-${GATEWAY_VERSION}
 # funding amount so phase-ops can configure the gateway's next-epoch bridge
 # and replacement escrows instead of treating this deployment as one-shot.
 DEVSHARD_ROTATION_ESCROW_AMOUNT=${AMOUNT}
+GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true
 DEVSHARD_POC_REQUEST_MODE=relaxed
 # The short test-lab PoC phases temporarily expose no current validation
 # weight. Relaxed mode must keep using the preserved participant set instead
@@ -139,6 +140,8 @@ GATEWAY_MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS}
 GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-1000000000}
 GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-1000000000}
 GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=${MAX_INPUT_TOKENS_IN_FLIGHT}
+GATEWAY_PARTICIPANT_REQUEST_BURST=${GDC_GATEWAY_PARTICIPANT_REQUEST_BURST:-1000000000}
+GATEWAY_PARTICIPANT_RECOVERY_PER_MINUTE=${GDC_GATEWAY_PARTICIPANT_RECOVERY_PER_MINUTE:-1000000000}
 # The Qwen profile has a 2048-token context window.  A default equal to the
 # whole window makes every non-empty OpenAI-compatible request invalid when a
 # client omits max_tokens.  Keep room for the prompt by default.

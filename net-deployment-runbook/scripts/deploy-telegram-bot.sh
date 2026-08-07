@@ -52,11 +52,19 @@ ssh "$BOT_HOST" "rm -rf '$remote' && mkdir -p '$remote'"
 rsync -a --delete --exclude .env --exclude data --exclude __pycache__ \
   "$BOT_SOURCE/" "$BOT_HOST:$remote/source/"
 
-# Stop the old long-poll consumer before deploying. This prevents duplicate
-# Telegram update consumption while the target keeps its durable assignment DB.
-ssh -T gdc-node0 'set -Eeuo pipefail
-  bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
-  [[ -n "$bot" ]] && docker stop "$bot" >/dev/null || true'
+# Telegram permits exactly one getUpdates consumer for a bot token. Stop every
+# non-target poller before the target is verified; otherwise both containers
+# receive HTTP 409 and neither can issue a key. Keep the stopped container and
+# its durable assignment database intact for an explicit operator migration.
+for host in gdc-node0 gdc-node4; do
+  [[ "$host" == "$BOT_HOST" ]] && continue
+  # node4 is intentionally absent during node0-only bootstrap.  Stop an old
+  # poller only on a provisioned Docker host; reachability of a future host is
+  # neither a bootstrap prerequisite nor a reason to fail key issuance.
+  ssh -T "$host" 'docker info >/dev/null 2>&1' >/dev/null 2>&1 || continue
+  ssh -T "$host" 'set -Eeuo pipefail
+    docker ps -q --filter name=gonka-devnet-bot-bot | xargs -r docker stop >/dev/null'
+done
 
 # Copy the finite authorised pool from the gateway host. The bot configuration
 # is rendered from the runbook's single root .env; target data is preserved.
@@ -76,7 +84,10 @@ ssh -T "$BOT_HOST" "set -Eeuo pipefail
   sudo chmod 0440 '$BOT_DIR/gateway-key-pool.json'
   sudo rm -f '$BOT_DIR/.env'
   cd '$BOT_DIR'
-  sudo env KEY_POOL_HOST_PATH='$BOT_DIR/gateway-key-pool.json' docker compose up -d --build >/dev/null"
+  # Recreate even when source files are unchanged: replacing the pool with
+  # install/tar changes its inode, while an existing bind mount keeps the old
+  # inode and would keep validating revoked keys.
+  sudo env KEY_POOL_HOST_PATH='$BOT_DIR/gateway-key-pool.json' docker compose up -d --build --force-recreate >/dev/null"
 
 ssh -T "$BOT_HOST" 'set -Eeuo pipefail
   bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
@@ -84,7 +95,12 @@ ssh -T "$BOT_HOST" 'set -Eeuo pipefail
   docker exec "$bot" python3 -c "import json, os; from urllib.request import urlopen; assert json.load(urlopen(\"https://api.telegram.org/bot\" + os.environ[\"TELEGRAM_BOT_TOKEN\"] + \"/getMe\", timeout=15))[\"ok\"]"
   docker exec "$bot" python3 -c "from bot import key_works, load_pool; assert key_works(load_pool()[0])"
   jq -e ".keys | type == \"array\" and length > 0" /srv/dai/gonka-devnet-bot/gateway-key-pool.json >/dev/null'
-if [[ "$BOT_HOST" != gdc-node0 ]]; then
-  ssh -T gdc-node0 '! docker ps --format "{{.Names}}" | grep -qx gonka-devnet-bot-bot-1'
-fi
+for host in gdc-node0 gdc-node4; do
+  if [[ "$host" == "$BOT_HOST" ]]; then
+    ssh -T "$host" 'docker ps --format "{{.Names}}" | grep -qx gonka-devnet-bot-bot-1'
+  else
+    ssh -T "$host" 'docker info >/dev/null 2>&1' >/dev/null 2>&1 || continue
+    ssh -T "$host" '! docker ps --format "{{.Names}}" | grep -qx gonka-devnet-bot-bot-1'
+  fi
+done
 printf 'PASS Telegram key bot runs on %s\n' "$BOT_HOST"

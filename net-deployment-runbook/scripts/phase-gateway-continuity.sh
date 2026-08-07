@@ -21,10 +21,23 @@ request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-20}"
 [[ "$post_success_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_POST_SUCCESSES must be positive'
 [[ "$request_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS must be positive'
 
-key_file="$SECRETS/gateway.client-keys"
-[[ -s "$key_file" ]] || die 'gateway client keys are absent; run bootstrap-access or ops gateway first'
-client_key="$(cut -d, -f1 "$key_file")"
-[[ -n "$client_key" ]] || die 'gateway client key is empty'
+# The continuity verdict must exercise the same credential class a visitor
+# receives from Telegram.  A privileged technical key can keep passing while
+# all pool keys are rejected by gateway policy or participant throttling.
+key_source="${GDC_GATEWAY_CONTINUITY_KEY_SOURCE:-telegram-pool}"
+case "$key_source" in
+  telegram-pool)
+    client_key="$(ssh -T gdc-node0 'jq -r ".keys[0] // empty" /srv/dai/gonka-devnet-bot/gateway-key-pool.json')"
+    [[ "$client_key" == sk-gdc-* ]] || die 'Telegram key pool is absent or invalid; run bootstrap-access or telegram-bot first'
+    ;;
+  technical)
+    key_file="$SECRETS/gateway.client-keys"
+    [[ -s "$key_file" ]] || die 'gateway client keys are absent; run bootstrap-access or ops gateway first'
+    client_key="$(cut -d, -f1 "$key_file")"
+    [[ -n "$client_key" ]] || die 'gateway client key is empty'
+    ;;
+  *) die 'GDC_GATEWAY_CONTINUITY_KEY_SOURCE must be telegram-pool or technical' ;;
+esac
 
 step 'Capture the live topology and calculate the next PoC boundary'
 curl -fsS "$chain_base/chain-api/productscience/inference/inference/params" >"$RUN/params.json"
@@ -48,6 +61,7 @@ start_height=$((target_anchor - pre_blocks))
   printf 'chain_id=%s\n' "$CHAIN_ID"
   printf 'genesis_sha256=%s\n' "$genesis_sha256"
   printf 'gateway_url=%s\n' "$gateway_url"
+  printf 'credential_source=%s\n' "$key_source"
   printf 'chain_base=%s\n' "$chain_base"
   printf 'initial_height=%s\n' "$height"
   printf 'target_poc_anchor=%s\n' "$target_anchor"

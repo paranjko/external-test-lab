@@ -22,6 +22,10 @@
     if (healthyNodes === 0) {
       return { state: 'OFFLINE', available: false, message: 'Network reset – no nodes online' };
     }
+    if (probeIsFresh(probe, nowMs, maxAgeMs) && probe.state === 'RECOVERING') {
+      const reason = String(probe.reason || 'replacement escrow is being prepared').replaceAll('_', ' ');
+      return { state: 'RECOVERING', available: false, message: `Gateway recovering – ${reason}` };
+    }
     const devshards = Array.isArray(state && state.devshards) ? state.devshards : [];
     if (state && state.mode === 'gateway' && Number(state.runtimes) === 0 && devshards.length === 0) {
       return { state: 'PENDING', available: false, message: 'Awaiting governance approval and an active DevShard' };

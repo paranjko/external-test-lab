@@ -23,7 +23,11 @@ test:
 	@./scripts/test-reset-evidence.sh
 	@./scripts/test-upgrade-blocked-verdict.sh
 	@./scripts/test-upgrade-state-comparison.sh
+	@./scripts/test-upgrade-proposal-binding.sh
 	@./scripts/test-gateway-continuity-verdict.sh
 	@node ./scripts/test-gateway-site-state.js
 	@./scripts/test-gateway-health-probe.sh
+	@./scripts/test-gateway-escrow-reconciler.sh
+	@./scripts/test-telegram-bot-deployment.sh
+	@python3 ./scripts/test-telegram-assurance-probe.py
 	@./scripts/test-genesis-identity-contract.sh

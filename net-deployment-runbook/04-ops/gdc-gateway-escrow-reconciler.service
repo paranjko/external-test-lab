@@ -1,0 +1,10 @@
+[Unit]
+Description=Reconcile Gonka DevShard gateway escrows with committed chain state
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/srv/dai/ops/gateway-escrow-reconciler.sh
+User=root
+Group=root
