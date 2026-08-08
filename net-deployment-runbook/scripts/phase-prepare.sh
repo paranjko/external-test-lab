@@ -40,6 +40,8 @@ for host in "${hosts[@]}"; do
     [[ "$ml_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "cannot determine network GPU IPv4 for $host from SSH alias $ml_host"
     callback_check="sudo grep -qx 'ML_CALLBACK_CIDR=$ml_address/32' /etc/gonka/host.env"
   fi
+  gateway_services=false
+  [[ "$host" == "$GATEWAY_NODE" ]] && gateway_services=true
   ssh_port="$(ssh -G "$host" 2>/dev/null | awk '$1 == "port" {print $2; exit}')"
   if [[ ! "$ssh_port" =~ ^[0-9]+$ ]]; then
     echo "FAILED  $host: cannot determine SSH port"
@@ -52,7 +54,7 @@ for host in "${hosts[@]}"; do
     failed_hosts+=("$host")
     continue
   fi
-  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && $callback_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
+  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
     continue
@@ -69,7 +71,7 @@ for host in "${hosts[@]}"; do
   if [[ "$role" == network-only ]]; then
     remote_env+=("ML_CALLBACK_CIDR='$ml_address/32'")
   fi
-  if ssh -T "$host" "sudo ${remote_env[*]} /tmp/gdc-host-prep/prepare-host.sh --role '$role' --monitoring-cidr '$MONITORING_CIDR' --public-edge-cidr '$PUBLIC_EDGE_CIDR' --ssh-port '$ssh_port'"; then
+  if ssh -T "$host" "sudo ${remote_env[*]} /tmp/gdc-host-prep/prepare-host.sh --role '$role' --monitoring-cidr '$MONITORING_CIDR' --public-edge-cidr '$PUBLIC_EDGE_CIDR' --ssh-port '$ssh_port' --gateway-services '$gateway_services'"; then
     prepare_rc=0
   else
     prepare_rc=$?

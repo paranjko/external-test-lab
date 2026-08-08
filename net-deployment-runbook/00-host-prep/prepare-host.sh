@@ -2,13 +2,13 @@
 set -Eeuo pipefail
 usage() {
   cat <<'EOF'
-Usage: sudo ./prepare-host.sh --role ROLE --monitoring-cidr CIDR --ssh-port PORT
+Usage: sudo ./prepare-host.sh --role ROLE --monitoring-cidr CIDR --ssh-port PORT [--gateway-services true|false]
 
 ROLE: network-gpu | network-only | ml-only
 EOF
 }
 [[ $EUID -eq 0 ]] || { echo "Run with sudo" >&2; exit 1; }
-ROLE=""; MONITORING_CIDR=""; PUBLIC_EDGE_CIDR=""; SSH_PORT=""; DRIVER_CHANGED=false
+ROLE=""; MONITORING_CIDR=""; PUBLIC_EDGE_CIDR=""; SSH_PORT=""; GATEWAY_SERVICES=false; DRIVER_CHANGED=false
 OPERATOR_USER="${SUDO_USER:-}"; MIN_DRIVER=580; ML_CLIENT_CIDR="${ML_CLIENT_CIDR:-}"; ML_CALLBACK_CIDR="${ML_CALLBACK_CIDR:-}"
 while (($#)); do
   case "$1" in
@@ -16,6 +16,7 @@ while (($#)); do
     --monitoring-cidr) MONITORING_CIDR="$2"; shift 2;;
     --public-edge-cidr) PUBLIC_EDGE_CIDR="$2"; shift 2;;
     --ssh-port) SSH_PORT="$2"; shift 2;;
+    --gateway-services) GATEWAY_SERVICES="$2"; shift 2;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown option: $1" >&2; usage; exit 2;;
   esac
@@ -23,6 +24,7 @@ done
 [[ "$ROLE" =~ ^(network-gpu|network-only|ml-only)$ ]] || { echo "Invalid --role" >&2; exit 2; }
 [[ -n "$MONITORING_CIDR" && -n "$OPERATOR_USER" ]] || { usage; exit 2; }
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || { echo "Invalid SSH port" >&2; exit 2; }
+[[ "$GATEWAY_SERVICES" == true || "$GATEWAY_SERVICES" == false ]] || { echo "--gateway-services must be true or false" >&2; exit 2; }
 source /etc/os-release
 [[ "$ID" == ubuntu ]] || { echo "Ubuntu required" >&2; exit 1; }
 case "$VERSION_ID" in 22.04|24.04|26.04) ;; *) echo "Supported: Ubuntu 22.04, 24.04, 26.04; got $VERSION_ID" >&2; exit 1;; esac
@@ -161,6 +163,7 @@ EOF
 install -d -m 0755 /etc/gonka
 cat >/etc/gonka/host.env <<EOF
 ROLE=$ROLE
+GATEWAY_SERVICES=$GATEWAY_SERVICES
 MONITORING_CIDR=$MONITORING_CIDR
 PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR
 ML_CLIENT_CIDR=$ML_CLIENT_CIDR

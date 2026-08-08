@@ -29,7 +29,7 @@ install_ipv4() {
     iptables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 80,443,5000 -j RETURN
     iptables -w -t mangle -A "$CHAIN" -p udp --dport 443 -j RETURN
   fi
-  if [[ "$(hostname)" == gdc-node0 ]]; then
+  if [[ "${GATEWAY_SERVICES:-false}" == true ]]; then
     iptables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 3000,8000,8081,8082,18080 -j RETURN
     if [[ -n "${PUBLIC_EDGE_CIDR:-}" ]]; then
       iptables -w -t mangle -A "$CHAIN" -s "$PUBLIC_EDGE_CIDR" -p tcp --dport 9099 -j RETURN
@@ -69,7 +69,7 @@ install_ipv6() {
     ip6tables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 80,443,5000 -j RETURN
     ip6tables -w -t mangle -A "$CHAIN" -p udp --dport 443 -j RETURN
   fi
-  if [[ "$(hostname)" == gdc-node0 ]]; then
+  if [[ "${GATEWAY_SERVICES:-false}" == true ]]; then
     ip6tables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 3000,8000,8081,8082,18080 -j RETURN
   fi
   ip6tables -w -t mangle -A "$CHAIN" -j DROP
