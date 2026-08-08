@@ -1,8 +1,8 @@
 # Telegram API-key issuer
 
 This is the source for the Community DevNet Telegram long-polling issuer. It
-runs on node0 during one-participant bootstrap and moves to the
-secondary-services host later. Gateway credentials and the finite authorised
+runs on the configured gateway host during one-participant bootstrap and moves
+to the configured secondary-services host later. Gateway credentials and the finite authorised
 key pool stay root-owned on the gateway host until deployment.
 
 The bot assigns one key to each private Telegram account. `/key` is idempotent;

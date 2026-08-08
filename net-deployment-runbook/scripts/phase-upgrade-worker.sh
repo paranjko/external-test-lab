@@ -27,7 +27,7 @@ for _ in $(seq 1 20); do
 - Timer: $UNIT.timer
 - Passed proposal: $PROPOSAL_ID
 - Target profile: testnet-0.2.15
-- State source: node0 loopback RPC over SSH
+- State source: Genesis participant loopback RPC over SSH
 - Delayed start: 5 seconds, after the scheduling command releases its lifecycle lock
 - Restart policy: on-failure, 30 seconds
 EOF

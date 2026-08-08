@@ -323,7 +323,7 @@ if [[ "$COMPONENT" == monitoring ]]; then
   step 'Reconcile the anonymous public dashboards with the monitoring source'
   reconcile_public_grafana false
   step 'Verify the separate public Grafana runtime'
-  # The operator Grafana on node0 remains authenticated. Public monitoring is
+  # The operator Grafana on the configured public edge remains authenticated. Public monitoring is
   # the independently provisioned anonymous-Viewer runtime on the public edge; sharing
   # an operator dashboard token would couple its database and session boundary
   # to the public origin, which the lifecycle explicitly forbids.

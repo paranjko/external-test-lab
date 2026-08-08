@@ -92,8 +92,8 @@ bind_and_open_replacement() {
   }
   # An owner chat binds the versiond session.  Target this runtime explicitly;
   # a pooled request may select an older escrow.  A successful completion is
-  # stronger than querying node0's versiond: routing can bind the session on a
-  # different selected validator host, so a local node0-only /diffs probe may
+  # stronger than querying the Genesis host versiond: routing can bind the session on a
+  # different selected validator host, so a local-only /diffs probe may
   # correctly return 404 even though the routable session is healthy.
   probe_payload="$(jq -cn --arg model "$DEVSHARD_MODEL" '{model:$model,messages:[{role:"user",content:"Reply with OK"}],max_tokens:1}')"
   body="$(mktemp)"

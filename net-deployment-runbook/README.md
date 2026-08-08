@@ -45,7 +45,7 @@ matches the image tag declared by upstream.
 
 ## Safety boundary
 
-Run this only against an isolated DevNet with dedicated accounts and hosts. Never use mainnet keys, funds, endpoints or chain state. Do not commit `.env`, `state/`, `generated/`, `artifacts/`, mnemonic backups, tokens or SSH configuration. Store the node0 mnemonic backup produced by `genesis` offline. Every later validator operator owns and stores that validator's backups.
+Run this only against an isolated DevNet with dedicated accounts and hosts. Never use mainnet keys, funds, endpoints or chain state. Do not commit `.env`, `state/`, `generated/`, `artifacts/`, mnemonic backups, tokens or SSH configuration. Store the Genesis operator mnemonic backup produced by `genesis` offline. Every later validator operator owns and stores that validator's backups.
 
 The operator workstation needs Bash, Docker, SSH, `jq`, `rsync`, `scp` and SSH aliases for the selected hosts. Copy the example configuration and set only the operator values it asks for:
 
@@ -63,9 +63,6 @@ must have the same usable headroom; they may be on that filesystem or another
 operator-managed filesystem. `prepare` verifies these conditions but never
 migrates data, modifies `/etc/fstab`, remounts a disk, or creates symlinks.
 
-For node2 this prerequisite is already met: `/srv/dai`, Docker and containerd
-are backed by its 440 GiB data disk with 365 GiB currently free.
-
 `GDC_SKIP_HOSTS` is the supported way to intentionally exclude a participant. An excluded host is recorded as `SKIP`, never silently counted as an active participant, and can be qualified and joined later.
 
 ## Baseline: 0.2.14
@@ -75,12 +72,12 @@ exclusive local lifecycle lock, so a second phase cannot race an active one:
 
 ```bash
 ./gdc.sh --release testnet-0.2.14 --model qwen3-0.6b prepare
-./gdc.sh --release testnet-0.2.14 qualify-ml gdc-node0
+./gdc.sh --release testnet-0.2.14 qualify-ml validator-a
 ./gdc.sh --release testnet-0.2.14 genesis
 ./gdc.sh --release testnet-0.2.14 bootstrap-access
-./gdc.sh --release testnet-0.2.14 join gdc-node1
-./gdc.sh --release testnet-0.2.14 join gdc-node2
-./gdc.sh --release testnet-0.2.14 join gdc-node4
+./gdc.sh --release testnet-0.2.14 join validator-b
+./gdc.sh --release testnet-0.2.14 join validator-c
+./gdc.sh --release testnet-0.2.14 join validator-d
 ./gdc.sh --release testnet-0.2.14 verify
 ./gdc.sh --release testnet-0.2.14 gateway-continuity
 ```
@@ -115,13 +112,14 @@ chain-accounted access contract as the later distributed network:
 ./gdc.sh --release testnet-0.2.14 bootstrap-access
 ```
 
-The command uses the live node0 RPC while node4 has not joined yet, submits or
+The command uses the configured gateway participant RPC while the other
+participants have not joined yet, submits or
 reuses the DevShard v3/v4 governance proposal, records the sole validator's
 vote, waits for the proposal to pass, creates an escrow, starts the gateway,
-generates and verifies a finite key pool, and deploys the Telegram bot on
-node0. The authenticated bootstrap endpoint is
-`https://node0.gonka-dev.net/gateway/v1`; neither node4 nor its public edge is
-required. The eight-block PoC exchange window and ten-block validation delay
+generates and verifies a finite key pool, and deploys the Telegram bot on the
+configured gateway host. The authenticated bootstrap endpoint is
+`https://<gateway-public-host>/gateway/v1`; neither a secondary-services host
+nor its public edge is required. The eight-block PoC exchange window and ten-block validation delay
 are intentional primary test parameters. Official DAPI 0.2.14 can submit its
 first MLNode distribution in the same block as a newer store commit. The
 exchange window remains open for its 30-second retry to observe the final
@@ -168,36 +166,36 @@ minimum test-chain funding.
 Coordinator workstation:
 
 ```bash
-./gdc.sh handoff create gdc-node2
+./gdc.sh handoff create validator-b
 ```
 
-Transfer the emitted `artifacts/operator-handoffs/gdc-node2/` directory. Its
+Transfer the emitted `artifacts/operator-handoffs/validator-b/` directory. Its
 manifest protects integrity; it contains no secrets. The recipient clones the
 same runbook release, adds its own `ACME_EMAIL` to `operator.env`, and provides
-the `gdc-node2` SSH alias. `join` produces missing model qualification evidence
+the `validator-b` SSH alias. `join` produces missing model qualification evidence
 automatically, then deploys and registers the node:
 
 ```bash
-GDC_ENV=/secure/gdc-node2/operator.env \
-GDC_NODE_HANDOFF_DIR=/secure/gdc-node2 \
-  ./gdc.sh --release testnet-0.2.14 join gdc-node2
+GDC_ENV=/secure/validator-b/operator.env \
+GDC_NODE_HANDOFF_DIR=/secure/validator-b \
+  ./gdc.sh --release testnet-0.2.14 join validator-b
 ```
 
 The first command ends in the registered-but-not-active state and writes an
-`artifacts/operator-requests/gdc-node2-activation-request.json` file. Transfer
+`artifacts/operator-requests/validator-b-activation-request.json` file. Transfer
 that public activation request to the coordinator, which verifies the
 committed address and consensus key and funds the account:
 
 ```bash
-./gdc.sh --release testnet-0.2.14 handoff approve gdc-node2 /received/gdc-node2-activation-request.json
+./gdc.sh --release testnet-0.2.14 handoff approve validator-b /received/validator-b-activation-request.json
 ```
 
 The operator then repeats the same command:
 
 ```bash
-GDC_ENV=/secure/gdc-node2/operator.env \
-GDC_NODE_HANDOFF_DIR=/secure/gdc-node2 \
-  ./gdc.sh --release testnet-0.2.14 join gdc-node2
+GDC_ENV=/secure/validator-b/operator.env \
+GDC_NODE_HANDOFF_DIR=/secure/validator-b \
+  ./gdc.sh --release testnet-0.2.14 join validator-b
 ```
 
 `handoff create` contains no validator or account secrets. The operator creates
@@ -207,8 +205,8 @@ the request, then funds that address; it cannot sign ML permissions. The
 operator reruns the same `join` command, signs with the operator-owned cold
 key, waits for ACTIVE, and records the local joined marker. This is the
 required rehearsal for adding a node after bootstrap: start a fresh baseline
-with `GDC_SKIP_HOSTS="gdc-node2 gdc-node3"`, then use the handoff flow for
-node2.
+with `GDC_SKIP_HOSTS="validator-b validator-c"`, then use the handoff flow for
+`validator-b`.
 
 ## Gateway and observability overlays
 
@@ -243,7 +241,7 @@ view. Prometheus scrapes the gateway metrics over the Docker host gateway, so
 the inference dashboard uses the same `/metrics` endpoint as the public API
 runtime without exposing an additional public collector. Run
 `04-ops/grafana/generate-dashboards.sh` after editing the dashboard source so
-the authenticated node0 and anonymous node4 copies remain identical.
+the authenticated and anonymous copies remain identical.
 
 Gateway escrow rotation is enabled by default. The gateway keeps two temporary
 and two regular escrows per model around the short test-lab epoch transition
@@ -282,7 +280,7 @@ in the ignored root `.env`; the finite `gateway-key-pool.json` remains a
 root-owned runtime file on the gateway host. Neither secret is committed.
 
 After those two files have been provisioned and the gateway is active, deploy
-or move the bot to the secondary-services host after node4 is available:
+or move the bot to the configured secondary-services host after it is available:
 
 ```bash
 ./gdc.sh telegram-bot
@@ -297,10 +295,10 @@ authenticated key before reporting success.
 Use these commands for a controlled node recovery rehearsal. `verify` waits for synchronization and checks common-height consistency; a running container is not sufficient evidence of recovery.
 
 ```bash
-./gdc.sh node stop gdc-node1
-./gdc.sh node start gdc-node1
-./gdc.sh node verify gdc-node1
-./gdc.sh node reset gdc-node1
+./gdc.sh node stop validator-b
+./gdc.sh node start validator-b
+./gdc.sh node verify validator-b
+./gdc.sh node reset validator-b
 ```
 
 ## Governed upgrade: 0.2.14 to 0.2.15

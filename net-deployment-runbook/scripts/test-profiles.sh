@@ -29,6 +29,7 @@ grep -Fq 'GDC_GOVERNANCE_AUTO_VOTE=true' "$ROOT/scripts/phase-bootstrap-access.s
 grep -Fq 'ensure-genesis-validation-weight.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'AMOUNT="${AMOUNT:-$MIN_AMOUNT}"' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'AMOUNT <= SPENDABLE_AMOUNT' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'STATE="${GDC_STATE_DIR:-$ROOT/state}"' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq -- '--from gdc-gateway-cold' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'keys export gdc-gateway-cold' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED=true' "$ROOT/.env.example"

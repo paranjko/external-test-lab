@@ -140,7 +140,7 @@ curl -fsS "$CHAIN_BASE/v1/models" >"$RUN/models-chain.json"
 jq -e --arg model "$MODEL_ID" '.data[] | select(.id == $model)' "$RUN/models-chain.json" >/dev/null || die "model $MODEL_ID is absent from the live API"
 # The 0.2.14 decentralized API intentionally exposes the model catalog at
 # /v1/models, while current epoch group and committed weights are chain REST
-# queries. Keep the latter on node0 loopback rather than treating a nonexistent
+# queries. Keep the latter on the Genesis participant loopback rather than treating a nonexistent
 # public /v2/models aggregate as evidence.
 ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data' >"$RUN/current-epoch-group.json"
 final_group_epoch="$(jq -er '.epoch_group_data.epoch_index | tonumber' "$RUN/current-epoch-group.json")"

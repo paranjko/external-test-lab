@@ -4,6 +4,12 @@ usage(){ echo "Usage: $0 inventory.env secrets-dir output-gateway.env [escrow-am
 [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 2; }
 INVENTORY="$1"; SECRETS="$2"; OUT="$3"; AMOUNT="${4:-${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# This renderer is also invoked directly by phase-ops after loading a rendered
+# inventory, rather than through load_project.  Its participant selection must
+# therefore use the same explicit local state root without relying on a caller
+# to initialise STATE.
+# shellcheck disable=SC2034 # consumed by configured_nodes after lib.sh is sourced
+STATE="${GDC_STATE_DIR:-$ROOT/state}"
 source "$ROOT/scripts/lib.sh"
 load_env "$INVENTORY"
 load_topology

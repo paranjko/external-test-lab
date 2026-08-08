@@ -21,7 +21,7 @@ for input in "${genesis_identity_inputs[@]}"; do
   [[ -s "$input" ]] || identity_inputs_ready=false
 done
 if [[ "$identity_inputs_ready" != true ]]; then
-  step 'Create Genesis operator secrets, node0 identities, and gateway account'
+  step 'Create Genesis operator secrets, Genesis participant identities, and gateway account'
   "$ROOT/scripts/phase-identities.sh"
 fi
 for input in "${genesis_identity_inputs[@]}"; do

@@ -63,14 +63,14 @@ grep -qx 'devshard_version=v4' "$ha_context" \
 } >"$RUN/context.env"
 node="$GENESIS_NODE"
 
-step 'Measure node0 headroom before choosing Genesis placement'
+step 'Measure Genesis host headroom before choosing bridge placement'
 ssh "$node" 'free -b; df -B1 /srv/dai; ip -s link' >"$RUN/headroom.txt"
 available_ram="$(awk '/MemAvailable:/ {print $2*1024}' "$RUN/headroom.txt" | head -n1)"
 available_disk="$(awk '$NF == "/srv/dai" {print $4}' "$RUN/headroom.txt")"
 min_ram="${GDC_BRIDGE_MIN_AVAILABLE_RAM_BYTES:-8589934592}"
 min_disk="${GDC_BRIDGE_MIN_AVAILABLE_DISK_BYTES:-107374182400}"
-[[ "$available_ram" =~ ^[0-9]+$ && "$available_disk" =~ ^[0-9]+$ ]] || die 'could not parse node0 headroom'
-(( available_ram >= min_ram && available_disk >= min_disk )) || die "node0 lacks measured bridge headroom (RAM=$available_ram disk=$available_disk)"
+[[ "$available_ram" =~ ^[0-9]+$ && "$available_disk" =~ ^[0-9]+$ ]] || die 'could not parse Genesis host headroom'
+(( available_ram >= min_ram && available_disk >= min_disk )) || die "Genesis host lacks measured bridge headroom (RAM=$available_ram disk=$available_disk)"
 
 step 'Install digest-pinned Sepolia bridge with isolated persistent state'
 remote="/tmp/gdc-bridge-$$"

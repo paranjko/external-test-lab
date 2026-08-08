@@ -28,7 +28,7 @@ www.{$SITE_HOST} {
 
 {$SITE_HOST} {
   encode zstd gzip
-  # The status site is an operations service on node0, not the Network Node
+  # The status site is an operations service on the configured public edge, not the Network Node
   # proxy's default dashboard. The public edge remains the only public TLS edge.
   reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {
     header_up Host {$GATEWAY_PUBLIC_HOST}

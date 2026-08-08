@@ -43,7 +43,7 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       # Grafana is published through the configured public TLS edge, not directly
-      # through node0.  This keeps login redirects and browser API requests on
+      # through the configured public edge. This keeps login redirects and browser API requests on
       # the same public origin.
       GF_SERVER_ROOT_URL: https://${GRAFANA_HOST}/
     volumes:
