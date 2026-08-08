@@ -320,11 +320,11 @@ if [[ "$COMPONENT" == gateway ]]; then
 fi
 
 if [[ "$COMPONENT" == monitoring ]]; then
-  step 'Reconcile the anonymous node4 dashboards with the monitoring source'
+  step 'Reconcile the anonymous public dashboards with the monitoring source'
   reconcile_public_grafana false
-  step 'Verify the separate node4 public Grafana runtime'
+  step 'Verify the separate public Grafana runtime'
   # The operator Grafana on node0 remains authenticated. Public monitoring is
-  # the independently provisioned anonymous-Viewer runtime on node4; sharing
+  # the independently provisioned anonymous-Viewer runtime on the public edge; sharing
   # an operator dashboard token would couple its database and session boundary
   # to the public origin, which the lifecycle explicitly forbids.
   "$ROOT/scripts/verify-public-grafana.sh"

@@ -42,7 +42,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      # Grafana is published through the node4/one-net TLS edge, not directly
+      # Grafana is published through the configured public TLS edge, not directly
       # through node0.  This keeps login redirects and browser API requests on
       # the same public origin.
       GF_SERVER_ROOT_URL: https://${GRAFANA_HOST}/

@@ -17,7 +17,7 @@ sed "s|__PUBLIC_GRAFANA_PROMETHEUS_URL__|$PUBLIC_GRAFANA_PROMETHEUS_URL|g" \
   "$HERE/public-grafana/provisioning/datasources/prometheus.yml" \
   >"$DEST/public-grafana/provisioning/datasources/prometheus.yml"
 chmod -R a+rX "$DEST/public-grafana"
-# Only node4 owns the three public origins.  All other participants retain a
+# Only the configured public edge owns the three public origins. All other participants retain a
 # narrowly-scoped per-node edge proxy and never contend for their certificates.
 if grep -qx 'PUBLIC_EDGE=true' "$1"; then
   install -m 0644 "$HERE/PublicCaddyfile" "$DEST/Caddyfile"

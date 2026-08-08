@@ -21,7 +21,7 @@
 }
 
 # Canonical public status origin. DNS may use a direct A record or a CNAME to
-# node4, but www must terminate TLS here before redirecting to the apex.
+# configured public edge, but www must terminate TLS here before redirecting to the apex.
 www.{$SITE_HOST} {
   redir https://{$SITE_HOST}{uri} permanent
 }

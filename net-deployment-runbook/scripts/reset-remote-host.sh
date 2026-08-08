@@ -10,7 +10,7 @@ for unit in "${poc_watch_units[@]}"; do
 done
 
 project_is_resettable() {
-  # The node4 Telegram issuer is a secondary service. A chain rehearsal reset
+  # The Telegram issuer is a secondary service. A chain rehearsal reset
   # must not destroy its finite pre-authorised key pool or the only active
   # long-poll consumer.
   # The public status and observability plane must remain available after a

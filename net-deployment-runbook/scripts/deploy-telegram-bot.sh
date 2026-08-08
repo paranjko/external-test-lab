@@ -52,7 +52,7 @@ rsync -a --delete --exclude .env --exclude data --exclude __pycache__ \
 # its durable assignment database intact for an explicit operator migration.
 for host in "${GDC_NODES[@]}"; do
   [[ "$host" == "$BOT_HOST" ]] && continue
-  # node4 is intentionally absent during node0-only bootstrap.  Stop an old
+  # The secondary-services host is intentionally absent during one-node bootstrap. Stop an old
   # poller only on a provisioned Docker host; reachability of a future host is
   # neither a bootstrap prerequisite nor a reason to fail key issuance.
   ssh -T "$host" 'docker info >/dev/null 2>&1' >/dev/null 2>&1 || continue
