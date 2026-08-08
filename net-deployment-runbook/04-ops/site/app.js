@@ -1,7 +1,7 @@
 const cfg=window.GDC_CONFIG;
 const gatewayStatus=window.GDC_GATEWAY_STATE;
 const $=id=>document.getElementById(id);
-const chainRpcHost=cfg.nodes.find(node=>node.name==='gdc-node4')?.publicHost||cfg.nodes.find(node=>node.name==='gdc-node0')?.publicHost;
+const chainRpcHost=cfg.nodes.find(node=>node.name===cfg.gatewayNode)?.publicHost||cfg.nodes[0]?.publicHost;
 $('chain-id').textContent=cfg.chainId;$('model-id').textContent=cfg.model;
 if(cfg.telegramBot){$('contact').textContent='Open Telegram bot';$('contact').href=cfg.telegramBot}else{$('contact').textContent='Telegram bot is not configured yet';$('contact').removeAttribute('href')}
 $('grafana-network').href=cfg.grafanaNetwork||cfg.grafana;
@@ -50,13 +50,12 @@ function participantNode(participant){
   try{endpoint=new URL(participant.inference_url)}catch{endpoint=null}
   const host=endpoint?.hostname||'';
   const catalog=(cfg.nodeCatalog||cfg.nodes).find(node=>node.address===participant.address||node.publicHost===host);
-  const knownHost=host.match(/^node([0-4])\.gonka-dev\.net$/);
   return {
     ...(catalog||{}),
-    name:catalog?.name||(knownHost?`gdc-node${knownHost[1]}`:host||`${participant.address.slice(0,10)}…`),
+    name:catalog?.name||host||`${participant.address.slice(0,10)}…`,
     address:participant.address,
     publicHost:catalog?.publicHost||host,
-    statusBase:catalog?.statusBase||(knownHost?`/status/node${knownHost[1]}`:''),
+    statusBase:catalog?.statusBase||'',
     participantStatus:String(participant.status||'UNKNOWN'),
   };
 }
@@ -136,6 +135,6 @@ async function refresh(){let healthy=0,best=0;
  try{if(!chainRpcHost)throw new Error('chain RPC host is missing');const v=await json(`https://${chainRpcHost}/chain-rpc/validators?per_page=100`);const vals=v.result.validators||[];const powers=vals.map(x=>BigInt(x.voting_power));const total=powers.reduce((a,b)=>a+b,0n);const max=powers.reduce((a,b)=>a>b?a:b,0n);const share=total?Number(max*10000n/total)/100:0;const unsafe=total>0n&&max*3n>=total;$('power-share').textContent=`${share.toFixed(2)}%`;$('power-share').style.color=unsafe?'var(--bad)':'var(--ok)'}catch{$('power-share').textContent='–'}
  let gatewayState,gatewayProbe;try{[gatewayState,gatewayProbe]=await Promise.all([json('/status/gateway/v1/status'),json('/status/gateway-health')])}catch{}
  try{if(!gatewayStatus.classify(gatewayState,healthy,gatewayProbe).available)throw new Error('gateway unavailable');const runtime=gatewayState.escrow_id?gatewayState:(gatewayState.devshards||[]).find(item=>item.active&&item.phase==='active'&&!item.requests_blocked);if(!runtime?.id&&!runtime?.escrow_id)throw new Error('no active unblocked escrow');const escrowId=runtime.id||runtime.escrow_id;$('gateway-access').hidden=false;$('gateway-detail').textContent=`Escrow #${escrowId} is ACTIVE – authenticated chain-accounted inference is accepting requests`}catch(error){$('gateway-access').hidden=true}
- try{const availability=gatewayStatus.classify(gatewayState,healthy,gatewayProbe);if(!availability.available)throw new Error(availability.message);const metricText=await text('/status/gateway/metrics'),metricValue=name=>[...metricText.matchAll(new RegExp(`^${name}(?:\\{[^}]*\\})?\\s+([0-9.e+-]+)$`,'gm'))].reduce((total,match)=>total+Number(match[1]),0),inflight=metricValue('devshard_gateway_inflight_requests'),tokens=metricValue('devshard_gateway_inflight_input_tokens'),accepted=metricValue('devshard_gateway_requests_total'),rejected=metricValue('devshard_gateway_limit_rejections_total'),capacity=metricValue('devshard_gateway_capacity_scale');const values=[String(inflight),tokens.toLocaleString(),accepted.toLocaleString(),rejected.toLocaleString(),`${Math.round(capacity*100)}%`];[...$('quality-metrics').children].forEach((card,index)=>card.querySelector('strong').textContent=values[index]);$('quality-active').textContent=inflight;$('quality-accepted').textContent=accepted;$('quality-rejected').textContent=rejected;const health=$('quality-health'),state=inflight>0?'active':'idle';health.dataset.state=state;$('quality-health-state').textContent=state.toUpperCase();setUtcTime('quality-updated',new Date(),'Updated')}catch(error){const availability=gatewayStatus.classify(gatewayState,healthy,gatewayProbe);$('quality-health-state').textContent=availability.state;$('quality-health').dataset.state=availability.state==='PENDING'?'degraded':'down';$('quality-updated').textContent=availability.message}
+ try{const availability=gatewayStatus.classify(gatewayState,healthy,gatewayProbe);if(!availability.available)throw new Error(availability.message);const metricText=await text('/status/gateway/metrics'),metricValue=name=>[...metricText.matchAll(new RegExp(`^${name}(?:\\{[^}]*\\})?\\s+([0-9.e+-]+)$`,'gm'))].reduce((total,match)=>total+Number(match[1]),0),inflight=metricValue('devshard_gateway_inflight_requests'),tokens=metricValue('devshard_gateway_inflight_input_tokens'),accepted=metricValue('devshard_gateway_requests_total'),rejected=metricValue('devshard_gateway_limit_rejections_total'),capacity=metricValue('devshard_gateway_capacity_scale');const values=[String(inflight),tokens.toLocaleString(),accepted.toLocaleString(),rejected.toLocaleString(),`${Math.round(capacity*100)}%`];[...$('quality-metrics').children].forEach((card,index)=>card.querySelector('strong').textContent=values[index]);$('quality-active').textContent=inflight;$('quality-accepted').textContent=accepted;$('quality-rejected').textContent=rejected;const health=$('quality-health'),state=inflight>0?'active':'idle';health.dataset.state=state;$('quality-health-state').textContent=inflight>0?'READY – processing requests':'READY – no requests in flight';setUtcTime('quality-updated',new Date(),'Updated')}catch(error){const availability=gatewayStatus.classify(gatewayState,healthy,gatewayProbe);$('quality-health-state').textContent=availability.state;$('quality-health').dataset.state=availability.state==='PENDING'?'degraded':'down';$('quality-updated').textContent=availability.message}
 }
 refresh();setInterval(refresh,15000);

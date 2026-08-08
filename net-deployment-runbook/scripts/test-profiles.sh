@@ -3,6 +3,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/profile.sh"
 source "$ROOT/scripts/lib.sh"
+"$ROOT/scripts/test-topology-inventory.sh"
 
 (
   unset SITE_HOST GRAFANA_HOST GDC_SITE_HOST GDC_GRAFANA_HOST
@@ -10,8 +11,8 @@ source "$ROOT/scripts/lib.sh"
   [[ "$SITE_HOST" == gonka-dev.net ]]
   [[ "$GRAFANA_HOST" == grafana.gonka-dev.net ]]
 
-  GDC_SITE_HOST=status.example.test
-  GDC_GRAFANA_HOST=monitoring.example.test
+  export GDC_SITE_HOST=status.example.test
+  export GDC_GRAFANA_HOST=monitoring.example.test
   load_public_observability_hosts
   [[ "$SITE_HOST" == status.example.test ]]
   [[ "$GRAFANA_HOST" == monitoring.example.test ]]
@@ -21,13 +22,14 @@ grep -Fq 'status.json.tmp' "$ROOT/scripts/qualify-ml-remote.sh"
 grep -Fq '2>>"$WORK/control.log"' "$ROOT/scripts/qualify-ml-remote.sh"
 grep -Fq 'phase-bootstrap-access.sh' "$ROOT/gdc.sh"
 grep -Fq 'GDC_CHAIN_RPC_URL' "$ROOT/scripts/phase-bootstrap-access.sh"
-grep -Fq 'GDC_GATEWAY_PUBLIC_URL="https://${NODE0_PUBLIC_HOST}/gateway"' "$ROOT/scripts/phase-bootstrap-access.sh"
-grep -Fq 'GDC_TELEGRAM_BOT_HOST=gdc-node0' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'GDC_GATEWAY_PUBLIC_URL="https://${API_HOST}"' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'GDC_TELEGRAM_BOT_API_BASE_URL="$GDC_GATEWAY_PUBLIC_URL/v1"' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'GDC_RUN_ID' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'GDC_GOVERNANCE_AUTO_VOTE=true' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'ensure-genesis-validation-weight.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'AMOUNT="${AMOUNT:-$MIN_AMOUNT}"' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'AMOUNT <= SPENDABLE_AMOUNT' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'STATE="${GDC_STATE_DIR:-$ROOT/state}"' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq -- '--from gdc-gateway-cold' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'keys export gdc-gateway-cold' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED=true' "$ROOT/.env.example"
@@ -43,7 +45,12 @@ grep -Fq 'GDC_GATEWAY_MIN_SPENDABLE_NGONKA=100000000000' "$ROOT/.env.example"
 grep -Fq 'GDC_GATEWAY_MIN_SPENDABLE_NGONKA:-100000000000' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '\"temp_count\":$gateway_rotation_temp_count' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '\"target_count\":$gateway_rotation_target_count' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-45' "$ROOT/scripts/phase-gateway-continuity.sh"
 grep -Fq 'DEVSHARD_CAPACITY_AWARE_LIMITS=off' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
+grep -Fq 'waiting_for_versiond_session' "$ROOT/04-ops/gateway-escrow-reconciler.sh"
+grep -Fq 'productscience/inference/inference/devshard_escrow' "$ROOT/04-ops/gateway-escrow-reconciler.sh"
 grep -Fq '.settings.max_concurrent_requests == 0 and .settings.max_concurrent_requests_per_10000_weight <= 0' "$ROOT/scripts/phase-ops.sh"
 if grep -Fq 'GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-10000000000' "$ROOT/04-ops/create-gateway.sh"; then
   echo 'gateway escrow must not default to the full Genesis allocation' >&2
@@ -55,6 +62,8 @@ grep -Fq '.epoch_params.poc_slot_allocation = {value:"5", exponent:-1}' "$ROOT/s
 grep -Fq 'systemctl restart gonka-firewall.service' "$ROOT/00-host-prep/prepare-host.sh"
 grep -Fq 'ML callback ingress source is stale' "$ROOT/00-host-prep/verify-host.sh"
 grep -Fq 'ensure-gateway-reserve.sh' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'load_project' "$ROOT/scripts/fetch-upstream.sh"
+grep -Fq 'source "$ROOT/scripts/lib.sh"' "$ROOT/scripts/fetch-upstream.sh"
 grep -Fq 'validation_weights' "$ROOT/scripts/ensure-genesis-validation-weight.sh"
 grep -Fq 'test-inference.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'sum(cometbft_p2p_peers) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
@@ -66,6 +75,13 @@ grep -Fq 'handle_path /gateway/*' "$ROOT/04-ops/Caddyfile"
 grep -Fq 'handle /status/participants' "$ROOT/04-ops/Caddyfile"
 grep -Fq "json('/status/participants')" "$ROOT/04-ops/site/app.js"
 grep -Fq 'validatorMapController?.update(observedNodes)' "$ROOT/04-ops/site/app.js"
+grep -Fq '__PUBLIC_GRAFANA_PROMETHEUS_URL__' "$ROOT/04-ops/edge-node/public-grafana/provisioning/datasources/prometheus.yml"
+grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/install-edge.sh"
+if grep -Eq 'node[0-9]\.gonka-dev\.net' "$ROOT/04-ops/edge-node/public-grafana/provisioning/datasources/prometheus.yml"; then
+  echo 'public Grafana datasource must be rendered from the configured gateway role' >&2
+  exit 1
+fi
 grep -Fq '/v1/versions' "$ROOT/04-ops/site/app.js"
 grep -Eq 'external-test-lab/tree/[0-9a-f]+/net-deployment-runbook/04-ops/site"[^>]*>ref:[0-9a-f]+' "$ROOT/04-ops/site/index.html"
 rendered_site_index="$(mktemp)"
@@ -82,6 +98,14 @@ grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
+grep -Fq 'telegram-key-probe' "$ROOT/gdc.sh"
+grep -Fq 'docker exec -i' "$ROOT/scripts/phase-telegram-key-probe.sh"
+grep -Fq 'GDC_ASSURANCE_SLA_MS' "$ROOT/scripts/phase-telegram-key-probe.sh"
+grep -Fq 'temporary_assignment_cleaned' "$ROOT/scripts/phase-telegram-key-probe.sh"
+if grep -Fq 'DELETE FROM keys WHERE telegram_id' "$ROOT/scripts/phase-telegram-key-probe.sh"; then
+  echo 'telegram-key-probe phase must not blindly delete an assignment before collision checks' >&2
+  exit 1
+fi
 if grep -Fq 'ssh_ready gdc-node4' "$ROOT/scripts/phase-bootstrap-access.sh"; then
   echo 'bootstrap-access must not require gdc-node4' >&2
   exit 1
@@ -92,6 +116,7 @@ for release in testnet-0.2.14 testnet-0.2.15; do
   [[ "$GDC_DEPLOYMENT_PROFILE" == community-lab ]]
   [[ "$GDC_OPERATOR_SERVICES_PROFILE" == gdc-lab ]]
   [[ "$GONKA_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$GONKA_REPOSITORY" == https://github.com/gonka-ai/gonka.git ]]
   [[ "$GONKA_SOURCE_REF" == "release/v$GONKA_RELEASE" ]]
   [[ "$GENESIS_EPOCH_LENGTH" == 50 && "$GENESIS_EPOCH_SHIFT" == 0 ]]
   images=("$TMKMS_IMAGE" "$INFERENCED_IMAGE" "$DAPI_IMAGE" "$VERSIOND_IMAGE" "$PROXY_IMAGE" "$POSTGRES_IMAGE" "$MLNODE_GENERIC_IMAGE" "$MLNODE_BLACKWELL_IMAGE" "$MLNODE_PROXY_IMAGE")
@@ -113,16 +138,28 @@ for release in testnet-0.2.14 testnet-0.2.15; do
   [[ "$(profile_hash)" == "$expected_network_hash" ]]
   [[ "$(operator_profile_hash)" == "$expected_operator_hash" ]]
   if [[ "$release" == testnet-0.2.15 ]]; then
+    [[ "$GONKA_HOST_STACK_COMMIT" == ce33c851282b8f4c0f63d78d46ddd4d8bb248207 ]]
+    [[ "$GONKA_HOST_STACK_DOC_SHA256" == 5a69a2d82f77b4ecd1e207af1119063f32693afdc01bca58433f71ffe4061f82 ]]
+    [[ "$GONKA_HOST_STACK_COMPOSE_SHA256" == d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94 ]]
+    [[ "$DAPI_SOURCE_REF" == release/v0.2.15-post3 ]]
+    [[ "$DAPI_COMMIT" == 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 ]]
+    [[ "$DAPI_IMAGE" == ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c ]]
+    [[ "$BRIDGE_IMAGE" == ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d ]]
     [[ "$INFERENCED_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-amd64.zip ]]
-    [[ "$DAPI_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/decentralized-api-amd64.zip ]]
+    [[ "$DAPI_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-post3/decentralized-api-amd64.zip ]]
     [[ "$INFERENCED_UPGRADE_SHA256" == 91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e ]]
-    [[ "$DAPI_UPGRADE_SHA256" == c9cf1bfa2c994beca8a528d0ee3ad7197a582144769711600ec9df41faf4c9f7 ]]
+    [[ "$DAPI_UPGRADE_SHA256" == 8cfa7345f5b7f968d5a1b765837b8319084c02d3dd2691b698c368774e20b55e ]]
   fi
   summary="$(profile_summary)"
   grep -qx "inferenced_image=$INFERENCED_IMAGE" <<<"$summary"
   grep -qx "dapi_image=$DAPI_IMAGE" <<<"$summary"
   grep -qx "mlnode_generic_image=$MLNODE_GENERIC_IMAGE" <<<"$summary"
   grep -qx "bridge_image=$BRIDGE_IMAGE" <<<"$summary"
+  if [[ "$release" == testnet-0.2.15 ]]; then
+    grep -qx "gonka_host_stack_commit=$GONKA_HOST_STACK_COMMIT" <<<"$summary"
+    grep -qx "dapi_source_ref=$DAPI_SOURCE_REF" <<<"$summary"
+    grep -qx "dapi_commit=$DAPI_COMMIT" <<<"$summary"
+  fi
   grep -qx "operator_explorer_image=$EXPLORER_IMAGE" <<<"$summary"
   grep -qx "operator_caddy_image=$CADDY_IMAGE" <<<"$summary"
   grep -qx "operator_grafana_image=$GRAFANA_IMAGE" <<<"$summary"
@@ -141,7 +178,7 @@ GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
 for profile in a5000-24g t4-16g 4090-24g 3090-24g blackwell-16g; do
   out="$(mktemp)"
   trap 'rm -f "${out:-}"' EXIT
-  "$ROOT/02-node/render-node-config.sh" --node-name gdc-node1 --profile "$profile" --output "$out" >/dev/null
+  "$ROOT/02-node/render-node-config.sh" --node-name validator-b --node-index 1 --profile "$profile" --output "$out" >/dev/null
   jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
     .[0].max_concurrent == 64
     and (.[0].models[$model].args | index("--dtype") != null)
@@ -153,7 +190,7 @@ for profile in a5000-24g t4-16g 4090-24g 3090-24g blackwell-16g; do
 done
 genesis_out="$(mktemp)"
 trap 'rm -f "${genesis_out:-}"' EXIT
-GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b \
+GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b GDC_GENESIS_GUARDIAN_ENABLED=true \
   "$ROOT/01-identities-genesis/render-genesis-overrides.sh" \
   --gateway-account gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq \
   --genesis-guardian gonka1rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr \
@@ -185,6 +222,9 @@ rm -f "$genesis_out"
 unset genesis_out
 grep -Fq 'GDC_NODE_HANDOFF_DIR' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'GDC_STOP_POC_AT_WINDDOWN' "$ROOT/02-node/render-node-env.sh"
+grep -Fq 'GDC_GENESIS_GUARDIAN_ENABLED' "$ROOT/01-identities-genesis/render-genesis-overrides.sh"
+grep -Fq 'one joined non-guardian model participant' "$ROOT/scripts/phase-bootstrap-access.sh"
+grep -Fq 'Create scoped operator secrets for $NODE' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'PoCGenerateWindDown' "$ROOT/02-node/poc-winddown-watch.sh"
 grep -Fq 'gdc-poc-winddown-watch@' "$ROOT/02-node/install-node.sh"
 grep -Fq 'gdc-poc-winddown-watch@' "$ROOT/02-node/ml-only/install-ml.sh"
@@ -192,12 +232,12 @@ grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-propose-upgrade.sh
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade.sh"
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade-worker.sh"
 grep -Fq '# DevNet verification: PASS' "$ROOT/scripts/lib.sh"
-grep -Fq 'expected SSH alias gdc-node1' "$ROOT/scripts/lib.sh"
-if (source "$ROOT/scripts/lib.sh"; node_name node2) >/dev/null 2>&1; then
-  echo 'short node aliases must be rejected by the operator command contract' >&2
+grep -Fq 'GDC_NODE_ALIASES' "$ROOT/scripts/lib.sh"
+if (source "$ROOT/scripts/lib.sh"; load_project; node_name node2) >/dev/null 2>&1; then
+  echo 'aliases absent from the operator inventory must be rejected' >&2
   exit 1
 fi
-[[ "$(source "$ROOT/scripts/lib.sh"; node_name gdc-node2)" == gdc-node2 ]]
+[[ "$(source "$ROOT/scripts/lib.sh"; load_project >/dev/null; node_name gdc-node2)" == gdc-node2 ]]
 grep -Fq 'ACTIVE chain participants differ from joined state' "$ROOT/scripts/phase-verify.sh"
 grep -Fq 'trap on_exit EXIT' "$ROOT/scripts/phase-verify.sh"
 for evidence_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-sepolia.sh phase-governance-devshard.sh phase-propose-upgrade.sh phase-vote-proposal.sh phase-audit-lifecycle.sh; do
@@ -210,6 +250,10 @@ grep -Fq "'gateway continuity|*-gateway-continuity/*|# Gateway continuity: PASS'
 grep -Fq 'genesis_sha256=$live_genesis_sha256' "$ROOT/scripts/phase-audit-lifecycle.sh"
 grep -Fq 'genesis_sha256=$genesis_sha256' "$ROOT/scripts/phase-verify.sh"
 grep -Fq "printf 'genesis_sha256=%s\\n' \"\$genesis_sha256\"" "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'GDC_GATEWAY_CONTINUITY_KEY_SOURCE:-telegram-pool' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'GDC_GATEWAY_PARTICIPANT_REQUEST_BURST=1000000000' "$ROOT/.env.example"
+grep -Fq 'GATEWAY_PARTICIPANT_REQUEST_BURST=${GDC_GATEWAY_PARTICIPANT_REQUEST_BURST:-1000000000}' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'participant_throttle' "$ROOT/scripts/phase-ops.sh"
 for genesis_bound_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-sepolia.sh; do
   grep -Fq "printf 'genesis_sha256=%s\\n' \"\$genesis_sha256\"" "$ROOT/scripts/$genesis_bound_phase"
 done
@@ -271,7 +315,7 @@ trap_test_dir="$(mktemp -d)"
 set +e
 (
   source "$ROOT/scripts/lib.sh"
-  RUN="$trap_test_dir"
+  export RUN="$trap_test_dir"
   install_evidence_exit_trap 'Contract test'
   exit 7
 )

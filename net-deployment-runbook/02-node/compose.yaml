@@ -118,7 +118,7 @@ services:
       - "127.0.0.1:9000:9000/tcp"
       - "${ML_CALLBACK_BIND:-127.0.0.1}:9100:9100/tcp"
       - "127.0.0.1:9200:9200/tcp"
-      # The gateway runs in host networking on node0.  It uses this internal
+      # The gateway runs in host networking on the configured gateway host. It uses this internal
       # Node Manager gRPC endpoint to discover active DevShard runtimes; keep
       # it loopback-only so it is never a public management interface.
       - "127.0.0.1:9400:9400/tcp"
@@ -186,7 +186,7 @@ services:
       EXEMPT_CONN_LIMIT: "200"
       GONKA_API_BLOCKED_ROUTES: poc-batches training
       CHAIN_RPC_PORT: "26657"
-      # Public status traffic is aggregated by the node4 edge into one source
+      # Public status traffic is aggregated by the public edge into one source
       # IP. The upstream default is 20 requests per minute, which makes normal
       # dashboard polling return intermittent 503s. Keep the same numeric
       # limit but use seconds for this controlled test network.

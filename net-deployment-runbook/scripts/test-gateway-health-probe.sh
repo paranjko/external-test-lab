@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+grep -Fq 'GDC_GATEWAY_PUBLIC_KEY_POOL_FILE' "$ROOT/04-ops/gateway-health-probe.sh"
 tmp="$(mktemp -d)"
 server_pid=''
 trap '[[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true; rm -rf "$tmp"' EXIT

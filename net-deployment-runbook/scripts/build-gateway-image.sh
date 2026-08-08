@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib.sh"
+load_project
 # shellcheck disable=SC1091
 source "$ROOT/scripts/profile.sh"
 load_profiles
@@ -18,8 +20,8 @@ esac
 # Release profiles name the default v4 image; derive a distinct immutable
 # local tag for the independently governed v3 runtime.
 IMAGE="${LOCAL_GATEWAY_IMAGE%-v4}-$VERSION"
-if ssh gdc-node0 docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "KEEP  $IMAGE already exists on gdc-node0"
+if ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "KEEP  $IMAGE already exists on $GATEWAY_NODE"
   exit 0
 fi
 "$ROOT/scripts/fetch-upstream.sh"
@@ -48,5 +50,5 @@ docker build --pull \
   --build-arg DEVSHARD_VERSION="$VERSION" \
   --build-arg DEVSHARD_PROTOCOL_VERSION="$VERSION" \
   -f "$dockerfile" -t "$IMAGE" "$build_context"
-docker save "$IMAGE" | ssh gdc-node0 docker load
+docker save "$IMAGE" | ssh "$GATEWAY_NODE" docker load
 printf '%s\n' "$IMAGE"

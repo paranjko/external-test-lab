@@ -47,24 +47,24 @@ Gonka DevNet Community manual deployment
 
 Create .env from .env.example, then run:
   ./gdc.sh --release testnet-0.2.14 --model qwen3-0.6b prepare
-  ./gdc.sh --release testnet-0.2.14 qualify-ml [gdc-nodeN]
+  ./gdc.sh --release testnet-0.2.14 qualify-ml [SSH_ALIAS]
   ./gdc.sh --release testnet-0.2.14 genesis
+  ./gdc.sh --release testnet-0.2.14 baseline
   ./gdc.sh --release testnet-0.2.14 bootstrap-access
+  ./gdc.sh telegram-key-probe Qwen/Qwen3-0.6B 60s
   ./gdc.sh --release testnet-0.2.14 gateway-continuity
-  ./gdc.sh --release testnet-0.2.14 join gdc-node1
-  ./gdc.sh --release testnet-0.2.14 join gdc-node2
-  ./gdc.sh --release testnet-0.2.14 join gdc-node3
-  ./gdc.sh --release testnet-0.2.14 join gdc-node4
-  ./gdc.sh --release testnet-0.2.14 handoff create gdc-node2
-  ./gdc.sh --release testnet-0.2.14 handoff approve gdc-node2 <activation-request.json>
+  ./gdc.sh --release testnet-0.2.14 join <SSH_ALIAS>
+  ./gdc.sh --release testnet-0.2.14 ml attach <SSH_ALIAS>
+  ./gdc.sh --release testnet-0.2.14 handoff create <SSH_ALIAS>
+  ./gdc.sh --release testnet-0.2.14 handoff approve <SSH_ALIAS> <activation-request.json>
   ./gdc.sh ops monitoring
   ./gdc.sh ops site
   ./gdc.sh ops explorer
   ./gdc.sh telegram-bot
-  ./gdc.sh node stop gdc-node1
-  ./gdc.sh node start gdc-node1
-  ./gdc.sh node verify gdc-node1
-  ./gdc.sh node reset gdc-node1
+  ./gdc.sh node stop <SSH_ALIAS>
+  ./gdc.sh node start <SSH_ALIAS>
+  ./gdc.sh node verify <SSH_ALIAS>
+  ./gdc.sh node reset <SSH_ALIAS>
   ./gdc.sh ops edge
   ./gdc.sh --release testnet-0.2.14 verify
   ./gdc.sh --release testnet-0.2.15 upgrade-proposal
@@ -106,13 +106,19 @@ done
 COMMAND="${1:-help}"
 shift || true
 case "$COMMAND" in
-  prepare|verify|reset|settle|bootstrap-access|gateway-continuity|audit|telegram-bot)
-    [[ "$COMMAND" == reset || $# -eq 0 ]] || { usage; exit 2; }
+  prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit|telegram-bot|telegram-key-probe)
+    [[ "$COMMAND" == reset || "$COMMAND" == telegram-key-probe || $# -eq 0 ]] || { usage; exit 2; }
     if [[ "$COMMAND" == reset ]]; then
-      exec "$ROOT/scripts/phase-reset.sh" "$@"
+      run_phase reset "$ROOT/scripts/phase-reset.sh" "$@"
+      exit $?
     fi
     if [[ "$COMMAND" == telegram-bot ]]; then
       run_phase telegram-bot "$ROOT/scripts/deploy-telegram-bot.sh"
+    elif [[ "$COMMAND" == telegram-key-probe ]]; then
+      [[ $# -eq 2 ]] || { usage; exit 2; }
+      run_phase telegram-key-probe "$ROOT/scripts/phase-telegram-key-probe.sh" "$@"
+    elif [[ "$COMMAND" == baseline ]]; then
+      run_phase baseline "$ROOT/scripts/phase-baseline.sh"
     elif [[ "$COMMAND" == bootstrap-access ]]; then
       run_phase bootstrap-access "$ROOT/scripts/phase-bootstrap-access.sh"
     elif [[ "$COMMAND" == gateway-continuity ]]; then
@@ -125,12 +131,13 @@ case "$COMMAND" in
     ;;
   qualify-ml)
     [[ $# -le 1 ]] || { usage; exit 2; }
-    qualification_target="${1:-gdc-node0}"
-    case "$qualification_target" in
-      gdc-node0|gdc-node1|gdc-node2|gdc-node3) ;;
-      gdc-node4) qualification_target=gdc-node4-ml ;;
-      *) echo 'qualify-ml expects gdc-node0, gdc-node1, gdc-node2, gdc-node3, or gdc-node4' >&2; exit 2 ;;
-    esac
+    # Resolve topology after parsing flags so the same command works for any
+    # valid SSH alias supplied by the operator inventory.
+    source "$ROOT/scripts/lib.sh"
+    load_project
+    qualification_target="${1:-$GENESIS_NODE}"
+    topology_contains_node "$qualification_target" || { echo "qualify-ml expects an alias from GDC_NODE_ALIASES, got: $qualification_target" >&2; exit 2; }
+    qualification_target="$(node_ml_host "$qualification_target" || printf '%s' "$qualification_target")"
     export GDC_QUALIFY_HOSTS="$qualification_target"
     run_phase qualify-ml "$ROOT/scripts/phase-qualify-ml.sh"
     ;;
@@ -174,11 +181,23 @@ case "$COMMAND" in
     run_phase "advance-after-upgrade-worker-$1" "$ROOT/scripts/phase-advance-after-upgrade-worker.sh" "$1"
     ;;
   ops)
-    [[ $# -eq 1 && "$1" =~ ^(gateway|monitoring|site|explorer|edge)$ ]] || { usage; exit 2; }
-    run_phase "ops-$1" "$ROOT/scripts/phase-ops.sh" "$1"
+    [[ $# -ge 1 ]] || { usage; exit 2; }
+    if [[ "$1" == edge-node ]]; then
+      [[ $# -eq 2 ]] || { usage; exit 2; }
+      source "$ROOT/scripts/lib.sh"
+      load_project
+      topology_contains_node "$2" || { echo "ops edge-node expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
+      run_phase "ops-edge-node-$2" "$ROOT/scripts/phase-ops.sh" "$1" "$2"
+    else
+      [[ $# -eq 1 && "$1" =~ ^(gateway|monitoring|site|explorer|edge)$ ]] || { usage; exit 2; }
+      run_phase "ops-$1" "$ROOT/scripts/phase-ops.sh" "$1"
+    fi
     ;;
   node)
     [[ $# -eq 2 && "$1" =~ ^(stop|start|verify|reset)$ ]] || { usage; exit 2; }
+    source "$ROOT/scripts/lib.sh"
+    load_project
+    topology_contains_node "$2" || { echo "node $1 expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
     run_phase "node-$1-$2" "$ROOT/scripts/phase-node.sh" "$1" "$2"
     ;;
   governance)
@@ -215,6 +234,14 @@ case "$COMMAND" in
   join)
     [[ $# -eq 1 ]] || { usage; exit 2; }
     run_phase "join-$1" "$ROOT/scripts/phase-join.sh" "$1"
+    ;;
+  ml)
+    [[ $# -eq 2 && "$1" == attach ]] || { usage; exit 2; }
+    source "$ROOT/scripts/lib.sh"
+    load_project
+    topology_contains_node "$2" || { echo "ml attach expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
+    [[ -n "$(node_ml_host "$2" || true)" ]] || { echo "no network GPU configured for $2 in GDC_NODE_ML_HOSTS" >&2; exit 2; }
+    run_phase "ml-attach-$2" "$ROOT/scripts/phase-ml-attach.sh" "$2"
     ;;
   handoff)
     [[ $# -ge 2 ]] || { usage; exit 2; }

@@ -38,7 +38,7 @@ cmp "$ROOT/04-ops/site/gateway-state.js" "$OUT/gateway-state.js"
 curl -fsS "https://$SITE_HOST/status/gateway-health" -o "$OUT/gateway-health.json"
 jq -e '
   ((keys | sort) == ["checked_at","http_status","latency_ms","reason","state"])
-  and (.state == "READY" or .state == "UNAVAILABLE")
+  and (.state == "READY" or .state == "UNAVAILABLE" or .state == "RECOVERING")
   and (.checked_at | fromdateiso8601 > 0)
   and (.http_status | type == "number")
   and (.latency_ms | type == "number")

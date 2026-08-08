@@ -6,9 +6,12 @@ assert_baseline_release
 record_phase_profile explorer
 
 REMOTE="/tmp/gdc-explorer-$$"
-# Keep the unavailable bootstrap host last: a node0 access outage must not
-# prevent the independently reachable nodes from receiving the dashboard.
-for node in gdc-node1 gdc-node2 gdc-node4 gdc-node0; do
+# Keep the Genesis host last: its access outage must not prevent independently
+# reachable participants from receiving the dashboard.
+nodes=()
+for node in "${GDC_NODES[@]}"; do [[ "$node" == "$GENESIS_NODE" ]] || nodes+=("$node"); done
+nodes+=("$GENESIS_NODE")
+for node in "${nodes[@]}"; do
   if host_is_skipped "$node"; then
     printf 'SKIP  explorer %s is excluded by GDC_SKIP_HOSTS\n' "$node"
     continue
@@ -28,10 +31,10 @@ for node in gdc-node1 gdc-node2 gdc-node4 gdc-node0; do
   ssh "$node" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
   rsync -a "$ROOT/04-ops/edge-node/" "$node:$REMOTE/edge/"
   scp -q "$edge_env" "$node:$REMOTE/edge.env"
-  if [[ "$node" == gdc-node4 ]]; then
+  if [[ "$node" == "$PUBLIC_EDGE_NODE" ]]; then
     caddy_start='docker compose up -d --force-recreate caddy'
   else
-    # `public-grafana` is not started outside node4, but Compose still
+    # `public-grafana` is not started outside the public edge, but Compose still
     # interpolates its required hostname while it renders the caddy service.
     caddy_start='GRAFANA_HOST=unused.invalid docker compose up -d --force-recreate caddy'
   fi

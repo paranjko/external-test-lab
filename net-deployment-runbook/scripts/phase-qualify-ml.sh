@@ -7,11 +7,18 @@ record_phase_profile ml-qualification
 
 RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-ml-qualification"
 mkdir -p "$RUN"
-hosts=(gdc-node0)
+hosts=("$GENESIS_NODE")
 if [[ -n "${GDC_QUALIFY_HOSTS:-}" ]]; then
   read -r -a hosts <<<"$GDC_QUALIFY_HOSTS"
   for host in "${hosts[@]}"; do
-    case "$host" in gdc-node0|gdc-node1|gdc-node2|gdc-node3|gdc-node4-ml) ;; *) die "unknown ML qualification host: $host" ;; esac
+    if topology_contains_node "$host"; then
+      continue
+    fi
+    ml_known=false
+    for node in "${GDC_NODES[@]}"; do
+      [[ "$(node_ml_host "$node" || true)" == "$host" ]] && ml_known=true
+    done
+    [[ "$ml_known" == true ]] || die "unknown ML qualification host: $host"
   done
 fi
 for host in "${hosts[@]}"; do
@@ -25,13 +32,15 @@ for host in "${hosts[@]}"; do
     printf 'SKIP  %s unreachable; no ML qualification claim\n' "$host" | tee "$report/verdict.txt"
     continue
   fi
-  case "$host" in
-    gdc-node0) profile="$NODE0_GPU_PROFILE"; image="$MLNODE_GENERIC_IMAGE" ;;
-    gdc-node1) profile="$NODE1_GPU_PROFILE"; image="$MLNODE_GENERIC_IMAGE" ;;
-    gdc-node2) profile="$NODE2_GPU_PROFILE"; image="$MLNODE_GENERIC_IMAGE" ;;
-    gdc-node3) profile="$NODE3_GPU_PROFILE"; image="$MLNODE_GENERIC_IMAGE" ;;
-    gdc-node4-ml) profile="$NODE4_GPU_PROFILE"; image="$MLNODE_BLACKWELL_IMAGE" ;;
-  esac
+  profile_node="$host"
+  if ! topology_contains_node "$host"; then
+    for node in "${GDC_NODES[@]}"; do
+      [[ "$(node_ml_host "$node" || true)" == "$host" ]] && profile_node="$node" && break
+    done
+  fi
+  profile="$(node_gpu_profile "$profile_node")"
+  image="$MLNODE_GENERIC_IMAGE"
+  [[ "$profile" == blackwell-* ]] && image="$MLNODE_BLACKWELL_IMAGE"
   attention_backend="$(attention_backend_for_profile "$profile")"
   step "Qualify $host ($profile) with $MODEL_ID"
   remote="/tmp/gdc-ml-qualification-$$-$host"

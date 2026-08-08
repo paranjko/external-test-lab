@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-"$ROOT/scripts/make-secrets.sh" "$tmp/secrets" >/dev/null
+"$ROOT/scripts/make-secrets.sh" "$tmp/secrets" gdc-node0 >/dev/null
 mapfile -t secret_files < <(find "$tmp/secrets" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
 expected=(
   bridge.jwt

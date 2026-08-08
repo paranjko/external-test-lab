@@ -17,15 +17,15 @@ require_pass_bundle() {
 
 printf '# Gonka DevNet lifecycle audit\n\n' >"$RUN/report.md"
 missing=()
-capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/live-genesis.json"
+capture_canonical_genesis "https://$GENESIS_PUBLIC_HOST/chain-rpc/genesis" "$RUN/live-genesis.json"
 live_genesis_sha256="$(genesis_sha256 "$RUN/live-genesis.json")"
 
 reset_hosts=()
-for i in 0 1 2 3 4; do
-  host="gdc-node$i"
+for host in "${GDC_NODES[@]}"; do
   host_is_skipped "$host" || reset_hosts+=("$host")
+  ml_host="$(node_ml_host "$host" || true)"
+  [[ -z "$ml_host" ]] || reset_hosts+=("$ml_host")
 done
-reset_hosts+=(gdc-node4-ml)
 reset_bundle=""
 while IFS= read -r candidate; do
   if reset_evidence_bundle_is_valid "$candidate" "${reset_hosts[@]}"; then
@@ -116,10 +116,10 @@ for item in \
 done
 
 step 'Capture live upgrade and topology gates'
-ssh gdc-node0 'curl -fsS http://127.0.0.1:26657/status' >"$RUN/chain-status.json"
+ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:26657/status' >"$RUN/chain-status.json"
 proposal_id="${GDC_UPGRADE_PROPOSAL_ID:-}"
 if [[ -z "$proposal_id" ]]; then
-  ssh gdc-node0 'curl -fsS "http://127.0.0.1:1317/cosmos/gov/v1/proposals?pagination.limit=100&reverse=true"' >"$RUN/proposals.json"
+  ssh "$GENESIS_NODE" 'curl -fsS "http://127.0.0.1:1317/cosmos/gov/v1/proposals?pagination.limit=100&reverse=true"' >"$RUN/proposals.json"
   proposal_id="$(jq -r '
     [.proposals[]
      | select(any(.messages[]?; .["@type"] == "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade" and .plan.name == "v0.2.15"))
@@ -133,8 +133,8 @@ elif [[ -z "$proposal_id" ]]; then
   missing+=("submitted v0.2.15 software-upgrade proposal")
   printf -- '- upgrade proposal: MISSING; current height: %s\n' "$height" >>"$RUN/report.md"
 else
-  ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/upgrade-proposal.json"
-  ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/cosmos/upgrade/v1beta1/current_plan' >"$RUN/current-plan.json"
+  ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/upgrade-proposal.json"
+  ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/cosmos/upgrade/v1beta1/current_plan' >"$RUN/current-plan.json"
   jq -e '.proposal.status == "PROPOSAL_STATUS_PASSED"' "$RUN/upgrade-proposal.json" >/dev/null || missing+=("passed v0.2.15 proposal #$proposal_id")
   plan_height="$(jq -er '
     [.. | objects | select(."@type"? == "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade") | .plan? | select(.name == "v0.2.15") | .height | tonumber][0]
@@ -162,9 +162,6 @@ if upgrade_bundle="$(require_pass_bundle '*-upgrade/*' '# DevNet upgrade: PASS')
   printf -- '- upgrade evidence: PASS (%s)\n' "$upgrade_bundle" >>"$RUN/report.md"
 else
   missing+=("post-upgrade PASS evidence")
-fi
-if host_is_skipped gdc-node3; then
-  printf -- '- node3: SKIP (non-gating; operator join runbook is available)\n' >>"$RUN/report.md"
 fi
 if [[ -z "${GDC_SEPOLIA_CONTRACT:-}" || -z "${GDC_SEPOLIA_BEACON_STATE_URL:-}" ]]; then
   missing+=("authorized Sepolia contract and beacon endpoint")
