@@ -124,6 +124,14 @@ case "$COMPONENT" in
     "$ROOT/04-ops/ensure-gateway-reserve.sh" \
       "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_min_spendable"
     step 'Create DevShard escrow and gateway credentials'
+    # Re-running `ops gateway` switches or verifies a protocol runtime; it is
+    # not authority to mint another escrow.  Reuse the previously committed
+    # escrow unless an operator explicitly supplies GDC_ESCROW_ID or the
+    # existing one has become invalid (which create-gateway validates).
+    if [[ -z "${GDC_ESCROW_ID:-}" && -s "$GATEWAY_ENV" ]]; then
+      previous_escrow="$(awk -F= '$1 == "DEVSHARD_ESCROW_ID" { print $2; exit }' "$GATEWAY_ENV")"
+      [[ "$previous_escrow" =~ ^[1-9][0-9]*$ ]] && export GDC_ESCROW_ID="$previous_escrow"
+    fi
     "$ROOT/04-ops/create-gateway.sh" "$INVENTORY" "$SECRETS" "$GATEWAY_ENV"
     gateway_default_max_tokens="$(awk -F= '$1 == "GATEWAY_DEFAULT_MAX_TOKENS" { print $2 }' "$GATEWAY_ENV")"
     [[ "$gateway_default_max_tokens" =~ ^[1-9][0-9]*$ ]] || die 'gateway default max tokens is missing or invalid'
@@ -246,7 +254,9 @@ if [[ "$COMPONENT" == gateway ]]; then
   ssh gdc-node0 "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"poc_max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"participant_throttle\":{\"request_burst\":$gateway_participant_request_burst,\"recovery_per_minute\":$gateway_participant_recovery_per_minute},\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":$gateway_rotation_enabled,\"settlement_enabled\":$gateway_rotation_settlement_enabled,\"pre_poc_blocks\":$gateway_pre_poc_blocks,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":$gateway_rotation_temp_count,\"target_count\":$gateway_rotation_target_count,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .poc_max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .max_input_tokens_in_flight == $gateway_max_input_tokens and .participant_throttle.request_burst == $gateway_participant_request_burst and .participant_throttle.recovery_per_minute == $gateway_participant_recovery_per_minute and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_input_tokens_in_flight == $gateway_max_input_tokens and .access_mode == \"api_key\")) and .escrow_rotation.enabled == $gateway_rotation_enabled and .escrow_rotation.settlement_enabled == $gateway_rotation_settlement_enabled and .escrow_rotation.pre_poc_blocks == $gateway_pre_poc_blocks and .escrow_rotation.models[0].temp_count == $gateway_rotation_temp_count and .escrow_rotation.models[0].target_count == $gateway_rotation_target_count and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
   step 'Verify gateway runtime, client authentication, and public route'
   gateway_ready=false
-  deadline=$((SECONDS + 180))
+    gateway_ready_timeout="${GDC_GATEWAY_READY_TIMEOUT_SECONDS:-600}"
+    [[ "$gateway_ready_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_READY_TIMEOUT_SECONDS must be positive'
+    deadline=$((SECONDS + gateway_ready_timeout))
   while (( SECONDS < deadline )); do
     if ssh gdc-node0 'set -Eeuo pipefail
       set -a; . /srv/dai/ops/gateway.env; set +a
@@ -255,12 +265,12 @@ if [[ "$COMPONENT" == gateway ]]; then
       curl -fsS http://127.0.0.1:18080/v1/admin/devshards -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
         | jq -e --arg model "$DEVSHARD_MODEL" ".limiter.models[\$model] as \$limits | ((.settings.max_concurrent_requests == 0 and .settings.max_concurrent_requests_per_10000_weight <= 0) or \$limits.effective_max_concurrent_requests > 0)" >/dev/null
       height="$(curl -fsS http://127.0.0.1:26657/status | jq -er ".result.sync_info.latest_block_height | tonumber")"
-      read -r epoch_length poc_duration validation_delay validation_duration validators_delay < <(
+      read -r epoch_length poc_duration poc_exchange_duration validation_delay validation_duration validators_delay < <(
         curl -fsS http://127.0.0.1:1317/productscience/inference/inference/params \
-          | jq -r ".params.epoch_params | [.epoch_length,.poc_stage_duration,.poc_validation_delay,.poc_validation_duration,.set_new_validators_delay] | map(tonumber) | @tsv"
+          | jq -r ".params.epoch_params | [.epoch_length,.poc_stage_duration,.poc_exchange_duration,.poc_validation_delay,.poc_validation_duration,.set_new_validators_delay] | map(tonumber) | @tsv"
       )
       position=$((height % epoch_length))
-      safe_start=$((poc_duration + validation_delay + validation_duration + validators_delay + 1))
+      safe_start=$((poc_duration + poc_exchange_duration + validation_delay + validation_duration + validators_delay + 1))
       safe_end=$((epoch_length - 10))
       (( position >= safe_start && position <= safe_end ))'; then
       gateway_ready=true
