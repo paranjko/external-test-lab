@@ -12,12 +12,12 @@ RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-vote-proposal-$proposal_id"
 mkdir -p "$RUN"
 install_evidence_exit_trap 'Governance vote'
 record_phase_profile vote-proposal
-rpc="${GDC_CHAIN_RPC_URL:-https://$NODE4_PUBLIC_HOST/chain-rpc/}"
+rpc="${GDC_CHAIN_RPC_URL:-https://$PUBLIC_EDGE_HOST/chain-rpc/}"
 
 step "Capture proposal $proposal_id and active participant voters"
-ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-before.json"
+ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-before.json"
 jq -e '.proposal.status == "PROPOSAL_STATUS_VOTING_PERIOD" or .proposal.status == "PROPOSAL_STATUS_PASSED"' "$RUN/proposal-before.json" >/dev/null || die "proposal $proposal_id is not votable or passed"
-ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id/votes" >"$RUN/votes-before.json"
+ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id/votes" >"$RUN/votes-before.json"
 
 # Cosmos may discard the individual vote list when the short test-lab voting
 # period closes. A rerun must not try to vote on an inactive proposal or claim
@@ -40,15 +40,15 @@ EOF
   exit 0
 fi
 
-mapfile -t indexes < <(configured_node_indexes)
-(( ${#indexes[@]} > 0 )) || die 'no joined participants are available to vote'
+mapfile -t nodes < <(configured_nodes)
+(( ${#nodes[@]} > 0 )) || die 'no joined participants are available to vote'
 password="$(<"$SECRETS/operator.keyring")"
 printf '[]' >"$RUN/vote-transactions.json"
 submitted=0
 pending_names=()
 pending_hashes=()
-for index in "${indexes[@]}"; do
-  name="gdc-node$index-cold"
+for node in "${nodes[@]}"; do
+  name="$node-cold"
   address="$(jq -er .address "$ACCOUNTS/$name.json")"
   if jq -e --arg address "$address" '.votes[]? | select(.voter == $address)' "$RUN/votes-before.json" >/dev/null; then
     printf 'READY existing vote from %s\n' "$name"
@@ -86,13 +86,13 @@ for position in "${!pending_hashes[@]}"; do
   printf '%s\n' "$receipt" >"$RUN/vote-receipt-$name.json"
 done
 
-expected="${#indexes[@]}"
+expected="${#nodes[@]}"
 deadline=$((SECONDS + 120))
 actual=0
 status=''
 while (( SECONDS < deadline )); do
-  ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-after.json"
-  ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id/votes" >"$RUN/votes-after.json"
+  ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-after.json"
+  ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id/votes" >"$RUN/votes-after.json"
   status="$(jq -er '.proposal.status' "$RUN/proposal-after.json")"
   actual="$(jq '[.votes[]?.voter] | unique | length' "$RUN/votes-after.json")"
   (( actual >= expected )) && break

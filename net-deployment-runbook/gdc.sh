@@ -47,27 +47,24 @@ Gonka DevNet Community manual deployment
 
 Create .env from .env.example, then run:
   ./gdc.sh --release testnet-0.2.14 --model qwen3-0.6b prepare
-  ./gdc.sh --release testnet-0.2.14 qualify-ml [gdc-nodeN]
+  ./gdc.sh --release testnet-0.2.14 qualify-ml [SSH_ALIAS]
   ./gdc.sh --release testnet-0.2.14 genesis
   ./gdc.sh --release testnet-0.2.14 baseline
   ./gdc.sh --release testnet-0.2.14 bootstrap-access
   ./gdc.sh telegram-key-probe Qwen/Qwen3-0.6B 60s
   ./gdc.sh --release testnet-0.2.14 gateway-continuity
-  ./gdc.sh --release testnet-0.2.14 join gdc-node1
-  ./gdc.sh --release testnet-0.2.14 join gdc-node2
-  ./gdc.sh --release testnet-0.2.14 join gdc-node3
-  ./gdc.sh --release testnet-0.2.14 join gdc-node4
-  ./gdc.sh --release testnet-0.2.14 ml attach gdc-node4
-  ./gdc.sh --release testnet-0.2.14 handoff create gdc-node2
-  ./gdc.sh --release testnet-0.2.14 handoff approve gdc-node2 <activation-request.json>
+  ./gdc.sh --release testnet-0.2.14 join <SSH_ALIAS>
+  ./gdc.sh --release testnet-0.2.14 ml attach <SSH_ALIAS>
+  ./gdc.sh --release testnet-0.2.14 handoff create <SSH_ALIAS>
+  ./gdc.sh --release testnet-0.2.14 handoff approve <SSH_ALIAS> <activation-request.json>
   ./gdc.sh ops monitoring
   ./gdc.sh ops site
   ./gdc.sh ops explorer
   ./gdc.sh telegram-bot
-  ./gdc.sh node stop gdc-node1
-  ./gdc.sh node start gdc-node1
-  ./gdc.sh node verify gdc-node1
-  ./gdc.sh node reset gdc-node1
+  ./gdc.sh node stop <SSH_ALIAS>
+  ./gdc.sh node start <SSH_ALIAS>
+  ./gdc.sh node verify <SSH_ALIAS>
+  ./gdc.sh node reset <SSH_ALIAS>
   ./gdc.sh ops edge
   ./gdc.sh --release testnet-0.2.14 verify
   ./gdc.sh --release testnet-0.2.15 upgrade-proposal

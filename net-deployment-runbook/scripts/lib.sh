@@ -492,10 +492,10 @@ require_current_baseline_pass() {
   ((${#evidence_nodes[@]} == ${#indexes[@]})) || die 'baseline PASS participant count differs from current joined state; run verify again'
 
   expected_addresses=()
-  reference_height="$(ssh gdc-node0 'curl -fsS http://127.0.0.1:26657/status' | jq -er '.result.sync_info.latest_block_height | tonumber')"
+  reference_height="$(ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:26657/status' | jq -er '.result.sync_info.latest_block_height | tonumber')"
   genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env")"
-  for index in "${indexes[@]}"; do
-    node="gdc-node$index"
+  for node in "${GDC_NODES[@]}"; do
+    [[ -e "$STATE/joined/$node" ]] || continue
     grep -qx "$node" <(printf '%s\n' "${evidence_nodes[@]}") || die "$node is absent from the baseline PASS bundle; run verify again"
     address="$(jq -er .address "$ACCOUNTS/$node-cold.json")"
     expected_addresses+=("$address")
@@ -516,7 +516,7 @@ require_current_baseline_pass() {
 
   mapfile -t expected_addresses < <(printf '%s\n' "${expected_addresses[@]}" | LC_ALL=C sort -u)
   mapfile -t live_addresses < <(
-    ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
+    ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
       | jq -er '.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1") | .address' \
       | LC_ALL=C sort -u
   )

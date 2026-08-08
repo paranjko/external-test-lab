@@ -32,7 +32,7 @@ RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-escrow-${DEVSHARD_ESCROW_ID
 mkdir -p "$RUN"
 devshard_version="${DEVSHARD_ROUTE_PREFIX##*/}"
 [[ "$devshard_version" =~ ^v[34]$ ]] || blocked 'Rendered gateway route does not identify DevShard v3 or v4.'
-capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+capture_canonical_genesis "https://$GENESIS_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
 genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 {
   profile_summary
@@ -44,7 +44,7 @@ genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 } >"$RUN/context.env"
 
 creator="$(jq -r .address "$ROOT/artifacts/accounts/gdc-gateway-cold.json")"
-rpc="https://$NODE4_PUBLIC_HOST/chain-rpc/"
+rpc="https://$PUBLIC_EDGE_HOST/chain-rpc/"
 step "Record funding evidence and creator balance before settlement for escrow $DEVSHARD_ESCROW_ID"
 cp "$ESCROW_CREATE" "$RUN/escrow-create.json"
 jq -e --arg creator "$creator" --arg id "$DEVSHARD_ESCROW_ID" '
@@ -55,9 +55,9 @@ jq -e --arg creator "$creator" --arg id "$DEVSHARD_ESCROW_ID" '
   and (.balanceBeforeFunding | type == "object")
   and (.balanceAfterFunding | type == "object")
 ' "$RUN/escrow-create.json" >/dev/null
-ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$creator" >"$RUN/balance-before.json"
+ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$creator" >"$RUN/balance-before.json"
 
-step 'Send authenticated OpenAI-compatible inference through the public node4 route'
+step 'Send authenticated OpenAI-compatible inference through the public gateway route'
 client_key="$(cut -d, -f1 "$SECRETS/gateway.client-keys")"
 unauth_status="$(curl -sk -o /dev/null -w '%{http_code}' "https://$API_HOST/v1/chat/completions" -H 'Content-Type: application/json' -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"health"}]}')"
 [[ "$unauth_status" == 401 ]] || die "unauthenticated gateway request returned $unauth_status, expected 401"
@@ -72,12 +72,12 @@ step 'Finalize the exact escrow through its per-escrow API path'
 # Inference responses can leave finish/validation messages queued briefly.
 # Synchronize them statefully before finalization; this is required by the
 # v3 runtime and harmless for v4, unlike a blind timing delay.
-ssh gdc-node0 "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/devshard/$DEVSHARD_ESCROW_ID/v1/debug/sync-hosts -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" >/dev/null"
-ssh gdc-node0 "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/devshard/$DEVSHARD_ESCROW_ID/v1/finalize -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\"" >"$RUN/finalize.json"
+ssh "$GATEWAY_NODE" "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/devshard/$DEVSHARD_ESCROW_ID/v1/debug/sync-hosts -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" >/dev/null"
+ssh "$GATEWAY_NODE" "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/devshard/$DEVSHARD_ESCROW_ID/v1/finalize -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\"" >"$RUN/finalize.json"
 jq -e --arg id "$DEVSHARD_ESCROW_ID" '(.escrow_id | tostring) == $id and (.version | type == "string")' "$RUN/finalize.json" >/dev/null
 
 step 'Settle the finalized escrow on chain'
-ssh gdc-node0 "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/devshards/$DEVSHARD_ESCROW_ID/settle -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}'" >"$RUN/settle.json"
+ssh "$GATEWAY_NODE" "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/devshards/$DEVSHARD_ESCROW_ID/settle -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}'" >"$RUN/settle.json"
 
 step 'Prove on-chain settlement and creator refund'
 deadline=$((SECONDS + 180))
@@ -88,9 +88,9 @@ while (( SECONDS < deadline )); do
   sleep 3
 done
 jq -e '.escrow.settled == true' "$RUN/escrow.json" >/dev/null || die 'escrow did not reach settled:true'
-ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$creator" >"$RUN/balance-after.json"
-ssh gdc-node0 'cd /srv/dai/ops && docker compose logs --no-color --tail=200 devshard-gateway' >"$RUN/gateway.log" || true
-ssh gdc-node0 'cd /srv/dai/deploy/gdc-node0 && docker compose logs --no-color --tail=200 versiond api' >"$RUN/versiond-and-api.log" || true
+ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$creator" >"$RUN/balance-after.json"
+ssh "$GATEWAY_NODE" 'cd /srv/dai/ops && docker compose logs --no-color --tail=200 devshard-gateway' >"$RUN/gateway.log" || true
+ssh "$GENESIS_NODE" "cd /srv/dai/deploy/$GENESIS_NODE && docker compose logs --no-color --tail=200 versiond api" >"$RUN/versiond-and-api.log" || true
 cat >"$RUN/verdict.md" <<EOF
 # Chain-accounted inference: PASS
 
