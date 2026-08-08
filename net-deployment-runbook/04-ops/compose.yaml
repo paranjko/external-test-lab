@@ -87,11 +87,7 @@ services:
       SITE_HOST: ${SITE_HOST:?SITE_HOST is required}
       API_HOST: ${API_HOST:?API_HOST is required}
       GRAFANA_HOST: ${GRAFANA_HOST:?GRAFANA_HOST is required}
-      NODE0_PUBLIC_HOST: ${NODE0_PUBLIC_HOST:?NODE0_PUBLIC_HOST is required}
-      NODE1_PUBLIC_HOST: ${NODE1_PUBLIC_HOST:?NODE1_PUBLIC_HOST is required}
-      NODE2_PUBLIC_HOST: ${NODE2_PUBLIC_HOST:?NODE2_PUBLIC_HOST is required}
-      NODE3_PUBLIC_HOST: ${NODE3_PUBLIC_HOST:?NODE3_PUBLIC_HOST is required}
-      NODE4_PUBLIC_HOST: ${NODE4_PUBLIC_HOST:?NODE4_PUBLIC_HOST is required}
+      GATEWAY_PUBLIC_HOST: ${GATEWAY_PUBLIC_HOST:?GATEWAY_PUBLIC_HOST is required}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./site:/srv:ro

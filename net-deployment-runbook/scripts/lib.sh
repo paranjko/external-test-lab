@@ -312,46 +312,47 @@ attention_backend_for_profile() {
 
 write_inventory() {
   umask 077
-  cat >"$INVENTORY" <<EOF
-CHAIN_ID=$CHAIN_ID
-BASE_DENOM=$BASE_DENOM
-BASE_DOMAIN=$BASE_DOMAIN
-SITE_HOST=$SITE_HOST
-API_HOST=$API_HOST
-GRAFANA_HOST=$GRAFANA_HOST
-ACME_EMAIL=$ACME_EMAIL
-MONITORING_CIDR=$MONITORING_CIDR
-PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR
-GDC_NODE_ALIASES=$GDC_NODE_ALIASES
-GDC_NODE_PUBLIC_HOSTS=$GDC_NODE_PUBLIC_HOSTS
-GDC_NODE_GPU_PROFILES=$GDC_NODE_GPU_PROFILES
-GDC_NODE_P2P_PORTS=$GDC_NODE_P2P_PORTS
-GDC_NODE_ML_HOSTS=${GDC_NODE_ML_HOSTS:-}
-GENESIS_NODE=$GENESIS_NODE
-GENESIS_PUBLIC_HOST=$GENESIS_PUBLIC_HOST
-GENESIS_P2P_PORT=$(node_p2p_port "$GENESIS_NODE")
-PUBLIC_EDGE_NODE=$PUBLIC_EDGE_NODE
-PUBLIC_EDGE_HOST=$PUBLIC_EDGE_HOST
-GATEWAY_NODE=$GATEWAY_NODE
-TELEGRAM_BOT_HOST=$TELEGRAM_BOT_HOST
-GRAFANA_PUBLIC_DASHBOARD_UID=$GRAFANA_PUBLIC_DASHBOARD_UID
-GRAFANA_PUBLIC_DASHBOARD_SHARE_UID=$GRAFANA_PUBLIC_DASHBOARD_SHARE_UID
-GRAFANA_PUBLIC_DASHBOARD_TOKEN=$GRAFANA_PUBLIC_DASHBOARD_TOKEN
-TELEGRAM_BOT_URL=$TELEGRAM_BOT_URL
-DATA_ROOT=$DATA_ROOT
-GENESIS_INSTALL_PATH=$GENESIS_INSTALL_PATH
-HF_CACHE_ROOT=$HF_CACHE_ROOT
-EOF
+  inventory_value() { printf '%s=%q\n' "$1" "$2"; }
+  {
+    inventory_value CHAIN_ID "$CHAIN_ID"
+    inventory_value BASE_DENOM "$BASE_DENOM"
+    inventory_value BASE_DOMAIN "$BASE_DOMAIN"
+    inventory_value SITE_HOST "$SITE_HOST"
+    inventory_value API_HOST "$API_HOST"
+    inventory_value GRAFANA_HOST "$GRAFANA_HOST"
+    inventory_value ACME_EMAIL "$ACME_EMAIL"
+    inventory_value MONITORING_CIDR "$MONITORING_CIDR"
+    inventory_value PUBLIC_EDGE_CIDR "$PUBLIC_EDGE_CIDR"
+    inventory_value GDC_NODE_ALIASES "$GDC_NODE_ALIASES"
+    inventory_value GDC_NODE_PUBLIC_HOSTS "$GDC_NODE_PUBLIC_HOSTS"
+    inventory_value GDC_NODE_GPU_PROFILES "$GDC_NODE_GPU_PROFILES"
+    inventory_value GDC_NODE_P2P_PORTS "$GDC_NODE_P2P_PORTS"
+    inventory_value GDC_NODE_ML_HOSTS "${GDC_NODE_ML_HOSTS:-}"
+    inventory_value GENESIS_NODE "$GENESIS_NODE"
+    inventory_value GENESIS_PUBLIC_HOST "$GENESIS_PUBLIC_HOST"
+    inventory_value GENESIS_P2P_PORT "$(node_p2p_port "$GENESIS_NODE")"
+    inventory_value PUBLIC_EDGE_NODE "$PUBLIC_EDGE_NODE"
+    inventory_value PUBLIC_EDGE_HOST "$PUBLIC_EDGE_HOST"
+    inventory_value GATEWAY_NODE "$GATEWAY_NODE"
+    inventory_value TELEGRAM_BOT_HOST "$TELEGRAM_BOT_HOST"
+    inventory_value GRAFANA_PUBLIC_DASHBOARD_UID "$GRAFANA_PUBLIC_DASHBOARD_UID"
+    inventory_value GRAFANA_PUBLIC_DASHBOARD_SHARE_UID "$GRAFANA_PUBLIC_DASHBOARD_SHARE_UID"
+    inventory_value GRAFANA_PUBLIC_DASHBOARD_TOKEN "$GRAFANA_PUBLIC_DASHBOARD_TOKEN"
+    inventory_value TELEGRAM_BOT_URL "$TELEGRAM_BOT_URL"
+    inventory_value DATA_ROOT "$DATA_ROOT"
+    inventory_value GENESIS_INSTALL_PATH "$GENESIS_INSTALL_PATH"
+    inventory_value HF_CACHE_ROOT "$HF_CACHE_ROOT"
+  } >"$INVENTORY"
   local index=0 node endpoint_var monitor_var
   for node in "${GDC_NODES[@]}"; do
-    printf 'NODE%s_PUBLIC_HOST=%s\n' "$index" "$(node_public_host "$node")" >>"$INVENTORY"
-    printf 'NODE%s_P2P_PORT=%s\n' "$index" "$(node_p2p_port "$node")" >>"$INVENTORY"
-    printf 'NODE%s_GPU_PROFILE=%s\n' "$index" "$(node_gpu_profile "$node")" >>"$INVENTORY"
+    inventory_value "NODE${index}_PUBLIC_HOST" "$(node_public_host "$node")" >>"$INVENTORY"
+    inventory_value "NODE${index}_P2P_PORT" "$(node_p2p_port "$node")" >>"$INVENTORY"
+    inventory_value "NODE${index}_GPU_PROFILE" "$(node_gpu_profile "$node")" >>"$INVENTORY"
     if [[ -n "$(node_ml_host "$node" || true)" ]]; then
       endpoint_var="NODE${index}_ML_ENDPOINT"
       monitor_var="NODE${index}_ML_MONITOR_HOST"
-      printf 'NODE%s_ML_ENDPOINT=%s\n' "$index" "${!endpoint_var:-}" >>"$INVENTORY"
-      printf 'NODE%s_ML_MONITOR_HOST=%s\n' "$index" "${!monitor_var:-}" >>"$INVENTORY"
+      inventory_value "NODE${index}_ML_ENDPOINT" "${!endpoint_var:-}" >>"$INVENTORY"
+      inventory_value "NODE${index}_ML_MONITOR_HOST" "${!monitor_var:-}" >>"$INVENTORY"
     fi
     index=$((index + 1))
   done

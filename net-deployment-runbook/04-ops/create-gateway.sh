@@ -4,8 +4,9 @@ usage(){ echo "Usage: $0 inventory.env secrets-dir output-gateway.env [escrow-am
 [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 2; }
 INVENTORY="$1"; SECRETS="$2"; OUT="$3"; AMOUNT="${4:-${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck disable=SC1090
-source "$INVENTORY"
+source "$ROOT/scripts/lib.sh"
+load_env "$INVENTORY"
+load_topology
 source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
@@ -17,14 +18,14 @@ MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-0}"
 [[ "$MAX_CONCURRENT_REQUESTS" =~ ^[0-9]+$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a non-negative integer' >&2; exit 2; }
 [[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[0-9]+$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a non-negative integer' >&2; exit 2; }
 CREATOR="$(jq -er .address "$ROOT/artifacts/accounts/gdc-gateway-cold.json")"
-# node4 owns public chain RPC after the distributed topology is available;
+# The public edge owns public chain RPC after the distributed topology is available;
 # bootstrap-access overrides this with the sole live Genesis participant.
-RPC="${GDC_CHAIN_RPC_URL:-https://${NODE4_PUBLIC_HOST}/chain-rpc/}"
+RPC="${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}"
 
 # The later settlement evidence must demonstrate the whole economic path, not
 # only its final state.  Capture the creator balance before the escrow funding
 # transaction and persist the receipt beside the rendered gateway environment.
-BALANCE_BEFORE="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
+BALANCE_BEFORE="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
 
 # v3/v4 and the creator are intentionally a governance gate, never Genesis
 # convenience state or a local versiond configuration substitute.
@@ -54,16 +55,15 @@ jq -e --arg creator "$CREATOR" '
 }
 
 # The devshard group can only be sampled after the model has active validation weights.
-mapfile -t markers < <(find "$ROOT/state/joined" -maxdepth 1 -type f -name 'gdc-node[0-4]' -print | LC_ALL=C sort)
-(( ${#markers[@]} > 0 )) || { echo 'No joined participants found' >&2; exit 1; }
-for marker in "${markers[@]}"; do
-  node="$(basename "$marker")"
+mapfile -t joined_nodes < <(configured_nodes)
+(( ${#joined_nodes[@]} > 0 )) || { echo 'No joined participants found' >&2; exit 1; }
+for node in "${joined_nodes[@]}"; do
   account="$ROOT/artifacts/accounts/$node-cold.json"
   [[ -s "$account" ]] || { echo "Missing account artifact for $node" >&2; exit 1; }
   address="$(jq -r .address "$account")"
   # Participant state is chain data.  The decentralized API exposes the
   # model catalog at /v1/models, not the obsolete public /v2 aggregate.
-  status="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$address" | jq -r '.participant.status // empty')"
+  status="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$address" | jq -r '.participant.status // empty')"
   case "$status" in ACTIVE|PARTICIPANT_STATUS_ACTIVE|1) ;; *) echo "$node is not ACTIVE: $status" >&2; exit 1;; esac
 done
 
@@ -107,7 +107,7 @@ jq -e --arg id "$ESCROW_ID" --arg creator "$CREATOR" --arg model "$MODEL_ID" '
   echo "new escrow $ESCROW_ID was not found in committed chain state" >&2
   exit 1
 }
-BALANCE_AFTER_FUNDING="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
+BALANCE_AFTER_FUNDING="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
 fi
 PRIVATE="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys export gdc-gateway-cold --keyring-backend file --unarmored-hex --unsafe --yes | grep -Eo '[0-9a-fA-F]{64}' | tail -n1)"
 [[ "$PRIVATE" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Cannot export gateway private key' >&2; exit 1; }

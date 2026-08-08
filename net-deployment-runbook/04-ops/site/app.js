@@ -1,7 +1,7 @@
 const cfg=window.GDC_CONFIG;
 const gatewayStatus=window.GDC_GATEWAY_STATE;
 const $=id=>document.getElementById(id);
-const chainRpcHost=cfg.nodes.find(node=>node.name==='gdc-node4')?.publicHost||cfg.nodes.find(node=>node.name==='gdc-node0')?.publicHost;
+const chainRpcHost=cfg.nodes.find(node=>node.name===cfg.gatewayNode)?.publicHost||cfg.nodes[0]?.publicHost;
 $('chain-id').textContent=cfg.chainId;$('model-id').textContent=cfg.model;
 if(cfg.telegramBot){$('contact').textContent='Open Telegram bot';$('contact').href=cfg.telegramBot}else{$('contact').textContent='Telegram bot is not configured yet';$('contact').removeAttribute('href')}
 $('grafana-network').href=cfg.grafanaNetwork||cfg.grafana;
@@ -50,13 +50,12 @@ function participantNode(participant){
   try{endpoint=new URL(participant.inference_url)}catch{endpoint=null}
   const host=endpoint?.hostname||'';
   const catalog=(cfg.nodeCatalog||cfg.nodes).find(node=>node.address===participant.address||node.publicHost===host);
-  const knownHost=host.match(/^node([0-4])\.gonka-dev\.net$/);
   return {
     ...(catalog||{}),
-    name:catalog?.name||(knownHost?`gdc-node${knownHost[1]}`:host||`${participant.address.slice(0,10)}…`),
+    name:catalog?.name||host||`${participant.address.slice(0,10)}…`,
     address:participant.address,
     publicHost:catalog?.publicHost||host,
-    statusBase:catalog?.statusBase||(knownHost?`/status/node${knownHost[1]}`:''),
+    statusBase:catalog?.statusBase||'',
     participantStatus:String(participant.status||'UNKNOWN'),
   };
 }

@@ -30,10 +30,7 @@ emit_component() {
 }
 
 printf '# HELP gdc_component_info Runtime and deployed-image software inventory\n# TYPE gdc_component_info gauge\n' >"$tmp"
-versions=''
-if [[ "$GDC_MONITOR_HOST" != gdc-node4-ml ]]; then
-  versions="$(curl -fsS --max-time 10 http://127.0.0.1:8000/v1/versions 2>/dev/null || true)"
-fi
+versions="$(curl -fsS --max-time 10 http://127.0.0.1:8000/v1/versions 2>/dev/null || true)"
 if jq -e '.api_version and .node_version' >/dev/null 2>&1 <<<"$versions"; then
   while IFS=$'\t' read -r component instance version commit; do
     emit_component "$component" "$instance" "$version" "$commit" '' runtime
