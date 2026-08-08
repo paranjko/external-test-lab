@@ -2,7 +2,11 @@ SHELLCHECK_VERSION ?= v0.11.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:$(SHELLCHECK_VERSION)
 SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './vendor/*' -print | LC_ALL=C sort)
 
-.PHONY: shellcheck test verify-upstream-profiles
+.PHONY: shellcheck test verify-upstream-profiles install-git-hooks
+
+install-git-hooks:
+	@git config core.hooksPath .githooks
+	@echo 'Git hooks enabled from .githooks'
 
 verify-upstream-profiles:
 	@./scripts/verify-release-profiles.sh

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+mapfile -d '' scripts < <(git diff --cached --name-only -z --diff-filter=ACMR -- '*.sh')
+((${#scripts[@]})) || exit 0
+
+# ShellCheck must inspect exactly what is about to be committed.  Reject a
+# partially staged script instead of linting unrelated working-tree content.
+for script in "${scripts[@]}"; do
+  if ! git diff --quiet -- "$script"; then
+    printf 'pre-commit: %s has unstaged changes; stage the final version before committing\n' "$script" >&2
+    exit 1
+  fi
+done
+
+command -v shellcheck >/dev/null 2>&1 || {
+  echo 'pre-commit: ShellCheck is required for staged Bash scripts' >&2
+  exit 1
+}
+
+shellcheck --external-sources --severity=warning "${scripts[@]}"
