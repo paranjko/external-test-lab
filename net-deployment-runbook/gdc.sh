@@ -111,7 +111,8 @@ case "$COMMAND" in
   prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit|telegram-bot|telegram-key-probe)
     [[ "$COMMAND" == reset || "$COMMAND" == telegram-key-probe || $# -eq 0 ]] || { usage; exit 2; }
     if [[ "$COMMAND" == reset ]]; then
-      exec "$ROOT/scripts/phase-reset.sh" "$@"
+      run_phase reset "$ROOT/scripts/phase-reset.sh" "$@"
+      exit $?
     fi
     if [[ "$COMMAND" == telegram-bot ]]; then
       run_phase telegram-bot "$ROOT/scripts/deploy-telegram-bot.sh"
