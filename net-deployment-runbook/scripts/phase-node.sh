@@ -5,9 +5,9 @@ load_project
 
 ACTION="${1:-}"
 NODE_INPUT="${2:-}"
-[[ "$NODE_INPUT" =~ ^(node[0-4]|gdc-node[0-4])$ ]] || die 'expected node0, gdc-node0, node1, gdc-node1, node2, gdc-node2, node3, gdc-node3, node4, or gdc-node4'
-if [[ "$NODE_INPUT" == gdc-* ]]; then NODE="$NODE_INPUT"; else NODE="gdc-$NODE_INPUT"; fi
-[[ "$ACTION" =~ ^(stop|start|verify|reset)$ ]] || die 'expected: node stop|start|verify|reset nodeN (or gdc-nodeN)'
+topology_contains_node "$NODE_INPUT" || die "expected an SSH alias from GDC_NODE_ALIASES, got: $NODE_INPUT"
+NODE="$NODE_INPUT"
+[[ "$ACTION" =~ ^(stop|start|verify|reset)$ ]] || die 'expected: node stop|start|verify|reset SSH_ALIAS'
 host_is_skipped "$NODE" && die "$NODE is excluded by GDC_SKIP_HOSTS"
 ssh_ready "$NODE" || die "$NODE is unreachable"
 
@@ -21,8 +21,15 @@ verify_node() {
     ' || die "$NODE has an unavailable Network Node service"
 
   url="$(node_url "$NODE")"
-  if [[ "$NODE" == gdc-node0 ]]; then peer=gdc-node1; else peer=gdc-node0; fi
-  host_is_skipped "$peer" && die "cannot select a live peer for $NODE"
+  peer="$GENESIS_NODE"
+  if [[ "$NODE" == "$GENESIS_NODE" ]]; then
+    for candidate in "${GDC_NODES[@]}"; do
+      [[ "$candidate" != "$NODE" && -e "$STATE/joined/$candidate" ]] || continue
+      host_is_skipped "$candidate" && continue
+      peer="$candidate"
+      break
+    done
+  fi
   peer_url="$(node_url "$peer")"
   own_status="$(curl -fsS "$url/chain-rpc/status")"
   peer_status="$(curl -fsS "$peer_url/chain-rpc/status")"
@@ -38,8 +45,13 @@ verify_node() {
 wait_for_node_sync() {
   local url peer peer_url own_status peer_status own_height peer_height catching lag deadline
   url="$(node_url "$NODE")"
-  if [[ "$NODE" == gdc-node0 ]]; then peer=gdc-node1; else peer=gdc-node0; fi
-  host_is_skipped "$peer" && die "cannot select a live peer for $NODE"
+  peer="$GENESIS_NODE"
+  if [[ "$NODE" == "$GENESIS_NODE" ]]; then
+    for candidate in "${GDC_NODES[@]}"; do
+      [[ "$candidate" != "$NODE" && -e "$STATE/joined/$candidate" ]] || continue
+      host_is_skipped "$candidate" || { peer="$candidate"; break; }
+    done
+  fi
   peer_url="$(node_url "$peer")"
   deadline=$((SECONDS + ${GDC_NODE_START_WAIT_SECONDS:-300}))
   while (( SECONDS < deadline )); do

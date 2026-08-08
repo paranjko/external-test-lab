@@ -10,7 +10,7 @@ install_evidence_exit_trap 'Gateway continuity'
 
 gateway_url="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
 gateway_url="${gateway_url%/}"
-chain_base="${GDC_CONTINUITY_CHAIN_BASE_URL:-https://$NODE0_PUBLIC_HOST}"
+chain_base="${GDC_CONTINUITY_CHAIN_BASE_URL:-https://$GENESIS_PUBLIC_HOST}"
 chain_base="${chain_base%/}"
 timeout_seconds="${GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS:-900}"
 pre_blocks="${GDC_GATEWAY_CONTINUITY_PRE_BLOCKS:-3}"
@@ -30,7 +30,7 @@ request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-45}"
 key_source="${GDC_GATEWAY_CONTINUITY_KEY_SOURCE:-telegram-pool}"
 case "$key_source" in
   telegram-pool)
-    client_key="$(ssh -T gdc-node0 'jq -r ".keys[0] // empty" /srv/dai/gonka-devnet-bot/gateway-key-pool.json')"
+    client_key="$(ssh -T "$TELEGRAM_BOT_HOST" 'jq -r ".keys[0] // empty" /srv/dai/gonka-devnet-bot/gateway-key-pool.json')"
     [[ "$client_key" == sk-gdc-* ]] || die 'Telegram key pool is absent or invalid; run bootstrap-access or telegram-bot first'
     ;;
   technical)
