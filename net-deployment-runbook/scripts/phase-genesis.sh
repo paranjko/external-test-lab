@@ -43,7 +43,7 @@ NODE="$GENESIS_NODE"
 NODE_DIR="$GENERATED/nodes/$NODE"
 mkdir -p "$NODE_DIR" "$GENERATED/edge" "$GENERATED/agents"
 "$ROOT/02-node/render-node-env.sh" --inventory "$INVENTORY" --node-name "$NODE" --account-public "$ACCOUNTS/$NODE-cold.json" --seeds-file "$GENESIS/genesis-seeds.txt" --secrets-dir "$SECRETS" --output "$NODE_DIR/.env" >/dev/null
-"$ROOT/02-node/render-node-config.sh" --node-name "$NODE" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json" >/dev/null
+"$ROOT/02-node/render-node-config.sh" --node-name "$NODE" --node-index "$(node_index "$NODE")" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json" >/dev/null
 "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$NODE" --output "$GENERATED/edge/$NODE.env"
 "$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$NODE" --output "$GENERATED/agents/$NODE.env"
 

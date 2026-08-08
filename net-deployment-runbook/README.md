@@ -91,14 +91,14 @@ lifecycle testing practical; it is not a claim about production timing. The
 validation slot must remain non-zero: zero disables PoC validation and makes a
 chain-accounted gateway impossible to verify.
 
-`genesis` creates only the Genesis operator's node0 secrets and identities plus
+`genesis` creates only the Genesis operator's secrets and identities plus
 the dedicated gateway account. It does not create passwords, cold accounts,
 warm keys, or consensus identities for later validators. Each validator
 operator creates that material during its own `join` flow.
 
-`qualify-ml` without a target checks only node0. A named diagnostic run accepts
-one SSH alias, for example `qualify-ml gdc-node2`; it never scans the other
-operators' hosts. `join gdc-nodeN` runs the same qualification automatically
+`qualify-ml` without a target checks the configured Genesis node. A named diagnostic run accepts
+one configured SSH alias, for example `qualify-ml validator-b`; it never scans the other
+operators' hosts. `join <ssh-alias>` runs the same qualification automatically
 for its own inference host when matching evidence does not already exist.
 
 Every `join` treats the target node as an independent validator. Genesis can be

@@ -166,7 +166,7 @@ GDC_RELEASE_PROFILE=testnet-0.2.14 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
 for profile in a5000-24g t4-16g 4090-24g 3090-24g blackwell-16g; do
   out="$(mktemp)"
   trap 'rm -f "${out:-}"' EXIT
-  "$ROOT/02-node/render-node-config.sh" --node-name gdc-node1 --profile "$profile" --output "$out" >/dev/null
+  "$ROOT/02-node/render-node-config.sh" --node-name validator-b --node-index 1 --profile "$profile" --output "$out" >/dev/null
   jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
     .[0].max_concurrent == 64
     and (.[0].models[$model].args | index("--dtype") != null)

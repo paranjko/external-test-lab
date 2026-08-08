@@ -57,6 +57,7 @@ Create .env from .env.example, then run:
   ./gdc.sh --release testnet-0.2.14 join gdc-node2
   ./gdc.sh --release testnet-0.2.14 join gdc-node3
   ./gdc.sh --release testnet-0.2.14 join gdc-node4
+  ./gdc.sh --release testnet-0.2.14 ml attach gdc-node4
   ./gdc.sh --release testnet-0.2.14 handoff create gdc-node2
   ./gdc.sh --release testnet-0.2.14 handoff approve gdc-node2 <activation-request.json>
   ./gdc.sh ops monitoring
@@ -230,6 +231,14 @@ case "$COMMAND" in
   join)
     [[ $# -eq 1 ]] || { usage; exit 2; }
     run_phase "join-$1" "$ROOT/scripts/phase-join.sh" "$1"
+    ;;
+  ml)
+    [[ $# -eq 2 && "$1" == attach ]] || { usage; exit 2; }
+    source "$ROOT/scripts/lib.sh"
+    load_project
+    topology_contains_node "$2" || { echo "ml attach expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
+    [[ -n "$(node_ml_host "$2" || true)" ]] || { echo "no network GPU configured for $2 in GDC_NODE_ML_HOSTS" >&2; exit 2; }
+    run_phase "ml-attach-$2" "$ROOT/scripts/phase-ml-attach.sh" "$2"
     ;;
   handoff)
     [[ $# -ge 2 ]] || { usage; exit 2; }

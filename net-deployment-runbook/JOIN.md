@@ -59,7 +59,27 @@ and recreates the local joined marker without duplicate funding transactions.
 To disable auto-qualification in exceptional cases (for example, when you want
 to run manual pre-staging), set `GDC_AUTO_QUALIFY_ML=false`.
 
-For `node4`, the script also installs and starts the dedicated Blackwell ML host.
+## Attach a network GPU
+
+When a validator uses a separate GPU host, define that relationship in the
+operator inventory before joining it:
+
+```dotenv
+GDC_NODE_ML_HOSTS="validator-c=validator-c-gpu"
+```
+
+`join validator-c` prepares the validator to reach the remote MLNode but never
+installs software on the GPU host. Once the participant is ACTIVE, attach it
+explicitly:
+
+```bash
+./gdc.sh --release testnet-0.2.14 ml attach validator-c
+```
+
+The command deploys MLNode and its monitoring agent only on the mapped GPU SSH
+alias, waits for the configured model to serve requests, and records the
+attachment under `state/ml-attached/`. It neither creates another validator nor
+changes the validator's chain account.
 
 ## 2. Operator handoff flow
 
