@@ -11,8 +11,8 @@ source "$ROOT/scripts/lib.sh"
   [[ "$SITE_HOST" == gonka-dev.net ]]
   [[ "$GRAFANA_HOST" == grafana.gonka-dev.net ]]
 
-  GDC_SITE_HOST=status.example.test
-  GDC_GRAFANA_HOST=monitoring.example.test
+  export GDC_SITE_HOST=status.example.test
+  export GDC_GRAFANA_HOST=monitoring.example.test
   load_public_observability_hosts
   [[ "$SITE_HOST" == status.example.test ]]
   [[ "$GRAFANA_HOST" == monitoring.example.test ]]
@@ -61,6 +61,8 @@ grep -Fq '.epoch_params.poc_slot_allocation = {value:"5", exponent:-1}' "$ROOT/s
 grep -Fq 'systemctl restart gonka-firewall.service' "$ROOT/00-host-prep/prepare-host.sh"
 grep -Fq 'ML callback ingress source is stale' "$ROOT/00-host-prep/verify-host.sh"
 grep -Fq 'ensure-gateway-reserve.sh' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'load_project' "$ROOT/scripts/fetch-upstream.sh"
+grep -Fq 'source "$ROOT/scripts/lib.sh"' "$ROOT/scripts/fetch-upstream.sh"
 grep -Fq 'validation_weights' "$ROOT/scripts/ensure-genesis-validation-weight.sh"
 grep -Fq 'test-inference.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'sum(cometbft_p2p_peers) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
@@ -106,6 +108,7 @@ for release in testnet-0.2.14 testnet-0.2.15; do
   [[ "$GDC_DEPLOYMENT_PROFILE" == community-lab ]]
   [[ "$GDC_OPERATOR_SERVICES_PROFILE" == gdc-lab ]]
   [[ "$GONKA_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$GONKA_REPOSITORY" == https://github.com/gonka-ai/gonka.git ]]
   [[ "$GONKA_SOURCE_REF" == "release/v$GONKA_RELEASE" ]]
   [[ "$GENESIS_EPOCH_LENGTH" == 50 && "$GENESIS_EPOCH_SHIFT" == 0 ]]
   images=("$TMKMS_IMAGE" "$INFERENCED_IMAGE" "$DAPI_IMAGE" "$VERSIOND_IMAGE" "$PROXY_IMAGE" "$POSTGRES_IMAGE" "$MLNODE_GENERIC_IMAGE" "$MLNODE_BLACKWELL_IMAGE" "$MLNODE_PROXY_IMAGE")
@@ -304,7 +307,7 @@ trap_test_dir="$(mktemp -d)"
 set +e
 (
   source "$ROOT/scripts/lib.sh"
-  RUN="$trap_test_dir"
+  export RUN="$trap_test_dir"
   install_evidence_exit_trap 'Contract test'
   exit 7
 )
