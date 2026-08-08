@@ -74,6 +74,13 @@ grep -Fq 'handle_path /gateway/*' "$ROOT/04-ops/Caddyfile"
 grep -Fq 'handle /status/participants' "$ROOT/04-ops/Caddyfile"
 grep -Fq "json('/status/participants')" "$ROOT/04-ops/site/app.js"
 grep -Fq 'validatorMapController?.update(observedNodes)' "$ROOT/04-ops/site/app.js"
+grep -Fq '__PUBLIC_GRAFANA_PROMETHEUS_URL__' "$ROOT/04-ops/edge-node/public-grafana/provisioning/datasources/prometheus.yml"
+grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/install-edge.sh"
+if grep -Eq 'node[0-9]\.gonka-dev\.net' "$ROOT/04-ops/edge-node/public-grafana/provisioning/datasources/prometheus.yml"; then
+  echo 'public Grafana datasource must be rendered from the configured gateway role' >&2
+  exit 1
+fi
 grep -Fq '/v1/versions' "$ROOT/04-ops/site/app.js"
 grep -Eq 'external-test-lab/tree/[0-9a-f]+/net-deployment-runbook/04-ops/site"[^>]*>ref:[0-9a-f]+' "$ROOT/04-ops/site/index.html"
 rendered_site_index="$(mktemp)"

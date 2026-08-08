@@ -48,6 +48,8 @@ values=(
   "ACME_EMAIL=$ACME_EMAIL"
   "CADDY_IMAGE=$CADDY_IMAGE"
   "GRAFANA_IMAGE=$GRAFANA_IMAGE"
+  "GATEWAY_PUBLIC_HOST=$(node_public_host "$GATEWAY_NODE")"
+  "PUBLIC_GRAFANA_PROMETHEUS_URL=http://$(node_public_host "$GATEWAY_NODE"):9099"
 )
 
 # The three public DevNet origins deliberately terminate only on the configured
@@ -60,7 +62,6 @@ if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
     "SITE_HOST=$SITE_HOST"
     "API_HOST=$API_HOST"
     "GRAFANA_HOST=$GRAFANA_HOST"
-    "GATEWAY_PUBLIC_HOST=$(node_public_host "$GATEWAY_NODE")"
   )
 else
   values+=("PUBLIC_EDGE=false" "PUBLIC_EDGE_HOST=$PUBLIC_EDGE_HOST")
