@@ -24,15 +24,18 @@ NOW_EPOCH="$(date -u +%s)"
   echo 'genesis time must be in the future' >&2
   exit 2
 }
-[[ -s "$IDENTITIES/gdc-node0.json" ]] || { echo 'Missing identity gdc-node0.json' >&2; exit 1; }
-NODE0_ACCOUNT="$ROOT/artifacts/accounts/gdc-node0-cold.json"
+GENESIS_NODE="${GENESIS_NODE:?inventory must define GENESIS_NODE}"
+GENESIS_PUBLIC_HOST="${GENESIS_PUBLIC_HOST:?inventory must define GENESIS_PUBLIC_HOST}"
+GENESIS_P2P_PORT="${GENESIS_P2P_PORT:?inventory must define GENESIS_P2P_PORT}"
+[[ -s "$IDENTITIES/$GENESIS_NODE.json" ]] || { echo "Missing identity $GENESIS_NODE.json" >&2; exit 1; }
+NODE0_ACCOUNT="$ROOT/artifacts/accounts/$GENESIS_NODE-cold.json"
 GATEWAY_ACCOUNT="$ROOT/artifacts/accounts/gdc-gateway-cold.json"
 [[ -s "$NODE0_ACCOUNT" && -s "$GATEWAY_ACCOUNT" ]] || { echo 'Create cold accounts first' >&2; exit 1; }
 NODE0_ADDRESS="$(jq -r .address "$NODE0_ACCOUNT")"
 GATEWAY_ADDRESS="$(jq -r .address "$GATEWAY_ACCOUNT")"
-NODE0_ID="$(jq -r .node_id "$IDENTITIES/gdc-node0.json")"
-NODE0_CONSENSUS="$(jq -r .consensus_pubkey "$IDENTITIES/gdc-node0.json")"
-NODE0_WARM="$(jq -r .warm_address "$IDENTITIES/gdc-node0.json")"
+NODE0_ID="$(jq -r .node_id "$IDENTITIES/$GENESIS_NODE.json")"
+NODE0_CONSENSUS="$(jq -r .consensus_pubkey "$IDENTITIES/$GENESIS_NODE.json")"
+NODE0_WARM="$(jq -r .warm_address "$IDENTITIES/$GENESIS_NODE.json")"
 GENESIS_GUARDIAN_ENABLED="${GDC_GENESIS_GUARDIAN_ENABLED:-false}"
 [[ "$GENESIS_GUARDIAN_ENABLED" =~ ^(true|false)$ ]] || { echo 'GDC_GENESIS_GUARDIAN_ENABLED must be true or false' >&2; exit 2; }
 GENESIS_GUARDIAN_ADDRESSES='[]'
@@ -51,7 +54,7 @@ run_logged() {
 }
 rm -rf "$HOME_DIR/config" "$HOME_DIR/data"
 
-run_logged "$ROOT/scripts/inferenced.sh" init gdc-node0 --chain-id "$CHAIN_ID" --default-denom "${BASE_DENOM:-ngonka}" --overwrite
+run_logged "$ROOT/scripts/inferenced.sh" init "$GENESIS_NODE" --chain-id "$CHAIN_ID" --default-denom "${BASE_DENOM:-ngonka}" --overwrite
 OVERLAY="$(mktemp)"; trap 'rm -f "$OVERLAY"' EXIT
 "$ROOT/01-identities-genesis/render-genesis-overrides.sh" \
   --gateway-account "$GATEWAY_ADDRESS" --genesis-guardian "$NODE0_ADDRESS" --output "$OVERLAY" >/dev/null
@@ -64,9 +67,9 @@ run_logged "$ROOT/scripts/inferenced.sh" genesis add-genesis-account "$NODE0_ADD
 run_logged "$ROOT/scripts/inferenced.sh" genesis add-genesis-account "$GATEWAY_ADDRESS" 100000000000ngonka
 
 printf '%s\n' "$PASSWORD" | run_logged "$ROOT/scripts/inferenced.sh" genesis gentx \
-  gdc-node0-cold 1ngonka --keyring-backend file --moniker gdc-node0 \
+  "${GENESIS_NODE}-cold" 1ngonka --keyring-backend file --moniker "$GENESIS_NODE" \
   --pubkey "$NODE0_CONSENSUS" --ml-operational-address "$NODE0_WARM" \
-  --url "https://${NODE0_PUBLIC_HOST}" --chain-id "$CHAIN_ID" --node-id "$NODE0_ID"
+  --url "https://${GENESIS_PUBLIC_HOST}" --chain-id "$CHAIN_ID" --node-id "$NODE0_ID"
 
 run_logged "$ROOT/scripts/inferenced.sh" genesis collect-gentxs --gentx-dir /home/gdc/.inference/config/gentx
 run_logged "$ROOT/scripts/inferenced.sh" genesis patch-genesis --genparticipant-dir /home/gdc/.inference/config/genparticipant
@@ -78,7 +81,7 @@ jq --arg chain "$CHAIN_ID" --arg time "$GENESIS_TIME" \
 mv "$UPDATED_GENESIS" "$HOME_DIR/config/genesis.json"
 run_logged "$ROOT/scripts/inferenced.sh" genesis validate-genesis
 
-printf '%s@%s:%s\n' "$NODE0_ID" "$NODE0_PUBLIC_HOST" "$NODE0_P2P_PORT" >"$OUTPUT/genesis-seeds.txt"
+printf '%s@%s:%s\n' "$NODE0_ID" "$GENESIS_PUBLIC_HOST" "$GENESIS_P2P_PORT" >"$OUTPUT/genesis-seeds.txt"
 install -m 0444 "$HOME_DIR/config/genesis.json" "$OUTPUT/genesis.json"
 sha256sum "$OUTPUT/genesis.json" | awk '{print $1"  genesis.json"}' > "$OUTPUT/genesis.sha256"
 

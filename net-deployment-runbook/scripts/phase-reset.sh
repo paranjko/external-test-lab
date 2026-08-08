@@ -35,7 +35,7 @@ snapshot_run_evidence() {
 reset_started_at="$(date -u +%FT%TZ)"
 pre_reset_chain_id=UNAVAILABLE
 pre_reset_genesis_sha256=UNAVAILABLE
-if capture_canonical_genesis "https://${NODE0_PUBLIC_HOST}/chain-rpc/genesis" "$MANIFEST_DIR/pre-reset-genesis.json"; then
+if capture_canonical_genesis "https://${GENESIS_PUBLIC_HOST}/chain-rpc/genesis" "$MANIFEST_DIR/pre-reset-genesis.json"; then
   pre_reset_chain_id="$(jq -er '.chain_id' "$MANIFEST_DIR/pre-reset-genesis.json")"
   pre_reset_genesis_sha256="$(genesis_sha256 "$MANIFEST_DIR/pre-reset-genesis.json")"
 fi
@@ -62,8 +62,7 @@ preservation_manifest() {
 }
 
 genesis_reset=false
-for i in 0 1 2 3 4; do
-  host="gdc-node$i"
+for host in "${GDC_NODES[@]}"; do
   if host_is_skipped "$host"; then
     echo "SKIP  $host is excluded by GDC_SKIP_HOSTS"
     continue
@@ -77,18 +76,22 @@ for i in 0 1 2 3 4; do
   ssh "$host" 'sudo bash -s' <"$ROOT/scripts/reset-remote-host.sh"
   preservation_manifest "$host" after
   cmp -s "$MANIFEST_DIR/$host.before" "$MANIFEST_DIR/$host.after" || die "$host reset changed Docker image IDs or /srv/dai/hf-cache; see $MANIFEST_DIR"
-  [[ "$host" == gdc-node0 ]] && genesis_reset=true
+  [[ "$host" == "$GENESIS_NODE" ]] && genesis_reset=true
 done
-step 'Reset gdc-node4-ml'
-if ssh_ready gdc-node4-ml; then
-  preservation_manifest gdc-node4-ml before
-  ssh gdc-node4-ml 'sudo bash -s' <"$ROOT/scripts/reset-remote-host.sh"
-  preservation_manifest gdc-node4-ml after
-  cmp -s "$MANIFEST_DIR/gdc-node4-ml.before" "$MANIFEST_DIR/gdc-node4-ml.after" || die "gdc-node4-ml reset changed Docker image IDs or /srv/dai/hf-cache; see $MANIFEST_DIR"
-else
-  echo 'SKIP  gdc-node4-ml is unreachable'
-fi
-[[ "$genesis_reset" == true ]] || die 'gdc-node0 was not reset; preserving local rehearsal state'
+for host in "${GDC_NODES[@]}"; do
+  ml_host="$(node_ml_host "$host" || true)"
+  [[ -n "$ml_host" ]] || continue
+  step "Reset ML host $ml_host for $host"
+  if ssh_ready "$ml_host"; then
+    preservation_manifest "$ml_host" before
+    ssh "$ml_host" 'sudo bash -s' <"$ROOT/scripts/reset-remote-host.sh"
+    preservation_manifest "$ml_host" after
+    cmp -s "$MANIFEST_DIR/$ml_host.before" "$MANIFEST_DIR/$ml_host.after" || die "$ml_host reset changed Docker image IDs or /srv/dai/hf-cache; see $MANIFEST_DIR"
+  else
+    echo "SKIP  $ml_host is unreachable"
+  fi
+done
+[[ "$genesis_reset" == true ]] || die "$GENESIS_NODE was not reset; preserving local rehearsal state"
 rm -rf "$STATE" "$ROOT/artifacts/accounts" "$ROOT/artifacts/genesis"
 snapshot_run_evidence "$MANIFEST_DIR/artifacts-runs.after.sha256"
 cmp -s "$MANIFEST_DIR/artifacts-runs.before.sha256" "$MANIFEST_DIR/artifacts-runs.after.sha256" \

@@ -220,12 +220,12 @@ grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-propose-upgrade.sh
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade.sh"
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade-worker.sh"
 grep -Fq '# DevNet verification: PASS' "$ROOT/scripts/lib.sh"
-grep -Fq 'expected SSH alias gdc-node1' "$ROOT/scripts/lib.sh"
-if (source "$ROOT/scripts/lib.sh"; node_name node2) >/dev/null 2>&1; then
-  echo 'short node aliases must be rejected by the operator command contract' >&2
+grep -Fq 'GDC_NODE_ALIASES' "$ROOT/scripts/lib.sh"
+if (source "$ROOT/scripts/lib.sh"; load_project; node_name node2) >/dev/null 2>&1; then
+  echo 'aliases absent from the operator inventory must be rejected' >&2
   exit 1
 fi
-[[ "$(source "$ROOT/scripts/lib.sh"; node_name gdc-node2)" == gdc-node2 ]]
+[[ "$(source "$ROOT/scripts/lib.sh"; load_project >/dev/null; node_name gdc-node2)" == gdc-node2 ]]
 grep -Fq 'ACTIVE chain participants differ from joined state' "$ROOT/scripts/phase-verify.sh"
 grep -Fq 'trap on_exit EXIT' "$ROOT/scripts/phase-verify.sh"
 for evidence_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-sepolia.sh phase-governance-devshard.sh phase-propose-upgrade.sh phase-vote-proposal.sh phase-audit-lifecycle.sh; do

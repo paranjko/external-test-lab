@@ -133,12 +133,13 @@ case "$COMMAND" in
     ;;
   qualify-ml)
     [[ $# -le 1 ]] || { usage; exit 2; }
-    qualification_target="${1:-gdc-node0}"
-    case "$qualification_target" in
-      gdc-node0|gdc-node1|gdc-node2|gdc-node3) ;;
-      gdc-node4) qualification_target=gdc-node4-ml ;;
-      *) echo 'qualify-ml expects gdc-node0, gdc-node1, gdc-node2, gdc-node3, or gdc-node4' >&2; exit 2 ;;
-    esac
+    # Resolve topology after parsing flags so the same command works for any
+    # valid SSH alias supplied by the operator inventory.
+    source "$ROOT/scripts/lib.sh"
+    load_project
+    qualification_target="${1:-$GENESIS_NODE}"
+    topology_contains_node "$qualification_target" || { echo "qualify-ml expects an alias from GDC_NODE_ALIASES, got: $qualification_target" >&2; exit 2; }
+    qualification_target="$(node_ml_host "$qualification_target" || printf '%s' "$qualification_target")"
     export GDC_QUALIFY_HOSTS="$qualification_target"
     run_phase qualify-ml "$ROOT/scripts/phase-qualify-ml.sh"
     ;;

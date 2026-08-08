@@ -38,6 +38,75 @@ load_public_observability_hosts() {
   GRAFANA_HOST="${GDC_GRAFANA_HOST:-grafana.gonka-dev.net}"
 }
 
+# Every participant is identified by an operator-provided SSH alias.  Public
+# DNS, hardware profile and an optional separate ML host belong to that alias;
+# no lifecycle command may infer them from a particular lab host name.
+topology_value() {
+  local mapping="$1" key="$2" entry name value
+  for entry in $mapping; do
+    name="${entry%%=*}"
+    value="${entry#*=}"
+    [[ "$name" == "$key" && "$value" != "$entry" ]] && { printf '%s\n' "$value"; return 0; }
+  done
+  return 1
+}
+
+topology_contains_node() {
+  local node="$1" candidate
+  for candidate in "${GDC_NODES[@]}"; do [[ "$candidate" == "$node" ]] && return 0; done
+  return 1
+}
+
+node_public_host() { topology_value "$GDC_NODE_PUBLIC_HOSTS" "$1" || die "no public host configured for SSH alias $1"; }
+node_gpu_profile() { topology_value "$GDC_NODE_GPU_PROFILES" "$1" || die "no GPU profile configured for SSH alias $1"; }
+node_p2p_port() { topology_value "$GDC_NODE_P2P_PORTS" "$1" || printf '%s\n' 5000; }
+node_ml_host() { topology_value "${GDC_NODE_ML_HOSTS:-}" "$1"; }
+
+load_topology() {
+  [[ -n "${GDC_NODE_ALIASES:-}" ]] || die 'set GDC_NODE_ALIASES in .env'
+  read -r -a GDC_NODES <<<"$GDC_NODE_ALIASES"
+  (( ${#GDC_NODES[@]} >= 1 )) || die 'GDC_NODE_ALIASES must contain at least one SSH alias'
+  local -A seen=()
+  local node host profile
+  for node in "${GDC_NODES[@]}"; do
+    [[ "$node" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid SSH alias in GDC_NODE_ALIASES: $node"
+    [[ -z "${seen[$node]:-}" ]] || die "duplicate SSH alias in GDC_NODE_ALIASES: $node"
+    seen[$node]=1
+    host="$(node_public_host "$node")"
+    [[ "$host" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid public host for $node: $host"
+    profile="$(node_gpu_profile "$node")"
+    [[ -n "$profile" ]] || die "empty GPU profile for $node"
+  done
+  GENESIS_NODE="${GDC_GENESIS_NODE:-${GDC_NODES[0]}}"
+  PUBLIC_EDGE_NODE="${GDC_PUBLIC_EDGE_NODE:-$GENESIS_NODE}"
+  GATEWAY_NODE="${GDC_GATEWAY_NODE:-$GENESIS_NODE}"
+  TELEGRAM_BOT_HOST="${GDC_TELEGRAM_BOT_HOST:-$GATEWAY_NODE}"
+  topology_contains_node "$GENESIS_NODE" || die "GDC_GENESIS_NODE is not in GDC_NODE_ALIASES: $GENESIS_NODE"
+  topology_contains_node "$PUBLIC_EDGE_NODE" || die "GDC_PUBLIC_EDGE_NODE is not in GDC_NODE_ALIASES: $PUBLIC_EDGE_NODE"
+  topology_contains_node "$GATEWAY_NODE" || die "GDC_GATEWAY_NODE is not in GDC_NODE_ALIASES: $GATEWAY_NODE"
+  topology_contains_node "$TELEGRAM_BOT_HOST" || die "GDC_TELEGRAM_BOT_HOST is not in GDC_NODE_ALIASES: $TELEGRAM_BOT_HOST"
+  GENESIS_PUBLIC_HOST="$(node_public_host "$GENESIS_NODE")"
+  PUBLIC_EDGE_HOST="$(node_public_host "$PUBLIC_EDGE_NODE")"
+
+  # Render templates still use positional NODE<n> variables.  They are derived
+  # from the supplied alias inventory here, never assigned to this lab's DNS
+  # names or hardware.  Lifecycle scripts use the alias helpers above.
+  local index=0 ml_alias ml_endpoint
+  for node in "${GDC_NODES[@]}"; do
+    printf -v "NODE${index}_PUBLIC_HOST" '%s' "$(node_public_host "$node")"
+    printf -v "NODE${index}_GPU_PROFILE" '%s' "$(node_gpu_profile "$node")"
+    printf -v "NODE${index}_P2P_PORT" '%s' "$(node_p2p_port "$node")"
+    ml_alias="$(node_ml_host "$node" || true)"
+    if [[ -n "$ml_alias" ]]; then
+      ml_endpoint="$(ssh -G "$ml_alias" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+      [[ -n "$ml_endpoint" ]] || die "cannot determine ML endpoint from SSH alias $ml_alias"
+      printf -v "NODE${index}_ML_ENDPOINT" '%s' "$ml_endpoint"
+      printf -v "NODE${index}_ML_MONITOR_HOST" '%s' "$ml_endpoint"
+    fi
+    index=$((index + 1))
+  done
+}
+
 write_env() {
   local file="$1"
   shift
@@ -107,41 +176,22 @@ load_project() {
   if [[ -n "$TELEGRAM_BOT_URL" && ! "$TELEGRAM_BOT_URL" =~ ^https://t\.me/[A-Za-z0-9_]{5,32}$ ]]; then
     die 'GDC_TELEGRAM_BOT_URL must be https://t.me/<bot_username>; never put a BotFather token here'
   fi
+  load_topology
   DATA_ROOT=/srv/dai
   GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
   HF_CACHE_ROOT=/srv/dai/hf-cache
-  NODE0_PUBLIC_HOST=node0.gonka-dev.net
-  NODE1_PUBLIC_HOST=node1.gonka-dev.net
-  NODE2_PUBLIC_HOST=node2.gonka-dev.net
-  NODE3_PUBLIC_HOST=node3.gonka-dev.net
-  NODE4_PUBLIC_HOST=node4.gonka-dev.net
-  NODE0_P2P_PORT=5000 NODE1_P2P_PORT=5000 NODE2_P2P_PORT=5000
-  NODE3_P2P_PORT=5000 NODE4_P2P_PORT=5000
-  NODE0_GPU_PROFILE=a5000-24g
-  NODE1_GPU_PROFILE=t4-16g
-  NODE2_GPU_PROFILE=4090-24g
-  NODE3_GPU_PROFILE=3090-24g
-  NODE4_GPU_PROFILE=blackwell-16g
   GRAFANA_PUBLIC_DASHBOARD_UID=gdc-overview
   # Public-dashboard URLs are intentionally capability links, not credentials.
   # Keep this stable so re-running ops monitoring repairs the same share.
   GRAFANA_PUBLIC_DASHBOARD_SHARE_UID=5fd40e12-5334-4d32-aea2-dcfe85afb3f2
   GRAFANA_PUBLIC_DASHBOARD_TOKEN=321a0d961e7f4b4ea6da843777c032eb
 
-  mapfile -t node0_addresses < <(getent ahostsv4 "$NODE0_PUBLIC_HOST" | awk '{print $1}' | sort -u)
-  (( ${#node0_addresses[@]} == 1 )) || die "$NODE0_PUBLIC_HOST must resolve to exactly one IPv4 address"
-  MONITORING_CIDR="${node0_addresses[0]}/32"
-  mapfile -t node4_edge_addresses < <(getent ahostsv4 "$NODE4_PUBLIC_HOST" | awk '{print $1}' | sort -u)
-  (( ${#node4_edge_addresses[@]} == 1 )) || die "$NODE4_PUBLIC_HOST must resolve to exactly one IPv4 address"
-  PUBLIC_EDGE_CIDR="${node4_edge_addresses[0]}/32"
-
-  # The node4 Network Node and its Blackwell ML host are different machines.
-  # Resolve the latter from the operator's SSH inventory, never from the
-  # node4 public DNS name: port 5000 on node4 is Tendermint P2P, not MLNode.
-  NODE4_ML_ENDPOINT="${GDC_NODE4_ML_ENDPOINT:-$(ssh -G gdc-node4-ml 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')}"
-  [[ -n "$NODE4_ML_ENDPOINT" ]] || die 'cannot determine gdc-node4-ml endpoint from SSH configuration'
-  [[ "$NODE4_ML_ENDPOINT" != "$NODE4_PUBLIC_HOST" ]] || die 'gdc-node4-ml endpoint must differ from node4 public host'
-  NODE4_ML_MONITOR_HOST="$NODE4_ML_ENDPOINT"
+  mapfile -t genesis_addresses < <(getent ahostsv4 "$GENESIS_PUBLIC_HOST" | awk '{print $1}' | sort -u)
+  (( ${#genesis_addresses[@]} == 1 )) || die "$GENESIS_PUBLIC_HOST must resolve to exactly one IPv4 address"
+  MONITORING_CIDR="${genesis_addresses[0]}/32"
+  mapfile -t edge_addresses < <(getent ahostsv4 "$PUBLIC_EDGE_HOST" | awk '{print $1}' | sort -u)
+  (( ${#edge_addresses[@]} == 1 )) || die "$PUBLIC_EDGE_HOST must resolve to exactly one IPv4 address"
+  PUBLIC_EDGE_CIDR="${edge_addresses[0]}/32"
 
   require ACME_EMAIL
   STATE="$ROOT/state"
@@ -257,23 +307,18 @@ GRAFANA_HOST=$GRAFANA_HOST
 ACME_EMAIL=$ACME_EMAIL
 MONITORING_CIDR=$MONITORING_CIDR
 PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR
-NODE0_PUBLIC_HOST=$NODE0_PUBLIC_HOST
-NODE0_P2P_PORT=5000
-NODE0_GPU_PROFILE=$NODE0_GPU_PROFILE
-NODE1_PUBLIC_HOST=$NODE1_PUBLIC_HOST
-NODE1_P2P_PORT=5000
-NODE1_GPU_PROFILE=$NODE1_GPU_PROFILE
-NODE2_PUBLIC_HOST=$NODE2_PUBLIC_HOST
-NODE2_P2P_PORT=5000
-NODE2_GPU_PROFILE=$NODE2_GPU_PROFILE
-NODE3_PUBLIC_HOST=$NODE3_PUBLIC_HOST
-NODE3_P2P_PORT=5000
-NODE3_GPU_PROFILE=$NODE3_GPU_PROFILE
-NODE4_PUBLIC_HOST=$NODE4_PUBLIC_HOST
-NODE4_P2P_PORT=5000
-NODE4_GPU_PROFILE=$NODE4_GPU_PROFILE
-NODE4_ML_ENDPOINT=$NODE4_ML_ENDPOINT
-NODE4_ML_MONITOR_HOST=$NODE4_ML_MONITOR_HOST
+GDC_NODE_ALIASES=$GDC_NODE_ALIASES
+GDC_NODE_PUBLIC_HOSTS=$GDC_NODE_PUBLIC_HOSTS
+GDC_NODE_GPU_PROFILES=$GDC_NODE_GPU_PROFILES
+GDC_NODE_P2P_PORTS=$GDC_NODE_P2P_PORTS
+GDC_NODE_ML_HOSTS=${GDC_NODE_ML_HOSTS:-}
+GENESIS_NODE=$GENESIS_NODE
+GENESIS_PUBLIC_HOST=$GENESIS_PUBLIC_HOST
+GENESIS_P2P_PORT=$(node_p2p_port "$GENESIS_NODE")
+PUBLIC_EDGE_NODE=$PUBLIC_EDGE_NODE
+PUBLIC_EDGE_HOST=$PUBLIC_EDGE_HOST
+GATEWAY_NODE=$GATEWAY_NODE
+TELEGRAM_BOT_HOST=$TELEGRAM_BOT_HOST
 GRAFANA_PUBLIC_DASHBOARD_UID=$GRAFANA_PUBLIC_DASHBOARD_UID
 GRAFANA_PUBLIC_DASHBOARD_SHARE_UID=$GRAFANA_PUBLIC_DASHBOARD_SHARE_UID
 GRAFANA_PUBLIC_DASHBOARD_TOKEN=$GRAFANA_PUBLIC_DASHBOARD_TOKEN
@@ -282,24 +327,38 @@ DATA_ROOT=$DATA_ROOT
 GENESIS_INSTALL_PATH=$GENESIS_INSTALL_PATH
 HF_CACHE_ROOT=$HF_CACHE_ROOT
 EOF
+  local index=0 node endpoint_var monitor_var
+  for node in "${GDC_NODES[@]}"; do
+    printf 'NODE%s_PUBLIC_HOST=%s\n' "$index" "$(node_public_host "$node")" >>"$INVENTORY"
+    printf 'NODE%s_P2P_PORT=%s\n' "$index" "$(node_p2p_port "$node")" >>"$INVENTORY"
+    printf 'NODE%s_GPU_PROFILE=%s\n' "$index" "$(node_gpu_profile "$node")" >>"$INVENTORY"
+    if [[ -n "$(node_ml_host "$node" || true)" ]]; then
+      endpoint_var="NODE${index}_ML_ENDPOINT"
+      monitor_var="NODE${index}_ML_MONITOR_HOST"
+      printf 'NODE%s_ML_ENDPOINT=%s\n' "$index" "${!endpoint_var:-}" >>"$INVENTORY"
+      printf 'NODE%s_ML_MONITOR_HOST=%s\n' "$index" "${!monitor_var:-}" >>"$INVENTORY"
+    fi
+    index=$((index + 1))
+  done
 }
 
 node_name() {
-  [[ "${1:-}" =~ ^gdc-node[1-4]$ ]] || die "expected SSH alias gdc-node1, gdc-node2, gdc-node3, or gdc-node4"
-  printf '%s\n' "$1"
+  local node="${1:-}"
+  topology_contains_node "$node" || die "unknown SSH alias: $node"
+  [[ "$node" != "$GENESIS_NODE" ]] || die "cannot join the Genesis node: $node"
+  printf '%s\n' "$node"
 }
 
 node_url() {
-  local index="${1#gdc-node}" variable="NODE${1#gdc-node}_PUBLIC_HOST"
-  [[ "$index" =~ ^[0-4]$ ]] || die "invalid node: $1"
-  # node4 is the stable public TLS edge for chain traffic.  Addressing node0
-  # through its own public hostname hairpins back into its proxy and is not a
-  # valid operator path after the edge split.
-  if [[ "$index" == 0 && "${GDC_NODE0_PUBLIC_VIA_EDGE:-true}" == true ]]; then
-    printf 'https://%s\n' "$NODE4_PUBLIC_HOST"
+  local node="$1"
+  topology_contains_node "$node" || die "unknown SSH alias: $node"
+  # A split public edge can proxy the genesis participant.  This is a role
+  # relationship, not a statement about a numbered node.
+  if [[ "$node" == "$GENESIS_NODE" && "${GDC_GENESIS_PUBLIC_VIA_EDGE:-true}" == true ]]; then
+    printf 'https://%s\n' "$PUBLIC_EDGE_HOST"
     return
   fi
-  printf 'https://%s\n' "${!variable}"
+  printf 'https://%s\n' "$(node_public_host "$node")"
 }
 
 participant_onboarding_state() {
@@ -356,10 +415,27 @@ ssh_ready() {
 }
 
 configured_node_indexes() {
-  local i
-  for i in 0 1 2 3 4; do
-    [[ -e "$STATE/joined/gdc-node$i" ]] && printf '%s\n' "$i"
+  local index=0 node
+  for node in "${GDC_NODES[@]}"; do
+    [[ -e "$STATE/joined/$node" ]] && printf '%s\n' "$index"
+    index=$((index + 1))
   done
+}
+
+configured_nodes() {
+  local node
+  for node in "${GDC_NODES[@]}"; do
+    [[ -e "$STATE/joined/$node" ]] && printf '%s\n' "$node"
+  done
+}
+
+node_index() {
+  local wanted="$1" index=0 node
+  for node in "${GDC_NODES[@]}"; do
+    [[ "$node" == "$wanted" ]] && { printf '%s\n' "$index"; return 0; }
+    index=$((index + 1))
+  done
+  die "unknown SSH alias: $wanted"
 }
 
 latest_baseline_pass_bundle() {
