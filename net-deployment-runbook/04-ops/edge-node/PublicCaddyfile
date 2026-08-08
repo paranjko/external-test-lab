@@ -3,17 +3,16 @@
   admin 127.0.0.1:2019
 }
 
-# node4 is the public edge and its Network Node endpoint. The public site and
-# API intentionally preserve node0 as their application origin while DNS and
+# The configured public edge is its Network Node endpoint. The public site and
+# API intentionally preserve the gateway host as their application origin while DNS and
 # TLS terminate here.
 {$PUBLIC_HOST} {
   encode zstd gzip
   @root path /
   redir @root /dashboard/gonka/gov 308
-  # node4 owns public TLS but is not necessarily a chain participant. Keep
-  # its public hostname stable while forwarding Network Node paths to node0.
-  reverse_proxy http://{$NODE0_PUBLIC_HOST}:8000 {
-    header_up Host {$NODE0_PUBLIC_HOST}
+  # The public edge owns public TLS but is not necessarily a chain participant.
+  reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8000 {
+    header_up Host {$GATEWAY_PUBLIC_HOST}
   }
   header {
     X-Content-Type-Options nosniff
@@ -30,9 +29,9 @@ www.{$SITE_HOST} {
 {$SITE_HOST} {
   encode zstd gzip
   # The status site is an operations service on node0, not the Network Node
-  # proxy's default dashboard. Node4 remains the only public TLS edge.
-  reverse_proxy http://{$NODE0_PUBLIC_HOST}:8081 {
-    header_up Host {$NODE0_PUBLIC_HOST}
+  # proxy's default dashboard. The public edge remains the only public TLS edge.
+  reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {
+    header_up Host {$GATEWAY_PUBLIC_HOST}
   }
   header {
     X-Content-Type-Options nosniff
@@ -42,8 +41,8 @@ www.{$SITE_HOST} {
 
 {$API_HOST} {
   encode zstd gzip
-  reverse_proxy http://{$NODE0_PUBLIC_HOST}:18080 {
-    header_up Host {$NODE0_PUBLIC_HOST}
+  reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:18080 {
+    header_up Host {$GATEWAY_PUBLIC_HOST}
   }
 }
 

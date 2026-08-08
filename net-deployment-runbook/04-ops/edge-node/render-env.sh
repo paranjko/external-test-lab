@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 --inventory FILE --node-name gdc-nodeN --output FILE" >&2
+  echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS --output FILE" >&2
 }
 
 INVENTORY=''
@@ -30,7 +30,7 @@ while (($#)); do
   esac
 done
 
-[[ "$NODE" =~ ^gdc-node[0-4]$ && -n "$OUTPUT" ]] || {
+[[ "$NODE" =~ ^[A-Za-z0-9._-]+$ && -n "$OUTPUT" ]] || {
   usage
   exit 2
 }
@@ -38,33 +38,32 @@ done
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 load_env "$INVENTORY"
+load_topology
 source "$ROOT/scripts/profile.sh"
 load_profiles
-
-INDEX="${NODE#gdc-node}"
-HOST_VARIABLE="NODE${INDEX}_PUBLIC_HOST"
+topology_contains_node "$NODE" || { echo "node is not configured in inventory: $NODE" >&2; exit 2; }
 
 values=(
-  "PUBLIC_HOST=${!HOST_VARIABLE}"
+  "PUBLIC_HOST=$(node_public_host "$NODE")"
   "ACME_EMAIL=$ACME_EMAIL"
   "CADDY_IMAGE=$CADDY_IMAGE"
   "GRAFANA_IMAGE=$GRAFANA_IMAGE"
 )
 
-# The three public DevNet origins deliberately terminate only on node4.  Its
-# canonical Network Node endpoint is node4.gonka-dev.net. Keeping this
+# The three public DevNet origins deliberately terminate only on the configured
+# public edge. Keeping this
 # selection in the rendered env prevents every participant edge proxy from
 # attempting to obtain the same ACME certificates.
-if [[ "$NODE" == gdc-node4 ]]; then
+if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
   values+=(
     "PUBLIC_EDGE=true"
     "SITE_HOST=$SITE_HOST"
     "API_HOST=$API_HOST"
     "GRAFANA_HOST=$GRAFANA_HOST"
-    "NODE0_PUBLIC_HOST=$NODE0_PUBLIC_HOST"
+    "GATEWAY_PUBLIC_HOST=$(node_public_host "$GATEWAY_NODE")"
   )
 else
-  values+=("PUBLIC_EDGE=false" "NODE4_PUBLIC_HOST=$NODE4_PUBLIC_HOST")
+  values+=("PUBLIC_EDGE=false" "PUBLIC_EDGE_HOST=$PUBLIC_EDGE_HOST")
 fi
 
 write_env "$OUTPUT" "${values[@]}"

@@ -7,13 +7,13 @@
   @root path /
   redir @root /dashboard/gonka/gov 308
   # The Network Node proxy accepts its public edge as a trusted upstream.
-  # Send participant-local public traffic through node4 so callback requests
+  # Send participant-local public traffic through the public edge so callback requests
   # do not arrive at the proxy from its own Docker bridge and get rejected.
-  reverse_proxy https://{$NODE4_PUBLIC_HOST} {
+  reverse_proxy https://{$PUBLIC_EDGE_HOST} {
     transport http {
-      tls_server_name {$NODE4_PUBLIC_HOST}
+      tls_server_name {$PUBLIC_EDGE_HOST}
     }
-    header_up Host {$NODE4_PUBLIC_HOST}
+    header_up Host {$PUBLIC_EDGE_HOST}
   }
   header {
     X-Content-Type-Options nosniff

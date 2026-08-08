@@ -32,8 +32,8 @@ services:
       SITE_HOST: ${SITE_HOST:-}
       API_HOST: ${API_HOST:-}
       GRAFANA_HOST: ${GRAFANA_HOST:-}
-      NODE0_PUBLIC_HOST: ${NODE0_PUBLIC_HOST:-}
-      NODE4_PUBLIC_HOST: ${NODE4_PUBLIC_HOST:-}
+      GATEWAY_PUBLIC_HOST: ${GATEWAY_PUBLIC_HOST:-}
+      PUBLIC_EDGE_HOST: ${PUBLIC_EDGE_HOST:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /srv/dai/caddy/data:/data
