@@ -32,7 +32,7 @@ grep -qx "release_profile=$GDC_RELEASE_PROFILE" "$settlement_context" \
   || blocked "Latest settlement does not belong to the current $GDC_RELEASE_PROFILE profile."
 grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$settlement_context" \
   || blocked 'Latest settlement used a different model profile.'
-capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+capture_canonical_genesis "https://$GENESIS_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
 genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 grep -qx "chain_id=$CHAIN_ID" "$settlement_context" \
   || blocked 'Latest settlement belongs to another chain ID.'
@@ -48,10 +48,10 @@ grep -qx 'devshard_version=v4' "$settlement_context" \
   printf 'devshard_version=v4\n'
   printf 'settlement_bundle=%s\n' "$settlement_dir"
 } >"$RUN/context.env"
-node=gdc-node0
+node="$GENESIS_NODE"
 expected_release="$GDC_RELEASE_PROFILE $(profile_hash)"
 ssh "$node" "grep -qx '$expected_release' /srv/dai/deploy/$node/.gdc-release" \
-  || die "node0 release marker does not match $GDC_RELEASE_PROFILE"
+  || die "$node release marker does not match $GDC_RELEASE_PROFILE"
 
 step 'Install two-replica v4 HA overlay on the already-settled participant'
 remote="/tmp/gdc-ha-$$"
@@ -95,7 +95,7 @@ if rg -i 'duplicate.*(submission|validation)|already submitted' "$RUN/ha-logs.tx
 cat >"$RUN/verdict.md" <<EOF
 # DevShard v4 HA: PASS
 
-Two versiond replicas shared node0's participant key and Postgres session
+Two versiond replicas shared the Genesis participant key and Postgres session
 state while keeping replica-local supervisor data. The sticky router survived a versiond-2 stop, authenticated
 gateway traffic succeeded during the outage, and the replica returned without
 manual state copy. No duplicate validation-submission signature appeared in the

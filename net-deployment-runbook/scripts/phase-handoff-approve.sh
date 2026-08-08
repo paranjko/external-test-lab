@@ -18,13 +18,13 @@ jq -e --arg node "$NODE" --arg chain "$CHAIN_ID" \
   "$REQUEST" >/dev/null || die 'activation request has an unexpected schema, node or chain ID'
 ADDRESS="$(jq -r .cold_address "$REQUEST")"
 step "Confirm $NODE registration on chain"
-"$ROOT/03-join/wait-registered.sh" "https://$NODE0_PUBLIC_HOST" "$ADDRESS"
-participant="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$ADDRESS")"
+"$ROOT/03-join/wait-registered.sh" "https://$GENESIS_PUBLIC_HOST" "$ADDRESS"
+participant="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$ADDRESS")"
 jq -e --arg address "$ADDRESS" --arg validator_key "$(jq -r .identity.consensus_pubkey "$REQUEST")" \
   '.participant.address == $address and .participant.validator_key == $validator_key' \
   <<<"$participant" >/dev/null || die 'registered participant does not match the activation request address and consensus key'
 
-spendable="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$ADDRESS")"
+spendable="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$ADDRESS")"
 spendable_ngonka="$(jq -r '[.balances[]? | select(.denom == "ngonka") | (.amount | tonumber)] | add // 0' <<<"$spendable")"
 [[ "$spendable_ngonka" =~ ^[0-9]+$ ]] || die 'cannot determine participant spendable balance'
 if (( spendable_ngonka == 0 )); then
