@@ -16,9 +16,17 @@ mkdir -p "$MANIFEST_DIR"
 
 snapshot_run_evidence() {
   local output="$1"
+  local -a find_args=(artifacts/runs -type f)
+  if [[ -n "${GDC_RUN_ID:-}" ]]; then
+    find_args+=( ! -path "artifacts/runs/$GDC_RUN_ID/*" )
+  fi
   (
     cd "$ROOT"
-    find artifacts/runs -type f -print0 2>/dev/null \
+    # `reset` itself now has normal lifecycle evidence under GDC_RUN_ID.  It
+    # is not prior evidence and naturally changes while this phase runs.
+    # Excluding only that active bundle preserves the cross-reset integrity
+    # check for every earlier bundle without making reset self-conflicting.
+    find "${find_args[@]}" -print0 2>/dev/null \
       | LC_ALL=C sort -z \
       | xargs -0 -r sha256sum
   ) >"$output"
