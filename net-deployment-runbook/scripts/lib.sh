@@ -157,7 +157,7 @@ load_project() {
   [[ -s "$ENV_FILE" ]] || die "create $ROOT/.env from .env.example"
   # A shell invocation is the explicit per-rehearsal override.  Do not let an
   # empty example value in .env silently re-include an intentionally skipped
-  # host (for example: GDC_SKIP_HOSTS='gdc-node2 gdc-node3' ./gdc.sh prepare).
+  # host (for example: GDC_SKIP_HOSTS='validator-b validator-c' ./gdc.sh prepare).
   local caller_skip_hosts='' resolved_profile_key
   local caller_skip_hosts_set=false
   if [[ ${GDC_SKIP_HOSTS+x} ]]; then

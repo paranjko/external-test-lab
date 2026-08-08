@@ -55,7 +55,7 @@ step "Vote yes on DevShard governance proposal $gov_id"
 step "Wait for passed DevShard governance proposal $gov_id"
 rpc="http://127.0.0.1:1317/cosmos/gov/v1/proposals/$gov_id"
 while (( SECONDS < deadline )); do
-  proposal="$(ssh gdc-node0 "curl -fsS $rpc")"
+  proposal="$(ssh "$GENESIS_NODE" "curl -fsS $rpc")"
   status="$(jq -r '.proposal.status' <<<"$proposal")"
   [[ "$status" == PROPOSAL_STATUS_PASSED ]] && break
   case "$status" in

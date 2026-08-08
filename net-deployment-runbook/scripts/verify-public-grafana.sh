@@ -21,7 +21,7 @@ for dashboard in gdc-network gdc-inference; do
 done
 jq -r '.dashboard.panels[]?.targets[]?.expr | select(type == "string" and length > 0)' "$RUN/gdc-network.json" "$RUN/gdc-inference.json" | sort -u >"$RUN/panel-expressions.txt"
 while IFS= read -r expression; do printf '%s' "$expression" | base64 -w0; printf '\n'; done <"$RUN/panel-expressions.txt" >"$RUN/panel-expressions.b64"
-ssh -T gdc-node0 'while IFS= read -r encoded; do
+ssh -T "$GATEWAY_NODE" 'while IFS= read -r encoded; do
   query="$(printf %s "$encoded" | base64 -d)"
   result="$(curl -fsSG --data-urlencode query="$query" http://127.0.0.1:9099/api/v1/query)"
   printf "%s\t%s\n" "$encoded" "$(printf %s "$result" | base64 -w0)"

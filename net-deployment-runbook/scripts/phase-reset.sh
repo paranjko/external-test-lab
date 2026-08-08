@@ -3,7 +3,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 # Reset needs both public-observability hosts and the deployment inventory for
-# the pre-reset chain snapshot.  Loading only .env leaves NODE0_PUBLIC_HOST
+# the pre-reset chain snapshot. Loading only .env leaves topology-derived state
 # unset under `set -u` before any host has been touched.
 load_project
 load_public_observability_hosts

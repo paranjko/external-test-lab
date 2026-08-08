@@ -42,7 +42,7 @@ grep -qx "release_profile=$GDC_RELEASE_PROFILE" "$ha_context" \
   || blocked "Latest HA evidence does not belong to the current $GDC_RELEASE_PROFILE profile."
 grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$ha_context" \
   || blocked 'Latest HA evidence used a different model profile.'
-capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+capture_canonical_genesis "https://$GENESIS_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
 genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 grep -qx "chain_id=$CHAIN_ID" "$ha_context" \
   || blocked 'Latest HA evidence belongs to another chain ID.'
@@ -61,7 +61,7 @@ grep -qx 'devshard_version=v4' "$ha_context" \
   printf 'beacon_state_url_sha256=%s\n' \
     "$(printf '%s' "$GDC_SEPOLIA_BEACON_STATE_URL" | sha256sum | awk '{print $1}')"
 } >"$RUN/context.env"
-node=gdc-node0
+node="$GENESIS_NODE"
 
 step 'Measure node0 headroom before choosing Genesis placement'
 ssh "$node" 'free -b; df -B1 /srv/dai; ip -s link' >"$RUN/headroom.txt"
@@ -85,12 +85,12 @@ ssh -T "$node" "sudo install -m 0644 '$remote/02-node/compose.bridge-sepolia.yam
 step 'Verify Sepolia bridge state and epoch-move observation'
 ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env --env-file .bridge.env -f compose.yaml -f compose.bridge-sepolia.yaml logs --no-color --tail=300 bridge" >"$RUN/bridge.log"
 rg -qi 'Running on Sepolia testnet' "$RUN/bridge.log" || die 'bridge did not confirm Sepolia mode'
-curl -fsS "https://$NODE0_PUBLIC_HOST/v1/bridge/addresses" >"$RUN/bridge-addresses-before.json"
+curl -fsS "https://$GENESIS_PUBLIC_HOST/v1/bridge/addresses" >"$RUN/bridge-addresses-before.json"
 jq -e --arg contract "$GDC_SEPOLIA_CONTRACT" '.. | strings | select(ascii_downcase == ($contract | ascii_downcase))' "$RUN/bridge-addresses-before.json" >/dev/null || die 'live bridge addresses do not include the authorized Sepolia contract'
 deadline=$((SECONDS + ${GDC_BRIDGE_EPOCH_WAIT_SECONDS:-1800}))
 before_hash="$(sha256sum "$RUN/bridge-addresses-before.json" | awk '{print $1}')"
 while (( SECONDS < deadline )); do
-  curl -fsS "https://$NODE0_PUBLIC_HOST/v1/bridge/addresses" >"$RUN/bridge-addresses-after.json"
+  curl -fsS "https://$GENESIS_PUBLIC_HOST/v1/bridge/addresses" >"$RUN/bridge-addresses-after.json"
   after_hash="$(sha256sum "$RUN/bridge-addresses-after.json" | awk '{print $1}')"
   [[ "$after_hash" != "$before_hash" ]] && break
   printf 'WAIT  bridge epoch-move state transition\n'; sleep 15
