@@ -6,7 +6,7 @@ COMPONENT="${1:-}"
 EDGE_NODE="${2:-}"
 [[ "$COMPONENT" =~ ^(gateway|monitoring|site|explorer|edge|edge-node)$ ]] || die 'expected: ops gateway, ops monitoring, ops site, ops explorer, ops edge, or ops edge-node gdc-nodeN'
 if [[ "$COMPONENT" == edge-node ]]; then
-  [[ "$EDGE_NODE" =~ ^gdc-node[0-4]$ ]] || die 'ops edge-node requires gdc-node0 through gdc-node4'
+  topology_contains_node "$EDGE_NODE" || die "ops edge-node requires an alias from GDC_NODE_ALIASES: $EDGE_NODE"
 fi
 if [[ "$COMPONENT" == explorer ]]; then
   exec "$ROOT/scripts/phase-explorer.sh"
@@ -32,7 +32,7 @@ step 'Render monitoring and public status configuration'
 "$ROOT/04-ops/render-ops.sh" --inventory "$INVENTORY" --accounts-dir "$ACCOUNTS" --secrets-dir "$SECRETS" --output-dir "$OPS_RENDER" >/dev/null
 
 reconcile_public_grafana() {
-  local start_caddy="${1:-false}" node=gdc-node4 edge_env edge_remote
+  local start_caddy="${1:-false}" node="$PUBLIC_EDGE_NODE" edge_env edge_remote
   edge_env="$GENERATED/edge/$node.env"
   edge_remote="${REMOTE}-edge"
   mkdir -p "$(dirname "$edge_env")"
@@ -48,20 +48,19 @@ reconcile_public_grafana() {
 }
 
 reconcile_monitoring_agents() {
-  local index node agent_env agent_remote gpu_flag
-  local -a indexes
+  local node ml_host agent_env agent_remote gpu_flag
+  local -a nodes
 
-  mapfile -t indexes < <(configured_node_indexes)
-  ((${#indexes[@]} > 0)) || die 'no joined nodes are available for monitoring-agent reconciliation'
+  mapfile -t nodes < <(configured_nodes)
+  ((${#nodes[@]} > 0)) || die 'no joined nodes are available for monitoring-agent reconciliation'
   mkdir -p "$GENERATED/agents"
 
-  for index in "${indexes[@]}"; do
-    node="gdc-node$index"
+  for node in "${nodes[@]}"; do
     ssh_ready "$node" || die "$node is joined but unreachable; monitoring inventory cannot be reconciled"
     agent_env="$GENERATED/agents/$node.env"
     agent_remote="${REMOTE}-agent-$node"
     gpu_flag=''
-    [[ "$index" != 4 ]] && gpu_flag='--gpu'
+    [[ -z "$(node_ml_host "$node" || true)" ]] && gpu_flag='--gpu'
     "$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$node" --output "$agent_env" >/dev/null
     ssh "$node" "rm -rf '$agent_remote' && mkdir -p '$agent_remote'"
     rsync -a "$ROOT/04-ops/agent/" "$node:$agent_remote/agent/"
@@ -71,27 +70,28 @@ reconcile_monitoring_agents() {
     printf 'READY monitoring inventory collector on %s\n' "$node"
   done
 
-  if [[ " ${indexes[*]} " == *' 4 '* ]]; then
-    node=gdc-node4-ml
-    ssh_ready "$node" || die "$node is required by joined gdc-node4 but unreachable; monitoring inventory cannot be reconciled"
-    agent_env="$GENERATED/agents/$node.env"
-    agent_remote="${REMOTE}-agent-$node"
-    "$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$node" --output "$agent_env" >/dev/null
-    ssh "$node" "rm -rf '$agent_remote' && mkdir -p '$agent_remote'"
-    rsync -a "$ROOT/04-ops/agent/" "$node:$agent_remote/agent/"
-    scp -q "$agent_env" "$node:$agent_remote/agent.env"
-    ssh -T "$node" "sudo '$agent_remote/agent/install-agent.sh' '$agent_remote/agent.env' --gpu; rm -rf '$agent_remote'"
-    start_stack "$node" /srv/dai/monitoring-agent
-    printf 'READY monitoring inventory collector on %s\n' "$node"
-  fi
+  for node in "${nodes[@]}"; do
+    ml_host="$(node_ml_host "$node" || true)"
+    [[ -n "$ml_host" && -e "$STATE/ml-attached/$node" ]] || continue
+    ssh_ready "$ml_host" || die "$ml_host is attached to $node but unreachable; monitoring inventory cannot be reconciled"
+    agent_env="$GENERATED/agents/$ml_host.env"
+    agent_remote="${REMOTE}-agent-$ml_host"
+    "$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$ml_host" --output "$agent_env" >/dev/null
+    ssh "$ml_host" "rm -rf '$agent_remote' && mkdir -p '$agent_remote'"
+    rsync -a "$ROOT/04-ops/agent/" "$ml_host:$agent_remote/agent/"
+    scp -q "$agent_env" "$ml_host:$agent_remote/agent.env"
+    ssh -T "$ml_host" "sudo '$agent_remote/agent/install-agent.sh' '$agent_remote/agent.env' --gpu; rm -rf '$agent_remote'"
+    start_stack "$ml_host" /srv/dai/monitoring-agent
+    printf 'READY monitoring inventory collector on %s\n' "$ml_host"
+  done
 }
 
 GATEWAY_OPTION=''
 CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
 if [[ "$COMPONENT" == edge ]]; then
-  step 'Install the public node4 edge configuration without changing chain state'
+  step 'Install the public edge configuration without changing chain state'
   reconcile_public_grafana true
-  step 'Verify the status site is served through node4 TLS'
+  step 'Verify the status site is served through the public edge TLS'
   site_ready=false
   for _ in $(seq 1 30); do
     if curl -fsS "https://$SITE_HOST/" | grep -q 'EXTERNAL TEST LAB'; then
@@ -101,9 +101,9 @@ if [[ "$COMPONENT" == edge ]]; then
     printf 'WAIT  public status site after edge restart\n'
     sleep 1
   done
-  [[ "$site_ready" == true ]] || die 'public node4 edge does not serve the current homepage contract'
+  [[ "$site_ready" == true ]] || die 'public edge does not serve the current homepage contract'
   "$ROOT/scripts/verify-public-grafana.sh"
-  printf 'PASS public node4 edge serves %s\n' "$SITE_HOST"
+  printf 'PASS public edge %s serves %s\n' "$PUBLIC_EDGE_NODE" "$SITE_HOST"
   exit 0
 fi
 if [[ "$COMPONENT" == edge-node ]]; then
@@ -121,7 +121,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
 fi
 case "$COMPONENT" in
   gateway)
-    step "Provide the pinned $GDC_GATEWAY_VERSION gateway image on gdc-node0"
+    step "Provide the pinned $GDC_GATEWAY_VERSION gateway image on $GATEWAY_NODE"
     "$ROOT/scripts/build-gateway-image.sh" >"$STATE/gateway-image-$GDC_GATEWAY_VERSION.txt"
     step 'Ensure the gateway has a durable test-token reserve for escrow rotation'
     gateway_min_spendable="${GDC_GATEWAY_MIN_SPENDABLE_NGONKA:-100000000000}"
@@ -176,7 +176,7 @@ case "$COMPONENT" in
     # `up -d` alone does not reload an already-running container, leaving a
     # newly rendered dashboard/scrape config silently stale.
     START_COMMAND='docker compose up -d --force-recreate prometheus alertmanager blackbox grafana'
-    ENDPOINT="http://$NODE0_PUBLIC_HOST:3000"
+    ENDPOINT="http://$(node_public_host "$GATEWAY_NODE"):3000"
     ;;
   site)
     SITE_INDEX_RENDER="$OPS_RENDER/site/index.html"
@@ -186,20 +186,20 @@ case "$COMPONENT" in
     # so cache policy changes apply without recreating Caddy and causing a
     # transient 503 for browser tabs polling the live status endpoints.
     CADDY_START_COMMAND='docker compose up -d caddy && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile'
-    ENDPOINT="http://$NODE0_PUBLIC_HOST:8081"
+    ENDPOINT="http://$(node_public_host "$GATEWAY_NODE"):8081"
     ;;
 esac
 
-step "Install $COMPONENT operations component on gdc-node0"
-ssh gdc-node0 "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
-rsync -a "$ROOT/04-ops/" "gdc-node0:$REMOTE/04-ops/"
-[[ -z "$SITE_INDEX_RENDER" ]] || rsync -a "$SITE_INDEX_RENDER" "gdc-node0:$REMOTE/04-ops/site/index.html"
-rsync -a "$OPS_RENDER/" "gdc-node0:$REMOTE/rendered/"
+step "Install $COMPONENT operations component on $GATEWAY_NODE"
+ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
+rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
+[[ -z "$SITE_INDEX_RENDER" ]] || rsync -a "$SITE_INDEX_RENDER" "$GATEWAY_NODE:$REMOTE/04-ops/site/index.html"
+rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"
 printf 'WAIT  start %s operations component\n' "$COMPONENT"
-if ssh -T gdc-node0 "sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION; rm -rf '$REMOTE'; { cd /srv/dai/edge && docker compose down; cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND; } >/srv/dai/ops/start-$COMPONENT.log 2>&1"; then
+if ssh -T "$GATEWAY_NODE" "sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION; rm -rf '$REMOTE'; { cd /srv/dai/edge && docker compose down; cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND; } >/srv/dai/ops/start-$COMPONENT.log 2>&1"; then
   printf 'READY %s endpoint %s\n' "$COMPONENT" "$ENDPOINT"
 else
-  ssh gdc-node0 "tail -100 /srv/dai/ops/start-$COMPONENT.log" >&2 || true
+  ssh "$GATEWAY_NODE" "tail -100 /srv/dai/ops/start-$COMPONENT.log" >&2 || true
   exit 1
 fi
 
@@ -209,14 +209,14 @@ if [[ "$COMPONENT" == gateway ]]; then
   # and this post-start registration step.  Do not try to re-register a pruned
   # ID: take the active runtime the gateway has already bound, persist that ID
   # in both rendered and deployed configuration, then continue idempotently.
-  gateway_active_escrow="$(ssh -T gdc-node0 'set -Eeuo pipefail
+  gateway_active_escrow="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
     set -a; . /srv/dai/ops/gateway.env; set +a
     curl -fsS http://127.0.0.1:18080/v1/admin/devshards \
       -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
       | jq -er "[.devshards[] | select(.active == true and (.runtime.phase // \"\") == \"active\" and (.runtime.requests_blocked // false) == false) | .id | tostring] | first // empty"')"
   [[ "$gateway_active_escrow" =~ ^[1-9][0-9]*$ ]] || die 'gateway has no active committed runtime after startup'
   sed -i -E "s/^DEVSHARD_ESCROW_ID=.*/DEVSHARD_ESCROW_ID=$gateway_active_escrow/" "$GATEWAY_ENV"
-  ssh -T gdc-node0 "sudo sed -i -E 's/^DEVSHARD_ESCROW_ID=.*/DEVSHARD_ESCROW_ID=$gateway_active_escrow/' /srv/dai/ops/gateway.env"
+  ssh -T "$GATEWAY_NODE" "sudo sed -i -E 's/^DEVSHARD_ESCROW_ID=.*/DEVSHARD_ESCROW_ID=$gateway_active_escrow/' /srv/dai/ops/gateway.env"
   step 'Register the newly created escrow in persistent gateway topology'
   # gateway.db deliberately owns runtime topology across restarts.  Replacing
   # gateway.env alone would leave a retired escrow resident and silently make
@@ -224,7 +224,7 @@ if [[ "$COMPONENT" == gateway ]]; then
   # the loopback-only admin API, retaining inactive historical entries for
   # settlement/debug evidence.  The request body and response never leave the
   # remote host because they contain the gateway private key.
-  ssh gdc-node0 'set -Eeuo pipefail
+  ssh "$GATEWAY_NODE" 'set -Eeuo pipefail
     set -a; . /srv/dai/ops/gateway.env; set +a
     payload="$(jq -cn --arg id "$DEVSHARD_ESCROW_ID" --arg key "$DEVSHARD_PRIVATE_KEY" --arg model "$DEVSHARD_MODEL" --arg route "$DEVSHARD_ROUTE_PREFIX" "{id:\$id,private_key:\$key,model:\$model,route_prefix:\$route}")"
     body="$(mktemp)"; trap "rm -f \"$body\"" EXIT
@@ -240,7 +240,7 @@ if [[ "$COMPONENT" == gateway ]]; then
       cat "$body" >&2; exit 1
   fi'
   step 'Ensure configured escrow is active in gateway routing table'
-  ssh gdc-node0 'set -Eeuo pipefail
+  ssh "$GATEWAY_NODE" 'set -Eeuo pipefail
     set -a; . /srv/dai/ops/gateway.env; set +a
     devshards_json="$(curl -fsS http://127.0.0.1:18080/v1/admin/devshards -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY")"
     escrow_state="$(jq -c --arg id "$DEVSHARD_ESCROW_ID" ".devshards[] | select((.id | tostring) == \$id)" <<<"$devshards_json")"
@@ -256,14 +256,14 @@ if [[ "$COMPONENT" == gateway ]]; then
   # These settings persist in gateway.db.  Apply the environment-derived
   # default explicitly so an existing state volume cannot retain an unsafe
   # value from a previous deployment.
-  ssh gdc-node0 "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"poc_max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"participant_throttle\":{\"request_burst\":$gateway_participant_request_burst,\"recovery_per_minute\":$gateway_participant_recovery_per_minute},\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":$gateway_rotation_enabled,\"settlement_enabled\":$gateway_rotation_settlement_enabled,\"pre_poc_blocks\":$gateway_pre_poc_blocks,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":$gateway_rotation_temp_count,\"target_count\":$gateway_rotation_target_count,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .poc_max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .max_input_tokens_in_flight == $gateway_max_input_tokens and .participant_throttle.request_burst == $gateway_participant_request_burst and .participant_throttle.recovery_per_minute == $gateway_participant_recovery_per_minute and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_input_tokens_in_flight == $gateway_max_input_tokens and .access_mode == \"api_key\")) and .escrow_rotation.enabled == $gateway_rotation_enabled and .escrow_rotation.settlement_enabled == $gateway_rotation_settlement_enabled and .escrow_rotation.pre_poc_blocks == $gateway_pre_poc_blocks and .escrow_rotation.models[0].temp_count == $gateway_rotation_temp_count and .escrow_rotation.models[0].target_count == $gateway_rotation_target_count and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
+  ssh "$GATEWAY_NODE" "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"poc_max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"participant_throttle\":{\"request_burst\":$gateway_participant_request_burst,\"recovery_per_minute\":$gateway_participant_recovery_per_minute},\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":$gateway_rotation_enabled,\"settlement_enabled\":$gateway_rotation_settlement_enabled,\"pre_poc_blocks\":$gateway_pre_poc_blocks,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":$gateway_rotation_temp_count,\"target_count\":$gateway_rotation_target_count,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .poc_max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .max_input_tokens_in_flight == $gateway_max_input_tokens and .participant_throttle.request_burst == $gateway_participant_request_burst and .participant_throttle.recovery_per_minute == $gateway_participant_recovery_per_minute and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_input_tokens_in_flight == $gateway_max_input_tokens and .access_mode == \"api_key\")) and .escrow_rotation.enabled == $gateway_rotation_enabled and .escrow_rotation.settlement_enabled == $gateway_rotation_settlement_enabled and .escrow_rotation.pre_poc_blocks == $gateway_pre_poc_blocks and .escrow_rotation.models[0].temp_count == $gateway_rotation_temp_count and .escrow_rotation.models[0].target_count == $gateway_rotation_target_count and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
   step 'Verify gateway runtime, client authentication, and public route'
   gateway_ready=false
     gateway_ready_timeout="${GDC_GATEWAY_READY_TIMEOUT_SECONDS:-600}"
     [[ "$gateway_ready_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_READY_TIMEOUT_SECONDS must be positive'
     deadline=$((SECONDS + gateway_ready_timeout))
   while (( SECONDS < deadline )); do
-    if ssh gdc-node0 'set -Eeuo pipefail
+    if ssh "$GATEWAY_NODE" 'set -Eeuo pipefail
       set -a; . /srv/dai/ops/gateway.env; set +a
       curl -fsS http://127.0.0.1:18080/v1/status \
         | jq -e "(.devshards // [.]) | any((.active // true) == true and .phase == \"active\" and .requests_blocked == false and .chain_phase == \"Inference\")" >/dev/null
@@ -285,7 +285,7 @@ if [[ "$COMPONENT" == gateway ]]; then
     sleep 3
   done
   [[ "$gateway_ready" == true ]] || die 'gateway did not become ACTIVE before timeout'
-  ssh gdc-node0 'test "$(stat -c %a /srv/dai/ops/gateway.env)" = 600'
+  ssh "$GATEWAY_NODE" 'test "$(stat -c %a /srv/dai/ops/gateway.env)" = 600'
   admin_key="$(<"$SECRETS/gateway.admin-key")"
   client_key="$(cut -d, -f1 "$SECRETS/gateway.client-keys")"
   unauth_status="$(curl -sk -o /dev/null -w '%{http_code}' "$GDC_GATEWAY_PUBLIC_URL/v1/chat/completions" -H 'Content-Type: application/json' -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"health"}]}')"
@@ -309,12 +309,12 @@ if [[ "$COMPONENT" == gateway ]]; then
         | map(select(. != null and (tostring | test("^[1-9][0-9]*$"))))
         | first | tostring
       ')"
-  chain_rpc="${GDC_CHAIN_RPC_URL:-https://${NODE4_PUBLIC_HOST}/chain-rpc/}"
+  chain_rpc="${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}"
   "$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$active_escrow" \
     --node "$chain_rpc" --chain-id "$CHAIN_ID" --output json \
     | jq -e --arg id "$active_escrow" '.found == true and (.escrow.id | tostring) == $id' >/dev/null \
     || die "gateway escrow $active_escrow is absent from committed chain state"
-  ssh gdc-node0 "set -Eeuo pipefail; curl -fsS http://127.0.0.1:18080/v1/status -H 'Authorization: Bearer $admin_key' >/dev/null"
+  ssh "$GATEWAY_NODE" "set -Eeuo pipefail; curl -fsS http://127.0.0.1:18080/v1/status -H 'Authorization: Bearer $admin_key' >/dev/null"
   "$ROOT/04-ops/test-inference.sh" "$GDC_GATEWAY_PUBLIC_URL" "$client_key" >/dev/null
   printf 'PASS gateway status and authentication checks\n'
 fi

@@ -186,7 +186,10 @@ case "$COMMAND" in
   ops)
     [[ $# -ge 1 ]] || { usage; exit 2; }
     if [[ "$1" == edge-node ]]; then
-      [[ $# -eq 2 && "$2" =~ ^gdc-node[0-4]$ ]] || { usage; exit 2; }
+      [[ $# -eq 2 ]] || { usage; exit 2; }
+      source "$ROOT/scripts/lib.sh"
+      load_project
+      topology_contains_node "$2" || { echo "ops edge-node expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
       run_phase "ops-edge-node-$2" "$ROOT/scripts/phase-ops.sh" "$1" "$2"
     else
       [[ $# -eq 1 && "$1" =~ ^(gateway|monitoring|site|explorer|edge)$ ]] || { usage; exit 2; }
@@ -195,6 +198,9 @@ case "$COMMAND" in
     ;;
   node)
     [[ $# -eq 2 && "$1" =~ ^(stop|start|verify|reset)$ ]] || { usage; exit 2; }
+    source "$ROOT/scripts/lib.sh"
+    load_project
+    topology_contains_node "$2" || { echo "node $1 expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
     run_phase "node-$1-$2" "$ROOT/scripts/phase-node.sh" "$1" "$2"
     ;;
   governance)

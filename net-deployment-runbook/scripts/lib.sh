@@ -62,12 +62,20 @@ node_gpu_profile() { topology_value "$GDC_NODE_GPU_PROFILES" "$1" || die "no GPU
 node_p2p_port() { topology_value "$GDC_NODE_P2P_PORTS" "$1" || printf '%s\n' 5000; }
 node_ml_host() { topology_value "${GDC_NODE_ML_HOSTS:-}" "$1"; }
 
+node_for_ml_host() {
+  local ml_host="$1" node
+  for node in "${GDC_NODES[@]}"; do
+    [[ "$(node_ml_host "$node" || true)" == "$ml_host" ]] && { printf '%s\n' "$node"; return 0; }
+  done
+  return 1
+}
+
 load_topology() {
   [[ -n "${GDC_NODE_ALIASES:-}" ]] || die 'set GDC_NODE_ALIASES in .env'
   read -r -a GDC_NODES <<<"$GDC_NODE_ALIASES"
   (( ${#GDC_NODES[@]} >= 1 )) || die 'GDC_NODE_ALIASES must contain at least one SSH alias'
-  local -A seen=()
-  local node host profile
+  local -A seen=() ml_seen=()
+  local node host profile ml_alias
   for node in "${GDC_NODES[@]}"; do
     [[ "$node" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid SSH alias in GDC_NODE_ALIASES: $node"
     [[ -z "${seen[$node]:-}" ]] || die "duplicate SSH alias in GDC_NODE_ALIASES: $node"
@@ -76,6 +84,13 @@ load_topology() {
     [[ "$host" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid public host for $node: $host"
     profile="$(node_gpu_profile "$node")"
     [[ -n "$profile" ]] || die "empty GPU profile for $node"
+    ml_alias="$(node_ml_host "$node" || true)"
+    if [[ -n "$ml_alias" ]]; then
+      [[ "$ml_alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid ML SSH alias for $node: $ml_alias"
+      [[ -z "${seen[$ml_alias]:-}" ]] || die "ML SSH alias must differ from a validator alias: $ml_alias"
+      [[ -z "${ml_seen[$ml_alias]:-}" ]] || die "network GPU SSH alias is mapped more than once: $ml_alias"
+      ml_seen[$ml_alias]=1
+    fi
   done
   GENESIS_NODE="${GDC_GENESIS_NODE:-${GDC_NODES[0]}}"
   PUBLIC_EDGE_NODE="${GDC_PUBLIC_EDGE_NODE:-$GENESIS_NODE}"
