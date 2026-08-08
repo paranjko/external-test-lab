@@ -22,8 +22,7 @@ case "$sla" in
   *h) sla_ms="$(( ${sla%h} * 3600000 ))" ;;
 esac
 
-bot_host="${GDC_TELEGRAM_BOT_HOST:-gdc-node4}"
-[[ "$bot_host" == gdc-node0 || "$bot_host" == gdc-node4 ]] || die 'GDC_TELEGRAM_BOT_HOST must be gdc-node0 or gdc-node4'
+bot_host="$TELEGRAM_BOT_HOST"
 # Telegram IDs are bounded to 52 significant bits.  This signed 64-bit value
 # cannot collide with a real account/group assignment, yet remains valid for
 # SQLite INTEGER PRIMARY KEY storage.
