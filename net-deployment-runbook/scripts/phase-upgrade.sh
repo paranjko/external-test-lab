@@ -14,14 +14,13 @@ grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$BASELINE" || die 'model overlay dif
 # 0.2.14 markers, so require the immutable pre-upgrade PASS bundle rather
 # than incorrectly demanding that a completed upgrade look like its baseline.
 target_runtime_active=true
-while IFS= read -r target_index; do
-  target_node="gdc-node$target_index"
+while IFS= read -r target_node; do
   target_versions="$(curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$target_node")/v1/versions" 2>/dev/null || true)"
   jq -e --arg commit "$GONKA_COMMIT" '
     (.node_version.version | ltrimstr("v")) == "0.2.15"
     and .node_version.commit == $commit
   ' <<<"$target_versions" >/dev/null 2>&1 || target_runtime_active=false
-done < <(configured_node_indexes)
+done < <(configured_nodes)
 if [[ "$target_runtime_active" == true ]]; then
   step 'Reuse immutable 0.2.14 baseline evidence for the already activated target runtime'
 else
@@ -48,35 +47,40 @@ on_upgrade_exit() {
 }
 trap on_upgrade_exit EXIT
 
-mapfile -t nodes < <(configured_node_indexes)
+mapfile -t nodes < <(configured_nodes)
 (( ${#nodes[@]} > 0 )) || die 'no joined participants to upgrade'
 
 chain_rpc() {
-  ssh gdc-node0 "curl -fsS http://127.0.0.1:26657/$1"
+  ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:26657/$1"
 }
 
 capture_chain_state() {
   local prefix="$1" account address balance
   chain_rpc status >"$RUN/$prefix-status.json"
   chain_rpc validators >"$RUN/$prefix-validators.json"
-  curl -fsS "https://$NODE0_PUBLIC_HOST/v1/models" >"$RUN/$prefix-models.json"
-  ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' >"$RUN/$prefix-participants.json"
-  ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data' >"$RUN/$prefix-epoch-group.json"
+  curl -fsS "https://$GENESIS_PUBLIC_HOST/v1/models" >"$RUN/$prefix-models.json"
+  ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' >"$RUN/$prefix-participants.json"
+  ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data' >"$RUN/$prefix-epoch-group.json"
   printf '[]' >"$RUN/$prefix-balances.json"
-  for account in "$ACCOUNTS"/gdc-node*-cold.json "$ACCOUNTS/gdc-gateway-cold.json"; do
+  for node in "${nodes[@]}"; do
+    account="$ACCOUNTS/$node-cold.json"
     address="$(jq -er .address "$account")"
-    balance="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$address")"
+    balance="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$address")"
     jq --arg address "$address" --argjson balance "$balance" '. + [{address:$address,balance:$balance}]' \
       "$RUN/$prefix-balances.json" >"$RUN/$prefix-balances.tmp"
     mv "$RUN/$prefix-balances.tmp" "$RUN/$prefix-balances.json"
   done
+  account="$ACCOUNTS/gdc-gateway-cold.json"
+  address="$(jq -er .address "$account")"
+  balance="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$address")"
+  jq --arg address "$address" --argjson balance "$balance" '. + [{address:$address,balance:$balance}]' "$RUN/$prefix-balances.json" >"$RUN/$prefix-balances.tmp"
+  mv "$RUN/$prefix-balances.tmp" "$RUN/$prefix-balances.json"
 }
 
 capture_compose_state() {
-  local prefix="$1" index node
+  local prefix="$1" node
   mkdir -p "$RUN/$prefix-services"
-  for index in "${nodes[@]}"; do
-    node="gdc-node$index"
+  for node in "${nodes[@]}"; do
     ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env ps --format json" \
       | jq -s '[.[] | {service:.Service,image:.Image,state:.State,health:.Health}] | sort_by(.service)' \
       >"$RUN/$prefix-services/$node.json"
@@ -103,10 +107,9 @@ fetch_node_versions() {
 }
 
 capture_runtime_state() {
-  local index node runtime_file node_current api_current node_process api_process
+  local node runtime_file node_current api_current node_process api_process
   mkdir -p "$RUN/runtime"
-  for index in "${nodes[@]}"; do
-    node="gdc-node$index"
+  for node in "${nodes[@]}"; do
     runtime_file="$RUN/runtime/$node.json"
     # A node's public Caddy proxy can return a short 502 while the API
     # container is being restarted by Cosmovisor. That is a transition to
@@ -136,7 +139,7 @@ capture_runtime_state() {
   || die 'GDC_UPGRADE_PROPOSAL_ID is required'
 upgrade_stage='proposal-verification'
 step "Verify passed software-upgrade proposal $GDC_UPGRADE_PROPOSAL_ID"
-proposal="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$GDC_UPGRADE_PROPOSAL_ID")"
+proposal="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$GDC_UPGRADE_PROPOSAL_ID")"
 printf '%s\n' "$proposal" >"$RUN/upgrade-proposal.json"
 jq -e '.proposal.status == "PROPOSAL_STATUS_PASSED"' "$RUN/upgrade-proposal.json" >/dev/null || die 'upgrade proposal has not passed'
 upgrade_name="v$GONKA_RELEASE"
@@ -160,9 +163,9 @@ if [[ -z "$pre_source" ]]; then
   (( current_height < plan_height )) || die 'upgrade already activated, but no pre-upgrade evidence bundle exists'
   capture_chain_state pre
   capture_compose_state pre
-  # node4 is the canonical public edge. node0's own hostname is a participant
+  # The public edge is canonical. The Genesis hostname is a participant
   # callback route and can retain a stale edge configuration across a reset.
-  capture_canonical_genesis "https://$NODE4_PUBLIC_HOST/chain-rpc/genesis" "$RUN/live-genesis.json"
+  capture_canonical_genesis "https://$PUBLIC_EDGE_HOST/chain-rpc/genesis" "$RUN/live-genesis.json"
   pre_source="$RUN"
 else
   for name in status validators models participants epoch-group balances; do
@@ -190,8 +193,7 @@ deadline=$((SECONDS + ${GDC_UPGRADE_WAIT_SECONDS:-21600}))
 mkdir -p "$RUN/last-upgrade-height"
 while (( SECONDS < deadline )); do
   applied=0
-  for index in "${nodes[@]}"; do
-    node="gdc-node$index"
+  for node in "${nodes[@]}"; do
     body="$(curl -fsS --max-time 8 "$(node_url "$node")/chain-api/productscience/inference/inference/last_upgrade_height" 2>/dev/null || true)"
     height="$(jq -r '.last_upgrade_height // "0"' <<<"$body" 2>/dev/null || true)"
     found="$(jq -r '.found // false' <<<"$body" 2>/dev/null || true)"
@@ -216,7 +218,7 @@ while (( SECONDS < deadline )); do
     fi
   done
   (( applied == ${#nodes[@]} )) && break
-  observed="$(curl -fsS --max-time 5 "https://$NODE4_PUBLIC_HOST/chain-rpc/status" 2>/dev/null | jq -r '.result.sync_info.latest_block_height // "unavailable"' 2>/dev/null || true)"
+  observed="$(curl -fsS --max-time 5 "https://$PUBLIC_EDGE_HOST/chain-rpc/status" 2>/dev/null | jq -r '.result.sync_info.latest_block_height // "unavailable"' 2>/dev/null || true)"
   printf 'WAIT  cosmovisor upgrade applied=%s/%s observed-height=%s target=%s\n' "$applied" "${#nodes[@]}" "${observed:-unavailable}" "$plan_height"
   sleep 5
 done
@@ -224,8 +226,7 @@ done
 capture_runtime_state
 
 step 'Record the active Cosmovisor release marker on every upgraded participant'
-for index in "${nodes[@]}"; do
-  node="gdc-node$index"
+for node in "${nodes[@]}"; do
   printf '%s %s\n' "$GDC_RELEASE_PROFILE" "$(profile_hash)" \
     | ssh "$node" "sudo tee /srv/dai/deploy/$node/.gdc-release >/dev/null && sudo chmod 600 /srv/dai/deploy/$node/.gdc-release"
 done
@@ -236,7 +237,7 @@ step "Wait for one full post-upgrade epoch beyond height $post_upgrade_boundary"
 deadline=$((SECONDS + ${GDC_UPGRADE_POST_EPOCH_WAIT_SECONDS:-3600}))
 current=0
 while (( SECONDS < deadline )); do
-  status="$(curl -fsS --max-time 8 "https://$NODE4_PUBLIC_HOST/chain-rpc/status" 2>/dev/null || true)"
+  status="$(curl -fsS --max-time 8 "https://$PUBLIC_EDGE_HOST/chain-rpc/status" 2>/dev/null || true)"
   observed="$(jq -r '.result.sync_info.latest_block_height // "0"' <<<"$status" 2>/dev/null || true)"
   [[ "$observed" =~ ^[0-9]+$ ]] && current="$observed"
   (( current > post_upgrade_boundary )) && break
@@ -248,7 +249,7 @@ done
 step 'Capture and compare post-upgrade state'
 capture_chain_state post
 capture_compose_state post
-capture_canonical_genesis "https://$NODE4_PUBLIC_HOST/chain-rpc/genesis" "$RUN/post-genesis.json"
+capture_canonical_genesis "https://$PUBLIC_EDGE_HOST/chain-rpc/genesis" "$RUN/post-genesis.json"
 [[ "$(genesis_sha256 "$RUN/post-genesis.json")" == "$live_genesis_hash" ]] || die 'Genesis changed during upgrade'
 [[ "$(jq -r .result.node_info.network "$RUN/pre-status.json")" == "$(jq -r .result.node_info.network "$RUN/post-status.json")" ]] || die 'chain ID changed during upgrade'
 jq -e --slurpfile before "$RUN/pre-participants.json" '
