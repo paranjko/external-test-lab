@@ -7,7 +7,7 @@ record_phase_profile identities
 
 MNEMONICS="$ROOT/artifacts/mnemonics"
 step 'Local secrets and account backups'
-"$ROOT/scripts/make-secrets.sh" "$SECRETS"
+"$ROOT/scripts/make-secrets.sh" "$SECRETS" "$GENESIS_NODE"
 step 'Cold accounts for genesis participant and gateway only'
 "$ROOT/01-identities-genesis/create-cold-accounts.sh" "$SECRETS/operator.keyring" "$GENESIS_NODE" gdc-gateway
 step 'Genesis participant identity'

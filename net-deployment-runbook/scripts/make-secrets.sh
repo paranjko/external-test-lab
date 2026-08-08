@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-$ROOT/state/secrets}"
+GENESIS_NODE="${2:-}"
+[[ "$GENESIS_NODE" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'Usage: make-secrets.sh [secrets-dir] GENESIS_SSH_ALIAS' >&2; exit 2; }
 umask 077
 mkdir -p "$OUT"
 new_count=0 keep_count=0
@@ -16,8 +18,8 @@ write_once() {
     new_count=$((new_count + 1))
   fi
 }
-write_once "$OUT/gdc-node0.keyring" "$(random)"
-write_once "$OUT/gdc-node0.postgres" "$(random)"
+write_once "$OUT/$GENESIS_NODE.keyring" "$(random)"
+write_once "$OUT/$GENESIS_NODE.postgres" "$(random)"
 write_once "$OUT/operator.keyring" "$(random)"
 write_once "$OUT/grafana.admin" "$(random)"
 write_once "$OUT/gateway.admin-key" "sk-admin-$(openssl rand -hex 24)"
