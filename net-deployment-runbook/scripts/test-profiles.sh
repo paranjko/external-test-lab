@@ -3,6 +3,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/profile.sh"
 source "$ROOT/scripts/lib.sh"
+"$ROOT/scripts/test-topology-inventory.sh"
 
 (
   unset SITE_HOST GRAFANA_HOST GDC_SITE_HOST GDC_GRAFANA_HOST
