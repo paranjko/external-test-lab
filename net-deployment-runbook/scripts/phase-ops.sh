@@ -14,6 +14,11 @@ fi
 if [[ "$COMPONENT" == gateway ]]; then
   GDC_GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
   [[ "$GDC_GATEWAY_VERSION" =~ ^v[34]$ ]] || die 'GDC_GATEWAY_VERSION must be v3 or v4'
+  supported_protocols="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
+  case " $supported_protocols " in
+    *" $GDC_GATEWAY_VERSION "*) ;;
+    *) die "DevShard $GDC_GATEWAY_VERSION is not supported by the pinned upstream artifact; supported: $supported_protocols" ;;
+  esac
   GDC_GATEWAY_PUBLIC_URL="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
   GDC_GATEWAY_PUBLIC_URL="${GDC_GATEWAY_PUBLIC_URL%/}"
   export GDC_GATEWAY_VERSION
