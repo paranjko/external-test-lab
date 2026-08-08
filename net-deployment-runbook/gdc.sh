@@ -49,6 +49,7 @@ Create .env from .env.example, then run:
   ./gdc.sh --release testnet-0.2.14 --model qwen3-0.6b prepare
   ./gdc.sh --release testnet-0.2.14 qualify-ml [gdc-nodeN]
   ./gdc.sh --release testnet-0.2.14 genesis
+  ./gdc.sh --release testnet-0.2.14 baseline
   ./gdc.sh --release testnet-0.2.14 bootstrap-access
   ./gdc.sh telegram-key-probe Qwen/Qwen3-0.6B 60s
   ./gdc.sh --release testnet-0.2.14 gateway-continuity
@@ -107,7 +108,7 @@ done
 COMMAND="${1:-help}"
 shift || true
 case "$COMMAND" in
-  prepare|verify|reset|settle|bootstrap-access|gateway-continuity|audit|telegram-bot|telegram-key-probe)
+  prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit|telegram-bot|telegram-key-probe)
     [[ "$COMMAND" == reset || "$COMMAND" == telegram-key-probe || $# -eq 0 ]] || { usage; exit 2; }
     if [[ "$COMMAND" == reset ]]; then
       exec "$ROOT/scripts/phase-reset.sh" "$@"
@@ -117,6 +118,8 @@ case "$COMMAND" in
     elif [[ "$COMMAND" == telegram-key-probe ]]; then
       [[ $# -eq 2 ]] || { usage; exit 2; }
       run_phase telegram-key-probe "$ROOT/scripts/phase-telegram-key-probe.sh" "$@"
+    elif [[ "$COMMAND" == baseline ]]; then
+      run_phase baseline "$ROOT/scripts/phase-baseline.sh"
     elif [[ "$COMMAND" == bootstrap-access ]]; then
       run_phase bootstrap-access "$ROOT/scripts/phase-bootstrap-access.sh"
     elif [[ "$COMMAND" == gateway-continuity ]]; then
