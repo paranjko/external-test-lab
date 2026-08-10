@@ -5,6 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 load_project
 
+note() {
+  [[ "${GDC_INFERENCED_CLI_QUIET:-false}" == true ]] || printf '%s\n' "$*"
+}
+
 platform_key() {
   local os arch
   os="$(uname -s)"
@@ -44,11 +48,11 @@ bin_dir="${GDC_INFERENCED_BIN_DIR:-$HOME/.local/bin}"
 target="$bin_dir/inferenced"
 current="$(command -v inferenced 2>/dev/null || true)"
 if [[ -n "$current" ]] && version_matches "$current"; then
-  printf 'PASS operator inferenced CLI: %s (%s)\n' "$current" "$INFERENCED_OPERATOR_VERSION"
+  note "PASS operator inferenced CLI: $current ($INFERENCED_OPERATOR_VERSION)"
   exit 0
 fi
 if version_matches "$target"; then
-  printf 'PASS operator inferenced CLI: %s (%s)\n' "$target" "$INFERENCED_OPERATOR_VERSION"
+  note "PASS operator inferenced CLI: $target ($INFERENCED_OPERATOR_VERSION)"
   exit 0
 fi
 
@@ -64,7 +68,7 @@ binary="$(find "$tmp/unpacked" -type f -name inferenced -perm -u+x -print -quit)
 install -d -m 0755 "$bin_dir"
 install -m 0755 "$binary" "$target"
 version_matches "$target" || die "installed inferenced does not report required version $INFERENCED_OPERATOR_VERSION"
-printf 'PASS operator inferenced CLI installed: %s (%s)\n' "$target" "$INFERENCED_OPERATOR_VERSION"
+note "PASS operator inferenced CLI installed: $target ($INFERENCED_OPERATOR_VERSION)"
 if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
-  printf 'NOTE add %s to PATH to invoke inferenced directly\n' "$bin_dir"
+  note "NOTE add $bin_dir to PATH to invoke inferenced directly"
 fi

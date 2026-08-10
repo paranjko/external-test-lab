@@ -21,7 +21,7 @@ grep -Fq '[ROLE-HOST.md](ROLE-HOST.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-GATEWAY.md](ROLE-GATEWAY.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-DEVELOPER.md](ROLE-DEVELOPER.md)' "$ROOT/README.md"
 grep -Fq './gdc.sh --release v2026.07.23 genesis gdc-node0' "$ROOT/ROLE-GENESIS.md"
-grep -Fq './gdc.sh host join <ssh-alias>' "$ROOT/ROLE-JOIN.md"
+grep -Fq './gdc.sh host join [--public-host <dns-name>] <ssh-alias>' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'OPS is the only role that requires `.env`' "$ROOT/ROLE-OPS.md"
 if grep -Eq 'GDC_GRAFANA_ADMIN_PASSWORD|GDC_ENV|\.env\.example|gpu-profile|p2p-port|acme-email|ACME_EMAIL' "$ROOT/ROLE-GENESIS.md"; then
   echo 'Genesis role must not require hidden configuration or internal deployment settings' >&2

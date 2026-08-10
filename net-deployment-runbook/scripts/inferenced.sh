@@ -5,20 +5,11 @@ source "$ROOT/scripts/lib.sh"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/profile.sh"
 load_profiles
-TOOL_IMAGE="${GDC_INFERENCED_TOOL_IMAGE:-$INFERENCED_IMAGE}"
-[[ "$TOOL_IMAGE" == *@sha256:* ]] || { echo 'GDC_INFERENCED_TOOL_IMAGE must be immutable by digest' >&2; exit 2; }
 HOME_DIR="${GDC_OPERATOR_HOME:-$STATE/operator-home}"
-RUNS_DIR="$GDC_HOME/runs"
-mkdir -p "$HOME_DIR" "$RUNS_DIR"
+BIN_DIR="${GDC_INFERENCED_BIN_DIR:-$HOME/.local/bin}"
+BIN="$BIN_DIR/inferenced"
+mkdir -p "$HOME_DIR"
 chmod 700 "$HOME_DIR"
-TTY=()
-[[ -t 0 && -t 1 ]] && TTY=(-t)
-exec docker run --rm -i "${TTY[@]}" --network host \
-  --user "$(id -u):$(id -g)" \
-  -e HOME=/home/gdc \
-  -v "$HOME_DIR:/home/gdc/.inference" \
-  -v "$RUNS_DIR:/gdc-runs:ro" \
-  -v "$ROOT:/kit" \
-  -w /kit \
-  --entrypoint inferenced \
-  "$TOOL_IMAGE" "$@"
+GDC_INFERENCED_CLI_QUIET=true "$ROOT/scripts/ensure-inferenced-cli.sh"
+[[ -x "$BIN" ]] || { echo "inferenced CLI was not installed at $BIN" >&2; exit 1; }
+exec "$BIN" --home "$HOME_DIR" "$@"

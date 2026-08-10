@@ -41,13 +41,10 @@ load_profiles() {
     # shellcheck disable=SC1090
     source "$GDC_RESOLVED_IMAGE_LOCK"
   fi
-  # The operator CLI uses the exact inferenced release image. It consumes the
-  # network profile and is not a separately versioned release input.
-  GDC_INFERENCED_TOOL_IMAGE="$INFERENCED_IMAGE"
   export GDC_RELEASE_PROFILE="$release" GDC_DEPLOYMENT_PROFILE="$deployment"
   export GDC_MODEL_PROFILE="$model" GDC_OPERATOR_SERVICES_PROFILE="$operator"
   export GONKA_REPOSITORY GONKA_SOURCE_REF GONKA_COMMIT MODEL_ID MODEL_REVISION
-  export GDC_INFERENCED_TOOL_IMAGE EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
+  export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
 }
 
 profile_summary() {

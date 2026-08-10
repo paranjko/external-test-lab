@@ -60,8 +60,7 @@ proposal_id="${GDC_UPGRADE_PROPOSAL_ID:-}"
 if [[ -z "$proposal_id" && "${GDC_UPGRADE_SUBMIT:-false}" == true ]]; then
   step 'Submit software-upgrade proposal from the dedicated operator account'
   password="$(<"$SECRETS/operator.keyring")"
-  proposal_in_container="$(inferenced_runs_path "$RUN/proposal.json")"
-  tx="$(printf '%s\n' "$password" | "$ROOT/scripts/inferenced.sh" tx gov submit-proposal "$proposal_in_container" \
+  tx="$(printf '%s\n' "$password" | "$ROOT/scripts/inferenced.sh" tx gov submit-proposal "$RUN/proposal.json" \
     --from "$GENESIS_NODE-cold" --keyring-backend file --chain-id "$CHAIN_ID" --node "$rpc" \
     --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --broadcast-mode sync --output json --yes)"
   printf '%s\n' "$tx" >"$RUN/submit-tx.json"

@@ -182,7 +182,6 @@ for release in v2026.07.23 v2026.08.06; do
   done
   [[ "$DEVSHARD_V3_SHA256" =~ ^[0-9a-f]{64}$ && "$DEVSHARD_V4_SHA256" =~ ^[0-9a-f]{64}$ ]]
   [[ "$BRIDGE_IMAGE" == *@sha256:* ]]
-  [[ "$GDC_INFERENCED_TOOL_IMAGE" == "$INFERENCED_IMAGE" ]]
   expected_network_hash="$(sha256sum \
     "$ROOT/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
     "$ROOT/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \

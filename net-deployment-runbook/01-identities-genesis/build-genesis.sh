@@ -84,8 +84,8 @@ printf '%s\n' "$PASSWORD" | run_logged "$ROOT/scripts/inferenced.sh" genesis gen
   --pubkey "$GENESIS_CONSENSUS" --ml-operational-address "$GENESIS_WARM" \
   --url "https://${GENESIS_PUBLIC_HOST}" --chain-id "$CHAIN_ID" --node-id "$GENESIS_ID"
 
-run_logged "$ROOT/scripts/inferenced.sh" genesis collect-gentxs --gentx-dir /home/gdc/.inference/config/gentx
-run_logged "$ROOT/scripts/inferenced.sh" genesis patch-genesis --genparticipant-dir /home/gdc/.inference/config/genparticipant
+run_logged "$ROOT/scripts/inferenced.sh" genesis collect-gentxs --gentx-dir "$HOME_DIR/config/gentx"
+run_logged "$ROOT/scripts/inferenced.sh" genesis patch-genesis --genparticipant-dir "$HOME_DIR/config/genparticipant"
 
 UPDATED_GENESIS="$(mktemp)"
 jq --arg chain "$CHAIN_ID" --arg time "$GENESIS_TIME" \

@@ -42,8 +42,9 @@ fi
 grep -Fq 'ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"' "$ROOT/scripts/lib.sh"
 grep -Fq 'GDC_HOME="$GDC_DATA_ROOT/$node"' "$ROOT/scripts/lib.sh"
 grep -Fq 'ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"' "$ROOT/scripts/deploy-telegram-bot.sh"
-grep -Fq -- '-v "$RUNS_DIR:/gdc-runs:ro"' "$ROOT/scripts/inferenced.sh"
-! grep -R -q 'proposal_in_container="/kit/' "$ROOT/scripts"
+grep -Fq 'exec "$BIN" --home "$HOME_DIR" "$@"' "$ROOT/scripts/inferenced.sh"
+! grep -Fq 'docker run' "$ROOT/scripts/inferenced.sh"
+! grep -R -q 'inferenced_runs_path' "$ROOT/scripts/phase-"*.sh
 ! grep -R --include='*.sh' --exclude='test-gdc-home.sh' -q '\$ROOT/(state|artifacts)' "$ROOT"
 ! grep -R --include='*.sh' --exclude='test-gdc-home.sh' -q 'GDC_STATE_DIR' "$ROOT"
 [[ ! -e "$ROOT/.env" && ! -e "$ROOT/state" && ! -e "$ROOT/artifacts" ]]
