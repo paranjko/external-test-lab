@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: $0 --env .env --output gdc-nodeN.json --mnemonic-output gdc-nodeN-warm.mnemonic" >&2; }
+usage(){ echo "Usage: $0 --env .env --output ssh-alias.json --mnemonic-output ssh-alias-warm.mnemonic" >&2; }
 ENV_FILE=""; OUTPUT=""; MNEMONIC_OUTPUT=""
 while (($#)); do case "$1" in --env) ENV_FILE="$2"; shift 2;; --output) OUTPUT="$2"; shift 2;; --mnemonic-output) MNEMONIC_OUTPUT="$2"; shift 2;; *) usage; exit 2;; esac; done
 [[ -s "$ENV_FILE" && -n "$OUTPUT" && -n "$MNEMONIC_OUTPUT" ]] || { usage; exit 2; }

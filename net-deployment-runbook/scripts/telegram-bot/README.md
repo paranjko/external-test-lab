@@ -1,27 +1,41 @@
-# Telegram API-key issuer
+# Telegram inference consumer
 
-This is the source for the Community DevNet Telegram long-polling issuer. It
-runs on node0 during one-participant bootstrap and moves to the
-secondary-services host later. Gateway credentials and the finite authorised
-key pool stay root-owned on the gateway host until deployment.
+This OPS service is the first controlled user of the Community DevNet gateway.
+It accepts private Telegram messages, keeps a durable conversation for each
+Telegram account, and sends every model turn through chain-accounted inference.
+It does not issue API keys.
 
-The bot assigns one key to each private Telegram account. `/key` is idempotent;
-`/renew` replaces the assigned key only with another key that passes an actual
-authenticated chat request. It never treats a direct MLNode response as gateway
-proof.
+The pinned Gonka gateway exposes `/v1/chat/completions`, not the OpenAI
+Conversations and Responses endpoints. The bot therefore runs a loopback-only
+compatibility API:
 
-## Operator setup
+- `POST /v1/conversations` creates durable conversation state
+- `POST /v1/responses` executes the next turn through the Gonka gateway
+- `GET /health` reports process health
+- `GET /metrics` exposes aggregate Prometheus metrics for local verification
 
-1. Create a BotFather bot and write its token to the runbook's root `.env`,
-   created from the root `.env.example`. There is no bot-specific `.env`.
-2. Generate the finite pool from the runbook secrets and install the resulting
-   `gateway-key-pool.json` alongside that file. Do not commit either file.
-3. Once the gateway is active, deploy the source and the two runtime secrets:
+The bot writes the same aggregate metrics to the node exporter's textfile
+collector. Prometheus receives interaction counts, unique users, Telegram
+Premium classification, inference outcomes, exact input/output tokens, and the
+last successful inference time. Metrics never contain Telegram IDs, usernames,
+conversation IDs, or message text.
 
-   ```bash
-   ./gdc.sh telegram-bot
-   ```
+## Commands
 
-The deployment renders an internal `bot.env`, preserves the durable issuance
-database on the target host, stops any old gateway-host poller, and verifies
-both the Telegram identity and an authorised key before declaring success.
+The Gateway operator first provisions the bot's dedicated client credential.
+OPS then deploys and verifies the consumer:
+
+```bash
+./gdc.sh gateway access-key ensure telegram
+./gdc.sh ops consumer telegram apply
+./gdc.sh ops consumer telegram status
+./gdc.sh ops consumer telegram verify
+```
+
+`apply` preserves `/srv/dai/gonka-devnet-bot/data/bot.sqlite3`, removes the
+obsolete key-pool file, stops stale Telegram pollers on other managed hosts,
+and proves a real inference before returning PASS.
+
+The BotFather token stays in the runbook's root `.env`. Gateway and internal
+adapter credentials remain mode-0600 files under the runbook state directory;
+they are never written to Git or returned to Telegram users.

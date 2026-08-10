@@ -30,10 +30,6 @@ while (($#)); do
   esac
 done
 
-[[ "$HOST" =~ ^gdc-node[0-4]$ || "$HOST" == gdc-node4-ml ]] || {
-  usage
-  exit 2
-}
 [[ -n "$INVENTORY" && -n "$OUTPUT" ]] || {
   usage
   exit 2
@@ -44,4 +40,15 @@ source "$ROOT/scripts/lib.sh"
 load_env "$INVENTORY"
 source "$ROOT/scripts/profile.sh"
 load_profiles
+valid_host=false
+for node in $GDC_NODE_ALIASES; do
+  [[ "$HOST" == "$node" ]] && valid_host=true
+done
+for mapping in ${GDC_NODE_ML_HOSTS:-}; do
+  [[ "$HOST" == "${mapping#*=}" && "$mapping" == *=* ]] && valid_host=true
+done
+[[ "$valid_host" == true && "$HOST" =~ ^[A-Za-z0-9._-]+$ ]] || {
+  echo "host is not configured in inventory: $HOST" >&2
+  exit 2
+}
 write_env "$OUTPUT" "GDC_MONITOR_HOST=$HOST" "NODE_EXPORTER_IMAGE=$NODE_EXPORTER_IMAGE" "CADVISOR_IMAGE=$CADVISOR_IMAGE"

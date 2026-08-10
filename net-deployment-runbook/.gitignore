@@ -2,14 +2,7 @@
 inventory.env
 wireguard.env
 VERSION.runtime.lock
-state/
-generated/
 vendor/
-artifacts/accounts/
-artifacts/identities/
-artifacts/genesis/
-artifacts/mnemonics/
-artifacts/wireguard-public-keys/
 
 # Runtime exports and reports
 *.tar.zst

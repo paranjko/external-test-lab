@@ -108,7 +108,20 @@ render() {
         stat(92;"Current executors";"count(count by (participant_key) (devshard_gateway_participant_quarantine_state)) or vector(0)";"none";6;55;6),
         stat(93;"Models observed";"count(count by (model) (devshard_gateway_requests_total)) or vector(0)";"none";12;55;6),
         stat(94;"Transport errors";"sum(devshard_gateway_participant_transport_errors_total) or vector(0)";"none";18;55;6),
-        textpanel(99;"Data contract";"This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Per-request token archives, GNK notional value and archive-node SQL are not available, so the board does not invent those panels.";59)
+
+        row(250;"Telegram inference consumer";59),
+        stat(101;"Unique users";"sum(gdc_telegram_bot_unique_users) or vector(0)";"none";0;60;4),
+        stat(102;"Premium users";"sum(gdc_telegram_bot_unique_users{premium=\"true\"}) or vector(0)";"none";4;60;4),
+        stat(103;"Conversations";"sum(gdc_telegram_bot_conversations) or vector(0)";"none";8;60;4),
+        stat(104;"Interactions";"sum(gdc_telegram_bot_interactions_total) or vector(0)";"none";12;60;4),
+        stat(105;"Input tokens";"sum(gdc_telegram_bot_tokens_total{direction=\"input\"}) or vector(0)";"none";16;60;4),
+        stat(106;"Output tokens";"sum(gdc_telegram_bot_tokens_total{direction=\"output\"}) or vector(0)";"none";20;60;4),
+        ts(111;"Interaction rate by outcome and Premium state";"sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total[15m])) or vector(0)";"{{outcome}} · premium={{premium}}";"reqps";0;64;12;8),
+        ts(112;"Inference request rate by outcome";"sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total[15m])) or vector(0)";"{{outcome}}";"reqps";12;64;12;8),
+        stat(113;"Last successful bot inference";"time() - max(gdc_telegram_bot_last_success_timestamp_seconds)";"s";0;72;8),
+        stat(114;"Responses without token usage";"sum(gdc_telegram_bot_usage_missing_total) or vector(0)";"none";8;72;8),
+        stat(115;"Consumer process";"max(gdc_telegram_bot_up) or vector(0)";"none";16;72;8),
+        textpanel(99;"Data contract";"This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.";76)
       ])
     end
   ' >"$output"

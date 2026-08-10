@@ -1,11 +1,32 @@
-# The three application origins terminate on node4/one-net in
-# edge-node/PublicCaddyfile.  Node0 still needs its own TLS name: DAPI peers
-# use the configured node URL for PoC proof exchange and chain RPC.  Keeping
-# this narrowly scoped to NODE0_PUBLIC_HOST preserves that protocol callback.
+# The three application origins terminate on the configured public edge in
+# edge-node/PublicCaddyfile. The gateway node still needs its own TLS name for
+# DAPI peers and chain RPC. Participant status routes are rendered from the
+# inventory into /srv/dai/ops/Caddyfile at deployment time.
 # `/gateway/*` is the one-participant bootstrap route: it keeps authenticated
 # inference available before the secondary-services host has joined.
-{$NODE0_PUBLIC_HOST} {
+{$GATEWAY_PUBLIC_HOST} {
   encode zstd gzip
+
+	@prometheus_from_public_edge {
+		path /ops-prometheus/*
+		remote_ip {$PUBLIC_EDGE_CIDR}
+	}
+	handle @prometheus_from_public_edge {
+		uri strip_prefix /ops-prometheus
+		reverse_proxy 127.0.0.1:9099
+	}
+	handle /ops-prometheus/* {
+		respond 403
+	}
+
+			handle_path /faucet/* {
+				reverse_proxy 127.0.0.1:18081
+			}
+
+  handle_path /join-bootstrap/* {
+    root * /join-bootstrap
+    file_server
+  }
 
   handle_path /gateway/* {
     reverse_proxy 127.0.0.1:18080
@@ -30,29 +51,6 @@ http://:8081 {
   handle /status/participants {
     rewrite * /productscience/inference/inference/participant
     reverse_proxy 127.0.0.1:1317
-  }
-  handle_path /status/node0/* {
-    reverse_proxy 127.0.0.1:8000
-  }
-  handle_path /status/node1/* {
-    reverse_proxy https://{$NODE1_PUBLIC_HOST} {
-      header_up Host {$NODE1_PUBLIC_HOST}
-    }
-  }
-  handle_path /status/node2/* {
-    reverse_proxy https://{$NODE2_PUBLIC_HOST} {
-      header_up Host {$NODE2_PUBLIC_HOST}
-    }
-  }
-  handle_path /status/node3/* {
-    reverse_proxy https://{$NODE3_PUBLIC_HOST} {
-      header_up Host {$NODE3_PUBLIC_HOST}
-    }
-  }
-  handle_path /status/node4/* {
-    reverse_proxy https://{$NODE4_PUBLIC_HOST} {
-      header_up Host {$NODE4_PUBLIC_HOST}
-    }
   }
   handle_path /status/gateway/* {
     reverse_proxy 127.0.0.1:18080

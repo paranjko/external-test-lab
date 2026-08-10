@@ -4,27 +4,34 @@ source "$(dirname "$0")/lib.sh"
 load_project
 record_phase_profile gateway-continuity
 
-RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-gateway-continuity"
+RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-gateway-continuity"
 mkdir -p "$RUN"
 install_evidence_exit_trap 'Gateway continuity'
 
 gateway_url="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
 gateway_url="${gateway_url%/}"
-chain_base="${GDC_CONTINUITY_CHAIN_BASE_URL:-https://$NODE0_PUBLIC_HOST}"
+chain_base="${GDC_CONTINUITY_CHAIN_BASE_URL:-https://$GENESIS_PUBLIC_HOST}"
 chain_base="${chain_base%/}"
 timeout_seconds="${GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS:-900}"
 pre_blocks="${GDC_GATEWAY_CONTINUITY_PRE_BLOCKS:-3}"
 post_success_target="${GDC_GATEWAY_CONTINUITY_POST_SUCCESSES:-2}"
-request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-20}"
+# The gateway's non-stream response floor is 20 seconds.  The observer must
+# outlive that floor; an equal client timeout fabricates HTTP 000 at the exact
+# boundary while a valid completion is still permitted.
+request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-45}"
 [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS must be positive'
 [[ "$pre_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_PRE_BLOCKS must be positive'
 [[ "$post_success_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_POST_SUCCESSES must be positive'
 [[ "$request_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS must be positive'
 
+# Continuity proves the gateway lifecycle with its dedicated assurance
+# credential. Telegram is a consumer of that gateway, never the source of
+# readiness credentials or a prerequisite for protocol assurance.
+key_source=assurance
 key_file="$SECRETS/gateway.client-keys"
-[[ -s "$key_file" ]] || die 'gateway client keys are absent; run bootstrap-access or ops gateway first'
+[[ -s "$key_file" ]] || die 'gateway client keys are absent; run bootstrap-access or gateway install first'
 client_key="$(cut -d, -f1 "$key_file")"
-[[ -n "$client_key" ]] || die 'gateway client key is empty'
+[[ -n "$client_key" ]] || die 'gateway assurance key is empty'
 
 step 'Capture the live topology and calculate the next PoC boundary'
 curl -fsS "$chain_base/chain-api/productscience/inference/inference/params" >"$RUN/params.json"
@@ -48,6 +55,7 @@ start_height=$((target_anchor - pre_blocks))
   printf 'chain_id=%s\n' "$CHAIN_ID"
   printf 'genesis_sha256=%s\n' "$genesis_sha256"
   printf 'gateway_url=%s\n' "$gateway_url"
+  printf 'credential_source=%s\n' "$key_source"
   printf 'chain_base=%s\n' "$chain_base"
   printf 'initial_height=%s\n' "$height"
   printf 'target_poc_anchor=%s\n' "$target_anchor"

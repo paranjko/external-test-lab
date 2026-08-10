@@ -2,12 +2,12 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
-[[ "$GDC_RELEASE_PROFILE" == testnet-0.2.15 ]] || die 'follow-up target must be testnet-0.2.15'
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]] || die 'follow-up target must be v2026.08.06'
 
 proposal_id="${1:-}"
 [[ "$proposal_id" =~ ^[1-9][0-9]*$ ]] || die 'usage: advance-after-upgrade <upgrade-proposal-id>'
 upgrade_unit="gdc-upgrade-proposal-${proposal_id}.service"
-run="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-advance-after-upgrade"
+run="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-advance-after-upgrade"
 mkdir -p "$run"
 record_phase_profile advance-after-upgrade
 
@@ -25,7 +25,7 @@ latest_passed_upgrade_verdict() {
       printf '%s\n' "$candidate"
       return 0
     fi
-  done < <(find "$ROOT/artifacts/runs" -mindepth 2 -maxdepth 2 -path '*-upgrade/verdict.md' -type f -print 2>/dev/null | LC_ALL=C sort -r)
+  done < <(find "$GDC_HOME/runs" -mindepth 2 -maxdepth 2 -path '*-upgrade/verdict.md' -type f -print 2>/dev/null | LC_ALL=C sort -r)
   return 1
 }
 while (( SECONDS < deadline )); do
@@ -43,19 +43,19 @@ cp "$upgrade_verdict" "$run/upgrade-verdict.md"
 
 step 'Submit the preflighted DevShard v3/v4 governance proposal'
 known_statuses="$run/governance-statuses-before.txt"
-find "$ROOT/artifacts/runs" -mindepth 2 -maxdepth 2 -path '*-governance-devshard/proposal-status.json' -type f -print 2>/dev/null | LC_ALL=C sort >"$known_statuses"
-GDC_GOVERNANCE_SUBMIT=true "$ROOT/gdc.sh" --release testnet-0.2.15 governance devshard || true
-gov_status="$(comm -13 "$known_statuses" <(find "$ROOT/artifacts/runs" -mindepth 2 -maxdepth 2 -path '*-governance-devshard/proposal-status.json' -type f -print 2>/dev/null | LC_ALL=C sort) | tail -n 1)"
+find "$GDC_HOME/runs" -mindepth 2 -maxdepth 2 -path '*-governance-devshard/proposal-status.json' -type f -print 2>/dev/null | LC_ALL=C sort >"$known_statuses"
+GDC_GOVERNANCE_SUBMIT=true "$ROOT/gdc.sh" --release v2026.08.06 governance devshard || true
+gov_status="$(comm -13 "$known_statuses" <(find "$GDC_HOME/runs" -mindepth 2 -maxdepth 2 -path '*-governance-devshard/proposal-status.json' -type f -print 2>/dev/null | LC_ALL=C sort) | tail -n 1)"
 [[ -s "$gov_status" ]] || die 'governance submission did not produce a proposal status artifact'
 gov_id="$(jq -er '.proposal.id | tonumber' "$gov_status")"
 
 step "Vote yes on DevShard governance proposal $gov_id"
-"$ROOT/gdc.sh" --release testnet-0.2.15 vote "$gov_id" yes
+"$ROOT/gdc.sh" --release v2026.08.06 vote "$gov_id" yes
 
 step "Wait for passed DevShard governance proposal $gov_id"
 rpc="http://127.0.0.1:1317/cosmos/gov/v1/proposals/$gov_id"
 while (( SECONDS < deadline )); do
-  proposal="$(ssh gdc-node0 "curl -fsS $rpc")"
+  proposal="$(ssh "$GENESIS_NODE" "curl -fsS $rpc")"
   status="$(jq -r '.proposal.status' <<<"$proposal")"
   [[ "$status" == PROPOSAL_STATUS_PASSED ]] && break
   case "$status" in
@@ -68,16 +68,16 @@ done
 printf '%s\n' "$proposal" >"$run/governance-proposal-passed.json"
 
 step 'Verify governance state and settle DevShard v3'
-GDC_GOVERNANCE_PROPOSAL_ID="$gov_id" "$ROOT/gdc.sh" --release testnet-0.2.15 governance devshard
-GDC_GATEWAY_VERSION=v3 "$ROOT/gdc.sh" --release testnet-0.2.15 ops gateway
-GDC_GATEWAY_VERSION=v3 "$ROOT/gdc.sh" --release testnet-0.2.15 settle
+GDC_GOVERNANCE_PROPOSAL_ID="$gov_id" "$ROOT/gdc.sh" --release v2026.08.06 governance devshard
+GDC_GATEWAY_VERSION=v3 "$ROOT/gdc.sh" --release v2026.08.06 ops gateway
+GDC_GATEWAY_VERSION=v3 "$ROOT/gdc.sh" --release v2026.08.06 settle
 
 step 'Settle DevShard v4 after independent gateway deployment'
-GDC_GATEWAY_VERSION=v4 "$ROOT/gdc.sh" --release testnet-0.2.15 ops gateway
-GDC_GATEWAY_VERSION=v4 "$ROOT/gdc.sh" --release testnet-0.2.15 settle
+GDC_GATEWAY_VERSION=v4 "$ROOT/gdc.sh" --release v2026.08.06 ops gateway
+GDC_GATEWAY_VERSION=v4 "$ROOT/gdc.sh" --release v2026.08.06 settle
 
 step 'Prove v4 high availability after the v4 settlement'
-"$ROOT/gdc.sh" --release testnet-0.2.15 ha v4
+"$ROOT/gdc.sh" --release v2026.08.06 ha v4
 cat >"$run/verdict.md" <<EOF
 # Post-upgrade advance: PASS
 

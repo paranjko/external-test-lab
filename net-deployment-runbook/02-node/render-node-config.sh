@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-usage() { echo "Usage: $0 --node-name gdc-nodeN --profile PROFILE [--ml-host HOST] [--ml-poc-port PORT] --output FILE" >&2; }
-NODE=''; PROFILE=''; ML_HOST='inference'; ML_POC_PORT=8080; OUTPUT=''
+usage() { echo "Usage: $0 --node-name SSH_ALIAS --node-index N --profile PROFILE [--ml-host HOST] [--ml-poc-port PORT] --output FILE" >&2; }
+NODE=''; NODE_INDEX=''; PROFILE=''; ML_HOST='inference'; ML_POC_PORT=8080; OUTPUT=''
 while (($#)); do case "$1" in
   --node-name) NODE="$2"; shift 2 ;;
+  --node-index) NODE_INDEX="$2"; shift 2 ;;
   --profile) PROFILE="$2"; shift 2 ;;
   --ml-host) ML_HOST="$2"; shift 2 ;;
   --ml-poc-port) ML_POC_PORT="$2"; shift 2 ;;
   --output) OUTPUT="$2"; shift 2 ;;
   *) usage; exit 2 ;;
 esac; done
-[[ "$NODE" =~ ^gdc-node[0-4]$ && -n "$OUTPUT" && "$ML_POC_PORT" =~ ^[1-9][0-9]{0,4}$ && "$ML_POC_PORT" -le 65535 ]] || { usage; exit 2; }
+[[ "$NODE" =~ ^[A-Za-z0-9._-]+$ && "$NODE_INDEX" =~ ^[0-9]+$ && -n "$OUTPUT" && "$ML_POC_PORT" =~ ^[1-9][0-9]{0,4}$ && "$ML_POC_PORT" -le 65535 ]] || { usage; exit 2; }
 case "$PROFILE" in
   a5000-24g|4090-24g|3090-24g|t4-16g|blackwell-16g) ;;
   *) echo "Unknown GPU profile: $PROFILE" >&2; exit 2 ;;
@@ -20,9 +21,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/profile.sh"
 load_profiles
 SOURCE="$ROOT/02-node/node-config-qwen3-0.6B.source.json"
-INDEX="${NODE#gdc-node}"
 mkdir -p "$(dirname "$OUTPUT")"
-jq --arg id "qwen3-0.6b:gdc$INDEX" --arg host "$ML_HOST" --argjson poc_port "$ML_POC_PORT" --arg model "$MODEL_ID" \
+jq --arg id "qwen3-0.6b:gdc$NODE_INDEX" --arg host "$ML_HOST" --argjson poc_port "$ML_POC_PORT" --arg model "$MODEL_ID" \
   --arg revision "$MODEL_REVISION" --argjson max "$MLNODE_MAX_NUM_SEQS" \
   --arg util "$MLNODE_GPU_MEMORY_UTILIZATION" --argjson context "$MLNODE_CONTEXT_LENGTH" '
   .[0].id = $id

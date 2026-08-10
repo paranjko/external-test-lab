@@ -8,7 +8,7 @@ profile_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 load_profiles() {
   local root release deployment model operator
   root="$(profile_root)"
-  release="${GDC_RELEASE_PROFILE:-testnet-0.2.14}"
+  release="${GDC_RELEASE_PROFILE:-v2026.07.23}"
   deployment="${GDC_DEPLOYMENT_PROFILE:-community-lab}"
   model="${GDC_MODEL_PROFILE:-qwen3-0.6b}"
   operator="${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
@@ -20,8 +20,16 @@ load_profiles() {
   [[ -r "$root/profiles/deployments/$deployment.lock" ]] || { echo "unknown deployment profile: $deployment" >&2; return 2; }
   [[ -r "$root/profiles/models/$model.lock" ]] || { echo "unknown model profile: $model" >&2; return 2; }
   [[ -r "$root/profiles/operator-services/$operator.lock" ]] || { echo "unknown operator-services profile: $operator" >&2; return 2; }
+  unset GONKA_HOST_STACK_COMMIT GONKA_HOST_STACK_DOC_SHA256 GONKA_HOST_STACK_COMPOSE_SHA256
+  unset DAPI_SOURCE_REF DAPI_COMMIT
   # shellcheck disable=SC1090
   source "$root/profiles/releases/$release.lock"
+  # v0.2.14 predates edge-api. These are runtime wiring defaults, not release
+  # inputs, so the immutable release lock does not carry blank assignments.
+  if [[ "$EDGE_API_ENABLED" == false ]]; then
+    EDGE_API_COMPOSE_PROFILE=''
+    EDGE_API_SERVICE_NAME=''
+  fi
   # shellcheck disable=SC1090
   source "$root/profiles/deployments/$deployment.lock"
   # shellcheck disable=SC1090
@@ -38,8 +46,8 @@ load_profiles() {
   GDC_INFERENCED_TOOL_IMAGE="$INFERENCED_IMAGE"
   export GDC_RELEASE_PROFILE="$release" GDC_DEPLOYMENT_PROFILE="$deployment"
   export GDC_MODEL_PROFILE="$model" GDC_OPERATOR_SERVICES_PROFILE="$operator"
-  export GONKA_SOURCE_REF GONKA_COMMIT MODEL_ID MODEL_REVISION
-  export GDC_INFERENCED_TOOL_IMAGE
+  export GONKA_REPOSITORY GONKA_SOURCE_REF GONKA_COMMIT MODEL_ID MODEL_REVISION
+  export GDC_INFERENCED_TOOL_IMAGE EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
 }
 
 profile_summary() {
@@ -47,6 +55,11 @@ profile_summary() {
     "$GDC_RELEASE_PROFILE" "$GDC_DEPLOYMENT_PROFILE" "$GDC_MODEL_PROFILE" "$GDC_OPERATOR_SERVICES_PROFILE"
   printf 'gonka_source_ref=%s\ngonka_commit=%s\nmodel=%s@%s\n' \
     "$GONKA_SOURCE_REF" "$GONKA_COMMIT" "$MODEL_ID" "$MODEL_REVISION"
+  if [[ -n "${GONKA_HOST_STACK_COMMIT:-}" ]]; then
+    printf 'gonka_host_stack_commit=%s\ngonka_host_stack_doc_sha256=%s\ngonka_host_stack_compose_sha256=%s\n' \
+      "$GONKA_HOST_STACK_COMMIT" "$GONKA_HOST_STACK_DOC_SHA256" "$GONKA_HOST_STACK_COMPOSE_SHA256"
+    printf 'dapi_source_ref=%s\ndapi_commit=%s\n' "$DAPI_SOURCE_REF" "$DAPI_COMMIT"
+  fi
   printf 'network_profile_hash=%s\noperator_services_profile_hash=%s\n' \
     "$(profile_hash)" "$(operator_profile_hash)"
   printf 'tmkms_image=%s\ninferenced_image=%s\ndapi_image=%s\nedge_api_image=%s\n' \

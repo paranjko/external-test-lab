@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ $# -ge 5 ]] || { echo "Usage: $0 inventory.env secrets-dir output-identities-dir mnemonic-dir gdc-nodeN [...]" >&2; exit 2; }
+[[ $# -ge 5 ]] || { echo "Usage: $0 inventory.env secrets-dir output-identities-dir mnemonic-dir ssh-alias [...]" >&2; exit 2; }
 INVENTORY="$1"; SECRETS="$2"; OUT="$3"; MNEMONICS="$4"
 shift 4
 NODES=("$@")
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; BOOT="$(mktemp -d)"; trap 'rm -rf "$BOOT"' EXIT
-LOGS="$ROOT/state/logs/identities"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/lib.sh"
+load_env "$INVENTORY"
+load_topology
+LOGS="$STATE/logs/identities"
 umask 077
 mkdir -p "$OUT" "$MNEMONICS" "$LOGS"
 failed=0
 for HOST in "${NODES[@]}"; do
-  [[ "$HOST" =~ ^gdc-node[0-4]$ ]] || { echo "Invalid node: $HOST" >&2; failed=1; continue; }
+  topology_contains_node "$HOST" || { echo "Invalid node alias outside the supplied inventory: $HOST" >&2; failed=1; continue; }
   REMOTE="/srv/dai/identity-bootstrap"
   if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$HOST" true; then
     echo "FAILED  $HOST is unreachable" >&2
@@ -18,7 +22,7 @@ for HOST in "${NODES[@]}"; do
     continue
   fi
   "$ROOT/02-node/render-node-env.sh" --inventory "$INVENTORY" --node-name "$HOST" \
-    --account-public "$ROOT/artifacts/accounts/$HOST-cold.json" --bootstrap \
+    --account-public "$GDC_HOME/accounts/$HOST-cold.json" --bootstrap \
     --secrets-dir "$SECRETS" --output "$BOOT/$HOST.env" >/dev/null
   ssh "$HOST" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
   rsync -a --delete "$ROOT/02-node/" "$HOST:$REMOTE/02-node/"

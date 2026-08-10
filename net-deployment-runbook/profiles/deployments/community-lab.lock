@@ -5,9 +5,10 @@ GENESIS_EPOCH_LENGTH=50
 GENESIS_EPOCH_SHIFT=0
 POSTGRES_IMAGE=postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
 
-# Hardware compatibility override for the split Blackwell ML participant.
-# The ordinary participant image remains sourced from the upstream release.
-MLNODE_BLACKWELL_IMAGE=ghcr.io/product-science/mlnode:3.0.12-post6-blackwell@sha256:35131eb9ba4abfa8ea92fbfce5255739ab2be80091d21e2fc7a42c2e4f1622f5
+# RTX PRO 2000 Blackwell (sm_120) requires the generic upstream image below.
+# The former product-science Blackwell override started an embedded vLLM
+# process whose PyTorch build supported only through sm_90.
+MLNODE_BLACKWELL_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5
 
 # Governed DevShard artifacts are network software, but they have their own
 # release refs and are not part of either core Gonka release tag.
@@ -16,5 +17,11 @@ DEVSHARD_V3_SHA256=ca1294fc8db3f0907a01f362eb4b13665f66d0fd12cfc6f01468b1e27f0ba
 DEVSHARD_V4_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-devshard-v4.0.1/devshardd.zip
 DEVSHARD_V4_SHA256=c80d098941fd18caf0159910c1b6c23140fce871f7ce903ceaad134cfe626b25
 DEVSHARD_V4_SOURCE_REF=release/v0.2.15-devshard-v4.0.1
-DEVSHARD_PROTOCOL_VERSION=v4
-LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v4
+# The published v4 source tag currently cannot parse protocol name `v4`: its
+# ProtocolVersion enum ends at v3.  Keep the operator profile truthful and
+# reject v4 before any gateway side effect instead of generating unusable
+# replacement escrows.  Add v4 here only after a verified upstream artifact
+# accepts v4 and completes an authenticated inference rehearsal.
+DEVSHARD_SUPPORTED_PROTOCOLS=v3
+DEVSHARD_PROTOCOL_VERSION=v3
+LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v3

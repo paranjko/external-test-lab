@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck disable=SC1091
-source "$ROOT/scripts/profile.sh"
-load_profiles
+source "$ROOT/scripts/lib.sh"
+# `fetch-upstream.sh` is executed as a child process by the gateway-image
+# builder.  The parent has loaded `.env`, but shell variables are not
+# automatically inherited by a child shell.  Load the same profile here so
+# the repository URL and immutable commit are both defined.
+load_project
 DEST="${1:-$ROOT/vendor/gonka}"
 if [[ -d "$DEST/.git" ]]; then
   git -C "$DEST" fetch --tags --force origin

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib.sh"
+load_project
+
+platform_key() {
+  local os arch
+  os="$(uname -s)"
+  arch="$(uname -m)"
+  case "$os/$arch" in
+    Linux/x86_64) printf '%s\n' LINUX_AMD64 ;;
+    Linux/aarch64|Linux/arm64) printf '%s\n' LINUX_ARM64 ;;
+    Darwin/x86_64) printf '%s\n' DARWIN_AMD64 ;;
+    Darwin/arm64) printf '%s\n' DARWIN_ARM64 ;;
+    *) die "unsupported operator platform for inferenced: $os/$arch" ;;
+  esac
+}
+
+version_matches() {
+  local candidate="$1" output
+  [[ -x "$candidate" ]] || return 1
+  output="$("$candidate" version 2>&1 || true)"
+  [[ "$output" =~ (^|[^0-9])v?${INFERENCED_OPERATOR_VERSION//./\\.}([^0-9]|$) ]]
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+key="$(platform_key)"
+url_var="INFERENCED_OPERATOR_URL_${key}"
+sha_var="INFERENCED_OPERATOR_SHA256_${key}"
+url="${!url_var:-}"
+expected_sha="${!sha_var:-}"
+[[ -n "$url" && "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || die "missing pinned inferenced CLI artifact for $key in $GDC_RELEASE_PROFILE"
+
+bin_dir="${GDC_INFERENCED_BIN_DIR:-$HOME/.local/bin}"
+target="$bin_dir/inferenced"
+current="$(command -v inferenced 2>/dev/null || true)"
+if [[ -n "$current" ]] && version_matches "$current"; then
+  printf 'PASS operator inferenced CLI: %s (%s)\n' "$current" "$INFERENCED_OPERATOR_VERSION"
+  exit 0
+fi
+if version_matches "$target"; then
+  printf 'PASS operator inferenced CLI: %s (%s)\n' "$target" "$INFERENCED_OPERATOR_VERSION"
+  exit 0
+fi
+
+step "Install pinned inferenced $INFERENCED_OPERATOR_VERSION for $key"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+curl -fL --retry 3 --connect-timeout 15 --max-time 600 "$url" -o "$tmp/inferenced.zip"
+actual_sha="$(sha256_file "$tmp/inferenced.zip")"
+[[ "$actual_sha" == "$expected_sha" ]] || die "inferenced CLI checksum mismatch: expected $expected_sha, got $actual_sha"
+unzip -q "$tmp/inferenced.zip" -d "$tmp/unpacked"
+binary="$(find "$tmp/unpacked" -type f -name inferenced -perm -u+x -print -quit)"
+[[ -n "$binary" ]] || die 'pinned inferenced archive does not contain an executable inferenced binary'
+install -d -m 0755 "$bin_dir"
+install -m 0755 "$binary" "$target"
+version_matches "$target" || die "installed inferenced does not report required version $INFERENCED_OPERATOR_VERSION"
+printf 'PASS operator inferenced CLI installed: %s (%s)\n' "$target" "$INFERENCED_OPERATOR_VERSION"
+if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
+  printf 'NOTE add %s to PATH to invoke inferenced directly\n' "$bin_dir"
+fi

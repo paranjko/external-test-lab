@@ -1,0 +1,110 @@
+schema_version: 1
+observed_at: "2026-08-09"
+sources:
+  network_updates: https://gonka.ai/docs/network-updates/
+  repository: https://github.com/gonka-ai/gonka
+
+network_upgrades:
+  - profile_id: v2026.01.08
+    core_release: v0.2.7
+    upstream_ref: release/v0.2.7
+    upstream_commit: d18165669326fffd6732bc124183a72c076a69ee
+    mainnet_state: executed
+    executable_lock: false
+  - profile_id: v2026.01.29
+    core_release: v0.2.8
+    upstream_ref: release/v0.2.8
+    upstream_commit: d61cf37eb97e0aaf3e4b227a1d6f31ea8635797a
+    mainnet_state: executed
+    executable_lock: false
+  - profile_id: v2026.02.01
+    core_release: v0.2.9
+    upstream_ref: release/v0.2.9
+    upstream_commit: 808247ea17c254f0b81cfa67edb579ba249175f0
+    mainnet_state: executed
+    executable_lock: false
+  - profile_id: v2026.02.18
+    core_release: v0.2.10
+    upstream_ref: release/v0.2.10
+    upstream_commit: faa358dec3091e19cb92267556443775431ecc81
+    mainnet_state: executed
+    executable_lock: false
+  - profile_id: v2026.03.20
+    core_release: v0.2.11
+    upstream_ref: release/v0.2.11
+    upstream_commit: 54c09b35bdceb4dd91c6d578635e63b8e41797e2
+    mainnet_state: executed
+    executable_lock: false
+  - profile_id: v2026.04.30
+    core_release: v0.2.12
+    upstream_ref: release/v0.2.12
+    upstream_commit: 1a122bcb9c296e6a91c1eb4769edc53e2c88a1e5
+    mainnet_state: executed
+    executable_lock: false
+  - profile_id: v2026.05.26
+    core_release: v0.2.13
+    upstream_ref: release/v0.2.13
+    upstream_commit: c716df26cb8802e341a007f79b445352c53a3bee
+    mainnet_state: executed
+    executable_lock: false
+  - profile_id: v2026.07.23
+    core_release: v0.2.14
+    upstream_ref: release/v0.2.14
+    upstream_commit: 2bfd85c958732992c7a9c5be1d796affe29f3ab4
+    mainnet_state: executed
+    executable_lock: true
+    lock: v2026.07.23.lock
+  - profile_id: v2026.07.30
+    core_release: v0.2.15
+    upstream_ref: release/v0.2.15
+    upstream_commit: 4d687ed6782bcea3931d2d9135bf322f84e190ab
+    mainnet_state: executed
+    executable_lock: false
+    superseded_by_compatible_stack: v2026.08.06
+
+component_updates:
+  - date: "2026-01-05"
+    component: decentralized-api
+    version: v0.2.6-post12
+    kind: api_patch
+  - date: "2026-08-03"
+    component: devshard-v4
+    version: v4.0.1
+    upstream_ref: release/v0.2.15-devshard-v4.0.1
+    upstream_commit: 3c034a72a80f82c33f71a73737c329f41c7ddf7b
+    kind: governed_runtime_upgrade
+  - date: "2026-08-03"
+    component: decentralized-api
+    version: v0.2.15-post3
+    upstream_ref: release/v0.2.15-post3
+    upstream_commit: 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0
+    kind: api_patch
+  - date: "2026-08-06"
+    component: host-stack
+    version: v2026.08.06
+    upstream_commit: ce33c851282b8f4c0f63d78d46ddd4d8bb248207
+    kind: compatible_stack_snapshot
+    executable_lock: true
+    lock: v2026.08.06.lock
+  - date: "2026-08-07"
+    component: join-ha-overlay
+    version: v0.2.15
+    upstream_commit: f040d0a5b5ef207a0c431894c9f9e2608f9d3073
+    kind: compose_tag_correction
+
+release_candidates:
+  - core_release: v0.2.16
+    observed_at: "2026-08-09"
+    upstream_branch: upgrade-v0.2.16
+    upstream_commit: 6e92e9089c42edcfcc3e93ce9b5a8ae2f3c47908
+    pull_request: https://github.com/gonka-ai/gonka/pull/1535
+    state: draft_not_qualified
+    executable_lock: false
+    blockers:
+      - no_release_tag
+      - no_published_host_stack
+      - draft_pull_request
+      - branch_behind_main
+      - review_required
+      - upgrade_rehearsal_failed
+      - migration_content_incomplete

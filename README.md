@@ -44,7 +44,7 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | M1 | Initial test strategy | [`testing/test-strategy.md`](testing/test-strategy.md) | published |
 | M1 | Node deployment runbook | [`net-deployment-runbook/`](net-deployment-runbook/) | published — `1.0.0-alpha.0` |
 | M1→M2 | Monthly public report #1 | [`reports/monthly/2026-08-month-1.md`](reports/monthly/2026-08-month-1.md) | published |
-| M2 | Join guide, regional layout | [`net-deployment-runbook/JOIN.md`](net-deployment-runbook/JOIN.md), `devnet/regions.md` | join guide published — regional layout planned |
+| M2 | Join guide, regional layout | [`net-deployment-runbook/ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md), `devnet/regions.md` | join guide published — regional layout planned |
 | M2 | Smoke & regression checklists, live task board | [`testing/`](testing/), [task board](https://github.com/users/paranjko/projects/1) | task board **live** — checklists planned |
 | M2 | External join opening (genesis params, seeds) | `devnet/` | planned — gates on M2 stability |
 | M3 | Test automation scripts (smoke-level) | `automation/` | planned |

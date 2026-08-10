@@ -1,0 +1,26 @@
+.git
+.env
+.env.*
+!.env.example
+inventory.env
+wireguard.env
+VERSION.runtime.lock
+
+# Runtime output must never enter the cleanroom image.
+artifacts/
+generated/
+lab/
+state/
+*.log
+
+# Defense in depth for credentials outside the standard runtime directories.
+*.key
+*.mnemonic
+*.pem
+*.secret
+*.issued-keys.log
+
+# Local caches and packaged output.
+node_modules/
+vendor/
+*.tar.zst

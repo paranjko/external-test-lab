@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib.sh"
 source "$ROOT/scripts/profile.sh"
 load_profiles
-OUT="${1:-$ROOT/state/resolved-images/$GDC_RELEASE_PROFILE+$GDC_DEPLOYMENT_PROFILE+$GDC_OPERATOR_SERVICES_PROFILE.lock}"
+OUT="${1:-$STATE/resolved-images/$GDC_RELEASE_PROFILE+$GDC_DEPLOYMENT_PROFILE+$GDC_OPERATOR_SERVICES_PROFILE.lock}"
 mkdir -p "$(dirname "$OUT")"
 
 network_image_vars=(

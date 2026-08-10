@@ -1,0 +1,27 @@
+{
+  "name": "cleanroom",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:4": {
+      "version": "latest",
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "remoteUser": "operator",
+  "mounts": [
+    "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind",
+    "source=${localEnv:HOME}/.ssh/config,target=/home/operator/.ssh/config,type=bind",
+    "source=${localEnv:HOME}/.ssh/known_hosts,target=/home/operator/.ssh/known_hosts,type=bind"
+  ],
+  "remoteEnv": {
+    "SSH_AUTH_SOCK": "/ssh-agent",
+    "GDC_HOME": "/workspaces/.data"
+  },
+  "workspaceMount": "source=${localWorkspaceFolderBasename}-cleanroom-workspace,target=/workspace,type=volume",
+  "workspaceFolder": "/workspace",
+  "postCreateCommand": "bash /opt/runbook-source/.devcontainer/initialize-cleanroom.sh"
+}

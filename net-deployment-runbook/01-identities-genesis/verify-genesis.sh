@@ -14,6 +14,7 @@ jq -e --arg chain "$CHAIN_ID" '
  .app_state.inference.params.epoch_params.epoch_length=="50" and
  .app_state.inference.params.epoch_params.epoch_shift=="0" and
  .app_state.inference.params.epoch_params.poc_slot_allocation=={"value":"5","exponent":-1} and
+ .app_state.inference.params.poc_params.validation_slots==2 and
  .app_state.inference.params.poc_params.poc_v2_enabled==true and
  .app_state.inference.params.devshard_escrow_params.allowed_creator_addresses == [] and
  .app_state.inference.params.devshard_escrow_params.approved_versions == []

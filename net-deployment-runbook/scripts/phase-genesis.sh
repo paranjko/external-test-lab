@@ -3,25 +3,55 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 assert_baseline_release
-record_phase_profile genesis
-require_ml_qualification gdc-node0
 TIME_SPEC="${1:---time=+1m}"
 [[ "$TIME_SPEC" =~ ^--time=\+([1-9][0-9]*)m$ ]] || die 'expected --time=+Nm'
 GENESIS_LEAD_MINUTES="${BASH_REMATCH[1]}"
+
+step 'Verify the operator inferenced CLI matches the selected release'
+"$ROOT/scripts/ensure-inferenced-cli.sh"
+
+# Genesis is the one-command path for a fresh, single-validator network.  It
+# must not rely on an operator remembering preparatory phases from a previous
+# rehearsal.  Scope host preparation and qualification to the requested
+# Genesis alias; additional validators remain independent join operations.
+GDC_PREPARE_HOSTS="$GENESIS_NODE" "$ROOT/scripts/phase-prepare.sh"
+if [[ "${GDC_GENESIS_ROLE_INPUT:-false}" == true && "$(node_gpu_profile "$GENESIS_NODE")" == auto ]]; then
+  step "Detect GPU profile for $GENESIS_NODE"
+  detected_gpu_profile="$("$ROOT/scripts/detect-gpu-profile.sh" "$GENESIS_NODE")"
+  encoded_gpu_profiles="$(printf '%q' "$GENESIS_NODE=$detected_gpu_profile")"
+  sed -i -E "s/^GDC_NODE_GPU_PROFILES=.*/GDC_NODE_GPU_PROFILES=$encoded_gpu_profiles/" "$ENV_FILE"
+  GDC_NODE_GPU_PROFILES="$GENESIS_NODE=$detected_gpu_profile"
+  export GDC_NODE_GPU_PROFILES
+  load_topology
+  write_inventory
+  printf 'READY %s GPU profile detected as %s\n' "$GENESIS_NODE" "$detected_gpu_profile"
+fi
+qualification_status=passed
+if [[ "${GDC_GENESIS_SKIP_QUALIFICATION:-false}" == true ]]; then
+  qualification_status=skipped_by_operator
+  printf 'SKIP  ML qualification explicitly disabled by the Genesis operator\n'
+else
+  GDC_QUALIFY_HOSTS="$GENESIS_NODE" "$ROOT/scripts/phase-qualify-ml.sh"
+  require_ml_qualification "$GENESIS_NODE"
+fi
+record_phase_profile genesis
+printf 'ml_qualification=%s\n' "$qualification_status" >>"$STATE/phase-profiles/genesis.env"
+printf 'PROFILE phase=genesis ml_qualification=%s\n' "$qualification_status"
 genesis_identity_inputs=(
   "$SECRETS/operator.keyring"
-  "$SECRETS/gdc-node0.keyring"
-  "$SECRETS/gdc-node0.postgres"
-  "$ACCOUNTS/gdc-node0-cold.json"
+  "$SECRETS/$GENESIS_NODE.keyring"
+  "$SECRETS/$GENESIS_NODE.postgres"
+  "$ACCOUNTS/$GENESIS_NODE-cold.json"
   "$ACCOUNTS/gdc-gateway-cold.json"
-  "$IDENTITIES/gdc-node0.json"
+  "$ACCOUNTS/gdc-faucet-cold.json"
+  "$IDENTITIES/$GENESIS_NODE.json"
 )
 identity_inputs_ready=true
 for input in "${genesis_identity_inputs[@]}"; do
   [[ -s "$input" ]] || identity_inputs_ready=false
 done
 if [[ "$identity_inputs_ready" != true ]]; then
-  step 'Create Genesis operator secrets, node0 identities, and gateway account'
+  step 'Create Genesis operator secrets, Genesis participant identities, and gateway account'
   "$ROOT/scripts/phase-identities.sh"
 fi
 for input in "${genesis_identity_inputs[@]}"; do
@@ -38,16 +68,16 @@ for profile_field in genesis_sha256 genesis_overrides_sha256; do
   printf 'PROFILE phase=genesis %s=%s\n' "$profile_field" "$profile_value"
 done
 
-step 'Render only gdc-node0'
-NODE=gdc-node0
+step "Render only $GENESIS_NODE"
+NODE="$GENESIS_NODE"
 NODE_DIR="$GENERATED/nodes/$NODE"
 mkdir -p "$NODE_DIR" "$GENERATED/edge" "$GENERATED/agents"
 "$ROOT/02-node/render-node-env.sh" --inventory "$INVENTORY" --node-name "$NODE" --account-public "$ACCOUNTS/$NODE-cold.json" --seeds-file "$GENESIS/genesis-seeds.txt" --secrets-dir "$SECRETS" --output "$NODE_DIR/.env" >/dev/null
-"$ROOT/02-node/render-node-config.sh" --node-name "$NODE" --profile "$NODE0_GPU_PROFILE" --output "$NODE_DIR/node-config.json" >/dev/null
+"$ROOT/02-node/render-node-config.sh" --node-name "$NODE" --node-index "$(node_index "$NODE")" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json" >/dev/null
 "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$NODE" --output "$GENERATED/edge/$NODE.env"
 "$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$NODE" --output "$GENERATED/agents/$NODE.env"
 
-step 'Install gdc-node0 deployment'
+step "Install $NODE deployment"
 ssh_ready "$NODE" || die "$NODE is unreachable; Genesis cannot be launched"
 REMOTE="/tmp/gdc-deploy-$$-$NODE"
 ssh "$NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
@@ -68,8 +98,17 @@ start_stack "$NODE" /srv/dai/monitoring-agent
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
 
 step 'Activate Genesis ML operations'
-"$ROOT/03-join/wait-synced.sh" "https://$NODE0_PUBLIC_HOST/chain-rpc" "https://$NODE0_PUBLIC_HOST/chain-rpc"
+"$ROOT/03-join/wait-synced.sh" "https://$GENESIS_PUBLIC_HOST/chain-rpc" "https://$GENESIS_PUBLIC_HOST/chain-rpc"
 "$ROOT/03-join/grant-ml-ops.sh" "$NODE" "$IDENTITIES/$NODE.json" "$INVENTORY"
 mkdir -p "$STATE/joined"
 touch "$STATE/joined/$NODE"
-printf '\nGenesis launched with gdc-node0 as the only participant.\n'
+persist_runtime_topology
+printf '\nGenesis launched with %s as the only participant.\n' "$NODE"
+
+step 'Start the public DevNet faucet for independent Host joins'
+"$ROOT/scripts/phase-ops.sh" faucet
+
+if [[ "${GDC_GENESIS_BOOTSTRAP_ACCESS:-true}" == true ]]; then
+  step 'Bootstrap authenticated inference for the single-validator network'
+  "$ROOT/scripts/phase-bootstrap-access.sh"
+fi

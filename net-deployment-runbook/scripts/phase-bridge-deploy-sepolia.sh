@@ -3,7 +3,7 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 
-RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-bridge-deploy-sepolia"
+RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-bridge-deploy-sepolia"
 mkdir -p "$RUN"
 install_evidence_exit_trap 'Sepolia bridge deployment'
 record_phase_profile bridge-deploy-sepolia
@@ -33,13 +33,13 @@ curl -fsS --max-time 20 "$rpc_url" -H 'Content-Type: application/json' \
 jq -e '.result == "0xaa36a7"' "$network_json" >/dev/null || die 'execution RPC is not Sepolia chain ID 11155111'
 
 step 'Capture current Gonka Genesis lineage and BLS epoch key'
-capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json" || die 'could not capture canonical Gonka Genesis'
+capture_canonical_genesis "https://$GENESIS_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json" || die 'could not capture canonical Gonka Genesis'
 genesis_sha256_value="$(genesis_sha256 "$RUN/genesis.json")"
 epoch_json="$RUN/current-epoch.json"
 group_json="$RUN/current-epoch-group.json"
-curl -fsS "https://$NODE0_PUBLIC_HOST/chain-api/productscience/inference/inference/get_current_epoch" >"$epoch_json"
+curl -fsS "https://$GENESIS_PUBLIC_HOST/chain-api/productscience/inference/inference/get_current_epoch" >"$epoch_json"
 epoch="$(jq -er '.epoch | tonumber' "$epoch_json")"
-curl -fsS "https://$NODE0_PUBLIC_HOST/chain-api/productscience/inference/bls/epoch_data/$epoch" >"$group_json"
+curl -fsS "https://$GENESIS_PUBLIC_HOST/chain-api/productscience/inference/bls/epoch_data/$epoch" >"$group_json"
 group_key_b64="$(jq -er '.epoch_data.group_public_key' "$group_json")"
 [[ -n "$group_key_b64" ]] || die 'current epoch has no BLS group public key'
 
@@ -48,7 +48,7 @@ cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 cp -a "$contract_root"/. "$work"/
 umask 077
-printf '%s\n' "PRIVATE_KEY=$private_key" "SEPOLIA_RPC_URL=$rpc_url" "GONKA_CHAIN_ID=$CHAIN_ID" 'ETHEREUM_CHAIN_ID=11155111' "GENESIS_GROUP_PUBLIC_KEY=$group_key_b64" "GENESIS_HOST=$NODE0_PUBLIC_HOST" >"$work/.env"
+printf '%s\n' "PRIVATE_KEY=$private_key" "SEPOLIA_RPC_URL=$rpc_url" "GONKA_CHAIN_ID=$CHAIN_ID" 'ETHEREUM_CHAIN_ID=11155111' "GENESIS_GROUP_PUBLIC_KEY=$group_key_b64" "GENESIS_HOST=$GENESIS_PUBLIC_HOST" >"$work/.env"
 chmod 600 "$work/.env"
 
 step 'Install pinned bridge project dependencies'

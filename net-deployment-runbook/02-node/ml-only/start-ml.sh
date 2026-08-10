@@ -4,7 +4,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # A second invocation can otherwise race the first one while it pulls images
 # or starts vLLM, yielding misleading readiness output from two operators.
 # This is a host-local lifecycle operation, so only one execution is valid.
-LOCK_FILE=/var/lock/gdc-node4-ml-start.lock
+STACK_NAME="$(basename "$HERE")"
+LOCK_FILE="/var/lock/${STACK_NAME}-start.lock"
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
   echo "FAILED ML start is already running on this host" >&2
