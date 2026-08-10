@@ -49,26 +49,28 @@
         <span>Gateway traffic</span><strong id="quality-health-state">CHECKING</strong>
         <div class="quality-health-counts"><span><b id="quality-active">0</b> active now</span><span><b id="quality-accepted">0</b> successful since restart</span><span><b id="quality-rejected">0</b> rate-limited since restart</span></div>
       </div>
+      <p id="quality-recovery" class="quality-recovery" hidden></p>
     </section>
     <section id="gateway-access" class="access" hidden aria-live="polite">
       <div class="access-copy">
         <span class="eyebrow">OPENAI-COMPATIBLE ACCESS</span>
         <div class="access-heading"><h2>Inference gateway</h2><span class="gateway-live"><i></i>LIVE</span></div>
         <p id="gateway-detail">Status: checking gateway endpoint…</p>
-        <p class="access-intro">Send standard chat-completions requests – each accepted request is tied to the active DevShard escrow</p>
+        <p class="access-intro">Use the Telegram conversation client or an operator-provisioned OpenAI-compatible credential – both send inference through an active DevShard escrow</p>
         <ol class="access-steps">
-          <li><b>Get a key</b><span>Issued by the community Telegram bot</span></li>
-          <li><b>Use the public endpoint</b><span>Drop it into any OpenAI-compatible client</span></li>
-          <li><b>Observe settlement</b><span>Inference is accounted for on the chain</span></li>
+          <li><b>Telegram client</b><span>Public conversation interface and first reference consumer</span></li>
+          <li><b>OpenAI-compatible API</b><span>Integration credentials are provisioned by the gateway operator</span></li>
+          <li><b>Chain accounting</b><span>Accepted inference is tied to the active DevShard escrow</span></li>
         </ol>
-        <a id="contact" class="key-link" href="#">Get an API key <span aria-hidden="true">↗</span></a>
-        <small class="access-note">Keys are broker credentials, not GNK tokens – direct MLNode responses are diagnostic only</small>
+        <a id="contact" class="key-link" href="#" hidden>Open Telegram conversation client <span aria-hidden="true">↗</span></a>
+        <small class="access-note">The Telegram bot consumes inference and does not issue API keys – direct MLNode responses remain diagnostic only</small>
       </div>
     </section>
   <footer><a class="wordmark" href="#top">EXTERNAL TEST LAB</a><span>Public operational evidence</span><a href="https://github.com/gonka-ai/gonka/discussions/1388" target="_blank" rel="noopener">Why this test lab exists ↗</a><a href="https://github.com/paranjko/external-test-lab" target="_blank" rel="noopener">Test Lab repository ↗</a><a href="https://github.com/paranjko/external-test-lab/tree/3041f903ef36a16cf06858b8e0daeaa6e1065f4b/net-deployment-runbook/04-ops/site" target="_blank" rel="noopener">ref:3041f90</a><a href="https://github.com/users/paranjko/projects/1" target="_blank" rel="noopener">Task board ↗</a></footer>
   </main>
   <script src="/config.js"></script>
   <script src="/gateway-state.js"></script>
+  <script src="/software-versions.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

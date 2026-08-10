@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 
 const [url, widthText, heightText, output, visibleNodesText = '0'] = process.argv.slice(2);
 const width = Number(widthText);
@@ -10,12 +11,23 @@ const height = Number(heightText);
 const visibleNodes = Number(visibleNodesText);
 const expectResetState = process.env.GDC_EXPECT_RESET_STATE === 'true';
 const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
+const expectGatewayReady = process.env.GDC_EXPECT_GATEWAY_READY === 'true';
 if (!url || !Number.isInteger(width) || !Number.isInteger(height) || !output || !Number.isInteger(visibleNodes) || visibleNodes < 0) {
   throw new Error('usage: capture-homepage-viewport.mjs URL WIDTH HEIGHT OUTPUT.png [MIN_VISIBLE_NODES]');
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'gdc-homepage-chrome-'));
-const port = 19222;
+// A fixed DevTools port can be owned by another concurrent browser check,
+// which leaves reset waiting forever for the wrong Chrome instance. Reserve an
+// ephemeral loopback port for this invocation instead.
+const port = await new Promise((resolve, reject) => {
+  const server = createServer();
+  server.once('error', reject);
+  server.listen(0, '127.0.0.1', () => {
+    const address = server.address();
+    server.close(error => error ? reject(error) : resolve(address.port));
+  });
+});
 const chrome = process.env.CHROME_BIN || 'google-chrome';
 const browser = spawn(chrome, [
   '--headless=new', '--no-sandbox', '--disable-gpu', `--remote-debugging-port=${port}`,
@@ -53,9 +65,12 @@ try {
   await call('Page.enable', {}, sessionId);
   await call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true }, sessionId);
   await call('Page.navigate', { url }, sessionId);
+  const gatewayStateReadyExpression = expectGatewayReady
+    ? '/^READY – /.test(document.querySelector("#quality-health-state")?.textContent || "")'
+    : '["READY – processing requests","READY – no requests in flight","RECOVERING","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || "")';
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const { result } = await call('Runtime.evaluate', {
-      expression: 'Boolean(document.querySelector("#updated")?.dateTime && /^Updated .* UTC$/.test(document.querySelector("#updated")?.textContent || "") && ["ACTIVE","IDLE","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || ""))',
+      expression: `Boolean(document.querySelector("#updated")?.dateTime && /^Updated .* UTC$/.test(document.querySelector("#updated")?.textContent || "") && ${gatewayStateReadyExpression})`,
       returnByValue: true,
     }, sessionId);
     if (result.value) break;
@@ -69,14 +84,14 @@ try {
   const state = JSON.parse(result.value);
   if (state.width !== width || state.height !== height) throw new Error(`emulation mismatch ${state.width}x${state.height}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
-  if (state.nodes.length < 1 || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapLeaflet || state.mapPoints < 1) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
-  const mappedNodes = state.nodes.filter(node => node.name !== 'gdc-node3');
-  if (state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
-  if (state.mapMarkers < 1 || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
+  if ((!expectResetState && state.nodes.length < 1) || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapLeaflet) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
+  const mappedNodes = state.nodes;
+  if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
+  if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
   if (mappedNodes.some(node => !node.versions || node.versions === 'checking')) throw new Error(`participant software versions did not resolve ${JSON.stringify(state)}`);
   if (expectResetState) {
-    const active = state.nodes.filter(node => node.name !== 'gdc-node3');
-    if (active.length < 1 || active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden) {
+    const active = state.nodes;
+    if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapValidators !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {
       throw new Error(`homepage does not show the real reset/offline state ${JSON.stringify(state)}`);
     }
   }
@@ -110,9 +125,12 @@ try {
     returnByValue: true,
   }, sessionId);
   const gateway = JSON.parse(gatewayResult.value);
-  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["ACTIVE", "IDLE", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
+  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["READY – processing requests", "READY – no requests in flight", "RECOVERING", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
   if (expectResetState && gateway.health !== 'OFFLINE') throw new Error(`gateway must be OFFLINE after reset ${JSON.stringify(gateway)}`);
   if (expectedGatewayState && gateway.health !== expectedGatewayState) throw new Error(`gateway state ${gateway.health} does not match expected ${expectedGatewayState}`);
+  if (expectGatewayReady && !/^READY – /.test(gateway.health || '')) {
+    throw new Error(`public page shows a non-ready gateway state ${gateway.health}`);
+  }
   const { result: typeResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify({heading:(s=>s==="normal"?0:Number.parseFloat(s))(getComputedStyle(document.querySelector(".hero h1")).letterSpacing),prose:Number.parseFloat(getComputedStyle(document.querySelector(".hero p")).wordSpacing),footer:Number.parseFloat(getComputedStyle(document.querySelector("footer")).wordSpacing),footerSize:Number.parseFloat(getComputedStyle(document.querySelector("footer")).fontSize),negativeTracking:[...document.querySelectorAll("body *")].filter(e=>{const s=getComputedStyle(e).letterSpacing;return s!=="normal"&&Number.parseFloat(s)<0}).map(e=>e.tagName+"."+e.className),footerChildren:[...document.querySelector("footer").children].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}})})',
     returnByValue: true,

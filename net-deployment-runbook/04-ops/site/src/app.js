@@ -1,16 +1,136 @@
-// Generated from src/app.js - edit the Flow source and run make site-js
+// @flow strict
 
-const cfg = window.GDC_CONFIG;
-const gatewayStatus = window.GDC_GATEWAY_STATE;
-const softwareVersion = window.GDC_SOFTWARE_VERSIONS;
-const $ = (id) => document.getElementById(id);
+type GeoLocation = {
+  latitude: number,
+  longitude: number,
+  city: string,
+  country: string,
+  isp: string,
+};
+
+type SiteNode = {
+  name: string,
+  address?: string,
+  publicHost?: string,
+  statusBase?: string,
+  ip?: string,
+  geo?: ?GeoLocation,
+  mode?: string,
+  reason?: string,
+  participantStatus?: string,
+  gpuProfile?: ?string,
+  gpuHost?: ?string,
+};
+
+type SiteConfig = {
+  chainId: string,
+  model: string,
+  gatewayNode?: string,
+  chainRpcHost?: string,
+  telegramBot?: string,
+  grafana?: string,
+  grafanaNetwork?: string,
+  grafanaInference: string,
+  nodes: Array<SiteNode>,
+  nodeCatalog?: Array<SiteNode>,
+};
+
+type GatewayAvailability = {
+  state: string,
+  available: boolean,
+  message: string,
+  startedAt?: string,
+};
+
+type GatewayStateApi = {
+  classify: (
+    state: any,
+    healthyNodes: number,
+    probe: any,
+    nowMs?: number,
+    maxAgeMs?: number,
+  ) => GatewayAvailability,
+};
+
+type SoftwareVersionApi = {
+  format: (state: any) => string,
+};
+
+type ValidatorMapController = {
+  update: (nodes: Array<SiteNode>) => void,
+};
+
+type Participant = {
+  address: string,
+  inference_url: string,
+  status?: string,
+};
+
+type ParticipantDiscovery = {
+  statusBase?: string,
+  ip?: string,
+  geo?: ?GeoLocation,
+};
+
+type GpuInventory = Map<string, Array<string>>;
+
+type Validator = {
+  ownerAddress: string,
+  ip: string,
+  licenseCount: number,
+  geo: {
+    lat: number,
+    lon: number,
+    city: string,
+    country: string,
+    isp: string,
+  },
+};
+
+type HTMLElement = any;
+type KeyboardEvent = { key: string };
+type RequestOptions = {
+  cache?: string,
+  headers?: { [string]: string },
+  signal?: mixed,
+};
+type Response = {
+  ok: boolean,
+  status: number,
+  json: () => Promise<any>,
+  text: () => Promise<string>,
+};
+
+declare var window: any;
+declare var document: any;
+declare var Intl: any;
+declare var getComputedStyle: any;
+declare function fetch(url: string, options: RequestOptions): Promise<Response>;
+declare class AbortController {
+  signal: mixed;
+  abort(): void;
+}
+declare class ResizeObserver {
+  constructor(callback: () => void): void;
+  observe(element: HTMLElement): void;
+  disconnect(): void;
+}
+declare class URL {
+  constructor(url: string): void;
+  hostname: string;
+}
+
+const cfg: SiteConfig = (window: any).GDC_CONFIG;
+const gatewayStatus: GatewayStateApi = (window: any).GDC_GATEWAY_STATE;
+const softwareVersion: SoftwareVersionApi = (window: any).GDC_SOFTWARE_VERSIONS;
+const $ = (id: string): any => document.getElementById(id);
 const chainRpcHost =
   cfg.chainRpcHost ||
   cfg.nodes.find((node) => node.name === cfg.gatewayNode)?.publicHost ||
   cfg.nodes[0]?.publicHost;
 $("chain-id").textContent = cfg.chainId;
 $("model-id").textContent = cfg.model;
-async function refreshTelegramConsumer() {
+async function refreshTelegramConsumer(): Promise<void> {
   const link = $("contact");
   link.hidden = true;
   link.removeAttribute("href");
@@ -25,15 +145,15 @@ async function refreshTelegramConsumer() {
 }
 $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana;
 $("grafana-inference").href = cfg.grafanaInference;
-const cards = new Map();
-let observedNodes = cfg.nodes.map((node) => ({ ...node }));
-let cardGpuInventory = new Map();
+const cards: Map<string, HTMLElement> = new Map();
+let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({ ...node }));
+let cardGpuInventory: GpuInventory = new Map();
 
-function nodeKey(node) {
+function nodeKey(node: SiteNode): string {
   return node.address || node.name;
 }
 
-function createCard(node) {
+function createCard(node: SiteNode): HTMLElement {
   const el = document.createElement("article");
   el.className = `node ${node.mode || "active"}`;
   el.innerHTML = `
@@ -76,12 +196,16 @@ function createCard(node) {
   return el;
 }
 
-function updateGpu(inventory, node, card) {
+function updateGpu(
+  inventory: GpuInventory,
+  node: SiteNode,
+  card: HTMLElement,
+): void {
   const row = card.querySelector('[data-k-row="gpu"]');
   const gpuHost = node.gpuHost || node.name;
   const names = inventory.get(gpuHost) || [];
   const connection = gpuHost === node.name ? "local" : "net";
-  const countedNames = new Map();
+  const countedNames: Map<string, number> = new Map();
   for (const name of names) {
     countedNames.set(name, (countedNames.get(name) || 0) + 1);
   }
@@ -102,9 +226,9 @@ function updateGpu(inventory, node, card) {
   card.querySelector('[data-k="gpu"]').title = `GPU host: ${gpuHost}`;
 }
 
-async function refreshGpuInventory() {
+async function refreshGpuInventory(): Promise<void> {
   const state = await json("/status/gpus");
-  const next = new Map();
+  const next: GpuInventory = new Map();
   for (const sample of state?.data?.result || []) {
     const host = String(sample?.metric?.host || "");
     const name = String(sample?.metric?.gpu_name || "");
@@ -120,7 +244,10 @@ async function refreshGpuInventory() {
   }
 }
 for (const node of observedNodes) createCard(node);
-async function response(url, options = {}) {
+async function response(
+  url: string,
+  options: RequestOptions = {},
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
@@ -135,19 +262,19 @@ async function response(url, options = {}) {
     clearTimeout(timer);
   }
 }
-async function json(url, options) {
+async function json(url: string, options: ?RequestOptions): Promise<any> {
   return (await response(url, options || {})).json();
 }
 
-async function text(url) {
+async function text(url: string): Promise<string> {
   return (await response(url)).text();
 }
 
-function set(card, key, value) {
+function set(card: HTMLElement, key: string, value: mixed): void {
   card.querySelector(`[data-k="${key}"]`).textContent = value;
 }
 
-function setUtcTime(id, date, label) {
+function setUtcTime(id: string, date: Date, label: string): void {
   const el = $(id);
   el.dateTime = date.toISOString();
   const value = new Intl.DateTimeFormat("en-GB", {
@@ -164,7 +291,10 @@ function setUtcTime(id, date, label) {
     .replace(",", "");
   el.textContent = `${label} ${value} UTC`;
 }
-function setRecoveryMessage(el, availability) {
+function setRecoveryMessage(
+  el: HTMLElement,
+  availability: GatewayAvailability,
+): void {
   el.replaceChildren(document.createTextNode(availability.message));
   const started = new Date(availability.startedAt || "");
   if (!Number.isFinite(started.getTime())) return;
@@ -184,17 +314,20 @@ function setRecoveryMessage(el, availability) {
   time.textContent = `started ${value} UTC`;
   el.append(" – ", time);
 }
-function escapeHtml(value) {
-  const entities = {
+function escapeHtml(value: mixed): string {
+  const entities: { [string]: string } = {
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
     "'": "&#39;",
     '"': "&quot;",
   };
-  return String(value).replace(/[&<>'"]/g, (char) => entities[char]);
+  return String(value).replace(
+    /[&<>'"]/g,
+    (char) => entities[char],
+  );
 }
-function syncStatus(value) {
+function syncStatus(value: mixed): string {
   const normalized =
     value === null || value === undefined
       ? ""
@@ -204,13 +337,14 @@ function syncStatus(value) {
   return "checking";
 }
 
-const participantDiscovery = new Map();
+const participantDiscovery: Map<string, Promise<ParticipantDiscovery>> =
+  new Map();
 
-async function discoverParticipant(host) {
+async function discoverParticipant(host: string): Promise<ParticipantDiscovery> {
   if (!host) return {};
   const cached = participantDiscovery.get(host);
   if (cached) return cached;
-  const discovery = (async () => {
+  const discovery: Promise<ParticipantDiscovery> = (async () => {
     const statusBase = `https://${host}`;
     const dns = await json(
       `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`,
@@ -247,7 +381,7 @@ async function discoverParticipant(host) {
   }
 }
 
-async function participantNode(participant) {
+async function participantNode(participant: Participant): Promise<SiteNode> {
   let endpoint;
   try {
     endpoint = new URL(participant.inference_url);
@@ -277,7 +411,7 @@ async function participantNode(participant) {
   };
 }
 
-async function reconcileParticipants() {
+async function reconcileParticipants(): Promise<number> {
   const state = await json("/status/participants");
   const participants = Array.isArray(state.participant)
     ? state.participant
@@ -302,9 +436,9 @@ async function reconcileParticipants() {
   return Number(state.block_height) || 0;
 }
 
-let validatorMapController;
+let validatorMapController: ?ValidatorMapController;
 
-async function initValidatorMap() {
+async function initValidatorMap(): Promise<?ValidatorMapController> {
   if (typeof window === "undefined") return;
   const container = $("validator-map");
   const shell = $("validator-map-shell");
@@ -346,9 +480,9 @@ async function initValidatorMap() {
   const primary = getComputedStyle(document.documentElement)
     .getPropertyValue("--primary-color")
     .trim();
-  const update = (nodes) => {
+  const update = (nodes: Array<SiteNode>): void => {
     markers.clearLayers();
-    const groups = new Map();
+    const groups: Map<string, Array<Validator>> = new Map();
     let validatorCount = 0;
     for (const node of nodes) {
       const geo = node.geo;
@@ -400,7 +534,7 @@ async function initValidatorMap() {
     container.dataset.validatorCount = String(validatorCount);
     container.dataset.markerCount = String(groups.size);
   };
-  const fit = () => {
+  const fit = (): void => {
     map.invalidateSize({ animate: false, pan: false });
     map.fitBounds(bounds, { animate: false });
   };
@@ -411,7 +545,7 @@ async function initValidatorMap() {
   });
   const observer = new ResizeObserver(fit);
   observer.observe(container);
-  const setFullscreen = (open) => {
+  const setFullscreen = (open: boolean): void => {
     shell.classList.toggle("is-fullscreen", open);
     button.setAttribute("aria-pressed", String(open));
     button.textContent = open ? "Close" : "Fullscreen";
@@ -421,13 +555,13 @@ async function initValidatorMap() {
   button.addEventListener("click", () =>
     setFullscreen(!shell.classList.contains("is-fullscreen")),
   );
-  const onKeydown = (event) => {
+  const onKeydown = (event: KeyboardEvent): void => {
     if (event.key === "Escape" && shell.classList.contains("is-fullscreen"))
       setFullscreen(false);
   };
   document.addEventListener("keydown", onKeydown);
   const theme = window.matchMedia("(prefers-color-scheme: light)");
-  const onTheme = () => tiles.setUrl(isLight() ? lightTiles : darkTiles);
+  const onTheme = (): void => tiles.setUrl(isLight() ? lightTiles : darkTiles);
   theme.addEventListener("change", onTheme);
   window.addEventListener(
     "pagehide",
@@ -451,7 +585,7 @@ initValidatorMap()
   .catch(() => {
     $("validator-map").textContent = "Validator map is unavailable";
   });
-async function refresh() {
+async function refresh(): Promise<void> {
   let healthy = 0;
   let best = 0;
   refreshTelegramConsumer();
@@ -537,8 +671,8 @@ async function refresh() {
   } catch {
     $("power-share").textContent = "–";
   }
-  let gatewayState = null;
-  let gatewayProbe = null;
+  let gatewayState: any = null;
+  let gatewayProbe: any = null;
   try {
     [gatewayState, gatewayProbe] = await Promise.all([
       json("/status/gateway/v1/status"),
@@ -571,7 +705,7 @@ async function refresh() {
     );
     if (!availability.available) throw new Error(availability.message);
     const metricText = await text("/status/gateway/metrics");
-    const metricValue = (name) =>
+    const metricValue = (name: string): number =>
       [
         ...metricText.matchAll(
           new RegExp(`^${name}(?:\\{[^}]*\\})?\\s+([0-9.e+-]+)$`, "gm"),

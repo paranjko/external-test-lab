@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const state = require('../04-ops/site/gateway-state.js');
 const now = Date.parse('2026-08-06T10:30:00Z');
 const readyProbe = { state: 'READY', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
 const failedProbe = { state: 'UNAVAILABLE', checked_at: '2026-08-06T10:29:50Z', http_status: 429 };
+const recoveringProbe = {
+  state: 'RECOVERING', reason: 'waiting_for_versiond_session', checked_at: '2026-08-06T10:29:50Z', http_status: 0,
+  recovery: { stage: 'waiting_for_versiond_session', escrow_id: '123', started_at: '2026-08-06T10:29:40Z', next_check_seconds: 15 },
+};
 
 const activeShard = {
   id: '52',
@@ -20,7 +25,24 @@ assert.deepEqual(state.classify(undefined, 0), {
 });
 
 assert.equal(state.classify({ mode: 'gateway', runtimes: 0, devshards: [] }, 1, readyProbe, now).state, 'PENDING');
+assert.deepEqual(state.classify({ mode: 'gateway', runtimes: 0, devshards: [] }, 1, {
+  ...failedProbe,
+  reason: 'replacement_escrow_creation_failed',
+}, now), {
+  state: 'UNAVAILABLE',
+  available: false,
+  message: 'Gateway unavailable – replacement escrow creation failed',
+});
 assert.equal(state.classify({ mode: 'gateway', runtimes: 1, devshards: [] }, 1, readyProbe, now).state, 'UNAVAILABLE');
+assert.deepEqual(state.classify({ mode: 'gateway', runtimes: 1, devshards: [] }, 1, recoveringProbe, now), {
+  state: 'RECOVERING', available: false,
+  message: 'Escrow #123 is active – waiting for its versiond inference session – next check within 15 seconds',
+  startedAt: '2026-08-06T10:29:40Z',
+});
+assert.equal(state.recoveryMessage({
+  state: 'RECOVERING', reason: 'waiting_for_chain_confirmation',
+  recovery: { escrow_id: '124', next_check_seconds: 15 },
+}), 'Escrow #124 was submitted – waiting for chain confirmation – next check within 15 seconds');
 
 const zeroCapacity = {
   mode: 'gateway',
@@ -43,5 +65,26 @@ assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, checked_at: '2026-
 
 const legacy = { escrow_id: '7', phase: 'active', requests_blocked: false };
 assert.equal(state.classify(legacy, 1, readyProbe, now).state, 'AVAILABLE');
+
+const siteApp = fs.readFileSync(`${__dirname}/../04-ops/site/app.js`, 'utf8');
+assert.match(siteApp, /READY – processing requests/);
+assert.match(siteApp, /READY – no requests in flight/);
+assert.match(siteApp, /quality-recovery/);
+assert.match(siteApp, /document\.createElement\(["']time["']\)/);
+assert.match(siteApp, /started.*UTC/);
+assert.match(siteApp, /cloudflare-dns\.com\/dns-query/);
+assert.match(siteApp, /ipwho\.is/);
+assert.match(siteApp, /statusBase:\s*`https:\/\/\$\{host\}`/);
+assert.match(siteApp, /json\("\/status\/gpus"\)/);
+assert.match(siteApp, /sample\?\.metric\?\.gpu_name/);
+assert.match(siteApp, /node\.gpuProfile && node\.gpuProfile !== "auto"/);
+assert.match(siteApp, /gpuHost === node\.name \? "local" : "net"/);
+assert.match(siteApp, /\$\{node\.gpuProfile\} – \$\{connection\}/);
+assert.match(siteApp, /replace\(\/\^NVIDIA\\s\+\/i, ""\)/);
+assert.match(
+  siteApp,
+  /Promise\.all\(\s*participants\.map\(participantNode\)\s*\)/,
+);
+assert.doesNotMatch(siteApp, /quality-health-state'\)\.textContent=state\.toUpperCase/);
 
 console.log('PASS gateway public-site state contract');

@@ -119,6 +119,16 @@ body * {
   gap: 18px;
 }
 
+.quality-recovery {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-left: 2px solid currentColor;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 footer {
   display: grid;
   grid-template-columns: max-content minmax(180px, 1fr) max-content max-content max-content max-content;
@@ -188,4 +198,7 @@ footer > :last-child {
   footer > :last-child {
     border-bottom: 0;
   }
+}
+.metric[hidden] {
+  display: none;
 }

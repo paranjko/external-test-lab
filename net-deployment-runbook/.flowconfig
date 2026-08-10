@@ -1,0 +1,14 @@
+[ignore]
+.*/node_modules/.*
+
+[include]
+<PROJECT_ROOT>/04-ops/site
+
+[libs]
+
+[lints]
+
+[options]
+all=false
+
+[strict]

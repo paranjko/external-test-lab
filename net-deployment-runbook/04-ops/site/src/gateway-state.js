@@ -1,13 +1,68 @@
-// Generated from src/gateway-state.js - edit the Flow source and run make site-js
+// @flow strict
 
-(function attachGatewayState(root, factory) {
+declare var module: any;
+
+type DevShardRuntime = {
+  id?: string | number,
+  escrow_id?: string | number,
+  active?: boolean,
+  phase?: string,
+  requests_blocked?: boolean,
+};
+
+type GatewayState = {
+  mode?: string,
+  runtimes?: number,
+  escrow_id?: string | number,
+  phase?: string,
+  requests_blocked?: boolean,
+  devshards?: Array<DevShardRuntime>,
+};
+
+type GatewayRecovery = {
+  escrow_id?: string | number,
+  started_at?: string,
+  next_check_seconds?: number | string,
+};
+
+type GatewayProbe = {
+  state?: string,
+  reason?: string,
+  checked_at?: string,
+  recovery?: GatewayRecovery,
+};
+
+type GatewayAvailability = {
+  state: string,
+  available: boolean,
+  message: string,
+  startedAt?: string,
+};
+
+type GatewayStateApi = {
+  activeRuntime: (state: ?GatewayState) => boolean,
+  probeIsFresh: (
+    probe: ?GatewayProbe,
+    nowMs: number,
+    maxAgeMs: number,
+  ) => boolean,
+  recoveryMessage: (probe: ?GatewayProbe) => string,
+  classify: (
+    state: ?GatewayState,
+    healthyNodes: number,
+    probe: ?GatewayProbe,
+    nowMs?: number,
+    maxAgeMs?: number,
+  ) => GatewayAvailability,
+};
+(function attachGatewayState(root: any, factory: () => GatewayStateApi) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.GDC_GATEWAY_STATE = api;
 })(
   typeof globalThis === "object" ? globalThis : this,
-  function gatewayStateFactory() {
-    function activeRuntime(state) {
+  function gatewayStateFactory(): GatewayStateApi {
+    function activeRuntime(state: ?GatewayState): boolean {
       if (!state || typeof state !== "object") return false;
       if (state.escrow_id) {
         return state.phase === "active" && state.requests_blocked !== true;
@@ -21,7 +76,11 @@
       );
     }
 
-    function probeIsFresh(probe, nowMs, maxAgeMs) {
+    function probeIsFresh(
+      probe: ?GatewayProbe,
+      nowMs: number,
+      maxAgeMs: number,
+    ): boolean {
       const checkedAt = Date.parse(probe?.checked_at || "");
       return (
         Number.isFinite(checkedAt) &&
@@ -30,7 +89,7 @@
       );
     }
 
-    function recoveryMessage(probe) {
+    function recoveryMessage(probe: ?GatewayProbe): string {
       const recovery =
         probe && probe.recovery && typeof probe.recovery === "object"
           ? probe.recovery
@@ -41,7 +100,7 @@
       const stage = String(
         (probe && probe.reason) || "replacement_escrow_recovering",
       );
-      const messages = {
+      const messages: { [string]: string } = {
         replacement_escrow_creating:
           "No valid runtime remains – creating a replacement escrow",
         waiting_for_chain_confirmation: `${escrow} was submitted – waiting for chain confirmation`,
@@ -63,14 +122,14 @@
     }
 
     function classify(
-      state,
-      healthyNodes,
-      probe,
-      nowMs = Date.now(),
-      maxAgeMs = 30000,
-    ) {
-      const currentProbe = probe || {};
-      const currentState = state || {};
+      state: ?GatewayState,
+      healthyNodes: number,
+      probe: ?GatewayProbe,
+      nowMs: number = Date.now(),
+      maxAgeMs: number = 30000,
+    ): GatewayAvailability {
+      const currentProbe: GatewayProbe = probe || {};
+      const currentState: GatewayState = state || {};
       if (healthyNodes === 0) {
         return {
           state: "OFFLINE",
