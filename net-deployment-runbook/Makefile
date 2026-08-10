@@ -60,3 +60,4 @@ test:
 	@./scripts/test-genesis-role-config.sh
 	@./scripts/test-role-separation.sh
 	@./scripts/test-domain-cli.sh
+	@./scripts/test-explicit-public-host.sh

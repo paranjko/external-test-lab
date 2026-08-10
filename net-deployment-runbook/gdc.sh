@@ -66,7 +66,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 baseline
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
-  ./gdc.sh host join [--skip-qualification] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
+  ./gdc.sh host join [--skip-qualification] [--public-host <DNS>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
   ./gdc.sh ops monitoring
@@ -88,7 +88,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 network verify
   ./gdc.sh network reset --yes
-  ./gdc.sh host join [--skip-qualification] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
+  ./gdc.sh host join [--skip-qualification] [--public-host <DNS>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
   ./gdc.sh --release v2026.07.23 host ml-attach <SSH_ALIAS>
   ./gdc.sh host stop|start|verify <SSH_ALIAS>
   ./gdc.sh host reset <SSH_ALIAS> [<SSH_ALIAS> ...]
@@ -440,10 +440,15 @@ case "$COMMAND" in
     esac
     ;;
   join)
-    join_alias='' join_gpu_alias='' skip_qualification=false
+    join_alias='' join_gpu_alias='' join_public_host='' skip_qualification=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --skip-qualification) skip_qualification=true ;;
+        --public-host)
+          join_public_host="${2:-}"
+          [[ "$join_public_host" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'host join --public-host requires a DNS name' >&2; exit 2; }
+          shift
+          ;;
         --*) echo "unknown host join option: $1" >&2; usage; exit 2 ;;
         *)
           if [[ -z "$join_alias" ]]; then
@@ -480,6 +485,7 @@ case "$COMMAND" in
         # shellcheck disable=SC1090
         source "$join_role_config"
         [[ " ${GDC_NODE_ALIASES:-} " == *" $join_alias "* ]] || exit 1
+        [[ -z "$join_public_host" ]] || [[ "$(topology_value "${GDC_NODE_PUBLIC_HOSTS:-}" "$join_alias" || true)" == "$join_public_host" ]] || exit 1
         [[ -z "$join_gpu_alias" ]] && exit 0
         for mapping in ${GDC_NODE_ML_HOSTS:-}; do
           [[ "$mapping" == "$join_alias=$join_gpu_alias" ]] && exit 0
@@ -492,6 +498,7 @@ case "$COMMAND" in
     if [[ "$join_role_ready" != true ]]; then
       join_input="$STATE/role-inputs/join-$join_alias"
       join_config_args=(--output "$join_input" --ssh-alias "$join_alias")
+      [[ -n "$join_public_host" ]] && join_config_args+=(--public-host "$join_public_host")
       [[ -n "$join_gpu_alias" ]] && join_config_args+=(--gpu-ssh-alias "$join_gpu_alias")
       "$ROOT/scripts/prepare-join-role-config.sh" "${join_config_args[@]}"
       printf '%s\n' "$join_input" >"$STATE/active-role-config"

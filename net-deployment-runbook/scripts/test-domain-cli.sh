@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 for contract in \
   './gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>]' \
-  './gdc.sh host join [--skip-qualification] <SSH_ALIAS> [<GPU_SSH_ALIAS>]' \
+  './gdc.sh host join [--skip-qualification] [--public-host <DNS>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]' \
   './gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>' \
   './gdc.sh --release v2026.07.23 gateway apply v3' \
   './gdc.sh --release v2026.08.06 governance devshard submit' \
@@ -16,11 +16,13 @@ done
 grep -Fq 'case "$COMMAND" in' "$ROOT/gdc.sh"
 grep -Fq 'prepare-join-role-config.sh' "$ROOT/gdc.sh"
 grep -Fq 'GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"' "$ROOT/gdc.sh"
+grep -Fq 'join_config_args+=(--public-host "$join_public_host")' "$ROOT/gdc.sh"
+grep -Fq 'detect-public-host.sh" "$SSH_ALIAS" "$PUBLIC_HOST"' "$ROOT/scripts/prepare-join-role-config.sh"
 grep -Fq 'join_config_args+=(--gpu-ssh-alias "$join_gpu_alias")' "$ROOT/gdc.sh"
 grep -Fq 'GDC_NODE_ML_HOSTS="${updated_ml_hosts}${updated_ml_hosts:+ }$SSH_ALIAS=$GPU_SSH_ALIAS"' "$ROOT/scripts/prepare-join-role-config.sh"
 grep -Fq 'GDC_JOIN_SKIP_QUALIFICATION:-false' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'ML qualification explicitly disabled by the joining Host operator' "$ROOT/scripts/phase-join.sh"
-grep -Fq './gdc.sh host join --skip-qualification <ssh-alias> [<gpu-ssh-alias>]' "$ROOT/ROLE-JOIN.md"
+grep -Fq './gdc.sh host join --skip-qualification [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]' "$ROOT/ROLE-JOIN.md"
 grep -Fq '"$ROOT/scripts/phase-ml-attach.sh" "$NODE"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'https://node0.gonka-dev.net/join-bootstrap' "$ROOT/scripts/prepare-join-role-config.sh"
 grep -Fq 'sha256sum -c required.sha256' "$ROOT/scripts/prepare-join-role-config.sh"

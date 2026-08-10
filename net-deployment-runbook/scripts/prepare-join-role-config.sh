@@ -2,17 +2,19 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 --output FILE --ssh-alias ALIAS [--gpu-ssh-alias ALIAS] [--bootstrap-url URL]" >&2
+  echo "Usage: $0 --output FILE --ssh-alias ALIAS [--public-host DNS] [--gpu-ssh-alias ALIAS] [--bootstrap-url URL]" >&2
 }
 
 OUTPUT=''
 SSH_ALIAS=''
 GPU_SSH_ALIAS=''
+PUBLIC_HOST=''
 BOOTSTRAP_URL="${GDC_JOIN_BOOTSTRAP_URL:-https://node0.gonka-dev.net/join-bootstrap}"
 while (($#)); do
   case "$1" in
     --output) OUTPUT="${2:-}"; shift 2 ;;
     --ssh-alias) SSH_ALIAS="${2:-}"; shift 2 ;;
+    --public-host) PUBLIC_HOST="${2:-}"; shift 2 ;;
     --gpu-ssh-alias) GPU_SSH_ALIAS="${2:-}"; shift 2 ;;
     --bootstrap-url) BOOTSTRAP_URL="${2:-}"; shift 2 ;;
     *) usage; exit 2 ;;
@@ -21,6 +23,7 @@ done
 
 [[ -n "$OUTPUT" && -n "$SSH_ALIAS" ]] || { usage; exit 2; }
 [[ "$SSH_ALIAS" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'invalid JOIN SSH alias' >&2; exit 2; }
+[[ -z "$PUBLIC_HOST" || "$PUBLIC_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'invalid JOIN public host' >&2; exit 2; }
 if [[ -n "$GPU_SSH_ALIAS" ]]; then
   [[ "$GPU_SSH_ALIAS" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'invalid JOIN GPU SSH alias' >&2; exit 2; }
   [[ "$GPU_SSH_ALIAS" != "$SSH_ALIAS" ]] || { echo 'JOIN Host and GPU SSH aliases must be different' >&2; exit 2; }
@@ -53,13 +56,26 @@ done
 # assignment characters before it is sourced.
 # shellcheck disable=SC1090
 source "$tmp/topology.env"
+if [[ -n "$PUBLIC_HOST" ]]; then
+  PUBLIC_HOST="$("$(dirname "$0")/detect-public-host.sh" "$SSH_ALIAS" "$PUBLIC_HOST")"
+fi
+if [[ -z "$PUBLIC_HOST" ]]; then
+  PUBLIC_HOST="$(topology_value "$GDC_NODE_PUBLIC_HOSTS" "$SSH_ALIAS" || true)"
+fi
+if [[ -z "$PUBLIC_HOST" ]]; then
+  PUBLIC_HOST="$("$(dirname "$0")/detect-public-host.sh" "$SSH_ALIAS")"
+fi
 if [[ " $GDC_NODE_ALIASES " != *" $SSH_ALIAS "* ]]; then
-  public_host="$("$(dirname "$0")/detect-public-host.sh" "$SSH_ALIAS")"
   GDC_NODE_ALIASES+=" $SSH_ALIAS"
-  GDC_NODE_PUBLIC_HOSTS+=" $SSH_ALIAS=$public_host"
   GDC_NODE_GPU_PROFILES+=" $SSH_ALIAS=auto"
   GDC_NODE_P2P_PORTS+=" $SSH_ALIAS=5000"
 fi
+updated_public_hosts=''
+for mapping in $GDC_NODE_PUBLIC_HOSTS; do
+  [[ "${mapping%%=*}" == "$SSH_ALIAS" ]] && continue
+  updated_public_hosts+="${updated_public_hosts:+ }$mapping"
+done
+GDC_NODE_PUBLIC_HOSTS="${updated_public_hosts}${updated_public_hosts:+ }$SSH_ALIAS=$PUBLIC_HOST"
 if [[ -n "$GPU_SSH_ALIAS" ]]; then
   updated_ml_hosts=''
   for mapping in ${GDC_NODE_ML_HOSTS:-}; do
