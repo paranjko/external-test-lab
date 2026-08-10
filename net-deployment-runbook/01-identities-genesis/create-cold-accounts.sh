@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PASSWORD_FILE="${1:-$ROOT/state/secrets/operator.keyring}"
+source "$ROOT/scripts/lib.sh"
+PASSWORD_FILE="${1:-$STATE/secrets/operator.keyring}"
 [[ -s "$PASSWORD_FILE" ]] || { echo "Missing $PASSWORD_FILE; run scripts/make-secrets.sh" >&2; exit 1; }
 PASSWORD="$(<"$PASSWORD_FILE")"
 shift || true
-BACKUP_DIR="$ROOT/artifacts/mnemonics"
+BACKUP_DIR="$GDC_HOME/mnemonics"
 normalize_account_name() {
   local input="$1" base
   case "$input" in
-    gdc-node[0-4]-cold|gdc-node[0-4]) base="${input%-cold}" ;;
-    node[0-4]-cold) base="gdc-${input%-cold}" ;;
-    node[0-4]) base="gdc-$input" ;;
     gdc-gateway-cold|gdc-gateway) base="gdc-gateway" ;;
-    *) echo "Unknown account target: $input" >&2; return 1 ;;
+    *-cold)
+      base="${input%-cold}"
+      [[ "$base" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid account target: $input" >&2; return 1; }
+      ;;
+    *)
+      base="$input"
+      [[ "$base" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid account target: $input" >&2; return 1; }
+      ;;
   esac
   printf '%s\n' "$base-cold"
 }
@@ -24,7 +29,8 @@ if [[ "$#" -gt 0 ]]; then
     TARGETS+=( "$(normalize_account_name "$input")" )
   done
 else
-  TARGETS=(gdc-node0-cold gdc-node1-cold gdc-node2-cold gdc-node3-cold gdc-node4-cold gdc-gateway-cold)
+  echo 'Specify at least one validator alias and/or gdc-gateway; refusing to create an implicit topology.' >&2
+  exit 2
 fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

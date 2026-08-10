@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: sudo $0 --node-name gdc-nodeN --env FILE --node-config FILE --genesis FILE [--local-ml] [--allow-release-change]" >&2; }
+usage(){ echo "Usage: sudo $0 --node-name ssh-alias --env FILE --node-config FILE --genesis FILE [--local-ml] [--allow-release-change]" >&2; }
 NODE=""; ENV_FILE=""; NODE_CONFIG=""; GENESIS=""; LOCAL_ML=false; ALLOW_RELEASE_CHANGE=false
 while (($#)); do
   case "$1" in

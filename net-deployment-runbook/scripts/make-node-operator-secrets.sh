@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+source "$(dirname "$0")/lib.sh"
+load_project
 
-[[ $# -eq 2 && "$1" =~ ^gdc-node[1-4]$ ]] || {
-  echo 'Usage: make-node-operator-secrets.sh gdc-nodeN secrets-dir' >&2
+[[ $# -eq 2 ]] || {
+  echo 'Usage: make-node-operator-secrets.sh ssh-alias secrets-dir' >&2
   exit 2
 }
 
-NODE="$1"
+NODE="$(node_name "$1")"
 OUT="$2"
 umask 077
 install -d -m 0700 "$OUT"

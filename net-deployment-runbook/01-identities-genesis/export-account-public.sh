@@ -3,10 +3,11 @@ set -Eeuo pipefail
 [[ $# -eq 2 ]] || { echo "Usage: $0 KEY_NAME PASSWORD_FILE" >&2; exit 2; }
 NAME="$1"; PASSWORD_FILE="$2"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib.sh"
 PASSWORD="$(<"$PASSWORD_FILE")"
 ADDRESS="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys show "$NAME" --keyring-backend file -a | tail -n1 | tr -d '\r')"
 PUB_JSON="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys show "$NAME" --keyring-backend file --pubkey)"
-OUT="$ROOT/artifacts/accounts/$NAME.json"
+OUT="$GDC_HOME/accounts/$NAME.json"
 mkdir -p "$(dirname "$OUT")"
 [[ "$ADDRESS" =~ ^gonka1[0-9a-z]{20,90}$ ]] || {
   echo "Invalid address from keyring: $ADDRESS" >&2

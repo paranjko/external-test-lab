@@ -3,8 +3,62 @@ set -Eeuo pipefail
 
 kit_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
+init_gdc_paths() {
+  ROOT="${ROOT:-$(kit_root)}"
+  local configured_home="${GDC_HOME:-$(dirname "$ROOT")/net-deployment-data}"
+  [[ -n "$configured_home" ]] || { echo 'error: GDC_HOME must not be empty' >&2; return 1; }
+  if [[ "$configured_home" != /* ]]; then
+    configured_home="$PWD/$configured_home"
+  fi
+  configured_home="$(realpath -m -- "$configured_home")"
+  [[ "$configured_home" != / ]] || { echo 'error: GDC_HOME must not be /' >&2; return 1; }
+  GDC_HOME="$configured_home"
+  STATE="$GDC_HOME/state"
+  export GDC_HOME STATE
+}
+
+init_gdc_paths
+
+# GDC_HOME is the operator's data root. Commands that act on a particular
+# Network Node select a child directory named after that operator-provided SSH
+# alias. This keeps private keys, imported Genesis material and evidence from
+# independent Hosts out of one shared state directory.
+init_gdc_data_root() {
+  GDC_DATA_ROOT="${GDC_DATA_ROOT:-$GDC_HOME}"
+  if [[ "$GDC_DATA_ROOT" != /* ]]; then
+    GDC_DATA_ROOT="$PWD/$GDC_DATA_ROOT"
+  fi
+  GDC_DATA_ROOT="$(realpath -m -- "$GDC_DATA_ROOT")"
+  [[ "$GDC_DATA_ROOT" != / ]] || die 'error: GDC_DATA_ROOT must not be /'
+  export GDC_DATA_ROOT
+}
+
+select_node_data_home() {
+  local node="$1"
+  [[ "$node" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid SSH alias for data directory: $node"
+  init_gdc_data_root
+  GDC_HOME="$GDC_DATA_ROOT/$node"
+  init_gdc_paths
+}
+
+select_network_owner_data_home() {
+  local owner_file="$GDC_DATA_ROOT/network-owner" owner
+  [[ -s "$owner_file" ]] || return 1
+  owner="$(<"$owner_file")"
+  select_node_data_home "$owner"
+}
+
 die() { echo "error: $*" >&2; exit 1; }
 step() { printf '\n== %s ==\n' "$*"; }
+
+inferenced_runs_path() {
+  local host_path runs_root
+  [[ $# -eq 1 ]] || die 'inferenced_runs_path expects one host path'
+  runs_root="$(realpath -m -- "$GDC_HOME/runs")"
+  host_path="$(realpath -m -- "$1")"
+  [[ "$host_path" == "$runs_root/"* ]] || die "inferenced input is outside $GDC_HOME/runs: $host_path"
+  printf '/gdc-runs/%s\n' "${host_path#"$runs_root/"}"
+}
 
 evidence_exit_trap() {
   local rc=$?
@@ -38,12 +92,104 @@ load_public_observability_hosts() {
   GRAFANA_HOST="${GDC_GRAFANA_HOST:-grafana.gonka-dev.net}"
 }
 
+# Every participant is identified by an operator-provided SSH alias.  Public
+# DNS, hardware profile and an optional separate ML host belong to that alias;
+# no lifecycle command may infer them from a particular lab host name.
+topology_value() {
+  local mapping="$1" key="$2" entry name value
+  for entry in $mapping; do
+    name="${entry%%=*}"
+    value="${entry#*=}"
+    [[ "$name" == "$key" && "$value" != "$entry" ]] && { printf '%s\n' "$value"; return 0; }
+  done
+  return 1
+}
+
+topology_contains_node() {
+  local node="$1" candidate
+  for candidate in "${GDC_NODES[@]}"; do [[ "$candidate" == "$node" ]] && return 0; done
+  return 1
+}
+
+node_public_host() { topology_value "$GDC_NODE_PUBLIC_HOSTS" "$1" || die "no public host configured for SSH alias $1"; }
+node_gpu_profile() { topology_value "$GDC_NODE_GPU_PROFILES" "$1" || die "no GPU profile configured for SSH alias $1"; }
+node_p2p_port() { topology_value "$GDC_NODE_P2P_PORTS" "$1" || printf '%s\n' 5000; }
+node_ml_host() { topology_value "${GDC_NODE_ML_HOSTS:-}" "$1"; }
+
+node_for_ml_host() {
+  local ml_host="$1" node
+  for node in "${GDC_NODES[@]}"; do
+    [[ "$(node_ml_host "$node" || true)" == "$ml_host" ]] && { printf '%s\n' "$node"; return 0; }
+  done
+  return 1
+}
+
+load_topology() {
+  [[ -n "${GDC_NODE_ALIASES:-}" ]] || die 'set GDC_NODE_ALIASES in .env'
+  read -r -a GDC_NODES <<<"$GDC_NODE_ALIASES"
+  (( ${#GDC_NODES[@]} >= 1 )) || die 'GDC_NODE_ALIASES must contain at least one SSH alias'
+  local -A seen=() ml_seen=()
+  local node host profile ml_alias
+  for node in "${GDC_NODES[@]}"; do
+    [[ "$node" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid SSH alias in GDC_NODE_ALIASES: $node"
+    [[ -z "${seen[$node]:-}" ]] || die "duplicate SSH alias in GDC_NODE_ALIASES: $node"
+    seen[$node]=1
+  done
+  for node in "${GDC_NODES[@]}"; do
+    host="$(node_public_host "$node")"
+    [[ "$host" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid public host for $node: $host"
+    profile="$(node_gpu_profile "$node")"
+    [[ -n "$profile" ]] || die "empty GPU profile for $node"
+    ml_alias="$(node_ml_host "$node" || true)"
+    if [[ -n "$ml_alias" ]]; then
+      [[ "$ml_alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid ML SSH alias for $node: $ml_alias"
+      [[ -z "${seen[$ml_alias]:-}" ]] || die "ML SSH alias must differ from a validator alias: $ml_alias"
+      [[ -z "${ml_seen[$ml_alias]:-}" ]] || die "network GPU SSH alias is mapped more than once: $ml_alias"
+      ml_seen[$ml_alias]=1
+    fi
+  done
+  GENESIS_NODE="${GDC_GENESIS_NODE:-${GDC_NODES[0]}}"
+  PUBLIC_EDGE_NODE="${GDC_PUBLIC_EDGE_NODE:-$GENESIS_NODE}"
+  GATEWAY_NODE="${GDC_GATEWAY_NODE:-$GENESIS_NODE}"
+  TELEGRAM_BOT_HOST="${GDC_TELEGRAM_BOT_HOST:-$GATEWAY_NODE}"
+  topology_contains_node "$GENESIS_NODE" || die "GDC_GENESIS_NODE is not in GDC_NODE_ALIASES: $GENESIS_NODE"
+  topology_contains_node "$PUBLIC_EDGE_NODE" || die "GDC_PUBLIC_EDGE_NODE is not in GDC_NODE_ALIASES: $PUBLIC_EDGE_NODE"
+  topology_contains_node "$GATEWAY_NODE" || die "GDC_GATEWAY_NODE is not in GDC_NODE_ALIASES: $GATEWAY_NODE"
+  topology_contains_node "$TELEGRAM_BOT_HOST" || die "GDC_TELEGRAM_BOT_HOST is not in GDC_NODE_ALIASES: $TELEGRAM_BOT_HOST"
+  GENESIS_PUBLIC_HOST="$(node_public_host "$GENESIS_NODE")"
+  PUBLIC_EDGE_HOST="$(node_public_host "$PUBLIC_EDGE_NODE")"
+
+  # Render templates still use positional NODE<n> variables.  They are derived
+  # from the supplied alias inventory here, never assigned to this lab's DNS
+  # names or hardware.  Lifecycle scripts use the alias helpers above.
+  local index=0 ml_alias ml_endpoint
+  for node in "${GDC_NODES[@]}"; do
+    printf -v "NODE${index}_PUBLIC_HOST" '%s' "$(node_public_host "$node")"
+    printf -v "NODE${index}_GPU_PROFILE" '%s' "$(node_gpu_profile "$node")"
+    printf -v "NODE${index}_P2P_PORT" '%s' "$(node_p2p_port "$node")"
+    ml_alias="$(node_ml_host "$node" || true)"
+    if [[ -n "$ml_alias" ]]; then
+      ml_endpoint="$(ssh -G "$ml_alias" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+      [[ -n "$ml_endpoint" ]] || die "cannot determine ML endpoint from SSH alias $ml_alias"
+      printf -v "NODE${index}_ML_ENDPOINT" '%s' "$ml_endpoint"
+      printf -v "NODE${index}_ML_MONITOR_HOST" '%s' "$ml_endpoint"
+    fi
+    index=$((index + 1))
+  done
+}
+
 write_env() {
   local file="$1"
   shift
   install -d -m 0700 "$(dirname "$file")"
   umask 077
   printf '%s\n' "$@" >"$file"
+}
+
+persist_runtime_topology() {
+  write_env "$STATE/runtime-topology.env" \
+    "GDC_GENESIS_NODE=$GENESIS_NODE" \
+    "GDC_GENESIS_GUARDIAN_ENABLED=${GDC_GENESIS_GUARDIAN_ENABLED:-false}"
 }
 
 capture_canonical_genesis() {
@@ -69,92 +215,87 @@ genesis_sha256() {
 # shellcheck disable=SC2034
 load_project() {
   ROOT="$(kit_root)"
-  ENV_FILE="${GDC_ENV:-$ROOT/.env}"
-  [[ -s "$ENV_FILE" ]] || die "create $ROOT/.env from .env.example"
-  # A shell invocation is the explicit per-rehearsal override.  Do not let an
-  # empty example value in .env silently re-include an intentionally skipped
-  # host (for example: GDC_SKIP_HOSTS='gdc-node2 gdc-node3' ./gdc.sh prepare).
-  local caller_skip_hosts='' resolved_profile_key
-  local caller_skip_hosts_set=false
-  if [[ ${GDC_SKIP_HOSTS+x} ]]; then
-    caller_skip_hosts="$GDC_SKIP_HOSTS"
-    caller_skip_hosts_set=true
+  init_gdc_paths
+  ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"
+  # OPS owns the root .env, while GENESIS and JOIN own their per-Host data
+  # directories. A lifecycle phase may therefore use OPS input without moving
+  # the Host's keys, Genesis or evidence back into the OPS data root.
+  if [[ ! -s "$ENV_FILE" && -z "${GDC_ENV:-}" && -n "${GDC_DATA_ROOT:-}" && "$GDC_HOME" != "$GDC_DATA_ROOT" && -s "$GDC_DATA_ROOT/.env" ]]; then
+    ENV_FILE="$GDC_DATA_ROOT/.env"
   fi
+  if [[ ! -s "$ENV_FILE" && -z "${GDC_ENV:-}" && -s "$STATE/active-role-config" ]]; then
+    ENV_FILE="$(<"$STATE/active-role-config")"
+  fi
+  [[ -s "$ENV_FILE" ]] || die 'no role input is available; GENESIS and JOIN create it automatically, while OPS requires .env'
+  local caller_genesis_node='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' resolved_profile_key runtime_topology runtime_genesis_node runtime_guardian_enabled runtime_home
+  local caller_genesis_node_set=false caller_public_edge_node_set=false caller_gateway_node_set=false caller_telegram_bot_host_set=false caller_guardian_enabled_set=false
+  if [[ ${GDC_GENESIS_NODE+x} ]]; then caller_genesis_node="$GDC_GENESIS_NODE"; caller_genesis_node_set=true; fi
+  if [[ ${GDC_PUBLIC_EDGE_NODE+x} ]]; then caller_public_edge_node="$GDC_PUBLIC_EDGE_NODE"; caller_public_edge_node_set=true; fi
+  if [[ ${GDC_GATEWAY_NODE+x} ]]; then caller_gateway_node="$GDC_GATEWAY_NODE"; caller_gateway_node_set=true; fi
+  if [[ ${GDC_TELEGRAM_BOT_HOST+x} ]]; then caller_telegram_bot_host="$GDC_TELEGRAM_BOT_HOST"; caller_telegram_bot_host_set=true; fi
+  if [[ ${GDC_GENESIS_GUARDIAN_ENABLED+x} ]]; then caller_guardian_enabled="$GDC_GENESIS_GUARDIAN_ENABLED"; caller_guardian_enabled_set=true; fi
+  runtime_home="$GDC_HOME"
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
+  # GDC_HOME locates .env itself, so it is a process-level input rather than a
+  # value that can recursively relocate the file from inside that file.
+  GDC_HOME="$runtime_home"
+  init_gdc_paths
+  # Genesis persists only its own network authority, never credentials or
+  # independently operated OPS/Gateway placement. A later bootstrap-access
+  # must keep using the selected Genesis alias, while .env remains
+  # authoritative for Public Edge, Gateway, and Telegram consumer hosts.
+  runtime_topology="$STATE/runtime-topology.env"
+  if [[ -s "$runtime_topology" ]]; then
+    runtime_genesis_node="$(awk -F= '$1 == "GDC_GENESIS_NODE" { print $2; exit }' "$runtime_topology")"
+    runtime_guardian_enabled="$(awk -F= '$1 == "GDC_GENESIS_GUARDIAN_ENABLED" { print $2; exit }' "$runtime_topology")"
+    [[ -n "$runtime_genesis_node" ]] && GDC_GENESIS_NODE="$runtime_genesis_node"
+    [[ -n "$runtime_guardian_enabled" ]] && GDC_GENESIS_GUARDIAN_ENABLED="$runtime_guardian_enabled"
+  fi
   # shellcheck disable=SC1091
   source "$ROOT/scripts/profile.sh"
-  resolved_profile_key="${GDC_RELEASE_PROFILE:-testnet-0.2.14}+${GDC_DEPLOYMENT_PROFILE:-community-lab}+${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
-  if [[ -z "${GDC_RESOLVED_IMAGE_LOCK:-}" && -r "$ROOT/state/resolved-images/$resolved_profile_key.lock" ]]; then
-    export GDC_RESOLVED_IMAGE_LOCK="$ROOT/state/resolved-images/$resolved_profile_key.lock"
+  resolved_profile_key="${GDC_RELEASE_PROFILE:-v2026.07.23}+${GDC_DEPLOYMENT_PROFILE:-community-lab}+${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
+  if [[ -z "${GDC_RESOLVED_IMAGE_LOCK:-}" && -r "$STATE/resolved-images/$resolved_profile_key.lock" ]]; then
+    export GDC_RESOLVED_IMAGE_LOCK="$STATE/resolved-images/$resolved_profile_key.lock"
   fi
   load_profiles
   set +a
-  if [[ "$caller_skip_hosts_set" == true ]]; then
-    export GDC_SKIP_HOSTS="$caller_skip_hosts"
-  fi
+  if [[ "$caller_genesis_node_set" == true ]]; then export GDC_GENESIS_NODE="$caller_genesis_node"; fi
+  if [[ "$caller_public_edge_node_set" == true ]]; then export GDC_PUBLIC_EDGE_NODE="$caller_public_edge_node"; fi
+  if [[ "$caller_gateway_node_set" == true ]]; then export GDC_GATEWAY_NODE="$caller_gateway_node"; fi
+  if [[ "$caller_telegram_bot_host_set" == true ]]; then export GDC_TELEGRAM_BOT_HOST="$caller_telegram_bot_host"; fi
+  if [[ "$caller_guardian_enabled_set" == true ]]; then export GDC_GENESIS_GUARDIAN_ENABLED="$caller_guardian_enabled"; fi
 
   # Keep a fresh Community DevNet recognisable across its reproducible
   # baseline and upgrade rehearsals. An explicit deployment override remains
   # possible through .env for an isolated experiment.
   CHAIN_ID="${CHAIN_ID:-gonka-devnet-community}"
   BASE_DENOM=ngonka
-  BASE_DOMAIN=gonka-dev.net
+  ACME_EMAIL="${ACME_EMAIL:-}"
   load_public_observability_hosts
   API_HOST=api.gonka-dev.net
-  TELEGRAM_BOT_URL="${GDC_TELEGRAM_BOT_URL:-}"
-  if [[ -n "$TELEGRAM_BOT_URL" && ! "$TELEGRAM_BOT_URL" =~ ^https://t\.me/[A-Za-z0-9_]{5,32}$ ]]; then
-    die 'GDC_TELEGRAM_BOT_URL must be https://t.me/<bot_username>; never put a BotFather token here'
-  fi
+  load_topology
   DATA_ROOT=/srv/dai
   GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
   HF_CACHE_ROOT=/srv/dai/hf-cache
-  NODE0_PUBLIC_HOST=node0.gonka-dev.net
-  NODE1_PUBLIC_HOST=node1.gonka-dev.net
-  NODE2_PUBLIC_HOST=node2.gonka-dev.net
-  NODE3_PUBLIC_HOST=node3.gonka-dev.net
-  NODE4_PUBLIC_HOST=node4.gonka-dev.net
-  NODE0_P2P_PORT=5000 NODE1_P2P_PORT=5000 NODE2_P2P_PORT=5000
-  NODE3_P2P_PORT=5000 NODE4_P2P_PORT=5000
-  NODE0_GPU_PROFILE=a5000-24g
-  NODE1_GPU_PROFILE=t4-16g
-  NODE2_GPU_PROFILE=4090-24g
-  NODE3_GPU_PROFILE=3090-24g
-  NODE4_GPU_PROFILE=blackwell-16g
-  GRAFANA_PUBLIC_DASHBOARD_UID=gdc-overview
-  # Public-dashboard URLs are intentionally capability links, not credentials.
-  # Keep this stable so re-running ops monitoring repairs the same share.
-  GRAFANA_PUBLIC_DASHBOARD_SHARE_UID=5fd40e12-5334-4d32-aea2-dcfe85afb3f2
-  GRAFANA_PUBLIC_DASHBOARD_TOKEN=321a0d961e7f4b4ea6da843777c032eb
+  mapfile -t genesis_addresses < <(getent ahostsv4 "$GENESIS_PUBLIC_HOST" | awk '{print $1}' | sort -u)
+  (( ${#genesis_addresses[@]} == 1 )) || die "$GENESIS_PUBLIC_HOST must resolve to exactly one IPv4 address"
+  MONITORING_CIDR="${genesis_addresses[0]}/32"
+  mapfile -t edge_addresses < <(getent ahostsv4 "$PUBLIC_EDGE_HOST" | awk '{print $1}' | sort -u)
+  (( ${#edge_addresses[@]} == 1 )) || die "$PUBLIC_EDGE_HOST must resolve to exactly one IPv4 address"
+  PUBLIC_EDGE_CIDR="${edge_addresses[0]}/32"
 
-  mapfile -t node0_addresses < <(getent ahostsv4 "$NODE0_PUBLIC_HOST" | awk '{print $1}' | sort -u)
-  (( ${#node0_addresses[@]} == 1 )) || die "$NODE0_PUBLIC_HOST must resolve to exactly one IPv4 address"
-  MONITORING_CIDR="${node0_addresses[0]}/32"
-  mapfile -t node4_edge_addresses < <(getent ahostsv4 "$NODE4_PUBLIC_HOST" | awk '{print $1}' | sort -u)
-  (( ${#node4_edge_addresses[@]} == 1 )) || die "$NODE4_PUBLIC_HOST must resolve to exactly one IPv4 address"
-  PUBLIC_EDGE_CIDR="${node4_edge_addresses[0]}/32"
-
-  # The node4 Network Node and its Blackwell ML host are different machines.
-  # Resolve the latter from the operator's SSH inventory, never from the
-  # node4 public DNS name: port 5000 on node4 is Tendermint P2P, not MLNode.
-  NODE4_ML_ENDPOINT="${GDC_NODE4_ML_ENDPOINT:-$(ssh -G gdc-node4-ml 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')}"
-  [[ -n "$NODE4_ML_ENDPOINT" ]] || die 'cannot determine gdc-node4-ml endpoint from SSH configuration'
-  [[ "$NODE4_ML_ENDPOINT" != "$NODE4_PUBLIC_HOST" ]] || die 'gdc-node4-ml endpoint must differ from node4 public host'
-  NODE4_ML_MONITOR_HOST="$NODE4_ML_ENDPOINT"
-
-  require ACME_EMAIL
-  STATE="$ROOT/state"
   SECRETS="$STATE/secrets"
   IDENTITIES="$STATE/identities"
   GENERATED="$STATE/generated"
-  GENESIS="$ROOT/artifacts/genesis"
-  ACCOUNTS="$ROOT/artifacts/accounts"
+  GENESIS="$GDC_HOME/genesis"
+  ACCOUNTS="$GDC_HOME/accounts"
   INVENTORY="$STATE/inventory.env"
-  mkdir -p "$STATE" "$ROOT/artifacts"
+  mkdir -p "$STATE" "$GDC_HOME"
   GDC_RUN_ID="${GDC_RUN_ID:-$(cat "$STATE/active-run-id" 2>/dev/null || true)}"
   if [[ -n "$GDC_RUN_ID" ]]; then
-    GDC_RUN_LOG="${GDC_RUN_LOG:-$ROOT/artifacts/runs/$GDC_RUN_ID/run.log}"
+    GDC_RUN_LOG="${GDC_RUN_LOG:-$GDC_HOME/runs/$GDC_RUN_ID/run.log}"
     export GDC_RUN_ID GDC_RUN_LOG
   fi
   write_inventory
@@ -174,7 +315,7 @@ record_phase_profile() {
 }
 
 assert_baseline_release() {
-  [[ "$GDC_RELEASE_PROFILE" == testnet-0.2.14 ]] || die "baseline phases require testnet-0.2.14, got $GDC_RELEASE_PROFILE"
+  [[ "$GDC_RELEASE_PROFILE" == v2026.07.23 ]] || die "baseline phases require v2026.07.23, got $GDC_RELEASE_PROFILE"
 }
 
 require_ml_qualification() {
@@ -216,23 +357,15 @@ latest_ml_qualification_report() {
     [[ -s "$report/models.json" && -s "$report/completion.json" && -s "$report/vram.csv" ]] || continue
     printf '%s\n' "$report"
     return 0
-  done < <(find "$ROOT/artifacts/runs" -mindepth 2 -maxdepth 2 -type d -path "*-ml-qualification/$host" -print 2>/dev/null | LC_ALL=C sort -r)
+  done < <(find "$GDC_HOME/runs" -mindepth 2 -maxdepth 2 -type d -path "*-ml-qualification/$host" -print 2>/dev/null | LC_ALL=C sort -r)
   return 1
 }
 
 require() {
   local name
   for name in "$@"; do
-    [[ -n "${!name:-}" && "${!name}" != REPLACE_* ]] || die "set $name in .env"
+    [[ -n "${!name:-}" && "${!name}" != REPLACE_* ]] || die "set $name in the active role configuration"
   done
-}
-
-host_is_skipped() {
-  local host="$1" skipped
-  for skipped in ${GDC_SKIP_HOSTS:-}; do
-    [[ "$skipped" == "$host" ]] && return 0
-  done
-  return 1
 }
 
 # This affects only the vLLM kernel implementation, not the pinned model,
@@ -247,52 +380,64 @@ attention_backend_for_profile() {
 
 write_inventory() {
   umask 077
-  cat >"$INVENTORY" <<EOF
-CHAIN_ID=$CHAIN_ID
-BASE_DENOM=$BASE_DENOM
-BASE_DOMAIN=$BASE_DOMAIN
-SITE_HOST=$SITE_HOST
-API_HOST=$API_HOST
-GRAFANA_HOST=$GRAFANA_HOST
-ACME_EMAIL=$ACME_EMAIL
-MONITORING_CIDR=$MONITORING_CIDR
-PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR
-NODE0_PUBLIC_HOST=$NODE0_PUBLIC_HOST
-NODE0_P2P_PORT=5000
-NODE0_GPU_PROFILE=$NODE0_GPU_PROFILE
-NODE1_PUBLIC_HOST=$NODE1_PUBLIC_HOST
-NODE1_P2P_PORT=5000
-NODE1_GPU_PROFILE=$NODE1_GPU_PROFILE
-NODE2_PUBLIC_HOST=$NODE2_PUBLIC_HOST
-NODE2_P2P_PORT=5000
-NODE2_GPU_PROFILE=$NODE2_GPU_PROFILE
-NODE3_PUBLIC_HOST=$NODE3_PUBLIC_HOST
-NODE3_P2P_PORT=5000
-NODE3_GPU_PROFILE=$NODE3_GPU_PROFILE
-NODE4_PUBLIC_HOST=$NODE4_PUBLIC_HOST
-NODE4_P2P_PORT=5000
-NODE4_GPU_PROFILE=$NODE4_GPU_PROFILE
-NODE4_ML_ENDPOINT=$NODE4_ML_ENDPOINT
-NODE4_ML_MONITOR_HOST=$NODE4_ML_MONITOR_HOST
-GRAFANA_PUBLIC_DASHBOARD_UID=$GRAFANA_PUBLIC_DASHBOARD_UID
-GRAFANA_PUBLIC_DASHBOARD_SHARE_UID=$GRAFANA_PUBLIC_DASHBOARD_SHARE_UID
-GRAFANA_PUBLIC_DASHBOARD_TOKEN=$GRAFANA_PUBLIC_DASHBOARD_TOKEN
-TELEGRAM_BOT_URL=$TELEGRAM_BOT_URL
-DATA_ROOT=$DATA_ROOT
-GENESIS_INSTALL_PATH=$GENESIS_INSTALL_PATH
-HF_CACHE_ROOT=$HF_CACHE_ROOT
-EOF
+  inventory_value() { printf '%s=%q\n' "$1" "$2"; }
+  {
+    inventory_value CHAIN_ID "$CHAIN_ID"
+    inventory_value BASE_DENOM "$BASE_DENOM"
+    inventory_value SITE_HOST "$SITE_HOST"
+    inventory_value API_HOST "$API_HOST"
+    inventory_value GRAFANA_HOST "$GRAFANA_HOST"
+    inventory_value ACME_EMAIL "$ACME_EMAIL"
+    inventory_value MONITORING_CIDR "$MONITORING_CIDR"
+    inventory_value PUBLIC_EDGE_CIDR "$PUBLIC_EDGE_CIDR"
+    inventory_value GDC_NODE_ALIASES "$GDC_NODE_ALIASES"
+    inventory_value GDC_NODE_PUBLIC_HOSTS "$GDC_NODE_PUBLIC_HOSTS"
+    inventory_value GDC_NODE_GPU_PROFILES "$GDC_NODE_GPU_PROFILES"
+    inventory_value GDC_NODE_P2P_PORTS "$GDC_NODE_P2P_PORTS"
+    inventory_value GDC_NODE_ML_HOSTS "${GDC_NODE_ML_HOSTS:-}"
+    inventory_value GDC_GENESIS_NODE "$GENESIS_NODE"
+    inventory_value GDC_PUBLIC_EDGE_NODE "$PUBLIC_EDGE_NODE"
+    inventory_value GDC_GATEWAY_NODE "$GATEWAY_NODE"
+    inventory_value GENESIS_NODE "$GENESIS_NODE"
+    inventory_value GENESIS_PUBLIC_HOST "$GENESIS_PUBLIC_HOST"
+    inventory_value GENESIS_P2P_PORT "$(node_p2p_port "$GENESIS_NODE")"
+    inventory_value PUBLIC_EDGE_HOST "$PUBLIC_EDGE_HOST"
+    inventory_value DATA_ROOT "$DATA_ROOT"
+    inventory_value GENESIS_INSTALL_PATH "$GENESIS_INSTALL_PATH"
+    inventory_value HF_CACHE_ROOT "$HF_CACHE_ROOT"
+  } >"$INVENTORY"
+  local index=0 node endpoint_var monitor_var
+  for node in "${GDC_NODES[@]}"; do
+    inventory_value "NODE${index}_PUBLIC_HOST" "$(node_public_host "$node")" >>"$INVENTORY"
+    inventory_value "NODE${index}_P2P_PORT" "$(node_p2p_port "$node")" >>"$INVENTORY"
+    inventory_value "NODE${index}_GPU_PROFILE" "$(node_gpu_profile "$node")" >>"$INVENTORY"
+    if [[ -n "$(node_ml_host "$node" || true)" ]]; then
+      endpoint_var="NODE${index}_ML_ENDPOINT"
+      monitor_var="NODE${index}_ML_MONITOR_HOST"
+      inventory_value "NODE${index}_ML_ENDPOINT" "${!endpoint_var:-}" >>"$INVENTORY"
+      inventory_value "NODE${index}_ML_MONITOR_HOST" "${!monitor_var:-}" >>"$INVENTORY"
+    fi
+    index=$((index + 1))
+  done
 }
 
 node_name() {
-  [[ "${1:-}" =~ ^gdc-node[1-4]$ ]] || die "expected SSH alias gdc-node1, gdc-node2, gdc-node3, or gdc-node4"
-  printf '%s\n' "$1"
+  local node="${1:-}"
+  topology_contains_node "$node" || die "unknown SSH alias: $node"
+  [[ "$node" != "$GENESIS_NODE" ]] || die "cannot join the Genesis node: $node"
+  printf '%s\n' "$node"
 }
 
 node_url() {
-  local index="${1#gdc-node}" variable="NODE${1#gdc-node}_PUBLIC_HOST"
-  [[ "$index" =~ ^[0-4]$ ]] || die "invalid node: $1"
-  printf 'https://%s\n' "${!variable}"
+  local node="$1"
+  topology_contains_node "$node" || die "unknown SSH alias: $node"
+  # A split public edge can proxy the genesis participant.  This is a role
+  # relationship, not a statement about a numbered node.
+  if [[ "$node" == "$GENESIS_NODE" && "${GDC_GENESIS_PUBLIC_VIA_EDGE:-true}" == true ]]; then
+    printf 'https://%s\n' "$PUBLIC_EDGE_HOST"
+    return
+  fi
+  printf 'https://%s\n' "$(node_public_host "$node")"
 }
 
 participant_onboarding_state() {
@@ -305,7 +450,7 @@ participant_onboarding_state() {
 }
 
 reset_evidence_bundle_is_valid() {
-  local bundle="$1"
+  local bundle="$1" runs_before runs_after
   shift
   [[ -d "$bundle" && -s "$bundle/public-reset-state.png" ]] || return 1
   [[ "$(od -An -tx1 -N8 "$bundle/public-reset-state.png" | tr -d ' \n')" == 89504e470d0a1a0a ]] || return 1
@@ -313,8 +458,17 @@ reset_evidence_bundle_is_valid() {
   [[ -s "$bundle/pre-reset.env" ]] || return 1
   grep -Eq '^pre_reset_chain_id=[a-zA-Z0-9._-]+$' "$bundle/pre-reset.env" || return 1
   grep -Eq '^pre_reset_genesis_sha256=[0-9a-f]{64}$' "$bundle/pre-reset.env" || return 1
-  [[ -f "$bundle/artifacts-runs.before.sha256" && -f "$bundle/artifacts-runs.after.sha256" ]] || return 1
-  cmp -s "$bundle/artifacts-runs.before.sha256" "$bundle/artifacts-runs.after.sha256" || return 1
+  if [[ -f "$bundle/runs.before.sha256" && -f "$bundle/runs.after.sha256" ]]; then
+    runs_before="$bundle/runs.before.sha256"
+    runs_after="$bundle/runs.after.sha256"
+  else
+    # Preserve audit compatibility with bundles produced before GDC_HOME was
+    # flattened and the intermediate artifacts directory was removed.
+    runs_before="$bundle/artifacts-runs.before.sha256"
+    runs_after="$bundle/artifacts-runs.after.sha256"
+  fi
+  [[ -f "$runs_before" && -f "$runs_after" ]] || return 1
+  cmp -s "$runs_before" "$runs_after" || return 1
 
   local host
   for host in "$@"; do
@@ -336,7 +490,7 @@ write_upgrade_blocked_verdict() {
 Do not reset Genesis and do not downgrade a node after the approved upgrade
 height. Preserve this bundle, diagnose the failed node, restore its pinned
 target deployment, and rerun the same command:
-./gdc.sh --release testnet-0.2.15 upgrade
+./gdc.sh --release v2026.08.06 upgrade
 The command permits a
 resume only when every already changed node has the exact target profile
 marker; a third or mixed release remains a hard failure.
@@ -349,10 +503,27 @@ ssh_ready() {
 }
 
 configured_node_indexes() {
-  local i
-  for i in 0 1 2 3 4; do
-    [[ -e "$STATE/joined/gdc-node$i" ]] && printf '%s\n' "$i"
+  local index=0 node
+  for node in "${GDC_NODES[@]}"; do
+    [[ -e "$STATE/joined/$node" ]] && printf '%s\n' "$index"
+    index=$((index + 1))
   done
+}
+
+configured_nodes() {
+  local node
+  for node in "${GDC_NODES[@]}"; do
+    [[ -e "$STATE/joined/$node" ]] && printf '%s\n' "$node"
+  done
+}
+
+node_index() {
+  local wanted="$1" index=0 node
+  for node in "${GDC_NODES[@]}"; do
+    [[ "$node" == "$wanted" ]] && { printf '%s\n' "$index"; return 0; }
+    index=$((index + 1))
+  done
+  die "unknown SSH alias: $wanted"
 }
 
 latest_baseline_pass_bundle() {
@@ -364,13 +535,13 @@ latest_baseline_pass_bundle() {
     bundle="$(dirname "$verdict")"
     environment="$bundle/environment.txt"
     [[ -s "$environment" && -s "$bundle/node-sync.json" && -s "$bundle/participants.json" ]] || continue
-    grep -qx 'release_profile=testnet-0.2.14' "$environment" || continue
+    grep -qx 'release_profile=v2026.07.23' "$environment" || continue
     grep -qx "chain_id=$CHAIN_ID" "$environment" || continue
     grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$environment" || continue
     grep -qx "profile_hash=$genesis_profile_hash" "$environment" || continue
     printf '%s\n' "$bundle"
     return 0
-  done < <(find "$ROOT/artifacts/runs" -mindepth 2 -maxdepth 2 -name verdict.md -print 2>/dev/null | LC_ALL=C sort -r)
+  done < <(find "$GDC_HOME/runs" -mindepth 2 -maxdepth 2 -name verdict.md -print 2>/dev/null | LC_ALL=C sort -r)
   return 1
 }
 
@@ -383,9 +554,9 @@ require_current_baseline_pass() {
   local reference_height lag genesis_profile_hash
   local -a indexes expected_addresses live_addresses evidence_nodes
 
-  step 'Require a current 0.2.14 baseline PASS before the upgrade lifecycle'
+  step 'Require a current v2026.07.23 baseline PASS before the upgrade lifecycle'
   bundle="$(latest_baseline_pass_bundle || true)"
-  [[ -n "$bundle" ]] || die 'no matching 0.2.14 verification PASS; restore every intended participant and run ./gdc.sh --release testnet-0.2.14 verify'
+  [[ -n "$bundle" ]] || die 'no matching v2026.07.23 verification PASS; restore every intended participant and run ./gdc.sh --release v2026.07.23 verify'
 
   mapfile -t indexes < <(configured_node_indexes)
   (( ${#indexes[@]} > 0 )) || die 'no joined participants are recorded for the verified baseline'
@@ -393,15 +564,15 @@ require_current_baseline_pass() {
   ((${#evidence_nodes[@]} == ${#indexes[@]})) || die 'baseline PASS participant count differs from current joined state; run verify again'
 
   expected_addresses=()
-  reference_height="$(ssh gdc-node0 'curl -fsS http://127.0.0.1:26657/status' | jq -er '.result.sync_info.latest_block_height | tonumber')"
+  reference_height="$(ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:26657/status' | jq -er '.result.sync_info.latest_block_height | tonumber')"
   genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env")"
-  for index in "${indexes[@]}"; do
-    node="gdc-node$index"
+  for node in "${GDC_NODES[@]}"; do
+    [[ -e "$STATE/joined/$node" ]] || continue
     grep -qx "$node" <(printf '%s\n' "${evidence_nodes[@]}") || die "$node is absent from the baseline PASS bundle; run verify again"
     address="$(jq -er .address "$ACCOUNTS/$node-cold.json")"
     expected_addresses+=("$address")
     marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release 2>/dev/null || true")"
-    [[ "$marker" == "testnet-0.2.14 $genesis_profile_hash" ]] || die "$node does not have the verified 0.2.14 deployment marker"
+    [[ "$marker" == "v2026.07.23 $genesis_profile_hash" ]] || die "$node does not have the verified v2026.07.23 deployment marker"
     ssh -T "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env ps node api proxy explorer --format '{{.Service}} {{.State}}'" \
       | awk '
           $1 == "node" || $1 == "api" || $1 == "proxy" || $1 == "explorer" { seen[$1]=1; if ($2 != "running") bad=1 }
@@ -417,7 +588,7 @@ require_current_baseline_pass() {
 
   mapfile -t expected_addresses < <(printf '%s\n' "${expected_addresses[@]}" | LC_ALL=C sort -u)
   mapfile -t live_addresses < <(
-    ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
+    ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
       | jq -er '.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1") | .address' \
       | LC_ALL=C sort -u
   )
