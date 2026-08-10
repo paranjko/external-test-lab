@@ -42,7 +42,10 @@ grep -q 'rejected since gateway restart' "$OUT/homepage.html"
 ! grep -q 'Accepted requests\|Limit rejections\|gateway process counter' "$OUT/homepage.html"
 grep -q 'gateway-state.js' "$OUT/homepage.html"
 curl -fsS "https://$SITE_HOST/gateway-state.js" -o "$OUT/gateway-state.js"
-cmp "$ROOT/04-ops/site/gateway-state.js" "$OUT/gateway-state.js"
+site_build="$(mktemp -d)"
+trap 'rm -rf "$site_build"' EXIT
+"$ROOT/scripts/build-site-js.sh" --output "$site_build"
+cmp "$site_build/gateway-state.js" "$OUT/gateway-state.js"
 curl -fsS "https://$SITE_HOST/status/gateway-health" -o "$OUT/gateway-health.json"
 jq -e '
   (((keys - ["recovery"]) | sort) == ["checked_at","http_status","latency_ms","reason","state"])

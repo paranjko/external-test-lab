@@ -64,7 +64,8 @@ grep -Fq 'GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true' "$ROOT/04-ops/create
 grep -Fq 'gateway immediately probes every participant endpoint' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq "https://\$gateway_ingress_host/health" "$ROOT/scripts/phase-ops.sh"
-grep -Fq 'gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
+grep -Fq '/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
+grep -Fq 'ExecStart=/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/gdc-gateway-escrow-reconciler.service"
 grep -Fq 'User=@GDC_SERVICE_USER@' "$ROOT/04-ops/gdc-gateway-escrow-reconciler.service"
 grep -Fq 'User=@GDC_SERVICE_USER@' "$ROOT/04-ops/gdc-gateway-health-probe.service"
 ! grep -Fq 'User=root' "$ROOT/04-ops/gdc-gateway-escrow-reconciler.service"
@@ -113,10 +114,10 @@ grep -Fq 'handle /status/gpus' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'query=gdc_nvidia_memory_total_bytes' "$ROOT/04-ops/render-ops.sh"
 grep -Fq "validator: '%s'" "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'header_up Host %s' "$ROOT/04-ops/render-ops.sh"
-grep -Fq 'json("/status/participants")' "$ROOT/04-ops/site/app.js"
-grep -Fq 'validatorMapController?.update(observedNodes)' "$ROOT/04-ops/site/app.js"
-grep -Fq 'AbortController' "$ROOT/04-ops/site/app.js"
-grep -Fq 'observedNodes.filter((node) => node.participantStatus === "ACTIVE")' "$ROOT/04-ops/site/app.js"
+grep -Fq 'json("/status/participants")' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'validatorMapController?.update(observedNodes)' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'AbortController' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'observedNodes.filter((node) => node.participantStatus === "ACTIVE")' "$ROOT/04-ops/site/src/app.js"
 grep -Fq '__PUBLIC_GRAFANA_PROMETHEUS_URL__' "$ROOT/04-ops/edge-node/public-grafana/provisioning/datasources/prometheus.yml"
 grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/install-edge.sh"
@@ -125,7 +126,7 @@ if grep -Eq 'node[0-9]\.gonka-dev\.net' "$ROOT/04-ops/edge-node/public-grafana/p
   echo 'public Grafana datasource must be rendered from the configured gateway role' >&2
   exit 1
 fi
-grep -Fq '/v1/versions' "$ROOT/04-ops/site/app.js"
+grep -Fq '/v1/versions' "$ROOT/04-ops/site/src/app.js"
 grep -Eq 'external-test-lab/tree/[0-9a-f]+/net-deployment-runbook/04-ops/site"[^>]*>ref:[0-9a-f]+' "$ROOT/04-ops/site/index.html"
 test_tmp="$(mktemp -d)"
 trap 'rm -rf "$test_tmp"' EXIT

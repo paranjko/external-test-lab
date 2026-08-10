@@ -7,15 +7,23 @@ DESTINATION="$ROOT/04-ops/site"
 FLOW_VERSION="${FLOW_VERSION:-0.281.0}"
 FLOW_REMOVE_TYPES_VERSION="${FLOW_REMOVE_TYPES_VERSION:-2.281.0}"
 PRETTIER_VERSION="${PRETTIER_VERSION:-3.6.2}"
-MODE="${1:---write}"
+MODE=--write
+DESTINATION="$ROOT/04-ops/site"
 
-case "$MODE" in
-  --write | --check) ;;
-  *)
-    echo "Usage: $0 [--write|--check]" >&2
-    exit 2
-    ;;
-esac
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --write|--check) MODE="$1" ;;
+    --output)
+      DESTINATION="${2:-}"
+      [[ -n "$DESTINATION" ]] || { echo 'missing value for --output' >&2; exit 2; }
+      shift
+      ;;
+    *) echo "Usage: $0 [--write|--check] [--output DIRECTORY]" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+DESTINATION="$(realpath -m -- "$DESTINATION")"
 
 run_flow() {
   if command -v flow >/dev/null 2>&1; then
@@ -71,7 +79,7 @@ run_prettier --write --log-level silent "${generated_files[@]}"
 
 for file in "${files[@]}"; do
   node --check "$output/$file"
-  if [[ "$MODE" == '--check' ]]; then
+  if [[ "$MODE" == '--check' && -f "$DESTINATION/$file" ]]; then
     cmp "$DESTINATION/$file" "$output/$file"
   fi
 done

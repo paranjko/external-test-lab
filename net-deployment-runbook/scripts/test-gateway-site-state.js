@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 const fs = require('node:fs');
-const state = require('../04-ops/site/gateway-state.js');
+const os = require('node:os');
+const path = require('node:path');
+const siteBuild = fs.mkdtempSync(path.join(os.tmpdir(), 'gdc-site-test-'));
+childProcess.execFileSync(
+  path.join(__dirname, 'build-site-js.sh'),
+  ['--output', siteBuild],
+  { stdio: 'inherit' },
+);
+const state = require(path.join(siteBuild, 'gateway-state.js'));
 const now = Date.parse('2026-08-06T10:30:00Z');
 const readyProbe = { state: 'READY', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
 const failedProbe = { state: 'UNAVAILABLE', checked_at: '2026-08-06T10:29:50Z', http_status: 429 };
@@ -66,7 +75,7 @@ assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, checked_at: '2026-
 const legacy = { escrow_id: '7', phase: 'active', requests_blocked: false };
 assert.equal(state.classify(legacy, 1, readyProbe, now).state, 'AVAILABLE');
 
-const siteApp = fs.readFileSync(`${__dirname}/../04-ops/site/app.js`, 'utf8');
+const siteApp = fs.readFileSync(path.join(siteBuild, 'app.js'), 'utf8');
 assert.match(siteApp, /READY – processing requests/);
 assert.match(siteApp, /READY – no requests in flight/);
 assert.match(siteApp, /quality-recovery/);
@@ -87,4 +96,5 @@ assert.match(
 );
 assert.doesNotMatch(siteApp, /quality-health-state'\)\.textContent=state\.toUpperCase/);
 
+fs.rmSync(siteBuild, { recursive: true, force: true });
 console.log('PASS gateway public-site state contract');

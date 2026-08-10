@@ -56,6 +56,7 @@ if [[ "$url" == *'devshard_escrow/'* ]]; then
   id="${url##*/}"
   case "${CASE_NAME}:${id}" in
     unknown:8) exit 7 ;;
+    malformed:8) printf '%s\n' 'not-json' ;;
     pending:123) printf '%s\n' '{"found":false}' ;;
     pending-routable:123) printf '%s\n' '{"found":true,"escrow":{"id":"123","settled":false}}' ;;
     manual-disabled:7) printf '%s\n' '{"found":true,"escrow":{"id":"7","settled":false}}' ;;
@@ -111,6 +112,10 @@ EOF
 run_case unknown '{"devshards":[{"id":"8","active":true,"phase":"active","requests_blocked":false}]}'
 jq -e '.state == "RECOVERING" and .reason == "chain_escrow_query_unavailable"' "$WORK/unknown/status.json" >/dev/null
 ! grep -Eq '/deactivate|DELETE|/v1/admin/escrows' "$WORK/unknown/curl.log"
+
+run_case malformed '{"devshards":[{"id":"8","active":true,"phase":"active","requests_blocked":false}]}'
+jq -e '.state == "RECOVERING" and .reason == "chain_escrow_query_unavailable"' "$WORK/malformed/status.json" >/dev/null
+! grep -Eq '/deactivate|DELETE|/v1/admin/escrows' "$WORK/malformed/curl.log"
 
 mkdir -p "$WORK/pending"
 printf '%s\n' '{"state":"RECOVERING","reason":"waiting_for_chain_confirmation","replacement_escrow":"123","entered_at":"2026-08-10T08:00:00Z"}' >"$WORK/pending/status.json"

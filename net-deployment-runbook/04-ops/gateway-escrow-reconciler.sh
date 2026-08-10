@@ -153,7 +153,18 @@ valid_active_ids=()
 unknown_ids=()
 while IFS=$'\t' read -r id active phase blocked; do
   [[ "$id" =~ ^[1-9][0-9]*$ ]] || continue
-  escrow="$(chain_escrow "$id" 2>/dev/null || true)"
+  # Chain transport failure and a chain answer are different states.  Only an
+  # explicit, structurally valid `found:false` or settled escrow can permit
+  # local deactivation/deletion.  In particular, a replacement may be absent
+  # from a lagging REST endpoint immediately after it was created.
+  if ! escrow="$(chain_escrow "$id" 2>/dev/null)"; then
+    unknown_ids+=("$id")
+    continue
+  fi
+  if ! jq -e 'type == "object" and (.found | type == "boolean")' <<<"$escrow" >/dev/null 2>&1; then
+    unknown_ids+=("$id")
+    continue
+  fi
   if jq -e --arg id "$id" '.found == true and (.escrow.id | tostring) == $id and ((.escrow.settled // .settled // false) != true)' <<<"$escrow" >/dev/null 2>&1; then
     # A replacement creation is asynchronous.  Its ID remains reserved until
     # chain confirmation even when a replica briefly reports found:false.

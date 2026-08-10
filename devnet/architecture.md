@@ -71,7 +71,7 @@ Access model: API keys are issued through the Telegram bot and have no artificia
 ## Milestone path (per proposal)
 
 - **M1 — done:** architecture agreed; 5 nodes online across 5 providers; deployment reproducible via the runbook; public status site, gateway and dashboards live.
-- **M2 — in progress:** grow towards 9+ MLNodes across target regions; join guide published ([JOIN.md](../net-deployment-runbook/JOIN.md)) and operator-handoff flow rehearsed; monitoring polish.
+- **M2 — in progress:** grow towards 9+ MLNodes across target regions; join guide published ([ROLE-JOIN.md](../net-deployment-runbook/ROLE-JOIN.md)) and operator-handoff flow rehearsed; monitoring polish.
 - **M3:** stable operation; incident log; onboarding guide for external participants.
 - **M4:** final infrastructure and cost report; handoff package.
 

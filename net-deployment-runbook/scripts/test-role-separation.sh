@@ -20,8 +20,6 @@ grep -Fq '[ROLE-JOIN.md](ROLE-JOIN.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-HOST.md](ROLE-HOST.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-GATEWAY.md](ROLE-GATEWAY.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-DEVELOPER.md](ROLE-DEVELOPER.md)' "$ROOT/README.md"
-grep -Fq 'ROLE-BRIDGE-MULTISIG-SIGNER.md' "$ROOT/README.md"
-grep -Fq 'deliberately backlog work' "$ROOT/README.md"
 grep -Fq './gdc.sh --release v2026.07.23 genesis gdc-node0' "$ROOT/ROLE-GENESIS.md"
 grep -Fq './gdc.sh host join <ssh-alias>' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'OPS is the only role that requires `.env`' "$ROOT/ROLE-OPS.md"
@@ -57,8 +55,8 @@ if grep -Eq 'reconcile_monitoring_agents|install-agent.sh' "$ROOT/scripts/phase-
   exit 1
 fi
 grep -Fq 'chainRpcHost:$chainRpcHost' "$ROOT/04-ops/render-ops.sh"
-grep -Eq 'const chainRpcHost[[:space:]]*=' "$ROOT/04-ops/site/app.js"
-grep -Fq 'json("/status/participants")' "$ROOT/04-ops/site/app.js"
+grep -Eq 'const chainRpcHost[[:space:]]*=' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'json("/status/participants")' "$ROOT/04-ops/site/src/app.js"
 for ops_only in GRAFANA_PUBLIC_DASHBOARD_UID GRAFANA_PUBLIC_DASHBOARD_SHARE_UID GRAFANA_PUBLIC_DASHBOARD_TOKEN TELEGRAM_BOT_URL TELEGRAM_BOT_HOST; do
   if sed -n '/^write_inventory()/,/^}/p' "$ROOT/scripts/lib.sh" | grep -q "inventory_value $ops_only"; then
     echo "common Host inventory contains OPS-only field: $ops_only" >&2

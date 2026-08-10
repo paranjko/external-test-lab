@@ -2,11 +2,11 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
-[[ "$GDC_RELEASE_PROFILE" == testnet-0.2.15 ]] || die 'upgrade proposal target must be testnet-0.2.15'
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]] || die 'upgrade proposal target must be v2026.08.06'
 
 BASELINE="$STATE/phase-profiles/genesis.env"
 [[ -s "$BASELINE" ]] || die 'no baseline Genesis profile recorded; run the 0.2.14 baseline first'
-grep -qx 'release_profile=testnet-0.2.14' "$BASELINE" || die 'Genesis was not formed from testnet-0.2.14'
+grep -qx 'release_profile=v2026.07.23' "$BASELINE" || die 'Genesis was not formed from v2026.07.23'
 grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$BASELINE" || die 'model overlay differs from baseline; model migration is a separate exercise'
 require_current_baseline_pass
 
@@ -16,20 +16,20 @@ require GDC_UPGRADE_HEIGHT GDC_UPGRADE_DEPOSIT
 [[ "$INFERENCED_UPGRADE_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'invalid pinned inferenced upgrade SHA-256'
 [[ "$DAPI_UPGRADE_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'invalid pinned DAPI upgrade SHA-256'
 
-RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)-propose-upgrade"
+RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-propose-upgrade"
 mkdir -p "$RUN"
 install_evidence_exit_trap 'Software upgrade proposal'
 record_phase_profile propose-upgrade
-# The operator CLI uses JSON-RPC POSTs. Route those through the public node4
-# edge, whose `handle_path` strips `/chain-rpc/`; node0's protocol callback
+# The operator CLI uses JSON-RPC POSTs. Route those through the public edge,
+# whose `handle_path` strips `/chain-rpc/`; the protocol callback
 # proxy intentionally retains the original path for DAPI peers.
-rpc="https://$NODE4_PUBLIC_HOST/chain-rpc/"
+rpc="https://$PUBLIC_EDGE_HOST/chain-rpc/"
 upgrade_name="v$GONKA_RELEASE"
 metadata="https://github.com/gonka-ai/gonka/releases/tag/release%2Fv$GONKA_RELEASE"
 
 step 'Capture chain height and render the immutable software-upgrade proposal'
 curl -fsS "$rpc/status" >"$RUN/pre-status.json"
-ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/params/deposit' >"$RUN/gov-params.json"
+ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/params/deposit' >"$RUN/gov-params.json"
 min_deposit="$(jq -er '(.params.min_deposit // .deposit_params.min_deposit)[0] | .amount + .denom' "$RUN/gov-params.json")"
 (( ${GDC_UPGRADE_DEPOSIT%ngonka} >= ${min_deposit%ngonka} )) || die "upgrade deposit $GDC_UPGRADE_DEPOSIT is below live governance minimum $min_deposit"
 current_height="$(jq -er '.result.sync_info.latest_block_height | tonumber' "$RUN/pre-status.json")"
@@ -60,9 +60,9 @@ proposal_id="${GDC_UPGRADE_PROPOSAL_ID:-}"
 if [[ -z "$proposal_id" && "${GDC_UPGRADE_SUBMIT:-false}" == true ]]; then
   step 'Submit software-upgrade proposal from the dedicated operator account'
   password="$(<"$SECRETS/operator.keyring")"
-  proposal_in_container="/kit/${RUN#"$ROOT/"}/proposal.json"
+  proposal_in_container="$(inferenced_runs_path "$RUN/proposal.json")"
   tx="$(printf '%s\n' "$password" | "$ROOT/scripts/inferenced.sh" tx gov submit-proposal "$proposal_in_container" \
-    --from gdc-node0-cold --keyring-backend file --chain-id "$CHAIN_ID" --node "$rpc" \
+    --from "$GENESIS_NODE-cold" --keyring-backend file --chain-id "$CHAIN_ID" --node "$rpc" \
     --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --broadcast-mode sync --output json --yes)"
   printf '%s\n' "$tx" >"$RUN/submit-tx.json"
   txhash="$(jq -er '.txhash // .tx_response.txhash' "$RUN/submit-tx.json")"
@@ -89,7 +89,7 @@ EOF
 fi
 
 step "Record submitted upgrade proposal $proposal_id"
-ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-status.json"
+ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-status.json"
 jq -e --arg name "$upgrade_name" --argjson height "$GDC_UPGRADE_HEIGHT" --slurpfile info "$RUN/upgrade-info.json" '
   [.. | objects | select(.["@type"]? == "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade") | .plan? | select(.name == $name and (.height | tonumber) == $height and (.info | fromjson) == $info[0])] | length > 0
 ' "$RUN/proposal-status.json" >/dev/null || die "proposal $proposal_id does not match the rendered software-upgrade plan"

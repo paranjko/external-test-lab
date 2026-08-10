@@ -52,7 +52,11 @@ sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service
   "$HERE/gdc-gateway-health-probe.service" \
   | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-health-probe.service
 install -m 0644 "$HERE/gdc-gateway-health-probe.timer" /etc/systemd/system/gdc-gateway-health-probe.timer
-install -m 0755 "$HERE/gateway-escrow-reconciler.sh" "$DEST/gateway-escrow-reconciler.sh"
+# OPS deployment files are intentionally writable by the deployment operator.
+# The reconciler is executed by systemd, so install its executable under
+# root-owned ancestors rather than below /srv/dai/ops.
+install -d -o root -g root -m 0755 /usr/local/lib/gonka-devnet
+install -o root -g root -m 0755 "$HERE/gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh
 sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
   "$HERE/gdc-gateway-escrow-reconciler.service" \
   | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-escrow-reconciler.service

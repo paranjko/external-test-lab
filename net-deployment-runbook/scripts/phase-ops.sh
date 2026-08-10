@@ -229,7 +229,12 @@ case "$COMPONENT" in
     ;;
   site)
     SITE_INDEX_RENDER="$OPS_RENDER/site/index.html"
+    SITE_ASSETS_RENDER="$OPS_RENDER/site/assets"
     "$ROOT/scripts/render-site-revision.sh" "$ROOT/04-ops/site/index.html" "$SITE_INDEX_RENDER"
+    mkdir -p "$SITE_ASSETS_RENDER"
+    rsync -a --exclude src/ "$ROOT/04-ops/site/" "$SITE_ASSETS_RENDER/"
+    "$ROOT/scripts/build-site-js.sh" --output "$SITE_ASSETS_RENDER"
+    cp "$SITE_INDEX_RENDER" "$SITE_ASSETS_RENDER/index.html"
     START_COMMAND=true
     # install-ops replaces Caddyfile atomically. A bind mount of a single file
     # keeps the old inode inside a running container, so `caddy reload` would
@@ -244,7 +249,7 @@ esac
 step "Install $COMPONENT operations component on $GATEWAY_NODE"
 ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
 rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
-[[ -z "$SITE_INDEX_RENDER" ]] || rsync -a "$SITE_INDEX_RENDER" "$GATEWAY_NODE:$REMOTE/04-ops/site/index.html"
+[[ -z "${SITE_ASSETS_RENDER:-}" ]] || rsync -a --delete "$SITE_ASSETS_RENDER/" "$GATEWAY_NODE:$REMOTE/04-ops/site/"
 rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"
 if [[ -n "$FAUCET_SIGNER_HOME" ]]; then
   rsync -a "$FAUCET_SIGNER_HOME/" "$GATEWAY_NODE:$REMOTE/faucet-signer/"

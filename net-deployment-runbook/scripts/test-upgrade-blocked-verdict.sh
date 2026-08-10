@@ -15,7 +15,7 @@ grep -qx -- '- Completed target nodes: gdc-node0 gdc-node1' "$OUT"
 grep -qx -- '- Exit status: 17' "$OUT"
 grep -q 'Do not reset Genesis' "$OUT"
 grep -q 'exact target profile' "$OUT"
-grep -q '^./gdc.sh --release testnet-0.2.15 upgrade$' "$OUT"
+grep -q '^./gdc.sh --release v2026.08.06 upgrade$' "$OUT"
 ! grep -q '^BEGIN phase=' "$OUT"
 
 printf 'PASS upgrade BLOCKED verdict contract\n'

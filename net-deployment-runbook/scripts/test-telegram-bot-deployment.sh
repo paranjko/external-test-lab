@@ -24,7 +24,7 @@ grep -Fq '@telegram_consumer path /status/telegram-consumer' "$ROOT/04-ops/edge-
 grep -Fq '@telegram_metrics_from_monitoring' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'remote_ip {$MONITORING_CIDR}' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'job_name: telegram-consumer' "$ROOT/04-ops/render-ops.sh"
-grep -Fq 'json("/status/telegram-consumer")' "$ROOT/04-ops/site/app.js"
+grep -Fq 'json("/status/telegram-consumer")' "$ROOT/04-ops/site/src/app.js"
 
 grep -Fq './gdc.sh ops consumer telegram apply' "$ROOT/gdc.sh"
 grep -Fq 'phase-telegram-consumer.sh' "$ROOT/gdc.sh"

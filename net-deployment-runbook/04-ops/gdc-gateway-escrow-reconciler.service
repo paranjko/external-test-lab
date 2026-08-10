@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/srv/dai/ops/gateway-escrow-reconciler.sh
+ExecStart=/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh
 User=@GDC_SERVICE_USER@
 Group=@GDC_SERVICE_GROUP@
 NoNewPrivileges=true
