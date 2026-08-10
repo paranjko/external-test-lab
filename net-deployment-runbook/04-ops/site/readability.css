@@ -54,7 +54,8 @@ body * {
 .validator-map-shell.is-fullscreen .validator-map { width: 100vw; height: 100dvh; }
 .validator-map-fullscreen { position: absolute; z-index: 1001; top: 12px; right: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; background: color-mix(in srgb, var(--paper) 82%, transparent); color: var(--ink); font: inherit; font-size: 12px; cursor: pointer; }
 .validator-map-fullscreen:hover { border-color: var(--primary-color); }
-.validator-marker { filter: drop-shadow(0 0 7px var(--primary-color)); }
+.validator-marker--online { filter: drop-shadow(0 0 7px var(--lime)); }
+.validator-marker--offline { filter: drop-shadow(0 0 7px var(--red)); }
 .leaflet-container { background: var(--paper); font-family: "JetBrains Mono", ui-monospace, monospace; }
 .validator-map.leaflet-container { background: color-mix(in srgb, var(--paper) 82%, var(--ink)); }
 /* Tile images must never inherit responsive-image constraints: Leaflet owns

@@ -18,6 +18,8 @@ type SiteNode = {
   mode?: string,
   reason?: string,
   participantStatus?: string,
+  isOnline?: boolean,
+  serverStatus?: string,
   gpuProfile?: ?string,
   gpuHost?: ?string,
 };
@@ -78,6 +80,7 @@ type Validator = {
   ownerAddress: string,
   ip: string,
   licenseCount: number,
+  online: boolean,
   geo: {
     lat: number,
     lon: number,
@@ -181,7 +184,7 @@ function createCard(node: SiteNode): HTMLElement {
       <b data-k="gpu"></b>
     </div>
   `;
-  el.querySelector("h3").textContent = node.name;
+  el.querySelector("h3").textContent = node.publicHost || node.name;
   set(el, "status", node.mode === "skip" ? "SKIP" : "checking…");
   set(el, "scope", node.mode === "skip" ? node.reason : node.address);
   set(el, "height", node.mode === "skip" ? "–" : "…");
@@ -203,8 +206,15 @@ function updateGpu(
 ): void {
   const row = card.querySelector('[data-k-row="gpu"]');
   const gpuHost = node.gpuHost || node.name;
-  const names = inventory.get(gpuHost) || [];
-  const connection = gpuHost === node.name ? "local" : "net";
+  // A dynamically discovered participant has its public DNS name from the
+  // chain, whereas the exporter labels the same machine with its SSH alias.
+  // refreshGpuInventory indexes both labels, so prefer the explicit GPU host
+  // but also allow the stable public hostname to identify local hardware.
+  const inventoryKey = [gpuHost, node.publicHost, node.name].find((key) =>
+    inventory.has(key || ""),
+  );
+  const names = inventory.get(inventoryKey || "") || [];
+  const connection = node.gpuHost && node.gpuHost !== node.name ? "net" : "local";
   const countedNames: Map<string, number> = new Map();
   for (const name of names) {
     countedNames.set(name, (countedNames.get(name) || 0) + 1);
@@ -231,11 +241,15 @@ async function refreshGpuInventory(): Promise<void> {
   const next: GpuInventory = new Map();
   for (const sample of state?.data?.result || []) {
     const host = String(sample?.metric?.host || "");
+    const instanceHost = String(sample?.metric?.instance || "").replace(/:\\d+$/, "");
     const name = String(sample?.metric?.gpu_name || "");
     if (!host || !name) continue;
-    const names = next.get(host) || [];
-    names.push(name);
-    next.set(host, names);
+    for (const key of new Set([host, instanceHost])) {
+      if (!key) continue;
+      const names = next.get(key) || [];
+      names.push(name);
+      next.set(key, names);
+    }
   }
   cardGpuInventory = next;
   for (const node of observedNodes) {
@@ -337,6 +351,16 @@ function syncStatus(value: mixed): string {
   return "checking";
 }
 
+function isNodeActive(status: mixed): boolean {
+  const normalized = String(status || "").trim().toUpperCase();
+  return (
+    normalized === "ACTIVE" ||
+    normalized === "PARTICIPANT_STATUS_ACTIVE" ||
+    normalized === "1" ||
+    normalized === ""
+  );
+}
+
 const participantDiscovery: Map<string, Promise<ParticipantDiscovery>> =
   new Map();
 
@@ -396,6 +420,7 @@ async function participantNode(participant: Participant): Promise<SiteNode> {
     !catalog || !catalog.ip || !catalog.geo
       ? await discoverParticipant(host)
       : {};
+  const participantStatus = participant.status || "UNKNOWN";
   return {
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
@@ -405,7 +430,9 @@ async function participantNode(participant: Participant): Promise<SiteNode> {
     geo: catalog?.geo || discovered.geo || null,
     mode: catalog?.mode,
     reason: catalog?.reason,
-    participantStatus: String(participant.status || "UNKNOWN"),
+    participantStatus: String(participantStatus),
+    isOnline: isNodeActive(participantStatus),
+    serverStatus: String(participantStatus),
     gpuProfile: catalog?.gpuProfile,
     gpuHost: catalog?.gpuHost,
   };
@@ -429,7 +456,7 @@ async function reconcileParticipants(): Promise<number> {
   for (const node of next) {
     let card = cards.get(nodeKey(node));
     if (!card) card = createCard(node);
-    card.querySelector("h3").textContent = node.name;
+    card.querySelector("h3").textContent = node.publicHost || node.name;
     set(card, "scope", node.address);
   }
   observedNodes = next;
@@ -477,6 +504,12 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     maxZoom: 20,
   }).addTo(map);
   const markers = L.layerGroup().addTo(map);
+  const okColor = getComputedStyle(document.documentElement)
+    .getPropertyValue("--lime")
+    .trim();
+  const badColor = getComputedStyle(document.documentElement)
+    .getPropertyValue("--red")
+    .trim();
   const primary = getComputedStyle(document.documentElement)
     .getPropertyValue("--primary-color")
     .trim();
@@ -494,6 +527,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         ownerAddress: node.address || "",
         ip: node.ip || "",
         licenseCount: 0,
+        online: node.isOnline ?? isNodeActive(node.participantStatus),
         geo: {
           lat,
           lon,
@@ -511,22 +545,36 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     for (const validators of groups.values()) {
       const first = validators[0];
       const count = validators.length;
-      const radius = Math.min(5 + Math.sqrt(count) * 3, 18);
+      const radius = Math.min(5 + Math.sqrt(count) * 3, 18) / 4;
+      const onlineCount = validators.filter((validator) => validator.online).length;
+      const allOnline = onlineCount === count && count > 0;
+      const onlineColor = allOnline
+        ? okColor || primary
+        : badColor || primary;
+      const popupStatusClass = allOnline ? "ok" : "bad";
+      const popupStatus =
+        onlineCount === 0
+          ? "not online"
+          : onlineCount === count
+            ? "online"
+            : `${onlineCount}/${count} online`;
       const rows = validators
         .map(
           (v) =>
             `<li><span>${escapeHtml(v.ip || "IP unavailable")}</span><span>${escapeHtml(v.ownerAddress.slice(0, 10))}</span><span>${escapeHtml(v.licenseCount)}</span></li>`,
         )
         .join("");
-      const popup = `<section class="validator-popup"><strong>${escapeHtml(first.geo.city)}, ${escapeHtml(first.geo.country)}</strong><p>${count} validator${count === 1 ? "" : "s"} at this location</p><ul>${rows}</ul></section>`;
+      const popup = `<section class="validator-popup"><strong>${escapeHtml(first.geo.city)}, ${escapeHtml(first.geo.country)}</strong><p class="status ${popupStatusClass}">${escapeHtml(
+        popupStatus,
+      )}</p><p>${count} validator${count === 1 ? "" : "s"} at this location</p><ul>${rows}</ul></section>`;
       L.circleMarker([first.geo.lat, first.geo.lon], {
         radius,
-        color: primary,
+        color: onlineColor,
         weight: 1,
         opacity: 0.95,
-        fillColor: primary,
+        fillColor: onlineColor,
         fillOpacity: 0.7,
-        className: "validator-marker",
+        className: `validator-marker validator-marker--${allOnline ? "online" : "offline"}`,
       })
         .addTo(markers)
         .bindPopup(popup, { closeButton: true, maxWidth: 340 });
@@ -602,9 +650,12 @@ async function refresh(): Promise<void> {
         if (!card) return;
         if (!n.statusBase) {
           const participantStatus = n.participantStatus || "UNKNOWN";
+          const isOnline = isNodeActive(participantStatus);
+          n.isOnline = isOnline;
+          n.serverStatus = String(participantStatus);
           set(card, "status", `${participantStatus.toLowerCase()} (chain)`);
           card.querySelector('[data-k="status"]').className =
-            participantStatus === "ACTIVE" ? "status ok" : "status bad";
+            isOnline ? "status ok" : "status bad";
           set(card, "height", best ? best.toLocaleString() : "–");
           set(card, "sync", "endpoint not proxied");
           set(card, "peers", "–");
@@ -613,6 +664,8 @@ async function refresh(): Promise<void> {
         }
         const statusBase = n.statusBase;
         try {
+          n.isOnline = true;
+          n.serverStatus = "online";
           const [s, net] = await Promise.all([
             json(`${statusBase}/chain-rpc/status`),
             json(`${statusBase}/chain-rpc/net_info`),
@@ -644,6 +697,8 @@ async function refresh(): Promise<void> {
             set(card, "versions", "unreported");
           }
         } catch (e) {
+          n.isOnline = false;
+          n.serverStatus = "offline";
           set(card, "status", `offline (${e.message})`);
           card.querySelector('[data-k="status"]').className = "status bad";
           set(card, "versions", "unavailable");
@@ -651,7 +706,7 @@ async function refresh(): Promise<void> {
       }),
   );
   validatorMapController?.update(
-    observedNodes.filter((node) => node.participantStatus === "ACTIVE"),
+    observedNodes,
   );
   $("best-height").textContent = best ? best.toLocaleString() : "–";
   setUtcTime("updated", new Date(), "Updated");
