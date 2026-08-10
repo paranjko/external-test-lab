@@ -5,31 +5,31 @@ load_project
 assert_baseline_release
 record_phase_profile bootstrap-access
 
-[[ -e "$STATE/joined/gdc-node0" ]] || die 'Genesis is not active; run ./gdc.sh --release testnet-0.2.14 genesis first'
-ssh_ready gdc-node0 || die 'gdc-node0 is unreachable'
-[[ -n "${TELEGRAM_BOT_TOKEN:-}" && "$TELEGRAM_BOT_TOKEN" != replace-with-BotFather-token ]] \
-  || die "TELEGRAM_BOT_TOKEN must be configured in $ENV_FILE"
+[[ -e "$STATE/joined/$GENESIS_NODE" ]] || die 'Genesis is not active; run ./gdc.sh --release v2026.07.23 genesis first'
+ssh_ready "$GENESIS_NODE" || die "$GENESIS_NODE is unreachable"
 
-# During one-participant bootstrap node4 has not joined the chain yet. Use the
-# live Genesis endpoint and node0's dedicated gateway route explicitly. The
-# ordinary distributed lifecycle switches public access to node4 later.
-export GDC_CHAIN_RPC_URL="https://${NODE0_PUBLIC_HOST}/chain-rpc/"
-export GDC_GATEWAY_PUBLIC_URL="https://${NODE0_PUBLIC_HOST}/gateway"
-
-step 'Verify the sole Genesis participant is active'
-node0_address="$(jq -er .address "$ACCOUNTS/gdc-node0-cold.json")"
-ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$node0_address" \
-  | jq -e '.participant.status == "ACTIVE" or .participant.status == "PARTICIPANT_STATUS_ACTIVE" or .participant.status == 1' >/dev/null \
-  || die 'gdc-node0 is not ACTIVE; wait for its ML activation before bootstrapping access'
-
-pool_created=false
-if [[ ! -s "$SECRETS/gateway-key-pool.json" ]]; then
-  step 'Create the finite Telegram key pool before rendering gateway credentials'
-  "$ROOT/scripts/create-telegram-key-pool.sh" --secrets-dir "$SECRETS"
-  pool_created=true
+# A non-guardian singleton has no validation counterpart and cannot acquire a
+# positive chain-computed model weight. `genesis <alias>` enables its guardian
+# specifically for one-node access bootstrap.
+guardian_addresses="$(ssh -T "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/params | jq -c ".params.genesis_guardian_params.guardian_addresses // []"')"
+participant_count="$(ssh -T "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant | jq ".participant | length"')"
+if [[ "$guardian_addresses" == '[]' && "$participant_count" =~ ^[0-9]+$ ]] && (( participant_count < 2 )); then
+  die 'single-node bootstrap requires GDC_GENESIS_GUARDIAN_ENABLED=true; otherwise join one eligible model participant first'
 fi
 
-step 'Approve pinned DevShard v3/v4 and the gateway creator through one-validator governance'
+# The configured public edge may differ from the Genesis participant. Use that
+# stable public route for operator RPC and the canonical API hostname for
+# gateway access; do not hairpin through a participant hostname.
+export GDC_CHAIN_RPC_URL="https://${PUBLIC_EDGE_HOST}/chain-rpc/"
+export GDC_GATEWAY_PUBLIC_URL="https://${API_HOST}"
+
+step 'Verify the sole Genesis participant is active'
+genesis_address="$(jq -er .address "$ACCOUNTS/$GENESIS_NODE-cold.json")"
+ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$genesis_address" \
+  | jq -e '.participant.status == "ACTIVE" or .participant.status == "PARTICIPANT_STATUS_ACTIVE" or .participant.status == 1' >/dev/null \
+  || die "$GENESIS_NODE is not ACTIVE; wait for its ML activation before bootstrapping access"
+
+step 'Approve configured DevShard protocols and the gateway creator through one-validator governance'
 GDC_GOVERNANCE_SUBMIT=true GDC_GOVERNANCE_AUTO_VOTE=true \
   "$ROOT/scripts/phase-governance-devshard.sh"
 
@@ -55,7 +55,7 @@ if [[ "$active_escrow" =~ ^[1-9][0-9]*$ ]]; then
     && gateway_active=true
 fi
 
-if [[ "$gateway_active" != true || "$pool_created" == true ]]; then
+if [[ "$gateway_active" != true ]]; then
   existing_escrow=''
   gateway_env="$GENERATED/ops/gateway.env"
   if [[ -s "$gateway_env" ]]; then
@@ -81,21 +81,8 @@ else
   GDC_ESCROW_ID="$active_escrow" "$ROOT/scripts/phase-ops.sh" gateway
 fi
 
-step 'Install the current authorised pool beside the preserved BotFather configuration'
-bot_dir=/srv/dai/gonka-devnet-bot
-remote_pool="/tmp/gdc-gateway-key-pool-$$.json"
-scp -q "$SECRETS/gateway-key-pool.json" "gdc-node0:$remote_pool"
-ssh gdc-node0 "set -Eeuo pipefail
-  sudo install -d -m 0750 '$bot_dir' '$bot_dir/data'
-  sudo install -o root -g root -m 0600 '$remote_pool' '$bot_dir/gateway-key-pool.json'
-  rm -f '$remote_pool'"
-
-step 'Deploy the Telegram issuer only after a key passes real chat completion'
-GDC_TELEGRAM_BOT_HOST=gdc-node0 \
-GDC_TELEGRAM_BOT_API_BASE_URL="$GDC_GATEWAY_PUBLIC_URL/v1" \
-  "$ROOT/scripts/deploy-telegram-bot.sh"
-
 step 'Verify final authenticated inference access'
 "$ROOT/04-ops/test-inference.sh" "$GDC_GATEWAY_PUBLIC_URL" "$client_key" >/dev/null
-printf 'PASS phase-local bootstrap access on gdc-node0: governed DevShard, active gateway, verified key pool and Telegram issuer\n'
-printf 'READY run ./gdc.sh --release testnet-0.2.14 gateway-continuity after independent operators add eligible non-guardian model capacity\n'
+printf 'PASS bootstrap access: governed DevShard and active authenticated gateway\n'
+printf 'INFO OPS Telegram inference consumer is optional and is not a Genesis or Host-join prerequisite\n'
+printf 'READY run ./gdc.sh --release v2026.07.23 gateway-continuity after independent operators add eligible non-guardian model capacity\n'

@@ -4,29 +4,39 @@ usage(){ echo "Usage: $0 inventory.env secrets-dir output-gateway.env [escrow-am
 [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 2; }
 INVENTORY="$1"; SECRETS="$2"; OUT="$3"; AMOUNT="${4:-${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck disable=SC1090
-source "$INVENTORY"
+source "$ROOT/scripts/lib.sh"
+# This renderer is also invoked directly by phase-ops. The shared path helper
+# gives it the same GDC_HOME state root without requiring load_project.
+load_env "$INVENTORY"
+load_topology
 source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$GATEWAY_VERSION" =~ ^v[34]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3 or v4' >&2; exit 2; }
 [[ -z "$AMOUNT" || "$AMOUNT" =~ ^[0-9]+$ ]] || exit 2
 PASSWORD="$(<"$SECRETS/operator.keyring")"; ADMIN_KEY="$(<"$SECRETS/gateway.admin-key")"; CLIENT_KEYS="$(<"$SECRETS/gateway.client-keys")"
+if [[ -s "$SECRETS/gateway.telegram-client-key" ]]; then
+  TELEGRAM_CLIENT_KEY="$(<"$SECRETS/gateway.telegram-client-key")"
+  case ",$CLIENT_KEYS," in
+    *",$TELEGRAM_CLIENT_KEY,"*) ;;
+    *) CLIENT_KEYS="$CLIENT_KEYS,$TELEGRAM_CLIENT_KEY" ;;
+  esac
+fi
 MAX_CONCURRENT_REQUESTS="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-0}"
 MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-0}"
 [[ "$MAX_CONCURRENT_REQUESTS" =~ ^[0-9]+$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a non-negative integer' >&2; exit 2; }
 [[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[0-9]+$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a non-negative integer' >&2; exit 2; }
-CREATOR="$(jq -er .address "$ROOT/artifacts/accounts/gdc-gateway-cold.json")"
-# node4 owns public chain RPC after the distributed topology is available;
+CREATOR="$(jq -er .address "$GDC_HOME/accounts/gdc-gateway-cold.json")"
+# The public edge owns public chain RPC after the distributed topology is available;
 # bootstrap-access overrides this with the sole live Genesis participant.
-RPC="${GDC_CHAIN_RPC_URL:-https://${NODE4_PUBLIC_HOST}/chain-rpc/}"
+RPC="${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}"
 
 # The later settlement evidence must demonstrate the whole economic path, not
 # only its final state.  Capture the creator balance before the escrow funding
 # transaction and persist the receipt beside the rendered gateway environment.
-BALANCE_BEFORE="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
+BALANCE_BEFORE="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
 
-# v3/v4 and the creator are intentionally a governance gate, never Genesis
+# The selected DevShard protocol and creator are intentionally a governance gate, never Genesis
 # convenience state or a local versiond configuration substitute.
 PARAMS="$("$ROOT/scripts/inferenced.sh" query inference params --node "$RPC" --chain-id "$CHAIN_ID" --output json)"
 MIN_AMOUNT="$(jq -er '(.params // .).devshard_escrow_params.min_amount' <<<"$PARAMS")"
@@ -43,27 +53,25 @@ SPENDABLE_AMOUNT="$(jq -r '[.balances[]? | select(.denom == "ngonka") | .amount]
   echo "escrow amount $AMOUNT exceeds spendable balance $SPENDABLE_AMOUNT; omit GDC_GATEWAY_ESCROW_AMOUNT_NGONKA to use the live minimum $MIN_AMOUNT" >&2
   exit 1
 }
-jq -e --arg creator "$CREATOR" '
+jq -e --arg creator "$CREATOR" --arg version "$GATEWAY_VERSION" '
   (.params // .).devshard_escrow_params as $p
   | ($p.allowed_creator_addresses | index($creator) != null)
-  and ([ $p.approved_versions[].name ] | sort) == ["v3", "v4"]
-  and ($p.approved_versions[] | .sha256 | test("^[0-9a-f]{64}$"))
+  and ($p.approved_versions | any(.name == $version and (.sha256 | test("^[0-9a-f]{64}$"))))
 ' <<<"$PARAMS" >/dev/null || {
-  echo 'v3/v4 approval and gateway creator allowlist must pass through governance before gateway deployment' >&2
+  echo "DevShard $GATEWAY_VERSION approval and gateway creator allowlist must pass through governance before gateway deployment" >&2
   exit 1
 }
 
 # The devshard group can only be sampled after the model has active validation weights.
-mapfile -t markers < <(find "$ROOT/state/joined" -maxdepth 1 -type f -name 'gdc-node[0-4]' -print | LC_ALL=C sort)
-(( ${#markers[@]} > 0 )) || { echo 'No joined participants found' >&2; exit 1; }
-for marker in "${markers[@]}"; do
-  node="$(basename "$marker")"
-  account="$ROOT/artifacts/accounts/$node-cold.json"
+mapfile -t joined_nodes < <(configured_nodes)
+(( ${#joined_nodes[@]} > 0 )) || { echo 'No joined participants found' >&2; exit 1; }
+for node in "${joined_nodes[@]}"; do
+  account="$GDC_HOME/accounts/$node-cold.json"
   [[ -s "$account" ]] || { echo "Missing account artifact for $node" >&2; exit 1; }
   address="$(jq -r .address "$account")"
   # Participant state is chain data.  The decentralized API exposes the
   # model catalog at /v1/models, not the obsolete public /v2 aggregate.
-  status="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$address" | jq -r '.participant.status // empty')"
+  status="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$address" | jq -r '.participant.status // empty')"
   case "$status" in ACTIVE|PARTICIPANT_STATUS_ACTIVE|1) ;; *) echo "$node is not ACTIVE: $status" >&2; exit 1;; esac
 done
 
@@ -107,7 +115,7 @@ jq -e --arg id "$ESCROW_ID" --arg creator "$CREATOR" --arg model "$MODEL_ID" '
   echo "new escrow $ESCROW_ID was not found in committed chain state" >&2
   exit 1
 }
-BALANCE_AFTER_FUNDING="$(ssh gdc-node0 "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
+BALANCE_AFTER_FUNDING="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/spendable_balances/$CREATOR")"
 fi
 PRIVATE="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys export gdc-gateway-cold --keyring-backend file --unarmored-hex --unsafe --yes | grep -Eo '[0-9a-fA-F]{64}' | tail -n1)"
 [[ "$PRIVATE" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Cannot export gateway private key' >&2; exit 1; }
@@ -130,15 +138,22 @@ DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-${GATEWAY_VERSION}
 # funding amount so phase-ops can configure the gateway's next-epoch bridge
 # and replacement escrows instead of treating this deployment as one-shot.
 DEVSHARD_ROTATION_ESCROW_AMOUNT=${AMOUNT}
+GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true
 DEVSHARD_POC_REQUEST_MODE=relaxed
 # The short test-lab PoC phases temporarily expose no current validation
 # weight. Relaxed mode must keep using the preserved participant set instead
 # of converting that expected transition into a zero-capacity rejection.
 DEVSHARD_CAPACITY_AWARE_LIMITS=off
 GATEWAY_MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS}
+# Upstream normalizes zero to 5 requests per 10,000 weight.  That default
+# rounds a valid small test-lab model weight down to no available requests.
+# Keep an explicit, non-limiting positive rate so the gateway reports and
+# enforces real capacity without silently converting to the upstream default.
 GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-1000000000}
 GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=${GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT:-1000000000}
 GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=${MAX_INPUT_TOKENS_IN_FLIGHT}
+GATEWAY_PARTICIPANT_REQUEST_BURST=${GDC_GATEWAY_PARTICIPANT_REQUEST_BURST:-1000000000}
+GATEWAY_PARTICIPANT_RECOVERY_PER_MINUTE=${GDC_GATEWAY_PARTICIPANT_RECOVERY_PER_MINUTE:-1000000000}
 # The Qwen profile has a 2048-token context window.  A default equal to the
 # whole window makes every non-empty OpenAI-compatible request invalid when a
 # client omits max_tokens.  Keep room for the prompt by default.

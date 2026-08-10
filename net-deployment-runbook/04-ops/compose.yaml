@@ -39,11 +39,15 @@ services:
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      # `docker compose up caddy|gateway` still interpolates this unrelated
+      # service. The runbook monitoring phase enforces the real OPS-owned
+      # password before Grafana can start; an empty value must not couple
+      # Gateway lifecycle to OPS credentials.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-unused-outside-monitoring}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      # Grafana is published through the node4/one-net TLS edge, not directly
-      # through node0.  This keeps login redirects and browser API requests on
+      # Grafana is published through the configured public TLS edge, not directly
+      # through the configured public edge. This keeps login redirects and browser API requests on
       # the same public origin.
       GF_SERVER_ROOT_URL: https://${GRAFANA_HOST}/
     volumes:
@@ -78,23 +82,38 @@ services:
       retries: 5
       start_period: 5s
 
+  faucet:
+    build:
+      context: ./faucet
+      args:
+        INFERENCED_IMAGE: ${INFERENCED_IMAGE:?INFERENCED_IMAGE is required}
+    restart: unless-stopped
+    env_file: [./faucet.env]
+    network_mode: host
+    volumes:
+      - /srv/dai/gonka-devnet-faucet/operator-home:/home/faucet/.inference
+      - /srv/dai/gonka-devnet-faucet/data:/data
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:18081/health', timeout=3).status == 200"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   caddy:
     image: ${CADDY_IMAGE:-caddy:2.11.4-alpine}
     restart: unless-stopped
     network_mode: host
     environment:
-      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+      ACME_EMAIL: ${ACME_EMAIL:-}
       SITE_HOST: ${SITE_HOST:?SITE_HOST is required}
       API_HOST: ${API_HOST:?API_HOST is required}
       GRAFANA_HOST: ${GRAFANA_HOST:?GRAFANA_HOST is required}
-      NODE0_PUBLIC_HOST: ${NODE0_PUBLIC_HOST:?NODE0_PUBLIC_HOST is required}
-      NODE1_PUBLIC_HOST: ${NODE1_PUBLIC_HOST:?NODE1_PUBLIC_HOST is required}
-      NODE2_PUBLIC_HOST: ${NODE2_PUBLIC_HOST:?NODE2_PUBLIC_HOST is required}
-      NODE3_PUBLIC_HOST: ${NODE3_PUBLIC_HOST:?NODE3_PUBLIC_HOST is required}
-      NODE4_PUBLIC_HOST: ${NODE4_PUBLIC_HOST:?NODE4_PUBLIC_HOST is required}
+      GATEWAY_PUBLIC_HOST: ${GATEWAY_PUBLIC_HOST:?GATEWAY_PUBLIC_HOST is required}
+      PUBLIC_EDGE_CIDR: ${PUBLIC_EDGE_CIDR:?PUBLIC_EDGE_CIDR is required}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./site:/srv:ro
+      - ./join-bootstrap:/join-bootstrap:ro
       - ./status:/status:ro
       - /srv/dai/caddy/data:/data
       - /srv/dai/caddy/config:/config

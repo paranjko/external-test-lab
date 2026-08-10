@@ -6,5 +6,6 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/srv/dai/ops/gateway-health-probe.sh
-User=root
-Group=root
+User=@GDC_SERVICE_USER@
+Group=@GDC_SERVICE_GROUP@
+NoNewPrivileges=true

@@ -1,34 +1,41 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: $0 inventory.env gateway-account.json minimum-spendable-ngonka" >&2; }
-[[ $# == 3 ]] || { usage; exit 2; }
-INVENTORY="$1"; ACCOUNT_JSON="$2"; MINIMUM="$3"
+usage(){ echo "Usage: $0 inventory.env gateway-account.json minimum-spendable-ngonka [rotation-headroom-ngonka]" >&2; }
+[[ $# -ge 3 && $# -le 4 ]] || { usage; exit 2; }
+INVENTORY="$1"; ACCOUNT_JSON="$2"; MINIMUM="$3"; HEADROOM="${4:-0}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck disable=SC1090
-source "$INVENTORY"
+source "$ROOT/scripts/lib.sh"
+load_env "$INVENTORY"
+load_topology
 ADDRESS="$(jq -er .address "$ACCOUNT_JSON")"
 [[ "$ADDRESS" =~ ^gonka1[0-9a-z]+$ ]] || { echo 'invalid gateway address' >&2; exit 2; }
 [[ "$MINIMUM" =~ ^[1-9][0-9]*$ ]] || { echo 'minimum spendable balance must be positive' >&2; exit 2; }
+[[ "$HEADROOM" =~ ^[0-9]+$ ]] || { echo 'rotation headroom must be a non-negative integer' >&2; exit 2; }
+TARGET=$((MINIMUM + HEADROOM))
+(( TARGET >= MINIMUM )) || { echo 'gateway reserve target overflows shell integer range' >&2; exit 2; }
 
 spendable_balance() {
   curl -fsS --max-time 10 \
-    "https://${NODE0_PUBLIC_HOST}/chain-api/cosmos/bank/v1beta1/spendable_balances/$ADDRESS" \
+    "https://${GENESIS_PUBLIC_HOST}/chain-api/cosmos/bank/v1beta1/spendable_balances/$ADDRESS" \
     | jq -er '[.balances[]? | select(.denom == "ngonka") | .amount][0] // "0"'
 }
 
 CURRENT="$(spendable_balance)"
 [[ "$CURRENT" =~ ^[0-9]+$ ]] || { echo 'invalid gateway spendable balance' >&2; exit 1; }
-if (( CURRENT >= MINIMUM )); then
-  printf 'PASS gateway spendable reserve %sngonka >= %sngonka\n' "$CURRENT" "$MINIMUM"
+if (( CURRENT >= TARGET )); then
+  printf 'PASS gateway spendable reserve %sngonka >= target %sngonka\n' "$CURRENT" "$TARGET"
   exit 0
 fi
 
-DEFICIT=$((MINIMUM - CURRENT))
+DEFICIT=$((TARGET - CURRENT))
 "$ROOT/03-join/fund-account.sh" "$ACCOUNT_JSON" "$INVENTORY" "$DEFICIT"
 for _ in $(seq 1 30); do
   CURRENT="$(spendable_balance)"
+  # Escrow rotation can consume the requested headroom as soon as the funding
+  # transaction commits.  The invariant is the minimum spendable floor; the
+  # extra target only makes that floor stable while replacements are created.
   [[ "$CURRENT" =~ ^[0-9]+$ ]] && (( CURRENT >= MINIMUM )) && {
-    printf 'PASS gateway spendable reserve restored to %sngonka\n' "$CURRENT"
+    printf 'PASS gateway spendable reserve restored to %sngonka with %sngonka rotation headroom requested\n' "$CURRENT" "$HEADROOM"
     exit 0
   }
   sleep 2
