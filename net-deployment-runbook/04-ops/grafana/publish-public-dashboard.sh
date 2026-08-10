@@ -32,7 +32,7 @@ status="$(publish)"
 # GF_SECURITY_ADMIN_PASSWORD only seeds a new Grafana database. The durable
 # operator volume survives monitoring redeployments, so reconcile an older
 # password through the local container CLI before treating a 401 as a failed
-# public-dashboard deployment. The secret never leaves node0 or stdout.
+# public-dashboard deployment. The secret never leaves the configured public edge or stdout.
 if [[ "$status" == 401 ]]; then
   docker compose exec -T grafana grafana cli admin reset-admin-password "$GRAFANA_ADMIN_PASSWORD" >/dev/null
   status="$(publish)"

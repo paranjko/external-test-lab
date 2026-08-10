@@ -4,6 +4,6 @@ datasources:
     uid: prometheus
     type: prometheus
     access: proxy
-    url: http://node0.gonka-dev.net:9099
+    url: __PUBLIC_GRAFANA_PROMETHEUS_URL__
     isDefault: true
     editable: false

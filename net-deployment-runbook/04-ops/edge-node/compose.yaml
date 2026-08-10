@@ -10,7 +10,7 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_USERS_ALLOW_SIGN_UP: "false"
-      # Compose interpolates every service, including this node4-only service
+      # Compose interpolates every service, including this public-edge-only service
       # when a regular Network Node starts only `caddy`.  A harmless default
       # keeps those local deployments independent of public-edge variables;
       # the public edge renderer always supplies the canonical hostname.
@@ -27,12 +27,14 @@ services:
     network_mode: host
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?PUBLIC_HOST is required}
-      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+      ACME_EMAIL: ${ACME_EMAIL:-}
       PUBLIC_EDGE: ${PUBLIC_EDGE:-false}
       SITE_HOST: ${SITE_HOST:-}
       API_HOST: ${API_HOST:-}
       GRAFANA_HOST: ${GRAFANA_HOST:-}
-      NODE0_PUBLIC_HOST: ${NODE0_PUBLIC_HOST:-}
+      GATEWAY_PUBLIC_HOST: ${GATEWAY_PUBLIC_HOST:-}
+      PUBLIC_EDGE_HOST: ${PUBLIC_EDGE_HOST:-}
+      MONITORING_CIDR: ${MONITORING_CIDR:-127.0.0.1/32}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /srv/dai/caddy/data:/data

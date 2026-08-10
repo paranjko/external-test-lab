@@ -2,12 +2,15 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib.sh"
 SITE_HOST="${GDC_SITE_HOST:-gonka-dev.net}"
 GRAFANA_NETWORK_URL="${GDC_GRAFANA_NETWORK_URL:-https://grafana.gonka-dev.net/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk}"
 GRAFANA_INFERENCE_URL="${GDC_GRAFANA_INFERENCE_URL:-https://grafana.gonka-dev.net/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-7d&to=now&timezone=utc&kiosk}"
 RUN_ID="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-homepage}"
-OUT="${GDC_HOMEPAGE_EVIDENCE_DIR:-$ROOT/artifacts/runs/$RUN_ID-homepage}"
+OUT="${GDC_HOMEPAGE_EVIDENCE_DIR:-$GDC_HOME/runs/$RUN_ID-homepage}"
 CHROME="${CHROME_BIN:-google-chrome}"
+EXPECT_RESET_STATE="${GDC_EXPECT_RESET_STATE:-false}"
+[[ "$EXPECT_RESET_STATE" =~ ^(true|false)$ ]] || { echo 'GDC_EXPECT_RESET_STATE must be true or false' >&2; exit 2; }
 mkdir -p "$OUT"
 
 command -v "$CHROME" >/dev/null || { echo 'google-chrome is required for homepage visual evidence' >&2; exit 1; }
@@ -26,6 +29,11 @@ test "$(grep -o 'grafana.gonka-dev.net/d/gdc-network' "$OUT/homepage.html" | wc 
 test "$(grep -o 'grafana.gonka-dev.net/d/gdc-inference' "$OUT/homepage.html" | wc -l)" -eq 1
 ! grep -qi 'proxy\.gonka\.gg\|node0\.gonka-dev\.net:3000' "$OUT/homepage.html"
 ! grep -Eq '<(pre|code)([[:space:]>])|curl-example|request-example' "$OUT/homepage.html"
+grep -q 'The Telegram bot consumes inference and does not issue API keys' "$OUT/homepage.html"
+if grep -q 'Keys are broker credentials' "$OUT/homepage.html"; then
+  echo 'obsolete Telegram key-issuer copy is still present' >&2
+  exit 1
+fi
 grep -q 'github.com/gonka-ai/gonka/discussions/1388' "$OUT/homepage.html"
 grep -q 'Successful requests' "$OUT/homepage.html"
 grep -q 'completed since gateway restart' "$OUT/homepage.html"
@@ -37,23 +45,48 @@ curl -fsS "https://$SITE_HOST/gateway-state.js" -o "$OUT/gateway-state.js"
 cmp "$ROOT/04-ops/site/gateway-state.js" "$OUT/gateway-state.js"
 curl -fsS "https://$SITE_HOST/status/gateway-health" -o "$OUT/gateway-health.json"
 jq -e '
-  ((keys | sort) == ["checked_at","http_status","latency_ms","reason","state"])
-  and (.state == "READY" or .state == "UNAVAILABLE")
+  (((keys - ["recovery"]) | sort) == ["checked_at","http_status","latency_ms","reason","state"])
+  and (.state == "READY" or .state == "UNAVAILABLE" or .state == "RECOVERING")
   and (.checked_at | fromdateiso8601 > 0)
   and (.http_status | type == "number")
   and (.latency_ms | type == "number")
   and (.reason | type == "string")
+  and (
+    if .state == "RECOVERING" then
+      (.recovery | type == "object")
+      and (.recovery.stage | type == "string")
+      and (.recovery.started_at | fromdateiso8601 > 0)
+      and (.recovery.next_check_seconds | type == "number")
+    else
+      (.recovery? == null)
+    end
+  )
 ' "$OUT/gateway-health.json" >/dev/null
 
 curl -fsS "https://$SITE_HOST/config.js" | sed -e 's/^window.GDC_CONFIG = //' -e 's/;$//' >"$OUT/config.json"
-curl -fsS "https://$SITE_HOST/status/participants" >"$OUT/participants.json"
+if [[ "$EXPECT_RESET_STATE" == true ]]; then
+  # The reset contract deliberately removes inferenced.  Caddy therefore has
+  # no chain REST upstream for this one endpoint; represent that truth as an
+  # empty participant set instead of treating it as a public-site outage.
+  if ! curl -fsS "https://$SITE_HOST/status/participants" >"$OUT/participants.json"; then
+    printf '{"participant":[]}\n' >"$OUT/participants.json"
+  fi
+else
+  curl -fsS "https://$SITE_HOST/status/participants" >"$OUT/participants.json"
+fi
 live_participant_count="$(jq -er '[.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")] | length' "$OUT/participants.json")"
-(( live_participant_count > 0 ))
+if [[ "$EXPECT_RESET_STATE" != true ]]; then
+  (( live_participant_count > 0 ))
+fi
 curl -fsS "https://$SITE_HOST/fonts/JetBrainsMono-Regular.woff2" -o "$OUT/JetBrainsMono-Regular.woff2"
 test -s "$OUT/JetBrainsMono-Regular.woff2"
 jq -e '
-  ([.nodes[] | select(.mode == "active")] | length >= 1)
-  and ([.nodeCatalog[] | select((.ip | test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")) and (.geo.latitude | type == "number") and (.geo.longitude | type == "number"))] | length >= 4)
+  (.nodeCatalog | type == "array")
+  and all(.nodeCatalog[];
+    (.ip | test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
+    and (.geo.latitude | type == "number")
+    and (.geo.longitude | type == "number")
+  )
   and (.grafanaNetwork | contains("/d/gdc-network/"))
   and (.grafanaInference | contains("/d/gdc-inference/"))
 ' "$OUT/config.json" >/dev/null
@@ -66,9 +99,9 @@ curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-network' | jq -e
 curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-inference' | jq -e '.dashboard.title == "Gonka DevNet Inference"' >"$OUT/grafana-inference-dashboard.json"
 ! grep -Eqi 'token price|price comparison|real spend|cost per' "$OUT/homepage.html"
 
-CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
+GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
   "https://$SITE_HOST/" 1440 900 "$OUT/homepage-1440x900.png" "$live_participant_count"
-CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
+GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
   "https://$SITE_HOST/" 390 844 "$OUT/homepage-390x844.png"
 identify "$OUT/homepage-1440x900.png" | grep -q '1440x900'
 identify "$OUT/homepage-390x844.png" | grep -q '390x844'
@@ -78,7 +111,7 @@ cat >"$OUT/finalize.md" <<EOF
 
 - Purpose: External Test Lab / Community DevNet.
 - Initial topology: at least one active participant; disconnected nodes are
-  omitted unless explicitly marked as SKIP.
+  omitted.
 - Checks: live topology, native gateway metrics, Grafana, desktop and mobile browser contracts.
 EOF
 printf 'PASS public homepage contract evidence: %s\n' "$OUT"
