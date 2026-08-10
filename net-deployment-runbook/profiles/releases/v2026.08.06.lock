@@ -1,0 +1,36 @@
+# Immutable host-stack snapshot dated 2026-08-06 (UTC), after v0.2.15 and
+# DevShard v4.0.1. The date identifies the complete compatible stack.
+GONKA_SOURCE_REF=release/v0.2.15
+GONKA_COMMIT=4d687ed6782bcea3931d2d9135bf322f84e190ab
+GONKA_REPOSITORY=https://github.com/gonka-ai/gonka.git
+GONKA_RELEASE=0.2.15
+GONKA_HOST_STACK_COMMIT=ce33c851282b8f4c0f63d78d46ddd4d8bb248207
+GONKA_HOST_STACK_DOC_SHA256=5a69a2d82f77b4ecd1e207af1119063f32693afdc01bca58433f71ffe4061f82
+GONKA_HOST_STACK_COMPOSE_SHA256=d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94
+DAPI_SOURCE_REF=release/v0.2.15-post3
+DAPI_COMMIT=5dbb53ddf3ddc42655fc04dc39d96003169bdbb0
+TMKMS_IMAGE=ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21
+INFERENCED_IMAGE=ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112
+INFERENCED_OPERATOR_VERSION=0.2.15
+INFERENCED_OPERATOR_URL_LINUX_AMD64=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-linux-amd64.zip
+INFERENCED_OPERATOR_SHA256_LINUX_AMD64=4e506d74491bf2636591d4088f3eebd0ac4c33e739f83bc1cd56785482a9a7ca
+INFERENCED_OPERATOR_URL_LINUX_ARM64=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-linux-arm64.zip
+INFERENCED_OPERATOR_SHA256_LINUX_ARM64=31dac13261d8d27ec674b42974b921c8e69959e8d41adc4d07242bc72026a650
+INFERENCED_OPERATOR_URL_DARWIN_AMD64=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-darwin-amd64.zip
+INFERENCED_OPERATOR_SHA256_DARWIN_AMD64=049a9b9dd428f7d47b5bb883f0f4737e2a75f604be5b8e682c2a3f5128bd4787
+INFERENCED_OPERATOR_URL_DARWIN_ARM64=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-darwin-arm64.zip
+INFERENCED_OPERATOR_SHA256_DARWIN_ARM64=119db2736fff15286874b987888d08d84d5991d928348f8efd415da959faa5e3
+DAPI_IMAGE=ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c
+EDGE_API_IMAGE=ghcr.io/product-science/edge-api:0.2.15@sha256:4f98b337ea837d711bdd7e0d0e3172a0034f37a5f7fb9764251b7155bb727025
+EDGE_API_ENABLED=true
+EDGE_API_COMPOSE_PROFILE=edge-api
+EDGE_API_SERVICE_NAME=edge-api
+VERSIOND_IMAGE=ghcr.io/product-science/versiond:0.2.15@sha256:3cd7abb49e04dc779411858adb446deccfb68fd6a69553365ed503ab000e0fb2
+PROXY_IMAGE=ghcr.io/product-science/proxy:0.2.15@sha256:88a392f2300e4f303df6c7dde4660944c3f99df1e7d959bb451bd62e2f846d49
+MLNODE_GENERIC_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5
+MLNODE_PROXY_IMAGE=nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+INFERENCED_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-amd64.zip
+INFERENCED_UPGRADE_SHA256=91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e
+DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-post3/decentralized-api-amd64.zip
+DAPI_UPGRADE_SHA256=8cfa7345f5b7f968d5a1b765837b8319084c02d3dd2691b698c368774e20b55e
+BRIDGE_IMAGE=ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d

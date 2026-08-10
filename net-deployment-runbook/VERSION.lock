@@ -1,6 +1,0 @@
-# Deprecated compatibility pointer. This file is intentionally not sourced.
-# Canonical, ownership-separated inputs live under profiles/:
-#   releases/          upstream Gonka network software
-#   deployments/       Community Test Lab network policy and extensions
-#   models/            model and PoC configuration
-#   operator-services/ operator-owned observability and edge software
