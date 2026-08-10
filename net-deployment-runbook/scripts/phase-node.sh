@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
-load_project
 
 ACTION="${1:-}"
 NODE_INPUT="${2:-}"
-[[ "$NODE_INPUT" =~ ^(node[0-4]|gdc-node[0-4])$ ]] || die 'expected node0, gdc-node0, node1, gdc-node1, node2, gdc-node2, node3, gdc-node3, node4, or gdc-node4'
-if [[ "$NODE_INPUT" == gdc-* ]]; then NODE="$NODE_INPUT"; else NODE="gdc-$NODE_INPUT"; fi
-[[ "$ACTION" =~ ^(stop|start|verify|reset)$ ]] || die 'expected: node stop|start|verify|reset nodeN (or gdc-nodeN)'
-host_is_skipped "$NODE" && die "$NODE is excluded by GDC_SKIP_HOSTS"
+[[ "$ACTION" =~ ^(stop|start|verify|reset)$ ]] || die 'expected: node stop|start|verify|reset SSH_ALIAS'
+[[ "$NODE_INPUT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid SSH alias: $NODE_INPUT"
+NODE="$NODE_INPUT"
+if [[ "$ACTION" != reset ]]; then
+  load_project
+  topology_contains_node "$NODE" || die "expected an SSH alias from GDC_NODE_ALIASES, got: $NODE"
+fi
 ssh_ready "$NODE" || die "$NODE is unreachable"
 
 verify_node() {
@@ -21,8 +23,14 @@ verify_node() {
     ' || die "$NODE has an unavailable Network Node service"
 
   url="$(node_url "$NODE")"
-  if [[ "$NODE" == gdc-node0 ]]; then peer=gdc-node1; else peer=gdc-node0; fi
-  host_is_skipped "$peer" && die "cannot select a live peer for $NODE"
+  peer="$GENESIS_NODE"
+  if [[ "$NODE" == "$GENESIS_NODE" ]]; then
+    for candidate in "${GDC_NODES[@]}"; do
+      [[ "$candidate" != "$NODE" && -e "$STATE/joined/$candidate" ]] || continue
+      peer="$candidate"
+      break
+    done
+  fi
   peer_url="$(node_url "$peer")"
   own_status="$(curl -fsS "$url/chain-rpc/status")"
   peer_status="$(curl -fsS "$peer_url/chain-rpc/status")"
@@ -38,8 +46,14 @@ verify_node() {
 wait_for_node_sync() {
   local url peer peer_url own_status peer_status own_height peer_height catching lag deadline
   url="$(node_url "$NODE")"
-  if [[ "$NODE" == gdc-node0 ]]; then peer=gdc-node1; else peer=gdc-node0; fi
-  host_is_skipped "$peer" && die "cannot select a live peer for $NODE"
+  peer="$GENESIS_NODE"
+  if [[ "$NODE" == "$GENESIS_NODE" ]]; then
+    for candidate in "${GDC_NODES[@]}"; do
+      [[ "$candidate" != "$NODE" && -e "$STATE/joined/$candidate" ]] || continue
+      peer="$candidate"
+      break
+    done
+  fi
   peer_url="$(node_url "$peer")"
   deadline=$((SECONDS + ${GDC_NODE_START_WAIT_SECONDS:-300}))
   while (( SECONDS < deadline )); do
@@ -64,9 +78,54 @@ wait_for_node_sync() {
 }
 
 reset_node() {
-  step "Reset $NODE deployment state and remove deployed containers"
-  ssh -T "$NODE" "NODE='$NODE' bash -s" <<'REMOTE'
+  local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias
+  linked_ml_host=''
+  source=''
+  endpoint="$(ssh -T "$NODE" "jq -r '.[]?.host // empty' /srv/dai/deploy/$NODE/node-config.json 2>/dev/null" 2>/dev/null | head -n 1 || true)"
+
+  # `phase-ml-attach.sh` records this relationship in the operator state. It
+  # is available even when a reset intentionally has no .env or role input.
+  if [[ -s "$STATE/ml-attached/$NODE" ]]; then
+    linked_ml_host="$(<"$STATE/ml-attached/$NODE")"
+    source='operator state'
+  fi
+
+  # The deployment record is written by `host join` / `host ml-attach`. It is
+  # an explicit operator decision, unlike a guessed naming convention.
+  if [[ -z "$linked_ml_host" && -n "$endpoint" && "$endpoint" != inference ]]; then
+    link_record="$(ssh -T "$NODE" "sudo cat /srv/dai/deploy/$NODE/gdc-ml-link.json 2>/dev/null" 2>/dev/null || true)"
+    link_alias="$(jq -er --arg node "$NODE" --arg endpoint "$endpoint" '
+      select(.schema_version == 1 and .validator_alias == $node and .ml_endpoint == $endpoint)
+      | .ml_ssh_alias
+    ' <<<"$link_record" 2>/dev/null || true)"
+    [[ "$link_alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+      || die "cannot safely reset external GPU for $NODE: missing a valid /srv/dai/deploy/$NODE/gdc-ml-link.json; use the GDC_HOME created by host join or reset the GPU host explicitly"
+    linked_ml_host="$link_alias"
+    source='Network Node deployment record'
+  fi
+
+  if [[ -n "$linked_ml_host" && -n "$endpoint" && "$endpoint" != inference ]]; then
+    candidate_host="$(ssh -G "$linked_ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+    candidate_ip="$(getent ahostsv4 "$candidate_host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    endpoint_ip="$(getent ahostsv4 "$endpoint" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    { [[ "$endpoint" == "$candidate_host" ]] || [[ -n "$endpoint_ip" && "$endpoint_ip" == "$candidate_ip" ]]; } \
+      || die "linked GPU host $linked_ml_host does not match $NODE ML endpoint $endpoint; no reset was performed"
+  fi
+
+  if [[ -n "$linked_ml_host" ]]; then
+    [[ "$linked_ml_host" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$linked_ml_host" != "$NODE" ]] \
+      || die "refusing invalid linked GPU alias for $NODE: $linked_ml_host"
+    ssh_ready "$linked_ml_host" \
+      || die "linked GPU host $linked_ml_host for $NODE is unreachable; no reset was performed"
+    printf 'READY detected linked GPU host %s for %s (%s)\n' "$linked_ml_host" "$NODE" "$source"
+  fi
+
+  reset_remote_host() {
+    local host="$1" clear_edge="$2"
+    ssh -T "$host" "NODE='$host' CLEAR_EDGE='$clear_edge' bash -s" <<'REMOTE'
 set -Eeuo pipefail
+
+systemctl disable --now "gdc-poc-winddown-watch@$NODE.service" >/dev/null 2>&1 || true
 
 compose_down_dir() {
   local dir="$1"
@@ -83,17 +142,51 @@ compose_down_dir() {
   fi
 }
 
+remove_compose_project() {
+  local project="$1"
+  local -a containers volumes networks
+
+  mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$project")
+  (( ${#containers[@]} == 0 )) || docker rm -f "${containers[@]}" >/dev/null
+
+  mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+  (( ${#volumes[@]} == 0 )) || docker volume rm -f "${volumes[@]}" >/dev/null
+
+  mapfile -t networks < <(docker network ls -q --filter "label=com.docker.compose.project=$project")
+  (( ${#networks[@]} == 0 )) || docker network rm "${networks[@]}" >/dev/null
+}
+
 compose_down_dir "/srv/dai/monitoring-agent"
-compose_down_dir "/srv/dai/edge"
+if [[ "$CLEAR_EDGE" == true ]]; then
+  compose_down_dir "/srv/dai/edge"
+elif [[ -f /srv/dai/edge/.env ]] && grep -qx 'PUBLIC_EDGE=true' /srv/dai/edge/.env; then
+  printf 'PRESERVE OPS public edge on %s\n' "$NODE"
+else
+  compose_down_dir "/srv/dai/edge"
+fi
 compose_down_dir "/srv/dai/deploy/$NODE"
+remove_compose_project "$NODE"
 
 rm -rf -- \
   "/srv/dai/deploy/$NODE" \
+  "/srv/dai/$NODE" \
   "/tmp/gdc-deploy-"*-"$NODE" \
   "/tmp/gdc-reset-"*-"$NODE"
 REMOTE
+  }
+
+  step "Reset $NODE deployment state and remove deployed containers"
+  # The public edge is an OPS-owned service. Resetting its validator must not
+  # also remove the Caddy instance that owns the public site, API and Grafana.
+  reset_remote_host "$NODE" false
   if [[ -e "$STATE/joined/$NODE" ]]; then
     rm -f "$STATE/joined/$NODE"
+  fi
+  if [[ -n "$linked_ml_host" ]]; then
+    step "Reset linked GPU host $linked_ml_host for $NODE"
+    reset_remote_host "$linked_ml_host" false
+    rm -f "$STATE/ml-attached/$NODE"
+    printf 'PASS %s linked GPU reset\n' "$linked_ml_host"
   fi
   printf 'PASS %s reset\n' "$NODE"
 }

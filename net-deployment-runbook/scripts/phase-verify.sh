@@ -3,7 +3,9 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 record_phase_profile verify
-RUN="$ROOT/artifacts/runs/$(date -u +%Y%m%dT%H%M%SZ)"
+CHAIN_BASE="${GDC_CHAIN_PUBLIC_BASE:-https://$PUBLIC_EDGE_HOST}"
+CHAIN_BASE="${CHAIN_BASE%/}"
+RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$RUN"
 VERDICT_WRITTEN=false
 on_exit() {
@@ -20,7 +22,7 @@ EOF
 trap on_exit EXIT
 
 step 'Record environment and topology'
-capture_canonical_genesis "https://$NODE0_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
+capture_canonical_genesis "$CHAIN_BASE/chain-rpc/genesis" "$RUN/genesis.json"
 genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 {
   echo "timestamp=$(date -u +%FT%TZ)"
@@ -35,10 +37,10 @@ genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 
 step 'Prove block progress with two state observations'
 deadline=$((SECONDS + 120))
-curl -fsS "https://$NODE0_PUBLIC_HOST/chain-rpc/status" >"$RUN/chain-status-first.json"
+curl -fsS "$CHAIN_BASE/chain-rpc/status" >"$RUN/chain-status-first.json"
 first="$(jq -er .result.sync_info.latest_block_height "$RUN/chain-status-first.json")"
 while (( SECONDS < deadline )); do
-  status="$(curl -fsS "https://$NODE0_PUBLIC_HOST/chain-rpc/status")"
+  status="$(curl -fsS "$CHAIN_BASE/chain-rpc/status")"
   current="$(jq -r .result.sync_info.latest_block_height <<<"$status")"
   if (( current > first )); then
     jq . <<<"$status" >"$RUN/chain-status-second.json"
@@ -48,8 +50,8 @@ while (( SECONDS < deadline )); do
 done
 (( current > first )) || die "block height did not advance from $first"
 
-mapfile -t node_indexes < <(configured_node_indexes)
-expected=${#node_indexes[@]}
+mapfile -t nodes < <(configured_nodes)
+expected=${#nodes[@]}
 (( expected > 0 )) || die 'no configured participant accounts found'
 
 # Fail before the full-epoch wait when local operator state omits an ACTIVE
@@ -57,13 +59,13 @@ expected=${#node_indexes[@]}
 # evidence set merely because its local joined marker was removed.
 step 'Reconcile the complete ACTIVE chain participant set with joined state'
 printf '[]' >"$RUN/expected-participant-addresses.json"
-for i in "${node_indexes[@]}"; do
-  address="$(jq -er .address "$ACCOUNTS/gdc-node$i-cold.json")"
+for node in "${nodes[@]}"; do
+  address="$(jq -er .address "$ACCOUNTS/$node-cold.json")"
   jq --arg address "$address" '. + [$address]' "$RUN/expected-participant-addresses.json" \
     >"$RUN/expected-participant-addresses.tmp"
   mv "$RUN/expected-participant-addresses.tmp" "$RUN/expected-participant-addresses.json"
 done
-ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
+ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
   >"$RUN/participants-chain.json"
 jq -e --slurpfile expected "$RUN/expected-participant-addresses.json" '
   ([.participant[]
@@ -79,7 +81,7 @@ epoch_timeout="${GDC_EPOCH_WAIT_TIMEOUT_SECONDS:-2400}"
 # A block-count interval alone is not enough: epoch groups become effective at
 # a chain-scheduled height, which can be later than `first + epoch_blocks`.
 # Anchor the evidence window to the next live group activation too.
-ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data' >"$RUN/current-epoch-group-initial.json"
+ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data' >"$RUN/current-epoch-group-initial.json"
 initial_group_epoch="$(jq -er '.epoch_group_data.epoch_index | tonumber' "$RUN/current-epoch-group-initial.json")"
 initial_group_effective="$(jq -er '.epoch_group_data.effective_block_height | tonumber' "$RUN/current-epoch-group-initial.json")"
 epoch_target=$((first + epoch_blocks))
@@ -88,7 +90,7 @@ group_target=$((initial_group_effective + epoch_blocks))
 step "Prove a complete $epoch_blocks-block interval and the next epoch-group activation from height $first to $epoch_target"
 deadline=$((SECONDS + epoch_timeout))
 while (( SECONDS < deadline )); do
-  status="$(curl -fsS "https://$NODE0_PUBLIC_HOST/chain-rpc/status")"
+  status="$(curl -fsS "$CHAIN_BASE/chain-rpc/status")"
   current="$(jq -r .result.sync_info.latest_block_height <<<"$status")"
   if (( current >= epoch_target )); then
     jq . <<<"$status" >"$RUN/chain-status-epoch.json"
@@ -101,11 +103,11 @@ done
 
 step "Prove exactly $expected ACTIVE participants"
 printf '[]' >"$RUN/participants.json"
-for i in "${node_indexes[@]}"; do
-  address="$(jq -r .address "$ACCOUNTS/gdc-node$i-cold.json")"
-  body="$(curl -fsS "https://$NODE0_PUBLIC_HOST/v2/participants/$address")"
+for node in "${nodes[@]}"; do
+  address="$(jq -r .address "$ACCOUNTS/$node-cold.json")"
+  body="$(curl -fsS "$CHAIN_BASE/v2/participants/$address")"
   status="$(jq -r '.participant.status // empty' <<<"$body")"
-  [[ "$status" =~ ^(ACTIVE|PARTICIPANT_STATUS_ACTIVE|1)$ ]] || die "gdc-node$i is not ACTIVE: $status"
+  [[ "$status" =~ ^(ACTIVE|PARTICIPANT_STATUS_ACTIVE|1)$ ]] || die "$node is not ACTIVE: $status"
   jq --argjson item "$body" '. + [$item]' "$RUN/participants.json" >"$RUN/participants.tmp"
   mv "$RUN/participants.tmp" "$RUN/participants.json"
 done
@@ -116,8 +118,7 @@ lag_threshold="${GDC_MAX_NODE_LAG_BLOCKS:-5}"
 [[ "$lag_threshold" =~ ^[0-9]+$ ]] || die 'GDC_MAX_NODE_LAG_BLOCKS must be a non-negative integer'
 printf '[]' >"$RUN/node-sync.json"
 common_height="$current"
-for i in "${node_indexes[@]}"; do
-  node="gdc-node$i"
+for node in "${nodes[@]}"; do
   node_status="$(curl -fsS "$(node_url "$node")/chain-rpc/status")"
   node_height="$(jq -er .result.sync_info.latest_block_height <<<"$node_status")"
   lag=$((current - node_height)); (( lag >= 0 )) || lag=0
@@ -127,8 +128,7 @@ for i in "${node_indexes[@]}"; do
     '. + [{node:$node,height:$height,lag:$lag}]' "$RUN/node-sync.json" >"$RUN/node-sync.tmp"
   mv "$RUN/node-sync.tmp" "$RUN/node-sync.json"
 done
-for i in "${node_indexes[@]}"; do
-  node="gdc-node$i"
+for node in "${nodes[@]}"; do
   hash="$(curl -fsS "$(node_url "$node")/chain-rpc/block?height=$common_height" | jq -er .result.block_id.hash)"
   jq --arg node "$node" --arg hash "$hash" \
     'map(if .node == $node then . + {common_height_hash:$hash} else . end)' \
@@ -136,13 +136,13 @@ for i in "${node_indexes[@]}"; do
   mv "$RUN/node-sync.tmp" "$RUN/node-sync.json"
 done
 jq -e '[.[].common_height_hash] | unique | length == 1' "$RUN/node-sync.json" >/dev/null || die 'nodes disagree on common-height block hash'
-curl -fsS "https://$NODE0_PUBLIC_HOST/v1/models" >"$RUN/models-chain.json"
+curl -fsS "$CHAIN_BASE/v1/models" >"$RUN/models-chain.json"
 jq -e --arg model "$MODEL_ID" '.data[] | select(.id == $model)' "$RUN/models-chain.json" >/dev/null || die "model $MODEL_ID is absent from the live API"
 # The 0.2.14 decentralized API intentionally exposes the model catalog at
 # /v1/models, while current epoch group and committed weights are chain REST
-# queries. Keep the latter on node0 loopback rather than treating a nonexistent
+# queries. Keep the latter on the Genesis participant loopback rather than treating a nonexistent
 # public /v2/models aggregate as evidence.
-ssh gdc-node0 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data' >"$RUN/current-epoch-group.json"
+ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data' >"$RUN/current-epoch-group.json"
 final_group_epoch="$(jq -er '.epoch_group_data.epoch_index | tonumber' "$RUN/current-epoch-group.json")"
 (( final_group_epoch > initial_group_epoch )) || die "live epoch group did not advance beyond epoch $initial_group_epoch"
 jq -e --arg model "$MODEL_ID" '.epoch_group_data.sub_group_models | index($model) != null' "$RUN/current-epoch-group.json" >/dev/null || die "model group $MODEL_ID is absent from the live epoch group"
@@ -150,20 +150,19 @@ jq -e '.epoch_group_data.validation_weights | type == "array" and length > 0' "$
 jq -e '(.epoch_group_data.validation_weights | map(.weight | tonumber) | add) as $committed
   | (.epoch_group_data.total_weight | tonumber) as $total
   | $committed > 0 and $committed == $total' "$RUN/current-epoch-group.json" >/dev/null || die 'committed validation-weight total is absent or differs from the epoch total'
-for i in "${node_indexes[@]}"; do
-  address="$(jq -r .address "$ACCOUNTS/gdc-node$i-cold.json")"
+for node in "${nodes[@]}"; do
+  address="$(jq -r .address "$ACCOUNTS/$node-cold.json")"
   jq -e --arg address "$address" '
     [(.epoch_group_data.validation_weights[]?.member_address),
      (.epoch_group_data.member_seed_signatures[]?.member_address)]
     | index($address) != null
-  ' "$RUN/current-epoch-group.json" >/dev/null || die "gdc-node$i is absent from the live epoch group"
+  ' "$RUN/current-epoch-group.json" >/dev/null || die "$node is absent from the live epoch group"
 done
 
 step 'Record direct ML qualification as component evidence only'
 mkdir -p "$RUN/ml-qualification"
-for i in "${node_indexes[@]}"; do
-  host="gdc-node$i"
-  [[ "$i" == 4 ]] && host=gdc-node4-ml
+for node in "${nodes[@]}"; do
+  host="$(node_ml_host "$node" || printf '%s' "$node")"
   require_ml_qualification "$host"
   report="$(latest_ml_qualification_report "$host")"
   target="$RUN/ml-qualification/$host"
