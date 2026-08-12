@@ -108,6 +108,10 @@ jq -e --arg genesis "$GENESIS_ADDRESS" --arg gateway "$GATEWAY_ADDRESS" --arg fa
   and .app_state.inference.params.devshard_escrow_params.allowed_creator_addresses == []
   and .app_state.inference.params.devshard_escrow_params.approved_versions == []
   and .app_state.inference.params.poc_params.poc_v2_enabled == true
+  and .app_state.inference.params.poc_params.confirmation_poc_v2_enabled == true
+  and .app_state.inference.params.confirmation_poc_params.expected_confirmations_per_epoch == "1"
+  and .app_state.inference.params.confirmation_poc_params.slash_fraction == {"value":"0","exponent":0}
+  and .app_state.inference.params.confirmation_poc_params.upgrade_protection_window == "20"
   and .app_state.inference.params.genesis_guardian_params.guardian_addresses == $guardian_addresses
   and .app_state.inference.genesis_only_params.genesis_guardian_enabled == $guardian_enabled
   and .app_state.inference.genesis_only_params.genesis_guardian_addresses == $guardian_addresses

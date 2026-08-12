@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ "$1" == -T ]] && shift
+node="$1"
+shift
+export NODE="$node"
+exec bash -s

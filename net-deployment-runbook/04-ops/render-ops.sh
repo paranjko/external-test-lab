@@ -14,6 +14,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 load_env "$INVENTORY"
 load_topology
+SECRETS="$STATE/secrets"
 source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
@@ -179,12 +180,17 @@ CADDY
 
 bootstrap_dir="$OUTPUT/join-bootstrap"
 rm -rf "$bootstrap_dir"
-mkdir -p "$bootstrap_dir/genesis" "$bootstrap_dir/profile"
-if [[ -s "$GDC_HOME/genesis/genesis.json" && -s "$GDC_HOME/genesis/genesis.sha256" && -s "$GDC_HOME/genesis/genesis-seeds.txt" && -s "$STATE/phase-profiles/genesis.env" ]]; then
+mkdir -p "$bootstrap_dir/genesis" "$bootstrap_dir/profile" "$bootstrap_dir/gateway"
+if [[ -s "$GDC_HOME/genesis/genesis.json" && -s "$GDC_HOME/genesis/genesis.sha256" && -s "$GDC_HOME/genesis/genesis-seeds.txt" && -s "$STATE/phase-profiles/genesis.env" && -s "$SECRETS/gateway.join-client-key" ]]; then
   install -m 0644 "$GDC_HOME/genesis/genesis.json" "$bootstrap_dir/genesis/genesis.json"
   install -m 0644 "$GDC_HOME/genesis/genesis.sha256" "$bootstrap_dir/genesis/genesis.sha256"
   install -m 0644 "$GDC_HOME/genesis/genesis-seeds.txt" "$bootstrap_dir/genesis/genesis-seeds.txt"
   install -m 0644 "$STATE/phase-profiles/genesis.env" "$bootstrap_dir/profile/genesis.env"
+  # This is the deliberately narrow, DevShard client credential used only by
+  # the JOIN_PASS completion regression. It is neither an operator key nor a
+  # gateway administration credential, and the operator stores it locally at
+  # mode 0600 after verifying the public-bootstrap manifest.
+  install -m 0644 "$SECRETS/gateway.join-client-key" "$bootstrap_dir/gateway/join-client-key"
   {
     printf 'GDC_NODE_ALIASES=%q\n' "$GDC_NODE_ALIASES"
     printf 'GDC_NODE_PUBLIC_HOSTS=%q\n' "$GDC_NODE_PUBLIC_HOSTS"

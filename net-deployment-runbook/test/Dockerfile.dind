@@ -1,0 +1,14 @@
+FROM bats/bats:1.14.0 AS bats
+
+FROM docker:27-dind
+
+RUN apk add --no-cache bash coreutils curl jq python3
+COPY --from=bats /opt/bats /opt/bats
+
+ENV PATH="/opt/bats/bin:${PATH}"
+WORKDIR /workspace
+COPY . /workspace
+COPY test/dind-entrypoint.sh /usr/local/bin/gdc-bats-dind
+RUN chmod 0755 /usr/local/bin/gdc-bats-dind
+
+ENTRYPOINT ["gdc-bats-dind"]

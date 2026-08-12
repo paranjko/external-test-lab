@@ -13,5 +13,6 @@ step 'Cold accounts for Genesis participant, gateway, and public faucet'
 step 'Genesis participant identity'
 "$ROOT/01-identities-genesis/collect-identities.sh" "$INVENTORY" "$SECRETS" "$IDENTITIES" "$MNEMONICS" "$GENESIS_NODE" \
   || die 'the Genesis participant identity could not be created'
-printf 'BACKUP  %s mnemonic files in %s\n' \
-  "$(find "$MNEMONICS" -maxdepth 1 -type f -name '*.mnemonic' | wc -l)" "$MNEMONICS"
+printf 'BACKUP  %s mnemonic files and %s cold-address references in %s\n' \
+  "$(find "$MNEMONICS" -maxdepth 1 -type f -name '*.mnemonic' | wc -l)" \
+  "$(find "$MNEMONICS" -maxdepth 1 -type f -name '*-cold.address' | wc -l)" "$MNEMONICS"

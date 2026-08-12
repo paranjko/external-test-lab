@@ -8,8 +8,12 @@ VERSION.runtime.lock
 
 # Runtime output must never enter the cleanroom image.
 artifacts/
+accounts/
 generated/
 lab/
+mnemonics/
+runs/
+secrets/
 state/
 *.log
 

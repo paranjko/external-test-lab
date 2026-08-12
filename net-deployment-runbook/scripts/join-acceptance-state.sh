@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Shared durable state for a bounded Host join acceptance run.  This file is
+# sourced by the phase and its focused regression test.
+
+join_acceptance_state_initialize() {
+  local run="$1" run_id="$2" genesis_sha256="$3" participant_address="$4" runtime_id="$5" current_epoch="$6" epochs="$7"
+  local state="$run/acceptance-state.json" observations="$run/poc-acceptance-observations.json" temporary preserved_initial
+  [[ "$current_epoch" =~ ^[1-9][0-9]*$ && "$epochs" =~ ^[1-9][0-9]*$ ]] || return 2
+  if [[ -s "$state" ]]; then
+    jq -e --arg run_id "$run_id" --arg genesis_sha256 "$genesis_sha256" --arg participant_address "$participant_address" --arg runtime_id "$runtime_id" '
+      .schema_version == 1
+      and .run_id == $run_id
+      and .genesis_sha256 == $genesis_sha256
+      and .participant_address == $participant_address
+      and .runtime_id == $runtime_id
+      and (.initial_epoch | tonumber) > 0
+      and (.deadline_epoch | tonumber) >= (.initial_epoch | tonumber)
+    ' "$state" >/dev/null || return 1
+  else
+    # Runs created before this state file already retain epoch observations.
+    # Adopt their first observed epoch instead of silently granting a new
+    # bounded window from the resume epoch.
+    preserved_initial="$(jq -er '[.[]?.epoch | tonumber] | min // empty' "$observations" 2>/dev/null || true)"
+    [[ "$preserved_initial" =~ ^[1-9][0-9]*$ ]] || preserved_initial="$current_epoch"
+    temporary="$(mktemp "$run/.acceptance-state.tmp.XXXXXX")"
+    jq -n --arg run_id "$run_id" --arg genesis_sha256 "$genesis_sha256" --arg participant_address "$participant_address" --arg runtime_id "$runtime_id" \
+      --argjson initial_epoch "$preserved_initial" --argjson deadline_epoch "$((preserved_initial + epochs))" \
+      '{schema_version:1,run_id:$run_id,genesis_sha256:$genesis_sha256,participant_address:$participant_address,runtime_id:$runtime_id,initial_epoch:$initial_epoch,deadline_epoch:$deadline_epoch,strongest_observed:null}' \
+      >"$temporary"
+    mv "$temporary" "$state"
+  fi
+  printf '%s\t%s\n' "$(jq -er '.initial_epoch | tonumber' "$state")" "$(jq -er '.deadline_epoch | tonumber' "$state")"
+}
+
+join_acceptance_state_record_strongest() {
+  local run="$1" epoch="$2" participant_weight="$3" accepted_weight_sum="$4" committed_total="$5" temporary
+  local state="$run/acceptance-state.json"
+  temporary="$(mktemp "$run/.acceptance-state.tmp.XXXXXX")"
+  jq --argjson epoch "$epoch" --argjson participant_weight "$participant_weight" \
+    --argjson accepted_weight_sum "$accepted_weight_sum" --argjson committed_total "$committed_total" '
+      .strongest_observed as $previous
+      | if $previous == null or ($epoch >= ($previous.epoch | tonumber)) then
+          .strongest_observed = {epoch:$epoch,participant_weight:$participant_weight,accepted_weight_sum:$accepted_weight_sum,committed_total:$committed_total}
+        else . end
+    ' "$state" >"$temporary"
+  mv "$temporary" "$state"
+}
+
+join_acceptance_state_restore_strongest() {
+  local run="$1"
+  local state="$run/acceptance-state.json" observations="$run/poc-acceptance-observations.json"
+  if jq -e '.strongest_observed? != null and (.strongest_observed.participant_weight | tonumber) > 0' "$state" >/dev/null 2>&1; then
+    jq -c '.strongest_observed' "$state"
+    return 0
+  fi
+  [[ -s "$observations" ]] || return 1
+  jq -ce '[.[]
+    | select(.weight_evidence.participant_eligible == true)
+    | {epoch,participant_weight:(.weight_evidence.participant_weight | tonumber),accepted_weight_sum:(.weight_evidence.accepted_weight_sum | tonumber),committed_total:(.weight_evidence.committed_total | tonumber)}]
+    | max_by(.epoch) // empty' "$observations"
+}

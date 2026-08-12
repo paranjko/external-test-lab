@@ -18,6 +18,10 @@ type SiteNode = {
   mode?: string,
   reason?: string,
   participantStatus?: string,
+  participantState?: string,
+  validatorEffective?: boolean,
+  votingPower?: string,
+  endpointReachable?: boolean,
   isOnline?: boolean,
   serverStatus?: string,
   gpuProfile?: ?string,
@@ -66,6 +70,12 @@ type Participant = {
   address: string,
   inference_url: string,
   status?: string,
+  validator_key?: string,
+};
+
+type ConsensusValidator = {
+  pub_key?: { value?: string },
+  voting_power?: string,
 };
 
 type ParticipantDiscovery = {
@@ -356,9 +366,39 @@ function isNodeActive(status: mixed): boolean {
   return (
     normalized === "ACTIVE" ||
     normalized === "PARTICIPANT_STATUS_ACTIVE" ||
-    normalized === "1" ||
-    normalized === ""
+    normalized === "1"
   );
+}
+
+function isPositivePower(value: mixed): boolean {
+  try {
+    return BigInt(String(value || "0")) > 0n;
+  } catch {
+    return false;
+  }
+}
+
+function statusLabel(node: SiteNode): { text: string, className: string } {
+  const active = isNodeActive(node.participantState || node.participantStatus);
+  if (!active)
+    return {
+      text: `${String(node.participantState || node.participantStatus || "UNKNOWN")} (chain)`,
+      className: "status bad",
+    };
+  if (!node.validatorEffective)
+    return {
+      text: "ACTIVE – waiting for validator set",
+      className: "status skip",
+    };
+  if (!node.endpointReachable)
+    return {
+      text: "effective validator – endpoint unavailable",
+      className: "status bad",
+    };
+  return {
+    text: "effective validator – endpoint reachable",
+    className: "status ok",
+  };
 }
 
 const participantDiscovery: Map<string, Promise<ParticipantDiscovery>> =
@@ -405,7 +445,10 @@ async function discoverParticipant(host: string): Promise<ParticipantDiscovery> 
   }
 }
 
-async function participantNode(participant: Participant): Promise<SiteNode> {
+async function participantNode(
+  participant: Participant,
+  validators: Map<string, ConsensusValidator>,
+): Promise<SiteNode> {
   let endpoint;
   try {
     endpoint = new URL(participant.inference_url);
@@ -421,6 +464,9 @@ async function participantNode(participant: Participant): Promise<SiteNode> {
       ? await discoverParticipant(host)
       : {};
   const participantStatus = participant.status || "UNKNOWN";
+  const validator = validators.get(String(participant.validator_key || ""));
+  const votingPower = String(validator?.voting_power || "0");
+  const validatorEffective = Boolean(validator) && isPositivePower(votingPower);
   return {
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
@@ -431,7 +477,11 @@ async function participantNode(participant: Participant): Promise<SiteNode> {
     mode: catalog?.mode,
     reason: catalog?.reason,
     participantStatus: String(participantStatus),
-    isOnline: isNodeActive(participantStatus),
+    participantState: String(participantStatus),
+    validatorEffective,
+    votingPower,
+    endpointReachable: false,
+    isOnline: false,
     serverStatus: String(participantStatus),
     gpuProfile: catalog?.gpuProfile,
     gpuHost: catalog?.gpuHost,
@@ -439,11 +489,22 @@ async function participantNode(participant: Participant): Promise<SiteNode> {
 }
 
 async function reconcileParticipants(): Promise<number> {
-  const state = await json("/status/participants");
+  if (!chainRpcHost) throw new Error("chain RPC host is missing");
+  const [state, validatorResponse] = await Promise.all([
+    json("/status/participants"),
+    json(`https://${chainRpcHost}/chain-rpc/validators?per_page=100`),
+  ]);
   const participants = Array.isArray(state.participant)
     ? state.participant
     : [];
-  const next = (await Promise.all(participants.map(participantNode))).sort(
+  const validators: Map<string, ConsensusValidator> = new Map(
+    (validatorResponse?.result?.validators || [])
+      .filter((validator) => validator?.pub_key?.value)
+      .map((validator) => [String(validator.pub_key.value), validator]),
+  );
+  const next = (await Promise.all(
+    participants.map((participant) => participantNode(participant, validators)),
+  )).sort(
     (left, right) => left.name.localeCompare(right.name),
   );
   const liveKeys = new Set(next.map(nodeKey));
@@ -649,13 +710,12 @@ async function refresh(): Promise<void> {
         const card = cards.get(nodeKey(n));
         if (!card) return;
         if (!n.statusBase) {
-          const participantStatus = n.participantStatus || "UNKNOWN";
-          const isOnline = isNodeActive(participantStatus);
-          n.isOnline = isOnline;
-          n.serverStatus = String(participantStatus);
-          set(card, "status", `${participantStatus.toLowerCase()} (chain)`);
-          card.querySelector('[data-k="status"]').className =
-            isOnline ? "status ok" : "status bad";
+          n.endpointReachable = false;
+          n.isOnline = false;
+          n.serverStatus = String(n.participantState || n.participantStatus || "UNKNOWN");
+          const display = statusLabel(n);
+          set(card, "status", display.text);
+          card.querySelector('[data-k="status"]').className = display.className;
           set(card, "height", best ? best.toLocaleString() : "–");
           set(card, "sync", "endpoint not proxied");
           set(card, "peers", "–");
@@ -664,8 +724,9 @@ async function refresh(): Promise<void> {
         }
         const statusBase = n.statusBase;
         try {
-          n.isOnline = true;
-          n.serverStatus = "online";
+          n.endpointReachable = true;
+          n.isOnline = Boolean(n.validatorEffective);
+          n.serverStatus = "endpoint reachable";
           const [s, net] = await Promise.all([
             json(`${statusBase}/chain-rpc/status`),
             json(`${statusBase}/chain-rpc/net_info`),
@@ -676,17 +737,19 @@ async function refresh(): Promise<void> {
           set(card, "height", h.toLocaleString());
           set(card, "sync", syncStatus(s.result.sync_info.catching_up));
           set(card, "peers", peers);
-          if (peers === 0 && singleParticipant) {
-            set(card, "status", "online (single node)");
-            card.querySelector('[data-k="status"]').className = "status ok";
-          } else if (peers === 0) {
-            set(card, "status", "online (no peers)");
-            card.querySelector('[data-k="status"]').className = "status bad";
-          } else {
-            set(card, "status", "online");
-            card.querySelector('[data-k="status"]').className = "status ok";
-          }
-          healthy++;
+          const display = statusLabel(n);
+          const noPeers = peers === 0 && !singleParticipant && n.validatorEffective;
+          set(
+            card,
+            "status",
+            noPeers
+              ? "effective validator – endpoint reachable, no peers"
+              : display.text,
+          );
+          card.querySelector('[data-k="status"]').className = noPeers
+            ? "status bad"
+            : display.className;
+          if (n.validatorEffective) healthy++;
           try {
             set(
               card,
@@ -697,9 +760,11 @@ async function refresh(): Promise<void> {
             set(card, "versions", "unreported");
           }
         } catch (e) {
+          n.endpointReachable = false;
           n.isOnline = false;
-          n.serverStatus = "offline";
-          set(card, "status", `offline (${e.message})`);
+          n.serverStatus = "endpoint unavailable";
+          const display = statusLabel(n);
+          set(card, "status", `${display.text} (${e.message})`);
           card.querySelector('[data-k="status"]').className = "status bad";
           set(card, "versions", "unavailable");
         }

@@ -69,5 +69,25 @@ for name in "${TARGETS[@]}"; do
     new_count=$((new_count + 1))
   fi
   "$ROOT/01-identities-genesis/export-account-public.sh" "$name" "$PASSWORD_FILE" >/dev/null
+  address_backup="$BACKUP_DIR/$name.address"
+  address="$(jq -er .address "$GDC_HOME/accounts/$name.json")"
+  [[ "$address" =~ ^gonka1[0-9a-z]{20,90}$ ]] || {
+    echo "FAILED  $name public account export has an invalid cold address" >&2
+    exit 1
+  }
+  # The mnemonic remains the recovery secret. Keep its matching public cold
+  # address alongside it so an operator can identify the wallet without
+  # importing the seed. Treat an unexpected pre-existing value as a safety
+  # failure rather than silently replacing a recovery reference.
+  if [[ -e "$address_backup" ]]; then
+    [[ "$(<"$address_backup")" == "$address" ]] || {
+      echo "FAILED  $name cold-address backup disagrees with the keyring" >&2
+      exit 1
+    }
+  else
+    printf '%s\n' "$address" >"$address_backup"
+    chmod 600 "$address_backup"
+  fi
 done
-printf 'ACCOUNTS  new=%d kept=%d\n' "$new_count" "$keep_count"
+printf 'ACCOUNTS  new=%d kept=%d cold-address-references=%d\n' \
+  "$new_count" "$keep_count" "${#seen[@]}"

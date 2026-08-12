@@ -117,7 +117,7 @@ grep -Fq 'header_up Host %s' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'json("/status/participants")' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'validatorMapController?.update(observedNodes)' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'AbortController' "$ROOT/04-ops/site/src/app.js"
-grep -Fq 'observedNodes.filter((node) => node.participantStatus === "ACTIVE")' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'isNodeActive(node.participantState || node.participantStatus)' "$ROOT/04-ops/site/src/app.js"
 grep -Fq '__PUBLIC_GRAFANA_PROMETHEUS_URL__' "$ROOT/04-ops/edge-node/public-grafana/provisioning/datasources/prometheus.yml"
 grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/install-edge.sh"
@@ -232,13 +232,14 @@ GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
 for profile in a5000-24g t4-16g 4090-24g 3090-24g blackwell-16g; do
   out="$(mktemp)"
   trap 'rm -f "${out:-}"' EXIT
-  "$ROOT/02-node/render-node-config.sh" --node-name validator-b --node-index 1 --profile "$profile" --output "$out" >/dev/null
+  "$ROOT/02-node/render-node-config.sh" --node-name validator-b --runtime-id qwen3-0.6b:gonka1validatorbvalidatorbvalidatorbvalidatorb --profile "$profile" --output "$out" >/dev/null
   jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
     .[0].max_concurrent == 64
     and (.[0].models[$model].args | index("--dtype") != null)
     and (.[0].models[$model].args | index($revision) != null)
     and (.[0].models[$model].args | index("2048") != null)
   ' "$out" >/dev/null
+  jq -e '. [0].id == "qwen3-0.6b:gonka1validatorbvalidatorbvalidatorbvalidatorb"' "$out" >/dev/null
   rm -f "$out"
   unset out
 done
@@ -287,7 +288,7 @@ grep -Fq 'Record the explicit Network Node to external GPU association' "$ROOT/s
 grep -Fq 'hardware_nodes/${ADDRESS}' "$ROOT/scripts/wait-hardware-node.sh"
 grep -Fq '.status == "INFERENCE"' "$ROOT/scripts/wait-hardware-node.sh"
 grep -Fq 'GDC_JOIN_REGISTRATION_TIMEOUT_SECONDS' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'registration endpoint returned transient 5xx' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'registration endpoint is transiently unavailable' "$ROOT/scripts/phase-join.sh"
 if grep -Fq './register-participant.sh .env >register-participant.log 2>&1" || true' "$ROOT/scripts/phase-join.sh"; then
   echo 'join must not suppress failed participant registration before waiting for it' >&2
   exit 1

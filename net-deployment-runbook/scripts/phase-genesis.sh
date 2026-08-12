@@ -50,6 +50,15 @@ identity_inputs_ready=true
 for input in "${genesis_identity_inputs[@]}"; do
   [[ -s "$input" ]] || identity_inputs_ready=false
 done
+# A host reset deliberately removes the remote inference directory while it
+# preserves the operator's local account and identity evidence. Those local
+# files alone cannot start a new Genesis: the node must also have the
+# identity-bootstrap config.toml that init-identity.sh creates on the host.
+if [[ "$identity_inputs_ready" == true ]] \
+  && ! ssh -T "$GENESIS_NODE" "test -s '$DATA_ROOT/$GENESIS_NODE/inference/config/config.toml'"; then
+  identity_inputs_ready=false
+  printf 'READY remote Genesis identity state is absent; recreating it before Genesis\n'
+fi
 if [[ "$identity_inputs_ready" != true ]]; then
   step 'Create Genesis operator secrets, Genesis participant identities, and gateway account'
   "$ROOT/scripts/phase-identities.sh"
@@ -62,6 +71,7 @@ GENESIS_TIME="$(date -u -d "+${GENESIS_LEAD_MINUTES} minutes" +%Y-%m-%dT%H:%M:%S
 step "Build and verify the one-participant Genesis at $GENESIS_TIME"
 "$ROOT/01-identities-genesis/build-genesis.sh" --inventory "$INVENTORY" --identities-dir "$IDENTITIES" --secrets-dir "$SECRETS" --genesis-time "$GENESIS_TIME" --output-dir "$GENESIS"
 "$ROOT/01-identities-genesis/verify-genesis.sh" "$GENESIS/genesis.json" "$GENESIS/genesis.sha256" "$CHAIN_ID"
+bind_run_manifest_genesis "$(genesis_sha256 "$GENESIS/genesis.json")"
 for profile_field in genesis_sha256 genesis_overrides_sha256; do
   profile_value="$(jq -er --arg field "$profile_field" '.[$field]' "$GENESIS/ceremony-record.json")"
   printf '%s=%s\n' "$profile_field" "$profile_value" >>"$STATE/phase-profiles/genesis.env"
@@ -72,8 +82,10 @@ step "Render only $GENESIS_NODE"
 NODE="$GENESIS_NODE"
 NODE_DIR="$GENERATED/nodes/$NODE"
 mkdir -p "$NODE_DIR" "$GENERATED/edge" "$GENERATED/agents"
+GENESIS_RUNTIME_ID="$(runtime_id_for_participant "$(jq -er .address "$ACCOUNTS/$NODE-cold.json")")"
+record_runtime_identity "$NODE" "$(jq -er .address "$ACCOUNTS/$NODE-cold.json")" "$GENESIS_RUNTIME_ID"
 "$ROOT/02-node/render-node-env.sh" --inventory "$INVENTORY" --node-name "$NODE" --account-public "$ACCOUNTS/$NODE-cold.json" --seeds-file "$GENESIS/genesis-seeds.txt" --secrets-dir "$SECRETS" --output "$NODE_DIR/.env" >/dev/null
-"$ROOT/02-node/render-node-config.sh" --node-name "$NODE" --node-index "$(node_index "$NODE")" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json" >/dev/null
+"$ROOT/02-node/render-node-config.sh" --node-name "$NODE" --runtime-id "$GENESIS_RUNTIME_ID" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json" >/dev/null
 "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$NODE" --output "$GENERATED/edge/$NODE.env"
 "$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$NODE" --output "$GENERATED/agents/$NODE.env"
 
@@ -99,7 +111,12 @@ ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
 
 step 'Activate Genesis ML operations'
 "$ROOT/03-join/wait-synced.sh" "https://$GENESIS_PUBLIC_HOST/chain-rpc" "https://$GENESIS_PUBLIC_HOST/chain-rpc"
+record_join_state "$NODE" NODE_SYNCED "$(jq -er .address "$ACCOUNTS/$NODE-cold.json")"
+step 'Restart the Genesis API and colocated MLNode only after synchronization'
+"$ROOT/03-join/restart-api-after-sync.sh" "$NODE"
 "$ROOT/03-join/grant-ml-ops.sh" "$NODE" "$IDENTITIES/$NODE.json" "$INVENTORY"
+"$ROOT/03-join/wait-active.sh" "https://$GENESIS_PUBLIC_HOST" "$(jq -er .address "$ACCOUNTS/$NODE-cold.json")"
+record_join_state "$NODE" ACTIVE "$(jq -er .address "$ACCOUNTS/$NODE-cold.json")"
 mkdir -p "$STATE/joined"
 touch "$STATE/joined/$NODE"
 persist_runtime_topology
@@ -111,4 +128,8 @@ step 'Start the public DevNet faucet for independent Host joins'
 if [[ "${GDC_GENESIS_BOOTSTRAP_ACCESS:-true}" == true ]]; then
   step 'Bootstrap authenticated inference for the single-validator network'
   "$ROOT/scripts/phase-bootstrap-access.sh"
+  step 'Require bounded Genesis validator effectiveness before lifecycle success'
+  "$ROOT/scripts/phase-join-acceptance.sh" "$NODE"
+else
+  printf 'INCOMPLETE Genesis was created without bootstrap access; it is not a full lifecycle PASS\n' >&2
 fi
