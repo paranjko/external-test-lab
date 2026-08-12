@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ "$1" == compose ]] || { echo "unexpected docker command: $*" >&2; exit 2; }
+shift
+while [[ "${1:-}" == -f ]]; do
+  shift 2
+done
+command="$1"
+shift
+printf '%s %s\n' "$command" "$*" >>"${GDC_MOCK_DOCKER_LOG:?}"
+
+case "$command" in
+  restart)
+    exit 0
+    ;;
+  ps)
+    for service in "$@"; do
+      [[ "$service" == --format ]] && break
+      printf '%s running\n' "$service"
+    done
+    ;;
+  *)
+    echo "unexpected compose command: $command" >&2
+    exit 2
+    ;;
+esac

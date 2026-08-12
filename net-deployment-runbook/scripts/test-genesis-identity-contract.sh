@@ -10,6 +10,7 @@ expected=(
   bridge.jwt
   gateway.admin-key
   gateway.client-keys
+  gateway.join-client-key
   gateway.telegram-client-key
   gdc-node0.keyring
   gdc-node0.postgres
@@ -43,6 +44,15 @@ grep -Fq 'ML qualification explicitly disabled by the Genesis operator' "$ROOT/s
 grep -Fq -- '--skip-qualification' "$ROOT/ROLE-GENESIS.md"
 ! grep -Fq -- '--sckip-qualification' "$ROOT/ROLE-GENESIS.md"
 grep -Fq 'phase-bootstrap-access.sh' "$ROOT/scripts/phase-genesis.sh"
+grep -Fq 'Require bounded Genesis validator effectiveness before lifecycle success' "$ROOT/scripts/phase-genesis.sh"
+grep -Fq 'phase-join-acceptance.sh' "$ROOT/scripts/phase-genesis.sh"
+! grep -Fq 'GDC_JOIN_GATEWAY_CLIENT_KEY_FILE' "$ROOT/scripts/phase-genesis.sh"
+grep -Fq 'gateway/join-client-key' "$ROOT/04-ops/render-ops.sh"
+grep -Fq 'gateway/join-client-key' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'cold-address backup disagrees with the keyring' "$ROOT/01-identities-genesis/create-cold-accounts.sh"
+grep -Fq '"$BACKUP_DIR/$name.address"' "$ROOT/01-identities-genesis/create-cold-accounts.sh"
+grep -Fq 'cold-address references' "$ROOT/scripts/phase-identities.sh"
+grep -Fq 'INCOMPLETE Genesis was created without bootstrap access' "$ROOT/scripts/phase-genesis.sh"
 grep -Fq 'phase-ops.sh" faucet' "$ROOT/scripts/phase-genesis.sh"
 grep -Fq 'gdc-faucet-cold.json' "$ROOT/scripts/phase-genesis.sh"
 grep -Fq 'persist_runtime_topology' "$ROOT/scripts/phase-genesis.sh"

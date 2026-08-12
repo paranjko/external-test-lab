@@ -23,6 +23,19 @@ load_topology
 [[ "$(node_for_ml_host operator-c-gpu)" == validator-c ]]
 [[ "$(node_p2p_port validator-b)" == 5100 ]]
 
+GDC_DATA_ROOT="$tmp/operator-data"
+mkdir -p "$GDC_DATA_ROOT/validator-a/state/joined" \
+  "$GDC_DATA_ROOT/validator-c/state/joined"
+touch "$GDC_DATA_ROOT/validator-a/state/joined/validator-a" \
+  "$GDC_DATA_ROOT/validator-c/state/joined/validator-c"
+[[ "$(node_data_home validator-c)" == "$GDC_DATA_ROOT/validator-c" ]]
+[[ "$(node_joined_marker validator-c)" == "$GDC_DATA_ROOT/validator-c/state/joined/validator-c" ]]
+[[ "$(node_account_file validator-c)" == "$GDC_DATA_ROOT/validator-c/accounts/validator-c-cold.json" ]]
+[[ "$(node_identity_file validator-c)" == "$GDC_DATA_ROOT/validator-c/state/identities/validator-c.json" ]]
+[[ "$(join_state_file validator-c)" == "$GDC_DATA_ROOT/validator-c/state/join-state/validator-c.env" ]]
+[[ "$(configured_nodes | tr '\n' ' ')" == 'validator-a validator-c ' ]]
+[[ "$(configured_node_indexes | tr '\n' ' ')" == '0 2 ' ]]
+
 if (
   GDC_NODE_ALIASES='validator-a validator-b'
   GDC_NODE_PUBLIC_HOSTS='validator-a=validator-a.example.net validator-b=validator-b.example.net'

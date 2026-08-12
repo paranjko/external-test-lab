@@ -60,7 +60,11 @@ const zeroCapacity = {
   devshards: [{ ...activeShard, chain_phase: 'PoCValidate', block_reason: 'poc' }],
 };
 assert.equal(state.classify(zeroCapacity, 1, failedProbe, now).state, 'UNAVAILABLE');
-assert.equal(state.classify(zeroCapacity, 1, readyProbe, now).state, 'AVAILABLE');
+assert.deepEqual(state.classify(zeroCapacity, 1, readyProbe, now), {
+  state: 'UNAVAILABLE',
+  available: false,
+  message: 'Gateway unavailable – no current eligible inference capacity',
+});
 
 const liveCapacity = {
   ...zeroCapacity,
@@ -87,13 +91,18 @@ assert.match(siteApp, /statusBase:\s*`https:\/\/\$\{host\}`/);
 assert.match(siteApp, /json\("\/status\/gpus"\)/);
 assert.match(siteApp, /sample\?\.metric\?\.gpu_name/);
 assert.match(siteApp, /node\.gpuProfile && node\.gpuProfile !== "auto"/);
-assert.match(siteApp, /gpuHost === node\.name \? "local" : "net"/);
+assert.match(siteApp, /node\.gpuHost && node\.gpuHost !== node\.name \? "net" : "local"/);
 assert.match(siteApp, /\$\{node\.gpuProfile\} – \$\{connection\}/);
 assert.match(siteApp, /replace\(\/\^NVIDIA\\s\+\/i, ""\)/);
 assert.match(
   siteApp,
-  /Promise\.all\(\s*participants\.map\(participantNode\)\s*\)/,
+  /participants\.map\(\s*\(participant\)\s*=>\s*participantNode\(participant, validators\),?\s*\)/,
 );
+assert.match(siteApp, /ACTIVE – waiting for validator set/);
+assert.match(siteApp, /effective validator – endpoint reachable/);
+assert.match(siteApp, /validatorEffective/);
+assert.match(siteApp, /endpointReachable/);
+assert.doesNotMatch(siteApp, /normalized === "1" \|\| normalized === ""/);
 assert.doesNotMatch(siteApp, /quality-health-state'\)\.textContent=state\.toUpperCase/);
 
 fs.rmSync(siteBuild, { recursive: true, force: true });
