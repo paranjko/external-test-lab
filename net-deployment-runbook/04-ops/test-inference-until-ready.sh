@@ -50,6 +50,26 @@ while (( SECONDS < deadline )); do
     "$api_url/v1/status" -H "Authorization: Bearer $client_key")"
   status_rc=$?
   set -e
+  # A gateway can retain a routable runtime while confirmation-PoC has
+  # intentionally suspended user inference. Do not send a completion merely
+  # because the transport/status endpoint is green: that produces a 429 and
+  # falsely labels the gateway ready. The raw status response remains in the
+  # evidence directory with the exact phase for diagnosis.
+  confirmation_poc_active=false
+  if [[ "$status_rc" == 0 && "$status_http" == 200 ]] && jq -e '
+    [.devshards[]? | .confirmation_poc_phase? | select(type == "string" and . != "")]
+    | any(. != "NORMAL_OPERATION")
+  ' "$status_file" >/dev/null 2>&1; then
+    confirmation_poc_active=true
+  fi
+  if [[ "$confirmation_poc_active" == true ]]; then
+    last_reason='confirmation_poc_not_normal_operation'
+    elapsed_ms=$(( $(date +%s%3N) - started_ms ))
+    record_attempt "${status_http:-0}" 0 false false "$last_reason" "$elapsed_ms"
+    printf 'WAIT inference attempt=%s reason=%s status_ready=false\n' "$attempt" "$last_reason" >&2
+    (( SECONDS < deadline )) && sleep 5
+    continue
+  fi
   if [[ "$status_rc" == 0 && "$status_http" == 200 ]] && jq -e '
     (.routable == true)
     or ([.devshards[]? | select((.active // false) == true and (.requests_blocked // false) == false and ((.phase // "") == "active" or (.phase // "") == "Inference"))] | length > 0)
@@ -58,7 +78,11 @@ while (( SECONDS < deadline )); do
     reason='routable_runtime_observed'
   fi
 
-  payload='{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Reply with exactly: GDC_OK"}],"temperature":0}'
+  # Keep the readiness probe bounded.  Without an explicit token limit the
+  # model may continue a trivial acknowledgement until the HTTP timeout,
+  # which leaves an in-flight request in the gateway and makes following
+  # probes report a misleading capacity failure.
+  payload='{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Reply with exactly: GDC_OK"}],"max_tokens":8,"temperature":0}'
   set +e
   completion_http="$(curl -sS --connect-timeout 10 --max-time 90 -o "$completion_file" -w '%{http_code}' \
     "$api_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \

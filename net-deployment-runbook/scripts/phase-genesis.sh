@@ -129,8 +129,7 @@ if [[ "${GDC_GENESIS_BOOTSTRAP_ACCESS:-true}" == true ]]; then
   step 'Bootstrap authenticated inference for the single-validator network'
   "$ROOT/scripts/phase-bootstrap-access.sh"
   step 'Require bounded Genesis validator effectiveness before lifecycle success'
-  GDC_JOIN_GATEWAY_CLIENT_KEY_FILE="$SECRETS/gateway.join-client-key" \
-    "$ROOT/scripts/phase-join-acceptance.sh" "$NODE"
+  "$ROOT/scripts/phase-join-acceptance.sh" "$NODE"
 else
   printf 'INCOMPLETE Genesis was created without bootstrap access; it is not a full lifecycle PASS\n' >&2
 fi

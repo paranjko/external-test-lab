@@ -10,7 +10,7 @@ workspace and a dedicated operator home. The command imports the public
 bootstrap; do not mount, copy, or reuse Genesis operator state:
 
 ```bash
-make cleanroom cmd='GDC_OPERATOR_MODE=external-operator GDC_HOME=/workspaces/external-join ./gdc.sh host join <ssh-alias>'
+make cleanroom cmd='GDC_HOME=/workspaces/external-join ./gdc.sh host join <ssh-alias>'
 ```
 
 Share only the resulting sanitized `join-acceptance-<ssh-alias>` bundle with a

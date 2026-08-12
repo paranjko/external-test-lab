@@ -359,7 +359,7 @@ record_run_manifest() {
     printf 'created_at=%s\n' "$(date -u +%FT%TZ)"
     printf 'operator_data_home=%s\n' "$GDC_HOME"
     printf 'runbook_commit=%s\n' "$commit"
-    printf 'operator_mode=%s\n' "${GDC_OPERATOR_MODE:-single-operator}"
+    printf 'operator_mode=runbook-managed\n'
     printf 'release_profile=%s\n' "$GDC_RELEASE_PROFILE"
     printf 'deployment_profile=%s\n' "$GDC_DEPLOYMENT_PROFILE"
     printf 'model_profile=%s\n' "$GDC_MODEL_PROFILE"

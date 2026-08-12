@@ -1,55 +1,48 @@
 # JOIN: add a Host
 
-JOIN is for an operator who owns the target Host. The operator creates and
-keeps that Host's keys. No Genesis secrets or manual approval are required.
-
-## Prerequisites
-
-Add the SSH alias:
-
-```bash
-cat >> ~/.ssh/config <<'EOL'
-Host <ssh-alias>
-  HostName <IP>
-  User root
-  Port <PORT> # optional
-EOL
-```
+JOIN is a single command for the operator who owns the target Host. The
+operator creates and keeps the Host's accounts and identities; the command
+imports only the public Genesis bootstrap.
 
 ## Join
 
 ```bash
-./gdc.sh host join [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]
+cat >> ~/.ssh/config <<'EOL'
+Host gdc-node3
+  HostName <IP>
+  User root
+  Port <PORT> # optional
+EOL
+
+git clone https://github.com/paranjko/external-test-lab.git
+
+export GDC_HOME=$HOME/.gdc-data # optional; default: ./net-deployment-data
+
+./external-test-lab/net-deployment-runbook/gdc.sh --release v2026.07.23 host join [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]
 ```
 
-The command imports the public Genesis data, detects the target DNS and GPU,
-creates the Host's accounts, installs the pinned release, synchronizes the
-node, registers it and waits for `ACTIVE`. No configuration file is required.
-When the optional GPU SSH alias is provided, the command qualifies that GPU,
-configures the validator to use it and attaches its MLNode automatically.
+The command verifies and imports the public Genesis bootstrap, creates the
+Host's accounts, installs the pinned release, synchronizes the node, registers
+it, and waits for `ACTIVE`. With an optional GPU SSH alias, it qualifies and
+attaches that MLNode automatically.
 
 `ACTIVE` is an onboarding state, not a successful validator join. The command
 continues through a bounded four-epoch acceptance window and returns
-`JOIN_PASS` only after a chain-recorded exact runtime, positive PoC weight,
-positive consensus voting power and an authenticated gateway regression. Give
-the joining operator a separate client credential for that final regression:
+`JOIN_PASS` only after it proves a chain-recorded runtime, positive PoC weight,
+positive consensus voting power, and authenticated gateway inference.
 
-```bash
-export GDC_JOIN_GATEWAY_CLIENT_KEY_FILE=/absolute/path/to/client-key
-chmod 600 "$GDC_JOIN_GATEWAY_CLIENT_KEY_FILE"
-GDC_OPERATOR_MODE=external-operator ./gdc.sh host join <ssh-alias>
-```
+The verified public bootstrap includes a join-only DevShard client credential.
+The runbook stores it in the operator's state with mode `0600` and uses it only
+for the final gateway regression. It never accepts a Genesis mnemonic,
+validator keyring, gateway creator key, administrator credential, or bot
+credential from the JOIN operator. The credential is omitted from logs and the
+sanitized receipt. A missing or malformed bootstrap credential yields
+`BLOCKED`; an unmet chain-evidence deadline yields `INCONCLUSIVE`.
 
-The file is read locally and is never copied into the runbook state, logs or
-receipt. If it is not available or is not mode `0600`, the result is
-`BLOCKED`, not success. A reachable chain that has not produced the required
-epoch evidence before the deadline is `INCONCLUSIVE`.
-
-For an independent Gate A proof, run the join from this operator's clean
-checkout and separate `GDC_HOME`, set `GDC_OPERATOR_MODE=external-operator`,
-then share only the resulting `join-acceptance-<ssh-alias>/` evidence bundle.
-Its `receipt.json` contains public chain-verifiable identifiers and no
-mnemonic, keyring, client credential or private account material.
+For an independent proof, use a clean checkout and a separate `GDC_HOME`, then
+share only the resulting `join-acceptance-<ssh-alias>/` evidence bundle. Its
+`receipt.json` contains public chain-verifiable identifiers and no mnemonic,
+keyring, client credential, or private account material.
 
 The receipt also records the epoch and reconciled positive PoC weight that
 made the bounded acceptance window eligible. A Gate A observer rejects a
@@ -89,19 +82,13 @@ If the GPU runs on another machine, see `host ml-attach` in
 ## Post-merge user-test handoff
 
 After this JOIN milestone is merged, test the two reserved Hosts from a fresh
-checkout of the then-current `main`, each with its own operator-owned home and
-separately delivered scoped client credential. Do not reuse a Genesis mnemonic,
-validator keyring, gateway creator key or bot credential.
+checkout of the then-current `main`, each with its own operator-owned home. Do
+not reuse a Genesis mnemonic, validator keyring, gateway creator key, or bot
+credential.
 
 ```bash
 git clone https://github.com/paranjko/external-test-lab.git /absolute/operator/external-test-lab
-cd /absolute/operator/external-test-lab/net-deployment-runbook
-git switch main
 export GDC_HOME=/absolute/operator/gdc-home
-export GDC_DATA_ROOT="$GDC_HOME"
-export GDC_OPERATOR_MODE=external-operator
-export GDC_JOIN_GATEWAY_CLIENT_KEY_FILE=/absolute/operator/gateway.join-client-key
-chmod 600 "$GDC_JOIN_GATEWAY_CLIENT_KEY_FILE"
 ```
 
 `gdc-node2` is the colocated Network Node and local GPU exercise:

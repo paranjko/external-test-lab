@@ -10,12 +10,18 @@ type DevShardRuntime = {
   requests_blocked?: boolean,
 };
 
+type GatewayCapacity = {
+  total_weight?: number | string,
+  scale_factor?: number | string,
+};
+
 type GatewayState = {
   mode?: string,
   runtimes?: number,
   escrow_id?: string | number,
   phase?: string,
   requests_blocked?: boolean,
+  capacity?: GatewayCapacity,
   devshards?: Array<DevShardRuntime>,
 };
 
@@ -62,8 +68,19 @@ type GatewayStateApi = {
 })(
   typeof globalThis === "object" ? globalThis : this,
   function gatewayStateFactory(): GatewayStateApi {
+    function hasCurrentCapacity(state: GatewayState): boolean {
+      const capacity = state && state.capacity;
+      if (!capacity || typeof capacity !== "object") return true;
+      const totalWeight = Number(capacity.total_weight);
+      const scaleFactor = Number(capacity.scale_factor);
+      if (Number.isFinite(totalWeight) && totalWeight <= 0) return false;
+      if (Number.isFinite(scaleFactor) && scaleFactor <= 0) return false;
+      return true;
+    }
+
     function activeRuntime(state: ?GatewayState): boolean {
       if (!state || typeof state !== "object") return false;
+      if (!hasCurrentCapacity(state)) return false;
       if (state.escrow_id) {
         return state.phase === "active" && state.requests_blocked !== true;
       }
@@ -180,7 +197,9 @@ type GatewayStateApi = {
         return {
           state: "UNAVAILABLE",
           available: false,
-          message: "Gateway unavailable – no active DevShard",
+          message: hasCurrentCapacity(currentState)
+            ? "Gateway unavailable – no active DevShard"
+            : "Gateway unavailable – no current eligible inference capacity",
         };
       }
       if (!probeIsFresh(currentProbe, nowMs, maxAgeMs)) {

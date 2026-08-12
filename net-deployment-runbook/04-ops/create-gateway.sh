@@ -15,6 +15,13 @@ GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$GATEWAY_VERSION" =~ ^v[34]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3 or v4' >&2; exit 2; }
 [[ -z "$AMOUNT" || "$AMOUNT" =~ ^[0-9]+$ ]] || exit 2
 PASSWORD="$(<"$SECRETS/operator.keyring")"; ADMIN_KEY="$(<"$SECRETS/gateway.admin-key")"; CLIENT_KEYS="$(<"$SECRETS/gateway.client-keys")"
+if [[ -s "$SECRETS/gateway.join-client-key" ]]; then
+  JOIN_CLIENT_KEY="$(<"$SECRETS/gateway.join-client-key")"
+  case ",$CLIENT_KEYS," in
+    *",$JOIN_CLIENT_KEY,"*) ;;
+    *) CLIENT_KEYS="$CLIENT_KEYS,$JOIN_CLIENT_KEY" ;;
+  esac
+fi
 if [[ -s "$SECRETS/gateway.telegram-client-key" ]]; then
   TELEGRAM_CLIENT_KEY="$(<"$SECRETS/gateway.telegram-client-key")"
   case ",$CLIENT_KEYS," in
@@ -22,10 +29,14 @@ if [[ -s "$SECRETS/gateway.telegram-client-key" ]]; then
     *) CLIENT_KEYS="$CLIENT_KEYS,$TELEGRAM_CLIENT_KEY" ;;
   esac
 fi
-MAX_CONCURRENT_REQUESTS="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-0}"
-MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-0}"
-[[ "$MAX_CONCURRENT_REQUESTS" =~ ^[0-9]+$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a non-negative integer' >&2; exit 2; }
-[[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[0-9]+$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a non-negative integer' >&2; exit 2; }
+# The pinned gateway interprets zero as zero practical request capacity even
+# when a positive weighted escrow exists. Keep the Community test-lab
+# defaults explicitly positive and bounded; they are an operator policy, not
+# a claim that the chain has admitted an unbounded runtime.
+MAX_CONCURRENT_REQUESTS="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-4}"
+MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-4096}"
+[[ "$MAX_CONCURRENT_REQUESTS" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a positive integer' >&2; exit 2; }
+[[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a positive integer' >&2; exit 2; }
 CREATOR="$(jq -er .address "$GDC_HOME/accounts/gdc-gateway-cold.json")"
 # The public edge owns public chain RPC after the distributed topology is available;
 # bootstrap-access overrides this with the sole live Genesis participant.
@@ -62,18 +73,15 @@ jq -e --arg creator "$CREATOR" --arg version "$GATEWAY_VERSION" '
   exit 1
 }
 
-# The devshard group can only be sampled after the model has active validation weights.
-mapfile -t joined_nodes < <(configured_nodes)
-(( ${#joined_nodes[@]} > 0 )) || { echo 'No joined participants found' >&2; exit 1; }
-for node in "${joined_nodes[@]}"; do
-  account="$GDC_HOME/accounts/$node-cold.json"
-  [[ -s "$account" ]] || { echo "Missing account artifact for $node" >&2; exit 1; }
-  address="$(jq -r .address "$account")"
-  # Participant state is chain data.  The decentralized API exposes the
-  # model catalog at /v1/models, not the obsolete public /v2 aggregate.
-  status="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$address" | jq -r '.participant.status // empty')"
-  case "$status" in ACTIVE|PARTICIPANT_STATUS_ACTIVE|1) ;; *) echo "$node is not ACTIVE: $status" >&2; exit 1;; esac
-done
+# OPS must use public chain state here. Requiring a local account artifact for
+# every participant leaks an independent Host's ownership boundary into
+# gateway reconciliation and prevents a valid external JOIN_PASS from being
+# served. This only proves that at least one live model participant exists;
+# the lifecycle public verifier separately proves the exact five-Host set.
+CHAIN_API="${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
+participants_json="$(curl -fsS "${CHAIN_API%/}/productscience/inference/inference/participant")"
+active_participant_count="$(jq '[.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1" or .status == 1)] | length' <<<"$participants_json")"
+(( active_participant_count > 0 )) || { echo 'No ACTIVE model participant exists in public chain state' >&2; exit 1; }
 
 EXISTING_ESCROW_ID="${GDC_ESCROW_ID:-}"
 if [[ -n "$EXISTING_ESCROW_ID" ]]; then
