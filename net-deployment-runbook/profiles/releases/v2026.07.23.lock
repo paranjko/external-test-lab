@@ -24,3 +24,7 @@ PROXY_IMAGE=ghcr.io/product-science/proxy:0.2.14@sha256:79e21ca2e435e463199a2994
 MLNODE_GENERIC_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5
 MLNODE_PROXY_IMAGE=nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
 BRIDGE_IMAGE=ghcr.io/product-science/bridge:0.2.14-post3@sha256:06f1c8750941cd31c6f46ff037e0b43f71a9ba5a5e4c6b81da8c4d6748af67b5
+# A joining Host has four complete epoch transitions after ACTIVE to acquire
+# and expose its first chain-computed eligibility result.
+GDC_JOIN_EFFECTIVE_EPOCHS=4
+GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS=7200

@@ -26,7 +26,7 @@ verify_node() {
   peer="$GENESIS_NODE"
   if [[ "$NODE" == "$GENESIS_NODE" ]]; then
     for candidate in "${GDC_NODES[@]}"; do
-      [[ "$candidate" != "$NODE" && -e "$STATE/joined/$candidate" ]] || continue
+      [[ "$candidate" != "$NODE" && -e "$(node_joined_marker "$candidate")" ]] || continue
       peer="$candidate"
       break
     done
@@ -49,7 +49,7 @@ wait_for_node_sync() {
   peer="$GENESIS_NODE"
   if [[ "$NODE" == "$GENESIS_NODE" ]]; then
     for candidate in "${GDC_NODES[@]}"; do
-      [[ "$candidate" != "$NODE" && -e "$STATE/joined/$candidate" ]] || continue
+      [[ "$candidate" != "$NODE" && -e "$(node_joined_marker "$candidate")" ]] || continue
       peer="$candidate"
       break
     done

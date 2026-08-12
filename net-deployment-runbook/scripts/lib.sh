@@ -208,7 +208,22 @@ capture_canonical_genesis() {
 
 genesis_sha256() {
   [[ -s "$1" ]] || return 1
-  sha256sum "$1" | awk '{print $1}'
+  # CometBFT exposes the running Genesis after its legacy-to-current field
+  # conversion: `consensus.params` becomes `consensus_params`, null app_hash
+  # becomes an empty string, and initial_height becomes a string. Those are
+  # the same Genesis, not a new chain. Hash the canonical chain identity so a
+  # Host that imports the generated file can be bound to the public endpoint
+  # without weakening the raw genesis.sha256 integrity check made at build.
+  jq -eS '
+    del(.app_name, .app_version)
+    | if has("app_hash") then .app_hash = (.app_hash // "") else . end
+    | if has("initial_height") then .initial_height = (.initial_height | tostring) else . end
+    | if .consensus.params? then
+        .consensus_params = .consensus.params | del(.consensus)
+      else
+        .
+      end
+  ' "$1" | sha256sum | awk '{print $1}'
 }
 
 # Variables initialized here are consumed by scripts that source this library.
@@ -227,13 +242,15 @@ load_project() {
     ENV_FILE="$(<"$STATE/active-role-config")"
   fi
   [[ -s "$ENV_FILE" ]] || die 'no role input is available; GENESIS and JOIN create it automatically, while OPS requires .env'
-  local caller_genesis_node='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' resolved_profile_key runtime_topology runtime_genesis_node runtime_guardian_enabled runtime_home
-  local caller_genesis_node_set=false caller_public_edge_node_set=false caller_gateway_node_set=false caller_telegram_bot_host_set=false caller_guardian_enabled_set=false
+  local caller_genesis_node='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' caller_gateway_max_concurrent_requests='' caller_gateway_max_input_tokens_in_flight='' resolved_profile_key runtime_topology runtime_genesis_node runtime_guardian_enabled runtime_home
+  local caller_genesis_node_set=false caller_public_edge_node_set=false caller_gateway_node_set=false caller_telegram_bot_host_set=false caller_guardian_enabled_set=false caller_gateway_max_concurrent_requests_set=false caller_gateway_max_input_tokens_in_flight_set=false
   if [[ ${GDC_GENESIS_NODE+x} ]]; then caller_genesis_node="$GDC_GENESIS_NODE"; caller_genesis_node_set=true; fi
   if [[ ${GDC_PUBLIC_EDGE_NODE+x} ]]; then caller_public_edge_node="$GDC_PUBLIC_EDGE_NODE"; caller_public_edge_node_set=true; fi
   if [[ ${GDC_GATEWAY_NODE+x} ]]; then caller_gateway_node="$GDC_GATEWAY_NODE"; caller_gateway_node_set=true; fi
   if [[ ${GDC_TELEGRAM_BOT_HOST+x} ]]; then caller_telegram_bot_host="$GDC_TELEGRAM_BOT_HOST"; caller_telegram_bot_host_set=true; fi
   if [[ ${GDC_GENESIS_GUARDIAN_ENABLED+x} ]]; then caller_guardian_enabled="$GDC_GENESIS_GUARDIAN_ENABLED"; caller_guardian_enabled_set=true; fi
+  if [[ ${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS+x} ]]; then caller_gateway_max_concurrent_requests="$GDC_GATEWAY_MAX_CONCURRENT_REQUESTS"; caller_gateway_max_concurrent_requests_set=true; fi
+  if [[ ${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT+x} ]]; then caller_gateway_max_input_tokens_in_flight="$GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT"; caller_gateway_max_input_tokens_in_flight_set=true; fi
   runtime_home="$GDC_HOME"
   set -a
   # shellcheck disable=SC1090
@@ -266,6 +283,8 @@ load_project() {
   if [[ "$caller_gateway_node_set" == true ]]; then export GDC_GATEWAY_NODE="$caller_gateway_node"; fi
   if [[ "$caller_telegram_bot_host_set" == true ]]; then export GDC_TELEGRAM_BOT_HOST="$caller_telegram_bot_host"; fi
   if [[ "$caller_guardian_enabled_set" == true ]]; then export GDC_GENESIS_GUARDIAN_ENABLED="$caller_guardian_enabled"; fi
+  if [[ "$caller_gateway_max_concurrent_requests_set" == true ]]; then export GDC_GATEWAY_MAX_CONCURRENT_REQUESTS="$caller_gateway_max_concurrent_requests"; fi
+  if [[ "$caller_gateway_max_input_tokens_in_flight_set" == true ]]; then export GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT="$caller_gateway_max_input_tokens_in_flight"; fi
 
   # Keep a fresh Community DevNet recognisable across its reproducible
   # baseline and upgrade rehearsals. An explicit deployment override remains
@@ -312,6 +331,52 @@ record_phase_profile() {
   while IFS= read -r line; do
     printf 'PROFILE phase=%s %s\n' "$phase" "$line"
   done <"$file"
+  record_run_manifest "$phase"
+}
+
+# Keep phase verdicts tied to the invocation that produced them.  This is
+# deliberately created before a phase mutates a remote host: a later PASS
+# bundle may not be reused for a different operator data root or release
+# profile merely because its directory name sorts last.
+record_run_manifest() {
+  local phase="$1" run_id manifest commit
+  run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
+  manifest="$GDC_HOME/runs/$run_id/manifest.env"
+  mkdir -p "$(dirname "$manifest")"
+  if [[ -s "$manifest" ]]; then
+    # Multiple phases may belong to one lifecycle run.  Never erase an
+    # already bound Genesis lineage when recording a later phase.
+    grep -qx "operator_data_home=$GDC_HOME" "$manifest" \
+      || die "run $run_id belongs to another operator data home"
+    grep -qx "profile_hash=$(profile_hash)" "$manifest" \
+      || die "run $run_id belongs to another release/profile lineage"
+    return 0
+  fi
+  commit="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'UNAVAILABLE')"
+  {
+    printf 'run_id=%s\n' "$run_id"
+    printf 'phase=%s\n' "$phase"
+    printf 'created_at=%s\n' "$(date -u +%FT%TZ)"
+    printf 'operator_data_home=%s\n' "$GDC_HOME"
+    printf 'runbook_commit=%s\n' "$commit"
+    printf 'operator_mode=%s\n' "${GDC_OPERATOR_MODE:-single-operator}"
+    printf 'release_profile=%s\n' "$GDC_RELEASE_PROFILE"
+    printf 'deployment_profile=%s\n' "$GDC_DEPLOYMENT_PROFILE"
+    printf 'model_profile=%s\n' "$GDC_MODEL_PROFILE"
+    printf 'profile_hash=%s\n' "$(profile_hash)"
+  } >"$manifest"
+}
+
+bind_run_manifest_genesis() {
+  local hash="$1" run_id manifest existing
+  [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die 'run manifest requires a canonical Genesis SHA-256'
+  run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
+  manifest="$GDC_HOME/runs/$run_id/manifest.env"
+  [[ -s "$manifest" ]] || die "run manifest is absent for run $run_id"
+  existing="$(awk -F= '$1 == "genesis_sha256" {print $2; exit}' "$manifest")"
+  [[ -z "$existing" || "$existing" == "$hash" ]] \
+    || die "run $run_id is already bound to another Genesis lineage"
+  [[ -n "$existing" ]] || printf 'genesis_sha256=%s\n' "$hash" >>"$manifest"
 }
 
 assert_baseline_release() {
@@ -352,12 +417,17 @@ ensure_ml_qualification() {
 # the newest complete evidence bundle instead of letting an incomplete later
 # attempt hide a prior successful qualification for the same pinned model.
 latest_ml_qualification_report() {
-  local host="$1" report
+  local host="$1" report node
   while IFS= read -r report; do
     [[ -s "$report/models.json" && -s "$report/completion.json" && -s "$report/vram.csv" ]] || continue
     printf '%s\n' "$report"
     return 0
-  done < <(find "$GDC_HOME/runs" -mindepth 2 -maxdepth 2 -type d -path "*-ml-qualification/$host" -print 2>/dev/null | LC_ALL=C sort -r)
+  done < <(
+    for node in "${GDC_NODES[@]}"; do
+      find "$(node_data_home "$node")/runs" -mindepth 2 -maxdepth 2 -type d \
+        -path "*-ml-qualification/$host" -print 2>/dev/null
+    done | LC_ALL=C sort -r
+  )
   return 1
 }
 
@@ -502,18 +572,102 @@ ssh_ready() {
     "$1" true </dev/null >/dev/null 2>&1
 }
 
+node_data_home() {
+  local node="$1"
+  printf '%s/%s\n' "$GDC_DATA_ROOT" "$node"
+}
+
+node_joined_marker() {
+  local node="$1"
+  printf '%s/state/joined/%s\n' "$(node_data_home "$node")" "$node"
+}
+
+node_account_file() {
+  local node="$1"
+  printf '%s/accounts/%s-cold.json\n' "$(node_data_home "$node")" "$node"
+}
+
+node_identity_file() {
+  local node="$1"
+  printf '%s/state/identities/%s.json\n' "$(node_data_home "$node")" "$node"
+}
+
+join_state_file() {
+  local node="$1"
+  printf '%s/state/join-state/%s.env\n' "$(node_data_home "$node")" "$node"
+}
+
+# Persist the strongest observed join state, rather than collapsing all
+# successful commands into the word "joined".  The file contains public
+# identifiers only and is safe to attach to a sanitized operator receipt.
+record_join_state() {
+  local node="$1" state="$2" address="${3:-}" file
+  file="$(join_state_file "$node")"
+  mkdir -p "$(dirname "$file")"
+  {
+    printf 'node=%s\n' "$node"
+    printf 'state=%s\n' "$state"
+    printf 'observed_at=%s\n' "$(date -u +%FT%TZ)"
+    printf 'run_id=%s\n' "${GDC_RUN_ID:-manual}"
+    printf 'address=%s\n' "$address"
+  } >"$file"
+}
+
+# The runtime identifier is submitted to chain-facing DAPI configuration.  A
+# topology position is local controller metadata, so it must never be used
+# here: two independent JOIN operators can both call their target "index 1".
+# A Bech32 participant address is globally unique for this chain and remains
+# stable across a resumable deployment.
+runtime_id_for_participant() {
+  local address="$1"
+  [[ "$address" =~ ^gonka1[0-9a-z]{20,90}$ ]] || die "invalid participant address for runtime identity: $address"
+  printf 'qwen3-0.6b:%s\n' "$address"
+}
+
+runtime_identity_file() {
+  local runtime_id="$1"
+  printf '%s/state/runtime-identities/%s.env\n' "$GDC_DATA_ROOT" "$(printf '%s' "$runtime_id" | sha256sum | awk '{print $1}')"
+}
+
+# Detect a collision before touching a remote Host.  The chain is the final
+# authority for cross-operator uniqueness, while this local guard prevents a
+# controller from accidentally reusing one runtime identity for two aliases.
+record_runtime_identity() {
+  local node="$1" address="$2" runtime_id="$3" file existing_node existing_address
+  file="$(runtime_identity_file "$runtime_id")"
+  mkdir -p "$(dirname "$file")"
+  if [[ -s "$file" ]]; then
+    existing_node="$(awk -F= '$1 == "node" {print $2; exit}' "$file")"
+    existing_address="$(awk -F= '$1 == "participant_address" {print $2; exit}' "$file")"
+    [[ "$existing_node" == "$node" && "$existing_address" == "$address" ]] \
+      || die "runtime ID collision: $runtime_id is already recorded for $existing_node/$existing_address"
+    return 0
+  fi
+  {
+    printf 'node=%s\n' "$node"
+    printf 'participant_address=%s\n' "$address"
+    printf 'runtime_id=%s\n' "$runtime_id"
+    printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
+  } >"$file"
+}
+
 configured_node_indexes() {
-  local index=0 node
+  local index=0 node joined_marker
   for node in "${GDC_NODES[@]}"; do
-    [[ -e "$STATE/joined/$node" ]] && printf '%s\n' "$index"
+    # Each Host owns its own state directory under GDC_DATA_ROOT.  Network
+    # lifecycle phases run from the Genesis owner's GDC_HOME, so checking only
+    # $STATE would silently omit independently joined validators.
+    joined_marker="$(node_joined_marker "$node")"
+    [[ -e "$joined_marker" ]] && printf '%s\n' "$index"
     index=$((index + 1))
   done
 }
 
 configured_nodes() {
-  local node
+  local node joined_marker
   for node in "${GDC_NODES[@]}"; do
-    [[ -e "$STATE/joined/$node" ]] && printf '%s\n' "$node"
+    joined_marker="$(node_joined_marker "$node")"
+    [[ -e "$joined_marker" ]] && printf '%s\n' "$node"
   done
 }
 
@@ -567,9 +721,9 @@ require_current_baseline_pass() {
   reference_height="$(ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:26657/status' | jq -er '.result.sync_info.latest_block_height | tonumber')"
   genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env")"
   for node in "${GDC_NODES[@]}"; do
-    [[ -e "$STATE/joined/$node" ]] || continue
+    [[ -e "$(node_joined_marker "$node")" ]] || continue
     grep -qx "$node" <(printf '%s\n' "${evidence_nodes[@]}") || die "$node is absent from the baseline PASS bundle; run verify again"
-    address="$(jq -er .address "$ACCOUNTS/$node-cold.json")"
+    address="$(jq -er .address "$(node_account_file "$node")")"
     expected_addresses+=("$address")
     marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release 2>/dev/null || true")"
     [[ "$marker" == "v2026.07.23 $genesis_profile_hash" ]] || die "$node does not have the verified v2026.07.23 deployment marker"
@@ -589,7 +743,7 @@ require_current_baseline_pass() {
   mapfile -t expected_addresses < <(printf '%s\n' "${expected_addresses[@]}" | LC_ALL=C sort -u)
   mapfile -t live_addresses < <(
     ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
-      | jq -er '.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1") | .address' \
+      | jq -er '.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1" or .status == 1) | .address' \
       | LC_ALL=C sort -u
   )
   [[ "$(printf '%s\n' "${expected_addresses[@]}")" == "$(printf '%s\n' "${live_addresses[@]}")" ]] \

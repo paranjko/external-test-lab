@@ -51,11 +51,15 @@ for clean_root in /opt/runbook-source /workspace; do
 
   for forbidden_path in \
     .env \
+    accounts \
     VERSION.runtime.lock \
     artifacts \
     generated \
     inventory.env \
     lab \
+    mnemonics \
+    runs \
+    secrets \
     state \
     wireguard.env; do
     if [[ -e "${clean_root}/${forbidden_path}" ]]; then
@@ -64,6 +68,15 @@ for clean_root in /opt/runbook-source /workspace; do
       exit 1
     fi
   done
+
+  leaked_secret="$(find "$clean_root" -type f \( \
+    -name '*.key' -o -name '*.mnemonic' -o -name '*.pem' -o -name '*.secret' \
+    -o -name '*keyring*' -o -name '*client-keys*' \
+  \) -print -quit)"
+  if [[ -n "$leaked_secret" ]]; then
+    printf 'FAIL host credential leaked into cleanroom: %s\n' "$leaked_secret" >&2
+    exit 1
+  fi
 done
 
 expected_gdc_home=/workspaces/.data

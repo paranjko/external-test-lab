@@ -3,15 +3,17 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 NODE="$(node_name "${1:-}")"
-INDEX="$(node_index "$NODE")"
 BASELINE="$STATE/phase-profiles/genesis.env"
-if [[ ! -s "$BASELINE" ]]; then
-  step 'Import public Genesis bootstrap for this independent Host join'
-  "$ROOT/scripts/fetch-join-bootstrap.sh"
-fi
+# A Host reset preserves local evidence by design. Never infer that a
+# preserved bootstrap belongs to the currently public chain: refresh the
+# authenticated public bootstrap before every join/resume, so a stale local
+# Genesis cannot be installed or bound to a new lifecycle run.
+step 'Import current public Genesis bootstrap for this independent Host join'
+"$ROOT/scripts/fetch-join-bootstrap.sh"
 [[ -s "$BASELINE" ]] || die 'public Genesis bootstrap did not provide a baseline profile'
 grep -qx 'release_profile=v2026.07.23' "$BASELINE" || die 'join requires a Genesis formed from v2026.07.23'
 record_phase_profile "join-${NODE}"
+record_join_state "$NODE" BOOTSTRAP_IMPORTED
 ML_TARGET="$(node_ml_host "$NODE" || printf '%s' "$NODE")"
 if [[ "$(node_gpu_profile "$NODE")" == auto ]]; then
   step "Detect GPU profile for $NODE"
@@ -39,6 +41,7 @@ getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve
 ACCOUNT="$ACCOUNTS/$NODE-cold.json"
 IDENTITY="$IDENTITIES/$NODE.json"
 [[ -s "$GENESIS/genesis.json" && -s "$GENESIS/genesis-seeds.txt" ]] || die 'run genesis first'
+bind_run_manifest_genesis "$(genesis_sha256 "$GENESIS/genesis.json")"
 
 # Every joining Host creates and owns its local keyring passwords before it
 # creates any account. No Genesis operator key, funding approval, or
@@ -53,11 +56,26 @@ if [[ ! -s "$ACCOUNT" ]]; then
   "$ROOT/01-identities-genesis/create-cold-accounts.sh" "$SECRETS/operator.keyring" "$NODE"
 fi
 [[ -s "$ACCOUNT" ]] || die "missing public cold account for $NODE"
+ADDRESS="$(jq -er .address "$ACCOUNT")"
+RUNTIME_ID="$(runtime_id_for_participant "$ADDRESS")"
+record_runtime_identity "$NODE" "$ADDRESS" "$RUNTIME_ID"
 
-if [[ ! -s "$IDENTITY" ]]; then
+# `host reset` deliberately preserves the joining Host's local account and
+# identity evidence, while removing the deployed inference directory and its
+# keyring.  A local JSON identity is therefore not sufficient proof that the
+# remote node can start.  Recreate the bootstrap when that remote state is
+# absent so a subsequent join is self-contained.
+remote_identity_ready=false
+if [[ -s "$IDENTITY" ]] \
+  && ssh -T "$NODE" "test -s '$DATA_ROOT/$NODE/inference/config/config.toml'"; then
+  remote_identity_ready=true
+fi
+if [[ "$remote_identity_ready" != true ]]; then
+  [[ -s "$IDENTITY" ]] && printf 'READY remote identity state is absent; recreating %s identity bootstrap\n' "$NODE"
   step "Create $NODE identity"
   "$ROOT/01-identities-genesis/collect-identities.sh" "$INVENTORY" "$SECRETS" "$IDENTITIES" "$GDC_HOME/mnemonics" "$NODE"
 fi
+record_join_state "$NODE" IDENTITY_CREATED "$ADDRESS"
 
 step "Render $NODE"
 NODE_DIR="$GENERATED/nodes/$NODE"
@@ -73,7 +91,7 @@ if [[ -n "$ML_HOST" ]]; then
   env_args+=(--poc-callback-url "http://$callback_address:9100" --ml-callback-bind 0.0.0.0)
 fi
 "$ROOT/02-node/render-node-env.sh" "${env_args[@]}" --output "$NODE_DIR/.env" >/dev/null
-config_args=(--node-name "$NODE" --node-index "$INDEX" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json")
+config_args=(--node-name "$NODE" --runtime-id "$RUNTIME_ID" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json")
 if [[ -n "$ML_HOST" ]]; then
   ML_ENDPOINT="$(ssh -G "$ML_HOST" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
   [[ -n "$ML_ENDPOINT" ]] || die "cannot determine network GPU endpoint from SSH alias $ML_HOST"
@@ -99,6 +117,25 @@ local_ml=(); gpu=()
 [[ -z "$ML_HOST" ]] && local_ml=(--local-ml) && gpu=(--gpu)
 ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}; rm -rf '$REMOTE'"
 
+# Persist the explicit external-GPU association as soon as the validator
+# deployment exists.  A join can fail later (for example, while claiming the
+# faucet); reset must still know exactly which GPU host may be cleaned up and
+# must never infer it from an alias convention.
+if [[ -n "$ML_HOST" ]]; then
+  link_record="$(jq -cn \
+    --arg validator_alias "$NODE" \
+    --arg ml_ssh_alias "$ML_HOST" \
+    --arg ml_endpoint "$ML_ENDPOINT" \
+    '{schema_version:1,validator_alias:$validator_alias,ml_ssh_alias:$ml_ssh_alias,ml_endpoint:$ml_endpoint}')"
+  printf '%s\n' "$link_record" | ssh -T "$NODE" "set -Eeuo pipefail
+    install_path='/srv/dai/deploy/$NODE/gdc-ml-link.json'
+    sudo install -d -m 0750 '/srv/dai/deploy/$NODE'
+    sudo tee \"\${install_path}.tmp\" >/dev/null
+    sudo install -m 0640 \"\${install_path}.tmp\" \"\${install_path}\"
+    sudo rm -f \"\${install_path}.tmp\""
+  printf 'READY recorded network GPU %s for %s before activation\n' "$ML_HOST" "$NODE"
+fi
+
 step "Start $NODE"
 start_stack "$NODE" /srv/dai/edge
 start_stack "$NODE" /srv/dai/monitoring-agent
@@ -106,7 +143,9 @@ ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
 
 step "Wait until $NODE is synchronized"
 "$ROOT/03-join/wait-synced.sh" "$URL/chain-rpc" "https://$GENESIS_PUBLIC_HOST/chain-rpc"
-ADDRESS="$(jq -r .address "$ACCOUNT")"
+record_join_state "$NODE" NODE_SYNCED "$ADDRESS"
+step "Restart $NODE API and colocated MLNode only after synchronization"
+"$ROOT/03-join/restart-api-after-sync.sh" "$NODE"
 participant_body="$(curl --connect-timeout 5 --max-time 10 -fsS "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"
 participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null || true)"
 participant_state="$(participant_onboarding_state "$participant_status")"
@@ -147,8 +186,20 @@ else
     # that edge is restarting or changing PoC phase. Retry only that class;
     # malformed identities, authentication errors and other deterministic
     # failures must surface immediately instead of becoming a 30-minute wait.
-    if grep -Eq '(^|[^0-9])5[0-9]{2}([^0-9]|$)|Service Temporarily Unavailable' <<<"$registration_log"; then
-      printf 'WAIT  %s registration endpoint returned transient 5xx\n' "$NODE"
+    if grep -Eq '(^|[^0-9])5[0-9]{2}([^0-9]|$)|Service Temporarily Unavailable|context deadline exceeded|Client\.Timeout exceeded|TLS handshake timeout' <<<"$registration_log"; then
+      # A client-side timeout is ambiguous: the chain edge may have accepted
+      # the registration after the client disconnected. Check public state
+      # before retrying so a second POST is never used to infer success.
+      observed_body="$(curl -fsS --connect-timeout 5 --max-time 15 "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"
+      observed_status="$(jq -r '.participant.status // empty' <<<"$observed_body" 2>/dev/null || true)"
+      case "$(participant_onboarding_state "$observed_status")" in
+        active|registered)
+          registration_succeeded=true
+          printf 'READY %s registration is committed after an ambiguous transport timeout\n' "$NODE"
+          break
+          ;;
+      esac
+      printf 'WAIT  %s registration endpoint is transiently unavailable\n' "$NODE"
       sleep 5
       continue
     fi
@@ -164,6 +215,7 @@ else
     exit 1
   }
 fi
+record_join_state "$NODE" REGISTERED "$ADDRESS"
 if [[ "$already_active" == true ]]; then
   printf 'READY %s is already ACTIVE; skip duplicate funding and ML permission transactions\n' "$NODE"
 else
@@ -174,10 +226,13 @@ else
   step "Wait until $NODE is ACTIVE"
   "$ROOT/03-join/wait-active.sh" "https://$GENESIS_PUBLIC_HOST" "$ADDRESS"
 fi
+record_join_state "$NODE" ACTIVE "$ADDRESS"
 mkdir -p "$STATE/joined"
 touch "$STATE/joined/$NODE"
 if [[ -n "$ML_HOST" ]]; then
   step "Attach network GPU $ML_HOST to $NODE"
   "$ROOT/scripts/phase-ml-attach.sh" "$NODE"
 fi
-printf '\n%s joined successfully.\n' "$NODE"
+
+step "Prove $NODE JOIN_PASS through chain eligibility and a gateway regression"
+"$ROOT/scripts/phase-join-acceptance.sh" "$NODE"

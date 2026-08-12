@@ -11,8 +11,10 @@ jq -e --arg chain "$CHAIN_ID" '
  .app_state.bank.denom_metadata[0].base=="ngonka" and
  (.app_state.bank.denom_metadata[0].denom_units | map(select(.denom=="gonka" and .exponent==9)) | length)==1 and
  [.app_state.inference.model_list[].id]==["Qwen/Qwen3-0.6B"] and
- .app_state.inference.params.epoch_params.epoch_length=="50" and
+ .app_state.inference.params.epoch_params.epoch_length=="90" and
  .app_state.inference.params.epoch_params.epoch_shift=="0" and
+ .app_state.inference.params.epoch_params.poc_stage_duration=="20" and
+ .app_state.inference.params.epoch_params.poc_exchange_duration=="10" and
  .app_state.inference.params.epoch_params.poc_slot_allocation=={"value":"5","exponent":-1} and
  .app_state.inference.params.poc_params.validation_slots==2 and
  .app_state.inference.params.poc_params.poc_v2_enabled==true and
