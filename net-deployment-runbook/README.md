@@ -27,6 +27,9 @@ alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
 gdc host join [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]
 ```
 
+For JOIN, use a lowercase SSH alias beginning with a letter or digit and
+containing only lowercase letters, digits, `_`, or `-`.
+
 Setup network:
 
 ```bash

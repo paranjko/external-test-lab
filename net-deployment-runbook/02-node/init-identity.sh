@@ -45,7 +45,10 @@ NODE_ID="$("${compose[@]}" run --rm --no-deps -T --entrypoint inferenced node te
 CONSENSUS="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh tmkms -c 'tmkms-pubkey' | grep -Eo '[A-Za-z0-9+/]{43}=' | tail -n1)"
 WARM_ADDRESS="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c 'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file -a' | tail -n1 | tr -d '\r')"
 WARM_PUB_JSON="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c 'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file --pubkey')"
-[[ "$NODE_NAME" =~ ^gdc-node[0-4]$ ]] || exit 1
+[[ "$NODE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+  echo "Invalid node SSH alias: $NODE_NAME" >&2
+  exit 2
+}
 [[ "$NODE_ID" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid node ID: $NODE_ID" >&2; exit 1; }
 [[ "$WARM_ADDRESS" =~ ^gonka1[0-9a-z]{20,90}$ ]] || { echo "Invalid warm address" >&2; exit 1; }
 [[ "$(base64 -d <<<"$CONSENSUS" | wc -c)" -eq 32 ]] || { echo 'Consensus key is not 32 bytes' >&2; exit 1; }

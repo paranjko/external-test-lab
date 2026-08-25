@@ -29,6 +29,10 @@ Host's accounts, installs the pinned release, synchronizes the node, registers
 it, and waits for `ACTIVE`. With an optional GPU SSH alias, it qualifies and
 attaches that MLNode automatically.
 
+Use a lowercase SSH alias beginning with a letter or digit and containing only
+lowercase letters, digits, `_`, or `-`. The alias is also the Docker Compose
+project name on the Host.
+
 `ACTIVE` is an onboarding state, not a successful validator join. The command
 continues through a bounded six-epoch acceptance window: two onboarding
 transitions followed by four effective-evidence epochs. It returns

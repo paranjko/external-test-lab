@@ -26,6 +26,15 @@ if grep -Eqi '^[[:space:]]*<(\!doctype|html)' "$tmp/manifest.sha256"; then
 fi
 "$ROOT/scripts/verify-join-bootstrap-manifest.sh" "$tmp" "$base" \
   || die 'public JOIN bootstrap checksum verification failed; preserve the diagnostic and wait for one consistent public bootstrap'
+if [[ -n "${GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256:-}" ]]; then
+  manifest_sha256="$(sha256sum "$tmp/manifest.sha256" | awk '{print $1}')"
+  if [[ "$manifest_sha256" != "$GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256" ]]; then
+    if [[ -e "$STATE/join-bootstrap-dispatched.manifest.sha256" ]]; then
+      die 'public JOIN bootstrap changed after dispatch binding; preserve the current state and use the separately validated diagnosis or recovery workflow'
+    fi
+    die 'public JOIN bootstrap changed after its role topology was prepared; no Host mutation was made, so rerun the first-time JOIN command to load one consistent bundle'
+  fi
+fi
 grep -qx "release_profile=$GDC_RELEASE_PROFILE" "$tmp/profile/genesis.env" || die 'public join bootstrap release differs from selected profile'
 grep -qx "join_bootstrap_format=$JOIN_BOOTSTRAP_FORMAT" "$tmp/profile/genesis.env" \
   || die 'public join bootstrap format is incompatible with this release profile'

@@ -210,8 +210,11 @@ try:
 
     # A changing epoch generation is stale admission state, even with capacity.
     State.ready = True; State.epochs = ["8", "9"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
-    process, proxy_port = start_proxy(backend_port, wait=0.5); processes.append(process)
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_generation_unstable"}}', "pre_dispatch_rejected")
+    # Two serial four-source observations must fit even under a briefly busy
+    # hosted runner; this fixture is proving generation change, not a timeout.
+    process, proxy_port = start_proxy(backend_port, wait=1.5); processes.append(process)
+    observed = post_details(proxy_port)
+    assert observed == (503, b'{"error": {"code": "admission_generation_unstable"}}', "pre_dispatch_rejected"), observed
     assert State.dispatches == 0, "stale phase generation dispatched"
     process.terminate(); process.wait(2); processes.remove(process)
 

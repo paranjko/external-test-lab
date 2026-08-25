@@ -40,10 +40,10 @@ while (($#)); do
 done
 
 [[ -n "$OUTPUT" && -n "$SSH_ALIAS" ]] || { usage; exit 2; }
-[[ "$SSH_ALIAS" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'invalid JOIN SSH alias' >&2; exit 2; }
+[[ "$SSH_ALIAS" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo 'invalid JOIN SSH alias (use lowercase letters, digits, _ or -)' >&2; exit 2; }
 [[ -z "$PUBLIC_HOST" || "$PUBLIC_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'invalid JOIN public host' >&2; exit 2; }
 if [[ -n "$GPU_SSH_ALIAS" ]]; then
-  [[ "$GPU_SSH_ALIAS" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'invalid JOIN GPU SSH alias' >&2; exit 2; }
+  [[ "$GPU_SSH_ALIAS" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo 'invalid JOIN GPU SSH alias (use lowercase letters, digits, _ or -)' >&2; exit 2; }
   [[ "$GPU_SSH_ALIAS" != "$SSH_ALIAS" ]] || { echo 'JOIN Host and GPU SSH aliases must be different' >&2; exit 2; }
 fi
 [[ "$BOOTSTRAP_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$ ]] \
@@ -92,6 +92,11 @@ if ! verify_public_checksum "$tmp/required.sha256" 2; then
 fi
 grep -qx "join_bootstrap_format=$JOIN_BOOTSTRAP_FORMAT" "$tmp/profile/genesis.env" \
   || { echo 'public join bootstrap format is incompatible with this release profile' >&2; exit 1; }
+BOOTSTRAP_MANIFEST_SHA256="$(sha256sum "$tmp/manifest.sha256" | awk '{print $1}')"
+[[ "$BOOTSTRAP_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo 'public JOIN bootstrap manifest digest is unavailable' >&2
+  exit 1
+}
 
 allowed='GDC_NODE_ALIASES|GDC_NODE_PUBLIC_HOSTS|GDC_NODE_GPU_PROFILES|GDC_NODE_P2P_PORTS|GDC_NODE_ML_HOSTS|GDC_GENESIS_NODE|GDC_PUBLIC_EDGE_NODE|GDC_GATEWAY_NODE'
 if grep -Ev "^($allowed)=([A-Za-z0-9._=\\\\ -]*|'')$" "$tmp/topology.env" | grep -q .; then
@@ -149,6 +154,7 @@ join_role_stage='write independent Host role input'
   printf 'GDC_PUBLIC_EDGE_NODE=%q\n' "${GDC_PUBLIC_EDGE_NODE:-$GDC_GENESIS_NODE}"
   printf 'GDC_GATEWAY_NODE=%q\n' "${GDC_GATEWAY_NODE:-$GDC_GENESIS_NODE}"
   printf 'GDC_JOIN_BOOTSTRAP_URL=%q\n' "$BOOTSTRAP_URL"
+  printf 'GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256=%q\n' "$BOOTSTRAP_MANIFEST_SHA256"
   printf 'GDC_DEPLOYMENT_PROFILE=community-lab\n'
   printf 'GDC_OPERATOR_SERVICES_PROFILE=gdc-lab\n'
   printf 'GDC_JOIN_ROLE_INPUT=true\n'

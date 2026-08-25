@@ -82,6 +82,8 @@ test:
 	@./scripts/test-faucet-caddy-config.sh
 	@./scripts/test-reconcile-join-bootstrap.sh
 	@./scripts/test-join-bootstrap-manifest.sh
+	@./scripts/test-join-bootstrap-consistency.sh
+	@./scripts/test-join-role-refresh.sh
 	@./scripts/test-public-edge-single-listener.sh
 	@./scripts/test-public-homepage-rendered-asset.sh
 	@./scripts/test-participant-poc-caddy-config.sh

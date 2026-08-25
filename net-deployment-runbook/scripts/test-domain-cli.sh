@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
 
 for contract in \
   './gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>]' \
@@ -47,6 +49,32 @@ grep -Fq 'bounded six-epoch acceptance window' "$ROOT/ROLE-JOIN.md"
 grep -Fq '"$ROOT/scripts/phase-ml-attach.sh" "$NODE"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'https://api.gonka-dev.net/join-bootstrap' "$ROOT/scripts/prepare-join-role-config.sh"
 grep -Fq 'verify_public_checksum' "$ROOT/scripts/prepare-join-role-config.sh"
+grep -Fq 'GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256' "$ROOT/scripts/prepare-join-role-config.sh"
+grep -Fq 'GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'test-join-role-refresh.sh' "$ROOT/Makefile"
+grep -Fq '^[a-z0-9][a-z0-9_-]*$' "$ROOT/gdc.sh"
+grep -Fq '[[ "${GDC_JOIN_ROLE_INPUT:-false}" != true || "$join_role_dispatched" == true ]] || exit 1' "$ROOT/gdc.sh"
+! grep -Fq 'join-bootstrap-dispatched.manifest.sha256' "$ROOT/gdc.sh"
+grep -Fq 'join-bootstrap-dispatched.manifest.sha256' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'acquire_operator_lock' "$ROOT/gdc.sh"
+grep -Fq 'GDC_OPERATOR_LOCK_STATE' "$ROOT/gdc.sh"
+grep -Fq 'JOIN dispatch binding disagrees with the selected role input' "$ROOT/gdc.sh"
+grep -Fq 'join_config_args+=(--bootstrap-url "$GDC_JOIN_BOOTSTRAP_URL")' "$ROOT/gdc.sh"
+grep -Fq 'role_sha256=' "$ROOT/scripts/phase-join.sh"
+grep -Fq '"$ROOT/scripts/fetch-join-bootstrap.sh"' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'join_dispatch_marker_tmp="$(mktemp "$STATE/.join-bootstrap-dispatched.manifest.sha256.XXXXXX")"' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'mv -f -- "$join_dispatch_marker_tmp" "$join_dispatch_marker"' "$ROOT/scripts/phase-join.sh"
+grep -Fq '^[a-z0-9][a-z0-9_-]*$' "$ROOT/02-node/init-identity.sh"
+grep -Fq '^[a-z0-9][a-z0-9_-]*$' "$ROOT/02-node/install-node.sh"
+grep -Fq '^[a-z0-9][a-z0-9_-]*$' "$ROOT/02-node/render-node-env.sh"
+! grep -Fq '^gdc-node[0-4]$' "$ROOT/02-node/init-identity.sh"
+! grep -Fq '^gdc-node[0-4]$' "$ROOT/02-node/install-node.sh"
+if GDC_HOME="$tmp" "$ROOT/gdc.sh" host join --public-host node2.example.net Validator.West >"$tmp/invalid-alias.stdout" 2>"$tmp/invalid-alias.stderr"; then
+  echo 'JOIN CLI accepted a Compose-unsafe SSH alias' >&2
+  exit 1
+fi
+grep -Fq 'invalid Host SSH alias: Validator.West' "$tmp/invalid-alias.stderr"
+[[ ! -e "$tmp/Validator.West" ]]
 grep -Fq 'COMMAND=node; set -- "$subcommand" "$@"' "$ROOT/gdc.sh"
 grep -Fq 'ERROR gdc command failed phase=%s exit=%s run_log=%s command=%s' "$ROOT/gdc.sh"
 grep -Fq 'run_phase "gateway-$gateway_action-$GDC_GATEWAY_VERSION"' "$ROOT/gdc.sh"

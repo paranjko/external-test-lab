@@ -62,6 +62,23 @@ env -u JOIN_BOOTSTRAP_FORMAT \
 source "$tmp/join.env"
 [[ "$GDC_GENESIS_NODE" == gdc-node0 ]]
 [[ "$GDC_NODE_PUBLIC_HOSTS" == *'gdc-node2=node2.example.net'* ]]
+[[ "$GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256" == "$(sha256sum "$fixture/manifest.sha256" | awk '{print $1}')" ]]
+
+PATH="$tmp/bin:$PATH" JOIN_FIXTURE="$fixture" GDC_RELEASE_PROFILE=v2026.07.23 \
+  "$ROOT/scripts/prepare-join-role-config.sh" \
+  --output "$tmp/arbitrary.env" --ssh-alias validator-west --public-host node2.example.net \
+  --bootstrap-url https://bootstrap.example.net/join-bootstrap
+source "$tmp/arbitrary.env"
+[[ "$GDC_NODE_ALIASES" == *'validator-west'* ]]
+
+if PATH="$tmp/bin:$PATH" JOIN_FIXTURE="$fixture" GDC_RELEASE_PROFILE=v2026.07.23 \
+  "$ROOT/scripts/prepare-join-role-config.sh" \
+  --output "$tmp/invalid-alias.env" --ssh-alias Validator.West --public-host node2.example.net \
+  --bootstrap-url https://bootstrap.example.net/join-bootstrap >"$tmp/invalid-alias.stdout" 2>"$tmp/invalid-alias.stderr"; then
+  echo 'JOIN role preparation accepted a Compose-unsafe SSH alias' >&2
+  exit 1
+fi
+grep -Fq 'invalid JOIN SSH alias' "$tmp/invalid-alias.stderr"
 
 printf '<html>not a manifest</html>\n' >"$fixture/manifest.sha256"
 if PATH="$tmp/bin:$PATH" JOIN_FIXTURE="$fixture" GDC_RELEASE_PROFILE=v2026.07.23 \
