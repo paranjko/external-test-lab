@@ -70,6 +70,8 @@ test:
 	@node ./scripts/test-gateway-site-state.js
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
+	@./scripts/test-firewall-policy.sh
+	@./scripts/test-public-grafana-targets.sh
 	@python3 ./scripts/test-gateway-admission-proxy.py
 	@./scripts/test-gateway-reserve-policy.sh
 	@./scripts/test-inference-until-ready.sh

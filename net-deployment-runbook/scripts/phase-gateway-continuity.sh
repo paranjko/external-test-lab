@@ -7,6 +7,7 @@ record_phase_profile gateway-continuity
 RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-gateway-continuity"
 mkdir -p "$RUN"
 install_evidence_exit_trap 'Gateway continuity'
+declare -a observability_pids=()
 
 gateway_url="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
 gateway_url="${gateway_url%/}"
@@ -15,13 +16,15 @@ chain_base="${chain_base%/}"
 timeout_seconds="${GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS:-900}"
 pre_blocks="${GDC_GATEWAY_CONTINUITY_PRE_BLOCKS:-3}"
 post_success_target="${GDC_GATEWAY_CONTINUITY_POST_SUCCESSES:-2}"
+minimum_lead_blocks="${GDC_GATEWAY_CONTINUITY_MIN_LEAD_BLOCKS:-10}"
 # The gateway's non-stream response floor is 20 seconds.  The observer must
 # outlive that floor; an equal client timeout fabricates HTTP 000 at the exact
 # boundary while a valid completion is still permitted.
-request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-210}"
+request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-270}"
 [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS must be positive'
 [[ "$pre_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_PRE_BLOCKS must be positive'
 [[ "$post_success_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_POST_SUCCESSES must be positive'
+[[ "$minimum_lead_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_MIN_LEAD_BLOCKS must be positive'
 [[ "$request_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS must be positive'
 
 # Continuity proves the gateway lifecycle with its dedicated assurance
@@ -48,6 +51,14 @@ height="$(jq -er '.result.sync_info.latest_block_height | tonumber' "$RUN/chain-
 position=$(((height - epoch_shift) % epoch_length))
 (( position < 0 )) && position=$((position + epoch_length))
 target_anchor=$((height + epoch_length - position))
+current_height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+# The topology and evidence preflight can consume several short block
+# intervals.  Starting an exact-height observer with too little lead time
+# makes a missed anchor likely before it has even begun polling.  Move to the
+# next canonical boundary instead; never relabel a later height as this one.
+if (( target_anchor - current_height < minimum_lead_blocks )); then
+  target_anchor=$((target_anchor + epoch_length))
+fi
 start_height=$((target_anchor - pre_blocks))
 {
   profile_summary
@@ -109,19 +120,26 @@ capture_targeted_observation() {
   local observation_target="$1"
   local window="$2"
   local coverage="$3"
-  local observation_height
+  local observation_height observability_pid observation
 
   while (( SECONDS < deadline )); do
     observation_height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
     if (( observation_height == observation_target )); then
+      mkdir -p "$RUN/observability/$coverage"
+      "$ROOT/scripts/capture-gateway-observability.sh" "$RUN/observability/$coverage" \
+        "$chain_base" "$gateway_url" "$observation_height" "$coverage" \
+        >"$RUN/observability/$coverage/capture.log" 2>&1 &
+      observability_pid=$!
       gateway_status="$(curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
       chain_phase="$(jq -r '
         ([.devshards[]? | select(.active == true) | .chain_phase]
           + [if .chain_phase? then .chain_phase else empty end])
         | map(select(. != null and . != "")) | first // "UNKNOWN"
       ' <<<"$gateway_status" 2>/dev/null || printf UNKNOWN)"
-      request_observation "$observation_height" "$window" "$coverage" "$coverage"
-      return 0
+      observation="$(request_observation "$observation_height" "$window" "$coverage" "$coverage")"
+      printf '%s\n' "$observation"
+      wait "$observability_pid"
+      return $?
     fi
     if (( observation_height > observation_target )); then
       jq -nc --arg timestamp "$(date -u +%FT%TZ)" --argjson height "$observation_height" \
@@ -233,14 +251,33 @@ if (( snapshot_rc != 0 )); then
 fi
 
 post_successes=0
+last_post_observation_height=0
 while (( SECONDS < deadline && post_successes < post_success_target )); do
   height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
   gateway_status="$(curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
   chain_phase="$(jq -r '([.devshards[]? | select(.active == true) | .chain_phase] + [if .chain_phase? then .chain_phase else empty end]) | map(select(. != null and . != "")) | first // "UNKNOWN"' <<<"$gateway_status" 2>/dev/null || printf UNKNOWN)"
-  if (( height > target_anchor )) && [[ "$chain_phase" == Inference ]]; then
+  # A successful request consumes the participant's current block budget.
+  # Keep the independent recovery observations on distinct heights so the
+  # second probe measures recovery, rather than competing with the first.
+  if (( height > target_anchor && height > last_post_observation_height )) && [[ "$chain_phase" == Inference ]]; then
+    last_post_observation_height="$height"
+    coverage="post-recovery-$((post_successes + 1))"
+    mkdir -p "$RUN/observability/$coverage"
+    "$ROOT/scripts/capture-gateway-observability.sh" "$RUN/observability/$coverage" \
+      "$chain_base" "$gateway_url" "$height" "$coverage" \
+      >"$RUN/observability/$coverage/capture.log" 2>&1 &
+    observability_pids+=("$!")
     observation="$(request_observation "$height" after post-recovery "$((post_successes + 1))")"
     printf '%s\n' "$observation" >>"$RUN/requests.jsonl"
-    post_successes=$((post_successes + 1))
+    http_code="$(jq -r .http_code <<<"$observation")"
+    admission="$(jq -r .admission <<<"$observation")"
+    if [[ "$http_code" =~ ^2[0-9][0-9]$ && "$admission" == dispatched_once ]]; then
+      post_successes=$((post_successes + 1))
+    else
+      # One failed attempt is already decisive evidence. Do not manufacture
+      # further failures by repeating requests in the same recovery window.
+      break
+    fi
   else
     sleep 1
   fi
@@ -248,6 +285,23 @@ done
 
 curl -fsS "$chain_base/chain-rpc/status" >"$RUN/chain-status-after.json"
 curl -fsS "$chain_base/chain-api/productscience/inference/inference/current_epoch_group_data" >"$RUN/epoch-group-after.json"
+set +e
+observability_rc=0
+for observability_pid in "${observability_pids[@]}"; do
+  wait "$observability_pid" || observability_rc=1
+done
+set -e
+if (( observability_rc != 0 )); then
+  printf 'INCONCLUSIVE continuity observability snapshot capture failed\n' >&2
+  exit 2
+fi
+expected_observability=$((3 + post_success_target))
+observability_count="$(find "$RUN/observability" -name finalize.json -type f 2>/dev/null | wc -l)"
+if (( observability_count < expected_observability )); then
+  printf 'INCONCLUSIVE continuity observability snapshots: expected=%s captured=%s\n' \
+    "$expected_observability" "$observability_count" >&2
+  exit 2
+fi
 if [[ ! -s "$RUN/preserved-snapshot.json" ]]; then
   printf '{"found":false,"capture":{"reason":"snapshot_not_captured"},"snapshot":{"episode_anchor_height":"%s","model_preserved_nodes":[]}}\n' \
     "$target_anchor" >"$RUN/preserved-snapshot.json"

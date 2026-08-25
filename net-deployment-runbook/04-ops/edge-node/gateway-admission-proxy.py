@@ -23,7 +23,11 @@ CHAIN_STATUS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL", "http://127.0.0
 CHAIN_PARAMS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL", "http://127.0.0.1:1317/productscience/inference/inference/params")
 SAFE_GUARD_BLOCKS = int(env("GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS", 10))
 MAX_QUEUE = int(env("GDC_GATEWAY_ADMISSION_MAX_QUEUE", 16))
-MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS", 180))
+# The v3 PoC lifecycle was observed to need 34 blocks – 187 seconds at the
+# measured block cadence – before an active runtime was again safe to admit.
+# Keep a bounded margin for a fresh second observation without outliving the
+# continuity observer's 270-second client timeout.
+MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS", 240))
 POLL = float(env("GDC_GATEWAY_ADMISSION_POLL_SECONDS", 0.25))
 MAX_BODY = int(env("GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES", 1048576))
 if not (MAX_QUEUE > 0 and MAX_WAIT > 0 and POLL > 0 and MAX_BODY > 0 and SAFE_GUARD_BLOCKS > 0):

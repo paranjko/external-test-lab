@@ -86,3 +86,9 @@ setup() {
   run grep -F 'FAILED' "$watch"
   [ "$status" -eq 0 ]
 }
+
+@test "managed firewall keeps explicit monitoring and ML allows terminal" {
+  run "$RUNBOOK/scripts/test-firewall-policy.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"explicit allows are terminal"* ]]
+}

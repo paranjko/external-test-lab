@@ -95,7 +95,21 @@ set -e
 grep -qx '# Gateway continuity: INCONCLUSIVE' "$WORK/verdict.md"
 
 grep -Fq 'capture-poc-snapshot.sh' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'GDC_GATEWAY_CONTINUITY_MIN_LEAD_BLOCKS' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'target_anchor - current_height < minimum_lead_blocks' "$ROOT/scripts/phase-gateway-continuity.sh"
 grep -Fq 'snapshot_pid=$!' "$ROOT/scripts/phase-gateway-continuity.sh"
 grep -Fq 'snapshot_not_captured' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'capture-gateway-observability.sh' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'observability_pids+=("$!")' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'INCONCLUSIVE continuity observability snapshots' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'last_post_observation_height' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'height > last_post_observation_height' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq '"$admission" == dispatched_once' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'if (.result.sync_info | has("catching_up"))' "$ROOT/scripts/capture-gateway-observability.sh"
+grep -Fq '[[ "$catching" == false ]]' "$ROOT/scripts/capture-gateway-observability.sh"
+grep -Fq 'dashboard-results.jsonl' "$ROOT/scripts/capture-gateway-observability.sh"
+grep -Fq 'expected Prometheus target is down or mislabeled' "$ROOT/scripts/capture-gateway-observability.sh"
+grep -Fq '.data.result[]?' "$ROOT/scripts/capture-gateway-observability.sh"
+grep -Fq 'https://$SITE_HOST/status/gateway-health' "$ROOT/scripts/capture-gateway-observability.sh"
 
 printf 'PASS gateway continuity verdict contract\n'

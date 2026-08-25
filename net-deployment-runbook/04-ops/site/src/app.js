@@ -26,6 +26,10 @@ type SiteNode = {
   endpointDiagnostic?: string,
   catchingUp?: boolean,
   blocksBehind?: number,
+  blockAgeSeconds?: number,
+  progressing?: ?boolean,
+  referenceKnown?: boolean,
+  referenceAgrees?: boolean,
   isOnline?: boolean,
   serverStatus?: string,
   gpuProfile?: ?string,
@@ -204,7 +208,7 @@ function createCard(node: SiteNode): HTMLElement {
       <b data-k="height"></b>
     </div>
     <div class="metric">
-      <span>VP</span>
+      <span>voting power</span>
       <b data-k="vp"></b>
     </div>
     <div class="metric">
@@ -219,7 +223,7 @@ function createCard(node: SiteNode): HTMLElement {
       <span>peers</span>
       <b data-k="peers"></b>
     </div>
-    <div class="metric software">
+    <div class="metric software" data-k-row="software">
       <span>software</span>
       <b data-k="versions"></b>
     </div>
@@ -278,6 +282,13 @@ function updateGpu(
   }
   row.hidden = false;
   if (!inventoryLabel) {
+    const configuredProfile = configuredGpuLabel(node.gpuProfile);
+    if (configuredProfile) {
+      set(card, "gpu", `${configuredProfile} – ${connection} (inventory unavailable)`);
+      card.querySelector('[data-k="gpu"]').title =
+        `Configured GPU host: ${gpuHost}; live inventory has not reported it yet`;
+      return;
+    }
     set(card, "gpu", "temporarily unavailable");
     card.querySelector('[data-k="gpu"]').title =
       "GPU inventory has not reported this Host yet";
@@ -285,6 +296,23 @@ function updateGpu(
   }
   set(card, "gpu", `${inventoryLabel} – ${connection}`);
   card.querySelector('[data-k="gpu"]').title = `GPU host: ${gpuHost}`;
+}
+
+function configuredGpuLabel(profile: ?string): ?string {
+  switch (profile) {
+    case "a5000-24g":
+      return "RTX A5000";
+    case "4090-24g":
+      return "GeForce RTX 4090";
+    case "3090-24g":
+      return "GeForce RTX 3090";
+    case "t4-16g":
+      return "Tesla T4";
+    case "blackwell-16g":
+      return "RTX PRO 2000 Blackwell";
+    default:
+      return null;
+  }
 }
 
 function markSoftwareInventoryUnavailable(card: HTMLElement): void {
@@ -469,6 +497,10 @@ function renderHostState(card: HTMLElement, node: SiteNode): boolean {
     endpointDiagnostic: node.endpointDiagnostic,
     catchingUp: node.catchingUp,
     blocksBehind: node.blocksBehind,
+    blockAgeSeconds: node.blockAgeSeconds,
+    progressing: node.progressing,
+    referenceKnown: node.referenceKnown,
+    referenceAgrees: node.referenceAgrees,
   });
   set(card, "status", display.primaryLabel);
   card.querySelector('[data-k="status"]').className = display.primaryClass;
@@ -796,11 +828,22 @@ initValidatorMap()
 async function refresh(): Promise<void> {
   let healthy = 0;
   let best = 0;
+  let referenceKnown = false;
+  let referenceHeight = 0;
   refreshTelegramConsumer();
   refreshGpuInventory().catch(() => {});
   refreshSoftwareInventory().catch(() => {});
   try {
     best = await reconcileParticipants();
+  } catch {}
+  try {
+    if (!chainRpcHost) throw new Error("chain RPC host is missing");
+    const reference = await json(`https://${chainRpcHost}/chain-rpc/status`);
+    referenceHeight = Number(reference.result.sync_info.latest_block_height);
+    if (Number.isFinite(referenceHeight) && referenceHeight > 0) {
+      best = Math.max(best, referenceHeight);
+      referenceKnown = true;
+    }
   } catch {}
   await Promise.all(
     observedNodes
@@ -830,10 +873,27 @@ async function refresh(): Promise<void> {
           const h = Number(s.result.sync_info.latest_block_height);
           const peers = Number(net.result.n_peers);
           n.catchingUp = Boolean(s.result.sync_info.catching_up);
-          n.blocksBehind = best > h ? best - h : 0;
+          n.blocksBehind = referenceKnown ? Math.abs(referenceHeight - h) : undefined;
+          const blockTime = Date.parse(String(s.result.sync_info.latest_block_time || ""));
+          n.blockAgeSeconds = Number.isFinite(blockTime)
+            ? Math.max(0, (Date.now() - blockTime) / 1000)
+            : undefined;
+          n.progressing = n.blockAgeSeconds !== undefined && n.blockAgeSeconds <= 90;
+          n.referenceKnown = referenceKnown;
+          n.referenceAgrees = referenceKnown && n.blocksBehind !== undefined && n.blocksBehind <= 5;
           best = Math.max(best, h);
           const validatorEffective = renderHostState(card, n);
-          n.isOnline = validatorEffective && !n.catchingUp;
+          n.isOnline =
+            validatorEffective &&
+            hostState.classify({
+              endpointState: n.endpointState,
+              catchingUp: n.catchingUp,
+              blocksBehind: n.blocksBehind,
+              blockAgeSeconds: n.blockAgeSeconds,
+              progressing: n.progressing,
+              referenceKnown: n.referenceKnown,
+              referenceAgrees: n.referenceAgrees,
+            }).syncLabel === "Synced";
           n.serverStatus = "endpoint reachable";
           set(card, "height", h.toLocaleString());
           set(card, "peers", peers);

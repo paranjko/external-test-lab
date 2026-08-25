@@ -3,8 +3,9 @@ set -Eeuo pipefail
 
 # Filter public traffic in mangle/PREROUTING, before Docker applies DNAT to
 # published ports. Keep project rules isolated; never flush a built-in chain.
-# shellcheck disable=SC1091
-source /etc/gonka/host.env
+# shellcheck source=/etc/gonka/host.env
+# shellcheck disable=SC1090,SC1091
+source "${GONKA_HOST_ENV:-/etc/gonka/host.env}"
 
 CHAIN=GONKA_INGRESS
 EXTERNAL_IF="$(ip -4 route show default | awk 'NR == 1 { print $5 }')"
@@ -21,28 +22,30 @@ install_ipv4() {
   iptables -w -t mangle -A "$CHAIN" ! -i "$EXTERNAL_IF" -j RETURN
   iptables -w -t mangle -A "$CHAIN" -m addrtype ! --dst-type LOCAL -j RETURN
   iptables -w -t mangle -A "$CHAIN" -m conntrack --ctstate INVALID -j DROP
-  iptables -w -t mangle -A "$CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  iptables -w -t mangle -A "$CHAIN" -p icmp -j RETURN
-  iptables -w -t mangle -A "$CHAIN" -p tcp --dport "$SSH_PORT" -j RETURN
+  # An allowed external packet must terminate mangle/PREROUTING. RETURN would
+  # re-enter a parent chain, where an older blanket DROP can undo this rule.
+  iptables -w -t mangle -A "$CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -w -t mangle -A "$CHAIN" -p icmp -j ACCEPT
+  iptables -w -t mangle -A "$CHAIN" -p tcp --dport "$SSH_PORT" -j ACCEPT
 
   if [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]]; then
-    iptables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 80,443,5000 -j RETURN
-    iptables -w -t mangle -A "$CHAIN" -p udp --dport 443 -j RETURN
+    iptables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 80,443,5000 -j ACCEPT
+    iptables -w -t mangle -A "$CHAIN" -p udp --dport 443 -j ACCEPT
   fi
   if [[ "${GATEWAY_SERVICES:-false}" == true ]]; then
-    iptables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 3000,8000,8081,8082,18080 -j RETURN
+    iptables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 3000,8000,8081,8082,18080 -j ACCEPT
     if [[ -n "${PUBLIC_EDGE_CIDR:-}" ]]; then
-      iptables -w -t mangle -A "$CHAIN" -s "$PUBLIC_EDGE_CIDR" -p tcp --dport 9099 -j RETURN
+      iptables -w -t mangle -A "$CHAIN" -s "$PUBLIC_EDGE_CIDR" -p tcp --dport 9099 -j ACCEPT
     fi
   fi
   iptables -w -t mangle -A "$CHAIN" -s "$MONITORING_CIDR" -p tcp \
-    -m multiport --dports 26660,8088,9101 -j RETURN
+    -m multiport --dports 26660,8088,9101 -j ACCEPT
   if [[ -n "${ML_CALLBACK_CIDR:-}" ]]; then
-    iptables -w -t mangle -A "$CHAIN" -s "$ML_CALLBACK_CIDR" -p tcp --dport 9100 -j RETURN
+    iptables -w -t mangle -A "$CHAIN" -s "$ML_CALLBACK_CIDR" -p tcp --dport 9100 -j ACCEPT
   fi
   if [[ "$ROLE" == ml-only ]]; then
     iptables -w -t mangle -A "$CHAIN" -s "$ML_CLIENT_CIDR" -p tcp \
-      -m multiport --dports 5000,8080 -j RETURN
+      -m multiport --dports 5000,8080 -j ACCEPT
   fi
   iptables -w -t mangle -A "$CHAIN" -j DROP
 
@@ -62,15 +65,15 @@ install_ipv6() {
   ip6tables -w -t mangle -A "$CHAIN" ! -i "$EXTERNAL_IF" -j RETURN
   ip6tables -w -t mangle -A "$CHAIN" -m addrtype ! --dst-type LOCAL -j RETURN
   ip6tables -w -t mangle -A "$CHAIN" -m conntrack --ctstate INVALID -j DROP
-  ip6tables -w -t mangle -A "$CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  ip6tables -w -t mangle -A "$CHAIN" -p ipv6-icmp -j RETURN
-  ip6tables -w -t mangle -A "$CHAIN" -p tcp --dport "$SSH_PORT" -j RETURN
+  ip6tables -w -t mangle -A "$CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  ip6tables -w -t mangle -A "$CHAIN" -p ipv6-icmp -j ACCEPT
+  ip6tables -w -t mangle -A "$CHAIN" -p tcp --dport "$SSH_PORT" -j ACCEPT
   if [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]]; then
-    ip6tables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 80,443,5000 -j RETURN
-    ip6tables -w -t mangle -A "$CHAIN" -p udp --dport 443 -j RETURN
+    ip6tables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 80,443,5000 -j ACCEPT
+    ip6tables -w -t mangle -A "$CHAIN" -p udp --dport 443 -j ACCEPT
   fi
   if [[ "${GATEWAY_SERVICES:-false}" == true ]]; then
-    ip6tables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 3000,8000,8081,8082,18080 -j RETURN
+    ip6tables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 3000,8000,8081,8082,18080 -j ACCEPT
   fi
   ip6tables -w -t mangle -A "$CHAIN" -j DROP
 }

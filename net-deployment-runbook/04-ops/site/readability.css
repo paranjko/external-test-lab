@@ -18,18 +18,54 @@ body * {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.nodes.compact .metric.software {
-  display: block;
+.nodes.compact .metric.software,
+.nodes.compact .metric.gpu:not([hidden]) {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
 }
 
-.nodes.compact .metric.software b {
+/* Software and GPU are independent facts.  Keep the software value readable
+ * without allowing it to visually merge with the GPU row below it. */
+.nodes.compact .metric.software {
+  min-height: 60px;
+  max-height: 60px;
+}
+
+.nodes.compact .metric.software b,
+.nodes.compact .metric.gpu b {
   display: block;
-  margin-top: 3px;
+  margin: 0;
   color: var(--ink);
   font-size: 10px;
   font-weight: 500;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.nodes.compact .metric.software b {
+  max-height: none;
+}
+
+.nodes.compact .metric.gpu:not([hidden]) {
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 6px;
+  min-height: 52px;
+  max-height: 52px;
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 2px solid var(--line);
+}
+
+/* GPU inventory is a compact hardware identifier.  It must remain intact on
+ * one line rather than breaking its model and source across rows. */
+.nodes.compact .metric.gpu b {
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .network-map-section {
@@ -207,14 +243,14 @@ footer > :last-child {
 /* Host state has a fixed visual budget at every supported breakpoint.  A
  * network diagnostic must remain a compact field, never resize this grid. */
 .nodes.compact {
-  grid-auto-rows: 400px;
+  grid-auto-rows: 424px;
 }
 
 .nodes.compact .node {
   box-sizing: border-box;
-  height: 400px;
-  min-height: 400px;
-  max-height: 400px;
+  height: 424px;
+  min-height: 424px;
+  max-height: 424px;
   overflow: hidden;
 }
 
@@ -254,6 +290,6 @@ footer > :last-child {
 
 @media (max-width: 520px) {
   .nodes.compact {
-    grid-auto-rows: 400px;
+    grid-auto-rows: 424px;
   }
 }

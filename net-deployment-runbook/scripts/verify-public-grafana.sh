@@ -1,5 +1,35 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
+verify_expected_target_result() {
+  local host="$1" validator="$2"
+  jq -e --arg host "$host" --arg validator "$validator" '
+    .status == "success"
+    and ([.data.result[] | select(.metric.host == $host and (.value[1] | tonumber) == 1)
+      | if $validator == "" then true else .metric.validator == $validator end] | any)
+  '
+}
+
+verify_linked_gpu_result() {
+  local host="$1"
+  jq -e --arg host "$host" '
+    .status == "success" and ([.data.result[] | select(.metric.host == $host)] | length > 0)
+  '
+}
+
+verify_linked_gpu_freshness_result() {
+  local host="$1"
+  jq -e --arg host "$host" '
+    .status == "success" and ([.data.result[] | select(.metric.host == $host and (.value[1] | tonumber) <= 120)] | any)
+  '
+}
+
+# The target predicates are intentionally importable for deterministic negative
+# tests. The normal verifier always continues into the live public checks.
+if [[ "${GDC_GRAFANA_VERIFIER_LIBRARY:-false}" == true ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 load_project
@@ -25,6 +55,40 @@ while (( SECONDS < deadline )); do
   sleep 3
 done
 test -s "$RUN/health.json" || die 'public Grafana did not become healthy'
+
+prom_query() {
+  local expression="$1" encoded
+  encoded="$(printf '%s' "$expression" | base64 -w0)"
+  ssh -T "$GATEWAY_NODE" "query=\$(printf %s '$encoded' | base64 -d); curl -fsSG --data-urlencode query=\"\$query\" http://127.0.0.1:9099/api/v1/query"
+}
+
+expected_targets="$RUN/expected-targets.tsv"
+: >"$expected_targets"
+for node in "${GDC_NODES[@]}"; do
+  printf '%s\t\n' "$node" >>"$expected_targets"
+done
+for node in "${GDC_NODES[@]}"; do
+  ml_host="$(node_ml_host "$node" || true)"
+  [[ -z "$ml_host" ]] || printf '%s\t%s\n' "$ml_host" "$node" >>"$expected_targets"
+done
+
+while IFS=$'\t' read -r host validator; do
+  target_result="$(prom_query "up{job=\"host\",host=\"$host\"}")"
+  verify_expected_target_result "$host" "$validator" <<<"$target_result" >/dev/null \
+    || die "expected Prometheus target is down or mislabeled: $host"
+done <"$expected_targets"
+
+while IFS=$'\t' read -r host validator; do
+  [[ -n "$validator" ]] || continue
+  gpu_result="$(prom_query "gdc_nvidia_memory_total_bytes{host=\"$host\"}")"
+  verify_linked_gpu_result "$host" <<<"$gpu_result" >/dev/null \
+    || die "linked GPU inventory is missing: $host"
+  # PromQL string literals reject a single backslash before a dot. A character
+  # class expresses the literal dot without adding another escaping layer.
+  freshness_result="$(prom_query "time() - max by(host) (node_textfile_mtime_seconds{host=\"$host\",file=~\".*nvidia[.]prom\"})")"
+  verify_linked_gpu_freshness_result "$host" <<<"$freshness_result" >/dev/null \
+    || die "linked GPU inventory is stale: $host"
+done <"$expected_targets"
 
 for dashboard in gdc-network gdc-inference; do
   curl -fsS "https://$GRAFANA_HOST/api/dashboards/uid/$dashboard" >"$RUN/$dashboard.json"
@@ -114,6 +178,7 @@ cat >"$RUN/finalize.md" <<EOF
 - Network: $NETWORK_URL
 - Inference: $INFERENCE_URL
 - Dashboards: gdc-network, gdc-inference
+- Expected Prometheus targets: $(wc -l <"$expected_targets") are up; linked GPU inventory is fresh.
 - Prometheus panel expressions: $(wc -l <"$RUN/panel-expressions.txt") returned live data.
 - Browser DOM contains both rendered dashboards and no No data, plugin, or authentication failure.
 EOF

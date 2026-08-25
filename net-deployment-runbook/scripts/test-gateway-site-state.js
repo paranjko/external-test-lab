@@ -89,6 +89,11 @@ assert.deepEqual(hostState.classify({
   votingPower: '42',
   endpointState: 'reachable',
   catchingUp: false,
+  blocksBehind: 0,
+  blockAgeSeconds: 12,
+  progressing: true,
+  referenceKnown: true,
+  referenceAgrees: true,
 }), {
   primaryLabel: 'Effective validator',
   primaryClass: 'status ok',
@@ -105,6 +110,10 @@ assert.deepEqual(hostState.classify({
   endpointState: 'reachable',
   catchingUp: true,
   blocksBehind: 17,
+  blockAgeSeconds: 12,
+  progressing: true,
+  referenceKnown: true,
+  referenceAgrees: true,
 }), {
   primaryLabel: 'Not in validator set',
   primaryClass: 'status skip',
@@ -151,6 +160,45 @@ assert.equal(hostState.classify({
   validatorKnown: true,
   votingPower: '88',
 }).primaryLabel, 'Participant inactive');
+assert.equal(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: true,
+  votingPower: '42',
+  endpointState: 'reachable',
+  catchingUp: false,
+  blocksBehind: 7000,
+  blockAgeSeconds: 36000,
+  progressing: false,
+  referenceKnown: true,
+  referenceAgrees: true,
+}).syncLabel, 'Lagging – 7,000 blocks');
+assert.equal(hostState.classify({
+  endpointState: 'reachable',
+  catchingUp: false,
+  blocksBehind: 0,
+  blockAgeSeconds: 91,
+  progressing: false,
+  referenceKnown: true,
+  referenceAgrees: true,
+}).syncLabel, 'Stale');
+assert.equal(hostState.classify({
+  endpointState: 'reachable',
+  catchingUp: false,
+  blocksBehind: 0,
+  blockAgeSeconds: 5,
+  progressing: true,
+  referenceKnown: false,
+}).syncLabel, 'Unknown');
+assert.equal(hostState.classify({
+  endpointState: 'reachable',
+  catchingUp: false,
+  blocksBehind: 0,
+  blockAgeSeconds: 5,
+  progressing: true,
+  referenceKnown: true,
+  referenceAgrees: false,
+}).syncLabel, 'Unknown');
 assert.equal(hostState.endpointDiagnostic(new Error('502')), 'HTTP 502');
 assert.equal(hostState.endpointDiagnostic(new Error('Failed to fetch')), 'Network error');
 assert.equal(hostState.endpointDiagnostic(new Error('timeout exceeded')), 'Timed out');
@@ -169,6 +217,9 @@ assert.match(siteApp, /sample\?\.metric\?\.gpu_name/);
 assert.match(siteApp, /node\.gpuHost && node\.gpuHost !== node\.name \? "net" : "local"/);
 assert.match(siteApp, /const gpuHost = node\.gpuHost \|\| node\.name/);
 assert.match(siteApp, /const inventoryKey = \[gpuHost, node\.publicHost, node\.name\]/);
+assert.match(siteApp, /configuredGpuLabel\(node\.gpuProfile\)/);
+assert.match(siteApp, /RTX PRO 2000 Blackwell/);
+assert.match(siteApp, /inventory unavailable/);
 assert.match(siteApp, /\$\{inventoryLabel\} – \$\{connection\}/);
 assert.match(siteApp, /replace\(\/\^NVIDIA\\s\+\/i, ""\)/);
 assert.match(
@@ -178,6 +229,9 @@ assert.match(
 assert.match(siteApp, /hostState\.classify/);
 assert.match(siteApp, /GDC_SOFTWARE_VERSIONS\.normalizeMlNodeVersion/);
 assert.match(siteApp, /data-k="vp"/);
+assert.match(siteApp, /<span>voting power<\/span>/);
+assert.match(siteApp, /class="metric software" data-k-row="software"/);
+assert.match(siteApp, /class="metric gpu" data-k-row="gpu" hidden/);
 assert.match(siteApp, /data-k="endpoint"/);
 assert.match(siteApp, /Promise\.allSettled/);
 assert.match(siteApp, /participantKnown: false/);
@@ -185,6 +239,9 @@ assert.match(siteApp, /validatorKnown: false/);
 assert.match(siteApp, /Array\.isArray\(validatorResult\.value\?\.result\?\.validators\)/);
 assert.match(siteApp, /validatorEffective/);
 assert.match(siteApp, /catchingUp/);
+assert.match(siteApp, /blockAgeSeconds/);
+assert.match(siteApp, /referenceKnown/);
+assert.match(siteApp, /chain-rpc\/status/);
 assert.doesNotMatch(siteApp, /waiting for validator set/);
 assert.doesNotMatch(siteApp, /effective validator – endpoint/);
 assert.doesNotMatch(siteApp, /\$\{display\.text\} \(\$\{e\.message\}\)/);
@@ -194,9 +251,16 @@ const readability = fs.readFileSync(
   path.join(__dirname, '..', '04-ops', 'site', 'readability.css'),
   'utf8',
 );
-assert.match(readability, /\.nodes\.compact \{\s*grid-auto-rows: 400px;/);
-assert.match(readability, /\.nodes\.compact \.node \{\s*box-sizing: border-box;\s*height: 400px;/);
+assert.match(readability, /\.nodes\.compact \{\s*grid-auto-rows: 424px;/);
+assert.match(readability, /\.nodes\.compact \.node \{\s*box-sizing: border-box;\s*height: 424px;/);
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;/);
+assert.match(readability, /\.nodes\.compact \.metric\.software,\s*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{/);
+assert.match(readability, /grid-template-columns: 72px minmax\(0, 1fr\);/);
+assert.match(readability, /\.nodes\.compact \.metric\.software \{\s*min-height: 60px;/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{[\s\S]*min-height: 52px;[\s\S]*border-top: 2px solid var\(--line\);/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{\s*grid-template-columns: 28px minmax\(0, 1fr\);/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu b \{\s*overflow-wrap: normal;\s*white-space: nowrap;/);
+assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*white-space: normal;/);
 assert.match(readability, /text-overflow: ellipsis/);
 
 fs.rmSync(siteBuild, { recursive: true, force: true });

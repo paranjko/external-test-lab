@@ -57,16 +57,27 @@
             ? `Unavailable – ${diagnostic}`
             : "Unknown";
       const lag = Number(input.blocksBehind);
+      const blockAge = Number(input.blockAgeSeconds);
+      const referenceKnown = input.referenceKnown !== false;
+      const referenceAgrees = input.referenceAgrees !== false;
       const syncLabel =
         endpointState === "unavailable"
           ? "Unavailable"
           : endpointState !== "reachable"
             ? "Unknown"
-            : input.catchingUp === true
-              ? Number.isFinite(lag) && lag > 0
-                ? `Lagging – ${Math.floor(lag).toLocaleString()} blocks`
-                : "Lagging"
-              : "Synced";
+            : !referenceKnown || !referenceAgrees
+              ? "Unknown"
+              : input.catchingUp === true
+                ? Number.isFinite(lag) && lag > 0
+                  ? `Lagging – ${Math.floor(lag).toLocaleString()} blocks`
+                  : "Lagging"
+                : !Number.isFinite(lag) || !Number.isFinite(blockAge)
+                  ? "Unknown"
+                  : lag > 5
+                    ? `Lagging – ${Math.floor(lag).toLocaleString()} blocks`
+                    : blockAge > 90 || input.progressing === false
+                      ? "Stale"
+                      : "Synced";
 
       if (!participantKnown) {
         return {
