@@ -51,8 +51,8 @@ if grep -Eq 'require ACME_EMAIL|ACME_EMAIL is required' "$ROOT/scripts/lib.sh" "
   echo 'ACME contact email must remain optional' >&2
   exit 1
 fi
-grep -Fq 'verify_public_checksums' "$ROOT/scripts/fetch-join-bootstrap.sh"
-grep -Fq 'public JOIN bootstrap checksum mismatch bootstrap_url=' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'verify-join-bootstrap-manifest.sh' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'public JOIN bootstrap checksum mismatch bootstrap_url=' "$ROOT/scripts/verify-join-bootstrap-manifest.sh"
 grep -Fq 'public JOIN bootstrap is unavailable: url=' "$ROOT/scripts/fetch-join-bootstrap.sh"
 grep -Fq 'public JOIN bootstrap manifest is HTML instead of checksums' "$ROOT/scripts/fetch-join-bootstrap.sh"
 grep -Fq 'find . -type f ! -name manifest.sha256 -print0' "$ROOT/04-ops/render-ops.sh"

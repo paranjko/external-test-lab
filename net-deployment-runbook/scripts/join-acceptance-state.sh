@@ -32,6 +32,12 @@ join_acceptance_state_initialize() {
   printf '%s\t%s\n' "$(jq -er '.initial_epoch | tonumber' "$state")" "$(jq -er '.deadline_epoch | tonumber' "$state")"
 }
 
+join_acceptance_state_epoch_within_deadline() {
+  local epoch="$1" deadline_epoch="$2"
+  [[ "$epoch" =~ ^[1-9][0-9]*$ && "$deadline_epoch" =~ ^[1-9][0-9]*$ ]] \
+    && (( epoch <= deadline_epoch ))
+}
+
 join_acceptance_state_record_strongest() {
   local run="$1" epoch="$2" participant_weight="$3" accepted_weight_sum="$4" committed_total="$5" temporary
   local state="$run/acceptance-state.json"

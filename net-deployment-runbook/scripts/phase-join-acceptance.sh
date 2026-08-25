@@ -26,9 +26,9 @@ TIMEOUT="${GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS:-}"
 # An independent participant registered during the current epoch cannot be
 # represented in that epoch's already-created group.  Two additional epochs
 # cover the registration/ACTIVE transition and the first group that can
-# contain its PoC evidence, then the profile's full effective window remains
-# required on top of that.  Genesis keeps the canonical profile window because
-# it exists before the first group is created.
+# contain its PoC evidence, then the profile's four complete effective epochs
+# remain required on top of that. Genesis keeps the canonical four-epoch
+# profile window because it exists before the first group is created.
 acceptance_epochs="$EPOCHS"
 [[ "$NODE" == "$GENESIS_NODE" ]] || acceptance_epochs=$((EPOCHS + 2))
 record_phase_profile "join-acceptance-$NODE"
@@ -47,6 +47,7 @@ poc_committed_total=0
 poc_distribution_tx_hash=''
 poc_distribution_tx_code=-1
 poc_distribution_stage=0
+late_restored_evidence=false
 [[ -s "$RUN/poc-acceptance-observations.json" ]] || printf '[]' >"$RUN/poc-acceptance-observations.json"
 
 LAST_PUBLIC_FETCH_FAILURE=''
@@ -320,6 +321,8 @@ if strongest_observed="$(join_acceptance_state_restore_strongest "$RUN" 2>/dev/n
     poc_participant_weight="$(jq -er '.participant_weight | tonumber' <<<"$strongest_observed")"
     poc_accepted_weight_sum="$(jq -er '.accepted_weight_sum | tonumber' <<<"$strongest_observed")"
     poc_committed_total="$(jq -er '.committed_total | tonumber' <<<"$strongest_observed")"
+    join_acceptance_state_epoch_within_deadline "$poc_accepted_epoch" "$deadline_epoch" \
+      || late_restored_evidence=true
   fi
 fi
 if distribution_evidence="$(join_acceptance_state_restore_distribution "$RUN" 2>/dev/null || true)"; then
@@ -356,9 +359,9 @@ inconclusive() {
 $NODE reached PARTICIPANT_ACTIVE but did not prove every JOIN_PASS state before
 epoch $deadline_epoch: $reason
 
-Retry the same command after the next eligible epoch. The existing account,
-consensus identity and runtime identity are retained; no new participant must
-be created.
+Preserve the evidence bundle and use a separately validated procedure for any
+subsequent diagnosis or recovery. The existing account, consensus identity and
+runtime identity are retained; no successful join is implied.
 EOF
   printf 'INCONCLUSIVE %s; evidence: %s\n' "$reason" "$RUN" >&2
   exit 2
@@ -387,12 +390,16 @@ blocked() {
 
 $NODE cannot complete the required join proof: $reason
 
-Supply the named safe precondition, then retry the same command. The existing
-account and identity are retained; no new participant must be created.
+Preserve this evidence and follow a separately validated procedure after the
+named safe precondition is available. The existing account and identity are
+retained; no successful join is implied.
 EOF
   printf 'BLOCKED %s; evidence: %s\n' "$reason" "$RUN" >&2
   exit 3
 }
+
+[[ "$late_restored_evidence" == false ]] \
+  || inconclusive "stored positive PoC evidence is later than immutable deadline_epoch=$deadline_epoch"
 
 step "Wait for $NODE PoC eligibility and effective validator membership through epoch $deadline_epoch"
 while (( SECONDS < deadline_seconds )); do
@@ -423,6 +430,8 @@ while (( SECONDS < deadline_seconds )); do
   done
   epoch="$(jq -r '.epoch_group_data.epoch_index // empty' <<<"$group" 2>/dev/null || true)"
   [[ "$epoch" =~ ^[0-9]+$ ]] || { printf 'WAIT  join acceptance cannot read epoch state from url=%s; retrying\n' "$group_endpoint"; sleep 5; continue; }
+  join_acceptance_state_epoch_within_deadline "$epoch" "$deadline_epoch" \
+    || inconclusive "current epoch=$epoch is later than immutable deadline_epoch=$deadline_epoch"
   if [[ -z "$validators" ]]; then
     printf 'WAIT  validator readback is temporarily unavailable\n'
     sleep 5
@@ -507,7 +516,7 @@ while (( SECONDS < deadline_seconds )); do
     record_join_state "$NODE" VALIDATOR_EFFECTIVE "$ADDRESS"
   fi
   # Requiring the deadline epoch even when all conditions appear early proves
-  # the promised four complete epoch transitions after ACTIVE.
+  # the documented six-epoch transition and evidence window after ACTIVE.
   if (( epoch >= deadline_epoch )) \
     && [[ "$poc_accepted_once" == true && "$runtime_ready" == true && "$validator_effective" == true ]]; then
     break

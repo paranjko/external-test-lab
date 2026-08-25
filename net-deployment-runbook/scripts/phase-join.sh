@@ -123,7 +123,7 @@ if [[ -s "$IDENTITY" ]] \
 fi
 [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true ]] && remote_identity_ready=false
 if [[ "$participant_state" != new && "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true && "$remote_identity_ready" != true ]]; then
-  die "$NODE participant already exists on this chain, but its validator identity is absent on the Host; cold and warm mnemonics alone cannot restore it. Re-run host join with --restore <${NODE}-validator-backup.tar>."
+  die "$NODE participant already exists on this chain, but its validator identity is absent on the Host; cold and warm mnemonics alone cannot restore it. Preserve the evidence and use a separately validated recovery procedure."
 fi
 if [[ "$remote_identity_ready" != true ]]; then
   [[ -s "$IDENTITY" ]] && printf 'READY remote identity state is absent; recreating %s identity bootstrap\n' "$NODE"
@@ -334,9 +334,7 @@ fi
 
 step "Create $NODE validator recovery archive"
 "$ROOT/scripts/validator-backup.sh" create "$NODE"
-if [[ "${GDC_JOIN_VERIFICATION:-false}" == true ]]; then
-  step "Verify $NODE through chain eligibility and a gateway regression"
-  "$ROOT/scripts/phase-join-acceptance.sh" "$NODE"
-else
-  printf 'READY %s operational join complete; run host join --verification %s to collect chain acceptance evidence\n' "$NODE" "$NODE"
-fi
+[[ "${GDC_JOIN_VERIFICATION:-true}" == true ]] \
+  || die 'the supported first-time JOIN workflow requires acceptance verification'
+step "Verify $NODE through chain eligibility and a gateway regression"
+"$ROOT/scripts/phase-join-acceptance.sh" "$NODE"

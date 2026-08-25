@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 for contract in \
   './gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>]' \
-  './gdc.sh host join [--verification] [--skip-qualification] [--public-host <DNS>] [--restore <NODE-validator-backup.tar>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]' \
+  './gdc.sh host join --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
   './gdc.sh host backup <SSH_ALIAS>' \
   './gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>' \
   './gdc.sh network reset --yes [--hosts <SSH_ALIAS[,SSH_ALIAS...]>]' \
@@ -27,6 +27,7 @@ grep -Fq 'invocation_command=%q' "$ROOT/scripts/lib.sh"
 grep -Fq 'prepare-join-role-config.sh' "$ROOT/gdc.sh"
 grep -Fq 'GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"' "$ROOT/gdc.sh"
 grep -Fq 'GDC_JOIN_VERIFICATION="$verification"' "$ROOT/gdc.sh"
+grep -Fq "skip_qualification=false verification=true" "$ROOT/gdc.sh"
 grep -Fq 'GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"' "$ROOT/gdc.sh"
 grep -Fq 'host backup requires retained operator state' "$ROOT/gdc.sh"
 grep -Fq 'phase-host-backup.sh' "$ROOT/gdc.sh"
@@ -35,9 +36,14 @@ grep -Fq 'detect-public-host.sh" "$SSH_ALIAS" "$PUBLIC_HOST"' "$ROOT/scripts/pre
 grep -Fq 'join_config_args+=(--gpu-ssh-alias "$join_gpu_alias")' "$ROOT/gdc.sh"
 grep -Fq 'GDC_NODE_ML_HOSTS="${updated_ml_hosts}${updated_ml_hosts:+ }$SSH_ALIAS=$GPU_SSH_ALIAS"' "$ROOT/scripts/prepare-join-role-config.sh"
 grep -Fq 'GDC_JOIN_SKIP_QUALIFICATION:-false' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'GDC_JOIN_VERIFICATION:-true' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'ML qualification explicitly disabled by the joining Host operator' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'gdc host join --skip-qualification [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]' "$ROOT/ROLE-JOIN.md"
-grep -Fq 'gdc host join --public-host <dns-name> --restore <ssh-alias>-validator-backup.tar <ssh-alias>' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' "$ROOT/ROLE-JOIN.md"
+! grep -Fq -- '--restore' "$ROOT/ROLE-JOIN.md"
+! grep -Fq -- '--verification' "$ROOT/ROLE-JOIN.md"
+! grep -Fq 'safe to run that form again' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'bounded six-epoch acceptance window' "$ROOT/ROLE-JOIN.md"
+! grep -Fq 'Re-run host join with --restore' "$ROOT/scripts/phase-join.sh"
 grep -Fq '"$ROOT/scripts/phase-ml-attach.sh" "$NODE"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'https://api.gonka-dev.net/join-bootstrap' "$ROOT/scripts/prepare-join-role-config.sh"
 grep -Fq 'verify_public_checksum' "$ROOT/scripts/prepare-join-role-config.sh"

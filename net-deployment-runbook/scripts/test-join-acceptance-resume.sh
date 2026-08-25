@@ -19,6 +19,8 @@ run_id=test-lifecycle-resume
 printf '%s\n' '[{"epoch":40,"weight_evidence":{"participant_eligible":false,"participant_weight":0,"accepted_weight_sum":0,"committed_total":0}},{"epoch":41,"weight_evidence":{"participant_eligible":true,"participant_weight":730,"accepted_weight_sum":730,"committed_total":730}}]' >"$run/poc-acceptance-observations.json"
 read -r initial_epoch deadline_epoch < <(join_acceptance_state_initialize "$run" "$run_id" "$genesis" "$participant" "$runtime" 40 3)
 [[ "$initial_epoch" == 40 && "$deadline_epoch" == 43 ]]
+join_acceptance_state_epoch_within_deadline 43 "$deadline_epoch"
+! join_acceptance_state_epoch_within_deadline 44 "$deadline_epoch"
 strongest="$(join_acceptance_state_restore_strongest "$run")"
 [[ "$(jq -r .epoch <<<"$strongest")" == 41 ]]
 join_acceptance_state_record_strongest "$run" 41 730 730 730

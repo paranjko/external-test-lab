@@ -493,8 +493,8 @@ if grep -Eq 'handoff\)|phase-handoff|GDC_NODE_HANDOFF_DIR' "$ROOT/gdc.sh" "$ROOT
 fi
 grep -Fq 'fetch-join-bootstrap.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'claim-devnet-faucet.sh' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'verify_public_checksums' "$ROOT/scripts/fetch-join-bootstrap.sh"
-grep -Fq 'public JOIN bootstrap checksum mismatch bootstrap_url=' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'verify-join-bootstrap-manifest.sh' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'public JOIN bootstrap checksum mismatch bootstrap_url=' "$ROOT/scripts/verify-join-bootstrap-manifest.sh"
 grep -Fq 'JOIN_BOOTSTRAP_FORMAT=1' "$ROOT/profiles/releases/v2026.07.23.lock"
 grep -Fq 'JOIN_BOOTSTRAP_FORMAT=1' "$ROOT/profiles/releases/v2026.08.06.lock"
 grep -Fq 'GDC_FAUCET_CLAIM_NGONKA' "$ROOT/scripts/phase-ops.sh"

@@ -8,7 +8,7 @@ bash -n "$BACKUP" "$ROOT/gdc.sh" "$ROOT/scripts/phase-join.sh" "$ROOT/scripts/ph
   "$ROOT/01-identities-genesis/collect-identities.sh" "$ROOT/02-node/init-identity.sh" \
   "$ROOT/03-join/grant-ml-ops.sh"
 
-grep -Fq -- '--restore <NODE-validator-backup.tar>' "$ROOT/gdc.sh"
+grep -Fq -- '--restore)' "$ROOT/gdc.sh"
 grep -Fq 'GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE' "$ROOT/gdc.sh"
 grep -Fq 'validator-backup.sh" restore' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'validator-backup.sh" create' "$ROOT/scripts/phase-join.sh"
@@ -38,7 +38,7 @@ grep -Fq 'test ! -e' "$BACKUP" || { echo 'restore must refuse to overwrite exist
 grep -Fq 'inference/config/node_key.json' "$BACKUP" || { echo 'backup must preserve the P2P node identity' >&2; exit 1; }
 grep -Fq 'remote-state/inference/config/node_key.json' "$BACKUP"
 grep -Fq 'validator-backup.tar' "$ROOT/ROLE-JOIN.md"
-grep -Fq 'gdc host join --public-host <dns-name> --restore <ssh-alias>-validator-backup.tar <ssh-alias>' "$ROOT/ROLE-JOIN.md"
+! grep -Fq -- '--restore' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'was accepted by the public RPC but was not committed within 60 seconds' "$ROOT/03-join/grant-ml-ops.sh"
 grep -Fq "sed '/^Usage:/,\$d'" "$ROOT/03-join/grant-ml-ops.sh"
 

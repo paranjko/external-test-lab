@@ -118,7 +118,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 baseline
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
-  ./gdc.sh host join [--verification] [--skip-qualification] [--public-host <DNS>] [--restore <NODE-validator-backup.tar>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
+  ./gdc.sh host join --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
@@ -144,7 +144,6 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 network confirmation-poc verify
   ./gdc.sh --release v2026.08.06 network upgrade verify <proposal-id>
   ./gdc.sh network reset --yes [--hosts <SSH_ALIAS[,SSH_ALIAS...]>]
-  ./gdc.sh host join [--skip-qualification] [--public-host <DNS>] [--restore <NODE-validator-backup.tar>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
   ./gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.07.23 host ml-attach <SSH_ALIAS>
@@ -578,14 +577,14 @@ case "$COMMAND" in
     esac
     ;;
   join)
-    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' skip_qualification=false verification=false
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' skip_qualification=false verification=true
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --skip-qualification) skip_qualification=true ;;
         --verification) verification=true ;;
         --public-host)
           join_public_host="${2:-}"
-          [[ "$join_public_host" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'host join --public-host requires a DNS name' >&2; exit 2; }
+          [[ "$join_public_host" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'host join --public-host requires an IP address or domain' >&2; exit 2; }
           shift
           ;;
         --restore)

@@ -30,7 +30,8 @@ it, and waits for `ACTIVE`. With an optional GPU SSH alias, it qualifies and
 attaches that MLNode automatically.
 
 `ACTIVE` is an onboarding state, not a successful validator join. The command
-continues through a bounded four-epoch acceptance window and returns
+continues through a bounded six-epoch acceptance window: two onboarding
+transitions followed by four effective-evidence epochs. It returns
 `JOIN_PASS` only after it proves a chain-recorded runtime, positive PoC weight,
 positive consensus voting power, and authenticated gateway inference.
 
@@ -40,8 +41,8 @@ operator.
 
 After a successful Genesis or JOIN, the command creates
 `$GDC_HOME/<ssh-alias>-validator-backup.tar`. Store this private archive away
-from the Host. It is required to restore the same validator after the Host is
-fully replaced.
+from the Host. It preserves the operator-owned validator material for a future
+documented recovery procedure.
 
 For an independent proof, use a clean checkout and a separate `GDC_HOME`, then
 share only the resulting `join-acceptance-<ssh-alias>/` evidence bundle. Its
@@ -55,49 +56,14 @@ pass the node's public DNS name explicitly:
 gdc host join --public-host node2.gonka-dev.net gdc-node2
 ```
 
-## Host lifecycle
+## Supported scope
 
-```bash
-gdc host verify <ssh-alias>
-gdc host stop <ssh-alias>
-gdc host start <ssh-alias>
-gdc host reset <ssh-alias>
-gdc host join [--skip-qualification] [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]
-gdc host join --verification [--skip-qualification] [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]
-```
-
-The first form performs the operational connection and creates the recovery
-archive. Add `--verification` to wait for chain acceptance, validator
-membership, and an authenticated inference regression. It is safe to run that
-form again for an already connected Host.
-
-To reuse a previously validated model installation without running the ML
-qualification probe again:
-
-```bash
-gdc host join --skip-qualification [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]
-```
-
-To restore a fully replaced Host, use the same JOIN command with its saved
-archive:
-
-```bash
-gdc host join --public-host <dns-name> --restore <ssh-alias>-validator-backup.tar <ssh-alias>
-```
-
-To refresh the private recovery archive while operator state is still
-available, run:
-
-```bash
-gdc host backup <ssh-alias>
-```
-
-The archive is written as `<ssh-alias>-validator-backup.tar` in the operator
-data root. For a split Host, the saved topology supplies and verifies its ML
-alias automatically; the Network Node owns validator identity.
-
-`host reset` removes only runbook-managed services and state for that Host.
-Its chain account remains owned by the operator.
+This guide documents one first-time independent Host connection. It creates a
+private validator backup as part of that flow. Repairing an existing Host,
+restoring a replaced Host, bypassing qualification, and broader Host lifecycle
+operations are not supported by this first-time JOIN interface. Do not use
+this guide to claim that an existing Host can be repaired or rejoined
+automatically.
 
 If the GPU runs on another machine, see `host ml-attach` in
 [ROLE-HOST.md](ROLE-HOST.md).
