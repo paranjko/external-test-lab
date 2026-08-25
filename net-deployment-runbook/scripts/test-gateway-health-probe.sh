@@ -20,6 +20,12 @@ EOF
 then
   echo 'confirmation PoC was routable' >&2; exit 1
 fi
+if "$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
+{"mode":"gateway","capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":1}}},"devshards":[{"active":true,"phase":"active","chain_phase":"PoCGenerateWindDown","requests_blocked":false}]}
+EOF
+then
+  echo 'non-Inference lifecycle was routable' >&2; exit 1
+fi
 tmp="$(mktemp -d)"
 server_pid=''
 trap '[[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true; rm -rf "$tmp"' EXIT
@@ -42,7 +48,7 @@ node -e '
     request.on("end",()=>{
       let payload={};try{payload=JSON.parse(body)}catch{}
       const valid=request.headers.authorization==="Bearer test-secret" && payload.model==="Qwen/Qwen3-0.6B" && payload.max_tokens===8;
-      response.writeHead(valid?200:401,{"content-type":"application/json"});
+      response.writeHead(valid?200:401,{"content-type":"application/json","X-GDC-Admission":"dispatched_once","X-GDC-Admission-ID":"0123456789abcdef0123456789abcdef","X-GDC-Arrival-Height":"100","X-GDC-Permit-Height":"101","X-GDC-Dispatch-Height":"101","X-GDC-Response-Height":"102","X-GDC-Safe-Generation":"100:7:Inference"});
       response.end(valid?JSON.stringify({choices:[{message:{content:"OK"}}]}):JSON.stringify({error:"unauthorized"}));
     });
   }).listen(Number(process.argv[1]),"127.0.0.1");
@@ -59,7 +65,7 @@ GDC_GATEWAY_HEALTH_FILE="$tmp/ready.json" \
 GDC_GATEWAY_RESERVE_FILE="$tmp/reserve.json" \
 GDC_GATEWAY_HEALTH_URL="http://127.0.0.1:$port" \
   "$ROOT/04-ops/gateway-health-probe.sh"
-jq -e '.state == "READY" and .http_status == 200 and .reason == "completion_succeeded" and (.latency_ms >= 0)' "$tmp/ready.json" >/dev/null
+jq -e '.state == "READY" and .http_status == 200 and .reason == "completion_succeeded" and (.latency_ms >= 0) and .admission == "dispatched_once" and .admission_id == "0123456789abcdef0123456789abcdef" and .arrival_height == 100 and .permit_height == 101 and .dispatch_height == 101 and .response_height == 102 and .safe_generation == "100:7:Inference"' "$tmp/ready.json" >/dev/null
 
 : >"$tmp/pooled"
 GDC_GATEWAY_ENV="$tmp/gateway.env" \
@@ -79,6 +85,7 @@ GDC_GATEWAY_HEALTH_URL="http://127.0.0.1:1" \
   "$ROOT/04-ops/gateway-health-probe.sh"
 jq -e '.state == "UNAVAILABLE" and .http_status == 0 and .reason == "request_failed"' "$tmp/unavailable.json" >/dev/null
 jq -e '.curl_exit > 0' "$tmp/unavailable.json" >/dev/null
+jq -e '.admission == "not_observed" and .admission_id == "" and .arrival_height == 0 and .permit_height == 0 and .dispatch_height == 0 and .response_height == 0 and .safe_generation == ""' "$tmp/unavailable.json" >/dev/null
 
 printf '%s\n' '{"state":"FAILED","reason":"replacement_escrow_creation_failed","checked_at":"2026-08-10T08:00:15Z"}' >"$tmp/failed-reconciliation.json"
 GDC_GATEWAY_ENV="$tmp/gateway.env" \

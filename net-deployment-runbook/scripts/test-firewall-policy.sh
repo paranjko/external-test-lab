@@ -11,6 +11,8 @@ ROLE=ml-only
 SSH_PORT=22
 MONITORING_CIDR=198.51.100.10/32
 ML_CLIENT_CIDR=198.51.100.20/32
+GATEWAY_SERVICES=true
+PUBLIC_EDGE_CIDR=198.51.100.30/32
 EOF
 cat >"$tmp/bin/ip" <<'EOF'
 #!/usr/bin/env sh
@@ -34,6 +36,8 @@ run_policy second
 for log in "$tmp/rules.first" "$tmp/rules.second"; do
   grep -Fq -- '-s 198.51.100.10/32 -p tcp -m multiport --dports 26660,8088,9101 -j ACCEPT' "$log"
   grep -Fq -- '-s 198.51.100.20/32 -p tcp -m multiport --dports 5000,8080 -j ACCEPT' "$log"
+  grep -Fq -- '-s 198.51.100.30/32 -p tcp -m multiport --dports 9099,18080 -j ACCEPT' "$log"
+  ! grep -Fq -- '--dports 3000,8000,8081,8082,18080' "$log"
   grep -Fq -- '-A GONKA_INGRESS -j DROP' "$log"
 done
 
@@ -43,7 +47,8 @@ done
 decision() {
   local source="$1" port="$2"
   if [[ "$source" == 198.51.100.10/32 && "$port" == 9101 ]] || \
-     [[ "$source" == 198.51.100.20/32 && "$port" == 5000 ]]; then
+     [[ "$source" == 198.51.100.20/32 && "$port" == 5000 ]] || \
+     [[ "$source" == 198.51.100.30/32 && "$port" == 18080 ]]; then
     printf 'ACCEPT\n'
   else
     printf 'DROP\n'
@@ -51,6 +56,8 @@ decision() {
 }
 [[ "$(decision 198.51.100.10/32 9101)" == ACCEPT ]]
 [[ "$(decision 198.51.100.20/32 5000)" == ACCEPT ]]
+[[ "$(decision 198.51.100.30/32 18080)" == ACCEPT ]]
+[[ "$(decision 203.0.113.44/32 18080)" == DROP ]]
 [[ "$(decision 203.0.113.44/32 9101)" == DROP ]]
 cmp "$tmp/rules.first" "$tmp/rules.second"
 printf 'PASS firewall policy fixture: explicit allows are terminal, unauthorized sources remain denied, repeated apply is stable\n'

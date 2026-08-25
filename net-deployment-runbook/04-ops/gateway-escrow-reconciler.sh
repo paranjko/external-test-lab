@@ -13,8 +13,13 @@ chain_rest="${GDC_GATEWAY_CHAIN_REST:-http://127.0.0.1:1317}"
 lock_file="${GDC_GATEWAY_RECONCILIATION_LOCK:-$(dirname "$status_file")/gateway-escrow-reconciler.lock}"
 reserve_file="${GDC_GATEWAY_RESERVE_FILE:-$(dirname "$status_file")/gateway-reserve.json}"
 replacement_attempt_file="${GDC_GATEWAY_REPLACEMENT_ATTEMPT_FILE:-$(dirname "$status_file")/gateway-replacement-attempt.json}"
+unavailability_file="${GDC_GATEWAY_UNAVAILABILITY_FILE:-$(dirname "$status_file")/gateway-unavailability.json}"
+transport_backoff_file="${GDC_GATEWAY_TRANSPORT_BACKOFF_FILE:-$(dirname "$status_file")/gateway-admission-transport.json}"
 replacement_max_attempts="${GDC_GATEWAY_REPLACEMENT_MAX_ATTEMPTS:-1}"
 replacement_backoff_seconds="${GDC_GATEWAY_REPLACEMENT_BACKOFF_SECONDS:-60}"
+replacement_unavailability_observations="${GDC_GATEWAY_REPLACEMENT_UNAVAILABILITY_OBSERVATIONS:-2}"
+transport_backoff_seconds="${GDC_GATEWAY_TRANSPORT_BACKOFF_SECONDS:-15}"
+transport_backoff_max_seconds="${GDC_GATEWAY_TRANSPORT_BACKOFF_MAX_SECONDS:-120}"
 
 mkdir -p "$(dirname "$status_file")"
 exec 9>"$lock_file"
@@ -22,17 +27,25 @@ flock -n 9 || exit 0
 
 write_status() {
   local state="$1" reason="$2" replacement="${3:-}"
-  local tmp checked_at entered_at
+  local tmp checked_at entered_at last_confirmed_at last_confirmed_state
   checked_at="$(date -u +%FT%TZ)"
   entered_at="$(jq -r --arg state "$state" --arg reason "$reason" --arg replacement "$replacement" '
     select(.state == $state and .reason == $reason and (.replacement_escrow // "") == $replacement)
     | .entered_at // .checked_at // empty
   ' "$status_file" 2>/dev/null || true)"
   [[ -n "$entered_at" ]] || entered_at="$checked_at"
+  last_confirmed_at="$(jq -r 'if .state == "READY" then .checked_at else .last_confirmed_at // empty end' "$status_file" 2>/dev/null || true)"
+  last_confirmed_state="$(jq -r 'if .state == "READY" then "READY" else .last_confirmed_state // empty end' "$status_file" 2>/dev/null || true)"
+  if [[ "$state" == READY ]]; then
+    last_confirmed_at="$checked_at"
+    last_confirmed_state=READY
+  fi
   tmp="$(mktemp "${status_file}.tmp.XXXXXX")"
   jq -n --arg state "$state" --arg reason "$reason" --arg replacement_escrow "$replacement" \
-    --arg checked_at "$checked_at" --arg entered_at "$entered_at" \
-    '{state:$state,reason:$reason,replacement_escrow:$replacement_escrow,entered_at:$entered_at,checked_at:$checked_at}' >"$tmp" || {
+    --arg checked_at "$checked_at" --arg entered_at "$entered_at" --arg last_confirmed_at "$last_confirmed_at" \
+    --arg last_confirmed_state "$last_confirmed_state" \
+    '{state:$state,reason:$reason,replacement_escrow:$replacement_escrow,entered_at:$entered_at,checked_at:$checked_at}
+     + (if $last_confirmed_at == "" then {} else {last_confirmed_at:$last_confirmed_at,last_confirmed_state:$last_confirmed_state} end)' >"$tmp" || {
       rm -f -- "$tmp"
       return 1
     }
@@ -53,6 +66,57 @@ replacement_attempt() {
     "$replacement_attempt_file" 2>/dev/null || true
 }
 
+clear_unavailability() {
+  rm -f -- "$unavailability_file"
+}
+
+clear_transport_backoff() {
+  rm -f -- "$transport_backoff_file"
+}
+
+transport_backoff_active() {
+  local next_attempt_at now_epoch next_epoch
+  [[ -f "$transport_backoff_file" ]] || return 1
+  next_attempt_at="$(jq -r '.next_attempt_at // empty' "$transport_backoff_file" 2>/dev/null || true)"
+  now_epoch="$(date -u +%s)"
+  next_epoch="$(date -u -d "$next_attempt_at" +%s 2>/dev/null || printf 0)"
+  (( now_epoch < next_epoch )) || return 1
+  jq -r '.failure_class // "connection_timeout"' "$transport_backoff_file"
+}
+
+record_transport_failure() {
+  local failure_class="$1" previous observations delay_seconds next_attempt_at tmp
+  previous="$(jq -c --arg failure_class "$failure_class" \
+    'select(type == "object" and .failure_class == $failure_class) // empty' \
+    "$transport_backoff_file" 2>/dev/null || true)"
+  observations=1
+  [[ -z "$previous" ]] || observations=$(( $(jq -r '.observations // 0' <<<"$previous") + 1 ))
+  delay_seconds=$(( transport_backoff_seconds * (2 ** (observations - 1)) ))
+  (( delay_seconds <= transport_backoff_max_seconds )) || delay_seconds="$transport_backoff_max_seconds"
+  next_attempt_at="$(date -u -d "+${delay_seconds} seconds" +%FT%TZ)"
+  tmp="$(mktemp "${transport_backoff_file}.tmp.XXXXXX")"
+  jq -n --arg failure_class "$failure_class" --arg next_attempt_at "$next_attempt_at" \
+    --argjson observations "$observations" --argjson delay_seconds "$delay_seconds" \
+    '{failure_class:$failure_class,observations:$observations,delay_seconds:$delay_seconds,next_attempt_at:$next_attempt_at,checked_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}' >"$tmp"
+  chmod 0644 "$tmp"
+  mv -fT -- "$tmp" "$transport_backoff_file"
+}
+
+observe_unavailability() {
+  local generation="$1" reason="$2" previous count tmp
+  previous="$(jq -c --arg generation "$generation" \
+    'select(type == "object" and .generation == $generation) // empty' \
+    "$unavailability_file" 2>/dev/null || true)"
+  count=1
+  [[ -z "$previous" ]] || count=$(( $(jq -r '.observations // 0' <<<"$previous") + 1 ))
+  tmp="$(mktemp "${unavailability_file}.tmp.XXXXXX")"
+  jq -n --arg generation "$generation" --arg reason "$reason" --argjson observations "$count" \
+    '{generation:$generation,reason:$reason,observations:$observations,checked_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}' >"$tmp"
+  chmod 0644 "$tmp"
+  mv -fT -- "$tmp" "$unavailability_file"
+  printf '%s\n' "$count"
+}
+
 replacement_generation() {
   local epoch
   epoch="$(curl -fsS --connect-timeout 3 --max-time 15 \
@@ -66,10 +130,11 @@ replacement_generation() {
   write_status PENDING gateway_credentials_unavailable
   exit 0
 }
-[[ "$replacement_max_attempts" =~ ^[1-9][0-9]*$ && "$replacement_backoff_seconds" =~ ^[1-9][0-9]*$ ]] || {
+if ! [[ "$replacement_max_attempts" =~ ^[1-9][0-9]*$ && "$replacement_backoff_seconds" =~ ^[1-9][0-9]*$ && "$replacement_unavailability_observations" =~ ^[0-9]+$ && "$transport_backoff_seconds" =~ ^[1-9][0-9]*$ && "$transport_backoff_max_seconds" =~ ^[1-9][0-9]*$ ]] \
+  || (( replacement_unavailability_observations < 2 || transport_backoff_max_seconds < transport_backoff_seconds )); then
   write_status FAILED replacement_attempt_configuration_invalid
   exit 1
-}
+fi
 
 # This runs from a root-owned systemd timer, while install-ops deliberately
 # leaves /srv/dai/ops operator-owned for routine deployment.  Never source
@@ -99,6 +164,11 @@ if [[ -z "$GDC_GATEWAY_ADMISSION_URL" ]]; then
   [[ "$admission_host" =~ ^[A-Za-z0-9.-]+$ ]] && GDC_GATEWAY_ADMISSION_URL="https://$admission_host"
 fi
 GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED="$(gateway_env_value GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED 2>/dev/null || printf true)"
+expected_host_count="${GDC_GATEWAY_EXPECTED_HOST_COUNT:-$(gateway_env_value GDC_GATEWAY_EXPECTED_HOST_COUNT 2>/dev/null || printf 0)}"
+[[ "$expected_host_count" =~ ^[0-9]+$ ]] || {
+  echo 'GDC_GATEWAY_EXPECTED_HOST_COUNT must be a non-negative integer' >&2
+  exit 2
+}
 [[ "${GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED:-true}" == true ]] || {
   write_status PENDING reconciliation_disabled
   exit 0
@@ -122,12 +192,32 @@ admin_delete() {
     -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" "$gateway_url$1" || true
 }
 admission_post() {
-  local path="$1" payload="$2" timeout_seconds="$3" deadline_ms
+  local path="$1" payload="$2" timeout_seconds="$3" deadline_ms stderr status rc failure_class
   deadline_ms="$(( $(date +%s%3N) + timeout_seconds * 1000 ))"
-  curl -sS --connect-timeout 3 --max-time "$timeout_seconds" -o "$4" -w '%{http_code}' \
+  stderr="$(mktemp)"
+  rc=0
+  status="$(curl -sS --connect-timeout 3 --max-time "$timeout_seconds" -o "$4" -w '%{http_code}' \
     -X POST "$GDC_GATEWAY_ADMISSION_URL$path" \
     -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -H 'Content-Type: application/json' \
-    -H "X-Request-Deadline-Ms: $deadline_ms" --data "$payload"
+    -H "X-Request-Deadline-Ms: $deadline_ms" --data "$payload" 2>"$stderr")" || rc=$?
+  if (( rc != 0 )); then
+    case "$rc" in
+      6) failure_class=dns_resolution_failed ;;
+      7) failure_class=connection_refused ;;
+      28) failure_class=connection_timeout ;;
+      35|51|58|60) failure_class=tls_failed ;;
+      *) failure_class=connection_timeout ;;
+    esac
+    rm -f -- "$stderr"
+    printf 'transport:%s\n' "$failure_class"
+    return 0
+  fi
+  rm -f -- "$stderr"
+  if [[ "$status" =~ ^5[0-9][0-9]$ ]]; then
+    printf 'transport:http_5xx\n'
+  else
+    printf '%s\n' "$status"
+  fi
 }
 chain_escrow() {
   curl -fsS --connect-timeout 3 --max-time 15 \
@@ -152,15 +242,25 @@ runtime_requires_poc_probation_recovery() {
 }
 
 recover_poc_probation() {
-  local id="$1" body status recovery_attempt=0
+  local id="$1" body status backoff_class recovery_attempt=0
   local payload
   payload="$(jq -cn --arg model "$DEVSHARD_MODEL" \
     '{model:$model,messages:[{role:"user",content:"Reply with OK"}],max_tokens:8,stream:true}')"
   while (( recovery_attempt < 12 )); do
     ((recovery_attempt += 1))
     runtime_requires_poc_probation_recovery "$id" || return 0
+    if backoff_class="$(transport_backoff_active)"; then
+      write_status DEGRADED "$backoff_class" "$id"
+      return 3
+    fi
     body="$(mktemp)"
-    status="$(admission_post "/devshard/$id/v1/chat/completions" "$payload" 45 "$body" || true)"
+    status="$(admission_post "/devshard/$id/v1/chat/completions" "$payload" 45 "$body")"
+    if [[ "$status" == transport:* ]]; then
+      rm -f -- "$body"
+      record_transport_failure "${status#transport:}"
+      write_status DEGRADED "${status#transport:}" "$id"
+      return 3
+    fi
     if [[ "$status" != 200 ]] || ! grep -Eq '^data: .*"choices"' "$body"; then
       rm -f -- "$body"
       write_status RECOVERING waiting_for_trusted_poc_runtime "$id"
@@ -174,7 +274,7 @@ recover_poc_probation() {
 }
 
 bind_and_probe_runtime() {
-  local id="$1" body status settings
+  local id="$1" body status settings backoff_class capacity_status
   # Global admission is an operator control.  Reconciliation must never undo
   # a maintenance or incident shutdown merely to make its own probe pass.
   settings="$(admin_get /v1/admin/settings 2>/dev/null || true)"
@@ -196,12 +296,33 @@ bind_and_probe_runtime() {
   # different selected validator host, so a local-only /diffs probe may
   # correctly return 404 even though the routable session is healthy.
   probe_payload="$(jq -cn --arg model "$DEVSHARD_MODEL" '{model:$model,messages:[{role:"user",content:"Reply with OK"}],max_tokens:1}')"
+  if backoff_class="$(transport_backoff_active)"; then
+    write_status DEGRADED "$backoff_class" "$id"
+    return 3
+  fi
   body="$(mktemp)"
   trap 'rm -f "$body"' RETURN
-  status="$(admission_post "/devshard/$id/v1/chat/completions" "$probe_payload" 30 "$body" || true)"
+  status="$(admission_post "/devshard/$id/v1/chat/completions" "$probe_payload" 30 "$body")"
+  if [[ "$status" == transport:* ]]; then
+    record_transport_failure "${status#transport:}"
+    write_status DEGRADED "${status#transport:}" "$id"
+    return 3
+  fi
   if [[ "$status" != 200 ]] || ! jq -e '.choices | type == "array" and length > 0' "$body" >/dev/null 2>&1; then
-    write_status RECOVERING waiting_for_versiond_session "$id"
+    write_status DEGRADED versiond_session_pending "$id"
     return 1
+  fi
+  clear_transport_backoff
+  clear_unavailability
+  if (( expected_host_count > 0 )); then
+    capacity_status="$(admin_get /v1/status 2>/dev/null || true)"
+    if ! jq -e --argjson expected "$expected_host_count" '
+      (.capacity.host_count | tonumber) == $expected
+      and (.capacity.available_host_count | tonumber) == $expected
+    ' <<<"$capacity_status" >/dev/null 2>&1; then
+      write_status DEGRADED fleet_capacity_incomplete "$id"
+      return 4
+    fi
   fi
   write_status READY replacement_routable "$id"
 }
@@ -216,7 +337,13 @@ admin_state="$(admin_get /v1/admin/devshards 2>/dev/null || true)"
 # that decision in this external controller rather than changing node code.
 gateway_status="$(admin_get /v1/status 2>/dev/null || true)"
 poc_active=false
-if jq -e '([.devshards[]? | .chain_phase] + [.chain_phase?] | any(. != null and . != "" and . != "Inference"))' \
+if jq -e '(
+  ([.devshards[]? | .chain_phase] + [.chain_phase?]
+    | any(. != null and . != "" and . != "Inference"))
+  or
+  ([.devshards[]? | .confirmation_poc_phase] + [.confirmation_poc_phase?]
+    | any(. != null and . != "" and . != "NORMAL_OPERATION"))
+)' \
   <<<"$gateway_status" >/dev/null 2>&1; then
   poc_active=true
 fi
@@ -233,6 +360,13 @@ if [[ "$poc_active" == true ]]; then
     write_status RECOVERING waiting_for_poc_preserved_runtime
     exit 0
   fi
+  # Confirmation PoC deliberately suspends normal user inference. A probe in
+  # that phase cannot distinguish the expected admission result from a broken
+  # versiond session, and may turn a short transition into replacement churn.
+  # Preserve all existing runtime and reserve state until normal operation
+  # resumes, then evaluate routability on its real inference path.
+  write_status DEGRADED runtime_not_routable
+  exit 0
 fi
 
 pending_id="$(jq -r 'select(.state == "RECOVERING" or .state == "PENDING") | .replacement_escrow // empty' "$status_file" 2>/dev/null || true)"
@@ -337,16 +471,27 @@ if ((${#valid_active_ids[@]} > 0)); then
     else
       probe_rc=$?
       # A manual global admission shutdown applies to every runtime. Preserve
-      # that authoritative state instead of trying older pool members.
-      ((probe_rc == 2)) && exit 0
+      # that authoritative state instead of trying older pool members. A
+      # classified transport failure is likewise a degraded observation, not
+      # evidence that a different runtime needs activation or replacement.
+      ((probe_rc == 2 || probe_rc == 3 || probe_rc == 4)) && exit 0
     fi
   done
-  write_status RECOVERING waiting_for_versiond_session "${valid_active_ids[0]}"
+  write_status DEGRADED versiond_session_pending "${valid_active_ids[0]}"
   exit 0
 fi
 
 if ((${#unknown_ids[@]} > 0)); then
-  write_status RECOVERING chain_escrow_query_unavailable
+  write_status DEGRADED connection_timeout
+  exit 0
+fi
+
+# A PoC window has an authoritative preserved participant set. Creating a new
+# escrow after locally deactivating non-preserved runtimes cannot make it
+# eligible in that window and only consumes the bounded reserve. Wait for the
+# native lifecycle to expose a routable preserved runtime instead.
+if [[ "$poc_active" == true ]]; then
+  write_status DEGRADED runtime_not_routable
   exit 0
 fi
 
@@ -363,6 +508,11 @@ generation="$(replacement_generation)" || {
   write_status RECOVERING replacement_generation_unavailable
   exit 1
 }
+unavailability_observations="$(observe_unavailability "$generation" runtime_not_routable)"
+if (( unavailability_observations < replacement_unavailability_observations )); then
+  write_status DEGRADED runtime_not_routable
+  exit 0
+fi
 existing_attempt="$(replacement_attempt)"
 if [[ -n "$existing_attempt" ]] && [[ "$(jq -r .generation <<<"$existing_attempt")" == "$generation" ]]; then
   existing_state="$(jq -r .state <<<"$existing_attempt")"

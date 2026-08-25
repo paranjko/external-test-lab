@@ -44,6 +44,16 @@
       header_up Host {$PUBLIC_HOST}
     }
   }
+  # This public edge is also a participant. Its Host-qualified chain routes
+  # must prove that participant's own CometBFT identity, not the configured
+  # gateway's canonical RPC. Keep this ahead of the public application
+  # fallback so /chain-rpc/status and /chain-api/* remain Host-local.
+  @participant_chain path /chain-rpc/* /chain-api/*
+  handle @participant_chain {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
+  }
   # The installer replaces this directory atomically only after checksum
   # verification.  Before Genesis it is absent and file_server returns 404;
   # after Genesis every response comes from the same verified bundle.

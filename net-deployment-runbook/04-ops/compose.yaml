@@ -77,7 +77,7 @@ services:
         - CMD-SHELL
         - >-
           wget -qO- http://127.0.0.1:18080/v1/status
-          | /usr/local/bin/gateway-status-routable.sh
+          | grep -Eq '"routable"[[:space:]]*:[[:space:]]*true'
       interval: 30s
       timeout: 5s
       retries: 5

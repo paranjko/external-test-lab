@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 usage() {
   printf 'Usage: %s API_URL CLIENT_KEY EVIDENCE_DIR OUTPUT_JSON [TIMEOUT_SECONDS]\n' "$0" >&2
 }
@@ -93,31 +95,20 @@ while (( SECONDS < deadline )); do
   status_rc=$?
   set -e
   [[ "$status_rc" == 0 ]] || report_curl_failure status "$api_url/v1/status" "${status_http:-0}" "$status_rc" "$status_stderr"
-  # A gateway can retain a routable runtime while confirmation-PoC has
-  # intentionally suspended user inference. Do not send a completion merely
-  # because the transport/status endpoint is green: that produces a 429 and
-  # falsely labels the gateway ready. The raw status response remains in the
-  # evidence directory with the exact phase for diagnosis.
-  confirmation_poc_active=false
-  if [[ "$status_rc" == 0 && "$status_http" == 200 ]] && jq -e '
-    [.devshards[]? | .confirmation_poc_phase? | select(type == "string" and . != "")]
-    | any(. != "NORMAL_OPERATION")
-  ' "$status_file" >/dev/null 2>&1; then
-    confirmation_poc_active=true
-  fi
-  if [[ "$confirmation_poc_active" == true ]]; then
-    last_reason='confirmation_poc_not_normal_operation'
+  # The public status endpoint can retain active runtimes during a lifecycle
+  # transition. Use the same capacity and Inference-phase predicate as the
+  # continuity observer before attempting a completion.
+  if [[ "$status_rc" == 0 && "$status_http" == 200 ]] \
+    && ! "$ROOT/04-ops/gateway-status-routable.sh" <"$status_file" >/dev/null 2>&1; then
+    last_reason='runtime_not_routable'
     elapsed_ms=$(( $(date +%s%3N) - started_ms ))
-    record_attempt "${status_http:-0}" 0 false false "$last_reason" "$elapsed_ms" "$status_rc" 0 'not_sent_confirmation_poc' 'not_sent'
+    record_attempt "${status_http:-0}" 0 false false "$last_reason" "$elapsed_ms" "$status_rc" 0 'not_sent_runtime_not_routable' 'not_sent'
     rm -f "$status_stderr" "$completion_stderr" "$completion_headers"
     printf 'WAIT inference attempt=%s reason=%s status_ready=false\n' "$attempt" "$last_reason" >&2
     (( SECONDS < deadline )) && sleep 5
     continue
   fi
-  if [[ "$status_rc" == 0 && "$status_http" == 200 ]] && jq -e '
-    (.routable == true)
-    or ([.devshards[]? | select((.active // false) == true and (.requests_blocked // false) == false and ((.phase // "") == "active" or (.phase // "") == "Inference"))] | length > 0)
-  ' "$status_file" >/dev/null 2>&1; then
+  if [[ "$status_rc" == 0 && "$status_http" == 200 ]]; then
     status_ready=true
     reason='routable_runtime_observed'
   fi

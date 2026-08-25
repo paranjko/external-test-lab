@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+#!/bin/sh
+set -eu
 
 # Read one official gateway /v1/status JSON document from stdin. The official
 # single-runtime response exposes `routable`; pooled v3 omits it and instead
@@ -9,7 +9,8 @@ jq -e '
     [.devshards[]?
       | select(.active == true)
       | select((.runtime.phase // .phase // "") == "active")
-      | select((.runtime.requests_blocked // .requests_blocked // false) != true)]
+      | select((.runtime.requests_blocked // .requests_blocked // false) != true)
+      | select((.runtime.chain_phase // .chain_phase // "Inference") == "Inference")]
     | length > 0;
   def positive_capacity:
     (.capacity.total_weight // .capacity.effective_weight
@@ -21,5 +22,8 @@ jq -e '
     ([.confirmation_poc_phase?, (.devshards[]? | .confirmation_poc_phase?)]
       | map(select(type == "string" and . != "" and . != "NORMAL_OPERATION"))
       | length) == 0;
-  normal_confirmation and ((.routable == true) or (positive_capacity and active_unblocked))
+  normal_confirmation and (
+    ((.routable == true) and (([.devshards[]?] | length) == 0 or active_unblocked))
+    or (positive_capacity and active_unblocked)
+  )
 ' >/dev/null

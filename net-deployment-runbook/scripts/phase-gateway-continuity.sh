@@ -3,25 +3,61 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 record_phase_profile gateway-continuity
+step 'Initialize bounded continuity transport'
 
 RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-gateway-continuity"
 mkdir -p "$RUN"
 install_evidence_exit_trap 'Gateway continuity'
 declare -a observability_pids=()
 
+topology_ssh() {
+  timeout --foreground --kill-after=2 10 \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 "$@"
+}
+
 gateway_url="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
 gateway_url="${gateway_url%/}"
 chain_base="${GDC_CONTINUITY_CHAIN_BASE_URL:-https://$GENESIS_PUBLIC_HOST}"
 chain_base="${chain_base%/}"
-timeout_seconds="${GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS:-900}"
+step 'Resolve bounded continuity transports'
+chain_transport_ip="$(topology_ssh -G "$GENESIS_NODE" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+edge_transport_ip="$(topology_ssh -G "$PUBLIC_EDGE_NODE" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+[[ "$chain_transport_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || die 'canonical chain transport IP is unavailable from topology'
+[[ "$edge_transport_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || die 'public edge transport IP is unavailable from topology'
+declare -a continuity_resolve=(
+  --resolve "$GENESIS_PUBLIC_HOST:443:$chain_transport_ip"
+  --resolve "$API_HOST:443:$edge_transport_ip"
+  --resolve "$SITE_HOST:443:$edge_transport_ip"
+)
+step 'Begin strict recovery-readiness preflight'
+continuity_curl() {
+  curl "${continuity_resolve[@]}" "$@"
+}
+continuity_ssh() {
+  # Preflight and post-dispatch evidence must not wait indefinitely for a
+  # broken control-plane transport. Keep SSH non-interactive and bounded so a
+  # missing Host sample becomes a recorded failed predicate rather than an
+  # observer hang that can consume the rotation horizon.
+  timeout --foreground --kill-after=2 15 \
+    ssh -T -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=5 -o ServerAliveCountMax=1 "$@"
+}
+# A full post-boundary replacement can take more than one 70-block epoch to
+# regain routability and five-Host voting power. Keep the observer bounded,
+# but allow enough time to distinguish delayed recovery from non-recovery.
+timeout_seconds="${GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS:-1800}"
+preflight_timeout="${GDC_GATEWAY_PREFLIGHT_TIMEOUT_SECONDS:-300}"
 pre_blocks="${GDC_GATEWAY_CONTINUITY_PRE_BLOCKS:-3}"
 post_success_target="${GDC_GATEWAY_CONTINUITY_POST_SUCCESSES:-2}"
 minimum_lead_blocks="${GDC_GATEWAY_CONTINUITY_MIN_LEAD_BLOCKS:-10}"
-# The gateway's non-stream response floor is 20 seconds.  The observer must
-# outlive that floor; an equal client timeout fabricates HTTP 000 at the exact
-# boundary while a valid completion is still permitted.
-request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-270}"
+# Three exact-boundary arrivals share one serialized upstream permit. Their
+# absolute deadline must cover post-PoC recovery plus earlier one-shot
+# dispatches; curl keeps a response margin beyond the admission cap.
+request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-930}"
 [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS must be positive'
+[[ "$preflight_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_PREFLIGHT_TIMEOUT_SECONDS must be positive'
 [[ "$pre_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_PRE_BLOCKS must be positive'
 [[ "$post_success_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_POST_SUCCESSES must be positive'
 [[ "$minimum_lead_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_MIN_LEAD_BLOCKS must be positive'
@@ -36,12 +72,68 @@ key_file="$SECRETS/gateway.client-keys"
 client_key="$(cut -d, -f1 "$key_file")"
 [[ -n "$client_key" ]] || die 'gateway assurance key is empty'
 
+capture_recovery_readiness() {
+  local participants='{}' validators='{}' epoch_group='{}' public_health='{}' reserve='{}' reconciliation='{}'
+  local participants_ok=false validators_ok=false epoch_group_ok=false gateway_status_ok=false
+  local public_health_ok=false reserve_ok=false reconciliation_ok=false expected_hosts evaluation
+
+  if participants="$(continuity_ssh "$GATEWAY_NODE" 'curl -fsS --connect-timeout 3 --max-time 10 http://127.0.0.1:1317/productscience/inference/inference/participant' 2>/dev/null)" \
+    && jq -e . <<<"$participants" >/dev/null 2>&1; then participants_ok=true; else participants='{}'; fi
+  if validators="$(continuity_ssh "$GATEWAY_NODE" 'curl -fsS --connect-timeout 3 --max-time 10 "http://127.0.0.1:26657/validators?per_page=100"' 2>/dev/null)" \
+    && jq -e . <<<"$validators" >/dev/null 2>&1; then validators_ok=true; else validators='{}'; fi
+  if epoch_group="$(continuity_ssh "$GATEWAY_NODE" 'curl -fsS --connect-timeout 3 --max-time 10 http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data' 2>/dev/null)" \
+    && jq -e . <<<"$epoch_group" >/dev/null 2>&1; then epoch_group_ok=true; else epoch_group='{}'; fi
+  if jq -e . <<<"$gateway_status" >/dev/null 2>&1; then gateway_status_ok=true; else gateway_status='{}'; fi
+  expected_hosts="$(printf '%s\n' "${GDC_NODES[@]}" | while IFS= read -r node; do node_public_host "$node"; done | jq -Rsc 'split("\n") | map(select(length > 0))')"
+  if public_health="$(continuity_curl -fsS --connect-timeout 3 --max-time 10 "https://$SITE_HOST/status/gateway-health" 2>/dev/null)" \
+    && jq -e . <<<"$public_health" >/dev/null 2>&1; then public_health_ok=true; else public_health='{}'; fi
+  if reserve="$(continuity_ssh "$GATEWAY_NODE" 'sudo cat /srv/dai/ops/status/gateway-reserve.json' 2>/dev/null)" \
+    && jq -e . <<<"$reserve" >/dev/null 2>&1; then reserve_ok=true; else reserve='{}'; fi
+  if reconciliation="$(continuity_ssh "$GATEWAY_NODE" 'sudo cat /srv/dai/ops/status/gateway-reconciliation.json' 2>/dev/null)" \
+    && jq -e . <<<"$reconciliation" >/dev/null 2>&1; then reconciliation_ok=true; else reconciliation='{}'; fi
+
+  evaluation="$(jq -nc \
+    --arg observed_at "$(date -u +%FT%TZ)" --argjson height "$height" \
+    --argjson participants_ok "$participants_ok" --argjson validators_ok "$validators_ok" \
+    --argjson epoch_group_ok "$epoch_group_ok" --argjson gateway_status_ok "$gateway_status_ok" \
+    --argjson public_health_ok "$public_health_ok" --argjson reserve_ok "$reserve_ok" \
+    --argjson reconciliation_ok "$reconciliation_ok" --argjson expected_hosts "$expected_hosts" \
+    --argjson participants "$participants" --argjson validators "$validators" --argjson epoch_group "$epoch_group" \
+    --argjson gateway_status "$gateway_status" --argjson public_health "$public_health" \
+    --argjson reserve "$reserve" --argjson reconciliation "$reconciliation" \
+    '{observed_at:$observed_at,height:$height,
+      sources:{participants:$participants_ok,validators:$validators_ok,epoch_group:$epoch_group_ok,
+        gateway_status:$gateway_status_ok,public_health:$public_health_ok,reserve:$reserve_ok,reconciliation:$reconciliation_ok},
+      expected_hosts:$expected_hosts,participants:$participants,validators:$validators,epoch_group:$epoch_group,
+      gateway_status:$gateway_status,public_health:$public_health,reserve:$reserve,reconciliation:$reconciliation}' \
+    | "$ROOT/scripts/evaluate-recovery-readiness.sh" "$MODEL_ID")"
+  printf '%s\n' "$evaluation" >>"$RUN/recovery-readiness.jsonl"
+  jq -e '.overall_ready == true' <<<"$evaluation" >/dev/null
+}
+
+: >"$RUN/recovery-readiness.jsonl"
+preflight_deadline=$((SECONDS + preflight_timeout))
+preflight_ready_samples=0
+last_preflight_height=0
+while (( SECONDS < preflight_deadline && preflight_ready_samples < 3 )); do
+  height="$(continuity_curl -fsS --connect-timeout 3 --max-time 10 "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+  if (( height <= last_preflight_height )); then sleep 1; continue; fi
+  last_preflight_height="$height"
+  gateway_status="$(continuity_curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
+  if capture_recovery_readiness; then
+    preflight_ready_samples=$((preflight_ready_samples + 1))
+  else
+    preflight_ready_samples=0
+  fi
+done
+(( preflight_ready_samples == 3 )) || die 'three consecutive full-fleet recovery readiness samples were not observed'
+
 step 'Capture the live topology and calculate the next PoC boundary'
-curl -fsS "$chain_base/chain-api/productscience/inference/inference/params" >"$RUN/params.json"
-curl -fsS "$chain_base/chain-api/productscience/inference/inference/participant" >"$RUN/participants.json"
-curl -fsS "$chain_base/chain-api/productscience/inference/inference/current_epoch_group_data" >"$RUN/epoch-group-before.json"
-curl -fsS "$chain_base/chain-rpc/status" >"$RUN/chain-status-before.json"
-capture_canonical_genesis "$chain_base/chain-rpc/genesis" "$RUN/genesis.json"
+continuity_curl -fsS "$chain_base/chain-api/productscience/inference/inference/params" >"$RUN/params.json"
+continuity_curl -fsS "$chain_base/chain-api/productscience/inference/inference/participant" >"$RUN/participants.json"
+continuity_curl -fsS "$chain_base/chain-api/productscience/inference/inference/current_epoch_group_data" >"$RUN/epoch-group-before.json"
+continuity_curl -fsS "$chain_base/chain-rpc/status" >"$RUN/chain-status-before.json"
+continuity_curl -fsS "$chain_base/chain-rpc/genesis" | jq -eS '.result.genesis' >"$RUN/genesis.json"
 genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 read -r epoch_length epoch_shift < <(
   jq -er '(.params // .).epoch_params | [(.epoch_length|tonumber),(.epoch_shift|tonumber)] | @tsv' "$RUN/params.json"
@@ -51,7 +143,7 @@ height="$(jq -er '.result.sync_info.latest_block_height | tonumber' "$RUN/chain-
 position=$(((height - epoch_shift) % epoch_length))
 (( position < 0 )) && position=$((position + epoch_length))
 target_anchor=$((height + epoch_length - position))
-current_height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+current_height="$(continuity_curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
 # The topology and evidence preflight can consume several short block
 # intervals.  Starting an exact-height observer with too little lead time
 # makes a missed anchor likely before it has even begun polling.  Move to the
@@ -72,13 +164,16 @@ start_height=$((target_anchor - pre_blocks))
   printf 'target_poc_anchor=%s\n' "$target_anchor"
   printf 'epoch_length=%s\n' "$epoch_length"
   printf 'epoch_shift=%s\n' "$epoch_shift"
+  printf 'continuity_timeout_seconds=%s\n' "$timeout_seconds"
+  printf 'request_timeout_seconds=%s\n' "$request_timeout"
+  printf 'post_success_target=%s\n' "$post_success_target"
 } >"$RUN/context.env"
 
 deadline=$((SECONDS + timeout_seconds))
 while (( height < start_height && SECONDS < deadline )); do
   printf 'WAIT  continuity window height=%s start=%s PoC=%s\n' "$height" "$start_height" "$target_anchor"
   sleep 5
-  height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+  height="$(continuity_curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
 done
 (( height >= start_height )) || die "chain did not reach continuity start height $start_height"
 
@@ -98,7 +193,7 @@ request_observation() {
     --arg model "$MODEL_ID" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:1}')"
   headers="$RUN/request-${coverage}.headers"
   deadline_ms="$(( $(date +%s%3N) + request_timeout * 1000 ))"
-  response="$(curl -sS --connect-timeout 10 --max-time "$request_timeout" -D "$headers" -w $'\n%{http_code}' \
+  response="$(continuity_curl -sS --connect-timeout 10 --max-time "$request_timeout" -D "$headers" -w $'\n%{http_code}' \
     "$gateway_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
     -H "X-Request-Deadline-Ms: $deadline_ms" -H 'Content-Type: application/json' --data-binary "$request" || true)"
   http_code="${response##*$'\n'}"
@@ -122,7 +217,7 @@ request_observation() {
   fi
   audit='{}'
   if [[ "$admission_id" =~ ^[a-f0-9]{32}$ ]]; then
-    audit="$(ssh -T "$PUBLIC_EDGE_NODE" "sudo jq -c --arg id '$admission_id' 'select(.admission_id == \$id)' /srv/dai/edge/status/gateway-admission.jsonl 2>/dev/null | tail -n1" 2>/dev/null || true)"
+    audit="$(continuity_ssh "$PUBLIC_EDGE_NODE" "sudo jq -c --arg id '$admission_id' 'select(.admission_id == \$id)' /srv/dai/edge/status/gateway-admission.jsonl 2>/dev/null | tail -n1" 2>/dev/null || true)"
     [[ -n "$audit" ]] || audit='{}'
   fi
   arrival_at_ms="$(jq -r '.arrival_at_ms // 0' <<<"$audit" 2>/dev/null || printf 0)"
@@ -153,14 +248,14 @@ capture_targeted_observation() {
   local observation_height observability_pid observation
 
   while (( SECONDS < deadline )); do
-    observation_height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+    observation_height="$(continuity_curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
     if (( observation_height == observation_target )); then
       mkdir -p "$RUN/observability/$coverage"
       "$ROOT/scripts/capture-gateway-observability.sh" "$RUN/observability/$coverage" \
         "$chain_base" "$gateway_url" "$observation_height" "$coverage" \
         >"$RUN/observability/$coverage/capture.log" 2>&1 &
       observability_pid=$!
-      gateway_status="$(curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
+      gateway_status="$(continuity_curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
       chain_phase="$(jq -r '
         ([.devshards[]? | select(.active == true) | .chain_phase]
           + [if .chain_phase? then .chain_phase else empty end])
@@ -210,8 +305,8 @@ sequence=0
 # intentionally disabled: it would turn a buffered user request into retries.
 while false; do
   sequence=$((sequence + 1))
-  height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
-  gateway_status="$(curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
+  height="$(continuity_curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+  gateway_status="$(continuity_curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
   chain_phase="$(jq -r '
     ([.devshards[]? | select(.active == true) | .chain_phase]
       + [if .chain_phase? then .chain_phase else empty end])
@@ -231,7 +326,7 @@ while false; do
   fi
 
   if (( height >= target_anchor )); then
-    snapshot="$(curl -sS --connect-timeout 5 --max-time 15 \
+    snapshot="$(continuity_curl -sS --connect-timeout 5 --max-time 15 \
       "$chain_base/chain-api/productscience/inference/inference/preserved_nodes_snapshot" || true)"
     snapshot_anchor="$(jq -r '.snapshot.episode_anchor_height // 0 | tonumber' <<<"$snapshot" 2>/dev/null || printf 0)"
     if (( snapshot_anchor == target_anchor )); then
@@ -282,14 +377,20 @@ fi
 
 post_successes=0
 last_post_observation_height=0
+last_recovery_evaluation_height=0
 while (( SECONDS < deadline && post_successes < post_success_target )); do
-  height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
-  gateway_status="$(curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
+  height="$(continuity_curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+  gateway_status="$(continuity_curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
   chain_phase="$(jq -r '([.devshards[]? | select(.active == true) | .chain_phase] + [if .chain_phase? then .chain_phase else empty end]) | map(select(. != null and . != "")) | first // "UNKNOWN"' <<<"$gateway_status" 2>/dev/null || printf UNKNOWN)"
   # A successful request consumes the participant's current block budget.
   # Keep the independent recovery observations on distinct heights so the
   # second probe measures recovery, rather than competing with the first.
-  if (( height > target_anchor && height > last_post_observation_height )) && [[ "$chain_phase" == Inference ]]; then
+  if (( height > target_anchor && height > last_post_observation_height && height > last_recovery_evaluation_height )); then
+    last_recovery_evaluation_height="$height"
+    if ! capture_recovery_readiness; then
+      sleep 1
+      continue
+    fi
     last_post_observation_height="$height"
     coverage="post-recovery-$((post_successes + 1))"
     mkdir -p "$RUN/observability/$coverage"
@@ -313,8 +414,8 @@ while (( SECONDS < deadline && post_successes < post_success_target )); do
   fi
 done
 
-curl -fsS "$chain_base/chain-rpc/status" >"$RUN/chain-status-after.json"
-curl -fsS "$chain_base/chain-api/productscience/inference/inference/current_epoch_group_data" >"$RUN/epoch-group-after.json"
+continuity_curl -fsS "$chain_base/chain-rpc/status" >"$RUN/chain-status-after.json"
+continuity_curl -fsS "$chain_base/chain-api/productscience/inference/inference/current_epoch_group_data" >"$RUN/epoch-group-after.json"
 set +e
 observability_rc=0
 for observability_pid in "${observability_pids[@]}"; do

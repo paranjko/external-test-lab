@@ -140,9 +140,10 @@ CADDY
     file_server
   }
   # Publish only the fixed GPU inventory query. Do not expose the general
-  # Prometheus query API through the public status origin.
+  # Prometheus query API through the public status origin. Exclude series whose
+  # latest exporter sample is older than the live-inventory freshness bound.
   handle /status/gpus {
-    rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes
+    rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes%20unless%20(time()%20-%20timestamp(gdc_nvidia_memory_total_bytes)%20%3E%20120)
     reverse_proxy 127.0.0.1:9099
   }
   # The site consumes software information only from the monitoring inventory,

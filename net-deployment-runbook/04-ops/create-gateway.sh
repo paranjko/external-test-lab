@@ -160,6 +160,7 @@ GDC_GATEWAY_ADMIN_URL=http://127.0.0.1:18080
 GDC_GATEWAY_ADMISSION_URL=https://${API_HOST}
 GDC_GATEWAY_REPLACEMENT_MAX_ATTEMPTS=${GDC_GATEWAY_REPLACEMENT_MAX_ATTEMPTS:-1}
 GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true
+GDC_GATEWAY_EXPECTED_HOST_COUNT=${active_participant_count}
 DEVSHARD_POC_REQUEST_MODE=relaxed
 # The short test-lab PoC phases temporarily expose no current validation
 # weight. Relaxed mode must keep using the preserved participant set instead

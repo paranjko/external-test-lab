@@ -103,6 +103,11 @@ use_network_owner_data_home() {
   select_network_owner_data_home || return 0
 }
 
+use_operator_inventory() {
+  [[ -s "$GDC_DATA_ROOT/.env" ]] || return 0
+  export GDC_ENV="$GDC_DATA_ROOT/.env"
+}
+
 usage() {
   cat <<'EOF'
 Gonka DevNet Community manual deployment
@@ -268,6 +273,9 @@ case "$COMMAND" in
     ;;
   prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit)
     use_network_owner_data_home
+    if [[ "$COMMAND" == gateway-continuity || "$COMMAND" == audit ]]; then
+      use_operator_inventory
+    fi
     [[ "$COMMAND" == reset || $# -eq 0 ]] || { usage; exit 2; }
     if [[ "$COMMAND" == reset ]]; then
       # A completed Genesis keeps its narrow role input under the network-owner
@@ -428,6 +436,7 @@ case "$COMMAND" in
     ;;
   gateway)
     use_network_owner_data_home
+    use_operator_inventory
     gateway_action="${1:-}"; shift || true
     case "$gateway_action" in
       access-key)

@@ -17,30 +17,17 @@ gateway_url="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
 step 'Read the public gateway runtime state'
 status="$(curl -fsS --connect-timeout 5 --max-time 20 "${gateway_url%/}/v1/status" \
   -H "Authorization: Bearer $client_key")"
-jq -e '
-  ([.devshards[]?
-    | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)
-    | .id]
-   + [if .phase == "active" and (.requests_blocked // false) == false then .escrow_id? else empty end])
-  | any(. != null and (tostring | test("^[1-9][0-9]*$")))
-' <<<"$status" >/dev/null || die 'gateway has no active unblocked runtime'
-
-confirmation_poc_active=false
-if jq -e '
-  [.confirmation_poc_phase?, (.devshards[]? | .confirmation_poc_phase?)]
-  | any(type == "string" and . != "" and . != "NORMAL_OPERATION")
-' <<<"$status" >/dev/null; then
-  confirmation_poc_active=true
+status_routable=false
+if printf '%s\n' "$status" | "$ROOT/04-ops/gateway-status-routable.sh" >/dev/null 2>&1; then
+  status_routable=true
 fi
 
 if [[ "$action" == status ]]; then
-  jq --arg state "$([[ "$confirmation_poc_active" == true ]] && printf TRANSITION || printf READY)" \
-    --arg reason "$([[ "$confirmation_poc_active" == true ]] && printf confirmation_poc_not_normal_operation || printf runtime_routable)" \
+  jq --arg state "$([[ "$status_routable" == true ]] && printf READY || printf TRANSITION)" \
+    --arg reason "$([[ "$status_routable" == true ]] && printf runtime_routable || printf runtime_not_routable)" \
     '{state:$state,reason:$reason,runtimes:(([.devshards[]? | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)] | length) + (if .phase == "active" and (.requests_blocked // false) == false then 1 else 0 end)),model:(.model // ([.devshards[]?.model] | first))}' <<<"$status"
   exit 0
 fi
-
-[[ "$confirmation_poc_active" == false ]] || die 'gateway confirmation PoC is not in NORMAL_OPERATION; no inference dispatched'
 
 step 'Prove authenticated chain-accounted inference'
 verify_evidence="${GDC_GATEWAY_VERIFY_EVIDENCE_DIR:-$GDC_HOME/runs/${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}-gateway-verify}"

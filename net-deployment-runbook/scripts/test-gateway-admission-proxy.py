@@ -37,6 +37,8 @@ class State:
     in_flight = 0
     max_in_flight = 0
     dispatch_delay = 0
+    state_delay = 0
+    chain_phase = "Inference"
     lock = threading.Lock()
 
 
@@ -45,8 +47,10 @@ class Backend(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if State.state_delay:
+            time.sleep(State.state_delay)
         if self.path == "/v1/status":
-            body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}}, "devshards": [{"id": "41", "active": State.ready, "runtime": {"phase": "active", "requests_blocked": False}}]}
+            body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}}, "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False}}]}
         elif self.path == "/epoch":
             epoch = State.epochs[State.epoch_index % len(State.epochs)]
             State.epoch_index += 1
@@ -66,7 +70,11 @@ class Backend(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.wfile.write(encoded)
+        except BrokenPipeError:
+            # The deadline regression intentionally closes this state request.
+            pass
 
     def do_POST(self):
         length = int(self.headers["Content-Length"])
@@ -116,12 +124,14 @@ def post(proxy_port, deadline=None, authorization=True):
 audit_files = {}
 
 
-def start_proxy(backend_port, max_queue=1, wait=0.35, state_paths=None, upstream_port=None):
+def start_proxy(backend_port, max_queue=1, wait=0.35, max_deadline=None,
+                state_paths=None, upstream_port=None):
     proxy_port = port()
     state_paths = state_paths or {}
     env = os.environ.copy()
     audit_file = tempfile.NamedTemporaryFile(delete=False).name
     audit_files[proxy_port] = audit_file
+    max_deadline = max_deadline if max_deadline is not None else max(wait, 1.5)
     env.update({
         "GDC_GATEWAY_ADMISSION_PORT": str(proxy_port),
         "GDC_GATEWAY_ADMISSION_UPSTREAM": "http://127.0.0.1:%s" % (upstream_port or backend_port),
@@ -131,6 +141,7 @@ def start_proxy(backend_port, max_queue=1, wait=0.35, state_paths=None, upstream
         "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("params", "/params")),
         "GDC_GATEWAY_ADMISSION_MAX_QUEUE": str(max_queue),
         "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS": str(wait),
+        "GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS": str(max_deadline),
         "GDC_GATEWAY_ADMISSION_POLL_SECONDS": "0.03",
         "GDC_GATEWAY_ADMISSION_AUDIT_FILE": audit_file,
     })
@@ -177,6 +188,17 @@ try:
     assert State.dispatches == 1, "gateway outcome was replayed"
     process.terminate(); process.wait(2); processes.remove(process)
 
+    # An explicit bounded client deadline may outlive the short default wait.
+    # This is required for serialized exact-boundary observations.
+    State.ready = True; State.epochs = ["8"]; State.epoch_index = 0; State.height = 50
+    State.dispatches = 0; State.dispatch_delay = 0.25
+    process, proxy_port = start_proxy(backend_port, wait=0.15, max_deadline=1); processes.append(process)
+    observed = post_details(proxy_port, int((time.time() + 0.8) * 1000))
+    assert observed == (429, b'{"error":"single outcome"}', "dispatched_once")
+    assert State.dispatches == 1, "explicit deadline was incorrectly capped by the default wait"
+    State.dispatch_delay = 0
+    process.terminate(); process.wait(2); processes.remove(process)
+
     # Consecutive fresh observations may span different block heights.  The
     # phase generation stays stable, so the proxy dispatches exactly once.
     State.ready = True; State.epochs = ["8"]; State.epoch_index = 0; State.height = 50; State.advance_height = True; State.dispatches = 0
@@ -188,25 +210,44 @@ try:
 
     # A changing epoch generation is stale admission state, even with capacity.
     State.ready = True; State.epochs = ["8", "9"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
-    process, proxy_port = start_proxy(backend_port, wait=0.18); processes.append(process)
+    process, proxy_port = start_proxy(backend_port, wait=0.5); processes.append(process)
     assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_generation_unstable"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "stale phase generation dispatched"
     process.terminate(); process.wait(2); processes.remove(process)
 
     # The block-derived PoC boundary fence also rejects before the one dispatch site.
     State.ready = True; State.epochs = ["9"]; State.epoch_index = 0; State.height = 95; State.dispatches = 0
-    process, proxy_port = start_proxy(backend_port, wait=0.18); processes.append(process)
+    process, proxy_port = start_proxy(backend_port, wait=0.5); processes.append(process)
     assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_poc_fence"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "PoC-boundary admission dispatched"
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    # Positive capacity and an active runtime are stale during PoC lifecycle
+    # phases. Keep the request queued and reject before dispatch if Inference
+    # does not return within its absolute deadline.
+    State.ready = True; State.chain_phase = "PoCGenerateWindDown"; State.epochs = ["9"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    process, proxy_port = start_proxy(backend_port, wait=0.5); processes.append(process)
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_runtime_unavailable"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "non-Inference runtime dispatched"
+    State.chain_phase = "Inference"
     process.terminate(); process.wait(2); processes.remove(process)
 
     # Each unavailable admission-state source is sanitized before dispatch.
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     for source, expected in (("status", "status_unavailable"), ("epoch", "epoch_unavailable"), ("chain", "chain_status_unavailable"), ("params", "params_unavailable")):
-        process, proxy_port = start_proxy(backend_port, wait=0.18, state_paths={source: "/missing"}); processes.append(process)
-        assert post_details(proxy_port) == (503, ('{"error": {"code": "admission_%s"}}' % expected).encode(), "pre_dispatch_rejected")
+        process, proxy_port = start_proxy(backend_port, wait=2, state_paths={source: "/missing"}); processes.append(process)
+        observed = post_details(proxy_port)
+        assert observed == (503, ('{"error": {"code": "admission_%s"}}' % expected).encode(), "pre_dispatch_rejected"), (source, observed)
         assert State.dispatches == 0, "unavailable %s state dispatched" % source
         process.terminate(); process.wait(2); processes.remove(process)
+
+    # A final lookup that reaches the deadline must not erase the concrete
+    # state-source failure observed throughout the request's wait window.
+    State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    process, proxy_port = start_proxy(backend_port, wait=0.08, state_paths={"epoch": "/missing"}); processes.append(process)
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_epoch_unavailable"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "deadline edge erased the state-source failure after dispatch"
+    process.terminate(); process.wait(2); processes.remove(process)
 
     # Queue capacity and an original expired deadline reject before dispatch.
     State.ready = False; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
@@ -217,6 +258,15 @@ try:
     assert post(proxy_port, int((time.time() - 1) * 1000))[0] == 408
     pending.join(2)
     assert State.dispatches == 0, "pre-dispatch rejection reached gateway"
+
+    # A slow chain-state sample consumes the same original absolute deadline.
+    # The proxy returns locally and does not open an upstream connection.
+    State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0; State.state_delay = 0.12
+    process, proxy_port = start_proxy(backend_port, wait=0.4); processes.append(process)
+    assert post_details(proxy_port, int((time.time() + 0.05) * 1000)) == (408, b'{"error": {"code": "admission_deadline_elapsed"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "expired state lookup opened an upstream connection"
+    State.state_delay = 0
+    process.terminate(); process.wait(2); processes.remove(process)
 
     # Three queued requests may observe one safe generation, but the governor
     # opens only one upstream connection at a time and one dispatch per block.

@@ -26,16 +26,18 @@ CHAIN_STATUS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL", "http://127.0.0
 CHAIN_PARAMS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL", "http://127.0.0.1:1317/productscience/inference/inference/params")
 SAFE_GUARD_BLOCKS = int(env("GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS", 10))
 MAX_QUEUE = int(env("GDC_GATEWAY_ADMISSION_MAX_QUEUE", 16))
-# The v3 PoC lifecycle was observed to need 34 blocks – 187 seconds at the
-# measured block cadence – before an active runtime was again safe to admit.
-# Keep a bounded margin for a fresh second observation without outliving the
-# continuity observer's 270-second client timeout.
-MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS", 240))
+# Requests without an explicit deadline keep a short bounded default. Exact
+# boundary observers may supply a longer deadline because three simultaneous
+# arrivals are serialized through one upstream permit and can spend most of
+# the default budget waiting for post-PoC recovery.
+MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS", 300))
+MAX_DEADLINE_WAIT = float(env("GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS", 900))
 POLL = float(env("GDC_GATEWAY_ADMISSION_POLL_SECONDS", 0.25))
 MAX_BODY = int(env("GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES", 1048576))
 MAX_DISPATCHES_PER_BLOCK = int(env("GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK", 1))
 AUDIT_FILE = env("GDC_GATEWAY_ADMISSION_AUDIT_FILE", "/edge/status/gateway-admission.jsonl")
-if not (MAX_QUEUE > 0 and MAX_WAIT > 0 and POLL > 0 and MAX_BODY > 0
+if not (MAX_QUEUE > 0 and MAX_WAIT > 0 and MAX_DEADLINE_WAIT >= MAX_WAIT
+        and POLL > 0 and MAX_BODY > 0
         and SAFE_GUARD_BLOCKS > 0 and MAX_DISPATCHES_PER_BLOCK > 0):
     raise SystemExit("gateway admission configuration must be positive")
 SLOTS = threading.BoundedSemaphore(MAX_QUEUE)
@@ -77,32 +79,51 @@ def dispatch_failure(error):
 
 def upstream_timeout(deadline):
     """Honor the caller's absolute deadline at the one upstream connection."""
-    return max(1.0, deadline - time.monotonic())
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("absolute deadline elapsed")
+    return remaining
 
 
-def get_json(url):
-    with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=3) as response:
+def get_json(url, deadline=None):
+    timeout = 3
+    if deadline is not None:
+        timeout = upstream_timeout(deadline)
+    with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=timeout) as response:
         if response.status != 200:
             raise ValueError("state response was not successful")
-        return json.load(response)
+        payload = json.load(response)
+    # JSON parsing may finish after the socket read. A state observation that
+    # consumed the caller's remaining budget is never usable for admission.
+    if deadline is not None:
+        upstream_timeout(deadline)
+    return payload
 
 
-def safe_generation():
+def safe_generation(deadline=None):
     """Fresh phase generation only when capacity and participants agree."""
     try:
-        status = get_json(STATUS_URL)
+        status = get_json(STATUS_URL, deadline)
+    except TimeoutError:
+        return None, "deadline_elapsed"
     except Exception:
         return None, "status_unavailable"
     try:
-        epoch = get_json(EPOCH_URL).get("epoch_group_data", {}).get("epoch_index")
+        epoch = get_json(EPOCH_URL, deadline).get("epoch_group_data", {}).get("epoch_index")
+    except TimeoutError:
+        return None, "deadline_elapsed"
     except Exception:
         return None, "epoch_unavailable"
     try:
-        height = get_json(CHAIN_STATUS_URL).get("result", {}).get("sync_info", {}).get("latest_block_height")
+        height = get_json(CHAIN_STATUS_URL, deadline).get("result", {}).get("sync_info", {}).get("latest_block_height")
+    except TimeoutError:
+        return None, "deadline_elapsed"
     except Exception:
         return None, "chain_status_unavailable"
     try:
-        params = get_json(CHAIN_PARAMS_URL).get("params", {}).get("epoch_params", {})
+        params = get_json(CHAIN_PARAMS_URL, deadline).get("params", {}).get("epoch_params", {})
+    except TimeoutError:
+        return None, "deadline_elapsed"
     except Exception:
         return None, "params_unavailable"
     try:
@@ -128,10 +149,12 @@ def safe_generation():
     participants = []
     for item in status.get("devshards", []):
         runtime = item.get("runtime") or item
-        if item.get("active") is True and runtime.get("phase") == "active" and not runtime.get("requests_blocked", False):
+        chain_phase = item.get("chain_phase") or runtime.get("chain_phase")
+        if (item.get("active") is True and runtime.get("phase") == "active"
+                and not runtime.get("requests_blocked", False)
+                and chain_phase == "Inference"):
             if item.get("id") is not None:
-                phase = item.get("chain_phase") or runtime.get("chain_phase") or "unknown"
-                participants.append("%s:%s" % (item["id"], phase))
+                participants.append("%s:%s" % (item["id"], chain_phase))
     if not positive or not participants:
         return None, "runtime_unavailable"
     # Height proves this observation is fresh and fences the next transition,
@@ -175,14 +198,14 @@ class Handler(BaseHTTPRequestHandler):
         if record.get("safe_generation"):
             self.send_header("X-GDC-Safe-Generation", record["safe_generation"])
 
-    def reject(self, status, code, record, admission="pre_dispatch_rejected"):
+    def reject(self, status, code, record, admission="pre_dispatch_rejected", deadline=None):
         payload = json.dumps({"error": {"code": code}}).encode()
         record.update({
             "admission": admission,
             "upstream_http_status": 0,
             "error_class": code,
             "response_at_ms": now_ms(),
-            "response_height": self.current_height(),
+            "response_height": self.current_height(deadline),
         })
         record_audit(record)
         self.send_response(status)
@@ -202,12 +225,13 @@ class Handler(BaseHTTPRequestHandler):
             remaining = int(client_deadline) / 1000.0 - time.time()
         except ValueError:
             return None
-        absolute_ms = int(client_deadline)
-        return absolute_ms, time.monotonic() + min(MAX_WAIT, remaining)
+        effective_wait = min(MAX_DEADLINE_WAIT, remaining)
+        absolute_ms = min(int(client_deadline), now_ms() + int(MAX_DEADLINE_WAIT * 1000))
+        return absolute_ms, time.monotonic() + effective_wait
 
-    def current_height(self):
+    def current_height(self, deadline=None):
         try:
-            height = get_json(CHAIN_STATUS_URL).get("result", {}).get("sync_info", {}).get("latest_block_height")
+            height = get_json(CHAIN_STATUS_URL, deadline).get("result", {}).get("sync_info", {}).get("latest_block_height")
             return int(height)
         except Exception:
             return None
@@ -226,7 +250,7 @@ class Handler(BaseHTTPRequestHandler):
                     return None, "client_disconnected"
                 if time.monotonic() >= deadline:
                     return None, "admission_deadline_elapsed"
-                current, reason = safe_generation()
+                current, reason = safe_generation(deadline)
                 if current is None:
                     return None, reason
                 if current["generation"] != stable_generation:
@@ -253,7 +277,7 @@ class Handler(BaseHTTPRequestHandler):
         record = {
             "admission_id": uuid.uuid4().hex,
             "arrival_at_ms": now_ms(),
-            "arrival_height": self.current_height(),
+            "arrival_height": None,
             "permit_at_ms": None,
             "permit_height": None,
             "dispatch_at_ms": None,
@@ -265,23 +289,9 @@ class Handler(BaseHTTPRequestHandler):
             "upstream_http_status": 0,
             "error_class": "",
         }
-        if not COMPLETION_PATH.fullmatch(self.path.split("?", 1)[0]):
-            self.reject(404, "not_found", record)
-            return
-        try:
-            length = int(self.headers.get("Content-Length", ""))
-        except ValueError:
-            self.reject(400, "invalid_content_length", record)
-            return
-        if length < 0 or length > MAX_BODY:
-            self.reject(413, "request_too_large", record)
-            return
-        body = self.rfile.read(length)
-        # An unauthenticated request must not bypass the shared permit or open
-        # an upstream connection. The public API contract remains HTTP 401.
-        if not self.headers.get("Authorization"):
-            self.reject(401, "authentication_required", record)
-            return
+        # Parse the deadline before *any* chain-state observation. The
+        # request's original absolute budget applies to audit heights as well
+        # as admission and the one allowed upstream connection.
         deadline_state = self.deadline()
         if deadline_state is None:
             self.reject(408, "admission_deadline_elapsed", record)
@@ -289,19 +299,44 @@ class Handler(BaseHTTPRequestHandler):
         deadline_ms, deadline = deadline_state
         record["deadline_ms"] = deadline_ms
         if deadline <= time.monotonic():
-            self.reject(408, "admission_deadline_elapsed", record)
+            self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
+            return
+        record["arrival_height"] = self.current_height(deadline)
+        if deadline <= time.monotonic():
+            self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
+            return
+        if not COMPLETION_PATH.fullmatch(self.path.split("?", 1)[0]):
+            self.reject(404, "not_found", record, deadline=deadline)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self.reject(400, "invalid_content_length", record, deadline=deadline)
+            return
+        if length < 0 or length > MAX_BODY:
+            self.reject(413, "request_too_large", record, deadline=deadline)
+            return
+        body = self.rfile.read(length)
+        # An unauthenticated request must not bypass the shared permit or open
+        # an upstream connection. The public API contract remains HTTP 401.
+        if not self.headers.get("Authorization"):
+            self.reject(401, "authentication_required", record, deadline=deadline)
+            return
+        if deadline <= time.monotonic():
+            self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
             return
         if not SLOTS.acquire(blocking=False):
-            self.reject(429, "admission_queue_full", record)
+            self.reject(429, "admission_queue_full", record, deadline=deadline)
             return
         try:
             previous = None
+            last_state_reason = None
             rejection = "admission_runtime_unavailable"
             while time.monotonic() < deadline:
                 if not self.connected():
-                    self.reject(499, "client_disconnected", record)
+                    self.reject(499, "client_disconnected", record, deadline=deadline)
                     return
-                current, reason = safe_generation()
+                current, reason = safe_generation(deadline)
                 # The same generation must be observed after the request was
                 # queued; both observations are before the sole dispatch site.
                 if current is not None and previous is not None and current["generation"] == previous["generation"]:
@@ -315,10 +350,10 @@ class Handler(BaseHTTPRequestHandler):
                         self.dispatch_once(body, record, deadline_ms, deadline)
                         return
                     if permit_reason == "client_disconnected":
-                        self.reject(499, permit_reason, record)
+                        self.reject(499, permit_reason, record, deadline=deadline)
                         return
                     if permit_reason == "admission_deadline_elapsed":
-                        self.reject(408, permit_reason, record)
+                        self.reject(408, permit_reason, record, deadline=deadline)
                         return
                     rejection = "admission_%s" % permit_reason
                     # The permit sample was not usable. Require two new
@@ -327,24 +362,43 @@ class Handler(BaseHTTPRequestHandler):
                     time.sleep(min(POLL, max(0, deadline - time.monotonic())))
                     continue
                 if current is None:
+                    if reason == "deadline_elapsed":
+                        if last_state_reason is None:
+                            self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
+                            return
+                        rejection = "admission_%s" % last_state_reason
+                        break
+                    last_state_reason = reason
                     rejection = "admission_%s" % reason
                 elif previous is not None:
                     rejection = "admission_generation_unstable"
                 previous = current
                 time.sleep(min(POLL, max(0, deadline - time.monotonic())))
-            self.reject(503, rejection, record)
+            self.reject(503, rejection, record, deadline=deadline)
         finally:
             SLOTS.release()
 
     def dispatch_once(self, body, record, deadline_ms, deadline):
+        if deadline <= time.monotonic():
+            self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
+            return
         headers = {key: value for key, value in self.headers.items()
                    if key.lower() not in {"host", "connection", "content-length"}}
         headers["Host"] = UPSTREAM.netloc
         headers["Content-Length"] = str(len(body))
         headers["X-Request-Deadline-Ms"] = str(deadline_ms)
+        try:
+            timeout = upstream_timeout(deadline)
+        except TimeoutError:
+            self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
+            DISPATCH_PERMIT.release()
+            return
         record["dispatch_at_ms"] = now_ms()
-        record["dispatch_height"] = self.current_height()
-        timeout = upstream_timeout(deadline)
+        record["dispatch_height"] = self.current_height(deadline)
+        if deadline <= time.monotonic():
+            self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
+            DISPATCH_PERMIT.release()
+            return
         connection = http.client.HTTPConnection(UPSTREAM.hostname, UPSTREAM.port or 80, timeout=timeout)
         try:
             # No code path retries after this connection is requested.
@@ -356,7 +410,7 @@ class Handler(BaseHTTPRequestHandler):
                 "upstream_http_status": response.status,
                 "error_class": "" if 200 <= response.status < 300 else "upstream_http_%s" % response.status,
                 "response_at_ms": now_ms(),
-                "response_height": self.current_height(),
+                "response_height": self.current_height(deadline),
             })
             record_audit(record)
             self.send_response(response.status, response.reason)
@@ -374,7 +428,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
         except Exception as error:
             status, error_class = dispatch_failure(error)
-            self.reject(status, error_class, record, "dispatch_attempt_failed")
+            self.reject(status, error_class, record, "dispatch_attempt_failed", deadline)
         finally:
             connection.close()
             DISPATCH_PERMIT.release()

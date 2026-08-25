@@ -19,6 +19,8 @@ grep -Fq 'handle_path /faucet/* {' "$caddyfile"
 public_caddyfile="$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq '@participant_devshard path /devshard/*' "$public_caddyfile"
 grep -Fq 'handle @participant_devshard {' "$public_caddyfile"
+grep -Fq '@participant_chain path /chain-rpc/* /chain-api/*' "$public_caddyfile"
+grep -Fq 'Host-qualified chain routes' "$public_caddyfile"
 grep -Fq 'reverse_proxy 127.0.0.1:8000 {' "$public_caddyfile"
 grep -Fq '@prometheus_from_public_edge {' "$caddyfile"
 

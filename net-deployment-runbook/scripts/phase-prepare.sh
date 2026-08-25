@@ -51,6 +51,10 @@ for host in "${hosts[@]}"; do
   fi
   gateway_services=false
   [[ "$host" == "$GATEWAY_NODE" ]] && gateway_services=true
+  firewall_check='true'
+  if [[ "$gateway_services" == true ]]; then
+    firewall_check="sudo iptables -w -t mangle -S GONKA_INGRESS | grep -Fq -- '-s $PUBLIC_EDGE_CIDR -p tcp -m multiport --dports 9099,18080 -j ACCEPT' && ! sudo iptables -w -t mangle -S GONKA_INGRESS | grep -Fq -- '--dports 3000,8000,8081,8082,18080'"
+  fi
   ssh_port="$(ssh -G "$host" 2>/dev/null | awk '$1 == "port" {print $2; exit}')"
   if [[ ! "$ssh_port" =~ ^[0-9]+$ ]]; then
     echo "FAILED  $host: cannot determine SSH port"
@@ -63,7 +67,7 @@ for host in "${hosts[@]}"; do
     failed_hosts+=("$host")
     continue
   fi
-  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
+  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
     continue

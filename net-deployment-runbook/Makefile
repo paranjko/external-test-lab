@@ -66,13 +66,16 @@ test:
 	@./scripts/test-upgrade-state-comparison.sh
 	@./scripts/test-upgrade-proposal-binding.sh
 	@./scripts/test-gateway-continuity-verdict.sh
+	@./scripts/test-recovery-readiness-predicate.sh
 	@./scripts/test-capture-poc-snapshot.sh
 	@node ./scripts/test-gateway-site-state.js
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
 	@./scripts/test-firewall-policy.sh
 	@./scripts/test-public-grafana-targets.sh
+	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-proxy.py
+	@./scripts/test-host-sync-verdict.sh
 	@./scripts/test-gateway-reserve-policy.sh
 	@./scripts/test-inference-until-ready.sh
 	@./scripts/test-gateway-escrow-reconciler.sh
