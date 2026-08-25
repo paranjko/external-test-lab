@@ -2,17 +2,38 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERIFY="$ROOT/.devcontainer/verify-cleanroom.sh"
-DOC="$ROOT/.devcontainer/README.md"
+DOC="$ROOT/.devcontainer/cleanroom/README.md"
+CONFIG="$ROOT/.devcontainer/cleanroom/devcontainer.json"
 IGNORE="$ROOT/.dockerignore"
 
-[[ -x "$VERIFY" ]]
+test -f "$CONFIG"
+test -f "$ROOT/.devcontainer/cleanroom/Dockerfile"
+test ! -e "$ROOT/.devcontainer/gdc"
+test ! -e "$ROOT/.devcontainer/initialize-cleanroom.sh"
+test ! -e "$ROOT/.devcontainer/verify-cleanroom.sh"
+test ! -e "$ROOT/.devcontainer/bootstrap-cleanroom.sh"
 for forbidden_path in accounts mnemonics runs secrets state; do
-  grep -Fq "    $forbidden_path" "$VERIFY"
   grep -Fxq "$forbidden_path/" "$IGNORE"
 done
-grep -Fq 'host credential leaked into cleanroom' "$VERIFY"
-grep -Fq 'GDC_HOME=/workspaces/external-join' "$DOC"
-grep -Fq 'not a live independent-operator PASS by itself' "$DOC"
+! grep -Fq 'docker-in-docker' "$CONFIG"
+grep -Fq '"updateRemoteUserUID": false' "$CONFIG"
+grep -Fq 'SSH_AUTH_SOCK' "$CONFIG"
+grep -Fq 'target=/home/operator/.ssh/config,type=bind,readonly' "$CONFIG"
+grep -Fq 'target=/home/operator/.gdc-data,type=bind' "$CONFIG"
+grep -Fq 'GDC_HOME": "/home/operator/.gdc-data"' "$CONFIG"
+data_ignore="$ROOT/.devcontainer/data/.gitignore"
+test -f "$data_ignore"
+grep -Fxq '*' "$data_ignore"
+grep -Fxq '!.gitignore' "$data_ignore"
+grep -Eq '^cleanroom: cleanroom-reset$' "$ROOT/Makefile"
+grep -Eq '^cleanroom-reset:$' "$ROOT/Makefile"
+! grep -Fq 'operator-cleanroom' "$ROOT/Makefile"
+grep -Fq 'git clone -b feat/honest-lifecycle-gate-b-upgrade' "$DOC"
+grep -Fq 'host join --public-host node3.gonka-dev.net gdc-node3' "$DOC"
+test -f "$ROOT/.devcontainer/node-host/devcontainer.json"
+test -f "$ROOT/.devcontainer/node-host/Dockerfile"
+test -f "$ROOT/.devcontainer/node-host/devcontainer-lock.json"
+test ! -e "$ROOT/.devcontainer/node-host/start-sshd.sh"
+grep -Fq 'docker-in-docker' "$ROOT/.devcontainer/node-host/devcontainer.json"
 
 echo 'PASS cleanroom external-operator isolation contract'

@@ -23,7 +23,9 @@ load_topology
 [[ "$(node_for_ml_host operator-c-gpu)" == validator-c ]]
 [[ "$(node_p2p_port validator-b)" == 5100 ]]
 
-GDC_DATA_ROOT="$tmp/operator-data"
+GDC_HOME="$tmp/operator-data"
+init_gdc_paths
+init_gdc_data_root
 mkdir -p "$GDC_DATA_ROOT/validator-a/state/joined" \
   "$GDC_DATA_ROOT/validator-c/state/joined"
 touch "$GDC_DATA_ROOT/validator-a/state/joined/validator-a" \

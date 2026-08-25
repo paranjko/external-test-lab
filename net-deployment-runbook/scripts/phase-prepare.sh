@@ -11,7 +11,9 @@ record_phase_profile prepare
 
 ready_hosts=(); reboot_hosts=(); skipped_hosts=(); failed_hosts=()
 prepare_nodes=("${GDC_NODES[@]}")
+explicit_hosts=false
 if [[ -n "${GDC_PREPARE_HOSTS:-}" ]]; then
+  explicit_hosts=true
   read -r -a prepare_nodes <<<"$GDC_PREPARE_HOSTS"
   for node in "${prepare_nodes[@]}"; do
     topology_contains_node "$node" || die "prepare expects an alias from GDC_NODE_ALIASES, got: $node"
@@ -24,6 +26,11 @@ for node in "${prepare_nodes[@]}"; do
 done
 for host in "${hosts[@]}"; do
   if ! ssh_ready "$host"; then
+    if [[ "$explicit_hosts" == true ]]; then
+      echo "FAILED  $host: SSH is unavailable; cannot prepare the requested Host"
+      failed_hosts+=("$host")
+      continue
+    fi
     echo "SKIP  $host is unreachable"
     skipped_hosts+=("$host")
     continue
@@ -44,6 +51,10 @@ for host in "${hosts[@]}"; do
   fi
   gateway_services=false
   [[ "$host" == "$GATEWAY_NODE" ]] && gateway_services=true
+  firewall_check='true'
+  if [[ "$gateway_services" == true ]]; then
+    firewall_check="sudo iptables -w -t mangle -S GONKA_INGRESS | grep -Fq -- '-s $PUBLIC_EDGE_CIDR -p tcp -m multiport --dports 9099,18080 -j ACCEPT' && ! sudo iptables -w -t mangle -S GONKA_INGRESS | grep -Fq -- '--dports 3000,8000,8081,8082,18080'"
+  fi
   ssh_port="$(ssh -G "$host" 2>/dev/null | awk '$1 == "port" {print $2; exit}')"
   if [[ ! "$ssh_port" =~ ^[0-9]+$ ]]; then
     echo "FAILED  $host: cannot determine SSH port"
@@ -56,16 +67,18 @@ for host in "${hosts[@]}"; do
     failed_hosts+=("$host")
     continue
   fi
-  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
+  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
     continue
   fi
   remote_env=()
   if [[ "$role" == ml-only ]]; then
-    client_address="$(getent ahostsv4 "$(node_public_host "$network_node")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    # The ML host is contacted by the network Host, not by its public edge
+    # hostname. Prefer the SSH endpoint and use public DNS only as a fallback.
+    client_address="$(ssh -G "$network_node" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}' || true)"
     if [[ ! "$client_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-      client_address="$(ssh -G "$network_node" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+      client_address="$(getent ahostsv4 "$(node_public_host "$network_node")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
     fi
     [[ "$client_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "cannot determine ML client IPv4 for $network_node"
     remote_env+=("ML_CLIENT_CIDR='$client_address/32'")

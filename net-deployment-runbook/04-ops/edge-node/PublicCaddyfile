@@ -26,22 +26,57 @@
   handle /ops-participant-status/* {
     respond 403
   }
-  @telegram_metrics_from_monitoring {
-    path /ops-telegram-metrics
-    remote_ip {$MONITORING_CIDR}
+  # Validators must retrieve this participant's PoC artifacts from the
+  # participant recorded on chain.  Sending this path to the gateway would
+  # read a different artifact store and can make a healthy Host appear absent.
+  @participant_poc path /v1/poc/*
+  handle @participant_poc {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
   }
-  handle @telegram_metrics_from_monitoring {
-    rewrite * /metrics
-    reverse_proxy 127.0.0.1:9464
+  # DevShard protocol traffic is addressed to the participant URL recorded on
+  # chain. It must reach this Host's DAPI so responses carry this participant's
+  # signing identity instead of the shared gateway Host's identity.
+  @participant_devshard path /devshard/*
+  handle @participant_devshard {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
   }
-  handle /ops-telegram-metrics {
-    respond 403
+  # This public edge is also a participant. Its Host-qualified chain routes
+  # must prove that participant's own CometBFT identity, not the configured
+  # gateway's canonical RPC. Keep this ahead of the public application
+  # fallback so /chain-rpc/status and /chain-api/* remain Host-local.
+  @participant_chain path /chain-rpc/* /chain-api/*
+  handle @participant_chain {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
   }
-  @root path /
-  redir @root /dashboard/gonka/gov 308
-  # The public edge owns public TLS but is not necessarily a chain participant.
-  reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8000 {
-    header_up Host {$GATEWAY_PUBLIC_HOST}
+  # The installer replaces this directory atomically only after checksum
+  # verification.  Before Genesis it is absent and file_server returns 404;
+  # after Genesis every response comes from the same verified bundle.
+  route {
+    @join_bootstrap path /join-bootstrap/*
+    handle @join_bootstrap {
+      reverse_proxy 127.0.0.1:18082
+    }
+    # Genesis runs the public faucet on the gateway Host.  The initial Community
+  # DevNet topology colocates that Host with its public TLS edge, so proxy the
+  # explicitly public faucet route to its loopback listener before the
+  # explorer fallback below.
+    handle_path /faucet/* {
+      reverse_proxy 127.0.0.1:18081
+    }
+    @root path /
+    redir @root /dashboard/gonka/gov 308
+    # The public edge owns public TLS but is not necessarily a chain participant.
+    handle {
+      reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8000 {
+        header_up Host {$GATEWAY_PUBLIC_HOST}
+      }
+    }
   }
   header {
     X-Content-Type-Options nosniff
@@ -61,15 +96,29 @@ www.{$SITE_HOST} {
   # Prometheus endpoint remain loopback-only on the OPS host.
   @telegram_consumer path /status/telegram-consumer
   handle @telegram_consumer {
-    rewrite * /health
-    reverse_proxy 127.0.0.1:9464
+    rewrite * /ops-telegram-consumer-health
+    reverse_proxy https://{$TELEGRAM_BOT_PUBLIC_HOST} {
+      transport http {
+        tls_server_name {$TELEGRAM_BOT_PUBLIC_HOST}
+      }
+      header_up Host {$TELEGRAM_BOT_PUBLIC_HOST}
+    }
   }
-  # The status site is an operations service on the configured public edge, not the Network Node
-  # proxy's default dashboard. The public edge remains the only public TLS edge.
-  handle {
+  # Dynamic status data is fetched from the gateway Host.  The page itself is
+  # served locally below, so a reset of that Host leaves a visible, honest
+  # OFFLINE state instead of taking the public site down.
+  @status_data {
+    path /status/*
+    not path /status/telegram-consumer
+  }
+  handle @status_data {
     reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {
       header_up Host {$GATEWAY_PUBLIC_HOST}
     }
+  }
+  handle {
+    root * /srv/dai/edge/site
+    file_server
   }
   header {
     X-Content-Type-Options nosniff
@@ -79,8 +128,20 @@ www.{$SITE_HOST} {
 
 {$API_HOST} {
   encode zstd gzip
-  reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:18080 {
-    header_up Host {$GATEWAY_PUBLIC_HOST}
+  handle /join-bootstrap/* {
+    reverse_proxy 127.0.0.1:18082
+  }
+  # This proxy may wait only before it opens its one gateway connection.
+  # Reconciler probes retain their explicit runtime path but share exactly the
+  # same permit as public, health, Telegram, and acceptance requests.
+  @governed_completion path /v1/chat/completions /devshard/*/v1/chat/completions
+  handle @governed_completion {
+    reverse_proxy 127.0.0.1:18083
+  }
+  handle {
+    reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:18080 {
+      header_up Host {$GATEWAY_PUBLIC_HOST}
+    }
   }
 }
 

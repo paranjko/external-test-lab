@@ -1,11 +1,84 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
+on_genesis_error() {
+  local rc=$?
+  printf 'FAILED Genesis command at line %s (exit %s)\n' "$1" "$rc" >&2
+  exit "$rc"
+}
+trap 'on_genesis_error "$LINENO"' ERR
 load_project
 assert_baseline_release
 TIME_SPEC="${1:---time=+1m}"
 [[ "$TIME_SPEC" =~ ^--time=\+([1-9][0-9]*)m$ ]] || die 'expected --time=+Nm'
 GENESIS_LEAD_MINUTES="${BASH_REMATCH[1]}"
+RUN="$GDC_HOME/runs/${GDC_RUN_ID:-manual}/genesis"
+export EVIDENCE_PHASE_NAME=genesis
+mkdir -p "$RUN"
+
+continue_genesis_bootstrap() {
+  step 'Start the public DevNet faucet for independent Host joins'
+  "$ROOT/scripts/phase-ops.sh" faucet
+
+  if [[ "${GDC_GENESIS_BOOTSTRAP_ACCESS:-true}" == true ]]; then
+    step 'Install the configured public edge'
+    GDC_PUBLIC_EDGE_VERIFY=false "$ROOT/scripts/phase-ops.sh" edge
+    step 'Publish the complete JOIN bootstrap before independent operators can join'
+    "$ROOT/scripts/phase-ops.sh" edge-node "$GENESIS_NODE"
+    step 'Synchronize the published JOIN bootstrap on the public edge'
+    GDC_PUBLIC_EDGE_VERIFY=false "$ROOT/scripts/phase-ops.sh" edge
+    step 'Bootstrap authenticated inference for the single-validator network'
+    "$ROOT/scripts/phase-bootstrap-access.sh"
+    ops_env="$GDC_DATA_ROOT/.env"
+    if [[ -s "$ops_env" ]] \
+      && grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' "$ops_env" \
+      && ! grep -Eq '^TELEGRAM_BOT_TOKEN=replace-with-BotFather-token$' "$ops_env"; then
+      step 'Refresh the Telegram inference consumer for the new gateway'
+      GDC_ENV="$ops_env" "$ROOT/scripts/phase-gateway-access-key.sh" ensure telegram
+      GDC_ENV="$ops_env" "$ROOT/scripts/phase-telegram-consumer.sh" apply
+    else
+      printf 'INFO Telegram consumer is not configured in the OPS environment; skipping its deployment\n'
+    fi
+    step 'Require bounded Genesis validator effectiveness before lifecycle success'
+    "$ROOT/scripts/phase-join-acceptance.sh" "$GENESIS_NODE"
+    step 'Create the Genesis validator recovery archive'
+    "$ROOT/scripts/validator-backup.sh" create "$GENESIS_NODE"
+    step 'Reconcile public monitoring from the fresh Genesis topology'
+    "$ROOT/scripts/phase-ops.sh" monitoring
+    step 'Verify the public status site'
+    "$ROOT/scripts/phase-ops.sh" site
+  else
+    printf 'INCOMPLETE Genesis was created without bootstrap access; it is not a full lifecycle PASS\n' >&2
+  fi
+}
+
+genesis_activation_is_current() {
+  local address local_sha public_genesis participant
+  [[ -e "$STATE/joined/$GENESIS_NODE" ]] || return 1
+  [[ -s "$GENESIS/genesis.json" && -s "$ACCOUNTS/$GENESIS_NODE-cold.json" ]] || return 1
+  address="$(jq -er .address "$ACCOUNTS/$GENESIS_NODE-cold.json")" || return 1
+  local_sha="$(genesis_sha256 "$GENESIS/genesis.json")" || return 1
+  public_genesis="$(mktemp)"
+  if ! capture_canonical_genesis "https://${GENESIS_PUBLIC_HOST}/chain-rpc/genesis" "$public_genesis"; then
+    rm -f "$public_genesis"
+    return 1
+  fi
+  [[ "$(genesis_sha256 "$public_genesis")" == "$local_sha" ]] || { rm -f "$public_genesis"; return 1; }
+  rm -f "$public_genesis"
+  participant="$(ssh -T "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant/$address" 2>/dev/null || true)"
+  jq -e '.participant.status == "ACTIVE" or .participant.status == "PARTICIPANT_STATUS_ACTIVE" or .participant.status == 1' <<<"$participant" >/dev/null 2>&1
+}
+
+if [[ -e "$STATE/joined/$GENESIS_NODE" ]]; then
+  if ! genesis_activation_is_current; then
+    die 'existing Genesis activation does not match the local ceremony or is not ACTIVE; reset the network before creating another Genesis'
+  fi
+  resume_sha="$(genesis_sha256 "$GENESIS/genesis.json")"
+  write_phase_lineage "$RUN" "$CHAIN_ID" "$resume_sha" || die 'failed to bind resumed Genesis evidence to the active chain'
+  printf 'READY resuming Genesis bootstrap from the verified ACTIVE participant\n'
+  continue_genesis_bootstrap
+  exit 0
+fi
 
 step 'Verify the operator inferenced CLI matches the selected release'
 "$ROOT/scripts/ensure-inferenced-cli.sh"
@@ -18,9 +91,18 @@ GDC_PREPARE_HOSTS="$GENESIS_NODE" "$ROOT/scripts/phase-prepare.sh"
 if [[ "${GDC_GENESIS_ROLE_INPUT:-false}" == true && "$(node_gpu_profile "$GENESIS_NODE")" == auto ]]; then
   step "Detect GPU profile for $GENESIS_NODE"
   detected_gpu_profile="$("$ROOT/scripts/detect-gpu-profile.sh" "$GENESIS_NODE")"
-  encoded_gpu_profiles="$(printf '%q' "$GENESIS_NODE=$detected_gpu_profile")"
+  read -r -a current_gpu_profiles <<<"$GDC_NODE_GPU_PROFILES"
+  gpu_profiles=()
+  for gpu_profile in "${current_gpu_profiles[@]}"; do
+    if [[ "$gpu_profile" == "$GENESIS_NODE="* ]]; then
+      gpu_profiles+=("$GENESIS_NODE=$detected_gpu_profile")
+    else
+      gpu_profiles+=("$gpu_profile")
+    fi
+  done
+  encoded_gpu_profiles="'${gpu_profiles[*]}'"
   sed -i -E "s/^GDC_NODE_GPU_PROFILES=.*/GDC_NODE_GPU_PROFILES=$encoded_gpu_profiles/" "$ENV_FILE"
-  GDC_NODE_GPU_PROFILES="$GENESIS_NODE=$detected_gpu_profile"
+  GDC_NODE_GPU_PROFILES="${gpu_profiles[*]}"
   export GDC_NODE_GPU_PROFILES
   load_topology
   write_inventory
@@ -71,9 +153,16 @@ GENESIS_TIME="$(date -u -d "+${GENESIS_LEAD_MINUTES} minutes" +%Y-%m-%dT%H:%M:%S
 step "Build and verify the one-participant Genesis at $GENESIS_TIME"
 "$ROOT/01-identities-genesis/build-genesis.sh" --inventory "$INVENTORY" --identities-dir "$IDENTITIES" --secrets-dir "$SECRETS" --genesis-time "$GENESIS_TIME" --output-dir "$GENESIS"
 "$ROOT/01-identities-genesis/verify-genesis.sh" "$GENESIS/genesis.json" "$GENESIS/genesis.sha256" "$CHAIN_ID"
-bind_run_manifest_genesis "$(genesis_sha256 "$GENESIS/genesis.json")"
+if ! GENESIS_SHA256="$(genesis_sha256 "$GENESIS/genesis.json")"; then
+  die 'failed to calculate the canonical Genesis SHA-256'
+fi
+if ! write_phase_lineage "$RUN" "$CHAIN_ID" "$GENESIS_SHA256"; then
+  die 'failed to bind the Genesis evidence to this lifecycle run'
+fi
 for profile_field in genesis_sha256 genesis_overrides_sha256; do
-  profile_value="$(jq -er --arg field "$profile_field" '.[$field]' "$GENESIS/ceremony-record.json")"
+  if ! profile_value="$(jq -er --arg field "$profile_field" '.[$field]' "$GENESIS/ceremony-record.json")"; then
+    die "Genesis ceremony record is missing $profile_field"
+  fi
   printf '%s=%s\n' "$profile_field" "$profile_value" >>"$STATE/phase-profiles/genesis.env"
   printf 'PROFILE phase=genesis %s=%s\n' "$profile_field" "$profile_value"
 done
@@ -122,14 +211,4 @@ touch "$STATE/joined/$NODE"
 persist_runtime_topology
 printf '\nGenesis launched with %s as the only participant.\n' "$NODE"
 
-step 'Start the public DevNet faucet for independent Host joins'
-"$ROOT/scripts/phase-ops.sh" faucet
-
-if [[ "${GDC_GENESIS_BOOTSTRAP_ACCESS:-true}" == true ]]; then
-  step 'Bootstrap authenticated inference for the single-validator network'
-  "$ROOT/scripts/phase-bootstrap-access.sh"
-  step 'Require bounded Genesis validator effectiveness before lifecycle success'
-  "$ROOT/scripts/phase-join-acceptance.sh" "$NODE"
-else
-  printf 'INCOMPLETE Genesis was created without bootstrap access; it is not a full lifecycle PASS\n' >&2
-fi
+continue_genesis_bootstrap

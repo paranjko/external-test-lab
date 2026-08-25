@@ -17,16 +17,15 @@ gateway_url="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
 step 'Read the public gateway runtime state'
 status="$(curl -fsS --connect-timeout 5 --max-time 20 "${gateway_url%/}/v1/status" \
   -H "Authorization: Bearer $client_key")"
-jq -e '
-  ([.devshards[]?
-    | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)
-    | .id]
-   + [if .phase == "active" and (.requests_blocked // false) == false then .escrow_id? else empty end])
-  | any(. != null and (tostring | test("^[1-9][0-9]*$")))
-' <<<"$status" >/dev/null || die 'gateway has no active unblocked runtime'
+status_routable=false
+if printf '%s\n' "$status" | "$ROOT/04-ops/gateway-status-routable.sh" >/dev/null 2>&1; then
+  status_routable=true
+fi
 
 if [[ "$action" == status ]]; then
-  jq '{state:"READY",runtimes:(([.devshards[]? | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)] | length) + (if .phase == "active" and (.requests_blocked // false) == false then 1 else 0 end)),model:(.model // ([.devshards[]?.model] | first))}' <<<"$status"
+  jq --arg state "$([[ "$status_routable" == true ]] && printf READY || printf TRANSITION)" \
+    --arg reason "$([[ "$status_routable" == true ]] && printf runtime_routable || printf runtime_not_routable)" \
+    '{state:$state,reason:$reason,runtimes:(([.devshards[]? | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)] | length) + (if .phase == "active" and (.requests_blocked // false) == false then 1 else 0 end)),model:(.model // ([.devshards[]?.model] | first))}' <<<"$status"
   exit 0
 fi
 

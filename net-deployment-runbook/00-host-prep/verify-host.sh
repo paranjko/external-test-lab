@@ -56,13 +56,13 @@ if [[ -r /etc/gonka/host.env ]]; then
   source /etc/gonka/host.env
   if [[ -n "${ML_CALLBACK_CIDR:-}" ]]; then
     iptables -t mangle -S GONKA_INGRESS 2>/dev/null \
-      | grep -Fq -- "-s $ML_CALLBACK_CIDR -p tcp -m tcp --dport 9100 -j RETURN" \
+      | grep -Fq -- "-s $ML_CALLBACK_CIDR -p tcp -m tcp --dport 9100 -j ACCEPT" \
       && pass 'ML callback ingress source' || fail 'ML callback ingress source is stale'
   fi
   if [[ "$ROLE" == ml-only ]]; then
     iptables -t mangle -S GONKA_INGRESS 2>/dev/null \
       | grep -F -- "-s $ML_CLIENT_CIDR -p tcp" \
-      | grep -Fq -- '--dports 5000,8080' \
+      | grep -F -- '--dports 5000,8080' | grep -Fq -- '-j ACCEPT' \
       && pass 'ML client ingress source' || fail 'ML client ingress source is stale'
   fi
 fi

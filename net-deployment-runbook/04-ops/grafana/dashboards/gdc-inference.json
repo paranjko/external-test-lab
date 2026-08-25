@@ -909,7 +909,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_sum) / sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_count)",
+          "expr": "sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_sum) / sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_count) or vector(0)",
           "refId": "A",
           "legendFormat": "{{participant_key}}"
         }
@@ -2233,7 +2233,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Last successful bot inference",
+      "title": "Last successful bot inference (0 when unavailable)",
       "gridPos": {
         "h": 4,
         "w": 8,
@@ -2275,7 +2275,7 @@
       },
       "targets": [
         {
-          "expr": "time() - max(gdc_telegram_bot_last_success_timestamp_seconds)",
+          "expr": "(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) or vector(0)",
           "refId": "A",
           "instant": true
         }
@@ -2402,7 +2402,7 @@
         "y": 76
       },
       "options": {
-        "content": "This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.",
+        "content": "This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content; a zero last-success age means the consumer has not reported a successful inference yet. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.",
         "mode": "markdown"
       }
     }

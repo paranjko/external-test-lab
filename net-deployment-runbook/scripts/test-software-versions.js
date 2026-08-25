@@ -24,6 +24,9 @@ assert.equal(
   versions.format(state('0.2.14', ['0.2.0'])),
   'chain 0.2.14 · DAPI 0.2.14 · MLNode 3.0.14-post2',
 );
+assert.equal(versions.normalizeMlNodeVersion('0.2.14', '0.2.0'), '3.0.14-post2');
+assert.equal(versions.normalizeMlNodeVersion('0.2.15', '0.2.0'), '3.0.14-post2');
+assert.equal(versions.normalizeMlNodeVersion('0.2.16', '3.0.15'), '3.0.15');
 assert.equal(
   versions.format(state('0.2.15', [])),
   'chain 0.2.15 · DAPI 0.2.14 · MLNode 3.0.14-post2',

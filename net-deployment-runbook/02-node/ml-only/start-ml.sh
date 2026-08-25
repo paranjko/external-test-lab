@@ -20,6 +20,21 @@ TENSOR_PARALLEL="${4:-}"
 MAX_SEQS="${5:-}"
 GPU_UTILIZATION="${6:-}"
 CONTEXT_LENGTH="${7:-}"
+curl_exit_status() {
+  case "${1:-125}" in
+    0) printf 'ok' ;;
+    5) printf 'proxy_resolution_failed' ;;
+    6) printf 'dns_resolution_failed' ;;
+    7) printf 'connection_failed' ;;
+    28) printf 'timeout' ;;
+    35) printf 'tls_handshake_failed' ;;
+    47) printf 'redirect_limit_exceeded' ;;
+    52) printf 'empty_response' ;;
+    56) printf 'receive_failed' ;;
+    137) printf 'process_killed' ;;
+    *) printf 'curl_error' ;;
+  esac
+}
 if [[ -n "$MODEL" ]]; then
   [[ -n "$DTYPE" && -n "$REVISION" && -n "$TENSOR_PARALLEL" && -n "$MAX_SEQS" && -n "$GPU_UTILIZATION" && -n "$CONTEXT_LENGTH" ]] || {
     echo 'Usage: start-ml.sh [env-file [model dtype revision tensor-parallel max-seqs gpu-utilization context-length]]' >&2
@@ -67,14 +82,35 @@ request="$(jq -nc --arg model "$MODEL" --arg dtype "$DTYPE" --arg revision "$REV
   --arg tensor "$TENSOR_PARALLEL" --arg max "$MAX_SEQS" --arg util "$GPU_UTILIZATION" --arg context "$CONTEXT_LENGTH" \
   '{model:$model,dtype:$dtype,additional_args:["--revision",$revision,"--tensor-parallel-size",$tensor,"--max-num-seqs",$max,"--gpu-memory-utilization",$util,"--max-model-len",$context]}')"
 while (( SECONDS < deadline )); do
-  status="$(docker compose --env-file "$ENV_FILE" -f "$HERE/compose.yaml" exec -T mlnode \
-    curl -fsS http://127.0.0.1:8080/api/v1/inference/up/status || true)"
+  status_stderr="$(mktemp)"
+  if status="$(docker compose --env-file "$ENV_FILE" -f "$HERE/compose.yaml" exec -T mlnode \
+    curl -fsS http://127.0.0.1:8080/api/v1/inference/up/status 2>"$status_stderr")"; then
+    status_curl_exit=0
+  else
+    status_curl_exit=$?
+  fi
+  if (( status_curl_exit != 0 )); then
+    status_detail="$(tr '\n' ' ' <"$status_stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+    printf 'WAIT  ML inference status unavailable url=http://127.0.0.1:8080/api/v1/inference/up/status http_status=000 curl_exit=%s curl_status=%s%s\n' \
+      "$status_curl_exit" "$(curl_exit_status "$status_curl_exit")" "${status_detail:+ detail=$status_detail}"
+    status='{}'
+  fi
+  rm -f "$status_stderr"
   if jq -e '.is_running == true and (.error == null or .error == "")' <<<"$status" >/dev/null 2>&1; then
     break
   fi
   if jq -e '.status == "not_started"' <<<"$status" >/dev/null 2>&1; then
-    printf '%s' "$request" | docker compose --env-file "$ENV_FILE" -f "$HERE/compose.yaml" exec -T mlnode \
-      curl -fsS -X POST http://127.0.0.1:8080/api/v1/inference/up/async -H 'Content-Type: application/json' --data-binary @- >/dev/null || true
+    start_stderr="$(mktemp)"
+    if printf '%s' "$request" | docker compose --env-file "$ENV_FILE" -f "$HERE/compose.yaml" exec -T mlnode \
+      curl -fsS -X POST http://127.0.0.1:8080/api/v1/inference/up/async -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>"$start_stderr"; then
+      start_curl_exit=0
+    else
+      start_curl_exit=$?
+      start_detail="$(tr '\n' ' ' <"$start_stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+      printf 'WAIT  ML inference start unavailable url=http://127.0.0.1:8080/api/v1/inference/up/async http_status=000 curl_exit=%s curl_status=%s%s\n' \
+        "$start_curl_exit" "$(curl_exit_status "$start_curl_exit")" "${start_detail:+ detail=$start_detail}"
+    fi
+    rm -f "$start_stderr"
   fi
   sleep 15
   printf 'WAIT  ML inference startup elapsed=%ss\n' "$((1800 - deadline + SECONDS))"

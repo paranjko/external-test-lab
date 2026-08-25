@@ -26,10 +26,25 @@ fi
 OPS_RENDER="$GENERATED/ops"
 GATEWAY_ENV="$OPS_RENDER/gateway.env"
 FAUCET_ENV="$OPS_RENDER/faucet.env"
+GATEWAY_RESERVE_ENV="$OPS_RENDER/gateway-reserve-signer.env"
 REMOTE="/tmp/gdc-ops-$$"
 SITE_INDEX_RENDER=''
 FAUCET_OPTION=''
 FAUCET_SIGNER_HOME=''
+
+if [[ "$COMPONENT" == faucet || "$COMPONENT" == gateway ]]; then
+  reserve_signer_token="$SECRETS/gateway.reserve-signer-token"
+  [[ ! -L "$reserve_signer_token" ]] \
+    || die 'gateway reserve signer credential must not be a symbolic link'
+  reserve_signer_token_state=preserved
+  [[ -e "$reserve_signer_token" ]] || reserve_signer_token_state=created
+  "$ROOT/scripts/make-secrets.sh" "$SECRETS" "$GENESIS_NODE" >/dev/null
+  [[ -f "$reserve_signer_token" && -s "$reserve_signer_token" ]] \
+    || die 'gateway reserve signer credential is unavailable after managed secret initialization'
+  [[ "$(stat -c '%a' "$reserve_signer_token")" == 600 ]] \
+    || die 'gateway reserve signer credential must have mode 0600'
+  printf 'READY gateway reserve signer credential %s\n' "$reserve_signer_token_state"
+fi
 
 # Only the authenticated Grafana service needs an OPS credential.  Genesis
 # calls this phase for the public faucet, which has no Grafana authority.
@@ -45,30 +60,36 @@ step 'Render monitoring and public status configuration'
 "$ROOT/04-ops/render-ops.sh" --inventory "$INVENTORY" --output-dir "$OPS_RENDER" >/dev/null
 
 reconcile_public_grafana() {
-  local start_caddy="${1:-false}" node="$PUBLIC_EDGE_NODE" edge_env edge_remote
+  local node="$PUBLIC_EDGE_NODE" edge_env edge_remote edge_start_log
   edge_env="$GENERATED/edge/$node.env"
   edge_remote="${REMOTE}-edge"
   mkdir -p "$(dirname "$edge_env")"
   "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$node" --output "$edge_env" >/dev/null
   ssh "$node" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
   rsync -a "$ROOT/04-ops/edge-node/" "$node:$edge_remote/edge/"
-  scp -q "$edge_env" "$node:$edge_remote/edge.env"
-  if [[ "$start_caddy" == true ]]; then
-    ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana caddy >/srv/dai/edge/start-edge.log 2>&1"
-  else
-    # Monitoring changes both Grafana provisioning and its least-privilege
-    # Prometheus/consumer routes. Recreate Caddy with the same rendered edge
-    # contract; otherwise the file on disk changes while the running container
-    # keeps serving the old bind-mounted inode.
-    ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana caddy >/srv/dai/edge/start-public-grafana.log 2>&1"
+  # Monitoring and site reconciliation also reinstall the public edge.
+  # Preserve the rendered public JOIN bundle on that edge irrespective of
+  # where the gateway runs: install-edge otherwise atomically replaces it
+  # with an empty directory and independent operators receive an error.
+  if [[ -s "$OPS_RENDER/join-bootstrap/manifest.sha256" ]]; then
+    rsync -a "$OPS_RENDER/join-bootstrap/" "$node:$edge_remote/edge/join-bootstrap/"
   fi
+  scp -q "$edge_env" "$node:$edge_remote/edge.env"
+  edge_start_log='/srv/dai/edge/start-public-grafana.log'
+  # install-edge atomically replaces the file bound into Caddy. Recreate only
+  # Caddy after Grafana is healthy so it binds the new routes.
+  ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate bootstrap gateway-admission; docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; docker compose up -d --force-recreate caddy"
 }
 
 GATEWAY_OPTION=''
 CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
 if [[ "$COMPONENT" == edge ]]; then
   step 'Install the public edge configuration without changing chain state'
-  reconcile_public_grafana true
+  reconcile_public_grafana
+  if [[ "${GDC_PUBLIC_EDGE_VERIFY:-true}" != true ]]; then
+    printf 'READY public edge configuration installed\n'
+    exit 0
+  fi
   step 'Verify the status site is served through the public edge TLS'
   site_ready=false
   for _ in $(seq 1 30); do
@@ -92,6 +113,11 @@ if [[ "$COMPONENT" == edge-node ]]; then
   "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$EDGE_NODE" --output "$edge_env" >/dev/null
   ssh "$EDGE_NODE" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
   rsync -a "$ROOT/04-ops/edge-node/" "$EDGE_NODE:$edge_remote/edge/"
+  if [[ "$EDGE_NODE" == "$GATEWAY_NODE" ]]; then
+    [[ -s "$OPS_RENDER/join-bootstrap/manifest.sha256" ]] \
+      || die 'gateway edge install requires a rendered public JOIN bootstrap'
+    rsync -a "$OPS_RENDER/join-bootstrap/" "$EDGE_NODE:$edge_remote/edge/join-bootstrap/"
+  fi
   scp -q "$edge_env" "$EDGE_NODE:$edge_remote/edge.env"
   ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate caddy"
   printf 'PASS participant edge installed on %s\n' "$EDGE_NODE"
@@ -118,43 +144,72 @@ case "$COMPONENT" in
       "FAUCET_AMOUNT_NGONKA=$faucet_amount" \
       "FAUCET_MAX_CLAIMS_PER_IP=${GDC_FAUCET_MAX_CLAIMS_PER_IP:-3}" \
       "FAUCET_WINDOW_SECONDS=${GDC_FAUCET_WINDOW_SECONDS:-86400}"
-    FAUCET_OPTION="--faucet-env '$REMOTE/rendered/faucet.env'"
-    START_COMMAND='docker compose up -d --build --force-recreate faucet'
+    gateway_recipient="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
+    write_env "$GATEWAY_RESERVE_ENV" \
+      "FAUCET_CHAIN_ID=$CHAIN_ID" "FAUCET_GENESIS_SHA256=$faucet_genesis_sha256" \
+      'FAUCET_RPC_URL=http://127.0.0.1:26657' 'FAUCET_CHAIN_REST_URL=http://127.0.0.1:1317' \
+      'FAUCET_KEY_NAME=gdc-faucet-cold' "FAUCET_KEYRING_PASSWORD=$(<"$SECRETS/operator.keyring")" \
+      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18083' \
+      "FAUCET_GATEWAY_RESERVE_RECIPIENT=$gateway_recipient" "FAUCET_GATEWAY_RESERVE_TOKEN=$(<"$reserve_signer_token")" \
+      "FAUCET_GATEWAY_RESERVE_MAX_NGONKA=${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
+    FAUCET_OPTION="--faucet-env '$REMOTE/rendered/faucet.env' --gateway-reserve-env '$REMOTE/rendered/gateway-reserve-signer.env'"
+    START_COMMAND='docker compose --profile gateway-reserve up -d --build --force-recreate faucet gateway-reserve-signer'
     ENDPOINT="https://${GENESIS_PUBLIC_HOST}/faucet/health"
     ;;
   gateway)
+    step 'Discard only gateway state whose every escrow is absent from committed chain state'
+    "$ROOT/scripts/reset-stale-gateway-state.sh" "$GATEWAY_NODE" "${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
     step "Provide the pinned $GDC_GATEWAY_VERSION gateway image on $GATEWAY_NODE"
     "$ROOT/scripts/build-gateway-image.sh" >"$STATE/gateway-image-$GDC_GATEWAY_VERSION.txt"
     step 'Reconcile the gateway creator reserve before escrow reuse or replacement'
-    gateway_min_spendable="${GDC_GATEWAY_MIN_SPENDABLE_NGONKA:-100000000000}"
-    [[ "$gateway_min_spendable" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MIN_SPENDABLE_NGONKA must be positive'
     gateway_reserve_temp_count="${GDC_GATEWAY_ROTATION_TEMP_COUNT:-2}"
     gateway_reserve_target_count="${GDC_GATEWAY_ROTATION_TARGET_COUNT:-2}"
     [[ "$gateway_reserve_temp_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TEMP_COUNT must be positive'
     [[ "$gateway_reserve_target_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TARGET_COUNT must be positive'
-    gateway_rotation_slots=$((gateway_reserve_temp_count + gateway_reserve_target_count + 1))
     gateway_live_min_amount="$("$ROOT/scripts/inferenced.sh" query inference params \
       --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json \
       | jq -er '(.params // .).devshard_escrow_params.min_amount')"
     gateway_rotation_amount="${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-$gateway_live_min_amount}"
     [[ "$gateway_rotation_amount" =~ ^[1-9][0-9]*$ ]] || die 'gateway rotation escrow amount must be positive'
-    gateway_reserve_headroom=$((gateway_rotation_amount * gateway_rotation_slots))
-    (( gateway_reserve_headroom >= gateway_rotation_amount )) || die 'gateway reserve headroom overflows shell integer range'
+    gateway_funding_horizon="${GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS:-1}"
+    gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
+    gateway_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
+    [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
+    [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
+    [[ "$gateway_max_refill" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be positive'
     "$ROOT/04-ops/ensure-gateway-reserve.sh" \
-      "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_min_spendable" "$gateway_reserve_headroom"
+      "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
+      "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \
+      0 0 "$gateway_max_refill"
     # Re-running `ops gateway` switches or verifies a protocol runtime; it is
     # not authority to mint another escrow.  The escrow reconciler can rotate
     # the configured ID while this command is not running, so the deployed
     # gateway runtime is authoritative.  Consult it before the rendered file:
     # the latter is merely a snapshot and may point at a pruned escrow.
     if [[ -z "${GDC_ESCROW_ID:-}" ]]; then
-      active_gateway_escrow="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
+      gateway_creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
+      active_gateway_escrows="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
         [[ -r /srv/dai/ops/gateway.env ]] || exit 0
         set -a; . /srv/dai/ops/gateway.env; set +a
         curl -fsS http://127.0.0.1:18080/v1/admin/devshards \
           -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
-          | jq -er "[.devshards[] | select(.active == true and (.runtime.phase // \"\") == \"active\" and (.runtime.requests_blocked // false) == false) | .id | tostring] | first // empty"' 2>/dev/null || true)"
-      if [[ "$active_gateway_escrow" =~ ^[1-9][0-9]*$ ]]; then
+          | jq -r ".devshards[]? | select(.active == true and (.runtime.phase // \"\") == \"active\" and (.runtime.requests_blocked // false) == false) | .id | tostring"' 2>/dev/null || true)"
+      active_gateway_escrow=''
+      while IFS= read -r candidate; do
+        [[ "$candidate" =~ ^[1-9][0-9]*$ ]] || continue
+        candidate_state="$("$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$candidate" \
+          --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json 2>/dev/null || true)"
+        if jq -e --arg creator "$gateway_creator" --arg model "$MODEL_ID" '
+          .found == true
+          and .escrow.creator == $creator
+          and .escrow.model_id == $model
+          and ((.escrow.settled // false) == false)
+        ' <<<"$candidate_state" >/dev/null 2>&1; then
+          active_gateway_escrow="$candidate"
+          break
+        fi
+      done <<<"$active_gateway_escrows"
+      if [[ -n "$active_gateway_escrow" ]]; then
         export GDC_ESCROW_ID="$active_gateway_escrow"
         printf 'READY reuse active gateway escrow %s from deployed runtime\n' "$GDC_ESCROW_ID"
       elif [[ -s "$GATEWAY_ENV" ]]; then
@@ -191,6 +246,7 @@ case "$COMPONENT" in
     gateway_rotation_target_count="${GDC_GATEWAY_ROTATION_TARGET_COUNT:-2}"
     gateway_rotation_enabled="${GDC_GATEWAY_ESCROW_ROTATION_ENABLED:-true}"
     gateway_rotation_settlement_enabled="${GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED:-true}"
+    gateway_ingress_timeout="${GDC_GATEWAY_INGRESS_TIMEOUT_SECONDS:-300}"
     [[ "$gateway_max_concurrent_requests" =~ ^[0-9]+$ ]] || die 'gateway max concurrent requests is missing or invalid'
     [[ "$gateway_max_concurrent_per_weight" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT must be non-negative'
     [[ "$gateway_max_input_tokens" =~ ^[0-9]+$ ]] || die 'gateway max input tokens in flight is missing or invalid'
@@ -201,6 +257,7 @@ case "$COMPONENT" in
     [[ "$gateway_rotation_target_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TARGET_COUNT must be positive'
     [[ "$gateway_rotation_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED must be true or false'
     [[ "$gateway_rotation_settlement_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED must be true or false'
+    [[ "$gateway_ingress_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_INGRESS_TIMEOUT_SECONDS must be positive'
     GATEWAY_OPTION="--gateway-env '$REMOTE/rendered/gateway.env'"
     # `gateway.env` is both container input and Compose interpolation input:
     # it selects the protocol-isolated state volume before the service is
@@ -215,7 +272,7 @@ case "$COMPONENT" in
     # this gateway node's Caddy is ready.  The runtime self-probe targets the
     # gateway participant host, so wait for that exact ingress instead.
     gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"
-    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + 120)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d devshard-gateway"
+    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d devshard-gateway"
     CADDY_START_COMMAND=true
     ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"
     ;;
@@ -235,6 +292,10 @@ case "$COMPONENT" in
     rsync -a --exclude src/ "$ROOT/04-ops/site/" "$SITE_ASSETS_RENDER/"
     "$ROOT/scripts/build-site-js.sh" --output "$SITE_ASSETS_RENDER"
     cp "$SITE_INDEX_RENDER" "$SITE_ASSETS_RENDER/index.html"
+    # The compiled source contains placeholder values. Replace it with the
+    # rendered deployment configuration before publishing identical assets to
+    # the gateway host and the independent public edge.
+    install -m 0644 "$OPS_RENDER/config.js" "$SITE_ASSETS_RENDER/config.js"
     START_COMMAND=true
     # install-ops replaces Caddyfile atomically. A bind mount of a single file
     # keeps the old inode inside a running container, so `caddy reload` would
@@ -249,6 +310,7 @@ esac
 step "Install $COMPONENT operations component on $GATEWAY_NODE"
 ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
 rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
+scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"
 [[ -z "${SITE_ASSETS_RENDER:-}" ]] || rsync -a --delete "$SITE_ASSETS_RENDER/" "$GATEWAY_NODE:$REMOTE/04-ops/site/"
 rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"
 if [[ -n "$FAUCET_SIGNER_HOME" ]]; then
@@ -264,7 +326,6 @@ if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
   sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION $FAUCET_OPTION
   rm -rf '$REMOTE'
   {
-    cd /srv/dai/edge && docker compose down
     cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND
   } >/srv/dai/ops/start-$COMPONENT.log 2>&1"; then
   printf 'READY %s endpoint %s\n' "$COMPONENT" "$ENDPOINT"
@@ -275,8 +336,33 @@ fi
 
 if [[ "$COMPONENT" == faucet ]]; then
   step 'Verify the public DevNet faucet route'
-  curl -fsS --connect-timeout 5 --max-time 15 "$ENDPOINT" | jq -e '.status == "ok"' >/dev/null
-  printf 'PASS public DevNet faucet: %s\n' "$ENDPOINT"
+  faucet_ready=false
+  faucet_attempts="${GDC_FAUCET_PUBLIC_READY_ATTEMPTS:-12}"
+  for faucet_attempt in $(seq 1 "$faucet_attempts"); do
+    faucet_response="$(mktemp)"
+    faucet_stderr="$(mktemp)"
+    set +e
+    faucet_http_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$faucet_response" -w '%{http_code}' "$ENDPOINT" 2>"$faucet_stderr")"
+    faucet_curl_exit=$?
+    set -e
+    if [[ "$faucet_curl_exit" == 0 && "$faucet_http_status" == 200 ]]; then
+      if jq -e '.status == "ok"' "$faucet_response" >/dev/null; then
+        rm -f "$faucet_response" "$faucet_stderr"
+        faucet_ready=true
+        printf 'PASS public DevNet faucet: %s\n' "$ENDPOINT"
+        break
+      fi
+      content_type="$(file -b --mime-type "$faucet_response" 2>/dev/null || printf unknown)"
+      rm -f "$faucet_response" "$faucet_stderr"
+      die "public DevNet faucet returned HTTP 200 with an invalid health payload: url=$ENDPOINT content_type=$content_type"
+    fi
+    faucet_detail="$(tr '\n' ' ' <"$faucet_stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+    rm -f "$faucet_response" "$faucet_stderr"
+    printf 'WAIT public DevNet faucet unavailable attempt=%s/%s url=%s http_status=%s curl_exit=%s curl_status=%s%s\n' \
+      "$faucet_attempt" "$faucet_attempts" "$ENDPOINT" "${faucet_http_status:-000}" "$faucet_curl_exit" "$(curl_exit_status "$faucet_curl_exit")" "${faucet_detail:+ detail=$faucet_detail}"
+    sleep 2
+  done
+  "$faucet_ready" || die "public DevNet faucet did not become ready after $faucet_attempts attempts: url=$ENDPOINT"
 fi
 
 if [[ "$COMPONENT" == gateway ]]; then
@@ -326,7 +412,7 @@ if [[ "$COMPONENT" == gateway ]]; then
     if ssh "$GATEWAY_NODE" 'set -Eeuo pipefail
       set -a; . /srv/dai/ops/gateway.env; set +a
       curl -fsS http://127.0.0.1:18080/v1/status \
-        | jq -e "(.devshards // [.]) | any((.active // true) == true and .phase == \"active\" and .requests_blocked == false and .chain_phase == \"Inference\")" >/dev/null
+        | jq -e "(.devshards // [.]) | any((.active // true) == true and (.runtime.phase // .phase // \"\") == \"active\" and (.runtime.requests_blocked // .requests_blocked // false) == false and (.runtime.chain_phase // .chain_phase // \"\") == \"Inference\")" >/dev/null
       curl -fsS http://127.0.0.1:18080/v1/admin/devshards -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
         | jq -e --arg model "$DEVSHARD_MODEL" ".limiter.models[\$model] as \$limits | ((.settings.max_concurrent_requests == 0 and .settings.max_concurrent_requests_per_10000_weight <= 0) or \$limits.effective_max_concurrent_requests > 0)" >/dev/null
       height="$(curl -fsS http://127.0.0.1:26657/status | jq -er ".result.sync_info.latest_block_height | tonumber")"
@@ -353,9 +439,9 @@ if [[ "$COMPONENT" == gateway ]]; then
   curl -fsS "$GDC_GATEWAY_PUBLIC_URL/v1/status" -H "Authorization: Bearer $client_key" \
     | jq -e '
         ([.devshards[]?
-          | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)
+          | select(.active == true and (.runtime.phase // .phase // "") == "active" and (.runtime.requests_blocked // .requests_blocked // false) == false)
           | .id]
-         + [if .phase == "active" and (.requests_blocked // false) == false then .escrow_id? else empty end])
+         + [if (.runtime.phase // .phase // "") == "active" and (.runtime.requests_blocked // .requests_blocked // false) == false then .escrow_id? else empty end])
         | any(. != null and (tostring | test("^[1-9][0-9]*$")))
       ' >/dev/null
   # Gateway status is a local runtime view.  Prove that its selected escrow
@@ -363,9 +449,9 @@ if [[ "$COMPONENT" == gateway ]]; then
   active_escrow="$(curl -fsS "$GDC_GATEWAY_PUBLIC_URL/v1/status" -H "Authorization: Bearer $client_key" \
     | jq -er '
         ([.devshards[]?
-          | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)
+          | select(.active == true and (.runtime.phase // .phase // "") == "active" and (.runtime.requests_blocked // .requests_blocked // false) == false)
           | .id]
-         + [if .phase == "active" and (.requests_blocked // false) == false then .escrow_id? else empty end])
+         + [if (.runtime.phase // .phase // "") == "active" and (.runtime.requests_blocked // .requests_blocked // false) == false then .escrow_id? else empty end])
         | map(select(. != null and (tostring | test("^[1-9][0-9]*$"))))
         | first | tostring
       ')"
@@ -392,6 +478,21 @@ if [[ "$COMPONENT" == monitoring ]]; then
 fi
 
 if [[ "$COMPONENT" == site ]]; then
+  step 'Publish the static status site on the public edge'
+  site_remote="${REMOTE}-public-site"
+  ssh "$PUBLIC_EDGE_NODE" "rm -rf '$site_remote' && mkdir -p '$site_remote/site'"
+  rsync -a --delete "$SITE_ASSETS_RENDER/" "$PUBLIC_EDGE_NODE:$site_remote/site/"
+  ssh -T "$PUBLIC_EDGE_NODE" "set -Eeuo pipefail
+    sudo install -d -m 0755 /srv/dai/edge/site
+    sudo rsync -a --delete '$site_remote/site/' /srv/dai/edge/site/
+    rm -rf '$site_remote'
+    cd /srv/dai/edge
+    if [[ \"${GDC_SITE_KEEP_CADDY:-false}\" == true ]]; then
+      docker compose ps -q caddy | grep -q . || { echo 'ERROR public Caddy is not running while reset requests listener preservation' >&2; exit 1; }
+    else
+      docker compose up -d --force-recreate caddy >/srv/dai/edge/start-site.log 2>&1
+    fi"
+  printf 'READY static status site published on %s\n' "$PUBLIC_EDGE_NODE"
   # Caddy can accept TLS before the just-recreated site upstream is ready.
   # Wait on the actual public contract rather than treating that short 502
   # window as a failed reset or a false public-state observation.
@@ -410,7 +511,7 @@ if [[ "$COMPONENT" == site ]]; then
   verify_deadline=$((SECONDS + ${GDC_SITE_PUBLIC_VERIFY_WAIT_SECONDS:-120}))
   verified=false
   while (( SECONDS < verify_deadline )); do
-    if "$ROOT/scripts/verify-public-homepage.sh"; then
+    if GDC_SITE_RENDERED_ASSETS="$SITE_ASSETS_RENDER" "$ROOT/scripts/verify-public-homepage.sh"; then
       verified=true
       break
     fi

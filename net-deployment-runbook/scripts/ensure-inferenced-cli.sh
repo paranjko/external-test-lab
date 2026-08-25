@@ -26,7 +26,7 @@ version_matches() {
   local candidate="$1" output
   [[ -x "$candidate" ]] || return 1
   output="$("$candidate" version 2>&1 || true)"
-  [[ "$output" =~ (^|[^0-9])v?${INFERENCED_OPERATOR_VERSION//./\\.}([^0-9]|$) ]]
+  [[ "$output" =~ (^|[^0-9])v?${GONKA_RELEASE//./\\.}([^0-9]|$) ]]
 }
 
 sha256_file() {
@@ -48,18 +48,21 @@ bin_dir="${GDC_INFERENCED_BIN_DIR:-$HOME/.local/bin}"
 target="$bin_dir/inferenced"
 current="$(command -v inferenced 2>/dev/null || true)"
 if [[ -n "$current" ]] && version_matches "$current"; then
-  note "PASS operator inferenced CLI: $current ($INFERENCED_OPERATOR_VERSION)"
+  note "PASS operator inferenced CLI: $current ($GONKA_RELEASE)"
   exit 0
 fi
 if version_matches "$target"; then
-  note "PASS operator inferenced CLI: $target ($INFERENCED_OPERATOR_VERSION)"
+  note "PASS operator inferenced CLI: $target ($GONKA_RELEASE)"
   exit 0
 fi
 
-step "Install pinned inferenced $INFERENCED_OPERATOR_VERSION for $key"
+step "Install pinned inferenced $GONKA_RELEASE for $key"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-curl -fL --retry 3 --connect-timeout 15 --max-time 600 "$url" -o "$tmp/inferenced.zip"
+printf 'WAIT download pinned inferenced CLI url=%s timeout_seconds=600\n' "$url" >&2
+if ! curl -fL --retry 3 --connect-timeout 15 --max-time 600 "$url" -o "$tmp/inferenced.zip"; then
+  die "failed to download pinned inferenced CLI from $url within timeout_seconds=600"
+fi
 actual_sha="$(sha256_file "$tmp/inferenced.zip")"
 [[ "$actual_sha" == "$expected_sha" ]] || die "inferenced CLI checksum mismatch: expected $expected_sha, got $actual_sha"
 unzip -q "$tmp/inferenced.zip" -d "$tmp/unpacked"
@@ -67,8 +70,8 @@ binary="$(find "$tmp/unpacked" -type f -name inferenced -perm -u+x -print -quit)
 [[ -n "$binary" ]] || die 'pinned inferenced archive does not contain an executable inferenced binary'
 install -d -m 0755 "$bin_dir"
 install -m 0755 "$binary" "$target"
-version_matches "$target" || die "installed inferenced does not report required version $INFERENCED_OPERATOR_VERSION"
-note "PASS operator inferenced CLI installed: $target ($INFERENCED_OPERATOR_VERSION)"
+version_matches "$target" || die "installed inferenced does not report required version $GONKA_RELEASE"
+note "PASS operator inferenced CLI installed: $target ($GONKA_RELEASE)"
 if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
   note "NOTE add $bin_dir to PATH to invoke inferenced directly"
 fi

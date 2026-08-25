@@ -10,11 +10,53 @@ BASELINE="$STATE/phase-profiles/genesis.env"
 # Genesis cannot be installed or bound to a new lifecycle run.
 step 'Import current public Genesis bootstrap for this independent Host join'
 "$ROOT/scripts/fetch-join-bootstrap.sh"
+if [[ "${GDC_JOIN_ROLE_INPUT:-false}" == true ]]; then
+  [[ "${GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || die 'JOIN role input lacks a valid prepared bootstrap digest'
+  [[ -n "${GDC_ENV:-}" && -s "$GDC_ENV" ]] || die 'JOIN role input path is unavailable for dispatch binding'
+  join_dispatch_marker="$STATE/join-bootstrap-dispatched.manifest.sha256"
+  join_role_sha256="$(sha256sum "$GDC_ENV" | awk '{print $1}')"
+  join_public_host="$(node_public_host "$NODE")"
+  join_gpu_alias="$(node_ml_host "$NODE" || true)"
+  if [[ -e "$join_dispatch_marker" ]]; then
+    grep -Fxq "manifest_sha256=$GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256" "$join_dispatch_marker" \
+      && grep -Fxq "role_sha256=$join_role_sha256" "$join_dispatch_marker" \
+      && grep -Fxq "host_alias=$NODE" "$join_dispatch_marker" \
+      && grep -Fxq "public_host=$join_public_host" "$join_dispatch_marker" \
+      && grep -Fxq "gpu_alias=$join_gpu_alias" "$join_dispatch_marker" \
+      || die 'JOIN bootstrap dispatch marker disagrees with the verified bootstrap binding'
+  else
+    install -d -m 0700 "$STATE"
+    umask 077
+    join_dispatch_marker_tmp="$(mktemp "$STATE/.join-bootstrap-dispatched.manifest.sha256.XXXXXX")"
+    {
+      printf 'schema_version=1\n'
+      printf 'manifest_sha256=%s\n' "$GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256"
+      printf 'role_sha256=%s\n' "$join_role_sha256"
+      printf 'host_alias=%s\n' "$NODE"
+      printf 'public_host=%s\n' "$join_public_host"
+      printf 'gpu_alias=%s\n' "$join_gpu_alias"
+    } >"$join_dispatch_marker_tmp"
+    chmod 0600 "$join_dispatch_marker_tmp"
+    mv -f -- "$join_dispatch_marker_tmp" "$join_dispatch_marker"
+  fi
+fi
 [[ -s "$BASELINE" ]] || die 'public Genesis bootstrap did not provide a baseline profile'
 grep -qx 'release_profile=v2026.07.23' "$BASELINE" || die 'join requires a Genesis formed from v2026.07.23'
 record_phase_profile "join-${NODE}"
+RUN="$GDC_HOME/runs/${GDC_RUN_ID:-manual}/join-$NODE"
+export EVIDENCE_PHASE_NAME="join-$NODE"
+mkdir -p "$RUN"
 record_join_state "$NODE" BOOTSTRAP_IMPORTED
 ML_TARGET="$(node_ml_host "$NODE" || printf '%s' "$NODE")"
+
+# An independent operator may be the first person to use this Host.  In a
+# split deployment the ML runtime must be able to reach the network Host's
+# DAPI callback port; that ingress rule belongs to host preparation, not to a
+# later PoC retry.  Prepare only this joining topology (and its declared ML
+# Host, which phase-prepare derives) so unrelated Hosts are never touched.
+step "Prepare $NODE for independent join"
+GDC_PREPARE_HOSTS="$NODE" "$ROOT/scripts/phase-prepare.sh"
+
 if [[ "$(node_gpu_profile "$NODE")" == auto ]]; then
   step "Detect GPU profile for $NODE"
   detected_gpu_profile="$("$ROOT/scripts/detect-gpu-profile.sh" "$ML_TARGET")"
@@ -41,7 +83,16 @@ getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve
 ACCOUNT="$ACCOUNTS/$NODE-cold.json"
 IDENTITY="$IDENTITIES/$NODE.json"
 [[ -s "$GENESIS/genesis.json" && -s "$GENESIS/genesis-seeds.txt" ]] || die 'run genesis first'
-bind_run_manifest_genesis "$(genesis_sha256 "$GENESIS/genesis.json")"
+GENESIS_SHA256="$(genesis_sha256 "$GENESIS/genesis.json")"
+GENESIS_CHAIN_ID="$(jq -er .chain_id "$GENESIS/genesis.json")"
+write_phase_lineage "$RUN" "$GENESIS_CHAIN_ID" "$GENESIS_SHA256"
+
+if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
+  step "Restore $NODE validator identity from operator backup"
+  "$ROOT/scripts/validator-backup.sh" restore "$NODE" "$GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE"
+  export GDC_RESTORE_VALIDATOR_BACKUP=true
+  export GDC_RESTORE_IDENTITY_FILE="$STATE/restore/$NODE/identity.json"
+fi
 
 # Every joining Host creates and owns its local keyring passwords before it
 # creates any account. No Genesis operator key, funding approval, or
@@ -51,14 +102,44 @@ if [[ ! -s "$SECRETS/operator.keyring" || ! -s "$SECRETS/$NODE.keyring" || ! -s 
   "$ROOT/scripts/make-node-operator-secrets.sh" "$NODE" "$SECRETS"
 fi
 
-if [[ ! -s "$ACCOUNT" ]]; then
-  step "Create $NODE cold account"
-  "$ROOT/01-identities-genesis/create-cold-accounts.sh" "$SECRETS/operator.keyring" "$NODE"
-fi
+step "Ensure $NODE cold account is available for transaction signing"
+"$ROOT/01-identities-genesis/create-cold-accounts.sh" "$SECRETS/operator.keyring" "$NODE"
 [[ -s "$ACCOUNT" ]] || die "missing public cold account for $NODE"
 ADDRESS="$(jq -er .address "$ACCOUNT")"
 RUNTIME_ID="$(runtime_id_for_participant "$ADDRESS")"
 record_runtime_identity "$NODE" "$ADDRESS" "$RUNTIME_ID"
+
+# A cold mnemonic identifies the on-chain participant, but it cannot recover
+# its validator identity.  Check this before generating anything on the Host:
+# otherwise a reset Host could acquire a new TMKMS/P2P/warm identity and appear
+# to resume an existing participant.
+participant_endpoint="https://${GENESIS_PUBLIC_HOST}/v2/participants/$ADDRESS"
+participant_body_file="$(mktemp)"
+participant_stderr_file="$(mktemp)"
+if participant_http_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$participant_body_file" -w '%{http_code}' "$participant_endpoint" 2>"$participant_stderr_file")"; then
+  participant_curl_exit=0
+else
+  participant_curl_exit=$?
+fi
+participant_error_detail="$(tr '\n' ' ' <"$participant_stderr_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+participant_body="$(<"$participant_body_file")"
+rm -f "$participant_body_file" "$participant_stderr_file"
+if (( participant_curl_exit != 0 )); then
+  die "cannot determine whether $NODE participant already exists (url=$participant_endpoint http_status=${participant_http_status:-000} curl_exit=$participant_curl_exit curl_status=$(curl_exit_status "$participant_curl_exit")${participant_error_detail:+ detail=$participant_error_detail})"
+fi
+case "$participant_http_status" in
+  200)
+    participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null)" || die "participant endpoint returned malformed JSON for $NODE (url=$participant_endpoint http_status=200)"
+    participant_state="$(participant_onboarding_state "$participant_status")"
+    ;;
+  404)
+    participant_status=''
+    participant_state=new
+    ;;
+  *)
+    die "cannot determine whether $NODE participant already exists (url=$participant_endpoint http_status=$participant_http_status)"
+    ;;
+esac
 
 # `host reset` deliberately preserves the joining Host's local account and
 # identity evidence, while removing the deployed inference directory and its
@@ -67,13 +148,28 @@ record_runtime_identity "$NODE" "$ADDRESS" "$RUNTIME_ID"
 # absent so a subsequent join is self-contained.
 remote_identity_ready=false
 if [[ -s "$IDENTITY" ]] \
-  && ssh -T "$NODE" "test -s '$DATA_ROOT/$NODE/inference/config/config.toml'"; then
+  && ssh -T "$NODE" "test -s '$DATA_ROOT/$NODE/inference/config/config.toml' && test -d '$DATA_ROOT/$NODE/tmkms' && test -s '$DATA_ROOT/$NODE/inference/config/node_key.json'"; then
   remote_identity_ready=true
+fi
+[[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true ]] && remote_identity_ready=false
+if [[ "$participant_state" != new && "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true && "$remote_identity_ready" != true ]]; then
+  die "$NODE participant already exists on this chain, but its validator identity is absent on the Host; cold and warm mnemonics alone cannot restore it. Preserve the evidence and use a separately validated recovery procedure."
 fi
 if [[ "$remote_identity_ready" != true ]]; then
   [[ -s "$IDENTITY" ]] && printf 'READY remote identity state is absent; recreating %s identity bootstrap\n' "$NODE"
   step "Create $NODE identity"
-  "$ROOT/01-identities-genesis/collect-identities.sh" "$INVENTORY" "$SECRETS" "$IDENTITIES" "$GDC_HOME/mnemonics" "$NODE"
+  GDC_RESTORE_WARM_MNEMONIC="${GDC_RESTORE_VALIDATOR_BACKUP:+$GDC_HOME/mnemonics/$NODE-warm.mnemonic}" \
+    "$ROOT/01-identities-genesis/collect-identities.sh" "$INVENTORY" "$SECRETS" "$IDENTITIES" "$GDC_HOME/mnemonics" "$NODE"
+fi
+if [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true ]]; then
+  jq -e --slurpfile expected "$GDC_RESTORE_IDENTITY_FILE" '
+    .node_name == $expected[0].node_name and
+    .node_id == $expected[0].node_id and
+    .consensus_pubkey == $expected[0].consensus_pubkey and
+    .warm_address == $expected[0].warm_address and
+    .warm_pubkey_b64 == $expected[0].warm_pubkey_b64
+  ' "$IDENTITY" >/dev/null || die "$NODE restored identity does not match validator backup"
+  printf 'READY %s restored validator identity matches the operator backup\n' "$NODE"
 fi
 record_join_state "$NODE" IDENTITY_CREATED "$ADDRESS"
 
@@ -83,9 +179,12 @@ mkdir -p "$NODE_DIR" "$GENERATED/edge" "$GENERATED/agents"
 env_args=(--inventory "$INVENTORY" --node-name "$NODE" --account-public "$ACCOUNT" --seeds-file "$GENESIS/genesis-seeds.txt" --secrets-dir "$SECRETS")
 ML_HOST="$(node_ml_host "$NODE" || true)"
 if [[ -n "$ML_HOST" ]]; then
-  callback_address="$(getent ahostsv4 "$(node_public_host "$NODE")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+  # The public hostname may resolve to the shared edge.  The ML runtime must
+  # post PoC batches to the joining network Host itself, so prefer the SSH
+  # endpoint that identifies that Host and only use DNS as a fallback.
+  callback_address="$(ssh -G "$NODE" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}' || true)"
   if [[ ! "$callback_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    callback_address="$(ssh -G "$NODE" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}' || true)"
+    callback_address="$(getent ahostsv4 "$(node_public_host "$NODE")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
   fi
   [[ "$callback_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "cannot determine callback IPv4 for $NODE"
   env_args+=(--poc-callback-url "http://$callback_address:9100" --ml-callback-bind 0.0.0.0)
@@ -167,6 +266,10 @@ case "$participant_state" in
     ;;
 esac
 
+if [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true && "$already_registered" != true ]]; then
+  die "$NODE validator backup belongs to a participant that is not registered on this chain; refusing to create a duplicate participant"
+fi
+
 if [[ "$already_registered" == true ]]; then
   printf 'READY %s participant already registered with status=%s; skip duplicate registration\n' "$NODE" "$participant_status"
 else
@@ -217,12 +320,37 @@ else
 fi
 record_join_state "$NODE" REGISTERED "$ADDRESS"
 if [[ "$already_active" == true ]]; then
-  printf 'READY %s is already ACTIVE; skip duplicate funding and ML permission transactions\n' "$NODE"
+  warm_address="$(jq -er .warm_address "$IDENTITY")"
+  warm_account_endpoint="https://${GENESIS_PUBLIC_HOST}/chain-api/cosmos/auth/v1beta1/accounts/$warm_address"
+  warm_account_body="$(mktemp)"
+  warm_account_stderr="$(mktemp)"
+  if warm_account_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$warm_account_body" -w '%{http_code}' "$warm_account_endpoint" 2>"$warm_account_stderr")"; then
+    warm_account_curl_exit=0
+  else
+    warm_account_curl_exit=$?
+  fi
+  warm_account_detail="$(tr '\n' ' ' <"$warm_account_stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+  rm -f "$warm_account_body" "$warm_account_stderr"
+  if (( warm_account_curl_exit == 0 )) && [[ "$warm_account_status" =~ ^2[0-9][0-9]$ ]]; then
+    printf 'READY %s is already ACTIVE with a provisioned warm account; skip duplicate funding and ML permission transactions\n' "$NODE"
+  elif (( warm_account_curl_exit == 0 )) && [[ "$warm_account_status" == 404 ]]; then
+    printf 'READY %s is already ACTIVE but its warm account is absent; resume ML permission grant without duplicate funding\n' "$NODE"
+    step "Grant ML operational permissions for $NODE"
+    "$ROOT/03-join/grant-ml-ops.sh" "$NODE" "$IDENTITY" "$INVENTORY"
+  else
+    die "cannot determine whether ACTIVE $NODE has a provisioned warm account (url=$warm_account_endpoint http_status=${warm_account_status:-000} curl_exit=$warm_account_curl_exit curl_status=$(curl_exit_status "$warm_account_curl_exit")${warm_account_detail:+ detail=$warm_account_detail})"
+  fi
 else
   step "Claim bounded public DevNet funding for $NODE"
   "$ROOT/scripts/claim-devnet-faucet.sh" "$ADDRESS"
   step "Grant ML operational permissions for $NODE"
   "$ROOT/03-join/grant-ml-ops.sh" "$NODE" "$IDENTITY" "$INVENTORY"
+  if [[ -z "$ML_HOST" ]]; then
+    step "Start colocated ML inference for $NODE"
+    "$ROOT/03-join/start-local-ml.sh" "$NODE" "$MODEL_ID" "$MODEL_REVISION" \
+      "$MLNODE_DTYPE" "$MLNODE_TENSOR_PARALLEL_SIZE" "$MLNODE_MAX_NUM_SEQS" \
+      "$MLNODE_GPU_MEMORY_UTILIZATION" "$MLNODE_CONTEXT_LENGTH"
+  fi
   step "Wait until $NODE is ACTIVE"
   "$ROOT/03-join/wait-active.sh" "https://$GENESIS_PUBLIC_HOST" "$ADDRESS"
 fi
@@ -234,5 +362,9 @@ if [[ -n "$ML_HOST" ]]; then
   "$ROOT/scripts/phase-ml-attach.sh" "$NODE"
 fi
 
-step "Prove $NODE JOIN_PASS through chain eligibility and a gateway regression"
+step "Create $NODE validator recovery archive"
+"$ROOT/scripts/validator-backup.sh" create "$NODE"
+[[ "${GDC_JOIN_VERIFICATION:-true}" == true ]] \
+  || die 'the supported first-time JOIN workflow requires acceptance verification'
+step "Verify $NODE through chain eligibility and a gateway regression"
 "$ROOT/scripts/phase-join-acceptance.sh" "$NODE"

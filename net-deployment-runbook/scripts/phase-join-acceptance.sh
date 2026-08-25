@@ -23,8 +23,17 @@ EPOCHS="${GDC_JOIN_EFFECTIVE_EPOCHS:-}"
 TIMEOUT="${GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS:-}"
 [[ "$EPOCHS" =~ ^[1-9][0-9]*$ && "$TIMEOUT" =~ ^[1-9][0-9]*$ ]] \
   || die 'release profile must define positive GDC_JOIN_EFFECTIVE_EPOCHS and GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS'
+# An independent participant registered during the current epoch cannot be
+# represented in that epoch's already-created group.  Two additional epochs
+# cover the registration/ACTIVE transition and the first group that can
+# contain its PoC evidence, then the profile's four complete effective epochs
+# remain required on top of that. Genesis keeps the canonical four-epoch
+# profile window because it exists before the first group is created.
+acceptance_epochs="$EPOCHS"
+[[ "$NODE" == "$GENESIS_NODE" ]] || acceptance_epochs=$((EPOCHS + 2))
 record_phase_profile "join-acceptance-$NODE"
 RUN="$GDC_HOME/runs/${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}/join-acceptance-$NODE"
+export EVIDENCE_PHASE_NAME="join-acceptance-$NODE"
 mkdir -p "$RUN"
 # The exit trap is installed before the first public-chain probe. Initialise
 # receipt fields so an early transport failure itself remains diagnosable.
@@ -37,34 +46,72 @@ poc_accepted_weight_sum=0
 poc_committed_total=0
 poc_distribution_tx_hash=''
 poc_distribution_tx_code=-1
+poc_distribution_stage=0
+late_restored_evidence=false
 [[ -s "$RUN/poc-acceptance-observations.json" ]] || printf '[]' >"$RUN/poc-acceptance-observations.json"
+
+LAST_PUBLIC_FETCH_FAILURE=''
+
+fetch_public_json() {
+  local label="$1" url="$2" output="$3" stderr http_status rc detail curl_status
+  stderr="$(mktemp "$RUN/.curl.XXXXXX")"
+  if http_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$output" -w '%{http_code}' "$url" 2>"$stderr")"; then rc=0; else rc=$?; fi
+  if (( rc == 0 )) && [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then rm -f "$stderr"; return 0; fi
+  detail="$(tr '\n' ' ' <"$stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+  rm -f "$stderr"
+  [[ "$http_status" =~ ^[0-9]{3}$ ]] || http_status=0
+  curl_status="$(curl_exit_status "$rc")"
+  LAST_PUBLIC_FETCH_FAILURE="request=$label url=$url http_status=$http_status curl_exit=$rc curl_status=$curl_status${detail:+ detail=$detail}"
+  printf 'WAIT  %s unavailable url=%s http_status=%s curl_exit=%s curl_status=%s%s\n' "$label" "$url" "$http_status" "$rc" "$curl_status" "${detail:+ detail=$detail}"
+  return 1
+}
 
 # Keep an evidence trail for the stage actually selected by the chain.  A
 # participant can be ACTIVE and have a runtime while its DAPI/MLNode follows
 # an old stage; accepting only the final epoch-group weight would conceal that
 # class of failure (LIFE-012).
 capture_poc_stage_trace() {
-  local group="$1" epoch="$2" stage commits distributions validations artifact_local artifact_public tmp
+  local group="$1" epoch="$2" stage artifact_stage commits distributions validations artifact_local artifact_public artifact_public_status artifact_public_stderr artifact_public_rc artifact_public_detail tmp
   stage="$(jq -er '.epoch_group_data.poc_start_block_height | tonumber' <<<"$group")" || return 1
   [[ "$stage" =~ ^[1-9][0-9]*$ ]] || return 1
+  artifact_stage=$((stage + EPOCH_LENGTH))
 
   cp "$RUN/epoch-group.json" "$RUN/canonical-epoch-group-$stage.json"
-  curl -fsS --connect-timeout 5 --max-time 15 \
-    "$CHAIN_BASE/chain-api/productscience/inference/inference/all_poc_v2_store_commits/$stage" \
-    >"$RUN/poc-commits-$stage.json" || printf '{"commits":[]}' >"$RUN/poc-commits-$stage.json"
-  curl -fsS --connect-timeout 5 --max-time 15 \
-    "$CHAIN_BASE/chain-api/productscience/inference/inference/all_mlnode_weight_distributions/$stage" \
-    >"$RUN/poc-distributions-$stage.json" || printf '{"distributions":[]}' >"$RUN/poc-distributions-$stage.json"
-  curl -fsS --connect-timeout 5 --max-time 15 \
-    "$CHAIN_BASE/chain-api/productscience/inference/inference/poc_v2_validations_for_stage/$stage" \
-    >"$RUN/poc-validations-$stage.json" || printf '{"poc_validation":[]}' >"$RUN/poc-validations-$stage.json"
+  fetch_public_json 'PoC commits' "$CHAIN_BASE/chain-api/productscience/inference/inference/all_poc_v2_store_commits/$stage" "$RUN/poc-commits-$stage.json" || printf '{"commits":[]}' >"$RUN/poc-commits-$stage.json"
+  fetch_public_json 'PoC weight distributions' "$CHAIN_BASE/chain-api/productscience/inference/inference/all_mlnode_weight_distributions/$stage" "$RUN/poc-distributions-$stage.json" || printf '{"distributions":[]}' >"$RUN/poc-distributions-$stage.json"
+  fetch_public_json 'PoC validations' "$CHAIN_BASE/chain-api/productscience/inference/inference/poc_v2_validations_for_stage/$stage" "$RUN/poc-validations-$stage.json" || printf '{"poc_validation":[]}' >"$RUN/poc-validations-$stage.json"
 
-  # The participant's public endpoint must expose the same artifact root that
-  # the validator will fetch.  This directly catches edge proxy cross-routing.
-  artifact_public="https://$(node_public_host "$NODE")/v1/poc/artifacts/state?height=$stage&model_id=${MODEL_ID//\//%2F}"
-  curl -fsS --connect-timeout 5 --max-time 15 "$artifact_public" \
-    >"$RUN/poc-artifact-public-$stage.json" || printf '{"unavailable":true}' >"$RUN/poc-artifact-public-$stage.json"
-  artifact_local="http://127.0.0.1:9000/v1/poc/artifacts/state?height=$stage&model_id=${MODEL_ID//\//%2F}"
+  # An epoch group records the completed PoC stage. DAPI retains the following
+  # stage that validators fetch and prunes the completed stage at the boundary.
+  artifact_public="https://$(node_public_host "$NODE")/v1/poc/artifacts/state?height=$artifact_stage&model_id=${MODEL_ID//\//%2F}"
+  tmp="$(mktemp "$RUN/.poc-artifact-public.tmp.XXXXXX")"
+  artifact_public_stderr="$(mktemp "$RUN/.poc-artifact-public.stderr.XXXXXX")"
+  if artifact_public_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp" -w '%{http_code}' "$artifact_public" 2>"$artifact_public_stderr")"; then
+    artifact_public_rc=0
+  else
+    artifact_public_rc=$?
+  fi
+  if [[ "$artifact_public_status" == 200 ]] \
+    && jq -e '(.root_hash | type == "string" and length > 0) and ((.count | tonumber) > 0)' "$tmp" >/dev/null 2>&1; then
+    rm -f "$artifact_public_stderr"
+    mv "$tmp" "$RUN/poc-artifact-public-$stage.json"
+  else
+    artifact_public_detail="$(tr '\n' ' ' <"$artifact_public_stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+    if [[ "$artifact_public_status" == 200 && -z "$artifact_public_detail" ]]; then
+      artifact_public_detail='artifact root is not populated yet'
+    fi
+    rm -f "$artifact_public_stderr"
+    [[ "$artifact_public_status" =~ ^[0-9]{3}$ ]] || artifact_public_status=0
+    printf 'WAIT  public PoC artifact unavailable canonical_stage=%s artifact_stage=%s url=%s http_status=%s curl_exit=%s curl_status=%s%s\n' \
+      "$stage" "$artifact_stage" "$artifact_public" "$artifact_public_status" "$artifact_public_rc" "$(curl_exit_status "$artifact_public_rc")" "${artifact_public_detail:+ detail=$artifact_public_detail}"
+    jq -n --argjson canonical_stage "$stage" --argjson artifact_stage "$artifact_stage" --argjson http_status "$artifact_public_status" --rawfile response "$tmp" \
+      '{unavailable:true,canonical_stage:$canonical_stage,artifact_stage:$artifact_stage,http_status:$http_status,response:$response}' >"$RUN/poc-artifact-public-$stage.json"
+    rm -f "$tmp"
+  fi
+  # The DAPI listens on 9000 inside the node deployment.  The host-local
+  # public proxy is the same surface validators use and is exposed on 8000;
+  # probing 9000 from the host produces a false unavailable result.
+  artifact_local="http://127.0.0.1:8000/v1/poc/artifacts/state?height=$artifact_stage&model_id=${MODEL_ID//\//%2F}"
   ssh -T "$NODE" "curl -fsS --connect-timeout 5 --max-time 15 '$artifact_local'" \
     >"$RUN/poc-artifact-local-$stage.json" 2>/dev/null || printf '{"unavailable":true}' >"$RUN/poc-artifact-local-$stage.json"
 
@@ -79,7 +126,7 @@ capture_poc_stage_trace() {
   commits="$RUN/poc-commits-$stage.json"
   distributions="$RUN/poc-distributions-$stage.json"
   validations="$RUN/poc-validations-$stage.json"
-  jq -n --argjson epoch "$epoch" --argjson canonical_poc_start_block_height "$stage" \
+  jq -n --argjson epoch "$epoch" --argjson canonical_poc_start_block_height "$stage" --argjson artifact_stage "$artifact_stage" \
     --arg participant "$ADDRESS" --arg runtime_id "$RUNTIME_ID" \
     --slurpfile commits "$commits" --slurpfile distributions "$distributions" \
     --slurpfile validations "$validations" --slurpfile artifact_local "$RUN/poc-artifact-local-$stage.json" \
@@ -91,44 +138,83 @@ capture_poc_stage_trace() {
       def participant_validations:
         [$validations[0].poc_validation[]?.poc_validation[]?
           | select(.participant_address == $participant)];
-      {epoch:$epoch,canonical_poc_start_block_height:$canonical_poc_start_block_height,
+      {epoch:$epoch,canonical_poc_start_block_height:$canonical_poc_start_block_height,artifact_stage:$artifact_stage,
        participant_address:$participant,runtime_id:$runtime_id,
        commit:([participant_commit] | first // null),
        distribution:([participant_distribution] | first // null),
        validations:participant_validations,
        artifact_local:$artifact_local[0],artifact_public:$artifact_public[0],
        artifact_public_matches_local:(
-         ($artifact_local[0].root_hash? // null) != null and
+         ($artifact_local[0].root_hash? // "") | length > 0 and
+         (($artifact_local[0].count? // 0) | tonumber) > 0 and
          ($artifact_local[0].root_hash? == $artifact_public[0].root_hash?) and
          ($artifact_local[0].count? == $artifact_public[0].count?))}
     ' >"$RUN/poc-stage-trace-$stage.json"
   tmp="$(mktemp "$RUN/.poc-stage-traces.tmp.XXXXXX")"
   jq --slurpfile trace "$RUN/poc-stage-trace-$stage.json" \
     'if any(.[]; .canonical_poc_start_block_height == $trace[0].canonical_poc_start_block_height)
-     then . else . + [$trace[0]] end' "$RUN/poc-stage-traces.json" \
+     then if $trace[0].artifact_public_matches_local == true
+          then [.[] | select(.canonical_poc_start_block_height != $trace[0].canonical_poc_start_block_height)] + $trace
+          else .
+          end
+     else . + $trace
+     end' "$RUN/poc-stage-traces.json" \
     >"$tmp"
   mv "$tmp" "$RUN/poc-stage-traces.json"
 }
 [[ -s "$RUN/poc-stage-traces.json" ]] || printf '[]' >"$RUN/poc-stage-traces.json"
 
 capture_poc_distribution_transactions() {
-  local stage="$1" latest_height end_height height tx_b64 tx_hash tx_json tmp
+  local stage="$1" latest_height end_height height tx_b64 tx_hash tx_json tmp status_json block_json status_url block_url tx_url had_fetch_failure=false
   local max_blocks="${GDC_JOIN_TX_TRACE_BLOCKS:-180}"
+  POC_DISTRIBUTION_READBACK_FAILURE=''
   [[ "$stage" =~ ^[1-9][0-9]*$ && "$max_blocks" =~ ^[1-9][0-9]*$ ]] || return 1
   # A second capture of the same canonical stage would only duplicate public
   # evidence and unnecessarily load the chain API.
-  [[ -s "$RUN/poc-distribution-transactions-$stage.json" ]] && return 0
-  latest_height="$(curl -fsS --connect-timeout 5 --max-time 15 "$CHAIN_BASE/chain-rpc/status" \
-    | jq -er '.result.sync_info.latest_block_height | tonumber')" || return 1
+  if [[ -s "$RUN/poc-distribution-transactions-$stage.json" ]] \
+    && jq -e --argjson stage "$stage" --arg participant "$ADDRESS" '
+      length > 0
+      and any(.[]; .tx_code == 0 and .tx_height >= $stage and .scanned_height == .tx_height
+        and any(.messages[]?; .creator == $participant))
+    ' "$RUN/poc-distribution-transactions-$stage.json" >/dev/null 2>&1; then
+    return 0
+  fi
+  status_url="$CHAIN_BASE/chain-rpc/status"
+  status_json="$(mktemp "$RUN/.poc-distribution-status.XXXXXX")"
+  if ! fetch_public_json 'canonical PoC distribution index' "$status_url" "$status_json"; then
+    POC_DISTRIBUTION_READBACK_FAILURE="$LAST_PUBLIC_FETCH_FAILURE"
+    rm -f "$status_json"
+    return 1
+  fi
+  if ! latest_height="$(jq -er '.result.sync_info.latest_block_height | tonumber' "$status_json")"; then
+    printf 'WAIT  canonical PoC distribution index is malformed stage=%s url=%s\n' "$stage" "$status_url"
+    rm -f "$status_json"
+    return 1
+  fi
+  rm -f "$status_json"
   end_height=$((stage + max_blocks))
   (( latest_height < end_height )) && end_height="$latest_height"
   printf '[]' >"$RUN/poc-distribution-transactions-$stage.json"
   for ((height = stage; height <= end_height; height++)); do
+    block_url="$CHAIN_BASE/chain-rpc/block?height=$height"
+    block_json="$(mktemp "$RUN/.poc-distribution-block.XXXXXX")"
+    if ! fetch_public_json "canonical PoC distribution block stage=$stage height=$height" "$block_url" "$block_json"; then
+      [[ -n "$POC_DISTRIBUTION_READBACK_FAILURE" ]] || POC_DISTRIBUTION_READBACK_FAILURE="$LAST_PUBLIC_FETCH_FAILURE"
+      had_fetch_failure=true
+      rm -f "$block_json"
+      continue
+    fi
     while IFS= read -r tx_b64; do
       [[ -n "$tx_b64" ]] || continue
       tx_hash="$(printf '%s' "$tx_b64" | base64 -d | sha256sum | awk '{print toupper($1)}')" || continue
-      tx_json="$(curl -fsS --connect-timeout 5 --max-time 15 \
-        "$CHAIN_BASE/chain-api/cosmos/tx/v1beta1/txs/$tx_hash")" || continue
+      tx_url="$CHAIN_BASE/chain-api/cosmos/tx/v1beta1/txs/$tx_hash"
+      tx_json="$(mktemp "$RUN/.poc-distribution-tx.XXXXXX")"
+      if ! fetch_public_json "canonical PoC distribution transaction stage=$stage height=$height tx=$tx_hash" "$tx_url" "$tx_json"; then
+        [[ -n "$POC_DISTRIBUTION_READBACK_FAILURE" ]] || POC_DISTRIBUTION_READBACK_FAILURE="$LAST_PUBLIC_FETCH_FAILURE"
+        had_fetch_failure=true
+        rm -f "$tx_json"
+        continue
+      fi
       jq -e --arg hash "$tx_hash" --argjson expected_height "$height" \
         --arg participant "$ADDRESS" --arg runtime_id "$RUNTIME_ID" --arg model "$MODEL_ID" '
           [.tx.body.messages[]? | .. | objects
@@ -141,21 +227,40 @@ capture_poc_distribution_transactions() {
              tx_height:(.tx_response.height | tonumber),scanned_height:$expected_height,
              message_type:"/inference.inference.MsgMLNodeWeightDistribution",
              messages:$messages}
-        ' <<<"$tx_json" >"$RUN/poc-distribution-transaction-$stage-$tx_hash.json" 2>/dev/null || continue
+        ' "$tx_json" >"$RUN/poc-distribution-transaction-$stage-$tx_hash.json" 2>/dev/null || { rm -f "$tx_json"; continue; }
+      rm -f "$tx_json"
       tmp="$(mktemp "$RUN/.poc-distribution-transactions.tmp.XXXXXX")"
       jq --slurpfile transaction "$RUN/poc-distribution-transaction-$stage-$tx_hash.json" \
         '. + $transaction' "$RUN/poc-distribution-transactions-$stage.json" \
         >"$tmp"
       mv "$tmp" "$RUN/poc-distribution-transactions-$stage.json"
-    done < <(curl -fsS --connect-timeout 5 --max-time 15 \
-      "$CHAIN_BASE/chain-rpc/block?height=$height" \
-      | jq -r '.result.block.data.txs[]?')
+    done < <(jq -r '.result.block.data.txs[]?' "$block_json")
+    rm -f "$block_json"
   done
-  jq -e --argjson stage "$stage" --arg participant "$ADDRESS" '
+  if jq -e --argjson stage "$stage" --arg participant "$ADDRESS" '
     length > 0
-    and all(.[]; .tx_code == 0 and .tx_height >= $stage and .scanned_height == .tx_height)
-    and all(.[]; .messages[]?.creator == $participant)
-  ' "$RUN/poc-distribution-transactions-$stage.json" >/dev/null || return 1
+    and any(.[]; .tx_code == 0 and .tx_height >= $stage and .scanned_height == .tx_height
+      and any(.messages[]?; .creator == $participant))
+  ' "$RUN/poc-distribution-transactions-$stage.json" >/dev/null; then
+    return 0
+  fi
+
+  # A transient failure for an unrelated transaction must not stop this pass
+  # before a later matching code=0 distribution can be read.  Retain the
+  # first failure only when no successful distribution was found.
+  [[ "$had_fetch_failure" == true ]] && return 1
+
+  # A matching transaction can be visible before it is accepted.  Reporting
+  # the public transaction result makes the wait actionable instead of
+  # incorrectly looking like an unavailable readback.
+  POC_DISTRIBUTION_READBACK_FAILURE="$(jq -r --arg participant "$ADDRESS" '
+    [.[]
+     | select(any(.messages[]?; .creator == $participant))
+     | select(.tx_code != 0)
+     | "tx_hash=\(.tx_hash) tx_code=\(.tx_code) tx_height=\(.tx_height)"
+    ] | last // empty
+  ' "$RUN/poc-distribution-transactions-$stage.json")"
+  return 1
 }
 
 # A transport or parsing failure must still leave an honest, sanitized
@@ -184,16 +289,24 @@ CHAIN_BASE="https://${GENESIS_PUBLIC_HOST}"
 capture_canonical_genesis "$CHAIN_BASE/chain-rpc/genesis" "$RUN/genesis.json" \
   || die 'cannot read canonical public Genesis for join acceptance'
 GENESIS_HASH="$(genesis_sha256 "$RUN/genesis.json")"
-bind_run_manifest_genesis "$GENESIS_HASH"
+CHAIN_ID="$(jq -er .chain_id "$RUN/genesis.json")"
+write_phase_lineage "$RUN" "$CHAIN_ID" "$GENESIS_HASH"
+
+params_endpoint="$CHAIN_BASE/chain-api/productscience/inference/inference/params"
+fetch_public_json 'inference epoch parameters' "$params_endpoint" "$RUN/inference-params.json" \
+  || die "cannot read inference epoch parameters from $params_endpoint"
+EPOCH_LENGTH="$(jq -er '(.params // .).epoch_params.epoch_length | tonumber' "$RUN/inference-params.json")"
+[[ "$EPOCH_LENGTH" =~ ^[1-9][0-9]*$ ]] || die 'inference epoch length is invalid'
 
 group_endpoint="$CHAIN_BASE/chain-api/productscience/inference/inference/current_epoch_group_data"
 hardware_endpoint="$CHAIN_BASE/chain-api/productscience/inference/inference/hardware_nodes/$ADDRESS"
 participant_endpoint="$CHAIN_BASE/v2/participants/$ADDRESS"
 validators_endpoint="$CHAIN_BASE/chain-rpc/validators?per_page=100"
-initial_group="$(curl -fsS --connect-timeout 5 --max-time 15 "$group_endpoint")"
+fetch_public_json 'initial epoch group' "$group_endpoint" "$RUN/initial-epoch-group.json" || die "cannot read initial epoch group from $group_endpoint"
+initial_group="$(<"$RUN/initial-epoch-group.json")"
 current_epoch="$(jq -er '.epoch_group_data.epoch_index | tonumber' <<<"$initial_group")"
 read -r initial_epoch deadline_epoch < <(
-  join_acceptance_state_initialize "$RUN" "${GDC_RUN_ID:-manual}" "$GENESIS_HASH" "$ADDRESS" "$RUNTIME_ID" "$current_epoch" "$EPOCHS"
+  join_acceptance_state_initialize "$RUN" "${GDC_RUN_ID:-manual}" "$GENESIS_HASH" "$ADDRESS" "$RUNTIME_ID" "$current_epoch" "$acceptance_epochs"
 ) || die 'join acceptance state is absent or bound to another Genesis, participant, or runtime'
 [[ "$initial_epoch" =~ ^[1-9][0-9]*$ && "$deadline_epoch" =~ ^[1-9][0-9]*$ ]] \
   || die 'join acceptance state is absent or bound to another Genesis, participant, or runtime'
@@ -208,6 +321,15 @@ if strongest_observed="$(join_acceptance_state_restore_strongest "$RUN" 2>/dev/n
     poc_participant_weight="$(jq -er '.participant_weight | tonumber' <<<"$strongest_observed")"
     poc_accepted_weight_sum="$(jq -er '.accepted_weight_sum | tonumber' <<<"$strongest_observed")"
     poc_committed_total="$(jq -er '.committed_total | tonumber' <<<"$strongest_observed")"
+    join_acceptance_state_epoch_within_deadline "$poc_accepted_epoch" "$deadline_epoch" \
+      || late_restored_evidence=true
+  fi
+fi
+if distribution_evidence="$(join_acceptance_state_restore_distribution "$RUN" 2>/dev/null || true)"; then
+  if [[ -n "$distribution_evidence" ]]; then
+    poc_distribution_stage="$(jq -er '.stage | tonumber' <<<"$distribution_evidence")"
+    poc_distribution_tx_hash="$(jq -er .tx_hash <<<"$distribution_evidence")"
+    poc_distribution_tx_code="$(jq -er '.tx_code | tonumber' <<<"$distribution_evidence")"
   fi
 fi
 
@@ -237,9 +359,9 @@ inconclusive() {
 $NODE reached PARTICIPANT_ACTIVE but did not prove every JOIN_PASS state before
 epoch $deadline_epoch: $reason
 
-Retry the same command after the next eligible epoch. The existing account,
-consensus identity and runtime identity are retained; no new participant must
-be created.
+Preserve the evidence bundle and use a separately validated procedure for any
+subsequent diagnosis or recovery. The existing account, consensus identity and
+runtime identity are retained; no successful join is implied.
 EOF
   printf 'INCONCLUSIVE %s; evidence: %s\n' "$reason" "$RUN" >&2
   exit 2
@@ -268,21 +390,53 @@ blocked() {
 
 $NODE cannot complete the required join proof: $reason
 
-Supply the named safe precondition, then retry the same command. The existing
-account and identity are retained; no new participant must be created.
+Preserve this evidence and follow a separately validated procedure after the
+named safe precondition is available. The existing account and identity are
+retained; no successful join is implied.
 EOF
   printf 'BLOCKED %s; evidence: %s\n' "$reason" "$RUN" >&2
   exit 3
 }
 
+[[ "$late_restored_evidence" == false ]] \
+  || inconclusive "stored positive PoC evidence is later than immutable deadline_epoch=$deadline_epoch"
+
 step "Wait for $NODE PoC eligibility and effective validator membership through epoch $deadline_epoch"
 while (( SECONDS < deadline_seconds )); do
-  participant="$(curl -fsS --connect-timeout 5 --max-time 15 "$participant_endpoint" 2>/dev/null || true)"
-  group="$(curl -fsS --connect-timeout 5 --max-time 15 "$group_endpoint" 2>/dev/null || true)"
-  hardware="$(curl -fsS --connect-timeout 5 --max-time 15 "$hardware_endpoint" 2>/dev/null || true)"
-  validators="$(curl -fsS --connect-timeout 5 --max-time 15 "$validators_endpoint" 2>/dev/null || true)"
+  participant=''
+  group=''
+  hardware=''
+  if fetch_public_json 'participant state' "$participant_endpoint" "$RUN/probe-participant.json"; then
+    participant="$(<"$RUN/probe-participant.json")"
+  fi
+  if fetch_public_json 'current epoch group' "$group_endpoint" "$RUN/probe-epoch-group.json"; then
+    group="$(<"$RUN/probe-epoch-group.json")"
+  fi
+  if fetch_public_json 'participant hardware nodes' "$hardware_endpoint" "$RUN/probe-hardware-nodes.json"; then
+    hardware="$(<"$RUN/probe-hardware-nodes.json")"
+  fi
+  validators=''
+  for _ in 1 2 3 4; do
+    if fetch_public_json 'consensus validator set' "$validators_endpoint" "$RUN/probe-validators.json"; then
+      validators="$(<"$RUN/probe-validators.json")"
+    else
+      validators=''
+    fi
+    if jq -e '.result.validators | type == "array"' <<<"$validators" >/dev/null 2>&1; then
+      break
+    fi
+    validators=''
+    sleep 2
+  done
   epoch="$(jq -r '.epoch_group_data.epoch_index // empty' <<<"$group" 2>/dev/null || true)"
-  [[ "$epoch" =~ ^[0-9]+$ ]] || { printf 'WAIT  join acceptance cannot read epoch state\n'; sleep 5; continue; }
+  [[ "$epoch" =~ ^[0-9]+$ ]] || { printf 'WAIT  join acceptance cannot read epoch state from url=%s; retrying\n' "$group_endpoint"; sleep 5; continue; }
+  join_acceptance_state_epoch_within_deadline "$epoch" "$deadline_epoch" \
+    || inconclusive "current epoch=$epoch is later than immutable deadline_epoch=$deadline_epoch"
+  if [[ -z "$validators" ]]; then
+    printf 'WAIT  validator readback is temporarily unavailable\n'
+    sleep 5
+    continue
+  fi
   printf '%s\n' "$participant" >"$RUN/participant.json"
   printf '%s\n' "$group" >"$RUN/epoch-group.json"
   printf '%s\n' "$hardware" >"$RUN/hardware-nodes.json"
@@ -291,6 +445,11 @@ while (( SECONDS < deadline_seconds )); do
     || fail 'cannot capture the canonical PoC-stage trace required for join diagnosis'
 
   participant_active=false
+  if ! jq -e '.participant.status != null' "$RUN/participant.json" >/dev/null 2>&1; then
+    printf 'WAIT  participant state endpoint is temporarily unavailable\n'
+    sleep 5
+    continue
+  fi
   jq -e '.participant.status == "ACTIVE" or .participant.status == "PARTICIPANT_STATUS_ACTIVE" or .participant.status == "1" or .participant.status == 1' \
     "$RUN/participant.json" >/dev/null 2>&1 && participant_active=true
   runtime_ready=false
@@ -323,10 +482,25 @@ while (( SECONDS < deadline_seconds )); do
     poc_committed_total="$committed_total"
     join_acceptance_state_record_strongest "$RUN" "$epoch" "$participant_weight" "$accepted_weight_sum" "$committed_total"
     canonical_stage="$(jq -er '.epoch_group_data.poc_start_block_height | tonumber' "$RUN/epoch-group.json")"
-    capture_poc_distribution_transactions "$canonical_stage" \
-      || fail "accepted PoC weight lacks a code=0 distribution transaction bound to canonical stage $canonical_stage"
-    poc_distribution_tx_hash="$(jq -er '.[0].tx_hash' "$RUN/poc-distribution-transactions-$canonical_stage.json")"
-    poc_distribution_tx_code="$(jq -er '.[0].tx_code | tonumber' "$RUN/poc-distribution-transactions-$canonical_stage.json")"
+    if [[ -z "$poc_distribution_tx_hash" ]]; then
+      distribution_captured=false
+      for _ in $(seq 1 "${GDC_JOIN_TX_TRACE_RETRIES:-12}"); do
+        if capture_poc_distribution_transactions "$canonical_stage"; then
+          distribution_captured=true
+          break
+        fi
+        rm -f "$RUN/poc-distribution-transactions-$canonical_stage.json"
+        printf 'WAIT  canonical PoC distribution readback unavailable canonical_stage=%s%s\n' \
+          "$canonical_stage" "${POC_DISTRIBUTION_READBACK_FAILURE:+ $POC_DISTRIBUTION_READBACK_FAILURE}"
+        sleep 5
+      done
+      if [[ "$distribution_captured" == true ]]; then
+        poc_distribution_stage="$canonical_stage"
+        poc_distribution_tx_hash="$(jq -er '[.[] | select(.tx_code == 0)] | last.tx_hash' "$RUN/poc-distribution-transactions-$canonical_stage.json")"
+        poc_distribution_tx_code="$(jq -er '[.[] | select(.tx_code == 0)] | last.tx_code | tonumber' "$RUN/poc-distribution-transactions-$canonical_stage.json")"
+        join_acceptance_state_record_distribution "$RUN" "$poc_distribution_stage" "$poc_distribution_tx_hash" "$poc_distribution_tx_code"
+      fi
+    fi
   fi
   validator_effective=false
   jq -e --arg key "$VALIDATOR_KEY" '
@@ -342,20 +516,39 @@ while (( SECONDS < deadline_seconds )); do
     record_join_state "$NODE" VALIDATOR_EFFECTIVE "$ADDRESS"
   fi
   # Requiring the deadline epoch even when all conditions appear early proves
-  # the promised four complete epoch transitions after ACTIVE.
+  # the documented six-epoch transition and evidence window after ACTIVE.
   if (( epoch >= deadline_epoch )) \
     && [[ "$poc_accepted_once" == true && "$runtime_ready" == true && "$validator_effective" == true ]]; then
     break
   fi
   if (( epoch >= deadline_epoch )); then
-    inconclusive "eligibility deadline reached (runtime=$runtime_ready poc_accepted_once=$poc_accepted_once validator_effective=$validator_effective)"
+    deadline_detail=''
+    if [[ "$poc_accepted_once" != true ]]; then
+      # The current group has only just begun.  Its predecessor is the last
+      # completed stage and can already contain an on-chain rejection that
+      # explains why this participant never received a positive weight.
+      canonical_stage="$(jq -er '.epoch_group_data.poc_start_block_height | tonumber' "$RUN/epoch-group.json")"
+      previous_stage=$((canonical_stage - EPOCH_LENGTH))
+      if (( previous_stage > 0 )); then
+        capture_poc_distribution_transactions "$previous_stage" || true
+        deadline_detail="$POC_DISTRIBUTION_READBACK_FAILURE"
+      fi
+    fi
+    inconclusive "eligibility deadline reached (runtime=$runtime_ready poc_accepted_once=$poc_accepted_once validator_effective=$validator_effective)${deadline_detail:+ $deadline_detail}"
   fi
-  printf 'WAIT  join state epoch=%s/%s runtime=%s poc_accepted_once=%s validator_effective=%s participant_weight=%s accepted_sum=%s committed_total=%s\n' \
-    "$epoch" "$deadline_epoch" "$runtime_ready" "$poc_accepted_once" "$validator_effective" \
-    "$participant_weight" "$accepted_weight_sum" "$committed_total"
+  if [[ "$poc_accepted_once" == true && "$runtime_ready" == true && "$validator_effective" == true ]]; then
+    printf 'WAIT  join evidence is positive at epoch=%s/%s; retaining it through the stability window (remaining_epochs=%s participant_weight=%s accepted_sum=%s committed_total=%s)\n' \
+      "$epoch" "$deadline_epoch" "$((deadline_epoch - epoch))" "$participant_weight" "$accepted_weight_sum" "$committed_total"
+  else
+    printf 'WAIT  join state epoch=%s/%s runtime=%s poc_accepted_once=%s validator_effective=%s participant_weight=%s accepted_sum=%s committed_total=%s\n' \
+      "$epoch" "$deadline_epoch" "$runtime_ready" "$poc_accepted_once" "$validator_effective" \
+      "$participant_weight" "$accepted_weight_sum" "$committed_total"
+  fi
   sleep 5
 done
 (( SECONDS < deadline_seconds )) || inconclusive 'wall-clock deadline reached before eligibility evidence'
+[[ -n "$poc_distribution_tx_hash" && "$poc_distribution_tx_code" == 0 ]] \
+  || inconclusive 'positive accepted PoC weight was observed but no canonical code=0 distribution transaction became readable before the eligibility deadline'
 
 KEY_FILE="$SECRETS/gateway.join-client-key"
 [[ -f "$KEY_FILE" ]] \
@@ -371,10 +564,16 @@ CLIENT_KEY="$(cut -d, -f1 <"$KEY_FILE")"
 [[ -n "$CLIENT_KEY" ]] || blocked 'the runbook-managed scoped gateway client credential is empty'
 [[ "$CLIENT_KEY" != sk-admin-* ]] \
   || blocked 'the runbook-managed scoped gateway client credential is administrative, not a client credential'
+inference_timeout="${GDC_JOIN_INFERENCE_TIMEOUT_SECONDS:-900}"
+[[ "$inference_timeout" =~ ^[1-9][0-9]*$ ]] \
+  || fail 'GDC_JOIN_INFERENCE_TIMEOUT_SECONDS must be a positive integer'
 step 'Run one authenticated gateway regression (routing through the new Host is not required)'
-"$ROOT/04-ops/test-inference-until-ready.sh" \
+if ! "$ROOT/04-ops/test-inference-until-ready.sh" \
   "https://$API_HOST" "$CLIENT_KEY" "$RUN/gateway-regression" \
-  "$RUN/gateway-regression/completion.json" 180
+  "$RUN/gateway-regression/completion.json" "$inference_timeout"; then
+  gateway_reason="$(jq -r '.reason // "evidence_unavailable"' "$RUN/gateway-regression/inference-verdict.json" 2>/dev/null || printf 'evidence_unavailable')"
+  inconclusive "authenticated gateway regression did not complete: $gateway_reason"
+fi
 
 record_join_state "$NODE" COMPLETE "$ADDRESS"
 write_receipt PASS 'active participant, exact chain runtime, positive accepted PoC weight in the bounded window, effective validator, and authenticated gateway regression proved'

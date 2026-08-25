@@ -1,0 +1,11 @@
+[Unit]
+Description=Continuously maintain bounded Gonka gateway reserve
+
+[Timer]
+OnBootSec=10s
+OnUnitInactiveSec=30s
+AccuracySec=1s
+Unit=gdc-gateway-reserve-controller.service
+
+[Install]
+WantedBy=timers.target

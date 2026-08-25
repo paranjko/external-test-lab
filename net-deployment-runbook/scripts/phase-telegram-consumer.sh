@@ -19,13 +19,26 @@ if [[ "$action" == apply ]]; then
 fi
 
 step "Check Telegram conversation consumer on $TELEGRAM_BOT_HOST"
-ssh -T "$TELEGRAM_BOT_HOST" 'set -Eeuo pipefail
+ssh -T "$TELEGRAM_BOT_HOST" bash -s -- "$action" <<'REMOTE'
+set -Eeuo pipefail
+action="$1"
   bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
-  [[ -n "$bot" ]]
-  [[ "$(docker inspect -f "{{.State.Health.Status}}" "$bot")" == healthy ]]
-  curl -fsS http://127.0.0.1:9464/health \
-    | jq -e ".status == \"ok\" and .inference_ready == true" >/dev/null
-  curl -fsS http://127.0.0.1:9464/metrics | grep -q "^gdc_telegram_bot_up 1$"'
+  [[ -n "$bot" ]] || { printf "ERROR Telegram consumer container is not running\n" >&2; exit 1; }
+  health="$(docker inspect -f "{{.State.Health.Status}}" "$bot")"
+  [[ "$health" == healthy ]] || { printf "ERROR Telegram consumer container health=%s\n" "$health" >&2; exit 1; }
+  payload="$(curl -fsS http://127.0.0.1:9464/health)" \
+    || { printf "ERROR Telegram consumer health endpoint is unavailable\n" >&2; exit 1; }
+  if ! jq -e '.status == "ok"' <<<"$payload" >/dev/null; then
+    printf "ERROR Telegram consumer process is not ready health=%s\n" "$payload" >&2
+    exit 1
+  fi
+  if [[ "$action" != verify ]] && ! jq -e '.inference_ready == true' <<<"$payload" >/dev/null; then
+    printf "ERROR Telegram consumer inference is not ready health=%s\n" "$payload" >&2
+    exit 1
+  fi
+  curl -fsS http://127.0.0.1:9464/metrics | grep -q "^gdc_telegram_bot_up 1$" \
+    || { printf "ERROR Telegram consumer up metric is absent\n" >&2; exit 1; }
+REMOTE
 
 if [[ "$action" == verify ]]; then
   step 'Prove the bot Conversations adapter completes chain-accounted inference'
@@ -35,8 +48,26 @@ model="$1"
 sla_seconds="$2"
 bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
 [[ "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$bot" | sed -n 's/^MODEL=//p')" == "$model" ]]
-timeout "$sla_seconds" docker exec "$bot" python3 /app/bot.py --probe \
-  | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value == {"conversation_id_present": True, "output_present": True, "status": "completed", "usage_present": True}'
+probe="$(timeout "$sla_seconds" docker exec "$bot" python3 /app/bot.py --probe 2>&1)" || {
+  printf "ERROR Telegram consumer inference probe failed response=%s\n" \
+    "$(jq -c '{status,reason}' <<<"$probe" 2>/dev/null || printf '%s' 'unparseable')" >&2
+  exit 1
+}
+jq -e '. == {"conversation_id_present": true, "output_present": true, "status": "completed", "usage_present": true}' \
+  <<<"$probe" >/dev/null || {
+  printf "ERROR Telegram consumer inference probe returned unexpected response=%s\n" \
+    "$(jq -c '{status,reason}' <<<"$probe" 2>/dev/null || printf '%s' 'unparseable')" >&2
+  exit 1
+}
+payload="$(curl -fsS http://127.0.0.1:9464/health)"
+jq -e --argjson sla "$sla_seconds" '
+  .status == "ok"
+  and .inference_ready == true
+  and (.last_success_age_seconds | type == "number" and . <= $sla)
+' <<<"$payload" >/dev/null || {
+  printf "ERROR Telegram consumer probe completed but readiness was not updated health=%s\n" "$payload" >&2
+  exit 1
+}
 REMOTE
   printf 'PASS Telegram conversation consumer completed inference for %s within %s with exact usage\n' "$model" "$sla"
 else

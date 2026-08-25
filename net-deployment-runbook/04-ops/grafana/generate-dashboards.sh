@@ -91,7 +91,7 @@ render() {
         row(220;"Executor latency and quality";22),
         ts(71;"First content latency p50";"histogram_quantile(0.50, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[15m]))) or vector(0)";"p50";"s";0;23;8;7),
         ts(72;"First content latency p95";"histogram_quantile(0.95, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[15m]))) or vector(0)";"p95";"s";8;23;8;7),
-        ts(73;"Attempt latency by executor";"sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_sum) / sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_count)";"{{participant_key}}";"s";16;23;8;7),
+        ts(73;"Attempt latency by executor";"sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_sum) / sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_count) or vector(0)";"{{participant_key}}";"s";16;23;8;7),
         table(74;"Executor wins";"sum by (participant_key,model) (devshard_gateway_user_visible_wins_total)";0;30;8;8),
         table(75;"Executor failures";"sum by (participant_key,model,reason) (devshard_gateway_attempt_failures_total) or vector(0)";8;30;8;8),
         table(76;"Quarantine state";"devshard_gateway_participant_quarantine_state";16;30;8;8),
@@ -118,10 +118,10 @@ render() {
         stat(106;"Output tokens";"sum(gdc_telegram_bot_tokens_total{direction=\"output\"}) or vector(0)";"none";20;60;4),
         ts(111;"Interaction rate by outcome and Premium state";"sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total[15m])) or vector(0)";"{{outcome}} · premium={{premium}}";"reqps";0;64;12;8),
         ts(112;"Inference request rate by outcome";"sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total[15m])) or vector(0)";"{{outcome}}";"reqps";12;64;12;8),
-        stat(113;"Last successful bot inference";"time() - max(gdc_telegram_bot_last_success_timestamp_seconds)";"s";0;72;8),
+        stat(113;"Last successful bot inference (0 when unavailable)";"(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) or vector(0)";"s";0;72;8),
         stat(114;"Responses without token usage";"sum(gdc_telegram_bot_usage_missing_total) or vector(0)";"none";8;72;8),
         stat(115;"Consumer process";"max(gdc_telegram_bot_up) or vector(0)";"none";16;72;8),
-        textpanel(99;"Data contract";"This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.";76)
+        textpanel(99;"Data contract";"This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content; a zero last-success age means the consumer has not reported a successful inference yet. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.";76)
       ])
     end
   ' >"$output"

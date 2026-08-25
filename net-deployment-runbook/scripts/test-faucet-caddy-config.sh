@@ -11,4 +11,8 @@ if ! output="$(docker run --rm \
   printf '%s\n' "$output" >&2
   exit 1
 fi
+grep -Fq "'FAUCET_LISTEN_PORT=18083'" "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'GDC_GATEWAY_RESERVE_SIGNER_URL=${GDC_GATEWAY_RESERVE_SIGNER_URL:-http://127.0.0.1:18083}' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'listen 127.0.0.1:18082;' "$ROOT/04-ops/edge-node/bootstrap-nginx.conf"
+! grep -Fq "'FAUCET_LISTEN_PORT=18082'" "$ROOT/scripts/phase-ops.sh"
 printf 'PASS public faucet Caddy route contract\n'

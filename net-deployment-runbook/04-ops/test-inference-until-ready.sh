@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 usage() {
   printf 'Usage: %s API_URL CLIENT_KEY EVIDENCE_DIR OUTPUT_JSON [TIMEOUT_SECONDS]\n' "$0" >&2
 }
@@ -12,6 +14,11 @@ evidence_dir="$3"
 output_json="$4"
 timeout_seconds="${5:-300}"
 [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || { echo 'timeout must be a positive integer' >&2; exit 2; }
+request_timeout_seconds="${GDC_INFERENCE_REQUEST_TIMEOUT_SECONDS:-25}"
+[[ "$request_timeout_seconds" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'GDC_INFERENCE_REQUEST_TIMEOUT_SECONDS must be a positive integer' >&2
+  exit 2
+}
 
 mkdir -p "$evidence_dir"
 attempts_file="$evidence_dir/inference-attempts.jsonl"
@@ -20,8 +27,34 @@ deadline=$((SECONDS + timeout_seconds))
 attempt=0
 last_reason='not_attempted'
 
+curl_exit_status() {
+  case "$1" in
+    0) printf 'ok' ;;
+    5) printf 'proxy_resolution_failed' ;;
+    6) printf 'dns_resolution_failed' ;;
+    7) printf 'connection_failed' ;;
+    28) printf 'timeout' ;;
+    35) printf 'tls_handshake_failed' ;;
+    47) printf 'redirect_limit_exceeded' ;;
+    52) printf 'empty_response' ;;
+    56) printf 'receive_failed' ;;
+    *) printf 'curl_error' ;;
+  esac
+}
+
+curl_error_detail() {
+  tr '\n' ' ' <"$1" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//'
+}
+
+report_curl_failure() {
+  local request="$1" url="$2" http_status="$3" curl_exit="$4" stderr="$5" detail
+  detail="$(curl_error_detail "$stderr")"
+  printf 'WAIT inference %s unavailable url=%s http_status=%s curl_exit=%s curl_status=%s%s\n' \
+    "$request" "$url" "$http_status" "$curl_exit" "$(curl_exit_status "$curl_exit")" "${detail:+ detail=$detail}" >&2
+}
+
 record_attempt() {
-  local status_code="$1" completion_code="$2" status_ready="$3" valid="$4" reason="$5" elapsed_ms="$6"
+  local status_code="$1" completion_code="$2" status_ready="$3" valid="$4" reason="$5" elapsed_ms="$6" status_exit="$7" completion_exit="$8" admission="$9" completion_error_code="${10}"
   jq -cn \
     --argjson attempt "$attempt" \
     --arg checked_at "$(date -u +%FT%TZ)" \
@@ -31,7 +64,13 @@ record_attempt() {
     --argjson completion_valid "$valid" \
     --arg reason "$reason" \
     --argjson elapsed_ms "$elapsed_ms" \
-    '{attempt:$attempt,checked_at:$checked_at,status_http:$status_http,status_ready:$status_ready,completion_http:$completion_http,completion_valid:$completion_valid,reason:$reason,elapsed_ms:$elapsed_ms}' \
+    --argjson status_curl_exit "$status_exit" \
+    --arg status_curl_status "$(curl_exit_status "$status_exit")" \
+    --argjson completion_curl_exit "$completion_exit" \
+    --arg completion_curl_status "$(curl_exit_status "$completion_exit")" \
+    --arg admission "$admission" \
+    --arg completion_error_code "$completion_error_code" \
+    '{attempt:$attempt,checked_at:$checked_at,status_http:$status_http,status_ready:$status_ready,status_curl_exit:$status_curl_exit,status_curl_status:$status_curl_status,completion_http:$completion_http,completion_valid:$completion_valid,completion_curl_exit:$completion_curl_exit,completion_curl_status:$completion_curl_status,admission:$admission,completion_error_code:$completion_error_code,reason:$reason,elapsed_ms:$elapsed_ms}' \
     >>"$attempts_file"
 }
 
@@ -42,38 +81,34 @@ while (( SECONDS < deadline )); do
   completion_file="$evidence_dir/completion-${attempt}.json"
   status_http=0
   completion_http=0
+  status_rc=0
+  completion_rc=0
   status_ready=false
   reason='status_unavailable'
+  status_stderr="$evidence_dir/status-${attempt}.curl.stderr"
+  completion_stderr="$evidence_dir/completion-${attempt}.curl.stderr"
+  completion_headers="$evidence_dir/completion-${attempt}.headers"
 
   set +e
   status_http="$(curl -sS --connect-timeout 5 --max-time 15 -o "$status_file" -w '%{http_code}' \
-    "$api_url/v1/status" -H "Authorization: Bearer $client_key")"
+    "$api_url/v1/status" -H "Authorization: Bearer $client_key" 2>"$status_stderr")"
   status_rc=$?
   set -e
-  # A gateway can retain a routable runtime while confirmation-PoC has
-  # intentionally suspended user inference. Do not send a completion merely
-  # because the transport/status endpoint is green: that produces a 429 and
-  # falsely labels the gateway ready. The raw status response remains in the
-  # evidence directory with the exact phase for diagnosis.
-  confirmation_poc_active=false
-  if [[ "$status_rc" == 0 && "$status_http" == 200 ]] && jq -e '
-    [.devshards[]? | .confirmation_poc_phase? | select(type == "string" and . != "")]
-    | any(. != "NORMAL_OPERATION")
-  ' "$status_file" >/dev/null 2>&1; then
-    confirmation_poc_active=true
-  fi
-  if [[ "$confirmation_poc_active" == true ]]; then
-    last_reason='confirmation_poc_not_normal_operation'
+  [[ "$status_rc" == 0 ]] || report_curl_failure status "$api_url/v1/status" "${status_http:-0}" "$status_rc" "$status_stderr"
+  # The public status endpoint can retain active runtimes during a lifecycle
+  # transition. Use the same capacity and Inference-phase predicate as the
+  # continuity observer before attempting a completion.
+  if [[ "$status_rc" == 0 && "$status_http" == 200 ]] \
+    && ! "$ROOT/04-ops/gateway-status-routable.sh" <"$status_file" >/dev/null 2>&1; then
+    last_reason='runtime_not_routable'
     elapsed_ms=$(( $(date +%s%3N) - started_ms ))
-    record_attempt "${status_http:-0}" 0 false false "$last_reason" "$elapsed_ms"
+    record_attempt "${status_http:-0}" 0 false false "$last_reason" "$elapsed_ms" "$status_rc" 0 'not_sent_runtime_not_routable' 'not_sent'
+    rm -f "$status_stderr" "$completion_stderr" "$completion_headers"
     printf 'WAIT inference attempt=%s reason=%s status_ready=false\n' "$attempt" "$last_reason" >&2
     (( SECONDS < deadline )) && sleep 5
     continue
   fi
-  if [[ "$status_rc" == 0 && "$status_http" == 200 ]] && jq -e '
-    (.routable == true)
-    or ([.devshards[]? | select((.active // false) == true and (.requests_blocked // false) == false and ((.phase // "") == "active" or (.phase // "") == "Inference"))] | length > 0)
-  ' "$status_file" >/dev/null 2>&1; then
+  if [[ "$status_rc" == 0 && "$status_http" == 200 ]]; then
     status_ready=true
     reason='routable_runtime_observed'
   fi
@@ -83,26 +118,38 @@ while (( SECONDS < deadline )); do
   # which leaves an in-flight request in the gateway and makes following
   # probes report a misleading capacity failure.
   payload='{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Reply with exactly: GDC_OK"}],"max_tokens":8,"temperature":0}'
+  completion_deadline_ms="$(( $(date +%s%3N) + request_timeout_seconds * 1000 ))"
   set +e
-  completion_http="$(curl -sS --connect-timeout 10 --max-time 90 -o "$completion_file" -w '%{http_code}' \
+  completion_http="$(curl -sS --connect-timeout 10 --max-time "$request_timeout_seconds" -D "$completion_headers" -o "$completion_file" -w '%{http_code}' \
     "$api_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
-    -H 'Content-Type: application/json' -d "$payload")"
+    -H "X-Request-Deadline-Ms: $completion_deadline_ms" -H 'Content-Type: application/json' -d "$payload" 2>"$completion_stderr")"
   completion_rc=$?
   set -e
+  [[ "$completion_rc" == 0 ]] || report_curl_failure completion "$api_url/v1/chat/completions" "${completion_http:-0}" "$completion_rc" "$completion_stderr"
+  admission='not_observed'
+  if [[ "$completion_rc" == 0 ]]; then
+    admission="$(awk 'tolower($0) ~ /^x-gdc-admission:/ { value=$0; sub(/^[^:]*:[[:space:]]*/, "", value); sub(/\r$/, "", value); print value; exit }' "$completion_headers")"
+    admission="${admission:-not_observed}"
+  fi
+  completion_error_code='not_observed'
+  if [[ "$admission" == pre_dispatch_rejected || "$admission" == dispatch_attempt_failed ]]; then
+    completion_error_code="$(jq -r '.error.code? | select(type == "string" and test("^[a-z0-9_]{1,64}$"))' "$completion_file" 2>/dev/null || true)"
+    completion_error_code="${completion_error_code:-not_observed}"
+  fi
 
   if [[ "$completion_rc" == 0 && "$completion_http" == 200 ]] && jq -e '.choices[0].message.content | type == "string"' "$completion_file" >/dev/null 2>&1; then
     elapsed_ms=$(( $(date +%s%3N) - started_ms ))
-    record_attempt "${status_http:-0}" "${completion_http:-0}" "$status_ready" true 'completion_succeeded' "$elapsed_ms"
+    record_attempt "${status_http:-0}" "${completion_http:-0}" "$status_ready" true 'completion_succeeded' "$elapsed_ms" "$status_rc" "$completion_rc" "$admission" "$completion_error_code"
     jq . "$completion_file" >"$output_json"
     jq -n --argjson attempts "$attempt" --arg verdict PASS --argjson last_status "$status_http" \
       '{verdict:$verdict,attempts:$attempts,last_status_http:$last_status}' >"$evidence_dir/inference-verdict.json"
-    rm -f "$status_file" "$completion_file"
+    rm -f "$status_file" "$completion_file" "$status_stderr" "$completion_stderr" "$completion_headers"
     printf 'PASS authenticated inference after %s attempt(s)\n' "$attempt"
     exit 0
   fi
 
   if [[ "$completion_rc" != 0 ]]; then
-    last_reason='request_failed'
+    last_reason="curl_$(curl_exit_status "$completion_rc")"
   elif [[ "$completion_http" == 429 || "$completion_http" == 502 || "$completion_http" == 503 || "$completion_http" == 504 ]]; then
     last_reason="http_${completion_http}"
   elif [[ "$completion_http" != 200 ]]; then
@@ -111,8 +158,8 @@ while (( SECONDS < deadline )); do
     last_reason='invalid_completion'
   fi
   elapsed_ms=$(( $(date +%s%3N) - started_ms ))
-  record_attempt "${status_http:-0}" "${completion_http:-0}" "$status_ready" false "$last_reason" "$elapsed_ms"
-  rm -f "$status_file" "$completion_file"
+  record_attempt "${status_http:-0}" "${completion_http:-0}" "$status_ready" false "$last_reason" "$elapsed_ms" "$status_rc" "$completion_rc" "$admission" "$completion_error_code"
+  rm -f "$status_file" "$completion_file" "$status_stderr" "$completion_stderr" "$completion_headers"
   printf 'WAIT inference attempt=%s reason=%s status_ready=%s\n' "$attempt" "$last_reason" "$status_ready" >&2
 
   case "$last_reason" in

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet --render-dir DIR [--gateway-env FILE] [--faucet-env FILE]" >&2; }
-RENDER=""; GATEWAY=""; FAUCET=""; COMPONENT=""
-while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;*)usage;exit 2;;esac;done
+usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet --render-dir DIR [--gateway-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE]" >&2; }
+RENDER=""; GATEWAY=""; FAUCET=""; GATEWAY_RESERVE=""; COMPONENT=""
+while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;*)usage;exit 2;;esac;done
 [[ $EUID -eq 0 && -s "$RENDER/.env" ]] || { usage; exit 2; }
 case "$COMPONENT" in
   gateway) [[ -s "$GATEWAY" ]] || { usage; exit 2; } ;;
-  faucet) [[ -s "$FAUCET" ]] || { usage; exit 2; } ;;
+  faucet) [[ -s "$FAUCET" && -s "$GATEWAY_RESERVE" ]] || { usage; exit 2; } ;;
   monitoring) [[ -s "$RENDER/prometheus.yml" ]] || { usage; exit 2; } ;;
   site) [[ -s "$RENDER/config.js" ]] || { usage; exit 2; } ;;
   *) usage; exit 2 ;;
@@ -24,6 +24,7 @@ elif [[ ! -e "$DEST/gateway.env" ]]; then
 fi
 if [[ "$COMPONENT" == faucet ]]; then
   install -m 0600 "$FAUCET" "$DEST/faucet.env"
+  install -m 0600 "$GATEWAY_RESERVE" "$DEST/gateway-reserve-signer.env"
 elif [[ ! -e "$DEST/faucet.env" ]]; then
   install -m 0600 /dev/null "$DEST/faucet.env"
 fi
@@ -57,6 +58,13 @@ install -m 0644 "$HERE/gdc-gateway-health-probe.timer" /etc/systemd/system/gdc-g
 # root-owned ancestors rather than below /srv/dai/ops.
 install -d -o root -g root -m 0755 /usr/local/lib/gonka-devnet
 install -o root -g root -m 0755 "$HERE/gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh
+install -o root -g root -m 0755 "$HERE/gateway-reserve-controller.sh" /usr/local/lib/gonka-devnet/gateway-reserve-controller.sh
+install -o root -g root -m 0755 "$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
+install -m 0755 "$HERE/gateway-status-routable.sh" "$DEST/gateway-status-routable.sh"
+sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
+  "$HERE/gdc-gateway-reserve-controller.service" \
+  | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-reserve-controller.service
+install -m 0644 "$HERE/gdc-gateway-reserve-controller.timer" /etc/systemd/system/gdc-gateway-reserve-controller.timer
 sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
   "$HERE/gdc-gateway-escrow-reconciler.service" \
   | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-escrow-reconciler.service
@@ -64,6 +72,8 @@ install -m 0644 "$HERE/gdc-gateway-escrow-reconciler.timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now gdc-gateway-health-probe.timer >/dev/null
 systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null
+systemctl enable --now gdc-gateway-reserve-controller.timer >/dev/null
+systemctl start gdc-gateway-reserve-controller.service || true
 systemctl start gdc-gateway-health-probe.service || true
 systemctl start gdc-gateway-escrow-reconciler.service || true
 printf 'READY installed %s operations component in %s\n' "$COMPONENT" "$DEST"

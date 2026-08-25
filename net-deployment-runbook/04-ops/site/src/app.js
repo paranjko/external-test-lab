@@ -19,9 +19,17 @@ type SiteNode = {
   reason?: string,
   participantStatus?: string,
   participantState?: string,
-  validatorEffective?: boolean,
+  participantKnown?: boolean,
+  validatorKnown?: boolean,
   votingPower?: string,
-  endpointReachable?: boolean,
+  endpointState?: string,
+  endpointDiagnostic?: string,
+  catchingUp?: boolean,
+  blocksBehind?: number,
+  blockAgeSeconds?: number,
+  progressing?: ?boolean,
+  referenceKnown?: boolean,
+  referenceAgrees?: boolean,
   isOnline?: boolean,
   serverStatus?: string,
   gpuProfile?: ?string,
@@ -58,8 +66,17 @@ type GatewayStateApi = {
   ) => GatewayAvailability,
 };
 
-type SoftwareVersionApi = {
-  format: (state: any) => string,
+type HostStateApi = {
+  isActiveParticipant: (status: mixed) => boolean,
+  classify: (state: any) => {
+    primaryLabel: string,
+    primaryClass: string,
+    votingPower: string,
+    endpointLabel: string,
+    syncLabel: string,
+    validatorEffective: boolean,
+  },
+  endpointDiagnostic: (error: mixed) => string,
 };
 
 type ValidatorMapController = {
@@ -85,6 +102,12 @@ type ParticipantDiscovery = {
 };
 
 type GpuInventory = Map<string, Array<string>>;
+type SoftwareInventory = Map<string, Array<any>>;
+type SoftwareVersionsApi = {
+  normalizeMlNodeVersion: (chain: string, reported: string) => string,
+};
+
+declare var GDC_SOFTWARE_VERSIONS: SoftwareVersionsApi;
 
 type Validator = {
   ownerAddress: string,
@@ -135,7 +158,7 @@ declare class URL {
 
 const cfg: SiteConfig = (window: any).GDC_CONFIG;
 const gatewayStatus: GatewayStateApi = (window: any).GDC_GATEWAY_STATE;
-const softwareVersion: SoftwareVersionApi = (window: any).GDC_SOFTWARE_VERSIONS;
+const hostState: HostStateApi = (window: any).GDC_HOST_STATE;
 const $ = (id: string): any => document.getElementById(id);
 const chainRpcHost =
   cfg.chainRpcHost ||
@@ -148,12 +171,18 @@ async function refreshTelegramConsumer(): Promise<void> {
   link.hidden = true;
   link.removeAttribute("href");
   if (!cfg.telegramBot) return;
+  link.textContent = "Open Telegram conversation client ↗";
+  link.href = cfg.telegramBot;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.hidden = false;
   try {
     const health = await json("/status/telegram-consumer");
-    if (health.status !== "ok" || health.inference_ready !== true) return;
-    link.textContent = "Open Telegram conversation client ↗";
-    link.href = cfg.telegramBot;
-    link.hidden = false;
+    if (health.status !== "ok" || health.inference_ready !== true) {
+      link.title = "The Telegram client is available; inference is temporarily unavailable.";
+      return;
+    }
+    link.removeAttribute("title");
   } catch {}
 }
 $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana;
@@ -161,6 +190,7 @@ $("grafana-inference").href = cfg.grafanaInference;
 const cards: Map<string, HTMLElement> = new Map();
 let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({ ...node }));
 let cardGpuInventory: GpuInventory = new Map();
+let cardSoftwareInventory: SoftwareInventory = new Map();
 
 function nodeKey(node: SiteNode): string {
   return node.address || node.name;
@@ -178,14 +208,22 @@ function createCard(node: SiteNode): HTMLElement {
       <b data-k="height"></b>
     </div>
     <div class="metric">
+      <span>voting power</span>
+      <b data-k="vp"></b>
+    </div>
+    <div class="metric">
       <span>chain sync</span>
       <b data-k="sync"></b>
+    </div>
+    <div class="metric">
+      <span>endpoint</span>
+      <b data-k="endpoint"></b>
     </div>
     <div class="metric">
       <span>peers</span>
       <b data-k="peers"></b>
     </div>
-    <div class="metric software">
+    <div class="metric software" data-k-row="software">
       <span>software</span>
       <b data-k="versions"></b>
     </div>
@@ -198,9 +236,12 @@ function createCard(node: SiteNode): HTMLElement {
   set(el, "status", node.mode === "skip" ? "SKIP" : "checking…");
   set(el, "scope", node.mode === "skip" ? node.reason : node.address);
   set(el, "height", node.mode === "skip" ? "–" : "…");
-  set(el, "sync", node.mode === "skip" ? "not joined" : "…");
+  set(el, "vp", node.mode === "skip" ? "Unavailable" : "Unavailable");
+  set(el, "sync", node.mode === "skip" ? "Unknown" : "Unknown");
+  set(el, "endpoint", node.mode === "skip" ? "Unknown" : "Unknown");
   set(el, "peers", node.mode === "skip" ? "–" : "…");
-  set(el, "versions", node.mode === "skip" ? "not running" : "checking");
+  if (node.mode === "skip") set(el, "versions", "not running");
+  else updateSoftware(cardSoftwareInventory, node, el);
   updateGpu(cardGpuInventory, node, el);
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
@@ -235,15 +276,110 @@ function updateGpu(
       return count === 1 ? displayName : `${displayName} ×${count}`;
     })
     .join(" + ");
-  const value = inventoryLabel
-    ? `${inventoryLabel} – ${connection}`
-    : node.gpuProfile && node.gpuProfile !== "auto"
-      ? `${node.gpuProfile} – ${connection}`
-      : "";
-  row.hidden = !value;
-  if (!value) return;
-  set(card, "gpu", value);
+  if (node.mode === "skip") {
+    row.hidden = true;
+    return;
+  }
+  row.hidden = false;
+  if (!inventoryLabel) {
+    const configuredProfile = configuredGpuLabel(node.gpuProfile);
+    if (configuredProfile) {
+      set(card, "gpu", `${configuredProfile} – ${connection} (inventory unavailable)`);
+      card.querySelector('[data-k="gpu"]').title =
+        `Configured GPU host: ${gpuHost}; live inventory has not reported it yet`;
+      return;
+    }
+    set(card, "gpu", "temporarily unavailable");
+    card.querySelector('[data-k="gpu"]').title =
+      "GPU inventory has not reported this Host yet";
+    return;
+  }
+  set(card, "gpu", `${inventoryLabel} – ${connection}`);
   card.querySelector('[data-k="gpu"]').title = `GPU host: ${gpuHost}`;
+}
+
+function configuredGpuLabel(profile: ?string): ?string {
+  switch (profile) {
+    case "a5000-24g":
+      return "RTX A5000";
+    case "4090-24g":
+      return "GeForce RTX 4090";
+    case "3090-24g":
+      return "GeForce RTX 3090";
+    case "t4-16g":
+      return "Tesla T4";
+    case "blackwell-16g":
+      return "RTX PRO 2000 Blackwell";
+    default:
+      return null;
+  }
+}
+
+function markSoftwareInventoryUnavailable(card: HTMLElement): void {
+  const value = card.querySelector('[data-k="versions"]');
+  value.textContent = "temporarily unavailable";
+  value.title = "Software inventory has not reported this Host yet";
+}
+
+function updateSoftware(
+  inventory: SoftwareInventory,
+  node: SiteNode,
+  card: HTMLElement,
+): void {
+  const key = [node.name, node.publicHost].find((candidate) =>
+    inventory.has(candidate || ""),
+  );
+  const samples = inventory.get(key || "") || [];
+  const components: Map<string, any> = new Map();
+  for (const sample of samples) {
+    const metric = sample?.metric || {};
+    const raw = String(metric.component || "");
+    const component = raw === "inference-chain" || raw === "node"
+      ? "chain"
+      : raw === "decentralized-api" || raw === "api"
+        ? "DAPI"
+        : raw === "mlnode"
+          ? "MLNode"
+          : "";
+    if (!component || !metric.version) continue;
+    const existing = components.get(component);
+    if (!existing || metric.source === "runtime") components.set(component, metric);
+  }
+  const formatted: Array<string> = [];
+  const chainVersion = String(components.get("chain")?.version || "unknown");
+  for (const component of ["chain", "DAPI", "MLNode"]) {
+    const metric = components.get(component);
+    if (!metric) continue;
+    const version = component === "MLNode"
+      ? GDC_SOFTWARE_VERSIONS.normalizeMlNodeVersion(chainVersion, String(metric.version))
+      : metric.version;
+    formatted.push(`${component} ${version}`);
+  }
+  const value = formatted.join(" · ");
+  if (!value) {
+    markSoftwareInventoryUnavailable(card);
+    return;
+  }
+  const target = card.querySelector('[data-k="versions"]');
+  target.textContent = value;
+  target.title = "Software inventory collected by the monitoring agent";
+}
+
+async function refreshSoftwareInventory(): Promise<void> {
+  const state = await json("/status/software");
+  const next: SoftwareInventory = new Map();
+  for (const sample of state?.data?.result || []) {
+    const host = String(sample?.metric?.host || "");
+    if (!host) continue;
+    const values = next.get(host) || [];
+    values.push(sample);
+    next.set(host, values);
+  }
+  cardSoftwareInventory = next;
+  for (const node of observedNodes) {
+    const card = cards.get(nodeKey(node));
+    if (card) updateSoftware(cardSoftwareInventory, node, card);
+  }
 }
 
 async function refreshGpuInventory(): Promise<void> {
@@ -351,54 +487,27 @@ function escapeHtml(value: mixed): string {
     (char) => entities[char],
   );
 }
-function syncStatus(value: mixed): string {
-  const normalized =
-    value === null || value === undefined
-      ? ""
-      : String(value).trim().toLowerCase();
-  if (normalized === "true" || value === true) return "sync in progress";
-  if (normalized === "false" || value === false) return "in sync";
-  return "checking";
-}
-
-function isNodeActive(status: mixed): boolean {
-  const normalized = String(status || "").trim().toUpperCase();
-  return (
-    normalized === "ACTIVE" ||
-    normalized === "PARTICIPANT_STATUS_ACTIVE" ||
-    normalized === "1"
-  );
-}
-
-function isPositivePower(value: mixed): boolean {
-  try {
-    return BigInt(String(value || "0")) > 0n;
-  } catch {
-    return false;
-  }
-}
-
-function statusLabel(node: SiteNode): { text: string, className: string } {
-  const active = isNodeActive(node.participantState || node.participantStatus);
-  if (!active)
-    return {
-      text: `${String(node.participantState || node.participantStatus || "UNKNOWN")} (chain)`,
-      className: "status bad",
-    };
-  if (!node.validatorEffective)
-    return {
-      text: "ACTIVE – waiting for validator set",
-      className: "status skip",
-    };
-  if (!node.endpointReachable)
-    return {
-      text: "effective validator – endpoint unavailable",
-      className: "status bad",
-    };
-  return {
-    text: "effective validator – endpoint reachable",
-    className: "status ok",
-  };
+function renderHostState(card: HTMLElement, node: SiteNode): boolean {
+  const display = hostState.classify({
+    participantKnown: node.participantKnown,
+    participantStatus: node.participantState || node.participantStatus,
+    validatorKnown: node.validatorKnown,
+    votingPower: node.votingPower,
+    endpointState: node.endpointState,
+    endpointDiagnostic: node.endpointDiagnostic,
+    catchingUp: node.catchingUp,
+    blocksBehind: node.blocksBehind,
+    blockAgeSeconds: node.blockAgeSeconds,
+    progressing: node.progressing,
+    referenceKnown: node.referenceKnown,
+    referenceAgrees: node.referenceAgrees,
+  });
+  set(card, "status", display.primaryLabel);
+  card.querySelector('[data-k="status"]').className = display.primaryClass;
+  set(card, "vp", display.votingPower);
+  set(card, "sync", display.syncLabel);
+  set(card, "endpoint", display.endpointLabel);
+  return display.validatorEffective;
 }
 
 const participantDiscovery: Map<string, Promise<ParticipantDiscovery>> =
@@ -448,6 +557,7 @@ async function discoverParticipant(host: string): Promise<ParticipantDiscovery> 
 async function participantNode(
   participant: Participant,
   validators: Map<string, ConsensusValidator>,
+  validatorKnown: boolean,
 ): Promise<SiteNode> {
   let endpoint;
   try {
@@ -465,8 +575,6 @@ async function participantNode(
       : {};
   const participantStatus = participant.status || "UNKNOWN";
   const validator = validators.get(String(participant.validator_key || ""));
-  const votingPower = String(validator?.voting_power || "0");
-  const validatorEffective = Boolean(validator) && isPositivePower(votingPower);
   return {
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
@@ -478,9 +586,11 @@ async function participantNode(
     reason: catalog?.reason,
     participantStatus: String(participantStatus),
     participantState: String(participantStatus),
-    validatorEffective,
-    votingPower,
-    endpointReachable: false,
+    participantKnown: Boolean(participant.status),
+    validatorKnown,
+    votingPower: validator ? String(validator.voting_power || "") : "0",
+    endpointState: "unknown",
+    endpointDiagnostic: "Check endpoint",
     isOnline: false,
     serverStatus: String(participantStatus),
     gpuProfile: catalog?.gpuProfile,
@@ -490,10 +600,28 @@ async function participantNode(
 
 async function reconcileParticipants(): Promise<number> {
   if (!chainRpcHost) throw new Error("chain RPC host is missing");
-  const [state, validatorResponse] = await Promise.all([
+  const [participantResult, validatorResult] = await Promise.allSettled([
     json("/status/participants"),
     json(`https://${chainRpcHost}/chain-rpc/validators?per_page=100`),
   ]);
+  if (participantResult.status !== "fulfilled") {
+    observedNodes = observedNodes.map((node) => ({
+      ...node,
+      participantKnown: false,
+      validatorKnown: false,
+      votingPower: "",
+    }));
+    for (const node of observedNodes) {
+      const card = cards.get(nodeKey(node));
+      if (card) renderHostState(card, node);
+    }
+    return 0;
+  }
+  const state = participantResult.value;
+  const validatorKnown =
+    validatorResult.status === "fulfilled" &&
+    Array.isArray(validatorResult.value?.result?.validators);
+  const validatorResponse = validatorKnown ? validatorResult.value : {};
   const participants = Array.isArray(state.participant)
     ? state.participant
     : [];
@@ -503,7 +631,9 @@ async function reconcileParticipants(): Promise<number> {
       .map((validator) => [String(validator.pub_key.value), validator]),
   );
   const next = (await Promise.all(
-    participants.map((participant) => participantNode(participant, validators)),
+    participants.map((participant) =>
+      participantNode(participant, validators, validatorKnown),
+    ),
   )).sort(
     (left, right) => left.name.localeCompare(right.name),
   );
@@ -519,6 +649,7 @@ async function reconcileParticipants(): Promise<number> {
     if (!card) card = createCard(node);
     card.querySelector("h3").textContent = node.publicHost || node.name;
     set(card, "scope", node.address);
+    renderHostState(card, node);
   }
   observedNodes = next;
   return Number(state.block_height) || 0;
@@ -588,7 +719,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         ownerAddress: node.address || "",
         ip: node.ip || "",
         licenseCount: 0,
-        online: node.isOnline ?? isNodeActive(node.participantStatus),
+        online: node.isOnline === true,
         geo: {
           lat,
           lon,
@@ -697,12 +828,23 @@ initValidatorMap()
 async function refresh(): Promise<void> {
   let healthy = 0;
   let best = 0;
+  let referenceKnown = false;
+  let referenceHeight = 0;
   refreshTelegramConsumer();
   refreshGpuInventory().catch(() => {});
+  refreshSoftwareInventory().catch(() => {});
   try {
     best = await reconcileParticipants();
   } catch {}
-  const singleParticipant = observedNodes.length === 1;
+  try {
+    if (!chainRpcHost) throw new Error("chain RPC host is missing");
+    const reference = await json(`https://${chainRpcHost}/chain-rpc/status`);
+    referenceHeight = Number(reference.result.sync_info.latest_block_height);
+    if (Number.isFinite(referenceHeight) && referenceHeight > 0) {
+      best = Math.max(best, referenceHeight);
+      referenceKnown = true;
+    }
+  } catch {}
   await Promise.all(
     observedNodes
       .filter((n) => n.mode !== "skip")
@@ -710,63 +852,62 @@ async function refresh(): Promise<void> {
         const card = cards.get(nodeKey(n));
         if (!card) return;
         if (!n.statusBase) {
-          n.endpointReachable = false;
+          n.endpointState = "unknown";
+          n.endpointDiagnostic = "Check endpoint";
           n.isOnline = false;
-          n.serverStatus = String(n.participantState || n.participantStatus || "UNKNOWN");
-          const display = statusLabel(n);
-          set(card, "status", display.text);
-          card.querySelector('[data-k="status"]').className = display.className;
+          n.serverStatus = "endpoint unknown";
           set(card, "height", best ? best.toLocaleString() : "–");
-          set(card, "sync", "endpoint not proxied");
           set(card, "peers", "–");
-          set(card, "versions", "unreported");
+          renderHostState(card, n);
+          updateSoftware(cardSoftwareInventory, n, card);
           return;
         }
         const statusBase = n.statusBase;
         try {
-          n.endpointReachable = true;
-          n.isOnline = Boolean(n.validatorEffective);
-          n.serverStatus = "endpoint reachable";
           const [s, net] = await Promise.all([
             json(`${statusBase}/chain-rpc/status`),
             json(`${statusBase}/chain-rpc/net_info`),
           ]);
+          n.endpointState = "reachable";
+          n.endpointDiagnostic = "";
           const h = Number(s.result.sync_info.latest_block_height);
           const peers = Number(net.result.n_peers);
+          n.catchingUp = Boolean(s.result.sync_info.catching_up);
+          n.blocksBehind = referenceKnown ? Math.abs(referenceHeight - h) : undefined;
+          const blockTime = Date.parse(String(s.result.sync_info.latest_block_time || ""));
+          n.blockAgeSeconds = Number.isFinite(blockTime)
+            ? Math.max(0, (Date.now() - blockTime) / 1000)
+            : undefined;
+          n.progressing = n.blockAgeSeconds !== undefined && n.blockAgeSeconds <= 90;
+          n.referenceKnown = referenceKnown;
+          n.referenceAgrees = referenceKnown && n.blocksBehind !== undefined && n.blocksBehind <= 5;
           best = Math.max(best, h);
+          const validatorEffective = renderHostState(card, n);
+          n.isOnline =
+            validatorEffective &&
+            hostState.classify({
+              endpointState: n.endpointState,
+              catchingUp: n.catchingUp,
+              blocksBehind: n.blocksBehind,
+              blockAgeSeconds: n.blockAgeSeconds,
+              progressing: n.progressing,
+              referenceKnown: n.referenceKnown,
+              referenceAgrees: n.referenceAgrees,
+            }).syncLabel === "Synced";
+          n.serverStatus = "endpoint reachable";
           set(card, "height", h.toLocaleString());
-          set(card, "sync", syncStatus(s.result.sync_info.catching_up));
           set(card, "peers", peers);
-          const display = statusLabel(n);
-          const noPeers = peers === 0 && !singleParticipant && n.validatorEffective;
-          set(
-            card,
-            "status",
-            noPeers
-              ? "effective validator – endpoint reachable, no peers"
-              : display.text,
-          );
-          card.querySelector('[data-k="status"]').className = noPeers
-            ? "status bad"
-            : display.className;
-          if (n.validatorEffective) healthy++;
-          try {
-            set(
-              card,
-              "versions",
-              softwareVersion.format(await json(`${statusBase}/v1/versions`)),
-            );
-          } catch {
-            set(card, "versions", "unreported");
-          }
+          if (validatorEffective) healthy++;
+          updateSoftware(cardSoftwareInventory, n, card);
         } catch (e) {
-          n.endpointReachable = false;
+          n.endpointState = "unavailable";
+          n.endpointDiagnostic = hostState.endpointDiagnostic(e);
           n.isOnline = false;
           n.serverStatus = "endpoint unavailable";
-          const display = statusLabel(n);
-          set(card, "status", `${display.text} (${e.message})`);
-          card.querySelector('[data-k="status"]').className = "status bad";
-          set(card, "versions", "unavailable");
+          set(card, "height", "–");
+          set(card, "peers", "–");
+          renderHostState(card, n);
+          updateSoftware(cardSoftwareInventory, n, card);
         }
       }),
   );
@@ -855,8 +996,8 @@ async function refresh(): Promise<void> {
     health.dataset.state = state;
     $("quality-health-state").textContent =
       inflight > 0
-        ? "READY – processing requests"
-        : "READY – no requests in flight";
+        ? "READY – verified inference; processing requests"
+        : "READY – verified inference; no requests in flight";
     $("quality-recovery").hidden = true;
     setUtcTime("quality-updated", new Date(), "Updated");
   } catch (error) {

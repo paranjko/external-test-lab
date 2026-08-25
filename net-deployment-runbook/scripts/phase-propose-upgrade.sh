@@ -33,7 +33,7 @@ ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/params/deposi
 min_deposit="$(jq -er '(.params.min_deposit // .deposit_params.min_deposit)[0] | .amount + .denom' "$RUN/gov-params.json")"
 (( ${GDC_UPGRADE_DEPOSIT%ngonka} >= ${min_deposit%ngonka} )) || die "upgrade deposit $GDC_UPGRADE_DEPOSIT is below live governance minimum $min_deposit"
 current_height="$(jq -er '.result.sync_info.latest_block_height | tonumber' "$RUN/pre-status.json")"
-min_lead_blocks="${GDC_UPGRADE_MIN_LEAD_BLOCKS:-30}"
+min_lead_blocks="${GDC_UPGRADE_MIN_LEAD_BLOCKS:-60}"
 [[ "$min_lead_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_UPGRADE_MIN_LEAD_BLOCKS must be a positive integer'
 (( GDC_UPGRADE_HEIGHT >= current_height + min_lead_blocks )) || die "upgrade height $GDC_UPGRADE_HEIGHT is too soon; need at least $min_lead_blocks blocks after current height $current_height"
 

@@ -10,7 +10,7 @@ while (($#)); do
   esac
 done
 [[ $EUID -eq 0 ]] || { echo 'Run with sudo' >&2; exit 1; }
-[[ "$NODE" =~ ^gdc-node[0-4]$ && -s "$ENV_FILE" && -s "$NODE_CONFIG" && -s "$GENESIS" ]] || { usage; exit 2; }
+[[ "$NODE" =~ ^[a-z0-9][a-z0-9_-]*$ && -s "$ENV_FILE" && -s "$NODE_CONFIG" && -s "$GENESIS" ]] || { usage; exit 2; }
 DEST="/srv/dai/deploy/$NODE"; mkdir -p "$DEST"
 new_release="$(awk -F= '$1 == "GDC_RELEASE_PROFILE" {print $2}' "$ENV_FILE")"
 new_hash="$(awk -F= '$1 == "GDC_PROFILE_HASH" {print $2}' "$ENV_FILE")"

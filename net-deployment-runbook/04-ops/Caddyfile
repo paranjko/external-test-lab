@@ -24,7 +24,7 @@
 			}
 
   handle_path /join-bootstrap/* {
-    root * /join-bootstrap
+    root * /ops/join-bootstrap
     file_server
   }
 

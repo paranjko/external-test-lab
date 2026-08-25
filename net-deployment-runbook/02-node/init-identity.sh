@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: $0 --env .env --output ssh-alias.json --mnemonic-output ssh-alias-warm.mnemonic" >&2; }
-ENV_FILE=""; OUTPUT=""; MNEMONIC_OUTPUT=""
-while (($#)); do case "$1" in --env) ENV_FILE="$2"; shift 2;; --output) OUTPUT="$2"; shift 2;; --mnemonic-output) MNEMONIC_OUTPUT="$2"; shift 2;; *) usage; exit 2;; esac; done
+usage(){ echo "Usage: $0 --env .env --output ssh-alias.json --mnemonic-output ssh-alias-warm.mnemonic [--warm-mnemonic FILE]" >&2; }
+ENV_FILE=""; OUTPUT=""; MNEMONIC_OUTPUT=""; WARM_MNEMONIC=""
+while (($#)); do case "$1" in --env) ENV_FILE="$2"; shift 2;; --output) OUTPUT="$2"; shift 2;; --mnemonic-output) MNEMONIC_OUTPUT="$2"; shift 2;; --warm-mnemonic) WARM_MNEMONIC="$2"; shift 2;; *) usage; exit 2;; esac; done
 [[ -s "$ENV_FILE" && -n "$OUTPUT" && -n "$MNEMONIC_OUTPUT" ]] || { usage; exit 2; }
+[[ -z "$WARM_MNEMONIC" || -s "$WARM_MNEMONIC" ]] || { echo "Warm mnemonic is not readable: $WARM_MNEMONIC" >&2; exit 1; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -a
 # shellcheck disable=SC1090
@@ -22,20 +23,32 @@ compose=(docker compose --env-file "$ENV_FILE" -f "$HERE/compose.yaml")
 if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
   'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file -a' >/dev/null 2>&1; then
   key_output="$TMP/warm-key.out"
-  "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
-    'printf "%s\n%s\n" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" | inferenced keys add "$KEY_NAME" --keyring-backend file' \
-    >"$key_output" 2>&1
-  mapfile -t phrases < <(awk 'NF == 24 {valid=1; for (i=1; i<=NF; i++) if ($i !~ /^[a-z]+$/) valid=0; if (valid) print}' "$key_output")
-  (( ${#phrases[@]} == 1 )) || { echo 'Cannot extract one warm-key mnemonic' >&2; exit 1; }
-  umask 077
-  mkdir -p "$(dirname "$MNEMONIC_OUTPUT")"
-  printf '%s\n' "${phrases[0]}" >"$MNEMONIC_OUTPUT"
+  if [[ -n "$WARM_MNEMONIC" ]]; then
+    if ! printf '%s\n%s\n%s\n' "$(<"$WARM_MNEMONIC")" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" \
+      | "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
+        'inferenced keys add "$KEY_NAME" --recover --keyring-backend file' >"$key_output" 2>&1; then
+      echo "Cannot restore warm key from $WARM_MNEMONIC; see $key_output" >&2
+      exit 1
+    fi
+  else
+    "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
+      'printf "%s\n%s\n" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" | inferenced keys add "$KEY_NAME" --keyring-backend file' \
+      >"$key_output" 2>&1
+    mapfile -t phrases < <(awk 'NF == 24 {valid=1; for (i=1; i<=NF; i++) if ($i !~ /^[a-z]+$/) valid=0; if (valid) print}' "$key_output")
+    (( ${#phrases[@]} == 1 )) || { echo 'Cannot extract one warm-key mnemonic' >&2; exit 1; }
+    umask 077
+    mkdir -p "$(dirname "$MNEMONIC_OUTPUT")"
+    printf '%s\n' "${phrases[0]}" >"$MNEMONIC_OUTPUT"
+  fi
 fi
 NODE_ID="$("${compose[@]}" run --rm --no-deps -T --entrypoint inferenced node tendermint show-node-id | tail -n1 | tr -d '\r')"
 CONSENSUS="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh tmkms -c 'tmkms-pubkey' | grep -Eo '[A-Za-z0-9+/]{43}=' | tail -n1)"
 WARM_ADDRESS="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c 'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file -a' | tail -n1 | tr -d '\r')"
 WARM_PUB_JSON="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c 'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file --pubkey')"
-[[ "$NODE_NAME" =~ ^gdc-node[0-4]$ ]] || exit 1
+[[ "$NODE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+  echo "Invalid node SSH alias: $NODE_NAME" >&2
+  exit 2
+}
 [[ "$NODE_ID" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid node ID: $NODE_ID" >&2; exit 1; }
 [[ "$WARM_ADDRESS" =~ ^gonka1[0-9a-z]{20,90}$ ]] || { echo "Invalid warm address" >&2; exit 1; }
 [[ "$(base64 -d <<<"$CONSENSUS" | wc -c)" -eq 32 ]] || { echo 'Consensus key is not 32 bytes' >&2; exit 1; }

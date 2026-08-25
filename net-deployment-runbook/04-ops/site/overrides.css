@@ -3,6 +3,9 @@
 .mark{display:none}
 .hero{padding:58px 0 44px}
 .hero h1{margin:15px 0 18px;font-size:clamp(44px,5.5vw,70px)}
+.join-node{margin:28px 0 20px;padding:26px;border:1px solid #4a466b;border-radius:10px;background:linear-gradient(135deg,#1d1b30,#14151d)}
+.join-node .section-title{margin-bottom:18px}.join-node .section-title h2{font-size:clamp(26px,3vw,36px)}
+.join-node pre{border:1px solid var(--line);border-radius:6px}.join-node p{margin:16px 0 0;color:var(--muted);font-size:13px}.join-node a{color:var(--lime)}
 .summary{margin-bottom:56px}
 @media(max-width:900px){.hero{padding-top:48px}}
-@media(max-width:520px){.hero{padding:38px 0}.hero h1{font-size:clamp(42px,13vw,60px)}}
+@media(max-width:520px){.hero{padding:38px 0}.hero h1{font-size:clamp(42px,13vw,60px)}.join-node{margin-top:20px;padding:20px}.join-node pre{padding:16px}}

@@ -39,6 +39,22 @@ cleanup() {
 
 trap cleanup EXIT HUP INT TERM
 
+installed_version_matches() {
+  candidate=$1
+  expected=$2
+  [ -x "$candidate" ] || return 1
+  "$candidate" version 2>&1 | awk -v expected="$expected" '
+    {
+      for (i = 1; i <= NF; i++) {
+        value = $i
+        sub(/^v/, "", value)
+        if (value == expected) found = 1
+      }
+    }
+    END { exit !found }
+  '
+}
+
 command -v curl >/dev/null 2>&1 || fail 'curl is required'
 command -v unzip >/dev/null 2>&1 || fail 'unzip is required'
 command -v awk >/dev/null 2>&1 || fail 'awk is required'
@@ -97,6 +113,12 @@ fi
 ASSET="inferenced-$PLATFORM-$ARCH.zip"
 DOWNLOAD_URL="https://github.com/gonka-ai/gonka/releases/download/$RELEASE_TAG/$ASSET"
 ARCHIVE="$WORKDIR/$ASSET"
+RELEASE_VERSION=$(printf '%s\n' "$RELEASE_TAG" | awk -F/ '{ version = $NF; sub(/^v/, "", version); print version }')
+
+if installed_version_matches "$INSTALL_DIR/inferenced" "$RELEASE_VERSION"; then
+  printf '%s\n' "inferenced $RELEASE_TAG is already installed at $INSTALL_DIR/inferenced"
+  exit 0
+fi
 
 printf '%s\n' "Downloading inferenced $RELEASE_TAG for $PLATFORM-$ARCH..."
 curl -fsSL --retry 3 --retry-delay 1 -o "$ARCHIVE" "$DOWNLOAD_URL" || \

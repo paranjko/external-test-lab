@@ -7,11 +7,11 @@ OPS is the only role that requires `.env`. Store it with runtime data, outside
 the runbook directory:
 
 ```bash
-mkdir -p ../net-deployment-data
-cp .env.example ../net-deployment-data/.env
+mkdir -p "$HOME/.gdc-data"
+cp .env.example "$HOME/.gdc-data/.env"
 ```
 
-The default data root is `../net-deployment-data`. To place it elsewhere,
+The default data root is `$HOME/.gdc-data`. To place it elsewhere,
 export `GDC_HOME=/absolute/path` before running `gdc.sh` and store the file as
 `$GDC_HOME/.env`.
 
@@ -24,10 +24,10 @@ they are not published through Genesis bootstrap or stored in Host inventory.
 ## Deploy
 
 ```bash
-./gdc.sh ops monitoring
-./gdc.sh ops site
-./gdc.sh ops edge
-./gdc.sh ops consumer telegram apply
+gdc ops monitoring
+gdc ops site
+gdc ops edge
+gdc ops consumer telegram apply
 ```
 
 The site and Grafana remain separate from validator lifecycle. A chain reset
@@ -39,5 +39,5 @@ network or gateway.
 ```bash
 curl -fsS https://gonka-dev.net/ >/dev/null
 curl -fsS https://grafana.gonka-dev.net/login >/dev/null
-./gdc.sh ops consumer telegram verify
+gdc ops consumer telegram verify
 ```

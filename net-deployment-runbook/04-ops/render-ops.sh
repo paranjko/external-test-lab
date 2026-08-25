@@ -19,7 +19,11 @@ source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$GATEWAY_VERSION" =~ ^v[34]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3 or v4' >&2; exit 2; }
-LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v4}-$GATEWAY_VERSION"
+# Deployment profiles name gateway artifacts with their protocol suffix.  Strip
+# either supported suffix before selecting the requested protocol, otherwise a
+# v3 profile such as `...:0.2.15-v3` becomes the distinct, unintended
+# `...:0.2.15-v3-v3` tag.
+LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v[34]}-$GATEWAY_VERSION"
 telegram_bot_url="${GDC_TELEGRAM_BOT_URL:-}"
 if [[ -n "$telegram_bot_url" && ! "$telegram_bot_url" =~ ^https://t\.me/[A-Za-z0-9_]{5,32}$ ]]; then
   echo 'GDC_TELEGRAM_BOT_URL must be https://t.me/<bot_username>; never put a BotFather token here' >&2
@@ -96,33 +100,8 @@ jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$AP
   [[ -z "${ACME_EMAIL:-}" ]] || printf '  email {$ACME_EMAIL}\n'
   printf '  admin 127.0.0.1:2019\n}\n'
   cat <<'CADDY'
-{$GATEWAY_PUBLIC_HOST} {
-  encode zstd gzip
-	@prometheus_from_public_edge {
-		path /ops-prometheus/*
-		remote_ip {$PUBLIC_EDGE_CIDR}
-	}
-	handle @prometheus_from_public_edge {
-		uri strip_prefix /ops-prometheus
-		reverse_proxy 127.0.0.1:9099
-	}
-	handle /ops-prometheus/* {
-		respond 403
-	}
-	handle_path /faucet/* {
-		reverse_proxy 127.0.0.1:18081
-	}
-  handle_path /join-bootstrap/* {
-    root * /join-bootstrap
-    file_server
-  }
-  handle_path /gateway/* {
-    reverse_proxy 127.0.0.1:18080
-  }
-  handle {
-    reverse_proxy 127.0.0.1:8000
-  }
-}
+# Public TLS belongs exclusively to the configured participant edge. This
+# internal status service intentionally exposes only its explicit HTTP ports.
 http://:8082 {
   encode zstd gzip
   reverse_proxy 127.0.0.1:8080
@@ -161,9 +140,16 @@ CADDY
     file_server
   }
   # Publish only the fixed GPU inventory query. Do not expose the general
-  # Prometheus query API through the public status origin.
+  # Prometheus query API through the public status origin. Exclude series whose
+  # latest exporter sample is older than the live-inventory freshness bound.
   handle /status/gpus {
-    rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes
+    rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes%20unless%20(time()%20-%20timestamp(gdc_nvidia_memory_total_bytes)%20%3E%20120)
+    reverse_proxy 127.0.0.1:9099
+  }
+  # The site consumes software information only from the monitoring inventory,
+  # never from a participant's public inference endpoint.
+  handle /status/software {
+    rewrite * /api/v1/query?query=gdc_component_info
     reverse_proxy 127.0.0.1:9099
   }
   root * /srv
@@ -186,6 +172,11 @@ if [[ -s "$GDC_HOME/genesis/genesis.json" && -s "$GDC_HOME/genesis/genesis.sha25
   install -m 0644 "$GDC_HOME/genesis/genesis.sha256" "$bootstrap_dir/genesis/genesis.sha256"
   install -m 0644 "$GDC_HOME/genesis/genesis-seeds.txt" "$bootstrap_dir/genesis/genesis-seeds.txt"
   install -m 0644 "$STATE/phase-profiles/genesis.env" "$bootstrap_dir/profile/genesis.env"
+  if ! grep -qx "join_bootstrap_format=$JOIN_BOOTSTRAP_FORMAT" "$bootstrap_dir/profile/genesis.env"; then
+    grep -qx "release_profile=$GDC_RELEASE_PROFILE" "$bootstrap_dir/profile/genesis.env" \
+      || { echo 'Genesis profile does not match the selected release' >&2; exit 1; }
+    printf 'join_bootstrap_format=%s\n' "$JOIN_BOOTSTRAP_FORMAT" >>"$bootstrap_dir/profile/genesis.env"
+  fi
   # This is the deliberately narrow, DevShard client credential used only by
   # the JOIN_PASS completion regression. It is neither an operator key nor a
   # gateway administration credential, and the operator stores it locally at

@@ -42,14 +42,16 @@ run_flow_remove_types() {
 }
 
 run_prettier() {
-  if command -v prettier >/dev/null 2>&1; then
-    prettier "$@"
-  else
-    npx --yes "prettier@$PRETTIER_VERSION" "$@"
-  fi
+  # Generated assets are compared byte-for-byte with the public deployment.
+  # A globally installed Prettier is not a reproducible build input, so always
+  # use the version fixed above.
+  npx --yes "prettier@$PRETTIER_VERSION" "$@"
 }
 
-run_flow check --max-warnings 0
+(
+  cd "$ROOT"
+  run_flow check --max-warnings 0
+)
 
 output="$DESTINATION"
 temporary_output=''
@@ -65,13 +67,22 @@ fi
     app.js \
     config.js \
     gateway-state.js \
+    host-state.js \
     software-versions.js
 )
 
-files=(app.js config.js gateway-state.js software-versions.js)
+files=(app.js config.js gateway-state.js host-state.js software-versions.js)
 generated_files=()
 for file in "${files[@]}"; do
   sed -i "1s|^//  strict$|// Generated from src/$file - edit the Flow source and run make site-js|" "$output/$file"
+  header_normalized="$(mktemp "$output/.${file}.XXXXXX")"
+  awk '
+    NR == 1 { print; header = 1; next }
+    header && $0 == "" { next }
+    header { print ""; header = 0 }
+    { print }
+  ' "$output/$file" >"$header_normalized"
+  mv "$header_normalized" "$output/$file"
   generated_files+=("$output/$file")
 done
 

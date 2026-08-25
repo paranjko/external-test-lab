@@ -20,16 +20,16 @@ EOL
 ## Operations
 
 ```bash
-./gdc.sh host verify <ssh-alias>
-./gdc.sh host stop <ssh-alias>
-./gdc.sh host start <ssh-alias>
-./gdc.sh host reset <ssh-alias>
+gdc host verify <ssh-alias>
+gdc host stop <ssh-alias>
+gdc host start <ssh-alias>
+gdc host reset <ssh-alias>
 ```
 
 Reset several Hosts sequentially with one command:
 
 ```bash
-./gdc.sh host reset <ssh-alias-1> <ssh-alias-2> [<ssh-alias-3> ...]
+gdc host reset <ssh-alias-1> <ssh-alias-2> [<ssh-alias-3> ...]
 ```
 
 Each Host is reset by the same phase as a separate command. If one reset
@@ -43,14 +43,14 @@ Provide the GPU SSH alias during the initial JOIN when an MLNode runs on a
 separate machine:
 
 ```bash
-./gdc.sh host join <ssh-alias> <gpu-ssh-alias>
+gdc host join <ssh-alias> <gpu-ssh-alias>
 ```
 
 Use the standalone operation to reapply an already configured network-GPU
 attachment:
 
 ```bash
-./gdc.sh host ml-attach <ssh-alias>
+gdc host ml-attach <ssh-alias>
 ```
 
 ## Governance
@@ -59,9 +59,9 @@ An active Host may vote with its current PoC-derived voting power. Query live
 chain parameters before acting.
 
 ```bash
-./gdc.sh governance vote <proposal-id> yes
-./gdc.sh governance devshard submit
-./gdc.sh governance devshard verify <proposal-id>
+gdc governance vote <proposal-id> yes
+gdc governance devshard submit
+gdc governance devshard verify <proposal-id>
 ```
 
 Keep the cold key on the operator's trusted machine. Never copy it to OPS,
@@ -70,6 +70,6 @@ Gateway, MLNode or public services.
 ## Sepolia observer
 
 ```bash
-./gdc.sh bridge observer apply <ssh-alias>
-./gdc.sh bridge observer verify <ssh-alias>
+gdc bridge observer apply <ssh-alias>
+gdc bridge observer verify <ssh-alias>
 ```

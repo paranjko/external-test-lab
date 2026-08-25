@@ -2,19 +2,32 @@ name: Net deployment runbook
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'net-deployment-runbook/**'
       - '.github/workflows/net-deployment-runbook.yml'
   pull_request:
+    types:
+      - opened
+      - reopened
+      - ready_for_review
+      - synchronize
     paths:
       - 'net-deployment-runbook/**'
       - '.github/workflows/net-deployment-runbook.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: net-deployment-runbook-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   shellcheck:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

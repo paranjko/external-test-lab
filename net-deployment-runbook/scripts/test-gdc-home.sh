@@ -5,12 +5,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 unset GDC_HOME STATE
 source "$ROOT/scripts/lib.sh"
 
-expected_default="$(dirname "$ROOT")/net-deployment-data"
+expected_default="$HOME/.gdc-data"
 [[ "$GDC_HOME" == "$expected_default" ]]
 [[ "$STATE" == "$expected_default/state" ]]
 
 override_root="$(mktemp -d)/operator-data"
-GDC_HOME="$override_root"
+unset GDC_INTERNAL_DATA_ROOT
+GDC_HOME="$override_root" GDC_DATA_ROOT="$(mktemp -d)/ignored-override"
 init_gdc_paths
 [[ "$GDC_HOME" == "$override_root" ]]
 [[ "$STATE" == "$override_root/state" ]]
@@ -19,6 +20,11 @@ select_node_data_home gdc-node1
 [[ "$GDC_DATA_ROOT" == "$override_root" ]]
 [[ "$GDC_HOME" == "$override_root/gdc-node1" ]]
 [[ "$STATE" == "$override_root/gdc-node1/state" ]]
+select_node_data_home gdc-node2
+[[ "$GDC_DATA_ROOT" == "$override_root" ]]
+[[ "$GDC_HOME" == "$override_root/gdc-node2" ]]
+[[ "$STATE" == "$override_root/gdc-node2/state" ]]
+[[ ! -e "$override_root/gdc-node1/gdc-node2" ]]
 [[ "$(inferenced_runs_path "$GDC_HOME/runs/example/proposal.json")" == /gdc-runs/example/proposal.json ]]
 if (inferenced_runs_path /tmp/outside-gdc-home.json >/dev/null 2>&1); then
   echo 'inferenced accepted a file outside GDC_HOME/runs' >&2
@@ -42,6 +48,7 @@ fi
 grep -Fq 'ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"' "$ROOT/scripts/lib.sh"
 grep -Fq 'GDC_HOME="$GDC_DATA_ROOT/$node"' "$ROOT/scripts/lib.sh"
 grep -Fq 'ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"' "$ROOT/scripts/deploy-telegram-bot.sh"
+grep -Fq 'export GDC_ENV="$GDC_DATA_ROOT/.env"' "$ROOT/gdc.sh"
 grep -Fq 'exec "$BIN" --home "$HOME_DIR" "$@"' "$ROOT/scripts/inferenced.sh"
 ! grep -Fq 'docker run' "$ROOT/scripts/inferenced.sh"
 ! grep -R -q 'inferenced_runs_path' "$ROOT/scripts/phase-"*.sh

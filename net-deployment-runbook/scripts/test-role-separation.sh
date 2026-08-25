@@ -11,17 +11,28 @@ if grep -REq "$retired_host_filter|$retired_host_helper" \
   exit 1
 fi
 
-for document in README.md ROLE-OPS.md ROLE-GENESIS.md ROLE-JOIN.md ROLE-HOST.md ROLE-GATEWAY.md ROLE-DEVELOPER.md; do
+for document in README.md ROLE-OPS.md ROLE-GENESIS.md ROLE-JOIN.md ROLE-HOST.md ROLE-UPGRADE.md ROLE-GATEWAY.md ROLE-DEVELOPER.md; do
   [[ -s "$ROOT/$document" ]] || { echo "missing role document: $document" >&2; exit 1; }
 done
 grep -Fq '[ROLE-OPS.md](ROLE-OPS.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-GENESIS.md](ROLE-GENESIS.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-JOIN.md](ROLE-JOIN.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-HOST.md](ROLE-HOST.md)' "$ROOT/README.md"
+grep -Fq '[ROLE-UPGRADE.md](ROLE-UPGRADE.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-GATEWAY.md](ROLE-GATEWAY.md)' "$ROOT/README.md"
 grep -Fq '[ROLE-DEVELOPER.md](ROLE-DEVELOPER.md)' "$ROOT/README.md"
-grep -Fq './gdc.sh --release v2026.07.23 genesis gdc-node0' "$ROOT/ROLE-GENESIS.md"
-grep -Fq './gdc.sh host join [--public-host <dns-name>] <ssh-alias>' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'gdc --release v2026.07.23 genesis gdc-node0' "$ROOT/ROLE-GENESIS.md"
+grep -Fq 'alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'GDC_HOME=$HOME/.gdc-data' "$ROOT/ROLE-JOIN.md"
+if grep -Eq 'GDC_DATA_ROOT|GDC_OPERATOR_MODE|GDC_JOIN_GATEWAY_CLIENT_KEY_FILE|Gate [AB]|Post-merge' "$ROOT/ROLE-JOIN.md"; then
+  echo 'JOIN documentation must not expose internal controls or processes' >&2
+  exit 1
+fi
+if grep -Eq 'bag reporting|tar -czf' "$ROOT/ROLE-JOIN.md"; then
+  echo 'JOIN documentation must not expose internal evidence-collection procedures' >&2
+  exit 1
+fi
 grep -Fq 'OPS is the only role that requires `.env`' "$ROOT/ROLE-OPS.md"
 if grep -Eq 'GDC_GRAFANA_ADMIN_PASSWORD|GDC_ENV|\.env\.example|gpu-profile|p2p-port|acme-email|ACME_EMAIL' "$ROOT/ROLE-GENESIS.md"; then
   echo 'Genesis role must not require hidden configuration or internal deployment settings' >&2
@@ -40,9 +51,20 @@ if grep -Eq 'require ACME_EMAIL|ACME_EMAIL is required' "$ROOT/scripts/lib.sh" "
   echo 'ACME contact email must remain optional' >&2
   exit 1
 fi
-grep -Fq 'sha256sum -c manifest.sha256' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'verify-join-bootstrap-manifest.sh' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'public JOIN bootstrap checksum mismatch bootstrap_url=' "$ROOT/scripts/verify-join-bootstrap-manifest.sh"
+grep -Fq 'public JOIN bootstrap is unavailable: url=' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'public JOIN bootstrap manifest is HTML instead of checksums' "$ROOT/scripts/fetch-join-bootstrap.sh"
 grep -Fq 'find . -type f ! -name manifest.sha256 -print0' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'sha256sum -c manifest.sha256' "$ROOT/04-ops/render-ops.sh"
+
+# A JOIN owns preparation of only its own network Host.  phase-prepare derives
+# a split ML Host from topology and opens the callback ingress before the
+# runtime is asked to generate PoC artifacts.
+grep -Fq 'Prepare $NODE for independent join' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'GDC_PREPARE_HOSTS="$NODE" "$ROOT/scripts/phase-prepare.sh"' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'explicit_hosts=false' "$ROOT/scripts/phase-prepare.sh"
+grep -Fq 'SSH is unavailable; cannot prepare the requested Host' "$ROOT/scripts/phase-prepare.sh"
 
 # OPS renders public endpoint observation without treating the local operator
 # state or validator accounts as the network source of truth.

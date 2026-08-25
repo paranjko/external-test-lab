@@ -6,14 +6,89 @@
   encode zstd gzip
   @root path /
   redir @root /dashboard/gonka/gov 308
-  # The Network Node proxy accepts its public edge as a trusted upstream.
-  # Send participant-local public traffic through the public edge so callback requests
-  # do not arrive at the proxy from its own Docker bridge and get rejected.
-  reverse_proxy https://{$PUBLIC_EDGE_HOST} {
+  # PoC validators fetch proofs from the participant recorded on chain.  That
+  # URL must terminate at this Host: forwarding it through the public edge
+  # reaches the gateway's DAPI, which has no artifact store for this
+  # participant and returns 404 during validation.
+  @participant_poc path /v1/poc/*
+  handle @participant_poc {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
+  }
+  # DevShard protocol traffic is addressed to the participant URL recorded on
+  # chain. It must reach this Host's DAPI so responses carry this participant's
+  # signing identity instead of the shared gateway Host's identity.
+  @participant_devshard path /devshard/*
+  handle @participant_devshard {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
+  }
+  # A Host's chain RPC and REST endpoints are also its own public identity.
+  # Sending them through the shared edge makes a Genesis Host poll a different
+  # machine during startup and turns an available local chain into a 502 when
+  # that edge is being rebuilt.
+  @participant_chain path /chain-rpc/* /chain-api/*
+  handle @participant_chain {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
+  }
+  # The configured gateway Host remains the public bootstrap origin even when
+  # its participant edge is recreated after Genesis. The bundle is staged and
+  # verified by the lifecycle renderer before this proxy is started.
+  route {
+    @join_bootstrap path /join-bootstrap/*
+    handle @join_bootstrap {
+      reverse_proxy 127.0.0.1:18082
+    }
+    handle_path /faucet/* {
+      reverse_proxy 127.0.0.1:18081
+    }
+    @prometheus_from_public_edge {
+      path /ops-prometheus/*
+      remote_ip {$PUBLIC_EDGE_CIDR}
+    }
+    handle @prometheus_from_public_edge {
+      uri strip_prefix /ops-prometheus
+      reverse_proxy 127.0.0.1:9099
+    }
+    handle /ops-prometheus/* {
+      respond 403
+    }
+    # The Telegram consumer itself is bound to loopback on its configured Host.
+  # Expose only its safe readiness summary here so the public edge can present
+  # it without needing a host port or a second bot process.
+    @telegram_consumer_health_from_observer {
+    path /ops-telegram-consumer-health
+    remote_ip {$MONITORING_CIDR} {$PUBLIC_EDGE_CIDR}
+  }
+    handle @telegram_consumer_health_from_observer {
+    rewrite * /health
+    reverse_proxy 127.0.0.1:9464
+  }
+    @telegram_metrics_from_monitoring {
+    path /ops-telegram-metrics
+    remote_ip {$MONITORING_CIDR} {$PUBLIC_EDGE_CIDR}
+  }
+    handle @telegram_metrics_from_monitoring {
+    rewrite * /metrics
+    reverse_proxy 127.0.0.1:9464
+  }
+    handle /ops-telegram-metrics {
+    respond 403
+  }
+    # The Network Node proxy accepts its public edge as a trusted upstream.
+  # All non-participant public traffic retains the public application origin.
+    handle {
+      reverse_proxy https://{$PUBLIC_EDGE_HOST} {
     transport http {
       tls_server_name {$PUBLIC_EDGE_HOST}
     }
     header_up Host {$PUBLIC_EDGE_HOST}
+      }
+    }
   }
   header {
     X-Content-Type-Options nosniff

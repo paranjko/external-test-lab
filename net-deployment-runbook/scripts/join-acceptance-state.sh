@@ -32,6 +32,12 @@ join_acceptance_state_initialize() {
   printf '%s\t%s\n' "$(jq -er '.initial_epoch | tonumber' "$state")" "$(jq -er '.deadline_epoch | tonumber' "$state")"
 }
 
+join_acceptance_state_epoch_within_deadline() {
+  local epoch="$1" deadline_epoch="$2"
+  [[ "$epoch" =~ ^[1-9][0-9]*$ && "$deadline_epoch" =~ ^[1-9][0-9]*$ ]] \
+    && (( epoch <= deadline_epoch ))
+}
+
 join_acceptance_state_record_strongest() {
   local run="$1" epoch="$2" participant_weight="$3" accepted_weight_sum="$4" committed_total="$5" temporary
   local state="$run/acceptance-state.json"
@@ -44,6 +50,34 @@ join_acceptance_state_record_strongest() {
         else . end
     ' "$state" >"$temporary"
   mv "$temporary" "$state"
+}
+
+# A positive PoC distribution is immutable chain evidence for the bounded
+# acceptance window.  Keep the first successfully reconciled transaction so
+# a later, still-open epoch group cannot discard proof that was already
+# established for this same participant and runtime.
+join_acceptance_state_record_distribution() {
+  local run="$1" stage="$2" tx_hash="$3" tx_code="$4" temporary
+  local state="$run/acceptance-state.json"
+  [[ "$stage" =~ ^[1-9][0-9]*$ && "$tx_hash" =~ ^[A-F0-9]{64}$ && "$tx_code" == 0 ]] || return 2
+  temporary="$(mktemp "$run/.acceptance-state.tmp.XXXXXX")"
+  jq --argjson stage "$stage" --arg tx_hash "$tx_hash" --argjson tx_code "$tx_code" '
+    if .distribution_evidence? == null then
+      .distribution_evidence = {stage:$stage,tx_hash:$tx_hash,tx_code:$tx_code}
+    else . end
+  ' "$state" >"$temporary"
+  mv "$temporary" "$state"
+}
+
+join_acceptance_state_restore_distribution() {
+  local run="$1"
+  local state="$run/acceptance-state.json"
+  jq -ce '
+    .distribution_evidence?
+    | select((.stage | tonumber) > 0)
+    | select(.tx_hash | test("^[A-F0-9]{64}$"))
+    | select((.tx_code | tonumber) == 0)
+  ' "$state"
 }
 
 join_acceptance_state_restore_strongest() {

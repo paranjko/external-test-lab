@@ -5,7 +5,7 @@ kit_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
 init_gdc_paths() {
   ROOT="${ROOT:-$(kit_root)}"
-  local configured_home="${GDC_HOME:-$(dirname "$ROOT")/net-deployment-data}"
+  local configured_home="${GDC_HOME:-$HOME/.gdc-data}"
   [[ -n "$configured_home" ]] || { echo 'error: GDC_HOME must not be empty' >&2; return 1; }
   if [[ "$configured_home" != /* ]]; then
     configured_home="$PWD/$configured_home"
@@ -19,18 +19,125 @@ init_gdc_paths() {
 
 init_gdc_paths
 
+runbook_revision() {
+  git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'UNAVAILABLE'
+}
+
+gdc_launcher_sha256() {
+  sha256sum "$ROOT/gdc.sh" | awk '{print $1}'
+}
+
+release_profile_lock_sha256() {
+  local release_profile="${GDC_RELEASE_PROFILE:-v2026.07.23}" lock_file
+  lock_file="$ROOT/profiles/releases/$release_profile.lock"
+  [[ -s "$lock_file" ]] || die "unknown release profile: $release_profile"
+  sha256sum "$lock_file" | awk '{print $1}'
+}
+
+run_manifest_path() {
+  local run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
+  printf '%s/runs/%s/manifest.env\n' "$GDC_HOME" "$run_id"
+}
+
+# Public observers do not load an operator role file, but they still need the
+# same immutable invocation envelope as mutation phases. This helper also
+# makes direct script execution fail closed instead of creating unbound output.
+ensure_run_manifest() {
+  local phase="$1" run_id manifest commit launcher_sha256 release_profile release_hash existing
+  [[ -n "$phase" ]] || die 'run manifest requires a phase name'
+  run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
+  export GDC_RUN_ID="$run_id"
+  manifest="$(run_manifest_path)"
+  release_profile="${GDC_RELEASE_PROFILE:-v2026.07.23}"
+  release_hash="$(release_profile_lock_sha256)"
+  mkdir -p "$(dirname "$manifest")"
+  if [[ -s "$manifest" ]]; then
+    grep -qx "run_id=$run_id" "$manifest" || die "run manifest belongs to another run ID"
+    grep -qx "operator_data_home=$GDC_HOME" "$manifest" || die "run manifest belongs to another operator data home"
+    grep -qx "release_profile=$release_profile" "$manifest" || die "run manifest belongs to another release profile"
+    existing="$(awk -F= '$1 == "release_profile_sha256" {print $2; exit}' "$manifest")"
+    if [[ -n "$existing" ]]; then
+      [[ "$existing" == "$release_hash" ]] || die 'run manifest has a different release profile hash'
+    else
+      printf 'release_profile_sha256=%s\n' "$release_hash" >>"$manifest"
+    fi
+    return 0
+  fi
+  commit="$(runbook_revision)"
+  launcher_sha256="$(gdc_launcher_sha256)"
+  {
+    printf 'schema_version=2\n'
+    printf 'run_id=%s\n' "$run_id"
+    printf 'phase=%s\n' "$phase"
+    printf 'created_at=%s\n' "$(date -u +%FT%TZ)"
+    printf 'operator_data_home=%s\n' "$GDC_HOME"
+    printf 'runbook_commit=%s\n' "$commit"
+    printf 'gdc_launcher_sha256=%s\n' "$launcher_sha256"
+    printf 'release_profile=%s\n' "$release_profile"
+    printf 'release_profile_sha256=%s\n' "$release_hash"
+    [[ -z "${GDC_INVOCATION_COMMAND:-}" ]] || printf 'invocation_command=%q\n' "$GDC_INVOCATION_COMMAND"
+    [[ -z "${GDC_INVOCATION_CWD:-}" ]] || printf 'invocation_cwd=%q\n' "$GDC_INVOCATION_CWD"
+    printf 'lineage_scope=pre-genesis\n'
+  } >"$manifest"
+}
+
+write_phase_lineage() {
+  local bundle="$1" chain_id="$2" hash="$3" manifest lineage release_hash profile_hash commit
+  [[ -d "$bundle" ]] || die "phase bundle directory is absent: $bundle"
+  [[ "$chain_id" =~ ^[A-Za-z0-9._-]+$ ]] || die 'phase lineage requires a chain ID'
+  [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die 'phase lineage requires a Genesis SHA-256'
+  ensure_run_manifest "${EVIDENCE_PHASE_NAME:-observer}"
+  bind_run_manifest_genesis "$hash" "$chain_id"
+  manifest="$(run_manifest_path)"
+  require_run_manifest_lineage "$manifest" "$hash" "$chain_id"
+  lineage="$bundle/lineage.env"
+  release_hash="$(awk -F= '$1 == "release_profile_sha256" {print $2; exit}' "$manifest")"
+  profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$manifest")"
+  commit="$(awk -F= '$1 == "runbook_commit" {print $2; exit}' "$manifest")"
+  if [[ -s "$lineage" ]]; then
+    grep -qx "run_id=$GDC_RUN_ID" "$lineage" \
+      && grep -qx "chain_id=$chain_id" "$lineage" \
+      && grep -qx "genesis_sha256=$hash" "$lineage" \
+      && grep -qx "release_profile_sha256=$release_hash" "$lineage" \
+      || die 'phase bundle lineage is stale or mismatched'
+    return 0
+  fi
+  {
+    printf 'schema_version=1\n'
+    printf 'run_id=%s\n' "$GDC_RUN_ID"
+    printf 'chain_id=%s\n' "$chain_id"
+    printf 'genesis_sha256=%s\n' "$hash"
+    printf 'release_profile=%s\n' "${GDC_RELEASE_PROFILE:-v2026.07.23}"
+    printf 'release_profile_sha256=%s\n' "$release_hash"
+    [[ -z "$profile_hash" ]] || printf 'profile_hash=%s\n' "$profile_hash"
+    printf 'runbook_commit=%s\n' "$commit"
+  } >"$lineage"
+  return 0
+}
+
 # GDC_HOME is the operator's data root. Commands that act on a particular
 # Network Node select a child directory named after that operator-provided SSH
 # alias. This keeps private keys, imported Genesis material and evidence from
 # independent Hosts out of one shared state directory.
 init_gdc_data_root() {
-  GDC_DATA_ROOT="${GDC_DATA_ROOT:-$GDC_HOME}"
+  # GDC_HOME is the only operator-controlled state location. Keep the shared
+  # parent for per-Host directories as an internal derived value; accepting a
+  # second environment override would make a JOIN appear to use one home while
+  # writing private state into another.
+  # Capture it once before selecting a per-Host GDC_HOME. A command operating
+  # on more than one Host must keep every Host directly below that original
+  # operator root, rather than nesting later aliases below the preceding one.
+  if [[ -z "${GDC_INTERNAL_DATA_ROOT:-}" ]]; then
+    GDC_INTERNAL_DATA_ROOT="$GDC_HOME"
+  fi
+  GDC_DATA_ROOT="$GDC_INTERNAL_DATA_ROOT"
   if [[ "$GDC_DATA_ROOT" != /* ]]; then
     GDC_DATA_ROOT="$PWD/$GDC_DATA_ROOT"
   fi
   GDC_DATA_ROOT="$(realpath -m -- "$GDC_DATA_ROOT")"
   [[ "$GDC_DATA_ROOT" != / ]] || die 'error: GDC_DATA_ROOT must not be /'
-  export GDC_DATA_ROOT
+  GDC_INTERNAL_DATA_ROOT="$GDC_DATA_ROOT"
+  export GDC_INTERNAL_DATA_ROOT GDC_DATA_ROOT
 }
 
 select_node_data_home() {
@@ -189,16 +296,42 @@ write_env() {
 persist_runtime_topology() {
   write_env "$STATE/runtime-topology.env" \
     "GDC_GENESIS_NODE=$GENESIS_NODE" \
+    "GDC_PUBLIC_EDGE_NODE=$PUBLIC_EDGE_NODE" \
+    "GDC_GATEWAY_NODE=$GATEWAY_NODE" \
+    "GDC_TELEGRAM_BOT_HOST=$TELEGRAM_BOT_HOST" \
     "GDC_GENESIS_GUARDIAN_ENABLED=${GDC_GENESIS_GUARDIAN_ENABLED:-false}"
 }
 
+curl_exit_status() {
+  case "${1:-125}" in
+    0) printf 'ok' ;;
+    5) printf 'proxy_resolution_failed' ;;
+    6) printf 'dns_resolution_failed' ;;
+    7) printf 'connection_failed' ;;
+    28) printf 'timeout' ;;
+    35) printf 'tls_handshake_failed' ;;
+    47) printf 'redirect_limit_exceeded' ;;
+    52) printf 'empty_response' ;;
+    56) printf 'receive_failed' ;;
+    137) printf 'process_killed' ;;
+    *) printf 'curl_error' ;;
+  esac
+}
+
 capture_canonical_genesis() {
-  local endpoint="$1" output="$2" raw
+  local endpoint="$1" output="$2" raw stderr http_status rc detail
   raw="$(mktemp)"
-  if ! curl -fsS --max-time 15 "$endpoint" >"$raw"; then
+  stderr="$(mktemp)"
+  if http_status="$(curl -sS --max-time 15 -o "$raw" -w '%{http_code}' "$endpoint" 2>"$stderr")"; then rc=0; else rc=$?; fi
+  if (( rc != 0 )) || [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+    detail="$(tr '\n' ' ' <"$stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+    printf 'WAIT  canonical Genesis unavailable url=%s http_status=%s curl_exit=%s curl_status=%s%s\n' \
+      "$endpoint" "${http_status:-0}" "$rc" "$(curl_exit_status "$rc")" "${detail:+ detail=$detail}" >&2
+    rm -f "$stderr"
     rm -f "$raw"
     return 1
   fi
+  rm -f "$stderr"
   if ! jq -eS '.result.genesis' "$raw" >"$output"; then
     rm -f "$raw" "$output"
     return 1
@@ -235,14 +368,14 @@ load_project() {
   # OPS owns the root .env, while GENESIS and JOIN own their per-Host data
   # directories. A lifecycle phase may therefore use OPS input without moving
   # the Host's keys, Genesis or evidence back into the OPS data root.
-  if [[ ! -s "$ENV_FILE" && -z "${GDC_ENV:-}" && -n "${GDC_DATA_ROOT:-}" && "$GDC_HOME" != "$GDC_DATA_ROOT" && -s "$GDC_DATA_ROOT/.env" ]]; then
-    ENV_FILE="$GDC_DATA_ROOT/.env"
-  fi
   if [[ ! -s "$ENV_FILE" && -z "${GDC_ENV:-}" && -s "$STATE/active-role-config" ]]; then
     ENV_FILE="$(<"$STATE/active-role-config")"
   fi
+  if [[ ! -s "$ENV_FILE" && -z "${GDC_ENV:-}" && -n "${GDC_DATA_ROOT:-}" && "$GDC_HOME" != "$GDC_DATA_ROOT" && -s "$GDC_DATA_ROOT/.env" ]]; then
+    ENV_FILE="$GDC_DATA_ROOT/.env"
+  fi
   [[ -s "$ENV_FILE" ]] || die 'no role input is available; GENESIS and JOIN create it automatically, while OPS requires .env'
-  local caller_genesis_node='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' caller_gateway_max_concurrent_requests='' caller_gateway_max_input_tokens_in_flight='' resolved_profile_key runtime_topology runtime_genesis_node runtime_guardian_enabled runtime_home
+  local caller_genesis_node='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' caller_gateway_max_concurrent_requests='' caller_gateway_max_input_tokens_in_flight='' resolved_profile_key runtime_topology runtime_genesis_node runtime_public_edge_node runtime_gateway_node runtime_telegram_bot_host runtime_guardian_enabled runtime_home
   local caller_genesis_node_set=false caller_public_edge_node_set=false caller_gateway_node_set=false caller_telegram_bot_host_set=false caller_guardian_enabled_set=false caller_gateway_max_concurrent_requests_set=false caller_gateway_max_input_tokens_in_flight_set=false
   if [[ ${GDC_GENESIS_NODE+x} ]]; then caller_genesis_node="$GDC_GENESIS_NODE"; caller_genesis_node_set=true; fi
   if [[ ${GDC_PUBLIC_EDGE_NODE+x} ]]; then caller_public_edge_node="$GDC_PUBLIC_EDGE_NODE"; caller_public_edge_node_set=true; fi
@@ -259,15 +392,20 @@ load_project() {
   # value that can recursively relocate the file from inside that file.
   GDC_HOME="$runtime_home"
   init_gdc_paths
-  # Genesis persists only its own network authority, never credentials or
-  # independently operated OPS/Gateway placement. A later bootstrap-access
-  # must keep using the selected Genesis alias, while .env remains
-  # authoritative for Public Edge, Gateway, and Telegram consumer hosts.
+  # Runtime topology belongs only to the network that created it. A fresh
+  # Genesis role input is authoritative for its new deployment and must not
+  # inherit public-role assignments from a removed network.
   runtime_topology="$STATE/runtime-topology.env"
-  if [[ -s "$runtime_topology" ]]; then
+  if [[ "${GDC_GENESIS_ROLE_INPUT:-false}" != true && -s "$runtime_topology" ]]; then
     runtime_genesis_node="$(awk -F= '$1 == "GDC_GENESIS_NODE" { print $2; exit }' "$runtime_topology")"
+    runtime_public_edge_node="$(awk -F= '$1 == "GDC_PUBLIC_EDGE_NODE" { print $2; exit }' "$runtime_topology")"
+    runtime_gateway_node="$(awk -F= '$1 == "GDC_GATEWAY_NODE" { print $2; exit }' "$runtime_topology")"
+    runtime_telegram_bot_host="$(awk -F= '$1 == "GDC_TELEGRAM_BOT_HOST" { print $2; exit }' "$runtime_topology")"
     runtime_guardian_enabled="$(awk -F= '$1 == "GDC_GENESIS_GUARDIAN_ENABLED" { print $2; exit }' "$runtime_topology")"
     [[ -n "$runtime_genesis_node" ]] && GDC_GENESIS_NODE="$runtime_genesis_node"
+    [[ -n "$runtime_public_edge_node" ]] && GDC_PUBLIC_EDGE_NODE="$runtime_public_edge_node"
+    [[ -n "$runtime_gateway_node" ]] && GDC_GATEWAY_NODE="$runtime_gateway_node"
+    [[ -n "$runtime_telegram_bot_host" ]] && GDC_TELEGRAM_BOT_HOST="$runtime_telegram_bot_host"
     [[ -n "$runtime_guardian_enabled" ]] && GDC_GENESIS_GUARDIAN_ENABLED="$runtime_guardian_enabled"
   fi
   # shellcheck disable=SC1091
@@ -339,7 +477,8 @@ record_phase_profile() {
 # bundle may not be reused for a different operator data root or release
 # profile merely because its directory name sorts last.
 record_run_manifest() {
-  local phase="$1" run_id manifest commit
+  local phase="$1" run_id manifest commit existing_profile
+  ensure_run_manifest "$phase"
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   manifest="$GDC_HOME/runs/$run_id/manifest.env"
   mkdir -p "$(dirname "$manifest")"
@@ -348,18 +487,26 @@ record_run_manifest() {
     # already bound Genesis lineage when recording a later phase.
     grep -qx "operator_data_home=$GDC_HOME" "$manifest" \
       || die "run $run_id belongs to another operator data home"
-    grep -qx "profile_hash=$(profile_hash)" "$manifest" \
-      || die "run $run_id belongs to another release/profile lineage"
+    existing_profile="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$manifest")"
+    if [[ -n "$existing_profile" ]]; then
+      [[ "$existing_profile" == "$(profile_hash)" ]] \
+        || die "run $run_id belongs to another release/profile lineage"
+    else
+      printf 'profile_hash=%s\n' "$(profile_hash)" >>"$manifest"
+      printf 'deployment_profile=%s\n' "$GDC_DEPLOYMENT_PROFILE" >>"$manifest"
+      printf 'model_profile=%s\n' "$GDC_MODEL_PROFILE" >>"$manifest"
+    fi
     return 0
   fi
   commit="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'UNAVAILABLE')"
   {
+    printf 'schema_version=2\n'
     printf 'run_id=%s\n' "$run_id"
     printf 'phase=%s\n' "$phase"
     printf 'created_at=%s\n' "$(date -u +%FT%TZ)"
     printf 'operator_data_home=%s\n' "$GDC_HOME"
     printf 'runbook_commit=%s\n' "$commit"
-    printf 'operator_mode=runbook-managed\n'
+    printf 'operator_mode=%s\n' "${GDC_OPERATOR_ROLE:-runbook-managed}"
     printf 'release_profile=%s\n' "$GDC_RELEASE_PROFILE"
     printf 'deployment_profile=%s\n' "$GDC_DEPLOYMENT_PROFILE"
     printf 'model_profile=%s\n' "$GDC_MODEL_PROFILE"
@@ -368,7 +515,7 @@ record_run_manifest() {
 }
 
 bind_run_manifest_genesis() {
-  local hash="$1" run_id manifest existing
+  local hash="$1" chain_id="${2:-}" run_id manifest existing existing_chain
   [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die 'run manifest requires a canonical Genesis SHA-256'
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   manifest="$GDC_HOME/runs/$run_id/manifest.env"
@@ -376,7 +523,28 @@ bind_run_manifest_genesis() {
   existing="$(awk -F= '$1 == "genesis_sha256" {print $2; exit}' "$manifest")"
   [[ -z "$existing" || "$existing" == "$hash" ]] \
     || die "run $run_id is already bound to another Genesis lineage"
-  [[ -n "$existing" ]] || printf 'genesis_sha256=%s\n' "$hash" >>"$manifest"
+  if [[ -z "$existing" ]]; then
+    printf 'genesis_sha256=%s\n' "$hash" >>"$manifest"
+    printf 'lineage_scope=genesis-bound\n' >>"$manifest"
+  fi
+  if [[ -n "$chain_id" ]]; then
+    [[ "$chain_id" =~ ^[A-Za-z0-9._-]+$ ]] || die 'run manifest requires a canonical chain ID'
+    existing_chain="$(awk -F= '$1 == "chain_id" {print $2; exit}' "$manifest")"
+    [[ -z "$existing_chain" || "$existing_chain" == "$chain_id" ]] \
+      || die "run $run_id is already bound to another chain lineage"
+    [[ -n "$existing_chain" ]] || printf 'chain_id=%s\n' "$chain_id" >>"$manifest"
+  fi
+}
+
+require_run_manifest_lineage() {
+  local manifest="$1" expected_hash="$2" expected_chain_id="$3"
+  [[ -s "$manifest" ]] || die "missing immutable run manifest: $manifest"
+  grep -qx "genesis_sha256=$expected_hash" "$manifest" \
+    || die 'evidence belongs to a different Genesis lineage'
+  if grep -q '^chain_id=' "$manifest"; then
+    grep -qx "chain_id=$expected_chain_id" "$manifest" \
+      || die 'evidence belongs to a different chain lineage'
+  fi
 }
 
 assert_baseline_release() {
@@ -417,14 +585,16 @@ ensure_ml_qualification() {
 # the newest complete evidence bundle instead of letting an incomplete later
 # attempt hide a prior successful qualification for the same pinned model.
 latest_ml_qualification_report() {
-  local host="$1" report node
+  local host="$1" report node node_runs
   while IFS= read -r report; do
     [[ -s "$report/models.json" && -s "$report/completion.json" && -s "$report/vram.csv" ]] || continue
     printf '%s\n' "$report"
     return 0
   done < <(
     for node in "${GDC_NODES[@]}"; do
-      find "$(node_data_home "$node")/runs" -mindepth 2 -maxdepth 2 -type d \
+      node_runs="$(node_data_home "$node")/runs"
+      [[ -d "$node_runs" ]] || continue
+      find "$node_runs" -mindepth 2 -maxdepth 2 -type d \
         -path "*-ml-qualification/$host" -print 2>/dev/null
     done | LC_ALL=C sort -r
   )
@@ -528,15 +698,8 @@ reset_evidence_bundle_is_valid() {
   [[ -s "$bundle/pre-reset.env" ]] || return 1
   grep -Eq '^pre_reset_chain_id=[a-zA-Z0-9._-]+$' "$bundle/pre-reset.env" || return 1
   grep -Eq '^pre_reset_genesis_sha256=[0-9a-f]{64}$' "$bundle/pre-reset.env" || return 1
-  if [[ -f "$bundle/runs.before.sha256" && -f "$bundle/runs.after.sha256" ]]; then
-    runs_before="$bundle/runs.before.sha256"
-    runs_after="$bundle/runs.after.sha256"
-  else
-    # Preserve audit compatibility with bundles produced before GDC_HOME was
-    # flattened and the intermediate artifacts directory was removed.
-    runs_before="$bundle/artifacts-runs.before.sha256"
-    runs_after="$bundle/artifacts-runs.after.sha256"
-  fi
+  runs_before="$bundle/runs.before.sha256"
+  runs_after="$bundle/runs.after.sha256"
   [[ -f "$runs_before" && -f "$runs_after" ]] || return 1
   cmp -s "$runs_before" "$runs_after" || return 1
 

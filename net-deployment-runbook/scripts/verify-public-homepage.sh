@@ -28,7 +28,13 @@ grep -q 'JetBrainsMono-Regular.woff2' "$OUT/homepage.html"
 test "$(grep -o 'grafana.gonka-dev.net/d/gdc-network' "$OUT/homepage.html" | wc -l)" -eq 1
 test "$(grep -o 'grafana.gonka-dev.net/d/gdc-inference' "$OUT/homepage.html" | wc -l)" -eq 1
 ! grep -qi 'proxy\.gonka\.gg\|node0\.gonka-dev\.net:3000' "$OUT/homepage.html"
-! grep -Eq '<(pre|code)([[:space:]>])|curl-example|request-example' "$OUT/homepage.html"
+test "$(grep -o '<pre><code>' "$OUT/homepage.html" | wc -l)" -eq 1
+grep -Fq '<section id="join-node"' "$OUT/homepage.html"
+grep -Fq 'How to Join node' "$OUT/homepage.html"
+grep -Fq 'alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"' "$OUT/homepage.html"
+grep -Fq 'gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;' "$OUT/homepage.html"
+grep -Fq 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host' "$OUT/homepage.html"
+! grep -Eq 'curl-example|request-example' "$OUT/homepage.html"
 grep -q 'The Telegram bot consumes inference and does not issue API keys' "$OUT/homepage.html"
 if grep -q 'Keys are broker credentials' "$OUT/homepage.html"; then
   echo 'obsolete Telegram key-issuer copy is still present' >&2
@@ -42,38 +48,62 @@ grep -q 'rejected since gateway restart' "$OUT/homepage.html"
 ! grep -q 'Accepted requests\|Limit rejections\|gateway process counter' "$OUT/homepage.html"
 grep -q 'gateway-state.js' "$OUT/homepage.html"
 curl -fsS "https://$SITE_HOST/gateway-state.js" -o "$OUT/gateway-state.js"
-site_build="$(mktemp -d)"
-trap 'rm -rf "$site_build"' EXIT
-"$ROOT/scripts/build-site-js.sh" --output "$site_build"
-cmp "$site_build/gateway-state.js" "$OUT/gateway-state.js"
+if [[ -n "${GDC_SITE_RENDERED_ASSETS:-}" ]]; then
+  expected_gateway_state="$GDC_SITE_RENDERED_ASSETS/gateway-state.js"
+  [[ -s "$expected_gateway_state" ]] || {
+    echo "rendered site asset is missing: $expected_gateway_state" >&2
+    exit 1
+  }
+else
+  site_build="$(mktemp -d)"
+  trap 'rm -rf "$site_build"' EXIT
+  "$ROOT/scripts/build-site-js.sh" --output "$site_build"
+  expected_gateway_state="$site_build/gateway-state.js"
+fi
+cmp "$expected_gateway_state" "$OUT/gateway-state.js"
 curl -fsS "https://$SITE_HOST/status/gateway-health" -o "$OUT/gateway-health.json"
 jq -e '
-  (((keys - ["recovery"]) | sort) == ["checked_at","http_status","latency_ms","reason","state"])
-  and (.state == "READY" or .state == "UNAVAILABLE" or .state == "RECOVERING")
-  and (.checked_at | fromdateiso8601 > 0)
+  def iso_epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+  (((keys - ["recovery"]) | sort) == ["admission","admission_id","arrival_height","checked_at","curl_exit","dispatch_height","http_status","latency_ms","permit_height","reason","response_height","safe_generation","state"])
+  and (.state == "READY" or .state == "DEGRADED" or .state == "UNAVAILABLE" or .state == "RECOVERING")
+  and (.checked_at | iso_epoch > 0)
+  and (.curl_exit | type == "number")
   and (.http_status | type == "number")
   and (.latency_ms | type == "number")
   and (.reason | type == "string")
+  and (.admission == "not_observed" or .admission == "dispatched_once" or .admission == "pre_dispatch_rejected" or .admission == "dispatch_attempt_failed")
+  and (.admission_id | type == "string")
+  and (.safe_generation | type == "string")
+  and (.arrival_height | type == "number")
+  and (.permit_height | type == "number")
+  and (.dispatch_height | type == "number")
+  and (.response_height | type == "number")
   and (
     if .state == "RECOVERING" then
       (.recovery | type == "object")
       and (.recovery.stage | type == "string")
-      and (.recovery.started_at | fromdateiso8601 > 0)
+      and (.recovery.started_at | iso_epoch > 0)
       and (.recovery.next_check_seconds | type == "number")
     else
       (.recovery? == null)
     end
   )
-' "$OUT/gateway-health.json" >/dev/null
+' "$OUT/gateway-health.json" >/dev/null || die 'public gateway health response has an invalid schema'
 
 curl -fsS "https://$SITE_HOST/config.js" | sed -e 's/^window.GDC_CONFIG = //' -e 's/;$//' >"$OUT/config.json"
 if [[ "$EXPECT_RESET_STATE" == true ]]; then
   # The reset contract deliberately removes inferenced.  Caddy therefore has
   # no chain REST upstream for this one endpoint; represent that truth as an
   # empty participant set instead of treating it as a public-site outage.
-  if ! curl -fsS "https://$SITE_HOST/status/participants" >"$OUT/participants.json"; then
-    printf '{"participant":[]}\n' >"$OUT/participants.json"
+  set +e
+  participant_http_status="$(curl -sS -o "$OUT/participants.json" -w '%{http_code}' "https://$SITE_HOST/status/participants")"
+  participant_curl_exit=$?
+  set -e
+  if [[ "$participant_curl_exit" != 0 || "$participant_http_status" != 502 ]]; then
+    die "reset participant endpoint did not report the expected unavailable upstream: url=https://$SITE_HOST/status/participants http_status=${participant_http_status:-0} curl_exit=$participant_curl_exit curl_status=$(curl_exit_status "$participant_curl_exit")"
   fi
+  printf 'INFO reset participant endpoint unavailable as expected: http_status=%s\n' "$participant_http_status"
+  printf '{"participant":[]}\n' >"$OUT/participants.json"
 else
   curl -fsS "https://$SITE_HOST/status/participants" >"$OUT/participants.json"
 fi
