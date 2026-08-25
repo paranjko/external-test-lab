@@ -22,8 +22,12 @@ read -r initial_epoch deadline_epoch < <(join_acceptance_state_initialize "$run"
 strongest="$(join_acceptance_state_restore_strongest "$run")"
 [[ "$(jq -r .epoch <<<"$strongest")" == 41 ]]
 join_acceptance_state_record_strongest "$run" 41 730 730 730
+join_acceptance_state_record_distribution "$run" 200 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 0
 
 read -r initial_epoch deadline_epoch < <(join_acceptance_state_initialize "$run" "$run_id" "$genesis" "$participant" "$runtime" 67 4)
 [[ "$initial_epoch" == 40 && "$deadline_epoch" == 43 ]]
-jq -e --arg run_id "$run_id" '.run_id == $run_id and .initial_epoch == 40 and .deadline_epoch == 43 and .strongest_observed.epoch == 41' "$run/acceptance-state.json" >/dev/null
-printf 'PASS interrupted epoch-40 acceptance resumes at epoch 67 with original deadline 43\n'
+jq -e --arg run_id "$run_id" '.run_id == $run_id and .initial_epoch == 40 and .deadline_epoch == 43 and .strongest_observed.epoch == 41 and .distribution_evidence.stage == 200 and .distribution_evidence.tx_code == 0' "$run/acceptance-state.json" >/dev/null
+distribution="$(join_acceptance_state_restore_distribution "$run")"
+[[ "$(jq -r .stage <<<"$distribution")" == 200 ]]
+[[ "$(jq -r .tx_hash <<<"$distribution")" == AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA ]]
+printf 'PASS interrupted epoch-40 acceptance resumes at epoch 67 with original deadline and canonical distribution evidence\n'

@@ -34,6 +34,8 @@ request_summary="$(jq -sc '
   {
     total:length,
     before:([.[] | select(.window == "before")] | length),
+    immediate_before:([.[] | select(.coverage == "immediate-before" and (.target_anchor | type) == "number" and .height == (.target_anchor - 1))] | length),
+    at_anchor:([.[] | select(.coverage == "at-anchor" and (.target_anchor | type) == "number" and .height == .target_anchor)] | length),
     poc:([.[] | select(.window == "poc")] | length),
     after:([.[] | select(.window == "after")] | length),
     failures:([.[] | select((.http_code | tonumber) < 200 or (.http_code | tonumber) >= 300)] | length),
@@ -44,19 +46,23 @@ request_summary="$(jq -sc '
 
 total="$(jq -r .total <<<"$request_summary")"
 before="$(jq -r .before <<<"$request_summary")"
+immediate_before="$(jq -r .immediate_before <<<"$request_summary")"
+at_anchor="$(jq -r .at_anchor <<<"$request_summary")"
 poc="$(jq -r .poc <<<"$request_summary")"
 after="$(jq -r .after <<<"$request_summary")"
 failures="$(jq -r .failures <<<"$request_summary")"
 first_height="$(jq -r .first_height <<<"$request_summary")"
 last_height="$(jq -r .last_height <<<"$request_summary")"
 
-if (( before == 0 || poc == 0 || after == 0 )); then
+if (( before == 0 || immediate_before != 1 || at_anchor != 1 || poc == 0 || after == 0 )); then
   cat >"$verdict" <<EOF
 # Gateway continuity: INCONCLUSIVE
 
 The evidence does not span all required windows around one PoC boundary.
 
 - Before-PoC observations: $before
+- Immediate-before-anchor observations: $immediate_before
+- At-anchor observations: $at_anchor
 - PoC observations: $poc
 - After-PoC observations: $after
 - Total authenticated requests: $total
@@ -107,6 +113,8 @@ and after one live PoC boundary.
 - Evidence heights: $first_height-$last_height
 - Authenticated requests: $total
 - Before-PoC observations: $before
+- Immediate-before-anchor observations: $immediate_before
+- At-anchor observations: $at_anchor
 - PoC observations: $poc
 - After-PoC observations: $after
 - Preserved model runtimes: $preserved_nodes

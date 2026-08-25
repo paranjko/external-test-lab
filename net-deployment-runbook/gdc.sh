@@ -2,27 +2,69 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+on_launcher_error() {
+  local rc="$?"
+  trap - ERR
+  printf 'ERROR gdc command failed phase=%s exit=%s run_log=%s command=%s\n' \
+    "${GDC_ACTIVE_PHASE:-unavailable}" "$rc" "${GDC_RUN_LOG:-unavailable}" \
+    "${GDC_INVOCATION_COMMAND:-$ROOT/gdc.sh}" >&2
+  exit "$rc"
+}
+trap 'on_launcher_error "$LINENO"' ERR
+
 source "$ROOT/scripts/lib.sh"
 init_gdc_data_root
-LOCK_FILE="$GDC_DATA_ROOT/.gdc.lock"
-mkdir -p "$GDC_DATA_ROOT"
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-  echo 'another gdc lifecycle phase is already running; wait for it to finish before starting a new one' >&2
-  exit 1
-fi
+
+acquire_operator_lock() {
+  local lock_file="$STATE/.lifecycle.lock"
+  mkdir -p "$STATE"
+  exec 9>"$lock_file"
+  if ! flock -n 9; then
+    echo 'another lifecycle phase is already running for this operator; wait for it to finish before starting another phase' >&2
+    exit 1
+  fi
+}
+
+format_safe_invocation() {
+  local arg redact_next=false rendered=''
+  for arg in "$@"; do
+    if [[ "$redact_next" == true ]]; then
+      rendered+=" $(printf '%q' '<redacted>')"
+      redact_next=false
+      continue
+    fi
+    case "$arg" in
+      --*key|--*key-file|--*token|--*password|--*secret|--*mnemonic|--*credential)
+        rendered+=" $(printf '%q' "$arg")"
+        redact_next=true
+        ;;
+      --*key=*|--*key-file=*|--*token=*|--*password=*|--*secret=*|--*mnemonic=*|--*credential=*)
+        rendered+=" $(printf '%q' "${arg%%=*}=<redacted>")"
+        ;;
+      *)
+        rendered+=" $(printf '%q' "$arg")"
+        ;;
+    esac
+  done
+  printf '%q%s\n' "$ROOT/gdc.sh" "$rendered"
+}
 
 run_phase() {
   local phase="$1"
   shift
   local state run_id_file run_id run_dir log rc
   state="$STATE"
+  acquire_operator_lock
   run_id_file="$state/active-run-id"
   mkdir -p "$state"
   # An assurance adapter owns one evidence namespace per scenario execution.
   # Do not silently append it to the last operator's lifecycle run.
   if [[ -n "${GDC_ASSURANCE_RUN_ID:-}" ]]; then
     run_id="assurance-${GDC_ASSURANCE_RUN_ID}"
+    printf '%s\n' "$run_id" >"$run_id_file"
+  elif [[ "${GDC_FORCE_NEW_RUN:-false}" == true ]]; then
+    run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     printf '%s\n' "$run_id" >"$run_id_file"
   elif [[ -s "$run_id_file" ]]; then
     run_id="$(<"$run_id_file")"
@@ -33,10 +75,15 @@ run_phase() {
   run_dir="$GDC_HOME/runs/$run_id"
   log="$run_dir/run.log"
   mkdir -p "$run_dir"
-  export GDC_RUN_ID="$run_id" GDC_RUN_LOG="$log"
+  export GDC_RUN_ID="$run_id" GDC_RUN_LOG="$log" GDC_ACTIVE_PHASE="$phase"
+  # This immutable envelope exists before the invoked phase can mutate a
+  # Host. `record_phase_profile` enriches it once role input is loaded.
+  ensure_run_manifest "$phase"
 
   set +e
   {
+    [[ -z "${GDC_INVOCATION_COMMAND:-}" ]] || printf 'INVOCATION command=%s\n' "$GDC_INVOCATION_COMMAND"
+    printf 'LAUNCHER runbook_revision=%s gdc_launcher_sha256=%s\n' "$(runbook_revision)" "$(gdc_launcher_sha256)"
     printf 'BEGIN phase=%s timestamp=%s run_id=%s\n' "$phase" "$(date -u +%FT%TZ)" "$run_id"
     "$@"
     rc=$?
@@ -61,12 +108,13 @@ usage() {
 Gonka DevNet Community manual deployment
 
 See the role guides for required input, then run:
-  ./gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>] [--skip-qualification]
-  ./gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>] --no-bootstrap-access
+  ./gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>] [--public-edge <SSH_ALIAS>] [--skip-qualification]
+  ./gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>] [--public-edge <SSH_ALIAS>] --no-bootstrap-access
   ./gdc.sh --release v2026.07.23 baseline
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
-  ./gdc.sh host join [--skip-qualification] [--public-host <DNS>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
+  ./gdc.sh host join [--verification] [--skip-qualification] [--public-host <DNS>] [--restore <NODE-validator-backup.tar>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
+  ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
   ./gdc.sh ops monitoring
@@ -87,8 +135,13 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.08.06 gateway ha v4
   ./gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 network verify
-  ./gdc.sh network reset --yes
-  ./gdc.sh host join [--skip-qualification] [--public-host <DNS>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
+  ./gdc.sh --release v2026.07.23 network gate-b verify
+  ./gdc.sh --release v2026.07.23 network confirmation-poc verify
+  ./gdc.sh --release v2026.08.06 network upgrade verify <proposal-id>
+  ./gdc.sh network reset --yes [--hosts <SSH_ALIAS[,SSH_ALIAS...]>]
+  ./gdc.sh host join [--skip-qualification] [--public-host <DNS>] [--restore <NODE-validator-backup.tar>] <SSH_ALIAS> [<GPU_SSH_ALIAS>]
+  ./gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>
+  ./gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.07.23 host ml-attach <SSH_ALIAS>
   ./gdc.sh host stop|start|verify <SSH_ALIAS>
   ./gdc.sh host reset <SSH_ALIAS> [<SSH_ALIAS> ...]
@@ -124,10 +177,14 @@ See the role guides for required input, then run:
 Start a clean rehearsal with:
   ./gdc.sh reset --yes
 
-Runtime data defaults to ../net-deployment-data. Override it per operator with:
+Runtime data defaults to \$HOME/.gdc-data. Override it per operator with:
   GDC_HOME=/absolute/path ./gdc.sh <command>
 EOF
 }
+
+GDC_INVOCATION_COMMAND="$(format_safe_invocation "$@")"
+GDC_INVOCATION_CWD="$PWD"
+export GDC_INVOCATION_COMMAND GDC_INVOCATION_CWD
 
 RELEASE=''
 MODEL=''
@@ -153,6 +210,9 @@ case "$COMMAND" in
     subcommand="${1:-}"; shift || true
     case "$subcommand" in
       genesis|verify|reset) COMMAND="$subcommand" ;;
+      gate-b) [[ "${1:-}" == verify && $# -eq 1 ]] || { usage; exit 2; }; shift; COMMAND=public-network-verify ;;
+      confirmation-poc) [[ "${1:-}" == verify && $# -eq 1 ]] || { usage; exit 2; }; shift; COMMAND=confirmation-poc ;;
+      upgrade) [[ "${1:-}" == verify && $# -eq 2 ]] || { usage; exit 2; }; COMMAND=public-upgrade-verify; set -- "$2" ;;
       *) usage; exit 2 ;;
     esac
     ;;
@@ -160,6 +220,12 @@ case "$COMMAND" in
     subcommand="${1:-}"; shift || true
     case "$subcommand" in
       join) COMMAND='join' ;;
+      backup) COMMAND='host-backup' ;;
+      upgrade)
+        upgrade_action="${1:-}"; shift || true
+        [[ "$upgrade_action" =~ ^(prepare|watch)$ ]] || { usage; exit 2; }
+        COMMAND="host-upgrade-$upgrade_action"
+        ;;
       ml-attach) COMMAND=ml; set -- attach "$@" ;;
       start|stop|verify|reset) COMMAND=node; set -- "$subcommand" "$@" ;;
       *) usage; exit 2 ;;
@@ -167,10 +233,60 @@ case "$COMMAND" in
     ;;
 esac
 case "$COMMAND" in
+  public-network-verify|confirmation-poc|public-upgrade-verify)
+    [[ $# -le 1 ]] || { usage; exit 2; }
+    case "$COMMAND" in
+      public-network-verify) run_phase public-network-verify "$ROOT/scripts/phase-public-network-verify.sh" ;;
+      confirmation-poc) run_phase confirmation-poc "$ROOT/scripts/phase-confirmation-poc.sh" ;;
+      public-upgrade-verify)
+        [[ "${GDC_RELEASE_PROFILE:-}" == v2026.08.06 && $# -eq 1 && "$1" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+        run_phase "public-upgrade-verify-$1" "$ROOT/scripts/phase-public-upgrade-verify.sh" "$1"
+        ;;
+    esac
+    ;;
+  host-upgrade-prepare|host-upgrade-watch)
+    [[ "${GDC_RELEASE_PROFILE:-}" == v2026.08.06 && $# -eq 2 && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$2" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+    use_node_data_home "$1"
+    if [[ "$COMMAND" == host-upgrade-prepare ]]; then
+      run_phase "host-upgrade-prepare-$1-$2" "$ROOT/scripts/phase-host-upgrade-prepare.sh" "$1" "$2"
+    else
+      run_phase "host-upgrade-watch-$1-$2" "$ROOT/scripts/phase-host-upgrade-watch.sh" "$1" "$2"
+    fi
+    ;;
+  host-backup)
+    backup_alias="${1:-}"
+    [[ $# -eq 1 && "$backup_alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'host backup requires exactly one SSH alias' >&2; exit 2; }
+    use_node_data_home "$backup_alias"
+    backup_role_config=''
+    if [[ -s "$GDC_HOME/.env" ]]; then backup_role_config="$GDC_HOME/.env";
+    elif [[ -s "$STATE/active-role-config" ]]; then backup_role_config="$(<"$STATE/active-role-config")"; fi
+    [[ -s "$backup_role_config" ]] || { echo "host backup requires retained operator state for $backup_alias; a running Host cannot recreate cold or warm recovery material" >&2; exit 1; }
+    export GDC_ENV="$backup_role_config"
+    source "$ROOT/scripts/lib.sh"
+    load_project
+    run_phase "backup-$backup_alias" "$ROOT/scripts/phase-host-backup.sh" "$backup_alias"
+    ;;
   prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit)
     use_network_owner_data_home
     [[ "$COMMAND" == reset || $# -eq 0 ]] || { usage; exit 2; }
     if [[ "$COMMAND" == reset ]]; then
+      # A completed Genesis keeps its narrow role input under the network-owner
+      # Host. Reset must instead use the operator inventory at the data-root so
+      # an explicit future Host can be reset before it has ever joined.
+      if [[ -s "$GDC_DATA_ROOT/.env" ]]; then
+        export GDC_ENV="$GDC_DATA_ROOT/.env"
+        # A completed network may have left a runtime topology behind.  Reset
+        # is an operator-inventory operation, so its public edge must come
+        # from that inventory rather than from the network being removed.
+        inventory_public_edge="$(awk -F= '$1 == "GDC_PUBLIC_EDGE_NODE" { print $2; exit }' "$GDC_DATA_ROOT/.env")"
+        if [[ -n "$inventory_public_edge" ]]; then
+          export GDC_PUBLIC_EDGE_NODE="$inventory_public_edge"
+        fi
+      fi
+      # Reset begins a new evidence namespace. A prior lifecycle may have
+      # been recorded against another release profile, which must not block
+      # removal of the managed deployment state.
+      export GDC_FORCE_NEW_RUN=true
       run_phase reset "$ROOT/scripts/phase-reset.sh" "$@"
       exit $?
     fi
@@ -207,31 +323,36 @@ case "$COMMAND" in
     ;;
   genesis)
     genesis_alias='' genesis_time='' bootstrap_access=true skip_qualification=false
-    genesis_public_host=''
+    genesis_public_host='' genesis_public_edge=''
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --time=*) [[ -z "$genesis_time" ]] || { usage; exit 2; }; genesis_time="$1" ;;
         --no-bootstrap-access) bootstrap_access=false ;;
         --skip-qualification) skip_qualification=true ;;
         --public-host) genesis_public_host="${2:-}"; shift ;;
+        --public-edge) genesis_public_edge="${2:-}"; shift ;;
         *) [[ -z "$genesis_alias" ]] || { usage; exit 2; }; genesis_alias="$1" ;;
       esac
       shift
     done
     [[ -n "$genesis_alias" ]] || { echo 'genesis requires an SSH alias' >&2; usage; exit 2; }
+    [[ -z "$genesis_public_edge" || "$genesis_public_edge" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+      echo "invalid public edge SSH alias: $genesis_public_edge" >&2; exit 2;
+    }
+    [[ -n "$genesis_public_edge" ]] || genesis_public_edge="$genesis_alias"
     use_node_data_home "$genesis_alias"
     genesis_input="$STATE/role-inputs/genesis-$genesis_alias"
     genesis_config_args=(--output "$genesis_input" --ssh-alias "$genesis_alias")
     [[ -n "$genesis_public_host" ]] && genesis_config_args+=(--public-host "$genesis_public_host")
+    genesis_config_args+=(--public-edge-ssh-alias "$genesis_public_edge")
     "$ROOT/scripts/write-genesis-role-config.sh" "${genesis_config_args[@]}"
     printf '%s\n' "$genesis_input" >"$STATE/active-role-config"
     export GDC_ENV="$genesis_input"
     source "$ROOT/scripts/lib.sh"
     load_project
     topology_contains_node "$genesis_alias" || { echo "genesis expects an alias from GDC_NODE_ALIASES, got: $genesis_alias" >&2; exit 2; }
-    # A one-node network owns every live role on its sole operator-supplied
-    # alias.  These process-local overrides do not rewrite the operator .env.
-    export GDC_GENESIS_NODE="$genesis_alias" GDC_PUBLIC_EDGE_NODE="$genesis_alias" GDC_GATEWAY_NODE="$genesis_alias" GDC_TELEGRAM_BOT_HOST="$genesis_alias"
+    topology_contains_node "$genesis_public_edge" || { echo "public edge expects an alias from GDC_NODE_ALIASES, got: $genesis_public_edge" >&2; exit 2; }
+    export GDC_GENESIS_NODE="$genesis_alias" GDC_PUBLIC_EDGE_NODE="$genesis_public_edge" GDC_GATEWAY_NODE="$genesis_alias" GDC_TELEGRAM_BOT_HOST="$genesis_alias"
     export GDC_GENESIS_SKIP_QUALIFICATION="$skip_qualification"
     if [[ "$bootstrap_access" == true ]]; then
       export GDC_GENESIS_GUARDIAN_ENABLED=true GDC_GENESIS_BOOTSTRAP_ACCESS=true
@@ -285,6 +406,10 @@ case "$COMMAND" in
     ;;
   ops)
     use_network_owner_data_home
+    # OPS configuration is owned by the network data root.  The network owner
+    # has a node-local role input as well, but it must not shadow public
+    # service settings such as the Telegram conversation URL.
+    export GDC_ENV="$GDC_DATA_ROOT/.env"
     [[ $# -ge 1 ]] || { usage; exit 2; }
     if [[ "$1" == consumer ]]; then
       [[ $# -ge 3 && $# -le 5 && "$2" == telegram && "$3" =~ ^(apply|status|verify)$ ]] || { usage; exit 2; }
@@ -345,6 +470,10 @@ case "$COMMAND" in
     [[ "$node_action" =~ ^(stop|start|verify|reset)$ ]] || { usage; exit 2; }
     if [[ "$node_action" == reset ]]; then
       [[ $# -ge 1 ]] || { usage; exit 2; }
+      # Reset deliberately starts fresh evidence. It must remain usable after
+      # a prior lifecycle under another release profile and must never alter
+      # that prior manifest.
+      export GDC_FORCE_NEW_RUN=true
     else
       [[ $# -eq 1 ]] || { usage; exit 2; }
     fi
@@ -440,13 +569,22 @@ case "$COMMAND" in
     esac
     ;;
   join)
-    join_alias='' join_gpu_alias='' join_public_host='' skip_qualification=false
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' skip_qualification=false verification=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --skip-qualification) skip_qualification=true ;;
+        --verification) verification=true ;;
         --public-host)
           join_public_host="${2:-}"
           [[ "$join_public_host" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'host join --public-host requires a DNS name' >&2; exit 2; }
+          shift
+          ;;
+        --restore)
+          join_restore_archive="${2:-}"
+          [[ -n "$join_restore_archive" && -f "$join_restore_archive" && -r "$join_restore_archive" ]] || {
+            echo 'host join --restore requires a readable validator backup archive' >&2; exit 2;
+          }
+          join_restore_archive="$(realpath -e -- "$join_restore_archive")"
           shift
           ;;
         --*) echo "unknown host join option: $1" >&2; usage; exit 2 ;;
@@ -471,6 +609,8 @@ case "$COMMAND" in
     fi
     use_node_data_home "$join_alias"
     export GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"
+    export GDC_JOIN_VERIFICATION="$verification"
+    [[ -z "$join_restore_archive" ]] || export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
     join_role_ready=false
     join_role_config=''
     if [[ -n "${GDC_ENV:-}" && -s "$GDC_ENV" ]]; then

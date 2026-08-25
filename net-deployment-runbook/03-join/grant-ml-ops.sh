@@ -33,7 +33,27 @@ for _ in $(seq 1 60); do
 done
 [[ "$rpc_ready" == true ]] || { echo 'public chain RPC did not become ready for ML operations grant' >&2; exit 1; }
 
-printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" tx inference grant-ml-ops-permissions \
+grant_output="$(mktemp)"
+trap 'rm -f "$grant_output"' EXIT
+if printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" tx inference grant-ml-ops-permissions \
   "$COLD" "$WARM" --from "$COLD" --keyring-backend file --chain-id "$CHAIN_ID" \
   --node "$RPC" \
-  --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --yes
+  --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --yes >"$grant_output" 2>&1; then
+  cat "$grant_output"
+  exit 0
+fi
+
+grant_tx_hash="$(sed -n 's/^Transaction sent with hash: \([0-9A-Fa-f]*\)$/\1/p' "$grant_output" | tail -n1)"
+if grep -q '^Timed out waiting for transaction ' "$grant_output"; then
+  # The pinned CLI prints Cobra's full command help after this timeout.  It
+  # does not identify a bad operator invocation and hides the actionable
+  # condition: RPC accepted the transaction but no block committed it.
+  sed '/^Usage:/,$d' "$grant_output"
+  printf 'ERROR ML operational-permission transaction was accepted by the public RPC but was not committed within 60 seconds; verify chain block production and transaction propagation (rpc=%s tx_hash=%s)\n' \
+    "$RPC" "${grant_tx_hash:-unavailable}" >&2
+  exit 1
+fi
+cat "$grant_output" >&2
+printf 'ERROR ML operational-permission transaction failed before confirmation (rpc=%s tx_hash=%s)\n' \
+  "$RPC" "${grant_tx_hash:-unavailable}" >&2
+exit 1

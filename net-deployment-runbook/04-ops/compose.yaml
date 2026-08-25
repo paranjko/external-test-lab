@@ -67,6 +67,7 @@ services:
       # and v4 gateways over the same state store: each runtime rejects a
       # recovered escrow belonging to the other protocol major.
       - ${DEVSHARD_GATEWAY_DATA_VOLUME:-gateway-data-v4}:/root/.devshardctl
+      - ./gateway-status-routable.sh:/usr/local/bin/gateway-status-routable.sh:ro
     network_mode: host
     healthcheck:
       # A listening gateway with an empty runtime set returns a successful
@@ -76,7 +77,7 @@ services:
         - CMD-SHELL
         - >-
           wget -qO- http://127.0.0.1:18080/v1/status
-          | grep -Eq '"routable"[[:space:]]*:[[:space:]]*true'
+          | /usr/local/bin/gateway-status-routable.sh
       interval: 30s
       timeout: 5s
       retries: 5
@@ -99,6 +100,19 @@ services:
       timeout: 5s
       retries: 3
 
+  gateway-reserve-signer:
+    profiles: [gateway-reserve]
+    build:
+      context: ./faucet
+      args:
+        INFERENCED_IMAGE: ${INFERENCED_IMAGE:?INFERENCED_IMAGE is required}
+    restart: unless-stopped
+    env_file: [./gateway-reserve-signer.env]
+    network_mode: host
+    volumes:
+      - /srv/dai/gonka-devnet-faucet/operator-home:/home/faucet/.inference:ro
+      - /srv/dai/gonka-devnet-gateway-reserve/data:/data
+
   caddy:
     image: ${CADDY_IMAGE:-caddy:2.11.4-alpine}
     restart: unless-stopped
@@ -113,7 +127,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./site:/srv:ro
-      - ./join-bootstrap:/join-bootstrap:ro
+      - ./:/ops:ro
       - ./status:/status:ro
       - /srv/dai/caddy/data:/data
       - /srv/dai/caddy/config:/config

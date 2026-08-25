@@ -35,6 +35,27 @@ The Lab provides an independent readiness recommendation. The final release deci
 - Deep product matrices (unless the release explicitly adds a Lab smoke item).
 - Full security red-team / economic exploit hunting — findings are escalated, not hunted systematically.
 
+## Near-term DevShard validation sequence
+
+The Lab builds confidence in protocol changes through ordered, separately
+reported iterations. A later iteration does not turn an earlier baseline into
+an assumed result.
+
+1. **Current baseline — `v2026.07.23` / `devshardd v3`.** Establish a clean
+   Community DevNet, prove independent Host joins, and retain chain,
+   inference, and public-observability evidence for the v3 runtime.
+2. **Next upgrade iteration — `v2026.08.06` / `devshardd v3` and `v4`.** In a
+   separate change and run, rehearse the documented network upgrade and verify
+   the relevant v3/v4 lifecycle before and after it.
+3. **Future target — `devshardd v5`.** Use the completed baseline and upgrade
+   evidence to define the v5 validation request and its acceptance pack; v5 is
+   not assumed compatible until that run succeeds.
+
+Each iteration retains the release-profile lock, immutable run manifest,
+sanitized chain receipts and verdicts, authenticated inference evidence, and
+public dashboard/browser evidence. These are the comparison artifacts for the
+next iteration and the basis for a repeatable v5 procedure.
+
 ## Release assurance flow
 
 Handoff terms follow proposal §11: protocol releases — RC, upgrade notes, affected components, and test focus **at least 7 days** before the planned vote/rollout where feasible; DevShard validation — **at least 3 days** before the expected result. Requests are filed as [validation requests](../../../issues/new/choose).

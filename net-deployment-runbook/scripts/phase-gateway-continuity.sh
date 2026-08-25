@@ -73,6 +73,73 @@ done
 
 step "Send authenticated requests across PoC anchor $target_anchor"
 : >"$RUN/requests.jsonl"
+
+request_observation() {
+  local observation_height="$1"
+  local window="$2"
+  local coverage="$3"
+  local sequence="$4"
+  local request response http_code payload error response_id
+
+  request="$(jq -nc --arg prompt "continuity probe anchor $target_anchor sequence $sequence" \
+    --arg model "$MODEL_ID" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:1}')"
+  response="$(curl -sS --connect-timeout 10 --max-time "$request_timeout" -w $'\n%{http_code}' \
+    "$gateway_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
+    -H 'Content-Type: application/json' --data-binary "$request" || true)"
+  http_code="${response##*$'\n'}"
+  payload="${response%$'\n'*}"
+  [[ "$http_code" =~ ^[0-9]{3}$ ]] || http_code=000
+  error="$(jq -r '.error.message // .message // empty' <<<"$payload" 2>/dev/null || true)"
+  response_id="$(jq -r '.id // empty' <<<"$payload" 2>/dev/null || true)"
+  jq -nc --arg timestamp "$(date -u +%FT%TZ)" --argjson height "$observation_height" \
+    --arg window "$window" --arg coverage "$coverage" --arg phase "$chain_phase" \
+    --arg code "$http_code" --arg error "$error" --arg response_id "$response_id" \
+    --argjson target_anchor "$target_anchor" \
+    '{timestamp:$timestamp,height:$height,target_anchor:$target_anchor,window:$window,coverage:$coverage,chain_phase:$phase,http_code:($code|tonumber),error:$error,response_id:$response_id}'
+}
+
+capture_targeted_observation() {
+  local observation_target="$1"
+  local window="$2"
+  local coverage="$3"
+  local observation_height
+
+  while (( SECONDS < deadline )); do
+    observation_height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+    if (( observation_height == observation_target )); then
+      gateway_status="$(curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
+      chain_phase="$(jq -r '
+        ([.devshards[]? | select(.active == true) | .chain_phase]
+          + [if .chain_phase? then .chain_phase else empty end])
+        | map(select(. != null and . != "")) | first // "UNKNOWN"
+      ' <<<"$gateway_status" 2>/dev/null || printf UNKNOWN)"
+      request_observation "$observation_height" "$window" "$coverage" "$coverage"
+      return 0
+    fi
+    if (( observation_height > observation_target )); then
+      jq -nc --arg timestamp "$(date -u +%FT%TZ)" --argjson height "$observation_height" \
+        --arg window "$window" --arg coverage "$coverage" --argjson target_anchor "$target_anchor" \
+        '{timestamp:$timestamp,height:$height,target_anchor:$target_anchor,window:$window,coverage:($coverage + "-missed"),chain_phase:"UNKNOWN",http_code:0,error:"target height was missed before a request could start",response_id:""}'
+      return 2
+    fi
+    sleep 1
+  done
+
+  jq -nc --arg timestamp "$(date -u +%FT%TZ)" --arg window "$window" \
+    --arg coverage "$coverage" --argjson target_anchor "$target_anchor" \
+    '{timestamp:$timestamp,height:0,target_anchor:$target_anchor,window:$window,coverage:($coverage + "-missed"),chain_phase:"UNKNOWN",http_code:0,error:"continuity deadline elapsed before target height",response_id:""}'
+  return 2
+}
+
+# Slow non-streaming inference must not make the observer skip the exact block
+# boundaries. These one-shot background probes use only chain-height state;
+# they never retry a request and write separate files to avoid concurrent
+# appends to requests.jsonl.
+capture_targeted_observation "$((target_anchor - 1))" before immediate-before >"$RUN/immediate-before-request.json" &
+immediate_before_pid=$!
+capture_targeted_observation "$target_anchor" anchor at-anchor >"$RUN/anchor-request.json" &
+anchor_pid=$!
+
 poc_active_seen=false
 after_seen=false
 post_successes=0
@@ -110,21 +177,9 @@ while (( SECONDS < deadline )); do
     fi
   fi
 
-  request="$(jq -nc --arg prompt "continuity probe anchor $target_anchor sequence $sequence" \
-    --arg model "$MODEL_ID" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:1}')"
-  response="$(curl -sS --connect-timeout 10 --max-time "$request_timeout" -w $'\n%{http_code}' \
-    "$gateway_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
-    -H 'Content-Type: application/json' --data-binary "$request" || true)"
-  http_code="${response##*$'\n'}"
-  payload="${response%$'\n'*}"
-  [[ "$http_code" =~ ^[0-9]{3}$ ]] || http_code=000
-  error="$(jq -r '.error.message // .message // empty' <<<"$payload" 2>/dev/null || true)"
-  response_id="$(jq -r '.id // empty' <<<"$payload" 2>/dev/null || true)"
-  jq -nc --arg timestamp "$(date -u +%FT%TZ)" --argjson height "$height" \
-    --arg window "$window" --arg phase "$chain_phase" --arg code "$http_code" \
-    --arg error "$error" --arg response_id "$response_id" \
-    '{timestamp:$timestamp,height:$height,window:$window,chain_phase:$phase,http_code:($code|tonumber),error:$error,response_id:$response_id}' \
-    >>"$RUN/requests.jsonl"
+  observation="$(request_observation "$height" "$window" regular "$sequence")"
+  http_code="$(jq -r .http_code <<<"$observation")"
+  printf '%s\n' "$observation" >>"$RUN/requests.jsonl"
   printf '%s height=%s phase=%s window=%s HTTP=%s\n' \
     "$([[ "$http_code" =~ ^2 ]] && printf PASS || printf FAILED)" "$height" "$chain_phase" "$window" "$http_code"
 
@@ -138,6 +193,22 @@ while (( SECONDS < deadline )); do
   fi
   sleep 1
 done
+
+set +e
+wait "$immediate_before_pid"
+immediate_before_rc=$?
+wait "$anchor_pid"
+anchor_rc=$?
+set -e
+for observation_file in "$RUN/immediate-before-request.json" "$RUN/anchor-request.json"; do
+  if [[ -s "$observation_file" ]]; then
+    cat "$observation_file" >>"$RUN/requests.jsonl"
+  fi
+done
+if (( immediate_before_rc != 0 || anchor_rc != 0 )); then
+  printf 'INCONCLUSIVE targeted boundary capture: immediate-before=%s anchor=%s\n' \
+    "$immediate_before_rc" "$anchor_rc" >&2
+fi
 
 curl -fsS "$chain_base/chain-rpc/status" >"$RUN/chain-status-after.json"
 curl -fsS "$chain_base/chain-api/productscience/inference/inference/current_epoch_group_data" >"$RUN/epoch-group-after.json"

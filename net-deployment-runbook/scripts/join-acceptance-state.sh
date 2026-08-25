@@ -46,6 +46,34 @@ join_acceptance_state_record_strongest() {
   mv "$temporary" "$state"
 }
 
+# A positive PoC distribution is immutable chain evidence for the bounded
+# acceptance window.  Keep the first successfully reconciled transaction so
+# a later, still-open epoch group cannot discard proof that was already
+# established for this same participant and runtime.
+join_acceptance_state_record_distribution() {
+  local run="$1" stage="$2" tx_hash="$3" tx_code="$4" temporary
+  local state="$run/acceptance-state.json"
+  [[ "$stage" =~ ^[1-9][0-9]*$ && "$tx_hash" =~ ^[A-F0-9]{64}$ && "$tx_code" == 0 ]] || return 2
+  temporary="$(mktemp "$run/.acceptance-state.tmp.XXXXXX")"
+  jq --argjson stage "$stage" --arg tx_hash "$tx_hash" --argjson tx_code "$tx_code" '
+    if .distribution_evidence? == null then
+      .distribution_evidence = {stage:$stage,tx_hash:$tx_hash,tx_code:$tx_code}
+    else . end
+  ' "$state" >"$temporary"
+  mv "$temporary" "$state"
+}
+
+join_acceptance_state_restore_distribution() {
+  local run="$1"
+  local state="$run/acceptance-state.json"
+  jq -ce '
+    .distribution_evidence?
+    | select((.stage | tonumber) > 0)
+    | select(.tx_hash | test("^[A-F0-9]{64}$"))
+    | select((.tx_code | tonumber) == 0)
+  ' "$state"
+}
+
 join_acceptance_state_restore_strongest() {
   local run="$1"
   local state="$run/acceptance-state.json" observations="$run/poc-acceptance-observations.json"

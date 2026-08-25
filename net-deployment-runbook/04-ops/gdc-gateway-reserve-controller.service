@@ -1,0 +1,11 @@
+[Unit]
+Description=Maintain bounded Gonka gateway escrow reserve
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/gonka-devnet/gateway-reserve-controller.sh
+User=@GDC_SERVICE_USER@
+Group=@GDC_SERVICE_GROUP@
+NoNewPrivileges=true

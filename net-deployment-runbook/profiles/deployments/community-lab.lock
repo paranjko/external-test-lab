@@ -1,8 +1,9 @@
 # Network-deployment inputs owned by this Community Test Lab runbook.
 # These affect chain behaviour or participant runtime, but are not claimed to
 # come from a Gonka release tag.
-GENESIS_EPOCH_LENGTH=50
+GENESIS_EPOCH_LENGTH=70
 GENESIS_EPOCH_SHIFT=0
+GENESIS_CONFIRMATION_POC_SAFETY_WINDOW=10
 POSTGRES_IMAGE=postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
 
 # RTX PRO 2000 Blackwell (sm_120) requires the generic upstream image below.

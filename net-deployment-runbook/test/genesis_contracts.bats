@@ -21,6 +21,37 @@ wait_for_mock_chain() {
   return 1
 }
 
+prepare_genesis_role_input() {
+  local home_dir="$1"
+  local role_input="$home_dir/role.env"
+  cat >"$role_input" <<'EOF'
+GDC_NODE_ALIASES=gdc-node0
+GDC_NODE_PUBLIC_HOSTS=gdc-node0=127.0.0.1
+GDC_NODE_GPU_PROFILES=gdc-node0=auto
+GDC_NODE_P2P_PORTS=gdc-node0=5000
+GDC_GENESIS_NODE=gdc-node0
+GDC_PUBLIC_EDGE_NODE=gdc-node0
+GDC_GATEWAY_NODE=gdc-node0
+GDC_DEPLOYMENT_PROFILE=community-lab
+GDC_OPERATOR_SERVICES_PROFILE=gdc-lab
+GDC_GENESIS_ROLE_INPUT=true
+EOF
+  printf '%s\n' "$role_input"
+}
+
+prepare_pinned_cli_fixture() {
+  local isolated="$1"
+  local bin_dir="$isolated/test-bin"
+  mkdir -p "$bin_dir"
+  cat >"$bin_dir/inferenced" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == version ]] || exit 2
+printf 'inferenced 0.2.14\n'
+EOF
+  chmod +x "$bin_dir/inferenced"
+  printf '%s\n' "$bin_dir"
+}
+
 @test "community-lab renders a reproducible PoC timing profile" {
   output="$BATS_TEST_TMPDIR/overrides.json"
 
@@ -31,7 +62,8 @@ wait_for_mock_chain() {
   [ "$status" -eq 0 ]
   jq -e '
     .app_state.inference.params.epoch_params
-    | .epoch_length == "50"
+    | .epoch_length == "70"
+    and .confirmation_poc_safety_window == "10"
     and .poc_stage_duration == "4"
     and .poc_exchange_duration == "8"
     and .poc_validation_delay == "10"
@@ -47,10 +79,12 @@ wait_for_mock_chain() {
   cp -a "$RUNBOOK" "$isolated"
   cp "$RUNBOOK/test/fixtures/inferenced.sh" "$isolated/scripts/inferenced.sh"
   chmod +x "$isolated/scripts/inferenced.sh"
+  cli_bin="$(prepare_pinned_cli_fixture "$isolated")"
   mkdir -p "$(dirname "$password_file")"
   printf 'test-password\n' >"$password_file"
+  role_input="$(prepare_genesis_role_input "$home_dir")"
 
-  run env GDC_HOME="$home_dir" \
+  run env PATH="$cli_bin:$PATH" GDC_HOME="$home_dir" GDC_ENV="$role_input" \
     "$isolated/01-identities-genesis/create-cold-accounts.sh" "$password_file" gdc-node0
 
   [ "$status" -eq 0 ]
@@ -58,11 +92,37 @@ wait_for_mock_chain() {
   [ "$(stat -c '%a' "$home_dir/mnemonics/gdc-node0-cold.address")" = 600 ]
 
   printf 'gonka1pppppppppppppppppppppppppppppppppppppp\n' >"$home_dir/mnemonics/gdc-node0-cold.address"
-  run env GDC_HOME="$home_dir" \
+  run env PATH="$cli_bin:$PATH" GDC_HOME="$home_dir" GDC_ENV="$role_input" \
     "$isolated/01-identities-genesis/create-cold-accounts.sh" "$password_file" gdc-node0
 
   [ "$status" -eq 1 ]
   [[ "$output" == *'cold-address backup disagrees with the keyring'* ]]
+}
+
+@test "cold account restores its local file keyring from its own mnemonic" {
+  isolated="$BATS_TEST_TMPDIR/runbook"
+  home_dir="$BATS_TEST_TMPDIR/operator"
+  password_file="$home_dir/state/secrets/operator.keyring"
+  cp -a "$RUNBOOK" "$isolated"
+  cp "$RUNBOOK/test/fixtures/inferenced.sh" "$isolated/scripts/inferenced.sh"
+  chmod +x "$isolated/scripts/inferenced.sh"
+  cli_bin="$(prepare_pinned_cli_fixture "$isolated")"
+  mkdir -p "$(dirname "$password_file")"
+  printf 'test-password\n' >"$password_file"
+  role_input="$(prepare_genesis_role_input "$home_dir")"
+
+  run env PATH="$cli_bin:$PATH" GDC_HOME="$home_dir" GDC_ENV="$role_input" \
+    "$isolated/01-identities-genesis/create-cold-accounts.sh" "$password_file" gdc-node0
+  [ "$status" -eq 0 ]
+  rm -f "$home_dir/stub-keyring/gdc-node0-cold"
+
+  run env PATH="$cli_bin:$PATH" GDC_HOME="$home_dir" GDC_ENV="$role_input" \
+    "$isolated/01-identities-genesis/create-cold-accounts.sh" "$password_file" gdc-node0
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'ACCOUNTS  recovered=1'* ]]
+  [ -e "$home_dir/stub-keyring/gdc-node0-cold" ]
+  [ "$(jq -r .address "$home_dir/accounts/gdc-node0-cold.json")" = "$GATEWAY" ]
 }
 
 @test "gateway renderer rejects the zero-capacity limits that make a READY runtime return 429" {
@@ -98,9 +158,9 @@ wait_for_mock_chain() {
   [ "$status" -eq 0 ]
   run grep -F 'install -m 0644 "$SECRETS/gateway.join-client-key" "$bootstrap_dir/gateway/join-client-key"' "$renderer"
   [ "$status" -eq 0 ]
-  run grep -F 'GDC_OPERATOR_MODE' "$RUNBOOK/ROLE-JOIN.md" "$acceptance" "$bootstrap" "$renderer" "$RUNBOOK/scripts/lib.sh" "$RUNBOOK/scripts/phase-genesis.sh" "$RUNBOOK/.devcontainer/README.md"
+  run grep -F 'GDC_OPERATOR_MODE' "$RUNBOOK/ROLE-JOIN.md" "$acceptance" "$bootstrap" "$renderer" "$RUNBOOK/scripts/lib.sh" "$RUNBOOK/scripts/phase-genesis.sh"
   [ "$status" -eq 1 ]
-  run grep -F 'GDC_JOIN_GATEWAY_CLIENT_KEY_FILE' "$RUNBOOK/ROLE-JOIN.md" "$acceptance" "$bootstrap" "$renderer" "$RUNBOOK/scripts/lib.sh" "$RUNBOOK/scripts/phase-genesis.sh" "$RUNBOOK/.devcontainer/README.md"
+  run grep -F 'GDC_JOIN_GATEWAY_CLIENT_KEY_FILE' "$RUNBOOK/ROLE-JOIN.md" "$acceptance" "$bootstrap" "$renderer" "$RUNBOOK/scripts/lib.sh" "$RUNBOOK/scripts/phase-genesis.sh"
   [ "$status" -eq 1 ]
 }
 

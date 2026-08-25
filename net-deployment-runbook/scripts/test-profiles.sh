@@ -3,7 +3,23 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/profile.sh"
 source "$ROOT/scripts/lib.sh"
+while IFS= read -r -d '' script; do
+  bash -n "$script"
+done < <(find "$ROOT" -type f -name '*.sh' -print0)
 "$ROOT/scripts/test-topology-inventory.sh"
+
+# Profile identities must be portable: an independent operator clones the
+# runbook into a different directory than Genesis, but lock-file contents are
+# the same release input.
+load_profiles
+expected_network_hash="$({
+  sha256sum "$ROOT/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
+    "$ROOT/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
+    "$ROOT/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}'
+} | sha256sum | awk '{print $1}')"
+expected_operator_hash="$(sha256sum "$ROOT/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+[[ "$(profile_hash)" == "$expected_network_hash" ]]
+[[ "$(operator_profile_hash)" == "$expected_operator_hash" ]]
 
 (
   unset SITE_HOST GRAFANA_HOST GDC_SITE_HOST GDC_GRAFANA_HOST
@@ -31,11 +47,50 @@ if grep -Fq 'deploy-telegram-bot.sh' "$ROOT/scripts/phase-bootstrap-access.sh"; 
   exit 1
 fi
 grep -Fq 'GDC_RUN_ID' "$ROOT/scripts/phase-reset.sh"
+grep -Fq 'export GDC_ENV="$GDC_DATA_ROOT/.env"' "$ROOT/gdc.sh"
+grep -Fq 'gdc_launcher_sha256' "$ROOT/gdc.sh"
+grep -Fq 'gdc_launcher_sha256' "$ROOT/scripts/lib.sh"
+grep -Fq 'export GDC_FORCE_NEW_RUN=true' "$ROOT/gdc.sh"
+grep -Fq 'GDC_PUBLIC_EDGE_VERIFY=false' "$ROOT/scripts/phase-reset.sh"
+! grep -Fq 'telegram-metrics' "$ROOT/scripts/phase-reset.sh"
+grep -Fq 'for project in gdc-edge gdc-ops' "$ROOT/scripts/reset-remote-host.sh"
+grep -Fq 'GDC_RESET_PRESERVE_PUBLIC_EDGE' "$ROOT/scripts/reset-remote-host.sh"
+grep -Fq '[[ "$preserve_public_edge" == true ]] || rm -rf -- /srv/dai/edge' "$ROOT/scripts/reset-remote-host.sh"
 grep -Fq 'runs/$GDC_RUN_ID-homepage/*' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'GDC_GOVERNANCE_AUTO_VOTE=true' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'ensure-genesis-validation-weight.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'GDC_SITE_PUBLIC_READY_WAIT_SECONDS' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'public homepage upstream after site restart' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'inventory_public_edge=' "$ROOT/gdc.sh"
+grep -Fq 'transient DNS, TLS or browser failure' "$ROOT/scripts/phase-reset.sh"
+grep -Fq '"checked_at","curl_exit","http_status","latency_ms","reason","state"' "$ROOT/scripts/verify-public-homepage.sh"
+grep -Fq 'public gateway health response has an invalid schema' "$ROOT/scripts/verify-public-homepage.sh"
+grep -Fq 'reset participant endpoint unavailable as expected' "$ROOT/scripts/verify-public-homepage.sh"
+grep -Fq 'handle_path /faucet/*' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq '@join_bootstrap path /join-bootstrap/*' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq 'handle /v1/chat/completions {' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq 'reverse_proxy 127.0.0.1:18083' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq 'gateway-admission-proxy.py' "$ROOT/04-ops/edge-node/compose.yaml"
+grep -Fq 'gateway-admission-proxy.py' "$ROOT/04-ops/edge-node/install-edge.sh"
+grep -Fq 'gateway-admission' "$ROOT/scripts/phase-ops.sh"
+! grep -Fq 'public DevNet faucet requires the public edge and gateway to use the same Host' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'ENDPOINT="https://${GENESIS_PUBLIC_HOST}/faucet/health"' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'GDC_FAUCET_PUBLIC_READY_ATTEMPTS:-12' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'WAIT public DevNet faucet unavailable attempt=%s/%s' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'public DevNet faucet did not become ready after $faucet_attempts attempts' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'public DevNet faucet returned HTTP 200 with an invalid health payload' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'gateway state has no configured managed volume' "$ROOT/scripts/reset-stale-gateway-state.sh"
+grep -Fq 'http_status=%s curl_exit=%s curl_status=%s' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq 'mv "$health_tmp" "$RUN/health.json"' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq 'GDC_PUBLIC_GRAFANA_BROWSER_TIMEOUT_SECONDS' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq 'timeout --kill-after=5s' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq 'browser_profile="$(mktemp -d)"' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq -- '--user-data-dir="$browser_profile"' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq 'chrome_rc="${network_chrome_rc:-125}"' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq 'public Grafana browser render dashboard=%s; retrying' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq 'GDC_PUBLIC_GRAFANA_BROWSER_READY_WAIT_SECONDS:-600' "$ROOT/scripts/verify-public-grafana.sh"
+grep -Fq 'local ML start request node=%s' "$ROOT/03-join/start-local-ml.sh"
+grep -Fq 'local ML model endpoint node=%s' "$ROOT/03-join/start-local-ml.sh"
 grep -Fq '[[ ! -d "$DEST/prometheus/prometheus.yml" ]] || rm -rf' "$ROOT/04-ops/install-ops.sh"
 grep -Fq 'GDC_SITE_PUBLIC_VERIFY_WAIT_SECONDS' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'complete public homepage contract after site restart' "$ROOT/scripts/phase-ops.sh"
@@ -62,9 +117,14 @@ grep -Fq 'GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-45' "$ROOT/scripts/pha
 grep -Fq 'DEVSHARD_CAPACITY_AWARE_LIMITS=off' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'gateway immediately probes every participant endpoint' "$ROOT/scripts/phase-ops.sh"
+grep -Fq '.runtime.chain_phase // .chain_phase' "$ROOT/scripts/phase-ops.sh"
+grep -Fq '.runtime.requests_blocked // .requests_blocked' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq "https://\$gateway_ingress_host/health" "$ROOT/scripts/phase-ops.sh"
 grep -Fq '/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
+grep -Fq 'scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"' "$ROOT/scripts/phase-ops.sh"
+grep -Fq '"$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh' "$ROOT/04-ops/install-ops.sh"
+! grep -Fq '$HERE/../' "$ROOT/04-ops/install-ops.sh"
 grep -Fq 'ExecStart=/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/gdc-gateway-escrow-reconciler.service"
 grep -Fq 'User=@GDC_SERVICE_USER@' "$ROOT/04-ops/gdc-gateway-escrow-reconciler.service"
 grep -Fq 'User=@GDC_SERVICE_USER@' "$ROOT/04-ops/gdc-gateway-health-probe.service"
@@ -80,11 +140,29 @@ if grep -Fq 'GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-10000000000' "$ROOT/04-ops/create
   exit 1
 fi
 grep -Fq 'poc_validation_delay = $poc_validation_delay' "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq 'PoC weight distributions' "$ROOT/scripts/phase-join-acceptance.sh"
+grep -Fq 'http_status=%s curl_exit=%s curl_status=%s' "$ROOT/scripts/phase-join-acceptance.sh"
+grep -Fq 'curl_status=%s' "$ROOT/scripts/phase-join-acceptance.sh"
 grep -Fq 'GDC_POC_EXCHANGE_DURATION:-8' "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq 'WAIT download pinned inferenced CLI url=' "$ROOT/scripts/ensure-inferenced-cli.sh"
+grep -Fq 'failed to download pinned inferenced CLI from' "$ROOT/scripts/ensure-inferenced-cli.sh"
+grep -Fq 'ML inference status unavailable url=http://127.0.0.1:8080/api/v1/inference/up/status http_status=000 curl_exit=%s curl_status=%s' "$ROOT/02-node/ml-only/start-ml.sh"
+grep -Fq 'ML inference start unavailable url=http://127.0.0.1:8080/api/v1/inference/up/async http_status=000 curl_exit=%s curl_status=%s' "$ROOT/02-node/ml-only/start-ml.sh"
+grep -Fq "56) printf 'receive_failed' ;;" "$ROOT/02-node/ml-only/start-ml.sh"
+grep -Fq "137) printf 'process_killed' ;;" "$ROOT/02-node/ml-only/start-ml.sh"
+grep -Fq '"$ROOT/scripts/ensure-inferenced-cli.sh"' "$ROOT/01-identities-genesis/create-cold-accounts.sh"
 grep -Fq '.epoch_params.poc_slot_allocation = {value:"5", exponent:-1}' "$ROOT/scripts/phase-governance-devshard.sh"
 grep -Fq 'systemctl restart gonka-firewall.service' "$ROOT/00-host-prep/prepare-host.sh"
 grep -Fq 'ML callback ingress source is stale' "$ROOT/00-host-prep/verify-host.sh"
 grep -Fq 'ensure-gateway-reserve.sh' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'reset-stale-gateway-state.sh' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'gateway_creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'and .escrow.creator == $creator' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'and .escrow.model_id == $model' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'every persisted escrow is absent from chain' "$ROOT/scripts/reset-stale-gateway-state.sh"
+grep -Fq 'label=com.docker.compose.project=gdc-ops' "$ROOT/scripts/reset-stale-gateway-state.sh"
+grep -Fq 'label=com.docker.compose.service=devshard-gateway' "$ROOT/scripts/reset-stale-gateway-state.sh"
+grep -Fq 'chain escrow query unavailable' "$ROOT/scripts/reset-stale-gateway-state.sh"
 grep -Fq 'load_project' "$ROOT/scripts/fetch-upstream.sh"
 grep -Fq 'source "$ROOT/scripts/lib.sh"' "$ROOT/scripts/fetch-upstream.sh"
 grep -Fq 'for node in "${GDC_NODES[@]}"' "$ROOT/scripts/render-bootstrap-envs.sh"
@@ -95,13 +173,15 @@ fi
 grep -Fq 'validation_weights' "$ROOT/scripts/ensure-genesis-validation-weight.sh"
 grep -Fq 'test-inference.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'sum(cometbft_p2p_peers) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
+grep -Fq '(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
+grep -Fq 'devshard_gateway_participant_total_attempt_seconds_count) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq '[[ ! -e "$STATE/joined/$node" ]]' "$ROOT/scripts/phase-explorer.sh"
 grep -Fq 'label=com.docker.compose.project=$project' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'gdc-poc-winddown-watch@$NODE.service' "$ROOT/scripts/phase-node.sh"
 grep -Fq '"/srv/dai/deploy/$NODE"' "$ROOT/scripts/phase-node.sh"
 grep -Fq '"/srv/dai/$NODE"' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'READY detected linked GPU host' "$ROOT/scripts/phase-node.sh"
-grep -Fq 'PRESERVE OPS public edge' "$ROOT/scripts/phase-node.sh"
+! grep -Fq 'PRESERVE OPS public edge' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'gdc-ml-link.json' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'is not joined to the current chain' "$ROOT/scripts/phase-explorer.sh"
 grep -Fq '.devshards[]?' "$ROOT/scripts/phase-bootstrap-access.sh"
@@ -109,8 +189,15 @@ grep -Fq '.devshards[]?' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'handle_path /gateway/*' "$ROOT/04-ops/Caddyfile"
 grep -Fq 'handle /status/participants' "$ROOT/04-ops/Caddyfile"
 grep -Fq 'ops-participant-status' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq '@participant_poc path /v1/poc/*' "$ROOT/04-ops/edge-node/Caddyfile"
+grep -Fq '@participant_devshard path /devshard/*' "$ROOT/04-ops/edge-node/Caddyfile"
+grep -Fq 'reverse_proxy 127.0.0.1:8000 {' "$ROOT/04-ops/edge-node/Caddyfile"
+grep -Fq '@participant_poc path /v1/poc/*' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq '@participant_devshard path /devshard/*' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+! grep -Fq '@participant_chain path /chain-rpc/* /chain-api/*' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'rewrite * /ops-participant-status{uri}' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'handle /status/gpus' "$ROOT/04-ops/render-ops.sh"
+grep -Fq 'handle /status/software' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'query=gdc_nvidia_memory_total_bytes' "$ROOT/04-ops/render-ops.sh"
 grep -Fq "validator: '%s'" "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'header_up Host %s' "$ROOT/04-ops/render-ops.sh"
@@ -121,13 +208,31 @@ grep -Fq 'isNodeActive(node.participantState || node.participantStatus)' "$ROOT/
 grep -Fq '__PUBLIC_GRAFANA_PROMETHEUS_URL__' "$ROOT/04-ops/edge-node/public-grafana/provisioning/datasources/prometheus.yml"
 grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/install-edge.sh"
-grep -Fq 'READY preserved existing OPS public edge' "$ROOT/04-ops/edge-node/install-edge.sh"
+grep -Fq 'network_mode: host' "$ROOT/04-ops/edge-node/compose.yaml"
+grep -Fq 'GF_SERVER_HTTP_PORT: "3001"' "$ROOT/04-ops/edge-node/compose.yaml"
+grep -Fq 'https://$(node_public_host "$GATEWAY_NODE")/ops-prometheus' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'https://$(node_public_host "$GATEWAY_NODE")/gateway/v1/status' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/current_epoch_group_data' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'https://${PUBLIC_EDGE_HOST}/chain-rpc/status' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'http://127.0.0.1:9099' "$ROOT/04-ops/edge-node/install-edge.sh"
+grep -Fq 'expected_remote_prometheus' "$ROOT/04-ops/edge-node/install-edge.sh"
+! grep -Fq 'preserved existing OPS public edge' "$ROOT/04-ops/edge-node/install-edge.sh"
 if grep -Eq 'node[0-9]\.gonka-dev\.net' "$ROOT/04-ops/edge-node/public-grafana/provisioning/datasources/prometheus.yml"; then
   echo 'public Grafana datasource must be rendered from the configured gateway role' >&2
   exit 1
 fi
-grep -Fq '/v1/versions' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'Software inventory has not reported this Host yet' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'GPU inventory has not reported this Host yet' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'json("/status/software")' "$ROOT/04-ops/site/src/app.js"
+! grep -Fq '/v1/versions' "$ROOT/04-ops/site/src/app.js"
 grep -Eq 'external-test-lab/tree/[0-9a-f]+/net-deployment-runbook/04-ops/site"[^>]*>ref:[0-9a-f]+' "$ROOT/04-ops/site/index.html"
+join_section_line="$(grep -n 'id="join-node"' "$ROOT/04-ops/site/index.html" | cut -d: -f1)"
+hero_end_line="$(grep -n '</header>' "$ROOT/04-ops/site/index.html" | head -n1 | cut -d: -f1)"
+[[ "$join_section_line" -gt "$hero_end_line" ]]
+grep -Fq 'How to Join node' "$ROOT/04-ops/site/index.html"
+grep -Fq 'alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"' "$ROOT/04-ops/site/index.html"
+grep -Fq 'gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;' "$ROOT/04-ops/site/index.html"
+grep -Fq 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host' "$ROOT/04-ops/site/index.html"
 test_tmp="$(mktemp -d)"
 trap 'rm -rf "$test_tmp"' EXIT
 rendered_site_index="$test_tmp/site-index.html"
@@ -138,11 +243,16 @@ grep -Fq "https://github.com/paranjko/external-test-lab/tree/$site_commit/net-de
 grep -Fq '!expectResetState && state.mapValidators !== mappedNodes.length' "$ROOT/scripts/capture-homepage-viewport.mjs"
 grep -Fq '(!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers' "$ROOT/scripts/capture-homepage-viewport.mjs"
 grep -Fq 'state.mapMarkers !== 0 || state.mapPoints !== 0' "$ROOT/scripts/capture-homepage-viewport.mjs"
+grep -Fq 'JOIN guide did not render' "$ROOT/scripts/capture-homepage-viewport.mjs"
+grep -Fq 'scrollIntoView({block:"start"})' "$ROOT/scripts/capture-homepage-viewport.mjs"
+grep -Fq 'WAIT homepage browser check unavailable reason=${detail}' "$ROOT/scripts/capture-homepage-viewport.mjs"
+grep -Fq "process.on('uncaughtException', reportBrowserFailure)" "$ROOT/scripts/capture-homepage-viewport.mjs"
 grep -Fq 'GDC_MONITOR_HOST=$HOST' "$ROOT/04-ops/agent/render-env.sh"
 grep -Fq 'gdc_component_info' "$ROOT/04-ops/agent/collect-versions.sh"
 grep -Fq 'gdc_component_info' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'gpuProfile:(if $gpuProfile == "auto" then null else $gpuProfile end)' "$ROOT/04-ops/render-ops.sh"
+grep -Fq 'LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v[34]}-$GATEWAY_VERSION"' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
@@ -169,7 +279,7 @@ for release in v2026.07.23 v2026.08.06; do
   [[ "$GONKA_COMMIT" =~ ^[0-9a-f]{40}$ ]]
   [[ "$GONKA_REPOSITORY" == https://github.com/gonka-ai/gonka.git ]]
   [[ "$GONKA_SOURCE_REF" == "release/v$GONKA_RELEASE" ]]
-  [[ "$GENESIS_EPOCH_LENGTH" == 50 && "$GENESIS_EPOCH_SHIFT" == 0 ]]
+  [[ "$GENESIS_EPOCH_LENGTH" == 70 && "$GENESIS_EPOCH_SHIFT" == 0 && "$GENESIS_CONFIRMATION_POC_SAFETY_WINDOW" == 10 ]]
   [[ "$MLNODE_BLACKWELL_IMAGE" == "$MLNODE_GENERIC_IMAGE" ]] || {
     echo 'Blackwell image must use the verified generic upstream runtime' >&2
     exit 1
@@ -185,10 +295,10 @@ for release in v2026.07.23 v2026.08.06; do
   expected_network_hash="$(sha256sum \
     "$ROOT/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
     "$ROOT/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$ROOT/profiles/models/$GDC_MODEL_PROFILE.lock" | sha256sum | awk '{print $1}')"
+    "$ROOT/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
   expected_operator_hash="$(sha256sum \
     "$ROOT/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" \
-    | sha256sum | awk '{print $1}')"
+    | awk '{print $1}' | sha256sum | awk '{print $1}')"
   [[ "$(profile_hash)" == "$expected_network_hash" ]]
   [[ "$(operator_profile_hash)" == "$expected_operator_hash" ]]
   if [[ "$release" == v2026.08.06 ]]; then
@@ -259,7 +369,8 @@ jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" --arg guardian go
   and .app_state.inference.params.devshard_escrow_params.approved_versions == []
   and .app_state.inference.params.devshard_escrow_params.allowed_creator_addresses == []
   and .app_state.inference.params.poc_params.models[0].model_id == $model
-  and .app_state.inference.params.epoch_params.epoch_length == "50"
+  and .app_state.inference.params.epoch_params.epoch_length == "70"
+  and .app_state.inference.params.epoch_params.confirmation_poc_safety_window == "10"
   and .app_state.inference.params.epoch_params.epoch_shift == "0"
   and .app_state.inference.params.epoch_params.poc_stage_duration == "4"
   and .app_state.inference.params.epoch_params.poc_exchange_duration == "8"
@@ -284,6 +395,8 @@ grep -Fq 'GDC_GENESIS_GUARDIAN_ENABLED' "$ROOT/01-identities-genesis/render-gene
 grep -Fq 'single-node bootstrap requires GDC_GENESIS_GUARDIAN_ENABLED=true' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'Create scoped operator secrets for $NODE' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'wait-hardware-node.sh' "$ROOT/scripts/phase-ml-attach.sh"
+grep -Fq 'Restart $NODE API after network GPU readiness' "$ROOT/scripts/phase-ml-attach.sh"
+grep -Fq 'restart-api-after-sync.sh" "$NODE"' "$ROOT/scripts/phase-ml-attach.sh"
 grep -Fq 'Record the explicit Network Node to external GPU association' "$ROOT/scripts/phase-ml-attach.sh"
 grep -Fq 'hardware_nodes/${ADDRESS}' "$ROOT/scripts/wait-hardware-node.sh"
 grep -Fq '.status == "INFERENCE"' "$ROOT/scripts/wait-hardware-node.sh"
@@ -306,6 +419,7 @@ grep -Fq 'gdc-poc-winddown-watch@' "$ROOT/02-node/ml-only/install-ml.sh"
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-propose-upgrade.sh"
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade.sh"
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade-worker.sh"
+grep -Fq '"$ROOT/gdc.sh" --release v2026.08.06 upgrade' "$ROOT/scripts/phase-upgrade-worker.sh"
 grep -Fq '# DevNet verification: PASS' "$ROOT/scripts/lib.sh"
 grep -Fq 'GDC_NODE_ALIASES' "$ROOT/scripts/lib.sh"
 if (
@@ -333,7 +447,7 @@ for evidence_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-observer.sh ph
   grep -Fq 'install_evidence_exit_trap' "$ROOT/scripts/$evidence_phase"
 done
 grep -Fq 'skip duplicate registration' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'skip duplicate funding and ML permission transactions' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'resume ML permission grant without duplicate funding' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'upgrade proposal: MISSING' "$ROOT/scripts/phase-audit-lifecycle.sh"
 grep -Fq "'gateway continuity|*-gateway-continuity/*|# Gateway continuity: PASS'" "$ROOT/scripts/phase-audit-lifecycle.sh"
 grep -Fq 'genesis_sha256=$live_genesis_sha256' "$ROOT/scripts/phase-audit-lifecycle.sh"
@@ -351,18 +465,23 @@ done
 grep -Fq 'genesis_sha256=$live_genesis_sha256' "$ROOT/scripts/phase-audit-lifecycle.sh"
 grep -Fq 'genesis_overrides_sha256' "$ROOT/01-identities-genesis/build-genesis.sh"
 grep -Fq 'PROFILE phase=genesis' "$ROOT/scripts/phase-genesis.sh"
-grep -Fq '"routable"[[:space:]]*:[[:space:]]*true' "$ROOT/04-ops/compose.yaml"
+grep -Fq '/usr/local/bin/gateway-status-routable.sh' "$ROOT/04-ops/compose.yaml"
+grep -Fq 'gateway-status-routable.sh:/usr/local/bin/gateway-status-routable.sh:ro' "$ROOT/04-ops/compose.yaml"
 if grep -Eq 'handoff\)|phase-handoff|GDC_NODE_HANDOFF_DIR' "$ROOT/gdc.sh" "$ROOT/scripts/phase-join.sh"; then
   echo 'Host join must not depend on a central handoff or approval flow' >&2
   exit 1
 fi
 grep -Fq 'fetch-join-bootstrap.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'claim-devnet-faucet.sh' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'sha256sum -c manifest.sha256' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'verify_public_checksums' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'public JOIN bootstrap checksum mismatch bootstrap_url=' "$ROOT/scripts/fetch-join-bootstrap.sh"
+grep -Fq 'JOIN_BOOTSTRAP_FORMAT=1' "$ROOT/profiles/releases/v2026.07.23.lock"
+grep -Fq 'JOIN_BOOTSTRAP_FORMAT=1' "$ROOT/profiles/releases/v2026.08.06.lock"
 grep -Fq 'GDC_FAUCET_CLAIM_NGONKA' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'GDC_FAUCET_INITIAL_NGONKA' "$ROOT/01-identities-genesis/build-genesis.sh"
-grep -Fq 'handle_path /faucet/*' "$ROOT/04-ops/render-ops.sh"
-grep -Fq 'handle_path /join-bootstrap/*' "$ROOT/04-ops/render-ops.sh"
+grep -Fq 'handle_path /faucet/*' "$ROOT/04-ops/edge-node/Caddyfile"
+grep -Fq '@join_bootstrap path /join-bootstrap/*' "$ROOT/04-ops/edge-node/Caddyfile"
+grep -Fq '@join_bootstrap path /join-bootstrap/*' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'Grant ML operational permissions for $NODE' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'devshard_version=' "$ROOT/scripts/phase-settle.sh"
 grep -Fq "grep -qx 'devshard_version=v4'" "$ROOT/scripts/phase-ha-v4.sh"

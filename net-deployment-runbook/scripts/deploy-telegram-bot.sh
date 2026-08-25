@@ -8,20 +8,17 @@ source "$ROOT/scripts/lib.sh"
 BOT_SOURCE="$ROOT/scripts/telegram-bot"
 BOT_DIR=/srv/dai/gonka-devnet-bot
 ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"
-CALLER_API_BASE_URL="${GDC_TELEGRAM_BOT_API_BASE_URL:-}"
-CALLER_API_BASE_URL_SET=false
-[[ ${GDC_TELEGRAM_BOT_API_BASE_URL+x} ]] && CALLER_API_BASE_URL_SET=true
 [[ -s "$ENV_FILE" ]] || { echo "missing environment file: $ENV_FILE" >&2; exit 1; }
 load_project
 BOT_HOST="$TELEGRAM_BOT_HOST"
+[[ "$BOT_HOST" == "$GATEWAY_NODE" ]] || {
+  echo 'Telegram consumer must run on the gateway Host so readiness and user inference use the same route' >&2
+  exit 1
+}
 [[ -n "${TELEGRAM_BOT_TOKEN:-}" && "$TELEGRAM_BOT_TOKEN" != replace-with-BotFather-token ]] || {
   echo "TELEGRAM_BOT_TOKEN must be configured in $ENV_FILE" >&2; exit 1;
 }
-if [[ "$CALLER_API_BASE_URL_SET" == true ]]; then
-  BOT_API_BASE_URL="$CALLER_API_BASE_URL"
-else
-  BOT_API_BASE_URL="${GDC_TELEGRAM_BOT_API_BASE_URL:-https://api.gonka-dev.net/v1}"
-fi
+BOT_API_BASE_URL="http://127.0.0.1:18080/v1"
 BOT_STATE_DB=/data/bot.sqlite3
 BOT_METRICS_FILE=/metrics/telegram-bot.prom
 BOT_KEY_FILE="$SECRETS/gateway.telegram-client-key"
@@ -49,7 +46,13 @@ printf '%s\n' \
   "GATEWAY_API_KEY=$BOT_GATEWAY_API_KEY" \
   "INTERNAL_API_TOKEN=$BOT_INTERNAL_API_TOKEN" \
   "INTERNAL_API_BASE_URL=http://127.0.0.1:9464" \
+  "HTTP_HOST=127.0.0.1" \
   "MODEL=$MODEL_ID" \
+  "GATEWAY_TIMEOUT_SECONDS=${GDC_TELEGRAM_GATEWAY_TIMEOUT_SECONDS:-30}" \
+  "INTERNAL_API_TIMEOUT_SECONDS=${GDC_TELEGRAM_INTERNAL_TIMEOUT_SECONDS:-35}" \
+  "TELEGRAM_REQUEST_TIMEOUT_SECONDS=${GDC_TELEGRAM_REQUEST_TIMEOUT_SECONDS:-10}" \
+  "TELEGRAM_POLL_TIMEOUT_SECONDS=${GDC_TELEGRAM_POLL_TIMEOUT_SECONDS:-35}" \
+  "TYPING_REFRESH_SECONDS=${GDC_TELEGRAM_TYPING_REFRESH_SECONDS:-4}" \
   "HEALTH_MAX_AGE_SECONDS=${GDC_TELEGRAM_CONSUMER_HEALTH_MAX_AGE_SECONDS:-900}" \
   "STATE_DB=$BOT_STATE_DB" \
   "METRICS_FILE=$BOT_METRICS_FILE" >"$runtime_env"
@@ -85,17 +88,25 @@ ssh -T "$BOT_HOST" "set -Eeuo pipefail
 consumer_ready=false
 deadline=$((SECONDS + VERIFY_TIMEOUT_SECONDS))
 while (( SECONDS < deadline )); do
-  if ssh -T "$BOT_HOST" 'set -Eeuo pipefail
-    bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
-    [[ -n "$bot" && "$(docker inspect -f "{{.State.Health.Status}}" "$bot")" == healthy ]]
-    curl -fsS http://127.0.0.1:9464/metrics | grep -q "^gdc_telegram_bot_up 1$"
-    docker exec "$bot" python3 -c "import json, os; from urllib.request import urlopen; assert json.load(urlopen(\"https://api.telegram.org/bot\" + os.environ[\"TELEGRAM_BOT_TOKEN\"] + \"/getMe\", timeout=15))[\"ok\"]"
-    docker exec "$bot" python3 /app/bot.py --probe \
-      | jq -e ".status == \"completed\" and .output_present == true and .usage_present == true" >/dev/null'; then
+  remaining=$((deadline - SECONDS))
+  if timeout "$remaining" ssh -T "$BOT_HOST" 'bash -s' <<'REMOTE'
+set -Eeuo pipefail
+bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
+[[ -n "$bot" && "$(docker inspect -f '{{.State.Health.Status}}' "$bot")" == healthy ]]
+curl -fsS http://127.0.0.1:9464/metrics | grep -q '^gdc_telegram_bot_up 1$'
+docker exec "$bot" python3 -c 'import json, os; from urllib.request import urlopen; assert json.load(urlopen("https://api.telegram.org/bot" + os.environ["TELEGRAM_BOT_TOKEN"] + "/getMe", timeout=15))["ok"]'
+probe_output="$(docker exec "$bot" python3 /app/bot.py --probe 2>&1)" || {
+  probe_reason="$(jq -r '.reason // "unknown"' <<<"$probe_output" 2>/dev/null || true)"
+  printf 'WAIT Telegram consumer probe endpoint=http://127.0.0.1:18080/v1/chat/completions reason=%s\n' "$probe_reason"
+  exit 1
+}
+jq -e '.status == "completed" and .output_present == true and .usage_present == true' <<<"$probe_output" >/dev/null
+REMOTE
+  then
     consumer_ready=true
     break
   fi
-  printf 'WAIT  Telegram conversation consumer is not yet ready\n'
+  printf 'WAIT Telegram conversation consumer is not ready; retrying before deadline=%ss\n' "$((deadline - SECONDS))"
   sleep 3
 done
 [[ "$consumer_ready" == true ]] || die "Telegram conversation consumer was not ready within ${VERIFY_TIMEOUT_SECONDS}s"

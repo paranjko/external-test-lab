@@ -18,30 +18,33 @@ EOL
 ## Create the network
 
 ```bash
-./gdc.sh --release v2026.07.23 genesis gdc-node0
+gdc --release v2026.07.23 genesis gdc-node0 --public-edge gdc-node4
 ```
 
 The command prepares the host, detects its public DNS and GPU, creates
 Genesis, starts the first Host and makes authenticated inference ready. No
 configuration file is required.
 
+`--public-edge` identifies the Host serving the public website, API, and
+Grafana. Omit it only when the Genesis Host serves those public endpoints.
+
 If the SSH alias does not map to a detectable public DNS name, provide only
 that missing value:
 
 ```bash
-./gdc.sh --release v2026.07.23 genesis my-host --public-host node.example.net
+gdc --release v2026.07.23 genesis my-host --public-host node.example.net --public-edge public-edge-host
 ```
 
 To create the chain without inference access:
 
 ```bash
-./gdc.sh --release v2026.07.23 genesis gdc-node0 --no-bootstrap-access
+gdc --release v2026.07.23 genesis gdc-node0 --no-bootstrap-access
 ```
 
 To explicitly bypass the ML qualification gate, use:
 
 ```bash
-./gdc.sh --release v2026.07.23 genesis gdc-node0 --skip-qualification
+gdc --release v2026.07.23 genesis gdc-node0 --skip-qualification
 ```
 
 This records `ml_qualification=skipped_by_operator` in the Genesis evidence.

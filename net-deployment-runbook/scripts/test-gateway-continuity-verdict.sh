@@ -8,8 +8,11 @@ model=Qwen/Qwen3-0.6B
 
 write_requests() {
   local failed_code="${1:-200}"
+  local anchor_code="${2:-200}"
   cat >"$WORK/requests.jsonl" <<EOF
 {"height":48,"window":"before","chain_phase":"Inference","http_code":200}
+{"height":49,"target_anchor":50,"window":"before","coverage":"immediate-before","chain_phase":"Inference","http_code":200}
+{"height":50,"target_anchor":50,"window":"anchor","coverage":"at-anchor","chain_phase":"PoCGenerate","http_code":$anchor_code}
 {"height":50,"window":"poc","chain_phase":"PoCGenerate","http_code":$failed_code}
 {"height":68,"window":"after","chain_phase":"Inference","http_code":200}
 EOF
@@ -42,6 +45,27 @@ write_requests 200
 "$ROOT/scripts/classify-gateway-continuity.sh" "$model" "$WORK/snapshot-ready.json" "$WORK/requests.jsonl" "$WORK/verdict.md"
 grep -qx '# Gateway continuity: PASS' "$WORK/verdict.md"
 grep -q 'Preserved model runtimes: 1' "$WORK/verdict.md"
+grep -q 'At-anchor observations: 1' "$WORK/verdict.md"
+
+write_requests 200 429
+set +e
+"$ROOT/scripts/classify-gateway-continuity.sh" "$model" "$WORK/snapshot-ready.json" "$WORK/requests.jsonl" "$WORK/verdict.md"
+rc=$?
+set -e
+[[ "$rc" == 1 ]]
+grep -qx '# Gateway continuity: FAIL' "$WORK/verdict.md"
+
+cat >"$WORK/requests.jsonl" <<EOF
+{"height":49,"target_anchor":50,"window":"before","coverage":"immediate-before","chain_phase":"Inference","http_code":200}
+{"height":50,"window":"poc","chain_phase":"PoCGenerate","http_code":200}
+{"height":68,"window":"after","chain_phase":"Inference","http_code":200}
+EOF
+set +e
+"$ROOT/scripts/classify-gateway-continuity.sh" "$model" "$WORK/snapshot-ready.json" "$WORK/requests.jsonl" "$WORK/verdict.md"
+rc=$?
+set -e
+[[ "$rc" == 2 ]]
+grep -qx '# Gateway continuity: INCONCLUSIVE' "$WORK/verdict.md"
 
 cat >"$WORK/requests.jsonl" <<EOF
 {"height":50,"window":"poc","chain_phase":"PoCGenerate","http_code":200}

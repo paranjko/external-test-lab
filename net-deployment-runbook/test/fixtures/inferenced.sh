@@ -14,6 +14,9 @@ mkdir -p "$state_dir"
 
 case "$action" in
   add)
+    if [[ " $* " == *' --recover '* ]]; then
+      cat >/dev/null
+    fi
     : >"$marker"
     printf '%s\n' 'one one one one one one one one one one one one one one one one one one one one one one one one'
     ;;

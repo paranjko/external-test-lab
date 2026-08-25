@@ -31,6 +31,7 @@ write_once "$OUT/gateway.client-keys" "sk-gdc-$(openssl rand -hex 24)"
 # is passed to one joining operator only for its final regression.
 write_once "$OUT/gateway.join-client-key" "sk-gdc-join-$(openssl rand -hex 24)"
 write_once "$OUT/gateway.telegram-client-key" "sk-gdc-telegram-$(openssl rand -hex 24)"
+write_once "$OUT/gateway.reserve-signer-token" "$(random)"
 write_once "$OUT/telegram.conversation-api-token" "$(random)"
 write_once "$OUT/bridge.jwt" "$(openssl rand -hex 32)"
 printf 'SECRETS  new=%d kept=%d path=%s\n' "$new_count" "$keep_count" "$OUT"

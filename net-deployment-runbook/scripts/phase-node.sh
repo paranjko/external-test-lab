@@ -128,17 +128,34 @@ set -Eeuo pipefail
 systemctl disable --now "gdc-poc-winddown-watch@$NODE.service" >/dev/null 2>&1 || true
 
 compose_down_dir() {
-  local dir="$1"
+  local dir="$1" output rc
   [[ -d "$dir" ]] || return 0
 
   if [[ ! -f "$dir/compose.yaml" ]]; then
     return 0
   fi
 
+  output="$(mktemp)"
   if [[ -f "$dir/.env" ]]; then
-    docker compose --env-file "$dir/.env" -f "$dir/compose.yaml" down -v --remove-orphans || true
+    if docker compose --env-file "$dir/.env" -f "$dir/compose.yaml" down -v --remove-orphans >"$output" 2>&1; then
+      rc=0
+    else
+      rc=$?
+    fi
   else
-    docker compose -f "$dir/compose.yaml" down -v --remove-orphans || true
+    if docker compose -f "$dir/compose.yaml" down -v --remove-orphans >"$output" 2>&1; then
+      rc=0
+    else
+      rc=$?
+    fi
+  fi
+  # Docker Compose prints this warning when an already-empty managed project
+  # is reset. It is an expected idempotent state, not an operator warning.
+  sed -E '/level=warning msg="Warning: No resource found to remove for project /d' "$output"
+  rm -f "$output"
+  if (( rc != 0 )); then
+    printf 'ERROR failed to remove managed Compose deployment directory=%s exit=%s\n' "$dir" "$rc" >&2
+    return "$rc"
   fi
 }
 
@@ -157,11 +174,9 @@ remove_compose_project() {
 }
 
 compose_down_dir "/srv/dai/monitoring-agent"
+# Public Caddy is OPS-owned and must survive an individual Host reset,
+# including reset of the Host that also provides the public edge.
 if [[ "$CLEAR_EDGE" == true ]]; then
-  compose_down_dir "/srv/dai/edge"
-elif [[ -f /srv/dai/edge/.env ]] && grep -qx 'PUBLIC_EDGE=true' /srv/dai/edge/.env; then
-  printf 'PRESERVE OPS public edge on %s\n' "$NODE"
-else
   compose_down_dir "/srv/dai/edge"
 fi
 compose_down_dir "/srv/dai/deploy/$NODE"

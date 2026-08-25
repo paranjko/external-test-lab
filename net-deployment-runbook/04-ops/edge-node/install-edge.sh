@@ -6,20 +6,23 @@ set -a
 # shellcheck disable=SC1090
 source "$1"
 set +a
-[[ "${PUBLIC_GRAFANA_PROMETHEUS_URL:-}" =~ ^https://[A-Za-z0-9.-]+/ops-prometheus$ ]] || {
-  echo 'PUBLIC_GRAFANA_PROMETHEUS_URL must be the edge-restricted HTTPS Prometheus route' >&2
+expected_remote_prometheus="https://${GATEWAY_PUBLIC_HOST:-}/ops-prometheus"
+[[ "${PUBLIC_GRAFANA_PROMETHEUS_URL:-}" == http://127.0.0.1:9099 || "${PUBLIC_GRAFANA_PROMETHEUS_URL:-}" == "$expected_remote_prometheus" ]] || {
+  echo 'PUBLIC_GRAFANA_PROMETHEUS_URL must use the configured gateway Prometheus route' >&2
   exit 2
 }
 
-# A JOIN operator can have an older public bootstrap in which this Host is not
-# marked as the OPS public edge. Never let that participant-local input
-# downgrade an already installed public edge and take the site, API, Grafana,
-# and their TLS certificates offline. OPS remains the owner of that config.
-if [[ -f "$DEST/.env" ]] && grep -qx 'PUBLIC_EDGE=true' "$DEST/.env" && ! grep -qx 'PUBLIC_EDGE=true' "$1"; then
-  printf 'READY preserved existing OPS public edge in %s\n' "$DEST"
-  exit 0
+mkdir -p "$DEST"
+install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"
+install -m 0644 "$HERE/bootstrap-nginx.conf" "$DEST/bootstrap-nginx.conf"
+# A failed first deployment can leave this exact bind-mount target as a
+# directory. Remove only that known invalid target before installing the file.
+if [[ -d "$DEST/gateway-admission-proxy.py" ]]; then
+  rm -rf "$DEST/gateway-admission-proxy.py"
 fi
-mkdir -p "$DEST"; install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"; install -m 0600 "$1" "$DEST/.env"
+install -m 0644 "$HERE/gateway-admission-proxy.py" "$DEST/gateway-admission-proxy.py"
+install -m 0600 "$1" "$DEST/.env"
+"$HERE/reconcile-join-bootstrap.sh" "$HERE/join-bootstrap" "$DEST/join-bootstrap"
 rm -rf "$DEST/public-grafana"
 cp -a "$HERE/public-grafana" "$DEST/public-grafana"
 sed "s|__PUBLIC_GRAFANA_PROMETHEUS_URL__|$PUBLIC_GRAFANA_PROMETHEUS_URL|g" \

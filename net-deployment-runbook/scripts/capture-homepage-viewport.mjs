@@ -12,6 +12,13 @@ const visibleNodes = Number(visibleNodesText);
 const expectResetState = process.env.GDC_EXPECT_RESET_STATE === 'true';
 const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
 const expectGatewayReady = process.env.GDC_EXPECT_GATEWAY_READY === 'true';
+const reportBrowserFailure = error => {
+  const detail = String(error?.message || error).replace(/\s+/g, ' ').trim();
+  process.stderr.write(`WAIT homepage browser check unavailable reason=${detail}\n`);
+  process.exitCode = 1;
+};
+process.on('uncaughtException', reportBrowserFailure);
+process.on('unhandledRejection', reportBrowserFailure);
 if (!url || !Number.isInteger(width) || !Number.isInteger(height) || !output || !Number.isInteger(visibleNodes) || visibleNodes < 0) {
   throw new Error('usage: capture-homepage-viewport.mjs URL WIDTH HEIGHT OUTPUT.png [MIN_VISIBLE_NODES]');
 }
@@ -67,7 +74,7 @@ try {
   await call('Page.navigate', { url }, sessionId);
   const gatewayStateReadyExpression = expectGatewayReady
     ? '/^READY – /.test(document.querySelector("#quality-health-state")?.textContent || "")'
-    : '["READY – processing requests","READY – no requests in flight","RECOVERING","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || "")';
+    : '["READY – verified inference; processing requests","READY – verified inference; no requests in flight","RECOVERING","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || "")';
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const { result } = await call('Runtime.evaluate', {
       expression: `Boolean(document.querySelector("#updated")?.dateTime && /^Updated .* UTC$/.test(document.querySelector("#updated")?.textContent || "") && ${gatewayStateReadyExpression})`,
@@ -78,13 +85,14 @@ try {
     await delay(1000);
   }
   const { result } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapMarkers:Number(document.querySelector("#validator-map")?.dataset.markerCount||0),mapValidators:Number(document.querySelector("#validator-map")?.dataset.validatorCount||0),mapLeaflet:document.querySelector("#validator-map")?.classList.contains("leaflet-container"),gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,nodes:[...document.querySelectorAll("#nodes .node")].map(n=>({name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,versions:n.querySelector("[data-k=versions]")?.textContent,top:n.getBoundingClientRect().top,bottom:n.getBoundingClientRect().bottom}))})',
+    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapMarkers:Number(document.querySelector("#validator-map")?.dataset.markerCount||0),mapValidators:Number(document.querySelector("#validator-map")?.dataset.validatorCount||0),mapLeaflet:document.querySelector("#validator-map")?.classList.contains("leaflet-container"),gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,join:(e=>({exists:Boolean(e),title:e?.querySelector("h2")?.textContent,code:e?.querySelector("code")?.textContent,link:e?.querySelector("a")?.href}))(document.querySelector("#join-node")),nodes:[...document.querySelectorAll("#nodes .node")].map(n=>({name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,versions:n.querySelector("[data-k=versions]")?.textContent,top:n.getBoundingClientRect().top,bottom:n.getBoundingClientRect().bottom}))})',
     returnByValue: true,
   }, sessionId);
   const state = JSON.parse(result.value);
   if (state.width !== width || state.height !== height) throw new Error(`emulation mismatch ${state.width}x${state.height}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
   if ((!expectResetState && state.nodes.length < 1) || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapLeaflet) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
+  if (!state.join.exists || state.join.title !== 'How to Join node' || state.join.code !== 'git clone https://github.com/paranjko/external-test-lab.git\nalias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"\ngdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' || state.join.link !== 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host') throw new Error(`JOIN guide did not render ${JSON.stringify(state.join)}`);
   const mappedNodes = state.nodes;
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
@@ -125,7 +133,7 @@ try {
     returnByValue: true,
   }, sessionId);
   const gateway = JSON.parse(gatewayResult.value);
-  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["READY – processing requests", "READY – no requests in flight", "RECOVERING", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
+  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["READY – verified inference; processing requests", "READY – verified inference; no requests in flight", "RECOVERING", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
   if (expectResetState && gateway.health !== 'OFFLINE') throw new Error(`gateway must be OFFLINE after reset ${JSON.stringify(gateway)}`);
   if (expectedGatewayState && gateway.health !== expectedGatewayState) throw new Error(`gateway state ${gateway.health} does not match expected ${expectedGatewayState}`);
   if (expectGatewayReady && !/^READY – /.test(gateway.health || '')) {
@@ -138,8 +146,17 @@ try {
   const typography = JSON.parse(typeResult.value);
   const footerOverlap = typography.footerChildren.some((box, index, boxes) => boxes.slice(index + 1).some(other => box.left < other.right && other.left < box.right && box.top < other.bottom && other.top < box.bottom));
   if (typography.heading < 0 || typography.prose <= 0 || typography.footer <= 0 || typography.footerSize < 13 || typography.negativeTracking.length || footerOverlap) throw new Error(`unreadable typography contract ${JSON.stringify(typography)}`);
-  const visible = state.nodes.filter(node => node.top >= 0 && node.bottom <= state.height).length;
-  if (visible < visibleNodes) throw new Error(`only ${visible}/${visibleNodes} required node cards are visible in the initial viewport`);
+  await call('Runtime.evaluate', { expression: 'document.querySelector("#nodes")?.scrollIntoView({block:"start"})' }, sessionId);
+  await delay(300);
+  const { result: nodeViewportResult } = await call('Runtime.evaluate', {
+    expression: 'JSON.stringify({height:innerHeight,nodes:[...document.querySelectorAll("#nodes .node")].map(n=>{const r=n.getBoundingClientRect();return {top:r.top,bottom:r.bottom}})})',
+    returnByValue: true,
+  }, sessionId);
+  const nodeViewport = JSON.parse(nodeViewportResult.value);
+  const visible = nodeViewport.nodes.filter(node => node.top >= 0 && node.bottom <= nodeViewport.height).length;
+  if (visible < visibleNodes) throw new Error(`only ${visible}/${visibleNodes} required node cards are visible after scrolling to participant status`);
+  await call('Runtime.evaluate', { expression: 'document.querySelector("#join-node")?.scrollIntoView({block:"start"})' }, sessionId);
+  await delay(300);
   const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);
   await writeFile(output, Buffer.from(screenshot.data, 'base64'));
 } finally {

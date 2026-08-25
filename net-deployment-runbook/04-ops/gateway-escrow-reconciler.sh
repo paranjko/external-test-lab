@@ -11,6 +11,10 @@ status_file="${GDC_GATEWAY_RECONCILIATION_FILE:-/srv/dai/ops/status/gateway-reco
 gateway_url="${GDC_GATEWAY_RECONCILIATION_URL:-http://127.0.0.1:18080}"
 chain_rest="${GDC_GATEWAY_CHAIN_REST:-http://127.0.0.1:1317}"
 lock_file="${GDC_GATEWAY_RECONCILIATION_LOCK:-$(dirname "$status_file")/gateway-escrow-reconciler.lock}"
+reserve_file="${GDC_GATEWAY_RESERVE_FILE:-$(dirname "$status_file")/gateway-reserve.json}"
+replacement_attempt_file="${GDC_GATEWAY_REPLACEMENT_ATTEMPT_FILE:-$(dirname "$status_file")/gateway-replacement-attempt.json}"
+replacement_max_attempts="${GDC_GATEWAY_REPLACEMENT_MAX_ATTEMPTS:-1}"
+replacement_backoff_seconds="${GDC_GATEWAY_REPLACEMENT_BACKOFF_SECONDS:-60}"
 
 mkdir -p "$(dirname "$status_file")"
 exec 9>"$lock_file"
@@ -36,9 +40,35 @@ write_status() {
   mv -fT -- "$tmp" "$status_file"
 }
 
+write_replacement_attempt() {
+  local attempt="$1" tmp
+  tmp="$(mktemp "${replacement_attempt_file}.tmp.XXXXXX")"
+  jq -c . <<<"$attempt" >"$tmp"
+  chmod 0644 "$tmp"
+  mv -fT "$tmp" "$replacement_attempt_file"
+}
+
+replacement_attempt() {
+  jq -c 'select(type == "object" and (.identity | type) == "string" and (.generation | type) == "string")' \
+    "$replacement_attempt_file" 2>/dev/null || true
+}
+
+replacement_generation() {
+  local epoch
+  epoch="$(curl -fsS --connect-timeout 3 --max-time 15 \
+    "$chain_rest/productscience/inference/inference/current_epoch_group_data" 2>/dev/null \
+    | jq -r '.epoch_group_data.epoch_index // empty' 2>/dev/null || true)"
+  [[ "$epoch" =~ ^[0-9]+$ ]] || return 1
+  printf 'epoch-%s\n' "$epoch"
+}
+
 [[ -s "$gateway_env" && -f "$gateway_env" && ! -L "$gateway_env" ]] || {
   write_status PENDING gateway_credentials_unavailable
   exit 0
+}
+[[ "$replacement_max_attempts" =~ ^[1-9][0-9]*$ && "$replacement_backoff_seconds" =~ ^[1-9][0-9]*$ ]] || {
+  write_status FAILED replacement_attempt_configuration_invalid
+  exit 1
 }
 
 # This runs from a root-owned systemd timer, while install-ops deliberately
@@ -91,6 +121,48 @@ chain_escrow() {
     "$chain_rest/productscience/inference/inference/devshard_escrow/$1"
 }
 
+runtime_requires_poc_probation_recovery() {
+  local id="$1" participants
+  [[ "${poc_active:-false}" == true && "${preserved_participants:-[]}" != '[]' ]] || return 1
+  participants="$(admin_get "/v1/admin/devshards/$id/participants" 2>/dev/null || true)"
+  jq -e --argjson preserved "$preserved_participants" '
+    [.participants[]?
+      | .participant_key as $participant
+      | select($preserved | index($participant))] as $eligible
+    | ($eligible | length) > 0
+      and all($eligible[];
+        .probationary == true
+        and .request_allowed == true
+        and .quarantined != true
+        and .blocked != true)
+  ' <<<"$participants" >/dev/null 2>&1
+}
+
+recover_poc_probation() {
+  local id="$1" body status recovery_attempt=0
+  local payload
+  payload="$(jq -cn --arg model "$DEVSHARD_MODEL" \
+    '{model:$model,messages:[{role:"user",content:"Reply with OK"}],max_tokens:8,stream:true}')"
+  while (( recovery_attempt < 12 )); do
+    ((recovery_attempt += 1))
+    runtime_requires_poc_probation_recovery "$id" || return 0
+    body="$(mktemp)"
+    status="$(curl -sS --connect-timeout 3 --max-time 45 -o "$body" -w '%{http_code}' \
+      -X POST "$gateway_url/devshard/$id/v1/chat/completions" \
+      -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -H 'Content-Type: application/json' \
+      --data "$payload" || true)"
+    if [[ "$status" != 200 ]] || ! grep -Eq '^data: .*"choices"' "$body"; then
+      rm -f -- "$body"
+      write_status RECOVERING waiting_for_trusted_poc_runtime "$id"
+      return 1
+    fi
+    rm -f -- "$body"
+  done
+  runtime_requires_poc_probation_recovery "$id" || return 0
+  write_status RECOVERING waiting_for_trusted_poc_runtime "$id"
+  return 1
+}
+
 bind_and_probe_runtime() {
   local id="$1" body status settings
   # Global admission is an operator control.  Reconciliation must never undo
@@ -98,7 +170,15 @@ bind_and_probe_runtime() {
   settings="$(admin_get /v1/admin/settings 2>/dev/null || true)"
   if jq -e '.disabled.enabled == true' <<<"$settings" >/dev/null 2>&1; then
     write_status PENDING gateway_admission_disabled "$id"
-    return 1
+    return 2
+  fi
+  # A participant which recovered from quarantine remains a no-winner until
+  # successful inference proves it healthy. During PoC it may be the only
+  # chain-eligible Host. A bounded streaming probe can complete through the
+  # gateway's existing suspicious-winner fallback and reduce that probation;
+  # the canonical non-streaming probe below must still pass before READY.
+  if runtime_requires_poc_probation_recovery "$id"; then
+    recover_poc_probation "$id" || return 1
   fi
   # An owner chat binds the versiond session.  Target this runtime explicitly;
   # a pooled request may select an older escrow.  A successful completion is
@@ -149,6 +229,22 @@ if [[ "$poc_active" == true ]]; then
 fi
 
 pending_id="$(jq -r 'select(.state == "RECOVERING" or .state == "PENDING") | .replacement_escrow // empty' "$status_file" 2>/dev/null || true)"
+# The gateway's built-in rotator can replace a runtime while this external
+# controller is still tracking an older recovery candidate. Once a newer
+# active runtime exists, the older pending ID is no longer authoritative and
+# must not prevent the controller from evaluating the current pool.
+if [[ "$pending_id" =~ ^[1-9][0-9]*$ ]]; then
+  newer_active_id="$(jq -r --argjson pending "$pending_id" '
+    [.devshards[]?
+      | select(.active == true)
+      | select((.runtime.phase // .phase // "") == "active")
+      | select((.runtime.requests_blocked // .requests_blocked // false) != true)
+      | (.id | tonumber)
+      | select(. > $pending)]
+    | max // empty
+  ' <<<"$admin_state" 2>/dev/null || true)"
+  [[ -z "$newer_active_id" ]] || pending_id=''
+fi
 valid_active_ids=()
 unknown_ids=()
 while IFS=$'\t' read -r id active phase blocked; do
@@ -210,7 +306,7 @@ while IFS=$'\t' read -r id active phase blocked; do
   fi
 
   # Stop routing first.  Deactivate is drain-safe; DELETE removes the local
-  # runtime/session storage when no request remains.  A 409 DELETE is retried
+# runtime/session storage when no request remains.  A 409 DELETE is retried
   # on the next reconciliation after the drain hook has completed.
   admin_post "/v1/admin/devshards/$id/deactivate" '{}' >/dev/null 2>&1 || true
   admin_delete "/v1/admin/devshards/$id" >/dev/null
@@ -227,8 +323,18 @@ if ((${#valid_active_ids[@]} > 0)); then
   # loop above has already removed chain-invalid entries and, during PoC, has
   # deactivated runtimes which contain no preserved participant.  Probe one of
   # the remaining chain-valid runtimes without changing its healthy peers.
-  selected_id="${valid_active_ids[0]}"
-  bind_and_probe_runtime "$selected_id" || exit 0
+  mapfile -t valid_active_ids < <(printf '%s\n' "${valid_active_ids[@]}" | sort -nr)
+  for selected_id in "${valid_active_ids[@]}"; do
+    if bind_and_probe_runtime "$selected_id"; then
+      exit 0
+    else
+      probe_rc=$?
+      # A manual global admission shutdown applies to every runtime. Preserve
+      # that authoritative state instead of trying older pool members.
+      ((probe_rc == 2)) && exit 0
+    fi
+  done
+  write_status RECOVERING waiting_for_versiond_session "${valid_active_ids[0]}"
   exit 0
 fi
 
@@ -242,17 +348,74 @@ fi
 # targeted owner chat below binds the versiond session immediately afterwards.
 # Do not use the global disabled setting here: it also blocks that owner chat.
 # The public status remains RECOVERING until the bound-session probe passes.
+if ! jq -e '.state == "READY" and (.current_balance | tonumber) >= (.low_watermark | tonumber)' "$reserve_file" >/dev/null 2>&1; then
+  write_status RECOVERING replacement_reserve_not_ready
+  exit 1
+fi
+generation="$(replacement_generation)" || {
+  write_status RECOVERING replacement_generation_unavailable
+  exit 1
+}
+existing_attempt="$(replacement_attempt)"
+if [[ -n "$existing_attempt" ]] && [[ "$(jq -r .generation <<<"$existing_attempt")" == "$generation" ]]; then
+  existing_state="$(jq -r .state <<<"$existing_attempt")"
+  existing_count="$(jq -r '.attempts // 0' <<<"$existing_attempt")"
+  existing_next="$(jq -r '.next_attempt_at // empty' <<<"$existing_attempt")"
+  if [[ "$existing_state" == creating || "$existing_state" == submitted ]]; then
+    write_status RECOVERING replacement_attempt_pending
+    exit 1
+  fi
+  if [[ "$existing_state" == failed ]]; then
+    if (( existing_count >= replacement_max_attempts )); then
+      write_status FAILED replacement_attempt_limit_reached
+      exit 1
+    fi
+    if [[ -n "$existing_next" ]] && (( $(date -u +%s) < $(date -u -d "$existing_next" +%s 2>/dev/null || printf 0) )); then
+      write_status RECOVERING replacement_backoff
+      exit 1
+    fi
+  fi
+fi
 write_status RECOVERING replacement_escrow_creating
+
+attempt_count=1
+if [[ -n "$existing_attempt" ]] && [[ "$(jq -r .generation <<<"$existing_attempt")" == "$generation" ]]; then
+  attempt_count=$(( $(jq -r '.attempts // 0' <<<"$existing_attempt") + 1 ))
+fi
+attempt_identity="$(printf '%s' "$(date -u +%FT%N):$$:$RANDOM:$generation:$attempt_count" | sha256sum | cut -d' ' -f1)"
+attempt="$(jq -cn --arg identity "$attempt_identity" --arg generation "$generation" --argjson attempts "$attempt_count" \
+  '{identity:$identity,generation:$generation,attempts:$attempts,state:"creating",created_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}')"
+write_replacement_attempt "$attempt"
 
 create_payload="$(jq -cn --arg key "$DEVSHARD_PRIVATE_KEY" --arg model "$DEVSHARD_MODEL" --arg route "${DEVSHARD_ROUTE_PREFIX:-}" --arg chain_id "${DEVSHARD_CHAIN_ID:-}" \
   --argjson amount "${DEVSHARD_ROTATION_ESCROW_AMOUNT:-0}" \
   '{private_key:$key,model_id:$model,route_prefix:$route,chain_id:$chain_id,amount:$amount,register:true}')"
-create_response="$(admin_post /v1/admin/escrows "$create_payload" 2>/dev/null || true)"
+create_body="$(mktemp)"
+set +e
+create_http="$(curl -sS --connect-timeout 3 --max-time 30 -o "$create_body" -w '%{http_code}' -X POST \
+  -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -H 'Content-Type: application/json' \
+  --data "$create_payload" "$gateway_url/v1/admin/escrows")"
+create_rc=$?
+set -e
+create_response="$(<"$create_body")"
+rm -f -- "$create_body"
 replacement_id="$(jq -r '.escrow_id // empty | tostring' <<<"$create_response" 2>/dev/null || true)"
 if [[ ! "$replacement_id" =~ ^[1-9][0-9]*$ ]]; then
+  if (( create_rc != 0 )); then
+    creation_class=curl_failure
+  elif [[ "$create_http" =~ ^[45][0-9][0-9]$ ]]; then
+    creation_class="http_${create_http}"
+  else
+    creation_class=invalid_response
+  fi
+  retry_at="$(date -u -d "+${replacement_backoff_seconds} seconds" +%FT%TZ)"
+  attempt="$(jq --arg failure_class "$creation_class" --arg retry_at "$retry_at" '(.state="failed") + {failure_class:$failure_class,next_attempt_at:$retry_at,failed_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}' <<<"$attempt")"
+  write_replacement_attempt "$attempt"
   write_status FAILED replacement_escrow_creation_failed
-  exit 0
+  exit 1
 fi
+attempt="$(jq --arg replacement_escrow "$replacement_id" '(.state="submitted") + {replacement_escrow:$replacement_escrow,submitted_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}' <<<"$attempt")"
+write_replacement_attempt "$attempt"
 
 replacement_chain="$(chain_escrow "$replacement_id" 2>/dev/null || true)"
 if ! jq -e --arg id "$replacement_id" '.found == true and (.escrow.id | tostring) == $id and ((.escrow.settled // .settled // false) != true)' <<<"$replacement_chain" >/dev/null 2>&1; then

@@ -16,7 +16,7 @@ systemd-run --user --unit="$UNIT" --on-active=5s --working-directory="$ROOT" \
   --property=TimeoutStartSec=6h --property=Restart=on-failure --property=RestartSec=30s \
   /usr/bin/env "GDC_HOME=$GDC_HOME" "GDC_UPGRADE_PROPOSAL_ID=$PROPOSAL_ID" GDC_UPGRADE_WAIT=true \
   "GDC_UPGRADE_WAIT_SECONDS=${GDC_UPGRADE_WAIT_SECONDS:-21600}" \
-  ./gdc.sh --release v2026.08.06 upgrade
+  "$ROOT/gdc.sh" --release v2026.08.06 upgrade
 
 for _ in $(seq 1 20); do
   if systemctl --user is-active --quiet "$UNIT.timer"; then

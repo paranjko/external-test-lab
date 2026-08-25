@@ -69,11 +69,11 @@ def request_ip(handler):
         return "invalid"
 
 
-def submit(address):
+def submit(address, amount=AMOUNT):
     env = os.environ.copy()
     env["HOME"] = "/home/faucet"
     result = subprocess.run(
-        ["inferenced", "tx", "bank", "send", KEY_NAME, address, f"{AMOUNT}ngonka", "--from", KEY_NAME,
+        ["inferenced", "tx", "bank", "send", KEY_NAME, address, f"{amount}ngonka", "--from", KEY_NAME,
          "--keyring-backend", "file", "--chain-id", CHAIN_ID, "--node", RPC_URL, "--gas", "auto",
          "--gas-adjustment", "1.5", "--gas-prices", "0ngonka", "--broadcast-mode", "sync", "--output", "json", "--yes"],
         input=f"{PASSWORD}\n", text=True, capture_output=True, env=env, timeout=45, check=False,
@@ -127,6 +127,9 @@ class FaucetHandler(BaseHTTPRequestHandler):
             self.reply(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/v1/gateway-reserve":
+            self.gateway_reserve()
+            return
         if self.path != "/v1/claim":
             self.reply(404, {"error": "not found"})
             return
@@ -164,6 +167,56 @@ class FaucetHandler(BaseHTTPRequestHandler):
             db.execute("UPDATE claims SET txhash = ?, state = 'submitted' WHERE address = ?", (txhash, address))
             db.commit()
         self.reply(202, {"address": address, "amount_ngonka": AMOUNT, "txhash": txhash, "state": "submitted"})
+
+    def gateway_reserve(self):
+        """Private loopback-only target reconciliation; no caller address/amount."""
+        recipient = os.environ.get("FAUCET_GATEWAY_RESERVE_RECIPIENT", "")
+        token = os.environ.get("FAUCET_GATEWAY_RESERVE_TOKEN", "")
+        maximum = os.environ.get("FAUCET_GATEWAY_RESERVE_MAX_NGONKA", "")
+        rest = os.environ.get("FAUCET_CHAIN_REST_URL", "")
+        supplied = self.headers.get("Authorization", "")
+        key = self.headers.get("Idempotency-Key", "")
+        if LISTEN_HOST not in {"127.0.0.1", "::1"} or not ADDRESS.fullmatch(recipient) or not token or supplied != f"Bearer {token}" or not re.fullmatch(r"[0-9a-f]{64}", key):
+            self.reply(403, {"error": "gateway reserve signing is unavailable"})
+            return
+        try:
+            maximum_int = int(maximum)
+            target = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0")))).get("target_balance")
+            target_int = int(target)
+            if maximum_int <= 0 or target_int <= 0 or not rest.startswith("http://127.0.0.1:"):
+                raise ValueError
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self.reply(400, {"error": "invalid gateway reserve target"})
+            return
+        with LOCK, database() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS gateway_refills (idempotency_key TEXT PRIMARY KEY, txhash TEXT NOT NULL, amount TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            existing = db.execute("SELECT txhash, amount FROM gateway_refills WHERE idempotency_key = ?", (key,)).fetchone()
+            if existing:
+                self.reply(200, {"txhash": existing[0], "amount_ngonka": existing[1], "state": "submitted"})
+                return
+            import urllib.request
+            try:
+                with urllib.request.urlopen(f"{rest}/cosmos/bank/v1beta1/spendable_balances/{recipient}", timeout=10) as response:
+                    balances = json.load(response).get("balances", [])
+                current = int(next((item["amount"] for item in balances if item.get("denom") == "ngonka"), "0"))
+            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                self.reply(503, {"error": "gateway reserve balance unavailable"})
+                return
+            amount = max(target_int - current, 0)
+            if amount == 0:
+                self.reply(200, {"state": "sufficient"})
+                return
+            if amount > maximum_int:
+                self.reply(409, {"error": "gateway reserve target exceeds limit"})
+                return
+            try:
+                txhash = submit(recipient, str(amount))
+            except (OSError, subprocess.TimeoutExpired, RuntimeError):
+                self.reply(503, {"error": "gateway reserve transaction was not accepted"})
+                return
+            db.execute("INSERT INTO gateway_refills VALUES (?, ?, ?, ?)", (key, txhash, str(amount), int(time.time())))
+            db.commit()
+        self.reply(202, {"txhash": txhash, "amount_ngonka": str(amount), "state": "submitted"})
 
 
 if __name__ == "__main__":

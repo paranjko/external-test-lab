@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import URLError
 
 
 TEMP = tempfile.TemporaryDirectory()
@@ -120,6 +121,34 @@ class TelegramConsumerTest(unittest.TestCase):
         self.assertTrue(health["inference_ready"])
         self.assertIsInstance(health["last_success_timestamp"], int)
 
+    def test_telegram_poll_timeout_exceeds_short_request_timeout(self):
+        observed = []
+
+        def fake_urlopen(_request, timeout):
+            observed.append(timeout)
+            return FakeResponse({"ok": True, "result": []})
+
+        with patch.object(BOT, "urlopen", side_effect=fake_urlopen):
+            BOT.telegram_request("sendChatAction", {"chat_id": 1, "action": "typing"})
+            BOT.telegram_request("getUpdates", {"timeout": 30})
+        self.assertEqual(observed, [BOT.TELEGRAM_REQUEST_TIMEOUT_SECONDS, BOT.TELEGRAM_POLL_TIMEOUT_SECONDS])
+        self.assertGreater(BOT.TELEGRAM_POLL_TIMEOUT_SECONDS, 30)
+
+    def test_probe_returns_the_direct_gateway_completion_shape(self):
+        with BOT.connection() as db, patch.object(
+            BOT, "gateway_completion", return_value={
+                "status": "completed",
+                "conversation": {"id": "conv_probe"},
+                "output_text": "GDC_OK",
+                "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            }
+        ):
+            result = BOT.run_probe()
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(result["conversation_id_present"])
+        self.assertTrue(result["output_present"])
+        self.assertTrue(result["usage_present"])
+
     def test_handle_sends_user_message_through_conversation_api(self):
         update = {
             "message": {
@@ -137,15 +166,55 @@ class TelegramConsumerTest(unittest.TestCase):
             return {"output_text": "A network."}
 
         replies = []
+        typing = []
         with BOT.connection() as db, patch.object(BOT, "internal_api_request", side_effect=fake_internal), patch.object(
             BOT, "send_message", side_effect=lambda _chat_id, text: replies.append(text)
-        ):
+        ), patch.object(BOT, "send_typing", side_effect=lambda chat_id: typing.append(chat_id)):
             BOT.handle(db, update)
             self.assertEqual(db.execute("SELECT count(*) FROM users").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT outcome FROM interactions").fetchone()[0], "success")
         self.assertEqual(requests[0], ("/v1/conversations", {"telegram_user_id": 3003}))
         self.assertEqual(requests[1], ("/v1/responses", {"conversation": "conv_test", "input": "What is Gonka?"}))
         self.assertEqual(replies, ["A network."])
+        self.assertEqual(typing, [3003])
+
+    def test_handle_replies_promptly_when_inference_fails(self):
+        update = {
+            "message": {
+                "chat": {"id": 4004, "type": "private"},
+                "from": {"id": 4004},
+                "text": "hello",
+            }
+        }
+        replies = []
+        typing = []
+        with BOT.connection() as db, patch.object(
+            BOT, "internal_api_request", side_effect=URLError("unavailable")
+        ), patch.object(BOT, "send_message", side_effect=lambda _chat_id, text: replies.append(text)), patch.object(
+            BOT, "send_typing", side_effect=lambda chat_id: typing.append(chat_id)
+        ):
+            BOT.handle(db, update)
+            outcome = db.execute("SELECT outcome FROM interactions").fetchone()["outcome"]
+        self.assertEqual(typing, [4004])
+        self.assertEqual(replies, ["Inference is temporarily unavailable, please try again later."])
+        self.assertEqual(outcome, "error")
+
+    def test_handle_replies_to_non_text_private_messages(self):
+        update = {
+            "message": {
+                "chat": {"id": 5005, "type": "private"},
+                "from": {"id": 5005},
+                "sticker": {"file_id": "ignored"},
+            }
+        }
+        replies = []
+        with BOT.connection() as db, patch.object(
+            BOT, "send_message", side_effect=lambda _chat_id, text: replies.append(text)
+        ):
+            BOT.handle(db, update)
+            outcome = db.execute("SELECT outcome FROM interactions").fetchone()["outcome"]
+        self.assertEqual(replies, ["Please send a text message to run inference."])
+        self.assertEqual(outcome, "rejected")
 
 
 if __name__ == "__main__":

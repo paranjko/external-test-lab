@@ -14,13 +14,16 @@ runtime_b="$(runtime_id_for_participant "$address_b")"
 [[ "$runtime_b" == qwen3-0.6b:"$address_b" ]]
 [[ "$runtime_a" != "$runtime_b" ]]
 
-GDC_DATA_ROOT="$(mktemp -d)"
-trap 'rm -rf "$GDC_DATA_ROOT"' EXIT
+GDC_HOME="$(mktemp -d)"
+init_gdc_paths
+init_gdc_data_root
+trap 'rm -rf "$GDC_HOME"' EXIT
 record_runtime_identity validator-a "$address_a" "$runtime_a"
 record_runtime_identity validator-a "$address_a" "$runtime_a"
-if GDC_DATA_ROOT="$GDC_DATA_ROOT" ROOT="$ROOT" bash -c '
+if GDC_HOME="$GDC_HOME" ROOT="$ROOT" bash -c '
   set -Eeuo pipefail
   source "$ROOT/scripts/lib.sh"
+  init_gdc_data_root
   record_runtime_identity validator-b "gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "qwen3-0.6b:gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ' >/dev/null 2>&1; then
   echo 'runtime identity collision was accepted' >&2

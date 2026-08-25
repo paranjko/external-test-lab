@@ -8,9 +8,11 @@ const siteBuild = fs.mkdtempSync(path.join(os.tmpdir(), 'gdc-site-test-'));
 childProcess.execFileSync(
   path.join(__dirname, 'build-site-js.sh'),
   ['--output', siteBuild],
-  { stdio: 'inherit' },
+  { cwd: os.tmpdir(), stdio: 'inherit' },
 );
 const state = require(path.join(siteBuild, 'gateway-state.js'));
+const generatedGatewayState = fs.readFileSync(path.join(siteBuild, 'gateway-state.js'), 'utf8');
+assert.doesNotMatch(generatedGatewayState, /run make site-js\n\n\n/);
 const now = Date.parse('2026-08-06T10:30:00Z');
 const readyProbe = { state: 'READY', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
 const failedProbe = { state: 'UNAVAILABLE', checked_at: '2026-08-06T10:29:50Z', http_status: 429 };
@@ -80,8 +82,8 @@ const legacy = { escrow_id: '7', phase: 'active', requests_blocked: false };
 assert.equal(state.classify(legacy, 1, readyProbe, now).state, 'AVAILABLE');
 
 const siteApp = fs.readFileSync(path.join(siteBuild, 'app.js'), 'utf8');
-assert.match(siteApp, /READY – processing requests/);
-assert.match(siteApp, /READY – no requests in flight/);
+assert.match(siteApp, /READY – verified inference; processing requests/);
+assert.match(siteApp, /READY – verified inference; no requests in flight/);
 assert.match(siteApp, /quality-recovery/);
 assert.match(siteApp, /document\.createElement\(["']time["']\)/);
 assert.match(siteApp, /started.*UTC/);
@@ -90,9 +92,10 @@ assert.match(siteApp, /ipwho\.is/);
 assert.match(siteApp, /statusBase:\s*`https:\/\/\$\{host\}`/);
 assert.match(siteApp, /json\("\/status\/gpus"\)/);
 assert.match(siteApp, /sample\?\.metric\?\.gpu_name/);
-assert.match(siteApp, /node\.gpuProfile && node\.gpuProfile !== "auto"/);
 assert.match(siteApp, /node\.gpuHost && node\.gpuHost !== node\.name \? "net" : "local"/);
-assert.match(siteApp, /\$\{node\.gpuProfile\} – \$\{connection\}/);
+assert.match(siteApp, /const gpuHost = node\.gpuHost \|\| node\.name/);
+assert.match(siteApp, /const inventoryKey = \[gpuHost, node\.publicHost, node\.name\]/);
+assert.match(siteApp, /\$\{inventoryLabel\} – \$\{connection\}/);
 assert.match(siteApp, /replace\(\/\^NVIDIA\\s\+\/i, ""\)/);
 assert.match(
   siteApp,
@@ -100,8 +103,11 @@ assert.match(
 );
 assert.match(siteApp, /ACTIVE – waiting for validator set/);
 assert.match(siteApp, /effective validator – endpoint reachable/);
+assert.match(siteApp, /effective validator – synchronizing/);
+assert.match(siteApp, /blocks behind/);
 assert.match(siteApp, /validatorEffective/);
 assert.match(siteApp, /endpointReachable/);
+assert.match(siteApp, /catchingUp/);
 assert.doesNotMatch(siteApp, /normalized === "1" \|\| normalized === ""/);
 assert.doesNotMatch(siteApp, /quality-health-state'\)\.textContent=state\.toUpperCase/);
 

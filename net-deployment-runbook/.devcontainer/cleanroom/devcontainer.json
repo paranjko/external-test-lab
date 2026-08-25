@@ -1,0 +1,26 @@
+{
+  "name": "cleanroom",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "operator",
+  "updateRemoteUserUID": false,
+  "runArgs": [
+    "--hostname=cleanroom",
+    "--add-host=host.docker.internal:host-gateway"
+  ],
+  "mounts": [
+    "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind",
+    "source=${localEnv:HOME}/.ssh/config,target=/home/operator/.ssh/config,type=bind,readonly",
+    "source=${localEnv:HOME}/.ssh/known_hosts,target=/home/operator/.ssh/known_hosts,type=bind,readonly",
+    "source=${localWorkspaceFolder}/.devcontainer/data,target=/home/operator/.gdc-data,type=bind"
+  ],
+  "remoteEnv": {
+    "SSH_AUTH_SOCK": "/ssh-agent",
+    "GDC_HOME": "/home/operator/.gdc-data"
+  },
+  "workspaceMount": "type=tmpfs,target=/tmp/empty-workspace",
+  "workspaceFolder": "/home/operator",
+  "postCreateCommand": "test \"$(id -un)\" = operator && ! command -v docker"
+}

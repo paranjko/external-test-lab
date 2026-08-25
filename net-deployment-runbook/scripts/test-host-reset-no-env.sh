@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+grep -Fq 'if [[ "$CLEAR_EDGE" == true ]]; then' "$ROOT/scripts/phase-node.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 fake_bin="$tmp/bin"
@@ -15,9 +16,23 @@ printf '%s\n' \
   'if [[ "${1:-}" == -G && -n "${GDC_TEST_SSH_HOST:-}" ]]; then printf "hostname %s\\n" "$GDC_TEST_SSH_HOST"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_EXTERNAL_ML_ENDPOINT:-}" && "$*" == *node-config.json* ]]; then printf "%s\\n" "$GDC_TEST_EXTERNAL_ML_ENDPOINT"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_LINK_RECORD:-}" && "$*" == *gdc-ml-link.json* ]]; then printf "%s\\n" "$GDC_TEST_LINK_RECORD"; exit 0; fi' \
-  'while IFS= read -r _; do :; done' \
+  'if [[ "${GDC_TEST_EXEC_REMOTE:-false}" == true && "$*" == *"bash -s" ]]; then command="${!#}"; PATH="${GDC_TEST_REMOTE_BIN}:$PATH" bash -c "$command"; exit $?; fi' \
   'exit 0' >"$fake_bin/ssh"
 chmod +x "$fake_bin/ssh"
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'case "${1:-}" in' \
+  '  compose) printf '\''time="2026-01-01T00:00:00Z" level=warning msg="Warning: No resource found to remove for project \\"gdc-edge\\"."\n'\'' >&2 ;;' \
+  '  ps|volume|network) ;;' \
+  '  *) echo "unexpected test docker invocation: $*" >&2; exit 1 ;;' \
+  'esac' >"$fake_bin/docker"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fake_bin/systemctl"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'case " $* " in *" /srv/dai/"*) exit 0 ;; esac' \
+  'exec /usr/bin/rm "$@"' >"$fake_bin/rm"
+chmod +x "$fake_bin/docker" "$fake_bin/systemctl" "$fake_bin/rm"
 
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$home" PATH="$fake_bin:$PATH" \
@@ -25,11 +40,42 @@ env -u GDC_ENV -u GDC_NODE_ALIASES \
 
 grep -Fq 'PASS gdc-node0 reset' "$tmp/output"
 grep -Fq 'END phase=node-reset-gdc-node0 status=0' "$tmp/output"
-[[ -f "$home/.gdc.lock" ]]
+[[ -f "$home/gdc-node0/state/.lifecycle.lock" ]]
 [[ -f "$home/gdc-node0/state/active-run-id" ]]
 [[ ! -e "$home/.env" ]]
 [[ ! -e "$home/gdc-node0/state/active-role-config" ]]
 [[ ! -e "$home/gdc-node0/state/role-inputs" ]]
+
+# A second reset against an already-empty Compose project is normal. Docker
+# emits a warning for that state, but the operator command must remain quiet
+# and successful while retaining real cleanup failures.
+idempotent_home="$tmp/gdc-idempotent-reset"
+env -u GDC_ENV -u GDC_NODE_ALIASES \
+  GDC_HOME="$idempotent_home" GDC_TEST_EXEC_REMOTE=true GDC_TEST_REMOTE_BIN="$fake_bin" PATH="$fake_bin:$PATH" \
+  "$ROOT/gdc.sh" host reset gdc-node1 >"$tmp/idempotent-output"
+grep -Fq 'PASS gdc-node1 reset' "$tmp/idempotent-output"
+! grep -Fq 'No resource found to remove for project' "$tmp/idempotent-output"
+
+# Reset has no release-profile input. A previous run can be bound to another
+# release profile, but its evidence must remain immutable and cannot block a
+# new reset run.
+profile_conflict_home="$tmp/gdc-profile-conflict"
+profile_conflict_state="$profile_conflict_home/gdc-node1/state"
+mkdir -p "$profile_conflict_home/gdc-node1/runs/old-profile" "$profile_conflict_state"
+printf 'old-profile\n' >"$profile_conflict_state/active-run-id"
+printf '%s\n' \
+  'schema_version=2' \
+  'run_id=old-profile' \
+  'operator_data_home=placeholder' \
+  'release_profile=v2026.08.06' \
+  'release_profile_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  >"$profile_conflict_home/gdc-node1/runs/old-profile/manifest.env"
+env -u GDC_ENV -u GDC_NODE_ALIASES \
+  GDC_HOME="$profile_conflict_home" PATH="$fake_bin:$PATH" \
+  "$ROOT/gdc.sh" host reset gdc-node1 >"$tmp/profile-conflict-output"
+grep -Fq 'PASS gdc-node1 reset' "$tmp/profile-conflict-output"
+[[ "$(<"$profile_conflict_state/active-run-id")" != old-profile ]]
+[[ -f "$profile_conflict_home/gdc-node1/runs/old-profile/manifest.env" ]]
 
 # A separately attached GPU is recorded in operator state. Host reset must
 # clear both machines without requiring a role input or a second command.
@@ -80,7 +126,7 @@ env -u GDC_ENV -u GDC_NODE_ALIASES GDC_HOME="$cleanroom_home" \
   "$cleanroom_root/gdc.sh" host reset gdc-node2 >"$tmp/cleanroom-output"
 grep -Fq 'PASS gdc-node2 reset' "$tmp/cleanroom-output"
 grep -Fq 'END phase=node-reset-gdc-node2 status=0' "$tmp/cleanroom-output"
-[[ -f "$cleanroom_home/.gdc.lock" ]]
+[[ -f "$cleanroom_home/gdc-node2/state/.lifecycle.lock" ]]
 [[ -f "$cleanroom_home/gdc-node2/state/active-run-id" ]]
 [[ ! -e "$cleanroom_root/.env" ]]
 [[ ! -e "$cleanroom_root/state" ]]
@@ -109,19 +155,26 @@ grep -Fq 'BEGIN phase=node-reset-gdc-node3' "$tmp/multi-output"
 grep -Fq 'END phase=node-reset-gdc-node3 status=0' "$tmp/multi-output"
 grep -Fq 'BEGIN phase=node-reset-gdc-node4' "$tmp/multi-output"
 grep -Fq 'END phase=node-reset-gdc-node4 status=0' "$tmp/multi-output"
+for alias in gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4; do
+  [[ -f "$multi_home/$alias/state/.lifecycle.lock" ]]
+done
+[[ ! -e "$multi_home/gdc-node0/gdc-node1" ]]
 
 cleanroom_recipe="$(sed -n '/^cleanroom:/,/^[^[:space:]].*:/p' "$ROOT/Makefile")"
 cleanroom_reset_recipe="$(sed -n '/^cleanroom-reset:/,/^[^[:space:]].*:/p' "$ROOT/Makefile")"
 grep -Fq 'cleanroom: cleanroom-reset' <<<"$cleanroom_recipe"
-grep -Fq 'cleanroom-fresh: cleanroom' "$ROOT/Makefile"
-grep -Fq 'up --workspace-folder . --remove-existing-container' <<<"$cleanroom_reset_recipe"
+grep -Fq 'CLEANROOM_DEVCONTAINER_CONFIG := .devcontainer/cleanroom/devcontainer.json' "$ROOT/Makefile"
+grep -Fq 'up --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . --remove-existing-container' <<<"$cleanroom_reset_recipe"
 ! grep -Fq 'build --workspace-folder .' "$ROOT/Makefile"
-grep -Fq '"GDC_HOME": "/workspaces/.data"' "$ROOT/.devcontainer/devcontainer.json"
-grep -Fq '"workspaceFolder": "/workspace"' "$ROOT/.devcontainer/devcontainer.json"
-grep -Fq 'readonly workspace_root=/workspace' "$ROOT/.devcontainer/initialize-cleanroom.sh"
-grep -Fq 'readonly cleanroom_gdc_home=/workspaces/.data' "$ROOT/.devcontainer/initialize-cleanroom.sh"
-grep -Fq 'expected_gdc_home=/workspaces/.data' "$ROOT/.devcontainer/verify-cleanroom.sh"
-grep -Fq 'exec --workspace-folder . $(cmd)' "$ROOT/Makefile"
-grep -Fq 'exec /workspace/gdc.sh "$@"' "$ROOT/.devcontainer/gdc"
+cleanroom_config="$ROOT/.devcontainer/cleanroom/devcontainer.json"
+grep -Fq '"GDC_HOME": "/home/operator/.gdc-data"' "$cleanroom_config"
+grep -Fq '"workspaceFolder": "/home/operator"' "$cleanroom_config"
+grep -Fq '"workspaceMount": "type=tmpfs,target=/tmp/empty-workspace"' "$cleanroom_config"
+grep -Fq 'target=/home/operator/.gdc-data,type=bind' "$cleanroom_config"
+grep -Fq 'exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)' "$ROOT/Makefile"
+grep -Fq 'lock_file="$STATE/.lifecycle.lock"' "$ROOT/gdc.sh"
+! grep -Fq '.gdc.lock' "$ROOT/gdc.sh"
+grep -Fq 'No resource found to remove for project' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'ERROR failed to remove managed Compose deployment directory=%s exit=%s' "$ROOT/scripts/phase-node.sh"
 
 printf 'PASS Host reset requires only an SSH alias and no role input\n'

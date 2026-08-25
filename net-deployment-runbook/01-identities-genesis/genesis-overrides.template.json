@@ -49,8 +49,8 @@
       },
       "params": {
         "epoch_params": {
-          "confirmation_poc_safety_window": "0",
-          "epoch_length": "50",
+          "confirmation_poc_safety_window": "10",
+          "epoch_length": "70",
           "epoch_multiplier": "1",
           "epoch_shift": "0",
           "poc_stage_duration": "4",
@@ -86,7 +86,7 @@
           "model_id": "Qwen/Qwen3-0.6B",
           "seq_len": "1024",
           "poc_v2_enabled": true,
-          "confirmation_poc_v2_enabled": false,
+          "confirmation_poc_v2_enabled": true,
           "stat_test": {
             "dist_threshold": {
               "value": "2",
@@ -132,7 +132,7 @@
           "validation_vote_threshold_bps": 5000
         },
         "confirmation_poc_params": {
-          "expected_confirmations_per_epoch": "0",
+          "expected_confirmations_per_epoch": "1",
           "alpha_threshold": {
             "value": "0",
             "exponent": 0
@@ -141,7 +141,7 @@
             "value": "0",
             "exponent": 0
           },
-          "upgrade_protection_window": "0"
+          "upgrade_protection_window": "20"
         },
         "bitcoin_reward_params": {
           "use_bitcoin_rewards": false

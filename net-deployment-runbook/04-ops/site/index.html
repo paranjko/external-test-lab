@@ -19,6 +19,13 @@
     <header id="top" class="hero">
       <div class="hero-copy"><span class="eyebrow">EXTERNAL TEST LAB</span><h1>Test network changes<br><em>before they ship</em></h1><p>A test environment for protocol upgrades, DevShards, inference flows, integrations and operational changes – before governance decisions or production rollout</p><div class="hero-actions"><a id="grafana-network" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-network/gonka-devnet-network?orgId=1&amp;from=now-24h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Network dashboard ↗</a><a id="grafana-inference" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-inference/gonka-devnet-inference?orgId=1&amp;from=now-7d&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Inference dashboard ↗</a></div></div>
     </header>
+    <section id="join-node" class="join-node" aria-labelledby="join-node-title">
+      <div class="section-title"><div><span class="eyebrow">OPERATE A HOST</span><h2 id="join-node-title">How to Join node</h2></div></div>
+      <pre><code>git clone https://github.com/paranjko/external-test-lab.git
+alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
+gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
+      <p>For more details, read <a href="https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host" target="_blank" rel="noopener">Community DevNet runbook/JOIN: add a Host</a></p>
+    </section>
     <section class="summary" aria-label="Network summary">
       <article><span>Chain ID</span><strong id="chain-id">–</strong><small>Shared ledger</small></article>
       <article><span>Common model</span><strong id="model-id">–</strong><small>Active group</small></article>

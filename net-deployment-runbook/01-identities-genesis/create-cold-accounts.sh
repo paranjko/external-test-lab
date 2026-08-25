@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 PASSWORD_FILE="${1:-$STATE/secrets/operator.keyring}"
 [[ -s "$PASSWORD_FILE" ]] || { echo "Missing $PASSWORD_FILE; run scripts/make-secrets.sh" >&2; exit 1; }
+"$ROOT/scripts/ensure-inferenced-cli.sh"
 PASSWORD="$(<"$PASSWORD_FILE")"
 shift || true
 BACKUP_DIR="$GDC_HOME/mnemonics"
@@ -36,7 +37,7 @@ fi
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 umask 077
 mkdir -p "$BACKUP_DIR"
-new_count=0 keep_count=0
+new_count=0 recovered_count=0 keep_count=0
 declare -A seen=()
 for name in "${TARGETS[@]}"; do
   if [[ -n "${seen[$name]:-}" ]]; then
@@ -47,6 +48,25 @@ for name in "${TARGETS[@]}"; do
   if printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys show "$name" --keyring-backend file -a >/dev/null 2>&1; then
     [[ -s "$backup" ]] || { echo "FAILED  $name exists without $backup; rotate the account" >&2; exit 1; }
     keep_count=$((keep_count + 1))
+  elif [[ -s "$backup" ]]; then
+    expected_address=''
+    if [[ -s "$GDC_HOME/accounts/$name.json" ]]; then
+      expected_address="$(jq -er .address "$GDC_HOME/accounts/$name.json")"
+    fi
+    output="$TMP/$name.recover.out"
+    if ! printf '%s\n%s\n%s\n' "$(<"$backup")" "$PASSWORD" "$PASSWORD" \
+      | "$ROOT/scripts/inferenced.sh" keys add "$name" --recover --keyring-backend file >"$output" 2>&1; then
+      install -m 0600 "$output" "$BACKUP_DIR/$name.recover.error.log"
+      echo "FAILED  $name recovery; details: $BACKUP_DIR/$name.recover.error.log" >&2
+      exit 1
+    fi
+    "$ROOT/01-identities-genesis/export-account-public.sh" "$name" "$PASSWORD_FILE" >/dev/null
+    recovered_address="$(jq -er .address "$GDC_HOME/accounts/$name.json")"
+    [[ -z "$expected_address" || "$expected_address" == "$recovered_address" ]] || {
+      echo "FAILED  $name recovered key disagrees with the existing public account" >&2
+      exit 1
+    }
+    recovered_count=$((recovered_count + 1))
   else
     output="$TMP/$name.out"
     if ! printf '%s\n%s\n' "$PASSWORD" "$PASSWORD" \
@@ -91,3 +111,4 @@ for name in "${TARGETS[@]}"; do
 done
 printf 'ACCOUNTS  new=%d kept=%d cold-address-references=%d\n' \
   "$new_count" "$keep_count" "${#seen[@]}"
+[[ "$recovered_count" -eq 0 ]] || printf 'ACCOUNTS  recovered=%d\n' "$recovered_count"

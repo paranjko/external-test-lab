@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -30,6 +31,11 @@ MAX_HISTORY_CHARS = int(os.environ.get("CONVERSATION_MAX_CHARS", "6000"))
 MAX_USER_MESSAGE_CHARS = int(os.environ.get("USER_MESSAGE_MAX_CHARS", "2000"))
 MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "512"))
 HEALTH_MAX_AGE_SECONDS = int(os.environ.get("HEALTH_MAX_AGE_SECONDS", "900"))
+GATEWAY_TIMEOUT_SECONDS = int(os.environ.get("GATEWAY_TIMEOUT_SECONDS", "30"))
+INTERNAL_API_TIMEOUT_SECONDS = int(os.environ.get("INTERNAL_API_TIMEOUT_SECONDS", "35"))
+TELEGRAM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "10"))
+TELEGRAM_POLL_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_POLL_TIMEOUT_SECONDS", "35"))
+TYPING_REFRESH_SECONDS = int(os.environ.get("TYPING_REFRESH_SECONDS", "4"))
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 THINK_BLOCK = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
 UNCLOSED_THINK_BLOCK = re.compile(r"<think\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
@@ -110,7 +116,8 @@ def telegram_request(method: str, payload=None):
         data=body,
         headers={"Content-Type": "application/json"} if body else {},
     )
-    with urlopen(request, timeout=35) as response:
+    timeout = TELEGRAM_POLL_TIMEOUT_SECONDS if method == "getUpdates" else TELEGRAM_REQUEST_TIMEOUT_SECONDS
+    with urlopen(request, timeout=timeout) as response:
         result = json.load(response)
     if not result.get("ok"):
         raise RuntimeError(f"Telegram {method} failed")
@@ -326,7 +333,7 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=90) as response:
+        with urlopen(request, timeout=GATEWAY_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
     except HTTPError as error:
         record_inference(db, f"http_{error.code}")
@@ -456,7 +463,7 @@ def internal_api_request(path: str, payload):
         headers={"Authorization": f"Bearer {INTERNAL_API_TOKEN}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(request, timeout=100) as response:
+    with urlopen(request, timeout=INTERNAL_API_TIMEOUT_SECONDS) as response:
         return json.load(response)
 
 
@@ -479,17 +486,49 @@ def send_message(chat_id: int, text: str) -> None:
         telegram_request("sendMessage", {"chat_id": chat_id, "text": part})
 
 
+def send_typing(chat_id: int) -> None:
+    telegram_request("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+
+
+@contextmanager
+def typing_indicator(chat_id: int):
+    """Keep Telegram's transient typing signal visible while inference runs."""
+    stopped = threading.Event()
+
+    def refresh() -> None:
+        while not stopped.wait(TYPING_REFRESH_SECONDS):
+            try:
+                send_typing(chat_id)
+            except Exception as error:
+                print(f"typing indicator failed: {type(error).__name__}", flush=True)
+
+    try:
+        try:
+            send_typing(chat_id)
+        except Exception as error:
+            print(f"typing indicator failed: {type(error).__name__}", flush=True)
+        worker = threading.Thread(target=refresh, daemon=True)
+        worker.start()
+        yield
+    finally:
+        stopped.set()
+
+
 def handle(db: sqlite3.Connection, update) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     user = message.get("from") or {}
     raw_text = message.get("text")
     chat_id, user_id = chat.get("id"), user.get("id")
-    if not chat_id or not user_id or chat.get("type") != "private" or not isinstance(raw_text, str):
+    if not chat_id or not user_id or chat.get("type") != "private":
         return
-    text = raw_text.strip()
     is_premium = user.get("is_premium") is True
     upsert_user(db, user_id, is_premium)
+    if not isinstance(raw_text, str):
+        send_message(chat_id, "Please send a text message to run inference.")
+        record_interaction(db, user_id, "message", "rejected", is_premium)
+        return
+    text = raw_text.strip()
     command = text.split(maxsplit=1)[0].lower() if text.startswith("/") else ""
     if command in ("/start", "/help"):
         send_message(chat_id, "Send a message to run chain-accounted inference. Use /new to start a new conversation.")
@@ -509,24 +548,35 @@ def handle(db: sqlite3.Connection, update) -> None:
         record_interaction(db, user_id, "message", "rejected", is_premium)
         return
     try:
-        conversation_id = conversation_for_user(db, user_id)
-        result = internal_api_request("/v1/responses", {"conversation": conversation_id, "input": text})
-        send_message(chat_id, result["output_text"])
-        record_interaction(db, user_id, "message", "success", is_premium)
-    except (HTTPError, URLError, TimeoutError, KeyError, ValueError, OSError):
-        send_message(chat_id, "Inference is temporarily unavailable, please try again later")
-        record_interaction(db, user_id, "message", "error", is_premium)
+        with typing_indicator(chat_id):
+            conversation_id = conversation_for_user(db, user_id)
+            result = internal_api_request("/v1/responses", {"conversation": conversation_id, "input": text})
+        reply = result["output_text"]
+        outcome = "success"
+    except Exception as error:
+        print(f"inference request failed: {type(error).__name__}", flush=True)
+        reply = "Inference is temporarily unavailable, please try again later."
+        outcome = "error"
+    try:
+        send_message(chat_id, reply)
+    except Exception as error:
+        # Telegram itself can be unavailable; retain a concise diagnostic while
+        # keeping the polling loop alive for the next user message.
+        print(f"Telegram reply delivery failed: {type(error).__name__}", flush=True)
+        outcome = "delivery_error"
+    record_interaction(db, user_id, "message", outcome, is_premium)
 
 
 def run_probe() -> dict:
-    conversation = internal_api_request("/v1/conversations", {})
-    response = internal_api_request(
-        "/v1/responses",
-        {"conversation": conversation["id"], "input": "Reply exactly GDC_OK"},
-    )
+    # Exercise the same bounded gateway completion used by a Telegram message.
+    # Calling the in-process HTTP API here would obscure the gateway error as a
+    # generic 502 and make deployment diagnosis unnecessarily indirect.
+    with connection() as db:
+        conversation_id = create_conversation(db)
+        response = gateway_completion(db, conversation_id, "Reply exactly GDC_OK")
     return {
         "status": response.get("status"),
-        "conversation_id_present": bool(conversation.get("id")),
+        "conversation_id_present": bool(response.get("conversation", {}).get("id")),
         "output_present": bool(response.get("output_text")),
         "usage_present": all(isinstance(response.get("usage", {}).get(key), int) for key in ("input_tokens", "output_tokens", "total_tokens")),
     }
@@ -552,6 +602,14 @@ def main() -> None:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--probe"]:
-        print(json.dumps(run_probe(), sort_keys=True))
+        try:
+            print(json.dumps(run_probe(), sort_keys=True))
+        except RuntimeError as error:
+            reason = str(error).replace(" ", "_")[:120]
+            print(json.dumps({"status": "failed", "reason": reason}, sort_keys=True))
+            sys.exit(1)
+        except (HTTPError, URLError, TimeoutError, ValueError, OSError) as error:
+            print(json.dumps({"status": "failed", "reason": type(error).__name__.lower()}, sort_keys=True))
+            sys.exit(1)
     else:
         main()

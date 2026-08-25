@@ -20,14 +20,16 @@ missing=()
 capture_canonical_genesis "https://$GENESIS_PUBLIC_HOST/chain-rpc/genesis" "$RUN/live-genesis.json"
 live_genesis_sha256="$(genesis_sha256 "$RUN/live-genesis.json")"
 
-reset_hosts=()
-for host in "${GDC_NODES[@]}"; do
-  reset_hosts+=("$host")
-  ml_host="$(node_ml_host "$host" || true)"
-  [[ -z "$ml_host" ]] || reset_hosts+=("$ml_host")
-done
 reset_bundle=""
 while IFS= read -r candidate; do
+  reset_hosts=()
+  [[ -s "$candidate/reset-hosts.txt" ]] || continue
+  mapfile -t reset_nodes <"$candidate/reset-hosts.txt"
+  for host in "${reset_nodes[@]}"; do
+    reset_hosts+=("$host")
+    ml_host="$(node_ml_host "$host" || true)"
+    [[ -z "$ml_host" ]] || reset_hosts+=("$ml_host")
+  done
   if reset_evidence_bundle_is_valid "$candidate" "${reset_hosts[@]}"; then
     reset_bundle="$candidate"
   fi

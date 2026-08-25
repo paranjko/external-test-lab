@@ -25,10 +25,22 @@ jq -e '
   | any(. != null and (tostring | test("^[1-9][0-9]*$")))
 ' <<<"$status" >/dev/null || die 'gateway has no active unblocked runtime'
 
+confirmation_poc_active=false
+if jq -e '
+  [.confirmation_poc_phase?, (.devshards[]? | .confirmation_poc_phase?)]
+  | any(type == "string" and . != "" and . != "NORMAL_OPERATION")
+' <<<"$status" >/dev/null; then
+  confirmation_poc_active=true
+fi
+
 if [[ "$action" == status ]]; then
-  jq '{state:"READY",runtimes:(([.devshards[]? | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)] | length) + (if .phase == "active" and (.requests_blocked // false) == false then 1 else 0 end)),model:(.model // ([.devshards[]?.model] | first))}' <<<"$status"
+  jq --arg state "$([[ "$confirmation_poc_active" == true ]] && printf TRANSITION || printf READY)" \
+    --arg reason "$([[ "$confirmation_poc_active" == true ]] && printf confirmation_poc_not_normal_operation || printf runtime_routable)" \
+    '{state:$state,reason:$reason,runtimes:(([.devshards[]? | select(.active == true and .phase == "active" and (.requests_blocked // false) == false)] | length) + (if .phase == "active" and (.requests_blocked // false) == false then 1 else 0 end)),model:(.model // ([.devshards[]?.model] | first))}' <<<"$status"
   exit 0
 fi
+
+[[ "$confirmation_poc_active" == false ]] || die 'gateway confirmation PoC is not in NORMAL_OPERATION; no inference dispatched'
 
 step 'Prove authenticated chain-accounted inference'
 verify_evidence="${GDC_GATEWAY_VERIFY_EVIDENCE_DIR:-$GDC_HOME/runs/${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}-gateway-verify}"

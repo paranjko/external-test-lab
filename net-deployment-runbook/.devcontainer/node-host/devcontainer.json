@@ -1,0 +1,22 @@
+{
+  "name": "Gonka disposable node host",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "../.."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:4": {
+      "version": "4.0.0",
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "remoteUser": "root",
+  "runArgs": [
+    "--privileged",
+    "--publish=2222:22"
+  ],
+  "workspaceMount": "source=${localWorkspaceFolderBasename}-node-host-workspace,target=/workspace,type=volume",
+  "workspaceFolder": "/workspace",
+  "postStartCommand": "sshd -t && (pgrep -x sshd >/dev/null 2>&1 || /usr/sbin/sshd) && docker info >/dev/null"
+}

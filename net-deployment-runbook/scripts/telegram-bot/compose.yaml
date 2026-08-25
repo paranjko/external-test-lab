@@ -3,11 +3,10 @@ services:
     build: .
     restart: unless-stopped
     env_file: [./bot.env]
+    network_mode: host
     volumes:
       - ./data:/data
       - /var/lib/node_exporter/textfile_collector:/metrics
-    ports:
-      - 127.0.0.1:9464:9464
     healthcheck:
       test: ["CMD", "python3", "-c", "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:9464/health', timeout=3).status == 200"]
       interval: 30s

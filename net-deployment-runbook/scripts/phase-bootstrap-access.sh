@@ -17,10 +17,10 @@ if [[ "$guardian_addresses" == '[]' && "$participant_count" =~ ^[0-9]+$ ]] && ((
   die 'single-node bootstrap requires GDC_GENESIS_GUARDIAN_ENABLED=true; otherwise join one eligible model participant first'
 fi
 
-# The configured public edge may differ from the Genesis participant. Use that
-# stable public route for operator RPC and the canonical API hostname for
-# gateway access; do not hairpin through a participant hostname.
-export GDC_CHAIN_RPC_URL="https://${PUBLIC_EDGE_HOST}/chain-rpc/"
+# The public edge can be distinct from the first participant and is reconciled
+# during this Genesis run. Bootstrap governance through the Genesis endpoint;
+# the authenticated user API remains the canonical public origin.
+export GDC_CHAIN_RPC_URL="https://${GENESIS_PUBLIC_HOST}/chain-rpc/"
 export GDC_GATEWAY_PUBLIC_URL="https://${API_HOST}"
 
 step 'Verify the sole Genesis participant is active'

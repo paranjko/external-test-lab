@@ -22,6 +22,8 @@ type SiteNode = {
   validatorEffective?: boolean,
   votingPower?: string,
   endpointReachable?: boolean,
+  catchingUp?: boolean,
+  blocksBehind?: number,
   isOnline?: boolean,
   serverStatus?: string,
   gpuProfile?: ?string,
@@ -58,10 +60,6 @@ type GatewayStateApi = {
   ) => GatewayAvailability,
 };
 
-type SoftwareVersionApi = {
-  format: (state: any) => string,
-};
-
 type ValidatorMapController = {
   update: (nodes: Array<SiteNode>) => void,
 };
@@ -85,6 +83,7 @@ type ParticipantDiscovery = {
 };
 
 type GpuInventory = Map<string, Array<string>>;
+type SoftwareInventory = Map<string, Array<any>>;
 
 type Validator = {
   ownerAddress: string,
@@ -135,7 +134,6 @@ declare class URL {
 
 const cfg: SiteConfig = (window: any).GDC_CONFIG;
 const gatewayStatus: GatewayStateApi = (window: any).GDC_GATEWAY_STATE;
-const softwareVersion: SoftwareVersionApi = (window: any).GDC_SOFTWARE_VERSIONS;
 const $ = (id: string): any => document.getElementById(id);
 const chainRpcHost =
   cfg.chainRpcHost ||
@@ -148,12 +146,18 @@ async function refreshTelegramConsumer(): Promise<void> {
   link.hidden = true;
   link.removeAttribute("href");
   if (!cfg.telegramBot) return;
+  link.textContent = "Open Telegram conversation client ↗";
+  link.href = cfg.telegramBot;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.hidden = false;
   try {
     const health = await json("/status/telegram-consumer");
-    if (health.status !== "ok" || health.inference_ready !== true) return;
-    link.textContent = "Open Telegram conversation client ↗";
-    link.href = cfg.telegramBot;
-    link.hidden = false;
+    if (health.status !== "ok" || health.inference_ready !== true) {
+      link.title = "The Telegram client is available; inference is temporarily unavailable.";
+      return;
+    }
+    link.removeAttribute("title");
   } catch {}
 }
 $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana;
@@ -161,6 +165,7 @@ $("grafana-inference").href = cfg.grafanaInference;
 const cards: Map<string, HTMLElement> = new Map();
 let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({ ...node }));
 let cardGpuInventory: GpuInventory = new Map();
+let cardSoftwareInventory: SoftwareInventory = new Map();
 
 function nodeKey(node: SiteNode): string {
   return node.address || node.name;
@@ -200,7 +205,8 @@ function createCard(node: SiteNode): HTMLElement {
   set(el, "height", node.mode === "skip" ? "–" : "…");
   set(el, "sync", node.mode === "skip" ? "not joined" : "…");
   set(el, "peers", node.mode === "skip" ? "–" : "…");
-  set(el, "versions", node.mode === "skip" ? "not running" : "checking");
+  if (node.mode === "skip") set(el, "versions", "not running");
+  else updateSoftware(cardSoftwareInventory, node, el);
   updateGpu(cardGpuInventory, node, el);
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
@@ -235,15 +241,81 @@ function updateGpu(
       return count === 1 ? displayName : `${displayName} ×${count}`;
     })
     .join(" + ");
-  const value = inventoryLabel
-    ? `${inventoryLabel} – ${connection}`
-    : node.gpuProfile && node.gpuProfile !== "auto"
-      ? `${node.gpuProfile} – ${connection}`
-      : "";
-  row.hidden = !value;
-  if (!value) return;
-  set(card, "gpu", value);
+  if (node.mode === "skip") {
+    row.hidden = true;
+    return;
+  }
+  row.hidden = false;
+  if (!inventoryLabel) {
+    set(card, "gpu", "temporarily unavailable");
+    card.querySelector('[data-k="gpu"]').title =
+      "GPU inventory has not reported this Host yet";
+    return;
+  }
+  set(card, "gpu", `${inventoryLabel} – ${connection}`);
   card.querySelector('[data-k="gpu"]').title = `GPU host: ${gpuHost}`;
+}
+
+function markSoftwareInventoryUnavailable(card: HTMLElement): void {
+  const value = card.querySelector('[data-k="versions"]');
+  value.textContent = "temporarily unavailable";
+  value.title = "Software inventory has not reported this Host yet";
+}
+
+function updateSoftware(
+  inventory: SoftwareInventory,
+  node: SiteNode,
+  card: HTMLElement,
+): void {
+  const key = [node.name, node.publicHost].find((candidate) =>
+    inventory.has(candidate || ""),
+  );
+  const samples = inventory.get(key || "") || [];
+  const components: Map<string, any> = new Map();
+  for (const sample of samples) {
+    const metric = sample?.metric || {};
+    const raw = String(metric.component || "");
+    const component = raw === "inference-chain" || raw === "node"
+      ? "chain"
+      : raw === "decentralized-api" || raw === "api"
+        ? "DAPI"
+        : raw === "mlnode"
+          ? "MLNode"
+          : "";
+    if (!component || !metric.version) continue;
+    const existing = components.get(component);
+    if (!existing || metric.source === "runtime") components.set(component, metric);
+  }
+  const formatted: Array<string> = [];
+  for (const component of ["chain", "DAPI", "MLNode"]) {
+    const metric = components.get(component);
+    if (metric) formatted.push(`${component} ${metric.version}`);
+  }
+  const value = formatted.join(" · ");
+  if (!value) {
+    markSoftwareInventoryUnavailable(card);
+    return;
+  }
+  const target = card.querySelector('[data-k="versions"]');
+  target.textContent = value;
+  target.title = "Software inventory collected by the monitoring agent";
+}
+
+async function refreshSoftwareInventory(): Promise<void> {
+  const state = await json("/status/software");
+  const next: SoftwareInventory = new Map();
+  for (const sample of state?.data?.result || []) {
+    const host = String(sample?.metric?.host || "");
+    if (!host) continue;
+    const values = next.get(host) || [];
+    values.push(sample);
+    next.set(host, values);
+  }
+  cardSoftwareInventory = next;
+  for (const node of observedNodes) {
+    const card = cards.get(nodeKey(node));
+    if (card) updateSoftware(cardSoftwareInventory, node, card);
+  }
 }
 
 async function refreshGpuInventory(): Promise<void> {
@@ -395,6 +467,16 @@ function statusLabel(node: SiteNode): { text: string, className: string } {
       text: "effective validator – endpoint unavailable",
       className: "status bad",
     };
+  if (node.catchingUp) {
+    const lag = Number(node.blocksBehind || 0);
+    return {
+      text:
+        lag > 0
+          ? `effective validator – synchronizing (${lag.toLocaleString()} blocks behind)`
+          : "effective validator – synchronizing",
+      className: "status skip",
+    };
+  }
   return {
     text: "effective validator – endpoint reachable",
     className: "status ok",
@@ -699,6 +781,7 @@ async function refresh(): Promise<void> {
   let best = 0;
   refreshTelegramConsumer();
   refreshGpuInventory().catch(() => {});
+  refreshSoftwareInventory().catch(() => {});
   try {
     best = await reconcileParticipants();
   } catch {}
@@ -719,7 +802,7 @@ async function refresh(): Promise<void> {
           set(card, "height", best ? best.toLocaleString() : "–");
           set(card, "sync", "endpoint not proxied");
           set(card, "peers", "–");
-          set(card, "versions", "unreported");
+          updateSoftware(cardSoftwareInventory, n, card);
           return;
         }
         const statusBase = n.statusBase;
@@ -733,12 +816,18 @@ async function refresh(): Promise<void> {
           ]);
           const h = Number(s.result.sync_info.latest_block_height);
           const peers = Number(net.result.n_peers);
+          n.catchingUp = Boolean(s.result.sync_info.catching_up);
+          n.blocksBehind = best > h ? best - h : 0;
           best = Math.max(best, h);
           set(card, "height", h.toLocaleString());
           set(card, "sync", syncStatus(s.result.sync_info.catching_up));
           set(card, "peers", peers);
           const display = statusLabel(n);
-          const noPeers = peers === 0 && !singleParticipant && n.validatorEffective;
+          const noPeers =
+            peers === 0 &&
+            !singleParticipant &&
+            n.validatorEffective &&
+            !n.catchingUp;
           set(
             card,
             "status",
@@ -750,15 +839,7 @@ async function refresh(): Promise<void> {
             ? "status bad"
             : display.className;
           if (n.validatorEffective) healthy++;
-          try {
-            set(
-              card,
-              "versions",
-              softwareVersion.format(await json(`${statusBase}/v1/versions`)),
-            );
-          } catch {
-            set(card, "versions", "unreported");
-          }
+          updateSoftware(cardSoftwareInventory, n, card);
         } catch (e) {
           n.endpointReachable = false;
           n.isOnline = false;
@@ -766,7 +847,7 @@ async function refresh(): Promise<void> {
           const display = statusLabel(n);
           set(card, "status", `${display.text} (${e.message})`);
           card.querySelector('[data-k="status"]').className = "status bad";
-          set(card, "versions", "unavailable");
+          updateSoftware(cardSoftwareInventory, n, card);
         }
       }),
   );
@@ -855,8 +936,8 @@ async function refresh(): Promise<void> {
     health.dataset.state = state;
     $("quality-health-state").textContent =
       inflight > 0
-        ? "READY – processing requests"
-        : "READY – no requests in flight";
+        ? "READY – verified inference; processing requests"
+        : "READY – verified inference; no requests in flight";
     $("quality-recovery").hidden = true;
     setUtcTime("quality-updated", new Date(), "Updated");
   } catch (error) {

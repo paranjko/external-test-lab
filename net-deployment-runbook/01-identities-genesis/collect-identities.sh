@@ -13,6 +13,11 @@ LOGS="$STATE/logs/identities"
 umask 077
 mkdir -p "$OUT" "$MNEMONICS" "$LOGS"
 failed=0
+restore_warm_mnemonic="${GDC_RESTORE_WARM_MNEMONIC:-}"
+[[ -z "$restore_warm_mnemonic" || -s "$restore_warm_mnemonic" ]] || {
+  echo "FAILED  restore warm mnemonic is not readable: $restore_warm_mnemonic" >&2
+  exit 1
+}
 for HOST in "${NODES[@]}"; do
   topology_contains_node "$HOST" || { echo "Invalid node alias outside the supplied inventory: $HOST" >&2; failed=1; continue; }
   REMOTE="/srv/dai/identity-bootstrap"
@@ -28,8 +33,14 @@ for HOST in "${NODES[@]}"; do
   rsync -a --delete "$ROOT/02-node/" "$HOST:$REMOTE/02-node/"
   scp -q "$BOOT/$HOST.env" "$HOST:$REMOTE/bootstrap.env"
   remote_mnemonic="$REMOTE/$HOST-warm.mnemonic"
+  remote_restore_mnemonic="$REMOTE/$HOST-warm.restore.mnemonic"
   log="$LOGS/$HOST.log"
-  if ! ssh -T "$HOST" "chmod 600 '$REMOTE/bootstrap.env'; trap 'rm -f \"$REMOTE/bootstrap.env\"' EXIT; cd '$REMOTE/02-node' && ./init-identity.sh --env '$REMOTE/bootstrap.env' --output '$REMOTE/$HOST.json' --mnemonic-output '$remote_mnemonic'" >"$log" 2>&1; then
+  init_args="--env '$REMOTE/bootstrap.env' --output '$REMOTE/$HOST.json' --mnemonic-output '$remote_mnemonic'"
+  if [[ -n "$restore_warm_mnemonic" ]]; then
+    scp -q "$restore_warm_mnemonic" "$HOST:$remote_restore_mnemonic"
+    init_args+=" --warm-mnemonic '$remote_restore_mnemonic'"
+  fi
+  if ! ssh -T "$HOST" "chmod 600 '$REMOTE/bootstrap.env' '$remote_restore_mnemonic' 2>/dev/null || true; trap 'rm -f \"$REMOTE/bootstrap.env\" \"$remote_restore_mnemonic\"' EXIT; cd '$REMOTE/02-node' && ./init-identity.sh $init_args" >"$log" 2>&1; then
     echo "FAILED  $HOST identity bootstrap; details: $log" >&2
     failed=1
     continue
@@ -47,7 +58,7 @@ for HOST in "${NODES[@]}"; do
     failed=1
     continue
   fi
-  ssh -T "$HOST" "rm -f '$REMOTE/$HOST.json' '$remote_mnemonic'"
+  ssh -T "$HOST" "rm -f '$REMOTE/$HOST.json' '$remote_mnemonic' '$remote_restore_mnemonic'"
   jq -r '"READY  \(.node_name) node_id=\(.node_id) warm=\(.warm_address)"' "$OUT/$HOST.json"
 done
 exit "$failed"

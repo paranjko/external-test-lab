@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+join_role_stage='load release profile'
+on_join_role_error() {
+  local rc="$?" line="$1"
+  trap - ERR
+  printf 'ERROR JOIN role configuration failed exit=%s line=%s stage=%s bootstrap_url=%s\n' \
+    "$rc" "$line" "$join_role_stage" "${BOOTSTRAP_URL:-unavailable}" >&2
+  exit "$rc"
+}
+trap 'on_join_role_error "$LINENO"' ERR
+
+# This helper runs before the JOIN phase loads the selected release profile.
+# Load it here so public bootstrap compatibility is checked against the
+# operator's chosen release rather than an inherited shell variable.
+# shellcheck disable=SC1091
+source "$ROOT/scripts/profile.sh"
+load_profiles
+
 usage() {
   echo "Usage: $0 --output FILE --ssh-alias ALIAS [--public-host DNS] [--gpu-ssh-alias ALIAS] [--bootstrap-url URL]" >&2
 }
@@ -9,7 +27,7 @@ OUTPUT=''
 SSH_ALIAS=''
 GPU_SSH_ALIAS=''
 PUBLIC_HOST=''
-BOOTSTRAP_URL="${GDC_JOIN_BOOTSTRAP_URL:-https://node0.gonka-dev.net/join-bootstrap}"
+BOOTSTRAP_URL="${GDC_JOIN_BOOTSTRAP_URL:-https://api.gonka-dev.net/join-bootstrap}"
 while (($#)); do
   case "$1" in
     --output) OUTPUT="${2:-}"; shift 2 ;;
@@ -34,14 +52,46 @@ BOOTSTRAP_URL="${BOOTSTRAP_URL%/}"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+verify_public_checksum() {
+  local manifest="$1" required="$2" expected path actual checked=0
+  while read -r expected path; do
+    [[ "$expected" =~ ^[0-9a-f]{64}$ && "$path" == ./* ]] || {
+      echo "public JOIN bootstrap manifest has an invalid checksum entry: $expected $path" >&2
+      return 1
+    }
+    actual="$(sha256sum "$tmp/${path#./}" | awk '{print $1}')" || {
+      echo "public JOIN bootstrap checksum could not read file=$path bootstrap_url=$BOOTSTRAP_URL" >&2
+      return 1
+    }
+    if [[ "$actual" != "$expected" ]]; then
+      printf 'public JOIN bootstrap checksum mismatch bootstrap_url=%s file=%s expected_sha256=%s actual_sha256=%s\n' \
+        "$BOOTSTRAP_URL" "$path" "$expected" "$actual" >&2
+      return 1
+    fi
+    checked=$((checked + 1))
+  done <"$manifest"
+  [[ "$checked" -eq "$required" ]] || {
+    echo "public JOIN bootstrap manifest is incomplete: expected_files=$required checked_files=$checked bootstrap_url=$BOOTSTRAP_URL" >&2
+    return 1
+  }
+}
 mkdir -p "$tmp/profile"
+join_role_stage='download public bootstrap metadata'
 for path in manifest.sha256 topology.env profile/genesis.env; do
   curl -fsS --connect-timeout 10 --max-time 60 "$BOOTSTRAP_URL/$path" -o "$tmp/$path"
 done
 
-grep -E '  \./(topology\.env|profile/genesis\.env)$' "$tmp/manifest.sha256" >"$tmp/required.sha256"
-[[ "$(wc -l <"$tmp/required.sha256")" -eq 2 ]] || { echo 'public bootstrap manifest is incomplete' >&2; exit 1; }
-(cd "$tmp" && sha256sum -c required.sha256)
+join_role_stage='verify public bootstrap metadata'
+if ! grep -E '  \./(topology\.env|profile/genesis\.env)$' "$tmp/manifest.sha256" >"$tmp/required.sha256"; then
+  echo 'public JOIN bootstrap manifest lacks topology/profile checksum entries; the endpoint may be serving an error document' >&2
+  exit 1
+fi
+if ! verify_public_checksum "$tmp/required.sha256" 2; then
+  echo 'public JOIN bootstrap checksum verification failed; retry only after the Genesis operator republishes one consistent bootstrap' >&2
+  exit 1
+fi
+grep -qx "join_bootstrap_format=$JOIN_BOOTSTRAP_FORMAT" "$tmp/profile/genesis.env" \
+  || { echo 'public join bootstrap format is incompatible with this release profile' >&2; exit 1; }
 
 allowed='GDC_NODE_ALIASES|GDC_NODE_PUBLIC_HOSTS|GDC_NODE_GPU_PROFILES|GDC_NODE_P2P_PORTS|GDC_NODE_ML_HOSTS|GDC_GENESIS_NODE|GDC_PUBLIC_EDGE_NODE|GDC_GATEWAY_NODE'
 if grep -Ev "^($allowed)=([A-Za-z0-9._=\\\\ -]*|'')$" "$tmp/topology.env" | grep -q .; then
@@ -55,6 +105,7 @@ done
 # The file is generated with printf %q and was restricted above to inert
 # assignment characters before it is sourced.
 # shellcheck disable=SC1090
+join_role_stage='validate public topology'
 source "$tmp/topology.env"
 if [[ -n "$PUBLIC_HOST" ]]; then
   PUBLIC_HOST="$("$(dirname "$0")/detect-public-host.sh" "$SSH_ALIAS" "$PUBLIC_HOST")"
@@ -87,6 +138,7 @@ fi
 
 install -d -m 0700 "$(dirname "$OUTPUT")"
 umask 077
+join_role_stage='write independent Host role input'
 {
   printf 'GDC_NODE_ALIASES=%q\n' "$GDC_NODE_ALIASES"
   printf 'GDC_NODE_PUBLIC_HOSTS=%q\n' "$GDC_NODE_PUBLIC_HOSTS"
