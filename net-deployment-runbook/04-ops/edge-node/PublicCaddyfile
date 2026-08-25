@@ -122,7 +122,10 @@ www.{$SITE_HOST} {
     reverse_proxy 127.0.0.1:18082
   }
   # This proxy may wait only before it opens its one gateway connection.
-  handle /v1/chat/completions {
+  # Reconciler probes retain their explicit runtime path but share exactly the
+  # same permit as public, health, Telegram, and acceptance requests.
+  @governed_completion path /v1/chat/completions /devshard/*/v1/chat/completions
+  handle @governed_completion {
     reverse_proxy 127.0.0.1:18083
   }
   handle {

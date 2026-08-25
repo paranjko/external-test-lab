@@ -41,7 +41,7 @@ node -e '
     request.on("data",chunk=>body+=chunk);
     request.on("end",()=>{
       let payload={};try{payload=JSON.parse(body)}catch{}
-      const valid=request.headers.authorization==="Bearer test-secret" && payload.model==="Qwen/Qwen3-0.6B" && payload.max_tokens===512;
+      const valid=request.headers.authorization==="Bearer test-secret" && payload.model==="Qwen/Qwen3-0.6B" && payload.max_tokens===8;
       response.writeHead(valid?200:401,{"content-type":"application/json"});
       response.end(valid?JSON.stringify({choices:[{message:{content:"OK"}}]}):JSON.stringify({error:"unauthorized"}));
     });

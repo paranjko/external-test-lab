@@ -64,7 +64,7 @@ cmp "$expected_gateway_state" "$OUT/gateway-state.js"
 curl -fsS "https://$SITE_HOST/status/gateway-health" -o "$OUT/gateway-health.json"
 jq -e '
   (((keys - ["recovery"]) | sort) == ["checked_at","curl_exit","http_status","latency_ms","reason","state"])
-  and (.state == "READY" or .state == "UNAVAILABLE" or .state == "RECOVERING")
+  and (.state == "READY" or .state == "DEGRADED" or .state == "UNAVAILABLE" or .state == "RECOVERING")
   and (.checked_at | fromdateiso8601 > 0)
   and (.curl_exit | type == "number")
   and (.http_status | type == "number")

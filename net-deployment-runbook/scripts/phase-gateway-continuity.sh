@@ -90,30 +90,60 @@ request_observation() {
   local window="$2"
   local coverage="$3"
   local sequence="$4"
-  local request response http_code payload error response_id headers admission
+  local request response http_code payload error response_id headers admission deadline_ms admission_id audit
+  local arrival_height permit_height dispatch_height response_height safe_generation
+  local arrival_at_ms permit_at_ms dispatch_at_ms response_at_ms upstream_http_status error_class
 
   request="$(jq -nc --arg prompt "continuity probe anchor $target_anchor sequence $sequence" \
     --arg model "$MODEL_ID" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:1}')"
   headers="$RUN/request-${coverage}.headers"
+  deadline_ms="$(( $(date +%s%3N) + request_timeout * 1000 ))"
   response="$(curl -sS --connect-timeout 10 --max-time "$request_timeout" -D "$headers" -w $'\n%{http_code}' \
     "$gateway_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
-    -H 'Content-Type: application/json' --data-binary "$request" || true)"
+    -H "X-Request-Deadline-Ms: $deadline_ms" -H 'Content-Type: application/json' --data-binary "$request" || true)"
   http_code="${response##*$'\n'}"
   payload="${response%$'\n'*}"
   [[ "$http_code" =~ ^[0-9]{3}$ ]] || http_code=000
   admission="$(awk 'tolower($0) ~ /^x-gdc-admission:/ { value=$0; sub(/^[^:]*:[[:space:]]*/, "", value); sub(/\r$/, "", value); print value; exit }' "$headers")"
   admission="${admission:-not_observed}"
+  header_value() {
+    local name="$1"
+    awk -v name="$name" 'tolower($0) ~ "^" tolower(name) ":" { value=$0; sub(/^[^:]*:[[:space:]]*/, "", value); sub(/\r$/, "", value); print value; exit }' "$headers"
+  }
+  admission_id="$(header_value X-GDC-Admission-ID)"
+  arrival_height="$(header_value X-GDC-Arrival-Height)"
+  permit_height="$(header_value X-GDC-Permit-Height)"
+  dispatch_height="$(header_value X-GDC-Dispatch-Height)"
+  response_height="$(header_value X-GDC-Response-Height)"
+  safe_generation="$(header_value X-GDC-Safe-Generation)"
   error=''
   if [[ "$admission" == pre_dispatch_rejected || "$admission" == dispatch_attempt_failed ]]; then
     error="$(jq -r '.error.code? | select(type == "string" and test("^[a-z0-9_]{1,64}$"))' <<<"$payload" 2>/dev/null || true)"
   fi
+  audit='{}'
+  if [[ "$admission_id" =~ ^[a-f0-9]{32}$ ]]; then
+    audit="$(ssh -T "$PUBLIC_EDGE_NODE" "sudo jq -c --arg id '$admission_id' 'select(.admission_id == \$id)' /srv/dai/edge/status/gateway-admission.jsonl 2>/dev/null | tail -n1" 2>/dev/null || true)"
+    [[ -n "$audit" ]] || audit='{}'
+  fi
+  arrival_at_ms="$(jq -r '.arrival_at_ms // 0' <<<"$audit" 2>/dev/null || printf 0)"
+  permit_at_ms="$(jq -r '.permit_at_ms // 0' <<<"$audit" 2>/dev/null || printf 0)"
+  dispatch_at_ms="$(jq -r '.dispatch_at_ms // 0' <<<"$audit" 2>/dev/null || printf 0)"
+  response_at_ms="$(jq -r '.response_at_ms // 0' <<<"$audit" 2>/dev/null || printf 0)"
+  upstream_http_status="$(jq -r '.upstream_http_status // 0' <<<"$audit" 2>/dev/null || printf 0)"
+  error_class="$(jq -r '.error_class // ""' <<<"$audit" 2>/dev/null || true)"
   rm -f "$headers"
   response_id="$(jq -r '.id // empty' <<<"$payload" 2>/dev/null || true)"
   jq -nc --arg timestamp "$(date -u +%FT%TZ)" --argjson height "$observation_height" \
-    --arg window "$window" --arg coverage "$coverage" --arg phase "$chain_phase" \
+    --arg window "$window" --arg coverage "$coverage" --arg phase "$chain_phase" --arg admission_id "$admission_id" \
     --arg code "$http_code" --arg error "$error" --arg admission "$admission" --arg response_id "$response_id" \
-    --argjson target_anchor "$target_anchor" \
-    '{timestamp:$timestamp,height:$height,target_anchor:$target_anchor,window:$window,coverage:$coverage,chain_phase:$phase,http_code:($code|tonumber),admission:$admission,error:$error,response_id:$response_id}'
+    --arg safe_generation "$safe_generation" --argjson target_anchor "$target_anchor" \
+    --argjson arrival_height "${arrival_height:-0}" --argjson permit_height "${permit_height:-0}" \
+    --argjson dispatch_height "${dispatch_height:-0}" --argjson response_height "${response_height:-0}" \
+    --argjson arrival_at_ms "${arrival_at_ms:-0}" --argjson permit_at_ms "${permit_at_ms:-0}" \
+    --argjson dispatch_at_ms "${dispatch_at_ms:-0}" --argjson response_at_ms "${response_at_ms:-0}" \
+    --argjson upstream_http_status "${upstream_http_status:-0}" --arg error_class "$error_class" \
+    --argjson admission_record "$audit" \
+    '{timestamp:$timestamp,height:$height,target_anchor:$target_anchor,window:$window,coverage:$coverage,chain_phase:$phase,http_code:($code|tonumber),admission:$admission,error:$error,response_id:$response_id,admission_id:$admission_id,safe_generation:$safe_generation,arrival_height:$arrival_height,permit_height:$permit_height,dispatch_height:$dispatch_height,response_height:$response_height,arrival_at_ms:$arrival_at_ms,permit_at_ms:$permit_at_ms,dispatch_at_ms:$dispatch_at_ms,response_at_ms:$response_at_ms,upstream_http_status:$upstream_http_status,error_class:$error_class,admission_record:$admission_record}'
 }
 
 capture_targeted_observation() {
@@ -291,16 +321,17 @@ for observability_pid in "${observability_pids[@]}"; do
   wait "$observability_pid" || observability_rc=1
 done
 set -e
+observability_incomplete=false
 if (( observability_rc != 0 )); then
   printf 'INCONCLUSIVE continuity observability snapshot capture failed\n' >&2
-  exit 2
+  observability_incomplete=true
 fi
 expected_observability=$((3 + post_success_target))
 observability_count="$(find "$RUN/observability" -name finalize.json -type f 2>/dev/null | wc -l)"
 if (( observability_count < expected_observability )); then
   printf 'INCONCLUSIVE continuity observability snapshots: expected=%s captured=%s\n' \
     "$expected_observability" "$observability_count" >&2
-  exit 2
+  observability_incomplete=true
 fi
 if [[ ! -s "$RUN/preserved-snapshot.json" ]]; then
   printf '{"found":false,"capture":{"reason":"snapshot_not_captured"},"snapshot":{"episode_anchor_height":"%s","model_preserved_nodes":[]}}\n' \
@@ -312,6 +343,16 @@ set +e
   "$RUN/preserved-snapshot.json" "$RUN/requests.jsonl" "$RUN/verdict.md"
 verdict_rc=$?
 set -e
+if [[ "$observability_incomplete" == true && "$verdict_rc" == 0 ]]; then
+  cat >"$RUN/verdict.md" <<EOF
+# Gateway continuity: INCONCLUSIVE
+
+Authenticated requests completed, but only $observability_count of
+$expected_observability required cross-surface snapshots finalized. No
+continuity PASS is implied.
+EOF
+  verdict_rc=2
+fi
 case "$verdict_rc" in
   0) printf 'PASS gateway continuity evidence: %s\n' "$RUN" ;;
   1) printf 'FAILED gateway continuity evidence: %s\n' "$RUN" ;;

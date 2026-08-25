@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression contract for bounded, pre-dispatch gateway admission."""
 import http.client
+import importlib.util
 import json
 import os
 import socket
@@ -13,6 +14,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROXY = os.path.join(ROOT, "04-ops", "edge-node", "gateway-admission-proxy.py")
+proxy_spec = importlib.util.spec_from_file_location("gateway_admission_proxy", PROXY)
+proxy_module = importlib.util.module_from_spec(proxy_spec)
+proxy_spec.loader.exec_module(proxy_module)
 
 
 def port():
@@ -30,6 +34,10 @@ class State:
     height = 50
     advance_height = False
     dispatches = 0
+    in_flight = 0
+    max_in_flight = 0
+    dispatch_delay = 0
+    lock = threading.Lock()
 
 
 class Backend(BaseHTTPRequestHandler):
@@ -61,21 +69,28 @@ class Backend(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_POST(self):
-        State.dispatches += 1
         length = int(self.headers["Content-Length"])
         self.rfile.read(length)
+        with State.lock:
+            State.dispatches += 1
+            State.in_flight += 1
+            State.max_in_flight = max(State.max_in_flight, State.in_flight)
+        if State.dispatch_delay:
+            time.sleep(State.dispatch_delay)
         if not self.headers.get("Authorization"):
             self.send_response(401)
             self.send_header("Content-Length", "0")
             self.end_headers()
-            return
-        # A gateway failure is an accounting outcome, not permission to replay.
-        body = b'{"error":"single outcome"}'
-        self.send_response(429)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        else:
+            # A gateway failure is an accounting outcome, not permission to replay.
+            body = b'{"error":"single outcome"}'
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        with State.lock:
+            State.in_flight -= 1
 
 
 def post_details(proxy_port, deadline=None, authorization=True):
@@ -98,13 +113,18 @@ def post(proxy_port, deadline=None, authorization=True):
     return status, body
 
 
-def start_proxy(backend_port, max_queue=1, wait=0.35, state_paths=None):
+audit_files = {}
+
+
+def start_proxy(backend_port, max_queue=1, wait=0.35, state_paths=None, upstream_port=None):
     proxy_port = port()
     state_paths = state_paths or {}
     env = os.environ.copy()
+    audit_file = tempfile.NamedTemporaryFile(delete=False).name
+    audit_files[proxy_port] = audit_file
     env.update({
         "GDC_GATEWAY_ADMISSION_PORT": str(proxy_port),
-        "GDC_GATEWAY_ADMISSION_UPSTREAM": "http://127.0.0.1:%s" % backend_port,
+        "GDC_GATEWAY_ADMISSION_UPSTREAM": "http://127.0.0.1:%s" % (upstream_port or backend_port),
         "GDC_GATEWAY_ADMISSION_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("status", "/v1/status")),
         "GDC_GATEWAY_ADMISSION_EPOCH_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("epoch", "/epoch")),
         "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("chain", "/chain-status")),
@@ -112,6 +132,7 @@ def start_proxy(backend_port, max_queue=1, wait=0.35, state_paths=None):
         "GDC_GATEWAY_ADMISSION_MAX_QUEUE": str(max_queue),
         "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS": str(wait),
         "GDC_GATEWAY_ADMISSION_POLL_SECONDS": "0.03",
+        "GDC_GATEWAY_ADMISSION_AUDIT_FILE": audit_file,
     })
     process = subprocess.Popen([sys.executable, PROXY], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
@@ -124,17 +145,26 @@ def start_proxy(backend_port, max_queue=1, wait=0.35, state_paths=None):
     raise RuntimeError("admission proxy did not start")
 
 
+def audit_records(proxy_port):
+    with open(audit_files[proxy_port], encoding="utf-8") as source:
+        return [json.loads(line) for line in source if line.strip()]
+
+
 backend_port = port()
 server = ThreadingHTTPServer(("127.0.0.1", backend_port), Backend)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 processes = []
 try:
+    # The one upstream connection gets the entire remaining absolute deadline;
+    # a fixed shorter transport cap would create a false dispatch failure.
+    assert proxy_module.upstream_timeout(time.monotonic() + 31.5) > 30
+
     # A request queued while phase state is unsafe dispatches only after two
     # fresh, matching generation observations and never replays a 429 outcome.
     State.ready = False; State.epochs = ["7"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     process, proxy_port = start_proxy(backend_port); processes.append(process)
-    assert post_details(proxy_port, authorization=False) == (401, b"", "dispatched_once")
-    assert State.dispatches == 1, "unauthenticated request did not preserve gateway auth contract"
+    assert post_details(proxy_port, authorization=False) == (401, b'{"error": {"code": "authentication_required"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "unauthenticated request bypassed the shared permit"
     State.dispatches = 0
     result = []
     worker = threading.Thread(target=lambda: result.append(post(proxy_port)))
@@ -187,10 +217,77 @@ try:
     assert post(proxy_port, int((time.time() - 1) * 1000))[0] == 408
     pending.join(2)
     assert State.dispatches == 0, "pre-dispatch rejection reached gateway"
+
+    # Three queued requests may observe one safe generation, but the governor
+    # opens only one upstream connection at a time and one dispatch per block.
+    State.ready = True; State.epochs = ["11"]; State.epoch_index = 0; State.height = 50; State.advance_height = True
+    State.dispatches = 0; State.in_flight = 0; State.max_in_flight = 0; State.dispatch_delay = 0.08
+    process, proxy_port = start_proxy(backend_port, max_queue=3, wait=1); processes.append(process)
+    results = []
+    workers = [threading.Thread(target=lambda: results.append(post_details(proxy_port))) for _ in range(3)]
+    for worker in workers: worker.start()
+    for worker in workers: worker.join(3)
+    assert len(results) == 3 and all(item[0] == 429 and item[2] == "dispatched_once" for item in results)
+    assert State.dispatches == 3 and State.max_in_flight == 1, "concurrent upstream dispatch escaped the permit"
+    records = audit_records(proxy_port)
+    assert len(records) == 3
+    assert all(record["admission"] == "dispatched_once" and record["upstream_http_status"] == 429
+               and record["error_class"] == "upstream_http_429" for record in records)
+    assert all(isinstance(record["arrival_height"], int) and isinstance(record["permit_height"], int)
+               and isinstance(record["dispatch_height"], int) and isinstance(record["response_height"], int)
+               and record["safe_generation"] for record in records)
+    State.advance_height = False; State.dispatch_delay = 0
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    # A client that disconnects while waiting loses its queue entry before any
+    # dispatch. An expired absolute deadline is equally pre-dispatch only.
+    State.ready = False; State.epochs = ["12"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    process, proxy_port = start_proxy(backend_port, max_queue=2, wait=0.4); processes.append(process)
+    abandoned = socket.create_connection(("127.0.0.1", proxy_port), timeout=1)
+    abandoned.sendall(b"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test\r\nContent-Length: 17\r\n\r\n{\"model\":\"model\"}")
+    abandoned.close()
+    time.sleep(0.12)
+    assert State.dispatches == 0, "disconnected request reached upstream"
+    assert post(proxy_port, int((time.time() - 1) * 1000))[0] == 408
+    records = audit_records(proxy_port)
+    assert any(record["error_class"] == "client_disconnected" for record in records)
+    assert any(record["error_class"] == "admission_deadline_elapsed" for record in records)
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    # A connection failure after the one dispatch site remains one observable
+    # outcome with a distinct machine-readable class; it is never replayed.
+    State.ready = True; State.epochs = ["13"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    unavailable_upstream = port()
+    process, proxy_port = start_proxy(backend_port, wait=0.4, upstream_port=unavailable_upstream); processes.append(process)
+    status, _body, admission = post_details(proxy_port)
+    assert (status, admission) == (502, "dispatch_attempt_failed")
+    assert State.dispatches == 0, "unavailable upstream unexpectedly dispatched to fixture backend"
+    records = audit_records(proxy_port)
+    assert len(records) == 1 and records[0]["error_class"] == "gateway_dispatch_connection_failed"
+    assert records[0]["admission"] == "dispatch_attempt_failed" and records[0]["upstream_http_status"] == 0
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    # A dispatch timeout is distinguishable from an upstream HTTP response and
+    # remains a single attempt, preserving the external-blocker discriminator.
+    State.ready = True; State.epochs = ["14"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    State.dispatch_delay = 2
+    process, proxy_port = start_proxy(backend_port, wait=2); processes.append(process)
+    status, _body, admission = post_details(proxy_port, int((time.time() + 1.1) * 1000))
+    assert (status, admission) == (504, "dispatch_attempt_failed")
+    assert State.dispatches == 1, "dispatch timeout retried the upstream request"
+    records = audit_records(proxy_port)
+    assert len(records) == 1 and records[0]["error_class"] == "gateway_dispatch_timeout"
+    assert records[0]["admission"] == "dispatch_attempt_failed" and records[0]["upstream_http_status"] == 0
+    State.dispatch_delay = 0
 finally:
     for process in processes:
         process.terminate()
         process.wait(2)
     server.shutdown()
+    for audit_file in audit_files.values():
+        try:
+            os.unlink(audit_file)
+        except FileNotFoundError:
+            pass
 
 print("PASS gateway admission is bounded, generation-fresh, deadline-preserving, and exactly-once")

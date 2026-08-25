@@ -93,12 +93,17 @@ DEVSHARD_MODEL="$(gateway_env_value DEVSHARD_MODEL 2>/dev/null || true)"
 DEVSHARD_ROUTE_PREFIX="$(gateway_env_value DEVSHARD_ROUTE_PREFIX 2>/dev/null || true)"
 DEVSHARD_CHAIN_ID="$(gateway_env_value DEVSHARD_CHAIN_ID 2>/dev/null || true)"
 DEVSHARD_ROTATION_ESCROW_AMOUNT="$(gateway_env_value DEVSHARD_ROTATION_ESCROW_AMOUNT 2>/dev/null || true)"
+GDC_GATEWAY_ADMISSION_URL="$(gateway_env_value GDC_GATEWAY_ADMISSION_URL 2>/dev/null || true)"
+if [[ -z "$GDC_GATEWAY_ADMISSION_URL" ]]; then
+  admission_host="$(awk -F= '$1 == "API_HOST" {print substr($0, index($0, "=") + 1); exit}' "$(dirname "$gateway_env")/.env" 2>/dev/null || true)"
+  [[ "$admission_host" =~ ^[A-Za-z0-9.-]+$ ]] && GDC_GATEWAY_ADMISSION_URL="https://$admission_host"
+fi
 GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED="$(gateway_env_value GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED 2>/dev/null || printf true)"
 [[ "${GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED:-true}" == true ]] || {
   write_status PENDING reconciliation_disabled
   exit 0
 }
-[[ -n "${DEVSHARD_ADMIN_API_KEY:-}" && -n "${DEVSHARD_PRIVATE_KEY:-}" && -n "${DEVSHARD_MODEL:-}" ]] || {
+[[ -n "${DEVSHARD_ADMIN_API_KEY:-}" && -n "${DEVSHARD_PRIVATE_KEY:-}" && -n "${DEVSHARD_MODEL:-}" && "$GDC_GATEWAY_ADMISSION_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] || {
   write_status FAILED gateway_credentials_incomplete
   exit 0
 }
@@ -115,6 +120,14 @@ admin_post() {
 admin_delete() {
   curl -sS --connect-timeout 3 --max-time 15 -o /dev/null -w '%{http_code}' -X DELETE \
     -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" "$gateway_url$1" || true
+}
+admission_post() {
+  local path="$1" payload="$2" timeout_seconds="$3" deadline_ms
+  deadline_ms="$(( $(date +%s%3N) + timeout_seconds * 1000 ))"
+  curl -sS --connect-timeout 3 --max-time "$timeout_seconds" -o "$4" -w '%{http_code}' \
+    -X POST "$GDC_GATEWAY_ADMISSION_URL$path" \
+    -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -H 'Content-Type: application/json' \
+    -H "X-Request-Deadline-Ms: $deadline_ms" --data "$payload"
 }
 chain_escrow() {
   curl -fsS --connect-timeout 3 --max-time 15 \
@@ -147,10 +160,7 @@ recover_poc_probation() {
     ((recovery_attempt += 1))
     runtime_requires_poc_probation_recovery "$id" || return 0
     body="$(mktemp)"
-    status="$(curl -sS --connect-timeout 3 --max-time 45 -o "$body" -w '%{http_code}' \
-      -X POST "$gateway_url/devshard/$id/v1/chat/completions" \
-      -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -H 'Content-Type: application/json' \
-      --data "$payload" || true)"
+    status="$(admission_post "/devshard/$id/v1/chat/completions" "$payload" 45 "$body" || true)"
     if [[ "$status" != 200 ]] || ! grep -Eq '^data: .*"choices"' "$body"; then
       rm -f -- "$body"
       write_status RECOVERING waiting_for_trusted_poc_runtime "$id"
@@ -188,10 +198,7 @@ bind_and_probe_runtime() {
   probe_payload="$(jq -cn --arg model "$DEVSHARD_MODEL" '{model:$model,messages:[{role:"user",content:"Reply with OK"}],max_tokens:1}')"
   body="$(mktemp)"
   trap 'rm -f "$body"' RETURN
-  status="$(curl -sS --connect-timeout 3 --max-time 30 -o "$body" -w '%{http_code}' \
-    -X POST "$gateway_url/devshard/$id/v1/chat/completions" \
-    -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -H 'Content-Type: application/json' \
-    --data "$probe_payload" || true)"
+  status="$(admission_post "/devshard/$id/v1/chat/completions" "$probe_payload" 30 "$body" || true)"
   if [[ "$status" != 200 ]] || ! jq -e '.choices | type == "array" and length > 0' "$body" >/dev/null 2>&1; then
     write_status RECOVERING waiting_for_versiond_session "$id"
     return 1

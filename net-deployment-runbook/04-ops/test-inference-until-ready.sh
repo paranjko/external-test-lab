@@ -127,10 +127,11 @@ while (( SECONDS < deadline )); do
   # which leaves an in-flight request in the gateway and makes following
   # probes report a misleading capacity failure.
   payload='{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Reply with exactly: GDC_OK"}],"max_tokens":8,"temperature":0}'
+  completion_deadline_ms="$(( $(date +%s%3N) + request_timeout_seconds * 1000 ))"
   set +e
   completion_http="$(curl -sS --connect-timeout 10 --max-time "$request_timeout_seconds" -D "$completion_headers" -o "$completion_file" -w '%{http_code}' \
     "$api_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
-    -H 'Content-Type: application/json' -d "$payload" 2>"$completion_stderr")"
+    -H "X-Request-Deadline-Ms: $completion_deadline_ms" -H 'Content-Type: application/json' -d "$payload" 2>"$completion_stderr")"
   completion_rc=$?
   set -e
   [[ "$completion_rc" == 0 ]] || report_curl_failure completion "$api_url/v1/chat/completions" "${completion_http:-0}" "$completion_rc" "$completion_stderr"

@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+grep -Fq 'X-Request-Deadline-Ms: $completion_deadline_ms' "$ROOT/04-ops/test-inference-until-ready.sh"
 tmp="$(mktemp -d)"
 server_pid=''
 trap '[[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true; rm -rf "$tmp"' EXIT

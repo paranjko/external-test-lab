@@ -21,6 +21,7 @@ if [[ -d "$DEST/gateway-admission-proxy.py" ]]; then
   rm -rf "$DEST/gateway-admission-proxy.py"
 fi
 install -m 0644 "$HERE/gateway-admission-proxy.py" "$DEST/gateway-admission-proxy.py"
+install -d -m 0750 "$DEST/status"
 install -m 0600 "$1" "$DEST/.env"
 "$HERE/reconcile-join-bootstrap.sh" "$HERE/join-bootstrap" "$DEST/join-bootstrap"
 rm -rf "$DEST/public-grafana"

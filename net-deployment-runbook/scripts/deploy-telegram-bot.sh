@@ -18,7 +18,9 @@ BOT_HOST="$TELEGRAM_BOT_HOST"
 [[ -n "${TELEGRAM_BOT_TOKEN:-}" && "$TELEGRAM_BOT_TOKEN" != replace-with-BotFather-token ]] || {
   echo "TELEGRAM_BOT_TOKEN must be configured in $ENV_FILE" >&2; exit 1;
 }
-BOT_API_BASE_URL="http://127.0.0.1:18080/v1"
+# Telegram is a real consumer, not a privileged gateway bypass. Route it
+# through the public-edge admission governor with every other inference probe.
+BOT_API_BASE_URL="https://${API_HOST}/v1"
 BOT_STATE_DB=/data/bot.sqlite3
 BOT_METRICS_FILE=/metrics/telegram-bot.prom
 BOT_KEY_FILE="$SECRETS/gateway.telegram-client-key"
@@ -97,7 +99,7 @@ curl -fsS http://127.0.0.1:9464/metrics | grep -q '^gdc_telegram_bot_up 1$'
 docker exec "$bot" python3 -c 'import json, os; from urllib.request import urlopen; assert json.load(urlopen("https://api.telegram.org/bot" + os.environ["TELEGRAM_BOT_TOKEN"] + "/getMe", timeout=15))["ok"]'
 probe_output="$(docker exec "$bot" python3 /app/bot.py --probe 2>&1)" || {
   probe_reason="$(jq -r '.reason // "unknown"' <<<"$probe_output" 2>/dev/null || true)"
-  printf 'WAIT Telegram consumer probe endpoint=http://127.0.0.1:18080/v1/chat/completions reason=%s\n' "$probe_reason"
+  printf 'WAIT Telegram consumer probe uses the governed public route reason=%s\n' "$probe_reason"
   exit 1
 }
 jq -e '.status == "completed" and .output_present == true and .usage_present == true' <<<"$probe_output" >/dev/null

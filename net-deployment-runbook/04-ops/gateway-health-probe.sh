@@ -3,8 +3,11 @@ set -Eeuo pipefail
 
 gateway_env="${GDC_GATEWAY_ENV:-/srv/dai/ops/gateway.env}"
 output="${GDC_GATEWAY_HEALTH_FILE:-/srv/dai/ops/status/gateway-health.json}"
-gateway_url="${GDC_GATEWAY_HEALTH_URL:-http://127.0.0.1:18080}"
-max_output_tokens="${GDC_GATEWAY_HEALTH_MAX_OUTPUT_TOKENS:-512}"
+gateway_url="${GDC_GATEWAY_HEALTH_URL:-}"
+# Public health runs every ten seconds. Keep its acknowledgement within the
+# same small, bounded response budget as gateway verification so it observes
+# a constrained one-model PoC without consuming the participant's window.
+max_output_tokens="${GDC_GATEWAY_HEALTH_MAX_OUTPUT_TOKENS:-8}"
 reconciliation_file="${GDC_GATEWAY_RECONCILIATION_FILE:-/srv/dai/ops/status/gateway-reconciliation.json}"
 reserve_file="${GDC_GATEWAY_RESERVE_FILE:-/srv/dai/ops/status/gateway-reserve.json}"
 mkdir -p "$(dirname "$output")"
@@ -45,15 +48,23 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
   # such as Telegram must not control or mask the gateway state.
   client_key="$(awk -F= '$1 == "DEVSHARD_API_KEYS" {print $2; exit}' "$gateway_env" | cut -d, -f1)"
   model="$(awk -F= '$1 == "DEVSHARD_MODEL" {print substr($0, index($0, "=") + 1); exit}' "$gateway_env")"
-  if [[ -n "$client_key" && -n "$model" ]]; then
-    # READY must prove the same response budget offered to interactive
-    # consumers. A tiny probe can pass while normal requests are rejected for
-    # exhausted participant capacity, which would mislead the public status.
+  if [[ -z "$gateway_url" ]]; then
+    gateway_url="$(awk -F= '$1 == "GDC_GATEWAY_ADMISSION_URL" {print substr($0, index($0, "=") + 1); exit}' "$gateway_env")"
+  fi
+  if [[ -z "$gateway_url" ]]; then
+    api_host="$(awk -F= '$1 == "API_HOST" {print substr($0, index($0, "=") + 1); exit}' "$(dirname "$gateway_env")/.env" 2>/dev/null || true)"
+    [[ "$api_host" =~ ^[A-Za-z0-9.-]+$ ]] && gateway_url="https://$api_host"
+  fi
+  if [[ -n "$client_key" && -n "$model" && "$gateway_url" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+    # READY must prove a bounded completion without consuming capacity needed
+    # by interactive requests during a one-model PoC.
     payload="$(jq -cn --arg model "$model" --argjson max_tokens "$max_output_tokens" '{model:$model,messages:[{role:"user",content:"Reply with OK"}],max_tokens:$max_tokens}')"
     set +e
+    request_deadline_ms="$(( $(date +%s%3N) + 20000 ))"
     http_code="$(curl -sS --connect-timeout 3 --max-time 20 -o "$response" -w '%{http_code}' \
       "$gateway_url/v1/chat/completions" \
       -H "Authorization: Bearer $client_key" \
+      -H "X-Request-Deadline-Ms: $request_deadline_ms" \
       -H 'Content-Type: application/json' \
       --data "$payload" 2>"$curl_error")"
     curl_rc=$?
@@ -79,6 +90,8 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
     else
       reason=invalid_completion
     fi
+  elif [[ -n "$client_key" && -n "$model" ]]; then
+    reason=admission_url_unavailable
   fi
 fi
 

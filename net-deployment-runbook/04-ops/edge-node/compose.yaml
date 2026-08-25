@@ -38,6 +38,7 @@ services:
     command: ["python3", "/edge/gateway-admission-proxy.py"]
     volumes:
       - ./gateway-admission-proxy.py:/edge/gateway-admission-proxy.py:ro
+      - ./status:/edge/status
 
   caddy:
     image: ${CADDY_IMAGE:-caddy:2.11.4-alpine}

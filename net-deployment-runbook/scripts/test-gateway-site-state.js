@@ -17,6 +17,7 @@ assert.doesNotMatch(generatedGatewayState, /run make site-js\n\n\n/);
 const now = Date.parse('2026-08-06T10:30:00Z');
 const readyProbe = { state: 'READY', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
 const failedProbe = { state: 'UNAVAILABLE', checked_at: '2026-08-06T10:29:50Z', http_status: 429 };
+const degradedProbe = { state: 'DEGRADED', reason: 'escrow_reserve_low', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
 const recoveringProbe = {
   state: 'RECOVERING', reason: 'waiting_for_versiond_session', checked_at: '2026-08-06T10:29:50Z', http_status: 0,
   recovery: { stage: 'waiting_for_versiond_session', escrow_id: '123', started_at: '2026-08-06T10:29:40Z', next_check_seconds: 15 },
@@ -77,6 +78,7 @@ const liveCapacity = {
 assert.equal(state.classify(liveCapacity, 1, readyProbe, now).state, 'AVAILABLE');
 assert.equal(state.classify(liveCapacity, 1, readyProbe, now).available, true);
 assert.equal(state.classify(liveCapacity, 1, failedProbe, now).state, 'UNAVAILABLE');
+assert.equal(state.classify(liveCapacity, 1, degradedProbe, now).state, 'UNAVAILABLE');
 assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, checked_at: '2026-08-06T10:28:00Z' }, now).state, 'UNAVAILABLE');
 
 const legacy = { escrow_id: '7', phase: 'active', requests_blocked: false };

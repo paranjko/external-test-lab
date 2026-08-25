@@ -15,6 +15,7 @@ DEVSHARD_MODEL=Qwen/Qwen3-0.6B
 DEVSHARD_ROUTE_PREFIX=/devshard/v3
 DEVSHARD_CHAIN_ID=gonka-devnet-community
 DEVSHARD_ROTATION_ESCROW_AMOUNT=1
+GDC_GATEWAY_ADMISSION_URL=https://admission
 GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true
 EOF
 }
@@ -31,7 +32,7 @@ set -Eeuo pipefail
 printf '%s\n' "$*" >>"$CASE_DIR/curl.log"
 url=''
 for arg in "$@"; do
-  [[ "$arg" == http://gateway* || "$arg" == http://chain* ]] && url="$arg"
+  [[ "$arg" == http://gateway* || "$arg" == http://chain* || "$arg" == https://admission* ]] && url="$arg"
 done
 if [[ "$url" == *'/v1/admin/devshards' ]]; then
   printf '%s\n' "$ADMIN_STATE"

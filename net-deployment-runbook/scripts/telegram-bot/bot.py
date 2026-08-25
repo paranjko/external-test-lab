@@ -326,10 +326,15 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
         "max_tokens": MAX_OUTPUT_TOKENS,
         "temperature": 0.2,
     }).encode()
+    deadline_ms = str(int(time.time() * 1000) + GATEWAY_TIMEOUT_SECONDS * 1000)
     request = Request(
         f"{GATEWAY_API_BASE_URL}/chat/completions",
         data=body,
-        headers={"Authorization": f"Bearer {GATEWAY_API_KEY}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {GATEWAY_API_KEY}",
+            "Content-Type": "application/json",
+            "X-Request-Deadline-Ms": deadline_ms,
+        },
         method="POST",
     )
     try:
