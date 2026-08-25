@@ -6,6 +6,23 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 model=Qwen/Qwen3-0.6B
 
+cat >"$WORK/snapshot-missing.json" <<EOF
+{"found":false,"snapshot":{"episode_anchor_height":"50","model_preserved_nodes":[]}}
+EOF
+cat >"$WORK/requests.jsonl" <<EOF
+{"height":49,"target_anchor":50,"window":"before","coverage":"immediate-before","chain_phase":"Inference","http_code":200}
+{"height":50,"target_anchor":50,"window":"anchor","coverage":"at-anchor","chain_phase":"PoCGenerate","http_code":200}
+{"height":50,"window":"poc","chain_phase":"PoCGenerate","http_code":200}
+{"height":68,"window":"after","chain_phase":"Inference","http_code":200}
+EOF
+set +e
+"$ROOT/scripts/classify-gateway-continuity.sh" "$model" "$WORK/snapshot-missing.json" "$WORK/requests.jsonl" "$WORK/verdict.md"
+rc=$?
+set -e
+[[ "$rc" == 2 ]]
+grep -qx '# Gateway continuity: INCONCLUSIVE' "$WORK/verdict.md"
+grep -q 'not evidence that the model had zero' "$WORK/verdict.md"
+
 write_requests() {
   local failed_code="${1:-200}"
   local anchor_code="${2:-200}"
@@ -76,5 +93,9 @@ rc=$?
 set -e
 [[ "$rc" == 2 ]]
 grep -qx '# Gateway continuity: INCONCLUSIVE' "$WORK/verdict.md"
+
+grep -Fq 'capture-poc-snapshot.sh' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'snapshot_pid=$!' "$ROOT/scripts/phase-gateway-continuity.sh"
+grep -Fq 'snapshot_not_captured' "$ROOT/scripts/phase-gateway-continuity.sh"
 
 printf 'PASS gateway continuity verdict contract\n'

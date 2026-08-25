@@ -85,7 +85,7 @@ try {
     await delay(1000);
   }
   const { result } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapMarkers:Number(document.querySelector("#validator-map")?.dataset.markerCount||0),mapValidators:Number(document.querySelector("#validator-map")?.dataset.validatorCount||0),mapLeaflet:document.querySelector("#validator-map")?.classList.contains("leaflet-container"),gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,join:(e=>({exists:Boolean(e),title:e?.querySelector("h2")?.textContent,code:e?.querySelector("code")?.textContent,link:e?.querySelector("a")?.href}))(document.querySelector("#join-node")),nodes:[...document.querySelectorAll("#nodes .node")].map(n=>({name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,versions:n.querySelector("[data-k=versions]")?.textContent,top:n.getBoundingClientRect().top,bottom:n.getBoundingClientRect().bottom}))})',
+    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapMarkers:Number(document.querySelector("#validator-map")?.dataset.markerCount||0),mapValidators:Number(document.querySelector("#validator-map")?.dataset.validatorCount||0),mapLeaflet:document.querySelector("#validator-map")?.classList.contains("leaflet-container"),gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,join:(e=>({exists:Boolean(e),title:e?.querySelector("h2")?.textContent,code:e?.querySelector("code")?.textContent,link:e?.querySelector("a")?.href}))(document.querySelector("#join-node")),nodes:[...document.querySelectorAll("#nodes .node")].map(n=>{const r=n.getBoundingClientRect();return {name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,vp:n.querySelector("[data-k=vp]")?.textContent,sync:n.querySelector("[data-k=sync]")?.textContent,endpoint:n.querySelector("[data-k=endpoint]")?.textContent,versions:n.querySelector("[data-k=versions]")?.textContent,top:r.top,bottom:r.bottom,height:r.height,clientHeight:n.clientHeight,scrollHeight:n.scrollHeight}})})',
     returnByValue: true,
   }, sessionId);
   const state = JSON.parse(result.value);
@@ -97,6 +97,13 @@ try {
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
   if (mappedNodes.some(node => !node.versions || node.versions === 'checking')) throw new Error(`participant software versions did not resolve ${JSON.stringify(state)}`);
+  const hostHeights = new Set(mappedNodes.map(node => Math.round(node.height)));
+  const hasUnboundedHostDiagnostic = node => {
+    const endpoint = node.endpoint || '';
+    return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
+      || (/\b[45]\d\d\b/.test(endpoint) && !/^Unavailable – HTTP [45]\d\d$/.test(endpoint));
+  };
+  if (hostHeights.size !== 1 || !hostHeights.has(400) || mappedNodes.some(node => node.scrollHeight > node.clientHeight || !node.vp || !node.sync || !node.endpoint || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or bounded state contract failed ${JSON.stringify(mappedNodes)}`);
   if (expectResetState) {
     const active = state.nodes;
     if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapValidators !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {

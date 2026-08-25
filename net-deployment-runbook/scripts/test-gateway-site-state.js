@@ -11,6 +11,7 @@ childProcess.execFileSync(
   { cwd: os.tmpdir(), stdio: 'inherit' },
 );
 const state = require(path.join(siteBuild, 'gateway-state.js'));
+const hostState = require(path.join(siteBuild, 'host-state.js'));
 const generatedGatewayState = fs.readFileSync(path.join(siteBuild, 'gateway-state.js'), 'utf8');
 assert.doesNotMatch(generatedGatewayState, /run make site-js\n\n\n/);
 const now = Date.parse('2026-08-06T10:30:00Z');
@@ -81,6 +82,79 @@ assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, checked_at: '2026-
 const legacy = { escrow_id: '7', phase: 'active', requests_blocked: false };
 assert.equal(state.classify(legacy, 1, readyProbe, now).state, 'AVAILABLE');
 
+assert.deepEqual(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: true,
+  votingPower: '42',
+  endpointState: 'reachable',
+  catchingUp: false,
+}), {
+  primaryLabel: 'Effective validator',
+  primaryClass: 'status ok',
+  votingPower: '42',
+  endpointLabel: 'Reachable',
+  syncLabel: 'Synced',
+  validatorEffective: true,
+});
+assert.deepEqual(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: true,
+  votingPower: '0',
+  endpointState: 'reachable',
+  catchingUp: true,
+  blocksBehind: 17,
+}), {
+  primaryLabel: 'Not in validator set',
+  primaryClass: 'status skip',
+  votingPower: '0',
+  endpointLabel: 'Reachable',
+  syncLabel: 'Lagging – 17 blocks',
+  validatorEffective: false,
+});
+assert.deepEqual(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: false,
+  endpointState: 'unavailable',
+  endpointDiagnostic: 'HTTP 502',
+}), {
+  primaryLabel: 'Validator data unavailable',
+  primaryClass: 'status bad',
+  votingPower: 'Unavailable',
+  endpointLabel: 'Unavailable – HTTP 502',
+  syncLabel: 'Unavailable',
+  validatorEffective: false,
+});
+assert.deepEqual(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: false,
+  endpointState: 'unavailable',
+  endpointDiagnostic: 'Network error',
+}), {
+  primaryLabel: 'Validator data unavailable',
+  primaryClass: 'status bad',
+  votingPower: 'Unavailable',
+  endpointLabel: 'Unavailable – Network error',
+  syncLabel: 'Unavailable',
+  validatorEffective: false,
+});
+assert.equal(hostState.classify({
+  participantKnown: false,
+  endpointState: 'unknown',
+}).primaryLabel, 'Participant data unavailable');
+assert.equal(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'INACTIVE',
+  validatorKnown: true,
+  votingPower: '88',
+}).primaryLabel, 'Participant inactive');
+assert.equal(hostState.endpointDiagnostic(new Error('502')), 'HTTP 502');
+assert.equal(hostState.endpointDiagnostic(new Error('Failed to fetch')), 'Network error');
+assert.equal(hostState.endpointDiagnostic(new Error('timeout exceeded')), 'Timed out');
+
 const siteApp = fs.readFileSync(path.join(siteBuild, 'app.js'), 'utf8');
 assert.match(siteApp, /READY – verified inference; processing requests/);
 assert.match(siteApp, /READY – verified inference; no requests in flight/);
@@ -99,17 +173,31 @@ assert.match(siteApp, /\$\{inventoryLabel\} – \$\{connection\}/);
 assert.match(siteApp, /replace\(\/\^NVIDIA\\s\+\/i, ""\)/);
 assert.match(
   siteApp,
-  /participants\.map\(\s*\(participant\)\s*=>\s*participantNode\(participant, validators\),?\s*\)/,
+  /participantNode\(participant, validators, validatorKnown\)/,
 );
-assert.match(siteApp, /ACTIVE – waiting for validator set/);
-assert.match(siteApp, /effective validator – endpoint reachable/);
-assert.match(siteApp, /effective validator – synchronizing/);
-assert.match(siteApp, /blocks behind/);
+assert.match(siteApp, /hostState\.classify/);
+assert.match(siteApp, /GDC_SOFTWARE_VERSIONS\.normalizeMlNodeVersion/);
+assert.match(siteApp, /data-k="vp"/);
+assert.match(siteApp, /data-k="endpoint"/);
+assert.match(siteApp, /Promise\.allSettled/);
+assert.match(siteApp, /participantKnown: false/);
+assert.match(siteApp, /validatorKnown: false/);
+assert.match(siteApp, /Array\.isArray\(validatorResult\.value\?\.result\?\.validators\)/);
 assert.match(siteApp, /validatorEffective/);
-assert.match(siteApp, /endpointReachable/);
 assert.match(siteApp, /catchingUp/);
-assert.doesNotMatch(siteApp, /normalized === "1" \|\| normalized === ""/);
+assert.doesNotMatch(siteApp, /waiting for validator set/);
+assert.doesNotMatch(siteApp, /effective validator – endpoint/);
+assert.doesNotMatch(siteApp, /\$\{display\.text\} \(\$\{e\.message\}\)/);
 assert.doesNotMatch(siteApp, /quality-health-state'\)\.textContent=state\.toUpperCase/);
+
+const readability = fs.readFileSync(
+  path.join(__dirname, '..', '04-ops', 'site', 'readability.css'),
+  'utf8',
+);
+assert.match(readability, /\.nodes\.compact \{\s*grid-auto-rows: 400px;/);
+assert.match(readability, /\.nodes\.compact \.node \{\s*box-sizing: border-box;\s*height: 400px;/);
+assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;/);
+assert.match(readability, /text-overflow: ellipsis/);
 
 fs.rmSync(siteBuild, { recursive: true, force: true });
 console.log('PASS gateway public-site state contract');

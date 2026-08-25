@@ -19,9 +19,11 @@ type SiteNode = {
   reason?: string,
   participantStatus?: string,
   participantState?: string,
-  validatorEffective?: boolean,
+  participantKnown?: boolean,
+  validatorKnown?: boolean,
   votingPower?: string,
-  endpointReachable?: boolean,
+  endpointState?: string,
+  endpointDiagnostic?: string,
   catchingUp?: boolean,
   blocksBehind?: number,
   isOnline?: boolean,
@@ -60,6 +62,19 @@ type GatewayStateApi = {
   ) => GatewayAvailability,
 };
 
+type HostStateApi = {
+  isActiveParticipant: (status: mixed) => boolean,
+  classify: (state: any) => {
+    primaryLabel: string,
+    primaryClass: string,
+    votingPower: string,
+    endpointLabel: string,
+    syncLabel: string,
+    validatorEffective: boolean,
+  },
+  endpointDiagnostic: (error: mixed) => string,
+};
+
 type ValidatorMapController = {
   update: (nodes: Array<SiteNode>) => void,
 };
@@ -84,6 +99,11 @@ type ParticipantDiscovery = {
 
 type GpuInventory = Map<string, Array<string>>;
 type SoftwareInventory = Map<string, Array<any>>;
+type SoftwareVersionsApi = {
+  normalizeMlNodeVersion: (chain: string, reported: string) => string,
+};
+
+declare var GDC_SOFTWARE_VERSIONS: SoftwareVersionsApi;
 
 type Validator = {
   ownerAddress: string,
@@ -134,6 +154,7 @@ declare class URL {
 
 const cfg: SiteConfig = (window: any).GDC_CONFIG;
 const gatewayStatus: GatewayStateApi = (window: any).GDC_GATEWAY_STATE;
+const hostState: HostStateApi = (window: any).GDC_HOST_STATE;
 const $ = (id: string): any => document.getElementById(id);
 const chainRpcHost =
   cfg.chainRpcHost ||
@@ -183,8 +204,16 @@ function createCard(node: SiteNode): HTMLElement {
       <b data-k="height"></b>
     </div>
     <div class="metric">
+      <span>VP</span>
+      <b data-k="vp"></b>
+    </div>
+    <div class="metric">
       <span>chain sync</span>
       <b data-k="sync"></b>
+    </div>
+    <div class="metric">
+      <span>endpoint</span>
+      <b data-k="endpoint"></b>
     </div>
     <div class="metric">
       <span>peers</span>
@@ -203,7 +232,9 @@ function createCard(node: SiteNode): HTMLElement {
   set(el, "status", node.mode === "skip" ? "SKIP" : "checking…");
   set(el, "scope", node.mode === "skip" ? node.reason : node.address);
   set(el, "height", node.mode === "skip" ? "–" : "…");
-  set(el, "sync", node.mode === "skip" ? "not joined" : "…");
+  set(el, "vp", node.mode === "skip" ? "Unavailable" : "Unavailable");
+  set(el, "sync", node.mode === "skip" ? "Unknown" : "Unknown");
+  set(el, "endpoint", node.mode === "skip" ? "Unknown" : "Unknown");
   set(el, "peers", node.mode === "skip" ? "–" : "…");
   if (node.mode === "skip") set(el, "versions", "not running");
   else updateSoftware(cardSoftwareInventory, node, el);
@@ -287,9 +318,14 @@ function updateSoftware(
     if (!existing || metric.source === "runtime") components.set(component, metric);
   }
   const formatted: Array<string> = [];
+  const chainVersion = String(components.get("chain")?.version || "unknown");
   for (const component of ["chain", "DAPI", "MLNode"]) {
     const metric = components.get(component);
-    if (metric) formatted.push(`${component} ${metric.version}`);
+    if (!metric) continue;
+    const version = component === "MLNode"
+      ? GDC_SOFTWARE_VERSIONS.normalizeMlNodeVersion(chainVersion, String(metric.version))
+      : metric.version;
+    formatted.push(`${component} ${version}`);
   }
   const value = formatted.join(" · ");
   if (!value) {
@@ -423,64 +459,23 @@ function escapeHtml(value: mixed): string {
     (char) => entities[char],
   );
 }
-function syncStatus(value: mixed): string {
-  const normalized =
-    value === null || value === undefined
-      ? ""
-      : String(value).trim().toLowerCase();
-  if (normalized === "true" || value === true) return "sync in progress";
-  if (normalized === "false" || value === false) return "in sync";
-  return "checking";
-}
-
-function isNodeActive(status: mixed): boolean {
-  const normalized = String(status || "").trim().toUpperCase();
-  return (
-    normalized === "ACTIVE" ||
-    normalized === "PARTICIPANT_STATUS_ACTIVE" ||
-    normalized === "1"
-  );
-}
-
-function isPositivePower(value: mixed): boolean {
-  try {
-    return BigInt(String(value || "0")) > 0n;
-  } catch {
-    return false;
-  }
-}
-
-function statusLabel(node: SiteNode): { text: string, className: string } {
-  const active = isNodeActive(node.participantState || node.participantStatus);
-  if (!active)
-    return {
-      text: `${String(node.participantState || node.participantStatus || "UNKNOWN")} (chain)`,
-      className: "status bad",
-    };
-  if (!node.validatorEffective)
-    return {
-      text: "ACTIVE – waiting for validator set",
-      className: "status skip",
-    };
-  if (!node.endpointReachable)
-    return {
-      text: "effective validator – endpoint unavailable",
-      className: "status bad",
-    };
-  if (node.catchingUp) {
-    const lag = Number(node.blocksBehind || 0);
-    return {
-      text:
-        lag > 0
-          ? `effective validator – synchronizing (${lag.toLocaleString()} blocks behind)`
-          : "effective validator – synchronizing",
-      className: "status skip",
-    };
-  }
-  return {
-    text: "effective validator – endpoint reachable",
-    className: "status ok",
-  };
+function renderHostState(card: HTMLElement, node: SiteNode): boolean {
+  const display = hostState.classify({
+    participantKnown: node.participantKnown,
+    participantStatus: node.participantState || node.participantStatus,
+    validatorKnown: node.validatorKnown,
+    votingPower: node.votingPower,
+    endpointState: node.endpointState,
+    endpointDiagnostic: node.endpointDiagnostic,
+    catchingUp: node.catchingUp,
+    blocksBehind: node.blocksBehind,
+  });
+  set(card, "status", display.primaryLabel);
+  card.querySelector('[data-k="status"]').className = display.primaryClass;
+  set(card, "vp", display.votingPower);
+  set(card, "sync", display.syncLabel);
+  set(card, "endpoint", display.endpointLabel);
+  return display.validatorEffective;
 }
 
 const participantDiscovery: Map<string, Promise<ParticipantDiscovery>> =
@@ -530,6 +525,7 @@ async function discoverParticipant(host: string): Promise<ParticipantDiscovery> 
 async function participantNode(
   participant: Participant,
   validators: Map<string, ConsensusValidator>,
+  validatorKnown: boolean,
 ): Promise<SiteNode> {
   let endpoint;
   try {
@@ -547,8 +543,6 @@ async function participantNode(
       : {};
   const participantStatus = participant.status || "UNKNOWN";
   const validator = validators.get(String(participant.validator_key || ""));
-  const votingPower = String(validator?.voting_power || "0");
-  const validatorEffective = Boolean(validator) && isPositivePower(votingPower);
   return {
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
@@ -560,9 +554,11 @@ async function participantNode(
     reason: catalog?.reason,
     participantStatus: String(participantStatus),
     participantState: String(participantStatus),
-    validatorEffective,
-    votingPower,
-    endpointReachable: false,
+    participantKnown: Boolean(participant.status),
+    validatorKnown,
+    votingPower: validator ? String(validator.voting_power || "") : "0",
+    endpointState: "unknown",
+    endpointDiagnostic: "Check endpoint",
     isOnline: false,
     serverStatus: String(participantStatus),
     gpuProfile: catalog?.gpuProfile,
@@ -572,10 +568,28 @@ async function participantNode(
 
 async function reconcileParticipants(): Promise<number> {
   if (!chainRpcHost) throw new Error("chain RPC host is missing");
-  const [state, validatorResponse] = await Promise.all([
+  const [participantResult, validatorResult] = await Promise.allSettled([
     json("/status/participants"),
     json(`https://${chainRpcHost}/chain-rpc/validators?per_page=100`),
   ]);
+  if (participantResult.status !== "fulfilled") {
+    observedNodes = observedNodes.map((node) => ({
+      ...node,
+      participantKnown: false,
+      validatorKnown: false,
+      votingPower: "",
+    }));
+    for (const node of observedNodes) {
+      const card = cards.get(nodeKey(node));
+      if (card) renderHostState(card, node);
+    }
+    return 0;
+  }
+  const state = participantResult.value;
+  const validatorKnown =
+    validatorResult.status === "fulfilled" &&
+    Array.isArray(validatorResult.value?.result?.validators);
+  const validatorResponse = validatorKnown ? validatorResult.value : {};
   const participants = Array.isArray(state.participant)
     ? state.participant
     : [];
@@ -585,7 +599,9 @@ async function reconcileParticipants(): Promise<number> {
       .map((validator) => [String(validator.pub_key.value), validator]),
   );
   const next = (await Promise.all(
-    participants.map((participant) => participantNode(participant, validators)),
+    participants.map((participant) =>
+      participantNode(participant, validators, validatorKnown),
+    ),
   )).sort(
     (left, right) => left.name.localeCompare(right.name),
   );
@@ -601,6 +617,7 @@ async function reconcileParticipants(): Promise<number> {
     if (!card) card = createCard(node);
     card.querySelector("h3").textContent = node.publicHost || node.name;
     set(card, "scope", node.address);
+    renderHostState(card, node);
   }
   observedNodes = next;
   return Number(state.block_height) || 0;
@@ -670,7 +687,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         ownerAddress: node.address || "",
         ip: node.ip || "",
         licenseCount: 0,
-        online: node.isOnline ?? isNodeActive(node.participantStatus),
+        online: node.isOnline === true,
         geo: {
           lat,
           lon,
@@ -785,7 +802,6 @@ async function refresh(): Promise<void> {
   try {
     best = await reconcileParticipants();
   } catch {}
-  const singleParticipant = observedNodes.length === 1;
   await Promise.all(
     observedNodes
       .filter((n) => n.mode !== "skip")
@@ -793,60 +809,44 @@ async function refresh(): Promise<void> {
         const card = cards.get(nodeKey(n));
         if (!card) return;
         if (!n.statusBase) {
-          n.endpointReachable = false;
+          n.endpointState = "unknown";
+          n.endpointDiagnostic = "Check endpoint";
           n.isOnline = false;
-          n.serverStatus = String(n.participantState || n.participantStatus || "UNKNOWN");
-          const display = statusLabel(n);
-          set(card, "status", display.text);
-          card.querySelector('[data-k="status"]').className = display.className;
+          n.serverStatus = "endpoint unknown";
           set(card, "height", best ? best.toLocaleString() : "–");
-          set(card, "sync", "endpoint not proxied");
           set(card, "peers", "–");
+          renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
           return;
         }
         const statusBase = n.statusBase;
         try {
-          n.endpointReachable = true;
-          n.isOnline = Boolean(n.validatorEffective);
-          n.serverStatus = "endpoint reachable";
           const [s, net] = await Promise.all([
             json(`${statusBase}/chain-rpc/status`),
             json(`${statusBase}/chain-rpc/net_info`),
           ]);
+          n.endpointState = "reachable";
+          n.endpointDiagnostic = "";
           const h = Number(s.result.sync_info.latest_block_height);
           const peers = Number(net.result.n_peers);
           n.catchingUp = Boolean(s.result.sync_info.catching_up);
           n.blocksBehind = best > h ? best - h : 0;
           best = Math.max(best, h);
+          const validatorEffective = renderHostState(card, n);
+          n.isOnline = validatorEffective && !n.catchingUp;
+          n.serverStatus = "endpoint reachable";
           set(card, "height", h.toLocaleString());
-          set(card, "sync", syncStatus(s.result.sync_info.catching_up));
           set(card, "peers", peers);
-          const display = statusLabel(n);
-          const noPeers =
-            peers === 0 &&
-            !singleParticipant &&
-            n.validatorEffective &&
-            !n.catchingUp;
-          set(
-            card,
-            "status",
-            noPeers
-              ? "effective validator – endpoint reachable, no peers"
-              : display.text,
-          );
-          card.querySelector('[data-k="status"]').className = noPeers
-            ? "status bad"
-            : display.className;
-          if (n.validatorEffective) healthy++;
+          if (validatorEffective) healthy++;
           updateSoftware(cardSoftwareInventory, n, card);
         } catch (e) {
-          n.endpointReachable = false;
+          n.endpointState = "unavailable";
+          n.endpointDiagnostic = hostState.endpointDiagnostic(e);
           n.isOnline = false;
           n.serverStatus = "endpoint unavailable";
-          const display = statusLabel(n);
-          set(card, "status", `${display.text} (${e.message})`);
-          card.querySelector('[data-k="status"]').className = "status bad";
+          set(card, "height", "–");
+          set(card, "peers", "–");
+          renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
         }
       }),

@@ -66,6 +66,7 @@ test:
 	@./scripts/test-upgrade-state-comparison.sh
 	@./scripts/test-upgrade-proposal-binding.sh
 	@./scripts/test-gateway-continuity-verdict.sh
+	@./scripts/test-capture-poc-snapshot.sh
 	@node ./scripts/test-gateway-site-state.js
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh

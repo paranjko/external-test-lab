@@ -28,6 +28,7 @@ class State:
     epochs = ["7"]
     epoch_index = 0
     height = 50
+    advance_height = False
     dispatches = 0
 
 
@@ -43,7 +44,10 @@ class Backend(BaseHTTPRequestHandler):
             State.epoch_index += 1
             body = {"epoch_group_data": {"epoch_index": epoch}}
         elif self.path == "/chain-status":
-            body = {"result": {"sync_info": {"latest_block_height": str(State.height)}}}
+            height = State.height
+            if State.advance_height:
+                State.height += 1
+            body = {"result": {"sync_info": {"latest_block_height": str(height)}}}
         elif self.path == "/params":
             body = {"params": {"epoch_params": {"epoch_length": "100", "poc_stage_duration": "2", "poc_exchange_duration": "2", "poc_validation_delay": "2", "poc_validation_duration": "2", "set_new_validators_delay": "2"}}}
         else:
@@ -94,16 +98,17 @@ def post(proxy_port, deadline=None, authorization=True):
     return status, body
 
 
-def start_proxy(backend_port, max_queue=1, wait=0.35, status_path="/v1/status"):
+def start_proxy(backend_port, max_queue=1, wait=0.35, state_paths=None):
     proxy_port = port()
+    state_paths = state_paths or {}
     env = os.environ.copy()
     env.update({
         "GDC_GATEWAY_ADMISSION_PORT": str(proxy_port),
         "GDC_GATEWAY_ADMISSION_UPSTREAM": "http://127.0.0.1:%s" % backend_port,
-        "GDC_GATEWAY_ADMISSION_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, status_path),
-        "GDC_GATEWAY_ADMISSION_EPOCH_URL": "http://127.0.0.1:%s/epoch" % backend_port,
-        "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL": "http://127.0.0.1:%s/chain-status" % backend_port,
-        "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL": "http://127.0.0.1:%s/params" % backend_port,
+        "GDC_GATEWAY_ADMISSION_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("status", "/v1/status")),
+        "GDC_GATEWAY_ADMISSION_EPOCH_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("epoch", "/epoch")),
+        "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("chain", "/chain-status")),
+        "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("params", "/params")),
         "GDC_GATEWAY_ADMISSION_MAX_QUEUE": str(max_queue),
         "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS": str(wait),
         "GDC_GATEWAY_ADMISSION_POLL_SECONDS": "0.03",
@@ -142,6 +147,15 @@ try:
     assert State.dispatches == 1, "gateway outcome was replayed"
     process.terminate(); process.wait(2); processes.remove(process)
 
+    # Consecutive fresh observations may span different block heights.  The
+    # phase generation stays stable, so the proxy dispatches exactly once.
+    State.ready = True; State.epochs = ["8"]; State.epoch_index = 0; State.height = 50; State.advance_height = True; State.dispatches = 0
+    process, proxy_port = start_proxy(backend_port); processes.append(process)
+    assert post_details(proxy_port) == (429, b'{"error":"single outcome"}', "dispatched_once")
+    assert State.dispatches == 1, "fresh height progression blocked safe dispatch"
+    State.advance_height = False
+    process.terminate(); process.wait(2); processes.remove(process)
+
     # A changing epoch generation is stale admission state, even with capacity.
     State.ready = True; State.epochs = ["8", "9"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     process, proxy_port = start_proxy(backend_port, wait=0.18); processes.append(process)
@@ -156,12 +170,13 @@ try:
     assert State.dispatches == 0, "PoC-boundary admission dispatched"
     process.terminate(); process.wait(2); processes.remove(process)
 
-    # Unavailable admission state is sanitized and rejected before dispatch.
+    # Each unavailable admission-state source is sanitized before dispatch.
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
-    process, proxy_port = start_proxy(backend_port, wait=0.18, status_path="/missing"); processes.append(process)
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_state_unavailable"}}', "pre_dispatch_rejected")
-    assert State.dispatches == 0, "unavailable admission state dispatched"
-    process.terminate(); process.wait(2); processes.remove(process)
+    for source, expected in (("status", "status_unavailable"), ("epoch", "epoch_unavailable"), ("chain", "chain_status_unavailable"), ("params", "params_unavailable")):
+        process, proxy_port = start_proxy(backend_port, wait=0.18, state_paths={source: "/missing"}); processes.append(process)
+        assert post_details(proxy_port) == (503, ('{"error": {"code": "admission_%s"}}' % expected).encode(), "pre_dispatch_rejected")
+        assert State.dispatches == 0, "unavailable %s state dispatched" % source
+        process.terminate(); process.wait(2); processes.remove(process)
 
     # Queue capacity and an original expired deadline reject before dispatch.
     State.ready = False; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0

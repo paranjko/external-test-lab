@@ -19,15 +19,21 @@ verdict="$4"
   printf '# Gateway continuity: INCONCLUSIVE\n\nNo authenticated request observations were captured.\n' >"$verdict"
   exit 2
 }
+if ! jq -e '.found == true and (.snapshot | type == "object")' "$snapshot" >/dev/null 2>&1; then
+  cat >"$verdict" <<EOF
+# Gateway continuity: INCONCLUSIVE
+
+No authoritative PoC preserved-runtime snapshot was captured. A missing
+snapshot is not evidence that the model had zero preserved runtimes.
+EOF
+  exit 2
+fi
 
 preserved_nodes="$(jq -er --arg model "$model" '
-  if .found != true then 0
-  else
-    [.snapshot.model_preserved_nodes[]?
-      | select(.model_id == $model)
-      | .participants[]?.node_ids[]?]
-    | unique | length
-  end
+  [.snapshot.model_preserved_nodes[]?
+    | select(.model_id == $model)
+    | .participants[]?.node_ids[]?]
+  | unique | length
 ' "$snapshot")"
 
 request_summary="$(jq -sc '

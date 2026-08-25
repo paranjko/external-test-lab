@@ -18,7 +18,7 @@ post_success_target="${GDC_GATEWAY_CONTINUITY_POST_SUCCESSES:-2}"
 # The gateway's non-stream response floor is 20 seconds.  The observer must
 # outlive that floor; an equal client timeout fabricates HTTP 000 at the exact
 # boundary while a valid completion is still permitted.
-request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-45}"
+request_timeout="${GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-210}"
 [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_TIMEOUT_SECONDS must be positive'
 [[ "$pre_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_PRE_BLOCKS must be positive'
 [[ "$post_success_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_CONTINUITY_POST_SUCCESSES must be positive'
@@ -79,23 +79,30 @@ request_observation() {
   local window="$2"
   local coverage="$3"
   local sequence="$4"
-  local request response http_code payload error response_id
+  local request response http_code payload error response_id headers admission
 
   request="$(jq -nc --arg prompt "continuity probe anchor $target_anchor sequence $sequence" \
     --arg model "$MODEL_ID" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:1}')"
-  response="$(curl -sS --connect-timeout 10 --max-time "$request_timeout" -w $'\n%{http_code}' \
+  headers="$RUN/request-${coverage}.headers"
+  response="$(curl -sS --connect-timeout 10 --max-time "$request_timeout" -D "$headers" -w $'\n%{http_code}' \
     "$gateway_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
     -H 'Content-Type: application/json' --data-binary "$request" || true)"
   http_code="${response##*$'\n'}"
   payload="${response%$'\n'*}"
   [[ "$http_code" =~ ^[0-9]{3}$ ]] || http_code=000
-  error="$(jq -r '.error.message // .message // empty' <<<"$payload" 2>/dev/null || true)"
+  admission="$(awk 'tolower($0) ~ /^x-gdc-admission:/ { value=$0; sub(/^[^:]*:[[:space:]]*/, "", value); sub(/\r$/, "", value); print value; exit }' "$headers")"
+  admission="${admission:-not_observed}"
+  error=''
+  if [[ "$admission" == pre_dispatch_rejected || "$admission" == dispatch_attempt_failed ]]; then
+    error="$(jq -r '.error.code? | select(type == "string" and test("^[a-z0-9_]{1,64}$"))' <<<"$payload" 2>/dev/null || true)"
+  fi
+  rm -f "$headers"
   response_id="$(jq -r '.id // empty' <<<"$payload" 2>/dev/null || true)"
   jq -nc --arg timestamp "$(date -u +%FT%TZ)" --argjson height "$observation_height" \
     --arg window "$window" --arg coverage "$coverage" --arg phase "$chain_phase" \
-    --arg code "$http_code" --arg error "$error" --arg response_id "$response_id" \
+    --arg code "$http_code" --arg error "$error" --arg admission "$admission" --arg response_id "$response_id" \
     --argjson target_anchor "$target_anchor" \
-    '{timestamp:$timestamp,height:$height,target_anchor:$target_anchor,window:$window,coverage:$coverage,chain_phase:$phase,http_code:($code|tonumber),error:$error,response_id:$response_id}'
+    '{timestamp:$timestamp,height:$height,target_anchor:$target_anchor,window:$window,coverage:$coverage,chain_phase:$phase,http_code:($code|tonumber),admission:$admission,error:$error,response_id:$response_id}'
 }
 
 capture_targeted_observation() {
@@ -139,13 +146,21 @@ capture_targeted_observation "$((target_anchor - 1))" before immediate-before >"
 immediate_before_pid=$!
 capture_targeted_observation "$target_anchor" anchor at-anchor >"$RUN/anchor-request.json" &
 anchor_pid=$!
+capture_targeted_observation "$((target_anchor + 1))" poc immediate-after-anchor >"$RUN/poc-request.json" &
+poc_pid=$!
+snapshot_timeout=$((deadline - SECONDS))
+(( snapshot_timeout > 0 )) || die 'continuity deadline elapsed before PoC snapshot capture started'
+"$ROOT/scripts/capture-poc-snapshot.sh" "$chain_base" "$target_anchor" "$epoch_length" "$snapshot_timeout" "$RUN/preserved-snapshot.json" &
+snapshot_pid=$!
 
 poc_active_seen=false
 after_seen=false
 post_successes=0
 snapshot_captured=false
 sequence=0
-while (( SECONDS < deadline )); do
+# Boundary probes below are one-shot requests.  The former regular loop is
+# intentionally disabled: it would turn a buffered user request into retries.
+while false; do
   sequence=$((sequence + 1))
   height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
   gateway_status="$(curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
@@ -199,21 +214,42 @@ wait "$immediate_before_pid"
 immediate_before_rc=$?
 wait "$anchor_pid"
 anchor_rc=$?
+wait "$poc_pid"
+poc_rc=$?
+wait "$snapshot_pid"
+snapshot_rc=$?
 set -e
-for observation_file in "$RUN/immediate-before-request.json" "$RUN/anchor-request.json"; do
+for observation_file in "$RUN/immediate-before-request.json" "$RUN/anchor-request.json" "$RUN/poc-request.json"; do
   if [[ -s "$observation_file" ]]; then
     cat "$observation_file" >>"$RUN/requests.jsonl"
   fi
 done
-if (( immediate_before_rc != 0 || anchor_rc != 0 )); then
-  printf 'INCONCLUSIVE targeted boundary capture: immediate-before=%s anchor=%s\n' \
-    "$immediate_before_rc" "$anchor_rc" >&2
+if (( immediate_before_rc != 0 || anchor_rc != 0 || poc_rc != 0 )); then
+  printf 'INCONCLUSIVE targeted boundary capture: immediate-before=%s anchor=%s poc=%s\n' \
+    "$immediate_before_rc" "$anchor_rc" "$poc_rc" >&2
 fi
+if (( snapshot_rc != 0 )); then
+  printf 'INCONCLUSIVE targeted PoC snapshot capture: status=%s\n' "$snapshot_rc" >&2
+fi
+
+post_successes=0
+while (( SECONDS < deadline && post_successes < post_success_target )); do
+  height="$(curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
+  gateway_status="$(curl -sS --connect-timeout 5 --max-time 15 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" || true)"
+  chain_phase="$(jq -r '([.devshards[]? | select(.active == true) | .chain_phase] + [if .chain_phase? then .chain_phase else empty end]) | map(select(. != null and . != "")) | first // "UNKNOWN"' <<<"$gateway_status" 2>/dev/null || printf UNKNOWN)"
+  if (( height > target_anchor )) && [[ "$chain_phase" == Inference ]]; then
+    observation="$(request_observation "$height" after post-recovery "$((post_successes + 1))")"
+    printf '%s\n' "$observation" >>"$RUN/requests.jsonl"
+    post_successes=$((post_successes + 1))
+  else
+    sleep 1
+  fi
+done
 
 curl -fsS "$chain_base/chain-rpc/status" >"$RUN/chain-status-after.json"
 curl -fsS "$chain_base/chain-api/productscience/inference/inference/current_epoch_group_data" >"$RUN/epoch-group-after.json"
-if [[ "$snapshot_captured" != true ]]; then
-  printf '{"found":false,"snapshot":{"episode_anchor_height":"%s","model_preserved_nodes":[]}}\n' \
+if [[ ! -s "$RUN/preserved-snapshot.json" ]]; then
+  printf '{"found":false,"capture":{"reason":"snapshot_not_captured"},"snapshot":{"episode_anchor_height":"%s","model_preserved_nodes":[]}}\n' \
     "$target_anchor" >"$RUN/preserved-snapshot.json"
 fi
 

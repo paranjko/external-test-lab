@@ -60,13 +60,13 @@ values=(
   # The public edge must not assume that gateway-internal listeners are
   # reachable over the gateway Host's public address. Use the TLS routes the
   # runbook already treats as the canonical chain/readiness boundary.
-  "GDC_GATEWAY_ADMISSION_STATUS_URL=https://$(node_public_host "$GATEWAY_NODE")/gateway/v1/status"
+  "GDC_GATEWAY_ADMISSION_STATUS_URL=https://${API_HOST}/v1/status"
   "GDC_GATEWAY_ADMISSION_EPOCH_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/current_epoch_group_data"
   "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL=https://${PUBLIC_EDGE_HOST}/chain-rpc/status"
   "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/params"
   "GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS=${GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS:-10}"
   "GDC_GATEWAY_ADMISSION_MAX_QUEUE=${GDC_GATEWAY_ADMISSION_MAX_QUEUE:-16}"
-  "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS:-20}"
+  "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS:-180}"
   "GDC_GATEWAY_ADMISSION_POLL_SECONDS=${GDC_GATEWAY_ADMISSION_POLL_SECONDS:-0.25}"
   "GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES=${GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES:-1048576}"
   "TELEGRAM_BOT_PUBLIC_HOST=$(node_public_host "$TELEGRAM_BOT_HOST")"

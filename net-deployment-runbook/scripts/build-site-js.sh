@@ -67,10 +67,11 @@ fi
     app.js \
     config.js \
     gateway-state.js \
+    host-state.js \
     software-versions.js
 )
 
-files=(app.js config.js gateway-state.js software-versions.js)
+files=(app.js config.js gateway-state.js host-state.js software-versions.js)
 generated_files=()
 for file in "${files[@]}"; do
   sed -i "1s|^//  strict$|// Generated from src/$file - edit the Flow source and run make site-js|" "$output/$file"

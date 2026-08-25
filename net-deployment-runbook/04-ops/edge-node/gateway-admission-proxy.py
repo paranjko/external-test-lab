@@ -23,7 +23,7 @@ CHAIN_STATUS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL", "http://127.0.0
 CHAIN_PARAMS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL", "http://127.0.0.1:1317/productscience/inference/inference/params")
 SAFE_GUARD_BLOCKS = int(env("GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS", 10))
 MAX_QUEUE = int(env("GDC_GATEWAY_ADMISSION_MAX_QUEUE", 16))
-MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS", 20))
+MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS", 180))
 POLL = float(env("GDC_GATEWAY_ADMISSION_POLL_SECONDS", 0.25))
 MAX_BODY = int(env("GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES", 1048576))
 if not (MAX_QUEUE > 0 and MAX_WAIT > 0 and POLL > 0 and MAX_BODY > 0 and SAFE_GUARD_BLOCKS > 0):
@@ -42,11 +42,20 @@ def safe_generation():
     """Fresh phase generation only when capacity and participants agree."""
     try:
         status = get_json(STATUS_URL)
+    except Exception:
+        return None, "status_unavailable"
+    try:
         epoch = get_json(EPOCH_URL).get("epoch_group_data", {}).get("epoch_index")
+    except Exception:
+        return None, "epoch_unavailable"
+    try:
         height = get_json(CHAIN_STATUS_URL).get("result", {}).get("sync_info", {}).get("latest_block_height")
+    except Exception:
+        return None, "chain_status_unavailable"
+    try:
         params = get_json(CHAIN_PARAMS_URL).get("params", {}).get("epoch_params", {})
     except Exception:
-        return None, "state_unavailable"
+        return None, "params_unavailable"
     try:
         height = int(height)
         epoch_length = int(params["epoch_length"])
@@ -72,10 +81,14 @@ def safe_generation():
         runtime = item.get("runtime") or item
         if item.get("active") is True and runtime.get("phase") == "active" and not runtime.get("requests_blocked", False):
             if item.get("id") is not None:
-                participants.append(str(item["id"]))
+                phase = item.get("chain_phase") or runtime.get("chain_phase") or "unknown"
+                participants.append("%s:%s" % (item["id"], phase))
     if not positive or not participants:
         return None, "runtime_unavailable"
-    return "%s:%s:%s" % (epoch, height, ",".join(sorted(participants))), None
+    # Height proves this observation is fresh and fences the next transition,
+    # but it is not itself a phase generation.  Including it would reject every
+    # request on chains that produce blocks faster than the polling interval.
+    return "%s:%s" % (epoch, ",".join(sorted(participants))), None
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -203,3 +203,57 @@ footer > :last-child {
 .metric[hidden] {
   display: none;
 }
+
+/* Host state has a fixed visual budget at every supported breakpoint.  A
+ * network diagnostic must remain a compact field, never resize this grid. */
+.nodes.compact {
+  grid-auto-rows: 400px;
+}
+
+.nodes.compact .node {
+  box-sizing: border-box;
+  height: 400px;
+  min-height: 400px;
+  max-height: 400px;
+  overflow: hidden;
+}
+
+.nodes.compact .node h3 {
+  min-height: 34px;
+  max-height: 34px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.nodes.compact .node > small {
+  min-height: 28px;
+  max-height: 28px;
+  overflow: hidden;
+}
+
+.nodes.compact .status {
+  min-height: 34px;
+  max-height: 34px;
+  overflow: hidden;
+}
+
+.nodes.compact .metric {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 30px;
+  max-height: 30px;
+}
+
+.nodes.compact .metric b {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .nodes.compact {
+    grid-auto-rows: 400px;
+  }
+}
