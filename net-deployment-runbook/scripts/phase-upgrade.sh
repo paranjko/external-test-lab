@@ -13,18 +13,40 @@ grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$BASELINE" || die 'model overlay dif
 # activated the approved target. In that state current nodes no longer carry
 # source-profile markers, so require the immutable pre-upgrade PASS bundle rather
 # than incorrectly demanding that a completed upgrade look like its baseline.
+marker_scope=full
+marker_description='full release'
+if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
+  marker_scope=cosmovisor
+  marker_description='candidate Cosmovisor binary upgrade'
+fi
+target_marker_name="$(upgrade_marker_name_for_scope "$marker_scope")"
 target_runtime_active=true
+target_runtime_observed=false
 target_profile_hash="$(profile_hash)"
+expected_target_marker="$GDC_RELEASE_PROFILE $target_profile_hash"
+source_profile_hash="$(GDC_RELEASE_PROFILE="$upgrade_source_profile" profile_hash)"
+expected_source_marker=''
+if [[ "$marker_scope" == full ]]; then
+  expected_source_marker="$upgrade_source_profile $source_profile_hash"
+fi
 while IFS= read -r target_node; do
   target_versions="$(curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$target_node")/v1/versions" 2>/dev/null || true)"
-  jq -e --arg version "$GONKA_RELEASE" --arg commit "$GONKA_COMMIT" '
+  target_runtime_matches=false
+  if jq -e --arg version "$GONKA_RELEASE" --arg commit "$GONKA_COMMIT" '
     (.node_version.version | ltrimstr("v")) == $version
     and .node_version.commit == $commit
-  ' <<<"$target_versions" >/dev/null 2>&1 || target_runtime_active=false
-  target_binary_marker="$(ssh -n "$target_node" "cat /srv/dai/deploy/$target_node/.gdc-binary-upgrade 2>/dev/null || true")"
-  [[ "$target_binary_marker" == "$GDC_RELEASE_PROFILE $target_profile_hash" ]] || target_runtime_active=false
+  ' <<<"$target_versions" >/dev/null 2>&1; then
+    target_runtime_matches=true
+    target_runtime_observed=true
+  else
+    target_runtime_active=false
+  fi
+  target_marker="$(ssh -n "$target_node" "cat /srv/dai/deploy/$target_node/$target_marker_name 2>/dev/null || true")"
+  classify_upgrade_runtime_marker \
+    "$target_runtime_matches" "$target_marker" "$expected_target_marker" \
+    "$expected_source_marker" >/dev/null
 done < <(configured_nodes)
-if [[ "$target_runtime_active" == true ]]; then
+if [[ "$target_runtime_active" == true || "$target_runtime_observed" == true ]]; then
   step "Reuse immutable $upgrade_source_profile baseline evidence for the already activated target runtime"
 else
   require_current_baseline_pass "$upgrade_source_profile"
@@ -232,12 +254,6 @@ done
 (( applied == ${#nodes[@]} )) || die "not every joined node applied upgrade height $plan_height"
 capture_runtime_state
 
-marker_scope=full
-marker_description='full release'
-if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
-  marker_scope=cosmovisor
-  marker_description='candidate Cosmovisor binary upgrade'
-fi
 step "Record the $marker_description marker on every upgraded participant"
 for node in "${nodes[@]}"; do
   "$ROOT/scripts/write-upgrade-marker.sh" \

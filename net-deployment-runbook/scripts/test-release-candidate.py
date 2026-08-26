@@ -288,31 +288,38 @@ def main() -> None:
         candidate.command_profile(args)
         candidate.command_verify(args)
         lock = releases / "v2026.08.25-rc.0.lock"
-        assert "LAB_CANDIDATE=true" in lock.read_text(encoding="utf-8")
-        assert "UPGRADE_FROM_PROFILE=v2026.08.06" in lock.read_text(encoding="utf-8")
-        assert "GONKA_HA=false" in lock.read_text(encoding="utf-8")
-        assert "DEVSHARD_STORAGE_MODE=memory" in lock.read_text(encoding="utf-8")
+        lock_text = lock.read_text(encoding="utf-8")
+        assert "LAB_CANDIDATE=true" in lock_text
+        assert "UPGRADE_FROM_PROFILE=v2026.08.06" in lock_text
+        assert "GONKA_HA=false" in lock_text
+        assert "DEVSHARD_STORAGE_MODE=memory" in lock_text
+        mlnode_reference = next(
+            component["reference"]
+            for component in source_definition["components"]
+            if component["id"] == "mlnode"
+        )
+        assert f"MLNODE_GENERIC_IMAGE={mlnode_reference}" in lock_text
         expected_image = (
             f"INFERENCED_IMAGE={manifest['images']['inferenced']['reference']}@"
             f"{manifest['images']['inferenced']['digest']}"
         )
-        assert expected_image in lock.read_text(encoding="utf-8")
+        assert expected_image in lock_text
         inferenced_binary = manifest["binaries"]["inferenced-linux-amd64"]
         operator_binary = manifest["binaries"]["inferenced-operator-linux-amd64"]
         assert (
             f"INFERENCED_OPERATOR_URL_LINUX_AMD64={operator_binary['url']}"
-            in lock.read_text(encoding="utf-8")
+            in lock_text
         )
         assert (
             "INFERENCED_OPERATOR_SHA256_LINUX_AMD64="
             f"{operator_binary['sha256']}"
-            in lock.read_text(encoding="utf-8")
+            in lock_text
         )
         assert operator_binary["url"] != inferenced_binary["url"]
         assert operator_binary["sha256"] != inferenced_binary["sha256"]
         assert (
             f"INFERENCED_UPGRADE_URL={inferenced_binary['url']}"
-            in lock.read_text(encoding="utf-8")
+            in lock_text
         )
         assert (
             f"INFERENCED_UPGRADE_SHA256={inferenced_binary['sha256']}"

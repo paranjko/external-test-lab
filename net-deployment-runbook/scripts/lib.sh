@@ -895,6 +895,31 @@ require_host_upgrade_state_target() {
   fi
 }
 
+upgrade_marker_name_for_scope() {
+  case "$1" in
+    full) printf '.gdc-release\n' ;;
+    cosmovisor) printf '.gdc-binary-upgrade\n' ;;
+    *) die "unknown upgrade marker scope: $1" ;;
+  esac
+}
+
+classify_upgrade_runtime_marker() {
+  local runtime_is_target="$1" marker="$2" expected_marker="$3" source_marker="${4:-}"
+  if [[ "$runtime_is_target" == true ]]; then
+    if [[ -z "$marker" || "$marker" == "$source_marker" ]]; then
+      printf 'target-unmarked\n'
+    elif [[ "$marker" == "$expected_marker" ]]; then
+      printf 'target-marked\n'
+    else
+      die "target runtime has a marker for another immutable profile: $marker"
+    fi
+  else
+    [[ -z "$marker" || "$marker" == "$source_marker" ]] \
+      || die "source or unavailable runtime has a target marker: $marker"
+    printf 'source-or-unavailable\n'
+  fi
+}
+
 latest_baseline_pass_bundle() {
   local profile="${1:-v2026.07.23}" verdict bundle environment profile_hash genesis_profile_hash expected_profile_hash root
   genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env" 2>/dev/null || true)"

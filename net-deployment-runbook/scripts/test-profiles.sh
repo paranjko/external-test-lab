@@ -273,6 +273,7 @@ grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'gpuProfile:(if $gpuProfile == "auto" then null else $gpuProfile end)' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v[34]}-$GATEWAY_VERSION"' "$ROOT/04-ops/render-ops.sh"
 grep -Fq '[[ "${LAB_CANDIDATE:-false}" != true ]]' "$ROOT/04-ops/render-ops.sh"
+grep -Fq 'MLNODE_BLACKWELL_IMAGE="$MLNODE_GENERIC_IMAGE"' "$ROOT/scripts/profile.sh"
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]

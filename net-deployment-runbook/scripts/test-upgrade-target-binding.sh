@@ -34,6 +34,28 @@ if (candidate_runtime_identity_for_marker \
   exit 1
 fi
 
+[[ "$(upgrade_marker_name_for_scope full)" == .gdc-release ]]
+[[ "$(upgrade_marker_name_for_scope cosmovisor)" == .gdc-binary-upgrade ]]
+[[ "$(classify_upgrade_runtime_marker true '' "$GDC_RELEASE_PROFILE $target_hash")" == target-unmarked ]]
+[[ "$(classify_upgrade_runtime_marker true "$GDC_RELEASE_PROFILE $target_hash" \
+  "$GDC_RELEASE_PROFILE $target_hash")" == target-marked ]]
+[[ "$(classify_upgrade_runtime_marker false '' "$GDC_RELEASE_PROFILE $target_hash")" == source-or-unavailable ]]
+source_marker="v2026.08.06 $target_hash"
+[[ "$(classify_upgrade_runtime_marker false "$source_marker" \
+  "$GDC_RELEASE_PROFILE $target_hash" "$source_marker")" == source-or-unavailable ]]
+[[ "$(classify_upgrade_runtime_marker true "$source_marker" \
+  "$GDC_RELEASE_PROFILE $target_hash" "$source_marker")" == target-unmarked ]]
+if (classify_upgrade_runtime_marker true "v2026.08.24-rc.9 $target_hash" \
+  "$GDC_RELEASE_PROFILE $target_hash") >/dev/null 2>&1; then
+  echo 'target runtime with another immutable marker must be rejected' >&2
+  exit 1
+fi
+if (classify_upgrade_runtime_marker false "$GDC_RELEASE_PROFILE $target_hash" \
+  "$GDC_RELEASE_PROFILE $target_hash") >/dev/null 2>&1; then
+  echo 'source runtime with a target marker must be rejected' >&2
+  exit 1
+fi
+
 state="$temporary/state.env"
 cat >"$state" <<EOF
 state=VALIDATOR_EFFECTIVE
@@ -60,5 +82,10 @@ if (require_host_upgrade_state_target "$state" gdc-node1 7 1200 \
   echo 'completed state from another target profile must be rejected' >&2
   exit 1
 fi
+
+grep -Fq 'target_marker_name="$(upgrade_marker_name_for_scope "$marker_scope")"' \
+  "$ROOT/scripts/phase-upgrade.sh"
+grep -Fq 'target_runtime_active" == true || "$target_runtime_observed" == true' \
+  "$ROOT/scripts/phase-upgrade.sh"
 
 printf 'PASS candidate runtime and Host upgrade target binding\n'
