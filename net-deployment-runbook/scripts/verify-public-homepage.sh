@@ -132,9 +132,9 @@ curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-network' | jq -e
 curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-inference' | jq -e '.dashboard.title == "Gonka DevNet Inference"' >"$OUT/grafana-inference-dashboard.json"
 ! grep -Eqi 'token price|price comparison|real spend|cost per' "$OUT/homepage.html"
 
-GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
+GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" GDC_CHECK_MAP_ZOOM=true CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
   "https://$SITE_HOST/" 1440 900 "$OUT/homepage-1440x900.png" "$live_participant_count"
-GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
+GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" GDC_CHECK_MAP_FULLSCREEN=true CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
   "https://$SITE_HOST/" 390 844 "$OUT/homepage-390x844.png"
 identify "$OUT/homepage-1440x900.png" | grep -q '1440x900'
 identify "$OUT/homepage-390x844.png" | grep -q '390x844'

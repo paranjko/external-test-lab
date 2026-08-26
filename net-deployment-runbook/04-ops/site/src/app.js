@@ -83,6 +83,11 @@ type ValidatorMapController = {
   update: (nodes: Array<SiteNode>) => void,
 };
 
+type ValidatorMapNavigation = {
+  fit: () => void,
+  remove: () => void,
+};
+
 type Participant = {
   address: string,
   inference_url: string,
@@ -657,6 +662,196 @@ async function reconcileParticipants(): Promise<number> {
 
 let validatorMapController: ?ValidatorMapController;
 
+const VALIDATOR_BOUNDS = [
+  [-58, -175],
+  [84, 175],
+];
+const WEB_MERCATOR_BOUNDS = [
+  [-85.05112878, -180],
+  [85.05112878, 180],
+];
+const WHEEL_ZOOM_STEP = 0.3;
+const WHEEL_ZOOM_SETTLE_MS = 80;
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function wheelPixels(event: any): number {
+  if (event.deltaMode === 1) return event.deltaY * 20;
+  if (event.deltaMode === 2) return event.deltaY * 60;
+  return event.deltaY;
+}
+
+function installSmoothWheelZoom(
+  map: any,
+  container: HTMLElement,
+  prepareBounds: (number) => void,
+): () => void {
+  // Leaflet batches small wheel deltas before animating them. On a trackpad
+  // that feels like a pause followed by a jump, so update once per paint.
+  let animationFrame: ?number;
+  let settleTimer: ?number;
+  let zooming = false;
+  let pendingZoomDelta = 0;
+  let pointer = null;
+
+  const finishZoom = (): void => {
+    settleTimer = null;
+    if (!zooming) return;
+    zooming = false;
+    map._moveEnd(true);
+  };
+
+  const centerZoomOnPointer = (
+    zoomPointer: any,
+    nextZoom: number,
+    currentZoom: number,
+  ): any => {
+    const viewCenter = map.getSize().divideBy(2);
+    const scale = map.getZoomScale(nextZoom, currentZoom);
+    const offset = zoomPointer
+      .subtract(viewCenter)
+      .multiplyBy(1 - 1 / scale);
+    return map._limitCenter(
+      map.containerPointToLatLng(viewCenter.add(offset)),
+      nextZoom,
+      map.options.maxBounds,
+    );
+  };
+
+  const renderZoom = (): void => {
+    animationFrame = null;
+    const currentZoom = map.getZoom();
+    const nextZoom = clamp(
+      currentZoom +
+        clamp(pendingZoomDelta, -WHEEL_ZOOM_STEP, WHEEL_ZOOM_STEP),
+      map.getMinZoom(),
+      map.getMaxZoom(),
+    );
+    pendingZoomDelta = 0;
+    const zoomPointer = pointer;
+    if (!zoomPointer || Math.abs(nextZoom - currentZoom) < 0.001) return;
+
+    prepareBounds(nextZoom);
+    if (!zooming) {
+      zooming = true;
+      map._moveStart(true, false);
+    }
+    // This is the same live transform path Leaflet uses for touch pinch. It
+    // keeps loaded tiles visible instead of rebuilding them for every delta.
+    map._move(centerZoomOnPointer(zoomPointer, nextZoom, currentZoom), nextZoom, {
+      pinch: true,
+      round: false,
+    });
+    if (settleTimer != null) window.clearTimeout(settleTimer);
+    settleTimer = window.setTimeout(finishZoom, WHEEL_ZOOM_SETTLE_MS);
+  };
+
+  const onWheel = (event: any): void => {
+    if (!event.ctrlKey && event.deltaY === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const sensitivity = event.ctrlKey ? 60 : 120;
+    pendingZoomDelta += clamp(
+      -wheelPixels(event) / sensitivity,
+      -WHEEL_ZOOM_STEP,
+      WHEEL_ZOOM_STEP,
+    );
+    pointer = map.mouseEventToContainerPoint(event);
+    if (animationFrame == null)
+      animationFrame = window.requestAnimationFrame(renderZoom);
+  };
+
+  container.addEventListener("wheel", onWheel, { passive: false });
+  return () => {
+    container.removeEventListener("wheel", onWheel);
+    if (animationFrame != null) window.cancelAnimationFrame(animationFrame);
+    if (settleTimer != null) window.clearTimeout(settleTimer);
+  };
+}
+
+function installValidatorMapNavigation(
+  map: any,
+  tiles: any,
+  container: HTMLElement,
+): ValidatorMapNavigation {
+  let useWorldBounds = false;
+
+  const recordZoom = (): void => {
+    container.dataset.zoom = String(map.getZoom());
+  };
+
+  const prepareBounds = (
+    zoom: number = map.getZoom(),
+    allowTighterBounds: boolean = true,
+  ): void => {
+    const north = map.project(VALIDATOR_BOUNDS[1], zoom).y;
+    const south = map.project(VALIDATOR_BOUNDS[0], zoom).y;
+    const validatorBoundsFit = south - north >= map.getSize().y - 1;
+    const nextUseWorldBounds = !validatorBoundsFit;
+
+    // Keep the wider bounds until an active gesture ends. Tightening them in
+    // the middle of a zoom makes Leaflet jump back toward the validator area.
+    if (!nextUseWorldBounds && useWorldBounds && !allowTighterBounds) return;
+    if (nextUseWorldBounds === useWorldBounds) return;
+    useWorldBounds = nextUseWorldBounds;
+    map.setMaxBounds(useWorldBounds ? WEB_MERCATOR_BOUNDS : VALIDATOR_BOUNDS);
+  };
+
+  const onZoom = (): void => {
+    prepareBounds(map.getZoom(), false);
+    // Leaflet waits until touchend to update tiles during a native pinch.
+    // Updating the active level here keeps the viewport covered mid-gesture.
+    tiles._update();
+    recordZoom();
+  };
+
+  const onZoomEnd = (): void => {
+    tiles._noPrune = false;
+    tiles._pruneTiles();
+    prepareBounds();
+    map.panInsideBounds(
+      useWorldBounds ? WEB_MERCATOR_BOUNDS : VALIDATOR_BOUNDS,
+      { animate: false },
+    );
+    map.invalidateSize({ animate: false, pan: false });
+    recordZoom();
+  };
+
+  const fit = (): void => {
+    map.invalidateSize({ animate: false, pan: false });
+    const minimumWorldZoom = Math.max(
+      1,
+      Math.ceil(Math.log2(map.getSize().y / 256)),
+    );
+    map.setMinZoom(minimumWorldZoom);
+    map.fitBounds(VALIDATOR_BOUNDS, { animate: false });
+    prepareBounds();
+    if (useWorldBounds) {
+      map.setView([0, 0], map.getZoom(), { animate: false });
+    } else {
+      map.panInsideBounds(VALIDATOR_BOUNDS, { animate: false });
+    }
+    recordZoom();
+  };
+
+  const removeWheelZoom = installSmoothWheelZoom(map, container, (zoom) =>
+    prepareBounds(zoom, false),
+  );
+  map.on("zoom", onZoom);
+  map.on("zoomend", onZoomEnd);
+
+  return {
+    fit,
+    remove: () => {
+      removeWheelZoom();
+      map.off("zoom", onZoom);
+      map.off("zoomend", onZoomEnd);
+    },
+  };
+}
+
 async function initValidatorMap(): Promise<?ValidatorMapController> {
   if (typeof window === "undefined") return;
   const container = $("validator-map");
@@ -669,10 +864,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     "https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.esm.js"
   );
   const L = module.default ?? module;
-  const bounds = [
-    [-58, -175],
-    [84, 175],
-  ];
   const darkTiles =
     "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
   const lightTiles =
@@ -684,16 +875,19 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     zoom: 2,
     minZoom: 1,
     maxZoom: 10,
-    zoomSnap: 0.1,
-    maxBounds: bounds,
+    zoomSnap: 0.05,
+    scrollWheelZoom: false,
+    maxBounds: VALIDATOR_BOUNDS,
     maxBoundsViscosity: 1,
     worldCopyJump: true,
     zoomControl: true,
     attributionControl: false,
+    bounceAtZoomLimits: false,
   });
   const tiles = L.tileLayer(isLight() ? lightTiles : darkTiles, {
     subdomains: "abcd",
     maxZoom: 20,
+    updateInterval: 40,
   }).addTo(map);
   const markers = L.layerGroup().addTo(map);
   const okColor = getComputedStyle(document.documentElement)
@@ -774,23 +968,15 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     container.dataset.validatorCount = String(validatorCount);
     container.dataset.markerCount = String(groups.size);
   };
-  const fit = (): void => {
-    map.invalidateSize({ animate: false, pan: false });
-    map.fitBounds(bounds, { animate: false });
-  };
-  map.on("zoomend", () => {
-    map.panInsideBounds(bounds, { animate: false });
-    map.invalidateSize({ animate: false, pan: false });
-    tiles.redraw();
-  });
-  const observer = new ResizeObserver(fit);
+  const navigation = installValidatorMapNavigation(map, tiles, container);
+  const observer = new ResizeObserver(navigation.fit);
   observer.observe(container);
   const setFullscreen = (open: boolean): void => {
     shell.classList.toggle("is-fullscreen", open);
     button.setAttribute("aria-pressed", String(open));
     button.textContent = open ? "Close" : "Fullscreen";
-    fit();
-    setTimeout(fit, 240);
+    navigation.fit();
+    setTimeout(navigation.fit, 240);
   };
   button.addEventListener("click", () =>
     setFullscreen(!shell.classList.contains("is-fullscreen")),
@@ -809,12 +995,13 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       observer.disconnect();
       theme.removeEventListener("change", onTheme);
       document.removeEventListener("keydown", onKeydown);
+      navigation.remove();
       map.remove();
     },
     { once: true },
   );
   update(observedNodes);
-  fit();
+  navigation.fit();
   return { update };
 }
 initValidatorMap()
