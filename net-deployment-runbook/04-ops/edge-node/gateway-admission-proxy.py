@@ -331,7 +331,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             previous = None
             last_state_reason = None
-            rejection = "admission_runtime_unavailable"
+            rejection = None
             while time.monotonic() < deadline:
                 if not self.connected():
                     self.reject(499, "client_disconnected", record, deadline=deadline)
@@ -363,10 +363,15 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 if current is None:
                     if reason == "deadline_elapsed":
-                        if last_state_reason is None:
+                        if last_state_reason is not None:
+                            rejection = "admission_%s" % last_state_reason
+                            break
+                        # A deadline reached during a later sample must not
+                        # erase a concrete unsafe generation already observed
+                        # during this request's bounded wait window.
+                        if rejection is None:
                             self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
                             return
-                        rejection = "admission_%s" % last_state_reason
                         break
                     last_state_reason = reason
                     rejection = "admission_%s" % reason
@@ -374,7 +379,7 @@ class Handler(BaseHTTPRequestHandler):
                     rejection = "admission_generation_unstable"
                 previous = current
                 time.sleep(min(POLL, max(0, deadline - time.monotonic())))
-            self.reject(503, rejection, record, deadline=deadline)
+            self.reject(503, rejection or "admission_runtime_unavailable", record, deadline=deadline)
         finally:
             SLOTS.release()
 
