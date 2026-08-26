@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHER_SOURCE="${BASH_SOURCE[0]}"
+LAUNCHER_PATH="$(realpath -e -- "$LAUNCHER_SOURCE")"
+ROOT="$(cd "$(dirname "$LAUNCHER_PATH")" && pwd)"
+if [[ "${LAUNCHER_SOURCE##*/}" == gdc.sh ]]; then
+  GDC_USAGE_COMMAND='./gdc.sh'
+else
+  GDC_USAGE_COMMAND="${LAUNCHER_SOURCE##*/}"
+fi
 
 on_launcher_error() {
   local rc="$?"
@@ -111,7 +118,7 @@ use_operator_inventory() {
 }
 
 usage() {
-  cat <<'EOF'
+  sed "s#\\./gdc\\.sh#$GDC_USAGE_COMMAND#g" <<'EOF'
 Gonka DevNet Community manual deployment
 
 See the role guides for required input, then run:
