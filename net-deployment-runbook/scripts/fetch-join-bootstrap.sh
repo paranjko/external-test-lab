@@ -10,7 +10,8 @@ trap 'rm -rf "$tmp"' EXIT
 fetch_public_file() {
   local path="$1" output="$2" http_status curl_exit
   set +e
-  http_status="$(curl -sS --connect-timeout 10 --max-time 60 -o "$output" -w '%{http_code}' "$base/$path")"
+  http_status="$(curl -sS --connect-timeout 10 --max-time 60 --retry 4 --retry-delay 2 \
+    --retry-all-errors -o "$output" -w '%{http_code}' "$base/$path")"
   curl_exit=$?
   set -e
   if [[ "$curl_exit" != 0 || ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then

@@ -52,6 +52,51 @@ EOF
   printf '%s\n' "$bin_dir"
 }
 
+prepare_validator_identity() {
+  local destination="$1" soft_seed="$2" kms_seed="$3" node_seed="$4"
+  local pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"
+  local node_public node_private
+  install -d -m 0700 "$destination/tmkms/secrets" "$destination/tmkms/state" \
+    "$destination/inference/config"
+  printf '%s' "$soft_seed" | base64 >"$destination/tmkms/secrets/priv_validator_key.softsign"
+  printf '%s' "$kms_seed" | base64 >"$destination/tmkms/secrets/kms-identity.key"
+  cat >"$destination/tmkms/tmkms.toml" <<'EOF'
+[[chain]]
+id = "test-chain"
+state_file = "/root/.tmkms/state/priv_validator_state.json"
+[[providers.softsign]]
+chain_ids = ["test-chain"]
+key_type = "consensus"
+path = "/root/.tmkms/secrets/priv_validator_key.softsign"
+[[validator]]
+chain_id = "test-chain"
+addr = "tcp://node:26658"
+secret_key = "/root/.tmkms/secrets/kms-identity.key"
+protocol_version = "v0.34"
+EOF
+  jq -n '{height:"10",round:"0",step:6,block_id:{hash:("A" * 64),
+    part_set_header:{total:1,hash:("B" * 64)}}}' \
+    >"$destination/tmkms/state/priv_validator_state.json"
+  printf '%s' "$node_seed" | base64 >"$BATS_TEST_TMPDIR/node-seed.base64"
+  node_public="$("$pubkey_helper" "$BATS_TEST_TMPDIR/node-seed.base64")"
+  printf '%s' "$node_seed" >"$BATS_TEST_TMPDIR/node-key.raw"
+  printf '%s' "$node_public" | base64 -d >>"$BATS_TEST_TMPDIR/node-key.raw"
+  node_private="$(base64 <"$BATS_TEST_TMPDIR/node-key.raw" | tr -d '\n')"
+  jq -n --arg value "$node_private" \
+    '{priv_key:{type:"tendermint/PrivKeyEd25519",value:$value}}' \
+    >"$destination/inference/config/node_key.json"
+  find "$destination" -type d -exec chmod 0700 {} +
+  find "$destination" -type f -exec chmod 0600 {} +
+}
+
+validator_identity_digest() {
+  local root="$1"
+  (
+    cd "$root"
+    find . -xdev -type f -print0 | sort -z | xargs -0 -r sha256sum
+  ) | sha256sum | awk '{print $1}'
+}
+
 @test "community-lab renders a reproducible PoC timing profile" {
   output="$BATS_TEST_TMPDIR/overrides.json"
 
@@ -125,6 +170,35 @@ EOF
   [ "$(jq -r .address "$home_dir/accounts/gdc-node0-cold.json")" = "$GATEWAY" ]
 }
 
+@test "running Host recovery rejects a wrong cold mnemonic behind a retained keyring" {
+  isolated="$BATS_TEST_TMPDIR/runbook"
+  home_dir="$BATS_TEST_TMPDIR/operator"
+  password_file="$home_dir/state/secrets/operator.keyring"
+  cp -a "$RUNBOOK" "$isolated"
+  cp "$RUNBOOK/test/fixtures/inferenced.sh" "$isolated/scripts/inferenced.sh"
+  chmod +x "$isolated/scripts/inferenced.sh"
+  cli_bin="$(prepare_pinned_cli_fixture "$isolated")"
+  mkdir -p "$(dirname "$password_file")"
+  printf 'test-password\n' >"$password_file"
+  role_input="$(prepare_genesis_role_input "$home_dir")"
+
+  run env PATH="$cli_bin:$PATH" GDC_HOME="$home_dir" GDC_ENV="$role_input" \
+    "$isolated/01-identities-genesis/create-cold-accounts.sh" "$password_file" gdc-node0
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .address "$home_dir/accounts/gdc-node0-cold.json")" = "$GATEWAY" ]
+
+  printf '%s\n' \
+    'wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong wrong' \
+    >"$home_dir/mnemonics/wrong-cold.mnemonic"
+  run env PATH="$cli_bin:$PATH" GDC_HOME="$home_dir" GDC_ENV="$role_input" \
+    "$isolated/scripts/derive-mnemonic-identity.sh" \
+    "$home_dir/mnemonics/wrong-cold.mnemonic" "$password_file" cold-recovery-check "$GATEWAY"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'recovery mnemonic controls another account address'* ]]
+  [ "$(jq -r .address "$home_dir/accounts/gdc-node0-cold.json")" = "$GATEWAY" ]
+}
+
 @test "gateway renderer rejects the zero-capacity limits that make a READY runtime return 429" {
   renderer="$RUNBOOK/04-ops/create-gateway.sh"
 
@@ -162,6 +236,283 @@ EOF
   [ "$status" -eq 1 ]
   run grep -F 'GDC_JOIN_GATEWAY_CLIENT_KEY_FILE' "$RUNBOOK/ROLE-JOIN.md" "$acceptance" "$bootstrap" "$renderer" "$RUNBOOK/scripts/lib.sh" "$RUNBOOK/scripts/phase-genesis.sh"
   [ "$status" -eq 1 ]
+}
+
+@test "protected existing validator identity is compared without remote writes" {
+  [[ "${GDC_BATS_CONTAINER:-}" == true ]] || skip 'requires make bats-docker'
+  state="$BATS_TEST_TMPDIR/state"
+  candidate="$BATS_TEST_TMPDIR/candidate"
+  helper="$RUNBOOK/scripts/build-validator-identity-restore-command.sh"
+  pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"
+  deployment_env="$BATS_TEST_TMPDIR/deploy/.env"
+  prepare_validator_identity "$state" \
+    01234567890123456789012345678901 \
+    abcdefghijklmnopqrstuvwxyzABCDEF \
+    12345678901234567890123456789012
+  consensus_key="$("$pubkey_helper" "$state/tmkms/secrets/priv_validator_key.softsign")"
+  cp -a "$state" "$candidate"
+  chown -R root:root "$state"
+  install -d -m 0700 "$(dirname "$deployment_env")"
+  printf 'deployed=true\n' >"$deployment_env"
+  before="$(find "$state" -type f -print0 | sort -z | xargs -0 sha256sum)"
+  bundle_sha256="$(validator_identity_digest "$candidate")"
+
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = existing ]
+  [ "$(find "$state" -type f -print0 | sort -z | xargs -0 sha256sum)" = "$before" ]
+
+  for state_case in float negative overflow wrong-type; do
+    candidate="$BATS_TEST_TMPDIR/state-$state_case-candidate"
+    cp -a "$state" "$candidate"
+    case "$state_case" in
+      float) mutation='.block_id.part_set_header.total = 1.5' ;;
+      negative) mutation='.block_id.part_set_header.total = -1' ;;
+      overflow) mutation='.block_id.part_set_header.total = 4294967296' ;;
+      wrong-type) mutation='.block_id.part_set_header.total = "1"' ;;
+    esac
+    jq "$mutation" "$state/tmkms/state/priv_validator_state.json" \
+      >"$BATS_TEST_TMPDIR/state-$state_case.json"
+    mv "$BATS_TEST_TMPDIR/state-$state_case.json" \
+      "$candidate/tmkms/state/priv_validator_state.json"
+    bundle_sha256="$(validator_identity_digest "$candidate")"
+
+    run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+      "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *'malformed TMKMS signing state'* ]]
+    [ "$(find "$state" -type f -print0 | sort -z | xargs -0 sha256sum)" = "$before" ]
+  done
+
+  candidate="$BATS_TEST_TMPDIR/wrong-consensus-candidate"
+  cp -a "$state" "$candidate"
+  printf '12345678901234567890123456789012' | base64 >"$BATS_TEST_TMPDIR/other.softsign"
+  wrong_consensus_key="$("$pubkey_helper" "$BATS_TEST_TMPDIR/other.softsign")"
+  bundle_sha256="$(validator_identity_digest "$candidate")"
+
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$wrong_consensus_key" "$deployment_env" "$bundle_sha256"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'staged TMKMS key does not match the validator backup consensus identity'* ]]
+  [ "$(find "$state" -type f -print0 | sort -z | xargs -0 sha256sum)" = "$before" ]
+
+  candidate="$BATS_TEST_TMPDIR/mismatched-candidate"
+  prepare_validator_identity "$candidate" \
+    01234567890123456789012345678901 \
+    ZYXWVUTSRQPONMLKJIHGFEDCBA987654 \
+    12345678901234567890123456789012
+  bundle_sha256="$(validator_identity_digest "$candidate")"
+
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'running validator identity does not match the supplied backup'* ]]
+  [ "$(find "$state" -type f -print0 | sort -z | xargs -0 sha256sum)" = "$before" ]
+}
+
+@test "validator restore command rejects archive shell injection before SSH" {
+  command_builder="$RUNBOOK/scripts/build-validator-identity-restore-command.sh"
+  pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"
+  printf '01234567890123456789012345678901' | base64 >"$BATS_TEST_TMPDIR/softsign"
+  consensus_key="$("$pubkey_helper" "$BATS_TEST_TMPDIR/softsign")"
+  bundle_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+  run "$command_builder" \
+    /srv/dai/gdc-node1 \
+    /tmp/gdc-gdc-node1-validator-restore-123 \
+    "$consensus_key" \
+    /srv/dai/deploy/gdc-node1/.env \
+    "$bundle_sha256"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == sudo\ env\ GDC_VALIDATOR_IDENTITY_REMOTE=true\ bash\ -s\ --* ]]
+
+  malicious_key="bad'; printf '%s\\n' ARCHIVE_COMMAND_EXECUTED; : '"
+  run "$command_builder" \
+    /srv/dai/gdc-node1 \
+    /tmp/gdc-gdc-node1-validator-restore-123 \
+    "$malicious_key" \
+    /srv/dai/deploy/gdc-node1/.env \
+    "$bundle_sha256"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'invalid consensus public key'* ]]
+  [[ "$output" != *'ARCHIVE_COMMAND_EXECUTED'* ]]
+}
+
+@test "schema-v1 backup without ml_host requires the live split topology binding" {
+  backup="$RUNBOOK/scripts/validator-backup.sh"
+  evaluator="$RUNBOOK/scripts/evaluate-running-host-recovery.sh"
+  consensus_key="$(printf '01234567890123456789012345678901' | base64 | tr -d '\n')"
+  warm_key="$(printf '123456789012345678901234567890123' | base64 | tr -d '\n')"
+  jq -n --arg consensus "$consensus_key" --arg warm "$warm_key" '
+    {node_name:"gdc-node4",node_id:"0123456789abcdef0123456789abcdef01234567",
+     consensus_pubkey:$consensus,warm_address:"gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+     warm_pubkey_b64:$warm}
+  ' >"$BATS_TEST_TMPDIR/identity.json"
+  jq -n --slurpfile identity "$BATS_TEST_TMPDIR/identity.json" '
+    {schema_version:1,node_name:"gdc-node4",created_at:"2026-08-20T12:00:00Z",
+     chain_id:"test-chain",genesis_sha256:("a" * 64),
+     participant_address:"gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+     identity:$identity[0]}
+  ' >"$BATS_TEST_TMPDIR/manifest.json"
+
+  run env GDC_VALIDATOR_BACKUP_TEST_MODE=true "$backup" validate-manifest \
+    "$BATS_TEST_TMPDIR/manifest.json" "$BATS_TEST_TMPDIR/identity.json" gdc-node4
+  [ "$status" -eq 0 ]
+
+  jq '.unexpected = true' "$BATS_TEST_TMPDIR/manifest.json" \
+    >"$BATS_TEST_TMPDIR/extra-manifest.json"
+  run env GDC_VALIDATOR_BACKUP_TEST_MODE=true "$backup" validate-manifest \
+    "$BATS_TEST_TMPDIR/extra-manifest.json" "$BATS_TEST_TMPDIR/identity.json" gdc-node4
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'manifest metadata is malformed or inconsistent'* ]]
+
+  jq '.ml_host = "bad alias"' "$BATS_TEST_TMPDIR/manifest.json" \
+    >"$BATS_TEST_TMPDIR/malformed-manifest.json"
+  run env GDC_VALIDATOR_BACKUP_TEST_MODE=true "$backup" validate-manifest \
+    "$BATS_TEST_TMPDIR/malformed-manifest.json" "$BATS_TEST_TMPDIR/identity.json" gdc-node4
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'manifest metadata is malformed or inconsistent'* ]]
+
+  runtime_id='qwen3-0.6b:gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
+  printf '%s\n' \
+    '{"schema_version":1,"validator_alias":"gdc-node4","ml_ssh_alias":"gdc-node4-ml","ml_endpoint":"192.0.2.44"}' \
+    >"$BATS_TEST_TMPDIR/live-link.json"
+  jq -n --arg runtime_id "$runtime_id" \
+    '[{id:$runtime_id,host:"192.0.2.44"}]' >"$BATS_TEST_TMPDIR/live-runtime.json"
+
+  run "$evaluator" topology \
+    gdc-node4 "$runtime_id" gdc-node4-ml 192.0.2.44 false '' \
+    "$BATS_TEST_TMPDIR/live-link.json" "$BATS_TEST_TMPDIR/live-runtime.json"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .backup_topology_binding <<<"$output")" = live-running-host ]
+
+  run "$evaluator" topology \
+    gdc-node4 "$runtime_id" gdc-node4-other 192.0.2.44 false '' \
+    "$BATS_TEST_TMPDIR/live-link.json" "$BATS_TEST_TMPDIR/live-runtime.json"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'running split-GPU binding disagrees'* ]]
+
+  run "$evaluator" topology \
+    gdc-node4 "$runtime_id" gdc-node4-ml 192.0.2.45 false '' \
+    "$BATS_TEST_TMPDIR/live-link.json" "$BATS_TEST_TMPDIR/live-runtime.json"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'running split-GPU binding disagrees'* ]]
+}
+
+@test "recovery topology rejects another or extra deployed runtime identity" {
+  evaluator="$RUNBOOK/scripts/evaluate-running-host-recovery.sh"
+  runtime_id='qwen3-0.6b:gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
+  wrong_runtime_id='qwen3-0.6b:gonka1pppppppppppppppppppppppppppppppppppppp'
+  printf '%s\n' \
+    '{"schema_version":1,"validator_alias":"gdc-node4","ml_ssh_alias":"gdc-node4-ml","ml_endpoint":"192.0.2.44"}' \
+    >"$BATS_TEST_TMPDIR/link.json"
+  jq -n --arg runtime_id "$wrong_runtime_id" \
+    '[{id:$runtime_id,host:"192.0.2.44"}]' >"$BATS_TEST_TMPDIR/wrong-runtime.json"
+
+  run "$evaluator" topology \
+    gdc-node4 "$runtime_id" gdc-node4-ml 192.0.2.44 false '' \
+    "$BATS_TEST_TMPDIR/link.json" "$BATS_TEST_TMPDIR/wrong-runtime.json"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'another or malformed runtime identity'* ]]
+
+  jq -n --arg runtime_id "$runtime_id" '[
+    {id:$runtime_id,host:"192.0.2.44"},
+    {id:"qwen3-0.6b:gonka1extra",host:"192.0.2.44"}
+  ]' >"$BATS_TEST_TMPDIR/extra-runtime.json"
+
+  run "$evaluator" topology \
+    gdc-node4 "$runtime_id" gdc-node4-ml 192.0.2.44 false '' \
+    "$BATS_TEST_TMPDIR/link.json" "$BATS_TEST_TMPDIR/extra-runtime.json"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'another or malformed runtime identity'* ]]
+}
+
+@test "interrupted validator identity restore resumes installation until deployment exists" {
+  [[ "${GDC_BATS_CONTAINER:-}" == true ]] || skip 'requires make bats-docker'
+  state="$BATS_TEST_TMPDIR/state"
+  candidate="$BATS_TEST_TMPDIR/candidate"
+  deployment_env="$BATS_TEST_TMPDIR/deploy/.env"
+  helper="$RUNBOOK/scripts/build-validator-identity-restore-command.sh"
+  pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"
+  prepare_validator_identity "$candidate" \
+    01234567890123456789012345678901 \
+    abcdefghijklmnopqrstuvwxyzABCDEF \
+    12345678901234567890123456789012
+  consensus_key="$("$pubkey_helper" "$candidate/tmkms/secrets/priv_validator_key.softsign")"
+  bundle_sha256="$(validator_identity_digest "$candidate")"
+
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    GDC_VALIDATOR_IDENTITY_TEST_INTERRUPT=before-activate \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+  [ "$status" -ne 0 ]
+  [ ! -e "$state" ]
+
+  candidate="$BATS_TEST_TMPDIR/retry-candidate"
+  prepare_validator_identity "$candidate" \
+    01234567890123456789012345678901 \
+    abcdefghijklmnopqrstuvwxyzABCDEF \
+    12345678901234567890123456789012
+  bundle_sha256="$(validator_identity_digest "$candidate")"
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+  [ "$status" -eq 0 ]
+  [ "$output" = installed ]
+  [ "$(<"$state/.gdc-validator-identity-restore.sha256")" = "$bundle_sha256" ]
+
+  candidate="$BATS_TEST_TMPDIR/resume-candidate"
+  prepare_validator_identity "$candidate" \
+    01234567890123456789012345678901 \
+    abcdefghijklmnopqrstuvwxyzABCDEF \
+    12345678901234567890123456789012
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+  [ "$status" -eq 0 ]
+  [ "$output" = installed ]
+
+  install -d -m 0700 "$(dirname "$deployment_env")"
+  printf 'deployed=true\n' >"$deployment_env"
+  candidate="$BATS_TEST_TMPDIR/running-candidate"
+  prepare_validator_identity "$candidate" \
+    01234567890123456789012345678901 \
+    abcdefghijklmnopqrstuvwxyzABCDEF \
+    12345678901234567890123456789012
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+  [ "$status" -eq 0 ]
+  [ "$output" = existing ]
+}
+
+@test "partial validator identity state is never accepted as resumable" {
+  [[ "${GDC_BATS_CONTAINER:-}" == true ]] || skip 'requires make bats-docker'
+  state="$BATS_TEST_TMPDIR/partial-state"
+  candidate="$BATS_TEST_TMPDIR/partial-candidate"
+  deployment_env="$BATS_TEST_TMPDIR/deploy-partial/.env"
+  helper="$RUNBOOK/scripts/build-validator-identity-restore-command.sh"
+  pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"
+  prepare_validator_identity "$candidate" \
+    01234567890123456789012345678901 \
+    abcdefghijklmnopqrstuvwxyzABCDEF \
+    12345678901234567890123456789012
+  consensus_key="$("$pubkey_helper" "$candidate/tmkms/secrets/priv_validator_key.softsign")"
+  bundle_sha256="$(validator_identity_digest "$candidate")"
+  install -d -m 0700 "$state/tmkms/secrets"
+  cp "$candidate/tmkms/secrets/priv_validator_key.softsign" \
+    "$state/tmkms/secrets/priv_validator_key.softsign"
+
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'partial, mixed, or ambiguous'* ]]
 }
 
 @test "container host mock restarts DAPI and colocated MLNode only after sync" {

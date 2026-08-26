@@ -78,7 +78,8 @@ verify_public_checksum() {
 mkdir -p "$tmp/profile"
 join_role_stage='download public bootstrap metadata'
 for path in manifest.sha256 topology.env profile/genesis.env; do
-  curl -fsS --connect-timeout 10 --max-time 60 "$BOOTSTRAP_URL/$path" -o "$tmp/$path"
+  curl -fsS --connect-timeout 10 --max-time 60 --retry 4 --retry-delay 2 \
+    --retry-all-errors "$BOOTSTRAP_URL/$path" -o "$tmp/$path"
 done
 
 join_role_stage='verify public bootstrap metadata'
