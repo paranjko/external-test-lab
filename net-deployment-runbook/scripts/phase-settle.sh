@@ -31,7 +31,7 @@ source "$GATEWAY_ENV"
 RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-escrow-${DEVSHARD_ESCROW_ID}"
 mkdir -p "$RUN"
 devshard_version="${DEVSHARD_ROUTE_PREFIX##*/}"
-[[ "$devshard_version" =~ ^v[34]$ ]] || blocked 'Rendered gateway route does not identify DevShard v3 or v4.'
+[[ "$devshard_version" =~ ^v[345]$ ]] || blocked 'Rendered gateway route does not identify DevShard v3, v4 or v5.'
 capture_canonical_genesis "https://$GENESIS_PUBLIC_HOST/chain-rpc/genesis" "$RUN/genesis.json"
 genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
 {

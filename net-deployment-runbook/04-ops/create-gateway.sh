@@ -12,7 +12,7 @@ load_topology
 source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
-[[ "$GATEWAY_VERSION" =~ ^v[34]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3 or v4' >&2; exit 2; }
+[[ "$GATEWAY_VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
 [[ -z "$AMOUNT" || "$AMOUNT" =~ ^[0-9]+$ ]] || exit 2
 PASSWORD="$(<"$SECRETS/operator.keyring")"; ADMIN_KEY="$(<"$SECRETS/gateway.admin-key")"; CLIENT_KEYS="$(<"$SECRETS/gateway.client-keys")"
 if [[ -s "$SECRETS/gateway.join-client-key" ]]; then
@@ -142,6 +142,11 @@ DEVSHARD_ESCROW_ID=${ESCROW_ID}
 DEVSHARD_MODEL=${MODEL_ID}
 DEVSHARD_ROUTE_PREFIX=/devshard/${GATEWAY_VERSION}
 DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-${GATEWAY_VERSION}
+DEVSHARD_HEIGHTSYNC=${DEVSHARD_HEIGHTSYNC:-false}
+DEVSHARD_HEIGHTSYNC_K=${DEVSHARD_HEIGHTSYNC_K:-10}
+DEVSHARD_HEIGHTSYNC_SLOTS=${DEVSHARD_HEIGHTSYNC_SLOTS:-1}
+GONKA_HA=${GONKA_HA:-false}
+DEVSHARD_STORAGE_MODE=${DEVSHARD_STORAGE_MODE:-memory}
 # Escrows are pruned by the chain after their retention window.  Persist the
 # funding amount so phase-ops can configure the gateway's next-epoch bridge
 # and replacement escrows instead of treating this deployment as one-shot.

@@ -81,5 +81,13 @@ grep -Fq 'GDC_GATE_B_PROGRESS_TIMEOUT_SECONDS' "$ROOT/profiles/releases/v2026.07
 grep -Fq 'GDC_MAX_NODE_LAG_BLOCKS' "$ROOT/profiles/releases/v2026.07.23.lock"
 grep -Fq 'PREPARED|WAITING_HEIGHT|ACTIVATED|SYNCED' "$ROOT/scripts/phase-host-upgrade-watch.sh"
 grep -Fq 'No other Host was changed' "$ROOT/scripts/phase-host-upgrade-watch.sh"
+upgrade_verifier="$ROOT/scripts/phase-public-upgrade-verify.sh"
+grep -Fq 'load_profiles' "$upgrade_verifier"
+grep -Fq 'VERIFICATION_SCOPE=cosmovisor-binaries' "$upgrade_verifier"
+grep -Fq 'GATE_B_PROFILE="$UPGRADE_FROM_PROFILE"' "$upgrade_verifier"
+grep -Fq 'GDC_RELEASE_PROFILE="$GATE_B_PROFILE"' "$upgrade_verifier"
+! grep -Fq 'export GDC_RELEASE_PROFILE="$GATE_B_PROFILE"' "$upgrade_verifier"
+grep -Fq '.release_profile == $profile' "$upgrade_verifier"
+grep -Fq 'not the complete candidate stack' "$upgrade_verifier"
 
 printf 'PASS Gate B, stale-lineage, canonical-PoC, CPoC, and upgrade-resume fixture contracts\n'

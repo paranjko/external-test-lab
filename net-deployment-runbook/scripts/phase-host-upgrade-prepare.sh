@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # involved.
 source "$(dirname "$0")/lib.sh"
 load_project
-[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]] || die 'host upgrade prepare requires --release v2026.08.06'
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 || -n "${UPGRADE_FROM_PROFILE:-}" ]] || die 'host upgrade prepare requires an upgrade-capable release profile'
 
 NODE="$(node_name "${1:-}")"
 PROPOSAL_ID="${2:-}"
@@ -75,6 +75,6 @@ cat >"$RUN/verdict.md" <<EOF
 
 $NODE independently verified the immutable proposal, current Genesis lineage,
 and pinned artifact digests, then prepared only its own Host. Resume with:
-./gdc.sh --release v2026.08.06 host upgrade watch $NODE $PROPOSAL_ID
+./gdc.sh --release $GDC_RELEASE_PROFILE host upgrade watch $NODE $PROPOSAL_ID
 EOF
 printf 'PREPARED Host upgrade evidence: %s\n' "$RUN"

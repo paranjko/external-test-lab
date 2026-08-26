@@ -7,7 +7,25 @@ load_project
 source "$ROOT/scripts/profile.sh"
 load_profiles
 VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
-[[ "$VERSION" =~ ^v[34]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3 or v4' >&2; exit 2; }
+[[ "$VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
+if [[ "$VERSION" == v5 ]]; then
+  IMAGE="${LOCAL_GATEWAY_IMAGE:?candidate v5 gateway image is required}"
+  archive_url="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL:?candidate v5 gateway image archive URL is required}"
+  archive_sha256="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256:?candidate v5 gateway image archive SHA-256 is required}"
+  [[ "${LAB_CANDIDATE:-false}" == true && "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo 'DevShard v5 requires an immutable laboratory candidate image archive' >&2; exit 2; }
+  archive="$(mktemp /tmp/gdc-devshard-gateway.XXXXXX.oci.tar.gz)"
+  trap 'rm -f -- "$archive"' EXIT
+  curl -fsSL "$archive_url" -o "$archive"
+  printf '%s  %s\n' "$archive_sha256" "$archive" | sha256sum -c -
+  # A mutable deployment tag is not identity evidence. Always reload it from
+  # the checksum-bound archive before reuse, then verify that the expected tag
+  # was materialized by docker load.
+  gzip -dc "$archive" | ssh "$GATEWAY_NODE" docker load
+  ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" >/dev/null
+  echo "READY $IMAGE loaded from its verified candidate archive on $GATEWAY_NODE"
+  exit 0
+fi
 case "$VERSION" in
   v4)
     SOURCE_REF="${DEVSHARD_V4_SOURCE_REF:?DEVSHARD_V4_SOURCE_REF is required for v4}"

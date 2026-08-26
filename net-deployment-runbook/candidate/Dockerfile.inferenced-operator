@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.4
+
+FROM golang:1.24.2-alpine3.21 AS builder
+
+ARG GOOS=linux
+ARG GOARCH=amd64
+ARG BLST_PORTABLE=0
+ARG LDFLAGS
+
+ENV GOOS=${GOOS} \
+    GOARCH=${GOARCH} \
+    CGO_ENABLED=1 \
+    GO111MODULE=on \
+    GOCACHE=/root/.cache/go-build \
+    GOMODCACHE=/go/pkg/mod \
+    CGO_CFLAGS="-I/lib -O2" \
+    CGO_CFLAGS_ALLOW=".*" \
+    BLST_PORTABLE=${BLST_PORTABLE}
+
+RUN apk add --no-cache ca-certificates gcc musl-dev
+RUN wget -qO /lib/libwasmvm_muslc.x86_64.a \
+      https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.x86_64.a \
+    && echo "70c989684d2b48ca17bbd55bb694bbb136d75c393c067ef3bdbca31d2b23b578  /lib/libwasmvm_muslc.x86_64.a" \
+      | sha256sum -c \
+    && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a
+
+WORKDIR /app/inference-chain
+COPY inference-chain/go.mod inference-chain/go.sum ./
+RUN --mount=type=cache,id=operator-go-build,target=/root/.cache/go-build \
+    --mount=type=cache,id=operator-go-mod,target=/go/pkg/mod \
+    go mod download
+
+COPY inference-chain/. .
+RUN --mount=type=cache,id=operator-go-build,target=/root/.cache/go-build \
+    --mount=type=cache,id=operator-go-mod,target=/go/pkg/mod \
+    if [ "$BLST_PORTABLE" = "1" ]; then export CGO_CFLAGS="$CGO_CFLAGS -D__BLST_PORTABLE__"; fi; \
+    CGO_ENABLED=1 CC=gcc CGO_LDFLAGS="-L/lib -lwasmvm_muslc -lm" \
+    go build -mod=readonly -tags muslc \
+      -ldflags "${LDFLAGS} -extldflags '-static'" \
+      -o /build_output/inferenced ./cmd/inferenced/main.go
+
+FROM scratch AS binary-exporter
+COPY --from=builder /build_output/inferenced /build_output/inferenced

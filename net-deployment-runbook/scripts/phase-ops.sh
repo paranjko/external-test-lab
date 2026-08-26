@@ -13,7 +13,7 @@ if [[ "$COMPONENT" == explorer ]]; then
 fi
 if [[ "$COMPONENT" == gateway ]]; then
   GDC_GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
-  [[ "$GDC_GATEWAY_VERSION" =~ ^v[34]$ ]] || die 'GDC_GATEWAY_VERSION must be v3 or v4'
+  [[ "$GDC_GATEWAY_VERSION" =~ ^v[345]$ ]] || die 'GDC_GATEWAY_VERSION must be v3, v4 or v5'
   supported_protocols="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
   case " $supported_protocols " in
     *" $GDC_GATEWAY_VERSION "*) ;;

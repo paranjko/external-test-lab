@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # target identity and mutable only in the last observed lifecycle state.
 source "$(dirname "$0")/lib.sh"
 load_project
-[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]] || die 'host upgrade watch requires --release v2026.08.06'
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 || -n "${UPGRADE_FROM_PROFILE:-}" ]] || die 'host upgrade watch requires an upgrade-capable release profile'
 
 NODE="$(node_name "${1:-}")"
 PROPOSAL_ID="${2:-}"
@@ -75,7 +75,7 @@ while (( SECONDS < deadline )); do
   fi
   write_state ACTIVATED
   versions="$(curl -fsS --connect-timeout 5 --max-time 15 "$NODE_URL/v1/versions" 2>/dev/null || true)"
-  if ! jq -e --arg commit "$GONKA_COMMIT" '(.node_version.version | ltrimstr("v")) == "0.2.15" and .node_version.commit == $commit' <<<"$versions" >/dev/null 2>&1; then
+  if ! jq -e --arg version "$GONKA_RELEASE" --arg commit "$GONKA_COMMIT" '(.node_version.version | ltrimstr("v")) == $version and .node_version.commit == $commit' <<<"$versions" >/dev/null 2>&1; then
     printf 'WAIT  %s state=ACTIVATED target runtime not yet public\n' "$NODE"
     sleep "$watch_poll"; continue
   fi

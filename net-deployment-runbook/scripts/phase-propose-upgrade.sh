@@ -2,13 +2,12 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
-[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]] || die 'upgrade proposal target must be v2026.08.06'
+upgrade_source_profile="${UPGRADE_FROM_PROFILE:-v2026.07.23}"
 
 BASELINE="$STATE/phase-profiles/genesis.env"
 [[ -s "$BASELINE" ]] || die 'no baseline Genesis profile recorded; run the 0.2.14 baseline first'
-grep -qx 'release_profile=v2026.07.23' "$BASELINE" || die 'Genesis was not formed from v2026.07.23'
 grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$BASELINE" || die 'model overlay differs from baseline; model migration is a separate exercise'
-require_current_baseline_pass
+require_current_baseline_pass "$upgrade_source_profile"
 
 require GDC_UPGRADE_HEIGHT GDC_UPGRADE_DEPOSIT
 [[ "$GDC_UPGRADE_HEIGHT" =~ ^[1-9][0-9]*$ ]] || die 'GDC_UPGRADE_HEIGHT must be a positive integer'
@@ -25,7 +24,7 @@ record_phase_profile propose-upgrade
 # proxy intentionally retains the original path for DAPI peers.
 rpc="https://$PUBLIC_EDGE_HOST/chain-rpc/"
 upgrade_name="v$GONKA_RELEASE"
-metadata="https://github.com/gonka-ai/gonka/releases/tag/release%2Fv$GONKA_RELEASE"
+metadata="${GONKA_UPGRADE_METADATA_URL:-https://github.com/gonka-ai/gonka/releases/tag/release%2Fv$GONKA_RELEASE}"
 
 step 'Capture chain height and render the immutable software-upgrade proposal'
 curl -fsS "$rpc/status" >"$RUN/pre-status.json"

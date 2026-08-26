@@ -723,7 +723,7 @@ write_upgrade_blocked_verdict() {
 Do not reset Genesis and do not downgrade a node after the approved upgrade
 height. Preserve this bundle, diagnose the failed node, restore its pinned
 target deployment, and rerun the same command:
-./gdc.sh --release v2026.08.06 upgrade
+./gdc.sh --release ${GDC_RELEASE_PROFILE:-v2026.08.06} upgrade
 The command permits a
 resume only when every already changed node has the exact target profile
 marker; a third or mixed release remains a hard failure.
@@ -844,7 +844,7 @@ node_index() {
 }
 
 latest_baseline_pass_bundle() {
-  local verdict bundle environment genesis_profile_hash
+  local profile="${1:-v2026.07.23}" verdict bundle environment profile_hash genesis_profile_hash
   genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env" 2>/dev/null || true)"
   [[ -n "$genesis_profile_hash" ]] || return 1
   while IFS= read -r verdict; do
@@ -852,10 +852,12 @@ latest_baseline_pass_bundle() {
     bundle="$(dirname "$verdict")"
     environment="$bundle/environment.txt"
     [[ -s "$environment" && -s "$bundle/node-sync.json" && -s "$bundle/participants.json" ]] || continue
-    grep -qx 'release_profile=v2026.07.23' "$environment" || continue
+    grep -qx "release_profile=$profile" "$environment" || continue
     grep -qx "chain_id=$CHAIN_ID" "$environment" || continue
     grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$environment" || continue
-    grep -qx "profile_hash=$genesis_profile_hash" "$environment" || continue
+    profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$environment")"
+    [[ "$profile_hash" =~ ^[0-9a-f]{64}$ ]] || continue
+    if [[ "$profile" == v2026.07.23 && "$profile_hash" != "$genesis_profile_hash" ]]; then continue; fi
     printf '%s\n' "$bundle"
     return 0
   done < <(find "$GDC_HOME/runs" -mindepth 2 -maxdepth 2 -name verdict.md -print 2>/dev/null | LC_ALL=C sort -r)
@@ -867,13 +869,14 @@ latest_baseline_pass_bundle() {
 # and reconcile it with local joined state, committed chain participants, live
 # node services and caught-up public RPC endpoints.
 require_current_baseline_pass() {
+  local profile="${1:-v2026.07.23}"
   local bundle index node address marker status node_height node_catching
-  local reference_height lag genesis_profile_hash
+  local reference_height lag baseline_profile_hash
   local -a indexes expected_addresses live_addresses evidence_nodes
 
-  step 'Require a current v2026.07.23 baseline PASS before the upgrade lifecycle'
-  bundle="$(latest_baseline_pass_bundle || true)"
-  [[ -n "$bundle" ]] || die 'no matching v2026.07.23 verification PASS; restore every intended participant and run ./gdc.sh --release v2026.07.23 verify'
+  step "Require a current $profile baseline PASS before the upgrade lifecycle"
+  bundle="$(latest_baseline_pass_bundle "$profile" || true)"
+  [[ -n "$bundle" ]] || die "no matching $profile verification PASS; restore every intended participant and run ./gdc.sh --release $profile verify"
 
   mapfile -t indexes < <(configured_node_indexes)
   (( ${#indexes[@]} > 0 )) || die 'no joined participants are recorded for the verified baseline'
@@ -882,14 +885,14 @@ require_current_baseline_pass() {
 
   expected_addresses=()
   reference_height="$(ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:26657/status' | jq -er '.result.sync_info.latest_block_height | tonumber')"
-  genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env")"
+  baseline_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$bundle/environment.txt")"
   for node in "${GDC_NODES[@]}"; do
     [[ -e "$(node_joined_marker "$node")" ]] || continue
     grep -qx "$node" <(printf '%s\n' "${evidence_nodes[@]}") || die "$node is absent from the baseline PASS bundle; run verify again"
     address="$(jq -er .address "$(node_account_file "$node")")"
     expected_addresses+=("$address")
     marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release 2>/dev/null || true")"
-    [[ "$marker" == "v2026.07.23 $genesis_profile_hash" ]] || die "$node does not have the verified v2026.07.23 deployment marker"
+    [[ "$marker" == "$profile $baseline_profile_hash" ]] || die "$node does not have the verified $profile deployment marker"
     ssh -T "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env ps node api proxy explorer --format '{{.Service}} {{.State}}'" \
       | awk '
           $1 == "node" || $1 == "api" || $1 == "proxy" || $1 == "explorer" { seen[$1]=1; if ($2 != "running") bad=1 }

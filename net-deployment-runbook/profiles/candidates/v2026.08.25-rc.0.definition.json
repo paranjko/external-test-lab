@@ -1,0 +1,286 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-candidate-definition",
+  "profile": "v2026.08.25-rc.0",
+  "classification": "lab-candidate",
+  "official_gonka_release": false,
+  "prepared_at": "2026-08-26T03:33:13Z",
+  "source_date": "2026-08-25",
+  "upgrade_from_profile": "v2026.08.06",
+  "repositories": {
+    "gonka_core": {
+      "url": "https://github.com/gonka-ai/gonka.git",
+      "ref": "refs/heads/upgrade-v0.2.16",
+      "commit": "7759adbf1bf454c74f112ed832c5dc7378e070f2",
+      "tree": "0024b7487141e9b1dfd0d3372a0724b09463efb5",
+      "committer_time": "2026-08-25T05:49:08Z"
+    },
+    "devshard_v5": {
+      "url": "https://github.com/gonka-ai/gonka.git",
+      "ref": "refs/heads/devshard-0.2.15-v5",
+      "commit": "b580088a38e58ca355667752ee1b36882afdecdf",
+      "tree": "6c1f206ef74d9e5119b0b85e5a803f0fd6c205a8",
+      "committer_time": "2026-08-25T09:47:55Z"
+    }
+  },
+  "composition": {
+    "relationship": "component-boundary composition",
+    "core_contains_devshard_head": false,
+    "devshard_contains_core_head": false,
+    "devshard_contains_core_snapshot": "6e92e9089c42edcfcc3e93ce9b5a8ae2f3c47908",
+    "rule": "Each component is built from exactly one declared source tree; no synthetic Gonka merge or source patch is permitted."
+  },
+  "governance": {
+    "core_upgrade_name": "v0.2.16",
+    "upgrade_info": {
+      "enabled_fee_groups": [],
+      "min_gas_prices": {}
+    },
+    "devshard_protocol_name": "v5"
+  },
+  "architectures": {
+    "observed_laboratory_hosts": [
+      "linux/amd64"
+    ],
+    "oci_images": [
+      "linux/amd64"
+    ],
+    "upgrade_binaries": [
+      "linux/amd64"
+    ]
+  },
+  "base_images": [
+    {
+      "reference": "golang:1.24.2-alpine3.21",
+      "digest": "sha256:7772cb5322baa875edd74705556d08f0eeca7b9c4b5367754ce3f2f00041ccee"
+    },
+    {
+      "reference": "golang:1.25.9-alpine3.23",
+      "digest": "sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f"
+    },
+    {
+      "reference": "alpine:3.21",
+      "digest": "sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d"
+    },
+    {
+      "reference": "alpine:3.23",
+      "digest": "sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
+    },
+    {
+      "reference": "haproxy:3.2-alpine",
+      "digest": "sha256:79799e8b2977e60802774fa53d29e6b54e045402cdd8a8b9fe43923e7095a047"
+    },
+    {
+      "reference": "nginx:1.27-alpine",
+      "digest": "sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+    },
+    {
+      "reference": "postgres:16-alpine",
+      "digest": "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+    }
+  ],
+  "components": [
+    {
+      "id": "inferenced",
+      "source": "gonka_core",
+      "path": "inference-chain",
+      "dockerfile": "inference-chain/Dockerfile",
+      "action": "build",
+      "artifacts": [
+        "oci-image",
+        "upgrade-binary",
+        "operator-binary"
+      ],
+      "build_args": {
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "BLST_PORTABLE": "0"
+      }
+    },
+    {
+      "id": "decentralized-api",
+      "source": "gonka_core",
+      "path": "decentralized-api",
+      "dockerfile": "decentralized-api/Dockerfile",
+      "action": "build",
+      "artifacts": [
+        "oci-image",
+        "upgrade-binary"
+      ],
+      "build_args": {
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "BLST_PORTABLE": "0",
+        "DEVSHARD_VERSION": "v5"
+      }
+    },
+    {
+      "id": "edge-api",
+      "source": "gonka_core",
+      "path": "edge-api",
+      "dockerfile": "edge-api/Dockerfile",
+      "action": "build",
+      "artifacts": [
+        "oci-image",
+        "upgrade-binary"
+      ],
+      "build_args": {
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "BLST_PORTABLE": "0"
+      }
+    },
+    {
+      "id": "devshard-runtime",
+      "source": "devshard_v5",
+      "path": "devshard",
+      "dockerfile": "devshard/Dockerfile",
+      "action": "build",
+      "artifacts": [
+        "devshardd-oci-image",
+        "devshard-gateway-oci-image",
+        "devshardd-binary"
+      ],
+      "build_args": {
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "BLST_PORTABLE": "0",
+        "DEVSHARD_VERSION": "v5",
+        "DEVSHARD_BINARY_VERSION": "v2026.08.25-rc.0-b580088a"
+      }
+    },
+    {
+      "id": "devshard-host",
+      "source": "devshard_v5",
+      "path": "devshard",
+      "dockerfile": "devshard/Dockerfile.host",
+      "action": "build",
+      "artifacts": [
+        "oci-image"
+      ],
+      "build_args": {
+        "DEVSHARD_VERSION": "v5"
+      }
+    },
+    {
+      "id": "versiond",
+      "source": "devshard_v5",
+      "path": "versioned",
+      "dockerfile": "versioned/Dockerfile",
+      "action": "build",
+      "artifacts": [
+        "oci-image"
+      ],
+      "build_args": {}
+    },
+    {
+      "id": "versiond-router",
+      "source": "devshard_v5",
+      "path": "versiond-router",
+      "dockerfile": "versiond-router/Dockerfile",
+      "action": "build",
+      "artifacts": [
+        "oci-image"
+      ],
+      "build_args": {}
+    },
+    {
+      "id": "mlnode",
+      "source": "gonka_core",
+      "path": "mlnode",
+      "action": "reuse-immutable",
+      "artifacts": [
+        "oci-image"
+      ],
+      "reference": "ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1"
+    },
+    {
+      "id": "proxy",
+      "source": "v2026.08.06",
+      "path": "proxy",
+      "action": "reuse-immutable",
+      "artifacts": [
+        "oci-image"
+      ],
+      "reference": "ghcr.io/product-science/proxy:0.2.15@sha256:88a392f2300e4f303df6c7dde4660944c3f99df1e7d959bb451bd62e2f846d49"
+    },
+    {
+      "id": "tmkms",
+      "source": "v2026.08.06",
+      "path": "tmkms",
+      "action": "reuse-immutable",
+      "artifacts": [
+        "oci-image"
+      ],
+      "reference": "ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21"
+    },
+    {
+      "id": "bridge",
+      "source": "v2026.08.06",
+      "path": "bridge",
+      "action": "reuse-immutable",
+      "artifacts": [
+        "oci-image"
+      ],
+      "reference": "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d"
+    }
+  ],
+  "features": {
+    "height_sync": {
+      "enabled": true,
+      "mode": "chain-only-anchor",
+      "DEVSHARD_HEIGHTSYNC": "true",
+      "DEVSHARD_CHAINORACLE_URL": null,
+      "DEVSHARD_HEIGHTSYNC_K": "10",
+      "DEVSHARD_HEIGHTSYNC_SLOTS": "1",
+      "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL": null,
+      "interval_ms": 3000,
+      "turn_timeout_ms": 6000,
+      "idle_timeout_ms": 12000,
+      "ack_deadline_blocks": 10,
+      "delta_blocks": 2,
+      "confirmation_window_blocks": 256,
+      "strong_mode": false
+    },
+    "ha": {
+      "GONKA_HA": "true",
+      "DEVSHARD_STORAGE_MODE": "postgres",
+      "router": "haproxy-3.2"
+    }
+  },
+  "excluded_capabilities": [
+    {
+      "id": "production-dapi-block-oracle",
+      "reason": "The exact core candidate does not contain the planned DAPI /block/* route; live height sync uses the source-supported direct-chain path."
+    },
+    {
+      "id": "height-sync-strong-mode",
+      "reason": "LightBlock verification, disputes, and slashing are not implemented at the exact v5 source."
+    },
+    {
+      "id": "height-sync-operator-observability",
+      "reason": "The dedicated observability change is not part of the exact v5 source."
+    },
+    {
+      "id": "signed-timeout-voter-slot",
+      "reason": "The open hardening change is not part of the exact v5 source."
+    },
+    {
+      "id": "snapshot-recovery-pending-tx-dedup",
+      "reason": "The open recovery change is not part of the exact v5 source."
+    },
+    {
+      "id": "payload-withholding-negative-vote",
+      "reason": "The open validation change is not part of the exact v5 source."
+    }
+  ],
+  "upstream_qualification_state": {
+    "core_pull_request": 1535,
+    "core_review_required": true,
+    "core_upgrade_rehearsal": "failure",
+    "devshard_pull_request": 1584,
+    "devshard_review_required": true,
+    "devshard_dynamic_testenv": "skipped",
+    "official_release_artifacts_available": false
+  }
+}
