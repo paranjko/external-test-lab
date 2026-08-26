@@ -72,11 +72,6 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        existing = path.read_text(encoding="utf-8")
-        if existing == content:
-            return
-        raise CandidateError(f"refusing to overwrite incompatible immutable file: {path}")
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
@@ -84,7 +79,15 @@ def atomic_write(path: Path, content: str) -> None:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        temporary.replace(path)
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            existing = path.read_text(encoding="utf-8")
+            if existing == content:
+                return
+            raise CandidateError(
+                f"refusing to overwrite incompatible immutable file: {path}"
+            ) from None
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -170,6 +173,15 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
     governance = definition.get("governance", {})
     if governance.get("core_upgrade_name") != "v0.2.16":
         raise CandidateError("candidate core upgrade name must be v0.2.16")
+    ha = definition.get("features", {}).get("ha", {})
+    if ha != {
+        "enabled": False,
+        "deployment": "excluded",
+        "storage_mode": "memory",
+    }:
+        raise CandidateError(
+            "candidate HA must remain excluded until a reviewed v5 deployment lifecycle exists"
+        )
     return definition, path, actual_hash
 
 
@@ -428,37 +440,50 @@ def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str
     for key in ("request_run_id", "run_id", "run_attempt"):
         if not str(workflow.get(key, "")).isdigit():
             raise CandidateError(f"candidate build workflow {key} is invalid")
+    run_id = str(workflow["run_id"])
+    definition_short = definition_hash[:12]
+    release_base = (
+        "https://github.com/paranjko/external-test-lab/releases/download/"
+        f"lab-candidate%2F{profile}"
+    )
     images = manifest.get("images")
     if not isinstance(images, dict) or set(images) != REQUIRED_IMAGES:
         raise CandidateError("candidate build image set is incomplete or unexpected")
     for name, image in images.items():
-        if not isinstance(image, dict) or not str(image.get("reference", "")).startswith("ghcr.io/paranjko/"):
+        expected_reference = (
+            f"ghcr.io/paranjko/gdc-{name}:"
+            f"{profile}-{definition_short}-{run_id}"
+        )
+        expected_archive_url = f"{release_base}/{name}-linux-amd64.oci.tar.gz"
+        if not isinstance(image, dict) or image.get("reference") != expected_reference:
             raise CandidateError(f"candidate image reference is invalid: {name}")
         if not DIGEST_RE.fullmatch(str(image.get("digest", ""))):
             raise CandidateError(f"candidate image digest is invalid: {name}")
         if image.get("sbom") is not True or image.get("provenance") is not True:
             raise CandidateError(f"candidate image attestations are incomplete: {name}")
-        if image.get("deployment_reference") != image.get("reference"):
+        if image.get("deployment_reference") != expected_reference:
             raise CandidateError(f"candidate deployment image was not published: {name}")
         if not HASH_RE.fullmatch(str(image.get("archive_sha256", ""))):
             raise CandidateError(f"candidate image archive checksum is invalid: {name}")
-        if not str(image.get("archive_url", "")).startswith(
-            "https://github.com/paranjko/external-test-lab/releases/download/lab-candidate%2F"
-        ):
+        if image.get("archive_url") != expected_archive_url:
             raise CandidateError(f"candidate image archive URL is invalid: {name}")
     binaries = manifest.get("binaries")
     if not isinstance(binaries, dict) or set(binaries) != REQUIRED_BINARIES:
         raise CandidateError("candidate build binary set is incomplete or unexpected")
     for name, binary in binaries.items():
+        component = name.removesuffix("-linux-amd64")
+        expected_oci_reference = (
+            f"ghcr.io/paranjko/gdc-upgrade-{component}:"
+            f"{profile}-{definition_short}-{run_id}"
+        )
+        expected_url = f"{release_base}/{name}.zip"
         if not isinstance(binary, dict) or not HASH_RE.fullmatch(str(binary.get("sha256", ""))):
             raise CandidateError(f"candidate binary checksum is invalid: {name}")
         if not DIGEST_RE.fullmatch(str(binary.get("oci_digest", ""))):
             raise CandidateError(f"candidate binary OCI digest is invalid: {name}")
-        if not str(binary.get("oci_reference", "")).startswith("ghcr.io/paranjko/"):
+        if binary.get("oci_reference") != expected_oci_reference:
             raise CandidateError(f"candidate binary OCI reference is invalid: {name}")
-        if not str(binary.get("url", "")).startswith(
-            "https://github.com/paranjko/external-test-lab/releases/download/lab-candidate%2F"
-        ):
+        if binary.get("url") != expected_url:
             raise CandidateError(f"candidate binary release URL is invalid: {name}")
         if binary.get("sbom") is not True or binary.get("provenance") is not True:
             raise CandidateError(f"candidate binary attestations are incomplete: {name}")
@@ -477,6 +502,7 @@ def render_lock(profile: str, manifest: dict[str, Any], manifest_hash: str) -> s
     definition, _, definition_hash = verify_definition(profile)
     images = manifest["images"]
     binaries = manifest["binaries"]
+    ha = definition["features"]["ha"]
     reused = {
         component["id"]: component["reference"]
         for component in definition["components"]
@@ -562,8 +588,8 @@ def render_lock(profile: str, manifest: dict[str, Any], manifest_hash: str) -> s
         "DEVSHARD_HEIGHTSYNC": "true",
         "DEVSHARD_HEIGHTSYNC_K": "10",
         "DEVSHARD_HEIGHTSYNC_SLOTS": "1",
-        "GONKA_HA": "true",
-        "DEVSHARD_STORAGE_MODE": "postgres",
+        "GONKA_HA": str(ha["enabled"]).lower(),
+        "DEVSHARD_STORAGE_MODE": ha["storage_mode"],
         "GDC_JOIN_EFFECTIVE_EPOCHS": "4",
         "GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS": "7200",
         "GDC_CPOC_PROBE_EPOCHS": "4",

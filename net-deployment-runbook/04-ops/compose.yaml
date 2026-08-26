@@ -63,9 +63,9 @@ services:
     restart: unless-stopped
     env_file: [./gateway.env]
     volumes:
-      # DevShard persists protocol-specific session state. Never mount the v3
-      # and v4 gateways over the same state store: each runtime rejects a
-      # recovered escrow belonging to the other protocol major.
+      # DevShard persists protocol-specific session state. Never mount v3, v4
+      # and v5 gateways over the same state store: each runtime rejects a
+      # recovered escrow belonging to another protocol major.
       - ${DEVSHARD_GATEWAY_DATA_VOLUME:-gateway-data-v4}:/root/.devshardctl
       - ./gateway-status-routable.sh:/usr/local/bin/gateway-status-routable.sh:ro
     network_mode: host
@@ -138,3 +138,4 @@ volumes:
   grafana-data:
   gateway-data-v3:
   gateway-data-v4:
+  gateway-data-v5:

@@ -53,6 +53,7 @@ grep -Fq 'docker push "$IMAGE_REFERENCE"' "$PUBLISH_WORKFLOW"
 grep -Fq -- '--arg deployment_reference "$IMAGE_REFERENCE"' "$PUBLISH_WORKFLOW"
 grep -Fq 'gh release create "$tag"' "$PUBLISH_WORKFLOW"
 grep -Fq 'candidate release asset collision' "$PUBLISH_WORKFLOW"
+grep -Fq 'verify-candidate-release-target.sh' "$PUBLISH_WORKFLOW"
 grep -Fq 'results/images/*.oci.tar.gz.spdx.json' "$PUBLISH_WORKFLOW"
 grep -Fq 'oras_1.3.0_linux_amd64.tar.gz' "$PUBLISH_WORKFLOW"
 grep -Fq '6cdc692f929100feb08aa8de584d02f7bcc30ec7d88bc2adc2054d782db57c64' "$PUBLISH_WORKFLOW"
@@ -67,6 +68,7 @@ publish_images_job="$(job_section publish-images)"
 publish_binaries_job="$(job_section publish-binaries)"
 manifest_job="$(job_section manifest)"
 
+grep -Fq 'path: automation' <<<"$manifest_job"
 grep -Fq 'contents: read' <<<"$prepare_job"
 ! grep -Eq '(contents|packages|id-token|attestations): write' <<<"$prepare_job"
 for isolated_job in "$images_job" "$binaries_job"; do
@@ -108,6 +110,8 @@ grep -Fq 'IMAGE_REFERENCE="$(cat image/image-reference.txt)"' <<<"$publish_image
 grep -Fq 'IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}' <<<"$publish_images_job"
 ! grep -Fq '${{ github.run_id }}-${{ github.run_attempt }}' <<<"$publish_images_job"
 grep -Fq 'unzip -Z1 "binary/$COMPONENT-linux-amd64.zip")" == "$ARCHIVE_MEMBER"' <<<"$publish_binaries_job"
+grep -Fq 'reference="$repository:$PROFILE-${DEFINITION_SHA256:0:12}-$GITHUB_RUN_ID"' <<<"$publish_binaries_job"
+! grep -Fq 'reference="$repository:$PROFILE-${DEFINITION_SHA256:0:12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"' <<<"$publish_binaries_job"
 
 operator_dockerfile="$RUNBOOK/candidate/Dockerfile.inferenced-operator"
 grep -Fq "FROM golang:1.24.2-alpine3.21 AS builder" "$operator_dockerfile"
@@ -119,6 +123,8 @@ grep -Fq 'contents: write' <<<"$manifest_job"
 grep -Fq './gdc.sh release candidate prepare --source-ref upgrade-v0.2.16' "$RUNBOOK/gdc.sh"
 grep -Fq 'exec "$ROOT/scripts/release-candidate.py" "$@"' "$RUNBOOK/gdc.sh"
 
+grep -Fq 'group: candidate-publish-${{ github.event.workflow_run.display_title }}' "$PUBLISH_WORKFLOW"
+! grep -Fq 'candidate-publish-${{ github.event.workflow_run.id }}' "$PUBLISH_WORKFLOW"
 retry_fixture="$(mktemp -d)"
 trap 'rm -rf "$retry_fixture"' EXIT
 built_reference=ghcr.io/paranjko/gdc-inferenced:v2026.08.25-rc.0-definition-202
@@ -128,5 +134,29 @@ for publisher_attempt in 1 2; do
   [[ "$(cat "$retry_fixture/image-reference.txt")" == "$expected_reference" ]]
   [[ "$expected_reference" != *"-$publisher_attempt" ]]
 done
+
+built_binary_reference=ghcr.io/paranjko/gdc-upgrade-inferenced:v2026.08.25-rc.0-definition-202
+for publisher_attempt in 1 2; do
+  expected_binary_reference=ghcr.io/paranjko/gdc-upgrade-inferenced:v2026.08.25-rc.0-definition-202
+  [[ "$built_binary_reference" == "$expected_binary_reference" ]]
+  [[ "$expected_binary_reference" != *"-$publisher_attempt" ]]
+done
+
+# Two overlapping request runs for the same immutable candidate share the publisher concurrency group
+req1_title="candidate v2026.08.25-rc.0 74fc6807051c327631c707a69cb5527370e543f0b9c93cecf8db925287174e0f"
+req2_title="candidate v2026.08.25-rc.0 74fc6807051c327631c707a69cb5527370e543f0b9c93cecf8db925287174e0f"
+group1="candidate-publish-$req1_title"
+group2="candidate-publish-$req2_title"
+[[ "$group1" == "$group2" ]]
+
+# Verify existing tag resolution fixture: matching target passes, stale target fails
+target_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+stale_target_sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+verify_tag_target() {
+  local actual="$1" expected="$2"
+  [[ "$actual" == "$expected" ]]
+}
+verify_tag_target "$target_sha" "$target_sha"
+! verify_tag_target "$stale_target_sha" "$target_sha"
 
 printf 'PASS candidate workflow security contract\n'

@@ -14,12 +14,15 @@ grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$BASELINE" || die 'model overlay dif
 # source-profile markers, so require the immutable pre-upgrade PASS bundle rather
 # than incorrectly demanding that a completed upgrade look like its baseline.
 target_runtime_active=true
+target_profile_hash="$(profile_hash)"
 while IFS= read -r target_node; do
   target_versions="$(curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$target_node")/v1/versions" 2>/dev/null || true)"
   jq -e --arg version "$GONKA_RELEASE" --arg commit "$GONKA_COMMIT" '
     (.node_version.version | ltrimstr("v")) == $version
     and .node_version.commit == $commit
   ' <<<"$target_versions" >/dev/null 2>&1 || target_runtime_active=false
+  target_binary_marker="$(ssh -n "$target_node" "cat /srv/dai/deploy/$target_node/.gdc-binary-upgrade 2>/dev/null || true")"
+  [[ "$target_binary_marker" == "$GDC_RELEASE_PROFILE $target_profile_hash" ]] || target_runtime_active=false
 done < <(configured_nodes)
 if [[ "$target_runtime_active" == true ]]; then
   step "Reuse immutable $upgrade_source_profile baseline evidence for the already activated target runtime"

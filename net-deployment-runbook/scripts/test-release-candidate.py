@@ -10,6 +10,7 @@ import io
 import json
 import subprocess
 import tempfile
+import threading
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -60,6 +61,7 @@ def main() -> None:
         definition_path = candidates / "v2026.08.25-rc.0.definition.json"
         write_json(definition_path, source_definition)
         definition_hash = candidate.sha256(definition_path)
+        definition_short = definition_hash[:12]
         definition_path.with_suffix(".sha256").write_text(
             f"{definition_hash}  {definition_path.name}\n", encoding="utf-8"
         )
@@ -91,19 +93,19 @@ def main() -> None:
                 "request_ref": "refs/heads/main",
                 "request_sha": "b" * 40,
                 "request_run_id": "101",
-                "run_id": "1",
+                "run_id": "202",
                 "run_attempt": "1",
             },
             "images": {
                 name: {
                     "reference": (
                         f"ghcr.io/paranjko/gdc-{name}:"
-                        "v2026.08.25-rc.0-9d405afd6bcc-202-1"
+                        f"v2026.08.25-rc.0-{definition_short}-202"
                     ),
                     "digest": f"sha256:{hashlib.sha256(name.encode()).hexdigest()}",
                     "deployment_reference": (
                         f"ghcr.io/paranjko/gdc-{name}:"
-                        "v2026.08.25-rc.0-9d405afd6bcc-202-1"
+                        f"v2026.08.25-rc.0-{definition_short}-202"
                     ),
                     "archive_url": f"https://github.com/paranjko/external-test-lab/releases/download/lab-candidate%2Fv2026.08.25-rc.0/{name}-linux-amd64.oci.tar.gz",
                     "archive_sha256": hashlib.sha256((name + "-archive").encode()).hexdigest(),
@@ -114,7 +116,11 @@ def main() -> None:
             },
             "binaries": {
                 name: {
-                    "oci_reference": f"ghcr.io/paranjko/gdc-upgrade-{name}:v2026.08.25-rc.0",
+                    "oci_reference": (
+                        "ghcr.io/paranjko/gdc-upgrade-"
+                        f"{name.removesuffix('-linux-amd64')}:"
+                        f"v2026.08.25-rc.0-{definition_short}-202"
+                    ),
                     "oci_digest": f"sha256:{hashlib.sha256((name + '-oci').encode()).hexdigest()}",
                     "url": f"https://github.com/paranjko/external-test-lab/releases/download/lab-candidate%2Fv2026.08.25-rc.0/{name}.zip",
                     "sha256": hashlib.sha256((name + "-zip").encode()).hexdigest(),
@@ -126,6 +132,35 @@ def main() -> None:
         }
         manifest_path = state / "v2026.08.25-rc.0" / "build" / "build-manifest.json"
         write_json(manifest_path, manifest)
+
+        retried_manifest = json.loads(json.dumps(manifest))
+        retried_manifest["workflow"]["run_attempt"] = "2"
+        retried_manifest_path = temporary / "retried-manifest.json"
+        write_json(retried_manifest_path, retried_manifest)
+        candidate.verify_build_manifest(
+            "v2026.08.25-rc.0", retried_manifest_path
+        )
+        assert {
+            value["oci_reference"]
+            for value in retried_manifest["binaries"].values()
+        } == {
+            value["oci_reference"] for value in manifest["binaries"].values()
+        }
+
+        attempt_scoped_binary = json.loads(json.dumps(retried_manifest))
+        attempt_scoped_binary["binaries"]["inferenced-linux-amd64"][
+            "oci_reference"
+        ] += "-2"
+        attempt_scoped_binary_path = temporary / "attempt-scoped-binary.json"
+        write_json(attempt_scoped_binary_path, attempt_scoped_binary)
+        try:
+            candidate.verify_build_manifest(
+                "v2026.08.25-rc.0", attempt_scoped_binary_path
+            )
+        except candidate.CandidateError as exc:
+            assert "binary OCI reference is invalid" in str(exc)
+        else:
+            raise AssertionError("attempt-scoped binary reference was accepted")
 
         invalid_publisher = json.loads(json.dumps(manifest))
         invalid_publisher["workflow"]["ref"] = "refs/heads/main"
@@ -164,6 +199,90 @@ def main() -> None:
         else:
             raise AssertionError("unpublished deployment tag was accepted")
 
+        swapped_images = json.loads(json.dumps(manifest))
+        swapped_images["images"]["inferenced"], swapped_images["images"]["decentralized-api"] = (
+            swapped_images["images"]["decentralized-api"],
+            swapped_images["images"]["inferenced"],
+        )
+        swapped_images_path = temporary / "swapped-images.json"
+        write_json(swapped_images_path, swapped_images)
+        try:
+            candidate.verify_build_manifest("v2026.08.25-rc.0", swapped_images_path)
+        except candidate.CandidateError as exc:
+            assert "image reference is invalid" in str(exc)
+        else:
+            raise AssertionError("images swapped between component keys were accepted")
+
+        wrong_image_archive = json.loads(json.dumps(manifest))
+        wrong_image_archive["images"]["inferenced"]["archive_url"] = (
+            "https://github.com/paranjko/external-test-lab/releases/download/"
+            "lab-candidate%2Fv2026.08.25-rc.0/decentralized-api-linux-amd64.oci.tar.gz"
+        )
+        wrong_image_archive_path = temporary / "wrong-image-archive.json"
+        write_json(wrong_image_archive_path, wrong_image_archive)
+        try:
+            candidate.verify_build_manifest(
+                "v2026.08.25-rc.0", wrong_image_archive_path
+            )
+        except candidate.CandidateError as exc:
+            assert "image archive URL is invalid" in str(exc)
+        else:
+            raise AssertionError("image archive bound to another component was accepted")
+
+        swapped_binaries = json.loads(json.dumps(manifest))
+        swapped_binaries["binaries"]["inferenced-linux-amd64"], swapped_binaries["binaries"]["edge-api-linux-amd64"] = (
+            swapped_binaries["binaries"]["edge-api-linux-amd64"],
+            swapped_binaries["binaries"]["inferenced-linux-amd64"],
+        )
+        swapped_binaries_path = temporary / "swapped-binaries.json"
+        write_json(swapped_binaries_path, swapped_binaries)
+        try:
+            candidate.verify_build_manifest("v2026.08.25-rc.0", swapped_binaries_path)
+        except candidate.CandidateError as exc:
+            assert "binary OCI reference is invalid" in str(exc)
+        else:
+            raise AssertionError("binaries swapped between component keys were accepted")
+
+        wrong_binary_url = json.loads(json.dumps(manifest))
+        wrong_binary_url["binaries"]["inferenced-linux-amd64"]["url"] = (
+            "https://github.com/paranjko/external-test-lab/releases/download/"
+            "lab-candidate%2Fv2026.08.25-rc.0/edge-api-linux-amd64.zip"
+        )
+        wrong_binary_url_path = temporary / "wrong-binary-url.json"
+        write_json(wrong_binary_url_path, wrong_binary_url)
+        try:
+            candidate.verify_build_manifest("v2026.08.25-rc.0", wrong_binary_url_path)
+        except candidate.CandidateError as exc:
+            assert "binary release URL is invalid" in str(exc)
+        else:
+            raise AssertionError("binary URL bound to another component was accepted")
+
+        for race_number in range(20):
+            race_path = releases / f"concurrent-{race_number}.lock"
+            barrier = threading.Barrier(2)
+            outcomes: list[tuple[str, str]] = []
+
+            def write_racer(content: str) -> None:
+                barrier.wait()
+                try:
+                    candidate.atomic_write(race_path, content)
+                except candidate.CandidateError:
+                    outcomes.append(("rejected", content))
+                else:
+                    outcomes.append(("created", content))
+
+            racers = [
+                threading.Thread(target=write_racer, args=("first\n",)),
+                threading.Thread(target=write_racer, args=("second\n",)),
+            ]
+            for racer in racers:
+                racer.start()
+            for racer in racers:
+                racer.join()
+            assert sorted(status for status, _ in outcomes) == ["created", "rejected"]
+            winner = next(content for status, content in outcomes if status == "created")
+            assert race_path.read_text(encoding="utf-8") == winner
+
         args = argparse.Namespace(profile="v2026.08.25-rc.0", build_manifest=str(manifest_path))
         candidate.command_profile(args)
         candidate.command_profile(args)
@@ -171,6 +290,8 @@ def main() -> None:
         lock = releases / "v2026.08.25-rc.0.lock"
         assert "LAB_CANDIDATE=true" in lock.read_text(encoding="utf-8")
         assert "UPGRADE_FROM_PROFILE=v2026.08.06" in lock.read_text(encoding="utf-8")
+        assert "GONKA_HA=false" in lock.read_text(encoding="utf-8")
+        assert "DEVSHARD_STORAGE_MODE=memory" in lock.read_text(encoding="utf-8")
         expected_image = (
             f"INFERENCED_IMAGE={manifest['images']['inferenced']['reference']}@"
             f"{manifest['images']['inferenced']['digest']}"

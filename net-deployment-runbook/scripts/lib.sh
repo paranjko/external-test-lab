@@ -843,10 +843,69 @@ node_index() {
   die "unknown SSH alias: $wanted"
 }
 
+release_profile_runtime_identity() {
+  local profile="$1" root lock
+  [[ "$profile" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || die "invalid release profile: $profile"
+  root="$(profile_root)"
+  lock="$root/profiles/releases/$profile.lock"
+  [[ -r "$lock" ]] || die "unknown release profile: $profile"
+  (
+    unset GONKA_RELEASE GONKA_COMMIT
+    # shellcheck disable=SC1090
+    source "$lock"
+    [[ "${GONKA_RELEASE:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] \
+      || die "$profile has an invalid Gonka runtime version"
+    [[ "${GONKA_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] \
+      || die "$profile has an invalid Gonka runtime commit"
+    printf '%s %s\n' "$GONKA_RELEASE" "$GONKA_COMMIT"
+  )
+}
+
+candidate_runtime_identity_for_marker() {
+  local marker="$1" source_profile="$2" expected_marker
+  if [[ -z "$marker" ]]; then
+    release_profile_runtime_identity "$source_profile"
+    return
+  fi
+  expected_marker="$GDC_RELEASE_PROFILE $(profile_hash)"
+  [[ "$marker" == "$expected_marker" ]] \
+    || die "refusing to stack $GDC_RELEASE_PROFILE on an earlier candidate runtime marker: $marker"
+  printf '%s %s\n' "$GONKA_RELEASE" "$GONKA_COMMIT"
+}
+
+require_host_upgrade_state_target() {
+  local file="$1" node="$2" proposal_id="$3" plan_height="$4"
+  local genesis_sha256="$5" chain_id="$6" expected_profile_hash
+  [[ -s "$file" ]] || die "Host upgrade state is absent: $file"
+  expected_profile_hash="$(profile_hash)"
+  if ! {
+    grep -qx "node=$node" "$file" \
+      && grep -qx "proposal_id=$proposal_id" "$file" \
+      && grep -qx "plan_height=$plan_height" "$file" \
+      && grep -qx "genesis_sha256=$genesis_sha256" "$file" \
+      && grep -qx "chain_id=$chain_id" "$file" \
+      && grep -qx "release_profile=$GDC_RELEASE_PROFILE" "$file" \
+      && grep -qx "profile_hash=$expected_profile_hash" "$file" \
+      && grep -qx "inferenced_url=$INFERENCED_UPGRADE_URL" "$file" \
+      && grep -qx "inferenced_sha256=$INFERENCED_UPGRADE_SHA256" "$file" \
+      && grep -qx "dapi_url=$DAPI_UPGRADE_URL" "$file" \
+      && grep -qx "dapi_sha256=$DAPI_UPGRADE_SHA256" "$file"
+  }; then
+    die 'prepared Host upgrade state is stale or targets another immutable profile'
+  fi
+}
+
 latest_baseline_pass_bundle() {
-  local profile="${1:-v2026.07.23}" verdict bundle environment profile_hash genesis_profile_hash
+  local profile="${1:-v2026.07.23}" verdict bundle environment profile_hash genesis_profile_hash expected_profile_hash root
   genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env" 2>/dev/null || true)"
   [[ -n "$genesis_profile_hash" ]] || return 1
+  root="$(profile_root)"
+  [[ -r "$root/profiles/releases/$profile.lock" && -r "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" && -r "$root/profiles/models/$GDC_MODEL_PROFILE.lock" ]] || return 1
+  expected_profile_hash="$(sha256sum "$root/profiles/releases/$profile.lock" \
+    "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
+    "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+  [[ -n "$expected_profile_hash" ]] || return 1
+  if [[ "$profile" == v2026.07.23 && "$expected_profile_hash" != "$genesis_profile_hash" ]]; then return 1; fi
   while IFS= read -r verdict; do
     grep -qx '# DevNet verification: PASS' "$verdict" || continue
     bundle="$(dirname "$verdict")"
@@ -856,8 +915,7 @@ latest_baseline_pass_bundle() {
     grep -qx "chain_id=$CHAIN_ID" "$environment" || continue
     grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$environment" || continue
     profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$environment")"
-    [[ "$profile_hash" =~ ^[0-9a-f]{64}$ ]] || continue
-    if [[ "$profile" == v2026.07.23 && "$profile_hash" != "$genesis_profile_hash" ]]; then continue; fi
+    [[ "$profile_hash" == "$expected_profile_hash" ]] || continue
     printf '%s\n' "$bundle"
     return 0
   done < <(find "$GDC_HOME/runs" -mindepth 2 -maxdepth 2 -name verdict.md -print 2>/dev/null | LC_ALL=C sort -r)
@@ -871,10 +929,23 @@ latest_baseline_pass_bundle() {
 require_current_baseline_pass() {
   local profile="${1:-v2026.07.23}"
   local bundle index node address marker status node_height node_catching
-  local reference_height lag baseline_profile_hash
+  local reference_height lag baseline_profile_hash expected_profile_hash root
+  local binary_marker node_versions source_release source_commit
+  local expected_runtime_version expected_runtime_commit runtime_error
   local -a indexes expected_addresses live_addresses evidence_nodes
 
   step "Require a current $profile baseline PASS before the upgrade lifecycle"
+  root="$(profile_root)"
+  [[ -r "$root/profiles/releases/$profile.lock" && -r "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" && -r "$root/profiles/models/$GDC_MODEL_PROFILE.lock" ]] \
+    || die "unknown profile inputs for $profile ($GDC_DEPLOYMENT_PROFILE / $GDC_MODEL_PROFILE)"
+  expected_profile_hash="$(sha256sum "$root/profiles/releases/$profile.lock" \
+    "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
+    "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+
+  source_release="$(awk -F= '$1 == "GONKA_RELEASE" {gsub(/\"/, "", $2); print $2; exit}' "$root/profiles/releases/$profile.lock")"
+  source_commit="$(awk -F= '$1 == "GONKA_COMMIT" {gsub(/\"/, "", $2); print $2; exit}' "$root/profiles/releases/$profile.lock")"
+  [[ -n "$source_release" && -n "$source_commit" ]] || die "cannot read GONKA_RELEASE / GONKA_COMMIT from $profile.lock"
+
   bundle="$(latest_baseline_pass_bundle "$profile" || true)"
   [[ -n "$bundle" ]] || die "no matching $profile verification PASS; restore every intended participant and run ./gdc.sh --release $profile verify"
 
@@ -886,13 +957,36 @@ require_current_baseline_pass() {
   expected_addresses=()
   reference_height="$(ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:26657/status' | jq -er '.result.sync_info.latest_block_height | tonumber')"
   baseline_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$bundle/environment.txt")"
+  [[ "$baseline_profile_hash" == "$expected_profile_hash" ]] || die "baseline PASS profile hash ($baseline_profile_hash) does not match expected hash ($expected_profile_hash)"
   for node in "${GDC_NODES[@]}"; do
     [[ -e "$(node_joined_marker "$node")" ]] || continue
     grep -qx "$node" <(printf '%s\n' "${evidence_nodes[@]}") || die "$node is absent from the baseline PASS bundle; run verify again"
     address="$(jq -er .address "$(node_account_file "$node")")"
     expected_addresses+=("$address")
     marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release 2>/dev/null || true")"
-    [[ "$marker" == "$profile $baseline_profile_hash" ]] || die "$node does not have the verified $profile deployment marker"
+    [[ "$marker" == "$profile $expected_profile_hash" ]] || die "$node does not have the verified $profile deployment marker"
+
+    binary_marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-binary-upgrade 2>/dev/null || true")"
+    if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
+      read -r expected_runtime_version expected_runtime_commit \
+        < <(candidate_runtime_identity_for_marker "$binary_marker" "$profile")
+      if [[ -n "$binary_marker" ]]; then
+        runtime_error="$node live runtime does not match its exact-target candidate marker"
+      else
+        runtime_error="$node live runtime does not match verified source baseline $profile ($source_release / $source_commit)"
+      fi
+    else
+      [[ -z "$binary_marker" ]] \
+        || die "$node has unexpected binary upgrade marker ($binary_marker); reset node before starting a different candidate"
+      expected_runtime_version="$source_release"
+      expected_runtime_commit="$source_commit"
+      runtime_error="$node live runtime does not match verified source baseline $profile ($source_release / $source_commit)"
+    fi
+
+    node_versions="$(curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$node")/v1/versions" 2>/dev/null || true)"
+    jq -e --arg version "$expected_runtime_version" --arg commit "$expected_runtime_commit" '
+      (.node_version.version | ltrimstr("v")) == $version and .node_version.commit == $commit
+    ' <<<"$node_versions" >/dev/null 2>&1 || die "$runtime_error"
     ssh -T "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env ps node api proxy explorer --format '{{.Service}} {{.State}}'" \
       | awk '
           $1 == "node" || $1 == "api" || $1 == "proxy" || $1 == "explorer" { seen[$1]=1; if ($2 != "running") bad=1 }

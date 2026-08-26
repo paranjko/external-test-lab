@@ -556,6 +556,10 @@ join_account_line="$(grep -n 'create-cold-accounts.sh' "$ROOT/scripts/phase-join
   exit 1
 }
 
+grep -Fq 'expected_profile_hash' "$ROOT/scripts/lib.sh"
+grep -Fq 'unexpected binary upgrade marker' "$ROOT/scripts/lib.sh"
+grep -Fq 'live runtime does not match verified source baseline' "$ROOT/scripts/lib.sh"
+
 trap_test_dir="$test_tmp/evidence-trap"
 mkdir -p "$trap_test_dir"
 set +e

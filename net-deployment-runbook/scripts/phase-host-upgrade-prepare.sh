@@ -40,13 +40,8 @@ STATE_FILE="$STATE/upgrade/$NODE-$PROPOSAL_ID.env"
 CACHE_DIR="/srv/dai/$NODE/gdc-upgrade-cache/$PROPOSAL_ID"
 mkdir -p "$(dirname "$STATE_FILE")"
 if [[ -s "$STATE_FILE" ]]; then
-  grep -qx "node=$NODE" "$STATE_FILE" \
-    && grep -qx "proposal_id=$PROPOSAL_ID" "$STATE_FILE" \
-    && grep -qx "plan_height=$plan_height" "$STATE_FILE" \
-    && grep -qx "genesis_sha256=$GENESIS_SHA256" "$STATE_FILE" \
-    && grep -qx "inferenced_sha256=$INFERENCED_UPGRADE_SHA256" "$STATE_FILE" \
-    && grep -qx "dapi_sha256=$DAPI_UPGRADE_SHA256" "$STATE_FILE" \
-    || die 'existing prepared upgrade state is stale or targets another immutable lineage'
+  require_host_upgrade_state_target "$STATE_FILE" "$NODE" "$PROPOSAL_ID" \
+    "$plan_height" "$GENESIS_SHA256" "$CHAIN_ID"
 else
   step "Pre-fetch only the pinned target artifacts on $NODE"
   ssh_ready "$NODE" || die "$NODE is unreachable"

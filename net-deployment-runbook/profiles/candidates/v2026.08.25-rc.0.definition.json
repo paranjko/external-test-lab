@@ -243,12 +243,16 @@
       "strong_mode": false
     },
     "ha": {
-      "GONKA_HA": "true",
-      "DEVSHARD_STORAGE_MODE": "postgres",
-      "router": "haproxy-3.2"
+      "enabled": false,
+      "deployment": "excluded",
+      "storage_mode": "memory"
     }
   },
   "excluded_capabilities": [
+    {
+      "id": "devshard-v5-ha-deployment",
+      "reason": "The candidate builds the v5 components but the runbook does not yet deploy and qualify a v5 replica, router, and shared-storage lifecycle."
+    },
     {
       "id": "production-dapi-block-oracle",
       "reason": "The exact core candidate does not contain the planned DAPI /block/* route; live height sync uses the source-supported direct-chain path."

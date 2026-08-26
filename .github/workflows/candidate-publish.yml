@@ -7,7 +7,7 @@ on:
     types: [completed]
 
 concurrency:
-  group: candidate-publish-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  group: candidate-publish-${{ github.event.workflow_run.display_title }}
   cancel-in-progress: false
 
 permissions: {}
@@ -645,7 +645,7 @@ jobs:
           archive="binary/$COMPONENT-linux-amd64.zip"
           printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           repository="ghcr.io/${GITHUB_REPOSITORY_OWNER}/gdc-upgrade-$COMPONENT"
-          reference="$repository:$PROFILE-${DEFINITION_SHA256:0:12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          reference="$repository:$PROFILE-${DEFINITION_SHA256:0:12}-$GITHUB_RUN_ID"
           oras push "$reference" \
             --artifact-type application/vnd.gdc.upgrade-binary.v1 \
             --annotation "org.opencontainers.image.source=https://github.com/gonka-ai/gonka" \
@@ -693,6 +693,12 @@ jobs:
       actions: read
       contents: write
     steps:
+      - name: Checkout trusted publication automation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: automation
+          persist-credentials: false
       - name: Download image results
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
@@ -757,6 +763,8 @@ jobs:
                 echo 'existing candidate release is not a prerelease' >&2
                 exit 1
               }
+            bash automation/net-deployment-runbook/scripts/verify-candidate-release-target.sh \
+              "$GITHUB_REPOSITORY" "$tag" "$TARGET_SHA"
           else
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$TARGET_SHA" --prerelease \
               --title "External Test Lab candidate $PROFILE" \
