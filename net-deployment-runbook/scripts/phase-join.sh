@@ -48,6 +48,26 @@ export EVIDENCE_PHASE_NAME="join-$NODE"
 mkdir -p "$RUN"
 record_join_state "$NODE" BOOTSTRAP_IMPORTED
 ML_TARGET="$(node_ml_host "$NODE" || printf '%s' "$NODE")"
+URL="$(node_url "$NODE")"
+PUBLIC_HOST="${URL#https://}"
+getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve to IPv4"
+ACCOUNT="$ACCOUNTS/$NODE-cold.json"
+IDENTITY="$IDENTITIES/$NODE.json"
+[[ -s "$GENESIS/genesis.json" && -s "$GENESIS/genesis-seeds.txt" ]] || die 'run genesis first'
+GENESIS_SHA256="$(genesis_sha256 "$GENESIS/genesis.json")"
+GENESIS_CHAIN_ID="$(jq -er .chain_id "$GENESIS/genesis.json")"
+write_phase_lineage "$RUN" "$GENESIS_CHAIN_ID" "$GENESIS_SHA256"
+
+if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
+  step "Validate $NODE validator identity from operator backup"
+  "$ROOT/scripts/validator-backup.sh" restore "$NODE" "$GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE"
+  export GDC_RESTORE_VALIDATOR_BACKUP=true
+  export GDC_RESTORE_IDENTITY_FILE="$STATE/restore/$NODE/identity.json"
+  if [[ "$(<"$STATE/restore/$NODE/mode")" == existing ]]; then
+    "$ROOT/scripts/recover-running-host-state.sh" "$NODE" "$GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE"
+    exit 0
+  fi
+fi
 
 # An independent operator may be the first person to use this Host.  In a
 # split deployment the ML runtime must be able to reach the network Host's
@@ -77,23 +97,6 @@ if [[ "${GDC_JOIN_SKIP_QUALIFICATION:-false}" == true ]]; then
 else
   ensure_ml_qualification "$ML_TARGET"
 fi
-URL="$(node_url "$NODE")"
-PUBLIC_HOST="${URL#https://}"
-getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve to IPv4"
-ACCOUNT="$ACCOUNTS/$NODE-cold.json"
-IDENTITY="$IDENTITIES/$NODE.json"
-[[ -s "$GENESIS/genesis.json" && -s "$GENESIS/genesis-seeds.txt" ]] || die 'run genesis first'
-GENESIS_SHA256="$(genesis_sha256 "$GENESIS/genesis.json")"
-GENESIS_CHAIN_ID="$(jq -er .chain_id "$GENESIS/genesis.json")"
-write_phase_lineage "$RUN" "$GENESIS_CHAIN_ID" "$GENESIS_SHA256"
-
-if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
-  step "Restore $NODE validator identity from operator backup"
-  "$ROOT/scripts/validator-backup.sh" restore "$NODE" "$GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE"
-  export GDC_RESTORE_VALIDATOR_BACKUP=true
-  export GDC_RESTORE_IDENTITY_FILE="$STATE/restore/$NODE/identity.json"
-fi
-
 # Every joining Host creates and owns its local keyring passwords before it
 # creates any account. No Genesis operator key, funding approval, or
 # cross-operator secret transfer is needed.

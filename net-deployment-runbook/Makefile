@@ -92,6 +92,11 @@ test:
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-validator-backup-contract.sh
+	@./scripts/test-validator-identity-restore-command.sh
+	@./scripts/test-running-host-deployment-secrets.sh
+	@./scripts/test-running-host-recovery-state.sh
+	@./scripts/test-running-host-recovery-publication.sh
+	@./scripts/test-running-host-recovery-orchestration.sh
 	@./scripts/test-genesis-role-config.sh
 	@./scripts/test-prepare-join-role-config.sh
 	@./scripts/test-role-separation.sh

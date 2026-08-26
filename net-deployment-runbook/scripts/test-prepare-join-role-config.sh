@@ -102,4 +102,6 @@ if PATH="$tmp/bin:$PATH" JOIN_FIXTURE="$fixture" GDC_RELEASE_PROFILE=v2026.07.23
 fi
 grep -Fq 'public JOIN bootstrap checksum mismatch bootstrap_url=https://bootstrap.example.net/join-bootstrap file=./topology.env expected_sha256=' "$tmp/mismatch.stderr"
 grep -Fq 'actual_sha256=' "$tmp/mismatch.stderr"
+grep -Fq -- '--retry-all-errors' "$ROOT/scripts/prepare-join-role-config.sh"
+grep -Fq -- '--retry-all-errors' "$ROOT/scripts/fetch-join-bootstrap.sh"
 printf 'PASS JOIN role configuration loads its release compatibility profile\n'
