@@ -10,6 +10,8 @@ const width = Number(widthText);
 const height = Number(heightText);
 const visibleNodes = Number(visibleNodesText);
 const expectResetState = process.env.GDC_EXPECT_RESET_STATE === 'true';
+const checkMapZoom = process.env.GDC_CHECK_MAP_ZOOM === 'true';
+const checkMapFullscreen = process.env.GDC_CHECK_MAP_FULLSCREEN === 'true';
 const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
 const expectGatewayReady = process.env.GDC_EXPECT_GATEWAY_READY === 'true';
 const reportBrowserFailure = error => {
@@ -42,6 +44,7 @@ const browser = spawn(chrome, [
 ], { stdio: 'ignore' });
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const mapCoverageExpression = 'JSON.stringify((()=>{const map=document.querySelector("#validator-map");if(!map)return null;const mapRect=map.getBoundingClientRect();const tiles=[...map.querySelectorAll(".leaflet-tile-loaded")].filter(tile=>{const style=getComputedStyle(tile);return style.display!=="none"&&style.visibility!=="hidden"&&style.opacity!=="0"}).map(tile=>tile.getBoundingClientRect());const edgeCovered=y=>{const ranges=tiles.filter(rect=>rect.top<=y&&rect.bottom>=y).map(rect=>[rect.left,rect.right]).sort((left,right)=>left[0]-right[0]);let coveredUntil=mapRect.left;for(const [left,right] of ranges){if(right<=coveredUntil)continue;if(left>coveredUntil+1)return false;coveredUntil=right;if(coveredUntil>=mapRect.right-1)return true}return coveredUntil>=mapRect.right-1};return{tileCount:tiles.length,topCovered:edgeCovered(mapRect.top+1),bottomCovered:edgeCovered(mapRect.bottom-1),leftCovered:tiles.some(rect=>rect.left<=mapRect.left+1),rightCovered:tiles.some(rect=>rect.right>=mapRect.right-1),zoom:Number(map.dataset.zoom),markersVisible:[...map.querySelectorAll(".validator-marker")].every(marker=>{const rect=marker.getBoundingClientRect();return rect.width>0&&rect.height>0&&rect.right>=mapRect.left&&rect.left<=mapRect.right&&rect.bottom>=mapRect.top&&rect.top<=mapRect.bottom})}})())';
 let socket;
 let sequence = 0;
 const pending = new Map();
@@ -113,6 +116,13 @@ try {
   if (expectedGatewayState === 'UNAVAILABLE' && !state.gatewayAccessHidden) {
     throw new Error(`gateway access card must be hidden while unavailable ${JSON.stringify(state)}`);
   }
+  if (checkMapZoom) {
+    await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map .leaflet-control-zoom-out")?.click()' }, sessionId);
+    await delay(300);
+    const { result: coverageResult } = await call('Runtime.evaluate', { expression: mapCoverageExpression, returnByValue: true }, sessionId);
+    const coverage = JSON.parse(coverageResult.value);
+    if (!coverage || !coverage.tileCount || !coverage.topCovered || !coverage.bottomCovered || !coverage.leftCovered || !coverage.rightCovered || coverage.markersVisible !== true) throw new Error(`validator map tiles do not cover every edge after zoom out ${JSON.stringify(coverage)}`);
+  }
   await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map .leaflet-control-zoom-in")?.click()' }, sessionId);
   await delay(300);
   await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map .leaflet-control-zoom-out")?.click()' }, sessionId);
@@ -122,6 +132,15 @@ try {
     returnByValue: true,
   }, sessionId);
   if (!mapCoverageResult.value) throw new Error('validator map restored Leaflet default light background after zoom in/out');
+  if (checkMapFullscreen) {
+    await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map-fullscreen")?.click()' }, sessionId);
+    await delay(350);
+    const { result: fullscreenResult } = await call('Runtime.evaluate', { expression: `JSON.stringify({coverage:${mapCoverageExpression},rect:(()=>{const r=document.querySelector("#validator-map")?.getBoundingClientRect();return r&&{left:r.left,top:r.top,right:r.right,bottom:r.bottom}})(),pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed")})`, returnByValue: true }, sessionId);
+    const fullscreen = JSON.parse(fullscreenResult.value);
+    const coverage = JSON.parse(fullscreen.coverage);
+    if (!coverage || !coverage.topCovered || !coverage.bottomCovered || !coverage.leftCovered || !coverage.rightCovered || !coverage.markersVisible || fullscreen.pressed !== 'true' || fullscreen.rect.left > 1 || fullscreen.rect.top > 1 || fullscreen.rect.right < width - 1 || fullscreen.rect.bottom < height - 1) throw new Error(`validator map does not cover fullscreen viewport ${JSON.stringify(fullscreen)}`);
+    await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map-fullscreen")?.click()' }, sessionId);
+  }
   const { result: accessResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify({code:document.querySelectorAll("#gateway-access pre,#gateway-access code").length,scroll:[...document.querySelectorAll("#gateway-access,#gateway-access *")].some(e=>{const s=getComputedStyle(e);return (s.overflowX==="auto"||s.overflowX==="scroll"||s.overflowY==="auto"||s.overflowY==="scroll")&&(e.scrollWidth>e.clientWidth||e.scrollHeight>e.clientHeight)})})',
     returnByValue: true,
