@@ -27,7 +27,6 @@ prepare_genesis_role_input() {
   cat >"$role_input" <<'EOF'
 GDC_NODE_ALIASES=gdc-node0
 GDC_NODE_PUBLIC_HOSTS=gdc-node0=127.0.0.1
-GDC_NODE_GPU_PROFILES=gdc-node0=auto
 GDC_NODE_P2P_PORTS=gdc-node0=5000
 GDC_GENESIS_NODE=gdc-node0
 GDC_PUBLIC_EDGE_NODE=gdc-node0

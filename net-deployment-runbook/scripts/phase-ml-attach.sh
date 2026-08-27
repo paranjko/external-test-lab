@@ -12,21 +12,17 @@ ML_ENDPOINT="$(ssh -G "$ML_HOST" 2>/dev/null | awk '$1 == "hostname" {print $2; 
 [[ -n "$ML_ENDPOINT" ]] || die "cannot determine network GPU endpoint from SSH alias $ML_HOST"
 record_phase_profile "ml-attach-$NODE"
 
-step "Render network GPU configuration for $NODE"
+step "Render network ML configuration for $NODE"
 ML_ENV="$GENERATED/$ML_HOST.env"
 AGENT_ENV="$GENERATED/agents/$ML_HOST.env"
-PROFILE="$(node_gpu_profile "$NODE")"
-ML_IMAGE="$MLNODE_GENERIC_IMAGE"
-[[ "$PROFILE" == blackwell-* ]] && ML_IMAGE="$MLNODE_BLACKWELL_IMAGE"
 write_env "$ML_ENV" \
   "COMPOSE_PROJECT_NAME=$ML_HOST" \
   'ML_BIND_IP=0.0.0.0' \
   "PUBLIC_URL=https://$(node_public_host "$NODE")" \
   "GDC_STOP_POC_AT_WINDDOWN=${GDC_STOP_POC_AT_WINDDOWN:-true}" \
   "HF_HOME=$HF_CACHE_ROOT" \
-  "MLNODE_IMAGE=$ML_IMAGE" \
+  "MLNODE_IMAGE=$MLNODE_GENERIC_IMAGE" \
   "MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE" \
-  "VLLM_ATTENTION_BACKEND=$(attention_backend_for_profile "$PROFILE")" \
   'POC_BATCH_SIZE_DEFAULT=32'
 "$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$ML_HOST" --output "$AGENT_ENV" >/dev/null
 

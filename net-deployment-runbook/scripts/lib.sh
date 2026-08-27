@@ -219,7 +219,6 @@ topology_contains_node() {
 }
 
 node_public_host() { topology_value "$GDC_NODE_PUBLIC_HOSTS" "$1" || die "no public host configured for SSH alias $1"; }
-node_gpu_profile() { topology_value "$GDC_NODE_GPU_PROFILES" "$1" || die "no GPU profile configured for SSH alias $1"; }
 node_p2p_port() { topology_value "$GDC_NODE_P2P_PORTS" "$1" || printf '%s\n' 5000; }
 node_ml_host() { topology_value "${GDC_NODE_ML_HOSTS:-}" "$1"; }
 
@@ -236,7 +235,7 @@ load_topology() {
   read -r -a GDC_NODES <<<"$GDC_NODE_ALIASES"
   (( ${#GDC_NODES[@]} >= 1 )) || die 'GDC_NODE_ALIASES must contain at least one SSH alias'
   local -A seen=() ml_seen=()
-  local node host profile ml_alias
+  local node host ml_alias
   for node in "${GDC_NODES[@]}"; do
     [[ "$node" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid SSH alias in GDC_NODE_ALIASES: $node"
     [[ -z "${seen[$node]:-}" ]] || die "duplicate SSH alias in GDC_NODE_ALIASES: $node"
@@ -245,8 +244,6 @@ load_topology() {
   for node in "${GDC_NODES[@]}"; do
     host="$(node_public_host "$node")"
     [[ "$host" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid public host for $node: $host"
-    profile="$(node_gpu_profile "$node")"
-    [[ -n "$profile" ]] || die "empty GPU profile for $node"
     ml_alias="$(node_ml_host "$node" || true)"
     if [[ -n "$ml_alias" ]]; then
       [[ "$ml_alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid ML SSH alias for $node: $ml_alias"
@@ -272,7 +269,6 @@ load_topology() {
   local index=0 ml_alias ml_endpoint
   for node in "${GDC_NODES[@]}"; do
     printf -v "NODE${index}_PUBLIC_HOST" '%s' "$(node_public_host "$node")"
-    printf -v "NODE${index}_GPU_PROFILE" '%s' "$(node_gpu_profile "$node")"
     printf -v "NODE${index}_P2P_PORT" '%s' "$(node_p2p_port "$node")"
     ml_alias="$(node_ml_host "$node" || true)"
     if [[ -n "$ml_alias" ]]; then
@@ -608,16 +604,6 @@ require() {
   done
 }
 
-# This affects only the vLLM kernel implementation, not the pinned model,
-# revision, dtype, context, or PoC parameters. Tesla T4 (Turing) cannot run
-# FlashAttention/FlashInfer, whereas the other configured P0 GPUs can.
-attention_backend_for_profile() {
-  case "$1" in
-    t4-16g) printf '%s\n' XFORMERS ;;
-    *) printf '%s\n' FLASHINFER ;;
-  esac
-}
-
 write_inventory() {
   umask 077
   inventory_value() { printf '%s=%q\n' "$1" "$2"; }
@@ -632,7 +618,6 @@ write_inventory() {
     inventory_value PUBLIC_EDGE_CIDR "$PUBLIC_EDGE_CIDR"
     inventory_value GDC_NODE_ALIASES "$GDC_NODE_ALIASES"
     inventory_value GDC_NODE_PUBLIC_HOSTS "$GDC_NODE_PUBLIC_HOSTS"
-    inventory_value GDC_NODE_GPU_PROFILES "$GDC_NODE_GPU_PROFILES"
     inventory_value GDC_NODE_P2P_PORTS "$GDC_NODE_P2P_PORTS"
     inventory_value GDC_NODE_ML_HOSTS "${GDC_NODE_ML_HOSTS:-}"
     inventory_value GDC_GENESIS_NODE "$GENESIS_NODE"
@@ -650,7 +635,6 @@ write_inventory() {
   for node in "${GDC_NODES[@]}"; do
     inventory_value "NODE${index}_PUBLIC_HOST" "$(node_public_host "$node")" >>"$INVENTORY"
     inventory_value "NODE${index}_P2P_PORT" "$(node_p2p_port "$node")" >>"$INVENTORY"
-    inventory_value "NODE${index}_GPU_PROFILE" "$(node_gpu_profile "$node")" >>"$INVENTORY"
     if [[ -n "$(node_ml_host "$node" || true)" ]]; then
       endpoint_var="NODE${index}_ML_ENDPOINT"
       monitor_var="NODE${index}_ML_MONITOR_HOST"

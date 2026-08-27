@@ -27,7 +27,6 @@ load_profiles
 topology_contains_node "$NODE" || { echo "node is not configured in inventory: $NODE" >&2; exit 2; }
 PUBLIC_HOST="$(node_public_host "$NODE")"
 P2P_PORT="$(node_p2p_port "$NODE")"
-GPU_PROFILE="$(node_gpu_profile "$NODE")"
 ADDRESS="$(jq -r .address "$ACCOUNT")"
 PUBKEY="$(jq -r .account_pubkey_b64 "$ACCOUNT")"
 [[ "$ADDRESS" =~ ^gonka1[0-9a-z]{20,90}$ ]] || { echo "Invalid account: $ACCOUNT" >&2; exit 1; }
@@ -35,7 +34,6 @@ if [[ "$BOOTSTRAP" == true ]]; then SEEDS='identity-bootstrap-only'; else SEEDS=
 KEYRING_PASSWORD="$(<"$SECRETS/$NODE.keyring")"
 POSTGRES_PASSWORD="$(<"$SECRETS/$NODE.postgres")"
 IS_GENESIS=false; [[ "$NODE" == "$GENESIS_NODE" ]] && IS_GENESIS=true
-ATTENTION_BACKEND="$(attention_backend_for_profile "$GPU_PROFILE")"
 write_env "$OUTPUT" \
   "COMPOSE_PROJECT_NAME=$NODE" "COMPOSE_PROFILES=$EDGE_API_COMPOSE_PROFILE" "NODE_NAME=$NODE" "CHAIN_ID=$CHAIN_ID" "BASE_DENOM=$BASE_DENOM" \
   "GDC_RELEASE_PROFILE=$GDC_RELEASE_PROFILE" "GDC_PROFILE_HASH=$(profile_hash)" "GONKA_COMMIT=$GONKA_COMMIT" \
@@ -55,5 +53,5 @@ write_env "$OUTPUT" \
   "DAPI_IMAGE=$DAPI_IMAGE" "EDGE_API_IMAGE=$EDGE_API_IMAGE" "EDGE_API_SERVICE_NAME=$EDGE_API_SERVICE_NAME" "VERSIOND_IMAGE=$VERSIOND_IMAGE" "PROXY_IMAGE=$PROXY_IMAGE" \
   "EXPLORER_IMAGE=$EXPLORER_IMAGE" "DASHBOARD_PORT=$DASHBOARD_PORT" \
   "MLNODE_IMAGE=$MLNODE_GENERIC_IMAGE" "MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE" \
-  "GPU_PROFILE=$GPU_PROFILE" "VLLM_ATTENTION_BACKEND=$ATTENTION_BACKEND" "POC_BATCH_SIZE_DEFAULT=32"
+  "POC_BATCH_SIZE_DEFAULT=32"
 echo "$OUTPUT"

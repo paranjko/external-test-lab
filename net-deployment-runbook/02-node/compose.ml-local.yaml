@@ -5,7 +5,6 @@ services:
     hostname: mlnode
     environment:
       HF_HOME: /root/.cache
-      VLLM_ATTENTION_BACKEND: ${VLLM_ATTENTION_BACKEND:-FLASHINFER}
       POC_BATCH_SIZE_DEFAULT: ${POC_BATCH_SIZE_DEFAULT:-32}
     volumes:
       - ${HF_HOME:?HF_HOME is required}:/root/.cache

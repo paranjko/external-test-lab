@@ -88,26 +88,6 @@ step 'Verify the operator inferenced CLI matches the selected release'
 # rehearsal.  Scope host preparation and qualification to the requested
 # Genesis alias; additional validators remain independent join operations.
 GDC_PREPARE_HOSTS="$GENESIS_NODE" "$ROOT/scripts/phase-prepare.sh"
-if [[ "${GDC_GENESIS_ROLE_INPUT:-false}" == true && "$(node_gpu_profile "$GENESIS_NODE")" == auto ]]; then
-  step "Detect GPU profile for $GENESIS_NODE"
-  detected_gpu_profile="$("$ROOT/scripts/detect-gpu-profile.sh" "$GENESIS_NODE")"
-  read -r -a current_gpu_profiles <<<"$GDC_NODE_GPU_PROFILES"
-  gpu_profiles=()
-  for gpu_profile in "${current_gpu_profiles[@]}"; do
-    if [[ "$gpu_profile" == "$GENESIS_NODE="* ]]; then
-      gpu_profiles+=("$GENESIS_NODE=$detected_gpu_profile")
-    else
-      gpu_profiles+=("$gpu_profile")
-    fi
-  done
-  encoded_gpu_profiles="'${gpu_profiles[*]}'"
-  sed -i -E "s/^GDC_NODE_GPU_PROFILES=.*/GDC_NODE_GPU_PROFILES=$encoded_gpu_profiles/" "$ENV_FILE"
-  GDC_NODE_GPU_PROFILES="${gpu_profiles[*]}"
-  export GDC_NODE_GPU_PROFILES
-  load_topology
-  write_inventory
-  printf 'READY %s GPU profile detected as %s\n' "$GENESIS_NODE" "$detected_gpu_profile"
-fi
 qualification_status=passed
 if [[ "${GDC_GENESIS_SKIP_QUALIFICATION:-false}" == true ]]; then
   qualification_status=skipped_by_operator
@@ -174,7 +154,7 @@ mkdir -p "$NODE_DIR" "$GENERATED/edge" "$GENERATED/agents"
 GENESIS_RUNTIME_ID="$(runtime_id_for_participant "$(jq -er .address "$ACCOUNTS/$NODE-cold.json")")"
 record_runtime_identity "$NODE" "$(jq -er .address "$ACCOUNTS/$NODE-cold.json")" "$GENESIS_RUNTIME_ID"
 "$ROOT/02-node/render-node-env.sh" --inventory "$INVENTORY" --node-name "$NODE" --account-public "$ACCOUNTS/$NODE-cold.json" --seeds-file "$GENESIS/genesis-seeds.txt" --secrets-dir "$SECRETS" --output "$NODE_DIR/.env" >/dev/null
-"$ROOT/02-node/render-node-config.sh" --node-name "$NODE" --runtime-id "$GENESIS_RUNTIME_ID" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json" >/dev/null
+"$ROOT/02-node/render-node-config.sh" --node-name "$NODE" --runtime-id "$GENESIS_RUNTIME_ID" --output "$NODE_DIR/node-config.json" >/dev/null
 "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$NODE" --output "$GENERATED/edge/$NODE.env"
 "$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$NODE" --output "$GENERATED/agents/$NODE.env"
 

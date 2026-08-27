@@ -15,7 +15,6 @@ printf 'release_profile=v2026.07.23\njoin_bootstrap_format=1\n' >"$fixture/profi
 printf '%s\n' \
   'GDC_NODE_ALIASES=gdc-node0 validator-west' \
   'GDC_NODE_PUBLIC_HOSTS=gdc-node0=node0.example.test validator-west=validator.example.test' \
-  'GDC_NODE_GPU_PROFILES=gdc-node0=auto validator-west=auto' \
   'GDC_NODE_P2P_PORTS=gdc-node0=5000 validator-west=5000' \
   'GDC_NODE_ML_HOSTS=' \
   'GDC_GENESIS_NODE=gdc-node0' \
@@ -56,7 +55,6 @@ GDC_DEPLOYMENT_PROFILE=community-lab
 GDC_OPERATOR_SERVICES_PROFILE=gdc-lab
 GDC_NODE_ALIASES='gdc-node0 validator-west'
 GDC_NODE_PUBLIC_HOSTS='gdc-node0=node0.example.test validator-west=validator.example.test'
-GDC_NODE_GPU_PROFILES='gdc-node0=auto validator-west=auto'
 GDC_NODE_P2P_PORTS='gdc-node0=5000 validator-west=5000'
 GDC_NODE_ML_HOSTS=''
 GDC_GENESIS_NODE=gdc-node0

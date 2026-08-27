@@ -99,12 +99,12 @@ BOOTSTRAP_MANIFEST_SHA256="$(sha256sum "$tmp/manifest.sha256" | awk '{print $1}'
   exit 1
 }
 
-allowed='GDC_NODE_ALIASES|GDC_NODE_PUBLIC_HOSTS|GDC_NODE_GPU_PROFILES|GDC_NODE_P2P_PORTS|GDC_NODE_ML_HOSTS|GDC_GENESIS_NODE|GDC_PUBLIC_EDGE_NODE|GDC_GATEWAY_NODE'
+allowed='GDC_NODE_ALIASES|GDC_NODE_PUBLIC_HOSTS|GDC_NODE_P2P_PORTS|GDC_NODE_ML_HOSTS|GDC_GENESIS_NODE|GDC_PUBLIC_EDGE_NODE|GDC_GATEWAY_NODE'
 if grep -Ev "^($allowed)=([A-Za-z0-9._=\\\\ -]*|'')$" "$tmp/topology.env" | grep -q .; then
   echo 'public topology contains an unsupported assignment' >&2
   exit 1
 fi
-for name in GDC_NODE_ALIASES GDC_NODE_PUBLIC_HOSTS GDC_NODE_GPU_PROFILES GDC_NODE_P2P_PORTS GDC_GENESIS_NODE; do
+for name in GDC_NODE_ALIASES GDC_NODE_PUBLIC_HOSTS GDC_NODE_P2P_PORTS GDC_GENESIS_NODE; do
   [[ "$(grep -c "^$name=" "$tmp/topology.env")" -eq 1 ]] || { echo "public topology is missing $name" >&2; exit 1; }
 done
 
@@ -124,7 +124,6 @@ if [[ -z "$PUBLIC_HOST" ]]; then
 fi
 if [[ " $GDC_NODE_ALIASES " != *" $SSH_ALIAS "* ]]; then
   GDC_NODE_ALIASES+=" $SSH_ALIAS"
-  GDC_NODE_GPU_PROFILES+=" $SSH_ALIAS=auto"
   GDC_NODE_P2P_PORTS+=" $SSH_ALIAS=5000"
 fi
 updated_public_hosts=''
@@ -148,7 +147,6 @@ join_role_stage='write independent Host role input'
 {
   printf 'GDC_NODE_ALIASES=%q\n' "$GDC_NODE_ALIASES"
   printf 'GDC_NODE_PUBLIC_HOSTS=%q\n' "$GDC_NODE_PUBLIC_HOSTS"
-  printf 'GDC_NODE_GPU_PROFILES=%q\n' "$GDC_NODE_GPU_PROFILES"
   printf 'GDC_NODE_P2P_PORTS=%q\n' "$GDC_NODE_P2P_PORTS"
   printf 'GDC_NODE_ML_HOSTS=%q\n' "${GDC_NODE_ML_HOSTS:-}"
   printf 'GDC_GENESIS_NODE=%q\n' "$GDC_GENESIS_NODE"

@@ -77,21 +77,6 @@ fi
 step "Prepare $NODE for independent join"
 GDC_PREPARE_HOSTS="$NODE" "$ROOT/scripts/phase-prepare.sh"
 
-if [[ "$(node_gpu_profile "$NODE")" == auto ]]; then
-  step "Detect GPU profile for $NODE"
-  detected_gpu_profile="$("$ROOT/scripts/detect-gpu-profile.sh" "$ML_TARGET")"
-  updated_gpu_profiles=''
-  for topology_node in "${GDC_NODES[@]}"; do
-    topology_profile="$(node_gpu_profile "$topology_node")"
-    [[ "$topology_node" == "$NODE" ]] && topology_profile="$detected_gpu_profile"
-    updated_gpu_profiles+="${updated_gpu_profiles:+ }$topology_node=$topology_profile"
-  done
-  GDC_NODE_GPU_PROFILES="$updated_gpu_profiles"
-  export GDC_NODE_GPU_PROFILES
-  load_topology
-  write_inventory
-  printf 'READY %s GPU profile detected as %s\n' "$NODE" "$detected_gpu_profile"
-fi
 if [[ "${GDC_JOIN_SKIP_QUALIFICATION:-false}" == true ]]; then
   printf 'SKIP  ML qualification explicitly disabled by the joining Host operator\n'
 else
@@ -193,7 +178,7 @@ if [[ -n "$ML_HOST" ]]; then
   env_args+=(--poc-callback-url "http://$callback_address:9100" --ml-callback-bind 0.0.0.0)
 fi
 "$ROOT/02-node/render-node-env.sh" "${env_args[@]}" --output "$NODE_DIR/.env" >/dev/null
-config_args=(--node-name "$NODE" --runtime-id "$RUNTIME_ID" --profile "$(node_gpu_profile "$NODE")" --output "$NODE_DIR/node-config.json")
+config_args=(--node-name "$NODE" --runtime-id "$RUNTIME_ID" --output "$NODE_DIR/node-config.json")
 if [[ -n "$ML_HOST" ]]; then
   ML_ENDPOINT="$(ssh -G "$ML_HOST" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
   [[ -n "$ML_ENDPOINT" ]] || die "cannot determine network GPU endpoint from SSH alias $ML_HOST"

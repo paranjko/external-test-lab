@@ -17,7 +17,6 @@ GDC_OPERATOR_SERVICES_PROFILE=gdc-lab
 GDC_JOIN_ROLE_INPUT=true
 GDC_NODE_ALIASES='gdc-node0 validator-west'
 GDC_NODE_PUBLIC_HOSTS='gdc-node0=node0.example.net validator-west=node2.example.net'
-GDC_NODE_GPU_PROFILES='gdc-node0=auto validator-west=auto'
 GDC_NODE_P2P_PORTS='gdc-node0=5000 validator-west=5000'
 GDC_NODE_ML_HOSTS=''
 GDC_GENESIS_NODE=gdc-node0

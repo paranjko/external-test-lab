@@ -10,7 +10,6 @@ printf '%s\n' 'join_bootstrap_format=1' >"$fixture/profile/genesis.env"
 printf '%s\n' \
   'GDC_NODE_ALIASES=gdc-node0' \
   'GDC_NODE_PUBLIC_HOSTS=gdc-node0=node0.example.net' \
-  'GDC_NODE_GPU_PROFILES=gdc-node0=auto' \
   'GDC_NODE_P2P_PORTS=gdc-node0=5000' \
   'GDC_NODE_ML_HOSTS=' \
   'GDC_GENESIS_NODE=gdc-node0' \

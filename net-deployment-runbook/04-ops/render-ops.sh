@@ -80,13 +80,12 @@ resolve_geo() {
 }
 for node in "${GDC_NODES[@]}"; do
   host="$(node_public_host "$node")"
-  gpu_profile="$(node_gpu_profile "$node")"
   gpu_host="$(node_ml_host "$node" || printf '%s' "$node")"
   ip="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
   geo="$(resolve_geo "$ip")"
   geo_by_node[$node]="$geo"
-  node_catalog="$(jq --arg name "$node" --arg host "$host" --arg status "/status/$node" --arg ip "$ip" --arg gpuProfile "$gpu_profile" --arg gpuHost "$gpu_host" --argjson geo "$geo" \
-    '. + [{name:$name,publicHost:$host,statusBase:$status,ip:$ip,geo:$geo,gpuProfile:(if $gpuProfile == "auto" then null else $gpuProfile end),gpuHost:$gpuHost}]' <<<"$node_catalog")"
+  node_catalog="$(jq --arg name "$node" --arg host "$host" --arg status "/status/$node" --arg ip "$ip" --arg gpuHost "$gpu_host" --argjson geo "$geo" \
+    '. + [{name:$name,publicHost:$host,statusBase:$status,ip:$ip,geo:$geo,gpuHost:$gpuHost}]' <<<"$node_catalog")"
 done
 
 jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$API_HOST/v1" \
@@ -187,7 +186,6 @@ if [[ -s "$GDC_HOME/genesis/genesis.json" && -s "$GDC_HOME/genesis/genesis.sha25
   {
     printf 'GDC_NODE_ALIASES=%q\n' "$GDC_NODE_ALIASES"
     printf 'GDC_NODE_PUBLIC_HOSTS=%q\n' "$GDC_NODE_PUBLIC_HOSTS"
-    printf 'GDC_NODE_GPU_PROFILES=%q\n' "$GDC_NODE_GPU_PROFILES"
     printf 'GDC_NODE_P2P_PORTS=%q\n' "$GDC_NODE_P2P_PORTS"
     printf 'GDC_NODE_ML_HOSTS=%q\n' "${GDC_NODE_ML_HOSTS:-}"
     printf 'GDC_GENESIS_NODE=%q\n' "$GENESIS_NODE"

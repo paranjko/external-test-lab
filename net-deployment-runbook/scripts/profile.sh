@@ -73,9 +73,8 @@ load_profiles() {
     DEVSHARD_SUPPORTED_PROTOCOLS="${CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS:-${DEVSHARD_SUPPORTED_PROTOCOLS:-v3}}"
     LOCAL_GATEWAY_IMAGE="${CANDIDATE_LOCAL_GATEWAY_IMAGE:-${LOCAL_GATEWAY_IMAGE:-}}"
     POSTGRES_IMAGE="${CANDIDATE_POSTGRES_IMAGE:-${POSTGRES_IMAGE:-}}"
-    MLNODE_BLACKWELL_IMAGE="$MLNODE_GENERIC_IMAGE"
     export DEVSHARD_SOURCE_REF DEVSHARD_COMMIT DEVSHARD_PROTOCOL_VERSION
-    export DEVSHARD_SUPPORTED_PROTOCOLS LOCAL_GATEWAY_IMAGE POSTGRES_IMAGE MLNODE_BLACKWELL_IMAGE
+    export DEVSHARD_SUPPORTED_PROTOCOLS LOCAL_GATEWAY_IMAGE POSTGRES_IMAGE
   fi
   if [[ -n "${comp_env:-}" ]]; then
     eval "$comp_env"
@@ -119,8 +118,8 @@ profile_summary() {
     "$TMKMS_IMAGE" "$INFERENCED_IMAGE" "$DAPI_IMAGE" "$EDGE_API_IMAGE"
   printf 'versiond_image=%s\nproxy_image=%s\npostgres_image=%s\n' \
     "$VERSIOND_IMAGE" "$PROXY_IMAGE" "$POSTGRES_IMAGE"
-  printf 'mlnode_generic_image=%s\nmlnode_blackwell_image=%s\nmlnode_proxy_image=%s\n' \
-    "$MLNODE_GENERIC_IMAGE" "$MLNODE_BLACKWELL_IMAGE" "$MLNODE_PROXY_IMAGE"
+  printf 'mlnode_generic_image=%s\nmlnode_proxy_image=%s\n' \
+    "$MLNODE_GENERIC_IMAGE" "$MLNODE_PROXY_IMAGE"
   printf 'bridge_image=%s\n' "$BRIDGE_IMAGE"
   printf 'operator_explorer_image=%s\noperator_caddy_image=%s\noperator_prometheus_image=%s\noperator_grafana_image=%s\n' \
     "$EXPLORER_IMAGE" "$CADDY_IMAGE" "$PROMETHEUS_IMAGE" "$GRAFANA_IMAGE"

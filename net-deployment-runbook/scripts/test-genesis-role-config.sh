@@ -14,7 +14,6 @@ trap 'rm -rf "$tmp"' EXIT
 source "$tmp/genesis-input"
 [[ "$GDC_NODE_ALIASES" == 'gdc-node0 gdc-node4' ]]
 [[ "$GDC_NODE_PUBLIC_HOSTS" == 'gdc-node0=node0.example.net gdc-node4=node4.example.net' ]]
-[[ "$GDC_NODE_GPU_PROFILES" == 'gdc-node0=auto gdc-node4=auto' ]]
 [[ "$GDC_NODE_P2P_PORTS" == 'gdc-node0=5000 gdc-node4=5000' ]]
 [[ "$GDC_GENESIS_NODE" == gdc-node0 && "$GDC_PUBLIC_EDGE_NODE" == gdc-node4 && "$GDC_GATEWAY_NODE" == gdc-node0 ]]
 runtime_state="$tmp/runtime-state"
@@ -41,10 +40,9 @@ grep -Fq 'detect-public-host.sh' "$ROOT/scripts/write-genesis-role-config.sh"
 grep -Fq -- '--public-edge-ssh-alias' "$ROOT/scripts/write-genesis-role-config.sh"
 grep -Fq 'active-role-config' "$ROOT/gdc.sh"
 grep -Fq 'active-role-config' "$ROOT/scripts/lib.sh"
-grep -Fq 'detect-gpu-profile.sh' "$ROOT/scripts/phase-genesis.sh"
-[[ "$("$ROOT/scripts/detect-gpu-profile.sh" --gpu-name 'NVIDIA RTX A5000' unused)" == a5000-24g ]]
-[[ "$("$ROOT/scripts/detect-gpu-profile.sh" --gpu-name 'Tesla T4' unused)" == t4-16g ]]
-[[ "$("$ROOT/scripts/detect-gpu-profile.sh" --gpu-name 'NVIDIA RTX PRO 2000 Blackwell' unused)" == blackwell-16g ]]
+grep -Fq 'phase-qualify-ml.sh' "$ROOT/scripts/phase-genesis.sh"
+grep -Fq 'ensure_ml_qualification' "$ROOT/scripts/phase-join.sh"
+! test -e "$ROOT/scripts/detect-gpu-profile.sh"
 if "$ROOT/scripts/write-genesis-role-config.sh" --output "$tmp/invalid" --ssh-alias bad --public-host 'not a host'; then
   echo 'Genesis role config accepted an invalid public host' >&2
   exit 1

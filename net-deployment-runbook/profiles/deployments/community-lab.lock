@@ -6,11 +6,6 @@ GENESIS_EPOCH_SHIFT=0
 GENESIS_CONFIRMATION_POC_SAFETY_WINDOW=10
 POSTGRES_IMAGE=postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94
 
-# RTX PRO 2000 Blackwell (sm_120) requires the generic upstream image below.
-# The former product-science Blackwell override started an embedded vLLM
-# process whose PyTorch build supported only through sm_90.
-MLNODE_BLACKWELL_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5
-
 # Governed DevShard artifacts are network software, but they have their own
 # release refs and are not part of either core Gonka release tag.
 DEVSHARD_V3_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.13-devshard-v3.0.0/devshardd.zip

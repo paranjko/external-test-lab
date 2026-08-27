@@ -270,10 +270,8 @@ grep -Fq 'GDC_MONITOR_HOST=$HOST' "$ROOT/04-ops/agent/render-env.sh"
 grep -Fq 'gdc_component_info' "$ROOT/04-ops/agent/collect-versions.sh"
 grep -Fq 'gdc_component_info' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
-grep -Fq 'gpuProfile:(if $gpuProfile == "auto" then null else $gpuProfile end)' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v[34]}-$GATEWAY_VERSION"' "$ROOT/04-ops/render-ops.sh"
 grep -Fq '[[ "${LAB_CANDIDATE:-false}" != true ]]' "$ROOT/04-ops/render-ops.sh"
-grep -Fq 'MLNODE_BLACKWELL_IMAGE="$MLNODE_GENERIC_IMAGE"' "$ROOT/scripts/profile.sh"
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
@@ -301,11 +299,7 @@ for release in v2026.07.23 v2026.08.06; do
   [[ "$GONKA_REPOSITORY" == https://github.com/gonka-ai/gonka.git ]]
   [[ "$GONKA_SOURCE_REF" == "release/v$GONKA_RELEASE" ]]
   [[ "$GENESIS_EPOCH_LENGTH" == 70 && "$GENESIS_EPOCH_SHIFT" == 0 && "$GENESIS_CONFIRMATION_POC_SAFETY_WINDOW" == 10 ]]
-  [[ "$MLNODE_BLACKWELL_IMAGE" == "$MLNODE_GENERIC_IMAGE" ]] || {
-    echo 'Blackwell image must use the verified generic upstream runtime' >&2
-    exit 1
-  }
-  images=("$TMKMS_IMAGE" "$INFERENCED_IMAGE" "$DAPI_IMAGE" "$VERSIOND_IMAGE" "$PROXY_IMAGE" "$POSTGRES_IMAGE" "$MLNODE_GENERIC_IMAGE" "$MLNODE_BLACKWELL_IMAGE" "$MLNODE_PROXY_IMAGE")
+  images=("$TMKMS_IMAGE" "$INFERENCED_IMAGE" "$DAPI_IMAGE" "$VERSIOND_IMAGE" "$PROXY_IMAGE" "$POSTGRES_IMAGE" "$MLNODE_GENERIC_IMAGE" "$MLNODE_PROXY_IMAGE")
   [[ "$EDGE_API_ENABLED" == false || "$EDGE_API_ENABLED" == true ]] || { echo "invalid EDGE_API_ENABLED in $release" >&2; exit 1; }
   [[ "$EDGE_API_ENABLED" != true ]] || images+=("$EDGE_API_IMAGE")
   for image in "${images[@]}"; do
@@ -360,20 +354,18 @@ grep -Fq 'GDC_DEPLOYMENT_PROFILE:-community-lab' "$ROOT/scripts/lib.sh"
 grep -Fq 'GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab' "$ROOT/scripts/lib.sh"
 
 GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
-for profile in a5000-24g t4-16g 4090-24g 3090-24g blackwell-16g; do
-  out="$(mktemp)"
-  trap 'rm -f "${out:-}"' EXIT
-  "$ROOT/02-node/render-node-config.sh" --node-name validator-b --runtime-id qwen3-0.6b:gonka1validatorbvalidatorbvalidatorbvalidatorb --profile "$profile" --output "$out" >/dev/null
-  jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
-    .[0].max_concurrent == 64
-    and (.[0].models[$model].args | index("--dtype") != null)
-    and (.[0].models[$model].args | index($revision) != null)
-    and (.[0].models[$model].args | index("2048") != null)
-  ' "$out" >/dev/null
-  jq -e '. [0].id == "qwen3-0.6b:gonka1validatorbvalidatorbvalidatorbvalidatorb"' "$out" >/dev/null
-  rm -f "$out"
-  unset out
-done
+out="$(mktemp)"
+trap 'rm -f "${out:-}"' EXIT
+"$ROOT/02-node/render-node-config.sh" --node-name validator-b --runtime-id qwen3-0.6b:gonka1validatorbvalidatorbvalidatorbvalidatorb --output "$out" >/dev/null
+jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
+  .[0].max_concurrent == 64
+  and (.[0].models[$model].args | index("--dtype") != null)
+  and (.[0].models[$model].args | index($revision) != null)
+  and (.[0].models[$model].args | index("2048") != null)
+' "$out" >/dev/null
+jq -e '. [0].id == "qwen3-0.6b:gonka1validatorbvalidatorbvalidatorbvalidatorb"' "$out" >/dev/null
+rm -f "$out"
+unset out
 genesis_out="$(mktemp)"
 trap 'rm -f "${genesis_out:-}"' EXIT
 GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3-0.6b GDC_GENESIS_GUARDIAN_ENABLED=true \
@@ -531,7 +523,6 @@ role_input="$test_tmp/role-input"
 cat >"$role_input" <<'EOF'
 GDC_NODE_ALIASES="gdc-node0 gdc-node2"
 GDC_NODE_PUBLIC_HOSTS="gdc-node0=127.0.0.1 gdc-node2=127.0.0.1"
-GDC_NODE_GPU_PROFILES="gdc-node0=auto gdc-node2=auto"
 GDC_NODE_P2P_PORTS="gdc-node0=5000 gdc-node2=5000"
 GDC_GENESIS_NODE=gdc-node0
 GDC_PUBLIC_EDGE_NODE=gdc-node0

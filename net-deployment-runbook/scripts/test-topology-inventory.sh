@@ -8,7 +8,6 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 GDC_NODE_ALIASES='validator-a validator-b validator-c'
 GDC_NODE_PUBLIC_HOSTS='validator-a=validator-a.example.net validator-b=validator-b.example.net validator-c=validator-c.example.net'
-GDC_NODE_GPU_PROFILES='validator-a=a5000-24g validator-b=t4-16g validator-c=blackwell-16g'
 GDC_NODE_P2P_PORTS='validator-a=5000 validator-b=5100 validator-c=5200'
 GDC_NODE_ML_HOSTS='validator-c=operator-c-gpu'
 GDC_GENESIS_NODE=validator-a
@@ -41,7 +40,6 @@ touch "$GDC_DATA_ROOT/validator-a/state/joined/validator-a" \
 if (
   GDC_NODE_ALIASES='validator-a validator-b'
   GDC_NODE_PUBLIC_HOSTS='validator-a=validator-a.example.net validator-b=validator-b.example.net'
-  GDC_NODE_GPU_PROFILES='validator-a=a5000-24g validator-b=t4-16g'
   GDC_NODE_P2P_PORTS='validator-a=5000 validator-b=5100'
   GDC_NODE_ML_HOSTS='validator-a=validator-b'
   load_topology
@@ -63,7 +61,7 @@ GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
 HF_CACHE_ROOT=/srv/dai/hf-cache
 INVENTORY="$tmp/inventory.env"
 write_inventory
-unset GDC_NODE_ALIASES GDC_NODE_PUBLIC_HOSTS GDC_NODE_GPU_PROFILES GDC_NODE_P2P_PORTS GDC_NODE_ML_HOSTS
+unset GDC_NODE_ALIASES GDC_NODE_PUBLIC_HOSTS GDC_NODE_P2P_PORTS GDC_NODE_ML_HOSTS
 load_env "$INVENTORY"
 [[ "$GDC_NODE_ALIASES" == 'validator-a validator-b validator-c' ]]
 [[ "$GDC_NODE_ML_HOSTS" == 'validator-c=operator-c-gpu' ]]

@@ -33,12 +33,10 @@ fi
 
 node_aliases="$SSH_ALIAS"
 node_hosts="$SSH_ALIAS=$PUBLIC_HOST"
-node_gpu_profiles="$SSH_ALIAS=auto"
 node_p2p_ports="$SSH_ALIAS=5000"
 if [[ "$PUBLIC_EDGE_SSH_ALIAS" != "$SSH_ALIAS" ]]; then
   node_aliases+=" $PUBLIC_EDGE_SSH_ALIAS"
   node_hosts+=" $PUBLIC_EDGE_SSH_ALIAS=$PUBLIC_EDGE_HOST"
-  node_gpu_profiles+=" $PUBLIC_EDGE_SSH_ALIAS=auto"
   node_p2p_ports+=" $PUBLIC_EDGE_SSH_ALIAS=5000"
 fi
 
@@ -47,7 +45,6 @@ umask 077
 {
   printf 'GDC_NODE_ALIASES=%q\n' "$node_aliases"
   printf 'GDC_NODE_PUBLIC_HOSTS=%q\n' "$node_hosts"
-  printf 'GDC_NODE_GPU_PROFILES=%q\n' "$node_gpu_profiles"
   printf 'GDC_NODE_P2P_PORTS=%q\n' "$node_p2p_ports"
   printf 'GDC_GENESIS_NODE=%q\n' "$SSH_ALIAS"
   printf 'GDC_PUBLIC_EDGE_NODE=%q\n' "$PUBLIC_EDGE_SSH_ALIAS"
