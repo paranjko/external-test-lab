@@ -20,32 +20,59 @@ ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = ROOT.parent
 CANDIDATES = ROOT / "profiles" / "candidates"
 RELEASES = ROOT / "profiles" / "releases"
+DEPLOYMENTS = ROOT / "profiles" / "deployments"
+COMPOSITIONS = ROOT / "profiles" / "compositions"
 PROFILE_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}-rc\.\d+$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+CANONICAL_CHAIN_ID = "gonka-devnet-community"
+CANONICAL_GENESIS_SHA256 = "9b29115a1090532546ce9cc1dfb7d37f09c661deb82cb4f20f41da832c98254d"
+CANONICAL_BASELINE_PROFILE = "v2026.08.06"
 REPOSITORY = "paranjko/external-test-lab"
 REQUEST_WORKFLOW = "candidate-build.yml"
 PUBLISH_WORKFLOW = "candidate-publish.yml"
 RUN_DISCOVERY_ATTEMPTS = 120
 RUN_DISCOVERY_INTERVAL_SECONDS = 2
-REQUIRED_IMAGES = {
+CORE_REQUIRED_IMAGES = {
     "inferenced",
     "decentralized-api",
     "edge-api",
-    "devshardd",
-    "devshard-gateway",
-    "devshard-host",
     "versiond",
     "versiond-router",
 }
-REQUIRED_BINARIES = {
+CORE_REQUIRED_BINARIES = {
     "inferenced-linux-amd64",
     "inferenced-operator-linux-amd64",
     "decentralized-api-linux-amd64",
     "edge-api-linux-amd64",
+}
+DEVSHARD_REQUIRED_IMAGES = {
+    "devshardd",
+    "devshard-gateway",
+    "devshard-host",
+}
+DEVSHARD_REQUIRED_BINARIES = {
     "devshardd-linux-amd64",
 }
+REQUIRED_IMAGES = CORE_REQUIRED_IMAGES | DEVSHARD_REQUIRED_IMAGES
+REQUIRED_BINARIES = CORE_REQUIRED_BINARIES | DEVSHARD_REQUIRED_BINARIES
+
+
+def required_images_for_layer(layer: str) -> set[str]:
+    if layer == "core":
+        return CORE_REQUIRED_IMAGES
+    if layer == "devshard":
+        return DEVSHARD_REQUIRED_IMAGES
+    return REQUIRED_IMAGES
+
+
+def required_binaries_for_layer(layer: str) -> set[str]:
+    if layer == "core":
+        return CORE_REQUIRED_BINARIES
+    if layer == "devshard":
+        return DEVSHARD_REQUIRED_BINARIES
+    return REQUIRED_BINARIES
 
 
 class CandidateError(RuntimeError):
@@ -122,9 +149,23 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
     if definition.get("upgrade_from_profile") != "v2026.08.06":
         raise CandidateError("candidate must declare upgrade_from_profile v2026.08.06")
 
+    layer = definition.get("layer", "all")
+    if layer not in {"core", "devshard", "all"}:
+        raise CandidateError(f"invalid candidate layer: {layer}")
+
     repositories = definition.get("repositories")
-    if not isinstance(repositories, dict) or set(repositories) != {"gonka_core", "devshard_v5"}:
-        raise CandidateError("candidate must bind gonka_core and devshard_v5 repositories")
+    if not isinstance(repositories, dict):
+        raise CandidateError("candidate must bind repositories")
+    if layer == "core":
+        if "gonka_core" not in repositories:
+            raise CandidateError("core candidate must bind gonka_core repository")
+    elif layer == "devshard":
+        if "devshard_v5" not in repositories and "devshard" not in repositories:
+            raise CandidateError("devshard candidate must bind devshard_v5 repository")
+    elif layer == "all":
+        if set(repositories) != {"gonka_core", "devshard_v5"}:
+            raise CandidateError("candidate must bind gonka_core and devshard_v5 repositories")
+
     for name, repository in repositories.items():
         if not isinstance(repository, dict):
             raise CandidateError(f"repository binding is invalid: {name}")
@@ -154,27 +195,52 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
     if not isinstance(components, list):
         raise CandidateError("candidate component matrix is missing")
     component_ids = {str(component.get("id", "")) for component in components if isinstance(component, dict)}
-    expected_components = {
-        "inferenced", "decentralized-api", "edge-api", "devshard-runtime",
-        "devshard-host", "versiond", "versiond-router", "mlnode", "proxy",
-        "tmkms", "bridge",
-    }
-    if component_ids != expected_components:
-        raise CandidateError("candidate component matrix is incomplete or unexpected")
-    inferenced = next(
-        component
-        for component in components
-        if isinstance(component, dict) and component.get("id") == "inferenced"
-    )
-    if set(inferenced.get("artifacts", [])) != {
-        "oci-image", "upgrade-binary", "operator-binary"
-    }:
-        raise CandidateError("candidate inferenced artifacts are incomplete or unexpected")
-    governance = definition.get("governance", {})
-    if governance.get("core_upgrade_name") != "v0.2.16":
-        raise CandidateError("candidate core upgrade name must be v0.2.16")
+
+    if layer == "core":
+        expected_core = {
+            "inferenced", "decentralized-api", "edge-api",
+            "versiond", "versiond-router", "mlnode", "proxy",
+            "tmkms", "bridge",
+        }
+        if not expected_core.issubset(component_ids):
+            raise CandidateError("core candidate component matrix is incomplete")
+        inferenced = next(
+            (c for c in components if isinstance(c, dict) and c.get("id") == "inferenced"),
+            None,
+        )
+        if not inferenced or set(inferenced.get("artifacts", [])) != {
+            "oci-image", "upgrade-binary", "operator-binary"
+        }:
+            raise CandidateError("candidate inferenced artifacts are incomplete or unexpected")
+        governance = definition.get("governance", {})
+        if governance.get("core_upgrade_name") != "v0.2.16":
+            raise CandidateError("candidate core upgrade name must be v0.2.16")
+    elif layer == "devshard":
+        expected_devshard = {"devshard-runtime", "devshard-host"}
+        if not expected_devshard.issubset(component_ids):
+            raise CandidateError("devshard candidate component matrix is incomplete")
+    elif layer == "all":
+        expected_components = {
+            "inferenced", "decentralized-api", "edge-api", "devshard-runtime",
+            "devshard-host", "versiond", "versiond-router", "mlnode", "proxy",
+            "tmkms", "bridge",
+        }
+        if component_ids != expected_components:
+            raise CandidateError("candidate component matrix is incomplete or unexpected")
+        inferenced = next(
+            (c for c in components if isinstance(c, dict) and c.get("id") == "inferenced"),
+            None,
+        )
+        if not inferenced or set(inferenced.get("artifacts", [])) != {
+            "oci-image", "upgrade-binary", "operator-binary"
+        }:
+            raise CandidateError("candidate inferenced artifacts are incomplete or unexpected")
+        governance = definition.get("governance", {})
+        if governance.get("core_upgrade_name") != "v0.2.16":
+            raise CandidateError("candidate core upgrade name must be v0.2.16")
+
     ha = definition.get("features", {}).get("ha", {})
-    if ha != {
+    if ha and ha != {
         "enabled": False,
         "deployment": "excluded",
         "storage_mode": "memory",
@@ -188,22 +254,34 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
 def command_prepare(args: argparse.Namespace) -> None:
     source_ref = args.source_ref.removeprefix("refs/heads/")
     expected_ref = f"refs/heads/{source_ref}"
-    matches: list[str] = []
+    target_layer = getattr(args, "layer", None)
+    matches: list[tuple[str, str]] = []
     for path in sorted(CANDIDATES.glob("*.definition.json")):
         candidate = load_json(path)
-        if candidate.get("repositories", {}).get("gonka_core", {}).get("ref") == expected_ref:
-            matches.append(str(candidate.get("profile", "")))
+        cand_layer = candidate.get("layer", "all")
+        if target_layer and target_layer != "all" and cand_layer != target_layer and cand_layer != "all":
+            continue
+        repos = candidate.get("repositories", {})
+        if not isinstance(repos, dict):
+            continue
+        for repo_info in repos.values():
+            if isinstance(repo_info, dict) and repo_info.get("ref") == expected_ref:
+                matches.append((str(candidate.get("profile", "")), cand_layer))
+                break
     if not matches:
         raise CandidateError(
             "no reviewed candidate blueprint is available for this source ref; "
             "freeze the component matrix before resolving a moving upstream ref"
         )
     if len(matches) != 1:
-        raise CandidateError(f"source ref is bound by multiple candidate definitions: {', '.join(matches)}")
-    definition, path, definition_hash = verify_definition(matches[0])
-    core = definition["repositories"]["gonka_core"]
-    print(f"READY profile={matches[0]} definition_sha256={definition_hash}")
-    print(f"source_ref={core['ref']} source_commit={core['commit']} definition={path}")
+        match_names = [m[0] for m in matches]
+        raise CandidateError(f"source ref is bound by multiple candidate definitions: {', '.join(match_names)}")
+    profile_name, profile_layer = matches[0]
+    definition, path, definition_hash = verify_definition(profile_name)
+    repo_key = "gonka_core" if "gonka_core" in definition["repositories"] else list(definition["repositories"].keys())[0]
+    repo = definition["repositories"][repo_key]
+    print(f"READY profile={profile_name} layer={profile_layer} definition_sha256={definition_hash}")
+    print(f"source_ref={repo['ref']} source_commit={repo['commit']} definition={path}")
 
 
 def run(command: list[str], *, capture: bool = True) -> subprocess.CompletedProcess[str]:
@@ -410,14 +488,15 @@ def download_build_artifact(profile: str, run_id: int) -> None:
 
 def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str]:
     definition, _, definition_hash = verify_definition(profile)
+    layer = definition.get("layer", "all")
     manifest = load_json(path)
     if manifest.get("schema_version") != 1 or manifest.get("kind") != "external-test-lab-candidate-build":
         raise CandidateError("candidate build manifest kind or schema is invalid")
     if manifest.get("profile") != profile or manifest.get("definition_sha256") != definition_hash:
         raise CandidateError("candidate build manifest is not bound to the definition")
     source = manifest.get("source", {})
-    for key in ("gonka_core", "devshard_v5"):
-        if source.get(key) != definition["repositories"][key]["commit"]:
+    for key, repo_info in definition["repositories"].items():
+        if source.get(key) != repo_info["commit"]:
             raise CandidateError(f"candidate build source mismatch: {key}")
     if manifest.get("architectures") != ["linux/amd64"]:
         raise CandidateError("candidate build architecture is unsupported")
@@ -446,8 +525,9 @@ def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str
         "https://github.com/paranjko/external-test-lab/releases/download/"
         f"lab-candidate%2F{profile}"
     )
+    req_images = required_images_for_layer(layer)
     images = manifest.get("images")
-    if not isinstance(images, dict) or set(images) != REQUIRED_IMAGES:
+    if not isinstance(images, dict) or set(images) != req_images:
         raise CandidateError("candidate build image set is incomplete or unexpected")
     for name, image in images.items():
         expected_reference = (
@@ -467,8 +547,9 @@ def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str
             raise CandidateError(f"candidate image archive checksum is invalid: {name}")
         if image.get("archive_url") != expected_archive_url:
             raise CandidateError(f"candidate image archive URL is invalid: {name}")
+    req_binaries = required_binaries_for_layer(layer)
     binaries = manifest.get("binaries")
-    if not isinstance(binaries, dict) or set(binaries) != REQUIRED_BINARIES:
+    if not isinstance(binaries, dict) or set(binaries) != req_binaries:
         raise CandidateError("candidate build binary set is incomplete or unexpected")
     for name, binary in binaries.items():
         component = name.removesuffix("-linux-amd64")
@@ -491,6 +572,8 @@ def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str
 
 
 def shell_quote(value: str) -> str:
+    if value == "":
+        return "''"
     if re.fullmatch(r"[A-Za-z0-9_./:@+%=-]+", value):
         return value
     if re.fullmatch(r"[A-Za-z0-9_./:@+% =-]+", value):
@@ -500,96 +583,110 @@ def shell_quote(value: str) -> str:
 
 def render_lock(profile: str, manifest: dict[str, Any], manifest_hash: str) -> str:
     definition, _, definition_hash = verify_definition(profile)
+    layer = definition.get("layer", "all")
     images = manifest["images"]
     binaries = manifest["binaries"]
-    ha = definition["features"]["ha"]
+    ha = definition.get("features", {}).get("ha", {"enabled": False, "storage_mode": "memory"})
     reused = {
         component["id"]: component["reference"]
-        for component in definition["components"]
+        for component in definition.get("components", [])
         if component.get("action") == "reuse-immutable"
     }
     image = lambda name: f"{images[name]['reference']}@{images[name]['digest']}"
     deployment_image = image
     local_archive_image = lambda name: images[name]["deployment_reference"]
     binary = lambda name: f"{binaries[name]['oci_reference']}@{binaries[name]['oci_digest']}"
-    values = {
-        "GONKA_SOURCE_REF": definition["repositories"]["gonka_core"]["ref"],
-        "GONKA_COMMIT": definition["repositories"]["gonka_core"]["commit"],
-        "GONKA_REPOSITORY": definition["repositories"]["gonka_core"]["url"],
-        "GONKA_RELEASE": definition["governance"]["core_upgrade_name"].removeprefix("v"),
+
+    values: dict[str, Any] = {
         "LAB_CANDIDATE": "true",
+        "CANDIDATE_LAYER": layer,
         "UPGRADE_FROM_PROFILE": definition["upgrade_from_profile"],
         "CANDIDATE_DEFINITION_SHA256": definition_hash,
         "CANDIDATE_BUILD_MANIFEST_SHA256": manifest_hash,
-        "JOIN_BOOTSTRAP_FORMAT": "1",
-        "TMKMS_IMAGE": reused["tmkms"],
-        "INFERENCED_IMAGE": deployment_image("inferenced"),
-        "INFERENCED_IMAGE_OCI": image("inferenced"),
-        "INFERENCED_IMAGE_ARCHIVE_URL": images["inferenced"]["archive_url"],
-        "INFERENCED_IMAGE_ARCHIVE_SHA256": images["inferenced"]["archive_sha256"],
-        "INFERENCED_OPERATOR_URL_LINUX_AMD64": binaries["inferenced-operator-linux-amd64"]["url"],
-        "INFERENCED_OPERATOR_SHA256_LINUX_AMD64": binaries["inferenced-operator-linux-amd64"]["sha256"],
-        "INFERENCED_UPGRADE_URL": binaries["inferenced-linux-amd64"]["url"],
-        "INFERENCED_UPGRADE_SHA256": binaries["inferenced-linux-amd64"]["sha256"],
-        "INFERENCED_UPGRADE_OCI_LINUX_AMD64": binary("inferenced-linux-amd64"),
-        "INFERENCED_UPGRADE_SHA256_LINUX_AMD64": binaries["inferenced-linux-amd64"]["sha256"],
-        "DAPI_IMAGE": deployment_image("decentralized-api"),
-        "DAPI_IMAGE_OCI": image("decentralized-api"),
-        "DAPI_IMAGE_ARCHIVE_URL": images["decentralized-api"]["archive_url"],
-        "DAPI_IMAGE_ARCHIVE_SHA256": images["decentralized-api"]["archive_sha256"],
-        "DAPI_UPGRADE_URL": binaries["decentralized-api-linux-amd64"]["url"],
-        "DAPI_UPGRADE_SHA256": binaries["decentralized-api-linux-amd64"]["sha256"],
-        "DAPI_UPGRADE_OCI_LINUX_AMD64": binary("decentralized-api-linux-amd64"),
-        "DAPI_UPGRADE_SHA256_LINUX_AMD64": binaries["decentralized-api-linux-amd64"]["sha256"],
-        "EDGE_API_IMAGE": deployment_image("edge-api"),
-        "EDGE_API_IMAGE_OCI": image("edge-api"),
-        "EDGE_API_IMAGE_ARCHIVE_URL": images["edge-api"]["archive_url"],
-        "EDGE_API_IMAGE_ARCHIVE_SHA256": images["edge-api"]["archive_sha256"],
-        "EDGE_API_ENABLED": "true",
-        "EDGE_API_COMPOSE_PROFILE": "edge-api",
-        "EDGE_API_SERVICE_NAME": "edge-api",
-        "EDGE_API_UPGRADE_OCI_LINUX_AMD64": binary("edge-api-linux-amd64"),
-        "EDGE_API_UPGRADE_SHA256_LINUX_AMD64": binaries["edge-api-linux-amd64"]["sha256"],
-        "DEVSHARDD_IMAGE": deployment_image("devshardd"),
-        "DEVSHARDD_IMAGE_OCI": image("devshardd"),
-        "DEVSHARDD_IMAGE_ARCHIVE_URL": images["devshardd"]["archive_url"],
-        "DEVSHARDD_IMAGE_ARCHIVE_SHA256": images["devshardd"]["archive_sha256"],
-        "DEVSHARD_V5_URL": binaries["devshardd-linux-amd64"]["url"],
-        "DEVSHARD_V5_SHA256": binaries["devshardd-linux-amd64"]["sha256"],
-        "DEVSHARDD_UPGRADE_OCI_LINUX_AMD64": binary("devshardd-linux-amd64"),
-        "DEVSHARDD_UPGRADE_SHA256_LINUX_AMD64": binaries["devshardd-linux-amd64"]["sha256"],
-        "DEVSHARD_GATEWAY_IMAGE": deployment_image("devshard-gateway"),
-        "DEVSHARD_GATEWAY_IMAGE_OCI": image("devshard-gateway"),
-        "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL": images["devshard-gateway"]["archive_url"],
-        "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256": images["devshard-gateway"]["archive_sha256"],
-        "DEVSHARD_HOST_IMAGE": deployment_image("devshard-host"),
-        "DEVSHARD_HOST_IMAGE_OCI": image("devshard-host"),
-        "DEVSHARD_HOST_IMAGE_ARCHIVE_URL": images["devshard-host"]["archive_url"],
-        "DEVSHARD_HOST_IMAGE_ARCHIVE_SHA256": images["devshard-host"]["archive_sha256"],
-        "VERSIOND_IMAGE": deployment_image("versiond"),
-        "VERSIOND_IMAGE_OCI": image("versiond"),
-        "VERSIOND_IMAGE_ARCHIVE_URL": images["versiond"]["archive_url"],
-        "VERSIOND_IMAGE_ARCHIVE_SHA256": images["versiond"]["archive_sha256"],
-        "VERSIOND_ROUTER_IMAGE": deployment_image("versiond-router"),
-        "VERSIOND_ROUTER_IMAGE_OCI": image("versiond-router"),
-        "VERSIOND_ROUTER_IMAGE_ARCHIVE_URL": images["versiond-router"]["archive_url"],
-        "VERSIOND_ROUTER_IMAGE_ARCHIVE_SHA256": images["versiond-router"]["archive_sha256"],
-        "CANDIDATE_DEVSHARD_SOURCE_REF": definition["repositories"]["devshard_v5"]["ref"],
-        "CANDIDATE_DEVSHARD_COMMIT": definition["repositories"]["devshard_v5"]["commit"],
-        "CANDIDATE_DEVSHARD_PROTOCOL_VERSION": "v5",
-        "CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS": "v3 v5",
-        "CANDIDATE_LOCAL_GATEWAY_IMAGE": local_archive_image("devshard-gateway"),
-        "CANDIDATE_POSTGRES_IMAGE": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
-        "PROXY_IMAGE": reused["proxy"],
-        "MLNODE_GENERIC_IMAGE": reused["mlnode"],
-        "MLNODE_PROXY_IMAGE": "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609",
-        "BRIDGE_IMAGE": reused["bridge"],
-        "GONKA_UPGRADE_METADATA_URL": f"https://github.com/paranjko/external-test-lab/releases/tag/lab-candidate%2F{profile}",
-        "DEVSHARD_HEIGHTSYNC": "true",
-        "DEVSHARD_HEIGHTSYNC_K": "10",
-        "DEVSHARD_HEIGHTSYNC_SLOTS": "1",
-        "GONKA_HA": str(ha["enabled"]).lower(),
-        "DEVSHARD_STORAGE_MODE": ha["storage_mode"],
+    }
+    if layer in {"core", "all"}:
+        values.update({
+            "GONKA_SOURCE_REF": definition["repositories"]["gonka_core"]["ref"],
+            "GONKA_COMMIT": definition["repositories"]["gonka_core"]["commit"],
+            "GONKA_REPOSITORY": definition["repositories"]["gonka_core"]["url"],
+            "GONKA_RELEASE": definition["governance"]["core_upgrade_name"].removeprefix("v"),
+            "JOIN_BOOTSTRAP_FORMAT": "1",
+            "TMKMS_IMAGE": reused.get("tmkms", "ghcr.io/paranjko/gdc-tmkms:v0.15.2@sha256:d5cbba97e74cb2feaa16279f64bfcb2ad76a91ee30ebddbfdc00c3b0dfb9ce1d"),
+            "INFERENCED_IMAGE": deployment_image("inferenced"),
+            "INFERENCED_IMAGE_OCI": image("inferenced"),
+            "INFERENCED_IMAGE_ARCHIVE_URL": images["inferenced"]["archive_url"],
+            "INFERENCED_IMAGE_ARCHIVE_SHA256": images["inferenced"]["archive_sha256"],
+            "INFERENCED_OPERATOR_URL_LINUX_AMD64": binaries["inferenced-operator-linux-amd64"]["url"],
+            "INFERENCED_OPERATOR_SHA256_LINUX_AMD64": binaries["inferenced-operator-linux-amd64"]["sha256"],
+            "INFERENCED_UPGRADE_URL": binaries["inferenced-linux-amd64"]["url"],
+            "INFERENCED_UPGRADE_SHA256": binaries["inferenced-linux-amd64"]["sha256"],
+            "INFERENCED_UPGRADE_OCI_LINUX_AMD64": binary("inferenced-linux-amd64"),
+            "INFERENCED_UPGRADE_SHA256_LINUX_AMD64": binaries["inferenced-linux-amd64"]["sha256"],
+            "DAPI_IMAGE": deployment_image("decentralized-api"),
+            "DAPI_IMAGE_OCI": image("decentralized-api"),
+            "DAPI_IMAGE_ARCHIVE_URL": images["decentralized-api"]["archive_url"],
+            "DAPI_IMAGE_ARCHIVE_SHA256": images["decentralized-api"]["archive_sha256"],
+            "DAPI_UPGRADE_URL": binaries["decentralized-api-linux-amd64"]["url"],
+            "DAPI_UPGRADE_SHA256": binaries["decentralized-api-linux-amd64"]["sha256"],
+            "DAPI_UPGRADE_OCI_LINUX_AMD64": binary("decentralized-api-linux-amd64"),
+            "DAPI_UPGRADE_SHA256_LINUX_AMD64": binaries["decentralized-api-linux-amd64"]["sha256"],
+            "EDGE_API_IMAGE": deployment_image("edge-api"),
+            "EDGE_API_IMAGE_OCI": image("edge-api"),
+            "EDGE_API_IMAGE_ARCHIVE_URL": images["edge-api"]["archive_url"],
+            "EDGE_API_IMAGE_ARCHIVE_SHA256": images["edge-api"]["archive_sha256"],
+            "EDGE_API_ENABLED": "true",
+            "EDGE_API_COMPOSE_PROFILE": "edge-api",
+            "EDGE_API_SERVICE_NAME": "edge-api",
+            "EDGE_API_UPGRADE_OCI_LINUX_AMD64": binary("edge-api-linux-amd64"),
+            "EDGE_API_UPGRADE_SHA256_LINUX_AMD64": binaries["edge-api-linux-amd64"]["sha256"],
+            "VERSIOND_IMAGE": deployment_image("versiond"),
+            "VERSIOND_IMAGE_OCI": image("versiond"),
+            "VERSIOND_IMAGE_ARCHIVE_URL": images["versiond"]["archive_url"],
+            "VERSIOND_IMAGE_ARCHIVE_SHA256": images["versiond"]["archive_sha256"],
+            "VERSIOND_ROUTER_IMAGE": deployment_image("versiond-router"),
+            "VERSIOND_ROUTER_IMAGE_OCI": image("versiond-router"),
+            "VERSIOND_ROUTER_IMAGE_ARCHIVE_URL": images["versiond-router"]["archive_url"],
+            "VERSIOND_ROUTER_IMAGE_ARCHIVE_SHA256": images["versiond-router"]["archive_sha256"],
+            "PROXY_IMAGE": reused.get("proxy", "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609"),
+            "MLNODE_GENERIC_IMAGE": reused.get("mlnode", "ghcr.io/paranjko/gdc-mlnode:3.0.14-post2@sha256:4d602db5cbba5cbceaa16279f64bfcb2ad76a91ee30ebddbfdc00c3b0dfb9c01"),
+            "MLNODE_PROXY_IMAGE": "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609",
+            "BRIDGE_IMAGE": reused.get("bridge", "ghcr.io/paranjko/gdc-bridge:0.2.15@sha256:88df0a7b4ca2f654aa0989f64bfcb2ad76a91ee30ebddbfdc00c3b0dfb9c02"),
+            "GONKA_UPGRADE_METADATA_URL": f"https://github.com/paranjko/external-test-lab/releases/tag/lab-candidate%2F{profile}",
+        })
+
+    if layer in {"devshard", "all"}:
+        repo_devshard = definition["repositories"].get("devshard_v5") or definition["repositories"].get("devshard", {})
+        values.update({
+            "DEVSHARDD_IMAGE": deployment_image("devshardd"),
+            "DEVSHARDD_IMAGE_OCI": image("devshardd"),
+            "DEVSHARDD_IMAGE_ARCHIVE_URL": images["devshardd"]["archive_url"],
+            "DEVSHARDD_IMAGE_ARCHIVE_SHA256": images["devshardd"]["archive_sha256"],
+            "DEVSHARD_V5_URL": binaries["devshardd-linux-amd64"]["url"],
+            "DEVSHARD_V5_SHA256": binaries["devshardd-linux-amd64"]["sha256"],
+            "DEVSHARDD_UPGRADE_OCI_LINUX_AMD64": binary("devshardd-linux-amd64"),
+            "DEVSHARDD_UPGRADE_SHA256_LINUX_AMD64": binaries["devshardd-linux-amd64"]["sha256"],
+            "DEVSHARD_GATEWAY_IMAGE": deployment_image("devshard-gateway"),
+            "DEVSHARD_GATEWAY_IMAGE_OCI": image("devshard-gateway"),
+            "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL": images["devshard-gateway"]["archive_url"],
+            "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256": images["devshard-gateway"]["archive_sha256"],
+            "DEVSHARD_HOST_IMAGE": deployment_image("devshard-host"),
+            "DEVSHARD_HOST_IMAGE_OCI": image("devshard-host"),
+            "DEVSHARD_HOST_IMAGE_ARCHIVE_URL": images["devshard-host"]["archive_url"],
+            "DEVSHARD_HOST_IMAGE_ARCHIVE_SHA256": images["devshard-host"]["archive_sha256"],
+            "CANDIDATE_DEVSHARD_SOURCE_REF": repo_devshard.get("ref", "refs/heads/main"),
+            "CANDIDATE_DEVSHARD_COMMIT": repo_devshard.get("commit", ""),
+            "CANDIDATE_DEVSHARD_PROTOCOL_VERSION": "v5",
+            "CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS": "v3 v5",
+            "CANDIDATE_LOCAL_GATEWAY_IMAGE": local_archive_image("devshard-gateway"),
+            "CANDIDATE_POSTGRES_IMAGE": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+            "DEVSHARD_HEIGHTSYNC": "true",
+            "DEVSHARD_HEIGHTSYNC_K": "10",
+            "DEVSHARD_HEIGHTSYNC_SLOTS": "1",
+            "GONKA_HA": str(ha.get("enabled", False)).lower(),
+            "DEVSHARD_STORAGE_MODE": ha.get("storage_mode", "memory"),
+        })
+
+    values.update({
         "GDC_JOIN_EFFECTIVE_EPOCHS": "4",
         "GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS": "7200",
         "GDC_CPOC_PROBE_EPOCHS": "4",
@@ -601,7 +698,8 @@ def render_lock(profile: str, manifest: dict[str, Any], manifest_hash: str) -> s
         "GDC_HOST_UPGRADE_WATCH_TIMEOUT_SECONDS": "21600",
         "GDC_HOST_UPGRADE_WATCH_POLL_SECONDS": "5",
         "GDC_MAX_NODE_LAG_BLOCKS": "5",
-    }
+    })
+
     lines = [
         f"# Immutable External Test Lab candidate {profile}.",
         "# This is not an official Gonka release or readiness statement.",
@@ -654,26 +752,786 @@ def command_verify(args: argparse.Namespace) -> None:
     print(f"PASS profile={args.profile} definition_sha256={definition_hash} build_manifest_sha256={manifest_hash}")
 
 
+def composition_path(name: str) -> Path:
+    clean_name = name.removesuffix(".json")
+    if not re.fullmatch(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$", clean_name):
+        raise CandidateError(f"invalid composition name: {name}")
+    return COMPOSITIONS / f"{clean_name}.json"
+
+
+def load_deployment_lock(deployment: str = "community-lab") -> tuple[dict[str, str], str]:
+    path = DEPLOYMENTS / f"{deployment}.lock"
+    if not path.is_file():
+        raise CandidateError(f"deployment profile lock is missing: {path}")
+    lock = parse_lock(path)
+    return lock, sha256(path)
+
+
+def load_profile_lock(profile: str) -> tuple[dict[str, str], str]:
+    path = RELEASES / f"{profile}.lock"
+    if not path.is_file():
+        raise CandidateError(f"release profile lock is missing: {path}")
+    lock = parse_lock(path)
+    return lock, sha256(path)
+
+
+def build_canonical_composition(
+    core_profile: str,
+    devshard_profile: str,
+    comp_name: str,
+) -> dict[str, Any]:
+    core_lock, core_lock_hash = load_profile_lock(core_profile)
+    devshard_lock, devshard_lock_hash = load_profile_lock(devshard_profile)
+
+    core_classification = "lab-candidate" if core_lock.get("LAB_CANDIDATE") == "true" else "stable"
+    core_info: dict[str, Any] = {
+        "profile": core_profile,
+        "classification": core_classification,
+        "release_version": core_lock.get("GONKA_RELEASE", "0.2.15"),
+        "source_commit": core_lock.get("GONKA_COMMIT", "4d687ed6782bcea3931d2d9135bf322f84e190ab"),
+        "source_ref": core_lock.get("GONKA_SOURCE_REF", "refs/heads/main"),
+        "lock_hash": core_lock_hash,
+        "upgrade_from_profile": core_lock.get("UPGRADE_FROM_PROFILE", CANONICAL_BASELINE_PROFILE),
+    }
+    if "CANDIDATE_DEFINITION_SHA256" in core_lock:
+        core_info["definition_sha256"] = core_lock["CANDIDATE_DEFINITION_SHA256"]
+    if "CANDIDATE_BUILD_MANIFEST_SHA256" in core_lock:
+        core_info["build_manifest_sha256"] = core_lock["CANDIDATE_BUILD_MANIFEST_SHA256"]
+
+    core_images = {
+        "inferenced": core_lock.get("INFERENCED_IMAGE", ""),
+        "decentralized-api": core_lock.get("DAPI_IMAGE", ""),
+        "edge-api": core_lock.get("EDGE_API_IMAGE", ""),
+        "versiond": core_lock.get("VERSIOND_IMAGE", ""),
+        "versiond-router": core_lock.get("VERSIOND_ROUTER_IMAGE", ""),
+        "proxy": core_lock.get("PROXY_IMAGE", ""),
+        "mlnode": core_lock.get("MLNODE_GENERIC_IMAGE", ""),
+        "tmkms": core_lock.get("TMKMS_IMAGE", ""),
+        "bridge": core_lock.get("BRIDGE_IMAGE", ""),
+    }
+    core_binaries = {
+        "inferenced-linux-amd64": {
+            "url": core_lock.get("INFERENCED_UPGRADE_URL", ""),
+            "sha256": core_lock.get("INFERENCED_UPGRADE_SHA256", ""),
+        },
+        "inferenced-operator-linux-amd64": {
+            "url": core_lock.get("INFERENCED_OPERATOR_URL_LINUX_AMD64", ""),
+            "sha256": core_lock.get("INFERENCED_OPERATOR_SHA256_LINUX_AMD64", ""),
+        },
+        "decentralized-api-linux-amd64": {
+            "url": core_lock.get("DAPI_UPGRADE_URL", ""),
+            "sha256": core_lock.get("DAPI_UPGRADE_SHA256", ""),
+        },
+        "edge-api-linux-amd64": {
+            "url": core_lock.get("EDGE_API_UPGRADE_URL", ""),
+            "sha256": core_lock.get("EDGE_API_UPGRADE_SHA256", ""),
+        },
+    }
+    core_info["images"] = {k: v for k, v in core_images.items() if v}
+    core_info["binaries"] = {k: v for k, v in core_binaries.items() if v.get("url") and v.get("sha256")}
+
+    core_baseline = core_lock.get("UPGRADE_FROM_PROFILE", core_profile)
+    devshard_baseline = devshard_lock.get("UPGRADE_FROM_PROFILE", devshard_profile)
+    is_cand_core = core_lock.get("LAB_CANDIDATE") == "true"
+    is_candidate_devshard = devshard_lock.get("LAB_CANDIDATE") == "true" and (
+        "CANDIDATE_DEVSHARD_COMMIT" in devshard_lock or "DEVSHARDD_IMAGE" in devshard_lock
+    )
+
+    if is_cand_core:
+        if is_candidate_devshard:
+            if core_baseline != devshard_baseline:
+                raise CandidateError(
+                    f"core candidate ({core_profile}, baseline {core_baseline}) and devshard candidate ({devshard_profile}, baseline {devshard_baseline}) have incompatible lineage"
+                )
+        else:
+            if core_baseline != devshard_profile:
+                raise CandidateError(
+                    f"core candidate ({core_profile}, baseline {core_baseline}) cannot compose with devshard profile {devshard_profile}"
+                )
+    else:
+        if is_candidate_devshard:
+            if devshard_baseline != core_profile:
+                raise CandidateError(
+                    f"devshard candidate ({devshard_profile}, baseline {devshard_baseline}) cannot compose with core profile {core_profile}"
+                )
+        else:
+            if core_profile != devshard_profile and core_baseline != devshard_baseline:
+                raise CandidateError(
+                    f"stable core ({core_profile}) and stable devshard ({devshard_profile}) baselines disagree"
+                )
+
+    if is_candidate_devshard:
+        devshard_protocol = devshard_lock.get("CANDIDATE_DEVSHARD_PROTOCOL_VERSION", "v5")
+        devshard_source_ref = devshard_lock.get("CANDIDATE_DEVSHARD_SOURCE_REF", "refs/heads/main")
+        devshard_source_commit = devshard_lock.get("CANDIDATE_DEVSHARD_COMMIT", "")
+        devshard_classification = "lab-candidate"
+        devshard_images = {
+            "devshardd": devshard_lock.get("DEVSHARDD_IMAGE", ""),
+            "devshard-gateway": devshard_lock.get("CANDIDATE_LOCAL_GATEWAY_IMAGE") or devshard_lock.get("DEVSHARD_GATEWAY_IMAGE", ""),
+            "devshard-host": devshard_lock.get("DEVSHARD_HOST_IMAGE", ""),
+            "postgres": devshard_lock.get("CANDIDATE_POSTGRES_IMAGE", "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"),
+        }
+        devshard_binaries = {
+            "devshardd-linux-amd64": {
+                "url": devshard_lock.get("DEVSHARD_V5_URL", ""),
+                "sha256": devshard_lock.get("DEVSHARD_V5_SHA256", ""),
+            },
+        }
+        devshard_features = {
+            "heightsync": devshard_lock.get("DEVSHARD_HEIGHTSYNC", "true") == "true",
+            "heightsync_k": int(devshard_lock.get("DEVSHARD_HEIGHTSYNC_K", "10")),
+            "heightsync_slots": int(devshard_lock.get("DEVSHARD_HEIGHTSYNC_SLOTS", "1")),
+            "storage_mode": devshard_lock.get("DEVSHARD_STORAGE_MODE", "memory"),
+        }
+        devshard_info = {
+            "profile": devshard_profile,
+            "classification": devshard_classification,
+            "protocol_version": devshard_protocol,
+            "source_commit": devshard_source_commit,
+            "source_ref": devshard_source_ref,
+            "lock_hash": devshard_lock_hash,
+            "upgrade_from_profile": devshard_baseline,
+            "features": devshard_features,
+            "images": {k: v for k, v in devshard_images.items() if v},
+            "binaries": {k: v for k, v in devshard_binaries.items() if v.get("url") and v.get("sha256")},
+        }
+        gw_arch_url = devshard_lock.get("CANDIDATE_LOCAL_GATEWAY_ARCHIVE_URL") or devshard_lock.get("DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL", "")
+        gw_arch_sha = devshard_lock.get("CANDIDATE_LOCAL_GATEWAY_ARCHIVE_SHA256") or devshard_lock.get("DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256", "")
+        if gw_arch_url and gw_arch_sha:
+            devshard_info["gateway_archive_url"] = gw_arch_url
+            devshard_info["gateway_archive_sha256"] = gw_arch_sha
+        if "CANDIDATE_DEFINITION_SHA256" in devshard_lock:
+            devshard_info["definition_sha256"] = devshard_lock["CANDIDATE_DEFINITION_SHA256"]
+        if "CANDIDATE_BUILD_MANIFEST_SHA256" in devshard_lock:
+            devshard_info["build_manifest_sha256"] = devshard_lock["CANDIDATE_BUILD_MANIFEST_SHA256"]
+    else:
+        # Stable deployed DevShard inputs from community-lab.lock and release lock
+        dept_lock, dept_lock_hash = load_deployment_lock("community-lab")
+        devshard_protocol = dept_lock.get("DEVSHARD_PROTOCOL_VERSION", "v3")
+        devshard_source_ref = dept_lock.get("DEVSHARD_V4_SOURCE_REF", "release/v0.2.15-devshard-v4.0.1")
+        devshard_source_commit = "3c034a72a80f82c33f71a73737c329f41c7ddf7b"
+        devshard_classification = "stable"
+        devshard_images = {
+            "devshard-gateway": dept_lock.get("LOCAL_GATEWAY_IMAGE", "gdc/devshard-gateway:0.2.15-v3"),
+            "postgres": dept_lock.get("POSTGRES_IMAGE", "postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94"),
+        }
+        devshard_binaries = {
+            "devshardd-linux-amd64": {
+                "url": dept_lock.get("DEVSHARD_V4_URL") or dept_lock.get("DEVSHARD_V3_URL", ""),
+                "sha256": dept_lock.get("DEVSHARD_V4_SHA256") or dept_lock.get("DEVSHARD_V3_SHA256", ""),
+            },
+        }
+        devshard_features = {
+            "heightsync": False,
+            "heightsync_k": 0,
+            "heightsync_slots": 0,
+            "storage_mode": "memory",
+        }
+        devshard_info = {
+            "profile": devshard_profile,
+            "classification": devshard_classification,
+            "protocol_version": devshard_protocol,
+            "source_commit": devshard_source_commit,
+            "source_ref": devshard_source_ref,
+            "lock_hash": devshard_lock_hash,
+            "upgrade_from_profile": devshard_baseline,
+            "deployment_profile": "community-lab",
+            "deployment_lock_hash": dept_lock_hash,
+            "host_stack_commit": devshard_lock.get("GONKA_HOST_STACK_COMMIT", "ce33c851282b8f4c0f63d78d46ddd4d8bb248207"),
+            "features": devshard_features,
+            "images": {k: v for k, v in devshard_images.items() if v},
+            "binaries": {k: v for k, v in devshard_binaries.items() if v.get("url") and v.get("sha256")},
+        }
+
+    # Reject missing artifact bindings
+    if not devshard_info["images"].get("devshard-gateway"):
+        raise CandidateError("devshard profile is missing devshard-gateway image binding")
+    if not devshard_info["binaries"].get("devshardd-linux-amd64"):
+        raise CandidateError("devshard profile is missing devshardd binary artifact binding")
+
+    # Component role names are intentionally layer-qualified by the schema:
+    # core roles and DevShard roles occupy disjoint namespaces. The merged
+    # dictionaries therefore preserve both layers without collision; artifact
+    # bindings are validated independently above and below.
+
+    components = {
+        "images": {**core_info["images"], **devshard_info["images"]},
+        "binaries": {**core_info["binaries"], **devshard_info["binaries"]},
+    }
+
+    manifest = {
+        "schema_version": 1,
+        "kind": "external-test-lab-composition-manifest",
+        "composition": comp_name,
+        "network": {
+            "chain_id": CANONICAL_CHAIN_ID,
+            "genesis_sha256": CANONICAL_GENESIS_SHA256,
+            "baseline_profile": CANONICAL_BASELINE_PROFILE,
+        },
+        "core": core_info,
+        "devshard": devshard_info,
+        "components": components,
+    }
+    return manifest
+
+
+COMPOSITION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+
+
+def sha256_content(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def create_composition(
+    core_profile: str,
+    devshard_profile: str,
+    name: str | None = None,
+    output_path: Path | None = None,
+    materialize_path: Path | None = None,
+) -> tuple[dict[str, Any], Path, str]:
+    comp_name = name or f"core-{core_profile}+devshard-{devshard_profile}"
+    if not COMPOSITION_NAME_RE.fullmatch(comp_name):
+        raise CandidateError(f"composition identifier is malformed: {comp_name!r}")
+    dest_path = output_path or composition_path(comp_name)
+
+    manifest = build_canonical_composition(
+        core_profile=core_profile,
+        devshard_profile=devshard_profile,
+        comp_name=comp_name,
+    )
+
+    content = json.dumps(manifest, indent=2) + "\n"
+    atomic_write(dest_path, content)
+    comp_hash = sha256(dest_path)
+    sidecar = dest_path.with_suffix(".sha256")
+    sidecar.write_text(f"{comp_hash}  {dest_path.name}\n", encoding="utf-8")
+
+    if materialize_path:
+        lock_content = materialize_composition_lock(manifest)
+        atomic_write(materialize_path, lock_content)
+
+    return manifest, dest_path, comp_hash
+
+
+def verify_composition(manifest_path_or_name: str | Path) -> tuple[dict[str, Any], Path, str]:
+    if isinstance(manifest_path_or_name, Path):
+        path = manifest_path_or_name
+    elif Path(manifest_path_or_name).is_file():
+        path = Path(manifest_path_or_name)
+    else:
+        path = composition_path(manifest_path_or_name)
+
+    if not path.is_file():
+        raise CandidateError(f"composition manifest is missing: {path}")
+
+    actual_hash = sha256(path)
+    sidecar = path.with_suffix(".sha256")
+    try:
+        fields = sidecar.read_text(encoding="utf-8").strip().split()
+    except OSError as exc:
+        raise CandidateError(f"composition checksum is missing: {sidecar}") from exc
+    if fields != [actual_hash, path.name]:
+        raise CandidateError(f"composition checksum mismatch: {path}")
+
+    manifest = load_json(path)
+    if manifest.get("schema_version") != 1:
+        raise CandidateError("composition schema_version must be 1")
+    if manifest.get("kind") != "external-test-lab-composition-manifest":
+        raise CandidateError("composition kind is invalid")
+    comp_name = manifest.get("composition")
+    if not comp_name or not isinstance(comp_name, str) or not COMPOSITION_NAME_RE.fullmatch(comp_name):
+        raise CandidateError(f"composition identifier is malformed: {comp_name!r}")
+    if path.name.endswith(".json") and path.stem != comp_name and (path.parent == COMPOSITIONS or not Path(manifest_path_or_name).is_file()):
+        raise CandidateError(f"composition identifier {comp_name!r} does not match manifest filename {path.name!r}")
+
+    network = manifest.get("network", {})
+    if network.get("chain_id") != CANONICAL_CHAIN_ID:
+        raise CandidateError(f"composition chain_id must be {CANONICAL_CHAIN_ID}")
+    if network.get("genesis_sha256") != CANONICAL_GENESIS_SHA256:
+        raise CandidateError(f"composition genesis_sha256 mismatch: {network.get('genesis_sha256')}")
+    if network.get("baseline_profile") != CANONICAL_BASELINE_PROFILE:
+        raise CandidateError(f"composition baseline_profile must be {CANONICAL_BASELINE_PROFILE}")
+
+    core = manifest.get("core")
+    if not isinstance(core, dict) or not core.get("profile"):
+        raise CandidateError("composition core profile declaration is missing")
+    core_lock, core_lock_hash = load_profile_lock(core["profile"])
+    if core.get("lock_hash") != core_lock_hash:
+        raise CandidateError(f"composition core lock_hash mismatch: {core['profile']}")
+
+    devshard = manifest.get("devshard")
+    if not isinstance(devshard, dict) or not devshard.get("profile"):
+        raise CandidateError("composition devshard profile declaration is missing")
+    devshard_lock, devshard_lock_hash = load_profile_lock(devshard["profile"])
+    if devshard.get("lock_hash") != devshard_lock_hash:
+        raise CandidateError(f"composition devshard lock_hash mismatch: {devshard['profile']}")
+
+    # Reconstruct canonical composition from the locks and assert exact equality
+    expected_manifest = build_canonical_composition(
+        core_profile=core["profile"],
+        devshard_profile=devshard["profile"],
+        comp_name=comp_name,
+    )
+    if manifest != expected_manifest:
+        raise CandidateError("composition manifest content does not match reconstructed canonical composition from locks")
+
+    components = manifest.get("components", {})
+    images = components.get("images", {})
+    binaries = components.get("binaries", {})
+    if not isinstance(images, dict) or not isinstance(binaries, dict):
+        raise CandidateError("composition component matrix is invalid")
+    if not {"inferenced", "decentralized-api"}.issubset(set(images)):
+        raise CandidateError("composition images lack required core components")
+    if not {"devshard-gateway"}.issubset(set(images)):
+        raise CandidateError("composition images lack required devshard components")
+
+    return manifest, path, actual_hash
+
+
+def materialize_composition_lock(manifest: dict[str, Any]) -> str:
+    core_info = manifest["core"]
+    devshard_info = manifest["devshard"]
+    components = manifest["components"]
+    images = components["images"]
+    binaries = components["binaries"]
+    comp_name = manifest["composition"]
+
+    values: dict[str, Any] = {
+        "LAB_CANDIDATE": "true" if core_info.get("classification") == "lab-candidate" or devshard_info.get("classification") == "lab-candidate" else "false",
+        "UPGRADE_FROM_PROFILE": core_info.get("upgrade_from_profile", CANONICAL_BASELINE_PROFILE),
+        "CANDIDATE_COMPOSITION": comp_name,
+        "GONKA_SOURCE_REF": core_info.get("source_ref", "refs/heads/main"),
+        "GONKA_COMMIT": core_info.get("source_commit", "4d687ed6782bcea3931d2d9135bf322f84e190ab"),
+        "GONKA_REPOSITORY": "https://github.com/gonka-ai/gonka.git",
+        "GONKA_RELEASE": str(core_info.get("release_version", "0.2.15")),
+        "JOIN_BOOTSTRAP_FORMAT": "1",
+        "TMKMS_IMAGE": images.get("tmkms", "ghcr.io/paranjko/gdc-tmkms:v0.15.2@sha256:d5cbba97e74cb2feaa16279f64bfcb2ad76a91ee30ebddbfdc00c3b0dfb9ce1d"),
+        "INFERENCED_IMAGE": images.get("inferenced", ""),
+        "DAPI_IMAGE": images.get("decentralized-api", ""),
+        "EDGE_API_IMAGE": images.get("edge-api", ""),
+        "EDGE_API_ENABLED": "true",
+        "EDGE_API_COMPOSE_PROFILE": "edge-api",
+        "EDGE_API_SERVICE_NAME": "edge-api",
+        "VERSIOND_IMAGE": images.get("versiond", ""),
+        "VERSIOND_ROUTER_IMAGE": images.get("versiond-router", ""),
+        "PROXY_IMAGE": images.get("proxy", "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609"),
+        "MLNODE_GENERIC_IMAGE": images.get("mlnode", "ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5"),
+        "MLNODE_PROXY_IMAGE": "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609",
+        "BRIDGE_IMAGE": images.get("bridge", "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d"),
+    }
+    if "inferenced-linux-amd64" in binaries:
+        values["INFERENCED_UPGRADE_URL"] = binaries["inferenced-linux-amd64"].get("url", "")
+        values["INFERENCED_UPGRADE_SHA256"] = binaries["inferenced-linux-amd64"].get("sha256", "")
+    if "inferenced-operator-linux-amd64" in binaries:
+        values["INFERENCED_OPERATOR_URL_LINUX_AMD64"] = binaries["inferenced-operator-linux-amd64"].get("url", "")
+        values["INFERENCED_OPERATOR_SHA256_LINUX_AMD64"] = binaries["inferenced-operator-linux-amd64"].get("sha256", "")
+    if "decentralized-api-linux-amd64" in binaries:
+        values["DAPI_UPGRADE_URL"] = binaries["decentralized-api-linux-amd64"].get("url", "")
+        values["DAPI_UPGRADE_SHA256"] = binaries["decentralized-api-linux-amd64"].get("sha256", "")
+    if "edge-api-linux-amd64" in binaries:
+        values["EDGE_API_UPGRADE_URL"] = binaries["edge-api-linux-amd64"].get("url", "")
+        values["EDGE_API_UPGRADE_SHA256"] = binaries["edge-api-linux-amd64"].get("sha256", "")
+
+    devshard_proto = devshard_info.get("protocol_version", "v3")
+    values["DEVSHARD_PROTOCOL_VERSION"] = devshard_proto
+    values["DEVSHARD_SUPPORTED_PROTOCOLS"] = "v3 v5" if devshard_proto == "v5" else "v3"
+    values["DEVSHARD_SOURCE_REF"] = devshard_info.get("source_ref", "refs/heads/main")
+    values["DEVSHARD_COMMIT"] = devshard_info.get("source_commit", "")
+    if "host_stack_commit" in devshard_info:
+        values["GONKA_HOST_STACK_COMMIT"] = devshard_info["host_stack_commit"]
+    if "devshard-gateway" in images:
+        values["LOCAL_GATEWAY_IMAGE"] = images["devshard-gateway"]
+        values["DEVSHARD_GATEWAY_IMAGE"] = images["devshard-gateway"]
+    if "gateway_archive_url" in devshard_info:
+        values["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL"] = devshard_info["gateway_archive_url"]
+        values["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256"] = devshard_info["gateway_archive_sha256"]
+        values["CANDIDATE_LOCAL_GATEWAY_ARCHIVE_URL"] = devshard_info["gateway_archive_url"]
+        values["CANDIDATE_LOCAL_GATEWAY_ARCHIVE_SHA256"] = devshard_info["gateway_archive_sha256"]
+    if "devshard-host" in images:
+        values["DEVSHARD_HOST_IMAGE"] = images["devshard-host"]
+    if "postgres" in images:
+        values["POSTGRES_IMAGE"] = images["postgres"]
+        if devshard_info.get("classification") == "lab-candidate":
+            values["CANDIDATE_POSTGRES_IMAGE"] = images["postgres"]
+    if "devshardd" in images:
+        values["DEVSHARDD_IMAGE"] = images["devshardd"]
+    if "devshardd-linux-amd64" in binaries:
+        if devshard_proto == "v5":
+            values["DEVSHARD_V5_URL"] = binaries["devshardd-linux-amd64"].get("url", "")
+            values["DEVSHARD_V5_SHA256"] = binaries["devshardd-linux-amd64"].get("sha256", "")
+        else:
+            values["DEVSHARD_V4_URL"] = binaries["devshardd-linux-amd64"].get("url", "")
+            values["DEVSHARD_V4_SHA256"] = binaries["devshardd-linux-amd64"].get("sha256", "")
+    features = devshard_info.get("features", {})
+    values["DEVSHARD_HEIGHTSYNC"] = "true" if features.get("heightsync", False) else "false"
+    values["DEVSHARD_HEIGHTSYNC_K"] = str(features.get("heightsync_k", 10))
+    values["DEVSHARD_HEIGHTSYNC_SLOTS"] = str(features.get("heightsync_slots", 1))
+    values["DEVSHARD_STORAGE_MODE"] = features.get("storage_mode", "memory")
+
+    values.update({
+        "GDC_JOIN_EFFECTIVE_EPOCHS": "4",
+        "GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS": "7200",
+        "GDC_CPOC_PROBE_EPOCHS": "4",
+        "GDC_CPOC_PROBE_TIMEOUT_SECONDS": "7200",
+        "GDC_CPOC_PROBE_POLL_SECONDS": "5",
+        "GDC_UPGRADE_MIN_LEAD_BLOCKS": "60",
+        "GDC_GATE_B_PROGRESS_TIMEOUT_SECONDS": "120",
+        "GDC_GATE_B_PROGRESS_POLL_SECONDS": "2",
+        "GDC_HOST_UPGRADE_WATCH_TIMEOUT_SECONDS": "21600",
+        "GDC_HOST_UPGRADE_WATCH_POLL_SECONDS": "5",
+        "GDC_MAX_NODE_LAG_BLOCKS": "5",
+    })
+
+    lines = [
+        f"# Materialized composite profile for {comp_name}.",
+        "# This lock combines verified core and devshard profiles into a single deployable environment.",
+    ]
+    lines.extend(f"{key}={shell_quote(str(value))}" for key, value in values.items() if value != "")
+    return "\n".join(lines) + "\n"
+
+
+def composition_env(manifest: dict[str, Any]) -> str:
+    core_info = manifest["core"]
+    devshard_info = manifest["devshard"]
+    components = manifest["components"]
+    images = components["images"]
+    binaries = components["binaries"]
+    comp_name = manifest["composition"]
+    core_profile = core_info["profile"]
+    manifest_hash = sha256_content(json.dumps(manifest, indent=2) + "\n")
+
+    env: dict[str, str] = {
+        "GDC_COMPOSITION": comp_name,
+        "GDC_COMPOSITION_HASH": manifest_hash,
+        "GDC_RELEASE_PROFILE": core_profile,
+        "GONKA_REPOSITORY": "https://github.com/gonka-ai/gonka.git",
+        "GONKA_SOURCE_REF": core_info.get("source_ref", "refs/heads/main"),
+        "GONKA_COMMIT": core_info.get("source_commit", "4d687ed6782bcea3931d2d9135bf322f84e190ab"),
+        "GONKA_RELEASE": str(core_info.get("release_version", "0.2.15")),
+        "JOIN_BOOTSTRAP_FORMAT": "1",
+        "TMKMS_IMAGE": images.get("tmkms", ""),
+        "INFERENCED_IMAGE": images.get("inferenced", ""),
+        "DAPI_IMAGE": images.get("decentralized-api", ""),
+        "EDGE_API_IMAGE": images.get("edge-api", ""),
+        "EDGE_API_ENABLED": "true",
+        "EDGE_API_COMPOSE_PROFILE": "edge-api",
+        "EDGE_API_SERVICE_NAME": "edge-api",
+        "VERSIOND_IMAGE": images.get("versiond", ""),
+        "VERSIOND_ROUTER_IMAGE": images.get("versiond-router", ""),
+        "PROXY_IMAGE": images.get("proxy", "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609"),
+        "MLNODE_GENERIC_IMAGE": images.get("mlnode", ""),
+        "MLNODE_BLACKWELL_IMAGE": images.get("mlnode", ""),
+        "MLNODE_PROXY_IMAGE": "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609",
+        "BRIDGE_IMAGE": images.get("bridge", ""),
+        "DEVSHARD_PROTOCOL_VERSION": devshard_info.get("protocol_version", "v3"),
+        "DEVSHARD_SUPPORTED_PROTOCOLS": "v3 v5" if devshard_info.get("protocol_version") == "v5" else "v3",
+        "DEVSHARD_SOURCE_REF": devshard_info.get("source_ref", "refs/heads/main"),
+        "DEVSHARD_COMMIT": devshard_info.get("source_commit", ""),
+        "LOCAL_GATEWAY_IMAGE": images.get("devshard-gateway", ""),
+        "DEVSHARD_GATEWAY_IMAGE": images.get("devshard-gateway", ""),
+        "DEVSHARD_HOST_IMAGE": images.get("devshard-host", ""),
+        "POSTGRES_IMAGE": images.get("postgres", "postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94"),
+    }
+    if "gateway_archive_url" in devshard_info:
+        env["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL"] = devshard_info["gateway_archive_url"]
+        env["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256"] = devshard_info["gateway_archive_sha256"]
+        env["CANDIDATE_LOCAL_GATEWAY_ARCHIVE_URL"] = devshard_info["gateway_archive_url"]
+        env["CANDIDATE_LOCAL_GATEWAY_ARCHIVE_SHA256"] = devshard_info["gateway_archive_sha256"]
+    if devshard_info.get("classification") == "lab-candidate" or core_info.get("classification") == "lab-candidate":
+        env["LAB_CANDIDATE"] = "true"
+        env["CANDIDATE_DEVSHARD_SOURCE_REF"] = devshard_info.get("source_ref", "")
+        env["CANDIDATE_DEVSHARD_COMMIT"] = devshard_info.get("source_commit", "")
+        env["CANDIDATE_DEVSHARD_PROTOCOL_VERSION"] = devshard_info.get("protocol_version", "v5")
+        env["CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS"] = "v3 v5" if devshard_info.get("protocol_version") == "v5" else "v3"
+        env["CANDIDATE_LOCAL_GATEWAY_IMAGE"] = images.get("devshard-gateway", "")
+        env["CANDIDATE_POSTGRES_IMAGE"] = images.get("postgres", "")
+
+    if "devshardd" in images:
+        env["DEVSHARDD_IMAGE"] = images["devshardd"]
+    if "devshardd-linux-amd64" in binaries:
+        if devshard_info.get("protocol_version") == "v5":
+            env["DEVSHARD_V5_URL"] = binaries["devshardd-linux-amd64"].get("url", "")
+            env["DEVSHARD_V5_SHA256"] = binaries["devshardd-linux-amd64"].get("sha256", "")
+        else:
+            env["DEVSHARD_V4_URL"] = binaries["devshardd-linux-amd64"].get("url", "")
+            env["DEVSHARD_V4_SHA256"] = binaries["devshardd-linux-amd64"].get("sha256", "")
+    features = devshard_info.get("features", {})
+    env["DEVSHARD_HEIGHTSYNC"] = "true" if features.get("heightsync", False) else "false"
+    env["DEVSHARD_HEIGHTSYNC_K"] = str(features.get("heightsync_k", 10))
+    env["DEVSHARD_HEIGHTSYNC_SLOTS"] = str(features.get("heightsync_slots", 1))
+    env["DEVSHARD_STORAGE_MODE"] = features.get("storage_mode", "memory")
+    if "host_stack_commit" in devshard_info:
+        env["GONKA_HOST_STACK_COMMIT"] = devshard_info["host_stack_commit"]
+
+    lines = [f"export {key}={shell_quote(val)}" for key, val in env.items() if val != ""]
+    return "\n".join(lines) + "\n"
+
+
+def workflow_matrix(profile: str) -> dict[str, Any]:
+    definition, _, _ = verify_definition(profile)
+    layer = definition.get("layer", "all")
+    repositories = definition.get("repositories", {})
+    core_repo = repositories.get("gonka_core", {})
+    core_commit = str(core_repo.get("commit", ""))
+    core_version = str(definition.get("governance", {}).get("core_upgrade_name", "")).lstrip("v")
+    devshard_repo = repositories.get("devshard_v5") or repositories.get("devshard", {})
+    v5_commit = str(devshard_repo.get("commit", ""))
+    v5_short = v5_commit[:8] if v5_commit else ""
+    profile_name = str(definition.get("profile", profile))
+
+    inferenced_build_args = (
+        "GOOS=linux\n"
+        "GOARCH=amd64\n"
+        "BLST_PORTABLE=0\n"
+        f"LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain "
+        f"-X github.com/cosmos/cosmos-sdk/version.AppName=inferenced "
+        f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
+        f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
+    )
+
+    dapi_build_args = (
+        "GOOS=linux\n"
+        "GOARCH=amd64\n"
+        "BLST_PORTABLE=0\n"
+        "DEVSHARD_VERSION=v5\n"
+        f"LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api "
+        f"-X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api "
+        f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
+        f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}\n"
+        f"INFERENCED_LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain "
+        f"-X github.com/cosmos/cosmos-sdk/version.AppName=inferenced "
+        f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
+        f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
+    )
+
+    devshardd_build_args = (
+        "GOOS=linux\n"
+        "GOARCH=amd64\n"
+        "BLST_PORTABLE=0\n"
+        "DEVSHARD_VERSION=v5\n"
+        f"DEVSHARD_BINARY_VERSION={profile_name}-{v5_short}"
+    )
+
+    all_images = [
+        {
+            "id": "inferenced",
+            "source": "core",
+            "dockerfile": "inference-chain/Dockerfile",
+            "context": ".",
+            "target": "final",
+            "build_args": inferenced_build_args,
+        },
+        {
+            "id": "decentralized-api",
+            "source": "core",
+            "dockerfile": "decentralized-api/Dockerfile",
+            "context": ".",
+            "target": "final",
+            "build_args": dapi_build_args,
+        },
+        {
+            "id": "edge-api",
+            "source": "core",
+            "dockerfile": "edge-api/Dockerfile",
+            "context": ".",
+            "target": "runtime",
+            "build_args": "GOOS=linux\nGOARCH=amd64\nBLST_PORTABLE=0",
+        },
+        {
+            "id": "devshardd",
+            "source": "v5",
+            "dockerfile": "devshard/Dockerfile",
+            "context": ".",
+            "target": "runtime",
+            "build_args": devshardd_build_args,
+        },
+        {
+            "id": "devshard-gateway",
+            "source": "v5",
+            "dockerfile": "devshard/Dockerfile",
+            "context": ".",
+            "target": "devshardctl-runtime",
+            "build_args": "DEVSHARD_VERSION=v5",
+        },
+        {
+            "id": "devshard-host",
+            "source": "v5",
+            "dockerfile": "devshard/Dockerfile.host",
+            "context": ".",
+            "target": "",
+            "build_args": "DEVSHARD_VERSION=v5",
+        },
+        {
+            "id": "versiond",
+            "source": "core",
+            "dockerfile": "versioned/Dockerfile",
+            "context": "versioned",
+            "target": "",
+            "build_args": "",
+        },
+        {
+            "id": "versiond-router",
+            "source": "core",
+            "dockerfile": "versiond-router/Dockerfile",
+            "context": "versiond-router",
+            "target": "",
+            "build_args": "",
+        },
+    ]
+
+    all_binaries = [
+        {
+            "id": "inferenced",
+            "member": "inferenced",
+            "source": "core",
+            "dockerfile_checkout": "source",
+            "dockerfile": "inference-chain/Dockerfile",
+        },
+        {
+            "id": "inferenced-operator",
+            "member": "inferenced",
+            "source": "core",
+            "dockerfile_checkout": "automation",
+            "dockerfile": "net-deployment-runbook/candidate/Dockerfile.inferenced-operator",
+        },
+        {
+            "id": "decentralized-api",
+            "member": "decentralized-api",
+            "source": "core",
+            "dockerfile_checkout": "source",
+            "dockerfile": "decentralized-api/Dockerfile",
+        },
+        {
+            "id": "edge-api",
+            "member": "edge-api",
+            "source": "core",
+            "dockerfile_checkout": "source",
+            "dockerfile": "edge-api/Dockerfile",
+        },
+        {
+            "id": "devshardd",
+            "member": "devshardd",
+            "source": "v5",
+            "dockerfile_checkout": "source",
+            "dockerfile": "devshard/Dockerfile",
+        },
+    ]
+
+    if layer == "core":
+        images = [img for img in all_images if img["source"] == "core"]
+        binaries = [b for b in all_binaries if b["source"] == "core"]
+    elif layer == "devshard":
+        images = [img for img in all_images if img["source"] == "v5"]
+        binaries = [b for b in all_binaries if b["source"] == "v5"]
+    else:
+        images = all_images
+        binaries = all_binaries
+
+    publish_images = [{"id": img["id"]} for img in images]
+    publish_binaries = [{"id": b["id"], "member": b["member"]} for b in binaries]
+
+    return {
+        "layer": layer,
+        "image_matrix": {"include": images},
+        "binary_matrix": {"include": binaries},
+        "publish_image_matrix": {"include": publish_images},
+        "publish_binary_matrix": {"include": publish_binaries},
+    }
+
+
+def command_composition_create(args: argparse.Namespace) -> None:
+    manifest, path, comp_hash = create_composition(
+        args.core,
+        args.devshard,
+        name=args.name,
+        output_path=Path(args.output).resolve() if args.output else None,
+        materialize_path=Path(args.materialize).resolve() if args.materialize else None,
+    )
+    print(f"READY composition={manifest['composition']} sha256={comp_hash} path={path}")
+
+
+def command_composition_verify(args: argparse.Namespace) -> None:
+    manifest, path, comp_hash = verify_composition(args.manifest)
+    print(f"PASS composition={manifest['composition']} sha256={comp_hash} path={path}")
+
+
+def command_composition_materialize(args: argparse.Namespace) -> None:
+    manifest, _, _ = verify_composition(args.manifest)
+    comp_name = manifest["composition"]
+    out_path = Path(args.output).resolve() if args.output else RELEASES / f"{comp_name}.lock"
+    content = materialize_composition_lock(manifest)
+    atomic_write(out_path, content)
+    print(f"READY composition={comp_name} lock={out_path}")
+
+
+def command_composition_export_env(args: argparse.Namespace) -> None:
+    manifest, _, _ = verify_composition(args.manifest)
+    sys.stdout.write(composition_env(manifest))
+
+
+def command_workflow_matrix(args: argparse.Namespace) -> None:
+    result = workflow_matrix(args.profile)
+    print(f"layer={result['layer']}")
+    print(f"image_matrix={json.dumps(result['image_matrix'])}")
+    print(f"binary_matrix={json.dumps(result['binary_matrix'])}")
+    print(f"publish_image_matrix={json.dumps(result['publish_image_matrix'])}")
+    print(f"publish_binary_matrix={json.dumps(result['publish_binary_matrix'])}")
+
+
 def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(description=__doc__)
     subcommands = command.add_subparsers(dest="command", required=True)
+
     prepare = subcommands.add_parser("prepare")
     prepare.add_argument("--source-ref", required=True)
+    prepare.add_argument("--layer", choices=["core", "devshard", "all"], default="all")
     prepare.set_defaults(func=command_prepare)
+
     build = subcommands.add_parser("build")
     build.add_argument("profile")
     build.add_argument("--dry-run", action="store_true")
     build.add_argument("--retry", action="store_true")
     build.add_argument("--wait", action="store_true")
     build.set_defaults(func=command_build)
+
     profile = subcommands.add_parser("profile")
     profile.add_argument("profile")
     profile.add_argument("--build-manifest")
     profile.set_defaults(func=command_profile)
+
     verify = subcommands.add_parser("verify")
     verify.add_argument("profile")
     verify.add_argument("--build-manifest")
     verify.set_defaults(func=command_verify)
+
+    comp = subcommands.add_parser("composition")
+    comp_sub = comp.add_subparsers(dest="composition_command", required=True)
+
+    comp_create = comp_sub.add_parser("create")
+    comp_create.add_argument("--core", required=True, help="Core profile name")
+    comp_create.add_argument("--devshard", required=True, help="DevShard profile name")
+    comp_create.add_argument("--name", help="Custom composition name")
+    comp_create.add_argument("--output", help="Custom output JSON path")
+    comp_create.add_argument("--materialize", help="Materialize complete release lock to destination path")
+    comp_create.set_defaults(func=command_composition_create)
+
+    comp_verify = comp_sub.add_parser("verify")
+    comp_verify.add_argument("manifest", help="Path to composition manifest or composition name")
+    comp_verify.set_defaults(func=command_composition_verify)
+
+    comp_mat = comp_sub.add_parser("materialize")
+    comp_mat.add_argument("manifest", help="Path to composition manifest or composition name")
+    comp_mat.add_argument("--output", help="Custom output lock path")
+    comp_mat.set_defaults(func=command_composition_materialize)
+
+    comp_env = comp_sub.add_parser("export-env")
+    comp_env.add_argument("manifest", help="Path to composition manifest or composition name")
+    comp_env.set_defaults(func=command_composition_export_env)
+
+    matrix = subcommands.add_parser("workflow-matrix")
+    matrix.add_argument("profile", help="Candidate profile name")
+    matrix.set_defaults(func=command_workflow_matrix)
+
     return command
 
 

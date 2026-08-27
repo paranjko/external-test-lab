@@ -2,7 +2,18 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-UPSTREAM="${GONKA_UPSTREAM_WORKTREE:-$ROOT/../../gonka}"
+UPSTREAM="${GONKA_UPSTREAM_WORKTREE:-}"
+if [[ -z "$UPSTREAM" ]]; then
+  if [[ -d "$ROOT/../../gonka/.git" || -f "$ROOT/../../gonka/.git" ]]; then
+    UPSTREAM="$ROOT/../../gonka"
+  elif [[ -d "$ROOT/../../../code/gonka/.git" || -f "$ROOT/../../../code/gonka/.git" ]]; then
+    UPSTREAM="$ROOT/../../../code/gonka"
+  elif [[ -d "$ROOT/../../code/gonka/.git" || -f "$ROOT/../../code/gonka/.git" ]]; then
+    UPSTREAM="$ROOT/../../code/gonka"
+  else
+    UPSTREAM="$ROOT/../../gonka"
+  fi
+fi
 source "$ROOT/scripts/profile.sh"
 VERIFY_REGISTRY=false
 if [[ "${1:-}" == --registry ]]; then

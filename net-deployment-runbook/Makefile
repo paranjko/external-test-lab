@@ -60,6 +60,7 @@ test:
 	@./scripts/test-upgrade-target-binding.sh
 	@./scripts/test-verify-candidate-release-target.sh
 	@./scripts/test-candidate-workflow.sh
+	@./scripts/test-composition-manifest.sh
 	@./scripts/test-candidate-gateway-compose.sh
 	@./scripts/test-build-gateway-image.sh
 	@./scripts/test-gdc-home.sh

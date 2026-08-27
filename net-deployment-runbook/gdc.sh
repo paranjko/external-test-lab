@@ -164,10 +164,13 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.08.06 bridge contract deploy sepolia
   ./gdc.sh --release v2026.08.06 bridge contract register sepolia
   ./gdc.sh --release v2026.08.06 bridge observer apply|status|verify <SSH_ALIAS>
-  ./gdc.sh release candidate prepare --source-ref upgrade-v0.2.16
+  ./gdc.sh release candidate prepare --source-ref upgrade-v0.2.16 [--layer core|devshard]
   ./gdc.sh release candidate build <vYYYY.MM.DD-rc.N> [--dry-run] [--retry] [--wait]
   ./gdc.sh release candidate profile <vYYYY.MM.DD-rc.N> [--build-manifest <PATH>]
   ./gdc.sh release candidate verify <vYYYY.MM.DD-rc.N> [--build-manifest <PATH>]
+  ./gdc.sh release composition create --core <CORE_PROFILE> --devshard <DEVSHARD_PROFILE> [--output <PATH>] [--materialize <PATH>]
+  ./gdc.sh release composition verify <PATH|NAME>
+  ./gdc.sh release composition materialize <PATH|NAME> [--output <PATH>]
   ./gdc.sh node stop <SSH_ALIAS>
   ./gdc.sh node start <SSH_ALIAS>
   ./gdc.sh node verify <SSH_ALIAS>
@@ -205,23 +208,44 @@ export GDC_INVOCATION_COMMAND GDC_INVOCATION_CWD
 
 RELEASE=''
 MODEL=''
+COMPOSITION=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release) RELEASE="${2:-}"; shift 2 ;;
+    --composition) COMPOSITION="${2:-}"; shift 2 ;;
     --model) MODEL="${2:-}"; shift 2 ;;
     *) break ;;
   esac
 done
-[[ -z "$RELEASE" || "$RELEASE" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "Invalid release profile: $RELEASE" >&2; exit 2; }
-[[ -z "$RELEASE" || -r "$ROOT/profiles/releases/$RELEASE.lock" ]] || { echo "Unknown release: $RELEASE" >&2; exit 2; }
+if [[ -n "$COMPOSITION" ]]; then
+  export GDC_COMPOSITION="$COMPOSITION"
+  if [[ -r "$COMPOSITION" ]]; then
+    :
+  elif [[ "$COMPOSITION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ && -r "$ROOT/profiles/compositions/$COMPOSITION.json" ]]; then
+    :
+  else
+    echo "Unknown composition: $COMPOSITION" >&2
+    exit 2
+  fi
+fi
+if [[ -n "$RELEASE" ]]; then
+  [[ "$RELEASE" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "Invalid release profile: $RELEASE" >&2; exit 2; }
+  [[ -r "$ROOT/profiles/releases/$RELEASE.lock" || -r "$ROOT/profiles/compositions/$RELEASE.json" || -r "$RELEASE" ]] || { echo "Unknown release: $RELEASE" >&2; exit 2; }
+  export GDC_RELEASE_PROFILE="$RELEASE"
+fi
 [[ -z "$MODEL" || "$MODEL" == qwen3-0.6b ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
-[[ -z "$RELEASE" ]] || export GDC_RELEASE_PROFILE="$RELEASE"
 [[ -z "$MODEL" ]] || export GDC_MODEL_PROFILE="$MODEL"
 
 is_upgrade_target_profile() {
   local profile="${GDC_RELEASE_PROFILE:-}" lock
+  if [[ -n "${GDC_COMPOSITION:-}" ]]; then
+    return 0
+  fi
   [[ -n "$profile" ]] || return 1
   [[ "$profile" == v2026.08.06 ]] && return 0
+  if [[ -f "$ROOT/profiles/compositions/$profile.json" || -f "$profile" ]]; then
+    return 0
+  fi
   lock="$ROOT/profiles/releases/$profile.lock"
   [[ -r "$lock" ]] && grep -Eq '^UPGRADE_FROM_PROFILE=[a-z0-9][a-z0-9.-]*$' "$lock"
 }
@@ -260,9 +284,20 @@ case "$COMMAND" in
 esac
 case "$COMMAND" in
   release)
-    [[ "${1:-}" == candidate && $# -ge 2 ]] || { usage; exit 2; }
-    shift
-    exec "$ROOT/scripts/release-candidate.py" "$@"
+    case "${1:-}" in
+      candidate)
+        [[ $# -ge 2 ]] || { usage; exit 2; }
+        shift
+        exec "$ROOT/scripts/release-candidate.py" "$@"
+        ;;
+      composition)
+        [[ $# -ge 2 ]] || { usage; exit 2; }
+        exec "$ROOT/scripts/release-candidate.py" "$@"
+        ;;
+      *)
+        usage; exit 2
+        ;;
+    esac
     ;;
   public-network-verify|confirmation-poc|public-upgrade-verify)
     [[ $# -le 1 ]] || { usage; exit 2; }

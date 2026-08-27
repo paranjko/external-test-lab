@@ -9,8 +9,8 @@ RUNBOOK="$ROOT/net-deployment-runbook"
 job_section() {
   local job="$1"
   awk -v job="$job" '
-    $0 == "  " job ":" { inside = 1 }
-    inside && $0 ~ /^  [A-Za-z0-9_-]+:$/ && $0 != "  " job ":" { exit }
+    $0 == "  " job ":" { inside = 1; next }
+    inside && $0 ~ /^  [a-z0-9-]+:$/ { exit }
     inside { print }
   ' "$PUBLISH_WORKFLOW"
 }
@@ -80,15 +80,18 @@ for isolated_job in "$images_job" "$binaries_job"; do
   ! grep -Eq '(contents|packages|id-token|attestations): write' <<<"$isolated_job"
   ! grep -Eq '(secrets\.|GH_TOKEN|docker/login-action|oras (login|push)|attest-build-provenance)' <<<"$isolated_job"
 done
-grep -Fq 'LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain' <<<"$images_job"
-grep -Fq 'LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api' <<<"$images_job"
-grep -Fq 'INFERENCED_LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain' <<<"$images_job"
-grep -Fq 'verify-candidate-binary-identity.sh' <<<"$images_job"
-grep -Fq 'patch-candidate-dapi-dockerfile.py' <<<"$images_job"
+grep -Fq 'matrix: ${{ fromJson(needs.prepare.outputs.image_matrix) }}' <<<"$images_job"
+grep -Fq 'matrix: ${{ fromJson(needs.prepare.outputs.binary_matrix) }}' <<<"$binaries_job"
+grep -Fq 'matrix: ${{ fromJson(needs.prepare.outputs.publish_image_matrix) }}' <<<"$publish_images_job"
+grep -Fq 'matrix: ${{ fromJson(needs.prepare.outputs.publish_binary_matrix) }}' <<<"$publish_binaries_job"
+grep -Fq 'workflow-matrix "$PROFILE"' <<<"$prepare_job"
+grep -Fq 'LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain' "$RUNBOOK/scripts/release-candidate.py"
+grep -Fq 'LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api' "$RUNBOOK/scripts/release-candidate.py"
+grep -Fq 'INFERENCED_LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain' "$RUNBOOK/scripts/release-candidate.py"
 ! grep -Fq '${{ github.run_id }}-${{ github.run_attempt }}' <<<"$images_job"
 ! grep -Fq 'make devshardd-release' <<<"$binaries_job"
 grep -Fq 'package-candidate-binary.sh' <<<"$binaries_job"
-grep -Fq 'Dockerfile.inferenced-operator' <<<"$binaries_job"
+grep -Fq 'Dockerfile.inferenced-operator' "$RUNBOOK/scripts/release-candidate.py"
 grep -Fq 'inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" operator' <<<"$binaries_job"
 grep -Fq -- '--build-arg "LDFLAGS=$inferenced_ldflags"' <<<"$binaries_job"
 grep -Fq -- '--build-arg DEVSHARD_VERSION=v5 --build-arg "LDFLAGS=$dapi_ldflags"' <<<"$binaries_job"

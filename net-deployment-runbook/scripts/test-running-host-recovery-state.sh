@@ -519,6 +519,7 @@ expect_failure stale-commit-height 'consensus commit evidence is malformed, non-
 
 printf '%s\n' runtime >"$tmp/runtime-decision.json"
 printf '%s\n' decision-boundary >"$tmp/decision-boundary.marker"
+touch -d '2 seconds ago' "$tmp/decision-boundary.marker"
 touch "$tmp/ready.json" "$tmp/participant-evaluation.json" "$tmp/validator-set.json" \
   "$tmp/signature.json" "$tmp/runtime-decision.json" "$tmp/block.json"
 "$CHECK" freshness 30 "$tmp/decision-boundary.marker" "$tmp/ready.json" \

@@ -26,12 +26,18 @@ jobs:
     outputs:
       profile: ${{ steps.request.outputs.profile }}
       definition_sha256: ${{ steps.request.outputs.definition_sha256 }}
+      layer: ${{ steps.definition.outputs.layer }}
       core_commit: ${{ steps.definition.outputs.core_commit }}
       core_version: ${{ steps.definition.outputs.core_version }}
       v5_commit: ${{ steps.definition.outputs.v5_commit }}
       v5_short: ${{ steps.definition.outputs.v5_short }}
+      devshard_repository_key: ${{ steps.definition.outputs.devshard_repository_key }}
       definition_short: ${{ steps.definition.outputs.definition_short }}
       base_images: ${{ steps.definition.outputs.base_images }}
+      image_matrix: ${{ steps.definition.outputs.image_matrix }}
+      binary_matrix: ${{ steps.definition.outputs.binary_matrix }}
+      publish_image_matrix: ${{ steps.definition.outputs.publish_image_matrix }}
+      publish_binary_matrix: ${{ steps.definition.outputs.publish_binary_matrix }}
     steps:
       - name: Checkout reviewed laboratory automation
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -91,7 +97,8 @@ jobs:
             echo 'candidate definition checksum mismatch' >&2
             exit 1
           }
-          jq -e --arg profile "$PROFILE" '
+          layer="$(jq -r '.layer // "all"' "$definition")"
+          jq -e --arg profile "$PROFILE" --arg layer "$layer" '
             .schema_version == 1 and
             .kind == "external-test-lab-candidate-definition" and
             .profile == $profile and
@@ -100,11 +107,11 @@ jobs:
             .upgrade_from_profile == "v2026.08.06" and
             .architectures.oci_images == ["linux/amd64"] and
             .architectures.upgrade_binaries == ["linux/amd64"] and
-            .repositories.gonka_core.url == "https://github.com/gonka-ai/gonka.git" and
-            .repositories.devshard_v5.url == "https://github.com/gonka-ai/gonka.git" and
-            .governance.core_upgrade_name == "v0.2.16" and
-            any(.components[]; .id == "inferenced" and
-              (.artifacts | index("operator-binary") != null))
+            (
+              ($layer == "core" and .repositories.gonka_core.url == "https://github.com/gonka-ai/gonka.git" and .governance.core_upgrade_name == "v0.2.16") or
+              ($layer == "devshard" and .repositories.devshard_v5.url == "https://github.com/gonka-ai/gonka.git") or
+              ($layer == "all" and .repositories.gonka_core.url == "https://github.com/gonka-ai/gonka.git" and .repositories.devshard_v5.url == "https://github.com/gonka-ai/gonka.git" and .governance.core_upgrade_name == "v0.2.16")
+            )
           ' "$definition" >/dev/null
           while IFS=$'\t' read -r reference expected; do
             actual="$(docker buildx imagetools inspect "$reference" | awk '$1 == "Digest:" {print $2; exit}')"
@@ -113,17 +120,23 @@ jobs:
               exit 1
             }
           done < <(jq -r '.base_images[] | [.reference, .digest] | @tsv' "$definition")
-          core_commit="$(jq -r .repositories.gonka_core.commit "$definition")"
-          core_version="$(jq -r '.governance.core_upgrade_name | sub("^v"; "")' "$definition")"
-          v5_commit="$(jq -r .repositories.devshard_v5.commit "$definition")"
-          [[ "$core_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          core_commit="$(jq -r '.repositories.gonka_core.commit // empty' "$definition")"
+          core_version="$(jq -r '.governance.core_upgrade_name // empty | sub("^v"; "")' "$definition")"
+          v5_commit="$(jq -r '.repositories.devshard_v5.commit // .repositories.devshard.commit // empty' "$definition")"
+          devshard_repository_key="$(jq -r 'if .repositories.devshard_v5 then "devshard_v5" else "devshard" end' "$definition")"
+          if [[ "$layer" != devshard ]]; then
+            [[ "$core_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          fi
           {
+            printf 'layer=%s\n' "$layer"
             printf 'core_commit=%s\ncore_version=%s\n' "$core_commit" "$core_version"
             printf 'v5_commit=%s\nv5_short=%s\n' "$v5_commit" "${v5_commit:0:8}"
+            printf 'devshard_repository_key=%s\n' "$devshard_repository_key"
             printf 'definition_short=%s\n' "${EXPECTED_SHA256:0:12}"
             printf 'base_images=%s\n' \
               "$(jq -c '.base_images | map({key:.reference,value:.digest}) | from_entries' "$definition")"
           } >>"$GITHUB_OUTPUT"
+          python3 net-deployment-runbook/scripts/release-candidate.py workflow-matrix "$PROFILE" >>"$GITHUB_OUTPUT"
 
   images:
     needs: prepare
@@ -132,74 +145,7 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - id: inferenced
-            source: core
-            dockerfile: inference-chain/Dockerfile
-            context: .
-            target: final
-            build_args: |-
-              GOOS=linux
-              GOARCH=amd64
-              BLST_PORTABLE=0
-              LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain -X github.com/cosmos/cosmos-sdk/version.AppName=inferenced -X github.com/cosmos/cosmos-sdk/version.Version=${{ needs.prepare.outputs.core_version }} -X github.com/cosmos/cosmos-sdk/version.Commit=${{ needs.prepare.outputs.core_commit }}
-          - id: decentralized-api
-            source: core
-            dockerfile: decentralized-api/Dockerfile
-            context: .
-            target: final
-            build_args: |-
-              GOOS=linux
-              GOARCH=amd64
-              BLST_PORTABLE=0
-              DEVSHARD_VERSION=v5
-              LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api -X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api -X github.com/cosmos/cosmos-sdk/version.Version=${{ needs.prepare.outputs.core_version }} -X github.com/cosmos/cosmos-sdk/version.Commit=${{ needs.prepare.outputs.core_commit }}
-              INFERENCED_LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain -X github.com/cosmos/cosmos-sdk/version.AppName=inferenced -X github.com/cosmos/cosmos-sdk/version.Version=${{ needs.prepare.outputs.core_version }} -X github.com/cosmos/cosmos-sdk/version.Commit=${{ needs.prepare.outputs.core_commit }}
-          - id: edge-api
-            source: core
-            dockerfile: edge-api/Dockerfile
-            context: .
-            target: runtime
-            build_args: |-
-              GOOS=linux
-              GOARCH=amd64
-              BLST_PORTABLE=0
-          - id: devshardd
-            source: v5
-            dockerfile: devshard/Dockerfile
-            context: .
-            target: runtime
-            build_args: |-
-              GOOS=linux
-              GOARCH=amd64
-              BLST_PORTABLE=0
-              DEVSHARD_VERSION=v5
-              DEVSHARD_BINARY_VERSION=${{ needs.prepare.outputs.profile }}-${{ needs.prepare.outputs.v5_short }}
-          - id: devshard-gateway
-            source: v5
-            dockerfile: devshard/Dockerfile
-            context: .
-            target: devshardctl-runtime
-            build_args: DEVSHARD_VERSION=v5
-          - id: devshard-host
-            source: v5
-            dockerfile: devshard/Dockerfile.host
-            context: .
-            target: ''
-            build_args: DEVSHARD_VERSION=v5
-          - id: versiond
-            source: v5
-            dockerfile: versioned/Dockerfile
-            context: versioned
-            target: ''
-            build_args: ''
-          - id: versiond-router
-            source: v5
-            dockerfile: versiond-router/Dockerfile
-            context: versiond-router
-            target: ''
-            build_args: ''
+      matrix: ${{ fromJson(needs.prepare.outputs.image_matrix) }}
     steps:
       - name: Checkout trusted publication automation
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -322,28 +268,7 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - id: inferenced
-            source: core
-            dockerfile_checkout: source
-            dockerfile: inference-chain/Dockerfile
-          - id: inferenced-operator
-            source: core
-            dockerfile_checkout: automation
-            dockerfile: net-deployment-runbook/candidate/Dockerfile.inferenced-operator
-          - id: decentralized-api
-            source: core
-            dockerfile_checkout: source
-            dockerfile: decentralized-api/Dockerfile
-          - id: edge-api
-            source: core
-            dockerfile_checkout: source
-            dockerfile: edge-api/Dockerfile
-          - id: devshardd
-            source: v5
-            dockerfile_checkout: source
-            dockerfile: devshard/Dockerfile
+      matrix: ${{ fromJson(needs.prepare.outputs.binary_matrix) }}
     steps:
       - name: Checkout trusted publication automation
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -385,6 +310,7 @@ jobs:
           CORE_VERSION: ${{ needs.prepare.outputs.core_version }}
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
           V5_COMMIT: ${{ needs.prepare.outputs.v5_commit }}
+          DEVSHARD_REPOSITORY_KEY: ${{ needs.prepare.outputs.devshard_repository_key }}
           PINNED_DOCKERFILE: ${{ steps.dockerfile.outputs.path }}
         run: |
           set -Eeuo pipefail
@@ -489,16 +415,7 @@ jobs:
       attestations: write
     strategy:
       fail-fast: false
-      matrix:
-        id:
-          - inferenced
-          - decentralized-api
-          - edge-api
-          - devshardd
-          - devshard-gateway
-          - devshard-host
-          - versiond
-          - versiond-router
+      matrix: ${{ fromJson(needs.prepare.outputs.publish_image_matrix) }}
     steps:
       - name: Download isolated image result
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -595,18 +512,7 @@ jobs:
       attestations: write
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - id: inferenced
-            member: inferenced
-          - id: inferenced-operator
-            member: inferenced
-          - id: decentralized-api
-            member: decentralized-api
-          - id: edge-api
-            member: edge-api
-          - id: devshardd
-            member: devshardd
+      matrix: ${{ fromJson(needs.prepare.outputs.publish_binary_matrix) }}
     steps:
       - name: Download isolated binary result
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -714,6 +620,7 @@ jobs:
       - name: Create immutable build manifest
         env:
           PROFILE: ${{ needs.prepare.outputs.profile }}
+          LAYER: ${{ needs.prepare.outputs.layer }}
           DEFINITION_SHA256: ${{ needs.prepare.outputs.definition_sha256 }}
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
           V5_COMMIT: ${{ needs.prepare.outputs.v5_commit }}
@@ -726,11 +633,21 @@ jobs:
           set -Eeuo pipefail
           images="$(jq -s 'map({key:.id,value:(del(.id))}) | from_entries' results/images/image-*.json)"
           binaries="$(jq -s 'map({key:.id,value:(del(.id))}) | from_entries' results/binaries/binary-*.json)"
+          source_json="$(python3 -c '
+          import json, sys
+          layer, core, v5, devshard_key = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+          src = {}
+          if layer in ("core", "all") and core:
+              src["gonka_core"] = core
+          if layer in ("devshard", "all") and v5:
+              src[devshard_key] = v5
+          print(json.dumps(src))
+          ' "$LAYER" "$CORE_COMMIT" "$V5_COMMIT" "$DEVSHARD_REPOSITORY_KEY")"
           jq -n \
             --arg profile "$PROFILE" \
+            --arg layer "$LAYER" \
             --arg definition "$DEFINITION_SHA256" \
-            --arg core "$CORE_COMMIT" \
-            --arg v5 "$V5_COMMIT" \
+            --argjson source "$source_json" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg ref "$WORKFLOW_REF" \
             --arg sha "$WORKFLOW_SHA" \
@@ -741,9 +658,9 @@ jobs:
             --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
             --argjson images "$images" \
             --argjson binaries "$binaries" \
-            '{schema_version:1,kind:"external-test-lab-candidate-build",profile:$profile,
+            '{schema_version:1,kind:"external-test-lab-candidate-build",profile:$profile,layer:$layer,
               definition_sha256:$definition,architectures:["linux/amd64"],
-              source:{gonka_core:$core,devshard_v5:$v5},
+              source:$source,
               workflow:{repository:$repository,ref:$ref,sha:$sha,request_ref:$request_ref,
                 request_sha:$request_sha,request_run_id:$request_run_id,run_id:$run_id,
                 run_attempt:$run_attempt},
