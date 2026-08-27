@@ -4,6 +4,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+mkdir -p "$tmp/bin"
+ln -s "$ROOT/gdc.sh" "$tmp/bin/gdc"
+GDC_HOME="$tmp/operator-home" "$tmp/bin/gdc" -h >"$tmp/symlink-help"
+grep -Fq 'Gonka DevNet Community manual deployment' "$tmp/symlink-help"
+grep -Fq '  gdc --release v2026.07.23 genesis' "$tmp/symlink-help"
+! grep -Fq '  ./gdc.sh' "$tmp/symlink-help"
+GDC_HOME="$tmp/operator-home" "$ROOT/gdc.sh" -h >"$tmp/direct-help"
+grep -Fq '  ./gdc.sh --release v2026.07.23 genesis' "$tmp/direct-help"
+
 for contract in \
   './gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>]' \
   './gdc.sh host join --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \

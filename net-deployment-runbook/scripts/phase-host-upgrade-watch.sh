@@ -5,22 +5,19 @@ set -Eeuo pipefail
 # target identity and mutable only in the last observed lifecycle state.
 source "$(dirname "$0")/lib.sh"
 load_project
-[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]] || die 'host upgrade watch requires --release v2026.08.06'
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 || -n "${UPGRADE_FROM_PROFILE:-}" ]] || die 'host upgrade watch requires an upgrade-capable release profile'
 
 NODE="$(node_name "${1:-}")"
 PROPOSAL_ID="${2:-}"
 [[ "$PROPOSAL_ID" =~ ^[1-9][0-9]*$ ]] || die 'usage: host upgrade watch <ssh-alias> <proposal-id>'
 STATE_FILE="$STATE/upgrade/$NODE-$PROPOSAL_ID.env"
 [[ -s "$STATE_FILE" ]] || die "no prepared state for $NODE proposal $PROPOSAL_ID; run host upgrade prepare first"
-grep -qx "node=$NODE" "$STATE_FILE" && grep -qx "proposal_id=$PROPOSAL_ID" "$STATE_FILE" \
-  || die 'prepared Host upgrade state belongs to another Host or proposal'
+if ! grep -qx "node=$NODE" "$STATE_FILE" || ! grep -qx "proposal_id=$PROPOSAL_ID" "$STATE_FILE"; then
+  die 'prepared Host upgrade state belongs to another Host or proposal'
+fi
 initial_state="$(awk -F= '$1 == "state" {print $2; exit}' "$STATE_FILE")"
 case "$initial_state" in
-  PREPARED|WAITING_HEIGHT|ACTIVATED|SYNCED) ;;
-  VALIDATOR_EFFECTIVE)
-    printf 'READY %s is already VALIDATOR_EFFECTIVE for immutable proposal %s\n' "$NODE" "$PROPOSAL_ID"
-    exit 0
-    ;;
+  PREPARED|WAITING_HEIGHT|ACTIVATED|SYNCED|VALIDATOR_EFFECTIVE) ;;
   FAILED) die 'prepared Host upgrade state is FAILED; inspect its evidence before explicitly preparing the same immutable target again' ;;
   *) die 'prepared Host upgrade state is malformed or cannot be resumed safely' ;;
 esac
@@ -42,6 +39,12 @@ plan_height="$("$ROOT/scripts/verify-upgrade-proposal-binding.sh" "$RUN/proposal
   "$INFERENCED_UPGRADE_URL" "$INFERENCED_UPGRADE_SHA256" "$DAPI_UPGRADE_URL" "$DAPI_UPGRADE_SHA256")" \
   || die "proposal $PROPOSAL_ID does not match this immutable target"
 grep -qx "plan_height=$plan_height" "$STATE_FILE" || die 'prepared state has a different activation height'
+require_host_upgrade_state_target "$STATE_FILE" "$NODE" "$PROPOSAL_ID" \
+  "$plan_height" "$GENESIS_SHA256" "$CHAIN_ID"
+if [[ "$initial_state" == VALIDATOR_EFFECTIVE ]]; then
+  printf 'READY %s is already VALIDATOR_EFFECTIVE for immutable proposal %s\n' "$NODE" "$PROPOSAL_ID"
+  exit 0
+fi
 
 write_state() {
   local state="$1"
@@ -75,7 +78,7 @@ while (( SECONDS < deadline )); do
   fi
   write_state ACTIVATED
   versions="$(curl -fsS --connect-timeout 5 --max-time 15 "$NODE_URL/v1/versions" 2>/dev/null || true)"
-  if ! jq -e --arg commit "$GONKA_COMMIT" '(.node_version.version | ltrimstr("v")) == "0.2.15" and .node_version.commit == $commit' <<<"$versions" >/dev/null 2>&1; then
+  if ! jq -e --arg version "$GONKA_RELEASE" --arg commit "$GONKA_COMMIT" '(.node_version.version | ltrimstr("v")) == $version and .node_version.commit == $commit' <<<"$versions" >/dev/null 2>&1; then
     printf 'WAIT  %s state=ACTIVATED target runtime not yet public\n' "$NODE"
     sleep "$watch_poll"; continue
   fi

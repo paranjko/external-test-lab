@@ -18,6 +18,7 @@ for protocol in "${supported_protocols_array[@]}"; do
   case "$protocol" in
     v3) approved_versions="$(jq --arg url "$DEVSHARD_V3_URL" --arg sha "$DEVSHARD_V3_SHA256" '. + [{name:"v3",binary:$url,sha256:$sha}]' <<<"$approved_versions")" ;;
     v4) approved_versions="$(jq --arg url "$DEVSHARD_V4_URL" --arg sha "$DEVSHARD_V4_SHA256" '. + [{name:"v4",binary:$url,sha256:$sha}]' <<<"$approved_versions")" ;;
+    v5) approved_versions="$(jq --arg url "$DEVSHARD_V5_URL" --arg sha "$DEVSHARD_V5_SHA256" '. + [{name:"v5",binary:$url,sha256:$sha}]' <<<"$approved_versions")" ;;
     *) die "unsupported DevShard protocol in DEVSHARD_SUPPORTED_PROTOCOLS: $protocol" ;;
   esac
 done

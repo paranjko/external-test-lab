@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
-[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]] || die 'upgrade worker target must be v2026.08.06'
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 || -n "${UPGRADE_FROM_PROFILE:-}" ]] || die 'upgrade worker target must be an upgrade-capable release profile'
 PROPOSAL_ID="${1:-}"
 [[ "$PROPOSAL_ID" =~ ^[1-9][0-9]*$ ]] || die 'usage: upgrade-worker <passed-proposal-id>'
-require_current_baseline_pass
+require_current_baseline_pass "${UPGRADE_FROM_PROFILE:-v2026.07.23}"
 
 UNIT="gdc-upgrade-proposal-${PROPOSAL_ID}"
 step "Schedule state-based upgrade worker for proposal $PROPOSAL_ID"
@@ -16,7 +16,7 @@ systemd-run --user --unit="$UNIT" --on-active=5s --working-directory="$ROOT" \
   --property=TimeoutStartSec=6h --property=Restart=on-failure --property=RestartSec=30s \
   /usr/bin/env "GDC_HOME=$GDC_HOME" "GDC_UPGRADE_PROPOSAL_ID=$PROPOSAL_ID" GDC_UPGRADE_WAIT=true \
   "GDC_UPGRADE_WAIT_SECONDS=${GDC_UPGRADE_WAIT_SECONDS:-21600}" \
-  "$ROOT/gdc.sh" --release v2026.08.06 upgrade
+  "$ROOT/gdc.sh" --release "$GDC_RELEASE_PROFILE" upgrade
 
 for _ in $(seq 1 20); do
   if systemctl --user is-active --quiet "$UNIT.timer"; then
@@ -26,7 +26,7 @@ for _ in $(seq 1 20); do
 - Unit: $UNIT.service
 - Timer: $UNIT.timer
 - Passed proposal: $PROPOSAL_ID
-- Target profile: v2026.08.06
+- Target profile: $GDC_RELEASE_PROFILE
 - State source: Genesis participant loopback RPC over SSH
 - Delayed start: 5 seconds, after the scheduling command releases its lifecycle lock
 - Restart policy: on-failure, 30 seconds

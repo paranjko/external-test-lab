@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 unset GDC_HOME STATE
 source "$ROOT/scripts/lib.sh"
 
-expected_default="$HOME/.gdc-data"
+expected_default="$(realpath -m -- "$HOME/.gdc-data")"
 [[ "$GDC_HOME" == "$expected_default" ]]
 [[ "$STATE" == "$expected_default/state" ]]
 

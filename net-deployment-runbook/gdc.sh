@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHER_SOURCE="${BASH_SOURCE[0]}"
+LAUNCHER_PATH="$(realpath -e -- "$LAUNCHER_SOURCE")"
+ROOT="$(cd "$(dirname "$LAUNCHER_PATH")" && pwd)"
+if [[ "${LAUNCHER_SOURCE##*/}" == gdc.sh ]]; then
+  GDC_USAGE_COMMAND='./gdc.sh'
+else
+  GDC_USAGE_COMMAND="${LAUNCHER_SOURCE##*/}"
+fi
 
 on_launcher_error() {
   local rc="$?"
@@ -111,7 +118,7 @@ use_operator_inventory() {
 }
 
 usage() {
-  cat <<'EOF'
+  sed "s#\\./gdc\\.sh#$GDC_USAGE_COMMAND#g" <<'EOF'
 Gonka DevNet Community manual deployment
 
 See the role guides for required input, then run:
@@ -157,6 +164,10 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.08.06 bridge contract deploy sepolia
   ./gdc.sh --release v2026.08.06 bridge contract register sepolia
   ./gdc.sh --release v2026.08.06 bridge observer apply|status|verify <SSH_ALIAS>
+  ./gdc.sh release candidate prepare --source-ref upgrade-v0.2.16
+  ./gdc.sh release candidate build <vYYYY.MM.DD-rc.N> [--dry-run] [--retry] [--wait]
+  ./gdc.sh release candidate profile <vYYYY.MM.DD-rc.N> [--build-manifest <PATH>]
+  ./gdc.sh release candidate verify <vYYYY.MM.DD-rc.N> [--build-manifest <PATH>]
   ./gdc.sh node stop <SSH_ALIAS>
   ./gdc.sh node start <SSH_ALIAS>
   ./gdc.sh node verify <SSH_ALIAS>
@@ -201,10 +212,19 @@ while [[ $# -gt 0 ]]; do
     *) break ;;
   esac
 done
-[[ -z "$RELEASE" || "$RELEASE" =~ ^v2026\.(07\.23|08\.06)$ ]] || { echo "Unknown release: $RELEASE" >&2; exit 2; }
+[[ -z "$RELEASE" || "$RELEASE" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "Invalid release profile: $RELEASE" >&2; exit 2; }
+[[ -z "$RELEASE" || -r "$ROOT/profiles/releases/$RELEASE.lock" ]] || { echo "Unknown release: $RELEASE" >&2; exit 2; }
 [[ -z "$MODEL" || "$MODEL" == qwen3-0.6b ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
 [[ -z "$RELEASE" ]] || export GDC_RELEASE_PROFILE="$RELEASE"
 [[ -z "$MODEL" ]] || export GDC_MODEL_PROFILE="$MODEL"
+
+is_upgrade_target_profile() {
+  local profile="${GDC_RELEASE_PROFILE:-}" lock
+  [[ -n "$profile" ]] || return 1
+  [[ "$profile" == v2026.08.06 ]] && return 0
+  lock="$ROOT/profiles/releases/$profile.lock"
+  [[ -r "$lock" ]] && grep -Eq '^UPGRADE_FROM_PROFILE=[a-z0-9][a-z0-9.-]*$' "$lock"
+}
 
 COMMAND="${1:-help}"
 shift || true
@@ -239,19 +259,24 @@ case "$COMMAND" in
     ;;
 esac
 case "$COMMAND" in
+  release)
+    [[ "${1:-}" == candidate && $# -ge 2 ]] || { usage; exit 2; }
+    shift
+    exec "$ROOT/scripts/release-candidate.py" "$@"
+    ;;
   public-network-verify|confirmation-poc|public-upgrade-verify)
     [[ $# -le 1 ]] || { usage; exit 2; }
     case "$COMMAND" in
       public-network-verify) run_phase public-network-verify "$ROOT/scripts/phase-public-network-verify.sh" ;;
       confirmation-poc) run_phase confirmation-poc "$ROOT/scripts/phase-confirmation-poc.sh" ;;
       public-upgrade-verify)
-        [[ "${GDC_RELEASE_PROFILE:-}" == v2026.08.06 && $# -eq 1 && "$1" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+        [[ $# -eq 1 && "$1" =~ ^[1-9][0-9]*$ ]] && is_upgrade_target_profile || { usage; exit 2; }
         run_phase "public-upgrade-verify-$1" "$ROOT/scripts/phase-public-upgrade-verify.sh" "$1"
         ;;
     esac
     ;;
   host-upgrade-prepare|host-upgrade-watch)
-    [[ "${GDC_RELEASE_PROFILE:-}" == v2026.08.06 && $# -eq 2 && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$2" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+    [[ $# -eq 2 && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$2" =~ ^[1-9][0-9]*$ ]] && is_upgrade_target_profile || { usage; exit 2; }
     use_node_data_home "$1"
     if [[ "$COMMAND" == host-upgrade-prepare ]]; then
       run_phase "host-upgrade-prepare-$1-$2" "$ROOT/scripts/phase-host-upgrade-prepare.sh" "$1" "$2"
@@ -376,25 +401,19 @@ case "$COMMAND" in
   upgrade)
     use_network_owner_data_home
     [[ $# -eq 0 ]] || { usage; exit 2; }
-    [[ "${GDC_RELEASE_PROFILE:-}" == v2026.08.06 ]] || {
-      echo 'upgrade requires --release v2026.08.06' >&2; exit 2;
-    }
+    is_upgrade_target_profile || { echo 'upgrade requires an upgrade-capable release profile' >&2; exit 2; }
     run_phase upgrade "$ROOT/scripts/phase-upgrade.sh"
     ;;
   upgrade-proposal)
     use_network_owner_data_home
     [[ $# -eq 0 ]] || { usage; exit 2; }
-    [[ "${GDC_RELEASE_PROFILE:-}" == v2026.08.06 ]] || {
-      echo 'upgrade-proposal requires --release v2026.08.06' >&2; exit 2;
-    }
+    is_upgrade_target_profile || { echo 'upgrade-proposal requires an upgrade-capable release profile' >&2; exit 2; }
     run_phase upgrade-proposal "$ROOT/scripts/phase-propose-upgrade.sh"
     ;;
   upgrade-worker)
     use_network_owner_data_home
     [[ $# -eq 1 && "$1" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
-    [[ "${GDC_RELEASE_PROFILE:-}" == v2026.08.06 ]] || {
-      echo 'upgrade-worker requires --release v2026.08.06' >&2; exit 2;
-    }
+    is_upgrade_target_profile || { echo 'upgrade-worker requires an upgrade-capable release profile' >&2; exit 2; }
     run_phase "upgrade-worker-$1" "$ROOT/scripts/phase-upgrade-worker.sh" "$1"
     ;;
   advance-after-upgrade)
@@ -450,7 +469,7 @@ case "$COMMAND" in
         fi
         ;;
       apply|reconcile)
-        [[ $# -le 1 && "${1:-v3}" =~ ^v[34]$ ]] || { usage; exit 2; }
+        [[ $# -le 1 && "${1:-v3}" =~ ^v[345]$ ]] || { usage; exit 2; }
         export GDC_GATEWAY_VERSION="${1:-v3}"
         run_phase "gateway-$gateway_action-$GDC_GATEWAY_VERSION" "$ROOT/scripts/phase-ops.sh" gateway
         ;;

@@ -18,12 +18,14 @@ SECRETS="$STATE/secrets"
 source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
-[[ "$GATEWAY_VERSION" =~ ^v[34]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3 or v4' >&2; exit 2; }
+[[ "$GATEWAY_VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
 # Deployment profiles name gateway artifacts with their protocol suffix.  Strip
 # either supported suffix before selecting the requested protocol, otherwise a
 # v3 profile such as `...:0.2.15-v3` becomes the distinct, unintended
 # `...:0.2.15-v3-v3` tag.
-LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v[34]}-$GATEWAY_VERSION"
+if [[ "${LAB_CANDIDATE:-false}" != true ]]; then
+  LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v[34]}-$GATEWAY_VERSION"
+fi
 telegram_bot_url="${GDC_TELEGRAM_BOT_URL:-}"
 if [[ -n "$telegram_bot_url" && ! "$telegram_bot_url" =~ ^https://t\.me/[A-Za-z0-9_]{5,32}$ ]]; then
   echo 'GDC_TELEGRAM_BOT_URL must be https://t.me/<bot_username>; never put a BotFather token here' >&2

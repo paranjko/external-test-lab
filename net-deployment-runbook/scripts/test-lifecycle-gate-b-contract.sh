@@ -79,7 +79,41 @@ grep -Fq 'GDC_UPGRADE_MIN_LEAD_BLOCKS' "$ROOT/scripts/phase-host-upgrade-prepare
 grep -Fq 'GDC_HOST_UPGRADE_WATCH_TIMEOUT_SECONDS' "$ROOT/profiles/releases/v2026.08.06.lock"
 grep -Fq 'GDC_GATE_B_PROGRESS_TIMEOUT_SECONDS' "$ROOT/profiles/releases/v2026.07.23.lock"
 grep -Fq 'GDC_MAX_NODE_LAG_BLOCKS' "$ROOT/profiles/releases/v2026.07.23.lock"
-grep -Fq 'PREPARED|WAITING_HEIGHT|ACTIVATED|SYNCED' "$ROOT/scripts/phase-host-upgrade-watch.sh"
+grep -Fq 'PREPARED|WAITING_HEIGHT|ACTIVATED|SYNCED|VALIDATOR_EFFECTIVE' "$ROOT/scripts/phase-host-upgrade-watch.sh"
+grep -Fq 'require_host_upgrade_state_target' "$ROOT/scripts/phase-host-upgrade-watch.sh"
 grep -Fq 'No other Host was changed' "$ROOT/scripts/phase-host-upgrade-watch.sh"
+
+# State validation rejects cross-profile resume even if state was VALIDATOR_EFFECTIVE
+state_fixture="$tmp/state.env"
+cat >"$state_fixture" <<'EOF'
+state=VALIDATOR_EFFECTIVE
+node=node1
+proposal_id=1
+release_profile=v2026.08.25-rc.0
+profile_hash=1111111111111111111111111111111111111111111111111111111111111111
+inferenced_sha256=2222222222222222222222222222222222222222222222222222222222222222
+dapi_sha256=3333333333333333333333333333333333333333333333333333333333333333
+EOF
+validate_watch_state() {
+  local file="$1" node="$2" proposal="$3" profile="$4" p_hash="$5" inf_hash="$6" dapi_hash="$7"
+  grep -qx "node=$node" "$file" \
+    && grep -qx "proposal_id=$proposal" "$file" \
+    && grep -qx "release_profile=$profile" "$file" \
+    && grep -qx "profile_hash=$p_hash" "$file" \
+    && grep -qx "inferenced_sha256=$inf_hash" "$file" \
+    && grep -qx "dapi_sha256=$dapi_hash" "$file"
+}
+validate_watch_state "$state_fixture" node1 1 v2026.08.25-rc.0 1111111111111111111111111111111111111111111111111111111111111111 2222222222222222222222222222222222222222222222222222222222222222 3333333333333333333333333333333333333333333333333333333333333333
+! validate_watch_state "$state_fixture" node1 1 v2026.08.25-rc.1 1111111111111111111111111111111111111111111111111111111111111111 2222222222222222222222222222222222222222222222222222222222222222 3333333333333333333333333333333333333333333333333333333333333333
+! validate_watch_state "$state_fixture" node1 1 v2026.08.25-rc.0 9999999999999999999999999999999999999999999999999999999999999999 2222222222222222222222222222222222222222222222222222222222222222 3333333333333333333333333333333333333333333333333333333333333333
+
+upgrade_verifier="$ROOT/scripts/phase-public-upgrade-verify.sh"
+grep -Fq 'load_profiles' "$upgrade_verifier"
+grep -Fq 'VERIFICATION_SCOPE=cosmovisor-binaries' "$upgrade_verifier"
+grep -Fq 'GATE_B_PROFILE="$UPGRADE_FROM_PROFILE"' "$upgrade_verifier"
+grep -Fq 'GDC_RELEASE_PROFILE="$GATE_B_PROFILE"' "$upgrade_verifier"
+! grep -Fq 'export GDC_RELEASE_PROFILE="$GATE_B_PROFILE"' "$upgrade_verifier"
+grep -Fq '.release_profile == $profile' "$upgrade_verifier"
+grep -Fq 'not the complete candidate stack' "$upgrade_verifier"
 
 printf 'PASS Gate B, stale-lineage, canonical-PoC, CPoC, and upgrade-resume fixture contracts\n'

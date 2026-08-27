@@ -272,6 +272,8 @@ grep -Fq 'gdc_component_info' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'gpuProfile:(if $gpuProfile == "auto" then null else $gpuProfile end)' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v[34]}-$GATEWAY_VERSION"' "$ROOT/04-ops/render-ops.sh"
+grep -Fq '[[ "${LAB_CANDIDATE:-false}" != true ]]' "$ROOT/04-ops/render-ops.sh"
+grep -Fq 'MLNODE_BLACKWELL_IMAGE="$MLNODE_GENERIC_IMAGE"' "$ROOT/scripts/profile.sh"
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
@@ -438,7 +440,7 @@ grep -Fq 'gdc-poc-winddown-watch@' "$ROOT/02-node/ml-only/install-ml.sh"
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-propose-upgrade.sh"
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade.sh"
 grep -Fq 'require_current_baseline_pass' "$ROOT/scripts/phase-upgrade-worker.sh"
-grep -Fq '"$ROOT/gdc.sh" --release v2026.08.06 upgrade' "$ROOT/scripts/phase-upgrade-worker.sh"
+grep -Fq '"$ROOT/gdc.sh" --release "$GDC_RELEASE_PROFILE" upgrade' "$ROOT/scripts/phase-upgrade-worker.sh"
 grep -Fq '# DevNet verification: PASS' "$ROOT/scripts/lib.sh"
 grep -Fq 'GDC_NODE_ALIASES' "$ROOT/scripts/lib.sh"
 if (
@@ -554,6 +556,10 @@ join_account_line="$(grep -n 'create-cold-accounts.sh' "$ROOT/scripts/phase-join
   echo 'Host join must create its local keyring before creating its cold account' >&2
   exit 1
 }
+
+grep -Fq 'expected_profile_hash' "$ROOT/scripts/lib.sh"
+grep -Fq 'unexpected binary upgrade marker' "$ROOT/scripts/lib.sh"
+grep -Fq 'live runtime does not match verified source baseline' "$ROOT/scripts/lib.sh"
 
 trap_test_dir="$test_tmp/evidence-trap"
 mkdir -p "$trap_test_dir"

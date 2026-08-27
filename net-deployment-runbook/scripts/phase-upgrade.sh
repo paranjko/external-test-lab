@@ -2,31 +2,56 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
-[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]] || die 'upgrade target must be v2026.08.06'
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 || -n "${UPGRADE_FROM_PROFILE:-}" ]] || die 'upgrade target must be an upgrade-capable release profile'
+upgrade_source_profile="${UPGRADE_FROM_PROFILE:-v2026.07.23}"
 
 BASELINE="$STATE/phase-profiles/genesis.env"
 [[ -s "$BASELINE" ]] || die 'no baseline Genesis profile recorded; run the 0.2.14 baseline first'
-grep -qx 'release_profile=v2026.07.23' "$BASELINE" || die 'Genesis was not formed from v2026.07.23'
 grep -qx "model=$MODEL_ID@$MODEL_REVISION" "$BASELINE" || die 'model overlay differs from baseline; model migration is a separate exercise'
 
 # A repaired/repeated evidence pass may run after the chain has already
 # activated the approved target. In that state current nodes no longer carry
-# 0.2.14 markers, so require the immutable pre-upgrade PASS bundle rather
+# source-profile markers, so require the immutable pre-upgrade PASS bundle rather
 # than incorrectly demanding that a completed upgrade look like its baseline.
+marker_scope=full
+marker_description='full release'
+if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
+  marker_scope=cosmovisor
+  marker_description='candidate Cosmovisor binary upgrade'
+fi
+target_marker_name="$(upgrade_marker_name_for_scope "$marker_scope")"
 target_runtime_active=true
+target_runtime_observed=false
+target_profile_hash="$(profile_hash)"
+expected_target_marker="$GDC_RELEASE_PROFILE $target_profile_hash"
+source_profile_hash="$(GDC_RELEASE_PROFILE="$upgrade_source_profile" profile_hash)"
+expected_source_marker=''
+if [[ "$marker_scope" == full ]]; then
+  expected_source_marker="$upgrade_source_profile $source_profile_hash"
+fi
 while IFS= read -r target_node; do
   target_versions="$(curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$target_node")/v1/versions" 2>/dev/null || true)"
-  jq -e --arg commit "$GONKA_COMMIT" '
-    (.node_version.version | ltrimstr("v")) == "0.2.15"
+  target_runtime_matches=false
+  if jq -e --arg version "$GONKA_RELEASE" --arg commit "$GONKA_COMMIT" '
+    (.node_version.version | ltrimstr("v")) == $version
     and .node_version.commit == $commit
-  ' <<<"$target_versions" >/dev/null 2>&1 || target_runtime_active=false
+  ' <<<"$target_versions" >/dev/null 2>&1; then
+    target_runtime_matches=true
+    target_runtime_observed=true
+  else
+    target_runtime_active=false
+  fi
+  target_marker="$(ssh -n "$target_node" "cat /srv/dai/deploy/$target_node/$target_marker_name 2>/dev/null || true")"
+  classify_upgrade_runtime_marker \
+    "$target_runtime_matches" "$target_marker" "$expected_target_marker" \
+    "$expected_source_marker" >/dev/null
 done < <(configured_nodes)
-if [[ "$target_runtime_active" == true ]]; then
-  step 'Reuse immutable 0.2.14 baseline evidence for the already activated target runtime'
+if [[ "$target_runtime_active" == true || "$target_runtime_observed" == true ]]; then
+  step "Reuse immutable $upgrade_source_profile baseline evidence for the already activated target runtime"
 else
-  require_current_baseline_pass
+  require_current_baseline_pass "$upgrade_source_profile"
 fi
-baseline_pass_bundle="$(latest_baseline_pass_bundle)"
+baseline_pass_bundle="$(latest_baseline_pass_bundle "$upgrade_source_profile")"
 [[ -s "$baseline_pass_bundle/current-epoch-group.json" ]] \
   || die 'accepted baseline PASS has no complete epoch-group evidence'
 record_phase_profile upgrade
@@ -85,6 +110,8 @@ capture_compose_state() {
       | jq -s '[.[] | {service:.Service,image:.Image,state:.State,health:.Health}] | sort_by(.service)' \
       >"$RUN/$prefix-services/$node.json"
     ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release" >"$RUN/$prefix-services/$node.release"
+    ssh "$node" "cat /srv/dai/deploy/$node/.gdc-binary-upgrade 2>/dev/null || true" \
+      >"$RUN/$prefix-services/$node.binary-upgrade"
   done
 }
 
@@ -107,7 +134,7 @@ fetch_node_versions() {
 }
 
 capture_runtime_state() {
-  local node runtime_file node_current api_current node_process api_process
+  local node runtime_file node_current api_current node_process api_process node_expected api_expected
   mkdir -p "$RUN/runtime"
   for node in "${nodes[@]}"; do
     runtime_file="$RUN/runtime/$node.json"
@@ -115,19 +142,21 @@ capture_runtime_state() {
     # container is being restarted by Cosmovisor. That is a transition to
     # wait through, not evidence that the upgrade itself failed.
     fetch_node_versions "$node" "$runtime_file"
-    jq -e --arg commit "$GONKA_COMMIT" '
-      (.node_version.version | ltrimstr("v")) == "0.2.15"
+    jq -e --arg version "$GONKA_RELEASE" --arg commit "$GONKA_COMMIT" '
+      (.node_version.version | ltrimstr("v")) == $version
       and .node_version.commit == $commit
-    ' "$runtime_file" >/dev/null || die "$node does not report the pinned 0.2.15 chain runtime"
+    ' "$runtime_file" >/dev/null || die "$node does not report the pinned v$GONKA_RELEASE chain runtime"
 
     node_current="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T node readlink -f /root/.inference/cosmovisor/current")"
     api_current="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T api readlink -f /root/.dapi/cosmovisor/current")"
-    node_process="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T node sh -lc 'ps -eo args | awk '\''\$1 ~ /cosmovisor\\/upgrades\\/v0.2.15\\/bin\\/inferenced\$/ {print \$1; exit}'\'''")"
-    api_process="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T api sh -lc 'ps -eo args | awk '\''\$1 ~ /cosmovisor\\/upgrades\\/v0.2.15\\/bin\\/decentralized-api\$/ {print \$1; exit}'\'''")"
-    [[ "$node_current" == /root/.inference/cosmovisor/upgrades/v0.2.15 ]] || die "$node chain cosmovisor link is not v0.2.15"
-    [[ "$api_current" == /root/.dapi/cosmovisor/upgrades/v0.2.15 ]] || die "$node DAPI cosmovisor link is not v0.2.15"
-    [[ "$node_process" == /root/.inference/cosmovisor/upgrades/v0.2.15/bin/inferenced ]] || die "$node chain process is not the v0.2.15 binary"
-    [[ "$api_process" == /root/.dapi/cosmovisor/upgrades/v0.2.15/bin/decentralized-api ]] || die "$node DAPI process is not the v0.2.15 binary"
+    node_expected="/root/.inference/cosmovisor/upgrades/v$GONKA_RELEASE/bin/inferenced"
+    api_expected="/root/.dapi/cosmovisor/upgrades/v$GONKA_RELEASE/bin/decentralized-api"
+    node_process="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T node ps -eo args" | awk -v expected="$node_expected" '$1 == expected {print $1; exit}')"
+    api_process="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T api ps -eo args" | awk -v expected="$api_expected" '$1 == expected {print $1; exit}')"
+    [[ "$node_current" == "/root/.inference/cosmovisor/upgrades/v$GONKA_RELEASE" ]] || die "$node chain cosmovisor link is not v$GONKA_RELEASE"
+    [[ "$api_current" == "/root/.dapi/cosmovisor/upgrades/v$GONKA_RELEASE" ]] || die "$node DAPI cosmovisor link is not v$GONKA_RELEASE"
+    [[ "$node_process" == "$node_expected" ]] || die "$node chain process is not the v$GONKA_RELEASE binary"
+    [[ "$api_process" == "$api_expected" ]] || die "$node DAPI process is not the v$GONKA_RELEASE binary"
     jq -n --arg node_current "$node_current" --arg api_current "$api_current" \
       --arg node_process "$node_process" --arg api_process "$api_process" \
       '{node_current:$node_current,api_current:$api_current,node_process:$node_process,api_process:$api_process}' \
@@ -207,8 +236,8 @@ while (( SECONDS < deadline )); do
     # record has expired; the pinned running version and commit then provide
     # the durable proof that this node applied the already-passed plan.
     version_body="$(curl -fsS --connect-timeout 3 --max-time 8 "$(node_url "$node")/v1/versions" 2>/dev/null || true)"
-    if jq -e --arg commit "$GONKA_COMMIT" '
-      (.node_version.version | ltrimstr("v")) == "0.2.15"
+    if jq -e --arg version "$GONKA_RELEASE" --arg commit "$GONKA_COMMIT" '
+      (.node_version.version | ltrimstr("v")) == $version
       and .node_version.commit == $commit
     ' <<<"$version_body" >/dev/null 2>&1; then
       jq -n --argjson runtime "$version_body" --argjson height "$plan_height" \
@@ -225,10 +254,10 @@ done
 (( applied == ${#nodes[@]} )) || die "not every joined node applied upgrade height $plan_height"
 capture_runtime_state
 
-step 'Record the active Cosmovisor release marker on every upgraded participant'
+step "Record the $marker_description marker on every upgraded participant"
 for node in "${nodes[@]}"; do
-  printf '%s %s\n' "$GDC_RELEASE_PROFILE" "$(profile_hash)" \
-    | ssh "$node" "sudo tee /srv/dai/deploy/$node/.gdc-release >/dev/null && sudo chmod 600 /srv/dai/deploy/$node/.gdc-release"
+  "$ROOT/scripts/write-upgrade-marker.sh" \
+    "$node" "$GDC_RELEASE_PROFILE" "$(profile_hash)" "$marker_scope"
 done
 
 upgrade_stage='post-upgrade-epoch'

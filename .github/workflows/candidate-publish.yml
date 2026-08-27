@@ -1,0 +1,796 @@
+name: Candidate publish
+run-name: publish ${{ github.event.workflow_run.display_title }} request-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}
+
+on:
+  workflow_run:
+    workflows: [Candidate build]
+    types: [completed]
+
+concurrency:
+  group: candidate-publish-${{ github.event.workflow_run.display_title }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  prepare:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+      github.event.workflow_run.path == '.github/workflows/candidate-build.yml'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      profile: ${{ steps.request.outputs.profile }}
+      definition_sha256: ${{ steps.request.outputs.definition_sha256 }}
+      core_commit: ${{ steps.definition.outputs.core_commit }}
+      core_version: ${{ steps.definition.outputs.core_version }}
+      v5_commit: ${{ steps.definition.outputs.v5_commit }}
+      v5_short: ${{ steps.definition.outputs.v5_short }}
+      definition_short: ${{ steps.definition.outputs.definition_short }}
+      base_images: ${{ steps.definition.outputs.base_images }}
+    steps:
+      - name: Checkout reviewed laboratory automation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Download publication request from triggering run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -Eeuo pipefail
+          gh run download "$REQUEST_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name candidate-publication-request --dir request
+      - name: Verify trusted publication request
+        id: request
+        env:
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -Eeuo pipefail
+          request=request/publication-request.json
+          jq -e \
+            --arg repository "$EXPECTED_REPOSITORY" \
+            --arg ref "$EXPECTED_REF" \
+            --arg sha "$EXPECTED_SHA" \
+            --arg run_id "$EXPECTED_RUN_ID" '
+              .schema_version == 1 and
+              .kind == "external-test-lab-candidate-publication-request" and
+              .repository == $repository and
+              .ref == $ref and
+              .sha == $sha and
+              .request_run_id == $run_id and
+              (.profile | test("^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-rc\\.[0-9]+$")) and
+              (.definition_sha256 | test("^[0-9a-f]{64}$"))
+            ' "$request" >/dev/null
+          printf 'profile=%s\ndefinition_sha256=%s\n' \
+            "$(jq -r .profile "$request")" \
+            "$(jq -r .definition_sha256 "$request")" >>"$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+      - name: Verify immutable definition and base images
+        id: definition
+        env:
+          PROFILE: ${{ steps.request.outputs.profile }}
+          EXPECTED_SHA256: ${{ steps.request.outputs.definition_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$PROFILE" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-rc\.[0-9]+$ ]]
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          definition="net-deployment-runbook/profiles/candidates/$PROFILE.definition.json"
+          [[ -f "$definition" ]]
+          actual_sha256="$(sha256sum "$definition" | awk '{print $1}')"
+          [[ "$actual_sha256" == "$EXPECTED_SHA256" ]] || {
+            echo 'candidate definition checksum mismatch' >&2
+            exit 1
+          }
+          jq -e --arg profile "$PROFILE" '
+            .schema_version == 1 and
+            .kind == "external-test-lab-candidate-definition" and
+            .profile == $profile and
+            .classification == "lab-candidate" and
+            .official_gonka_release == false and
+            .upgrade_from_profile == "v2026.08.06" and
+            .architectures.oci_images == ["linux/amd64"] and
+            .architectures.upgrade_binaries == ["linux/amd64"] and
+            .repositories.gonka_core.url == "https://github.com/gonka-ai/gonka.git" and
+            .repositories.devshard_v5.url == "https://github.com/gonka-ai/gonka.git" and
+            .governance.core_upgrade_name == "v0.2.16" and
+            any(.components[]; .id == "inferenced" and
+              (.artifacts | index("operator-binary") != null))
+          ' "$definition" >/dev/null
+          while IFS=$'\t' read -r reference expected; do
+            actual="$(docker buildx imagetools inspect "$reference" | awk '$1 == "Digest:" {print $2; exit}')"
+            [[ "$actual" == "$expected" ]] || {
+              printf 'base image digest mismatch reference=%s expected=%s actual=%s\n' "$reference" "$expected" "$actual" >&2
+              exit 1
+            }
+          done < <(jq -r '.base_images[] | [.reference, .digest] | @tsv' "$definition")
+          core_commit="$(jq -r .repositories.gonka_core.commit "$definition")"
+          core_version="$(jq -r '.governance.core_upgrade_name | sub("^v"; "")' "$definition")"
+          v5_commit="$(jq -r .repositories.devshard_v5.commit "$definition")"
+          [[ "$core_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          {
+            printf 'core_commit=%s\ncore_version=%s\n' "$core_commit" "$core_version"
+            printf 'v5_commit=%s\nv5_short=%s\n' "$v5_commit" "${v5_commit:0:8}"
+            printf 'definition_short=%s\n' "${EXPECTED_SHA256:0:12}"
+            printf 'base_images=%s\n' \
+              "$(jq -c '.base_images | map({key:.reference,value:.digest}) | from_entries' "$definition")"
+          } >>"$GITHUB_OUTPUT"
+
+  images:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: inferenced
+            source: core
+            dockerfile: inference-chain/Dockerfile
+            context: .
+            target: final
+            build_args: |-
+              GOOS=linux
+              GOARCH=amd64
+              BLST_PORTABLE=0
+              LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain -X github.com/cosmos/cosmos-sdk/version.AppName=inferenced -X github.com/cosmos/cosmos-sdk/version.Version=${{ needs.prepare.outputs.core_version }} -X github.com/cosmos/cosmos-sdk/version.Commit=${{ needs.prepare.outputs.core_commit }}
+          - id: decentralized-api
+            source: core
+            dockerfile: decentralized-api/Dockerfile
+            context: .
+            target: final
+            build_args: |-
+              GOOS=linux
+              GOARCH=amd64
+              BLST_PORTABLE=0
+              DEVSHARD_VERSION=v5
+              LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api -X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api -X github.com/cosmos/cosmos-sdk/version.Version=${{ needs.prepare.outputs.core_version }} -X github.com/cosmos/cosmos-sdk/version.Commit=${{ needs.prepare.outputs.core_commit }}
+              INFERENCED_LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain -X github.com/cosmos/cosmos-sdk/version.AppName=inferenced -X github.com/cosmos/cosmos-sdk/version.Version=${{ needs.prepare.outputs.core_version }} -X github.com/cosmos/cosmos-sdk/version.Commit=${{ needs.prepare.outputs.core_commit }}
+          - id: edge-api
+            source: core
+            dockerfile: edge-api/Dockerfile
+            context: .
+            target: runtime
+            build_args: |-
+              GOOS=linux
+              GOARCH=amd64
+              BLST_PORTABLE=0
+          - id: devshardd
+            source: v5
+            dockerfile: devshard/Dockerfile
+            context: .
+            target: runtime
+            build_args: |-
+              GOOS=linux
+              GOARCH=amd64
+              BLST_PORTABLE=0
+              DEVSHARD_VERSION=v5
+              DEVSHARD_BINARY_VERSION=${{ needs.prepare.outputs.profile }}-${{ needs.prepare.outputs.v5_short }}
+          - id: devshard-gateway
+            source: v5
+            dockerfile: devshard/Dockerfile
+            context: .
+            target: devshardctl-runtime
+            build_args: DEVSHARD_VERSION=v5
+          - id: devshard-host
+            source: v5
+            dockerfile: devshard/Dockerfile.host
+            context: .
+            target: ''
+            build_args: DEVSHARD_VERSION=v5
+          - id: versiond
+            source: v5
+            dockerfile: versioned/Dockerfile
+            context: versioned
+            target: ''
+            build_args: ''
+          - id: versiond-router
+            source: v5
+            dockerfile: versiond-router/Dockerfile
+            context: versiond-router
+            target: ''
+            build_args: ''
+    steps:
+      - name: Checkout trusted publication automation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: automation
+          persist-credentials: false
+      - name: Checkout exact Gonka source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: gonka-ai/gonka
+          ref: ${{ matrix.source == 'core' && needs.prepare.outputs.core_commit || needs.prepare.outputs.v5_commit }}
+          path: source
+          persist-credentials: false
+      - name: Pin every Dockerfile base to its reviewed digest
+        id: dockerfile
+        env:
+          BASE_IMAGES_JSON: ${{ needs.prepare.outputs.base_images }}
+          IMAGE_ID: ${{ matrix.id }}
+          SOURCE_DOCKERFILE: source/${{ matrix.dockerfile }}
+          PINNED_DOCKERFILE: source/${{ matrix.context }}/.gdc-candidate-${{ matrix.id }}.Dockerfile
+        run: |
+          set -Eeuo pipefail
+          python3 automation/net-deployment-runbook/scripts/pin-candidate-dockerfile.py \
+            --source "$SOURCE_DOCKERFILE" --output "$PINNED_DOCKERFILE" \
+            --base-images-json "$BASE_IMAGES_JSON"
+          if [[ "$IMAGE_ID" == decentralized-api ]]; then
+            python3 automation/net-deployment-runbook/scripts/patch-candidate-dapi-dockerfile.py \
+              --source "$PINNED_DOCKERFILE" --output "$PINNED_DOCKERFILE"
+          fi
+          grep -E '^FROM ' "$PINNED_DOCKERFILE"
+          printf 'path=%s\n' "$PINNED_DOCKERFILE" >>"$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+      - name: Build isolated candidate image
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        with:
+          context: source/${{ matrix.context }}
+          file: ${{ steps.dockerfile.outputs.path }}
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          tags: ghcr.io/${{ github.repository_owner }}/gdc-${{ matrix.id }}:${{ needs.prepare.outputs.profile }}-${{ needs.prepare.outputs.definition_short }}-${{ github.run_id }}
+          build-args: ${{ matrix.build_args }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/gonka-ai/gonka
+            org.opencontainers.image.revision=${{ matrix.source == 'core' && needs.prepare.outputs.core_commit || needs.prepare.outputs.v5_commit }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.profile }}
+            org.opencontainers.image.title=External Test Lab ${{ matrix.id }} candidate
+      - name: Verify built core runtime identity
+        env:
+          IMAGE_ID: ${{ matrix.id }}
+          IMAGE_REFERENCE: ghcr.io/${{ github.repository_owner }}/gdc-${{ matrix.id }}:${{ needs.prepare.outputs.profile }}-${{ needs.prepare.outputs.definition_short }}-${{ github.run_id }}
+          CORE_VERSION: ${{ needs.prepare.outputs.core_version }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+        run: |
+          set -Eeuo pipefail
+          case "$IMAGE_ID" in
+            inferenced) executable=/usr/bin/inferenced ;;
+            decentralized-api) executable=/usr/bin/decentralized-api ;;
+            *) exit 0 ;;
+          esac
+          container="$(docker create "$IMAGE_REFERENCE")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container:$executable" candidate-executable
+          chmod 0755 candidate-executable
+          bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
+            "$IMAGE_ID" candidate-executable "$CORE_VERSION" "$CORE_COMMIT" metadata
+          if [[ "$IMAGE_ID" == decentralized-api ]]; then
+            docker cp "$container:/usr/bin/inferenced" candidate-inferenced
+            chmod 0755 candidate-inferenced
+            bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
+              inferenced candidate-inferenced "$CORE_VERSION" "$CORE_COMMIT" metadata
+          else
+            version_output="$(docker run --rm --entrypoint "$executable" "$IMAGE_REFERENCE" version --long)"
+            escaped_version="${CORE_VERSION//./\\.}"
+            grep -Eq '^name: "?inference-chain"?$' <<<"$version_output"
+            grep -Eq '^server_name: "?inferenced"?$' <<<"$version_output"
+            grep -Eq "^version: \"?$escaped_version\"?$" <<<"$version_output"
+            grep -Eq "^commit: \"?$CORE_COMMIT\"?$" <<<"$version_output"
+          fi
+      - name: Install pinned SBOM client
+        run: |
+          set -Eeuo pipefail
+          curl -fsSLo /tmp/syft.tar.gz https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz
+          echo '2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f  /tmp/syft.tar.gz' | sha256sum -c
+          tools="$RUNNER_TEMP/candidate-tools"
+          mkdir -p "$tools"
+          tar -xzf /tmp/syft.tar.gz -C "$tools" syft
+          printf '%s\n' "$tools" >>"$GITHUB_PATH"
+      - name: Export isolated image result
+        env:
+          IMAGE_ID: ${{ matrix.id }}
+          IMAGE_REFERENCE: ghcr.io/${{ github.repository_owner }}/gdc-${{ matrix.id }}:${{ needs.prepare.outputs.profile }}-${{ needs.prepare.outputs.definition_short }}-${{ github.run_id }}
+        run: |
+          set -Eeuo pipefail
+          archive="$IMAGE_ID-linux-amd64.oci.tar.gz"
+          docker image inspect "$IMAGE_REFERENCE" >/dev/null
+          syft "docker:$IMAGE_REFERENCE" -o spdx-json="${archive}.spdx.json"
+          docker save "$IMAGE_REFERENCE" | gzip -n >"$archive"
+          sha256sum "$archive" >"$archive.sha256"
+          printf '%s\n' "$IMAGE_REFERENCE" >image-reference.txt
+      - name: Upload isolated image result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-image-build-${{ matrix.id }}
+          path: |
+            ${{ matrix.id }}-linux-amd64.oci.tar.gz
+            ${{ matrix.id }}-linux-amd64.oci.tar.gz.sha256
+            ${{ matrix.id }}-linux-amd64.oci.tar.gz.spdx.json
+            image-reference.txt
+          if-no-files-found: error
+          retention-days: 90
+
+  binaries:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: inferenced
+            source: core
+            dockerfile_checkout: source
+            dockerfile: inference-chain/Dockerfile
+          - id: inferenced-operator
+            source: core
+            dockerfile_checkout: automation
+            dockerfile: net-deployment-runbook/candidate/Dockerfile.inferenced-operator
+          - id: decentralized-api
+            source: core
+            dockerfile_checkout: source
+            dockerfile: decentralized-api/Dockerfile
+          - id: edge-api
+            source: core
+            dockerfile_checkout: source
+            dockerfile: edge-api/Dockerfile
+          - id: devshardd
+            source: v5
+            dockerfile_checkout: source
+            dockerfile: devshard/Dockerfile
+    steps:
+      - name: Checkout trusted publication automation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: automation
+          persist-credentials: false
+      - name: Checkout exact Gonka source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: gonka-ai/gonka
+          ref: ${{ matrix.source == 'core' && needs.prepare.outputs.core_commit || needs.prepare.outputs.v5_commit }}
+          path: source
+          persist-credentials: false
+      - name: Pin every Dockerfile base to its reviewed digest
+        id: dockerfile
+        env:
+          BASE_IMAGES_JSON: ${{ needs.prepare.outputs.base_images }}
+          COMPONENT: ${{ matrix.id }}
+          SOURCE_DOCKERFILE: ${{ matrix.dockerfile_checkout }}/${{ matrix.dockerfile }}
+          PINNED_DOCKERFILE: source/.gdc-candidate-binary-${{ matrix.id }}.Dockerfile
+        run: |
+          set -Eeuo pipefail
+          python3 automation/net-deployment-runbook/scripts/pin-candidate-dockerfile.py \
+            --source "$SOURCE_DOCKERFILE" --output "$PINNED_DOCKERFILE" \
+            --base-images-json "$BASE_IMAGES_JSON"
+          if [[ "$COMPONENT" == decentralized-api ]]; then
+            python3 automation/net-deployment-runbook/scripts/patch-candidate-dapi-dockerfile.py \
+              --source "$PINNED_DOCKERFILE" --output "$PINNED_DOCKERFILE"
+          fi
+          grep -E '^FROM ' "$PINNED_DOCKERFILE"
+          printf 'path=%s\n' "$PINNED_DOCKERFILE" >>"$GITHUB_OUTPUT"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+      - name: Build upgrade archive
+        env:
+          COMPONENT: ${{ matrix.id }}
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+          CORE_VERSION: ${{ needs.prepare.outputs.core_version }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          V5_COMMIT: ${{ needs.prepare.outputs.v5_commit }}
+          PINNED_DOCKERFILE: ${{ steps.dockerfile.outputs.path }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p package
+          inferenced_ldflags="-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain -X github.com/cosmos/cosmos-sdk/version.AppName=inferenced -X github.com/cosmos/cosmos-sdk/version.Version=$CORE_VERSION -X github.com/cosmos/cosmos-sdk/version.Commit=$CORE_COMMIT"
+          dapi_ldflags="-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api -X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api -X github.com/cosmos/cosmos-sdk/version.Version=$CORE_VERSION -X github.com/cosmos/cosmos-sdk/version.Commit=$CORE_COMMIT"
+          case "$COMPONENT" in
+            inferenced)
+              docker buildx build --platform linux/amd64 --target binary-exporter --output type=local,dest=package \
+                --build-arg GOOS=linux --build-arg GOARCH=amd64 --build-arg BLST_PORTABLE=0 \
+                --build-arg "LDFLAGS=$inferenced_ldflags" \
+                -f "$PINNED_DOCKERFILE" source
+              ;;
+            inferenced-operator)
+              docker buildx build --platform linux/amd64 --target binary-exporter --output type=local,dest=package \
+                --build-arg GOOS=linux --build-arg GOARCH=amd64 --build-arg BLST_PORTABLE=0 \
+                --build-arg "LDFLAGS=$inferenced_ldflags" \
+                -f "$PINNED_DOCKERFILE" source
+              ;;
+            decentralized-api)
+              docker buildx build --platform linux/amd64 --target binary-exporter --output type=local,dest=package \
+                --build-arg GOOS=linux --build-arg GOARCH=amd64 --build-arg BLST_PORTABLE=0 \
+                --build-arg DEVSHARD_VERSION=v5 --build-arg "LDFLAGS=$dapi_ldflags" \
+                --build-arg "INFERENCED_LDFLAGS=$inferenced_ldflags" \
+                -f "$PINNED_DOCKERFILE" source
+              ;;
+            edge-api)
+              docker buildx build --platform linux/amd64 --target binary-exporter --output type=local,dest=package \
+                --build-arg GOOS=linux --build-arg GOARCH=amd64 --build-arg BLST_PORTABLE=0 \
+                -f "$PINNED_DOCKERFILE" source
+              ;;
+            devshardd)
+              builder="candidate-devshardd-builder:$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+              docker buildx build --platform linux/amd64 --target builder --load \
+                --build-arg GOOS=linux --build-arg GOARCH=amd64 --build-arg BLST_PORTABLE=0 \
+                --build-arg DEVSHARD_VERSION=v5 \
+                --build-arg DEVSHARD_BINARY_VERSION="$PROFILE-${V5_COMMIT:0:8}" \
+                -f "$PINNED_DOCKERFILE" -t "$builder" source
+              container="$(docker create "$builder")"
+              docker cp "$container:/app/devshard/build/devshardd" package/devshardd
+              docker rm "$container" >/dev/null
+              chmod 0755 package/devshardd
+              ;;
+            *) exit 2 ;;
+          esac
+          case "$COMPONENT" in
+            inferenced)
+              bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
+                inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" metadata
+              ;;
+            inferenced-operator)
+              bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
+                inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" operator
+              ;;
+            decentralized-api)
+              bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
+                decentralized-api package/build_output/decentralized-api "$CORE_VERSION" "$CORE_COMMIT" metadata
+              bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
+                inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" metadata
+              ;;
+          esac
+          archive="$COMPONENT-linux-amd64.zip"
+          automation/net-deployment-runbook/scripts/package-candidate-binary.sh \
+            "$COMPONENT" package "$archive"
+          sha256sum "$archive" >"$archive.sha256"
+      - name: Install pinned SBOM client
+        run: |
+          set -Eeuo pipefail
+          curl -fsSLo /tmp/syft.tar.gz https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz
+          echo '2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f  /tmp/syft.tar.gz' | sha256sum -c
+          tools="$RUNNER_TEMP/candidate-tools"
+          mkdir -p "$tools"
+          tar -xzf /tmp/syft.tar.gz -C "$tools" syft
+          printf '%s\n' "$tools" >>"$GITHUB_PATH"
+      - name: Generate binary SBOM
+        env:
+          COMPONENT: ${{ matrix.id }}
+        run: |
+          set -Eeuo pipefail
+          archive="$COMPONENT-linux-amd64.zip"
+          automation/net-deployment-runbook/scripts/generate-candidate-binary-sbom.sh \
+            "$COMPONENT" "$archive" "${archive}.spdx.json"
+      - name: Upload isolated binary result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-binary-build-${{ matrix.id }}
+          path: |
+            ${{ matrix.id }}-linux-amd64.zip
+            ${{ matrix.id }}-linux-amd64.zip.sha256
+            ${{ matrix.id }}-linux-amd64.zip.spdx.json
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-images:
+    needs: [prepare, images]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        id:
+          - inferenced
+          - decentralized-api
+          - edge-api
+          - devshardd
+          - devshard-gateway
+          - devshard-host
+          - versiond
+          - versiond-router
+    steps:
+      - name: Download isolated image result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: candidate-image-build-${{ matrix.id }}
+          path: image
+      - name: Validate image data without publication credentials
+        id: image
+        env:
+          IMAGE_ID: ${{ matrix.id }}
+          EXPECTED_IMAGE_REFERENCE: ghcr.io/${{ github.repository_owner }}/gdc-${{ matrix.id }}:${{ needs.prepare.outputs.profile }}-${{ needs.prepare.outputs.definition_short }}-${{ github.run_id }}
+        run: |
+          set -Eeuo pipefail
+          archive="image/$IMAGE_ID-linux-amd64.oci.tar.gz"
+          (cd image && sha256sum -c "$IMAGE_ID-linux-amd64.oci.tar.gz.sha256")
+          jq -e '.spdxVersion | startswith("SPDX-")' "${archive}.spdx.json" >/dev/null
+          IMAGE_REFERENCE="$(cat image/image-reference.txt)"
+          [[ "$IMAGE_REFERENCE" == "$EXPECTED_IMAGE_REFERENCE" ]] || {
+            echo 'candidate image artifact reference mismatch' >&2
+            exit 1
+          }
+          gzip -dc "$archive" | docker load
+          docker image inspect "$IMAGE_REFERENCE" >/dev/null
+          printf 'reference=%s\n' "$IMAGE_REFERENCE" >>"$GITHUB_OUTPUT"
+      - name: Install pinned OCI client
+        run: |
+          set -Eeuo pipefail
+          curl -fsSLo /tmp/oras.tar.gz https://github.com/oras-project/oras/releases/download/v1.3.0/oras_1.3.0_linux_amd64.tar.gz
+          echo '6cdc692f929100feb08aa8de584d02f7bcc30ec7d88bc2adc2054d782db57c64  /tmp/oras.tar.gz' | sha256sum -c
+          tools="$RUNNER_TEMP/candidate-tools"
+          mkdir -p "$tools"
+          tar -xzf /tmp/oras.tar.gz -C "$tools" oras
+          printf '%s\n' "$tools" >>"$GITHUB_PATH"
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish verified image and SBOM
+        id: publish
+        env:
+          IMAGE_ID: ${{ matrix.id }}
+          IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}
+        run: |
+          set -Eeuo pipefail
+          docker push "$IMAGE_REFERENCE"
+          digest="$(docker buildx imagetools inspect "$IMAGE_REFERENCE" | awk '$1 == "Digest:" {print $2; exit}')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          oras attach --artifact-type application/spdx+json "$IMAGE_REFERENCE@$digest" \
+            "image/$IMAGE_ID-linux-amd64.oci.tar.gz.spdx.json:application/spdx+json"
+          printf 'subject_name=%s\nsubject_digest=%s\nreference=%s\n' \
+            "${IMAGE_REFERENCE%%:*}" "$digest" "$IMAGE_REFERENCE" >>"$GITHUB_OUTPUT"
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-name: ${{ steps.publish.outputs.subject_name }}
+          subject-digest: ${{ steps.publish.outputs.subject_digest }}
+          push-to-registry: true
+      - name: Record published image result
+        env:
+          IMAGE_ID: ${{ matrix.id }}
+          IMAGE_REFERENCE: ${{ steps.publish.outputs.reference }}
+          IMAGE_DIGEST: ${{ steps.publish.outputs.subject_digest }}
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+        run: |
+          set -Eeuo pipefail
+          archive="$IMAGE_ID-linux-amd64.oci.tar.gz"
+          mkdir -p published-image
+          cp "image/$archive" "image/$archive.sha256" "image/$archive.spdx.json" published-image/
+          archive_sha256="$(awk '{print $1}' "image/$archive.sha256")"
+          archive_url="https://github.com/$GITHUB_REPOSITORY/releases/download/lab-candidate%2F$PROFILE/$archive"
+          jq -n --arg id "$IMAGE_ID" --arg reference "$IMAGE_REFERENCE" --arg digest "$IMAGE_DIGEST" \
+            --arg deployment_reference "$IMAGE_REFERENCE" --arg archive_url "$archive_url" --arg archive_sha256 "$archive_sha256" \
+            '{id:$id,reference:$reference,digest:$digest,deployment_reference:$deployment_reference,
+              archive_url:$archive_url,archive_sha256:$archive_sha256,sbom:true,provenance:true}' \
+            >"published-image/image-$IMAGE_ID.json"
+      - name: Upload published image result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-image-${{ matrix.id }}
+          path: published-image/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-binaries:
+    needs: [prepare, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: inferenced
+            member: inferenced
+          - id: inferenced-operator
+            member: inferenced
+          - id: decentralized-api
+            member: decentralized-api
+          - id: edge-api
+            member: edge-api
+          - id: devshardd
+            member: devshardd
+    steps:
+      - name: Download isolated binary result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: candidate-binary-build-${{ matrix.id }}
+          path: binary
+      - name: Validate binary data without publication credentials
+        env:
+          COMPONENT: ${{ matrix.id }}
+          ARCHIVE_MEMBER: ${{ matrix.member }}
+        run: |
+          set -Eeuo pipefail
+          (cd binary && sha256sum -c "$COMPONENT-linux-amd64.zip.sha256")
+          unzip -tq "binary/$COMPONENT-linux-amd64.zip" >/dev/null
+          [[ "$(unzip -Z1 "binary/$COMPONENT-linux-amd64.zip")" == "$ARCHIVE_MEMBER" ]]
+          jq -e '.spdxVersion | startswith("SPDX-")' \
+            "binary/$COMPONENT-linux-amd64.zip.spdx.json" >/dev/null
+      - name: Install pinned OCI client
+        run: |
+          set -Eeuo pipefail
+          curl -fsSLo /tmp/oras.tar.gz https://github.com/oras-project/oras/releases/download/v1.3.0/oras_1.3.0_linux_amd64.tar.gz
+          echo '6cdc692f929100feb08aa8de584d02f7bcc30ec7d88bc2adc2054d782db57c64  /tmp/oras.tar.gz' | sha256sum -c
+          tools="$RUNNER_TEMP/candidate-tools"
+          mkdir -p "$tools"
+          tar -xzf /tmp/oras.tar.gz -C "$tools" oras
+          printf '%s\n' "$tools" >>"$GITHUB_PATH"
+      - name: Publish verified archive and SBOM to GHCR
+        id: publish
+        env:
+          COMPONENT: ${{ matrix.id }}
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFINITION_SHA256: ${{ needs.prepare.outputs.definition_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          archive="binary/$COMPONENT-linux-amd64.zip"
+          printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          repository="ghcr.io/${GITHUB_REPOSITORY_OWNER}/gdc-upgrade-$COMPONENT"
+          reference="$repository:$PROFILE-${DEFINITION_SHA256:0:12}-$GITHUB_RUN_ID"
+          oras push "$reference" \
+            --artifact-type application/vnd.gdc.upgrade-binary.v1 \
+            --annotation "org.opencontainers.image.source=https://github.com/gonka-ai/gonka" \
+            --annotation "org.opencontainers.image.version=$PROFILE" \
+            "$archive:application/zip" \
+            "${archive}.sha256:text/plain" \
+            "${archive}.spdx.json:application/spdx+json"
+          digest="$(oras resolve "$reference")"
+          printf 'subject_name=%s\nsubject_digest=%s\nreference=%s\n' "$repository" "$digest" "$reference" >>"$GITHUB_OUTPUT"
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-name: ${{ steps.publish.outputs.subject_name }}
+          subject-digest: ${{ steps.publish.outputs.subject_digest }}
+          push-to-registry: true
+      - name: Record published binary result
+        env:
+          BINARY_ID: ${{ matrix.id }}-linux-amd64
+          COMPONENT: ${{ matrix.id }}
+          OCI_REFERENCE: ${{ steps.publish.outputs.reference }}
+          OCI_DIGEST: ${{ steps.publish.outputs.subject_digest }}
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+        run: |
+          set -Eeuo pipefail
+          archive="$COMPONENT-linux-amd64.zip"
+          mkdir -p published-binary
+          cp "binary/$archive" "binary/$archive.sha256" "binary/$archive.spdx.json" published-binary/
+          checksum="$(awk '{print $1}' "binary/$archive.sha256")"
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/lab-candidate%2F$PROFILE/$archive"
+          jq -n --arg id "$BINARY_ID" --arg reference "$OCI_REFERENCE" --arg digest "$OCI_DIGEST" --arg sha256 "$checksum" --arg url "$url" \
+            '{id:$id,oci_reference:$reference,oci_digest:$digest,sha256:$sha256,url:$url,sbom:true,provenance:true}' \
+            >"published-binary/binary-$COMPONENT.json"
+      - name: Upload published binary result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-binary-${{ matrix.id }}
+          path: published-binary/
+          if-no-files-found: error
+          retention-days: 90
+
+  manifest:
+    needs: [prepare, publish-images, publish-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout trusted publication automation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: automation
+          persist-credentials: false
+      - name: Download image results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: candidate-image-*
+          path: results/images
+          merge-multiple: true
+      - name: Download binary results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: candidate-binary-*
+          path: results/binaries
+          merge-multiple: true
+      - name: Create immutable build manifest
+        env:
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+          DEFINITION_SHA256: ${{ needs.prepare.outputs.definition_sha256 }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          V5_COMMIT: ${{ needs.prepare.outputs.v5_commit }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          REQUEST_REF: refs/heads/${{ github.event.repository.default_branch }}
+          REQUEST_SHA: ${{ github.event.workflow_run.head_sha }}
+          REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -Eeuo pipefail
+          images="$(jq -s 'map({key:.id,value:(del(.id))}) | from_entries' results/images/image-*.json)"
+          binaries="$(jq -s 'map({key:.id,value:(del(.id))}) | from_entries' results/binaries/binary-*.json)"
+          jq -n \
+            --arg profile "$PROFILE" \
+            --arg definition "$DEFINITION_SHA256" \
+            --arg core "$CORE_COMMIT" \
+            --arg v5 "$V5_COMMIT" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg ref "$WORKFLOW_REF" \
+            --arg sha "$WORKFLOW_SHA" \
+            --arg request_ref "$REQUEST_REF" \
+            --arg request_sha "$REQUEST_SHA" \
+            --arg request_run_id "$REQUEST_RUN_ID" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson images "$images" \
+            --argjson binaries "$binaries" \
+            '{schema_version:1,kind:"external-test-lab-candidate-build",profile:$profile,
+              definition_sha256:$definition,architectures:["linux/amd64"],
+              source:{gonka_core:$core,devshard_v5:$v5},
+              workflow:{repository:$repository,ref:$ref,sha:$sha,request_ref:$request_ref,
+                request_sha:$request_sha,request_run_id:$request_run_id,run_id:$run_id,
+                run_attempt:$run_attempt},
+              images:$images,binaries:$binaries}' >build-manifest.json
+          sha256sum build-manifest.json >build-manifest.sha256
+      - name: Publish idempotent laboratory prerelease assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -Eeuo pipefail
+          tag="lab-candidate/$PROFILE"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease \
+              | grep -Fxq true || {
+                echo 'existing candidate release is not a prerelease' >&2
+                exit 1
+              }
+            bash automation/net-deployment-runbook/scripts/verify-candidate-release-target.sh \
+              "$GITHUB_REPOSITORY" "$tag" "$TARGET_SHA"
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$TARGET_SHA" --prerelease \
+              --title "External Test Lab candidate $PROFILE" \
+              --notes "Independent laboratory build. This is not an official Gonka release or readiness statement."
+          fi
+          for asset in results/images/*.oci.tar.gz results/images/*.oci.tar.gz.sha256 \
+            results/images/*.oci.tar.gz.spdx.json \
+            results/binaries/*.zip results/binaries/*.zip.sha256 results/binaries/*.zip.spdx.json; do
+            name="${asset##*/}"
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              download_dir="$(mktemp -d)"
+              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$download_dir"
+              cmp -- "$asset" "$download_dir/$name" || {
+                echo "candidate release asset collision: $name" >&2
+                exit 1
+              }
+            else
+              gh release upload "$tag" "$asset" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+      - name: Upload immutable build manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ needs.prepare.outputs.profile }}-build-manifest
+          path: |
+            build-manifest.json
+            build-manifest.sha256
+          if-no-files-found: error
+          retention-days: 90

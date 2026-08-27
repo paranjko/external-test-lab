@@ -10,7 +10,7 @@ BATS_DIND_IMAGE ?= gdc-runbook-bats-dind:local
 cmd ?= bash
 authorized_key_file ?=
 
-.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-js site-js-check test edge-integration verify-upstream-profiles install-git-hooks
+.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-js site-js-check test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -51,6 +51,17 @@ site-js-check:
 
 test:
 	@./scripts/build-site-js.sh --check
+	@python3 ./scripts/test-release-candidate.py
+	@python3 ./scripts/test-pin-candidate-dockerfile.py
+	@python3 ./scripts/test-patch-candidate-dapi-dockerfile.py
+	@./scripts/test-package-candidate-binary.sh
+	@./scripts/test-generate-candidate-binary-sbom.sh
+	@./scripts/test-write-upgrade-marker.sh
+	@./scripts/test-upgrade-target-binding.sh
+	@./scripts/test-verify-candidate-release-target.sh
+	@./scripts/test-candidate-workflow.sh
+	@./scripts/test-candidate-gateway-compose.sh
+	@./scripts/test-build-gateway-image.sh
 	@./scripts/test-gdc-home.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/verify-release-profiles.sh
@@ -60,6 +71,7 @@ test:
 	@./scripts/test-validation-weight-evidence.sh
 	@./scripts/test-run-lineage-contract.sh
 	@./scripts/test-lifecycle-gate-b-contract.sh
+	@./scripts/test-public-upgrade-candidate-cli.sh
 	@./scripts/test-join-acceptance-contract.sh
 	@./scripts/test-reset-evidence.sh
 	@./scripts/test-upgrade-blocked-verdict.sh
@@ -103,6 +115,9 @@ test:
 	@./scripts/test-domain-cli.sh
 	@./scripts/test-explicit-public-host.sh
 	@./scripts/test-cleanroom-contract.sh
+
+verify-candidate-workflow:
+	@./scripts/test-candidate-workflow.sh
 
 edge-integration:
 	@./scripts/test-public-edge-static-site.sh
