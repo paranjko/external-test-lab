@@ -64,6 +64,7 @@ test:
 	@./scripts/test-candidate-gateway-compose.sh
 	@./scripts/test-build-gateway-image.sh
 	@./scripts/test-gdc-home.sh
+	@./scripts/test-gdc-github-report.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh

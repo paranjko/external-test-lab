@@ -126,7 +126,10 @@ grep -Fq 'COPY --from=builder /build_output/inferenced /build_output/inferenced'
 grep -Fq 'contents: write' <<<"$manifest_job"
 ! grep -Eq '(packages|id-token|attestations): write' <<<"$manifest_job"
 grep -Fq './gdc.sh release candidate prepare --source-ref upgrade-v0.2.16' "$RUNBOOK/gdc.sh"
-grep -Fq 'exec "$ROOT/scripts/release-candidate.py" "$@"' "$RUNBOOK/gdc.sh"
+# The launcher must remain in process so its single EXIT boundary records a
+# failed release command in the same private failure-envelope contract.
+grep -Fq '"$ROOT/scripts/release-candidate.py" "$@"' "$RUNBOOK/gdc.sh"
+! grep -Fq 'exec "$ROOT/scripts/release-candidate.py" "$@"' "$RUNBOOK/gdc.sh"
 
 grep -Fq 'group: candidate-publish-${{ github.event.workflow_run.display_title }}' "$PUBLISH_WORKFLOW"
 ! grep -Fq 'candidate-publish-${{ github.event.workflow_run.id }}' "$PUBLISH_WORKFLOW"
