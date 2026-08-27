@@ -90,8 +90,10 @@ only to one of your own open issues, or cancel; cancellation always retains
 the local report.
 
 GitHub issues are public in this repository. The complete report is sent as
-inline Markdown, so it remains useful with the stable GitHub CLI. The local
-archive is attached only when the installed CLI explicitly supports a
-compatible attachment option; otherwise it remains local. If `gh` is missing,
-not authenticated, lacks permission, or cannot reach GitHub, the command
-explains the next local recovery step and keeps the report and archive.
+inline Markdown, so it remains useful with the stable GitHub CLI. Raw logs are
+never uploaded. The local archive is attached only when the installed CLI
+explicitly supports a compatible attachment option; otherwise it remains
+local. When attachment is available, it is the sanitized archive rather than
+the raw run log. If `gh` is missing, not authenticated, lacks permission, or
+cannot reach GitHub, the command explains the next local recovery step and
+keeps the report and archive.

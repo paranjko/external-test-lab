@@ -36,6 +36,8 @@ grep -Fq -- '--body-file ' "$tmp/gh.args"
 ! grep -Fq 'report contents' "$tmp/gh.args"
 grep -Fq 'gdc-report-id:' "$tmp/published.md"
 grep -Fq 'gdc-report-sha256:' "$tmp/published.md"
+grep -Fq '<code>gdc invalid-command' "$tmp/published.md"
+! grep -Fq './gdc.sh' "$tmp/published.md"
 ! grep -Eiq 'authorization|private key|mnemonic|cookie|token=' "$tmp/published.md"
 report_dir="$(find "$tmp/operator/reporting/reports" -maxdepth 1 -mindepth 1 -type d -print -quit)"
 [[ -d "$report_dir" ]]
@@ -90,6 +92,56 @@ EOF
 grep -Fq 'Publication cancelled' "$tmp/cancel.err"
 ! grep -Eq 'issue (create|comment).*--body-file' "$tmp/cancel.args" || { echo 'cancellation attempted a write' >&2; exit 1; }
 
+FAKE_GH_ISSUES_JSON='[{"number":9001,"title":"Existing fixture","url":"https://github.com/paranjko/external-test-lab/issues/9001","author":{"login":"fixture-user","id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}]' \
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/projected-issues.args" FAKE_GH_BODY="$tmp/projected-issues.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  run_gdc report github >"$tmp/projected-issues.out" 2>"$tmp/projected-issues.err" <<'EOF'
+0
+EOF
+grep -Fq 'Publication cancelled' "$tmp/projected-issues.err"
+! grep -Fq 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' "$tmp/projected-issues.out" || { echo 'unallowlisted GitHub field reached the terminal' >&2; exit 1; }
+
+hostile_issue_root="$tmp/hostile-issue-operator"
+if GDC_HOME="$hostile_issue_root" "$ROOT/gdc.sh" hostile-issue-command >"$tmp/hostile-issue.out" 2>"$tmp/hostile-issue.err"; then
+  echo 'hostile issue fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+if FAKE_GH_ISSUES_JSON='[{"number":9001,"title":"unsafe\u001b[31m title","url":"https://github.com/paranjko/external-test-lab/issues/9001","author":{"login":"fixture-user"}}]' \
+  PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/hostile-issue.args" FAKE_GH_BODY="$tmp/hostile-issue.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$hostile_issue_root" "$ROOT/gdc.sh" report github >"$tmp/hostile-issue-report.out" 2>"$tmp/hostile-issue-report.err" <<'EOF'
+EOF
+then
+  echo 'hostile GitHub issue title unexpectedly succeeded' >&2
+  exit 1
+fi
+grep -Fq 'GitHub returned an invalid issue list' "$tmp/hostile-issue-report.err"
+! grep -Eq 'issue (create|comment).*--body-file' "$tmp/hostile-issue.args" || { echo 'hostile issue title attempted a write' >&2; exit 1; }
+
+unsafe_invocation_root="$tmp/unsafe-invocation-operator"
+if GDC_HOME="$unsafe_invocation_root" "$ROOT/gdc.sh" unsafe-invocation-command >"$tmp/unsafe-invocation.out" 2>"$tmp/unsafe-invocation.err"; then
+  echo 'unsafe invocation fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+unsafe_invocation_id="$(<"$unsafe_invocation_root/reporting/failures/latest-failure")"
+unsafe_invocation_failure="$unsafe_invocation_root/reporting/invocations/invocation.$unsafe_invocation_id/failure.env"
+{
+  while IFS= read -r line; do
+    case "$line" in
+      safe_invocation=*) printf 'safe_invocation=./gdc.sh \033[31mhostile\n' ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+  done <"$unsafe_invocation_failure"
+} >"$unsafe_invocation_failure.rewritten"
+mv "$unsafe_invocation_failure.rewritten" "$unsafe_invocation_failure"
+if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/unsafe-invocation.args" FAKE_GH_BODY="$tmp/unsafe-invocation.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$unsafe_invocation_root" "$ROOT/gdc.sh" report github >"$tmp/unsafe-invocation-report.out" 2>"$tmp/unsafe-invocation-report.err" <<'EOF'
+EOF
+then
+  echo 'control-bearing invocation unexpectedly succeeded' >&2
+  exit 1
+fi
+grep -Fq 'unsafe invocation text' "$tmp/unsafe-invocation-report.err"
+[[ ! -e "$tmp/unsafe-invocation.args" ]] || { echo 'unsafe invocation reached GitHub preflight' >&2; exit 1; }
+
 if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/context.args" FAKE_GH_BODY="$tmp/context.md" GDC_REPORT_TEST_INTERACTIVE=true \
   run_gdc report github >"$tmp/context.out" 2>"$tmp/context.err" <<'EOF'
 1
@@ -112,6 +164,8 @@ PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/attach.args" FAKE_GH_BODY="$tmp/attach.
 y
 EOF
 grep -Eq 'issue create.*--attach' "$tmp/attach.args"
+grep -Eq 'issue create.*--attach.*report\.[^ ]+\.tar\.gz' "$tmp/attach.args"
+! grep -Fq 'run.log' "$tmp/attach.args" || { echo 'attachment attempted to upload a raw log' >&2; exit 1; }
 
 if run_gdc another-invalid-command >"$tmp/second.out" 2>"$tmp/second.err"; then
   echo 'second pre-phase failure unexpectedly succeeded' >&2

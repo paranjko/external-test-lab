@@ -24,8 +24,8 @@ record_launcher_failure() {
   mkdir -p "$failure_dir"
   chmod 0700 "${GDC_DATA_ROOT:?}/reporting" "$failure_dir" 2>/dev/null || true
   tmp="$failure_dir/.latest-failure.$$.tmp"
-  safe_invocation="${GDC_INVOCATION_COMMAND:-$ROOT/gdc.sh}"
-  safe_invocation="${safe_invocation/"$ROOT/gdc.sh"/.\/gdc.sh}"
+  safe_invocation="${GDC_INVOCATION_COMMAND:-gdc}"
+  safe_invocation="${safe_invocation/"$ROOT/gdc.sh"/gdc}"
   {
     printf 'schema_version=1\n'
     printf 'invocation_id=%s\n' "$GDC_LAUNCHER_INVOCATION_ID"
@@ -43,7 +43,7 @@ record_launcher_failure() {
   printf '%s\n' "$GDC_LAUNCHER_INVOCATION_ID" >"$tmp"
   chmod 0600 "$tmp"
   mv -f "$tmp" "$failure_dir/latest-failure"
-  printf 'Hint: review the retained local failure and run ./gdc.sh report github when you are ready to disclose a sanitized report.\n' >&2
+  printf 'Hint: review the retained local failure and run gdc report github when you are ready to disclose a sanitized report.\n' >&2
 }
 
 on_launcher_exit() {
@@ -122,7 +122,7 @@ format_safe_invocation() {
         ;;
     esac
   done
-  printf '%q%s\n' "$ROOT/gdc.sh" "$rendered"
+  printf '%q%s\n' 'gdc' "$rendered"
 }
 
 run_phase() {

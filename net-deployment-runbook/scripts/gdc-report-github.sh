@@ -30,18 +30,20 @@ require_regular_beneath() {
 }
 
 read_failure_record() {
-  local record="$1" key value
+  local record="$1" key value seen_keys=' '
   require_regular_beneath "$REPORTING_ROOT" "$record" || die 'selected failure record is unsafe; inspect the local reporting directory'
-  FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_SAFE_INVOCATION='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG=''
+  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_SAFE_INVOCATION='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG=''
   while IFS='=' read -r key value; do
+    [[ "$seen_keys" != *" $key "* ]] || die 'failure record has a duplicate field'
+    seen_keys+="$key "
     case "$key" in
-      schema_version) [[ "$value" == 1 ]] || die 'unsupported failure record schema' ;;
+      schema_version) [[ "$value" == 1 ]] || die 'unsupported failure record schema'; FAILURE_SCHEMA_VERSION="$value" ;;
       invocation_id) [[ "$value" =~ ^[A-Za-z0-9._-]{6,128}$ ]] || die 'unsafe invocation identifier'; FAILURE_INVOCATION_ID="$value" ;;
       exit_code) [[ "$value" =~ ^[1-9][0-9]*$ ]] || die 'unsafe exit code'; FAILURE_EXIT_CODE="$value" ;;
       failure_stage) [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe failure stage'; FAILURE_STAGE="$value" ;;
       active_phase) [[ "$value" == unavailable || "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe active phase'; FAILURE_PHASE="$value" ;;
       run_id) [[ "$value" == unavailable || "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe run identifier'; FAILURE_RUN_ID="$value" ;;
-      safe_invocation) [[ "${#value}" -le 1024 && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die 'unsafe invocation text'; FAILURE_SAFE_INVOCATION="$value" ;;
+      safe_invocation) [[ "${#value}" -le 1024 && "$value" == 'gdc'* ]] && is_public_single_line "$value" || die 'unsafe invocation text'; FAILURE_SAFE_INVOCATION="$value" ;;
       run_manifest) FAILURE_RUN_MANIFEST="$value" ;;
       run_log) FAILURE_RUN_LOG="$value" ;;
       envelope) : ;; # Private paths are deliberately not collected.
@@ -49,7 +51,7 @@ read_failure_record() {
       *) die 'failure record has an unsupported field' ;;
     esac
   done <"$record"
-  [[ -n "$FAILURE_INVOCATION_ID" && -n "$FAILURE_EXIT_CODE" && -n "$FAILURE_STAGE" && -n "$FAILURE_RECORDED_AT" && -n "$FAILURE_SAFE_INVOCATION" ]] || die 'failure record is incomplete'
+  [[ -n "$FAILURE_SCHEMA_VERSION" && -n "$FAILURE_INVOCATION_ID" && -n "$FAILURE_EXIT_CODE" && -n "$FAILURE_STAGE" && -n "$FAILURE_RECORDED_AT" && -n "$FAILURE_SAFE_INVOCATION" ]] || die 'failure record is incomplete'
 }
 
 collect_diagnostic_excerpt() {
@@ -124,6 +126,12 @@ select_failure() {
 
 strip_controls() {
   LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | sed -E 's/[[:space:]]+$//'
+}
+
+is_public_single_line() {
+  local value="$1"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || return 1
+  printf '%s' "$value" | LC_ALL=C grep -Eq '^[ -~]*$'
 }
 
 scan_public_text() {
@@ -268,9 +276,17 @@ gh_preflight() {
   GH_LOGIN="$(gh api user --jq .login 2>/dev/null || true)"
   [[ "$GH_LOGIN" =~ ^[A-Za-z0-9-]{1,39}$ ]] || { notice "GitHub login could not be resolved; local report retained at $REPORT_DIR"; return 1; }
   [[ "$(gh api "repos/$REPORT_REPOSITORY" --jq '.permissions.push' 2>/dev/null || true)" == true ]] || { notice "GitHub issue write permission is unavailable; local report retained at $REPORT_DIR"; return 1; }
-  gh issue list --repo "$REPORT_REPOSITORY" --author "$GH_LOGIN" --state open --limit 100 --json number,title,url,author >"$REPORT_DIR/open-issues.json" || { notice "GitHub issue access is unavailable; local report retained at $REPORT_DIR"; return 1; }
-  scan_public_text "$REPORT_DIR/open-issues.json" || { notice "GitHub returned unsafe issue data; local report retained at $REPORT_DIR"; return 1; }
-  jq -e --arg login "$GH_LOGIN" 'type == "array" and all(.[]; (.number | type == "number") and (.url | type == "string") and (.author.login == $login) and (.title | type == "string"))' "$REPORT_DIR/open-issues.json" >/dev/null || { notice "GitHub returned an invalid issue list; local report retained at $REPORT_DIR"; return 1; }
+  gh issue list --repo "$REPORT_REPOSITORY" --author "$GH_LOGIN" --state open --limit 100 --json number,title,url,author >"$REPORT_DIR/.open-issues.raw.json" || { notice "GitHub issue access is unavailable; local report retained at $REPORT_DIR"; return 1; }
+  jq -e --arg login "$GH_LOGIN" '
+    type == "array" and all(.[];
+      (.number | type == "number") and
+      (.url | type == "string" and test("^https://github\\.com/paranjko/external-test-lab/issues/[1-9][0-9]*$")) and
+      (.author.login == $login) and
+      (.title | type == "string" and length >= 1 and length <= 160 and all(explode[]; . >= 32 and . != 127))
+    )
+  ' "$REPORT_DIR/.open-issues.raw.json" >/dev/null || { notice "GitHub returned an invalid issue list; local report retained at $REPORT_DIR"; return 1; }
+  jq -c '[.[] | {number, title, url, author: {login: .author.login}}]' "$REPORT_DIR/.open-issues.raw.json" >"$REPORT_DIR/open-issues.json"
+  rm -f "$REPORT_DIR/.open-issues.raw.json"
   ATTACHMENT_STATE='not supported by this GitHub CLI; inline Markdown is the complete report'
   attachment_args=()
   if gh issue create --help 2>/dev/null | grep -Fq -- '--attach' && gh issue comment --help 2>/dev/null | grep -Fq -- '--attach' && command -v file >/dev/null 2>&1 && [[ "$(file -b --mime-type "$ARCHIVE_PATH")" == application/gzip ]]; then
@@ -314,7 +330,7 @@ read_issue_title() {
   printf 'New issue title [%s]: ' "$title"
   read -r candidate || candidate=''
   [[ -n "$candidate" ]] || return 0
-  [[ "${#candidate}" -le 160 && "$candidate" != *$'\n'* && "$candidate" != *$'\r'* ]] || die "issue title is unsafe; retained $REPORT_DIR"
+  [[ "${#candidate}" -le 160 ]] && is_public_single_line "$candidate" || die "issue title is unsafe; retained $REPORT_DIR"
   printf '%s\n' "$candidate" >"$title_file"
   scan_public_text "$title_file" || die "issue title is unsafe for public disclosure; retained $REPORT_DIR"
   rm -f "$title_file"
@@ -400,7 +416,7 @@ publish() {
   else
     jq -e --argjson number "$issue_number" --arg login "$GH_LOGIN" '.[] | select(.number == $number and .author.login == $login)' "$REPORT_DIR/open-issues.json" >/dev/null || { notice "Selected issue is no longer eligible; local report retained at $REPORT_DIR"; return 1; }
     gh issue view "$issue_number" --repo "$REPORT_REPOSITORY" --json number,state,author,url >"$REPORT_DIR/selected-issue.json" || { notice "Selected issue could not be revalidated; local report retained at $REPORT_DIR"; return 1; }
-    jq -e --argjson number "$issue_number" --arg login "$GH_LOGIN" '.number == $number and .state == "OPEN" and .author.login == $login and (.url | startswith("https://github.com/paranjko/external-test-lab/issues/"))' "$REPORT_DIR/selected-issue.json" >/dev/null || { notice "Selected issue is no longer eligible; local report retained at $REPORT_DIR"; return 1; }
+    jq -e --argjson number "$issue_number" --arg login "$GH_LOGIN" '.number == $number and .state == "OPEN" and .author.login == $login and (.url | type == "string" and test("^https://github\\.com/paranjko/external-test-lab/issues/[1-9][0-9]*$"))' "$REPORT_DIR/selected-issue.json" >/dev/null || { notice "Selected issue is no longer eligible; local report retained at $REPORT_DIR"; return 1; }
     gh issue comment "$issue_number" --repo "$REPORT_REPOSITORY" --body-file "$REPORT_DIR/report.md" "${attachment_args[@]}" >/dev/null || { notice "GitHub comment creation failed; publication state UNKNOWN and local report retained at $REPORT_DIR"; return 1; }
     url="$(jq -r '.url' "$REPORT_DIR/selected-issue.json")"
     verify_issue "$url" true || { notice "GitHub readback was incomplete; publication state UNKNOWN and local report retained at $REPORT_DIR"; return 1; }
