@@ -71,6 +71,39 @@ def main() -> None:
             candidate.command_prepare(argparse.Namespace(source_ref="upgrade-v0.2.16"))
         assert "READY profile=v2026.08.25-rc.0" in output.getvalue()
 
+        # A layer-qualified freeze must not select an older combined
+        # definition that happens to bind the same DevShard ref.
+        devshard_only = json.loads(json.dumps(source_definition))
+        devshard_only["profile"] = "v2026.08.27-rc.0"
+        devshard_only["layer"] = "devshard"
+        devshard_only["repositories"] = {
+            "devshard_v5": source_definition["repositories"]["devshard_v5"]
+        }
+        devshard_only["components"] = [
+            {
+                "id": "devshard-runtime",
+                "action": "build-candidate",
+                "artifacts": ["oci-image", "upgrade-binary"],
+            },
+            {
+                "id": "devshard-host",
+                "action": "build-candidate",
+                "artifacts": ["oci-image"],
+            },
+        ]
+        devshard_path = candidates / "v2026.08.27-rc.0.definition.json"
+        write_json(devshard_path, devshard_only)
+        devshard_hash = candidate.sha256(devshard_path)
+        devshard_path.with_suffix(".sha256").write_text(
+            f"{devshard_hash}  {devshard_path.name}\n", encoding="utf-8"
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            candidate.command_prepare(
+                argparse.Namespace(source_ref="devshard-0.2.15-v5", layer="devshard")
+            )
+        assert "READY profile=v2026.08.27-rc.0 layer=devshard" in output.getvalue()
+
         image_names = candidate.REQUIRED_IMAGES
         binary_names = candidate.REQUIRED_BINARIES
         manifest = {
