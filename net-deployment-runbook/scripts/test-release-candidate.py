@@ -509,50 +509,46 @@ def main() -> None:
 
         calls.clear()
         downloads.clear()
-        retry_request_lists = 0
-        retry_publish_lists = 0
-        stale_publish_title = f"publish {request_title} request-101-attempt-1"
-        retry_publish_title = f"publish {request_title} request-101-attempt-2"
+        retry_dispatched = False
+        retry_publish_title = f"publish {request_title} request-102-attempt-1"
 
         def fake_retry_run(
             command: list[str], *, capture: bool = True
         ) -> subprocess.CompletedProcess[str]:
-            nonlocal retry_request_lists, retry_publish_lists
+            nonlocal retry_dispatched
             calls.append(command)
             stdout = ""
             if command[:2] == ["git", "show"]:
                 stdout = definition_path.read_text(encoding="utf-8")
+            elif command[:3] == ["gh", "workflow", "run"]:
+                retry_dispatched = True
             elif command[:2] == ["gh", "api"]:
                 endpoint = command[-1]
                 if candidate.REQUEST_WORKFLOW in endpoint:
-                    retry_request_lists += 1
-                    stdout = workflow_pages([{
+                    runs = [{
                         "databaseId": 101,
                         "displayTitle": request_title,
                         "status": "completed",
-                        "conclusion": (
-                            "failure" if retry_request_lists == 1 else "success"
-                        ),
-                        "attempt": 1 if retry_request_lists == 1 else 2,
-                    }])
-                elif candidate.PUBLISH_WORKFLOW in endpoint:
-                    retry_publish_lists += 1
-                    runs = [{
-                        "databaseId": 201,
-                        "displayTitle": stale_publish_title,
-                        "status": "completed",
-                        "conclusion": "skipped",
+                        "conclusion": "failure",
                         "attempt": 1,
                     }]
-                    if retry_publish_lists > 1:
+                    if retry_dispatched:
                         runs.insert(0, {
-                            "databaseId": 202,
-                            "displayTitle": retry_publish_title,
-                            "status": "in_progress",
-                            "conclusion": "",
+                            "databaseId": 102,
+                            "displayTitle": request_title,
+                            "status": "completed",
+                            "conclusion": "success",
                             "attempt": 1,
                         })
                     stdout = workflow_pages(runs)
+                elif candidate.PUBLISH_WORKFLOW in endpoint:
+                    stdout = workflow_pages([{
+                        "databaseId": 202,
+                        "displayTitle": retry_publish_title,
+                        "status": "in_progress",
+                        "conclusion": "",
+                        "attempt": 1,
+                    }])
             return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
         candidate.run = fake_retry_run
@@ -563,19 +559,15 @@ def main() -> None:
                     profile="v2026.08.25-rc.0", dry_run=False, retry=True, wait=True
                 )
             )
-        reruns = [
-            command
-            for command in calls
-            if command[:3] == ["gh", "run", "rerun"]
-        ]
-        assert reruns == [[
-            "gh", "run", "rerun", "101", "--repo", candidate.REPOSITORY, "--failed"
-        ]]
+        assert any(command[:3] == ["gh", "workflow", "run"] for command in calls)
+        assert not any(command[:3] == ["gh", "run", "rerun"] for command in calls)
         watched = [
             int(command[3])
             for command in calls
             if command[:3] == ["gh", "run", "watch"]
         ]
+        assert watched == [202]
+        assert downloads == [("v2026.08.25-rc.0", 202)]
         # --- IMP-013: Core Layer Candidate Tests ---
         core_definition = {
             "schema_version": 1,

@@ -400,6 +400,24 @@ def command_build(args: argparse.Namespace) -> None:
 
     request_runs = workflow_runs(REQUEST_WORKFLOW, "workflow_dispatch")
     request = next((item for item in request_runs if item.get("displayTitle") == request_title), None)
+    retry_with_fresh_request = False
+    if request and request.get("status") == "completed" and request.get("conclusion") == "success":
+        request_run_id = int(request["databaseId"])
+        request_attempt = int(request.get("attempt", 0))
+        if request_attempt < 1:
+            raise CandidateError(f"candidate request run {request_run_id} has no valid attempt")
+        previous_publish_title = (
+            f"publish {request_title} request-{request_run_id}-attempt-{request_attempt}"
+        )
+        previous_publication = matching_run(
+            PUBLISH_WORKFLOW, "workflow_run", previous_publish_title
+        )
+        retry_with_fresh_request = bool(
+            args.retry
+            and previous_publication
+            and previous_publication.get("status") == "completed"
+            and previous_publication.get("conclusion") != "success"
+        )
     if request and request.get("status") != "completed":
         request_run_id = int(request["databaseId"])
         print(f"RESUME profile={args.profile} request_run_id={request_run_id}")
@@ -408,10 +426,16 @@ def command_build(args: argparse.Namespace) -> None:
             f"candidate request run {request['databaseId']} concluded {request.get('conclusion')}; "
             "inspect it and rerun with --retry only after the cause is understood"
         )
-    elif request and request.get("conclusion") != "success":
+    elif request and (request.get("conclusion") != "success" or retry_with_fresh_request):
+        existing_ids = {int(item["databaseId"]) for item in request_runs}
+        run(dispatch)
+        print(f"RETRY profile={args.profile} definition_sha256={definition_hash} fresh_request=true")
+        if not args.wait:
+            return
+        request = wait_for_new_run(
+            REQUEST_WORKFLOW, "workflow_dispatch", request_title, existing_ids
+        )
         request_run_id = int(request["databaseId"])
-        run(["gh", "run", "rerun", str(request_run_id), "--repo", REPOSITORY, "--failed"])
-        print(f"RETRY profile={args.profile} request_run_id={request_run_id}")
     elif request:
         request_run_id = int(request["databaseId"])
     else:
@@ -463,8 +487,10 @@ def command_build(args: argparse.Namespace) -> None:
                 f"{publication.get('conclusion')}; inspect it and rerun with --retry only "
                 "after the cause is understood"
             )
-        run(["gh", "run", "rerun", str(publish_run_id), "--repo", REPOSITORY, "--failed"])
-        print(f"RETRY profile={args.profile} publish_run_id={publish_run_id}")
+        raise CandidateError(
+            f"candidate publication run {publish_run_id} failed after request selection; "
+            "rerun with --retry to dispatch a fresh reviewed candidate request"
+        )
     else:
         print(f"RESUME profile={args.profile} publish_run_id={publish_run_id}")
     if args.wait:
