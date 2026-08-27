@@ -259,7 +259,11 @@ def command_prepare(args: argparse.Namespace) -> None:
     for path in sorted(CANDIDATES.glob("*.definition.json")):
         candidate = load_json(path)
         cand_layer = candidate.get("layer", "all")
-        if target_layer and target_layer != "all" and cand_layer != target_layer and cand_layer != "all":
+        # A layer-qualified prepare must never fall back to a historical
+        # combined definition.  That would silently reintroduce components
+        # outside the frozen candidate boundary when both definitions bind
+        # the same moving upstream ref.
+        if target_layer and cand_layer != target_layer:
             continue
         repos = candidate.get("repositories", {})
         if not isinstance(repos, dict):
