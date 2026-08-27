@@ -624,6 +624,7 @@ jobs:
           DEFINITION_SHA256: ${{ needs.prepare.outputs.definition_sha256 }}
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
           V5_COMMIT: ${{ needs.prepare.outputs.v5_commit }}
+          DEVSHARD_REPOSITORY_KEY: ${{ needs.prepare.outputs.devshard_repository_key }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
           REQUEST_REF: refs/heads/${{ github.event.repository.default_branch }}

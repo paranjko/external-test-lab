@@ -46,6 +46,14 @@ def workflow_pages(*pages: list[dict[str, object]]) -> str:
 
 
 def main() -> None:
+    workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/candidate-publish.yml").read_text(
+        encoding="utf-8"
+    )
+    manifest_step = workflow.split("      - name: Create immutable build manifest\n", 1)[1].split(
+        "      - name: Publish idempotent laboratory prerelease assets\n", 1
+    )[0]
+    assert "DEVSHARD_REPOSITORY_KEY: ${{ needs.prepare.outputs.devshard_repository_key }}" in manifest_step
+
     source_definition = candidate.load_json(
         candidate.CANDIDATES / "v2026.08.25-rc.0.definition.json"
     )
