@@ -40,7 +40,7 @@ jobs:
       publish_binary_matrix: ${{ steps.definition.outputs.publish_binary_matrix }}
     steps:
       - name: Checkout reviewed laboratory automation
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
@@ -80,7 +80,7 @@ jobs:
             "$(jq -r .profile "$request")" \
             "$(jq -r .definition_sha256 "$request")" >>"$GITHUB_OUTPUT"
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@v4.3.0
       - name: Verify immutable definition and base images
         id: definition
         env:
@@ -148,13 +148,13 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.image_matrix) }}
     steps:
       - name: Checkout trusted publication automation
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           path: automation
           persist-credentials: false
       - name: Checkout exact Gonka source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@v7.0.1
         with:
           repository: gonka-ai/gonka
           ref: ${{ matrix.source == 'core' && needs.prepare.outputs.core_commit || needs.prepare.outputs.v5_commit }}
@@ -179,9 +179,9 @@ jobs:
           grep -E '^FROM ' "$PINNED_DOCKERFILE"
           printf 'path=%s\n' "$PINNED_DOCKERFILE" >>"$GITHUB_OUTPUT"
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@v4.3.0
       - name: Build isolated candidate image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@v7.3.0
         with:
           context: source/${{ matrix.context }}
           file: ${{ steps.dockerfile.outputs.path }}
@@ -250,7 +250,7 @@ jobs:
           sha256sum "$archive" >"$archive.sha256"
           printf '%s\n' "$IMAGE_REFERENCE" >image-reference.txt
       - name: Upload isolated image result
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: candidate-image-build-${{ matrix.id }}
           path: |
@@ -271,13 +271,13 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.binary_matrix) }}
     steps:
       - name: Checkout trusted publication automation
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           path: automation
           persist-credentials: false
       - name: Checkout exact Gonka source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@v7.0.1
         with:
           repository: gonka-ai/gonka
           ref: ${{ matrix.source == 'core' && needs.prepare.outputs.core_commit || needs.prepare.outputs.v5_commit }}
@@ -302,7 +302,7 @@ jobs:
           grep -E '^FROM ' "$PINNED_DOCKERFILE"
           printf 'path=%s\n' "$PINNED_DOCKERFILE" >>"$GITHUB_OUTPUT"
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@v4.3.0
       - name: Build upgrade archive
         env:
           COMPONENT: ${{ matrix.id }}
@@ -394,7 +394,7 @@ jobs:
           automation/net-deployment-runbook/scripts/generate-candidate-binary-sbom.sh \
             "$COMPONENT" "$archive" "${archive}.spdx.json"
       - name: Upload isolated binary result
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: candidate-binary-build-${{ matrix.id }}
           path: |
@@ -418,7 +418,7 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.publish_image_matrix) }}
     steps:
       - name: Download isolated image result
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@v8.0.1
         with:
           name: candidate-image-build-${{ matrix.id }}
           path: image
@@ -450,7 +450,7 @@ jobs:
           tar -xzf /tmp/oras.tar.gz -C "$tools" oras
           printf '%s\n' "$tools" >>"$GITHUB_PATH"
       - name: Log in to GHCR
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+        uses: docker/login-action@v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -470,7 +470,7 @@ jobs:
           printf 'subject_name=%s\nsubject_digest=%s\nreference=%s\n' \
             "${IMAGE_REFERENCE%%:*}" "$digest" "$IMAGE_REFERENCE" >>"$GITHUB_OUTPUT"
       - name: Attest image provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        uses: actions/attest-build-provenance@v4.2.2
         with:
           subject-name: ${{ steps.publish.outputs.subject_name }}
           subject-digest: ${{ steps.publish.outputs.subject_digest }}
@@ -494,7 +494,7 @@ jobs:
               archive_url:$archive_url,archive_sha256:$archive_sha256,sbom:true,provenance:true}' \
             >"published-image/image-$IMAGE_ID.json"
       - name: Upload published image result
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: candidate-image-${{ matrix.id }}
           path: published-image/
@@ -515,7 +515,7 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.publish_binary_matrix) }}
     steps:
       - name: Download isolated binary result
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@v8.0.1
         with:
           name: candidate-binary-build-${{ matrix.id }}
           path: binary
@@ -562,7 +562,7 @@ jobs:
           digest="$(oras resolve "$reference")"
           printf 'subject_name=%s\nsubject_digest=%s\nreference=%s\n' "$repository" "$digest" "$reference" >>"$GITHUB_OUTPUT"
       - name: Attest binary provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        uses: actions/attest-build-provenance@v4.2.2
         with:
           subject-name: ${{ steps.publish.outputs.subject_name }}
           subject-digest: ${{ steps.publish.outputs.subject_digest }}
@@ -585,7 +585,7 @@ jobs:
             '{id:$id,oci_reference:$reference,oci_digest:$digest,sha256:$sha256,url:$url,sbom:true,provenance:true}' \
             >"published-binary/binary-$COMPONENT.json"
       - name: Upload published binary result
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: candidate-binary-${{ matrix.id }}
           path: published-binary/
@@ -600,19 +600,19 @@ jobs:
       contents: write
     steps:
       - name: Checkout trusted publication automation
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           path: automation
           persist-credentials: false
       - name: Download image results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@v8.0.1
         with:
           pattern: candidate-image-*
           path: results/images
           merge-multiple: true
       - name: Download binary results
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@v8.0.1
         with:
           pattern: candidate-binary-*
           path: results/binaries
@@ -704,7 +704,7 @@ jobs:
             fi
           done
       - name: Upload immutable build manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: candidate-${{ needs.prepare.outputs.profile }}-build-manifest
           path: |
