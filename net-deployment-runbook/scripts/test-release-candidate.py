@@ -919,6 +919,8 @@ def main() -> None:
         )
         assert manifest_cand["core"]["classification"] == "lab-candidate"
         assert manifest_cand["devshard"]["classification"] == "lab-candidate"
+        assert "@sha256:" in manifest_cand["devshard"]["images"]["devshard-gateway"]
+        assert manifest_cand["devshard"]["images"]["devshard-gateway"] != "gdc/devshard-gateway:0.2.15-v5"
         candidate.verify_composition(comp_candidate_path)
 
         # Verify candidate composition lock and env bindings
