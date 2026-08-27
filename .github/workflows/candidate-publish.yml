@@ -114,7 +114,7 @@ jobs:
             )
           ' "$definition" >/dev/null
           while IFS=$'\t' read -r reference expected; do
-            actual="$(docker buildx imagetools inspect "$reference" | awk '$1 == "Digest:" {print $2; exit}')"
+            actual="$(docker buildx imagetools inspect "$reference" | awk '$1 == "Digest:" {print $2}')"
             [[ "$actual" == "$expected" ]] || {
               printf 'base image digest mismatch reference=%s expected=%s actual=%s\n' "$reference" "$expected" "$actual" >&2
               exit 1
@@ -463,7 +463,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           docker push "$IMAGE_REFERENCE"
-          digest="$(docker buildx imagetools inspect "$IMAGE_REFERENCE" | awk '$1 == "Digest:" {print $2; exit}')"
+          digest="$(docker buildx imagetools inspect "$IMAGE_REFERENCE" | awk '$1 == "Digest:" {print $2}')"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           oras attach --artifact-type application/spdx+json "$IMAGE_REFERENCE@$digest" \
             "image/$IMAGE_ID-linux-amd64.oci.tar.gz.spdx.json:application/spdx+json"

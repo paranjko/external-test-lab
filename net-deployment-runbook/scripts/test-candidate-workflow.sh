@@ -39,6 +39,8 @@ grep -Fq 'EXPECTED_RUN_ID: ${{ github.event.workflow_run.id }}' "$PUBLISH_WORKFL
 ! grep -Fq '${{ inputs.' "$PUBLISH_WORKFLOW"
 grep -Fq 'candidate definition checksum mismatch' "$PUBLISH_WORKFLOW"
 grep -Fq 'base image digest mismatch' "$PUBLISH_WORKFLOW"
+[[ "$(grep -Fc "awk '\$1 == \"Digest:\" {print \$2}'" "$PUBLISH_WORKFLOW")" == 2 ]]
+! grep -Fq "awk '\$1 == \"Digest:\" {print \$2; exit}'" "$PUBLISH_WORKFLOW"
 grep -Fq 'WORKFLOW_REF: ${{ github.workflow_ref }}' "$PUBLISH_WORKFLOW"
 grep -Fq 'WORKFLOW_SHA: ${{ github.workflow_sha }}' "$PUBLISH_WORKFLOW"
 grep -Fq 'REQUEST_SHA: ${{ github.event.workflow_run.head_sha }}' "$PUBLISH_WORKFLOW"
