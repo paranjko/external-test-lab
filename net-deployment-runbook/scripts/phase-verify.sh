@@ -59,23 +59,20 @@ expected=${#nodes[@]}
 # evidence set merely because its local joined marker was removed.
 step 'Resolve the complete canonical Host inventory into public participant identities'
 TOPOLOGY="$STATE/lineage/current-topology.json"
-resolve_expected_network_participants "$RUN/expected-participants.json" "$CHAIN_ID" "$genesis_sha256" "$TOPOLOGY"
-jq '[.[].address]' "$RUN/expected-participants.json" >"$RUN/expected-participant-addresses.json"
-mapfile -t participant_records < <(jq -c '.[]' "$RUN/expected-participants.json")
-
-step 'Reconcile the complete ACTIVE chain participant set with expected identities'
 ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
   >"$RUN/participants-chain.json"
-jq -e --slurpfile expected "$RUN/expected-participant-addresses.json" '
+resolve_expected_network_participants "$RUN/expected-participants.json" "$CHAIN_ID" "$genesis_sha256" "$TOPOLOGY" "$RUN/participants-chain.json"
+mapfile -t participant_records < <(jq -c '.participants[]' "$RUN/expected-participants.json")
+
+step 'Reconcile the complete ACTIVE chain participant set with expected identities'
+jq -e --slurpfile expected "$RUN/expected-participants.json" '
   ([.participant[]
-    | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")
-    | .address] | length) == ([.participant[]
-    | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")
-    | .address] | unique | length)
-  and ([.participant[]
-    | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")
-    | .address] | sort)
-  == ($expected[0] | sort)
+    | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1" or .status == 1)
+    | {address, validator_key, public_host:(.inference_url | sub("^https://"; "") | sub("/$"; ""))}]
+    | sort_by(.address))
+  == ([$expected[0].participants[]
+    | {address, validator_key, public_host}]
+    | sort_by(.address))
 ' "$RUN/participants-chain.json" >/dev/null \
   || die 'ACTIVE chain participants differ from the complete expected identity set'
 

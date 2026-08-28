@@ -457,6 +457,9 @@ fi
   node_name gdc-node2
 })" == gdc-node2 ]]
 grep -Fq 'resolve_expected_network_participants' "$ROOT/scripts/phase-verify.sh"
+grep -Fq 'participants-chain.json' "$ROOT/scripts/phase-verify.sh"
+grep -Fq 'public-chain-participant' "$ROOT/scripts/lib.sh"
+grep -Fq 'current-lineage receipt conflicts with public chain identity' "$ROOT/scripts/lib.sh"
 grep -Fq 'ACTIVE chain participants differ from the complete expected identity set' "$ROOT/scripts/phase-verify.sh"
 grep -Fq 'use_operator_inventory' "$ROOT/gdc.sh"
 grep -Fq 'trap on_exit EXIT' "$ROOT/scripts/phase-verify.sh"

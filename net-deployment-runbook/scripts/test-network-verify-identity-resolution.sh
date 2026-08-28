@@ -21,11 +21,17 @@ load_topology
 address() { printf 'gonka1%020d\n' "$1"; }
 for node in node0 node1 node2 node4; do
   mkdir -p "$(dirname "$(node_account_file "$node")")"
+  jq -n --arg address "$(address "${node#node}")" '{address:$address}' >"$(node_account_file "$node")"
 done
-jq -n --arg address "$(address 0)" '{address:$address}' >"$(node_account_file node0)"
-jq -n --arg address "$(address 1)" '{address:$address}' >"$(node_account_file node1)"
-jq -n --arg address "$(address 2)" '{address:$address}' >"$(node_account_file node2)"
-jq -n --arg address "$(address 4)" '{address:$address}' >"$(node_account_file node4)"
+
+chain="$tmp/participants-chain.json"
+jq -n --arg a0 "$(address 0)" --arg a1 "$(address 1)" --arg a2 "$(address 2)" --arg a3 "$(address 3)" --arg a4 "$(address 4)" '
+  {participant:[
+    {address:$a0,validator_key:"key0",inference_url:"https://node0.example",status:"ACTIVE"},
+    {address:$a1,validator_key:"key1",inference_url:"https://node1.example",status:"ACTIVE"},
+    {address:$a2,validator_key:"key2",inference_url:"https://node2.example",status:"ACTIVE"},
+    {address:$a3,validator_key:"key3",inference_url:"https://node3.example/",status:"ACTIVE"},
+    {address:$a4,validator_key:"key4",inference_url:"https://node4.example",status:"ACTIVE"}]}' >"$chain"
 
 topology="$tmp/topology.json"
 jq -n --arg chain test-chain --arg genesis aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
@@ -38,21 +44,35 @@ jq -n --arg chain test-chain --arg genesis aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     {address:$a4,validator_key:"key4",runtime_id:("qwen3-0.6b:"+$a4),public_host:"node4.example"}]}' >"$topology"
 
 out="$tmp/expected.json"
-resolve_expected_network_participants "$out" test-chain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$topology"
-[[ "$(jq length "$out")" == 5 ]]
-[[ "$(jq -r '.[] | select(.node == "node3") | .source' "$out")" == sanitized-current-lineage-receipt ]]
-[[ "$(jq -r '.[] | select(.node == "node4") | .source' "$out")" == coordinator-owned-public-account ]]
+resolve() {
+  resolve_expected_network_participants "$out" test-chain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$1" "$2"
+}
+expect_reject() { if ( "$@" ) >/dev/null 2>&1; then echo 'accepted invalid identity contract' >&2; exit 1; fi; }
 
-expect_reject() { if ( "$@" ) >/dev/null 2>&1; then echo "accepted invalid identity contract" >&2; exit 1; fi; }
-expect_reject resolve_expected_network_participants "$out" other-chain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$topology"
-expect_reject resolve_expected_network_participants "$out" test-chain bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$topology"
-jq '.participants[3].address = .participants[2].address | .participants[3].runtime_id = ("qwen3-0.6b:" + .participants[2].address)' "$topology" >"$tmp/duplicate.json"
-expect_reject resolve_expected_network_participants "$out" test-chain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$tmp/duplicate.json"
-jq '.participants[3].public_host = "node2.example"' "$topology" >"$tmp/ambiguous.json"
-expect_reject resolve_expected_network_participants "$out" test-chain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$tmp/ambiguous.json"
-jq '.participants[4].address = "gonka100000000000000000003" | .participants[4].runtime_id = "qwen3-0.6b:gonka100000000000000000003"' "$topology" >"$tmp/conflict.json"
-expect_reject resolve_expected_network_participants "$out" test-chain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$tmp/conflict.json"
-rm "$(node_account_file node4)"
-expect_reject resolve_expected_network_participants "$out" test-chain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$tmp/empty.json"
+resolve "$topology" "$chain"
+[[ "$(jq -r '.chain_id' "$out")" == test-chain ]]
+[[ "$(jq -r '.genesis_sha256' "$out")" == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]
+[[ "$(jq '.participants | length' "$out")" == 5 ]]
+[[ "$(jq -r '.participants[] | select(.node == "node3") | .source' "$out")" == public-chain-participant ]]
+[[ "$(jq -r '.participants[] | select(.node == "node3") | .validator_key' "$out")" == key3 ]]
+[[ "$(jq -r '.participants[] | select(.node == "node4") | .source' "$out")" == coordinator-owned-public-account ]]
 
-printf 'PASS complete Host identity resolution rejects missing, duplicate, stale, conflicting, and ambiguous identities\n'
+# An independent Host remains resolvable from public chain state with no receipt.
+resolve "$tmp/no-receipt.json" "$chain"
+
+jq '.genesis_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$topology" >"$tmp/stale.json"
+expect_reject resolve "$tmp/stale.json" "$chain"
+jq '.participants[3].validator_key = "other-key"' "$topology" >"$tmp/conflicting-receipt.json"
+expect_reject resolve "$tmp/conflicting-receipt.json" "$chain"
+jq '.participant[4].inference_url = "https://node3.example/"' "$chain" >"$tmp/duplicate-endpoint.json"
+expect_reject resolve "$tmp/no-receipt.json" "$tmp/duplicate-endpoint.json"
+jq 'del(.participant[3])' "$chain" >"$tmp/missing.json"
+expect_reject resolve "$tmp/no-receipt.json" "$tmp/missing.json"
+jq '.participant[3].status = "INACTIVE"' "$chain" >"$tmp/inactive.json"
+expect_reject resolve "$tmp/no-receipt.json" "$tmp/inactive.json"
+jq '.participant[3].inference_url = "http://node3.example"' "$chain" >"$tmp/non-https.json"
+expect_reject resolve "$tmp/no-receipt.json" "$tmp/non-https.json"
+jq '.participant[0].address = "gonka100000000000000000099"' "$chain" >"$tmp/local-host-conflict.json"
+expect_reject resolve "$tmp/no-receipt.json" "$tmp/local-host-conflict.json"
+
+printf 'PASS complete Host identity resolution uses public chain state and rejects invalid mappings\n'

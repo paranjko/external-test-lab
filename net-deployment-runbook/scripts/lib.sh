@@ -746,19 +746,32 @@ node_account_file() {
 
 # Resolve the full canonical Host inventory into public participant identities.
 # A coordinator may read only the public address field from a Host account file
-# it owns.  An independent Host is represented by a current, sanitized JOIN
-# receipt instead; no keyring, mnemonic, validator key, recovery archive, or
-# private operator directory is consulted.
+# it owns. An independent Host is resolved from the captured public chain
+# participant set. A current, sanitized JOIN receipt is an optional consistency
+# check only; no keyring, mnemonic, validator key, recovery archive, or private
+# operator directory is consulted.
 resolve_expected_network_participants() {
-  local output="$1" chain_id="$2" genesis_sha256="$3" topology="$4"
-  local node host account address local_address receipt_count receipt_address
-  local topology_required=false
+  local output="$1" chain_id="$2" genesis_sha256="$3" topology="$4" chain_participants="$5"
+  local node host account address local_address validator_key source receipt_count
+  local candidate_count receipt_address receipt_validator_key
   local tmp
   [[ "$chain_id" =~ ^[A-Za-z0-9._-]+$ ]] || die 'invalid chain ID for expected participant resolution'
   [[ "$genesis_sha256" =~ ^[0-9a-f]{64}$ ]] || die 'invalid Genesis hash for expected participant resolution'
   mkdir -p "$(dirname "$output")"
   tmp="${output}.tmp"
-  printf '[]' >"$tmp"
+  jq -e '.participant | type == "array"' "$chain_participants" >/dev/null \
+    || die 'captured public participant set is malformed'
+  jq -e '
+    [.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1" or .status == 1)
+      | {address,validator_key,inference_url}]
+    | all(.[]; (.address | type == "string" and test("^gonka1[0-9a-z]{20,90}$"))
+        and (.validator_key | type == "string" and length > 0)
+        and (.inference_url | type == "string" and test("^https://[A-Za-z0-9.-]+/?$")))
+    and ([.[].address] | length) == ([.[].address] | unique | length)
+    and ([.[].inference_url | sub("/$"; "")] | length) == ([.[].inference_url | sub("/$"; "")] | unique | length)
+  ' "$chain_participants" >/dev/null || die 'ACTIVE public participant set has malformed or duplicate identities'
+  jq -n --arg chain_id "$chain_id" --arg genesis_sha256 "$genesis_sha256" \
+    '{schema_version:1,chain_id:$chain_id,genesis_sha256:$genesis_sha256,participants:[]}' >"$tmp"
 
   for node in "${GDC_NODES[@]}"; do
     host="$(node_public_host "$node")"
@@ -768,8 +781,6 @@ resolve_expected_network_participants() {
       [[ -f "$account" && ! -L "$account" ]] || die "public account record is not a regular file for $node"
       local_address="$(jq -er '.address | select(type == "string" and test("^gonka1[0-9a-z]{20,90}$"))' "$account")" \
         || die "public account record lacks a valid participant address for $node"
-    else
-      topology_required=true
     fi
 
     if [[ -s "$topology" ]]; then
@@ -788,37 +799,43 @@ resolve_expected_network_participants() {
       (( receipt_count <= 1 )) || die "ambiguous current-lineage identity for $node"
       if (( receipt_count == 1 )); then
         receipt_address="$(jq -er --arg host "$host" '.participants[] | select(.public_host == $host) | .address' "$topology")"
-        if [[ -n "$local_address" && "$local_address" != "$receipt_address" ]]; then
-          die "conflicting public account and current-lineage identity for $node"
-        fi
+        receipt_validator_key="$(jq -er --arg host "$host" '.participants[] | select(.public_host == $host) | .validator_key' "$topology")"
       else
         receipt_address=''
+        receipt_validator_key=''
       fi
     else
       receipt_count=0
       receipt_address=''
+      receipt_validator_key=''
     fi
 
     if [[ -n "$local_address" ]]; then
+      candidate_count="$(jq --arg address "$local_address" --arg host "$host" '[.participant[] | select((.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1" or .status == 1) and .address == $address and (.inference_url | sub("/$"; "")) == ("https://" + $host))] | length' "$chain_participants")"
+      (( candidate_count == 1 )) || die "coordinator-owned public identity for $node is missing, inactive, ambiguous, or mapped to another host"
       address="$local_address"
+      validator_key="$(jq -er --arg address "$address" '.participant[] | select(.address == $address) | .validator_key' "$chain_participants")"
       source='coordinator-owned-public-account'
     else
-      [[ "$receipt_count" == 1 ]] || die "missing current-lineage public identity for independent Host $node"
-      jq -e --arg host "$host" '.participants[] | select(.public_host == $host and .operator_mode == "independent-host")' "$topology" >/dev/null \
-        || die "current-lineage identity for $node is not an independent Host receipt"
-      address="$receipt_address"
-      source='sanitized-current-lineage-receipt'
+      candidate_count="$(jq --arg host "$host" '[.participant[] | select((.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1" or .status == 1) and (.inference_url | sub("/$"; "")) == ("https://" + $host))] | length' "$chain_participants")"
+      (( candidate_count == 1 )) || die "independent public identity for $node is missing, inactive, ambiguous, or mapped to another host"
+      address="$(jq -er --arg host "$host" '.participant[] | select((.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1" or .status == 1) and (.inference_url | sub("/$"; "")) == ("https://" + $host)) | .address' "$chain_participants")"
+      validator_key="$(jq -er --arg host "$host" '.participant[] | select((.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1" or .status == 1) and (.inference_url | sub("/$"; "")) == ("https://" + $host)) | .validator_key' "$chain_participants")"
+      source='public-chain-participant'
     fi
-    jq --arg node "$node" --arg public_host "$host" --arg address "$address" --arg source "$source" \
-      '. + [{node:$node,public_host:$public_host,address:$address,source:$source}]' "$tmp" >"${tmp}.next"
+    if (( receipt_count == 1 )); then
+      [[ "$receipt_address" == "$address" && "$receipt_validator_key" == "$validator_key" ]] \
+        || die "current-lineage receipt conflicts with public chain identity for $node"
+    fi
+    jq --arg node "$node" --arg public_host "$host" --arg address "$address" --arg validator_key "$validator_key" --arg source "$source" \
+      '.participants += [{node:$node,public_host:$public_host,address:$address,validator_key:$validator_key,source:$source}]' "$tmp" >"${tmp}.next"
     mv "${tmp}.next" "$tmp"
   done
 
-  if [[ "$topology_required" == true ]]; then
-    [[ -s "$topology" ]] || die 'independent Host identity requires a sanitized current-lineage topology'
-  fi
-  jq -e 'length > 0 and ([.[].address] | length) == ([.[].address] | unique | length)
-    and ([.[].public_host] | length) == ([.[].public_host] | unique | length)' "$tmp" >/dev/null \
+  jq -e '(.participants | length > 0)
+    and ([.participants[].address] | length) == ([.participants[].address] | unique | length)
+    and ([.participants[].validator_key] | length) == ([.participants[].validator_key] | unique | length)
+    and ([.participants[].public_host] | length) == ([.participants[].public_host] | unique | length)' "$tmp" >/dev/null \
     || die 'expected participant identities are missing or duplicate'
   mv "$tmp" "$output"
 }
