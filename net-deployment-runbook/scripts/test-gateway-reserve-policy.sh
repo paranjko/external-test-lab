@@ -30,14 +30,36 @@ install -m 0755 "$POLICY" "$tmp/controller/gateway-reserve-policy.sh"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+args="$*"
+output=''
+while (($#)); do
+  case "$1" in
+    -o) output="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+emit() {
+  local body="$1" status="${2:-200}"
+  if [[ -n "$output" ]]; then
+    printf '%s\n' "$body" >"$output"
+    printf '%s' "$status"
+  else
+    printf '%s\n' "$body"
+  fi
+}
 [[ "${GDC_TEST_CHAIN_UNAVAILABLE:-false}" != true ]] || exit 22
-case "$*" in
-  *'/cosmos/bank/'*) printf '{"balances":[{"denom":"ngonka","amount":"%s"}]}\n' "${GDC_TEST_BALANCE:-601}" ;;
-  *'/cosmos/tx/'*) printf '%s\n' "${GDC_TEST_TX_RESPONSE:-}" ;;
-  *'/v1/admin/devshards'*) printf '%s\n' "${GDC_TEST_ADMIN_STATE:-{\"devshards\":[]}}" ;;
+case "$args" in
+  *'/cosmos/bank/'*) emit "{\"balances\":[{\"denom\":\"ngonka\",\"amount\":\"${GDC_TEST_BALANCE:-601}\"}]}" ;;
+  *'/cosmos/tx/'*) emit "${GDC_TEST_TX_RESPONSE:-}" ;;
+  *'/v1/admin/devshards'*) emit "${GDC_TEST_ADMIN_STATE:-{\"devshards\":[]}}" ;;
   *)
     [[ -n "${GDC_TEST_POST_LOG:-}" ]] && printf 'post\n' >>"$GDC_TEST_POST_LOG"
-    printf '%s\n' '{"txhash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","state":"submitted"}'
+    if [[ "${GDC_TEST_SIGNER_UNAVAILABLE:-false}" == true ]]; then
+      emit '{"error":"gateway reserve funding account has insufficient funds"}' 503
+    else
+      emit '{"txhash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","state":"submitted"}'
+    fi
     ;;
 esac
 EOF
@@ -77,6 +99,31 @@ controller_rc=$?
 set -e
 [[ "$controller_rc" == 1 ]]
 jq -e '.state == "BLOCKED" and .reason == "reserve_chain_unavailable"' "$tmp/blocked.json" >/dev/null
+
+# A signer outage preserves one attempt identity throughout backoff. A retry
+# before next_attempt_at must not create or submit another logical refill.
+signer_file="$tmp/signer-unavailable.json"
+signer_post_log="$tmp/signer-posts.log"
+set +e
+GDC_TEST_BALANCE=500 GDC_TEST_SIGNER_UNAVAILABLE=true GDC_TEST_POST_LOG="$signer_post_log" \
+  PATH="$tmp/bin:$PATH" GDC_GATEWAY_ENV="$tmp/gateway.env" \
+  GDC_GATEWAY_RESERVE_FILE="$signer_file" GDC_GATEWAY_RESERVE_LOCK="$tmp/signer.lock" \
+  "$tmp/controller/gateway-reserve-controller.sh" >/dev/null 2>&1
+signer_first_rc=$?
+set -e
+[[ "$signer_first_rc" == 1 ]]
+signer_identity="$(jq -r '.attempt.identity' "$signer_file")"
+set +e
+GDC_TEST_BALANCE=500 GDC_TEST_SIGNER_UNAVAILABLE=true GDC_TEST_POST_LOG="$signer_post_log" \
+  PATH="$tmp/bin:$PATH" GDC_GATEWAY_ENV="$tmp/gateway.env" \
+  GDC_GATEWAY_RESERVE_FILE="$signer_file" GDC_GATEWAY_RESERVE_LOCK="$tmp/signer.lock" \
+  "$tmp/controller/gateway-reserve-controller.sh" >/dev/null 2>&1
+signer_backoff_rc=$?
+set -e
+[[ "$signer_backoff_rc" == 1 ]]
+[[ "$(jq -r '.attempt.identity' "$signer_file")" == "$signer_identity" ]]
+[[ "$(wc -l <"$signer_post_log")" == 1 ]]
+[[ "$(jq -r .reason "$signer_file")" == reserve_backoff ]]
 
 # A persisted submission is retried with the same identity only while its
 # transaction is unresolved. A later equal deficit gets a fresh identity after

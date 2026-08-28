@@ -18,6 +18,9 @@ mkdir -p "$DEST"; cp -a "$HERE"/. "$DEST"/
 mkdir -p "$DEST/status"
 install -m 0600 "$RENDER/.env" "$DEST/.env"
 if [[ "$COMPONENT" == gateway ]]; then
+  # Close the old lifecycle controller before replacing its environment. It
+  # is restarted only after Compose has recreated the matching gateway.
+  systemctl stop gdc-gateway-escrow-reconciler.timer gdc-gateway-escrow-reconciler.service >/dev/null 2>&1 || true
   install -m 0600 "$GATEWAY" "$DEST/gateway.env"
 elif [[ ! -e "$DEST/gateway.env" ]]; then
   install -m 0600 /dev/null "$DEST/gateway.env"
@@ -53,7 +56,6 @@ install -m 0644 "$HERE/gdc-gateway-health-probe.timer" /etc/systemd/system/gdc-g
 # The reconciler is executed by systemd, so install its executable under
 # root-owned ancestors rather than below /srv/dai/ops.
 install -d -o root -g root -m 0755 /usr/local/lib/gonka-devnet
-install -o root -g root -m 0755 "$HERE/gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh
 install -o root -g root -m 0755 "$HERE/gateway-reserve-controller.sh" /usr/local/lib/gonka-devnet/gateway-reserve-controller.sh
 install -o root -g root -m 0755 "$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
 install -m 0755 "$HERE/gateway-status-routable.sh" "$DEST/gateway-status-routable.sh"
@@ -61,15 +63,19 @@ sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service
   "$HERE/gdc-gateway-reserve-controller.service" \
   | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-reserve-controller.service
 install -m 0644 "$HERE/gdc-gateway-reserve-controller.timer" /etc/systemd/system/gdc-gateway-reserve-controller.timer
-sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
-  "$HERE/gdc-gateway-escrow-reconciler.service" \
-  | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-escrow-reconciler.service
-install -m 0644 "$HERE/gdc-gateway-escrow-reconciler.timer" /etc/systemd/system/gdc-gateway-escrow-reconciler.timer
+# Upgrade the reconciler executable, unit and environment as one gateway
+# operation. An unrelated OPS deployment must not start new lifecycle code
+# against a retained gateway.env with an older contract.
+if [[ "$COMPONENT" == gateway ]]; then
+  install -o root -g root -m 0755 "$HERE/gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh
+  sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
+    "$HERE/gdc-gateway-escrow-reconciler.service" \
+    | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-escrow-reconciler.service
+  install -m 0644 "$HERE/gdc-gateway-escrow-reconciler.timer" /etc/systemd/system/gdc-gateway-escrow-reconciler.timer
+fi
 systemctl daemon-reload
 systemctl enable --now gdc-gateway-health-probe.timer >/dev/null
-systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null
 systemctl enable --now gdc-gateway-reserve-controller.timer >/dev/null
 systemctl start gdc-gateway-reserve-controller.service || true
 systemctl start gdc-gateway-health-probe.service || true
-systemctl start gdc-gateway-escrow-reconciler.service || true
 printf 'READY installed %s operations component in %s\n' "$COMPONENT" "$DEST"

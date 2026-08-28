@@ -1125,6 +1125,8 @@ def materialize_composition_lock(manifest: dict[str, Any]) -> str:
     images = components["images"]
     binaries = components["binaries"]
     comp_name = manifest["composition"]
+    gateway_image = images.get("devshard-gateway", "")
+    local_gateway_image = gateway_image.split("@sha256:", 1)[0]
 
     values: dict[str, Any] = {
         "LAB_CANDIDATE": "true" if core_info.get("classification") == "lab-candidate" or devshard_info.get("classification") == "lab-candidate" else "false",
@@ -1170,8 +1172,8 @@ def materialize_composition_lock(manifest: dict[str, Any]) -> str:
     if "host_stack_commit" in devshard_info:
         values["GONKA_HOST_STACK_COMMIT"] = devshard_info["host_stack_commit"]
     if "devshard-gateway" in images:
-        values["LOCAL_GATEWAY_IMAGE"] = images["devshard-gateway"]
-        values["DEVSHARD_GATEWAY_IMAGE"] = images["devshard-gateway"]
+        values["LOCAL_GATEWAY_IMAGE"] = local_gateway_image
+        values["DEVSHARD_GATEWAY_IMAGE"] = gateway_image
     if "gateway_archive_url" in devshard_info:
         values["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL"] = devshard_info["gateway_archive_url"]
         values["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256"] = devshard_info["gateway_archive_sha256"]
@@ -1227,6 +1229,8 @@ def composition_env(manifest: dict[str, Any]) -> str:
     images = components["images"]
     binaries = components["binaries"]
     comp_name = manifest["composition"]
+    gateway_image = images.get("devshard-gateway", "")
+    local_gateway_image = gateway_image.split("@sha256:", 1)[0]
     core_profile = core_info["profile"]
     manifest_hash = sha256_content(json.dumps(manifest, indent=2) + "\n")
 
@@ -1257,8 +1261,8 @@ def composition_env(manifest: dict[str, Any]) -> str:
         "DEVSHARD_SUPPORTED_PROTOCOLS": "v3 v5" if devshard_info.get("protocol_version") == "v5" else "v3",
         "DEVSHARD_SOURCE_REF": devshard_info.get("source_ref", "refs/heads/main"),
         "DEVSHARD_COMMIT": devshard_info.get("source_commit", ""),
-        "LOCAL_GATEWAY_IMAGE": images.get("devshard-gateway", ""),
-        "DEVSHARD_GATEWAY_IMAGE": images.get("devshard-gateway", ""),
+        "LOCAL_GATEWAY_IMAGE": local_gateway_image,
+        "DEVSHARD_GATEWAY_IMAGE": gateway_image,
         "DEVSHARD_HOST_IMAGE": images.get("devshard-host", ""),
         "POSTGRES_IMAGE": images.get("postgres", "postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94"),
     }
@@ -1273,7 +1277,7 @@ def composition_env(manifest: dict[str, Any]) -> str:
         env["CANDIDATE_DEVSHARD_COMMIT"] = devshard_info.get("source_commit", "")
         env["CANDIDATE_DEVSHARD_PROTOCOL_VERSION"] = devshard_info.get("protocol_version", "v5")
         env["CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS"] = "v3 v5" if devshard_info.get("protocol_version") == "v5" else "v3"
-        env["CANDIDATE_LOCAL_GATEWAY_IMAGE"] = images.get("devshard-gateway", "")
+        env["CANDIDATE_LOCAL_GATEWAY_IMAGE"] = local_gateway_image
         env["CANDIDATE_POSTGRES_IMAGE"] = images.get("postgres", "")
 
     if "devshardd" in images:

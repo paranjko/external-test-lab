@@ -7,6 +7,12 @@ proposal_id="${1:-}"
 option="${2:-yes}"
 [[ "$proposal_id" =~ ^[1-9][0-9]*$ ]] || die 'proposal ID must be a positive integer'
 [[ "$option" =~ ^(yes|no|abstain|no_with_veto)$ ]] || die 'vote option must be yes, no, abstain, or no_with_veto'
+case "$option" in
+  yes) option_constant=VOTE_OPTION_YES ;;
+  no) option_constant=VOTE_OPTION_NO ;;
+  abstain) option_constant=VOTE_OPTION_ABSTAIN ;;
+  no_with_veto) option_constant=VOTE_OPTION_NO_WITH_VETO ;;
+esac
 
 RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-vote-proposal-$proposal_id"
 mkdir -p "$RUN"
@@ -42,20 +48,50 @@ fi
 
 mapfile -t nodes < <(configured_nodes)
 (( ${#nodes[@]} > 0 )) || die 'no joined participants are available to vote'
-password="$(<"$SECRETS/operator.keyring")"
+voting_nodes=()
+printf '[]' >"$RUN/expected-voters.json"
+for node in "${nodes[@]}"; do
+  node_home="$GDC_DATA_ROOT/$node"
+  account_file="$node_home/accounts/$node-cold.json"
+  password_file="$node_home/state/secrets/operator.keyring"
+  operator_home="$node_home/state/operator-home"
+  if [[ ! -s "$account_file" || ! -s "$password_file" || ! -d "$operator_home/keyring-file" ]]; then
+    die "joined Host $node has incomplete local governance signing state; repair or restore it before voting"
+  fi
+  name="$node-cold"
+  expected_address="$(jq -er .address "$account_file")"
+  password="$(<"$password_file")"
+  signing_address="$(printf '%s\n' "$password" | GDC_OPERATOR_HOME="$operator_home" \
+    "$ROOT/scripts/inferenced.sh" keys show "$name" --keyring-backend file -a | tail -n1 | tr -d '\r')"
+  [[ "$signing_address" == "$expected_address" ]] || \
+    die "local governance signing identity for $node does not match its recorded account"
+  jq --arg node "$node" --arg name "$name" --arg address "$expected_address" --arg option "$option_constant" \
+    '. + [{node:$node,name:$name,address:$address,option:$option}]' \
+    "$RUN/expected-voters.json" >"$RUN/expected-voters.tmp"
+  mv "$RUN/expected-voters.tmp" "$RUN/expected-voters.json"
+  voting_nodes+=("$node")
+done
+(( ${#voting_nodes[@]} > 0 )) || die 'no locally managed participant has complete governance signing state'
+"$ROOT/scripts/governance-vote-evidence.sh" validate "$RUN/expected-voters.json" || \
+  die 'locally managed Hosts do not have unique governance signer addresses'
 printf '[]' >"$RUN/vote-transactions.json"
 submitted=0
 pending_names=()
 pending_hashes=()
-for node in "${nodes[@]}"; do
+pending_addresses=()
+for node in "${voting_nodes[@]}"; do
   name="$node-cold"
-  address="$(jq -er .address "$ACCOUNTS/$name.json")"
-  if jq -e --arg address "$address" '.votes[]? | select(.voter == $address)' "$RUN/votes-before.json" >/dev/null; then
-    printf 'READY existing vote from %s\n' "$name"
-    continue
-  fi
+  node_home="$GDC_DATA_ROOT/$node"
+  account_file="$node_home/accounts/$name.json"
+  password_file="$node_home/state/secrets/operator.keyring"
+  operator_home="$node_home/state/operator-home"
+  address="$(jq -er .address "$account_file")"
+  # A vote visible before this run is mutable until the period closes. Submit
+  # the requested option again so every claimed participant has an immutable
+  # committed receipt from this exact run.
   step "Vote $option from $name"
-  tx="$(printf '%s\n' "$password" | "$ROOT/scripts/inferenced.sh" tx gov vote "$proposal_id" "$option" \
+  password="$(<"$password_file")"
+  tx="$(printf '%s\n' "$password" | GDC_OPERATOR_HOME="$operator_home" "$ROOT/scripts/inferenced.sh" tx gov vote "$proposal_id" "$option" \
     --from "$name" --keyring-backend file --chain-id "$CHAIN_ID" --node "$rpc" \
     --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --broadcast-mode sync --output json --yes)"
   jq -e '.code == 0 and (.txhash | test("^[A-F0-9]{64}$"))' <<<"$tx" >/dev/null || die "vote transaction from $name failed"
@@ -64,6 +100,7 @@ for node in "${nodes[@]}"; do
   mv "$RUN/vote-transactions.tmp" "$RUN/vote-transactions.json"
   pending_names+=("$name")
   pending_hashes+=("$txhash")
+  pending_addresses+=("$address")
   submitted=$((submitted + 1))
 done
 
@@ -72,6 +109,7 @@ done
 for position in "${!pending_hashes[@]}"; do
   name="${pending_names[$position]}"
   txhash="${pending_hashes[$position]}"
+  address="${pending_addresses[$position]}"
   receipt=''
   for _ in $(seq 1 60); do
     receipt="$("$ROOT/scripts/inferenced.sh" query tx "$txhash" --node "$rpc" --output json 2>/dev/null || true)"
@@ -81,12 +119,13 @@ for position in "${!pending_hashes[@]}"; do
     printf 'WAIT  vote transaction %s from %s to enter a block\n' "$txhash" "$name"
     sleep 2
   done
-  jq -e '(.code // .tx_response.code // -1) == 0 and ((.height // .tx_response.height // "0") | tonumber) > 0' <<<"$receipt" >/dev/null 2>&1 || \
-    die "vote transaction from $name was not committed successfully"
   printf '%s\n' "$receipt" >"$RUN/vote-receipt-$name.json"
+  "$ROOT/scripts/governance-vote-evidence.sh" receipt \
+    "$address" "$proposal_id" "$option_constant" "$RUN/vote-receipt-$name.json" || \
+    die "vote transaction from $name was not committed with the expected voter and option"
 done
 
-expected="${#nodes[@]}"
+expected="${#voting_nodes[@]}"
 deadline=$((SECONDS + 120))
 actual=0
 status=''
@@ -94,7 +133,8 @@ while (( SECONDS < deadline )); do
   ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-after.json"
   ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id/votes" >"$RUN/votes-after.json"
   status="$(jq -er '.proposal.status' "$RUN/proposal-after.json")"
-  actual="$(jq '[.votes[]?.voter] | unique | length' "$RUN/votes-after.json")"
+  actual="$("$ROOT/scripts/governance-vote-evidence.sh" count \
+    "$RUN/expected-voters.json" "$RUN/votes-after.json")"
   (( actual >= expected )) && break
   [[ "$status" != PROPOSAL_STATUS_VOTING_PERIOD ]] && break
   printf 'WAIT  proposal %s recorded votes=%s expected=%s\n' "$proposal_id" "$actual" "$expected"
@@ -103,19 +143,19 @@ done
 
 if (( actual < expected )); then
   # inferenced 0.2.14 may stop returning individual votes as soon as the short
-  # test-lab voting period closes. In that state, successful committed vote
-  # receipts plus the final tally are the durable evidence.
+  # test-lab voting period closes. In that state, this run's committed exact
+  # vote receipts plus the final tally are the durable evidence.
   [[ "$status" == PROPOSAL_STATUS_PASSED ]] || \
     die "proposal $proposal_id has $actual recorded votes, expected at least $expected"
   tally_field="${option}_count"
   tally="$(jq -er --arg field "$tally_field" '.proposal.final_tally_result[$field] | tonumber' "$RUN/proposal-after.json")"
-  (( tally > 0 && submitted + actual >= expected )) || \
+  (( tally > 0 && submitted == expected )) || \
     die "proposal $proposal_id passed without sufficient durable vote evidence"
 fi
 cat >"$RUN/verdict.md" <<EOF
 # Governance vote: RECORDED
 
-All $expected active configured participants have durable evidence for a
+All $expected locally managed participants with complete signing state have durable evidence for a
 \`$option\` vote on proposal $proposal_id. Current proposal status is
 \`$status\`; software or parameter cutovers remain separately gated on
 \`PROPOSAL_STATUS_PASSED\`.

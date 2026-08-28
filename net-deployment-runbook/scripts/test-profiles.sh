@@ -74,7 +74,7 @@ grep -Fq 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/PublicCaddyfile
 grep -Fq '@governed_completion path /v1/chat/completions /devshard/*/v1/chat/completions' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'reverse_proxy 127.0.0.1:18083' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'gateway-admission-proxy.py' "$ROOT/04-ops/edge-node/compose.yaml"
-grep -Fq 'gateway-admission-proxy.py' "$ROOT/04-ops/edge-node/install-edge.sh"
+grep -Fq 'gateway-admission-proxy.py' "$ROOT/04-ops/edge-node/install-gateway-admission.sh"
 grep -Fq 'gateway-admission' "$ROOT/scripts/phase-ops.sh"
 ! grep -Fq 'public DevNet faucet requires the public edge and gateway to use the same Host' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'ENDPOINT="https://${GENESIS_PUBLIC_HOST}/faucet/health"' "$ROOT/scripts/phase-ops.sh"
@@ -122,6 +122,10 @@ grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_WAI
 grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS", 900' "$ROOT/04-ops/edge-node/gateway-admission-proxy.py"
 grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS:-900}' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK=${GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK:-1}' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=$gateway_admission_protocols_json' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'DEVSHARD_SUPPORTED_PROTOCOLS' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'env_file: [./gateway-admission.env]' "$ROOT/04-ops/edge-node/compose.yaml"
+grep -Fq 'Deploy the matching public admission contract' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'GDC_GATEWAY_ADMISSION_URL=https://${API_HOST}' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'GDC_GATEWAY_ADMISSION_URL' "$ROOT/04-ops/gateway-health-probe.sh"
 grep -Fq 'admission_post()' "$ROOT/04-ops/gateway-escrow-reconciler.sh"
@@ -135,6 +139,23 @@ grep -Fq '.runtime.requests_blocked // .requests_blocked' "$ROOT/scripts/phase-o
 grep -Fq 'gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq "https://\$gateway_ingress_host/health" "$ROOT/scripts/phase-ops.sh"
 grep -Fq '/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
+reconciler_install_block="$(awk '
+  /# Upgrade the reconciler executable, unit and environment as one gateway/ { capture=1 }
+  capture { print }
+  capture && /^fi$/ { exit }
+' "$ROOT/04-ops/install-ops.sh")"
+grep -Fq 'if [[ "$COMPONENT" == gateway ]]; then' <<<"$reconciler_install_block"
+grep -Fq 'gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' <<<"$reconciler_install_block"
+grep -Fq 'gdc-gateway-escrow-reconciler.timer" /etc/systemd/system/gdc-gateway-escrow-reconciler.timer' <<<"$reconciler_install_block"
+[[ "$(grep -Fc 'gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh")" == 1 ]]
+[[ "$(grep -Fc 'systemctl enable --now gdc-gateway-escrow-reconciler.timer' "$ROOT/04-ops/install-ops.sh")" == 0 ]]
+[[ "$(grep -Fc 'systemctl start gdc-gateway-escrow-reconciler.service' "$ROOT/04-ops/install-ops.sh")" == 0 ]]
+grep -Fq 'systemctl stop gdc-gateway-escrow-reconciler.timer gdc-gateway-escrow-reconciler.service' "$ROOT/04-ops/install-ops.sh"
+[[ "$(grep -Fc 'systemctl enable --now gdc-gateway-escrow-reconciler.timer' "$ROOT/scripts/phase-ops.sh")" == 1 ]]
+[[ "$(grep -Fc 'systemctl start gdc-gateway-escrow-reconciler.service' "$ROOT/scripts/phase-ops.sh")" == 1 ]]
+grep -Fq 'up -d --force-recreate devshard-gateway' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'ps --status running -q devshard-gateway' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND && $POST_START_COMMAND' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '"$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh' "$ROOT/04-ops/install-ops.sh"
 ! grep -Fq '$HERE/../' "$ROOT/04-ops/install-ops.sh"

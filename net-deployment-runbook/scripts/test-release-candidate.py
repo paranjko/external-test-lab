@@ -927,7 +927,12 @@ def main() -> None:
         mat_cand_lock = temporary / "materialized-cand.lock"
         mat_cand_content = candidate.materialize_composition_lock(manifest_cand)
         candidate.atomic_write(mat_cand_lock, mat_cand_content)
+        candidate_gateway = manifest_cand["devshard"]["images"]["devshard-gateway"]
+        candidate_gateway_local = candidate_gateway.split("@sha256:", 1)[0]
         assert "DEVSHARD_PROTOCOL_VERSION=v5" in mat_cand_content
+        assert f"LOCAL_GATEWAY_IMAGE={candidate_gateway_local}" in mat_cand_content
+        assert f"LOCAL_GATEWAY_IMAGE={candidate_gateway}" not in mat_cand_content
+        assert f"DEVSHARD_GATEWAY_IMAGE={candidate_gateway}" in mat_cand_content
         assert "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL=" in mat_cand_content
         assert "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256=" in mat_cand_content
         assert "POSTGRES_IMAGE='postgres:16-alpine@" in mat_cand_content or "POSTGRES_IMAGE=postgres:16-alpine@" in mat_cand_content
@@ -935,6 +940,9 @@ def main() -> None:
 
         env_cand_content = candidate.composition_env(manifest_cand)
         assert "export GDC_COMPOSITION_HASH=" in env_cand_content
+        assert f"export LOCAL_GATEWAY_IMAGE={candidate_gateway_local}" in env_cand_content
+        assert f"export CANDIDATE_LOCAL_GATEWAY_IMAGE={candidate_gateway_local}" in env_cand_content
+        assert f"export DEVSHARD_GATEWAY_IMAGE={candidate_gateway}" in env_cand_content
         assert "export DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL=" in env_cand_content
         assert "export DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256=" in env_cand_content
         assert "export POSTGRES_IMAGE='postgres:16-alpine@" in env_cand_content or "export POSTGRES_IMAGE=postgres:16-alpine@" in env_cand_content

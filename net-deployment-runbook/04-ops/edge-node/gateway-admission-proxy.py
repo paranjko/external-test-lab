@@ -51,6 +51,53 @@ UPSTREAM_CONTENT_TYPES = {
     "text/event-stream": "text/event-stream",
     "text/plain": "text/plain",
 }
+PROTOCOL_CONTRACTS = {}
+
+
+def load_protocol_contracts(value):
+    """Validate the immutable protocol tuples accepted by this deployment."""
+    try:
+        contracts = json.loads(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("gateway admission protocol contracts are not valid JSON") from error
+    if not isinstance(contracts, dict) or not contracts:
+        raise ValueError("gateway admission protocol contracts must be a non-empty object")
+    for version, contract in contracts.items():
+        if not isinstance(version, str) or not re.fullmatch(r"v[1-9][0-9]*", version):
+            raise ValueError("gateway admission protocol version is invalid")
+        if not isinstance(contract, dict) or set(contract) != {"binary", "sha256"}:
+            raise ValueError("gateway admission protocol contract is invalid")
+        binary = contract["binary"]
+        digest = contract["sha256"]
+        parsed = urlsplit(binary) if isinstance(binary, str) else None
+        if parsed is None or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("gateway admission protocol binary URL is invalid")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("gateway admission protocol SHA-256 is invalid")
+    return contracts
+
+
+def valid_approved_versions(versions):
+    """Require one structurally valid immutable tuple per protocol name."""
+    if not isinstance(versions, list):
+        return False
+    names = set()
+    for entry in versions:
+        if not isinstance(entry, dict):
+            return False
+        name = entry.get("name")
+        binary = entry.get("binary")
+        digest = entry.get("sha256")
+        parsed = urlsplit(binary) if isinstance(binary, str) else None
+        if (not isinstance(name, str)
+                or not re.fullmatch(r"v[1-9][0-9]*", name)
+                or name in names
+                or parsed is None or parsed.scheme != "https" or not parsed.netloc
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+            return False
+        names.add(name)
+    return True
 
 
 def now_ms():
@@ -119,6 +166,8 @@ def safe_generation(deadline=None):
         return None, "deadline_elapsed"
     except Exception:
         return None, "status_unavailable"
+    if not isinstance(status, dict):
+        return None, "state_invalid"
     try:
         epoch = get_json(EPOCH_URL, deadline).get("epoch_group_data", {}).get("epoch_index")
     except TimeoutError:
@@ -132,11 +181,23 @@ def safe_generation(deadline=None):
     except Exception:
         return None, "chain_status_unavailable"
     try:
-        params = get_json(CHAIN_PARAMS_URL, deadline).get("params", {}).get("epoch_params", {})
+        params_payload = get_json(CHAIN_PARAMS_URL, deadline)
     except TimeoutError:
         return None, "deadline_elapsed"
     except Exception:
         return None, "params_unavailable"
+    if not isinstance(params_payload, dict):
+        return None, "state_invalid"
+    params_root = params_payload.get("params", params_payload)
+    if not isinstance(params_root, dict):
+        return None, "state_invalid"
+    params = params_root.get("epoch_params", {})
+    escrow_params = params_root.get("devshard_escrow_params", {})
+    if not isinstance(escrow_params, dict):
+        return None, "protocol_approval_invalid"
+    approved_versions = escrow_params.get("approved_versions")
+    if not valid_approved_versions(approved_versions):
+        return None, "protocol_approval_invalid"
     try:
         height = int(height)
         epoch_length = int(params["epoch_length"])
@@ -150,22 +211,49 @@ def safe_generation(deadline=None):
     if not isinstance(epoch, (str, int)):
         return None, "epoch_invalid"
     capacity = status.get("capacity", {})
+    if not isinstance(capacity, dict):
+        return None, "capacity_invalid"
+    models = capacity.get("models", {})
+    if not isinstance(models, dict):
+        return None, "capacity_invalid"
+    if any(not isinstance(item, dict) for item in models.values()):
+        return None, "capacity_invalid"
     weights = [capacity.get("total_weight"), capacity.get("effective_weight")]
     weights.extend((item or {}).get("current_weight", (item or {}).get("total_weight"))
-                   for item in (capacity.get("models") or {}).values())
+                   for item in models.values())
     try:
         positive = any(float(weight) > 0 for weight in weights if weight is not None)
     except (TypeError, ValueError):
         return None, "capacity_invalid"
+    devshards = status.get("devshards", [])
+    if not isinstance(devshards, list):
+        return None, "state_invalid"
     participants = []
-    for item in status.get("devshards", []):
-        runtime = item.get("runtime") or item
+    for item in devshards:
+        if not isinstance(item, dict):
+            return None, "state_invalid"
+        runtime = item.get("runtime")
+        if runtime is None:
+            runtime = item
+        if not isinstance(runtime, dict):
+            return None, "state_invalid"
         chain_phase = item.get("chain_phase") or runtime.get("chain_phase")
         if (item.get("active") is True and runtime.get("phase") == "active"
                 and not runtime.get("requests_blocked", False)
                 and chain_phase == "Inference"):
+            version = runtime.get("session_version") or item.get("session_version")
+            if not isinstance(version, str) or not re.fullmatch(r"v[1-9][0-9]*", version):
+                return None, "protocol_version_unavailable"
+            contract = PROTOCOL_CONTRACTS.get(version)
+            if contract is None:
+                return None, "protocol_not_configured"
+            named = [entry for entry in approved_versions
+                     if isinstance(entry, dict) and entry.get("name") == version]
+            if (len(named) != 1 or named[0].get("binary") != contract["binary"]
+                    or named[0].get("sha256") != contract["sha256"]):
+                return None, "protocol_not_approved"
             if item.get("id") is not None:
-                participants.append("%s:%s" % (item["id"], chain_phase))
+                participants.append("%s:%s:%s" % (item["id"], version, chain_phase))
     if not positive or not participants:
         return None, "runtime_unavailable"
     # Height proves this observation is fresh and fences the next transition,
@@ -452,4 +540,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    try:
+        PROTOCOL_CONTRACTS = load_protocol_contracts(
+            env("GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON", ""))
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

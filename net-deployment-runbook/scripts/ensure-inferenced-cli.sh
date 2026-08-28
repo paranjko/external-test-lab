@@ -57,7 +57,11 @@ if version_matches "$target"; then
   exit 0
 fi
 
-step "Install pinned inferenced $GONKA_RELEASE for $key"
+if [[ "${GDC_INFERENCED_CLI_QUIET:-false}" == true ]]; then
+  printf 'INSTALL pinned inferenced release=%s platform=%s\n' "$GONKA_RELEASE" "$key" >&2
+else
+  step "Install pinned inferenced $GONKA_RELEASE for $key"
+fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 printf 'WAIT download pinned inferenced CLI url=%s timeout_seconds=600\n' "$url" >&2

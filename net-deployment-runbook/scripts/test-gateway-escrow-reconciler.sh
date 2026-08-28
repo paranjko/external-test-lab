@@ -14,6 +14,8 @@ DEVSHARD_PRIVATE_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 DEVSHARD_MODEL=Qwen/Qwen3-0.6B
 DEVSHARD_ROUTE_PREFIX=/devshard/v3
 DEVSHARD_CHAIN_ID=gonka-devnet-community
+DEVSHARD_BINARY_URL=https://example.invalid/devshardd-v3.zip
+DEVSHARD_BINARY_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 DEVSHARD_ROTATION_ESCROW_AMOUNT=1
 GDC_GATEWAY_ADMISSION_URL=https://admission
 GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true
@@ -67,6 +69,21 @@ if [[ "$url" == *'current_epoch_group_data' ]]; then
   printf '%s\n' '{"epoch_group_data":{"epoch_index":"42"}}'
   exit 0
 fi
+if [[ "$url" == *'inference/params' ]]; then
+  if [[ "$CASE_NAME" == approval-unavailable && ! -e "$CASE_DIR/approval-restored" ]]; then
+    exit 6
+  fi
+  if [[ "$CASE_NAME" == approval-revoked || "$CASE_NAME" == pending-superseded-revoked ]]; then
+    printf '%s\n' '{"params":{"devshard_escrow_params":{"approved_versions":[]}}}'
+  elif [[ "$CASE_NAME" == approval-duplicate ]]; then
+    printf '%s\n' '{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v3","binary":"https://example.invalid/devshardd-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v3","binary":"https://example.invalid/conflicting.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}}}'
+  elif [[ "$CASE_NAME" == approval-malformed ]]; then
+    printf '%s\n' '{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v3","binary":"https://example.invalid/devshardd-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"invalid"]}}'
+  else
+    printf '%s\n' '{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v3","binary":"https://example.invalid/devshardd-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}}'
+  fi
+  exit 0
+fi
 if [[ "$url" == *'devshard_escrow/'* ]]; then
   id="${url##*/}"
   case "${CASE_NAME}:${id}" in
@@ -75,7 +92,8 @@ if [[ "$url" == *'devshard_escrow/'* ]]; then
     pending:123) printf '%s\n' '{"found":false}' ;;
     pending-superseded:123) printf '%s\n' '{"found":false}' ;;
     pending-superseded:124|pending-superseded:125) printf '%s\n' "{\"found\":true,\"escrow\":{\"id\":\"$id\",\"settled\":false}}" ;;
-    pending-routable:123) printf '%s\n' '{"found":true,"escrow":{"id":"123","settled":false}}' ;;
+    pending-superseded-revoked:125) printf '%s\n' '{"found":true,"escrow":{"id":"125","settled":false}}' ;;
+    pending-routable:123|approval-revoked:123|approval-unavailable:123|approval-duplicate:123|approval-malformed:123) printf '%s\n' '{"found":true,"escrow":{"id":"123","settled":false}}' ;;
     manual-disabled:7|fleet-incomplete:7) printf '%s\n' '{"found":true,"escrow":{"id":"7","settled":false}}' ;;
     transport-failure:7|transport-refused:7|transport-timeout:7|transport-tls:7|transport-http-5xx:7) printf '%s\n' '{"found":true,"escrow":{"id":"7","settled":false}}' ;;
     inactive:7) printf '%s\n' '{"found":true,"escrow":{"id":"7","settled":false}}' ;;
@@ -184,6 +202,54 @@ jq -e '.state == "READY" and .reason == "replacement_routable" and .replacement_
 grep -Fq '/devshard/125/v1/chat/completions' "$WORK/pending-superseded/curl.log"
 ! grep -Fq '/v1/admin/escrows' "$WORK/pending-superseded/curl.log"
 
+# A runtime which the built-in rotator has already activated still requires
+# current approval. A stale tracked candidate must not let the newer runtime
+# bypass the exact governed tuple check and reach READY.
+mkdir -p "$WORK/pending-superseded-revoked"
+printf '%s\n' '{"state":"RECOVERING","reason":"waiting_for_chain_confirmation","replacement_escrow":"123"}' \
+  >"$WORK/pending-superseded-revoked/status.json"
+run_case pending-superseded-revoked \
+  '{"devshards":[{"id":"125","active":true,"phase":"active","requests_blocked":false}]}'
+jq -e '.state == "PENDING" and .reason == "devshard_protocol_not_approved" and .replacement_escrow == "125"' \
+  "$WORK/pending-superseded-revoked/status.json" >/dev/null
+grep -Fq 'inference/params' "$WORK/pending-superseded-revoked/curl.log"
+grep -Fq '/v1/admin/devshards/125/deactivate' "$WORK/pending-superseded-revoked/curl.log"
+! grep -Fq '/devshard/125/v1/chat/completions' "$WORK/pending-superseded-revoked/curl.log"
+
+# Approval transport failure blocks reconciliation without changing the
+# already-active runtime. Public admission enforces the same exact tuple and
+# independently fails closed until the observer recovers.
+run_case approval-unavailable \
+  '{"devshards":[{"id":"123","active":true,"phase":"active","requests_blocked":false}]}'
+jq -e '.state == "DEGRADED" and .reason == "devshard_protocol_approval_unavailable" and .replacement_escrow == "123"' \
+  "$WORK/approval-unavailable/status.json" >/dev/null
+! grep -Fq '/v1/admin/devshards/123/deactivate' "$WORK/approval-unavailable/curl.log"
+! grep -Fq '/devshard/123/v1/chat/completions' "$WORK/approval-unavailable/curl.log"
+! grep -Fq '/v1/admin/escrows' "$WORK/approval-unavailable/curl.log"
+
+# Structurally invalid or duplicate governed protocol entries are observer
+# failures. Preserve the active runtime, but never probe or fund through them.
+for case_name in approval-duplicate approval-malformed; do
+  run_case "$case_name" \
+    '{"devshards":[{"id":"123","active":true,"phase":"active","requests_blocked":false}]}'
+  jq -e '.state == "DEGRADED" and .reason == "devshard_protocol_approval_unavailable" and .replacement_escrow == "123"' \
+    "$WORK/$case_name/status.json" >/dev/null
+  ! grep -Fq '/v1/admin/devshards/123/deactivate' "$WORK/$case_name/curl.log"
+  ! grep -Fq '/devshard/123/v1/chat/completions' "$WORK/$case_name/curl.log"
+  ! grep -Fq '/v1/admin/escrows' "$WORK/$case_name/curl.log"
+done
+
+# When exact approval becomes readable again, the same runtime is probed and
+# restored to READY without activation, deactivation, or replacement funding.
+: >"$WORK/approval-unavailable/approval-restored"
+run_case approval-unavailable \
+  '{"devshards":[{"id":"123","active":true,"phase":"active","requests_blocked":false}]}'
+jq -e '.state == "READY" and .reason == "replacement_routable" and .replacement_escrow == "123"' \
+  "$WORK/approval-unavailable/status.json" >/dev/null
+grep -Fq '/devshard/123/v1/chat/completions' "$WORK/approval-unavailable/curl.log"
+! grep -Fq '/v1/admin/devshards/123/deactivate' "$WORK/approval-unavailable/curl.log"
+! grep -Fq '/v1/admin/escrows' "$WORK/approval-unavailable/curl.log"
+
 # A replacement remains the same tracked escrow after chain confirmation.
 # Reconciliation activates and probes it instead of funding another escrow.
 mkdir -p "$WORK/pending-routable"
@@ -192,6 +258,15 @@ run_case pending-routable '{"devshards":[{"id":"123","active":false,"phase":"ina
 jq -e '.state == "READY" and .reason == "replacement_routable" and .replacement_escrow == "123"' "$WORK/pending-routable/status.json" >/dev/null
 grep -Fq '/v1/admin/devshards/123/activate' "$WORK/pending-routable/curl.log"
 ! grep -Fq '/v1/admin/escrows' "$WORK/pending-routable/curl.log"
+
+# A later governance change revokes activation authority. The timer must
+# re-read the exact tuple and fail closed before POSTing activate.
+mkdir -p "$WORK/approval-revoked"
+printf '%s\n' '{"state":"RECOVERING","reason":"waiting_for_routable_runtime","replacement_escrow":"123"}' >"$WORK/approval-revoked/status.json"
+run_case approval-revoked '{"devshards":[{"id":"123","active":false,"phase":"inactive","requests_blocked":false}]}'
+jq -e '.state == "PENDING" and .reason == "devshard_protocol_not_approved" and .replacement_escrow == "123"' \
+  "$WORK/approval-revoked/status.json" >/dev/null
+! grep -Fq '/v1/admin/devshards/123/activate' "$WORK/approval-revoked/curl.log"
 
 # A single confirmed no-runtime observation is degraded evidence, not
 # permission to mint a replacement. The same product condition must persist

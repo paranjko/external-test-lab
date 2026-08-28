@@ -14,14 +14,27 @@ fi
 if [[ "$COMPONENT" == gateway ]]; then
   GDC_GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
   [[ "$GDC_GATEWAY_VERSION" =~ ^v[345]$ ]] || die 'GDC_GATEWAY_VERSION must be v3, v4 or v5'
-  supported_protocols="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
-  case " $supported_protocols " in
+  gateway_supported_protocols="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
+  case " $gateway_supported_protocols " in
     *" $GDC_GATEWAY_VERSION "*) ;;
-    *) die "DevShard $GDC_GATEWAY_VERSION is not supported by the pinned upstream artifact; supported: $supported_protocols" ;;
+    *) die "DevShard $GDC_GATEWAY_VERSION is not supported by the pinned gateway artifact; supported: $gateway_supported_protocols" ;;
   esac
+  case "$GDC_GATEWAY_VERSION" in
+    v3) gateway_archive_url="$DEVSHARD_V3_URL"; gateway_archive_sha="$DEVSHARD_V3_SHA256" ;;
+    v4) gateway_archive_url="$DEVSHARD_V4_URL"; gateway_archive_sha="$DEVSHARD_V4_SHA256" ;;
+    v5) gateway_archive_url="$DEVSHARD_V5_URL"; gateway_archive_sha="$DEVSHARD_V5_SHA256" ;;
+  esac
+  gateway_approved_params="$STATE/gateway-approved-$GDC_GATEWAY_VERSION.json"
+  "$ROOT/scripts/inferenced.sh" query inference params \
+    --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json \
+    >"$gateway_approved_params"
+  "$ROOT/scripts/verify-approved-devshard-version.sh" \
+    "$gateway_approved_params" "$GDC_GATEWAY_VERSION" "$gateway_archive_url" "$gateway_archive_sha"
   GDC_GATEWAY_PUBLIC_URL="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
   GDC_GATEWAY_PUBLIC_URL="${GDC_GATEWAY_PUBLIC_URL%/}"
-  export GDC_GATEWAY_VERSION
+  GDC_GATEWAY_ARCHIVE_URL="$gateway_archive_url"
+  GDC_GATEWAY_ARCHIVE_SHA256="$gateway_archive_sha"
+  export GDC_GATEWAY_VERSION GDC_GATEWAY_ARCHIVE_URL GDC_GATEWAY_ARCHIVE_SHA256
 fi
 OPS_RENDER="$GENERATED/ops"
 GATEWAY_ENV="$OPS_RENDER/gateway.env"
@@ -69,11 +82,35 @@ reconcile_public_grafana() {
   rsync -a "$ROOT/04-ops/edge-node/" "$node:$edge_remote/edge/"
   scp -q "$edge_env" "$node:$edge_remote/edge.env"
   edge_start_log='/srv/dai/edge/start-public-grafana.log'
-  ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate gateway-admission; docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; docker compose up -d --force-recreate caddy"
+  ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; docker compose up -d --force-recreate caddy"
+}
+
+deploy_gateway_admission() {
+  local node="$PUBLIC_EDGE_NODE" admission_env admission_remote expected_sha remote_sha
+  admission_env="$GENERATED/edge/gateway-admission.env"
+  admission_remote="${REMOTE}-gateway-admission"
+  mkdir -p "$(dirname "$admission_env")"
+  "$ROOT/04-ops/edge-node/render-env.sh" \
+    --inventory "$INVENTORY" --node-name "$node" --output "$admission_env" >/dev/null
+  expected_sha="$(sha256sum "$admission_env" | awk '{print $1}')"
+  ssh "$node" "rm -rf '$admission_remote' && mkdir -p '$admission_remote'"
+  rsync -a "$ROOT/04-ops/edge-node/" "$node:$admission_remote/edge/"
+  scp -q "$admission_env" "$node:$admission_remote/gateway-admission.env"
+  remote_sha="$(ssh -T "$node" "set -Eeuo pipefail
+    sudo '$admission_remote/edge/install-gateway-admission.sh' '$admission_remote/gateway-admission.env' >/dev/null
+    rm -rf '$admission_remote'
+    cd /srv/dai/edge
+    docker compose up -d --force-recreate gateway-admission >start-gateway-admission.log 2>&1
+    [[ -n \"\$(docker compose ps --status running -q gateway-admission)\" ]]
+    sudo sha256sum gateway-admission.env | awk '{print \$1}'")"
+  [[ "$remote_sha" == "$expected_sha" ]] \
+    || die "gateway admission environment differs after deployment: expected=$expected_sha actual=${remote_sha:-unavailable}"
+  printf 'READY gateway admission contract deployed from the selected gateway profile\n'
 }
 
 GATEWAY_OPTION=''
 CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
+POST_START_COMMAND=true
 if [[ "$COMPONENT" == edge ]]; then
   step 'Install the public edge configuration without changing chain state'
   reconcile_public_grafana
@@ -120,6 +157,8 @@ case "$COMPONENT" in
     [[ "$faucet_amount" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_CLAIM_NGONKA must be positive'
     [[ "$faucet_initial" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
     (( faucet_amount <= faucet_initial )) || die 'GDC_FAUCET_CLAIM_NGONKA must not exceed GDC_FAUCET_INITIAL_NGONKA'
+    step 'Reconcile the bounded DevNet faucet reserve'
+    "$ROOT/scripts/ensure-account-balance.sh" "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$faucet_initial"
     FAUCET_SIGNER_HOME="$("$ROOT/scripts/prepare-faucet-signer.sh")"
     write_env "$FAUCET_ENV" \
       "FAUCET_CHAIN_ID=$CHAIN_ID" \
@@ -160,9 +199,14 @@ case "$COMPONENT" in
     gateway_funding_horizon="${GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS:-1}"
     gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
     gateway_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
+    gateway_funding_source_target="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
     [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
     [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
     [[ "$gateway_max_refill" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be positive'
+    [[ "$gateway_funding_source_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
+    step 'Reconcile the gateway reserve funding source'
+    "$ROOT/scripts/ensure-account-balance.sh" \
+      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$gateway_funding_source_target"
     "$ROOT/04-ops/ensure-gateway-reserve.sh" \
       "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
       "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \
@@ -258,8 +302,9 @@ case "$COMPONENT" in
     # this gateway node's Caddy is ready.  The runtime self-probe targets the
     # gateway participant host, so wait for that exact ingress instead.
     gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"
-    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d devshard-gateway"
+    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
     CADDY_START_COMMAND=true
+    POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
     ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"
     ;;
   monitoring)
@@ -302,6 +347,14 @@ rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"
 if [[ -n "$FAUCET_SIGNER_HOME" ]]; then
   rsync -a "$FAUCET_SIGNER_HOME/" "$GATEWAY_NODE:$REMOTE/faucet-signer/"
 fi
+if [[ "$COMPONENT" == gateway ]]; then
+  step "Revalidate the exact $GDC_GATEWAY_VERSION approval at the activation boundary"
+  "$ROOT/scripts/inferenced.sh" query inference params \
+    --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json \
+    >"$gateway_approved_params"
+  "$ROOT/scripts/verify-approved-devshard-version.sh" \
+    "$gateway_approved_params" "$GDC_GATEWAY_VERSION" "$gateway_archive_url" "$gateway_archive_sha"
+fi
 printf 'WAIT  start %s operations component\n' "$COMPONENT"
 if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
   if [[ -d '$REMOTE/faucet-signer' ]]; then
@@ -312,12 +365,17 @@ if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
   sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION $FAUCET_OPTION
   rm -rf '$REMOTE'
   {
-    cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND
+    cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND && $POST_START_COMMAND
   } >/srv/dai/ops/start-$COMPONENT.log 2>&1"; then
   printf 'READY %s endpoint %s\n' "$COMPONENT" "$ENDPOINT"
 else
   ssh "$GATEWAY_NODE" "tail -100 /srv/dai/ops/start-$COMPONENT.log" >&2 || true
   exit 1
+fi
+
+if [[ "$COMPONENT" == gateway ]]; then
+  step 'Deploy the matching public admission contract'
+  deploy_gateway_admission
 fi
 
 if [[ "$COMPONENT" == faucet ]]; then

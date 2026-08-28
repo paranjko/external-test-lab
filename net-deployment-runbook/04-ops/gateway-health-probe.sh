@@ -37,18 +37,37 @@ safe_generation=''
   exit 2
 }
 
-if [[ -s "$reconciliation_file" ]] && jq -e '.state == "RECOVERING"' "$reconciliation_file" >/dev/null 2>&1; then
-  state=RECOVERING
-  reason="$(jq -r '.reason // "replacement_escrow_recovering"' "$reconciliation_file")"
-  recovery_escrow="$(jq -r '.replacement_escrow // empty' "$reconciliation_file")"
-  recovery_started_at="$(jq -r '.entered_at // .checked_at // empty' "$reconciliation_file")"
-  next_check_seconds=15
-fi
-if [[ -s "$reconciliation_file" ]] && jq -e '.state == "FAILED"' "$reconciliation_file" >/dev/null 2>&1; then
-  state=UNAVAILABLE
-  reason="$(jq -r '.reason // "replacement_escrow_failed"' "$reconciliation_file")"
-  recovery_escrow="$(jq -r '.replacement_escrow // empty' "$reconciliation_file")"
-  recovery_started_at="$(jq -r '.entered_at // .checked_at // empty' "$reconciliation_file")"
+if [[ -s "$reconciliation_file" ]]; then
+  reconciliation_state="$(jq -er '.state | strings' "$reconciliation_file" 2>/dev/null || true)"
+  reconciliation_reason="$(jq -r '.reason // empty' "$reconciliation_file" 2>/dev/null || true)"
+  recovery_escrow="$(jq -r '.replacement_escrow // empty' "$reconciliation_file" 2>/dev/null || true)"
+  recovery_started_at="$(jq -r '.entered_at // .checked_at // empty' "$reconciliation_file" 2>/dev/null || true)"
+  case "$reconciliation_state" in
+    READY)
+      ;;
+    RECOVERING)
+      state=RECOVERING
+      reason="${reconciliation_reason:-replacement_escrow_recovering}"
+      next_check_seconds=15
+      ;;
+    PENDING)
+      state=RECOVERING
+      reason="${reconciliation_reason:-gateway_reconciliation_pending}"
+      next_check_seconds=15
+      ;;
+    DEGRADED)
+      state=DEGRADED
+      reason="${reconciliation_reason:-gateway_reconciliation_degraded}"
+      ;;
+    FAILED)
+      state=UNAVAILABLE
+      reason="${reconciliation_reason:-replacement_escrow_failed}"
+      ;;
+    *)
+      state=UNAVAILABLE
+      reason=reconciliation_state_invalid
+      ;;
+  esac
 fi
 
 if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$gateway_env" ]]; then

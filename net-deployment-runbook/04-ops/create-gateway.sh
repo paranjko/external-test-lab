@@ -13,6 +13,20 @@ source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$GATEWAY_VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
+GATEWAY_SUPPORTED_PROTOCOLS="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
+case " $GATEWAY_SUPPORTED_PROTOCOLS " in
+  *" $GATEWAY_VERSION "*) ;;
+  *) echo "DevShard $GATEWAY_VERSION is not supported by the pinned gateway artifact; supported: $GATEWAY_SUPPORTED_PROTOCOLS" >&2; exit 1 ;;
+esac
+case "$GATEWAY_VERSION" in
+  v3) PROFILE_GATEWAY_ARCHIVE_URL="$DEVSHARD_V3_URL"; PROFILE_GATEWAY_ARCHIVE_SHA256="$DEVSHARD_V3_SHA256" ;;
+  v4) PROFILE_GATEWAY_ARCHIVE_URL="$DEVSHARD_V4_URL"; PROFILE_GATEWAY_ARCHIVE_SHA256="$DEVSHARD_V4_SHA256" ;;
+  v5) PROFILE_GATEWAY_ARCHIVE_URL="$DEVSHARD_V5_URL"; PROFILE_GATEWAY_ARCHIVE_SHA256="$DEVSHARD_V5_SHA256" ;;
+esac
+GATEWAY_ARCHIVE_URL="${GDC_GATEWAY_ARCHIVE_URL:-$PROFILE_GATEWAY_ARCHIVE_URL}"
+GATEWAY_ARCHIVE_SHA256="${GDC_GATEWAY_ARCHIVE_SHA256:-$PROFILE_GATEWAY_ARCHIVE_SHA256}"
+[[ "$GATEWAY_ARCHIVE_URL" == "$PROFILE_GATEWAY_ARCHIVE_URL" ]] || { echo "DevShard $GATEWAY_VERSION archive URL conflicts with the selected profile" >&2; exit 2; }
+[[ "$GATEWAY_ARCHIVE_SHA256" == "$PROFILE_GATEWAY_ARCHIVE_SHA256" ]] || { echo "DevShard $GATEWAY_VERSION archive SHA-256 conflicts with the selected profile" >&2; exit 2; }
 [[ -z "$AMOUNT" || "$AMOUNT" =~ ^[0-9]+$ ]] || exit 2
 PASSWORD="$(<"$SECRETS/operator.keyring")"; ADMIN_KEY="$(<"$SECRETS/gateway.admin-key")"; CLIENT_KEYS="$(<"$SECRETS/gateway.client-keys")"
 if [[ -s "$SECRETS/gateway.join-client-key" ]]; then
@@ -64,12 +78,23 @@ SPENDABLE_AMOUNT="$(jq -r '[.balances[]? | select(.denom == "ngonka") | .amount]
   echo "escrow amount $AMOUNT exceeds spendable balance $SPENDABLE_AMOUNT; omit GDC_GATEWAY_ESCROW_AMOUNT_NGONKA to use the live minimum $MIN_AMOUNT" >&2
   exit 1
 }
-jq -e --arg creator "$CREATOR" --arg version "$GATEWAY_VERSION" '
+jq -e --arg creator "$CREATOR" --arg version "$GATEWAY_VERSION" \
+  --arg binary "$GATEWAY_ARCHIVE_URL" --arg sha256 "$GATEWAY_ARCHIVE_SHA256" '
   (.params // .).devshard_escrow_params as $p
   | ($p.allowed_creator_addresses | index($creator) != null)
-  and ($p.approved_versions | any(.name == $version and (.sha256 | test("^[0-9a-f]{64}$"))))
+  and ($p.approved_versions as $versions
+    | ($versions | type) == "array"
+    and all($versions[];
+      type == "object"
+      and (.name | type == "string" and test("^v[1-9][0-9]*$"))
+      and (.binary | type == "string" and test("^https://"))
+      and (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))
+    and (($versions | map(.name) | length) == ($versions | map(.name) | unique | length))
+    and ([$versions[] | select(.name == $version)] | length == 1)
+    and ([$versions[] | select(.name == $version)][0]
+      | .binary == $binary and .sha256 == $sha256))
 ' <<<"$PARAMS" >/dev/null || {
-  echo "DevShard $GATEWAY_VERSION approval and gateway creator allowlist must pass through governance before gateway deployment" >&2
+  echo "DevShard $GATEWAY_VERSION exact URL/SHA-256 approval and gateway creator allowlist must pass through governance before gateway deployment" >&2
   exit 1
 }
 
@@ -141,6 +166,8 @@ DEVSHARD_PRIVATE_KEY=${PRIVATE}
 DEVSHARD_ESCROW_ID=${ESCROW_ID}
 DEVSHARD_MODEL=${MODEL_ID}
 DEVSHARD_ROUTE_PREFIX=/devshard/${GATEWAY_VERSION}
+DEVSHARD_BINARY_URL=${GATEWAY_ARCHIVE_URL}
+DEVSHARD_BINARY_SHA256=${GATEWAY_ARCHIVE_SHA256}
 DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-${GATEWAY_VERSION}
 DEVSHARD_HEIGHTSYNC=${DEVSHARD_HEIGHTSYNC:-false}
 DEVSHARD_HEIGHTSYNC_K=${DEVSHARD_HEIGHTSYNC_K:-10}

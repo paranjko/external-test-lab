@@ -48,6 +48,32 @@ if [[ "$NODE" != "$GATEWAY_NODE" ]]; then
   prometheus_url="https://$(node_public_host "$GATEWAY_NODE")/ops-prometheus"
 fi
 
+gateway_admission_protocols_json='{}'
+read -r -a gateway_supported_protocols <<<"${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
+(( ${#gateway_supported_protocols[@]} > 0 )) || {
+  echo 'gateway admission requires at least one supported DevShard protocol' >&2
+  exit 2
+}
+for protocol in "${gateway_supported_protocols[@]}"; do
+  case "$protocol" in
+    v3) protocol_url="$DEVSHARD_V3_URL"; protocol_sha256="$DEVSHARD_V3_SHA256" ;;
+    v4) protocol_url="$DEVSHARD_V4_URL"; protocol_sha256="$DEVSHARD_V4_SHA256" ;;
+    v5) protocol_url="${DEVSHARD_V5_URL:-}"; protocol_sha256="${DEVSHARD_V5_SHA256:-}" ;;
+    *) echo "unsupported DevShard gateway protocol in profile: $protocol" >&2; exit 2 ;;
+  esac
+  [[ "$protocol_url" =~ ^https?:// && "$protocol_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "DevShard $protocol gateway admission contract is incomplete" >&2
+    exit 2
+  }
+  if jq -e --arg protocol "$protocol" 'has($protocol)' <<<"$gateway_admission_protocols_json" >/dev/null; then
+    echo "duplicate DevShard gateway protocol in profile: $protocol" >&2
+    exit 2
+  fi
+  gateway_admission_protocols_json="$(jq -c \
+    --arg protocol "$protocol" --arg url "$protocol_url" --arg sha256 "$protocol_sha256" \
+    '. + {($protocol):{binary:$url,sha256:$sha256}}' <<<"$gateway_admission_protocols_json")"
+done
+
 values=(
   "PUBLIC_HOST=$(node_public_host "$NODE")"
   "ACME_EMAIL=${ACME_EMAIL:-}"
@@ -64,6 +90,7 @@ values=(
   "GDC_GATEWAY_ADMISSION_EPOCH_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/current_epoch_group_data"
   "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL=https://${PUBLIC_EDGE_HOST}/chain-rpc/status"
   "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/params"
+  "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=$gateway_admission_protocols_json"
   "GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS=${GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS:-10}"
   "GDC_GATEWAY_ADMISSION_MAX_QUEUE=${GDC_GATEWAY_ADMISSION_MAX_QUEUE:-16}"
   "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS:-300}"

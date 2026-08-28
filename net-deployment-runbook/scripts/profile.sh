@@ -24,6 +24,7 @@ load_profiles() {
       return 2
     }
     eval "$comp_env"
+    export GDC_COMPOSITION="$comp_target"
     release="$GDC_RELEASE_PROFILE"
   fi
 
@@ -41,6 +42,7 @@ load_profiles() {
   unset CANDIDATE_DEFINITION_SHA256 CANDIDATE_BUILD_MANIFEST_SHA256
   unset CANDIDATE_DEVSHARD_SOURCE_REF CANDIDATE_DEVSHARD_COMMIT
   unset CANDIDATE_DEVSHARD_PROTOCOL_VERSION CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS
+  unset DEVSHARD_GOVERNANCE_PROTOCOLS
   unset CANDIDATE_LOCAL_GATEWAY_IMAGE CANDIDATE_POSTGRES_IMAGE
   unset DEVSHARD_V5_URL DEVSHARD_V5_SHA256 DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL
   unset DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256 CANDIDATE_LAYER CANDIDATE_COMPOSITION
@@ -78,7 +80,18 @@ load_profiles() {
   fi
   if [[ -n "${comp_env:-}" ]]; then
     eval "$comp_env"
+    export GDC_COMPOSITION="$comp_target"
   fi
+  # Chain registration eligibility is an explicit deployment-profile
+  # decision, never an inference from the presence of a URL and checksum.
+  # Gateway routing capability remains independently fail-closed through
+  # DEVSHARD_SUPPORTED_PROTOCOLS.
+  DEVSHARD_GOVERNANCE_PROTOCOLS="${DEVSHARD_GOVERNANCE_PROTOCOLS:-$DEVSHARD_SUPPORTED_PROTOCOLS}"
+  if [[ -n "${DEVSHARD_V5_URL:-}" && -n "${DEVSHARD_V5_SHA256:-}" \
+    && " $DEVSHARD_GOVERNANCE_PROTOCOLS " != *' v5 '* ]]; then
+    DEVSHARD_GOVERNANCE_PROTOCOLS+=' v5'
+  fi
+  export DEVSHARD_GOVERNANCE_PROTOCOLS
   if [[ -n "${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL:-}" ]]; then
     export DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256
   fi

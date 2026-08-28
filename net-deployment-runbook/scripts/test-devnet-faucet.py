@@ -2,6 +2,7 @@
 """Black-box contract test for the bounded DevNet faucet HTTP service."""
 
 import http.client
+import importlib.util
 import json
 import os
 import pathlib
@@ -143,5 +144,34 @@ with tempfile.TemporaryDirectory() as temporary:
     finally:
         process.terminate()
         process.wait(timeout=5)
+
+required_import_environment = {
+    "FAUCET_CHAIN_ID": "gonka-devnet-community",
+    "FAUCET_GENESIS_SHA256": "a" * 64,
+    "FAUCET_RPC_URL": "http://127.0.0.1:26657",
+    "FAUCET_KEYRING_PASSWORD": "test-password",
+    "FAUCET_AMOUNT_NGONKA": "100",
+}
+original_environment = {key: os.environ.get(key) for key in required_import_environment}
+os.environ.update(required_import_environment)
+try:
+    specification = importlib.util.spec_from_file_location("gdc_faucet_contract", FAUCET)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    assert module.safe_transaction_error(RuntimeError("insufficient funds: hidden detail")) == (
+        "gateway reserve funding account has insufficient funds"
+    )
+    assert module.safe_transaction_error(RuntimeError("account sequence mismatch, expected 4")) == (
+        "gateway reserve signer sequence conflict"
+    )
+    assert module.safe_transaction_error(RuntimeError("private implementation detail")) == (
+        "gateway reserve transaction was not accepted"
+    )
+finally:
+    for key, value in original_environment.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 print("PASS DevNet faucet contract")
