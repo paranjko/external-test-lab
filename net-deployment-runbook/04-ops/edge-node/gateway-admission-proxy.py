@@ -46,6 +46,11 @@ DISPATCH_LOCK = threading.Lock()
 AUDIT_LOCK = threading.Lock()
 DISPATCHES_BY_HEIGHT = {}
 COMPLETION_PATH = re.compile(r"^/(?:v1/chat/completions|devshard/[0-9]+/v1/chat/completions)$")
+UPSTREAM_CONTENT_TYPES = {
+    "application/json": "application/json",
+    "text/event-stream": "text/event-stream",
+    "text/plain": "text/plain",
+}
 
 
 def now_ms():
@@ -83,6 +88,12 @@ def upstream_timeout(deadline):
     if remaining <= 0:
         raise TimeoutError("absolute deadline elapsed")
     return remaining
+
+
+def safe_upstream_content_type(value):
+    """Map untrusted upstream metadata to a fixed response-header value."""
+    media_type = value.split(";", 1)[0].strip().lower()
+    return UPSTREAM_CONTENT_TYPES.get(media_type, "application/octet-stream")
 
 
 def get_json(url, deadline=None):
@@ -420,9 +431,10 @@ class Handler(BaseHTTPRequestHandler):
             record_audit(record)
             self.send_response(response.status, response.reason)
             self.response_headers(record, "dispatched_once")
-            for key, value in response.getheaders():
-                if key.lower() not in {"connection", "transfer-encoding", "content-length"}:
-                    self.send_header(key, value)
+            # Upstream headers are not a trusted response-header source.  The
+            # proxy owns framing and exposes only an allowlisted media type.
+            self.send_header("Content-Type", safe_upstream_content_type(
+                response.getheader("Content-Type", "")))
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             try:

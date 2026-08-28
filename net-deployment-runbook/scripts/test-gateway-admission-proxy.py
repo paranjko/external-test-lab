@@ -169,6 +169,8 @@ try:
     # The one upstream connection gets the entire remaining absolute deadline;
     # a fixed shorter transport cap would create a false dispatch failure.
     assert proxy_module.upstream_timeout(time.monotonic() + 31.5) > 30
+    assert proxy_module.safe_upstream_content_type("application/json; charset=utf-8") == "application/json"
+    assert proxy_module.safe_upstream_content_type("text/plain\\r\\nX-Injected: yes") == "application/octet-stream"
 
     # A request queued while phase state is unsafe dispatches only after two
     # fresh, matching generation observations and never replays a 429 outcome.

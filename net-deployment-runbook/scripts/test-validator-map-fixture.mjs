@@ -50,6 +50,15 @@ const call = (method, params = {}, target = sessionId) => new Promise((resolvePr
 const coverage = 'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),r=map?.getBoundingClientRect(),tiles=[...document.querySelectorAll("#validator-map .leaflet-tile")].map(t=>t.getBoundingClientRect()),edge=n=>tiles.some(t=>n==="top"?t.top<=r.top+1:n==="bottom"?t.bottom>=r.bottom-1:n==="left"?t.left<=r.left+1:t.right>=r.right-1);return{top:edge("top"),bottom:edge("bottom"),left:edge("left"),right:edge("right"),tiles:tiles.length,markers:document.querySelectorAll("#validator-map .validator-marker").length,zoom:Number(map?.dataset.zoom),rect:{left:r?.left,top:r?.top,right:r?.right,bottom:r?.bottom}}})())';
 const leaflet = await readFile(join(leafletRoot, 'leaflet-src.esm.js'));
 const stylesheet = await readFile(join(leafletRoot, 'leaflet.css'));
+const cartoTileHosts = new Set(['a.basemaps.cartocdn.com', 'b.basemaps.cartocdn.com', 'c.basemaps.cartocdn.com', 'd.basemaps.cartocdn.com']);
+const isCartoTile = url => {
+  try {
+    const target = new URL(url);
+    return target.protocol === 'https:' && cartoTileHosts.has(target.hostname);
+  } catch {
+    return false;
+  }
+};
 async function devtools() { for (let attempt = 0; attempt < 60; attempt += 1) { try { return await (await fetch(`http://127.0.0.1:${freePort}/json/version`)).json(); } catch { await delay(100); } } throw new Error('Chrome DevTools endpoint did not become ready'); }
 try {
   socket = new WebSocket((await devtools()).webSocketDebuggerUrl);
@@ -57,8 +66,8 @@ try {
   socket.addEventListener('message', async event => {
     const message = JSON.parse(event.data); if (message.id) { const waiter = pending.get(message.id); if (!waiter) return; pending.delete(message.id); message.error ? waiter.reject(new Error(message.error.message)) : waiter.resolve(message.result); return; }
     if (message.method !== 'Fetch.requestPaused') return;
-    const url = message.params.request.url; const body = url.includes('leaflet-src.esm.js') ? leaflet : url.includes('leaflet.css') ? stylesheet : url.includes('cartocdn.com') ? Buffer.from(tile, 'base64') : JSON.stringify({ result: url.includes('validators') ? { validators: [{ pub_key: { value: 'fixture-key' }, voting_power: '100' }] } : { sync_info: { latest_block_height: '424' } } });
-    const type = url.includes('.css') ? 'text/css' : url.includes('cartocdn.com') ? 'image/png' : url.includes('fixture.invalid') ? 'application/json' : 'text/javascript';
+    const url = message.params.request.url; const cartoTile = isCartoTile(url); const body = url.includes('leaflet-src.esm.js') ? leaflet : url.includes('leaflet.css') ? stylesheet : cartoTile ? Buffer.from(tile, 'base64') : JSON.stringify({ result: url.includes('validators') ? { validators: [{ pub_key: { value: 'fixture-key' }, voting_power: '100' }] } : { sync_info: { latest_block_height: '424' } } });
+    const type = url.includes('.css') ? 'text/css' : cartoTile ? 'image/png' : url.includes('fixture.invalid') ? 'application/json' : 'text/javascript';
     await call('Fetch.fulfillRequest', { requestId: message.params.requestId, responseCode: 200, responseHeaders: [{ name: 'content-type', value: type }, { name: 'access-control-allow-origin', value: '*' }], body: Buffer.from(body).toString('base64') });
   });
   const { targetId } = await call('Target.createTarget', { url: 'about:blank' }, undefined); ({ sessionId } = await call('Target.attachToTarget', { targetId, flatten: true }, undefined));
