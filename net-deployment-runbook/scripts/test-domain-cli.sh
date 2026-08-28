@@ -40,8 +40,26 @@ grep -Fq 'GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"' "$ROOT/gdc.sh"
 grep -Fq 'GDC_JOIN_VERIFICATION="$verification"' "$ROOT/gdc.sh"
 grep -Fq "skip_qualification=false verification=false" "$ROOT/gdc.sh"
 grep -Fq 'GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"' "$ROOT/gdc.sh"
-grep -Fq 'resolve_join_release_profile "$RELEASE"' "$ROOT/gdc.sh"
-grep -Fq 'host join release profile conflicts with retained operator lineage' "$ROOT/scripts/lib.sh"
+grep -Fq 'host join does not accept --release' "$ROOT/gdc.sh"
+grep -Fq 'observe-network-composition.sh' "$ROOT/gdc.sh"
+grep -Fq 'export GDC_RELEASE_PROFILE' "$ROOT/gdc.sh"
+join_release_tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$join_release_tmp"' EXIT
+if GDC_HOME="$join_release_tmp" "$ROOT/gdc.sh" --release v2026.07.23 host join node1 >"$join_release_tmp/out" 2>"$join_release_tmp/err"; then
+  echo 'host join unexpectedly accepted a global --release selector' >&2
+  exit 1
+fi
+grep -Fq 'host join does not accept --release' "$join_release_tmp/err"
+[[ ! -e "$join_release_tmp/state/network-bootstrap.json" ]]
+for selector in '--release=v2026.07.23' '--release v2026.07.23'; do
+  read -r -a selector_args <<<"$selector"
+  if GDC_HOME="$join_release_tmp" "$ROOT/gdc.sh" host join "${selector_args[@]}" node1 >"$join_release_tmp/local.out" 2>"$join_release_tmp/local.err"; then
+    echo "host join unexpectedly accepted selector: $selector" >&2
+    exit 1
+  fi
+  grep -Fq 'host join does not accept release or composition selectors' "$join_release_tmp/local.err"
+  [[ ! -e "$join_release_tmp/state/network-bootstrap.json" ]]
+done
 grep -Fq 'GDC_JOIN_RECOVERY_NEW_RUN:-false' "$ROOT/gdc.sh"
 grep -Fq 'host backup requires retained operator state' "$ROOT/gdc.sh"
 grep -Fq 'phase-host-backup.sh' "$ROOT/gdc.sh"

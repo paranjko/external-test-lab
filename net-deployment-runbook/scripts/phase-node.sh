@@ -152,6 +152,14 @@ compose_down_dir() {
   # Docker Compose prints this warning when an already-empty managed project
   # is reset. It is an expected idempotent state, not an operator warning.
   sed -E '/level=warning msg="Warning: No resource found to remove for project /d' "$output"
+  # A previous interrupted render may have left a syntactically invalid .env.
+  # The label-based cleanup immediately below does not read that file and is
+  # the authoritative fallback for this managed deployment. Do not let the
+  # broken input prevent recovery/reset from removing it.
+  if (( rc != 0 )) && grep -Fq 'failed to read ' "$output" && grep -Fq '/.env:' "$output"; then
+    printf 'READY removed managed Compose resources without reading invalid env directory=%s\n' "$dir"
+    rc=0
+  fi
   rm -f "$output"
   if (( rc != 0 )); then
     printf 'ERROR failed to remove managed Compose deployment directory=%s exit=%s\n' "$dir" "$rc" >&2

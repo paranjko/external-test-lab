@@ -290,6 +290,7 @@ COMPOSITION=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release) RELEASE="${2:-}"; shift 2 ;;
+    --release=*) RELEASE="${1#--release=}"; shift ;;
     --composition) COMPOSITION="${2:-}"; shift 2 ;;
     --model) MODEL="${2:-}"; shift 2 ;;
     *) break ;;
@@ -776,8 +777,17 @@ case "$COMMAND" in
     ;;
   join)
     join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' skip_qualification=false verification=false
+    # JOIN derives its exact compatible composition from independently
+    # observed Bootstrap seeds. An operator-selected release or composition
+    # could otherwise turn retained evidence into a software authority.
+    [[ -z "$RELEASE" ]] || { echo 'host join does not accept --release; composition is selected from verified seed observations' >&2; exit 2; }
+    [[ -z "$COMPOSITION" ]] || { echo 'host join does not accept --composition; composition is selected from verified seed observations' >&2; exit 2; }
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --release|--release=*|--composition|--composition=*)
+          echo 'host join does not accept release or composition selectors; composition is selected from verified seed observations' >&2
+          exit 2
+          ;;
         --skip-qualification) skip_qualification=true ;;
         --verification) verification=true ;;
         --public-host)
@@ -825,11 +835,10 @@ case "$COMMAND" in
       [[ "$join_gpu_alias" != "$join_alias" ]] || { echo 'Host and GPU SSH aliases must be different' >&2; exit 2; }
     fi
     use_node_data_home "$join_alias"
-    resolve_join_release_profile "$RELEASE" "$join_restore_archive"
     acquire_operator_lock
-    "$ROOT/scripts/ensure-inferenced-cli.sh"
-    # Bootstrap staging precedes role-input creation. These paths therefore
-    # cannot depend on load_project(), which needs that role input.
+    # Bootstrap observation precedes both CLI installation and role-input
+    # creation. The public network therefore selects the local immutable
+    # profile before any software download or Host mutation.
     join_genesis="$GDC_HOME/genesis"
     join_secrets="$STATE/secrets"
     if [[ -z "$join_bootstrap_file" ]]; then
@@ -838,10 +847,36 @@ case "$COMMAND" in
     else
       "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
     fi
-    "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$join_genesis" --state-dir "$STATE" --secrets-dir "$join_secrets"
+    join_composition="$STATE/network-composition.env"
+    "$ROOT/scripts/observe-network-composition.sh" --bootstrap-file "$join_bootstrap_file" --output "$join_composition"
+    # The observer only emits fixed-name, shell-quoted values after validating
+    # the complete local lock mapping.
+    unset GDC_COMPOSITION GDC_COMPOSITION_HASH
+    # shellcheck disable=SC1090
+    source "$join_composition"
+    # Sourcing assigns shell variables but does not export them.  Every
+    # subsequent helper is a child process, so export the network-selected
+    # profile before installing its CLI, creating the run manifest, or
+    # invoking the JOIN phase.
+    export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
+    export GDC_NETWORK_COMETBFT_VERSION GDC_NETWORK_CORE_VERSION GDC_NETWORK_CORE_COMMIT
+    export GDC_NETWORK_DAPI_VERSION GDC_NETWORK_DAPI_COMMIT GDC_NETWORK_DEVSHARD_TARGET
+    export GDC_RELEASE_PROFILE
+    [[ -z "${GDC_COMPOSITION:-}" ]] || export GDC_COMPOSITION
+    run_join_preflight inferenced-cli unavailable dependency inferenced \
+      'The pinned operator CLI was not available after safe installation checks.' \
+      "$ROOT/scripts/ensure-inferenced-cli.sh"
+    run_join_preflight bootstrap-stage unavailable chain bootstrap \
+       'The validated Bootstrap descriptor could not be staged locally.' \
+       "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$join_genesis" --state-dir "$STATE" --secrets-dir "$join_secrets"
     export GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"
     export GDC_JOIN_VERIFICATION="$verification"
-    [[ -z "$join_restore_archive" ]] || export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
+    if [[ -n "$join_restore_archive" ]]; then
+      export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
+      # Recovery is not a continuation of a historical software decision.
+      # It receives a new manifest bound to the currently observed network.
+      export GDC_JOIN_RECOVERY_NEW_RUN=true
+    fi
     join_role_ready=false
     join_role_config=''
     if [[ -n "${GDC_ENV:-}" && -s "$GDC_ENV" ]]; then

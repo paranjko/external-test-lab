@@ -176,5 +176,6 @@ grep -Fq 'lock_file="$STATE/.lifecycle.lock"' "$ROOT/gdc.sh"
 ! grep -Fq '.gdc.lock' "$ROOT/gdc.sh"
 grep -Fq 'No resource found to remove for project' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'ERROR failed to remove managed Compose deployment directory=%s exit=%s' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'removed managed Compose resources without reading invalid env' "$ROOT/scripts/phase-node.sh"
 
 printf 'PASS Host reset requires only an SSH alias and no role input\n'

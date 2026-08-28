@@ -34,7 +34,7 @@ grep -Fq 'apt-get install -y --no-install-recommends gh' "$ROOT/.devcontainer/cl
 grep -Eq '^[[:space:]]+binutils \\' "$ROOT/.devcontainer/cleanroom/Dockerfile"
 grep -Eq 'locales binutils \\' "$ROOT/00-host-prep/prepare-host.sh"
 ! grep -Fq 'operator-cleanroom' "$ROOT/Makefile"
-grep -Fq 'git clone -b feat/honest-lifecycle-gate-b-upgrade' "$DOC"
+grep -Fq 'git clone https://github.com/paranjko/external-test-lab.git' "$DOC"
 grep -Fq 'host join --public-host node3.gonka-dev.net gdc-node3' "$DOC"
 test -f "$ROOT/.devcontainer/node-host/devcontainer.json"
 test -f "$ROOT/.devcontainer/node-host/Dockerfile"

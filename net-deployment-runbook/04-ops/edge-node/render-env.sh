@@ -43,9 +43,25 @@ source "$ROOT/scripts/profile.sh"
 load_profiles
 topology_contains_node "$NODE" || { echo "node is not configured in inventory: $NODE" >&2; exit 2; }
 
-prometheus_url='http://127.0.0.1:9099'
-if [[ "$NODE" != "$GATEWAY_NODE" ]]; then
-  prometheus_url="https://$(node_public_host "$GATEWAY_NODE")/ops-prometheus"
+# A one-Host JOIN intentionally imports no SSH alias for the network gateway
+# or Telegram bot.  Its edge still has to expose this Host's participant
+# routes, but the auxiliary public routes must use the already validated seed
+# origin instead of trying to resolve an empty local alias.
+gateway_public_host="$PUBLIC_EDGE_HOST"
+telegram_bot_public_host="$PUBLIC_EDGE_HOST"
+prometheus_url="https://${PUBLIC_EDGE_HOST}/ops-prometheus"
+gateway_admission_upstream="https://${API_HOST}"
+gateway_admission_status_url="https://${API_HOST}/v1/status"
+if [[ -n "$GATEWAY_NODE" ]]; then
+  gateway_public_host="$(node_public_host "$GATEWAY_NODE")"
+  telegram_bot_public_host="$(node_public_host "$TELEGRAM_BOT_HOST")"
+  gateway_admission_upstream="http://${gateway_public_host}:18080"
+  gateway_admission_status_url="https://${gateway_public_host}/ops-gateway-admission-state"
+  if [[ "$NODE" == "$GATEWAY_NODE" ]]; then
+    prometheus_url='http://127.0.0.1:9099'
+  else
+    prometheus_url="https://${gateway_public_host}/ops-prometheus"
+  fi
 fi
 
 gateway_admission_protocols_json='{}'
@@ -81,15 +97,15 @@ values=(
   "MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE"
   "GRAFANA_IMAGE=$GRAFANA_IMAGE"
   "PYTHON_IMAGE=${PYTHON_IMAGE:-python:3.13-alpine}"
-  "GATEWAY_PUBLIC_HOST=$(node_public_host "$GATEWAY_NODE")"
-  "GDC_GATEWAY_ADMISSION_UPSTREAM=http://$(node_public_host "$GATEWAY_NODE"):18080"
+  "GATEWAY_PUBLIC_HOST=$gateway_public_host"
+  "GDC_GATEWAY_ADMISSION_UPSTREAM=$gateway_admission_upstream"
   # The public edge must not assume that gateway-internal listeners are
   # reachable over the gateway Host's public address. Use the TLS routes the
   # runbook already treats as the canonical chain/readiness boundary.
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
   # identity and positive capacity instead of deployment intent.
-  "GDC_GATEWAY_ADMISSION_STATUS_URL=https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
+  "GDC_GATEWAY_ADMISSION_STATUS_URL=$gateway_admission_status_url"
   "GDC_GATEWAY_ADMISSION_EPOCH_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/current_epoch_group_data"
   "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL=https://${PUBLIC_EDGE_HOST}/chain-rpc/status"
   "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/params"
@@ -102,7 +118,7 @@ values=(
   "GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES=${GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES:-1048576}"
   "GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK=${GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK:-1}"
   "GDC_GATEWAY_ADMISSION_AUDIT_FILE=/edge/status/gateway-admission.jsonl"
-  "TELEGRAM_BOT_PUBLIC_HOST=$(node_public_host "$TELEGRAM_BOT_HOST")"
+  "TELEGRAM_BOT_PUBLIC_HOST=$telegram_bot_public_host"
   "PUBLIC_GRAFANA_PROMETHEUS_URL=$prometheus_url"
   "MONITORING_CIDR=$MONITORING_CIDR"
   "PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR"
