@@ -43,7 +43,7 @@ read_failure_record() {
       failure_stage) [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe failure stage'; FAILURE_STAGE="$value" ;;
       active_phase) [[ "$value" == unavailable || "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe active phase'; FAILURE_PHASE="$value" ;;
       run_id) [[ "$value" == unavailable || "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe run identifier'; FAILURE_RUN_ID="$value" ;;
-      safe_invocation) [[ "${#value}" -le 1024 && "$value" == 'gdc'* ]] && is_public_single_line "$value" || die 'unsafe invocation text'; FAILURE_SAFE_INVOCATION="$value" ;;
+      safe_invocation) FAILURE_SAFE_INVOCATION="$(normalize_safe_invocation "$value")" || die 'unsafe invocation text' ;;
       run_manifest) FAILURE_RUN_MANIFEST="$value" ;;
       run_log) FAILURE_RUN_LOG="$value" ;;
       envelope) : ;; # Private paths are deliberately not collected.
@@ -132,6 +132,22 @@ is_public_single_line() {
   local value="$1"
   [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || return 1
   printf '%s' "$value" | LC_ALL=C grep -Eq '^[ -~]*$'
+}
+
+normalize_safe_invocation() {
+  local value="$1" launcher
+  [[ "${#value}" -le 1024 ]] && is_public_single_line "$value" || return 1
+  if [[ "$value" == gdc || "$value" == gdc\ * ]]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if [[ "$value" == ./gdc.sh || "$value" == ./gdc.sh\ * ]]; then
+    printf 'gdc%s\n' "${value#./gdc.sh}"
+    return 0
+  fi
+  [[ "$value" =~ ^/[^[:space:]]+/gdc\.sh($|[[:space:]].*)$ ]] || return 1
+  launcher="${value%%[[:space:]]*}"
+  printf 'gdc%s\n' "${value#"$launcher"}"
 }
 
 scan_public_text() {

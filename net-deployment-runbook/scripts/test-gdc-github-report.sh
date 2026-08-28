@@ -23,6 +23,7 @@ failure="$tmp/operator/reporting/invocations/invocation.$failure_id/failure.env"
 [[ -f "$failure" && ! -L "$failure" ]]
 grep -qx 'failure_stage=pre-phase' "$failure"
 grep -qx 'exit_code=2' "$failure"
+sed -i 's#^safe_invocation=.*#safe_invocation=/tmp/legacy-runbook/gdc.sh invalid-command#' "$failure"
 
 PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/gh.args" FAKE_GH_BODY="$tmp/published.md" GDC_REPORT_TEST_INTERACTIVE=true \
   run_gdc report github >"$tmp/new.out" 2>"$tmp/new.err" <<'EOF'
@@ -38,6 +39,7 @@ grep -Fq 'gdc-report-id:' "$tmp/published.md"
 grep -Fq 'gdc-report-sha256:' "$tmp/published.md"
 grep -Fq '<code>gdc invalid-command' "$tmp/published.md"
 ! grep -Fq './gdc.sh' "$tmp/published.md"
+! grep -Fq '/tmp/legacy-runbook' "$tmp/published.md"
 ! grep -Eiq 'authorization|private key|mnemonic|cookie|token=' "$tmp/published.md"
 report_dir="$(find "$tmp/operator/reporting/reports" -maxdepth 1 -mindepth 1 -type d -print -quit)"
 [[ -d "$report_dir" ]]
