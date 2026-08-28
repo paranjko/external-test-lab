@@ -61,7 +61,7 @@ grep -Fq 'oras_1.3.0_linux_amd64.tar.gz' "$PUBLISH_WORKFLOW"
 grep -Fq '6cdc692f929100feb08aa8de584d02f7bcc30ec7d88bc2adc2054d782db57c64' "$PUBLISH_WORKFLOW"
 grep -Fq 'syft_1.51.0_linux_amd64.tar.gz' "$PUBLISH_WORKFLOW"
 grep -Fq '2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f' "$PUBLISH_WORKFLOW"
-grep -Fq 'actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be' "$PUBLISH_WORKFLOW"
+grep -Fq 'actions/attest-build-provenance@v4.2.2' "$PUBLISH_WORKFLOW"
 
 prepare_job="$(job_section prepare)"
 images_job="$(job_section images)"

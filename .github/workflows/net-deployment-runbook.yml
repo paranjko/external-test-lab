@@ -33,7 +33,7 @@ jobs:
       shell: ${{ steps.filter.outputs.shell }}
     steps:
       - id: filter
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9.0.0
         with:
           script: |
             if (context.eventName !== 'pull_request') {
@@ -60,21 +60,28 @@ jobs:
       needs.changes.outputs.shell == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Check runbook shell scripts
         run: make -C net-deployment-runbook shellcheck
 
   runbook-contracts:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.GDC_NODE4_RUNNER_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && fromJSON('["self-hosted", "linux", "x64", "gdc-node4"]') || 'ubuntu-latest' }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'gdc-node4-runner' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Checkout pinned Gonka source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           repository: gonka-ai/gonka
           path: net-deployment-runbook/vendor/gonka
           fetch-depth: 0
+      - name: Check runbook shell scripts on Node4
+        if: runner.name == 'external-test-lab-gdc-node4'
+        run: ./ops/github-actions-runner/run-shellcheck-native.sh net-deployment-runbook
+      - name: Check runbook shell scripts on GitHub-hosted fallback
+        if: runner.name != 'external-test-lab-gdc-node4'
+        run: make -C net-deployment-runbook shellcheck
       - name: Test runbook contracts
         run: >-
           GONKA_UPSTREAM_WORKTREE="$GITHUB_WORKSPACE/net-deployment-runbook/vendor/gonka"

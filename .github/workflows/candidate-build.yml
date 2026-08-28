@@ -23,10 +23,10 @@ permissions:
 jobs:
   request:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.GDC_NODE4_RUNNER_ENABLED == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && fromJSON('["self-hosted", "linux", "x64", "gdc-node4"]') || 'ubuntu-latest' }}
     steps:
       - name: Checkout exact reviewed request
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -64,7 +64,7 @@ jobs:
               }
             ' >publication-request.json
       - name: Upload publication request
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: candidate-publication-request
           path: publication-request.json
