@@ -5,6 +5,7 @@ load_project
 record_phase_profile verify
 CHAIN_BASE="${GDC_CHAIN_PUBLIC_BASE:-https://$PUBLIC_EDGE_HOST}"
 CHAIN_BASE="${CHAIN_BASE%/}"
+BOOTSTRAP_DESCRIPTOR="$ROOT/bootstrap/release/${CHAIN_ID}.json"
 RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$RUN"
 VERDICT_WRITTEN=false
@@ -34,6 +35,48 @@ genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
   echo "profile_hash=$(profile_hash)"
   echo "model=$MODEL_ID@$MODEL_REVISION"
 } >"$RUN/environment.txt"
+
+fetch_broker_models() {
+  local endpoint evidence status curl_status response_validation broker_list index=0
+  local -a endpoints=() roles=()
+  if [[ -r "$BOOTSTRAP_DESCRIPTOR" ]]; then
+    broker_list="$RUN/bootstrap-broker-endpoints.txt"
+    python3 "$ROOT/scripts/network-bootstrap.py" broker-urls "$BOOTSTRAP_DESCRIPTOR" >"$broker_list" \
+      || die "Bootstrap descriptor is invalid: $BOOTSTRAP_DESCRIPTOR"
+    mapfile -t endpoints <"$broker_list"
+    (( ${#endpoints[@]} > 0 )) || die "Bootstrap descriptor has no broker endpoints: $BOOTSTRAP_DESCRIPTOR"
+    roles=("bootstrap-broker")
+  else
+    endpoints=("https://$API_HOST")
+    roles=("managed-genesis-api-fallback")
+  fi
+  for endpoint in "${endpoints[@]}"; do
+    ((index += 1))
+    evidence="$RUN/models-broker-$index.json"
+    set +e
+    status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$evidence" -w '%{http_code}' "$endpoint/v1/models")"
+    curl_status=$?
+    set -e
+    response_validation=UNAVAILABLE
+    if (( curl_status == 0 )) && [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+      if ! jq -e '.data | type == "array"' "$evidence" >/dev/null 2>&1; then
+        response_validation=MALFORMED_MODEL_LIST
+      elif ! jq -e --arg model "$MODEL_ID" '.data[] | select(.id == $model)' "$evidence" >/dev/null 2>&1; then
+        response_validation=MISSING_CONFIGURED_MODEL
+      else
+        response_validation=PASS
+      fi
+    elif (( curl_status == 0 )); then
+      response_validation=NON_2XX
+    else
+      response_validation=TRANSPORT_FAILURE
+    fi
+    printf 'BROKER_MODEL_ATTEMPT role=%s url=%s http_status=%s curl_status=%s response_validation=%s evidence=%s\n' \
+      "${roles[0]}" "$endpoint/v1/models" "$status" "$curl_status" "$response_validation" "$evidence"
+    [[ "$response_validation" == PASS ]] && { cp "$evidence" "$RUN/models-broker.json"; return 0; }
+  done
+  die 'canonical Bootstrap broker model discovery failed'
+}
 
 step 'Prove block progress with two state observations'
 deadline=$((SECONDS + 120))
@@ -138,8 +181,7 @@ for node in "${nodes[@]}"; do
   mv "$RUN/node-sync.tmp" "$RUN/node-sync.json"
 done
 jq -e '[.[].common_height_hash] | unique | length == 1' "$RUN/node-sync.json" >/dev/null || die 'nodes disagree on common-height block hash'
-curl -fsS "$CHAIN_BASE/v1/models" >"$RUN/models-chain.json"
-jq -e --arg model "$MODEL_ID" '.data[] | select(.id == $model)' "$RUN/models-chain.json" >/dev/null || die "model $MODEL_ID is absent from the live API"
+fetch_broker_models
 # The 0.2.14 decentralized API intentionally exposes the model catalog at
 # /v1/models, while current epoch group and committed weights are chain REST
 # queries. Keep the latter on the Genesis participant loopback rather than treating a nonexistent
