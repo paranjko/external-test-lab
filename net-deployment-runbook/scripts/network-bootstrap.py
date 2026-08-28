@@ -62,6 +62,15 @@ def env(doc):
  if len(rpcs)<2:raise BootstrapError("env","seeds","two distinct RPC URLs required")
  def quote(v):return "'"+v.replace("'","'\\\"'\\\"'")+"'"
  return "".join(f"export {k}={quote(v)}\n" for k,v in (("SEED_API_URL",first["api"]),("SEED_NODE_RPC_URL",first["rpc"]),("SEED_NODE_P2P_URL",first["p2p"]),("RPC_SERVER_URL_1",rpcs[0]),("RPC_SERVER_URL_2",rpcs[1]))).encode()
+def broker_urls(doc):
+ values=[]
+ for i,broker in enumerate(doc["brokers"]):
+  for j,endpoint in enumerate(broker["api_urls"]):
+   parsed=valid_url(endpoint,f"brokers[{i}].api_urls[{j}]",{"https"})
+   if parsed.path not in ("", "/"):raise BootstrapError("semantics",f"brokers[{i}].api_urls[{j}]","contains an unsupported path")
+   values.append(endpoint.rstrip("/"))
+ if not values:raise BootstrapError("semantics","brokers","contains no broker API URL")
+ return values
 def genesis(seed,doc,out):
  result=subprocess.run([os.environ.get("INFERENCED","inferenced"),"download-genesis",seed["rpc"],str(out)],capture_output=True,text=True)
  if result.returncode:raise BootstrapError("genesis",seed["rpc"],"official download-genesis failed")
@@ -95,7 +104,7 @@ def online(doc):
  print(f"PASS online network bootstrap chain_id={doc['chain_id']} seeds={len(doc['seeds'])}")
 def main(argv):
  parser=argparse.ArgumentParser();sub=parser.add_subparsers(dest="command",required=True)
- for name in ("verify","online","env"):p=sub.add_parser(name);p.add_argument("file",type=Path)
+ for name in ("verify","online","env","broker-urls"):p=sub.add_parser(name);p.add_argument("file",type=Path)
  p=sub.add_parser("stage");p.add_argument("file",type=Path);p.add_argument("destination",type=Path)
  p=sub.add_parser("render");p.add_argument("input",type=Path);p.add_argument("output",type=Path)
  a=parser.parse_args(argv)
@@ -104,6 +113,7 @@ def main(argv):
   if a.command=="verify":print(f"PASS offline network bootstrap file={a.file} chain_id={doc['chain_id']} genesis_sha256={doc['genesis']['sha256']} seeds={len(doc['seeds'])}");print("Repository attestation and live RPC checks were not run.")
   elif a.command=="online":online(doc)
   elif a.command=="env":sys.stdout.buffer.write(env(doc))
+  elif a.command=="broker-urls":print(*broker_urls(doc),sep="\n")
   elif a.command=="render":a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_bytes((json.dumps(doc,sort_keys=True,separators=(",",":"))+"\n").encode())
   elif a.command=="stage":
    selected=None
