@@ -26,6 +26,10 @@ grep -qx 'exit_code=2' "$failure"
 # Older records may contain an untrusted reconstruction of the command. It is
 # deliberately ignored and must never enter generated report files.
 printf 'safe_invocation=/tmp/legacy-runbook/gdc.sh invalid-command\n' >>"$failure"
+mkdir -p "$tmp/operator/runs/diagnostic-fixture"
+"$ROOT/scripts/diagnostic-envelope.sh" write "$tmp/operator/runs/diagnostic-fixture/diagnostic-envelope.v1.json" \
+  join join-node failed interrupted network curl 28 safe join-repeat 'network readback timed out'
+printf 'diagnostic_envelope=%s\n' "$tmp/operator/runs/diagnostic-fixture/diagnostic-envelope.v1.json" >>"$failure"
 
 PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/gh.args" FAKE_GH_BODY="$tmp/published.md" GDC_REPORT_TEST_INTERACTIVE=true \
   run_gdc report github >"$tmp/new.out" 2>"$tmp/new.err" <<'EOF'
@@ -42,6 +46,9 @@ grep -Fq 'gdc-report-sha256:' "$tmp/published.md"
 ! grep -Fq 'Safe reproduction command' "$tmp/published.md"
 ! grep -Fq '/tmp/legacy-runbook' "$tmp/published.md"
 ! grep -Fq 'safe_invocation=' "$tmp/published.md"
+grep -Fq 'network readback timed out' "$tmp/published.md"
+grep -Fq 'Resume decision: `safe`.' "$tmp/published.md"
+grep -Fq 'permits repeating the supported `gdc host join` operation' "$tmp/published.md"
 ! grep -Eq '^\| (docker|gh|docker_compose|nvidia_gpu|filesystem_free_kib) \|' "$tmp/published.md"
 grep -Eq '^\| bash \| [0-9][0-9A-Za-z()._-]* \|$' "$tmp/published.md"
 ! grep -Eiq 'authorization|private key|mnemonic|cookie|token=' "$tmp/published.md"

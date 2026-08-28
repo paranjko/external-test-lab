@@ -32,7 +32,7 @@ require_regular_beneath() {
 read_failure_record() {
   local record="$1" key value seen_keys=' '
   require_regular_beneath "$REPORTING_ROOT" "$record" || die 'selected failure record is unsafe; inspect the local reporting directory'
-  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG=''
+  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG='' FAILURE_DIAGNOSTIC_ENVELOPE=''
   while IFS='=' read -r key value; do
     [[ "$seen_keys" != *" $key "* ]] || die 'failure record has a duplicate field'
     seen_keys+="$key "
@@ -50,11 +50,40 @@ read_failure_record() {
       run_manifest) FAILURE_RUN_MANIFEST="$value" ;;
       run_log) FAILURE_RUN_LOG="$value" ;;
       envelope) : ;; # Private paths are deliberately not collected.
+      diagnostic_envelope) FAILURE_DIAGNOSTIC_ENVELOPE="$value" ;;
       recorded_at) [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$ ]] || die 'unsafe failure timestamp'; FAILURE_RECORDED_AT="$value" ;;
       *) die 'failure record has an unsupported field' ;;
     esac
   done <"$record"
   [[ -n "$FAILURE_SCHEMA_VERSION" && -n "$FAILURE_INVOCATION_ID" && -n "$FAILURE_EXIT_CODE" && -n "$FAILURE_STAGE" && -n "$FAILURE_RECORDED_AT" ]] || die 'failure record is incomplete'
+}
+
+collect_diagnostic_envelope() {
+  DIAGNOSTIC_SUMMARY='Limited legacy context: no validated diagnostic envelope was retained.'
+  DIAGNOSTIC_RESUME='not_applicable'
+  DIAGNOSTIC_RESUME_TOKEN='none'
+  [[ -n "${FAILURE_DIAGNOSTIC_ENVELOPE:-}" ]] || return 0
+  require_regular_beneath "$GDC_DATA_ROOT" "$FAILURE_DIAGNOSTIC_ENVELOPE" || die 'diagnostic envelope is unsafe; retained report was not published'
+  "$ROOT/scripts/diagnostic-envelope.sh" validate "$FAILURE_DIAGNOSTIC_ENVELOPE" || die 'diagnostic envelope is invalid; retained report was not published'
+  DIAGNOSTIC_SUMMARY="$(jq -r .summary "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_RESUME="$(jq -r .resume.decision "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_RESUME_TOKEN="$(jq -r .resume.token "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+}
+
+render_resume_guidance() {
+  case "${DIAGNOSTIC_RESUME_TOKEN:-none}" in
+    join-repeat)
+      printf 'The validated state permits repeating the supported `gdc host join` operation for the same Host. The report deliberately omits operator arguments and local paths.\n'
+      ;;
+    none)
+      case "${DIAGNOSTIC_RESUME:-not_applicable}" in
+        manual_action_required) printf 'No runnable command is included: an operator must first resolve the stated prerequisite.\n' ;;
+        unsafe) printf 'No runnable command is included because retry safety is not proven.\n' ;;
+        *) printf 'No resume command applies to this diagnostic.\n' ;;
+      esac
+      ;;
+    *) die 'validated diagnostic has an unsupported resume token' ;;
+  esac
 }
 
 collect_diagnostic_excerpt() {
@@ -205,6 +234,7 @@ write_report() {
   report_id="gdc-${FAILURE_RECORDED_AT//[-:TZ]/}-${FAILURE_INVOCATION_ID}"
   created_at="$(date -u +%FT%TZ)"
   collect_manifest_identity
+  collect_diagnostic_envelope
   collect_diagnostic_excerpt
   {
     printf 'schema_version=%s\n' "$REPORT_SCHEMA_VERSION"
@@ -221,6 +251,7 @@ write_report() {
     printf 'chain_id=%s\n' "$MANIFEST_CHAIN_ID"
     printf 'genesis_sha256=%s\n' "$MANIFEST_GENESIS_SHA256"
     printf 'runbook_revision=%s\n' "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)"
+    printf 'diagnostic_resume=%s\n' "$DIAGNOSTIC_RESUME"
     printf 'launcher_sha256=%s\n' "$(sha256sum "$ROOT/gdc.sh" | awk '{print $1}')"
     safe_probe 'os' uname -s
     safe_probe 'kernel' uname -r
@@ -235,6 +266,10 @@ write_report() {
     printf '## Summary\n\n'
     printf '| Field | Value |\n| --- | --- |\n'
     awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(report_id|created_at|failure_recorded_at|failure_stage|active_phase|exit_code|run_id|release_profile|release_profile_sha256|profile_sha256|chain_id|genesis_sha256|runbook_revision|launcher_sha256)$/ { print "| " $1, $2 " |" }' "$metadata"
+    printf '\n## Typed diagnostic\n\n'
+    printf '%s\n' "$DIAGNOSTIC_SUMMARY" | escape_html
+    printf '\n\nResume decision: `%s`.\n\n' "$DIAGNOSTIC_RESUME"
+    render_resume_guidance
     printf '\n## Environment\n\n| Field | Value |\n| --- | --- |\n'
     awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(os|kernel|architecture|bash|utc_clock)$/ { gsub(/\|/, "\\|", $2); print "| " $1, $2 " |" }' "$metadata"
     printf '\n## Sanitized diagnostic excerpt\n\n<pre>\n'

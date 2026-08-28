@@ -176,6 +176,8 @@ evidence_exit_trap() {
 The phase stopped with exit code $rc before it could write its final verdict.
 Inspect the run log and evidence in this directory. No PASS is implied.
 EOF
+    "$ROOT/scripts/phase-diagnostic-adapter.sh" "$RUN/diagnostic-envelope.v1.json" "${EVIDENCE_PHASE_NAME:-phase}" "$rc"
+    export GDC_DIAGNOSTIC_ENVELOPE="$RUN/diagnostic-envelope.v1.json"
   fi
 }
 
