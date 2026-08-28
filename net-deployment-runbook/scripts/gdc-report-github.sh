@@ -32,7 +32,7 @@ require_regular_beneath() {
 read_failure_record() {
   local record="$1" key value seen_keys=' '
   require_regular_beneath "$REPORTING_ROOT" "$record" || die 'selected failure record is unsafe; inspect the local reporting directory'
-  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_SAFE_INVOCATION='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG=''
+  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG=''
   while IFS='=' read -r key value; do
     [[ "$seen_keys" != *" $key "* ]] || die 'failure record has a duplicate field'
     seen_keys+="$key "
@@ -43,7 +43,10 @@ read_failure_record() {
       failure_stage) [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe failure stage'; FAILURE_STAGE="$value" ;;
       active_phase) [[ "$value" == unavailable || "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe active phase'; FAILURE_PHASE="$value" ;;
       run_id) [[ "$value" == unavailable || "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die 'unsafe run identifier'; FAILURE_RUN_ID="$value" ;;
-      safe_invocation) FAILURE_SAFE_INVOCATION="$(normalize_safe_invocation "$value")" || die 'unsafe invocation text' ;;
+      # Legacy records may contain this once-public field. It is deliberately
+      # ignored: launcher argument rewriting cannot provide a reliable public
+      # reproduction command and paths must never enter the report.
+      safe_invocation) : ;;
       run_manifest) FAILURE_RUN_MANIFEST="$value" ;;
       run_log) FAILURE_RUN_LOG="$value" ;;
       envelope) : ;; # Private paths are deliberately not collected.
@@ -51,7 +54,7 @@ read_failure_record() {
       *) die 'failure record has an unsupported field' ;;
     esac
   done <"$record"
-  [[ -n "$FAILURE_SCHEMA_VERSION" && -n "$FAILURE_INVOCATION_ID" && -n "$FAILURE_EXIT_CODE" && -n "$FAILURE_STAGE" && -n "$FAILURE_RECORDED_AT" && -n "$FAILURE_SAFE_INVOCATION" ]] || die 'failure record is incomplete'
+  [[ -n "$FAILURE_SCHEMA_VERSION" && -n "$FAILURE_INVOCATION_ID" && -n "$FAILURE_EXIT_CODE" && -n "$FAILURE_STAGE" && -n "$FAILURE_RECORDED_AT" ]] || die 'failure record is incomplete'
 }
 
 collect_diagnostic_excerpt() {
@@ -185,6 +188,13 @@ safe_probe() {
   printf '%s=%s\n' "$label" "$value"
 }
 
+safe_bash_version() {
+  local version
+  version="$(bash --version 2>/dev/null | sed -n '1{s/^GNU bash, version \([^ ]*\).*/\1/p;}')"
+  [[ "$version" =~ ^[0-9][0-9A-Za-z()._-]{0,127}$ ]] || version='unavailable'
+  printf 'bash=%s\n' "$version"
+}
+
 write_report() {
   local report_dir metadata body inventory
   report_dir="$1"
@@ -205,7 +215,6 @@ write_report() {
     printf 'active_phase=%s\n' "${FAILURE_PHASE:-unavailable}"
     printf 'exit_code=%s\n' "$FAILURE_EXIT_CODE"
     printf 'run_id=%s\n' "${FAILURE_RUN_ID:-unavailable}"
-    printf 'safe_invocation=%s\n' "$FAILURE_SAFE_INVOCATION"
     printf 'release_profile=%s\n' "$MANIFEST_RELEASE_PROFILE"
     printf 'release_profile_sha256=%s\n' "$MANIFEST_RELEASE_SHA256"
     printf 'profile_sha256=%s\n' "$MANIFEST_PROFILE_SHA256"
@@ -216,12 +225,7 @@ write_report() {
     safe_probe 'os' uname -s
     safe_probe 'kernel' uname -r
     safe_probe 'architecture' uname -m
-    safe_probe 'bash' bash --version
-    safe_probe 'docker' docker --version
-    safe_probe 'gh' gh --version
-    safe_probe 'docker_compose' docker compose version
-    safe_probe 'nvidia_gpu' nvidia-smi --query-gpu=name --format=csv,noheader
-    printf 'filesystem_free_kib=%s\n' "$(df -Pk "$GDC_DATA_ROOT" 2>/dev/null | awk 'NR == 2 && $4 ~ /^[0-9]+$/ { print $4; exit }')"
+    safe_bash_version
     safe_probe 'utc_clock' date -u +%FT%TZ
   } >"$metadata"
   scan_public_text "$metadata" || die "unsafe generated metadata; retained $report_dir"
@@ -231,11 +235,8 @@ write_report() {
     printf '## Summary\n\n'
     printf '| Field | Value |\n| --- | --- |\n'
     awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(report_id|created_at|failure_recorded_at|failure_stage|active_phase|exit_code|run_id|release_profile|release_profile_sha256|profile_sha256|chain_id|genesis_sha256|runbook_revision|launcher_sha256)$/ { print "| " $1, $2 " |" }' "$metadata"
-    printf '\n## Safe reproduction command\n\n<code>'
-    awk -F= '$1 == "safe_invocation" { sub(/^[^=]*=/, ""); print; exit }' "$metadata" | escape_html
-    printf '</code>\n'
     printf '\n## Environment\n\n| Field | Value |\n| --- | --- |\n'
-    awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(os|kernel|architecture|bash|docker|docker_compose|gh|nvidia_gpu|filesystem_free_kib|utc_clock)$/ { gsub(/\|/, "\\|", $2); print "| " $1, $2 " |" }' "$metadata"
+    awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(os|kernel|architecture|bash|utc_clock)$/ { gsub(/\|/, "\\|", $2); print "| " $1, $2 " |" }' "$metadata"
     printf '\n## Sanitized diagnostic excerpt\n\n<pre>\n'
     printf '%s\n' "$DIAGNOSTIC_EXCERPT" | escape_html
     printf '</pre>\n'

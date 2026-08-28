@@ -13,7 +13,7 @@ fi
 GDC_LAUNCHER_EXIT_RECORDED=false
 
 record_launcher_failure() {
-  local rc="$1" tmp failure_dir safe_invocation
+  local rc="$1" tmp failure_dir
   [[ "$rc" -ne 0 && -n "${GDC_LAUNCHER_ENVELOPE_DIR:-}" ]] || return 0
   # A report-publication failure retains its own local draft; making it the
   # latest incident would recursively hide the selected operational failure.
@@ -24,8 +24,6 @@ record_launcher_failure() {
   mkdir -p "$failure_dir"
   chmod 0700 "${GDC_DATA_ROOT:?}/reporting" "$failure_dir" 2>/dev/null || true
   tmp="$failure_dir/.latest-failure.$$.tmp"
-  safe_invocation="${GDC_INVOCATION_COMMAND:-gdc}"
-  safe_invocation="${safe_invocation/"$ROOT/gdc.sh"/gdc}"
   {
     printf 'schema_version=1\n'
     printf 'invocation_id=%s\n' "$GDC_LAUNCHER_INVOCATION_ID"
@@ -35,7 +33,6 @@ record_launcher_failure() {
     printf 'run_id=%s\n' "${GDC_RUN_ID:-unavailable}"
     printf 'run_log=%s\n' "${GDC_RUN_LOG:-unavailable}"
     [[ -z "${GDC_RUN_ID:-}" ]] || printf 'run_manifest=%s\n' "$GDC_HOME/runs/$GDC_RUN_ID/manifest.env"
-    printf 'safe_invocation=%s\n' "$safe_invocation"
     printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
     printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
   } >"$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"

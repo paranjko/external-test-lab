@@ -23,7 +23,9 @@ failure="$tmp/operator/reporting/invocations/invocation.$failure_id/failure.env"
 [[ -f "$failure" && ! -L "$failure" ]]
 grep -qx 'failure_stage=pre-phase' "$failure"
 grep -qx 'exit_code=2' "$failure"
-sed -i 's#^safe_invocation=.*#safe_invocation=/tmp/legacy-runbook/gdc.sh invalid-command#' "$failure"
+# Older records may contain an untrusted reconstruction of the command. It is
+# deliberately ignored and must never enter generated report files.
+printf 'safe_invocation=/tmp/legacy-runbook/gdc.sh invalid-command\n' >>"$failure"
 
 PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/gh.args" FAKE_GH_BODY="$tmp/published.md" GDC_REPORT_TEST_INTERACTIVE=true \
   run_gdc report github >"$tmp/new.out" 2>"$tmp/new.err" <<'EOF'
@@ -37,14 +39,18 @@ grep -Fq -- '--body-file ' "$tmp/gh.args"
 ! grep -Fq 'report contents' "$tmp/gh.args"
 grep -Fq 'gdc-report-id:' "$tmp/published.md"
 grep -Fq 'gdc-report-sha256:' "$tmp/published.md"
-grep -Fq '<code>gdc invalid-command' "$tmp/published.md"
-! grep -Fq './gdc.sh' "$tmp/published.md"
+! grep -Fq 'Safe reproduction command' "$tmp/published.md"
 ! grep -Fq '/tmp/legacy-runbook' "$tmp/published.md"
+! grep -Fq 'safe_invocation=' "$tmp/published.md"
+! grep -Eq '^\| (docker|gh|docker_compose|nvidia_gpu|filesystem_free_kib) \|' "$tmp/published.md"
+grep -Eq '^\| bash \| [0-9][0-9A-Za-z()._-]* \|$' "$tmp/published.md"
 ! grep -Eiq 'authorization|private key|mnemonic|cookie|token=' "$tmp/published.md"
 report_dir="$(find "$tmp/operator/reporting/reports" -maxdepth 1 -mindepth 1 -type d -print -quit)"
 [[ -d "$report_dir" ]]
 [[ "$(stat -c '%a' "$report_dir")" == 700 ]]
 [[ "$(stat -c '%a' "$report_dir/report.md")" == 400 ]]
+! grep -Fq 'safe_invocation=' "$report_dir/report.txt"
+! grep -Fq '/tmp/legacy-runbook' "$report_dir/report.txt"
 archive="$report_dir.tar.gz"
 [[ "$(stat -c '%a' "$archive")" == 600 ]]
 tar -tzf "$archive" | grep -qx 'report.txt'
@@ -117,32 +123,6 @@ then
 fi
 grep -Fq 'GitHub returned an invalid issue list' "$tmp/hostile-issue-report.err"
 ! grep -Eq 'issue (create|comment).*--body-file' "$tmp/hostile-issue.args" || { echo 'hostile issue title attempted a write' >&2; exit 1; }
-
-unsafe_invocation_root="$tmp/unsafe-invocation-operator"
-if GDC_HOME="$unsafe_invocation_root" "$ROOT/gdc.sh" unsafe-invocation-command >"$tmp/unsafe-invocation.out" 2>"$tmp/unsafe-invocation.err"; then
-  echo 'unsafe invocation fixture failure unexpectedly succeeded' >&2
-  exit 1
-fi
-unsafe_invocation_id="$(<"$unsafe_invocation_root/reporting/failures/latest-failure")"
-unsafe_invocation_failure="$unsafe_invocation_root/reporting/invocations/invocation.$unsafe_invocation_id/failure.env"
-{
-  while IFS= read -r line; do
-    case "$line" in
-      safe_invocation=*) printf 'safe_invocation=./gdc.sh \033[31mhostile\n' ;;
-      *) printf '%s\n' "$line" ;;
-    esac
-  done <"$unsafe_invocation_failure"
-} >"$unsafe_invocation_failure.rewritten"
-mv "$unsafe_invocation_failure.rewritten" "$unsafe_invocation_failure"
-if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/unsafe-invocation.args" FAKE_GH_BODY="$tmp/unsafe-invocation.md" GDC_REPORT_TEST_INTERACTIVE=true \
-  GDC_HOME="$unsafe_invocation_root" "$ROOT/gdc.sh" report github >"$tmp/unsafe-invocation-report.out" 2>"$tmp/unsafe-invocation-report.err" <<'EOF'
-EOF
-then
-  echo 'control-bearing invocation unexpectedly succeeded' >&2
-  exit 1
-fi
-grep -Fq 'unsafe invocation text' "$tmp/unsafe-invocation-report.err"
-[[ ! -e "$tmp/unsafe-invocation.args" ]] || { echo 'unsafe invocation reached GitHub preflight' >&2; exit 1; }
 
 if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/context.args" FAKE_GH_BODY="$tmp/context.md" GDC_REPORT_TEST_INTERACTIVE=true \
   run_gdc report github >"$tmp/context.out" 2>"$tmp/context.err" <<'EOF'
