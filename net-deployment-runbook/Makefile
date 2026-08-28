@@ -70,6 +70,7 @@ test:
 	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh
 	@./scripts/test-network-verify-identity-resolution.sh
+	@./scripts/test-deployed-ml-evidence.sh
 	@./scripts/test-participant-state.sh
 	@./scripts/test-runtime-identity.sh
 	@./scripts/test-validation-weight-evidence.sh
