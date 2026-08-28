@@ -162,16 +162,13 @@ for participant in "${participant_records[@]}"; do
   ' "$RUN/current-epoch-group.json" >/dev/null || die "$node is absent from the live epoch group"
 done
 
-step 'Record direct ML qualification as component evidence only'
-mkdir -p "$RUN/ml-qualification"
+step 'Record direct evidence from each deployed ML runtime'
+ml_hosts=()
 for node in "${nodes[@]}"; do
   host="$(node_ml_host "$node" || printf '%s' "$node")"
-  require_ml_qualification "$host"
-  report="$(latest_ml_qualification_report "$host")"
-  target="$RUN/ml-qualification/$host"
-  mkdir -p "$target"
-  cp "$report/models.json" "$report/completion.json" "$report/vram.csv" "$target/"
+  ml_hosts+=("$host")
 done
+"$ROOT/scripts/capture-deployed-ml-evidence.sh" "$RUN/ml-runtime" "$MODEL_ID" "${ml_hosts[@]}"
 
 step 'Assess operator-record style in the complete rehearsal log'
 STYLE="$RUN/style-consistency.md"
@@ -211,7 +208,7 @@ cat >"$RUN/verdict.md" <<EOF
 - block height advanced from $first to $current, crossing one complete $epoch_blocks-block epoch;
 - every joined node is within $lag_threshold blocks and shares the block hash at height $common_height;
 - $MODEL_ID has a live group with non-empty validation weights;
-- direct ML model/completion evidence is retained separately and is not treated
+- deployed ML model/completion evidence is retained separately and is not treated
   as chain-accounted inference;
 - output style assessment: $STYLE.
 EOF
