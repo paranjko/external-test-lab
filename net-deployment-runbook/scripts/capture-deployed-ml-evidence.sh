@@ -29,7 +29,7 @@ poll_seconds="${GDC_DEPLOYED_ML_EVIDENCE_POLL_SECONDS:-10}"
 umask 077
 mkdir -p "$OUTPUT_DIR"
 
-declare -A seen=() containers=() stages=() reasons=()
+declare -A seen=() containers=() container_ids=() stages=() reasons=()
 for host in "${hosts[@]}"; do
   [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
     echo "error: invalid ML Host SSH alias: $host" >&2
@@ -46,17 +46,31 @@ for host in "${hosts[@]}"; do
 done
 
 HTTP_STATUS=000
+remaining_seconds() {
+  local remaining_seconds=$((deadline - SECONDS))
+  (( remaining_seconds > 0 )) || return 1
+  printf '%s\n' "$remaining_seconds"
+}
+
+remote() {
+  local host="$1"
+  shift
+  local remaining_seconds
+  remaining_seconds="$(remaining_seconds)" || return 124
+  timeout --foreground "${remaining_seconds}s" ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$@"
+}
+
 capture_http() {
-  local host="$1" container="$2" method="$3" url="$4" body_file="$5" payload="${6:-}"
+  local host="$1" consumer="$2" method="$3" url="$4" body_file="$5" payload="${6:-}"
   local wire="$body_file.wire" status_line rc=0
   rm -f "$wire" "$body_file"
   if [[ "$method" == GET ]]; then
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-      "docker exec '$container' curl -sS --max-time 20 -w '\nGDC_HTTP_STATUS=%{http_code}\n' '$url'" \
+    remote "$host" \
+      "docker exec '$consumer' curl -sS --max-time 20 -w '\nGDC_HTTP_STATUS=%{http_code}\n' '$url'" \
       >"$wire" || rc=$?
   else
-    printf '%s' "$payload" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-      "docker exec -i '$container' curl -sS --max-time 60 -w '\nGDC_HTTP_STATUS=%{http_code}\n' '$url' -H 'Content-Type: application/json' --data-binary @-" \
+    printf '%s' "$payload" | remote "$host" \
+      "docker exec -i '$consumer' curl -sS --max-time 60 -w '\nGDC_HTTP_STATUS=%{http_code}\n' '$url' -H 'Content-Type: application/json' --data-binary @-" \
       >"$wire" || rc=$?
   fi
   if (( rc != 0 )); then
@@ -86,22 +100,24 @@ while (( remaining > 0 && SECONDS < deadline )); do
     report="$OUTPUT_DIR/$host"
 
     if [[ "${stages[$host]}" == container ]]; then
-      mapfile -t matches < <(ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
-        "docker ps --filter 'label=com.docker.compose.project=$host' --filter 'label=com.docker.compose.service=mlnode' --format '{{.Names}}'" \
+      mapfile -t matches < <(remote "$host" \
+        "docker ps --filter 'label=com.docker.compose.project=$host' --filter 'label=com.docker.compose.service=mlnode' --format '{{.Names}} {{.ID}}'" \
         2>/dev/null || true)
-      if (( ${#matches[@]} != 1 )) || [[ ! "${matches[0]:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+      if (( ${#matches[@]} != 1 )) || [[ ! "${matches[0]:-}" =~ ^([A-Za-z0-9][A-Za-z0-9_.-]*)\ ([0-9a-f]{12,64})$ ]]; then
         reasons[$host]="running_mlnode_containers_${#matches[@]}"
         printf 'WAIT  deployed ML evidence host=%s stage=container reason=%s\n' "$host" "${reasons[$host]}"
         continue
       fi
-      containers[$host]="${matches[0]}"
-      printf '%s\n' "${matches[0]}" >"$report/container.txt"
+      containers[$host]="${BASH_REMATCH[1]}"
+      container_ids[$host]="${BASH_REMATCH[2]}"
+      printf '%s\n' "${containers[$host]}" >"$report/container.txt"
+      printf '%s\n' "${container_ids[$host]}" >"$report/container-id.txt"
       stages[$host]=runtime
     fi
 
     if [[ "${stages[$host]}" == runtime ]]; then
       container="${containers[$host]}"
-      if ! capture_http "$host" "$container" GET \
+      if ! capture_http "$host" inference GET \
         http://127.0.0.1:8080/api/v1/inference/up/status "$report/status.json.tmp"; then
         reasons[$host]=runtime_status_transport
         printf 'WAIT  deployed ML evidence host=%s stage=runtime reason=%s\n' "$host" "${reasons[$host]}"
@@ -120,7 +136,7 @@ while (( remaining > 0 && SECONDS < deadline )); do
       fi
       mv "$report/status.json.tmp" "$report/status.json"
 
-      if ! capture_http "$host" "$container" GET \
+      if ! capture_http "$host" inference GET \
         http://127.0.0.1:5000/v1/models "$report/models.json.tmp"; then
         reasons[$host]=models_transport
         printf 'WAIT  deployed ML evidence host=%s stage=models reason=%s\n' "$host" "${reasons[$host]}"
@@ -131,7 +147,7 @@ while (( remaining > 0 && SECONDS < deadline )); do
         printf 'WAIT  deployed ML evidence host=%s stage=models reason=%s\n' "$host" "${reasons[$host]}"
         continue
       fi
-      if ! jq -e --arg model "$MODEL_ID" '.data[] | select(.id == $model)' \
+      if ! jq -e --arg model "$MODEL_ID" '.data | type == "array" and any(.[]; .id == $model)' \
         "$report/models.json.tmp" >/dev/null 2>&1; then
         reasons[$host]=model_missing
         printf 'WAIT  deployed ML evidence host=%s stage=models reason=%s\n' "$host" "${reasons[$host]}"
@@ -139,7 +155,7 @@ while (( remaining > 0 && SECONDS < deadline )); do
       fi
       mv "$report/models.json.tmp" "$report/models.json"
 
-      if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
+      if ! remote "$host" \
         'nvidia-smi --query-gpu=name,memory.total,memory.used,memory.free --format=csv,noheader' \
         >"$report/vram.csv.tmp"; then
         reasons[$host]=gpu_inventory_transport
@@ -158,7 +174,16 @@ while (( remaining > 0 && SECONDS < deadline )); do
 
     if [[ "${stages[$host]}" == completion ]]; then
       container="${containers[$host]}"
-      if ! capture_http "$host" "$container" POST \
+      current_id="$(remote "$host" "docker inspect --format '{{.Id}}' '$container'" 2>/dev/null || true)"
+      if [[ "$current_id" != "${container_ids[$host]}" ]]; then
+        rm -f "$report/status.json" "$report/models.json" "$report/vram.csv" "$report/completion.json"
+        unset 'containers[$host]' 'container_ids[$host]'
+        stages[$host]=container
+        reasons[$host]=runtime_replaced
+        printf 'WAIT  deployed ML evidence host=%s stage=container reason=%s\n' "$host" "${reasons[$host]}"
+        continue
+      fi
+      if ! capture_http "$host" inference POST \
         http://127.0.0.1:5000/v1/chat/completions "$report/completion.json.tmp" "$completion_payload"; then
         reasons[$host]=completion_transport
         printf 'WAIT  deployed ML completion host=%s reason=%s\n' "$host" "${reasons[$host]}"
@@ -170,7 +195,7 @@ while (( remaining > 0 && SECONDS < deadline )); do
         printf 'WAIT  deployed ML completion host=%s reason=%s\n' "$host" "${reasons[$host]}"
         continue
       fi
-      if ! jq -e '.choices[0].message.content | type == "string"' \
+      if ! jq -e '(.choices[0].message.content | (type == "string") and (gsub("^[[:space:]]+|[[:space:]]+$"; "") | length > 0))' \
         "$report/completion.json.tmp" >/dev/null 2>&1; then
         reasons[$host]=completion_invalid_response
         mv "$report/completion.json.tmp" "$report/completion-last.json"
@@ -186,7 +211,10 @@ while (( remaining > 0 && SECONDS < deadline )); do
     fi
   done
   (( remaining == 0 )) && break
-  sleep "$poll_seconds"
+  sleep_seconds="$poll_seconds"
+  remaining_seconds="$(remaining_seconds)" || break
+  (( sleep_seconds > remaining_seconds )) && sleep_seconds="$remaining_seconds"
+  sleep "$sleep_seconds"
 done
 
 if (( remaining > 0 )); then
