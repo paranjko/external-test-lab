@@ -12,31 +12,77 @@ permissions:
   id-token: write
 
 jobs:
-  attest:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      schema: ${{ steps.availability.outputs.schema }}
+      mainnet: ${{ steps.availability.outputs.mainnet }}
+      testnet: ${{ steps.availability.outputs.testnet }}
+      community: ${{ steps.availability.outputs.community }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: availability
+        name: Discover independently publishable artifacts
+        run: |
+          set -Eeuo pipefail
+          release=net-deployment-runbook/bootstrap/release
+          for artifact in schema:v1.bootstrap.schema.json mainnet:gonka-mainnet.json testnet:gonka-testnet.json community:gonka-devnet-community.json; do
+            name="${artifact%%:*}"
+            file="${artifact#*:}"
+            if [[ -f "$release/$file" ]]; then
+              echo "$name=true" >>"$GITHUB_OUTPUT"
+            else
+              echo "$name=false" >>"$GITHUB_OUTPUT"
+            fi
+          done
+  attest-schema:
+    needs: discover
+    if: ${{ needs.discover.outputs.schema == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Verify exact release inputs
+      - name: Verify exact schema input
         run: |
           set -Eeuo pipefail
           release=net-deployment-runbook/bootstrap/release
           cmp "$release/v1.bootstrap.schema.json" net-deployment-runbook/bootstrap/v1.bootstrap.schema.json
-          for file in gonka-mainnet.json gonka-testnet.json gonka-devnet-community.json; do
-            python3 net-deployment-runbook/scripts/network-bootstrap.py verify "$release/$file"
-          done
-      - name: Attest schema
+      - name: Attest exact schema
         uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/v1.bootstrap.schema.json
-      - name: Attest Mainnet bootstrap
+  attest-mainnet:
+    needs: discover
+    if: ${{ needs.discover.outputs.mainnet == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify exact Mainnet input
+        run: python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-mainnet.json
+      - name: Attest exact Mainnet bootstrap
         uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-mainnet.json
-      - name: Attest Testnet bootstrap
+  attest-testnet:
+    needs: discover
+    if: ${{ needs.discover.outputs.testnet == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify exact Testnet input
+        run: python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-testnet.json
+      - name: Attest exact Testnet bootstrap
         uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-testnet.json
-      - name: Attest Community DevNet bootstrap
+  attest-community:
+    needs: discover
+    if: ${{ needs.discover.outputs.community == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify exact Community DevNet input
+        run: python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-devnet-community.json
+      - name: Attest exact Community DevNet bootstrap
         uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-devnet-community.json
