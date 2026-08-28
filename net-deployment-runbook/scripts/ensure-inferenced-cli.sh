@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
-load_project
+source "$ROOT/scripts/profile.sh"
+load_profiles
 
 note() {
   [[ "${GDC_INFERENCED_CLI_QUIET:-false}" == true ]] || printf '%s\n' "$*"

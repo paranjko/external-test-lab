@@ -53,6 +53,7 @@ test:
 	@./scripts/build-site-js.sh --check
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-network-bootstrap.py
+	@./scripts/test-network-bootstrap-shell.sh
 	@python3 ./scripts/test-pin-candidate-dockerfile.py
 	@python3 ./scripts/test-patch-candidate-dapi-dockerfile.py
 	@./scripts/test-package-candidate-binary.sh
@@ -69,6 +70,7 @@ test:
 	@./scripts/test-diagnostic-envelope.sh
 	@./scripts/test-phase-diagnostic-adapter.sh
 	@./scripts/test-classify-join-state.sh
+	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh

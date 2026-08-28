@@ -136,7 +136,7 @@ run_phase() {
   if [[ -n "${GDC_ASSURANCE_RUN_ID:-}" ]]; then
     run_id="assurance-${GDC_ASSURANCE_RUN_ID}"
     printf '%s\n' "$run_id" >"$run_id_file"
-  elif [[ "${GDC_FORCE_NEW_RUN:-false}" == true ]]; then
+  elif [[ "${GDC_FORCE_NEW_RUN:-false}" == true || "${GDC_JOIN_RECOVERY_NEW_RUN:-false}" == true ]]; then
     run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     printf '%s\n' "$run_id" >"$run_id_file"
   elif [[ -s "$run_id_file" ]]; then
@@ -372,10 +372,10 @@ case "$COMMAND" in
   network-bootstrap-verify)
     if [[ "${1:-}" == --online ]]; then
       [[ $# -eq 2 && -f "$2" && -r "$2" ]] || { echo 'network bootstrap verify --online requires one readable file' >&2; exit 2; }
-      exec python3 "$ROOT/scripts/network-bootstrap.py" online "$2"
+      exec "$ROOT/scripts/network-bootstrap.sh" online "$2"
     fi
     [[ $# -eq 1 && -f "$1" && -r "$1" ]] || { echo 'network bootstrap verify requires one readable file' >&2; exit 2; }
-    exec python3 "$ROOT/scripts/network-bootstrap.py" verify "$1"
+    exec "$ROOT/scripts/network-bootstrap.sh" verify "$1"
     ;;
   release)
     case "${1:-}" in
@@ -786,14 +786,20 @@ case "$COMMAND" in
       [[ "$join_gpu_alias" != "$join_alias" ]] || { echo 'Host and GPU SSH aliases must be different' >&2; exit 2; }
     fi
     use_node_data_home "$join_alias"
+    resolve_join_release_profile "$RELEASE" "$join_restore_archive"
     acquire_operator_lock
+    "$ROOT/scripts/ensure-inferenced-cli.sh"
+    # Bootstrap staging precedes role-input creation. These paths therefore
+    # cannot depend on load_project(), which needs that role input.
+    join_genesis="$GDC_HOME/genesis"
+    join_secrets="$STATE/secrets"
     if [[ -z "$join_bootstrap_file" ]]; then
       join_bootstrap_file="$STATE/network-bootstrap.json"
       "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/gonka-devnet-community/bootstrap.json --output "$join_bootstrap_file"
     else
-      python3 "$ROOT/scripts/network-bootstrap.py" verify "$join_bootstrap_file" >/dev/null
+      "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
     fi
-    "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$GENESIS" --state-dir "$STATE" --secrets-dir "$SECRETS"
+    "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$join_genesis" --state-dir "$STATE" --secrets-dir "$join_secrets"
     export GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"
     export GDC_JOIN_VERIFICATION="$verification"
     [[ -z "$join_restore_archive" ]] || export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
