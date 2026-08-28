@@ -51,7 +51,7 @@ if grep -Eq 'require ACME_EMAIL|ACME_EMAIL is required' "$ROOT/scripts/lib.sh" "
   echo 'ACME contact email must remain optional' >&2
   exit 1
 fi
-grep -Fq 'network-bootstrap.py" verify' "$ROOT/scripts/fetch-network-bootstrap.sh"
+grep -Fq 'network-bootstrap.sh" verify' "$ROOT/scripts/fetch-network-bootstrap.sh"
 grep -Fq 'network bootstrap download failed url=' "$ROOT/scripts/fetch-network-bootstrap.sh"
 grep -Fq 'stage-network-bootstrap.sh' "$ROOT/scripts/phase-join.sh"
 ! grep -Rq 'join-bootstrap\|topology.env\|profile/genesis.env' "$ROOT/scripts" --exclude='test-*' --exclude='release-candidate.py'

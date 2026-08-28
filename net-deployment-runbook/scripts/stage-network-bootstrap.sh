@@ -24,7 +24,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$STATE_DIR" "$GENESIS_DIR" "$SECRETS_DIR"
 temporary="$(mktemp -d "$STATE_DIR/.network-bootstrap.XXXXXX")"
 trap 'rm -rf -- "$temporary"' EXIT
-python3 "$ROOT/scripts/network-bootstrap.py" stage "$BOOTSTRAP_FILE" "$temporary"
+"$ROOT/scripts/network-bootstrap.sh" stage "$BOOTSTRAP_FILE" "$temporary"
 install -m 0600 "$temporary/genesis.json" "$GENESIS_DIR/genesis.json"
 sha256sum "$temporary/genesis.json" | awk '{print $1 "  genesis.json"}' >"$GENESIS_DIR/genesis.sha256"
 chmod 0600 "$GENESIS_DIR/genesis.sha256"

@@ -29,7 +29,7 @@ if [[ -n "$GPU_SSH_ALIAS" ]]; then
   [[ "$GPU_SSH_ALIAS" =~ ^[a-z0-9][a-z0-9_-]*$ && "$GPU_SSH_ALIAS" != "$SSH_ALIAS" ]] || { echo 'invalid JOIN GPU SSH alias' >&2; exit 2; }
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-python3 "$ROOT/scripts/network-bootstrap.py" verify "$BOOTSTRAP_FILE" >/dev/null
+"$ROOT/scripts/network-bootstrap.sh" verify "$BOOTSTRAP_FILE" >/dev/null
 if [[ -z "$PUBLIC_HOST" ]]; then
   PUBLIC_HOST="$("$ROOT/scripts/detect-public-host.sh" "$SSH_ALIAS")"
 fi
@@ -37,13 +37,16 @@ fi
 
 stage="$(mktemp -d)"
 trap 'rm -rf -- "$stage"' EXIT
-python3 "$ROOT/scripts/network-bootstrap.py" stage "$BOOTSTRAP_FILE" "$stage" >/dev/null
+"$ROOT/scripts/network-bootstrap.sh" stage "$BOOTSTRAP_FILE" "$stage" >/dev/null
 bootstrap_sha256="$(sha256sum "$BOOTSTRAP_FILE" | awk '{print $1}')"
 bootstrap_schema='https://gonka-dev.net/v1.bootstrap.schema.json'
 # This file is generated locally from validated JSON, never downloaded or
 # evaluated from a remote source.
 source "$stage/bootstrap.env"
 [[ -n "${SEED_NODE_RPC_URL:-}" ]] || { echo 'validated bootstrap did not yield a usable seed RPC' >&2; exit 1; }
+network_host="${SEED_NODE_RPC_URL#*://}"
+network_host="${network_host%%[:/]*}"
+[[ -n "$network_host" ]] || { echo 'validated bootstrap did not yield a usable seed RPC host' >&2; exit 1; }
 
 install -d -m 0700 "$(dirname "$OUTPUT")"
 umask 077
@@ -55,7 +58,7 @@ umask 077
   printf 'GDC_JOIN_BOOTSTRAP_FILE=%q\n' "$(realpath -e -- "$BOOTSTRAP_FILE")"
   printf 'GDC_JOIN_BOOTSTRAP_SHA256=%q\n' "$bootstrap_sha256"
   printf 'GDC_JOIN_BOOTSTRAP_SCHEMA=%q\n' "$bootstrap_schema"
-  printf 'GDC_JOIN_NETWORK_HOST=%q\n' "$(python3 -c "from urllib.parse import urlsplit; print(urlsplit('$SEED_NODE_RPC_URL').hostname)")"
+  printf 'GDC_JOIN_NETWORK_HOST=%q\n' "$network_host"
   printf 'GDC_CHAIN_RPC_URL=%q\n' "$SEED_NODE_RPC_URL/"
   printf 'SEED_API_URL=%q\n' "$SEED_API_URL"
   printf 'SEED_NODE_RPC_URL=%q\n' "$SEED_NODE_RPC_URL"

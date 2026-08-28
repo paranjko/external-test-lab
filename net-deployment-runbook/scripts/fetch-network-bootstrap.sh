@@ -27,7 +27,7 @@ if (( curl_status != 0 )) || [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
   echo "network bootstrap download failed url=$URL http_status=$status curl_exit=$curl_status" >&2
   exit 1
 fi
-python3 "$ROOT/scripts/network-bootstrap.py" verify "$temporary" >/dev/null
+"$ROOT/scripts/network-bootstrap.sh" verify "$temporary" >/dev/null
 chmod 0600 "$temporary"
 mv -f -- "$temporary" "$OUTPUT"
 printf 'PASS downloaded and validated network bootstrap url=%s sha256=%s\n' "$URL" "$(sha256sum "$OUTPUT" | awk '{print $1}')"
