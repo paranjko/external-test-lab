@@ -167,7 +167,7 @@ run_phase() {
   if (( rc != 0 )); then
     diagnostic_envelope="$(find "$run_dir" -maxdepth 2 -type f -name diagnostic-envelope.v1.json -print 2>/dev/null | LC_ALL=C sort | tail -n1 || true)"
     if [[ -z "$diagnostic_envelope" ]]; then
-      "$ROOT/scripts/diagnostic-envelope.sh" write "$run_dir/diagnostic-envelope.v1.json" observability "$phase" failed interrupted unknown shell "$rc" not_applicable none 'phase stopped before a terminal result'
+      "$ROOT/scripts/phase-diagnostic-adapter.sh" "$run_dir/diagnostic-envelope.v1.json" "$phase" "$rc"
       diagnostic_envelope="$run_dir/diagnostic-envelope.v1.json"
     fi
     [[ -z "$diagnostic_envelope" ]] || export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic_envelope"

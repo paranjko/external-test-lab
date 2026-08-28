@@ -108,14 +108,24 @@ pass the node's public DNS name explicitly:
 gdc host join --public-host node2.gonka-dev.net gdc-node2
 ```
 
-## Supported scope
+## Repeat and recovery scope
 
-This guide documents one first-time independent Host connection. It creates a
-private validator backup as part of that flow. Repairing an existing Host,
-restoring a replaced Host, bypassing qualification, and broader Host lifecycle
-operations are not supported by this first-time JOIN interface. Do not use
-this guide to claim that an existing Host can be repaired or rejoined
-automatically.
+The same JOIN command may be repeated for a complete matching local state. It
+queries registration before submission and must not create a second
+participant, funding claim, or validator identity. A partial, conflicting,
+different-lineage, or unreachable state stops before deployment changes.
+
+For a validated private archive, use the same supported interface:
+
+```bash
+gdc host join --restore <validator-backup.tar> --public-host <IP_or_DOMAIN> <ssh-alias>
+```
+
+The archive is an assertion, not permission to replace identity. A matching
+running Host is recovered only after identity, lineage, and signer checks; an
+empty Host is restored only after archive validation. Do not bypass
+qualification or use this interface to reset, recreate Genesis, or adopt an
+unknown existing validator.
 
 If the GPU runs on another machine, see `host ml-attach` in
 [ROLE-HOST.md](ROLE-HOST.md).

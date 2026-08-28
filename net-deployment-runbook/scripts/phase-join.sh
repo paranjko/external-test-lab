@@ -21,6 +21,40 @@ PUBLIC_HOST="${URL#https://}"
 getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve to IPv4"
 ACCOUNT="$ACCOUNTS/$NODE-cold.json"
 IDENTITY="$IDENTITIES/$NODE.json"
+JOIN_CLASSIFICATION="$("$ROOT/scripts/classify-join-state.sh" "$IDENTITY" "$ACCOUNT" "$STATE/joined/$NODE" "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}")"
+JOIN_CLASS="$(jq -er .classification <<<"$JOIN_CLASSIFICATION")"
+case "$JOIN_CLASS" in
+  new|restore_empty)
+    printf 'READY Host JOIN classification=%s before mutation\n' "$JOIN_CLASS"
+    ;;
+  running_matched)
+    printf 'READY Host JOIN classification=running_matched; preserving existing local identity for chain readback\n'
+    ;;
+  partial_identity)
+    die 'Host JOIN classification=partial_identity; refuse mutation until the incomplete local identity is resolved through the supported recovery path'
+    ;;
+  *)
+    die 'Host JOIN classification is unsupported or ambiguous; refuse mutation'
+    ;;
+esac
+# Do not allow a first-time local state to overwrite, adopt, or obscure an
+# already deployed validator. This is a read-only SSH preflight; the fuller
+# PR #51 backup verifier remains authoritative when --restore is supplied.
+remote_identity_state=absent
+if ssh -T "$NODE" "test -s '$DATA_ROOT/$NODE/inference/config/config.toml' && test -d '$DATA_ROOT/$NODE/tmkms' && test -s '$DATA_ROOT/$NODE/inference/config/node_key.json'"; then
+  remote_identity_state=present
+else
+  remote_identity_rc=$?
+  if (( remote_identity_rc == 255 )); then
+    die 'Host JOIN classification=unreachable; remote identity preflight could not establish an SSH session'
+  fi
+fi
+if [[ "$remote_identity_state" == present && "$JOIN_CLASS" == new && -z "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
+  die 'Host JOIN classification=identity_conflict; a remote validator identity exists without matching local operator state'
+fi
+if [[ "$remote_identity_state" == present && "$JOIN_CLASS" == partial_identity ]]; then
+  die 'Host JOIN classification=partial_identity; remote identity cannot be adopted from incomplete local state'
+fi
 [[ -s "$GENESIS/genesis.json" && -s "$GENESIS/genesis-seeds.txt" ]] || die 'run genesis first'
 GENESIS_SHA256="$(genesis_sha256 "$GENESIS/genesis.json")"
 GENESIS_CHAIN_ID="$(jq -er .chain_id "$GENESIS/genesis.json")"
@@ -103,8 +137,7 @@ esac
 # remote node can start.  Recreate the bootstrap when that remote state is
 # absent so a subsequent join is self-contained.
 remote_identity_ready=false
-if [[ -s "$IDENTITY" ]] \
-  && ssh -T "$NODE" "test -s '$DATA_ROOT/$NODE/inference/config/config.toml' && test -d '$DATA_ROOT/$NODE/tmkms' && test -s '$DATA_ROOT/$NODE/inference/config/node_key.json'"; then
+if [[ -s "$IDENTITY" && "$remote_identity_state" == present ]]; then
   remote_identity_ready=true
 fi
 [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true ]] && remote_identity_ready=false

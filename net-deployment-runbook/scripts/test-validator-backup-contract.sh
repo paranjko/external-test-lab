@@ -506,7 +506,9 @@ grep -Fq 'inference/config/node_key.json' "$BACKUP" || { echo 'backup must prese
 grep -Fq 'remote-state/inference/config/node_key.json' "$BACKUP"
 grep -Fq 'validator-backup.tar' "$ROOT/ROLE-JOIN.md"
 ! grep -Fq -- '--restore' "$ROOT/ROLE-JOIN.md"
-grep -Fq 'was accepted by the public RPC but was not committed within 60 seconds' "$ROOT/03-join/grant-ml-ops.sh"
+grep -Fq 'committed after timeout readback' "$ROOT/03-join/grant-ml-ops.sh"
+grep -Fq 'query tx "$grant_tx_hash" --node "$RPC" --output json' "$ROOT/03-join/grant-ml-ops.sh"
+grep -Fq 'do not retry automatically' "$ROOT/03-join/grant-ml-ops.sh"
 grep -Fq "sed '/^Usage:/,\$d'" "$ROOT/03-join/grant-ml-ops.sh"
 
 printf 'PASS validator backup and restore contract\n'

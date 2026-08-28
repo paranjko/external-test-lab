@@ -49,8 +49,26 @@ if grep -q '^Timed out waiting for transaction ' "$grant_output"; then
   # does not identify a bad operator invocation and hides the actionable
   # condition: RPC accepted the transaction but no block committed it.
   sed '/^Usage:/,$d' "$grant_output"
-  printf 'ERROR ML operational-permission transaction was accepted by the public RPC but was not committed within 60 seconds; verify chain block production and transaction propagation (rpc=%s tx_hash=%s)\n' \
-    "$RPC" "${grant_tx_hash:-unavailable}" >&2
+  [[ "$grant_tx_hash" =~ ^[0-9A-Fa-f]{64}$ ]] || {
+    printf 'ERROR ML operational-permission broadcast is ambiguous and did not provide a valid transaction hash; do not retry automatically (rpc=%s)\n' "$RPC" >&2
+    exit 1
+  }
+  # A client timeout occurs after the RPC accepted the request. Resolve that
+  # ambiguity by readback only – never re-submit based on the timeout.
+  for _ in $(seq 1 5); do
+    readback="$("$ROOT/scripts/inferenced.sh" query tx "$grant_tx_hash" --node "$RPC" --output json 2>/dev/null || true)"
+    if jq -e '(.code // .tx_response.code // 1) == 0' >/dev/null 2>&1 <<<"$readback"; then
+      printf 'PASS ML operational-permission transaction committed after timeout readback tx_hash=%s\n' "$grant_tx_hash"
+      exit 0
+    fi
+    if jq -e '(.code // .tx_response.code // 0) != 0' >/dev/null 2>&1 <<<"$readback"; then
+      printf 'ERROR ML operational-permission transaction committed with non-zero code after timeout readback tx_hash=%s\n' "$grant_tx_hash" >&2
+      exit 1
+    fi
+    sleep 3
+  done
+  printf 'ERROR ML operational-permission transaction remains ambiguous after bounded chain readback; do not retry automatically (rpc=%s tx_hash=%s)\n' \
+    "$RPC" "$grant_tx_hash" >&2
   exit 1
 fi
 cat "$grant_output" >&2
