@@ -454,7 +454,9 @@ fi
   GENESIS_NODE=gdc-node0
   node_name gdc-node2
 })" == gdc-node2 ]]
-grep -Fq 'ACTIVE chain participants differ from joined state' "$ROOT/scripts/phase-verify.sh"
+grep -Fq 'resolve_expected_network_participants' "$ROOT/scripts/phase-verify.sh"
+grep -Fq 'ACTIVE chain participants differ from the complete expected identity set' "$ROOT/scripts/phase-verify.sh"
+grep -Fq 'use_operator_inventory' "$ROOT/gdc.sh"
 grep -Fq 'trap on_exit EXIT' "$ROOT/scripts/phase-verify.sh"
 for evidence_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-observer.sh phase-governance-devshard.sh phase-propose-upgrade.sh phase-vote-proposal.sh phase-audit-lifecycle.sh; do
   grep -Fq 'install_evidence_exit_trap' "$ROOT/scripts/$evidence_phase"

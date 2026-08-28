@@ -50,30 +50,34 @@ while (( SECONDS < deadline )); do
 done
 (( current > first )) || die "block height did not advance from $first"
 
-mapfile -t nodes < <(configured_nodes)
+mapfile -t nodes < <(printf '%s\n' "${GDC_NODES[@]}")
 expected=${#nodes[@]}
-(( expected > 0 )) || die 'no configured participant accounts found'
+(( expected > 0 )) || die 'canonical operator inventory has no Hosts'
 
 # Fail before the full-epoch wait when local operator state omits an ACTIVE
 # chain participant. Otherwise a reset runtime could disappear from the
 # evidence set merely because its local joined marker was removed.
-step 'Reconcile the complete ACTIVE chain participant set with joined state'
-printf '[]' >"$RUN/expected-participant-addresses.json"
-for node in "${nodes[@]}"; do
-  address="$(jq -er .address "$ACCOUNTS/$node-cold.json")"
-  jq --arg address "$address" '. + [$address]' "$RUN/expected-participant-addresses.json" \
-    >"$RUN/expected-participant-addresses.tmp"
-  mv "$RUN/expected-participant-addresses.tmp" "$RUN/expected-participant-addresses.json"
-done
+step 'Resolve the complete canonical Host inventory into public participant identities'
+TOPOLOGY="$STATE/lineage/current-topology.json"
+resolve_expected_network_participants "$RUN/expected-participants.json" "$CHAIN_ID" "$genesis_sha256" "$TOPOLOGY"
+jq '[.[].address]' "$RUN/expected-participants.json" >"$RUN/expected-participant-addresses.json"
+mapfile -t participant_records < <(jq -c '.[]' "$RUN/expected-participants.json")
+
+step 'Reconcile the complete ACTIVE chain participant set with expected identities'
 ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' \
   >"$RUN/participants-chain.json"
 jq -e --slurpfile expected "$RUN/expected-participant-addresses.json" '
   ([.participant[]
     | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")
+    | .address] | length) == ([.participant[]
+    | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")
+    | .address] | unique | length)
+  and ([.participant[]
+    | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")
     | .address] | sort)
   == ($expected[0] | sort)
 ' "$RUN/participants-chain.json" >/dev/null \
-  || die 'ACTIVE chain participants differ from joined state; restore or reset the topology before verify'
+  || die 'ACTIVE chain participants differ from the complete expected identity set'
 
 epoch_blocks="${GDC_VERIFY_EPOCH_BLOCKS:-$GENESIS_EPOCH_LENGTH}"
 epoch_timeout="${GDC_EPOCH_WAIT_TIMEOUT_SECONDS:-2400}"
@@ -103,8 +107,9 @@ done
 
 step "Prove exactly $expected ACTIVE participants"
 printf '[]' >"$RUN/participants.json"
-for node in "${nodes[@]}"; do
-  address="$(jq -r .address "$ACCOUNTS/$node-cold.json")"
+for participant in "${participant_records[@]}"; do
+  node="$(jq -er .node <<<"$participant")"
+  address="$(jq -er .address <<<"$participant")"
   body="$(curl -fsS "$CHAIN_BASE/v2/participants/$address")"
   status="$(jq -r '.participant.status // empty' <<<"$body")"
   [[ "$status" =~ ^(ACTIVE|PARTICIPANT_STATUS_ACTIVE|1)$ ]] || die "$node is not ACTIVE: $status"
@@ -150,8 +155,9 @@ jq -e '.epoch_group_data.validation_weights | type == "array" and length > 0' "$
 jq -e '(.epoch_group_data.validation_weights | map(.weight | tonumber) | add) as $committed
   | (.epoch_group_data.total_weight | tonumber) as $total
   | $committed > 0 and $committed == $total' "$RUN/current-epoch-group.json" >/dev/null || die 'committed validation-weight total is absent or differs from the epoch total'
-for node in "${nodes[@]}"; do
-  address="$(jq -r .address "$ACCOUNTS/$node-cold.json")"
+for participant in "${participant_records[@]}"; do
+  node="$(jq -er .node <<<"$participant")"
+  address="$(jq -er .address <<<"$participant")"
   jq -e --arg address "$address" '
     [(.epoch_group_data.validation_weights[]?.member_address),
      (.epoch_group_data.member_seed_signatures[]?.member_address)]

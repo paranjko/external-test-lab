@@ -407,7 +407,7 @@ case "$COMMAND" in
     ;;
   prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit)
     use_network_owner_data_home
-    if [[ "$COMMAND" == gateway-continuity || "$COMMAND" == audit ]]; then
+    if [[ "$COMMAND" == verify || "$COMMAND" == gateway-continuity || "$COMMAND" == audit ]]; then
       use_operator_inventory
     fi
     [[ "$COMMAND" == reset || $# -eq 0 ]] || { usage; exit 2; }

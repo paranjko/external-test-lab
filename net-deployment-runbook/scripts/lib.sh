@@ -734,6 +734,85 @@ node_account_file() {
   printf '%s/accounts/%s-cold.json\n' "$(node_data_home "$node")" "$node"
 }
 
+# Resolve the full canonical Host inventory into public participant identities.
+# A coordinator may read only the public address field from a Host account file
+# it owns.  An independent Host is represented by a current, sanitized JOIN
+# receipt instead; no keyring, mnemonic, validator key, recovery archive, or
+# private operator directory is consulted.
+resolve_expected_network_participants() {
+  local output="$1" chain_id="$2" genesis_sha256="$3" topology="$4"
+  local node host account address local_address receipt_count receipt_address
+  local topology_required=false
+  local tmp
+  [[ "$chain_id" =~ ^[A-Za-z0-9._-]+$ ]] || die 'invalid chain ID for expected participant resolution'
+  [[ "$genesis_sha256" =~ ^[0-9a-f]{64}$ ]] || die 'invalid Genesis hash for expected participant resolution'
+  mkdir -p "$(dirname "$output")"
+  tmp="${output}.tmp"
+  printf '[]' >"$tmp"
+
+  for node in "${GDC_NODES[@]}"; do
+    host="$(node_public_host "$node")"
+    account="$(node_account_file "$node")"
+    local_address=''
+    if [[ -e "$account" ]]; then
+      [[ -f "$account" && ! -L "$account" ]] || die "public account record is not a regular file for $node"
+      local_address="$(jq -er '.address | select(type == "string" and test("^gonka1[0-9a-z]{20,90}$"))' "$account")" \
+        || die "public account record lacks a valid participant address for $node"
+    else
+      topology_required=true
+    fi
+
+    if [[ -s "$topology" ]]; then
+      jq -e --arg chain "$chain_id" --arg genesis "$genesis_sha256" '
+        .schema_version == 1 and .chain_id == $chain and .genesis_sha256 == $genesis
+        and (.participants | type == "array")
+        and ([.participants[].address] | length) == ([.participants[].address] | unique | length)
+        and ([.participants[].validator_key] | length) == ([.participants[].validator_key] | unique | length)
+        and ([.participants[].runtime_id] | length) == ([.participants[].runtime_id] | unique | length)
+        and ([.participants[].public_host] | length) == ([.participants[].public_host] | unique | length)
+        and all(.participants[]; (.address | type == "string" and test("^gonka1[0-9a-z]{20,90}$"))
+          and (.runtime_id == ("qwen3-0.6b:" + .address))
+          and (.public_host | type == "string" and test("^[A-Za-z0-9.-]+$")))
+      ' "$topology" >/dev/null || die 'current-lineage topology is stale, incomplete, or contains duplicate identities'
+      receipt_count="$(jq --arg host "$host" '[.participants[] | select(.public_host == $host)] | length' "$topology")"
+      (( receipt_count <= 1 )) || die "ambiguous current-lineage identity for $node"
+      if (( receipt_count == 1 )); then
+        receipt_address="$(jq -er --arg host "$host" '.participants[] | select(.public_host == $host) | .address' "$topology")"
+        if [[ -n "$local_address" && "$local_address" != "$receipt_address" ]]; then
+          die "conflicting public account and current-lineage identity for $node"
+        fi
+      else
+        receipt_address=''
+      fi
+    else
+      receipt_count=0
+      receipt_address=''
+    fi
+
+    if [[ -n "$local_address" ]]; then
+      address="$local_address"
+      source='coordinator-owned-public-account'
+    else
+      [[ "$receipt_count" == 1 ]] || die "missing current-lineage public identity for independent Host $node"
+      jq -e --arg host "$host" '.participants[] | select(.public_host == $host and .operator_mode == "independent-host")' "$topology" >/dev/null \
+        || die "current-lineage identity for $node is not an independent Host receipt"
+      address="$receipt_address"
+      source='sanitized-current-lineage-receipt'
+    fi
+    jq --arg node "$node" --arg public_host "$host" --arg address "$address" --arg source "$source" \
+      '. + [{node:$node,public_host:$public_host,address:$address,source:$source}]' "$tmp" >"${tmp}.next"
+    mv "${tmp}.next" "$tmp"
+  done
+
+  if [[ "$topology_required" == true ]]; then
+    [[ -s "$topology" ]] || die 'independent Host identity requires a sanitized current-lineage topology'
+  fi
+  jq -e 'length > 0 and ([.[].address] | length) == ([.[].address] | unique | length)
+    and ([.[].public_host] | length) == ([.[].public_host] | unique | length)' "$tmp" >/dev/null \
+    || die 'expected participant identities are missing or duplicate'
+  mv "$tmp" "$output"
+}
+
 node_identity_file() {
   local node="$1"
   printf '%s/state/identities/%s.json\n' "$(node_data_home "$node")" "$node"
