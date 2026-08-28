@@ -89,7 +89,7 @@ def online(doc):
  for number,broker in enumerate(doc["brokers"]):
   for endpoint in broker["api_urls"]:
    try:
-    with urlopen(endpoint,timeout=10):pass
+    with urlopen(endpoint.rstrip("/")+"/v1/models",timeout=10):pass
    except Exception as error:bad.append(f"bootstrap validation failed stage=online field=brokers[{number}]: broker endpoint unavailable ({type(error).__name__})")
  if bad:raise BootstrapError("online","seeds","; ".join(bad[:3]))
  print(f"PASS online network bootstrap chain_id={doc['chain_id']} seeds={len(doc['seeds'])}")
