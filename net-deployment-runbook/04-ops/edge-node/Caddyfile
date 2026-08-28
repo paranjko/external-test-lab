@@ -35,13 +35,16 @@
       header_up Host {$PUBLIC_HOST}
     }
   }
-  # The configured gateway Host remains the public bootstrap origin even when
-  # its participant edge is recreated after Genesis. The bundle is staged and
-  # verified by the lifecycle renderer before this proxy is started.
+  # Bootstrap documents are static release artifacts. This participant edge
+  # serves no compatibility bundle and never exposes credentials or topology.
   route {
-    @join_bootstrap path /join-bootstrap/*
-    handle @join_bootstrap {
-      reverse_proxy 127.0.0.1:18082
+    handle /v1.bootstrap.schema.json {
+      root * /edge/bootstrap/current
+      file_server
+    }
+    handle_path /bootstrap/* {
+      root * /edge/bootstrap/current
+      file_server
     }
     handle_path /faucet/* {
       reverse_proxy 127.0.0.1:18081

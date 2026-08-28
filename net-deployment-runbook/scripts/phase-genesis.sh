@@ -23,9 +23,9 @@ continue_genesis_bootstrap() {
   if [[ "${GDC_GENESIS_BOOTSTRAP_ACCESS:-true}" == true ]]; then
     step 'Install the configured public edge'
     GDC_PUBLIC_EDGE_VERIFY=false "$ROOT/scripts/phase-ops.sh" edge
-    step 'Publish the complete JOIN bootstrap before independent operators can join'
+    step 'Install the Genesis participant edge configuration'
     "$ROOT/scripts/phase-ops.sh" edge-node "$GENESIS_NODE"
-    step 'Synchronize the published JOIN bootstrap on the public edge'
+    step 'Refresh the public edge configuration after Genesis'
     GDC_PUBLIC_EDGE_VERIFY=false "$ROOT/scripts/phase-ops.sh" edge
     step 'Bootstrap authenticated inference for the single-validator network'
     "$ROOT/scripts/phase-bootstrap-access.sh"

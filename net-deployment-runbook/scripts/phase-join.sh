@@ -3,45 +3,12 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 NODE="$(node_name "${1:-}")"
-BASELINE="$STATE/phase-profiles/genesis.env"
-# A Host reset preserves local evidence by design. Never infer that a
-# preserved bootstrap belongs to the currently public chain: refresh the
-# authenticated public bootstrap before every join/resume, so a stale local
-# Genesis cannot be installed or bound to a new lifecycle run.
-step 'Import current public Genesis bootstrap for this independent Host join'
-"$ROOT/scripts/fetch-join-bootstrap.sh"
-if [[ "${GDC_JOIN_ROLE_INPUT:-false}" == true ]]; then
-  [[ "${GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || die 'JOIN role input lacks a valid prepared bootstrap digest'
-  [[ -n "${GDC_ENV:-}" && -s "$GDC_ENV" ]] || die 'JOIN role input path is unavailable for dispatch binding'
-  join_dispatch_marker="$STATE/join-bootstrap-dispatched.manifest.sha256"
-  join_role_sha256="$(sha256sum "$GDC_ENV" | awk '{print $1}')"
-  join_public_host="$(node_public_host "$NODE")"
-  join_gpu_alias="$(node_ml_host "$NODE" || true)"
-  if [[ -e "$join_dispatch_marker" ]]; then
-    grep -Fxq "manifest_sha256=$GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256" "$join_dispatch_marker" \
-      && grep -Fxq "role_sha256=$join_role_sha256" "$join_dispatch_marker" \
-      && grep -Fxq "host_alias=$NODE" "$join_dispatch_marker" \
-      && grep -Fxq "public_host=$join_public_host" "$join_dispatch_marker" \
-      && grep -Fxq "gpu_alias=$join_gpu_alias" "$join_dispatch_marker" \
-      || die 'JOIN bootstrap dispatch marker disagrees with the verified bootstrap binding'
-  else
-    install -d -m 0700 "$STATE"
-    umask 077
-    join_dispatch_marker_tmp="$(mktemp "$STATE/.join-bootstrap-dispatched.manifest.sha256.XXXXXX")"
-    {
-      printf 'schema_version=1\n'
-      printf 'manifest_sha256=%s\n' "$GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256"
-      printf 'role_sha256=%s\n' "$join_role_sha256"
-      printf 'host_alias=%s\n' "$NODE"
-      printf 'public_host=%s\n' "$join_public_host"
-      printf 'gpu_alias=%s\n' "$join_gpu_alias"
-    } >"$join_dispatch_marker_tmp"
-    chmod 0600 "$join_dispatch_marker_tmp"
-    mv -f -- "$join_dispatch_marker_tmp" "$join_dispatch_marker"
-  fi
-fi
-[[ -s "$BASELINE" ]] || die 'public Genesis bootstrap did not provide a baseline profile'
-grep -qx 'release_profile=v2026.07.23' "$BASELINE" || die 'join requires a Genesis formed from v2026.07.23'
+[[ "${GDC_JOIN_ROLE_INPUT:-false}" == true ]] || die 'JOIN requires a generated one-host role input'
+[[ -r "${GDC_JOIN_BOOTSTRAP_FILE:-}" ]] || die 'JOIN role input lacks a validated bootstrap file'
+[[ "${GDC_JOIN_BOOTSTRAP_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || die 'JOIN role input lacks a valid bootstrap digest'
+[[ "${GDC_JOIN_BOOTSTRAP_SCHEMA:-}" == https://gonka-dev.net/v1.bootstrap.schema.json ]] || die 'JOIN role input has an unsupported bootstrap schema'
+step 'Stage validated one-file network bootstrap before Host preparation'
+"$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE" --genesis-dir "$GENESIS" --state-dir "$STATE" --secrets-dir "$SECRETS"
 record_phase_profile "join-${NODE}"
 RUN="$GDC_HOME/runs/${GDC_RUN_ID:-manual}/join-$NODE"
 export EVIDENCE_PHASE_NAME="join-$NODE"

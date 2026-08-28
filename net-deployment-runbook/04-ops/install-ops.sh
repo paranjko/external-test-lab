@@ -37,11 +37,7 @@ if [[ -s "$RENDER/prometheus.yml" ]]; then
   install -m 0644 "$RENDER/prometheus.yml" "$DEST/prometheus/prometheus.yml"
 fi
 [[ -s "$RENDER/Caddyfile" ]] && install -m 0644 "$RENDER/Caddyfile" "$DEST/Caddyfile"
-if [[ -d "$RENDER/join-bootstrap" ]]; then
-  rm -rf "$DEST/join-bootstrap"
-  install -d -m 0755 "$DEST/join-bootstrap"
-  cp -a "$RENDER/join-bootstrap/." "$DEST/join-bootstrap/"
-fi
+install -d -m 0755 "$DEST/bootstrap"
 # Copy the rendered public configuration on every component install.  The
 # source tree contains only a safe placeholder; installing gateway or
 # monitoring used to overwrite an already-rendered site config and leave the

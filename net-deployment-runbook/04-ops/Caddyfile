@@ -23,8 +23,12 @@
 				reverse_proxy 127.0.0.1:18081
 			}
 
-  handle_path /join-bootstrap/* {
-    root * /ops/join-bootstrap
+  handle /v1.bootstrap.schema.json {
+    root * /ops/bootstrap/current
+    file_server
+  }
+  handle_path /bootstrap/* {
+    root * /ops/bootstrap/current
     file_server
   }
 

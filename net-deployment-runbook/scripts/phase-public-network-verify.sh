@@ -190,21 +190,15 @@ step 'Run three consecutive authenticated gateway completions'
 key_file="$STATE/secrets/gateway.join-client-key"
 if [[ ! -s "$key_file" ]]; then
   step 'Import verified scoped gateway credential from the public bootstrap'
-  bootstrap_tmp="$(mktemp -d)"
-  bootstrap_base="$CHAIN_BASE/join-bootstrap"
-  if ! curl -fsS --connect-timeout 5 --max-time 30 "$bootstrap_base/manifest.sha256" >"$bootstrap_tmp/manifest.sha256" \
-    || ! curl -fsS --connect-timeout 5 --max-time 30 "$bootstrap_base/gateway/join-client-key" >"$bootstrap_tmp/join-client-key"; then
-    rm -rf "$bootstrap_tmp"
-    inconclusive 'cannot retrieve the public bootstrap scoped gateway credential'
+  bootstrap_file="$(mktemp)"
+  bootstrap_url="${GDC_NETWORK_BOOTSTRAP_URL:-https://gonka-dev.net/bootstrap/gonka-devnet-community.json}"
+  if ! "$ROOT/scripts/fetch-network-bootstrap.sh" --url "$bootstrap_url" --output "$bootstrap_file"; then
+    rm -f -- "$bootstrap_file"
+    inconclusive 'cannot retrieve and validate the public network bootstrap'
   fi
-  expected_key_sha="$(awk '$2 ~ /(^|\/)gateway\/join-client-key$/ {print $1; exit}' "$bootstrap_tmp/manifest.sha256")"
-  if [[ ! "$expected_key_sha" =~ ^[0-9a-f]{64}$ ]] || ! printf '%s  %s\n' "$expected_key_sha" "$bootstrap_tmp/join-client-key" | sha256sum -c - >/dev/null; then
-    rm -rf "$bootstrap_tmp"
-    blocked 'public bootstrap gateway credential is missing from, or mismatches, its manifest'
-  fi
-  install -d -m 0700 "$STATE/secrets"
-  install -m 0600 "$bootstrap_tmp/join-client-key" "$key_file"
-  rm -rf "$bootstrap_tmp"
+  "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$bootstrap_file" --genesis-dir "$GENESIS" --state-dir "$STATE" --secrets-dir "$STATE/secrets" \
+    || { rm -f -- "$bootstrap_file"; blocked 'public network bootstrap could not be staged safely'; }
+  rm -f -- "$bootstrap_file"
 fi
 [[ -s "$key_file" && "$(stat -c %a "$key_file")" == 600 ]] \
   || blocked 'no mode-0600 scoped gateway client credential is available for the required Gate B completions'
