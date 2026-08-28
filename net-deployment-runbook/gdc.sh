@@ -10,6 +10,50 @@ else
   GDC_USAGE_COMMAND="${LAUNCHER_SOURCE##*/}"
 fi
 
+GDC_LAUNCHER_EXIT_RECORDED=false
+
+record_launcher_failure() {
+  local rc="$1" tmp failure_dir safe_invocation
+  [[ "$rc" -ne 0 && -n "${GDC_LAUNCHER_ENVELOPE_DIR:-}" ]] || return 0
+  # A report-publication failure retains its own local draft; making it the
+  # latest incident would recursively hide the selected operational failure.
+  [[ "${GDC_REPORT_MODE:-false}" != true ]] || return 0
+  [[ "$GDC_LAUNCHER_EXIT_RECORDED" != true ]] || return 0
+  GDC_LAUNCHER_EXIT_RECORDED=true
+  failure_dir="${GDC_DATA_ROOT:?}/reporting/failures"
+  mkdir -p "$failure_dir"
+  chmod 0700 "${GDC_DATA_ROOT:?}/reporting" "$failure_dir" 2>/dev/null || true
+  tmp="$failure_dir/.latest-failure.$$.tmp"
+  safe_invocation="${GDC_INVOCATION_COMMAND:-gdc}"
+  safe_invocation="${safe_invocation/"$ROOT/gdc.sh"/gdc}"
+  {
+    printf 'schema_version=1\n'
+    printf 'invocation_id=%s\n' "$GDC_LAUNCHER_INVOCATION_ID"
+    printf 'exit_code=%s\n' "$rc"
+    printf 'failure_stage=%s\n' "${GDC_ACTIVE_PHASE:-pre-phase}"
+    printf 'active_phase=%s\n' "${GDC_ACTIVE_PHASE:-unavailable}"
+    printf 'run_id=%s\n' "${GDC_RUN_ID:-unavailable}"
+    printf 'run_log=%s\n' "${GDC_RUN_LOG:-unavailable}"
+    [[ -z "${GDC_RUN_ID:-}" ]] || printf 'run_manifest=%s\n' "$GDC_HOME/runs/$GDC_RUN_ID/manifest.env"
+    printf 'safe_invocation=%s\n' "$safe_invocation"
+    printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
+    printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
+  } >"$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
+  chmod 0600 "$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
+  printf '%s\n' "$GDC_LAUNCHER_INVOCATION_ID" >"$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$failure_dir/latest-failure"
+  printf 'Hint: review the retained local failure and run gdc report github when you are ready to disclose a sanitized report.\n' >&2
+}
+
+on_launcher_exit() {
+  local rc="$?"
+  trap - EXIT
+  set +e
+  record_launcher_failure "$rc"
+  exit "$rc"
+}
+
 on_launcher_error() {
   local rc="$?"
   trap - ERR
@@ -22,6 +66,28 @@ trap 'on_launcher_error "$LINENO"' ERR
 
 source "$ROOT/scripts/lib.sh"
 init_gdc_data_root
+
+initialize_launcher_envelope() {
+  local base
+  base="$GDC_DATA_ROOT/reporting/invocations"
+  mkdir -p "$base"
+  chmod 0700 "$GDC_DATA_ROOT/reporting" "$base" 2>/dev/null || true
+  GDC_LAUNCHER_ENVELOPE_DIR="$(mktemp -d "$base/invocation.XXXXXX")"
+  GDC_LAUNCHER_INVOCATION_ID="${GDC_LAUNCHER_ENVELOPE_DIR##*/invocation.}"
+  chmod 0700 "$GDC_LAUNCHER_ENVELOPE_DIR"
+  {
+    printf 'schema_version=1\n'
+    printf 'invocation_id=%s\n' "$GDC_LAUNCHER_INVOCATION_ID"
+    printf 'created_at=%s\n' "$(date -u +%FT%TZ)"
+    printf 'runbook_revision=%s\n' "$(runbook_revision)"
+    printf 'gdc_launcher_sha256=%s\n' "$(gdc_launcher_sha256)"
+  } >"$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
+  chmod 0600 "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
+  export GDC_LAUNCHER_ENVELOPE_DIR GDC_LAUNCHER_INVOCATION_ID
+}
+
+initialize_launcher_envelope
+trap on_launcher_exit EXIT
 
 acquire_operator_lock() {
   [[ "${GDC_OPERATOR_LOCK_STATE:-}" == "$STATE" ]] && return 0
@@ -56,7 +122,7 @@ format_safe_invocation() {
         ;;
     esac
   done
-  printf '%q%s\n' "$ROOT/gdc.sh" "$rendered"
+  printf '%q%s\n' 'gdc' "$rendered"
 }
 
 run_phase() {
@@ -125,6 +191,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>] [--public-edge <SSH_ALIAS>] [--skip-qualification]
   ./gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>] [--public-edge <SSH_ALIAS>] --no-bootstrap-access
   ./gdc.sh --release v2026.07.23 baseline
+  ./gdc.sh report github
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
   ./gdc.sh host join --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
@@ -205,6 +272,10 @@ EOF
 GDC_INVOCATION_COMMAND="$(format_safe_invocation "$@")"
 GDC_INVOCATION_CWD="$PWD"
 export GDC_INVOCATION_COMMAND GDC_INVOCATION_CWD
+{
+  printf 'safe_invocation=%q\n' "$GDC_INVOCATION_COMMAND"
+  printf 'invocation_cwd=%q\n' "$GDC_INVOCATION_CWD"
+} >>"$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
 
 RELEASE=''
 MODEL=''
@@ -288,16 +359,21 @@ case "$COMMAND" in
       candidate)
         [[ $# -ge 2 ]] || { usage; exit 2; }
         shift
-        exec "$ROOT/scripts/release-candidate.py" "$@"
+        "$ROOT/scripts/release-candidate.py" "$@"
         ;;
       composition)
         [[ $# -ge 2 ]] || { usage; exit 2; }
-        exec "$ROOT/scripts/release-candidate.py" "$@"
+        "$ROOT/scripts/release-candidate.py" "$@"
         ;;
       *)
         usage; exit 2
         ;;
     esac
+    ;;
+  report)
+    [[ "${1:-}" == github && $# -eq 1 ]] || { usage; exit 2; }
+    export GDC_REPORT_MODE=true
+    "$ROOT/scripts/gdc-report-github.sh"
     ;;
   public-network-verify|confirmation-poc|public-upgrade-verify)
     [[ $# -le 1 ]] || { usage; exit 2; }

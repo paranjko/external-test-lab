@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+log="${FAKE_GH_ARGS:?}"
+printf '%q ' "$@" >>"$log"
+printf '\n' >>"$log"
+
+if [[ "$1" == --version ]]; then
+  [[ "${FAKE_GH_MISSING:-false}" != true ]] || exit 127
+  printf 'gh version fixture\n'
+  exit 0
+fi
+
+if [[ "$1" == auth && "$2" == status ]]; then
+  [[ "${FAKE_GH_AUTH:-ok}" == ok ]] || exit 1
+  exit 0
+fi
+if [[ "$1" == api && "$2" == user ]]; then printf 'fixture-user\n'; exit 0; fi
+if [[ "$1" == api && "$2" == repos/* ]]; then printf 'true\n'; exit 0; fi
+if [[ "$1" == api && "$2" == search/issues* ]]; then printf '%s\n' "${FAKE_GH_DUPLICATES:-0}"; exit 0; fi
+
+if [[ "$1" == issue && "$2" == list ]]; then
+  printf '%s\n' "${FAKE_GH_ISSUES_JSON:-[]}"
+  exit 0
+fi
+if [[ "$1" == issue && ( "$2" == create || "$2" == comment ) && " ${*:3} " == *' --help '* ]]; then
+  [[ "${FAKE_GH_ATTACH:-false}" == true ]] && printf '  --attach file\n'
+  exit 0
+fi
+
+body_file=''
+for ((i=1; i <= $#; i++)); do
+  if [[ "${!i}" == --body-file ]]; then
+    j=$((i + 1)); body_file="${!j}"
+  fi
+done
+if [[ -n "$body_file" ]]; then cp -- "$body_file" "${FAKE_GH_BODY:?}"; fi
+
+if [[ "$1" == issue && "$2" == create ]]; then
+  [[ "${FAKE_GH_CREATE:-ok}" != fail ]] || exit 1
+  [[ "${FAKE_GH_CREATE:-ok}" != ambiguous ]] || { printf 'connection closed after request\n'; exit 0; }
+  printf 'https://github.com/paranjko/external-test-lab/issues/9001\n'
+  exit 0
+fi
+if [[ "$1" == issue && "$2" == comment ]]; then
+  [[ "${FAKE_GH_COMMENT:-ok}" == ok ]] || exit 1
+  exit 0
+fi
+if [[ "$1" == issue && "$2" == view ]]; then
+  json=''
+  for ((i=1; i <= $#; i++)); do
+    if [[ "${!i}" == --json ]]; then j=$((i + 1)); json="${!j}"; fi
+  done
+  if [[ "$json" == number,state,author,url ]]; then
+    printf '{"number":9001,"state":"OPEN","author":{"login":"fixture-user"},"url":"https://github.com/paranjko/external-test-lab/issues/9001"}\n'
+  elif [[ "${FAKE_GH_COMMENT_MODE:-false}" == true ]]; then
+    jq -n --rawfile body "${FAKE_GH_BODY:?}" '{url:"https://github.com/paranjko/external-test-lab/issues/9001",author:{login:"fixture-user"},body:"",comments:[{url:"https://github.com/paranjko/external-test-lab/issues/9001#issuecomment-9002",author:{login:"fixture-user"},body:$body}]}'
+  else
+    if [[ "${FAKE_GH_READBACK_MISMATCH:-false}" == true ]]; then
+      jq -n '{url:"https://github.com/paranjko/external-test-lab/issues/9001",author:{login:"fixture-user"},body:"different body",comments:[]}'
+    else
+      jq -n --rawfile body "${FAKE_GH_BODY:?}" '{url:"https://github.com/paranjko/external-test-lab/issues/9001",author:{login:"fixture-user"},body:$body,comments:[]}'
+    fi
+  fi
+  exit 0
+fi
+exit 1
