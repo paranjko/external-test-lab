@@ -34,6 +34,7 @@ record_launcher_failure() {
     printf 'run_log=%s\n' "${GDC_RUN_LOG:-unavailable}"
     [[ -z "${GDC_RUN_ID:-}" ]] || printf 'run_manifest=%s\n' "$GDC_HOME/runs/$GDC_RUN_ID/manifest.env"
     printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
+    [[ -z "${GDC_DIAGNOSTIC_ENVELOPE:-}" ]] || printf 'diagnostic_envelope=%s\n' "$GDC_DIAGNOSTIC_ENVELOPE"
     printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
   } >"$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
   chmod 0600 "$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
@@ -125,7 +126,7 @@ format_safe_invocation() {
 run_phase() {
   local phase="$1"
   shift
-  local state run_id_file run_id run_dir log rc
+  local state run_id_file run_id run_dir log rc diagnostic_envelope
   state="$STATE"
   acquire_operator_lock
   run_id_file="$state/active-run-id"
@@ -163,6 +164,14 @@ run_phase() {
     exit "$rc"
   } 2>&1 | tee -a "$log"
   rc=${PIPESTATUS[0]}
+  if (( rc != 0 )); then
+    diagnostic_envelope="$(find "$run_dir" -maxdepth 2 -type f -name diagnostic-envelope.v1.json -print 2>/dev/null | LC_ALL=C sort | tail -n1 || true)"
+    if [[ -z "$diagnostic_envelope" ]]; then
+      "$ROOT/scripts/diagnostic-envelope.sh" write "$run_dir/diagnostic-envelope.v1.json" observability "$phase" failed interrupted unknown shell "$rc" not_applicable none 'phase stopped before a terminal result'
+      diagnostic_envelope="$run_dir/diagnostic-envelope.v1.json"
+    fi
+    [[ -z "$diagnostic_envelope" ]] || export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic_envelope"
+  fi
   set -e
   return "$rc"
 }
@@ -723,7 +732,7 @@ case "$COMMAND" in
     esac
     ;;
   join)
-    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' skip_qualification=false verification=true
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' skip_qualification=false verification=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --skip-qualification) skip_qualification=true ;;

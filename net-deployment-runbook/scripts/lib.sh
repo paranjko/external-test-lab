@@ -176,6 +176,19 @@ evidence_exit_trap() {
 The phase stopped with exit code $rc before it could write its final verdict.
 Inspect the run log and evidence in this directory. No PASS is implied.
 EOF
+    local family=observability decision=not_applicable summary
+    case "${EVIDENCE_PHASE_NAME:-$RUN}" in
+      genesis*) family='genesis' ;;
+      *qualification*|*prepare*) family='qualification' ;;
+      join*) family='join'; decision='manual_action_required' ;;
+      *poc*) family='poc' ;;
+      gateway*) family='gateway' ;;
+      *upgrade*) family='upgrade' ;;
+      bridge*) family='bridge' ;;
+    esac
+    summary="${EVIDENCE_VERDICT_HEADING:-Lifecycle phase} stopped before a terminal verdict"
+    "$ROOT/scripts/diagnostic-envelope.sh" write "$RUN/diagnostic-envelope.v1.json" "$family" "${EVIDENCE_PHASE_NAME:-phase}" failed interrupted unknown shell "$rc" "$decision" none "$summary"
+    export GDC_DIAGNOSTIC_ENVELOPE="$RUN/diagnostic-envelope.v1.json"
   fi
 }
 

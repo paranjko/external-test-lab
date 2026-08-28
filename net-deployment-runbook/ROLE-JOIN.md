@@ -79,14 +79,22 @@ Use a lowercase SSH alias beginning with a letter or digit and containing only
 lowercase letters, digits, `_`, or `-`. The alias is also the Docker Compose
 project name on the Host.
 
-`ACTIVE` is an onboarding state, not a successful validator join. The command
-continues through a bounded six-epoch acceptance window: two onboarding
-transitions followed by four effective-evidence epochs. It returns
-`JOIN_PASS` only after it proves a chain-recorded runtime, positive PoC weight,
-positive consensus voting power, and authenticated gateway inference.
+`ACTIVE` is an onboarding state, not a successful validator join. Ordinary
+JOIN finishes after mandatory installation, synchronization, registration,
+permissions, and recovery-archive creation. Request the longer acceptance
+proof explicitly when the operator needs it:
 
-The observable successful result is `JOIN_PASS`. `ACTIVE` alone does not prove
-a successful validator join.
+```bash
+gdc host join --verification --public-host <IP_or_DOMAIN> <ssh-alias>
+```
+
+Only `--verification` enters the bounded six-epoch acceptance window and
+returns `JOIN_PASS` after proving a chain-recorded runtime, positive PoC
+weight, positive consensus voting power, and authenticated gateway inference.
+
+The mandatory completion result is not `JOIN_PASS`. `ACTIVE` alone does not
+prove a successful validator join; `JOIN_PASS` is available only from explicit
+verification.
 
 After a successful Genesis or JOIN, the command creates
 `$GDC_HOME/<ssh-alias>-validator-backup.tar`. Store this private archive away
