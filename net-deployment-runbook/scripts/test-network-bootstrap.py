@@ -167,11 +167,16 @@ class BootstrapTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(expected, result.stderr)
 
-    def test_attestation_workflow_targets_only_the_exact_release_files(self) -> None:
+    def test_attestation_workflow_runs_only_for_release_artifacts(self) -> None:
         workflow = ATTESTATION_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
         self.assertNotIn("signer-workflow", workflow)
+        self.assertIn("actions/checkout@v7", workflow)
+        self.assertEqual(workflow.count("actions/attest@v4"), 4)
+        self.assertIn("- 'net-deployment-runbook/bootstrap/release/**'", workflow)
+        self.assertNotIn("- 'net-deployment-runbook/bootstrap/v1.bootstrap.schema.json'", workflow)
+        self.assertNotIn("- 'net-deployment-runbook/scripts/network-bootstrap.py'", workflow)
         for name in ("v1.bootstrap.schema.json", "gonka-mainnet.json", "gonka-testnet.json", "gonka-devnet-community.json"):
             self.assertIn(f"subject-path: net-deployment-runbook/bootstrap/release/{name}", workflow)
 

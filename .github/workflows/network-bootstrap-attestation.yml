@@ -5,9 +5,6 @@ on:
     branches: [main]
     paths:
       - 'net-deployment-runbook/bootstrap/release/**'
-      - 'net-deployment-runbook/bootstrap/v1.bootstrap.schema.json'
-      - 'net-deployment-runbook/scripts/network-bootstrap.py'
-      - '.github/workflows/network-bootstrap-attestation.yml'
 
 permissions:
   contents: read
@@ -18,7 +15,7 @@ jobs:
   attest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify exact release inputs
         run: |
           set -Eeuo pipefail
@@ -28,18 +25,18 @@ jobs:
             python3 net-deployment-runbook/scripts/network-bootstrap.py verify "$release/$file"
           done
       - name: Attest schema
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/v1.bootstrap.schema.json
       - name: Attest Mainnet bootstrap
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-mainnet.json
       - name: Attest Testnet bootstrap
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-testnet.json
       - name: Attest Community DevNet bootstrap
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-devnet-community.json
