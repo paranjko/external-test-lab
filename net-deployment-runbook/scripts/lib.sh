@@ -754,7 +754,7 @@ node_account_file() {
 # operator directory is consulted.
 resolve_expected_network_participants() {
   local output="$1" chain_id="$2" genesis_sha256="$3" topology="$4" chain_participants="$5"
-  local node host account address local_address validator_key source receipt_count
+  local node host account address local_address validator_key runtime_id source receipt_count
   local candidate_count receipt_address receipt_validator_key
   local tmp
   [[ "$chain_id" =~ ^[A-Za-z0-9._-]+$ ]] || die 'invalid chain ID for expected participant resolution'
@@ -829,8 +829,9 @@ resolve_expected_network_participants() {
       [[ "$receipt_address" == "$address" && "$receipt_validator_key" == "$validator_key" ]] \
         || die "current-lineage receipt conflicts with public chain identity for $node"
     fi
-    jq --arg node "$node" --arg public_host "$host" --arg address "$address" --arg validator_key "$validator_key" --arg source "$source" \
-      '.participants += [{node:$node,public_host:$public_host,address:$address,validator_key:$validator_key,source:$source}]' "$tmp" >"${tmp}.next"
+    runtime_id="$(runtime_id_for_participant "$address")"
+    jq --arg node "$node" --arg public_host "$host" --arg address "$address" --arg validator_key "$validator_key" --arg runtime_id "$runtime_id" --arg source "$source" \
+      '.participants += [{node:$node,public_host:$public_host,address:$address,validator_key:$validator_key,runtime_id:$runtime_id,source:$source}]' "$tmp" >"${tmp}.next"
     mv "${tmp}.next" "$tmp"
   done
 

@@ -400,6 +400,10 @@ case "$COMMAND" in
     ;;
   public-network-verify|confirmation-poc|public-upgrade-verify)
     [[ $# -le 1 ]] || { usage; exit 2; }
+    if [[ "$COMMAND" == confirmation-poc ]]; then
+      use_network_owner_data_home
+      use_operator_inventory
+    fi
     case "$COMMAND" in
       public-network-verify) run_phase public-network-verify "$ROOT/scripts/phase-public-network-verify.sh" ;;
       confirmation-poc) run_phase confirmation-poc "$ROOT/scripts/phase-confirmation-poc.sh" ;;

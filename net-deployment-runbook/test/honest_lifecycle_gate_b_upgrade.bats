@@ -52,11 +52,15 @@ setup() {
   run grep -F 'fleet-wide zero' "$observer"
   [ "$status" -eq 0 ]
   run grep -F 'different Genesis lineage' "$observer"
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
   run grep -F 'phase sequence is incomplete or out of order' "$observer"
   [ "$status" -eq 0 ]
   run grep -F 'trigger_height' "$observer"
   [ "$status" -eq 0 ]
+  run grep -F 'resolve_expected_network_participants' "$observer"
+  [ "$status" -eq 0 ]
+  run grep -F 'current-lineage topology is absent; import sanitized JOIN receipts' "$observer"
+  [ "$status" -ne 0 ]
 }
 
 @test "Host upgrade is immutable, local, resumable, and rejects unsafe plan heights" {

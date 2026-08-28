@@ -4,6 +4,8 @@ set -Eeuo pipefail
 # Read-only observer. Ordinary PoC, a local ML completion, or a current
 # ACTIVE participant can never substitute for this phase sequence.
 source "$(dirname "$0")/lib.sh"
+load_project
+record_phase_profile confirmation-poc
 
 CHAIN_BASE="${GDC_CHAIN_PUBLIC_BASE:-}"
 [[ "$CHAIN_BASE" =~ ^https://[A-Za-z0-9.-]+$ ]] \
@@ -61,9 +63,9 @@ GENESIS_SHA256="$(genesis_sha256 "$RUN/genesis.json")"
 CHAIN_ID="$(jq -er .chain_id "$RUN/genesis.json")"
 write_phase_lineage "$RUN" "$CHAIN_ID" "$GENESIS_SHA256"
 RELEASE_PROFILE_SHA256="$(awk -F= '$1 == "release_profile_sha256" {print $2; exit}' "$(run_manifest_path)")"
-[[ -s "$TOPOLOGY" ]] || blocked 'current-lineage topology is absent; import sanitized JOIN receipts and render it before observing confirmation-PoC'
-jq -e --arg hash "$GENESIS_SHA256" '.genesis_sha256 == $hash and (.participants | length == 5)' "$TOPOLOGY" >/dev/null \
-  || blocked 'current-lineage topology is incomplete or belongs to a different Genesis lineage'
+ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/productscience/inference/inference/participant' >"$RUN/participants-chain.json" \
+  || inconclusive 'cannot capture public participant identities for confirmation-PoC'
+resolve_expected_network_participants "$RUN/expected-participants.json" "$CHAIN_ID" "$GENESIS_SHA256" "$TOPOLOGY" "$RUN/participants-chain.json"
 
 jq -e '
   .app_state.inference.params as $params

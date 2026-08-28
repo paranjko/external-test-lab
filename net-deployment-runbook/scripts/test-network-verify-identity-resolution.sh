@@ -55,6 +55,7 @@ resolve "$topology" "$chain"
 [[ "$(jq '.participants | length' "$out")" == 5 ]]
 [[ "$(jq -r '.participants[] | select(.node == "node3") | .source' "$out")" == public-chain-participant ]]
 [[ "$(jq -r '.participants[] | select(.node == "node3") | .validator_key' "$out")" == key3 ]]
+[[ "$(jq -r '.participants[] | select(.node == "node3") | .runtime_id' "$out")" == "qwen3-0.6b:$(address 3)" ]]
 [[ "$(jq -r '.participants[] | select(.node == "node4") | .source' "$out")" == coordinator-owned-public-account ]]
 
 # An independent Host remains resolvable from public chain state with no receipt.
