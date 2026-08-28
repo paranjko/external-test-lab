@@ -14,7 +14,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 load_env "$INVENTORY"
 load_topology
-SECRETS="$STATE/secrets"
 source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
@@ -165,41 +164,9 @@ CADDY
 CADDY
 } >"$OUTPUT/Caddyfile"
 
-bootstrap_dir="$OUTPUT/join-bootstrap"
-rm -rf "$bootstrap_dir"
-mkdir -p "$bootstrap_dir/genesis" "$bootstrap_dir/profile" "$bootstrap_dir/gateway"
-if [[ -s "$GDC_HOME/genesis/genesis.json" && -s "$GDC_HOME/genesis/genesis.sha256" && -s "$GDC_HOME/genesis/genesis-seeds.txt" && -s "$STATE/phase-profiles/genesis.env" && -s "$SECRETS/gateway.join-client-key" ]]; then
-  install -m 0644 "$GDC_HOME/genesis/genesis.json" "$bootstrap_dir/genesis/genesis.json"
-  install -m 0644 "$GDC_HOME/genesis/genesis.sha256" "$bootstrap_dir/genesis/genesis.sha256"
-  install -m 0644 "$GDC_HOME/genesis/genesis-seeds.txt" "$bootstrap_dir/genesis/genesis-seeds.txt"
-  install -m 0644 "$STATE/phase-profiles/genesis.env" "$bootstrap_dir/profile/genesis.env"
-  if ! grep -qx "join_bootstrap_format=$JOIN_BOOTSTRAP_FORMAT" "$bootstrap_dir/profile/genesis.env"; then
-    grep -qx "release_profile=$GDC_RELEASE_PROFILE" "$bootstrap_dir/profile/genesis.env" \
-      || { echo 'Genesis profile does not match the selected release' >&2; exit 1; }
-    printf 'join_bootstrap_format=%s\n' "$JOIN_BOOTSTRAP_FORMAT" >>"$bootstrap_dir/profile/genesis.env"
-  fi
-  # This is the deliberately narrow, DevShard client credential used only by
-  # the JOIN_PASS completion regression. It is neither an operator key nor a
-  # gateway administration credential, and the operator stores it locally at
-  # mode 0600 after verifying the public-bootstrap manifest.
-  install -m 0644 "$SECRETS/gateway.join-client-key" "$bootstrap_dir/gateway/join-client-key"
-  {
-    printf 'GDC_NODE_ALIASES=%q\n' "$GDC_NODE_ALIASES"
-    printf 'GDC_NODE_PUBLIC_HOSTS=%q\n' "$GDC_NODE_PUBLIC_HOSTS"
-    printf 'GDC_NODE_P2P_PORTS=%q\n' "$GDC_NODE_P2P_PORTS"
-    printf 'GDC_NODE_ML_HOSTS=%q\n' "${GDC_NODE_ML_HOSTS:-}"
-    printf 'GDC_GENESIS_NODE=%q\n' "$GENESIS_NODE"
-    printf 'GDC_PUBLIC_EDGE_NODE=%q\n' "$PUBLIC_EDGE_NODE"
-    printf 'GDC_GATEWAY_NODE=%q\n' "$GATEWAY_NODE"
-  } >"$bootstrap_dir/topology.env"
-  (
-    cd "$bootstrap_dir"
-    find . -type f ! -name manifest.sha256 -print0 \
-      | LC_ALL=C sort -z \
-      | xargs -0 sha256sum >manifest.sha256
-    sha256sum -c manifest.sha256
-  )
-fi
+# Bootstrap documents are release artifacts, not a by-product of an OPS
+# render.  In particular, this renderer must never copy credentials, topology,
+# profile data, or a locally generated Genesis into a public web root.
 
 {
   cat <<'YAML'

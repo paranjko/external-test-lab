@@ -67,18 +67,9 @@ reconcile_public_grafana() {
   "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$node" --output "$edge_env" >/dev/null
   ssh "$node" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
   rsync -a "$ROOT/04-ops/edge-node/" "$node:$edge_remote/edge/"
-  # Monitoring and site reconciliation also reinstall the public edge.
-  # Preserve the rendered public JOIN bundle on that edge irrespective of
-  # where the gateway runs: install-edge otherwise atomically replaces it
-  # with an empty directory and independent operators receive an error.
-  if [[ -s "$OPS_RENDER/join-bootstrap/manifest.sha256" ]]; then
-    rsync -a "$OPS_RENDER/join-bootstrap/" "$node:$edge_remote/edge/join-bootstrap/"
-  fi
   scp -q "$edge_env" "$node:$edge_remote/edge.env"
   edge_start_log='/srv/dai/edge/start-public-grafana.log'
-  # install-edge atomically replaces the file bound into Caddy. Recreate only
-  # Caddy after Grafana is healthy so it binds the new routes.
-  ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate bootstrap gateway-admission; docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; docker compose up -d --force-recreate caddy"
+  ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate gateway-admission; docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; docker compose up -d --force-recreate caddy"
 }
 
 GATEWAY_OPTION=''
@@ -113,11 +104,6 @@ if [[ "$COMPONENT" == edge-node ]]; then
   "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$INVENTORY" --node-name "$EDGE_NODE" --output "$edge_env" >/dev/null
   ssh "$EDGE_NODE" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
   rsync -a "$ROOT/04-ops/edge-node/" "$EDGE_NODE:$edge_remote/edge/"
-  if [[ "$EDGE_NODE" == "$GATEWAY_NODE" ]]; then
-    [[ -s "$OPS_RENDER/join-bootstrap/manifest.sha256" ]] \
-      || die 'gateway edge install requires a rendered public JOIN bootstrap'
-    rsync -a "$OPS_RENDER/join-bootstrap/" "$EDGE_NODE:$edge_remote/edge/join-bootstrap/"
-  fi
   scp -q "$edge_env" "$EDGE_NODE:$edge_remote/edge.env"
   ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate caddy"
   printf 'PASS participant edge installed on %s\n' "$EDGE_NODE"

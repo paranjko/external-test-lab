@@ -220,17 +220,17 @@ validator_identity_digest() {
   [ "$status" -ne 0 ]
 }
 
-@test "independent JOIN uses one GDC_HOME and the verified bootstrap client credential" {
+@test "independent JOIN stages a verified one-file bootstrap without publishing credentials" {
   acceptance="$RUNBOOK/scripts/phase-join-acceptance.sh"
-  bootstrap="$RUNBOOK/scripts/fetch-join-bootstrap.sh"
+  bootstrap="$RUNBOOK/scripts/stage-network-bootstrap.sh"
   renderer="$RUNBOOK/04-ops/render-ops.sh"
 
   run grep -F 'KEY_FILE="$SECRETS/gateway.join-client-key"' "$acceptance"
   [ "$status" -eq 0 ]
-  run grep -F 'install -m 0600 "$tmp/gateway/join-client-key" "$SECRETS/gateway.join-client-key"' "$bootstrap"
+  run grep -F 'gateway.join-client-key' "$bootstrap"
   [ "$status" -eq 0 ]
-  run grep -F 'install -m 0644 "$SECRETS/gateway.join-client-key" "$bootstrap_dir/gateway/join-client-key"' "$renderer"
-  [ "$status" -eq 0 ]
+  run grep -F 'gateway.join-client-key' "$renderer"
+  [ "$status" -ne 0 ]
   run grep -F 'GDC_OPERATOR_MODE' "$RUNBOOK/ROLE-JOIN.md" "$acceptance" "$bootstrap" "$renderer" "$RUNBOOK/scripts/lib.sh" "$RUNBOOK/scripts/phase-genesis.sh"
   [ "$status" -eq 1 ]
   run grep -F 'GDC_JOIN_GATEWAY_CLIENT_KEY_FILE' "$RUNBOOK/ROLE-JOIN.md" "$acceptance" "$bootstrap" "$renderer" "$RUNBOOK/scripts/lib.sh" "$RUNBOOK/scripts/phase-genesis.sh"

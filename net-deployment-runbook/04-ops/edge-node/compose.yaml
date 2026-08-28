@@ -1,13 +1,5 @@
 name: gdc-edge
 services:
-  bootstrap:
-    image: ${MLNODE_PROXY_IMAGE:?MLNODE_PROXY_IMAGE is required}
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./join-bootstrap:/bootstrap:ro
-      - ./bootstrap-nginx.conf:/etc/nginx/conf.d/default.conf:ro
-
   public-grafana:
     profiles: ["public-edge"]
     image: ${GRAFANA_IMAGE:?GRAFANA_IMAGE is required}
@@ -44,8 +36,6 @@ services:
     image: ${CADDY_IMAGE:-caddy:2.11.4-alpine}
     restart: unless-stopped
     network_mode: host
-    depends_on:
-      - bootstrap
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?PUBLIC_HOST is required}
       ACME_EMAIL: ${ACME_EMAIL:-}

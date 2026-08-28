@@ -54,13 +54,16 @@
       header_up Host {$PUBLIC_HOST}
     }
   }
-  # The installer replaces this directory atomically only after checksum
-  # verification.  Before Genesis it is absent and file_server returns 404;
-  # after Genesis every response comes from the same verified bundle.
+  # Bootstrap documents are static release artifacts. They use no legacy
+  # compatibility bundle and expose no credentials or topology.
   route {
-    @join_bootstrap path /join-bootstrap/*
-    handle @join_bootstrap {
-      reverse_proxy 127.0.0.1:18082
+    handle /v1.bootstrap.schema.json {
+      root * /edge/bootstrap/current
+      file_server
+    }
+    handle_path /bootstrap/* {
+      root * /edge/bootstrap/current
+      file_server
     }
     # Genesis runs the public faucet on the gateway Host.  The initial Community
   # DevNet topology colocates that Host with its public TLS edge, so proxy the
@@ -128,8 +131,13 @@ www.{$SITE_HOST} {
 
 {$API_HOST} {
   encode zstd gzip
-  handle /join-bootstrap/* {
-    reverse_proxy 127.0.0.1:18082
+  handle /v1.bootstrap.schema.json {
+    root * /edge/bootstrap/current
+    file_server
+  }
+  handle_path /bootstrap/* {
+    root * /edge/bootstrap/current
+    file_server
   }
   # This proxy may wait only before it opens its one gateway connection.
   # Reconciler probes retain their explicit runtime path but share exactly the

@@ -52,6 +52,7 @@ site-js-check:
 test:
 	@./scripts/build-site-js.sh --check
 	@python3 ./scripts/test-release-candidate.py
+	@python3 ./scripts/test-network-bootstrap.py
 	@python3 ./scripts/test-pin-candidate-dockerfile.py
 	@python3 ./scripts/test-patch-candidate-dapi-dockerfile.py
 	@./scripts/test-package-candidate-binary.sh
@@ -95,10 +96,6 @@ test:
 	@./scripts/test-inference-until-ready.sh
 	@./scripts/test-gateway-escrow-reconciler.sh
 	@./scripts/test-faucet-caddy-config.sh
-	@./scripts/test-reconcile-join-bootstrap.sh
-	@./scripts/test-join-bootstrap-manifest.sh
-	@./scripts/test-join-bootstrap-consistency.sh
-	@./scripts/test-join-role-refresh.sh
 	@./scripts/test-public-edge-single-listener.sh
 	@./scripts/test-public-homepage-rendered-asset.sh
 	@./scripts/test-participant-poc-caddy-config.sh

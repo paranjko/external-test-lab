@@ -211,6 +211,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 gateway continuity
   ./gdc.sh --release v2026.07.23 gateway settle
   ./gdc.sh --release v2026.08.06 gateway ha v4
+  ./gdc.sh network bootstrap verify FILE
   ./gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 network verify
   ./gdc.sh --release v2026.07.23 network gate-b verify
@@ -327,6 +328,11 @@ case "$COMMAND" in
   network)
     subcommand="${1:-}"; shift || true
     case "$subcommand" in
+      bootstrap)
+        if [[ "${1:-}" != verify || "$#" -ne 2 ]]; then usage; exit 2; fi
+        COMMAND='network-bootstrap-verify'
+        set -- "$2"
+        ;;
       genesis|verify|reset) COMMAND="$subcommand" ;;
       gate-b) [[ "${1:-}" == verify && $# -eq 1 ]] || { usage; exit 2; }; shift; COMMAND=public-network-verify ;;
       confirmation-poc) [[ "${1:-}" == verify && $# -eq 1 ]] || { usage; exit 2; }; shift; COMMAND=confirmation-poc ;;
@@ -351,6 +357,10 @@ case "$COMMAND" in
     ;;
 esac
 case "$COMMAND" in
+  network-bootstrap-verify)
+    [[ $# -eq 1 && -f "$1" && -r "$1" ]] || { echo 'network bootstrap verify requires one readable file' >&2; exit 2; }
+    exec python3 "$ROOT/scripts/network-bootstrap.py" verify "$1"
+    ;;
   release)
     case "${1:-}" in
       candidate)
@@ -706,7 +716,7 @@ case "$COMMAND" in
     esac
     ;;
   join)
-    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' skip_qualification=false verification=true
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' skip_qualification=false verification=true
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --skip-qualification) skip_qualification=true ;;
@@ -714,6 +724,17 @@ case "$COMMAND" in
         --public-host)
           join_public_host="${2:-}"
           [[ "$join_public_host" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'host join --public-host requires an IP address or domain' >&2; exit 2; }
+          shift
+          ;;
+        --bootstrap-file)
+          join_bootstrap_file="${2:-}"
+          [[ -r "$join_bootstrap_file" ]] || { echo 'host join --bootstrap-file requires a readable file' >&2; exit 2; }
+          join_bootstrap_file="$(realpath -e -- "$join_bootstrap_file")"
+          shift
+          ;;
+        --p2p-port)
+          join_p2p_port="${2:-}"
+          [[ "$join_p2p_port" =~ ^[1-9][0-9]{0,4}$ && "$join_p2p_port" -le 65535 ]] || { echo 'host join --p2p-port requires a port from 1 through 65535' >&2; exit 2; }
           shift
           ;;
         --restore)
@@ -746,13 +767,18 @@ case "$COMMAND" in
     fi
     use_node_data_home "$join_alias"
     acquire_operator_lock
+    if [[ -z "$join_bootstrap_file" ]]; then
+      join_bootstrap_file="$STATE/network-bootstrap.json"
+      "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/bootstrap/gonka-devnet-community.json --output "$join_bootstrap_file"
+    else
+      python3 "$ROOT/scripts/network-bootstrap.py" verify "$join_bootstrap_file" >/dev/null
+    fi
+    "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$GENESIS" --state-dir "$STATE" --secrets-dir "$SECRETS"
     export GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"
     export GDC_JOIN_VERIFICATION="$verification"
     [[ -z "$join_restore_archive" ]] || export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
     join_role_ready=false
     join_role_config=''
-    join_dispatch_marker="$STATE/join-bootstrap-dispatched.manifest.sha256"
-    join_role_dispatched=false
     if [[ -n "${GDC_ENV:-}" && -s "$GDC_ENV" ]]; then
       join_role_config="$GDC_ENV"
     elif [[ -s "$GDC_HOME/.env" ]]; then
@@ -760,60 +786,18 @@ case "$COMMAND" in
     elif [[ -s "$STATE/active-role-config" ]]; then
       join_role_config="$(<"$STATE/active-role-config")"
     fi
-    join_marker_schema='' join_marker_manifest='' join_marker_role_sha256=''
-    join_marker_alias='' join_marker_public_host='' join_marker_gpu_alias=''
-    if [[ -e "$join_dispatch_marker" ]]; then
-      [[ -s "$join_dispatch_marker" ]] || { echo 'JOIN bootstrap dispatch marker is empty; refusing to replace the prepared bootstrap' >&2; exit 1; }
-      while IFS='=' read -r key value; do
-        case "$key" in
-          schema_version) join_marker_schema="$value" ;;
-          manifest_sha256) join_marker_manifest="$value" ;;
-          role_sha256) join_marker_role_sha256="$value" ;;
-          host_alias) join_marker_alias="$value" ;;
-          public_host) join_marker_public_host="$value" ;;
-          gpu_alias) join_marker_gpu_alias="$value" ;;
-          *) echo 'JOIN bootstrap dispatch marker has an unsupported field; refusing to replace the prepared bootstrap' >&2; exit 1 ;;
-        esac
-      done <"$join_dispatch_marker"
-      [[ "$join_marker_schema" == 1 && "$join_marker_manifest" =~ ^[0-9a-f]{64}$ && "$join_marker_role_sha256" =~ ^[0-9a-f]{64}$ && "$join_marker_alias" =~ ^[a-z0-9][a-z0-9_-]*$ && "$join_marker_public_host" =~ ^[A-Za-z0-9.-]+$ && "$join_marker_gpu_alias" =~ ^[a-z0-9_-]*$ ]] || {
-        echo 'JOIN bootstrap dispatch marker is invalid; refusing to replace the prepared bootstrap' >&2
-        exit 1
-      }
-      join_role_dispatched=true
-      [[ "$join_alias" == "$join_marker_alias" ]] || { echo 'JOIN has already dispatched with a different Host topology; use a separately validated recovery workflow' >&2; exit 1; }
-      [[ -z "$join_public_host" || "$join_public_host" == "$join_marker_public_host" ]] || { echo 'JOIN has already dispatched with a different public Host; use a separately validated recovery workflow' >&2; exit 1; }
-      [[ -z "$join_gpu_alias" || "$join_gpu_alias" == "$join_marker_gpu_alias" ]] || { echo 'JOIN has already dispatched with a different GPU Host; use a separately validated recovery workflow' >&2; exit 1; }
-    fi
     if [[ -s "$join_role_config" ]]; then
       # This is a locally generated, mode-0600 role file.
       # shellcheck disable=SC1090
       source "$join_role_config"
-      if [[ "$join_role_dispatched" == true ]]; then
-        [[ "$(sha256sum "$join_role_config" | awk '{print $1}')" == "$join_marker_role_sha256" ]] || {
-          echo 'JOIN dispatch binding disagrees with the selected role input; refusing to replace it' >&2
-          exit 1
-        }
-        [[ "${GDC_JOIN_BOOTSTRAP_MANIFEST_SHA256:-}" == "$join_marker_manifest" ]] || {
-          echo 'JOIN dispatch binding disagrees with the selected bootstrap; refusing to replace it' >&2
-          exit 1
-        }
-        [[ "$(topology_value "${GDC_NODE_PUBLIC_HOSTS:-}" "$join_alias" || true)" == "$join_marker_public_host" ]] || {
-          echo 'JOIN dispatch binding disagrees with the selected public Host; refusing to replace it' >&2
-          exit 1
-        }
-        [[ "$(topology_value "${GDC_NODE_ML_HOSTS:-}" "$join_alias" || true)" == "$join_marker_gpu_alias" ]] || {
-          echo 'JOIN dispatch binding disagrees with the selected GPU Host; refusing to replace it' >&2
-          exit 1
-        }
-      fi
     fi
     if [[ -s "$join_role_config" ]] && (
         # This is a locally generated, mode-0600 role file.
         # shellcheck disable=SC1090
         source "$join_role_config"
-        # Public bootstrap can rotate between attempts. Generated JOIN role
-        # inputs therefore never bypass preparation on a new invocation.
-        [[ "${GDC_JOIN_ROLE_INPUT:-false}" != true || "$join_role_dispatched" == true ]] || exit 1
+        # A bootstrap can rotate between attempts. Generated JOIN role inputs
+        # therefore never bypass preparation on a new invocation.
+        [[ "${GDC_JOIN_ROLE_INPUT:-false}" != true ]] || exit 1
         [[ " ${GDC_NODE_ALIASES:-} " == *" $join_alias "* ]] || exit 1
         [[ -z "$join_public_host" ]] || [[ "$(topology_value "${GDC_NODE_PUBLIC_HOSTS:-}" "$join_alias" || true)" == "$join_public_host" ]] || exit 1
         [[ -z "$join_gpu_alias" ]] && exit 0
@@ -828,9 +812,10 @@ case "$COMMAND" in
     if [[ "$join_role_ready" != true ]]; then
       join_input="$STATE/role-inputs/join-$join_alias"
       join_config_args=(--output "$join_input" --ssh-alias "$join_alias")
+      join_config_args+=(--bootstrap-file "$join_bootstrap_file")
       [[ -n "$join_public_host" ]] && join_config_args+=(--public-host "$join_public_host")
       [[ -n "$join_gpu_alias" ]] && join_config_args+=(--gpu-ssh-alias "$join_gpu_alias")
-      [[ -n "${GDC_JOIN_BOOTSTRAP_URL:-}" ]] && join_config_args+=(--bootstrap-url "$GDC_JOIN_BOOTSTRAP_URL")
+      [[ -n "$join_p2p_port" ]] && join_config_args+=(--p2p-port "$join_p2p_port")
       "$ROOT/scripts/prepare-join-role-config.sh" "${join_config_args[@]}"
       printf '%s\n' "$join_input" >"$STATE/active-role-config"
       export GDC_ENV="$join_input"

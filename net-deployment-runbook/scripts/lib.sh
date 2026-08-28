@@ -252,6 +252,16 @@ load_topology() {
       ml_seen[$ml_alias]=1
     fi
   done
+  if [[ "${GDC_JOIN_ROLE_INPUT:-false}" == true ]]; then
+    [[ -n "${GDC_JOIN_NETWORK_HOST:-}" ]] || die 'JOIN role input lacks a network seed host'
+    GENESIS_NODE=''
+    PUBLIC_EDGE_NODE=''
+    GATEWAY_NODE=''
+    TELEGRAM_BOT_HOST=''
+    GENESIS_PUBLIC_HOST="$GDC_JOIN_NETWORK_HOST"
+    PUBLIC_EDGE_HOST="$GDC_JOIN_NETWORK_HOST"
+    return 0
+  fi
   GENESIS_NODE="${GDC_GENESIS_NODE:-${GDC_NODES[0]}}"
   PUBLIC_EDGE_NODE="${GDC_PUBLIC_EDGE_NODE:-$GENESIS_NODE}"
   GATEWAY_NODE="${GDC_GATEWAY_NODE:-$GENESIS_NODE}"

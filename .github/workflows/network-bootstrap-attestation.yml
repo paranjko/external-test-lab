@@ -1,0 +1,42 @@
+name: Network bootstrap attestation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'net-deployment-runbook/bootstrap/release/**'
+
+permissions:
+  contents: read
+  attestations: write
+  id-token: write
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify exact release inputs
+        run: |
+          set -Eeuo pipefail
+          release=net-deployment-runbook/bootstrap/release
+          cmp "$release/v1.bootstrap.schema.json" net-deployment-runbook/bootstrap/v1.bootstrap.schema.json
+          for file in gonka-mainnet.json gonka-testnet.json gonka-devnet-community.json; do
+            python3 net-deployment-runbook/scripts/network-bootstrap.py verify "$release/$file"
+          done
+      - name: Attest schema
+        uses: actions/attest@v4
+        with:
+          subject-path: net-deployment-runbook/bootstrap/release/v1.bootstrap.schema.json
+      - name: Attest Mainnet bootstrap
+        uses: actions/attest@v4
+        with:
+          subject-path: net-deployment-runbook/bootstrap/release/gonka-mainnet.json
+      - name: Attest Testnet bootstrap
+        uses: actions/attest@v4
+        with:
+          subject-path: net-deployment-runbook/bootstrap/release/gonka-testnet.json
+      - name: Attest Community DevNet bootstrap
+        uses: actions/attest@v4
+        with:
+          subject-path: net-deployment-runbook/bootstrap/release/gonka-devnet-community.json

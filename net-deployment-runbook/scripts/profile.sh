@@ -93,8 +93,6 @@ load_profiles() {
   export GDC_RELEASE_PROFILE="$release" GDC_DEPLOYMENT_PROFILE="$deployment"
   export GDC_MODEL_PROFILE="$model" GDC_OPERATOR_SERVICES_PROFILE="$operator"
   export GONKA_REPOSITORY GONKA_SOURCE_REF GONKA_COMMIT MODEL_ID MODEL_REVISION
-  [[ "${JOIN_BOOTSTRAP_FORMAT:-}" =~ ^[1-9][0-9]*$ ]] || { echo 'release profile has an invalid JOIN bootstrap format' >&2; return 2; }
-  export JOIN_BOOTSTRAP_FORMAT
   export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
 }
 
@@ -106,7 +104,6 @@ profile_summary() {
     "$GDC_RELEASE_PROFILE" "$GDC_DEPLOYMENT_PROFILE" "$GDC_MODEL_PROFILE" "$GDC_OPERATOR_SERVICES_PROFILE"
   printf 'gonka_source_ref=%s\ngonka_commit=%s\nmodel=%s@%s\n' \
     "$GONKA_SOURCE_REF" "$GONKA_COMMIT" "$MODEL_ID" "$MODEL_REVISION"
-  printf 'join_bootstrap_format=%s\n' "$JOIN_BOOTSTRAP_FORMAT"
   if [[ -n "${GONKA_HOST_STACK_COMMIT:-}" ]]; then
     printf 'gonka_host_stack_commit=%s\ngonka_host_stack_doc_sha256=%s\ngonka_host_stack_compose_sha256=%s\n' \
       "$GONKA_HOST_STACK_COMMIT" "$GONKA_HOST_STACK_DOC_SHA256" "$GONKA_HOST_STACK_COMPOSE_SHA256"

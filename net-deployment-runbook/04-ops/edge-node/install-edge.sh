@@ -14,7 +14,7 @@ expected_remote_prometheus="https://${GATEWAY_PUBLIC_HOST:-}/ops-prometheus"
 
 mkdir -p "$DEST"
 install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"
-install -m 0644 "$HERE/bootstrap-nginx.conf" "$DEST/bootstrap-nginx.conf"
+install -d -m 0755 "$DEST/bootstrap"
 # A failed first deployment can leave this exact bind-mount target as a
 # directory. Remove only that known invalid target before installing the file.
 if [[ -d "$DEST/gateway-admission-proxy.py" ]]; then
@@ -23,7 +23,6 @@ fi
 install -m 0644 "$HERE/gateway-admission-proxy.py" "$DEST/gateway-admission-proxy.py"
 install -d -m 0750 "$DEST/status"
 install -m 0600 "$1" "$DEST/.env"
-"$HERE/reconcile-join-bootstrap.sh" "$HERE/join-bootstrap" "$DEST/join-bootstrap"
 rm -rf "$DEST/public-grafana"
 cp -a "$HERE/public-grafana" "$DEST/public-grafana"
 sed "s|__PUBLIC_GRAFANA_PROMETHEUS_URL__|$PUBLIC_GRAFANA_PROMETHEUS_URL|g" \

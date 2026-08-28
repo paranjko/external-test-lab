@@ -1,8 +1,32 @@
 # JOIN: add a Host
 
-JOIN is a single command for the operator who owns the target Host. The
-operator creates and keeps the Host's accounts and identities; the command
-imports only the public Genesis bootstrap.
+JOIN uses one signed network bootstrap document. Your SSH alias, public Host,
+P2P port, and optional ML Host remain local to your machine.
+
+## Download and verify a bootstrap
+
+Download the schema and the network document you intend to use. Attestation
+verification is optional and checks the downloaded bytes' repository origin;
+local validation checks the document's chain, Genesis, seed, and service data.
+
+```bash
+wget https://gonka-dev.net/v1.bootstrap.schema.json
+gh attestation verify v1.bootstrap.schema.json -R paranjko/external-test-lab
+
+wget https://gonka-dev.net/bootstrap/gonka-mainnet.json
+gh attestation verify gonka-mainnet.json -R paranjko/external-test-lab
+
+wget https://gonka-dev.net/bootstrap/gonka-testnet.json
+gh attestation verify gonka-testnet.json -R paranjko/external-test-lab
+
+wget https://gonka-dev.net/bootstrap/gonka-devnet-community.json
+gh attestation verify gonka-devnet-community.json -R paranjko/external-test-lab
+```
+
+The Community DevNet document may contain a scoped, public client credential
+for its final inference check. It is not a private operator key. Never add
+private keys, mnemonics, SSH credentials, or administrator tokens to a
+bootstrap document.
 
 ## Join
 
@@ -21,10 +45,17 @@ alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
 # Optional: choose a different local data directory
 # export GDC_HOME=/absolute/path
 
+gdc network bootstrap verify gonka-devnet-community.json
+gdc host join --bootstrap-file gonka-devnet-community.json --public-host <IP_or_DOMAIN> <ssh-alias>
+```
+
+For Community DevNet, the simple form downloads the same network document:
+
+```bash
 gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
-The command verifies and imports the public Genesis bootstrap, creates the
+The command validates and imports the public Genesis bootstrap, creates the
 Host's accounts, installs the pinned release, synchronizes the node, registers
 it, and waits for `ACTIVE`. With an optional GPU SSH alias, it qualifies and
 attaches that MLNode automatically.
@@ -39,19 +70,13 @@ transitions followed by four effective-evidence epochs. It returns
 `JOIN_PASS` only after it proves a chain-recorded runtime, positive PoC weight,
 positive consensus voting power, and authenticated gateway inference.
 
-The verified public bootstrap includes a join-only gateway credential for the
-final inference check. It never accepts Genesis private material from the JOIN
-operator.
+The observable successful result is `JOIN_PASS`. `ACTIVE` alone does not prove
+a successful validator join.
 
 After a successful Genesis or JOIN, the command creates
 `$GDC_HOME/<ssh-alias>-validator-backup.tar`. Store this private archive away
 from the Host. It preserves the operator-owned validator material for a future
 documented recovery procedure.
-
-For an independent proof, use a clean checkout and a separate `GDC_HOME`, then
-share only the resulting `join-acceptance-<ssh-alias>/` evidence bundle. Its
-`receipt.json` contains public chain-verifiable identifiers and no mnemonic,
-keyring, client credential, or private account material.
 
 If the SSH alias uses an IP address and DNS cannot be detected automatically,
 pass the node's public DNS name explicitly:
