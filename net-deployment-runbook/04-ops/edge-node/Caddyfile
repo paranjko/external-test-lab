@@ -42,7 +42,8 @@
       root * /edge/bootstrap/current
       file_server
     }
-    handle_path /bootstrap/* {
+    @network_bootstrap path_regexp network_bootstrap ^/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/bootstrap\.(json|env)$
+    handle @network_bootstrap {
       root * /edge/bootstrap/current
       file_server
     }

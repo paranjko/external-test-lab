@@ -70,7 +70,7 @@ grep -Fq '[[ ! -s "$RECEIPT_ROOT/receipt.json" ]] || receipts+=' "$ROOT/scripts/
 grep -Fq '# JOIN acceptance: PASS' "$ROOT/scripts/phase-public-network-verify.sh"
 grep -Fq 'issue #28 external JOIN receipt' "$ROOT/scripts/phase-public-network-verify.sh"
 grep -Fq 'write_phase_lineage' "$ROOT/scripts/phase-public-network-verify.sh"
-grep -Fq 'Import verified scoped gateway credential from the public bootstrap' "$ROOT/scripts/phase-public-network-verify.sh"
+! grep -Fq 'credential from the public bootstrap' "$ROOT/scripts/phase-public-network-verify.sh"
 grep -Fq 'different Genesis lineage' "$ROOT/scripts/phase-confirmation-poc.sh"
 grep -Fq 'write_phase_lineage' "$ROOT/scripts/phase-confirmation-poc.sh"
 grep -Fq 'phase sequence is incomplete or out of order' "$ROOT/scripts/phase-confirmation-poc.sh"

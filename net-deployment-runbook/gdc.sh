@@ -329,9 +329,12 @@ case "$COMMAND" in
     subcommand="${1:-}"; shift || true
     case "$subcommand" in
       bootstrap)
-        if [[ "${1:-}" != verify || "$#" -ne 2 ]]; then usage; exit 2; fi
+        if [[ "${1:-}" != verify ]] || { [[ "$#" -ne 2 ]] && { [[ "$#" -ne 3 || "${2:-}" != --online ]]; }; }; then
+          usage
+          exit 2
+        fi
         COMMAND='network-bootstrap-verify'
-        set -- "$2"
+        if [[ "${2:-}" == --online ]]; then set -- --online "$3"; else set -- "$2"; fi
         ;;
       genesis|verify|reset) COMMAND="$subcommand" ;;
       gate-b) [[ "${1:-}" == verify && $# -eq 1 ]] || { usage; exit 2; }; shift; COMMAND=public-network-verify ;;
@@ -358,6 +361,10 @@ case "$COMMAND" in
 esac
 case "$COMMAND" in
   network-bootstrap-verify)
+    if [[ "${1:-}" == --online ]]; then
+      [[ $# -eq 2 && -f "$2" && -r "$2" ]] || { echo 'network bootstrap verify --online requires one readable file' >&2; exit 2; }
+      exec python3 "$ROOT/scripts/network-bootstrap.py" online "$2"
+    fi
     [[ $# -eq 1 && -f "$1" && -r "$1" ]] || { echo 'network bootstrap verify requires one readable file' >&2; exit 2; }
     exec python3 "$ROOT/scripts/network-bootstrap.py" verify "$1"
     ;;
@@ -769,7 +776,7 @@ case "$COMMAND" in
     acquire_operator_lock
     if [[ -z "$join_bootstrap_file" ]]; then
       join_bootstrap_file="$STATE/network-bootstrap.json"
-      "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/bootstrap/gonka-devnet-community.json --output "$join_bootstrap_file"
+      "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/gonka-devnet-community/bootstrap.json --output "$join_bootstrap_file"
     else
       python3 "$ROOT/scripts/network-bootstrap.py" verify "$join_bootstrap_file" >/dev/null
     fi

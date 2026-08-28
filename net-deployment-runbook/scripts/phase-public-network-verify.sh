@@ -188,20 +188,8 @@ cp "$cpoc_dir/receipt.json" "$RUN/confirmation-poc-receipt.json"
 
 step 'Run three consecutive authenticated gateway completions'
 key_file="$STATE/secrets/gateway.join-client-key"
-if [[ ! -s "$key_file" ]]; then
-  step 'Import verified scoped gateway credential from the public bootstrap'
-  bootstrap_file="$(mktemp)"
-  bootstrap_url="${GDC_NETWORK_BOOTSTRAP_URL:-https://gonka-dev.net/bootstrap/gonka-devnet-community.json}"
-  if ! "$ROOT/scripts/fetch-network-bootstrap.sh" --url "$bootstrap_url" --output "$bootstrap_file"; then
-    rm -f -- "$bootstrap_file"
-    inconclusive 'cannot retrieve and validate the public network bootstrap'
-  fi
-  "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$bootstrap_file" --genesis-dir "$GENESIS" --state-dir "$STATE" --secrets-dir "$STATE/secrets" \
-    || { rm -f -- "$bootstrap_file"; blocked 'public network bootstrap could not be staged safely'; }
-  rm -f -- "$bootstrap_file"
-fi
 [[ -s "$key_file" && "$(stat -c %a "$key_file")" == 600 ]] \
-  || blocked 'no mode-0600 scoped gateway client credential is available for the required Gate B completions'
+  || blocked 'no mode-0600 locally provisioned gateway client credential is available for the required Gate B completions'
 gateway_url="${GDC_GATEWAY_PUBLIC_URL:-https://api.gonka-dev.net}"
 client_key="$(cut -d, -f1 <"$key_file")"
 for attempt in 1 2 3; do

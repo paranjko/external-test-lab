@@ -228,7 +228,7 @@ validator_identity_digest() {
   run grep -F 'KEY_FILE="$SECRETS/gateway.join-client-key"' "$acceptance"
   [ "$status" -eq 0 ]
   run grep -F 'gateway.join-client-key' "$bootstrap"
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
   run grep -F 'gateway.join-client-key' "$renderer"
   [ "$status" -ne 0 ]
   run grep -F 'GDC_OPERATOR_MODE' "$RUNBOOK/ROLE-JOIN.md" "$acceptance" "$bootstrap" "$renderer" "$RUNBOOK/scripts/lib.sh" "$RUNBOOK/scripts/phase-genesis.sh"

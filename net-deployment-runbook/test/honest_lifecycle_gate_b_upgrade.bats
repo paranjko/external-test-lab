@@ -33,8 +33,8 @@ setup() {
   [ "$status" -eq 0 ]
   run grep -F 'write_phase_lineage' "$verifier"
   [ "$status" -eq 0 ]
-  run grep -F 'Import verified scoped gateway credential from the public bootstrap' "$verifier"
-  [ "$status" -eq 0 ]
+  run grep -F 'credential from the public bootstrap' "$verifier"
+  [ "$status" -ne 0 ]
 }
 
 @test "CPoC refuses ordinary PoC, stale lineage, missing phases, and fleet-wide zero" {

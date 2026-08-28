@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 --bootstrap-file FILE --genesis-dir DIR --state-dir DIR --secrets-dir DIR" >&2
+  echo "Usage: $0 --bootstrap-file FILE --genesis-dir DIR --state-dir DIR [--secrets-dir DIR]" >&2
 }
 
 BOOTSTRAP_FILE=''
@@ -30,8 +30,3 @@ sha256sum "$temporary/genesis.json" | awk '{print $1 "  genesis.json"}' >"$GENES
 chmod 0600 "$GENESIS_DIR/genesis.sha256"
 install -m 0600 "$temporary/genesis-seeds.txt" "$GENESIS_DIR/genesis-seeds.txt"
 install -m 0600 "$temporary/bootstrap.env" "$STATE_DIR/network-bootstrap.env"
-if [[ -s "$temporary/gateway.join-client-key" ]]; then
-  install -m 0600 "$temporary/gateway.join-client-key" "$SECRETS_DIR/gateway.join-client-key"
-else
-  rm -f -- "$SECRETS_DIR/gateway.join-client-key"
-fi

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://gonka-dev.net/v1.bootstrap.schema.json",
+  "chain_id": "gonka-testnet",
+  "genesis": {
+    "sha256": "734faeec6a35a9c9e0578845f22906c8b99b3bf917406be6939b1c95c1c34a37"
+  },
+  "seeds": [
+    {
+      "node_id": "b52e6b8d8b13d525d4909ded243ba8dfe48ff721",
+      "rpc": "http://89.169.111.79:8000/chain-rpc",
+      "p2p": "tcp://89.169.111.79:5000",
+      "api": "http://89.169.111.79:8000"
+    },
+    {
+      "node_id": "0de4ef8db0b5b7774badf76fd10b6fe72c60f7c7",
+      "rpc": "http://89.169.110.250:8000/chain-rpc",
+      "p2p": "tcp://89.169.110.250:5000"
+    }
+  ],
+  "brokers": []
+}

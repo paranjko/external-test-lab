@@ -57,11 +57,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Verify exact Mainnet input
-        run: python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-mainnet.json
+        run: |
+          python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-mainnet.json
+          python3 net-deployment-runbook/scripts/network-bootstrap.py env net-deployment-runbook/bootstrap/release/gonka-mainnet.json | cmp - net-deployment-runbook/bootstrap/release/gonka-mainnet.env
       - name: Attest exact Mainnet bootstrap
         uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-mainnet.json
+      - name: Attest exact Mainnet ENV projection
+        uses: actions/attest@v4
+        with:
+          subject-path: net-deployment-runbook/bootstrap/release/gonka-mainnet.env
   attest-testnet:
     needs: discover
     if: ${{ needs.discover.outputs.testnet == 'true' }}
@@ -69,11 +75,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Verify exact Testnet input
-        run: python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-testnet.json
+        run: |
+          python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-testnet.json
+          python3 net-deployment-runbook/scripts/network-bootstrap.py env net-deployment-runbook/bootstrap/release/gonka-testnet.json | cmp - net-deployment-runbook/bootstrap/release/gonka-testnet.env
       - name: Attest exact Testnet bootstrap
         uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-testnet.json
+      - name: Attest exact Testnet ENV projection
+        uses: actions/attest@v4
+        with:
+          subject-path: net-deployment-runbook/bootstrap/release/gonka-testnet.env
   attest-community:
     needs: discover
     if: ${{ needs.discover.outputs.community == 'true' }}
@@ -81,8 +93,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Verify exact Community DevNet input
-        run: python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-devnet-community.json
+        run: |
+          python3 net-deployment-runbook/scripts/network-bootstrap.py verify net-deployment-runbook/bootstrap/release/gonka-devnet-community.json
+          python3 net-deployment-runbook/scripts/network-bootstrap.py env net-deployment-runbook/bootstrap/release/gonka-devnet-community.json | cmp - net-deployment-runbook/bootstrap/release/gonka-devnet-community.env
       - name: Attest exact Community DevNet bootstrap
         uses: actions/attest@v4
         with:
           subject-path: net-deployment-runbook/bootstrap/release/gonka-devnet-community.json
+      - name: Attest exact Community DevNet ENV projection
+        uses: actions/attest@v4
+        with:
+          subject-path: net-deployment-runbook/bootstrap/release/gonka-devnet-community.env

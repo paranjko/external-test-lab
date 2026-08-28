@@ -10,22 +10,31 @@ verification is optional and checks the downloaded bytes' repository origin;
 local validation checks the document's chain, Genesis, seed, and service data.
 
 ```bash
-wget https://gonka-dev.net/v1.bootstrap.schema.json
+wget -O v1.bootstrap.schema.json https://gonka-dev.net/v1.bootstrap.schema.json
 gh attestation verify v1.bootstrap.schema.json -R paranjko/external-test-lab
 
-wget https://gonka-dev.net/bootstrap/gonka-devnet-community.json
-gh attestation verify gonka-devnet-community.json -R paranjko/external-test-lab
+wget -O gonka-devnet-community.bootstrap.json \
+  https://gonka-dev.net/gonka-devnet-community/bootstrap.json
+gh attestation verify gonka-devnet-community.bootstrap.json -R paranjko/external-test-lab
 ```
 
-Testnet is intentionally unavailable until Gonka publishes an authoritative
-Testnet Genesis and at least one matching usable seed. Do not substitute a
-Mainnet document or use a placeholder. Mainnet is published only after its
-exact current Genesis and an official reachable matching seed are verified.
+The same schema supports the other published networks; keep each downloaded
+file distinct before verifying it:
 
-The Community DevNet document may contain a scoped, public client credential
-for its final inference check. It is not a private operator key. Never add
-private keys, mnemonics, SSH credentials, or administrator tokens to a
-bootstrap document.
+```bash
+wget -O gonka-mainnet.bootstrap.json \
+  https://gonka-dev.net/gonka-mainnet/bootstrap.json
+wget -O gonka-testnet.bootstrap.json \
+  https://gonka-dev.net/gonka-testnet/bootstrap.json
+gh attestation verify gonka-mainnet.bootstrap.json -R paranjko/external-test-lab
+gh attestation verify gonka-testnet.bootstrap.json -R paranjko/external-test-lab
+```
+
+The descriptor carries only chain identity, RPC/P2P seeds, optional participant
+registration APIs, and optional broker discovery. It never contains Genesis
+bytes, credentials, topology, or release-profile data. `genesis.sha256` is the
+distribution-integrity hash of the exact file written by `inferenced
+download-genesis`, not a consensus-defined chain fingerprint.
 
 ## Join
 
@@ -44,9 +53,16 @@ alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
 # Optional: choose a different local data directory
 # export GDC_HOME=/absolute/path
 
-gdc network bootstrap verify gonka-devnet-community.json
-gdc host join --bootstrap-file gonka-devnet-community.json --public-host <IP_or_DOMAIN> <ssh-alias>
+gdc network bootstrap verify gonka-devnet-community.bootstrap.json
+gdc network bootstrap verify --online gonka-devnet-community.bootstrap.json
+gdc host join --bootstrap-file gonka-devnet-community.bootstrap.json --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
+
+`bootstrap.env` is a generated compatibility projection, not an independent
+input. Download it only alongside the matching JSON, verify its attestation,
+generate the projection locally from the verified JSON, compare the bytes, and
+inspect it before applying it to an operator-owned local environment. Do not
+execute shell content directly from a URL.
 
 For Community DevNet, the simple form downloads the same network document:
 

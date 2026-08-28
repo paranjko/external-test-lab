@@ -38,11 +38,12 @@ fi
 stage="$(mktemp -d)"
 trap 'rm -rf -- "$stage"' EXIT
 python3 "$ROOT/scripts/network-bootstrap.py" stage "$BOOTSTRAP_FILE" "$stage" >/dev/null
-bootstrap_sha256=''
-bootstrap_schema=''
-seed_host=''
+bootstrap_sha256="$(sha256sum "$BOOTSTRAP_FILE" | awk '{print $1}')"
+bootstrap_schema='https://gonka-dev.net/v1.bootstrap.schema.json'
+# This file is generated locally from validated JSON, never downloaded or
+# evaluated from a remote source.
 source "$stage/bootstrap.env"
-[[ -n "${seed_host:-}" ]] || { echo 'validated bootstrap did not yield a usable seed host' >&2; exit 1; }
+[[ -n "${SEED_NODE_RPC_URL:-}" ]] || { echo 'validated bootstrap did not yield a usable seed RPC' >&2; exit 1; }
 
 install -d -m 0700 "$(dirname "$OUTPUT")"
 umask 077
@@ -54,7 +55,10 @@ umask 077
   printf 'GDC_JOIN_BOOTSTRAP_FILE=%q\n' "$(realpath -e -- "$BOOTSTRAP_FILE")"
   printf 'GDC_JOIN_BOOTSTRAP_SHA256=%q\n' "$bootstrap_sha256"
   printf 'GDC_JOIN_BOOTSTRAP_SCHEMA=%q\n' "$bootstrap_schema"
-  printf 'GDC_JOIN_NETWORK_HOST=%q\n' "$seed_host"
-  printf 'GDC_CHAIN_RPC_URL=%q\n' "https://$seed_host/chain-rpc/"
+  printf 'GDC_JOIN_NETWORK_HOST=%q\n' "$(python3 -c "from urllib.parse import urlsplit; print(urlsplit('$SEED_NODE_RPC_URL').hostname)")"
+  printf 'GDC_CHAIN_RPC_URL=%q\n' "$SEED_NODE_RPC_URL/"
+  printf 'SEED_API_URL=%q\n' "$SEED_API_URL"
+  printf 'SEED_NODE_RPC_URL=%q\n' "$SEED_NODE_RPC_URL"
+  printf 'SEED_NODE_P2P_URL=%q\n' "$SEED_NODE_P2P_URL"
   printf 'GDC_JOIN_ROLE_INPUT=true\n'
 } >"$OUTPUT"
