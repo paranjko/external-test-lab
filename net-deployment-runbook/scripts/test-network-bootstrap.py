@@ -15,6 +15,7 @@ class TestBootstrap(unittest.TestCase):
   for name,chain,seeds in (("gonka-devnet-community.json","gonka-devnet-community",5),("gonka-mainnet.json","gonka-mainnet",2),("gonka-testnet.json","gonka-testnet",2)):
    doc=json.loads((RELEASE/name).read_text());self.assertEqual(doc["chain_id"],chain);self.assertEqual(len(doc["seeds"]),seeds);self.assertEqual(self.tool("verify",RELEASE/name).returncode,0);self.assertEqual(self.tool("env",RELEASE/name).stdout.encode(),(RELEASE/(name.removesuffix(".json")+".env")).read_bytes())
   community=json.loads((RELEASE/"gonka-devnet-community.json").read_text());self.assertEqual([seed["node_id"] for seed in community["seeds"]],["a78baa4988a9be991685080df4c232b1fdbe60ac","0f955d2e5ff3bdeabf04d91b5d590dc902aae4d0","ce4ff321a327263939a9f50fce2de988af95a5db","dda7f9dd24446c9e0b9fd6caac9a9d354dfdd651","1c62708ec56fe02d52c3ecedd388ebcc9ace55b4"])
+  self.assertEqual(community["seeds"][0]["api"],"https://node0.gonka-dev.net");self.assertEqual(community["brokers"][0]["api_urls"],["https://api.gonka-dev.net"])
  def test_http_network_control_but_https_brokers(self):
   with tempfile.TemporaryDirectory() as t:
    d=Path(t);good=self.write(d,"good.json",document());self.assertEqual(self.tool("verify",good).returncode,0)

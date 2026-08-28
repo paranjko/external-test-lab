@@ -96,6 +96,18 @@ www.{$SITE_HOST} {
 
 {$SITE_HOST} {
   encode zstd gzip
+  # Bootstrap is a public consumer contract on the canonical site origin as
+  # well as the node and API origins. Keep this static route ahead of the site
+  # fallback so a published descriptor never reaches the dashboard handler.
+  handle /v1.bootstrap.schema.json {
+    root * /edge/bootstrap/current
+    file_server
+  }
+  @network_bootstrap path_regexp network_bootstrap ^/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/bootstrap\.(json|env)$
+  handle @network_bootstrap {
+    root * /edge/bootstrap/current
+    file_server
+  }
   # Publish only the consumer readiness summary. The Conversations API and
   # Prometheus endpoint remain loopback-only on the OPS host.
   @telegram_consumer path /status/telegram-consumer

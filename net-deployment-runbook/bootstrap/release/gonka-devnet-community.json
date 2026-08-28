@@ -9,7 +9,7 @@
       "node_id": "a78baa4988a9be991685080df4c232b1fdbe60ac",
       "rpc": "https://node0.gonka-dev.net/chain-rpc",
       "p2p": "tcp://node0.gonka-dev.net:5000",
-      "api": "https://api.gonka-dev.net"
+      "api": "https://node0.gonka-dev.net"
     },
     {
       "node_id": "0f955d2e5ff3bdeabf04d91b5d590dc902aae4d0",
