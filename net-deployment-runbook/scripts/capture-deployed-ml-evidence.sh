@@ -115,6 +115,22 @@ while (( remaining > 0 && SECONDS < deadline )); do
       stages[$host]=runtime
     fi
 
+    # Every retry must observe the same sole runtime generation. A matching
+    # name alone is insufficient because Compose can replace its container.
+    if [[ "${stages[$host]}" != container ]]; then
+      mapfile -t matches < <(remote "$host" \
+        "docker ps --filter 'label=com.docker.compose.project=$host' --filter 'label=com.docker.compose.service=mlnode' --format '{{.Names}} {{.ID}}'" \
+        2>/dev/null || true)
+      if (( ${#matches[@]} != 1 )) || [[ "${matches[0]:-}" != "${containers[$host]} ${container_ids[$host]}" ]]; then
+        rm -f "$report/status.json" "$report/models.json" "$report/vram.csv" "$report/completion.json"
+        unset 'containers[$host]' 'container_ids[$host]'
+        stages[$host]=container
+        reasons[$host]=runtime_replaced_or_ambiguous
+        printf 'WAIT  deployed ML evidence host=%s stage=container reason=%s\n' "$host" "${reasons[$host]}"
+        continue
+      fi
+    fi
+
     if [[ "${stages[$host]}" == runtime ]]; then
       container="${containers[$host]}"
       if ! capture_http "$host" inference GET \
@@ -174,15 +190,6 @@ while (( remaining > 0 && SECONDS < deadline )); do
 
     if [[ "${stages[$host]}" == completion ]]; then
       container="${containers[$host]}"
-      current_id="$(remote "$host" "docker inspect --format '{{.Id}}' '$container'" 2>/dev/null || true)"
-      if [[ "$current_id" != "${container_ids[$host]}" ]]; then
-        rm -f "$report/status.json" "$report/models.json" "$report/vram.csv" "$report/completion.json"
-        unset 'containers[$host]' 'container_ids[$host]'
-        stages[$host]=container
-        reasons[$host]=runtime_replaced
-        printf 'WAIT  deployed ML evidence host=%s stage=container reason=%s\n' "$host" "${reasons[$host]}"
-        continue
-      fi
       if ! capture_http "$host" inference POST \
         http://127.0.0.1:5000/v1/chat/completions "$report/completion.json.tmp" "$completion_payload"; then
         reasons[$host]=completion_transport

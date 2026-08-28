@@ -44,12 +44,17 @@ case "$command" in
     ;;
   *'docker ps'*)
     [[ "${MOCK_CONTAINER_MODE:-one}" != none ]] || exit 0
-    printf '%s-mlnode-1 0123456789ab\n' "$host"
+    container_id=0123456789ab
+    discovery_file="${MOCK_STATE_DIR:?}/$host.discovery"
+    discovery_count=0
+    [[ ! -s "$discovery_file" ]] || read -r discovery_count <"$discovery_file"
+    discovery_count=$((discovery_count + 1))
+    printf '%s\n' "$discovery_count" >"$discovery_file"
+    if [[ "${MOCK_RUNTIME_MODE:-stable}" == replaced ]] && (( discovery_count > 1 )); then
+      container_id=abcdef012345
+    fi
+    printf '%s-mlnode-1 %s\n' "$host" "$container_id"
     [[ "${MOCK_CONTAINER_MODE:-one}" != two ]] || printf '%s-mlnode-2 abcdef012345\n' "$host"
-    ;;
-  *'docker inspect'*)
-    [[ "${MOCK_RUNTIME_MODE:-stable}" != replaced ]] || printf 'abcdef012345\n'
-    [[ "${MOCK_RUNTIME_MODE:-stable}" == replaced ]] || printf '0123456789ab\n'
     ;;
   *'nvidia-smi'*)
     printf 'Mock GPU, 16384 MiB, 4096 MiB, 12288 MiB\n'
@@ -115,13 +120,11 @@ if MOCK_COMPLETION_MODE=empty GDC_DEPLOYED_ML_EVIDENCE_TIMEOUT_SECONDS=1 \
   exit 1
 fi
 
-if MOCK_RUNTIME_MODE=replaced GDC_DEPLOYED_ML_EVIDENCE_TIMEOUT_SECONDS=1 \
+rm -f "$MOCK_STATE_DIR/node-a.discovery"
+MOCK_RUNTIME_MODE=replaced GDC_DEPLOYED_ML_EVIDENCE_TIMEOUT_SECONDS=5 \
   GDC_DEPLOYED_ML_EVIDENCE_POLL_SECONDS=1 \
-  "$ROOT/scripts/capture-deployed-ml-evidence.sh" "$tmp/replaced" Qwen/Qwen3-0.6B node-a \
-  >/dev/null 2>&1; then
-  echo 'accepted evidence across a replaced ML runtime' >&2
-  exit 1
-fi
+  "$ROOT/scripts/capture-deployed-ml-evidence.sh" "$tmp/replaced" Qwen/Qwen3-0.6B node-a
+[[ "$(cat "$tmp/replaced/node-a/container-id.txt")" == abcdef012345 ]]
 
 if MOCK_HANG_MODE=true GDC_DEPLOYED_ML_EVIDENCE_TIMEOUT_SECONDS=1 \
   GDC_DEPLOYED_ML_EVIDENCE_POLL_SECONDS=1 \
