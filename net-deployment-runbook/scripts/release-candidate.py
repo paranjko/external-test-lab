@@ -897,7 +897,7 @@ def build_canonical_composition(
         devshard_classification = "lab-candidate"
         devshard_images = {
             "devshardd": devshard_lock.get("DEVSHARDD_IMAGE", ""),
-            "devshard-gateway": devshard_lock.get("CANDIDATE_LOCAL_GATEWAY_IMAGE") or devshard_lock.get("DEVSHARD_GATEWAY_IMAGE", ""),
+            "devshard-gateway": devshard_lock.get("DEVSHARD_GATEWAY_IMAGE", ""),
             "devshard-host": devshard_lock.get("DEVSHARD_HOST_IMAGE", ""),
             "postgres": devshard_lock.get("CANDIDATE_POSTGRES_IMAGE", "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"),
         }

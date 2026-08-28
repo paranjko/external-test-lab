@@ -24,9 +24,47 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      shell: ${{ steps.filter.outputs.shell }}
+    steps:
+      - id: filter
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName !== 'pull_request') {
+              core.setOutput('shell', 'true');
+              return;
+            }
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const shellRelevant = files.some(({ filename }) =>
+              filename.endsWith('.sh') ||
+              filename === 'net-deployment-runbook/Makefile' ||
+              filename === '.github/workflows/net-deployment-runbook.yml'
+            );
+            core.setOutput('shell', String(shellRelevant));
+
   shellcheck:
+    needs: changes
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      needs.changes.outputs.shell == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check runbook shell scripts
+        run: make -C net-deployment-runbook shellcheck
+
+  runbook-contracts:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
@@ -37,8 +75,6 @@ jobs:
           repository: gonka-ai/gonka
           path: net-deployment-runbook/vendor/gonka
           fetch-depth: 0
-      - name: Check runbook shell scripts
-        run: make -C net-deployment-runbook shellcheck
       - name: Test runbook contracts
         run: >-
           GONKA_UPSTREAM_WORKTREE="$GITHUB_WORKSPACE/net-deployment-runbook/vendor/gonka"
