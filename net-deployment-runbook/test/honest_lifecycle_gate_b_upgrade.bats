@@ -59,6 +59,8 @@ setup() {
   [ "$status" -eq 0 ]
   run grep -F 'resolve_expected_network_participants' "$observer"
   [ "$status" -eq 0 ]
+  run grep -F 'CHAIN_BASE="${GDC_CHAIN_PUBLIC_BASE:-https://$PUBLIC_EDGE_HOST}"' "$observer"
+  [ "$status" -eq 0 ]
   run grep -F 'current-lineage topology is absent; import sanitized JOIN receipts' "$observer"
   [ "$status" -ne 0 ]
 }

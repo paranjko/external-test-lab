@@ -7,7 +7,7 @@ source "$(dirname "$0")/lib.sh"
 load_project
 record_phase_profile confirmation-poc
 
-CHAIN_BASE="${GDC_CHAIN_PUBLIC_BASE:-}"
+CHAIN_BASE="${GDC_CHAIN_PUBLIC_BASE:-https://$PUBLIC_EDGE_HOST}"
 [[ "$CHAIN_BASE" =~ ^https://[A-Za-z0-9.-]+$ ]] \
   || die 'GDC_CHAIN_PUBLIC_BASE must be an HTTPS public chain endpoint'
 CHAIN_BASE="${CHAIN_BASE%/}"
