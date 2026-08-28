@@ -23,6 +23,9 @@ grep -Fq 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/Caddyfile"
 grep -Fq 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'root * /edge/bootstrap/current' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+[[ "$(grep -Fc 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
+[[ "$(grep -Fc 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
+[[ "$(grep -Fc 'root * /edge/bootstrap/current' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -ge 3 ]]
 ! grep -Fq 'reconcile-join-bootstrap.sh' "$ROOT/04-ops/edge-node/install-edge.sh"
 grep -Fq 'Publish the static status site on the public edge' "$phase"
 grep -Fq 'rsync -a --delete "$SITE_ASSETS_RENDER/" "$PUBLIC_EDGE_NODE:$site_remote/site/"' "$phase"
