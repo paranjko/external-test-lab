@@ -78,9 +78,10 @@ wait_for_node_sync() {
 }
 
 reset_node() {
-  local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias
+  local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias backup_archive
   linked_ml_host=''
   source=''
+  backup_archive="$GDC_DATA_ROOT/$NODE-validator-backup.tar"
   endpoint="$(ssh -T "$NODE" "jq -r '.[]?.host // empty' /srv/dai/deploy/$NODE/node-config.json 2>/dev/null" 2>/dev/null | head -n 1 || true)"
 
   # `phase-ml-attach.sh` records this relationship in the operator state. It
@@ -204,6 +205,12 @@ REMOTE
   reset_remote_host "$NODE" false
   if [[ -e "$STATE/joined/$NODE" ]]; then
     rm -f "$STATE/joined/$NODE"
+  fi
+  # The operator recovery archive deliberately lives at the data root rather
+  # than inside the reset node directory. Confirm that a reset retained it,
+  # without logging the archive's potentially private local path.
+  if [[ -f "$backup_archive" && ! -L "$backup_archive" && -r "$backup_archive" ]]; then
+    printf 'READY preserved local validator recovery archive for %s\n' "$NODE"
   fi
   if [[ -n "$linked_ml_host" ]]; then
     step "Reset linked GPU host $linked_ml_host for $NODE"
