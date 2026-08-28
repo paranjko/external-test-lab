@@ -13,15 +13,14 @@ local validation checks the document's chain, Genesis, seed, and service data.
 wget https://gonka-dev.net/v1.bootstrap.schema.json
 gh attestation verify v1.bootstrap.schema.json -R paranjko/external-test-lab
 
-wget https://gonka-dev.net/bootstrap/gonka-mainnet.json
-gh attestation verify gonka-mainnet.json -R paranjko/external-test-lab
-
-wget https://gonka-dev.net/bootstrap/gonka-testnet.json
-gh attestation verify gonka-testnet.json -R paranjko/external-test-lab
-
 wget https://gonka-dev.net/bootstrap/gonka-devnet-community.json
 gh attestation verify gonka-devnet-community.json -R paranjko/external-test-lab
 ```
+
+Testnet is intentionally unavailable until Gonka publishes an authoritative
+Testnet Genesis and at least one matching usable seed. Do not substitute a
+Mainnet document or use a placeholder. Mainnet is published only after its
+exact current Genesis and an official reachable matching seed are verified.
 
 The Community DevNet document may contain a scoped, public client credential
 for its final inference check. It is not a private operator key. Never add

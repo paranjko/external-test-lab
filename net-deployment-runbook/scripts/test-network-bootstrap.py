@@ -19,7 +19,6 @@ TOOL = ROOT / "scripts" / "network-bootstrap.py"
 SCHEMA = ROOT / "bootstrap" / "v1.bootstrap.schema.json"
 STAGER = ROOT / "scripts" / "stage-network-bootstrap.sh"
 PUBLISHER = ROOT / "scripts" / "publish-network-bootstrap.sh"
-SET_PUBLISHER = ROOT / "scripts" / "publish-network-bootstrap-set.sh"
 ATTESTATION_WORKFLOW = ROOT.parent / ".github" / "workflows" / "network-bootstrap-attestation.yml"
 
 
@@ -95,11 +94,17 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn("bootstrap_schema=https://gonka-dev.net/v1.bootstrap.schema.json", state.joinpath("network-bootstrap.env").read_text())
             self.assertEqual(stat.S_IMODE(secrets.joinpath("gateway.join-client-key").stat().st_mode), 0o600)
 
-    def test_publisher_replaces_only_valid_complete_artifacts(self) -> None:
+    def test_publisher_replaces_each_valid_artifact_without_a_release_set(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
-            good = self.write(directory, "good.json", document())
-            published = directory / "public" / "gonka-devnet-community.json"
+            published_root = directory / "public" / "current"
+            schema = directory / "v1.bootstrap.schema.json"
+            schema.write_bytes(SCHEMA.read_bytes())
+            schema_result = subprocess.run([str(PUBLISHER), "--artifact", str(schema), "--published", str(published_root / schema.name)], text=True, capture_output=True, check=False)
+            self.assertEqual(schema_result.returncode, 0, schema_result.stderr)
+            self.assertEqual(published_root.joinpath(schema.name).read_bytes(), SCHEMA.read_bytes())
+            good = self.write(directory, "gonka-devnet-community.json", document())
+            published = published_root / "gonka-devnet-community.json"
             first = subprocess.run([str(PUBLISHER), "--artifact", str(good), "--published", str(published)], text=True, capture_output=True, check=False)
             self.assertEqual(first.returncode, 0, first.stderr)
             original = published.read_bytes()
@@ -107,36 +112,11 @@ class BootstrapTests(unittest.TestCase):
             second = subprocess.run([str(PUBLISHER), "--artifact", str(bad), "--published", str(published)], text=True, capture_output=True, check=False)
             self.assertNotEqual(second.returncode, 0)
             self.assertEqual(published.read_bytes(), original)
-
-    def test_set_publisher_requires_each_named_network_document(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            directory = Path(temp)
-            artifacts = directory / "artifacts"
-            artifacts.mkdir()
-            artifacts.joinpath("v1.bootstrap.schema.json").write_bytes(SCHEMA.read_bytes())
-            for name in ("gonka-mainnet.json", "gonka-testnet.json", "gonka-devnet-community.json"):
-                self.write(artifacts, name, document())
-            published = directory / "published"
-            result = subprocess.run([str(SET_PUBLISHER), "--artifacts", str(artifacts), "--published", str(published)], text=True, capture_output=True, check=False)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(published.joinpath("current").is_symlink())
-            self.assertEqual(published.joinpath("current", "v1.bootstrap.schema.json").read_bytes(), SCHEMA.read_bytes())
-            first_target = published.joinpath("current").readlink()
-            replacement = document()
-            replacement_genesis = b'{"chain_id":"gonka-replacement"}\n'
-            replacement["chain_id"] = "gonka-replacement"
-            replacement["genesis"] = {"encoding": "base64", "sha256": hashlib.sha256(replacement_genesis).hexdigest(), "data": base64.b64encode(replacement_genesis).decode()}
-            for name in ("gonka-mainnet.json", "gonka-testnet.json", "gonka-devnet-community.json"):
-                self.write(artifacts, name, replacement)
-            replacement_result = subprocess.run([str(SET_PUBLISHER), "--artifacts", str(artifacts), "--published", str(published)], text=True, capture_output=True, check=False)
-            self.assertEqual(replacement_result.returncode, 0, replacement_result.stderr)
-            self.assertNotEqual(published.joinpath("current").readlink(), first_target)
-            preserved_target = published.joinpath("current").readlink()
-            artifacts.joinpath("gonka-testnet.json").unlink()
-            rejected = subprocess.run([str(SET_PUBLISHER), "--artifacts", str(artifacts), "--published", str(published)], text=True, capture_output=True, check=False)
-            self.assertNotEqual(rejected.returncode, 0)
-            self.assertIn("gonka-testnet.json", rejected.stderr)
-            self.assertEqual(published.joinpath("current").readlink(), preserved_target)
+            self.assertEqual(published_root.joinpath(schema.name).read_bytes(), SCHEMA.read_bytes())
+            mismatch = subprocess.run([str(PUBLISHER), "--artifact", str(schema), "--published", str(published_root / "gonka-testnet.json")], text=True, capture_output=True, check=False)
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("target name differs", mismatch.stderr)
+            self.assertFalse((ROOT / "scripts" / "publish-network-bootstrap-set.sh").exists())
 
     def test_rejects_duplicate_keys_and_invalid_utf8(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -177,8 +157,11 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("- 'net-deployment-runbook/bootstrap/release/**'", workflow)
         self.assertNotIn("- 'net-deployment-runbook/bootstrap/v1.bootstrap.schema.json'", workflow)
         self.assertNotIn("- 'net-deployment-runbook/scripts/network-bootstrap.py'", workflow)
-        for name in ("v1.bootstrap.schema.json", "gonka-mainnet.json", "gonka-testnet.json", "gonka-devnet-community.json"):
+        for job, name in (("attest-schema", "v1.bootstrap.schema.json"), ("attest-mainnet", "gonka-mainnet.json"), ("attest-testnet", "gonka-testnet.json"), ("attest-community", "gonka-devnet-community.json")):
+            self.assertIn(f"  {job}:", workflow)
+            self.assertIn(f"needs.discover.outputs.{job.removeprefix('attest-')} == 'true'", workflow)
             self.assertIn(f"subject-path: net-deployment-runbook/bootstrap/release/{name}", workflow)
+        self.assertNotIn("for file in gonka-mainnet.json gonka-testnet.json gonka-devnet-community.json", workflow)
 
     def test_rejects_semantic_hazards_without_echoing_credential(self) -> None:
         cases = [
