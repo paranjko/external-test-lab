@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-[[ $# -eq 2 ]] || {
-  echo 'usage: validate-devshard-governance-protocols.sh REQUESTED ALLOWED' >&2
+[[ $# -eq 2 || $# -eq 3 ]] || {
+  echo 'usage: validate-devshard-governance-protocols.sh REQUESTED ALLOWED [CURRENT]' >&2
   exit 2
 }
 
 requested="$1"
 allowed="$2"
+current_supplied=false
+current=''
+if [[ $# -eq 3 ]]; then
+  current_supplied=true
+  current="$3"
+fi
 read -r -a requested_protocols <<<"$requested"
 read -r -a allowed_protocols <<<"$allowed"
 (( ${#requested_protocols[@]} > 0 )) || { echo 'requested DevShard protocol set must not be empty' >&2; exit 2; }
@@ -41,6 +47,22 @@ if (( ${#normalized_requested[@]} != ${#normalized_allowed[@]} || ${#missing[@]}
   (( ${#missing[@]} == 0 )) || printf ' (missing: %s)' "${missing[*]}" >&2
   printf '\n' >&2
   exit 2
+fi
+
+if [[ "$current_supplied" == true ]]; then
+  read -r -a current_protocols <<<"$current"
+  normalized_current=()
+  for protocol in "${current_protocols[@]}"; do
+    [[ "$protocol" =~ ^v[1-9][0-9]*$ ]] \
+      || { echo "invalid currently approved DevShard protocol: $protocol" >&2; exit 2; }
+    [[ " ${normalized_current[*]} " != *" $protocol "* ]] \
+      || { echo "duplicate currently approved DevShard protocol: $protocol" >&2; exit 2; }
+    normalized_current+=("$protocol")
+    [[ " ${normalized_requested[*]} " == *" $protocol "* ]] || {
+      echo "requested DevShard governance set would revoke currently approved protocol: $protocol" >&2
+      exit 2
+    }
+  done
 fi
 
 # Emit profile order so semantically identical user input renders identical

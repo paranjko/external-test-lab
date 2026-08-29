@@ -90,5 +90,9 @@ grep -Fq 'params_url="${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api
   "$ROOT/scripts/phase-governance-devshard.sh"
 grep -Fq 'curl_exit=$params_curl_exit curl_status=$(curl_exit_status "$params_curl_exit")' \
   "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq 'would revoke currently approved protocol' \
+  "$ROOT/scripts/validate-devshard-governance-protocols.sh"
+grep -Fq '"$supported_protocols" "$governance_candidates" "$current_protocols"' \
+  "$ROOT/scripts/phase-governance-devshard.sh"
 
 printf 'PASS DevShard governance proposal selection\n'

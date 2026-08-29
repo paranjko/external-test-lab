@@ -8,6 +8,8 @@ trap 'rm -rf "$tmp"' EXIT
 validator="$ROOT/scripts/validate-devshard-governance-protocols.sh"
 [[ "$($validator 'v3 v4 v5' 'v3 v4 v5')" == 'v3 v4 v5' ]]
 [[ "$($validator 'v5 v3 v4' 'v3 v4 v5')" == 'v3 v4 v5' ]]
+[[ "$($validator 'v3 v4 v5' 'v3 v4 v5' 'v3 v5')" == 'v3 v4 v5' ]]
+[[ "$($validator 'v3 v4 v5' 'v3 v4 v5' '')" == 'v3 v4 v5' ]]
 
 if "$validator" 'v3 v5' 'v3 v4 v5' >"$tmp/out" 2>"$tmp/err"; then
   echo 'partial replacement of the governance protocol set was accepted' >&2
@@ -32,5 +34,17 @@ if "$validator" 'v3 v4 v5' 'v3 v4 v4 v5' >"$tmp/out" 2>"$tmp/err"; then
   exit 1
 fi
 grep -Fq 'duplicate governance DevShard candidate: v4' "$tmp/err"
+
+if "$validator" 'v3 v4' 'v3 v4' 'v3 v4 v5' >"$tmp/out" 2>"$tmp/err"; then
+  echo 'governance validator accepted revocation of a currently approved protocol' >&2
+  exit 1
+fi
+grep -Fq 'would revoke currently approved protocol: v5' "$tmp/err"
+
+if "$validator" 'v3 v4 v5' 'v3 v4 v5' 'v3 v5 v5' >"$tmp/out" 2>"$tmp/err"; then
+  echo 'duplicate current governance protocol was accepted' >&2
+  exit 1
+fi
+grep -Fq 'duplicate currently approved DevShard protocol: v5' "$tmp/err"
 
 printf 'PASS DevShard governance protocol boundary\n'

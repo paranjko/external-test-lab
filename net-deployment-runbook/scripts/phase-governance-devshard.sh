@@ -58,6 +58,22 @@ if (( params_curl_exit != 0 )) || [[ ! "$params_http_status" =~ ^2[0-9][0-9]$ ]]
 fi
 jq -e '(.params // .)' "$RUN/params-before.json" >"$RUN/params-before.normalized.json" \
   || die "current public inference parameters are malformed (url=$params_url evidence=$RUN/params-before.json)"
+current_protocols="$(jq -er '
+  (.params // .).devshard_escrow_params.approved_versions
+  | if type != "array" then error("approved_versions is not an array") else . end
+  | map(
+      if (.name | type) == "string" and (.name | test("^v[1-9][0-9]*$"))
+      then .name
+      else error("approved DevShard protocol name is invalid")
+      end
+    )
+  | join(" ")
+' "$RUN/params-before.json")" \
+  || die "current approved DevShard protocol set is malformed (url=$params_url evidence=$RUN/params-before.json)"
+# MsgUpdateParams replaces approved_versions wholesale. Never let an older or
+# unscoped profile silently revoke a protocol that is already approved.
+"$ROOT/scripts/validate-devshard-governance-protocols.sh" \
+  "$supported_protocols" "$governance_candidates" "$current_protocols" >/dev/null
 ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/params/deposit' >"$RUN/gov-params.json"
 min_deposit="$(jq -er '(.params.min_deposit // .deposit_params.min_deposit)[0] | .amount + .denom' "$RUN/gov-params.json")"
 deposit="${GDC_GOVERNANCE_DEPOSIT:-$min_deposit}"
