@@ -1,0 +1,66 @@
+name: Publish public status site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'net-deployment-runbook/04-ops/site/**'
+
+concurrency:
+  group: gonka-dev-site-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish gonka-dev.net
+    runs-on: ubuntu-latest
+    environment: gonka-dev-site-publish
+    steps:
+      - name: Checkout the merged site revision
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5.0.0
+        with:
+          node-version: 22
+
+      - name: Build and validate browser assets
+        run: make -C net-deployment-runbook test-gateway-site-state
+
+      - name: Prepare the exact static site release
+        run: >-
+          make -C net-deployment-runbook prepare-static-site
+          site_release_dir="$RUNNER_TEMP/gonka-dev-site"
+
+      - name: Configure the dedicated deploy key
+        env:
+          DEPLOY_HOST: ${{ secrets.GONKA_DEV_SITE_DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.GONKA_DEV_SITE_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PRIVATE_KEY: ${{ secrets.GONKA_DEV_SITE_DEPLOY_PRIVATE_KEY }}
+          DEPLOY_USER: ${{ secrets.GONKA_DEV_SITE_DEPLOY_USER }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ -n "$DEPLOY_KNOWN_HOSTS" && -n "$DEPLOY_PRIVATE_KEY" ]]
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >~/.ssh/known_hosts
+          printf '%s\n' "$DEPLOY_PRIVATE_KEY" >~/.ssh/id_ed25519
+          chmod 0600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          printf 'DEPLOY_HOST=%s\nDEPLOY_USER=%s\n' "$DEPLOY_HOST" "$DEPLOY_USER" >>"$GITHUB_ENV"
+
+      - name: Publish the verified release
+        run: >-
+          make -C net-deployment-runbook publish-site-release
+          site_release_dir="$RUNNER_TEMP/gonka-dev-site"
+          deploy_host="$DEPLOY_HOST" deploy_user="$DEPLOY_USER"
+
+      - name: Verify the public deployment
+        run: >-
+          make -C net-deployment-runbook verify-site-release
+          site_release_dir="$RUNNER_TEMP/gonka-dev-site"

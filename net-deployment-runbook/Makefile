@@ -9,8 +9,11 @@ BATS_DOCKER_IMAGE ?= gdc-runbook-bats:local
 BATS_DIND_IMAGE ?= gdc-runbook-bats-dind:local
 cmd ?= bash
 authorized_key_file ?=
+site_release_dir ?= $(CURDIR)/.data/site-release
+deploy_host ?=
+deploy_user ?=
 
-.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-js site-js-check test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
+.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-js site-js-check test-gateway-site-state prepare-static-site publish-site-release verify-site-release test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -49,8 +52,33 @@ site-js:
 site-js-check:
 	@./scripts/build-site-js.sh --check
 
-test:
-	@./scripts/build-site-js.sh --check
+test-gateway-site-state: site-js-check
+	@node ./scripts/test-gateway-site-state.js
+
+prepare-static-site:
+	@mkdir -p "$(site_release_dir)"
+	@rsync -a --exclude src/ 04-ops/site/ "$(site_release_dir)/"
+	@./scripts/render-site-revision.sh 04-ops/site/index.html "$(site_release_dir)/index.html"
+	@./scripts/build-site-js.sh --output "$(site_release_dir)"
+	@rm -f "$(site_release_dir)/config.js"
+	@test -s "$(site_release_dir)/index.html"
+	@test ! -e "$(site_release_dir)/config.js"
+
+publish-site-release:
+	@test -n "$(deploy_host)" && test -n "$(deploy_user)" || { echo 'set deploy_host and deploy_user' >&2; exit 2; }
+	@test -d "$(site_release_dir)" || { echo 'run prepare-static-site first' >&2; exit 2; }
+	@remote="$(deploy_user)@$(deploy_host)"; \
+	ssh -o BatchMode=yes "$$remote" 'sudo install -d -m 0755 /srv/dai/edge/site'; \
+	rsync -a --delete --exclude config.js -e 'ssh -o BatchMode=yes' \
+		"$(site_release_dir)/" "$$remote:/srv/dai/edge/site/"; \
+	ssh -o BatchMode=yes "$$remote" \
+		'cd /srv/dai/edge && docker compose up -d --force-recreate caddy'
+
+verify-site-release:
+	@test -d "$(site_release_dir)" || { echo 'run prepare-static-site first' >&2; exit 2; }
+	@GDC_SITE_RENDERED_ASSETS="$(site_release_dir)" ./scripts/verify-public-homepage.sh
+
+test: site-js-check
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-network-bootstrap.py
 	@./scripts/test-network-bootstrap-shell.sh
@@ -91,7 +119,7 @@ test:
 	@./scripts/test-gateway-continuity-verdict.sh
 	@./scripts/test-recovery-readiness-predicate.sh
 	@./scripts/test-capture-poc-snapshot.sh
-	@node ./scripts/test-gateway-site-state.js
+	@$(MAKE) test-gateway-site-state
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
 	@./scripts/test-firewall-policy.sh
