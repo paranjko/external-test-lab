@@ -117,6 +117,7 @@ test:
 	@./scripts/test-participant-poc-caddy-config.sh
 	@python3 ./scripts/test-devnet-faucet.py
 	@./scripts/test-telegram-bot-deployment.sh
+	@./scripts/test-telegram-consumer-probe-loop.sh
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-validator-backup-contract.sh
