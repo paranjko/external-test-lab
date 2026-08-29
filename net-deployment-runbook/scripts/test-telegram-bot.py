@@ -40,6 +40,11 @@ class FakeResponse:
         return json.dumps(self.payload).encode()
 
 
+class FakeMalformedResponse(FakeResponse):
+    def read(self):
+        return b"{"
+
+
 class TelegramConsumerTest(unittest.TestCase):
     def setUp(self):
         if BOT.DB_FILE.exists():
@@ -91,6 +96,17 @@ class TelegramConsumerTest(unittest.TestCase):
         self.assertEqual(response["output_text"], "The visible answer")
         self.assertEqual(assistant, "The visible answer")
         self.assertNotIn("private reasoning", response["output_text"])
+
+    def test_gateway_completion_classifies_malformed_json_as_invalid_response(self):
+        with BOT.connection() as db:
+            conversation = BOT.create_conversation(db, 45)
+            with patch.object(BOT, "urlopen", return_value=FakeMalformedResponse(None)):
+                with self.assertRaisesRegex(RuntimeError, "gateway returned invalid JSON"):
+                    BOT.gateway_completion(db, conversation, "hello")
+            outcome = db.execute(
+                "SELECT outcome FROM inference_events ORDER BY id DESC LIMIT 1"
+            ).fetchone()["outcome"]
+        self.assertEqual(outcome, "invalid_response")
 
     def test_output_filter_removes_multiple_and_unclosed_think_blocks(self):
         self.assertEqual(

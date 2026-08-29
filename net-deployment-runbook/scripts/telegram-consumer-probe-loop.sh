@@ -19,8 +19,10 @@ deadline=$(( $(date +%s) + sla_seconds ))
 attempt=0
 last_reason=not_started
 completed=false
-while (( $(date +%s) < deadline )); do
-  remaining=$(( deadline - $(date +%s) ))
+while :; do
+  now="$(date +%s)"
+  remaining=$(( deadline - now ))
+  (( remaining > 0 )) || break
   attempt=$((attempt + 1))
   # Each attempt creates a new conversation and a request with its own
   # absolute deadline. The outer timeout only bounds a wedged process; it

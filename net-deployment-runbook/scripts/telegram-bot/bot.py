@@ -343,7 +343,10 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
     except HTTPError as error:
         record_inference(db, f"http_{error.code}")
         raise RuntimeError(f"gateway returned HTTP {error.code}") from error
-    except (URLError, TimeoutError, ValueError, OSError) as error:
+    except ValueError as error:
+        record_inference(db, "invalid_response")
+        raise RuntimeError("gateway returned invalid JSON") from error
+    except (URLError, TimeoutError, OSError) as error:
         record_inference(db, "transport_error")
         raise RuntimeError("gateway request failed") from error
     try:

@@ -65,6 +65,10 @@ case "${1:-}" in
         printf '%s\n' '{"status":"failed","reason":"gateway_returned_HTTP_401"}'
         exit 1
         ;;
+      malformed)
+        printf '%s\n' '{"status":"failed","reason":"gateway_returned_invalid_JSON"}'
+        exit 1
+        ;;
     esac
     printf '%s\n' '{"conversation_id_present":true,"output_present":true,"status":"completed","usage_present":true}'
     ;;
@@ -110,5 +114,20 @@ if run_case permanent 20; then
 fi
 [[ "$(cat "$tmp/permanent/docker-count")" == 1 ]]
 grep -Fq 'reason=gateway_returned_HTTP_401' "$tmp/permanent.err"
+
+if run_case malformed 20; then
+  printf 'malformed response unexpectedly passed\n' >&2
+  exit 1
+fi
+[[ "$(cat "$tmp/malformed/docker-count")" == 1 ]]
+grep -Fq 'reason=gateway_returned_invalid_JSON' "$tmp/malformed.err"
+
+if run_case deadline-boundary 1; then
+  printf 'expired deadline unexpectedly passed\n' >&2
+  exit 1
+fi
+[[ "$(cat "$tmp/deadline-boundary/docker-count")" == 0 ]]
+[[ "$(cat "$tmp/deadline-boundary/timeout-count")" == 0 ]]
+grep -Fq 'did not recover within 1s attempts=0 last_reason=not_started' "$tmp/deadline-boundary.err"
 
 printf 'PASS Telegram consumer probe retry, expiry, cancellation, and fail-fast contracts\n'
