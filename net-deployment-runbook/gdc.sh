@@ -176,6 +176,26 @@ run_phase() {
   return "$rc"
 }
 
+run_join_preflight() {
+  local checkpoint="$1" state="$2" category="$3" tool="$4" summary="$5" rc diagnostic
+  shift 5
+  if "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  # JOIN has not selected a local profile or touched a Host at this point.
+  # Retain a bounded, structured diagnostic in the launcher envelope rather
+  # than manufacturing a lifecycle manifest for an unselected release.
+  GDC_ACTIVE_PHASE='join-preflight'
+  diagnostic="$GDC_LAUNCHER_ENVELOPE_DIR/diagnostic-envelope.v1.json"
+  "$ROOT/scripts/diagnostic-envelope.sh" write "$diagnostic" \
+    join join-preflight "$checkpoint" "$state" "$category" "$tool" "$rc" \
+    safe join-repeat "$summary"
+  export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic"
+  return "$rc"
+}
+
 use_node_data_home() {
   select_node_data_home "$1"
 }
@@ -843,12 +863,18 @@ case "$COMMAND" in
     join_secrets="$STATE/secrets"
     if [[ -z "$join_bootstrap_file" ]]; then
       join_bootstrap_file="$STATE/network-bootstrap.json"
-      "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/gonka-devnet-community/bootstrap.json --output "$join_bootstrap_file"
+      run_join_preflight bootstrap-fetch unavailable network curl \
+        'The public Bootstrap descriptor could not be fetched and validated.' \
+        "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/gonka-devnet-community/bootstrap.json --output "$join_bootstrap_file"
     else
-      "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
+      run_join_preflight bootstrap-verify invalid-bootstrap configuration bootstrap \
+        'The supplied Bootstrap descriptor did not satisfy the local validation contract.' \
+        "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
     fi
     join_composition="$STATE/network-composition.env"
-    "$ROOT/scripts/observe-network-composition.sh" --bootstrap-file "$join_bootstrap_file" --output "$join_composition"
+    run_join_preflight software-observation unavailable network seed-observer \
+      'Public seed observations did not establish one safe software composition.' \
+      "$ROOT/scripts/observe-network-composition.sh" --bootstrap-file "$join_bootstrap_file" --output "$join_composition"
     # The observer only emits fixed-name, shell-quoted values after validating
     # the complete local lock mapping.
     unset GDC_COMPOSITION GDC_COMPOSITION_HASH
