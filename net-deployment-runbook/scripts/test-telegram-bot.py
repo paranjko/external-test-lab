@@ -5,9 +5,10 @@ import json
 import os
 import tempfile
 import unittest
+from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 
 TEMP = tempfile.TemporaryDirectory()
@@ -107,6 +108,34 @@ class TelegramConsumerTest(unittest.TestCase):
                 "SELECT outcome FROM inference_events ORDER BY id DESC LIMIT 1"
             ).fetchone()["outcome"]
         self.assertEqual(outcome, "invalid_response")
+
+    def test_gateway_completion_exposes_only_proven_pre_dispatch_rejection_for_retry(self):
+        headers = Message()
+        headers["X-GDC-Admission"] = "pre_dispatch_rejected"
+        error = HTTPError("https://api.example/v1/chat/completions", 503, "Unavailable", headers, None)
+        with BOT.connection() as db:
+            conversation = BOT.create_conversation(db, 46)
+            with patch.object(BOT, "urlopen", side_effect=error):
+                with self.assertRaisesRegex(RuntimeError, "gateway pre dispatch rejected"):
+                    BOT.gateway_completion(db, conversation, "hello")
+            outcome = db.execute(
+                "SELECT outcome FROM inference_events ORDER BY id DESC LIMIT 1"
+            ).fetchone()["outcome"]
+        self.assertEqual(outcome, "pre_dispatch_http_503")
+
+    def test_gateway_completion_does_not_make_dispatched_failure_retryable(self):
+        headers = Message()
+        headers["X-GDC-Admission"] = "dispatched_once"
+        error = HTTPError("https://api.example/v1/chat/completions", 503, "Unavailable", headers, None)
+        with BOT.connection() as db:
+            conversation = BOT.create_conversation(db, 47)
+            with patch.object(BOT, "urlopen", side_effect=error):
+                with self.assertRaisesRegex(RuntimeError, "gateway returned HTTP 503"):
+                    BOT.gateway_completion(db, conversation, "hello")
+            outcome = db.execute(
+                "SELECT outcome FROM inference_events ORDER BY id DESC LIMIT 1"
+            ).fetchone()["outcome"]
+        self.assertEqual(outcome, "http_503")
 
     def test_output_filter_removes_multiple_and_unclosed_think_blocks(self):
         self.assertEqual(

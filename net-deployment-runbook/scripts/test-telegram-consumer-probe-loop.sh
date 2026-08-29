@@ -29,10 +29,10 @@ cat > "$tmp/bin/timeout" <<'MOCK'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 shift
-if [[ "$(cat "$FIXTURE/scenario")" == timeout-success ]]; then
+if [[ "$(cat "$FIXTURE/scenario")" == timeout ]]; then
   count="$(cat "$FIXTURE/timeout-count")"
   printf '%s\n' "$((count + 1))" > "$FIXTURE/timeout-count"
-  (( count > 0 )) || exit 124
+  exit 124
 fi
 exec "$@"
 MOCK
@@ -51,14 +51,26 @@ case "${1:-}" in
     count="$(cat "$FIXTURE/docker-count")"
     printf '%s\n' "$((count + 1))" > "$FIXTURE/docker-count"
     case "$(cat "$FIXTURE/scenario")" in
-      retry-success)
+      pre-dispatch-success)
         if (( count == 0 )); then
-          printf '%s\n' '{"status":"failed","reason":"gateway_returned_HTTP_429"}'
+          printf '%s\n' '{"status":"failed","reason":"gateway_pre_dispatch_rejected"}'
           exit 1
         fi
         ;;
-      persistent)
+      persistent-pre-dispatch)
+        printf '%s\n' '{"status":"failed","reason":"gateway_pre_dispatch_rejected"}'
+        exit 1
+        ;;
+      generic-503)
         printf '%s\n' '{"status":"failed","reason":"gateway_returned_HTTP_503"}'
+        exit 1
+        ;;
+      dispatched-503)
+        printf '%s\n' '{"status":"failed","reason":"gateway_returned_HTTP_503"}'
+        exit 1
+        ;;
+      transport)
+        printf '%s\n' '{"status":"failed","reason":"gateway_request_failed"}'
         exit 1
         ;;
       permanent)
@@ -92,21 +104,35 @@ run_case() {
     bash "$probe_loop" 'Qwen/Qwen3-0.6B' "$sla" > "$output" 2> "$error"
 }
 
-run_case retry-success 20
-[[ "$(cat "$tmp/retry-success/docker-count")" == 2 ]]
-grep -Fq 'gateway_returned_HTTP_429' "$tmp/retry-success.out"
+run_case pre-dispatch-success 20
+[[ "$(cat "$tmp/pre-dispatch-success/docker-count")" == 2 ]]
+grep -Fq 'gateway_pre_dispatch_rejected' "$tmp/pre-dispatch-success.out"
 
-run_case timeout-success 20
-[[ "$(cat "$tmp/timeout-success/timeout-count")" == 2 ]]
-[[ "$(cat "$tmp/timeout-success/docker-count")" == 1 ]]
-grep -Fq 'probe_timeout' "$tmp/timeout-success.out"
+if run_case timeout 20; then
+  printf 'ambiguous timeout unexpectedly retried or passed\n' >&2
+  exit 1
+fi
+[[ "$(cat "$tmp/timeout/timeout-count")" == 1 ]]
+[[ "$(cat "$tmp/timeout/docker-count")" == 0 ]]
+grep -Fq 'without safe retry attempt=1 reason=probe_timeout' "$tmp/timeout.err"
 
-if run_case persistent 12; then
+if run_case persistent-pre-dispatch 12; then
   printf 'persistent retryable failure unexpectedly passed\n' >&2
   exit 1
 fi
-[[ "$(cat "$tmp/persistent/docker-count")" -gt 1 ]]
-grep -Fq 'did not recover within 12s' "$tmp/persistent.err"
+[[ "$(cat "$tmp/persistent-pre-dispatch/docker-count")" -gt 1 ]]
+grep -Fq 'did not recover within 12s' "$tmp/persistent-pre-dispatch.err"
+
+for scenario in generic-503 dispatched-503 transport; do
+  if run_case "$scenario" 20; then
+    printf '%s unexpectedly retried or passed\n' "$scenario" >&2
+    exit 1
+  fi
+  [[ "$(cat "$tmp/$scenario/docker-count")" == 1 ]]
+done
+grep -Fq 'without safe retry attempt=1 reason=gateway_returned_HTTP_503' "$tmp/generic-503.err"
+grep -Fq 'without safe retry attempt=1 reason=gateway_returned_HTTP_503' "$tmp/dispatched-503.err"
+grep -Fq 'without safe retry attempt=1 reason=gateway_request_failed' "$tmp/transport.err"
 
 if run_case permanent 20; then
   printf 'permanent failure unexpectedly passed\n' >&2
@@ -130,4 +156,4 @@ fi
 [[ "$(cat "$tmp/deadline-boundary/timeout-count")" == 0 ]]
 grep -Fq 'did not recover within 1s attempts=0 last_reason=not_started' "$tmp/deadline-boundary.err"
 
-printf 'PASS Telegram consumer probe retry, expiry, cancellation, and fail-fast contracts\n'
+printf 'PASS Telegram consumer probe retries only proven pre-dispatch rejection and fails closed otherwise\n'

@@ -25,8 +25,8 @@ while :; do
   (( remaining > 0 )) || break
   attempt=$((attempt + 1))
   # Each attempt creates a new conversation and a request with its own
-  # absolute deadline. The outer timeout only bounds a wedged process; it
-  # never replays an already dispatched request.
+  # absolute deadline. A new attempt is safe only after the admission proxy
+  # explicitly proves that the previous request was rejected before dispatch.
   probe_timeout=35
   (( remaining < probe_timeout )) && probe_timeout="$remaining"
   set +e
@@ -50,9 +50,10 @@ while :; do
     [[ -n "$last_reason" ]] || last_reason=unparseable
   fi
   case "$last_reason" in
-    gateway_request_failed|gateway_returned_HTTP_429|gateway_returned_HTTP_502|gateway_returned_HTTP_503|gateway_returned_HTTP_504|probe_timeout) ;;
+    gateway_pre_dispatch_rejected) ;;
     *)
-      printf 'ERROR Telegram consumer inference probe failed attempt=%s reason=%s\n' "$attempt" "$last_reason" >&2
+      printf 'ERROR Telegram consumer inference probe failed without safe retry attempt=%s reason=%s\n' \
+        "$attempt" "$last_reason" >&2
       exit 1
       ;;
   esac

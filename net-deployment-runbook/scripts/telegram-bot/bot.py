@@ -341,6 +341,10 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
         with urlopen(request, timeout=GATEWAY_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
     except HTTPError as error:
+        admission = error.headers.get("X-GDC-Admission", "") if error.headers else ""
+        if admission == "pre_dispatch_rejected":
+            record_inference(db, f"pre_dispatch_http_{error.code}")
+            raise RuntimeError("gateway pre dispatch rejected") from error
         record_inference(db, f"http_{error.code}")
         raise RuntimeError(f"gateway returned HTTP {error.code}") from error
     except ValueError as error:
