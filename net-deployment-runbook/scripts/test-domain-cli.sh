@@ -106,6 +106,7 @@ grep -Fq 'ERROR gdc command failed phase=%s exit=%s run_log=%s command=%s' "$ROO
 grep -Fq 'run_phase "gateway-$gateway_action-$GDC_GATEWAY_VERSION"' "$ROOT/gdc.sh"
 grep -Fq 'phase-gateway-observe.sh' "$ROOT/gdc.sh"
 grep -Fq 'verify_evidence=' "$ROOT/scripts/phase-gateway-observe.sh"
+grep -Fq 'sla="${1:-300s}"' "$ROOT/scripts/phase-gateway-observe.sh"
 grep -Fq 'gateway-status-routable.sh' "$ROOT/scripts/phase-gateway-observe.sh"
 grep -Fq '"$verify_evidence" "$verify_evidence/completion.json"' "$ROOT/scripts/phase-gateway-observe.sh"
 ! grep -Fq '"$gateway_url" "$client_key" "$MODEL_ID" "${sla%s}"' "$ROOT/scripts/phase-gateway-observe.sh"

@@ -53,6 +53,7 @@ grep -Fq 'link.hidden = false' "$ROOT/04-ops/site/src/app.js"
 
 grep -Fq './gdc.sh ops consumer telegram apply' "$ROOT/gdc.sh"
 grep -Fq 'phase-telegram-consumer.sh' "$ROOT/gdc.sh"
+grep -Fq 'sla="${2:-300s}"' "$ROOT/scripts/phase-telegram-consumer.sh"
 grep -Fq 'gateway access-key ensure telegram' "$ROOT/gdc.sh"
 grep -Fq 'phase-gateway-access-key.sh' "$ROOT/gdc.sh"
 ! grep -Eq 'telegram-key-probe|telegram-bot\)' "$ROOT/gdc.sh"

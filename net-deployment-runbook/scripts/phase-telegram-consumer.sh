@@ -8,7 +8,10 @@ action="${1:-}"
 shift
 
 model="${1:-$MODEL_ID}"
-sla="${2:-60s}"
+# The bot uses the same governed public admission path as direct clients.  Its
+# default must therefore span a complete epoch lifecycle as well; callers can
+# still select a smaller explicit SLA for focused diagnostics.
+sla="${2:-300s}"
 [[ $# -le 2 ]] || die 'verify accepts only an optional model and SLA'
 [[ "$model" == "$MODEL_ID" ]] || die "Telegram consumer is configured for $MODEL_ID, not $model"
 [[ "$sla" =~ ^[1-9][0-9]*s$ ]] || die 'Telegram consumer verification SLA must be a positive number of seconds'

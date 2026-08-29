@@ -6,7 +6,11 @@ load_project
 action="${1:-}"
 [[ "$action" =~ ^(status|verify)$ ]] || die 'expected gateway status or verify'
 shift
-sla="${1:-60s}"
+# A verification that starts inside the PoC fence may need to cross the rest
+# of the current 70-block epoch before admission can dispatch safely.  Keep the
+# public command bounded, but make its default long enough to observe one full
+# lifecycle instead of reporting a false timeout before the next safe window.
+sla="${1:-300s}"
 [[ $# -le 1 && "$sla" =~ ^[1-9][0-9]*s$ ]] || die 'gateway verification SLA must be a positive number of seconds'
 
 key_file="$SECRETS/gateway.client-keys"
