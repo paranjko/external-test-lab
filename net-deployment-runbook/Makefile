@@ -68,11 +68,11 @@ publish-site-release:
 	@test -n "$(deploy_host)" && test -n "$(deploy_user)" || { echo 'set deploy_host and deploy_user' >&2; exit 2; }
 	@test -d "$(site_release_dir)" || { echo 'run prepare-static-site first' >&2; exit 2; }
 	@remote="$(deploy_user)@$(deploy_host)"; \
-	ssh -o BatchMode=yes "$$remote" 'sudo install -d -m 0755 /srv/dai/edge/site'; \
+	ssh -o BatchMode=yes "$$remote" 'test -w /srv/dai/edge/site'; \
 	rsync -a --delete --exclude config.js -e 'ssh -o BatchMode=yes' \
 		"$(site_release_dir)/" "$$remote:/srv/dai/edge/site/"; \
 	ssh -o BatchMode=yes "$$remote" \
-		'cd /srv/dai/edge && docker compose up -d --force-recreate caddy'
+		'cd /srv/dai/edge && sudo /usr/bin/docker compose up -d --force-recreate caddy'
 
 verify-site-release:
 	@test -d "$(site_release_dir)" || { echo 'run prepare-static-site first' >&2; exit 2; }
