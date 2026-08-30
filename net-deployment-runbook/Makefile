@@ -158,6 +158,9 @@ test: site-js-check
 	@./scripts/test-validator-backup-contract.sh
 	@./scripts/test-observe-network-composition.sh
 	@./scripts/test-join-preflight-diagnostics.sh
+	@./scripts/test-join-lineage-preflight.sh
+	@./scripts/test-host-join-state-sync.sh
+	@./scripts/test-signer-activation-gate.sh
 	@./scripts/test-init-identity-restore-diagnostics.sh
 	@./scripts/test-cleanroom-no-python-restore.sh
 	@./scripts/test-validator-identity-restore-command.sh
