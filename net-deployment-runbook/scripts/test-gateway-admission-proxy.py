@@ -150,6 +150,7 @@ def start_proxy(backend_port, max_queue=1, wait=0.35, max_deadline=None,
         "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("chain", "/chain-status")),
         "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("params", "/params")),
         "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON": json.dumps({"v3": {"binary": "https://example.invalid/devshardd-v3.zip", "sha256": "a" * 64}}),
+        "GDC_GATEWAY_ADMISSION_SINGLE_RUNTIME_PROTOCOL": "v3",
         "GDC_GATEWAY_ADMISSION_MAX_QUEUE": str(max_queue),
         "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS": str(wait),
         "GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS": str(max_deadline),
@@ -282,6 +283,28 @@ try:
     process, proxy_port = start_proxy(backend_port, wait=0.2); processes.append(process)
     assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_protocol_version_unavailable"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "conflicting protocol aliases dispatched"
+    State.status_override = None
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    # The pinned gateway delegates /v1/status directly to the runtime when
+    # exactly one runtime remains. That response omits pooled capacity and
+    # protocol fields, so admission uses the independently rendered protocol
+    # contract and the runtime's active, unblocked Inference state.
+    State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    State.status_override = {
+        "escrow_id": "41", "nonce": 0, "phase": "active", "balance": 100,
+        "chain_phase": "Inference", "requests_blocked": False, "config": {},
+    }
+    process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
+    assert post_details(proxy_port) == (429, b'{"error":"single outcome"}', "dispatched_once")
+    assert State.dispatches == 1, "healthy single-runtime status was not admitted"
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    State.dispatches = 0
+    State.status_override["escrow_id"] = "invalid"
+    process, proxy_port = start_proxy(backend_port, wait=0.2); processes.append(process)
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_state_invalid"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "malformed single-runtime status dispatched"
     State.status_override = None
     process.terminate(); process.wait(2); processes.remove(process)
 

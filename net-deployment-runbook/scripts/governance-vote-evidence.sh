@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 usage() {
-  echo 'usage: governance-vote-evidence.sh validate EXPECTED.json | count EXPECTED.json VOTES.json | receipt EXPECTED_ADDRESS PROPOSAL_ID OPTION RECEIPT.json' >&2
+  echo 'usage: governance-vote-evidence.sh validate EXPECTED.json | count EXPECTED.json VOTES.json | receipt EXPECTED_ADDRESS PROPOSAL_ID OPTION TXHASH RECEIPT.json' >&2
 }
 
 validate_expected() {
@@ -47,17 +47,21 @@ case "$mode" in
     ' "$votes"
     ;;
   receipt)
-    [[ $# -eq 4 ]] || { usage; exit 2; }
+    [[ $# -eq 5 ]] || { usage; exit 2; }
     address="$1"
     proposal_id="$2"
     option="$3"
-    receipt="$4"
+    txhash="$4"
+    receipt="$5"
     [[ "$address" =~ ^gonka1[0-9a-z]+$ ]] || { echo 'invalid expected governance voter address' >&2; exit 2; }
     [[ "$proposal_id" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid expected governance proposal ID' >&2; exit 2; }
     [[ "$option" =~ ^VOTE_OPTION_(YES|NO|ABSTAIN|NO_WITH_VETO)$ ]] || { echo 'invalid expected governance vote option' >&2; exit 2; }
-    jq -e --arg address "$address" --arg proposal_id "$proposal_id" --arg option "$option" '
+    [[ "$txhash" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo 'invalid expected governance transaction hash' >&2; exit 2; }
+    txhash="${txhash^^}"
+    jq -e --arg address "$address" --arg proposal_id "$proposal_id" --arg option "$option" --arg txhash "$txhash" '
       ((.code // .tx_response.code // -1) | tonumber) == 0
       and (((.height // .tx_response.height // "0") | tonumber) > 0)
+      and (((.txhash // .tx_response.txhash // "") | ascii_upcase) == $txhash)
       and ([
         (.tx // .tx_response.tx // {}).body.messages[]?
         | select(
@@ -68,7 +72,7 @@ case "$mode" in
           )
       ] | length) == 1
     ' "$receipt" >/dev/null || {
-      echo "committed governance vote receipt does not match voter=$address proposal=$proposal_id option=$option" >&2
+      echo "committed governance vote receipt does not match voter=$address proposal=$proposal_id option=$option txhash=$txhash" >&2
       exit 1
     }
     ;;

@@ -35,6 +35,7 @@ cat >"$tmp/receipt.json" <<'EOF'
 {
   "height": "42",
   "code": 0,
+  "txhash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   "tx": {
     "body": {
       "messages": [
@@ -49,18 +50,29 @@ cat >"$tmp/receipt.json" <<'EOF'
   }
 }
 EOF
-"$ROOT/scripts/governance-vote-evidence.sh" receipt gonka1alpha 7 VOTE_OPTION_YES "$tmp/receipt.json"
-if "$ROOT/scripts/governance-vote-evidence.sh" receipt gonka1beta 7 VOTE_OPTION_YES "$tmp/receipt.json" \
+"$ROOT/scripts/governance-vote-evidence.sh" receipt gonka1alpha 7 VOTE_OPTION_YES \
+  AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "$tmp/receipt.json"
+if "$ROOT/scripts/governance-vote-evidence.sh" receipt gonka1beta 7 VOTE_OPTION_YES \
+  AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "$tmp/receipt.json" \
   >"$tmp/out" 2>"$tmp/err"; then
   echo 'receipt for another voter was accepted' >&2
   exit 1
 fi
 grep -Fq 'does not match voter=gonka1beta' "$tmp/err"
-if "$ROOT/scripts/governance-vote-evidence.sh" receipt gonka1alpha 7 VOTE_OPTION_NO "$tmp/receipt.json" \
+if "$ROOT/scripts/governance-vote-evidence.sh" receipt gonka1alpha 7 VOTE_OPTION_NO \
+  AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA "$tmp/receipt.json" \
   >"$tmp/out" 2>"$tmp/err"; then
   echo 'receipt for another vote option was accepted' >&2
   exit 1
 fi
 grep -Fq 'option=VOTE_OPTION_NO' "$tmp/err"
+
+if "$ROOT/scripts/governance-vote-evidence.sh" receipt gonka1alpha 7 VOTE_OPTION_YES \
+  BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "$tmp/receipt.json" \
+  >"$tmp/out" 2>"$tmp/err"; then
+  echo 'receipt for another transaction hash was accepted' >&2
+  exit 1
+fi
+grep -Fq 'txhash=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' "$tmp/err"
 
 printf 'PASS exact governance voter evidence\n'

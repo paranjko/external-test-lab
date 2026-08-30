@@ -121,8 +121,8 @@ for position in "${!pending_hashes[@]}"; do
   done
   printf '%s\n' "$receipt" >"$RUN/vote-receipt-$name.json"
   "$ROOT/scripts/governance-vote-evidence.sh" receipt \
-    "$address" "$proposal_id" "$option_constant" "$RUN/vote-receipt-$name.json" || \
-    die "vote transaction from $name was not committed with the expected voter and option"
+    "$address" "$proposal_id" "$option_constant" "$txhash" "$RUN/vote-receipt-$name.json" || \
+    die "vote transaction from $name was not committed with the expected hash, voter, and option"
 done
 
 expected="${#voting_nodes[@]}"

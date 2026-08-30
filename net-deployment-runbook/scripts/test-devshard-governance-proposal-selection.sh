@@ -95,4 +95,56 @@ grep -Fq 'would revoke currently approved protocol' \
 grep -Fq '"$supported_protocols" "$governance_candidates" "$current_protocols"' \
   "$ROOT/scripts/phase-governance-devshard.sh"
 
+cat >"$tmp/current-params.json" <<'EOF'
+{
+  "params": {
+    "devshard_escrow_params": {
+      "allowed_creator_addresses": [],
+      "approved_versions": [
+        {"name":"v3","binary":"https://example/v3.zip","sha256":"3333333333333333333333333333333333333333333333333333333333333333"}
+      ]
+    }
+  }
+}
+EOF
+cat >"$tmp/requested-versions.json" <<'EOF'
+[
+  {"name":"v3","binary":"https://example/v3.zip","sha256":"3333333333333333333333333333333333333333333333333333333333333333"},
+  {"name":"v5","binary":"https://example/v5.zip","sha256":"5555555555555555555555555555555555555555555555555555555555555555"}
+]
+EOF
+
+state="$("$ROOT/scripts/prepare-devshard-governance-state.sh" \
+  "$tmp/current-params.json" "$tmp/requested-versions.json" gonka1gateway)"
+jq -e '
+  .allowed_creator_addresses == []
+  and (.approved_versions | map(.name)) == ["v3", "v5"]
+' <<<"$state" >/dev/null
+
+jq '.params.devshard_escrow_params.allowed_creator_addresses = ["gonka1alpha", "gonka1beta"]' \
+  "$tmp/current-params.json" >"$tmp/restricted-params.json"
+state="$("$ROOT/scripts/prepare-devshard-governance-state.sh" \
+  "$tmp/restricted-params.json" "$tmp/requested-versions.json" gonka1gateway)"
+jq -e '
+  .allowed_creator_addresses == ["gonka1alpha", "gonka1beta", "gonka1gateway"]
+' <<<"$state" >/dev/null
+
+jq '.[0].sha256 = ("9" * 64)' "$tmp/requested-versions.json" >"$tmp/rebound-versions.json"
+if "$ROOT/scripts/prepare-devshard-governance-state.sh" \
+  "$tmp/current-params.json" "$tmp/rebound-versions.json" gonka1gateway \
+  >"$tmp/out" 2>"$tmp/err"; then
+  echo 'same-name approved DevShard tuple rebinding was accepted' >&2
+  exit 1
+fi
+grep -Fq 'would rebind or omit an approved DevShard protocol tuple' "$tmp/err"
+
+jq 'map(select(.name != "v3"))' "$tmp/requested-versions.json" >"$tmp/omitted-versions.json"
+if "$ROOT/scripts/prepare-devshard-governance-state.sh" \
+  "$tmp/current-params.json" "$tmp/omitted-versions.json" gonka1gateway \
+  >"$tmp/out" 2>"$tmp/err"; then
+  echo 'approved DevShard tuple omission was accepted' >&2
+  exit 1
+fi
+grep -Fq 'would rebind or omit an approved DevShard protocol tuple' "$tmp/err"
+
 printf 'PASS DevShard governance proposal selection\n'

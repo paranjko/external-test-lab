@@ -81,7 +81,8 @@ SPENDABLE_AMOUNT="$(jq -r '[.balances[]? | select(.denom == "ngonka") | .amount]
 jq -e --arg creator "$CREATOR" --arg version "$GATEWAY_VERSION" \
   --arg binary "$GATEWAY_ARCHIVE_URL" --arg sha256 "$GATEWAY_ARCHIVE_SHA256" '
   (.params // .).devshard_escrow_params as $p
-  | ($p.allowed_creator_addresses | index($creator) != null)
+  | (($p.allowed_creator_addresses | length) == 0
+    or ($p.allowed_creator_addresses | index($creator) != null))
   and ($p.approved_versions as $versions
     | ($versions | type) == "array"
     and all($versions[];

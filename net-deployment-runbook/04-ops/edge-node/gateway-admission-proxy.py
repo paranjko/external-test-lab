@@ -24,6 +24,7 @@ STATUS_URL = env("GDC_GATEWAY_ADMISSION_STATUS_URL", "http://127.0.0.1:18080/v1/
 EPOCH_URL = env("GDC_GATEWAY_ADMISSION_EPOCH_URL", "http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data")
 CHAIN_STATUS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL", "http://127.0.0.1:26657/status")
 CHAIN_PARAMS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL", "http://127.0.0.1:1317/productscience/inference/inference/params")
+SINGLE_RUNTIME_PROTOCOL = env("GDC_GATEWAY_ADMISSION_SINGLE_RUNTIME_PROTOCOL", "")
 SAFE_GUARD_BLOCKS = int(env("GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS", 10))
 MAX_QUEUE = int(env("GDC_GATEWAY_ADMISSION_MAX_QUEUE", 16))
 # Requests without an explicit deadline keep a short bounded default. Exact
@@ -121,6 +122,35 @@ def runtime_protocol_version(item, runtime):
     if not observed or len(set(observed)) != 1:
         return None
     return observed[0]
+
+
+def single_runtime_view(status):
+    """Normalize the pinned gateway's direct one-runtime status response."""
+    if not isinstance(SINGLE_RUNTIME_PROTOCOL, str) or not re.fullmatch(
+            r"v[1-9][0-9]*", SINGLE_RUNTIME_PROTOCOL):
+        return None, "protocol_version_unavailable"
+    if SINGLE_RUNTIME_PROTOCOL not in PROTOCOL_CONTRACTS:
+        return None, "protocol_not_configured"
+    escrow_id = status.get("escrow_id")
+    if isinstance(escrow_id, int):
+        escrow_id = str(escrow_id)
+    if (not isinstance(escrow_id, str) or not re.fullmatch(r"[1-9][0-9]*", escrow_id)
+            or not isinstance(status.get("phase"), str)
+            or not isinstance(status.get("chain_phase", ""), str)
+            or not isinstance(status.get("requests_blocked"), bool)):
+        return None, "state_invalid"
+    runtime = {
+        "phase": status["phase"],
+        "chain_phase": status.get("chain_phase", ""),
+        "requests_blocked": status["requests_blocked"],
+        "session_version": SINGLE_RUNTIME_PROTOCOL,
+    }
+    return {
+        "id": escrow_id,
+        "active": status["phase"] == "active",
+        "chain_phase": status.get("chain_phase", ""),
+        "runtime": runtime,
+    }, None
 
 
 def now_ms():
@@ -233,24 +263,38 @@ def safe_generation(deadline=None):
         return None, "poc_fence"
     if not isinstance(epoch, (str, int)):
         return None, "epoch_invalid"
-    capacity = status.get("capacity", {})
-    if not isinstance(capacity, dict):
-        return None, "capacity_invalid"
-    models = capacity.get("models", {})
-    if not isinstance(models, dict):
-        return None, "capacity_invalid"
-    if any(not isinstance(item, dict) for item in models.values()):
-        return None, "capacity_invalid"
-    weights = [capacity.get("total_weight"), capacity.get("effective_weight")]
-    weights.extend((item or {}).get("current_weight", (item or {}).get("total_weight"))
-                   for item in models.values())
-    try:
-        positive = any(float(weight) > 0 for weight in weights if weight is not None)
-    except (TypeError, ValueError):
-        return None, "capacity_invalid"
-    devshards = status.get("devshards", [])
-    if not isinstance(devshards, list):
-        return None, "state_invalid"
+    if "capacity" not in status and "devshards" not in status:
+        single_runtime, reason = single_runtime_view(status)
+        if single_runtime is None:
+            return None, reason
+        devshards = [single_runtime]
+        # The direct status endpoint exists only when the gateway has exactly
+        # one resident runtime. Its active, unblocked Inference phase is the
+        # independently observed routability signal; the selected protocol is
+        # bound by the rendered deployment contract and rechecked on chain.
+        positive = (single_runtime["active"] is True
+                    and single_runtime["runtime"]["phase"] == "active"
+                    and not single_runtime["runtime"]["requests_blocked"]
+                    and single_runtime["chain_phase"] == "Inference")
+    else:
+        capacity = status.get("capacity")
+        if not isinstance(capacity, dict):
+            return None, "capacity_invalid"
+        models = capacity.get("models", {})
+        if not isinstance(models, dict):
+            return None, "capacity_invalid"
+        if any(not isinstance(item, dict) for item in models.values()):
+            return None, "capacity_invalid"
+        weights = [capacity.get("total_weight"), capacity.get("effective_weight")]
+        weights.extend((item or {}).get("current_weight", (item or {}).get("total_weight"))
+                       for item in models.values())
+        try:
+            positive = any(float(weight) > 0 for weight in weights if weight is not None)
+        except (TypeError, ValueError):
+            return None, "capacity_invalid"
+        devshards = status.get("devshards")
+        if not isinstance(devshards, list):
+            return None, "state_invalid"
     participants = []
     for item in devshards:
         if not isinstance(item, dict):
@@ -568,4 +612,7 @@ if __name__ == "__main__":
             env("GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON", ""))
     except ValueError as error:
         raise SystemExit(str(error)) from error
+    if (not re.fullmatch(r"v[1-9][0-9]*", SINGLE_RUNTIME_PROTOCOL)
+            or SINGLE_RUNTIME_PROTOCOL not in PROTOCOL_CONTRACTS):
+        raise SystemExit("gateway admission single-runtime protocol is not configured")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

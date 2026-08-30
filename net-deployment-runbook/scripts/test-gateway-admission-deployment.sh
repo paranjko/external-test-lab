@@ -19,18 +19,21 @@ GDC_RELEASE_PROFILE=v2026.08.06 \
     --inventory "$tmp/inventory.env" --node-name validator-e --output "$tmp/stable.env"
 stable_contract="$(sed -n 's/^GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=//p' "$tmp/stable.env")"
 jq -e 'keys == ["v3"]' <<<"$stable_contract" >/dev/null
+grep -Fxq 'GDC_GATEWAY_ADMISSION_SINGLE_RUNTIME_PROTOCOL=v3' "$tmp/stable.env"
 
 GDC_COMPOSITION=core-v2026.08.06+devshard-v2026.08.27-rc.0 \
   "$ROOT/04-ops/edge-node/render-env.sh" \
     --inventory "$tmp/inventory.env" --node-name validator-e --output "$tmp/candidate.env"
 candidate_contract="$(sed -n 's/^GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=//p' "$tmp/candidate.env")"
 jq -e 'keys == ["v3", "v5"] and (has("v4") | not)' <<<"$candidate_contract" >/dev/null
+grep -Fxq 'GDC_GATEWAY_ADMISSION_SINGLE_RUNTIME_PROTOCOL=v5' "$tmp/candidate.env"
 
 grep -Fq 'env_file: [./gateway-admission.env]' "$ROOT/04-ops/edge-node/compose.yaml"
 grep -Fq 'install-gateway-admission.sh' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'deploy_gateway_admission' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway admission environment differs after deployment' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway admission environment has an invalid protocol contract' "$ROOT/04-ops/edge-node/install-gateway-admission.sh"
+grep -Fq 'gateway admission environment has an invalid single-runtime protocol' "$ROOT/04-ops/edge-node/install-gateway-admission.sh"
 
 grafana_reconcile="$(awk '
   /^reconcile_public_grafana\(\)/ { capture=1 }
