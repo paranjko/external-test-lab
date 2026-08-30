@@ -38,6 +38,7 @@ if [[ "$COMPONENT" == gateway ]]; then
 fi
 OPS_RENDER="$GENERATED/ops"
 GATEWAY_ENV="$OPS_RENDER/gateway.env"
+GATEWAY_OBSERVER_ENV="$OPS_RENDER/gateway-admission-observer.env"
 FAUCET_ENV="$OPS_RENDER/faucet.env"
 GATEWAY_RESERVE_ENV="$OPS_RENDER/gateway-reserve-signer.env"
 REMOTE="/tmp/gdc-ops-$$"
@@ -86,12 +87,17 @@ reconcile_public_grafana() {
 }
 
 deploy_gateway_admission() {
-  local node="$PUBLIC_EDGE_NODE" admission_env admission_remote expected_sha remote_sha
+  local node="$PUBLIC_EDGE_NODE" admission_env admission_remote expected_sha remote_sha status_bearer_token
   admission_env="$GENERATED/edge/gateway-admission.env"
   admission_remote="${REMOTE}-gateway-admission"
   mkdir -p "$(dirname "$admission_env")"
   "$ROOT/04-ops/edge-node/render-env.sh" \
     --inventory "$INVENTORY" --node-name "$node" --output "$admission_env" >/dev/null
+  status_bearer_token="$(<"$SECRETS/gateway.admission-observer-key")"
+  [[ "$status_bearer_token" =~ ^[A-Za-z0-9._:-]{16,256}$ ]] \
+    || die 'gateway admission status credential is missing or invalid'
+  printf 'GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN=%s\n' "$status_bearer_token" >>"$admission_env"
+  chmod 0600 "$admission_env"
   expected_sha="$(sha256sum "$admission_env" | awk '{print $1}')"
   ssh "$node" "rm -rf '$admission_remote' && mkdir -p '$admission_remote'"
   rsync -a "$ROOT/04-ops/edge-node/" "$node:$admission_remote/edge/"
@@ -100,12 +106,38 @@ deploy_gateway_admission() {
     sudo '$admission_remote/edge/install-gateway-admission.sh' '$admission_remote/gateway-admission.env' >/dev/null
     rm -rf '$admission_remote'
     cd /srv/dai/edge
-    docker compose up -d --force-recreate gateway-admission >start-gateway-admission.log 2>&1
-    [[ -n \"\$(docker compose ps --status running -q gateway-admission)\" ]]
     sudo sha256sum gateway-admission.env | awk '{print \$1}'")"
   [[ "$remote_sha" == "$expected_sha" ]] \
     || die "gateway admission environment differs after deployment: expected=$expected_sha actual=${remote_sha:-unavailable}"
+  ssh -T "$node" "set -Eeuo pipefail
+    cd /srv/dai/edge
+    cleanup_failed_admission() {
+      rc=\$?
+      if (( rc != 0 )); then
+        docker compose stop gateway-admission >/srv/dai/stop-gateway-admission.log 2>&1 || true
+      fi
+      exit \"\$rc\"
+    }
+    trap cleanup_failed_admission EXIT
+    [[ \"\$(sudo sha256sum gateway-admission.env | awk '{print \$1}')\" == '$expected_sha' ]]
+    set -a; . ./gateway-admission.env; set +a
+    curl -fsS --connect-timeout 5 --max-time 15 \"\$GDC_GATEWAY_ADMISSION_STATUS_URL\" \
+      -H \"Authorization: Bearer \$GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN\" \
+      | jq -e '.capacity.models | type == \"object\"' >/dev/null
+    docker compose up -d --force-recreate gateway-admission >start-gateway-admission.log 2>&1
+    [[ -n \"\$(docker compose ps --status running -q gateway-admission)\" ]]
+    trap - EXIT"
   printf 'READY gateway admission contract deployed from the selected gateway profile\n'
+}
+
+suspend_gateway_admission() {
+  local remote_script="${REMOTE}-suspend-gateway-admission.sh"
+  scp -q "$ROOT/04-ops/edge-node/suspend-gateway-admission.sh" \
+    "$PUBLIC_EDGE_NODE:$remote_script"
+  ssh -T "$PUBLIC_EDGE_NODE" "set -Eeuo pipefail
+    sudo '$remote_script'
+    rm -f '$remote_script'"
+  printf 'READY public gateway admission is fail-closed for runtime replacement\n'
 }
 
 GATEWAY_OPTION=''
@@ -272,6 +304,10 @@ case "$COMPONENT" in
     fi
     step 'Create DevShard escrow and gateway credentials'
     "$ROOT/04-ops/create-gateway.sh" "$INVENTORY" "$SECRETS" "$GATEWAY_ENV"
+    write_env "$GATEWAY_OBSERVER_ENV" \
+      "DEVSHARD_ADMIN_API_KEY=$(<"$SECRETS/gateway.admin-key")" \
+      "GDC_GATEWAY_ADMISSION_OBSERVER_TOKEN=$(<"$SECRETS/gateway.admission-observer-key")" \
+      'GDC_GATEWAY_ADMIN_STATE_URL=http://127.0.0.1:18080/v1/admin/devshards'
     gateway_default_max_tokens="$(awk -F= '$1 == "GATEWAY_DEFAULT_MAX_TOKENS" { print $2 }' "$GATEWAY_ENV")"
     [[ "$gateway_default_max_tokens" =~ ^[1-9][0-9]*$ ]] || die 'gateway default max tokens is missing or invalid'
     gateway_rotation_escrow_amount="$(awk -F= '$1 == "DEVSHARD_ROTATION_ESCROW_AMOUNT" { print $2 }' "$GATEWAY_ENV")"
@@ -298,7 +334,7 @@ case "$COMPONENT" in
     [[ "$gateway_rotation_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED must be true or false'
     [[ "$gateway_rotation_settlement_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED must be true or false'
     [[ "$gateway_ingress_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_INGRESS_TIMEOUT_SECONDS must be positive'
-    GATEWAY_OPTION="--gateway-env '$REMOTE/rendered/gateway.env'"
+    GATEWAY_OPTION="--gateway-env '$REMOTE/rendered/gateway.env' --gateway-observer-env '$REMOTE/rendered/gateway-admission-observer.env'"
     # `gateway.env` is both container input and Compose interpolation input:
     # it selects the protocol-isolated state volume before the service is
     # created. `env_file:` alone is too late for `${...}` in compose.yaml.
@@ -314,7 +350,7 @@ case "$COMPONENT" in
     gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"
     START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
     CADDY_START_COMMAND=true
-    POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
+    POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-admission-observer.service >/dev/null && sudo systemctl restart gdc-gateway-admission-observer.service && sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
     ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"
     ;;
   monitoring)
@@ -364,6 +400,8 @@ if [[ "$COMPONENT" == gateway ]]; then
     >"$gateway_approved_params"
   "$ROOT/scripts/verify-approved-devshard-version.sh" \
     "$gateway_approved_params" "$GDC_GATEWAY_VERSION" "$gateway_archive_url" "$gateway_archive_sha"
+  step 'Suspend public admission before replacing the gateway runtime'
+  suspend_gateway_admission
 fi
 printf 'WAIT  start %s operations component\n' "$COMPONENT"
 if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
@@ -381,11 +419,6 @@ if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
 else
   ssh "$GATEWAY_NODE" "tail -100 /srv/dai/ops/start-$COMPONENT.log" >&2 || true
   exit 1
-fi
-
-if [[ "$COMPONENT" == gateway ]]; then
-  step 'Deploy the matching public admission contract'
-  deploy_gateway_admission
 fi
 
 if [[ "$COMPONENT" == faucet ]]; then
@@ -485,6 +518,25 @@ if [[ "$COMPONENT" == gateway ]]; then
     sleep 3
   done
   [[ "$gateway_ready" == true ]] || die 'gateway did not become ACTIVE before timeout'
+  step 'Verify the sanitized read-only admission observer'
+  observer_token="$(<"$SECRETS/gateway.admission-observer-key")"
+  observer_url="https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
+  curl -fsS --connect-timeout 5 --max-time 15 "$observer_url" \
+    -H "Authorization: Bearer $observer_token" \
+    | jq -e --arg protocol "$GDC_GATEWAY_VERSION" '
+        (.capacity.models // {}) as $models
+        | any($models[]?; ((.current_weight // .total_weight // 0) | tonumber) > 0)
+        and any(.devshards[]?;
+          .active == true
+          and .protocol_version == $protocol
+          and .runtime.session_version == $protocol
+          and .runtime.phase == "active"
+          and .runtime.chain_phase == "Inference"
+          and .runtime.requests_blocked == false)
+      ' >/dev/null \
+    || die "gateway admission observer does not expose the selected live protocol with positive capacity: url=$observer_url"
+  step 'Deploy the matching public admission contract'
+  deploy_gateway_admission
   ssh "$GATEWAY_NODE" 'test "$(stat -c %a /srv/dai/ops/gateway.env)" = 600'
   admin_key="$(<"$SECRETS/gateway.admin-key")"
   client_key="$(cut -d, -f1 "$SECRETS/gateway.client-keys")"

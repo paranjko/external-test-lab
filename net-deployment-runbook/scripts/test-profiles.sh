@@ -254,7 +254,7 @@ grep -Fq 'PUBLIC_GRAFANA_PROMETHEUS_URL' "$ROOT/04-ops/edge-node/install-edge.sh
 grep -Fq 'network_mode: host' "$ROOT/04-ops/edge-node/compose.yaml"
 grep -Fq 'GF_SERVER_HTTP_PORT: "3001"' "$ROOT/04-ops/edge-node/compose.yaml"
 grep -Fq 'https://$(node_public_host "$GATEWAY_NODE")/ops-prometheus' "$ROOT/04-ops/edge-node/render-env.sh"
-grep -Fq 'https://${API_HOST}/v1/status' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/current_epoch_group_data' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'https://${PUBLIC_EDGE_HOST}/chain-rpc/status' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'http://127.0.0.1:9099' "$ROOT/04-ops/edge-node/install-edge.sh"
@@ -315,6 +315,7 @@ grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 grep -Fq 'ops consumer telegram apply' "$ROOT/gdc.sh"
 grep -Fq 'phase-telegram-consumer.sh' "$ROOT/gdc.sh"
 grep -Fq 'gateway.telegram-client-key' "$ROOT/scripts/make-secrets.sh"
+grep -Fq 'gateway.admission-observer-key' "$ROOT/scripts/make-secrets.sh"
 grep -Fq 'telegram.conversation-api-token' "$ROOT/scripts/make-secrets.sh"
 ! grep -Eq 'telegram-key-probe|gateway-key-pool|create-telegram-key-pool' \
   "$ROOT/gdc.sh" \

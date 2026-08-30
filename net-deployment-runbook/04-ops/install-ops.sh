@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet --render-dir DIR [--gateway-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE]" >&2; }
-RENDER=""; GATEWAY=""; FAUCET=""; GATEWAY_RESERVE=""; COMPONENT=""
-while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;*)usage;exit 2;;esac;done
+usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet --render-dir DIR [--gateway-env FILE] [--gateway-observer-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE]" >&2; }
+RENDER=""; GATEWAY=""; GATEWAY_OBSERVER=""; FAUCET=""; GATEWAY_RESERVE=""; COMPONENT=""
+while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--gateway-observer-env) GATEWAY_OBSERVER="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;*)usage;exit 2;;esac;done
 [[ $EUID -eq 0 && -s "$RENDER/.env" ]] || { usage; exit 2; }
 case "$COMPONENT" in
-  gateway) [[ -s "$GATEWAY" ]] || { usage; exit 2; } ;;
+  gateway) [[ -s "$GATEWAY" && -s "$GATEWAY_OBSERVER" ]] || { usage; exit 2; } ;;
   faucet) [[ -s "$FAUCET" && -s "$GATEWAY_RESERVE" ]] || { usage; exit 2; } ;;
   monitoring) [[ -s "$RENDER/prometheus.yml" ]] || { usage; exit 2; } ;;
   site) [[ -s "$RENDER/config.js" ]] || { usage; exit 2; } ;;
@@ -22,6 +22,7 @@ if [[ "$COMPONENT" == gateway ]]; then
   # is restarted only after Compose has recreated the matching gateway.
   systemctl stop gdc-gateway-escrow-reconciler.timer gdc-gateway-escrow-reconciler.service >/dev/null 2>&1 || true
   install -m 0600 "$GATEWAY" "$DEST/gateway.env"
+  install -m 0600 "$GATEWAY_OBSERVER" "$DEST/gateway-admission-observer.env"
 elif [[ ! -e "$DEST/gateway.env" ]]; then
   install -m 0600 /dev/null "$DEST/gateway.env"
 fi
@@ -67,6 +68,10 @@ install -m 0644 "$HERE/gdc-gateway-reserve-controller.timer" /etc/systemd/system
 # operation. An unrelated OPS deployment must not start new lifecycle code
 # against a retained gateway.env with an older contract.
 if [[ "$COMPONENT" == gateway ]]; then
+  install -o root -g root -m 0755 "$HERE/gateway-admission-observer.py" /usr/local/lib/gonka-devnet/gateway-admission-observer.py
+  sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
+    "$HERE/gdc-gateway-admission-observer.service" \
+    | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-admission-observer.service
   install -o root -g root -m 0755 "$HERE/gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh
   sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
     "$HERE/gdc-gateway-escrow-reconciler.service" \

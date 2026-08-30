@@ -1,0 +1,20 @@
+[Unit]
+Description=Gonka gateway admission read-only observer
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@GDC_SERVICE_USER@
+Group=@GDC_SERVICE_GROUP@
+EnvironmentFile=/srv/dai/ops/gateway-admission-observer.env
+ExecStart=/usr/bin/python3 /usr/local/lib/gonka-devnet/gateway-admission-observer.py
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

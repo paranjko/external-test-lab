@@ -46,18 +46,23 @@ step 'Capture live inference and governance parameters before proposal'
 # could preserve stale unrelated parameters.
 params_url="${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
 params_url="${params_url%/}/productscience/inference/inference/params"
-params_curl_stderr="$RUN/params-before.curl.stderr"
-set +e
-params_http_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUN/params-before.json" \
-  -w '%{http_code}' "$params_url" 2>"$params_curl_stderr")"
-params_curl_exit=$?
-set -e
-if (( params_curl_exit != 0 )) || [[ ! "$params_http_status" =~ ^2[0-9][0-9]$ ]]; then
-  params_error_detail="$(tr '\n' ' ' <"$params_curl_stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//' | cut -c1-240)"
-  die "cannot capture current public inference parameters (url=$params_url http_status=${params_http_status:-000} curl_exit=$params_curl_exit curl_status=$(curl_exit_status "$params_curl_exit")${params_error_detail:+ detail=$params_error_detail})"
-fi
-jq -e '(.params // .)' "$RUN/params-before.json" >"$RUN/params-before.normalized.json" \
-  || die "current public inference parameters are malformed (url=$params_url evidence=$RUN/params-before.json)"
+capture_public_params() {
+  local output="$1" label="$2" stderr_file http_status curl_exit error_detail
+  stderr_file="$RUN/$label.curl.stderr"
+  set +e
+  http_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$output" \
+    -w '%{http_code}' "$params_url" 2>"$stderr_file")"
+  curl_exit=$?
+  set -e
+  if (( curl_exit != 0 )) || [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+    error_detail="$(tr '\n' ' ' <"$stderr_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//' | cut -c1-240)"
+    die "cannot capture current public inference parameters (stage=$label url=$params_url http_status=${http_status:-000} curl_exit=$curl_exit curl_status=$(curl_exit_status "$curl_exit")${error_detail:+ detail=$error_detail})"
+  fi
+  jq -e '(.params // .)' "$output" >/dev/null \
+    || die "current public inference parameters are malformed (stage=$label url=$params_url evidence=$output)"
+}
+capture_public_params "$RUN/params-before.json" params-before
+jq '(.params // .)' "$RUN/params-before.json" >"$RUN/params-before.normalized.json"
 printf '%s\n' "$approved_versions" >"$RUN/requested-approved-versions.json"
 governance_state="$("$ROOT/scripts/prepare-devshard-governance-state.sh" \
   "$RUN/params-before.json" "$RUN/requested-approved-versions.json" "$creator")" \
@@ -209,13 +214,13 @@ EOF
 }
 
 step 'Verify effective versions, creator allowlist, and live escrow limits'
-"$ROOT/scripts/inferenced.sh" query inference params --node "$rpc" --chain-id "$CHAIN_ID" --output json >"$RUN/params-after.json"
+capture_public_params "$RUN/params-after.json" params-after
 jq -e --arg creator "$creator" --argjson allowed_creators "$allowed_creators" \
   --argjson approved_versions "$approved_versions" --arg exchange "$poc_exchange_duration" '
   (.params // .).devshard_escrow_params as $p
-  | ($p.allowed_creator_addresses == $allowed_creators)
-  and (($p.allowed_creator_addresses | length) == 0
-    or ($p.allowed_creator_addresses | index($creator) != null))
+  | (($p.allowed_creator_addresses // []) == $allowed_creators)
+  and ((($p.allowed_creator_addresses // []) | length) == 0
+    or (($p.allowed_creator_addresses // []) | index($creator) != null))
   and ($p.approved_versions == $approved_versions)
   and ($p.min_amount | tonumber > 0)
   and ($p.max_nonce | tonumber > 0)

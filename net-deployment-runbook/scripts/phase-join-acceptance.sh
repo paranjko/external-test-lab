@@ -556,7 +556,7 @@ KEY_FILE="$SECRETS/gateway.join-client-key"
 [[ "$(stat -c %a "$KEY_FILE")" == 600 ]] \
   || blocked 'the runbook-managed scoped gateway client credential must have mode 0600'
 case "${KEY_FILE##*/}" in
-  gateway.admin-key|gateway.client-keys|gateway.telegram-client-key|operator.keyring|*.keyring)
+  gateway.admin-key|gateway.admission-observer-key|gateway.client-keys|gateway.telegram-client-key|operator.keyring|*.keyring)
     blocked 'the runbook-managed gateway credential must be a separately scoped join client credential, not an administrative or consumer credential'
     ;;
 esac

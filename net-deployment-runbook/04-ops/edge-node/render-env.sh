@@ -86,12 +86,14 @@ values=(
   # The public edge must not assume that gateway-internal listeners are
   # reachable over the gateway Host's public address. Use the TLS routes the
   # runbook already treats as the canonical chain/readiness boundary.
-  "GDC_GATEWAY_ADMISSION_STATUS_URL=https://${API_HOST}/v1/status"
+  # The public one-runtime status omits protocol and capacity. Admission uses
+  # the authenticated aggregate observer so it binds the actual live runtime
+  # identity and positive capacity instead of deployment intent.
+  "GDC_GATEWAY_ADMISSION_STATUS_URL=https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
   "GDC_GATEWAY_ADMISSION_EPOCH_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/current_epoch_group_data"
   "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL=https://${PUBLIC_EDGE_HOST}/chain-rpc/status"
   "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/params"
   "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=$gateway_admission_protocols_json"
-  "GDC_GATEWAY_ADMISSION_SINGLE_RUNTIME_PROTOCOL=${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
   "GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS=${GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS:-10}"
   "GDC_GATEWAY_ADMISSION_MAX_QUEUE=${GDC_GATEWAY_ADMISSION_MAX_QUEUE:-16}"
   "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS:-300}"

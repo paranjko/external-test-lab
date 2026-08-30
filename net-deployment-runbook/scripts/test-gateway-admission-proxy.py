@@ -55,6 +55,11 @@ class Backend(BaseHTTPRequestHandler):
         if State.state_delay:
             time.sleep(State.state_delay)
         if self.path == "/v1/status":
+            if self.headers.get("Authorization") != "Bearer test-status":
+                self.send_response(401)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             body = State.status_override
             if body is None:
                 body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}}, "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False, "session_version": State.session_version}}]}
@@ -146,11 +151,11 @@ def start_proxy(backend_port, max_queue=1, wait=0.35, max_deadline=None,
         "GDC_GATEWAY_ADMISSION_PORT": str(proxy_port),
         "GDC_GATEWAY_ADMISSION_UPSTREAM": "http://127.0.0.1:%s" % (upstream_port or backend_port),
         "GDC_GATEWAY_ADMISSION_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("status", "/v1/status")),
+        "GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN": "test-status",
         "GDC_GATEWAY_ADMISSION_EPOCH_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("epoch", "/epoch")),
         "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("chain", "/chain-status")),
         "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("params", "/params")),
         "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON": json.dumps({"v3": {"binary": "https://example.invalid/devshardd-v3.zip", "sha256": "a" * 64}}),
-        "GDC_GATEWAY_ADMISSION_SINGLE_RUNTIME_PROTOCOL": "v3",
         "GDC_GATEWAY_ADMISSION_MAX_QUEUE": str(max_queue),
         "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS": str(wait),
         "GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS": str(max_deadline),
@@ -286,25 +291,25 @@ try:
     State.status_override = None
     process.terminate(); process.wait(2); processes.remove(process)
 
-    # The pinned gateway delegates /v1/status directly to the runtime when
-    # exactly one runtime remains. That response omits pooled capacity and
-    # protocol fields, so admission uses the independently rendered protocol
-    # contract and the runtime's active, unblocked Inference state.
+    # The authenticated aggregate observer retains actual protocol identity
+    # and capacity even when exactly one runtime remains.
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     State.status_override = {
-        "escrow_id": "41", "nonce": 0, "phase": "active", "balance": 100,
-        "chain_phase": "Inference", "requests_blocked": False, "config": {},
+        "capacity": {"models": {"model": {"current_weight": 1}}},
+        "devshards": [{"id": "41", "active": True, "protocol_version": "v3",
+                       "runtime": {"phase": "active", "chain_phase": "Inference",
+                                   "requests_blocked": False, "session_version": "v3"}}],
     }
     process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
     assert post_details(proxy_port) == (429, b'{"error":"single outcome"}', "dispatched_once")
-    assert State.dispatches == 1, "healthy single-runtime status was not admitted"
+    assert State.dispatches == 1, "healthy aggregate single-runtime status was not admitted"
     process.terminate(); process.wait(2); processes.remove(process)
 
     State.dispatches = 0
-    State.status_override["escrow_id"] = "invalid"
+    State.status_override["capacity"]["models"]["model"]["current_weight"] = 0
     process, proxy_port = start_proxy(backend_port, wait=0.2); processes.append(process)
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_state_invalid"}}', "pre_dispatch_rejected")
-    assert State.dispatches == 0, "malformed single-runtime status dispatched"
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_runtime_unavailable"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "zero-capacity single-runtime status dispatched"
     State.status_override = None
     process.terminate(); process.wait(2); processes.remove(process)
 

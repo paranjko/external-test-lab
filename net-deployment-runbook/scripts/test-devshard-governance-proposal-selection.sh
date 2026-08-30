@@ -88,8 +88,22 @@ grep -Fq 'invalid proposal selection mode' "$tmp/err"
 
 grep -Fq 'params_url="${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"' \
   "$ROOT/scripts/phase-governance-devshard.sh"
-grep -Fq 'curl_exit=$params_curl_exit curl_status=$(curl_exit_status "$params_curl_exit")' \
+if grep -Fq 'params_curl_exit' "$ROOT/scripts/phase-governance-devshard.sh"; then
+  echo 'legacy one-shot parameter capture remains in governance phase' >&2
+  exit 1
+fi
+grep -Fq 'capture_public_params "$RUN/params-before.json" params-before' \
   "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq 'capture_public_params "$RUN/params-after.json" params-after' \
+  "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq '($p.allowed_creator_addresses // []) == $allowed_creators' \
+  "$ROOT/scripts/phase-governance-devshard.sh"
+jq -e --argjson expected '[]' '
+  .params.devshard_escrow_params as $p
+  | (($p.allowed_creator_addresses // []) == $expected)
+' <<'EOF' >/dev/null
+{"params":{"devshard_escrow_params":{}}}
+EOF
 grep -Fq 'would revoke currently approved protocol' \
   "$ROOT/scripts/validate-devshard-governance-protocols.sh"
 grep -Fq '"$supported_protocols" "$governance_candidates" "$current_protocols"' \

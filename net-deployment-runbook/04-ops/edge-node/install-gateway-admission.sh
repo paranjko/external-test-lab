@@ -5,7 +5,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST=/srv/dai/edge
 
 protocols_json="$(sed -n 's/^GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=//p' "$1")"
-single_runtime_protocol="$(sed -n 's/^GDC_GATEWAY_ADMISSION_SINGLE_RUNTIME_PROTOCOL=//p' "$1")"
+status_bearer_token="$(sed -n 's/^GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN=//p' "$1")"
 jq -e '
   type == "object" and length > 0
   and all(to_entries[];
@@ -14,9 +14,8 @@ jq -e '
     and (.value.sha256 | test("^[0-9a-f]{64}$")))
 ' <<<"$protocols_json" >/dev/null \
   || { echo 'gateway admission environment has an invalid protocol contract' >&2; exit 2; }
-if [[ ! "$single_runtime_protocol" =~ ^v[345]$ ]] \
-  || ! jq -e --arg protocol "$single_runtime_protocol" 'has($protocol)' <<<"$protocols_json" >/dev/null; then
-  echo 'gateway admission environment has an invalid single-runtime protocol' >&2
+if [[ ! "$status_bearer_token" =~ ^[A-Za-z0-9._:-]{16,256}$ ]]; then
+  echo 'gateway admission environment has an invalid status credential' >&2
   exit 2
 fi
 
