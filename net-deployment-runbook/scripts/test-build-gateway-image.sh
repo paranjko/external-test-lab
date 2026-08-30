@@ -32,7 +32,10 @@ printf '%s\n' '#!/usr/bin/env bash' \
 printf '%s\n' '#!/usr/bin/env bash' \
   'set -Eeuo pipefail' \
   'printf "%s\n" "$*" >>"$TEST_GATEWAY_LOG"' \
-  'if [[ "$*" == *"docker load"* ]]; then cat >/dev/null; fi' >"$temporary/bin/ssh"
+  'if [[ "$*" == *"docker load"* ]]; then cat >/dev/null; exit 0; fi' \
+  'if [[ "$*" == *"docker image inspect --format {{.Id}}"* ]]; then' \
+  '  if [[ "$*" == *@sha256:* ]]; then printf "%s\n" "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; else printf "%s\n" "${TEST_LOADED_IMAGE_ID:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"; fi' \
+  'fi' >"$temporary/bin/ssh"
 chmod +x "$temporary/bin/curl" "$temporary/bin/ssh"
 
 TEST_GATEWAY_ARCHIVE="$temporary/candidate.oci.tar.gz" \
@@ -41,6 +44,7 @@ PATH="$temporary/bin:$PATH" \
 GDC_GATEWAY_VERSION=v5 \
 DEVSHARD_PROTOCOL_VERSION=v5 \
 LOCAL_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:candidate \
+DEVSHARD_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:candidate@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
 DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL=https://example.invalid/gateway.oci.tar.gz \
 DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256="$archive_sha256" \
 LAB_CANDIDATE=true \
@@ -48,8 +52,29 @@ GATEWAY_NODE=gateway.example \
   "$temporary/runbook/scripts/build-gateway-image.sh" >/dev/null
 
 mapfile -t ssh_calls <"$temporary/ssh.log"
-[[ "${#ssh_calls[@]}" == 2 ]]
+[[ "${#ssh_calls[@]}" == 4 ]]
 [[ "${ssh_calls[0]}" == 'gateway.example docker load' ]]
-[[ "${ssh_calls[1]}" == 'gateway.example docker image inspect ghcr.io/paranjko/gdc-devshard-gateway:candidate' ]]
+[[ "${ssh_calls[1]}" == 'gateway.example docker image inspect --format {{.Id}} ghcr.io/paranjko/gdc-devshard-gateway:candidate' ]]
+[[ "${ssh_calls[2]}" == 'gateway.example docker pull ghcr.io/paranjko/gdc-devshard-gateway:candidate@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]]
+[[ "${ssh_calls[3]}" == 'gateway.example docker image inspect --format {{.Id}} ghcr.io/paranjko/gdc-devshard-gateway:candidate@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]]
 
-printf 'PASS verified candidate gateway image reload contract\n'
+: >"$temporary/ssh.log"
+if TEST_LOADED_IMAGE_ID=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  TEST_GATEWAY_ARCHIVE="$temporary/candidate.oci.tar.gz" \
+  TEST_GATEWAY_LOG="$temporary/ssh.log" \
+  PATH="$temporary/bin:$PATH" \
+  GDC_GATEWAY_VERSION=v5 \
+  DEVSHARD_PROTOCOL_VERSION=v5 \
+  LOCAL_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:candidate \
+  DEVSHARD_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:candidate@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL=https://example.invalid/gateway.oci.tar.gz \
+  DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256="$archive_sha256" \
+  LAB_CANDIDATE=true \
+  GATEWAY_NODE=gateway.example \
+    "$temporary/runbook/scripts/build-gateway-image.sh" >/dev/null 2>"$temporary/mismatch.stderr"; then
+  echo 'candidate gateway accepted an archive image that differs from the immutable digest' >&2
+  exit 1
+fi
+grep -Fq 'does not match the immutable composition digest' "$temporary/mismatch.stderr"
+
+printf 'PASS verified candidate gateway image identity contract\n'
