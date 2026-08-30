@@ -68,11 +68,34 @@ if ! LC_ALL=C grep -aFq 'GOOS=linux' "$binary" \
   echo "DevShard $protocol executable is not built for linux/amd64" >&2
   exit 1
 fi
-if ! LC_ALL=C grep -aEq "(^|[^[:alnum:]_.-])main\\.Version=${protocol}([^[:alnum:]_.-]|$)" "$binary" \
-  || ! LC_ALL=C grep -aEq "(^|[^[:alnum:]_.-])devshard/types\\.buildStateRootProtocolVersion=${protocol}([^[:alnum:]_.-]|$)" "$binary"; then
-  echo "DevShard $protocol executable build metadata reports another protocol" >&2
-  exit 1
-fi
+for tool in nm objdump; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "DevShard protocol verification requires binutils tool: $tool" >&2
+    exit 1
+  }
+done
+symbol_rows="$(LC_ALL=C nm -S --defined-only "$binary" 2>/dev/null \
+  | awk '$4 == "main.Version.str" || $4 == "devshard/types.buildStateRootProtocolVersion.str" { print $1 "\t" $2 "\t" $4 }')"
+expected_hex="$(printf '%s\0' "$protocol" | od -An -v -tx1 | tr -d ' \n')"
+for symbol in main.Version devshard/types.buildStateRootProtocolVersion; do
+  mapfile -t matches < <(awk -F '\t' -v wanted="$symbol.str" '$3 == wanted { print $1 "\t" $2 }' <<<"$symbol_rows")
+  if [[ ${#matches[@]} -ne 1 ]]; then
+    echo "DevShard $protocol executable does not define the required linked protocol symbol: $symbol" >&2
+    exit 1
+  fi
+  IFS=$'\t' read -r address size <<<"${matches[0]}"
+  [[ "$address" =~ ^[0-9a-fA-F]+$ && "$size" =~ ^[0-9a-fA-F]+$ ]] || {
+    echo "DevShard $protocol executable has invalid linked protocol symbol metadata: $symbol" >&2
+    exit 1
+  }
+  stop_address="$(printf '0x%x' "$((16#$address + 16#$size))")"
+  actual_hex="$(LC_ALL=C objdump -s --start-address="0x$address" --stop-address="$stop_address" "$binary" 2>/dev/null \
+    | awk '/^[[:space:]]*[0-9a-fA-F]+[[:space:]]/ { for (i = 2; i <= NF; i++) { if ($i ~ /^[0-9a-fA-F]+$/ && length($i) <= 8 && length($i) % 2 == 0) printf "%s", $i; else break } }')"
+  if [[ "$actual_hex" != "$expected_hex" ]]; then
+    echo "DevShard $protocol executable linked symbol reports another protocol: $symbol" >&2
+    exit 1
+  fi
+done
 if [[ "$refresh_binding" == true ]]; then
   binding_tmp="$(mktemp "$cache_dir/.source-$protocol.XXXXXX")"
   jq -n --arg url "$url" --arg sha256 "$expected_sha" \

@@ -8,13 +8,19 @@ trap 'rm -rf "$tmp"' EXIT
 ! grep -Fq 'command -v go' "$ROOT/scripts/verify-devshard-archive.sh"
 ! grep -Fq 'go version -m' "$ROOT/scripts/verify-devshard-archive.sh"
 
-printf 'package main\nvar Version string\nfunc main() { println(Version) }\n' >"$tmp/main.go"
-(
-  cd "$tmp"
-  GOCACHE="$tmp/go-cache" GO111MODULE=off CGO_ENABLED=0 go build \
-    -ldflags='-X=main.Version=v4 -X=devshard/types.buildStateRootProtocolVersion=v4' \
-    -o devshardd main.go
-)
+build_fixture() {
+  local version="$1" output="$2"
+  mkdir -p "$tmp/src/testapp" "$tmp/src/devshard/types"
+  printf 'package types\nvar buildStateRootProtocolVersion string\nfunc Protocol() string { return buildStateRootProtocolVersion }\n' \
+    >"$tmp/src/devshard/types/types.go"
+  printf 'package main\nimport "devshard/types"\nvar Version string\nfunc main() { println(Version, types.Protocol()) }\n' \
+    >"$tmp/src/testapp/main.go"
+  GOPATH="$tmp" GOCACHE="$tmp/go-cache" GO111MODULE=off CGO_ENABLED=0 go build \
+    -ldflags="-X=main.Version=$version -X=devshard/types.buildStateRootProtocolVersion=$version" \
+    -o "$output" testapp
+}
+
+build_fixture v4 "$tmp/devshardd"
 python3 -m zipfile -c "$tmp/source.zip" "$tmp/devshardd"
 sha="$(sha256sum "$tmp/source.zip" | awk '{print $1}')"
 url="file://$tmp/source.zip"
@@ -47,16 +53,27 @@ if "$ROOT/scripts/verify-devshard-archive.sh" v5 "$url" "$sha" "$tmp/cache" >"$t
   echo 'mismatched executable protocol was accepted' >&2
   exit 1
 fi
-grep -Fq 'executable build metadata reports another protocol' "$tmp/err"
+grep -Fq 'executable linked symbol reports another protocol' "$tmp/err"
+
+# Linker arguments are not evidence that the target variable exists. A binary
+# with a real main.Version and a decoy state-root -X argument must fail closed.
+printf 'package main\nvar Version string\nfunc main() { println(Version) }\n' >"$tmp/decoy.go"
+mkdir -p "$tmp/decoy-bin"
+GOCACHE="$tmp/go-cache" GO111MODULE=off CGO_ENABLED=0 go build \
+  -ldflags='-X=main.Version=v4 -X=devshard/types.buildStateRootProtocolVersion=v4' \
+  -o "$tmp/decoy-bin/devshardd" "$tmp/decoy.go"
+python3 -m zipfile -c "$tmp/decoy.zip" "$tmp/decoy-bin/devshardd"
+decoy_sha="$(sha256sum "$tmp/decoy.zip" | awk '{print $1}')"
+if "$ROOT/scripts/verify-devshard-archive.sh" v4 "file://$tmp/decoy.zip" \
+  "$decoy_sha" "$tmp/decoy-cache" >"$tmp/out" 2>"$tmp/err"; then
+  echo 'unused protocol linker argument was accepted as linked metadata' >&2
+  exit 1
+fi
+grep -Fq 'does not define the required linked protocol symbol' "$tmp/err"
 
 # Version metadata is token-bounded: v40 must not satisfy a v4 check merely
 # because both required strings contain the shorter protocol as a prefix.
-(
-  cd "$tmp"
-  GOCACHE="$tmp/go-cache" GO111MODULE=off CGO_ENABLED=0 go build \
-    -ldflags='-X=main.Version=v40 -X=devshard/types.buildStateRootProtocolVersion=v40' \
-    -o devshardd main.go
-)
+build_fixture v40 "$tmp/devshardd"
 python3 -m zipfile -c "$tmp/v40.zip" "$tmp/devshardd"
 v40_sha="$(sha256sum "$tmp/v40.zip" | awk '{print $1}')"
 if "$ROOT/scripts/verify-devshard-archive.sh" v4 "file://$tmp/v40.zip" \
@@ -64,7 +81,7 @@ if "$ROOT/scripts/verify-devshard-archive.sh" v4 "file://$tmp/v40.zip" \
   echo 'v40 executable metadata was accepted as v4' >&2
   exit 1
 fi
-grep -Fq 'executable build metadata reports another protocol' "$tmp/err"
+grep -Fq 'executable linked symbol reports another protocol' "$tmp/err"
 "$ROOT/scripts/verify-devshard-archive.sh" v40 "file://$tmp/v40.zip" \
   "$v40_sha" "$tmp/v40-cache" >/dev/null
 

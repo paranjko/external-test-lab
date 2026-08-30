@@ -211,19 +211,26 @@ case "$COMPONENT" in
       "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
       "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \
       0 0 "$gateway_max_refill"
-    # Re-running `ops gateway` switches or verifies a protocol runtime; it is
-    # not authority to mint another escrow.  The escrow reconciler can rotate
-    # the configured ID while this command is not running, so the deployed
-    # gateway runtime is authoritative.  Consult it before the rendered file:
-    # the latter is merely a snapshot and may point at a pruned escrow.
+    # Re-running `ops gateway` may reuse an escrow only for the same bound
+    # protocol. A Host persists the protocol binding per escrow and rejects a
+    # later request that presents the same escrow through another route. The
+    # deployed runtime is authoritative because the reconciler can rotate the
+    # rendered ID while this command is not running.
+    if [[ -n "${GDC_ESCROW_ID:-}" ]]; then
+      configured_escrow="$(awk -F= '$1 == "DEVSHARD_ESCROW_ID" { print $2; exit }' "$GATEWAY_ENV" 2>/dev/null || true)"
+      configured_route="$(awk -F= '$1 == "DEVSHARD_ROUTE_PREFIX" { print $2; exit }' "$GATEWAY_ENV" 2>/dev/null || true)"
+      [[ "$GDC_ESCROW_ID" == "$configured_escrow" && "$configured_route" == "/devshard/$GDC_GATEWAY_VERSION" ]] \
+        || die 'GDC_ESCROW_ID may reuse only the rendered escrow for the selected DevShard protocol'
+    fi
     if [[ -z "${GDC_ESCROW_ID:-}" ]]; then
       gateway_creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
-      active_gateway_escrows="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
+      active_gateway_state="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
         [[ -r /srv/dai/ops/gateway.env ]] || exit 0
         set -a; . /srv/dai/ops/gateway.env; set +a
         curl -fsS http://127.0.0.1:18080/v1/admin/devshards \
-          -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
-          | jq -r ".devshards[]? | select(.active == true and (.runtime.phase // \"\") == \"active\" and (.runtime.requests_blocked // false) == false) | .id | tostring"' 2>/dev/null || true)"
+          -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY"' 2>/dev/null || true)"
+      active_gateway_escrows="$(printf '%s\n' "$active_gateway_state" \
+        | "$ROOT/scripts/select-compatible-gateway-escrows.sh" "$GDC_GATEWAY_VERSION" 2>/dev/null || true)"
       active_gateway_escrow=''
       while IFS= read -r candidate; do
         [[ "$candidate" =~ ^[1-9][0-9]*$ ]] || continue
@@ -241,10 +248,13 @@ case "$COMPONENT" in
       done <<<"$active_gateway_escrows"
       if [[ -n "$active_gateway_escrow" ]]; then
         export GDC_ESCROW_ID="$active_gateway_escrow"
-        printf 'READY reuse active gateway escrow %s from deployed runtime\n' "$GDC_ESCROW_ID"
+        printf 'READY reuse active %s gateway escrow %s from deployed runtime\n' "$GDC_GATEWAY_VERSION" "$GDC_ESCROW_ID"
       elif [[ -s "$GATEWAY_ENV" ]]; then
         previous_escrow="$(awk -F= '$1 == "DEVSHARD_ESCROW_ID" { print $2; exit }' "$GATEWAY_ENV")"
-        if [[ "$previous_escrow" =~ ^[1-9][0-9]*$ ]]; then
+        previous_route="$(awk -F= '$1 == "DEVSHARD_ROUTE_PREFIX" { print $2; exit }' "$GATEWAY_ENV")"
+        if [[ "$previous_escrow" =~ ^[1-9][0-9]*$ && "$previous_route" != "/devshard/$GDC_GATEWAY_VERSION" ]]; then
+          printf 'READY discard gateway escrow %s bound to incompatible route %s\n' "$previous_escrow" "${previous_route:-unavailable}"
+        elif [[ "$previous_escrow" =~ ^[1-9][0-9]*$ ]]; then
           previous_state="$("$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$previous_escrow" \
             --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json 2>/dev/null || true)"
           if jq -e '.found == true and (.escrow.settled // false) == false' <<<"$previous_state" >/dev/null 2>&1; then
