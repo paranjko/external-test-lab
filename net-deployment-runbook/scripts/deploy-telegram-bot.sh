@@ -25,7 +25,7 @@ BOT_STATE_DB=/data/bot.sqlite3
 BOT_METRICS_FILE=/metrics/telegram-bot.prom
 BOT_KEY_FILE="$SECRETS/gateway.telegram-client-key"
 BOT_INTERNAL_TOKEN_FILE="$SECRETS/telegram.conversation-api-token"
-VERIFY_TIMEOUT_SECONDS="${GDC_TELEGRAM_CONSUMER_VERIFY_TIMEOUT_SECONDS:-180}"
+VERIFY_TIMEOUT_SECONDS="${GDC_TELEGRAM_CONSUMER_VERIFY_TIMEOUT_SECONDS:-300}"
 
 [[ -f "$BOT_SOURCE/compose.yaml" && -f "$BOT_SOURCE/bot.py" ]] || {
   echo "embedded Telegram bot source is incomplete: $BOT_SOURCE" >&2; exit 1;
@@ -87,7 +87,7 @@ ssh -T "$BOT_HOST" "set -Eeuo pipefail
   cd '$BOT_DIR'
   sudo docker compose up -d --build --force-recreate >/dev/null"
 
-consumer_ready=false
+consumer_runtime_ready=false
 deadline=$((SECONDS + VERIFY_TIMEOUT_SECONDS))
 while (( SECONDS < deadline )); do
   remaining=$((deadline - SECONDS))
@@ -97,21 +97,21 @@ bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
 [[ -n "$bot" && "$(docker inspect -f '{{.State.Health.Status}}' "$bot")" == healthy ]]
 curl -fsS http://127.0.0.1:9464/metrics | grep -q '^gdc_telegram_bot_up 1$'
 docker exec "$bot" python3 -c 'import json, os; from urllib.request import urlopen; assert json.load(urlopen("https://api.telegram.org/bot" + os.environ["TELEGRAM_BOT_TOKEN"] + "/getMe", timeout=15))["ok"]'
-probe_output="$(docker exec "$bot" python3 /app/bot.py --probe 2>&1)" || {
-  probe_reason="$(jq -r '.reason // "unknown"' <<<"$probe_output" 2>/dev/null || true)"
-  printf 'WAIT Telegram consumer probe uses the governed public route reason=%s\n' "$probe_reason"
-  exit 1
-}
-jq -e '.status == "completed" and .output_present == true and .usage_present == true' <<<"$probe_output" >/dev/null
 REMOTE
   then
-    consumer_ready=true
+    consumer_runtime_ready=true
     break
   fi
-  printf 'WAIT Telegram conversation consumer is not ready; retrying before deadline=%ss\n' "$((deadline - SECONDS))"
+  printf 'WAIT Telegram consumer runtime is not ready; retrying before deadline=%ss\n' "$((deadline - SECONDS))"
   sleep 3
 done
-[[ "$consumer_ready" == true ]] || die "Telegram conversation consumer was not ready within ${VERIFY_TIMEOUT_SECONDS}s"
+[[ "$consumer_runtime_ready" == true ]] \
+  || die "Telegram consumer runtime was not ready within ${VERIFY_TIMEOUT_SECONDS}s"
+
+remaining=$((deadline - SECONDS))
+(( remaining > 0 )) || die "Telegram consumer inference verification exceeded ${VERIFY_TIMEOUT_SECONDS}s"
+timeout "$remaining" ssh -T "$BOT_HOST" "bash -s -- '$MODEL_ID' '$remaining'" \
+  <"$ROOT/scripts/telegram-consumer-probe-loop.sh"
 
 for host in "${GDC_NODES[@]}"; do
   if [[ "$host" == "$BOT_HOST" ]]; then
@@ -121,4 +121,4 @@ for host in "${GDC_NODES[@]}"; do
     ssh -T "$host" '! docker ps --format "{{.Names}}" | grep -qx gonka-devnet-bot-bot-1'
   fi
 done
-printf 'PASS Telegram conversation consumer runs on %s\n' "$BOT_HOST"
+printf 'PASS Telegram conversation consumer runs on %s and completed governed inference\n' "$BOT_HOST"

@@ -15,13 +15,15 @@ expected_remote_prometheus="https://${GATEWAY_PUBLIC_HOST:-}/ops-prometheus"
 mkdir -p "$DEST"
 install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"
 install -d -m 0755 "$DEST/bootstrap"
-# A failed first deployment can leave this exact bind-mount target as a
-# directory. Remove only that known invalid target before installing the file.
-if [[ -d "$DEST/gateway-admission-proxy.py" ]]; then
-  rm -rf "$DEST/gateway-admission-proxy.py"
+# Compose validates env_file paths even when only Caddy is selected. Seed an
+# empty non-contract file once for participant edges; only gateway apply may
+# replace it with a routable protocol contract.
+if [[ -d "$DEST/gateway-admission.env" ]]; then
+  rm -rf "$DEST/gateway-admission.env"
 fi
-install -m 0644 "$HERE/gateway-admission-proxy.py" "$DEST/gateway-admission-proxy.py"
-install -d -m 0750 "$DEST/status"
+if [[ ! -e "$DEST/gateway-admission.env" ]]; then
+  install -m 0600 /dev/null "$DEST/gateway-admission.env"
+fi
 install -m 0600 "$1" "$DEST/.env"
 rm -rf "$DEST/public-grafana"
 cp -a "$HERE/public-grafana" "$DEST/public-grafana"

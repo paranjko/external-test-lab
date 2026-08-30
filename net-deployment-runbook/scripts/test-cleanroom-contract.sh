@@ -31,6 +31,8 @@ grep -Fq 'https://cli.github.com/packages/githubcli-archive-keyring.gpg' "$ROOT/
 grep -Fq '6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b' "$ROOT/.devcontainer/cleanroom/Dockerfile"
 grep -Fq 'https://cli.github.com/packages stable main' "$ROOT/.devcontainer/cleanroom/Dockerfile"
 grep -Fq 'apt-get install -y --no-install-recommends gh' "$ROOT/.devcontainer/cleanroom/Dockerfile"
+grep -Eq '^[[:space:]]+binutils \\' "$ROOT/.devcontainer/cleanroom/Dockerfile"
+grep -Eq 'locales binutils \\' "$ROOT/00-host-prep/prepare-host.sh"
 ! grep -Fq 'operator-cleanroom' "$ROOT/Makefile"
 grep -Fq 'git clone -b feat/honest-lifecycle-gate-b-upgrade' "$DOC"
 grep -Fq 'host join --public-host node3.gonka-dev.net gdc-node3' "$DOC"

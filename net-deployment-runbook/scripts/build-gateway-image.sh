@@ -8,8 +8,11 @@ source "$ROOT/scripts/profile.sh"
 load_profiles
 VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
+IMAGE="$(local_gateway_image_for_protocol "$VERSION")"
 if [[ "$VERSION" == v5 ]]; then
-  IMAGE="${LOCAL_GATEWAY_IMAGE:?candidate v5 gateway image is required}"
+  immutable_image="${DEVSHARD_GATEWAY_IMAGE:?candidate v5 immutable gateway image is required}"
+  [[ "$immutable_image" =~ @sha256:[0-9a-f]{64}$ ]] \
+    || { echo 'candidate v5 immutable gateway image must include a SHA-256 digest' >&2; exit 2; }
   archive_url="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL:?candidate v5 gateway image archive URL is required}"
   archive_sha256="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256:?candidate v5 gateway image archive SHA-256 is required}"
   [[ "${LAB_CANDIDATE:-false}" == true && "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
@@ -22,7 +25,13 @@ if [[ "$VERSION" == v5 ]]; then
   # the checksum-bound archive before reuse, then verify that the expected tag
   # was materialized by docker load.
   gzip -dc "$archive" | ssh "$GATEWAY_NODE" docker load
-  ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" >/dev/null
+  loaded_image_id="$(ssh "$GATEWAY_NODE" docker image inspect --format '{{.Id}}' "$IMAGE")"
+  ssh "$GATEWAY_NODE" docker pull "$immutable_image" >/dev/null
+  immutable_image_id="$(ssh "$GATEWAY_NODE" docker image inspect --format '{{.Id}}' "$immutable_image")"
+  [[ "$loaded_image_id" =~ ^sha256:[0-9a-f]{64}$ && "$loaded_image_id" == "$immutable_image_id" ]] || {
+    echo 'candidate v5 gateway archive image does not match the immutable composition digest' >&2
+    exit 1
+  }
   echo "READY $IMAGE loaded from its verified candidate archive on $GATEWAY_NODE"
   exit 0
 fi
@@ -35,9 +44,6 @@ case "$VERSION" in
     SOURCE_REF='release/v0.2.13-devshard-v3.0.0'
     ;;
 esac
-# Release profiles name the default v4 image; derive a distinct immutable
-# local tag for the independently governed v3 runtime.
-IMAGE="${LOCAL_GATEWAY_IMAGE%-v4}-$VERSION"
 if ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "KEEP  $IMAGE already exists on $GATEWAY_NODE"
   exit 0

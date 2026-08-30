@@ -95,6 +95,22 @@ GDC_GATEWAY_HEALTH_URL="http://127.0.0.1:1" \
   "$ROOT/04-ops/gateway-health-probe.sh"
 jq -e '.state == "UNAVAILABLE" and .reason == "replacement_escrow_creation_failed" and (.recovery? == null)' "$tmp/failed.json" >/dev/null
 
+printf '%s\n' '{"state":"PENDING","reason":"devshard_protocol_not_approved","replacement_escrow":"123","checked_at":"2026-08-10T08:00:15Z"}' >"$tmp/pending-reconciliation.json"
+GDC_GATEWAY_ENV="$tmp/gateway.env" \
+GDC_GATEWAY_HEALTH_FILE="$tmp/pending.json" \
+GDC_GATEWAY_RECONCILIATION_FILE="$tmp/pending-reconciliation.json" \
+GDC_GATEWAY_HEALTH_URL="http://127.0.0.1:$port" \
+  "$ROOT/04-ops/gateway-health-probe.sh"
+jq -e '.state == "RECOVERING" and .reason == "devshard_protocol_not_approved" and .http_status == 0' "$tmp/pending.json" >/dev/null
+
+printf '%s\n' '{"state":"DEGRADED","reason":"devshard_protocol_approval_unavailable","replacement_escrow":"123","checked_at":"2026-08-10T08:00:15Z"}' >"$tmp/degraded-reconciliation.json"
+GDC_GATEWAY_ENV="$tmp/gateway.env" \
+GDC_GATEWAY_HEALTH_FILE="$tmp/degraded.json" \
+GDC_GATEWAY_RECONCILIATION_FILE="$tmp/degraded-reconciliation.json" \
+GDC_GATEWAY_HEALTH_URL="http://127.0.0.1:$port" \
+  "$ROOT/04-ops/gateway-health-probe.sh"
+jq -e '.state == "DEGRADED" and .reason == "devshard_protocol_approval_unavailable" and .http_status == 0' "$tmp/degraded.json" >/dev/null
+
 printf '%s\n' '{"state":"RECOVERING","reason":"waiting_for_chain_confirmation","replacement_escrow":"123","entered_at":"2026-08-10T08:00:00Z","checked_at":"2026-08-10T08:00:15Z"}' >"$tmp/reconciliation.json"
 GDC_GATEWAY_ENV="$tmp/gateway.env" \
 GDC_GATEWAY_HEALTH_FILE="$tmp/recovering.json" \

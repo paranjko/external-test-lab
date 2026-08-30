@@ -14,17 +14,31 @@ fi
 if [[ "$COMPONENT" == gateway ]]; then
   GDC_GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
   [[ "$GDC_GATEWAY_VERSION" =~ ^v[345]$ ]] || die 'GDC_GATEWAY_VERSION must be v3, v4 or v5'
-  supported_protocols="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
-  case " $supported_protocols " in
+  gateway_supported_protocols="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
+  case " $gateway_supported_protocols " in
     *" $GDC_GATEWAY_VERSION "*) ;;
-    *) die "DevShard $GDC_GATEWAY_VERSION is not supported by the pinned upstream artifact; supported: $supported_protocols" ;;
+    *) die "DevShard $GDC_GATEWAY_VERSION is not supported by the pinned gateway artifact; supported: $gateway_supported_protocols" ;;
   esac
+  case "$GDC_GATEWAY_VERSION" in
+    v3) gateway_archive_url="$DEVSHARD_V3_URL"; gateway_archive_sha="$DEVSHARD_V3_SHA256" ;;
+    v4) gateway_archive_url="$DEVSHARD_V4_URL"; gateway_archive_sha="$DEVSHARD_V4_SHA256" ;;
+    v5) gateway_archive_url="$DEVSHARD_V5_URL"; gateway_archive_sha="$DEVSHARD_V5_SHA256" ;;
+  esac
+  gateway_approved_params="$STATE/gateway-approved-$GDC_GATEWAY_VERSION.json"
+  "$ROOT/scripts/inferenced.sh" query inference params \
+    --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json \
+    >"$gateway_approved_params"
+  "$ROOT/scripts/verify-approved-devshard-version.sh" \
+    "$gateway_approved_params" "$GDC_GATEWAY_VERSION" "$gateway_archive_url" "$gateway_archive_sha"
   GDC_GATEWAY_PUBLIC_URL="${GDC_GATEWAY_PUBLIC_URL:-https://$API_HOST}"
   GDC_GATEWAY_PUBLIC_URL="${GDC_GATEWAY_PUBLIC_URL%/}"
-  export GDC_GATEWAY_VERSION
+  GDC_GATEWAY_ARCHIVE_URL="$gateway_archive_url"
+  GDC_GATEWAY_ARCHIVE_SHA256="$gateway_archive_sha"
+  export GDC_GATEWAY_VERSION GDC_GATEWAY_ARCHIVE_URL GDC_GATEWAY_ARCHIVE_SHA256
 fi
 OPS_RENDER="$GENERATED/ops"
 GATEWAY_ENV="$OPS_RENDER/gateway.env"
+GATEWAY_OBSERVER_ENV="$OPS_RENDER/gateway-admission-observer.env"
 FAUCET_ENV="$OPS_RENDER/faucet.env"
 GATEWAY_RESERVE_ENV="$OPS_RENDER/gateway-reserve-signer.env"
 REMOTE="/tmp/gdc-ops-$$"
@@ -69,11 +83,66 @@ reconcile_public_grafana() {
   rsync -a "$ROOT/04-ops/edge-node/" "$node:$edge_remote/edge/"
   scp -q "$edge_env" "$node:$edge_remote/edge.env"
   edge_start_log='/srv/dai/edge/start-public-grafana.log'
-  ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate gateway-admission; docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; docker compose up -d --force-recreate caddy"
+  ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; docker compose up -d --force-recreate caddy"
+}
+
+deploy_gateway_admission() {
+  local node="$PUBLIC_EDGE_NODE" admission_env admission_remote expected_sha remote_sha status_bearer_token
+  admission_env="$GENERATED/edge/gateway-admission.env"
+  admission_remote="${REMOTE}-gateway-admission"
+  mkdir -p "$(dirname "$admission_env")"
+  "$ROOT/04-ops/edge-node/render-env.sh" \
+    --inventory "$INVENTORY" --node-name "$node" --output "$admission_env" >/dev/null
+  status_bearer_token="$(<"$SECRETS/gateway.admission-observer-key")"
+  [[ "$status_bearer_token" =~ ^[A-Za-z0-9._:-]{16,256}$ ]] \
+    || die 'gateway admission status credential is missing or invalid'
+  printf 'GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN=%s\n' "$status_bearer_token" >>"$admission_env"
+  chmod 0600 "$admission_env"
+  expected_sha="$(sha256sum "$admission_env" | awk '{print $1}')"
+  ssh "$node" "rm -rf '$admission_remote' && mkdir -p '$admission_remote'"
+  rsync -a "$ROOT/04-ops/edge-node/" "$node:$admission_remote/edge/"
+  scp -q "$admission_env" "$node:$admission_remote/gateway-admission.env"
+  remote_sha="$(ssh -T "$node" "set -Eeuo pipefail
+    sudo '$admission_remote/edge/install-gateway-admission.sh' '$admission_remote/gateway-admission.env' >/dev/null
+    rm -rf '$admission_remote'
+    cd /srv/dai/edge
+    sudo sha256sum gateway-admission.env | awk '{print \$1}'")"
+  [[ "$remote_sha" == "$expected_sha" ]] \
+    || die "gateway admission environment differs after deployment: expected=$expected_sha actual=${remote_sha:-unavailable}"
+  ssh -T "$node" "set -Eeuo pipefail
+    cd /srv/dai/edge
+    cleanup_failed_admission() {
+      rc=\$?
+      if (( rc != 0 )); then
+        docker compose stop gateway-admission >/srv/dai/stop-gateway-admission.log 2>&1 || true
+      fi
+      exit \"\$rc\"
+    }
+    trap cleanup_failed_admission EXIT
+    [[ \"\$(sudo sha256sum gateway-admission.env | awk '{print \$1}')\" == '$expected_sha' ]]
+    set -a; . ./gateway-admission.env; set +a
+    curl -fsS --connect-timeout 5 --max-time 15 \"\$GDC_GATEWAY_ADMISSION_STATUS_URL\" \
+      -H \"Authorization: Bearer \$GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN\" \
+      | jq -e '.capacity.models | type == \"object\"' >/dev/null
+    docker compose up -d --force-recreate gateway-admission >start-gateway-admission.log 2>&1
+    [[ -n \"\$(docker compose ps --status running -q gateway-admission)\" ]]
+    trap - EXIT"
+  printf 'READY gateway admission contract deployed from the selected gateway profile\n'
+}
+
+suspend_gateway_admission() {
+  local remote_script="${REMOTE}-suspend-gateway-admission.sh"
+  scp -q "$ROOT/04-ops/edge-node/suspend-gateway-admission.sh" \
+    "$PUBLIC_EDGE_NODE:$remote_script"
+  ssh -T "$PUBLIC_EDGE_NODE" "set -Eeuo pipefail
+    sudo '$remote_script'
+    rm -f '$remote_script'"
+  printf 'READY public gateway admission is fail-closed for runtime replacement\n'
 }
 
 GATEWAY_OPTION=''
 CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
+POST_START_COMMAND=true
 if [[ "$COMPONENT" == edge ]]; then
   step 'Install the public edge configuration without changing chain state'
   reconcile_public_grafana
@@ -120,6 +189,8 @@ case "$COMPONENT" in
     [[ "$faucet_amount" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_CLAIM_NGONKA must be positive'
     [[ "$faucet_initial" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
     (( faucet_amount <= faucet_initial )) || die 'GDC_FAUCET_CLAIM_NGONKA must not exceed GDC_FAUCET_INITIAL_NGONKA'
+    step 'Reconcile the bounded DevNet faucet reserve'
+    "$ROOT/scripts/ensure-account-balance.sh" "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$faucet_initial"
     FAUCET_SIGNER_HOME="$("$ROOT/scripts/prepare-faucet-signer.sh")"
     write_env "$FAUCET_ENV" \
       "FAUCET_CHAIN_ID=$CHAIN_ID" \
@@ -160,26 +231,38 @@ case "$COMPONENT" in
     gateway_funding_horizon="${GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS:-1}"
     gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
     gateway_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
+    gateway_funding_source_target="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
     [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
     [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
     [[ "$gateway_max_refill" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be positive'
+    [[ "$gateway_funding_source_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
+    step 'Reconcile the gateway reserve funding source'
+    "$ROOT/scripts/ensure-account-balance.sh" \
+      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$gateway_funding_source_target"
     "$ROOT/04-ops/ensure-gateway-reserve.sh" \
       "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
       "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \
       0 0 "$gateway_max_refill"
-    # Re-running `ops gateway` switches or verifies a protocol runtime; it is
-    # not authority to mint another escrow.  The escrow reconciler can rotate
-    # the configured ID while this command is not running, so the deployed
-    # gateway runtime is authoritative.  Consult it before the rendered file:
-    # the latter is merely a snapshot and may point at a pruned escrow.
+    # Re-running `ops gateway` may reuse an escrow only for the same bound
+    # protocol. A Host persists the protocol binding per escrow and rejects a
+    # later request that presents the same escrow through another route. The
+    # deployed runtime is authoritative because the reconciler can rotate the
+    # rendered ID while this command is not running.
+    if [[ -n "${GDC_ESCROW_ID:-}" ]]; then
+      configured_escrow="$(awk -F= '$1 == "DEVSHARD_ESCROW_ID" { print $2; exit }' "$GATEWAY_ENV" 2>/dev/null || true)"
+      configured_route="$(awk -F= '$1 == "DEVSHARD_ROUTE_PREFIX" { print $2; exit }' "$GATEWAY_ENV" 2>/dev/null || true)"
+      [[ "$GDC_ESCROW_ID" == "$configured_escrow" && "$configured_route" == "/devshard/$GDC_GATEWAY_VERSION" ]] \
+        || die 'GDC_ESCROW_ID may reuse only the rendered escrow for the selected DevShard protocol'
+    fi
     if [[ -z "${GDC_ESCROW_ID:-}" ]]; then
       gateway_creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
-      active_gateway_escrows="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
+      active_gateway_state="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
         [[ -r /srv/dai/ops/gateway.env ]] || exit 0
         set -a; . /srv/dai/ops/gateway.env; set +a
         curl -fsS http://127.0.0.1:18080/v1/admin/devshards \
-          -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
-          | jq -r ".devshards[]? | select(.active == true and (.runtime.phase // \"\") == \"active\" and (.runtime.requests_blocked // false) == false) | .id | tostring"' 2>/dev/null || true)"
+          -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY"' 2>/dev/null || true)"
+      active_gateway_escrows="$(printf '%s\n' "$active_gateway_state" \
+        | "$ROOT/scripts/select-compatible-gateway-escrows.sh" "$GDC_GATEWAY_VERSION" 2>/dev/null || true)"
       active_gateway_escrow=''
       while IFS= read -r candidate; do
         [[ "$candidate" =~ ^[1-9][0-9]*$ ]] || continue
@@ -197,10 +280,13 @@ case "$COMPONENT" in
       done <<<"$active_gateway_escrows"
       if [[ -n "$active_gateway_escrow" ]]; then
         export GDC_ESCROW_ID="$active_gateway_escrow"
-        printf 'READY reuse active gateway escrow %s from deployed runtime\n' "$GDC_ESCROW_ID"
+        printf 'READY reuse active %s gateway escrow %s from deployed runtime\n' "$GDC_GATEWAY_VERSION" "$GDC_ESCROW_ID"
       elif [[ -s "$GATEWAY_ENV" ]]; then
         previous_escrow="$(awk -F= '$1 == "DEVSHARD_ESCROW_ID" { print $2; exit }' "$GATEWAY_ENV")"
-        if [[ "$previous_escrow" =~ ^[1-9][0-9]*$ ]]; then
+        previous_route="$(awk -F= '$1 == "DEVSHARD_ROUTE_PREFIX" { print $2; exit }' "$GATEWAY_ENV")"
+        if [[ "$previous_escrow" =~ ^[1-9][0-9]*$ && "$previous_route" != "/devshard/$GDC_GATEWAY_VERSION" ]]; then
+          printf 'READY discard gateway escrow %s bound to incompatible route %s\n' "$previous_escrow" "${previous_route:-unavailable}"
+        elif [[ "$previous_escrow" =~ ^[1-9][0-9]*$ ]]; then
           previous_state="$("$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$previous_escrow" \
             --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json 2>/dev/null || true)"
           if jq -e '.found == true and (.escrow.settled // false) == false' <<<"$previous_state" >/dev/null 2>&1; then
@@ -218,6 +304,10 @@ case "$COMPONENT" in
     fi
     step 'Create DevShard escrow and gateway credentials'
     "$ROOT/04-ops/create-gateway.sh" "$INVENTORY" "$SECRETS" "$GATEWAY_ENV"
+    write_env "$GATEWAY_OBSERVER_ENV" \
+      "DEVSHARD_ADMIN_API_KEY=$(<"$SECRETS/gateway.admin-key")" \
+      "GDC_GATEWAY_ADMISSION_OBSERVER_TOKEN=$(<"$SECRETS/gateway.admission-observer-key")" \
+      'GDC_GATEWAY_ADMIN_STATE_URL=http://127.0.0.1:18080/v1/admin/devshards'
     gateway_default_max_tokens="$(awk -F= '$1 == "GATEWAY_DEFAULT_MAX_TOKENS" { print $2 }' "$GATEWAY_ENV")"
     [[ "$gateway_default_max_tokens" =~ ^[1-9][0-9]*$ ]] || die 'gateway default max tokens is missing or invalid'
     gateway_rotation_escrow_amount="$(awk -F= '$1 == "DEVSHARD_ROTATION_ESCROW_AMOUNT" { print $2 }' "$GATEWAY_ENV")"
@@ -244,7 +334,7 @@ case "$COMPONENT" in
     [[ "$gateway_rotation_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED must be true or false'
     [[ "$gateway_rotation_settlement_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED must be true or false'
     [[ "$gateway_ingress_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_INGRESS_TIMEOUT_SECONDS must be positive'
-    GATEWAY_OPTION="--gateway-env '$REMOTE/rendered/gateway.env'"
+    GATEWAY_OPTION="--gateway-env '$REMOTE/rendered/gateway.env' --gateway-observer-env '$REMOTE/rendered/gateway-admission-observer.env'"
     # `gateway.env` is both container input and Compose interpolation input:
     # it selects the protocol-isolated state volume before the service is
     # created. `env_file:` alone is too late for `${...}` in compose.yaml.
@@ -258,8 +348,9 @@ case "$COMPONENT" in
     # this gateway node's Caddy is ready.  The runtime self-probe targets the
     # gateway participant host, so wait for that exact ingress instead.
     gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"
-    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d devshard-gateway"
+    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
     CADDY_START_COMMAND=true
+    POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-admission-observer.service >/dev/null && sudo systemctl restart gdc-gateway-admission-observer.service && sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
     ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"
     ;;
   monitoring)
@@ -302,6 +393,16 @@ rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"
 if [[ -n "$FAUCET_SIGNER_HOME" ]]; then
   rsync -a "$FAUCET_SIGNER_HOME/" "$GATEWAY_NODE:$REMOTE/faucet-signer/"
 fi
+if [[ "$COMPONENT" == gateway ]]; then
+  step "Revalidate the exact $GDC_GATEWAY_VERSION approval at the activation boundary"
+  "$ROOT/scripts/inferenced.sh" query inference params \
+    --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json \
+    >"$gateway_approved_params"
+  "$ROOT/scripts/verify-approved-devshard-version.sh" \
+    "$gateway_approved_params" "$GDC_GATEWAY_VERSION" "$gateway_archive_url" "$gateway_archive_sha"
+  step 'Suspend public admission before replacing the gateway runtime'
+  suspend_gateway_admission
+fi
 printf 'WAIT  start %s operations component\n' "$COMPONENT"
 if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
   if [[ -d '$REMOTE/faucet-signer' ]]; then
@@ -312,7 +413,7 @@ if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
   sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION $FAUCET_OPTION
   rm -rf '$REMOTE'
   {
-    cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND
+    cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND && $POST_START_COMMAND
   } >/srv/dai/ops/start-$COMPONENT.log 2>&1"; then
   printf 'READY %s endpoint %s\n' "$COMPONENT" "$ENDPOINT"
 else
@@ -417,6 +518,25 @@ if [[ "$COMPONENT" == gateway ]]; then
     sleep 3
   done
   [[ "$gateway_ready" == true ]] || die 'gateway did not become ACTIVE before timeout'
+  step 'Verify the sanitized read-only admission observer'
+  observer_token="$(<"$SECRETS/gateway.admission-observer-key")"
+  observer_url="https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
+  curl -fsS --connect-timeout 5 --max-time 15 "$observer_url" \
+    -H "Authorization: Bearer $observer_token" \
+    | jq -e --arg protocol "$GDC_GATEWAY_VERSION" '
+        (.capacity.models // {}) as $models
+        | any($models[]?; ((.current_weight // .total_weight // 0) | tonumber) > 0)
+        and any(.devshards[]?;
+          .active == true
+          and .protocol_version == $protocol
+          and .runtime.session_version == $protocol
+          and .runtime.phase == "active"
+          and .runtime.chain_phase == "Inference"
+          and .runtime.requests_blocked == false)
+      ' >/dev/null \
+    || die "gateway admission observer does not expose the selected live protocol with positive capacity: url=$observer_url"
+  step 'Deploy the matching public admission contract'
+  deploy_gateway_admission
   ssh "$GATEWAY_NODE" 'test "$(stat -c %a /srv/dai/ops/gateway.env)" = 600'
   admin_key="$(<"$SECRETS/gateway.admin-key")"
   client_key="$(cut -d, -f1 "$SECRETS/gateway.client-keys")"

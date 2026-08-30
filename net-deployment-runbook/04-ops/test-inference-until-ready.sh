@@ -162,13 +162,15 @@ while (( SECONDS < deadline )); do
   rm -f "$status_file" "$completion_file" "$status_stderr" "$completion_stderr" "$completion_headers"
   printf 'WAIT inference attempt=%s reason=%s status_ready=%s\n' "$attempt" "$last_reason" "$status_ready" >&2
 
-  case "$last_reason" in
-    http_401|http_403|http_400|http_404|invalid_completion)
-      jq -n --arg verdict BLOCKED --arg reason "$last_reason" --argjson attempts "$attempt" \
-        '{verdict:$verdict,reason:$reason,attempts:$attempts}' >"$evidence_dir/inference-verdict.json"
-      exit 1
-      ;;
-  esac
+  # A retry is safe only when the admission proxy proves that no upstream
+  # dispatch occurred. Transport failures, missing headers, dispatched_once,
+  # and dispatch_attempt_failed are terminal because another attempt could
+  # create a second chain-accounted inference.
+  if [[ "$admission" != pre_dispatch_rejected ]]; then
+    jq -n --arg verdict BLOCKED --arg reason "$last_reason" --arg admission "$admission" --argjson attempts "$attempt" \
+      '{verdict:$verdict,reason:$reason,admission:$admission,attempts:$attempts}' >"$evidence_dir/inference-verdict.json"
+    exit 1
+  fi
   (( SECONDS < deadline )) && sleep 5
 done
 

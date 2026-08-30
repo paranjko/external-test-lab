@@ -90,6 +90,18 @@ def submit(address, amount=AMOUNT):
     return txhash
 
 
+def safe_transaction_error(error):
+    """Classify signer failures without returning CLI output or private state."""
+    message = str(error).lower()
+    if "insufficient funds" in message:
+        return "gateway reserve funding account has insufficient funds"
+    if "account sequence mismatch" in message or "incorrect account sequence" in message:
+        return "gateway reserve signer sequence conflict"
+    if "timed out" in message or "timeout" in message:
+        return "gateway reserve transaction timed out"
+    return "gateway reserve transaction was not accepted"
+
+
 def signer_cli_ready():
     try:
         result = subprocess.run(
@@ -211,8 +223,8 @@ class FaucetHandler(BaseHTTPRequestHandler):
                 return
             try:
                 txhash = submit(recipient, str(amount))
-            except (OSError, subprocess.TimeoutExpired, RuntimeError):
-                self.reply(503, {"error": "gateway reserve transaction was not accepted"})
+            except (OSError, subprocess.TimeoutExpired, RuntimeError) as error:
+                self.reply(503, {"error": safe_transaction_error(error)})
                 return
             db.execute("INSERT INTO gateway_refills VALUES (?, ?, ?, ?)", (key, txhash, str(amount), int(time.time())))
             db.commit()

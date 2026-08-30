@@ -26,7 +26,9 @@ services:
     image: ${PYTHON_IMAGE:-python:3.13-alpine}
     restart: unless-stopped
     network_mode: host
-    env_file: [./.env]
+    # This contract is selected by `gateway apply`, independently from the
+    # Caddy/Grafana operator profile in .env.
+    env_file: [./gateway-admission.env]
     command: ["python3", "/edge/gateway-admission-proxy.py"]
     volumes:
       - ./gateway-admission-proxy.py:/edge/gateway-admission-proxy.py:ro

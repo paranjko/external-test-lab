@@ -10,18 +10,29 @@ record_phase_profile governance-devshard
 creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
 poc_exchange_duration="${GDC_POC_EXCHANGE_DURATION:-8}"
 [[ "$poc_exchange_duration" =~ ^[1-9][0-9]*$ ]] || die 'GDC_POC_EXCHANGE_DURATION must be positive'
-supported_protocols="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
+governance_candidates="${DEVSHARD_GOVERNANCE_PROTOCOLS:-${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}}"
+supported_protocols="${GDC_GOVERNANCE_DEVSHARD_PROTOCOLS:-$governance_candidates}"
+supported_protocols="$("$ROOT/scripts/validate-devshard-governance-protocols.sh" \
+  "$supported_protocols" "$governance_candidates")"
 read -r -a supported_protocols_array <<<"$supported_protocols"
-(( ${#supported_protocols_array[@]} > 0 )) || die 'DEVSHARD_SUPPORTED_PROTOCOLS must not be empty'
 approved_versions='[]'
+artifact_cache="$GDC_HOME/cache/devshard"
 for protocol in "${supported_protocols_array[@]}"; do
+  jq -e --arg protocol "$protocol" 'all(.[]; .name != $protocol)' <<<"$approved_versions" >/dev/null \
+    || die "duplicate DevShard protocol in requested governance set: $protocol"
   case "$protocol" in
     v3) approved_versions="$(jq --arg url "$DEVSHARD_V3_URL" --arg sha "$DEVSHARD_V3_SHA256" '. + [{name:"v3",binary:$url,sha256:$sha}]' <<<"$approved_versions")" ;;
     v4) approved_versions="$(jq --arg url "$DEVSHARD_V4_URL" --arg sha "$DEVSHARD_V4_SHA256" '. + [{name:"v4",binary:$url,sha256:$sha}]' <<<"$approved_versions")" ;;
     v5) approved_versions="$(jq --arg url "$DEVSHARD_V5_URL" --arg sha "$DEVSHARD_V5_SHA256" '. + [{name:"v5",binary:$url,sha256:$sha}]' <<<"$approved_versions")" ;;
-    *) die "unsupported DevShard protocol in DEVSHARD_SUPPORTED_PROTOCOLS: $protocol" ;;
+    *) die "unsupported DevShard governance candidate: $protocol" ;;
   esac
 done
+printf 'PROFILE phase=governance-devshard approved_protocols=%s\n' "$supported_protocols"
+
+step 'Verify requested DevShard archives before governance'
+while IFS=$'\t' read -r protocol url sha; do
+  "$ROOT/scripts/verify-devshard-archive.sh" "$protocol" "$url" "$sha" "$artifact_cache"
+done < <(jq -r '.[] | [.name,.binary,.sha256] | @tsv' <<<"$approved_versions")
 # Public chain RPC terminates on the configured public edge after the distributed topology is
 # available. bootstrap-access overrides this with the sole Genesis participant.
 rpc="${GDC_CHAIN_RPC_URL:-https://$PUBLIC_EDGE_HOST/chain-rpc/}"
@@ -29,8 +40,41 @@ authority="${GDC_INFERENCE_GOV_AUTHORITY:-gonka10d07y265gmmuvt4z0w9aw880jnsr700j
 [[ "$authority" =~ ^gonka1[0-9a-z]{20,90}$ ]] || die 'GDC_INFERENCE_GOV_AUTHORITY is invalid'
 
 step 'Capture live inference and governance parameters before proposal'
-"$ROOT/scripts/inferenced.sh" query inference params --node "$rpc" --chain-id "$CHAIN_ID" --output json >"$RUN/params-before.json"
-jq -e '(.params // .)' "$RUN/params-before.json" >"$RUN/params-before.normalized.json"
+# Use the same protobuf JSON REST representation that governance proposal
+# readback uses, through the current public chain boundary used by the
+# transition. The CLI query omits unpopulated fields and a lagging local Host
+# could preserve stale unrelated parameters.
+params_url="${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
+params_url="${params_url%/}/productscience/inference/inference/params"
+capture_public_params() {
+  local output="$1" label="$2" stderr_file http_status curl_exit error_detail
+  stderr_file="$RUN/$label.curl.stderr"
+  set +e
+  http_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$output" \
+    -w '%{http_code}' "$params_url" 2>"$stderr_file")"
+  curl_exit=$?
+  set -e
+  if (( curl_exit != 0 )) || [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+    error_detail="$(tr '\n' ' ' <"$stderr_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//' | cut -c1-240)"
+    die "cannot capture current public inference parameters (stage=$label url=$params_url http_status=${http_status:-000} curl_exit=$curl_exit curl_status=$(curl_exit_status "$curl_exit")${error_detail:+ detail=$error_detail})"
+  fi
+  jq -e '(.params // .)' "$output" >/dev/null \
+    || die "current public inference parameters are malformed (stage=$label url=$params_url evidence=$output)"
+}
+capture_public_params "$RUN/params-before.json" params-before
+jq '(.params // .)' "$RUN/params-before.json" >"$RUN/params-before.normalized.json"
+printf '%s\n' "$approved_versions" >"$RUN/requested-approved-versions.json"
+governance_state="$("$ROOT/scripts/prepare-devshard-governance-state.sh" \
+  "$RUN/params-before.json" "$RUN/requested-approved-versions.json" "$creator")" \
+  || die "requested DevShard governance transition is not state-preserving (evidence=$RUN/params-before.json)"
+current_protocols="$(jq -er '
+  (.params // .).devshard_escrow_params.approved_versions | map(.name) | join(" ")
+' "$RUN/params-before.json")"
+allowed_creators="$(jq -c '.allowed_creator_addresses' <<<"$governance_state")"
+# MsgUpdateParams replaces approved_versions wholesale. Never let an older or
+# unscoped profile silently revoke or rebind a protocol that is already approved.
+"$ROOT/scripts/validate-devshard-governance-protocols.sh" \
+  "$supported_protocols" "$governance_candidates" "$current_protocols" >/dev/null
 ssh "$GENESIS_NODE" 'curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/params/deposit' >"$RUN/gov-params.json"
 min_deposit="$(jq -er '(.params.min_deposit // .deposit_params.min_deposit)[0] | .amount + .denom' "$RUN/gov-params.json")"
 deposit="${GDC_GOVERNANCE_DEPOSIT:-$min_deposit}"
@@ -39,11 +83,12 @@ deposit="${GDC_GOVERNANCE_DEPOSIT:-$min_deposit}"
 
 step 'Render the full, state-preserving DevShard params proposal'
 jq --arg authority "$authority" --arg creator "$creator" --argjson approved_versions "$approved_versions" \
+  --argjson allowed_creators "$allowed_creators" \
   --arg poc_exchange_duration "$poc_exchange_duration" --arg poc_validation_delay "10" \
   --arg deposit "$deposit" '
   (.params // .) as $params
   | $params
-  | .devshard_escrow_params.allowed_creator_addresses = [$creator]
+  | .devshard_escrow_params.allowed_creator_addresses = $allowed_creators
   | .devshard_escrow_params.approved_versions = $approved_versions
   | .devshard_escrow_params.devshard_requests_enabled = true
   | .epoch_params.poc_exchange_duration = $poc_exchange_duration
@@ -51,20 +96,27 @@ jq --arg authority "$authority" --arg creator "$creator" --argjson approved_vers
   | .epoch_params.poc_slot_allocation = {value:"5", exponent:-1}
   | {messages:[{"@type":"/inference.inference.MsgUpdateParams",authority:$authority,params:.}],
      metadata:"",title:"GDC: DevShard access and protocol PoC allocation",deposit:$deposit,
-     summary:"Registers immutable supported DevShard archives, allows the dedicated gateway creator, keeps the 0.2.14 PoC distribution retry window open, and preserves the protocol default 50 percent PoC slot allocation."}
+     summary:"Registers immutable supported DevShard archives, preserves the live creator policy while keeping the gateway authorized, keeps the 0.2.14 PoC distribution retry window open, and preserves the protocol default 50 percent PoC slot allocation."}
 ' "$RUN/params-before.json" >"$RUN/proposal.json"
-jq -e --arg creator "$creator" --argjson approved_versions "$approved_versions" '
+message_hash="$(jq -cS '.messages' "$RUN/proposal.json" | sha256sum | awk '{print $1}')"
+proposal_metadata="gdc-message-sha256:$message_hash"
+jq --arg metadata "$proposal_metadata" '.metadata = $metadata' "$RUN/proposal.json" >"$RUN/proposal.with-metadata.json"
+mv "$RUN/proposal.with-metadata.json" "$RUN/proposal.json"
+jq -e --argjson allowed_creators "$allowed_creators" --argjson approved_versions "$approved_versions" '
   .messages[0].params.devshard_escrow_params as $p
-  | $p.allowed_creator_addresses == [$creator]
+  | $p.allowed_creator_addresses == $allowed_creators
   and $p.approved_versions == $approved_versions
   and ($p.approved_versions[] | .sha256 | test("^[0-9a-f]{64}$"))
   and ($p.max_nonce | tonumber > 0)
   and (.messages[0].params.epoch_params.poc_slot_allocation == {value:"5", exponent:-1})
 ' "$RUN/proposal.json" >/dev/null
 
-if jq -e --arg creator "$creator" --argjson approved_versions "$approved_versions" --arg exchange "$poc_exchange_duration" '
+if jq -e --arg creator "$creator" --argjson allowed_creators "$allowed_creators" \
+  --argjson approved_versions "$approved_versions" --arg exchange "$poc_exchange_duration" '
   (.params // .).devshard_escrow_params as $p
-  | ($p.allowed_creator_addresses | index($creator) != null)
+  | ($p.allowed_creator_addresses == $allowed_creators)
+  and (($p.allowed_creator_addresses | length) == 0
+    or ($p.allowed_creator_addresses | index($creator) != null))
   and ($p.devshard_requests_enabled == true)
   and $p.approved_versions == $approved_versions
   and (((.params // .).epoch_params.poc_exchange_duration | tonumber) == ($exchange | tonumber))
@@ -77,7 +129,8 @@ if jq -e --arg creator "$creator" --argjson approved_versions "$approved_version
 # DevShard governance: PASS
 
 The effective chain parameters already authorize the configured DevShard binaries and
-the dedicated gateway creator. No duplicate proposal was submitted.
+the gateway creator without narrowing the live creator policy. No duplicate proposal
+was submitted.
 EOF
   printf 'PASS governance already effective: %s\n' "$RUN"
   exit 0
@@ -85,14 +138,8 @@ fi
 
 proposal_id="${GDC_GOVERNANCE_PROPOSAL_ID:-}"
 if [[ -z "$proposal_id" ]]; then
-  ssh "$GENESIS_NODE" 'curl -fsS "http://127.0.0.1:1317/cosmos/gov/v1/proposals?pagination.limit=100"' >"$RUN/proposals.json"
-  proposal_id="$(jq -r '
-    [.proposals[]?
-      | select(.title == "GDC: DevShard access and protocol PoC allocation")
-      | select(.status == "PROPOSAL_STATUS_VOTING_PERIOD" or .status == "PROPOSAL_STATUS_PASSED")
-      | (.id | tonumber)]
-    | if length == 0 then "" else max | tostring end
-  ' "$RUN/proposals.json")"
+  "$ROOT/scripts/fetch-governance-proposals.sh" "$GENESIS_NODE" "$RUN/proposals.json"
+  proposal_id="$("$ROOT/scripts/select-devshard-governance-proposal.sh" "$RUN/proposal.json" "$RUN/proposals.json")"
   [[ -z "$proposal_id" ]] || printf 'READY reuse DevShard governance proposal %s\n' "$proposal_id"
 fi
 if [[ -z "$proposal_id" && "${GDC_GOVERNANCE_SUBMIT:-false}" == true ]]; then
@@ -130,6 +177,19 @@ fi
 
 step "Verify passed governance proposal $proposal_id"
 ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id" >"$RUN/proposal-status.json"
+jq '{proposals:[.proposal]}' "$RUN/proposal-status.json" >"$RUN/proposal-selected-list.json"
+matched_proposal_id="$("$ROOT/scripts/select-devshard-governance-proposal.sh" \
+  "$RUN/proposal.json" "$RUN/proposal-selected-list.json" verify)"
+if [[ "$matched_proposal_id" != "$proposal_id" ]]; then
+  cat >"$RUN/verdict.md" <<EOF
+# DevShard governance: BLOCKED
+
+Proposal $proposal_id does not carry the exact DevShard transition rendered by
+this run. It is not reused, voted, or accepted as evidence for this transition.
+EOF
+  printf 'BLOCKED proposal %s does not match desired DevShard transition metadata and parameters\n' "$proposal_id"
+  exit 3
+fi
 proposal_status="$(jq -er '.proposal.status' "$RUN/proposal-status.json")"
 if [[ "$proposal_status" == PROPOSAL_STATUS_VOTING_PERIOD && "${GDC_GOVERNANCE_AUTO_VOTE:-false}" == true ]]; then
   "$ROOT/scripts/phase-vote-proposal.sh" "$proposal_id" yes
@@ -154,10 +214,13 @@ EOF
 }
 
 step 'Verify effective versions, creator allowlist, and live escrow limits'
-"$ROOT/scripts/inferenced.sh" query inference params --node "$rpc" --chain-id "$CHAIN_ID" --output json >"$RUN/params-after.json"
-jq -e --arg creator "$creator" --argjson approved_versions "$approved_versions" --arg exchange "$poc_exchange_duration" '
+capture_public_params "$RUN/params-after.json" params-after
+jq -e --arg creator "$creator" --argjson allowed_creators "$allowed_creators" \
+  --argjson approved_versions "$approved_versions" --arg exchange "$poc_exchange_duration" '
   (.params // .).devshard_escrow_params as $p
-  | ($p.allowed_creator_addresses | index($creator) != null)
+  | (($p.allowed_creator_addresses // []) == $allowed_creators)
+  and ((($p.allowed_creator_addresses // []) | length) == 0
+    or (($p.allowed_creator_addresses // []) | index($creator) != null))
   and ($p.approved_versions == $approved_versions)
   and ($p.min_amount | tonumber > 0)
   and ($p.max_nonce | tonumber > 0)
@@ -170,7 +233,8 @@ cat >"$RUN/verdict.md" <<EOF
 # DevShard governance: PASS
 
 Proposal $proposal_id passed. The chain now authorizes the configured DevShard
-protocols with recorded SHA-256 values, allows the dedicated gateway creator
-$creator, and preserves the protocol default 50 percent PoC slot allocation.
+protocols with recorded SHA-256 values, keeps gateway creator $creator authorized
+without narrowing the live creator policy, and preserves the protocol default 50
+percent PoC slot allocation.
 EOF
 printf 'PASS governance evidence: %s\n' "$RUN"

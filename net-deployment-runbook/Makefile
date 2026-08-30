@@ -91,9 +91,16 @@ test: site-js-check
 	@./scripts/test-verify-candidate-release-target.sh
 	@./scripts/test-candidate-workflow.sh
 	@./scripts/test-composition-manifest.sh
+	@./scripts/test-devshard-governance-proposal-selection.sh
+	@./scripts/test-fetch-governance-proposals.sh
+	@./scripts/test-governance-vote-evidence.sh
+	@./scripts/test-validate-devshard-governance-protocols.sh
+	@./scripts/test-verify-devshard-archive.sh
+	@./scripts/test-verify-approved-devshard-version.sh
 	@./scripts/test-candidate-gateway-compose.sh
 	@./scripts/test-build-gateway-image.sh
 	@./scripts/test-gdc-home.sh
+	@./scripts/test-ensure-inferenced-cli-output.sh
 	@./scripts/test-gdc-github-report.sh
 	@./scripts/test-diagnostic-envelope.sh
 	@./scripts/test-phase-diagnostic-adapter.sh
@@ -122,12 +129,17 @@ test: site-js-check
 	@$(MAKE) test-gateway-site-state
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
+	@./scripts/test-gateway-admission-deployment.sh
+	@./scripts/test-suspend-gateway-admission.sh
 	@./scripts/test-firewall-policy.sh
 	@./scripts/test-public-grafana-targets.sh
 	@./scripts/test-public-gpu-freshness.sh
+	@python3 ./scripts/test-gateway-admission-observer.py
 	@python3 ./scripts/test-gateway-admission-proxy.py
 	@./scripts/test-host-sync-verdict.sh
+	@./scripts/test-ensure-account-balance.sh
 	@./scripts/test-gateway-reserve-policy.sh
+	@./scripts/test-select-compatible-gateway-escrows.sh
 	@./scripts/test-inference-until-ready.sh
 	@./scripts/test-gateway-escrow-reconciler.sh
 	@./scripts/test-faucet-caddy-config.sh
@@ -136,6 +148,7 @@ test: site-js-check
 	@./scripts/test-participant-poc-caddy-config.sh
 	@python3 ./scripts/test-devnet-faucet.py
 	@./scripts/test-telegram-bot-deployment.sh
+	@./scripts/test-telegram-consumer-probe-loop.sh
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-validator-backup-contract.sh

@@ -232,8 +232,8 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 host ml-attach <SSH_ALIAS>
   ./gdc.sh host stop|start|verify <SSH_ALIAS>
   ./gdc.sh host reset <SSH_ALIAS> [<SSH_ALIAS> ...]
-  ./gdc.sh --release v2026.08.06 governance devshard submit
-  ./gdc.sh --release v2026.08.06 governance devshard verify <proposal-id>
+  ./gdc.sh --composition <COMPOSITION> governance devshard submit [--protocols v3,v4,v5]
+  ./gdc.sh --composition <COMPOSITION> governance devshard verify <proposal-id> [--protocols v3,v4,v5]
   ./gdc.sh --release v2026.08.06 governance vote <proposal-id> [yes|no|abstain|no_with_veto]
   ./gdc.sh --release v2026.08.06 bridge contract deploy sepolia
   ./gdc.sh --release v2026.08.06 bridge contract register sepolia
@@ -256,7 +256,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.08.06 advance-after-upgrade <proposal-id>
   ./gdc.sh --release v2026.08.06 advance-after-upgrade-worker <proposal-id>
   ./gdc.sh --release v2026.08.06 upgrade
-  ./gdc.sh --release v2026.08.06 governance devshard
+  ./gdc.sh --composition <COMPOSITION> governance devshard [--protocols v3,v4,v5]
   ./gdc.sh --release v2026.08.06 vote <proposal-id> [yes|no|abstain|no_with_veto]
   GDC_GATEWAY_VERSION=v3 GDC_GATEWAY_ESCROW_ROTATION_ENABLED=false GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=false ./gdc.sh --release v2026.08.06 ops gateway
   ./gdc.sh --release v2026.08.06 settle
@@ -305,10 +305,15 @@ if [[ -n "$COMPOSITION" ]]; then
     echo "Unknown composition: $COMPOSITION" >&2
     exit 2
   fi
+  composition_env="$("$ROOT/scripts/release-candidate.py" composition export-env "$COMPOSITION")" || exit $?
+  eval "$composition_env"
+  export GDC_COMPOSITION="$COMPOSITION"
 fi
 if [[ -n "$RELEASE" ]]; then
   [[ "$RELEASE" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "Invalid release profile: $RELEASE" >&2; exit 2; }
   [[ -r "$ROOT/profiles/releases/$RELEASE.lock" || -r "$ROOT/profiles/compositions/$RELEASE.json" || -r "$RELEASE" ]] || { echo "Unknown release: $RELEASE" >&2; exit 2; }
+  [[ -z "$COMPOSITION" || "$RELEASE" == "$GDC_RELEASE_PROFILE" ]] \
+    || { echo "Release profile $RELEASE conflicts with composition core profile $GDC_RELEASE_PROFILE" >&2; exit 2; }
   export GDC_RELEASE_PROFILE="$RELEASE"
 fi
 [[ -z "$MODEL" || "$MODEL" == qwen3-0.6b ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
@@ -326,6 +331,22 @@ is_upgrade_target_profile() {
   fi
   lock="$ROOT/profiles/releases/$profile.lock"
   [[ -r "$lock" ]] && grep -Eq '^UPGRADE_FROM_PROFILE=[a-z0-9][a-z0-9.-]*$' "$lock"
+}
+
+configure_devshard_governance_protocols() {
+  local raw="$1" protocol normalized=''
+  local -a protocols=()
+  [[ -n "$raw" ]] || { echo 'DevShard protocol list must not be empty' >&2; exit 2; }
+  IFS=',' read -r -a protocols <<<"$raw"
+  ((${#protocols[@]} > 0)) || { echo 'DevShard protocol list must not be empty' >&2; exit 2; }
+  for protocol in "${protocols[@]}"; do
+    [[ "$protocol" =~ ^v[1-9][0-9]*$ ]] || { echo "Invalid DevShard protocol: $protocol" >&2; exit 2; }
+    case " $normalized " in
+      *" $protocol "*) echo "Duplicate DevShard protocol: $protocol" >&2; exit 2 ;;
+    esac
+    normalized="${normalized:+$normalized }$protocol"
+  done
+  export GDC_GOVERNANCE_DEVSHARD_PROTOCOLS="$normalized"
 }
 
 COMMAND="${1:-help}"
@@ -663,18 +684,35 @@ case "$COMMAND" in
     done
     ;;
   governance)
+    export GDC_FORCE_NEW_RUN=true
     use_network_owner_data_home
     governance_action="${1:-}"; shift || true
     if [[ "$governance_action" == devshard ]]; then
       case "${1:-}" in
         '') run_phase governance-devshard "$ROOT/scripts/phase-governance-devshard.sh" ;;
+        --protocols)
+          [[ $# -eq 2 ]] || { usage; exit 2; }
+          configure_devshard_governance_protocols "$2"
+          run_phase governance-devshard "$ROOT/scripts/phase-governance-devshard.sh"
+          ;;
         submit)
-          [[ $# -eq 1 ]] || { usage; exit 2; }
+          shift
+          if [[ $# -gt 0 ]]; then
+            [[ $# -eq 2 && "$1" == --protocols ]] || { usage; exit 2; }
+            configure_devshard_governance_protocols "$2"
+          fi
           GDC_GOVERNANCE_SUBMIT=true run_phase governance-devshard-submit "$ROOT/scripts/phase-governance-devshard.sh"
           ;;
         verify)
-          [[ $# -eq 2 && "$2" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
-          GDC_GOVERNANCE_PROPOSAL_ID="$2" run_phase "governance-devshard-verify-$2" "$ROOT/scripts/phase-governance-devshard.sh"
+          shift
+          proposal_id="${1:-}"
+          [[ "$proposal_id" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+          shift
+          if [[ $# -gt 0 ]]; then
+            [[ $# -eq 2 && "$1" == --protocols ]] || { usage; exit 2; }
+            configure_devshard_governance_protocols "$2"
+          fi
+          GDC_GOVERNANCE_PROPOSAL_ID="$proposal_id" run_phase "governance-devshard-verify-$proposal_id" "$ROOT/scripts/phase-governance-devshard.sh"
           ;;
         *) usage; exit 2 ;;
       esac
@@ -686,6 +724,7 @@ case "$COMMAND" in
     fi
     ;;
   vote)
+    export GDC_FORCE_NEW_RUN=true
     use_network_owner_data_home
     [[ $# -eq 1 || $# -eq 2 ]] || { usage; exit 2; }
     run_phase "vote-proposal-$1" "$ROOT/scripts/phase-vote-proposal.sh" "$@"

@@ -25,7 +25,7 @@ for contract in \
   './gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>' \
   './gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>' \
   './gdc.sh --release v2026.07.23 gateway apply v3' \
-  './gdc.sh --release v2026.08.06 governance devshard submit' \
+  './gdc.sh --composition <COMPOSITION> governance devshard submit [--protocols v3,v4,v5]' \
   './gdc.sh --release v2026.08.06 bridge contract deploy sepolia' \
   './gdc.sh --release v2026.08.06 bridge observer apply|status|verify <SSH_ALIAS>'; do
   grep -Fq "$contract" "$ROOT/gdc.sh"
@@ -106,12 +106,37 @@ grep -Fq 'ERROR gdc command failed phase=%s exit=%s run_log=%s command=%s' "$ROO
 grep -Fq 'run_phase "gateway-$gateway_action-$GDC_GATEWAY_VERSION"' "$ROOT/gdc.sh"
 grep -Fq 'phase-gateway-observe.sh' "$ROOT/gdc.sh"
 grep -Fq 'verify_evidence=' "$ROOT/scripts/phase-gateway-observe.sh"
+grep -Fq 'sla="${1:-300s}"' "$ROOT/scripts/phase-gateway-observe.sh"
 grep -Fq 'gateway-status-routable.sh' "$ROOT/scripts/phase-gateway-observe.sh"
 grep -Fq '"$verify_evidence" "$verify_evidence/completion.json"' "$ROOT/scripts/phase-gateway-observe.sh"
 ! grep -Fq '"$gateway_url" "$client_key" "$MODEL_ID" "${sla%s}"' "$ROOT/scripts/phase-gateway-observe.sh"
 grep -Fq 'phase-bridge-observer.sh' "$ROOT/gdc.sh"
 grep -Fq 'GDC_GOVERNANCE_SUBMIT=true run_phase' "$ROOT/gdc.sh"
-grep -Fq 'GDC_GOVERNANCE_PROPOSAL_ID="$2" run_phase' "$ROOT/gdc.sh"
+grep -Fq 'configure_devshard_governance_protocols "$2"' "$ROOT/gdc.sh"
+grep -Fq 'GDC_GOVERNANCE_PROPOSAL_ID="$proposal_id" run_phase' "$ROOT/gdc.sh"
+grep -Fq 'composition export-env "$COMPOSITION"' "$ROOT/gdc.sh"
+grep -Fq 'signing_address="$(printf' "$ROOT/scripts/phase-vote-proposal.sh"
+grep -Fq 'does not match its recorded account' "$ROOT/scripts/phase-vote-proposal.sh"
+grep -Fq 'has incomplete local governance signing state' "$ROOT/scripts/phase-vote-proposal.sh"
+! grep -Fq 'SKIP  vote from' "$ROOT/scripts/phase-vote-proposal.sh"
+! grep -Fq 'READY existing vote from' "$ROOT/scripts/phase-vote-proposal.sh"
+! grep -Fq 'submitted + preexisting' "$ROOT/scripts/phase-vote-proposal.sh"
+grep -Fq 'governance-vote-evidence.sh" receipt' "$ROOT/scripts/phase-vote-proposal.sh"
+[[ "$(grep -Fc '"$ROOT/scripts/verify-approved-devshard-version.sh"' "$ROOT/scripts/phase-ops.sh")" == 2 ]]
+grep -Fq 'is not supported by the pinned gateway artifact' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'is not supported by the pinned gateway artifact' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq '$p.approved_versions as $versions' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'map(.name) | unique | length' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq '.binary == $binary and .sha256 == $sha256' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'DEVSHARD_BINARY_URL=${GATEWAY_ARCHIVE_URL}' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'DEVSHARD_BINARY_SHA256=${GATEWAY_ARCHIVE_SHA256}' "$ROOT/04-ops/create-gateway.sh"
+if GDC_HOME="$tmp/governance-home" "$ROOT/gdc.sh" \
+  --composition core-v2026.08.06+devshard-v2026.08.27-rc.0 \
+  governance devshard submit --protocols v3,v3 >"$tmp/governance.stdout" 2>"$tmp/governance.stderr"; then
+  echo 'governance CLI accepted a duplicate DevShard protocol' >&2
+  exit 1
+fi
+grep -Fq 'Duplicate DevShard protocol: v3' "$tmp/governance.stderr"
 if grep -Eq 'ha-v4|phase-ha-v4|DevShard v4 HA' "$ROOT/scripts/phase-bridge-observer.sh"; then
   echo 'bridge observer has an artificial DevShard HA prerequisite' >&2
   exit 1

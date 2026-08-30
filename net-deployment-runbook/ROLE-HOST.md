@@ -60,8 +60,8 @@ chain parameters before acting.
 
 ```bash
 gdc governance vote <proposal-id> yes
-gdc governance devshard submit
-gdc governance devshard verify <proposal-id>
+gdc --composition <composition> governance devshard submit
+gdc --composition <composition> governance devshard verify <proposal-id>
 ```
 
 Keep the cold key on the operator's trusted machine. Never copy it to OPS,

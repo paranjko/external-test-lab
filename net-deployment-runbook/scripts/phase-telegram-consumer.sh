@@ -8,7 +8,10 @@ action="${1:-}"
 shift
 
 model="${1:-$MODEL_ID}"
-sla="${2:-60s}"
+# The bot uses the same governed public admission path as direct clients.  Its
+# default must therefore span a complete epoch lifecycle as well; callers can
+# still select a smaller explicit SLA for focused diagnostics.
+sla="${2:-300s}"
 [[ $# -le 2 ]] || die 'verify accepts only an optional model and SLA'
 [[ "$model" == "$MODEL_ID" ]] || die "Telegram consumer is configured for $MODEL_ID, not $model"
 [[ "$sla" =~ ^[1-9][0-9]*s$ ]] || die 'Telegram consumer verification SLA must be a positive number of seconds'
@@ -42,33 +45,8 @@ REMOTE
 
 if [[ "$action" == verify ]]; then
   step 'Prove the bot Conversations adapter completes chain-accounted inference'
-  ssh -T "$TELEGRAM_BOT_HOST" bash -s -- "$model" "$sla_seconds" <<'REMOTE'
-set -Eeuo pipefail
-model="$1"
-sla_seconds="$2"
-bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
-[[ "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$bot" | sed -n 's/^MODEL=//p')" == "$model" ]]
-probe="$(timeout "$sla_seconds" docker exec "$bot" python3 /app/bot.py --probe 2>&1)" || {
-  printf "ERROR Telegram consumer inference probe failed response=%s\n" \
-    "$(jq -c '{status,reason}' <<<"$probe" 2>/dev/null || printf '%s' 'unparseable')" >&2
-  exit 1
-}
-jq -e '. == {"conversation_id_present": true, "output_present": true, "status": "completed", "usage_present": true}' \
-  <<<"$probe" >/dev/null || {
-  printf "ERROR Telegram consumer inference probe returned unexpected response=%s\n" \
-    "$(jq -c '{status,reason}' <<<"$probe" 2>/dev/null || printf '%s' 'unparseable')" >&2
-  exit 1
-}
-payload="$(curl -fsS http://127.0.0.1:9464/health)"
-jq -e --argjson sla "$sla_seconds" '
-  .status == "ok"
-  and .inference_ready == true
-  and (.last_success_age_seconds | type == "number" and . <= $sla)
-' <<<"$payload" >/dev/null || {
-  printf "ERROR Telegram consumer probe completed but readiness was not updated health=%s\n" "$payload" >&2
-  exit 1
-}
-REMOTE
+  ssh -T "$TELEGRAM_BOT_HOST" bash -s -- "$model" "$sla_seconds" \
+    < "$ROOT/scripts/telegram-consumer-probe-loop.sh"
   printf 'PASS Telegram conversation consumer completed inference for %s within %s with exact usage\n' "$model" "$sla"
 else
   printf 'READY Telegram conversation consumer is healthy\n'

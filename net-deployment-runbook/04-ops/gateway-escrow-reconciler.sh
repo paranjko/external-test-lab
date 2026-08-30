@@ -157,6 +157,8 @@ DEVSHARD_PRIVATE_KEY="$(gateway_env_value DEVSHARD_PRIVATE_KEY 2>/dev/null || tr
 DEVSHARD_MODEL="$(gateway_env_value DEVSHARD_MODEL 2>/dev/null || true)"
 DEVSHARD_ROUTE_PREFIX="$(gateway_env_value DEVSHARD_ROUTE_PREFIX 2>/dev/null || true)"
 DEVSHARD_CHAIN_ID="$(gateway_env_value DEVSHARD_CHAIN_ID 2>/dev/null || true)"
+DEVSHARD_BINARY_URL="$(gateway_env_value DEVSHARD_BINARY_URL 2>/dev/null || true)"
+DEVSHARD_BINARY_SHA256="$(gateway_env_value DEVSHARD_BINARY_SHA256 2>/dev/null || true)"
 DEVSHARD_ROTATION_ESCROW_AMOUNT="$(gateway_env_value DEVSHARD_ROTATION_ESCROW_AMOUNT 2>/dev/null || true)"
 GDC_GATEWAY_ADMISSION_URL="$(gateway_env_value GDC_GATEWAY_ADMISSION_URL 2>/dev/null || true)"
 if [[ -z "$GDC_GATEWAY_ADMISSION_URL" ]]; then
@@ -173,7 +175,10 @@ expected_host_count="${GDC_GATEWAY_EXPECTED_HOST_COUNT:-$(gateway_env_value GDC_
   write_status PENDING reconciliation_disabled
   exit 0
 }
-[[ -n "${DEVSHARD_ADMIN_API_KEY:-}" && -n "${DEVSHARD_PRIVATE_KEY:-}" && -n "${DEVSHARD_MODEL:-}" && "$GDC_GATEWAY_ADMISSION_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] || {
+[[ -n "${DEVSHARD_ADMIN_API_KEY:-}" && -n "${DEVSHARD_PRIVATE_KEY:-}" && -n "${DEVSHARD_MODEL:-}" \
+  && "$DEVSHARD_ROUTE_PREFIX" =~ ^/devshard/v[1-9][0-9]*$ \
+  && "$DEVSHARD_BINARY_URL" =~ ^https:// && "$DEVSHARD_BINARY_SHA256" =~ ^[0-9a-f]{64}$ \
+  && "$GDC_GATEWAY_ADMISSION_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] || {
   write_status FAILED gateway_credentials_incomplete
   exit 0
 }
@@ -222,6 +227,52 @@ admission_post() {
 chain_escrow() {
   curl -fsS --connect-timeout 3 --max-time 15 \
     "$chain_rest/productscience/inference/inference/devshard_escrow/$1"
+}
+
+live_protocol_approved() {
+  local params version
+  version="${DEVSHARD_ROUTE_PREFIX##*/}"
+  params="$(curl -fsS --connect-timeout 3 --max-time 15 \
+    "$chain_rest/productscience/inference/inference/params")" || return 2
+  jq -e '
+    (.params // .).devshard_escrow_params.approved_versions as $versions
+    | ($versions | type) == "array"
+    and all($versions[];
+      type == "object"
+      and (.name | type == "string" and test("^v[1-9][0-9]*$"))
+      and (.binary | type == "string" and test("^https://"))
+      and (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))
+    and (($versions | map(.name) | length) == ($versions | map(.name) | unique | length))
+  ' \
+    <<<"$params" >/dev/null 2>&1 || return 2
+  jq -e --arg version "$version" --arg url "$DEVSHARD_BINARY_URL" \
+    --arg sha256 "$DEVSHARD_BINARY_SHA256" '
+      (.params // .).devshard_escrow_params.approved_versions as $versions
+      | ([$versions[] | select(.name == $version)] | length == 1)
+      and ([$versions[] | select(.name == $version)][0]
+        | .binary == $url and .sha256 == $sha256)
+    ' <<<"$params" >/dev/null 2>&1
+}
+
+require_live_protocol_approval() {
+  local runtime_id="${1:-}" runtime_active="${2:-false}" approval_rc=0 state reason
+  live_protocol_approved || approval_rc=$?
+  (( approval_rc != 0 )) || return 0
+  if (( approval_rc == 1 )) \
+    && [[ "$runtime_active" == true && "$runtime_id" =~ ^[1-9][0-9]*$ ]] \
+    && ! admin_post "/v1/admin/devshards/$runtime_id/deactivate" '{}' >/dev/null 2>&1; then
+    write_status FAILED devshard_protocol_deactivation_failed "$runtime_id"
+    return 1
+  fi
+  if (( approval_rc == 1 )); then
+    state=PENDING
+    reason=devshard_protocol_not_approved
+  else
+    state=DEGRADED
+    reason=devshard_protocol_approval_unavailable
+  fi
+  write_status "$state" "$reason" "$runtime_id"
+  return 1
 }
 
 runtime_requires_poc_probation_recovery() {
@@ -403,16 +454,25 @@ while IFS=$'\t' read -r id active phase blocked; do
     continue
   fi
   if jq -e --arg id "$id" '.found == true and (.escrow.id | tostring) == $id and ((.escrow.settled // .settled // false) != true)' <<<"$escrow" >/dev/null 2>&1; then
+    # The gateway's internal rotator may expose an already-active runtime
+    # without passing through this controller's activation branch. Recheck the
+    # exact governed artifact before any such runtime can be probed or reported
+    # READY. Public admission independently checks the same exact chain tuple.
+    if [[ "$active" == true && "$phase" == active && "$blocked" != true ]]; then
+      require_live_protocol_approval "$id" true || exit 0
+    fi
     # A replacement creation is asynchronous.  Its ID remains reserved until
     # chain confirmation even when a replica briefly reports found:false.
     if [[ "$id" == "$pending_id" ]]; then
       if [[ "$active" == true && "$phase" == active && "$blocked" != true ]]; then
         bind_and_probe_runtime "$id" || exit 0
       else
-        if admin_post "/v1/admin/devshards/$id/activate" '{}' >/dev/null 2>&1; then
-          bind_and_probe_runtime "$id" || exit 0
-        else
-          write_status RECOVERING waiting_for_routable_runtime "$id"
+        if require_live_protocol_approval "$id"; then
+          if admin_post "/v1/admin/devshards/$id/activate" '{}' >/dev/null 2>&1; then
+            bind_and_probe_runtime "$id" || exit 0
+          else
+            write_status RECOVERING waiting_for_routable_runtime "$id"
+          fi
         fi
       fi
       exit 0
@@ -500,6 +560,7 @@ fi
 # targeted owner chat below binds the versiond session immediately afterwards.
 # Do not use the global disabled setting here: it also blocks that owner chat.
 # The public status remains RECOVERING until the bound-session probe passes.
+require_live_protocol_approval || exit 0
 if ! jq -e '.state == "READY" and (.current_balance | tonumber) >= (.low_watermark | tonumber)' "$reserve_file" >/dev/null 2>&1; then
   write_status RECOVERING replacement_reserve_not_ready
   exit 1

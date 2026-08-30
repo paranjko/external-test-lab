@@ -24,6 +24,7 @@ write_once "$OUT/$GENESIS_NODE.postgres" "$(random)"
 write_once "$OUT/operator.keyring" "$(random)"
 write_once "$OUT/grafana.admin" "$(random)"
 write_once "$OUT/gateway.admin-key" "sk-admin-$(openssl rand -hex 24)"
+write_once "$OUT/gateway.admission-observer-key" "sk-observer-$(openssl rand -hex 24)"
 write_once "$OUT/gateway.client-keys" "sk-gdc-$(openssl rand -hex 24)"
 # A join proof must not borrow the Genesis operator's general assurance
 # credential, a validator keyring, or the Telegram consumer credential.  This

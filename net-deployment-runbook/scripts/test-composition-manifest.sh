@@ -34,7 +34,10 @@ grep -q "LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v3" "$mat_lock"
   # shellcheck source=/dev/null
   source "$ROOT/scripts/profile.sh"
   GDC_COMPOSITION="$comp_out" load_profiles
+  [[ "$GDC_COMPOSITION" == "$comp_out" ]]
   [[ "$DEVSHARD_PROTOCOL_VERSION" == "v3" ]]
+  [[ "$DEVSHARD_SUPPORTED_PROTOCOLS" == "v3" ]]
+  [[ "$DEVSHARD_GOVERNANCE_PROTOCOLS" == "v3 v4" ]]
   [[ "$LOCAL_GATEWAY_IMAGE" == "gdc/devshard-gateway:0.2.15-v3" ]]
   [[ -n "$GDC_COMPOSITION_HASH" ]]
   hash1="$(profile_hash)"
@@ -43,11 +46,23 @@ grep -q "LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v3" "$mat_lock"
   GDC_COMPOSITION_HASH="0000000000000000000000000000000000000000000000000000000000000000"
   hash2="$(profile_hash)"
   [[ "$hash1" != "$hash2" ]]
+  GDC_COMPOSITION_HASH=''
+  load_profiles
+  [[ "$GDC_COMPOSITION" == "$comp_out" ]]
+  [[ -n "$GDC_COMPOSITION_HASH" ]]
 )
 
 # Positive: gdc.sh CLI accepts direct composition file path
 gdc_out="$("$ROOT/gdc.sh" --composition "$comp_out" release composition verify "$comp_out")"
 [[ "$gdc_out" == *"PASS composition=test-gdc-comp"* ]]
+
+# Negative: an explicit release cannot contradict the composition core profile.
+if "$ROOT/gdc.sh" --composition "$comp_out" --release v2026.07.23 \
+  release composition verify "$comp_out" >"$tmp/conflict.out" 2>"$tmp/conflict.err"; then
+  echo 'composition CLI accepted a conflicting release profile' >&2
+  exit 1
+fi
+grep -Fq 'conflicts with composition core profile v2026.08.06' "$tmp/conflict.err"
 
 # Positive: test profile_summary with composition
 (
@@ -55,7 +70,7 @@ gdc_out="$("$ROOT/gdc.sh" --composition "$comp_out" release composition verify "
   source "$ROOT/scripts/profile.sh"
   GDC_COMPOSITION="$comp_out" load_profiles
   summary="$(profile_summary)"
-  [[ "$summary" == *"composition=test-gdc-comp"* ]]
+  [[ "$summary" == *"composition=$comp_out"* ]]
   [[ "$summary" == *"composition_hash="* ]]
   [[ "$summary" == *"postgres_image="* ]]
 )
@@ -67,6 +82,9 @@ printf '%s\n' \
   'UPGRADE_FROM_PROFILE=v2026.08.06' \
   'DEVSHARD_PROTOCOL_VERSION=v5' \
   'CANDIDATE_DEVSHARD_PROTOCOL_VERSION=v5' \
+  'CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS="v3 v5"' \
+  'DEVSHARD_V5_URL=https://example.test/devshardd-v5.zip' \
+  'DEVSHARD_V5_SHA256=5555555555555555555555555555555555555555555555555555555555555555' \
   'LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:candidate' \
   'POSTGRES_IMAGE=postgres:16-alpine' > "$ROOT/profiles/releases/devshard-test-temp.lock"
 (
@@ -77,6 +95,8 @@ printf '%s\n' \
   [[ -n "$INFERENCED_IMAGE" ]]
   [[ -n "$GONKA_COMMIT" ]]
   [[ "$DEVSHARD_PROTOCOL_VERSION" == "v5" ]]
+  [[ "$DEVSHARD_SUPPORTED_PROTOCOLS" == "v3 v5" ]]
+  [[ "$DEVSHARD_GOVERNANCE_PROTOCOLS" == "v3 v4 v5" ]]
 )
 rm -f "$ROOT/profiles/releases/devshard-test-temp.lock"
 

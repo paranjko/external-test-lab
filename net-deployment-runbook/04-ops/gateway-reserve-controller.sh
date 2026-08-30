@@ -25,6 +25,17 @@ attempt_from_state() {
     | select((.identity | type) == "string" and (.identity | test("^[0-9a-f]{64}$")))
   ' "$status_file" 2>/dev/null || true
 }
+curl_status() {
+  case "$1" in
+    0) printf ok ;;
+    6) printf dns_resolution_failed ;;
+    7) printf connection_failed ;;
+    22) printf http_error ;;
+    28) printf timeout ;;
+    35|60) printf tls_error ;;
+    *) printf curl_error ;;
+  esac
+}
 transaction_result() {
   local txhash="$1" response code
   response="$(curl -fsS --connect-timeout 3 --max-time 10 "$chain_rest/cosmos/tx/v1beta1/txs/$txhash" 2>/dev/null || true)"
@@ -77,11 +88,11 @@ policy="$("$(dirname "$0")/gateway-reserve-policy.sh" "$balance" "$min_amount" "
 deficit="$(jq -er .deficit <<<"$policy")"
 target_balance="$(jq -er .target_balance <<<"$policy")"
 if (( deficit == 0 )); then write_state READY reserve_sufficient "$policy"; exit 0; fi
+attempt="$(attempt_from_state)"
 next="$(jq -r '.next_attempt_at // empty' "$status_file" 2>/dev/null || true)"
-[[ -z "$next" || "$(date -u +%s)" -ge "$(date -u -d "$next" +%s 2>/dev/null || printf 0)" ]] || { write_state BLOCKED reserve_backoff "$policy" "$next"; exit 1; }
+[[ -z "$next" || "$(date -u +%s)" -ge "$(date -u -d "$next" +%s 2>/dev/null || printf 0)" ]] || { write_state BLOCKED reserve_backoff "$policy" "$next" "${attempt:-null}"; exit 1; }
 token="$(value GDC_GATEWAY_RESERVE_TOKEN 2>/dev/null || true)"
 [[ -n "$token" ]] || { write_state BLOCKED reserve_signer_credential_unavailable "$policy"; exit 1; }
-attempt="$(attempt_from_state)"
 if [[ -n "$attempt" ]]; then
   attempt_state="$(jq -r .state <<<"$attempt")"
   txhash="$(jq -r '.txhash // empty' <<<"$attempt")"
@@ -122,7 +133,29 @@ fi
 [[ -n "$attempt" ]] || attempt="$(new_attempt)"
 idempotency="$(jq -r .identity <<<"$attempt")"
 write_state RECOVERING refill_attempt_created "$policy" '' "$attempt"
-response="$(curl -fsS --connect-timeout 3 --max-time 45 -X POST "$signer/v1/gateway-reserve" -H "Authorization: Bearer $token" -H "Idempotency-Key: $idempotency" -H 'Content-Type: application/json' --data "$(jq -cn --argjson target "$target_balance" '{target_balance:$target}')")" || { next="$(date -u -d '+60 seconds' +%FT%TZ)"; write_state BLOCKED reserve_signer_unavailable "$policy" "$next" "$attempt"; exit 1; }
+signer_response="$(mktemp)"
+signer_stderr="$(mktemp)"
+set +e
+signer_http_status="$(curl -sS --connect-timeout 3 --max-time 45 -o "$signer_response" -w '%{http_code}' \
+  -X POST "$signer/v1/gateway-reserve" -H "Authorization: Bearer $token" \
+  -H "Idempotency-Key: $idempotency" -H 'Content-Type: application/json' \
+  --data "$(jq -cn --argjson target "$target_balance" '{target_balance:$target}')" 2>"$signer_stderr")"
+signer_curl_exit=$?
+set -e
+if (( signer_curl_exit != 0 )) || [[ ! "$signer_http_status" =~ ^2[0-9][0-9]$ ]]; then
+  signer_reason="$(jq -r '.error // empty' "$signer_response" 2>/dev/null || true)"
+  signer_reason="$(tr '[:upper:] ' '[:lower:]_' <<<"$signer_reason" | sed 's/[^a-z0-9_-]//g; s/_\+/_/g; s/^_//; s/_$//')"
+  signer_detail="$(tr '\n' ' ' <"$signer_stderr" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+  printf 'ERROR gateway reserve signer request failed role=loopback-reserve-signer http_status=%s curl_exit=%s curl_status=%s%s%s\n' \
+    "${signer_http_status:-000}" "$signer_curl_exit" "$(curl_status "$signer_curl_exit")" \
+    "${signer_reason:+ reason=$signer_reason}" "${signer_detail:+ detail=$signer_detail}" >&2
+  rm -f "$signer_response" "$signer_stderr"
+  next="$(date -u -d '+60 seconds' +%FT%TZ)"
+  write_state BLOCKED reserve_signer_unavailable "$policy" "$next" "$attempt"
+  exit 1
+fi
+response="$(<"$signer_response")"
+rm -f "$signer_response" "$signer_stderr"
 txhash="$(jq -r '.txhash // empty' <<<"$response")"
 [[ "$txhash" =~ ^[0-9A-Fa-f]{64}$ ]] || { write_state BLOCKED reserve_signer_invalid_response "$policy" '' "$attempt"; exit 1; }
 attempt="$(jq --arg txhash "$txhash" '(.state="submitted") + {txhash:$txhash,submitted_at:(now|strftime("%Y-%m-%dT%H:%M:%SZ"))}' <<<"$attempt")"

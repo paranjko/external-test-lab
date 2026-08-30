@@ -9,6 +9,7 @@ mapfile -t secret_files < <(find "$tmp/secrets" -maxdepth 1 -type f -printf '%f\
 expected=(
   bridge.jwt
   gateway.admin-key
+  gateway.admission-observer-key
   gateway.client-keys
   gateway.join-client-key
   gateway.reserve-signer-token
