@@ -267,6 +267,24 @@ try:
     State.protocol_sha256 = "a" * 64
     process.terminate(); process.wait(2); processes.remove(process)
 
+    # The pinned v3 gateway reports the legacy protocol_version field with an
+    # unprefixed value. Normalize that exact wire shape, but reject conflicting
+    # legacy and current aliases before dispatch.
+    State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    State.status_override = {"capacity": {"models": {"model": {"current_weight": 1}}}, "devshards": [{"id": "41", "active": True, "chain_phase": "Inference", "phase": "active", "requests_blocked": False, "protocol_version": "3"}]}
+    process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
+    assert post_details(proxy_port) == (429, b'{"error":"single outcome"}', "dispatched_once")
+    assert State.dispatches == 1, "legacy v3 protocol_version was not admitted"
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    State.dispatches = 0
+    State.status_override["devshards"][0]["session_version"] = "v4"
+    process, proxy_port = start_proxy(backend_port, wait=0.2); processes.append(process)
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_protocol_version_unavailable"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "conflicting protocol aliases dispatched"
+    State.status_override = None
+    process.terminate(); process.wait(2); processes.remove(process)
+
     # Governance eligibility does not imply gateway support. An exact-approved
     # v4 Host runtime remains unroutable when the selected gateway profile
     # configures only v3.

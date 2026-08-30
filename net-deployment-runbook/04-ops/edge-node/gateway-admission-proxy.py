@@ -100,6 +100,29 @@ def valid_approved_versions(versions):
     return True
 
 
+def runtime_protocol_version(item, runtime):
+    """Normalize legacy and current gateway status fields fail closed."""
+    observed = []
+    containers = [runtime]
+    if item is not runtime:
+        containers.append(item)
+    for container in containers:
+        for field in ("session_version", "protocol_version"):
+            if field not in container:
+                continue
+            value = container[field]
+            if not isinstance(value, str):
+                return None
+            if re.fullmatch(r"[1-9][0-9]*", value):
+                value = "v" + value
+            elif not re.fullmatch(r"v[1-9][0-9]*", value):
+                return None
+            observed.append(value)
+    if not observed or len(set(observed)) != 1:
+        return None
+    return observed[0]
+
+
 def now_ms():
     return int(time.time() * 1000)
 
@@ -241,8 +264,8 @@ def safe_generation(deadline=None):
         if (item.get("active") is True and runtime.get("phase") == "active"
                 and not runtime.get("requests_blocked", False)
                 and chain_phase == "Inference"):
-            version = runtime.get("session_version") or item.get("session_version")
-            if not isinstance(version, str) or not re.fullmatch(r"v[1-9][0-9]*", version):
+            version = runtime_protocol_version(item, runtime)
+            if version is None:
                 return None, "protocol_version_unavailable"
             contract = PROTOCOL_CONTRACTS.get(version)
             if contract is None:
