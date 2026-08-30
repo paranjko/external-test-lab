@@ -29,6 +29,7 @@ grep -Fq 'root * /edge/bootstrap/current' "$ROOT/04-ops/edge-node/PublicCaddyfil
 ! grep -Fq 'reconcile-join-bootstrap.sh' "$ROOT/04-ops/edge-node/install-edge.sh"
 grep -Fq 'Publish the static status site on the public edge' "$phase"
 grep -Fq 'rsync -a --delete "$SITE_ASSETS_RENDER/" "$PUBLIC_EDGE_NODE:$site_remote/site/"' "$phase"
+grep -Fq "sudo rsync -a --delete --exclude preview/ '\$site_remote/site/' /srv/dai/edge/site/" "$phase"
 ! grep -Fq 'join-bootstrap' "$phase"
 ! grep -Fq 'docker compose up -d --force-recreate bootstrap' "$phase"
 ! grep -Fq 'cd /srv/dai/edge && docker compose down' "$phase"

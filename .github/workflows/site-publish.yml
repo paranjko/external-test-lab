@@ -30,31 +30,19 @@ jobs:
           node-version: 22
 
       - name: Build and validate browser assets
-        run: make -C net-deployment-runbook test-gateway-site-state
+        run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths test-site-publisher
 
       - name: Prepare the exact static site release
         run: >-
           make -C net-deployment-runbook prepare-static-site
           site_release_dir="$RUNNER_TEMP/gonka-dev-site"
 
-      - name: Configure the dedicated deploy key
+      - name: Publish the verified release
         env:
           DEPLOY_HOST: ${{ secrets.GONKA_DEV_SITE_DEPLOY_HOST }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.GONKA_DEV_SITE_DEPLOY_KNOWN_HOSTS }}
           DEPLOY_PRIVATE_KEY: ${{ secrets.GONKA_DEV_SITE_DEPLOY_PRIVATE_KEY }}
           DEPLOY_USER: ${{ secrets.GONKA_DEV_SITE_DEPLOY_USER }}
-        run: |
-          set -Eeuo pipefail
-          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
-          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
-          [[ -n "$DEPLOY_KNOWN_HOSTS" && -n "$DEPLOY_PRIVATE_KEY" ]]
-          install -d -m 0700 ~/.ssh
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >~/.ssh/known_hosts
-          printf '%s\n' "$DEPLOY_PRIVATE_KEY" >~/.ssh/id_ed25519
-          chmod 0600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
-          printf 'DEPLOY_HOST=%s\nDEPLOY_USER=%s\n' "$DEPLOY_HOST" "$DEPLOY_USER" >>"$GITHUB_ENV"
-
-      - name: Publish the verified release
         run: >-
           make -C net-deployment-runbook publish-site-release
           site_release_dir="$RUNNER_TEMP/gonka-dev-site"

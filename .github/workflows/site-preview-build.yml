@@ -1,0 +1,48 @@
+name: Build status-site preview
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+    paths:
+      - 'net-deployment-runbook/04-ops/site/**'
+
+concurrency:
+  group: gonka-dev-site-preview-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Fork previews require a separate origin-security design and are intentionally skipped.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the PR revision without deployment credentials
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5.0.0
+        with:
+          node-version: 22
+
+      - name: Build and validate browser assets
+        run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths
+
+      - name: Prepare the static site artifact
+        run: >-
+          make -C net-deployment-runbook prepare-static-site
+          site_release_dir="$RUNNER_TEMP/gonka-dev-site-preview"
+
+      - name: Upload the static site artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gonka-dev-site-preview
+          path: ${{ runner.temp }}/gonka-dev-site-preview
+          if-no-files-found: error
+          retention-days: 2
