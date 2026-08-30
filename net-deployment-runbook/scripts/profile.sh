@@ -5,6 +5,19 @@
 
 profile_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
+local_gateway_image_for_protocol() {
+  local version="$1" image="${LOCAL_GATEWAY_IMAGE:?LOCAL_GATEWAY_IMAGE is required}"
+  [[ "$version" =~ ^v[345]$ ]] || {
+    echo 'gateway protocol must be v3, v4 or v5' >&2
+    return 2
+  }
+  if [[ "${LAB_CANDIDATE:-false}" == true && "$version" == "${DEVSHARD_PROTOCOL_VERSION:-}" ]]; then
+    printf '%s\n' "$image"
+    return 0
+  fi
+  printf '%s-%s\n' "${image%-v[345]}" "$version"
+}
+
 load_profiles() {
   local root release deployment model operator comp_target comp_env
   root="$(profile_root)"

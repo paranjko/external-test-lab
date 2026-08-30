@@ -8,8 +8,8 @@ source "$ROOT/scripts/profile.sh"
 load_profiles
 VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
+IMAGE="$(local_gateway_image_for_protocol "$VERSION")"
 if [[ "$VERSION" == v5 ]]; then
-  IMAGE="${LOCAL_GATEWAY_IMAGE:?candidate v5 gateway image is required}"
   archive_url="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL:?candidate v5 gateway image archive URL is required}"
   archive_sha256="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256:?candidate v5 gateway image archive SHA-256 is required}"
   [[ "${LAB_CANDIDATE:-false}" == true && "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
@@ -35,9 +35,6 @@ case "$VERSION" in
     SOURCE_REF='release/v0.2.13-devshard-v3.0.0'
     ;;
 esac
-# Release profiles name the default v4 image; derive a distinct immutable
-# local tag for the independently governed v3 runtime.
-IMAGE="${LOCAL_GATEWAY_IMAGE%-v4}-$VERSION"
 if ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "KEEP  $IMAGE already exists on $GATEWAY_NODE"
   exit 0

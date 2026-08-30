@@ -294,8 +294,21 @@ grep -Fq 'GDC_MONITOR_HOST=$HOST' "$ROOT/04-ops/agent/render-env.sh"
 grep -Fq 'gdc_component_info' "$ROOT/04-ops/agent/collect-versions.sh"
 grep -Fq 'gdc_component_info' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq 'nodeCatalog:$nodeCatalog' "$ROOT/04-ops/render-ops.sh"
-grep -Fq 'LOCAL_GATEWAY_IMAGE="${LOCAL_GATEWAY_IMAGE%-v[34]}-$GATEWAY_VERSION"' "$ROOT/04-ops/render-ops.sh"
-grep -Fq '[[ "${LAB_CANDIDATE:-false}" != true ]]' "$ROOT/04-ops/render-ops.sh"
+grep -Fq 'LOCAL_GATEWAY_IMAGE="$(local_gateway_image_for_protocol "$GATEWAY_VERSION")"' "$ROOT/04-ops/render-ops.sh"
+grep -Fq 'IMAGE="$(local_gateway_image_for_protocol "$VERSION")"' "$ROOT/scripts/build-gateway-image.sh"
+(
+  export LOCAL_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:candidate
+  export LAB_CANDIDATE=true
+  export DEVSHARD_PROTOCOL_VERSION=v5
+  [[ "$(local_gateway_image_for_protocol v5)" == "$LOCAL_GATEWAY_IMAGE" ]]
+  [[ "$(local_gateway_image_for_protocol v3)" == "$LOCAL_GATEWAY_IMAGE-v3" ]]
+
+  export LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v4
+  export LAB_CANDIDATE=false
+  export DEVSHARD_PROTOCOL_VERSION=v4
+  [[ "$(local_gateway_image_for_protocol v4)" == "$LOCAL_GATEWAY_IMAGE" ]]
+  [[ "$(local_gateway_image_for_protocol v3)" == gdc/devshard-gateway:0.2.15-v3 ]]
+)
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]

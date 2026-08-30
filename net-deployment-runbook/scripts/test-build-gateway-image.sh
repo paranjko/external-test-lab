@@ -9,7 +9,16 @@ trap cleanup EXIT
 mkdir -p "$temporary/runbook/scripts" "$temporary/bin"
 cp "$ROOT/scripts/build-gateway-image.sh" "$temporary/runbook/scripts/"
 printf '%s\n' 'load_project() { :; }' >"$temporary/runbook/scripts/lib.sh"
-printf '%s\n' 'load_profiles() { :; }' >"$temporary/runbook/scripts/profile.sh"
+printf '%s\n' \
+  'load_profiles() { :; }' \
+  'local_gateway_image_for_protocol() {' \
+  '  local version="$1" image="${LOCAL_GATEWAY_IMAGE:?}"' \
+  '  if [[ "${LAB_CANDIDATE:-false}" == true && "$version" == "${DEVSHARD_PROTOCOL_VERSION:-}" ]]; then' \
+  '    printf "%s\\n" "$image"' \
+  '  else' \
+  '    printf "%s-%s\\n" "${image%-v[345]}" "$version"' \
+  '  fi' \
+  '}' >"$temporary/runbook/scripts/profile.sh"
 printf '%s\n' 'immutable candidate gateway payload' | gzip -n >"$temporary/candidate.oci.tar.gz"
 archive_sha256="$(sha256sum "$temporary/candidate.oci.tar.gz" | awk '{print $1}')"
 

@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/profile.sh"
 temporary="$(mktemp -d /tmp/gdc-test-candidate-gateway-compose.XXXXXX)"
 cleanup() { rm -rf -- "$temporary"; }
 trap cleanup EXIT
@@ -29,4 +30,23 @@ jq -e '
 ' <<<"$config" >/dev/null
 jq -e '.volumes | has("gateway-data-v5")' <<<"$config" >/dev/null
 
-printf 'PASS candidate v5 gateway Compose state volume\n'
+export LOCAL_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:candidate
+export LAB_CANDIDATE=true
+export DEVSHARD_PROTOCOL_VERSION=v5
+candidate_v3_image="$(local_gateway_image_for_protocol v3)"
+candidate_v3_config="$({
+  DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-v3 \
+  LOCAL_GATEWAY_IMAGE="$candidate_v3_image" \
+  INFERENCED_IMAGE=ghcr.io/paranjko/gdc-inferenced:candidate \
+  SITE_HOST=site.example.invalid \
+  API_HOST=api.example.invalid \
+  GRAFANA_HOST=grafana.example.invalid \
+  GATEWAY_PUBLIC_HOST=gateway.example.invalid \
+  PUBLIC_EDGE_CIDR=192.0.2.0/24 \
+    docker compose --project-directory "$temporary" \
+      -f "$temporary/compose.yaml" config --format json
+})"
+jq -e --arg expected "$candidate_v3_image" \
+  '.services["devshard-gateway"].image == $expected' <<<"$candidate_v3_config" >/dev/null
+
+printf 'PASS candidate gateway Compose image and state-volume contracts\n'
