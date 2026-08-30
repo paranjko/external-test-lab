@@ -7,7 +7,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 cat >"$tmp/bootstrap.json" <<'EOF'
-{"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-devnet-community","genesis":{"sha256":"9b29115a1090532546ce9cc1dfb7d37f09c661deb82cb4f20f41da832c98254d"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://node0.example.test/chain-rpc","p2p":"tcp://node0.example.test:5000","api":"https://node0.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://node1.example.test/chain-rpc","p2p":"tcp://node1.example.test:5000","api":"https://node1.example.test"}],"brokers":[]}
+{"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-devnet-community","genesis":{"sha256":"93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://node0.example.test/chain-rpc","p2p":"tcp://node0.example.test:5000","api":"https://node0.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://node1.example.test/chain-rpc","p2p":"tcp://node1.example.test:5000","api":"https://node1.example.test"}],"brokers":[]}
 EOF
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'
@@ -22,28 +22,27 @@ esac
 [[ "${MODE:-good}" != one_seed || "$node" != 1 ]] || exit 7
 chain=gonka-devnet-community
 [[ "${MODE:-good}" != wrong_chain || "$node" != 1 ]] || chain=other-chain
-version=0.2.14
+version=0.2.15
 cometbft_version=0.38.19
-commit=2bfd85c958732992c7a9c5be1d796affe29f3ab4
-[[ "${MODE:-good}" != conflict || "$node" != 1 ]] || { version=0.2.15; commit=4d687ed6782bcea3931d2d9135bf322f84e190ab; }
+commit=4d687ed6782bcea3931d2d9135bf322f84e190ab
+[[ "${MODE:-good}" != conflict || "$node" != 1 ]] || { version=0.2.14; commit=2bfd85c958732992c7a9c5be1d796affe29f3ab4; }
 [[ "${MODE:-good}" != unknown ]] || { version=9.9.9; commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; }
-[[ "${MODE:-good}" != v5 ]] || { version=0.2.15; commit=4d687ed6782bcea3931d2d9135bf322f84e190ab; }
-[[ "${MODE:-good}" != v3 ]] || { version=0.2.15; commit=4d687ed6782bcea3931d2d9135bf322f84e190ab; }
 case "$url" in
   */status) printf '{"result":{"node_info":{"id":"%s","network":"%s","version":"%s"}}}\n' "$id" "$chain" "$cometbft_version" ;;
   */abci_info) printf '{"result":{"response":{"version":"%s"}}}\n' "$version" ;;
   */v1/versions)
     [[ "${MODE:-good}" != incomplete || "$node" != 1 ]] || { printf '{"node_version":{"version":"0.2.14"}}\n'; exit 0; }
     api_node_version="$version"; api_node_commit="$commit"
-    [[ "${MODE:-good}" != api_mismatch || "$node" != 1 ]] || { api_node_version=0.2.15; api_node_commit=4d687ed6782bcea3931d2d9135bf322f84e190ab; }
-    printf '{"node_version":{"version":"%s","commit":"%s"},"api_version":{"version":"0.2.14-post3","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}}\n' "$api_node_version" "$api_node_commit"
+    [[ "${MODE:-good}" != api_mismatch || "$node" != 1 ]] || { api_node_version=0.2.14; api_node_commit=2bfd85c958732992c7a9c5be1d796affe29f3ab4; }
+    printf '{"node_version":{"version":"%s","commit":"%s"},"api_version":{"version":"0.2.15-post3","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}}\n' "$api_node_version" "$api_node_commit"
     ;;
   */chain-api/productscience/inference/inference/params)
-    target='[]'
-    [[ "${MODE:-good}" != v5 ]] || target='[{"name":"v5"}]'
-    [[ "${MODE:-good}" != v3 ]] || target='[{"name":"v3"}]'
-    [[ "${MODE:-good}" != mixed_target || "$node" != 1 ]] || target='[{"name":"v5"}]'
-    printf '{"params":{"devshard_escrow_params":{"approved_versions":%s}}}\n' "$target"
+    approvals='[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]'
+    [[ "${MODE:-good}" != reordered || "$node" != 1 ]] || approvals='[{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]'
+    [[ "${MODE:-good}" != conflicting_approvals || "$node" != 1 ]] || approvals='[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]'
+    [[ "${MODE:-good}" != malformed_approval || "$node" != 1 ]] || approvals='[{"name":"v3","binary":"http://example.test/devshard-v3.zip","sha256":"not-a-sha"}]'
+    [[ "${MODE:-good}" != duplicate_approval || "$node" != 1 ]] || approvals='[{"name":"v3","binary":"https://example.test/a.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v3","binary":"https://example.test/b.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]'
+    printf '{"params":{"devshard_escrow_params":{"approved_versions":%s}}}\n' "$approvals"
     ;;
   *) exit 2 ;;
 esac
@@ -58,23 +57,20 @@ run_case() {
 run_case good
 # shellcheck source=/dev/null
 source "$tmp/good.env"
-[[ "$GDC_RELEASE_PROFILE" == v2026.07.23 ]]
-[[ "$GDC_NETWORK_CHAIN_ID" == gonka-devnet-community && "$GDC_NETWORK_CORE_VERSION" == 0.2.14 ]]
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]]
+[[ "$GDC_NETWORK_CHAIN_ID" == gonka-devnet-community && "$GDC_NETWORK_CORE_VERSION" == 0.2.15 ]]
 [[ "$GDC_NETWORK_COMETBFT_VERSION" == 0.38.19 ]]
-[[ "$GDC_NETWORK_DEVSHARD_TARGET" == '' && "$GDC_NETWORK_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
-run_case v5
+[[ "$GDC_NETWORK_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+[[ "$GDC_NETWORK_DEVSHARD_APPROVALS" == *'"name":"v3"'* && "$GDC_NETWORK_DEVSHARD_APPROVALS" == *'"name":"v4"'* && "$GDC_NETWORK_DEVSHARD_APPROVALS" == *'"name":"v5"'* ]]
+[[ -z "${GDC_NETWORK_DEVSHARD_TARGET:-}" && -z "${GDC_COMPOSITION:-}" ]]
+fingerprint="$GDC_NETWORK_FINGERPRINT"
+run_case reordered
 # shellcheck source=/dev/null
-source "$tmp/v5.env"
+source "$tmp/reordered.env"
 [[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]]
-[[ "$GDC_COMPOSITION" == core-v2026.08.06+devshard-v2026.08.27-rc.0 ]]
-run_case v3
-# shellcheck source=/dev/null
-unset GDC_COMPOSITION
-source "$tmp/v3.env"
-[[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]]
-[[ -z "${GDC_COMPOSITION:-}" ]]
+[[ "$GDC_NETWORK_FINGERPRINT" == "$fingerprint" ]]
 
-for case_name in one_seed conflict wrong_chain incomplete unknown mixed_target api_mismatch; do
+for case_name in one_seed conflict wrong_chain incomplete unknown conflicting_approvals malformed_approval duplicate_approval api_mismatch; do
   if run_case "$case_name" >"$tmp/$case_name.out" 2>"$tmp/$case_name.err"; then
     echo "unsafe seed observation accepted: $case_name" >&2
     exit 1
@@ -85,7 +81,9 @@ grep -Fq 'software_ambiguous:' "$tmp/conflict.err"
 grep -Fq 'software_ambiguous:' "$tmp/wrong_chain.err"
 grep -Fq 'software_incomplete:' "$tmp/incomplete.err"
 grep -Fq 'software_unsupported:' "$tmp/unknown.err"
-grep -Fq 'software_ambiguous:' "$tmp/mixed_target.err"
+grep -Fq 'software_ambiguous:' "$tmp/conflicting_approvals.err"
+grep -Fq 'software_incomplete:' "$tmp/malformed_approval.err"
+grep -Fq 'software_incomplete:' "$tmp/duplicate_approval.err"
 grep -Fq 'software_upgrade_required:' "$tmp/api_mismatch.err"
 
 printf 'PASS seed-derived network composition selection is deterministic and fail-closed\n'
