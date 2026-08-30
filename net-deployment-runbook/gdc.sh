@@ -35,6 +35,7 @@ record_launcher_failure() {
     [[ -z "${GDC_RUN_ID:-}" ]] || printf 'run_manifest=%s\n' "$GDC_HOME/runs/$GDC_RUN_ID/manifest.env"
     printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
     [[ -z "${GDC_DIAGNOSTIC_ENVELOPE:-}" ]] || printf 'diagnostic_envelope=%s\n' "$GDC_DIAGNOSTIC_ENVELOPE"
+    [[ -z "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || printf 'preflight_receipt=%s\n' "$GDC_JOIN_PREFLIGHT_RECEIPT"
     printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
   } >"$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
   chmod 0600 "$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
@@ -193,7 +194,38 @@ run_join_preflight() {
     join join-preflight "$checkpoint" "$state" "$category" "$tool" "$rc" \
     safe join-repeat "$summary"
   export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic"
+  write_join_preflight_receipt "$checkpoint" failed "$category" "$tool"
+  printf 'ERROR JOIN preflight failed checkpoint=%s preflight_receipt=%s\n' \
+    "$checkpoint" "$GDC_JOIN_PREFLIGHT_RECEIPT" >&2
   return "$rc"
+}
+
+initialize_join_preflight_receipt() {
+  GDC_JOIN_PREFLIGHT_RECEIPT="$STATE/preflight-receipt.env"
+  export GDC_JOIN_PREFLIGHT_RECEIPT
+  write_join_preflight_receipt initialized pending unavailable unavailable
+}
+
+write_join_preflight_receipt() {
+  local checkpoint="$1" result="$2" category="$3" tool="$4" tmp
+  [[ -n "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || return 0
+  tmp="${GDC_JOIN_PREFLIGHT_RECEIPT}.tmp.$$"
+  {
+    printf 'schema_version=1\n'
+    printf 'invocation_id=%s\n' "$GDC_LAUNCHER_INVOCATION_ID"
+    printf 'checkpoint=%s\nresult=%s\ncategory=%s\ntool=%s\n' \
+      "$checkpoint" "$result" "$category" "$tool"
+    printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
+    [[ -z "${GDC_NETWORK_FINGERPRINT:-}" ]] || printf 'network_fingerprint=%s\n' "$GDC_NETWORK_FINGERPRINT"
+    [[ -z "${GDC_NETWORK_CHAIN_ID:-}" ]] || printf 'chain_id=%s\n' "$GDC_NETWORK_CHAIN_ID"
+    [[ -z "${GDC_NETWORK_GENESIS_SHA256:-}" ]] || printf 'genesis_sha256=%s\n' "$GDC_NETWORK_GENESIS_SHA256"
+    [[ -z "${GDC_NETWORK_CORE_VERSION:-}" ]] || printf 'core_version=%s\ncore_commit=%s\n' "$GDC_NETWORK_CORE_VERSION" "$GDC_NETWORK_CORE_COMMIT"
+    [[ -z "${GDC_NETWORK_DAPI_VERSION:-}" ]] || printf 'dapi_version=%s\ndapi_commit=%s\n' "$GDC_NETWORK_DAPI_VERSION" "$GDC_NETWORK_DAPI_COMMIT"
+    [[ -z "${GDC_NETWORK_DEVSHARD_APPROVALS:-}" ]] || printf 'devshard_approvals=%q\n' "$GDC_NETWORK_DEVSHARD_APPROVALS"
+    [[ -z "${GDC_RELEASE_PROFILE:-}" ]] || printf 'release_profile=%s\n' "$GDC_RELEASE_PROFILE"
+  } >"$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$GDC_JOIN_PREFLIGHT_RECEIPT"
 }
 
 use_node_data_home() {
@@ -856,6 +888,9 @@ case "$COMMAND" in
     fi
     use_node_data_home "$join_alias"
     acquire_operator_lock
+    # Persist a bounded receipt before any Bootstrap fetch or network
+    # observation. It is updated atomically as public facts become available.
+    initialize_join_preflight_receipt
     # Bootstrap observation precedes both CLI installation and role-input
     # creation. The public network therefore selects the local immutable
     # profile before any software download or Host mutation.
@@ -886,9 +921,9 @@ case "$COMMAND" in
     # invoking the JOIN phase.
     export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
     export GDC_NETWORK_COMETBFT_VERSION GDC_NETWORK_CORE_VERSION GDC_NETWORK_CORE_COMMIT
-    export GDC_NETWORK_DAPI_VERSION GDC_NETWORK_DAPI_COMMIT GDC_NETWORK_DEVSHARD_TARGET
+    export GDC_NETWORK_DAPI_VERSION GDC_NETWORK_DAPI_COMMIT GDC_NETWORK_DEVSHARD_APPROVALS
     export GDC_RELEASE_PROFILE
-    [[ -z "${GDC_COMPOSITION:-}" ]] || export GDC_COMPOSITION
+    write_join_preflight_receipt software-observation passed unavailable seed-observer
     run_join_preflight inferenced-cli unavailable dependency inferenced \
       'The pinned operator CLI was not available after safe installation checks.' \
       "$ROOT/scripts/ensure-inferenced-cli.sh"

@@ -85,11 +85,14 @@ mapfile -t unique_api_observations < <(printf '%s\n' "${api_observations[@]}" | 
 IFS='|' read -r api_node_version node_commit api_version api_commit <<<"${unique_api_observations[0]}"
 [[ "$api_node_version" == "$abci_version" ]] || die upgrade_required 'seed API version disagrees with independently observed seed RPC application version'
 
-# Governance state is an independently observable selector only during a
-# transition.  It is chain state, not DAPI state: query the public chain-api
-# that each seed exposes alongside its RPC route.  A DAPI root can legitimately
+# Governance state is chain state, not DAPI state: query the public chain-api
+# that each seed exposes alongside its RPC route. A DAPI root can legitimately
 # serve the dashboard and must not be mistaken for the Cosmos REST service.
-declare -a targets=()
+#
+# approved_versions is a compatibility allowlist consumed by Versiond. It does
+# not identify one active DevShard runtime and therefore must never select a
+# Host composition. Retain the complete normalized records as evidence.
+declare -a approval_sets=()
 for (( index=0; index<seed_count; index++ )); do
   rpc="$(jq -r ".seeds[$index].rpc" "$BOOTSTRAP")"
   case "$rpc" in
@@ -98,15 +101,28 @@ for (( index=0; index<seed_count; index++ )); do
   esac
   params="$tmp/params-$index.json"
   if fetch_json "$chain_api" "$params"; then
-    target="$(jq -er '(.params // .).devshard_escrow_params.approved_versions | map(.name) | unique | join(",")' "$params" 2>/dev/null)" \
+    approval_set="$(jq -cer '
+      (.params // .).devshard_escrow_params.approved_versions
+      | if type != "array" then error("approved_versions is not an array") else . end
+      | if all(.[];
+          type == "object" and
+          (.name | type == "string" and test("^v[1-9][0-9]*$")) and
+          (.binary | type == "string" and test("^https://[^[:space:]]+$")) and
+          (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+        ) then . else error("malformed approved version") end
+      | if (map(.name) | unique | length) == length
+        then . else error("duplicate approved version name") end
+      | map({name: .name, url: .binary, sha256: .sha256})
+      | sort_by(.name, .url, .sha256)
+    ' "$params" 2>/dev/null)" \
       || die incomplete "seed chain API $chain_api returned malformed governed DevShard state"
-    targets+=("$target")
+    approval_sets+=("$approval_set")
   fi
 done
-(( ${#targets[@]} >= 2 )) || die incomplete 'fewer than two seed chain APIs exposed governed DevShard state'
-mapfile -t unique_targets < <(printf '%s\n' "${targets[@]}" | LC_ALL=C sort -u)
-(( ${#unique_targets[@]} == 1 )) || die ambiguous 'seed chain APIs disagree about governed DevShard targets'
-devshard_target="${unique_targets[0]}"
+(( ${#approval_sets[@]} >= 2 )) || die incomplete 'fewer than two seed chain APIs exposed governed DevShard approval state'
+mapfile -t unique_approval_sets < <(printf '%s\n' "${approval_sets[@]}" | LC_ALL=C sort -u)
+(( ${#unique_approval_sets[@]} == 1 )) || die ambiguous 'seed chain APIs disagree about governed DevShard approval records'
+devshard_approvals="${unique_approval_sets[0]}"
 
 profile=''
 for lock in "$ROOT"/profiles/releases/*.lock; do
@@ -114,38 +130,22 @@ for lock in "$ROOT"/profiles/releases/*.lock; do
   [[ "$(awk -F= '$1 == "LAB_CANDIDATE" {print $2; exit}' "$lock")" != true ]] || continue
   lock_version="$(awk -F= '$1 == "GONKA_RELEASE" {print $2; exit}' "$lock")"
   lock_commit="$(awk -F= '$1 == "GONKA_COMMIT" {print $2; exit}' "$lock")"
-  if [[ "$lock_version" == "$node_version" && "$lock_commit" == "$node_commit" ]]; then
+  lock_dapi_ref="$(awk -F= '$1 == "DAPI_SOURCE_REF" {print $2; exit}' "$lock")"
+  lock_dapi_commit="$(awk -F= '$1 == "DAPI_COMMIT" {print $2; exit}' "$lock")"
+  lock_chain_id="$(awk -F= '$1 == "JOIN_NETWORK_CHAIN_ID" {print $2; exit}' "$lock")"
+  lock_genesis_sha256="$(awk -F= '$1 == "JOIN_NETWORK_GENESIS_SHA256" {print $2; exit}' "$lock")"
+  lock_dapi_version="${lock_dapi_ref#release/v}"
+  if [[ "$lock_version" == "$node_version" && "$lock_commit" == "$node_commit" &&
+    "$lock_dapi_version" == "$api_version" && "$lock_dapi_commit" == "$api_commit" &&
+    "$lock_chain_id" == "$chain_id" && "$lock_genesis_sha256" == "$genesis_sha256" ]]; then
     candidate="${lock##*/}"; candidate="${candidate%.lock}"
-    [[ -z "$profile" ]] || die ambiguous "multiple local profiles match observed core runtime $node_version"
+  [[ -z "$profile" ]] || die ambiguous "multiple local profiles match observed chain/Genesis/core/DAPI runtime"
     profile="$candidate"
   fi
 done
-[[ -n "$profile" ]] || die unsupported "no immutable local profile matches observed core runtime $node_version@$node_commit"
+[[ -n "$profile" ]] || die unsupported "no immutable local profile matches observed core/DAPI runtime $node_version@$node_commit $api_version@$api_commit"
 
-composition=''
-case "$devshard_target" in
-  '') ;;
-  v3)
-    # v3 is the stable deployment profile's in-tree DevShard runtime.  It
-    # needs no candidate composition overlay.
-    ;;
-  v5)
-    for manifest in "$ROOT"/profiles/compositions/*.json; do
-      [[ -r "$manifest" ]] || continue
-      if jq -e --arg chain "$chain_id" --arg genesis "$genesis_sha256" --arg profile "$profile" '
-        .network.chain_id == $chain and .network.genesis_sha256 == $genesis and
-        .core.profile == $profile and .devshard.protocol_version == "v5"
-      ' "$manifest" >/dev/null; then
-        [[ -z "$composition" ]] || die ambiguous 'multiple immutable compositions match the governed DevShard target'
-        composition="${manifest##*/}"; composition="${composition%.json}"
-      fi
-    done
-    [[ -n "$composition" ]] || die unsupported 'no immutable local composition matches the governed DevShard v5 target'
-    ;;
-  *) die unsupported "governed DevShard target is unsupported: $devshard_target" ;;
-esac
-
-fingerprint="$(printf 'chain_id=%s\ngenesis_sha256=%s\ncometbft_version=%s\nnode_version=%s\nnode_commit=%s\ndapi_version=%s\ndapi_commit=%s\nabci_version=%s\ndevshard_target=%s\n' "$chain_id" "$genesis_sha256" "$cometbft_version" "$node_version" "$node_commit" "$api_version" "$api_commit" "$abci_version" "$devshard_target" | sha256sum | awk '{print $1}')"
+fingerprint="$(printf 'chain_id=%s\ngenesis_sha256=%s\ncometbft_version=%s\nnode_version=%s\nnode_commit=%s\ndapi_version=%s\ndapi_commit=%s\nabci_version=%s\ndevshard_approvals=%s\n' "$chain_id" "$genesis_sha256" "$cometbft_version" "$node_version" "$node_commit" "$api_version" "$api_commit" "$abci_version" "$devshard_approvals" | sha256sum | awk '{print $1}')"
 mkdir -p "$(dirname "$OUTPUT")"
 {
   printf 'GDC_NETWORK_FINGERPRINT=%q\n' "$fingerprint"
@@ -154,9 +154,8 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf 'GDC_NETWORK_COMETBFT_VERSION=%q\n' "$cometbft_version"
   printf 'GDC_NETWORK_CORE_VERSION=%q\nGDC_NETWORK_CORE_COMMIT=%q\n' "$node_version" "$node_commit"
   printf 'GDC_NETWORK_DAPI_VERSION=%q\nGDC_NETWORK_DAPI_COMMIT=%q\n' "$api_version" "$api_commit"
-  printf 'GDC_NETWORK_DEVSHARD_TARGET=%q\n' "$devshard_target"
+  printf 'GDC_NETWORK_DEVSHARD_APPROVALS=%q\n' "$devshard_approvals"
   printf 'GDC_RELEASE_PROFILE=%q\n' "$profile"
-  [[ -z "$composition" ]] || printf 'GDC_COMPOSITION=%q\n' "$composition"
 } >"$OUTPUT"
 chmod 0600 "$OUTPUT"
-printf 'PASS observed network software fingerprint=%s profile=%s composition=%s rpc_seeds=%s api_seeds=%s\n' "$fingerprint" "$profile" "${composition:-none}" "${#rpc_observations[@]}" "${#api_observations[@]}"
+printf 'PASS observed network software fingerprint=%s profile=%s rpc_seeds=%s api_seeds=%s approval_seeds=%s\n' "$fingerprint" "$profile" "${#rpc_observations[@]}" "${#api_observations[@]}" "${#approval_sets[@]}"
