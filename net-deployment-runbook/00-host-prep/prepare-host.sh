@@ -50,7 +50,7 @@ status "PREPARE  $HOST_NAME"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
-  ca-certificates curl gnupg jq git rsync unzip zip zstd openssl age locales \
+  ca-certificates curl gnupg jq git rsync unzip zip zstd openssl age locales binutils \
   python3 python3-yaml python3-requests python3-venv chrony fail2ban unattended-upgrades \
   smartmontools nvme-cli pciutils lsof net-tools iptables conntrack socat \
   ubuntu-drivers-common mokutil
