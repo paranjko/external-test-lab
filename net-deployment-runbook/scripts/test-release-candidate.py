@@ -77,6 +77,13 @@ def main() -> None:
             }
         ]
     }
+    new_composition = candidate.build_canonical_composition(
+        "v2026.08.06",
+        "v2026.08.30-rc.0",
+        "new-devshard-contract",
+    )
+    assert "postgres" not in new_composition["devshard"]["images"]
+    assert "postgres" not in new_composition["components"]["images"]
     malformed_publication = json.loads(json.dumps(new_definition))
     malformed_publication["publication"]["release_tag"] = "lab-candidate/v2026.08.30-rc.0"
     try:
@@ -440,15 +447,62 @@ def main() -> None:
             winner = next(content for status, content in outcomes if status == "created")
             assert race_path.read_text(encoding="utf-8") == winner
 
+        manifest_path.write_bytes(
+            manifest_path.read_bytes().replace(b"\n", b"\r\n")
+        )
         args = argparse.Namespace(profile="v2026.08.25-rc.0", build_manifest=str(manifest_path))
         candidate.command_profile(args)
         candidate.command_profile(args)
         candidate.command_verify(args)
+        retained_manifest = releases / "v2026.08.25-rc.0" / "build-manifest.json"
+        retained_sidecar = retained_manifest.with_suffix(".sha256")
+        assert retained_manifest.read_bytes() == manifest_path.read_bytes()
+        assert retained_sidecar.read_text(encoding="utf-8").split() == [
+            candidate.sha256(retained_manifest),
+            retained_manifest.name,
+        ]
+        candidate.command_verify(
+            argparse.Namespace(profile="v2026.08.25-rc.0", build_manifest=None)
+        )
+        snapshot_manifest, snapshot_hash, snapshot_content = (
+            candidate.verify_build_manifest_snapshot(
+                "v2026.08.25-rc.0",
+                manifest_path,
+            )
+        )
+        assert snapshot_manifest == manifest
+        manifest_path.write_bytes(
+            manifest_path.read_bytes().replace(b'"run_attempt": "1"', b'"run_attempt": "2"')
+        )
+        assert candidate.preserve_build_manifest(
+            "v2026.08.25-rc.0",
+            snapshot_content,
+            snapshot_hash,
+        ) == retained_manifest
+        assert retained_manifest.read_bytes() == snapshot_content
+        manifest_path.write_bytes(snapshot_content)
+        retained_sidecar.write_text(
+            f"{'0' * 64}  {retained_manifest.name}\n",
+            encoding="utf-8",
+        )
+        try:
+            candidate.command_verify(
+                argparse.Namespace(profile="v2026.08.25-rc.0", build_manifest=None)
+            )
+        except candidate.CandidateError as exc:
+            assert "build manifest checksum mismatch" in str(exc)
+        else:
+            raise AssertionError("tampered retained build manifest sidecar was accepted")
+        retained_sidecar.write_text(
+            f"{candidate.sha256(retained_manifest)}  {retained_manifest.name}\n",
+            encoding="utf-8",
+        )
         lock = releases / "v2026.08.25-rc.0.lock"
         lock_text = lock.read_text(encoding="utf-8")
         assert "LAB_CANDIDATE=true" in lock_text
         assert "UPGRADE_FROM_PROFILE=v2026.08.06" in lock_text
         assert "GONKA_HA=false" in lock_text
+        assert "CANDIDATE_POSTGRES_IMAGE=postgres:16-alpine@" in lock_text
         assert "DEVSHARD_STORAGE_MODE=memory" in lock_text
         mlnode_reference = next(
             component["reference"]
@@ -1037,6 +1091,8 @@ def main() -> None:
         assert manifest_cand["devshard"]["classification"] == "lab-candidate"
         assert "@sha256:" in manifest_cand["devshard"]["images"]["devshard-gateway"]
         assert manifest_cand["devshard"]["images"]["devshard-gateway"] != "gdc/devshard-gateway:0.2.15-v5"
+        assert "postgres" in manifest_cand["devshard"]["images"]
+        assert "postgres" in manifest_cand["components"]["images"]
         candidate.verify_composition(comp_candidate_path)
 
         # Verify candidate composition lock and env bindings
@@ -1052,6 +1108,7 @@ def main() -> None:
         assert "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL=" in mat_cand_content
         assert "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256=" in mat_cand_content
         assert "POSTGRES_IMAGE='postgres:16-alpine@" in mat_cand_content or "POSTGRES_IMAGE=postgres:16-alpine@" in mat_cand_content
+        assert "CANDIDATE_POSTGRES_IMAGE='postgres:16-alpine@" in mat_cand_content or "CANDIDATE_POSTGRES_IMAGE=postgres:16-alpine@" in mat_cand_content
         assert "DEVSHARD_HOST_IMAGE=" in mat_cand_content
 
         env_cand_content = candidate.composition_env(manifest_cand)
@@ -1062,6 +1119,7 @@ def main() -> None:
         assert "export DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL=" in env_cand_content
         assert "export DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256=" in env_cand_content
         assert "export POSTGRES_IMAGE='postgres:16-alpine@" in env_cand_content or "export POSTGRES_IMAGE=postgres:16-alpine@" in env_cand_content
+        assert "export CANDIDATE_POSTGRES_IMAGE='postgres:16-alpine@" in env_cand_content or "export CANDIDATE_POSTGRES_IMAGE=postgres:16-alpine@" in env_cand_content
         assert "export DEVSHARD_HOST_IMAGE=" in env_cand_content
 
         # Verify stable composition devshard commit is distinct from host stack commit

@@ -127,6 +127,17 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def load_json_snapshot(path: Path) -> tuple[dict[str, Any], bytes]:
+    try:
+        content = path.read_bytes()
+        value = json.loads(content.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CandidateError(f"cannot read JSON {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise CandidateError(f"JSON root must be an object: {path}")
+    return value, content
+
+
 def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -141,6 +152,27 @@ def atomic_write(path: Path, content: str) -> None:
         except FileExistsError:
             existing = path.read_text(encoding="utf-8")
             if existing == content:
+                return
+            raise CandidateError(
+                f"refusing to overwrite incompatible immutable file: {path}"
+            ) from None
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.read_bytes() == content:
                 return
             raise CandidateError(
                 f"refusing to overwrite incompatible immutable file: {path}"
@@ -338,6 +370,53 @@ def run(command: list[str], *, capture: bool = True) -> subprocess.CompletedProc
 def candidate_state(profile: str) -> Path:
     data_root = Path(os.environ.get("GDC_HOME", str(Path.home() / ".gdc-data"))).expanduser()
     return data_root / "candidates" / profile
+
+
+def retained_build_manifest(profile: str) -> Path:
+    return RELEASES / profile / "build-manifest.json"
+
+
+def resolve_build_manifest(
+    profile: str,
+    supplied: str | None,
+    *,
+    prefer_retained: bool,
+) -> Path:
+    if supplied:
+        return Path(supplied).resolve()
+    retained = retained_build_manifest(profile)
+    state_manifest = candidate_state(profile) / "build" / "build-manifest.json"
+    if prefer_retained and retained.is_file():
+        return retained
+    if state_manifest.is_file():
+        return state_manifest
+    if retained.is_file():
+        return retained
+    return state_manifest
+
+
+def preserve_build_manifest(profile: str, content: bytes, manifest_hash: str) -> Path:
+    destination = retained_build_manifest(profile)
+    if hashlib.sha256(content).hexdigest() != manifest_hash:
+        raise CandidateError("candidate build manifest snapshot checksum mismatch")
+    atomic_write_bytes(destination, content)
+    if sha256(destination) != manifest_hash:
+        raise CandidateError("retained candidate build manifest checksum mismatch")
+    atomic_write(
+        destination.with_suffix(".sha256"),
+        f"{manifest_hash}  {destination.name}\n",
+    )
+    return destination
+
+
+def verify_retained_manifest_sidecar(path: Path, manifest_hash: str) -> None:
+    sidecar = path.with_suffix(".sha256")
+    try:
+        fields = sidecar.read_text(encoding="utf-8").strip().split()
+    except OSError as exc:
+        raise CandidateError(f"candidate build manifest checksum is missing: {sidecar}") from exc
+    if fields != [manifest_hash, path.name]:
+        raise CandidateError(f"candidate build manifest checksum mismatch: {path}")
 
 
 def workflow_runs(workflow: str, event: str) -> list[dict[str, Any]]:
@@ -547,10 +626,13 @@ def download_build_artifact(profile: str, run_id: int) -> None:
     verify_build_manifest(profile, manifest)
 
 
-def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str]:
+def verify_build_manifest_snapshot(
+    profile: str,
+    path: Path,
+) -> tuple[dict[str, Any], str, bytes]:
     definition, _, definition_hash = verify_definition(profile)
     layer = definition.get("layer", "all")
-    manifest = load_json(path)
+    manifest, content = load_json_snapshot(path)
     if manifest.get("schema_version") != 1 or manifest.get("kind") != "external-test-lab-candidate-build":
         raise CandidateError("candidate build manifest kind or schema is invalid")
     if manifest.get("profile") != profile or manifest.get("definition_sha256") != definition_hash:
@@ -630,7 +712,12 @@ def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str
             raise CandidateError(f"candidate binary release URL is invalid: {name}")
         if binary.get("sbom") is not True or binary.get("provenance") is not True:
             raise CandidateError(f"candidate binary attestations are incomplete: {name}")
-    return manifest, sha256(path)
+    return manifest, hashlib.sha256(content).hexdigest(), content
+
+
+def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str]:
+    manifest, manifest_hash, _ = verify_build_manifest_snapshot(profile, path)
+    return manifest, manifest_hash
 
 
 def shell_quote(value: str) -> str:
@@ -743,7 +830,16 @@ def render_lock(profile: str, manifest: dict[str, Any], manifest_hash: str) -> s
             "CANDIDATE_DEVSHARD_PROTOCOL_VERSION": "v5",
             "CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS": "v3 v5",
             "CANDIDATE_LOCAL_GATEWAY_IMAGE": local_archive_image("devshard-gateway"),
-            "CANDIDATE_POSTGRES_IMAGE": "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+            **(
+                {
+                    "CANDIDATE_POSTGRES_IMAGE": (
+                        "postgres:16-alpine@sha256:"
+                        "cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+                    )
+                }
+                if definition.get("publication") is None
+                else {}
+            ),
             "DEVSHARD_HEIGHTSYNC": "true",
             "DEVSHARD_HEIGHTSYNC_K": "10",
             "DEVSHARD_HEIGHTSYNC_SLOTS": "1",
@@ -774,11 +870,18 @@ def render_lock(profile: str, manifest: dict[str, Any], manifest_hash: str) -> s
 
 
 def command_profile(args: argparse.Namespace) -> None:
-    manifest_path = Path(args.build_manifest).resolve() if args.build_manifest else candidate_state(args.profile) / "build" / "build-manifest.json"
-    manifest, manifest_hash = verify_build_manifest(args.profile, manifest_path)
+    manifest_path = resolve_build_manifest(args.profile, args.build_manifest, prefer_retained=False)
+    manifest, manifest_hash, manifest_content = verify_build_manifest_snapshot(
+        args.profile,
+        manifest_path,
+    )
     lock = RELEASES / f"{args.profile}.lock"
     atomic_write(lock, render_lock(args.profile, manifest, manifest_hash))
-    print(f"READY profile={args.profile} release_lock={lock} build_manifest_sha256={manifest_hash}")
+    retained = preserve_build_manifest(args.profile, manifest_content, manifest_hash)
+    print(
+        f"READY profile={args.profile} release_lock={lock} "
+        f"build_manifest={retained} build_manifest_sha256={manifest_hash}"
+    )
 
 
 def parse_lock(path: Path) -> dict[str, str]:
@@ -807,11 +910,16 @@ def command_verify(args: argparse.Namespace) -> None:
         raise CandidateError("candidate release lock classification or upgrade source is invalid")
     if lock.get("CANDIDATE_DEFINITION_SHA256") != definition_hash:
         raise CandidateError("candidate release lock is not bound to its definition")
-    manifest_path = Path(args.build_manifest).resolve() if args.build_manifest else candidate_state(args.profile) / "build" / "build-manifest.json"
-    _, manifest_hash = verify_build_manifest(args.profile, manifest_path)
+    manifest_path = resolve_build_manifest(args.profile, args.build_manifest, prefer_retained=True)
+    manifest, manifest_hash, _ = verify_build_manifest_snapshot(
+        args.profile,
+        manifest_path,
+    )
+    if manifest_path == retained_build_manifest(args.profile):
+        verify_retained_manifest_sidecar(manifest_path, manifest_hash)
     if lock.get("CANDIDATE_BUILD_MANIFEST_SHA256") != manifest_hash:
         raise CandidateError("candidate release lock is not bound to its build manifest")
-    expected = render_lock(args.profile, load_json(manifest_path), manifest_hash)
+    expected = render_lock(args.profile, manifest, manifest_hash)
     if lock_path.read_text(encoding="utf-8") != expected:
         raise CandidateError("candidate release lock does not match the verified build manifest")
     print(f"PASS profile={args.profile} definition_sha256={definition_hash} build_manifest_sha256={manifest_hash}")
@@ -934,8 +1042,9 @@ def build_canonical_composition(
             "devshardd": devshard_lock.get("DEVSHARDD_IMAGE", ""),
             "devshard-gateway": devshard_lock.get("DEVSHARD_GATEWAY_IMAGE", ""),
             "devshard-host": devshard_lock.get("DEVSHARD_HOST_IMAGE", ""),
-            "postgres": devshard_lock.get("CANDIDATE_POSTGRES_IMAGE", "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"),
         }
+        if devshard_lock.get("CANDIDATE_POSTGRES_IMAGE"):
+            devshard_images["postgres"] = devshard_lock["CANDIDATE_POSTGRES_IMAGE"]
         devshard_binaries = {
             "devshardd-linux-amd64": {
                 "url": devshard_lock.get("DEVSHARD_V5_URL", ""),
@@ -1299,8 +1408,9 @@ def composition_env(manifest: dict[str, Any]) -> str:
         "LOCAL_GATEWAY_IMAGE": local_gateway_image,
         "DEVSHARD_GATEWAY_IMAGE": gateway_image,
         "DEVSHARD_HOST_IMAGE": images.get("devshard-host", ""),
-        "POSTGRES_IMAGE": images.get("postgres", "postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94"),
     }
+    if "postgres" in images:
+        env["POSTGRES_IMAGE"] = images["postgres"]
     if "gateway_archive_url" in devshard_info:
         env["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL"] = devshard_info["gateway_archive_url"]
         env["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256"] = devshard_info["gateway_archive_sha256"]
@@ -1313,7 +1423,8 @@ def composition_env(manifest: dict[str, Any]) -> str:
         env["CANDIDATE_DEVSHARD_PROTOCOL_VERSION"] = devshard_info.get("protocol_version", "v5")
         env["CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS"] = "v3 v5" if devshard_info.get("protocol_version") == "v5" else "v3"
         env["CANDIDATE_LOCAL_GATEWAY_IMAGE"] = local_gateway_image
-        env["CANDIDATE_POSTGRES_IMAGE"] = images.get("postgres", "")
+        if "postgres" in images:
+            env["CANDIDATE_POSTGRES_IMAGE"] = images["postgres"]
 
     if "devshardd" in images:
         env["DEVSHARDD_IMAGE"] = images["devshardd"]

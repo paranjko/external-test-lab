@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-composition-manifest",
+  "composition": "core-v2026.08.06+devshard-v2026.08.30-rc.0",
+  "network": {
+    "chain_id": "gonka-devnet-community",
+    "genesis_sha256": "9b29115a1090532546ce9cc1dfb7d37f09c661deb82cb4f20f41da832c98254d",
+    "baseline_profile": "v2026.08.06"
+  },
+  "core": {
+    "profile": "v2026.08.06",
+    "classification": "stable",
+    "release_version": "0.2.15",
+    "source_commit": "4d687ed6782bcea3931d2d9135bf322f84e190ab",
+    "source_ref": "release/v0.2.15",
+    "lock_hash": "41731c04b1655b9ff6bbf608395dfd735e848fa00c7896689a39cc8180a2947d",
+    "upgrade_from_profile": "v2026.08.06",
+    "images": {
+      "inferenced": "ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112",
+      "decentralized-api": "ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c",
+      "edge-api": "ghcr.io/product-science/edge-api:0.2.15@sha256:4f98b337ea837d711bdd7e0d0e3172a0034f37a5f7fb9764251b7155bb727025",
+      "versiond": "ghcr.io/product-science/versiond:0.2.15@sha256:3cd7abb49e04dc779411858adb446deccfb68fd6a69553365ed503ab000e0fb2",
+      "proxy": "ghcr.io/product-science/proxy:0.2.15@sha256:88a392f2300e4f303df6c7dde4660944c3f99df1e7d959bb451bd62e2f846d49",
+      "mlnode": "ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5",
+      "tmkms": "ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21",
+      "bridge": "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d"
+    },
+    "binaries": {
+      "inferenced-linux-amd64": {
+        "url": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-amd64.zip",
+        "sha256": "91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e"
+      },
+      "inferenced-operator-linux-amd64": {
+        "url": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-linux-amd64.zip",
+        "sha256": "4e506d74491bf2636591d4088f3eebd0ac4c33e739f83bc1cd56785482a9a7ca"
+      },
+      "decentralized-api-linux-amd64": {
+        "url": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-post3/decentralized-api-amd64.zip",
+        "sha256": "8cfa7345f5b7f968d5a1b765837b8319084c02d3dd2691b698c368774e20b55e"
+      }
+    }
+  },
+  "devshard": {
+    "profile": "v2026.08.30-rc.0",
+    "classification": "lab-candidate",
+    "protocol_version": "v5",
+    "source_commit": "e0814d3c01fe4ad1363d23d6ba4a66e612bb2676",
+    "source_ref": "refs/heads/gateway-v4-merge",
+    "lock_hash": "3579b8a1d5df84727c9166b2aa6a391f472da894dc53fd099336ef9a4196b64d",
+    "upgrade_from_profile": "v2026.08.06",
+    "features": {
+      "heightsync": true,
+      "heightsync_k": 10,
+      "heightsync_slots": 1,
+      "storage_mode": "memory"
+    },
+    "images": {
+      "devshardd": "ghcr.io/paranjko/gdc-devshardd:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:7911023585fec09eaab1c6f738718b3f004b19865baf396ded15a9da69b92139",
+      "devshard-gateway": "ghcr.io/paranjko/gdc-devshard-gateway:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:29ec3a7d273b523425539dbf348688c1731304516ac75868b5abde476c4c636f",
+      "devshard-host": "ghcr.io/paranjko/gdc-devshard-host:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:e33660fd57a67882b02c1eadc4b184100c0d2bdee2db14c44e4ddfd9689f44b2"
+    },
+    "binaries": {
+      "devshardd-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.30-rc.0/devshardd.zip",
+        "sha256": "ca8346493e4fb92b1ffd25e3a792e2bb916f60bf6d0daa0aebcc1c49d4b8f39b"
+      }
+    },
+    "gateway_archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.30-rc.0/devshard-gateway-linux-amd64.oci.tar.gz",
+    "gateway_archive_sha256": "dc7a8eaf0e859d7ed4ba876f0efe5fc19e52bfdc138b624a0f47b31be7781d0b",
+    "definition_sha256": "956a7758af5ba16cb47e7c09e8f18a8b3646ee1486d86749e3cf1db5c1820d86",
+    "build_manifest_sha256": "0ca70f36cee0a38e44b16d163fc5c1e181e771e01bfec285d7ecd4417eace083"
+  },
+  "components": {
+    "images": {
+      "inferenced": "ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112",
+      "decentralized-api": "ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c",
+      "edge-api": "ghcr.io/product-science/edge-api:0.2.15@sha256:4f98b337ea837d711bdd7e0d0e3172a0034f37a5f7fb9764251b7155bb727025",
+      "versiond": "ghcr.io/product-science/versiond:0.2.15@sha256:3cd7abb49e04dc779411858adb446deccfb68fd6a69553365ed503ab000e0fb2",
+      "proxy": "ghcr.io/product-science/proxy:0.2.15@sha256:88a392f2300e4f303df6c7dde4660944c3f99df1e7d959bb451bd62e2f846d49",
+      "mlnode": "ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5",
+      "tmkms": "ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21",
+      "bridge": "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d",
+      "devshardd": "ghcr.io/paranjko/gdc-devshardd:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:7911023585fec09eaab1c6f738718b3f004b19865baf396ded15a9da69b92139",
+      "devshard-gateway": "ghcr.io/paranjko/gdc-devshard-gateway:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:29ec3a7d273b523425539dbf348688c1731304516ac75868b5abde476c4c636f",
+      "devshard-host": "ghcr.io/paranjko/gdc-devshard-host:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:e33660fd57a67882b02c1eadc4b184100c0d2bdee2db14c44e4ddfd9689f44b2"
+    },
+    "binaries": {
+      "inferenced-linux-amd64": {
+        "url": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-amd64.zip",
+        "sha256": "91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e"
+      },
+      "inferenced-operator-linux-amd64": {
+        "url": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-linux-amd64.zip",
+        "sha256": "4e506d74491bf2636591d4088f3eebd0ac4c33e739f83bc1cd56785482a9a7ca"
+      },
+      "decentralized-api-linux-amd64": {
+        "url": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-post3/decentralized-api-amd64.zip",
+        "sha256": "8cfa7345f5b7f968d5a1b765837b8319084c02d3dd2691b698c368774e20b55e"
+      },
+      "devshardd-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.30-rc.0/devshardd.zip",
+        "sha256": "ca8346493e4fb92b1ffd25e3a792e2bb916f60bf6d0daa0aebcc1c49d4b8f39b"
+      }
+    }
+  }
+}
