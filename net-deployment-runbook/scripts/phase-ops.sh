@@ -230,15 +230,45 @@ case "$COMPONENT" in
     [[ "$gateway_rotation_amount" =~ ^[1-9][0-9]*$ ]] || die 'gateway rotation escrow amount must be positive'
     gateway_funding_horizon="${GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS:-1}"
     gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
-    gateway_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
+    gateway_requested_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-}"
     gateway_funding_source_target="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
     [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
     [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
-    [[ "$gateway_max_refill" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be positive'
-    [[ "$gateway_funding_source_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
+    if ! is_safe_integer "$gateway_funding_source_target" || [[ "$gateway_funding_source_target" == 0 ]]; then
+      die 'GDC_FAUCET_INITIAL_NGONKA must be a positive safe integer'
+    fi
+    gateway_max_refill="$(
+      ssh "$GATEWAY_NODE" \
+        "sudo sed -n 's/^FAUCET_GATEWAY_RESERVE_MAX_NGONKA=//p' /srv/dai/ops/gateway-reserve-signer.env"
+    )" || die 'deployed gateway reserve signer maximum is unavailable on the gateway node'
+    if ! is_safe_integer "$gateway_max_refill" || [[ "$gateway_max_refill" == 0 ]]; then
+      die 'deployed gateway reserve signer maximum must be exactly one positive safe integer'
+    fi
+    if [[ -n "$gateway_requested_max_refill" && "$gateway_requested_max_refill" != "$gateway_max_refill" ]]; then
+      die 'GDC_GATEWAY_MAX_REFILL_NGONKA does not match the deployed gateway reserve signer maximum'
+    fi
+    export GDC_GATEWAY_MAX_REFILL_NGONKA="$gateway_max_refill"
+    gateway_faucet_claim_amount="$(
+      ssh "$GATEWAY_NODE" \
+        "sudo sed -n 's/^FAUCET_AMOUNT_NGONKA=//p' /srv/dai/ops/faucet.env"
+    )" || die 'deployed faucet claim amount is unavailable on the gateway node'
+    if ! is_safe_integer "$gateway_faucet_claim_amount" || [[ "$gateway_faucet_claim_amount" == 0 ]]; then
+      die 'deployed faucet claim amount must be exactly one positive safe integer'
+    fi
+    (( gateway_max_refill < gateway_funding_source_target )) \
+      || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be below GDC_FAUCET_INITIAL_NGONKA'
+    # The funding source is also the active public faucet. Permit one bounded
+    # max-refill window of normal drift from its configured target, but retain
+    # enough for a later maximum reserve refill plus one concurrent full claim.
+    gateway_funding_source_minimum="$((gateway_funding_source_target - gateway_max_refill))"
+    (( gateway_funding_source_minimum >= gateway_max_refill )) \
+      || die 'gateway funding source must retain two maximum reserve refills'
+    (( gateway_faucet_claim_amount <= gateway_funding_source_minimum - gateway_max_refill )) \
+      || die 'gateway funding source must retain one faucet claim above the maximum reserve refill'
     step 'Reconcile the gateway reserve funding source'
     "$ROOT/scripts/ensure-account-balance.sh" \
-      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$gateway_funding_source_target"
+      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" \
+      "$gateway_funding_source_target" "$gateway_funding_source_minimum"
     "$ROOT/04-ops/ensure-gateway-reserve.sh" \
       "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
       "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \

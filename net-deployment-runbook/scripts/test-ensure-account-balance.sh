@@ -51,12 +51,32 @@ if ensure_account_balance_main "$tmp/account.json" "$tmp/inventory.env" 500 >/de
   exit 1
 fi
 
+rm -f "$tmp/funding.log"
+set_balances 450
+ensure_account_balance_main "$tmp/account.json" "$tmp/inventory.env" 500 400 >/dev/null
+[[ ! -e "$tmp/funding.log" ]]
+
+set_balances 100 450
+ensure_account_balance_main "$tmp/account.json" "$tmp/inventory.env" 500 400 >/dev/null
+[[ "$(cat "$tmp/funding.log")" == 400 ]]
+
+rm -f "$tmp/funding.log"
+set_balances 100 399
+if ensure_account_balance_main "$tmp/account.json" "$tmp/inventory.env" 500 400 >/dev/null 2>&1; then
+  echo 'account reserve accepted a post-funding balance below its minimum' >&2
+  exit 1
+fi
+
 if ensure_account_balance_main "$tmp/account.json" "$tmp/inventory.env" 0 >/dev/null 2>&1; then
   echo 'account reserve accepted a zero target' >&2
   exit 1
 fi
 if ensure_account_balance_main "$tmp/account.json" "$tmp/inventory.env" 9999999999999999999 >/dev/null 2>&1; then
   echo 'account reserve accepted an integer outside the supported range' >&2
+  exit 1
+fi
+if ensure_account_balance_main "$tmp/account.json" "$tmp/inventory.env" 500 501 >/dev/null 2>&1; then
+  echo 'account reserve accepted a minimum above its target' >&2
   exit 1
 fi
 
