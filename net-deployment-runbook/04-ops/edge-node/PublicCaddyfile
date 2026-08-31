@@ -73,6 +73,17 @@
     handle_path /faucet/* {
       reverse_proxy 127.0.0.1:18081
     }
+    @gateway_admission_observer_from_public_edge {
+      path /ops-gateway-admission-state
+      remote_ip {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @gateway_admission_observer_from_public_edge {
+      rewrite * /v1/status
+      reverse_proxy 127.0.0.1:18084
+    }
+    handle /ops-gateway-admission-state {
+      respond 403
+    }
     @root path /
     redir @root /dashboard/gonka/gov 308
     # The public edge owns public TLS but is not necessarily a chain participant.

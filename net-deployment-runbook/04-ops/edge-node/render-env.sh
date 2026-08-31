@@ -74,6 +74,11 @@ for protocol in "${gateway_supported_protocols[@]}"; do
     '. + {($protocol):{binary:$url,sha256:$sha256}}' <<<"$gateway_admission_protocols_json")"
 done
 
+gateway_admission_status_url="https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
+if [[ "$NODE" == "$GATEWAY_NODE" && "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
+  gateway_admission_status_url='http://127.0.0.1:18084/v1/status'
+fi
+
 values=(
   "PUBLIC_HOST=$(node_public_host "$NODE")"
   "ACME_EMAIL=${ACME_EMAIL:-}"
@@ -83,13 +88,12 @@ values=(
   "PYTHON_IMAGE=${PYTHON_IMAGE:-python:3.13-alpine}"
   "GATEWAY_PUBLIC_HOST=$(node_public_host "$GATEWAY_NODE")"
   "GDC_GATEWAY_ADMISSION_UPSTREAM=http://$(node_public_host "$GATEWAY_NODE"):18080"
-  # The public edge must not assume that gateway-internal listeners are
-  # reachable over the gateway Host's public address. Use the TLS routes the
-  # runbook already treats as the canonical chain/readiness boundary.
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
-  # identity and positive capacity instead of deployment intent.
-  "GDC_GATEWAY_ADMISSION_STATUS_URL=https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
+  # identity and positive capacity instead of deployment intent. The gateway
+  # participant edge exposes this path over TLS only to PUBLIC_EDGE_CIDR. A
+  # colocated public edge uses the same host-network loopback instead.
+  "GDC_GATEWAY_ADMISSION_STATUS_URL=$gateway_admission_status_url"
   "GDC_GATEWAY_ADMISSION_EPOCH_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/current_epoch_group_data"
   "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL=https://${PUBLIC_EDGE_HOST}/chain-rpc/status"
   "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/params"

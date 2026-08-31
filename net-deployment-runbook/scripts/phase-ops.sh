@@ -140,6 +140,79 @@ suspend_gateway_admission() {
   printf 'READY public gateway admission is fail-closed for runtime replacement\n'
 }
 
+reconcile_gateway_observer_route() {
+  local node="$GATEWAY_NODE" edge_env edge_remote observer_active existing_admission
+  edge_env="$GENERATED/edge/$node.env"
+  edge_remote="${REMOTE}-gateway-edge"
+  mkdir -p "$(dirname "$edge_env")"
+  "$ROOT/04-ops/edge-node/render-env.sh" \
+    --inventory "$INVENTORY" --node-name "$node" --output "$edge_env" >/dev/null
+  ssh "$node" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
+  rsync -a "$ROOT/04-ops/edge-node/" "$node:$edge_remote/edge/"
+  scp -q "$edge_env" "$node:$edge_remote/edge.env"
+  ssh -T "$node" "set -Eeuo pipefail
+    sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'
+    rm -rf '$edge_remote'
+    cd /srv/dai/edge
+    docker compose up -d --force-recreate caddy >/srv/dai/edge/start-gateway-observer-route.log 2>&1"
+  if ! observer_active="$(ssh -T "$node" 'set -Eeuo pipefail
+    load_state="$(sudo systemctl show gdc-gateway-admission-observer.service -p LoadState --value)"
+    case "$load_state" in
+      loaded) sudo systemctl show gdc-gateway-admission-observer.service -p ActiveState --value ;;
+      not-found) printf absent ;;
+      *) exit 1 ;;
+    esac')"; then
+    die 'could not determine gateway admission observer state before runtime replacement'
+  fi
+  if [[ "$observer_active" != active ]]; then
+    if ! existing_admission="$(ssh -T "$PUBLIC_EDGE_NODE" 'set -Eeuo pipefail
+      [[ -d /srv/dai/edge ]] || exit 0
+      cd /srv/dai/edge
+      docker compose ps -aq gateway-admission')"; then
+      die 'could not determine public admission state before runtime replacement'
+    fi
+    [[ -z "$existing_admission" ]] \
+      || die 'existing public admission cannot be suspended before its observer TLS route is proven'
+    printf 'READY gateway observer TLS route installed; live probe deferred until first observer start\n'
+    return
+  fi
+  probe_gateway_observer_tls_route
+}
+
+probe_gateway_observer_tls_route() (
+  local probe_env status_url attempts interval attempt probe_ready=false
+  probe_env="$(mktemp)"
+  trap 'rm -f "$probe_env"' EXIT
+  status_url="https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
+  if [[ "$GATEWAY_NODE" == "$PUBLIC_EDGE_NODE" ]]; then
+    status_url='http://127.0.0.1:18084/v1/status'
+  fi
+  if ! write_env "$probe_env" \
+    "GDC_GATEWAY_ADMISSION_STATUS_URL=$status_url" \
+    "GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN=$(<"$SECRETS/gateway.admission-observer-key")"; then
+    die 'could not create temporary gateway observer probe credentials'
+  fi
+  attempts="${GDC_GATEWAY_OBSERVER_ROUTE_ATTEMPTS:-30}"
+  interval="${GDC_GATEWAY_OBSERVER_ROUTE_INTERVAL_SECONDS:-1}"
+  [[ "$attempts" =~ ^[1-9][0-9]*$ && "$interval" =~ ^[0-9]+$ ]] \
+    || die 'gateway observer route retry settings are invalid'
+  for attempt in $(seq 1 "$attempts"); do
+    if ssh -T "$PUBLIC_EDGE_NODE" 'set -Eeuo pipefail
+      set -a; . /dev/stdin; set +a
+      curl -fsS --connect-timeout 5 --max-time 15 "$GDC_GATEWAY_ADMISSION_STATUS_URL" \
+        -H "Authorization: Bearer $GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN" \
+        | jq -e '\'' .capacity.models | type == "object" '\'' >/dev/null' <"$probe_env"; then
+      probe_ready=true
+      break
+    fi
+    printf 'WAIT authenticated gateway observer TLS route attempt=%s/%s\n' "$attempt" "$attempts"
+    (( attempt == attempts )) || sleep "$interval"
+  done
+  [[ "$probe_ready" == true ]] \
+    || die "authenticated gateway observer TLS route did not become ready after $attempts attempts"
+  printf 'READY authenticated gateway observer TLS route is reachable from the managed public edge\n'
+)
+
 GATEWAY_OPTION=''
 CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
 POST_START_COMMAND=true
@@ -430,6 +503,8 @@ if [[ "$COMPONENT" == gateway ]]; then
     >"$gateway_approved_params"
   "$ROOT/scripts/verify-approved-devshard-version.sh" \
     "$gateway_approved_params" "$GDC_GATEWAY_VERSION" "$gateway_archive_url" "$gateway_archive_sha"
+  step 'Reconcile the authenticated gateway observer TLS route before runtime replacement'
+  reconcile_gateway_observer_route
   step 'Suspend public admission before replacing the gateway runtime'
   suspend_gateway_admission
 fi
@@ -549,11 +624,13 @@ if [[ "$COMPONENT" == gateway ]]; then
   done
   [[ "$gateway_ready" == true ]] || die 'gateway did not become ACTIVE before timeout'
   step 'Verify the sanitized read-only admission observer'
-  observer_token="$(<"$SECRETS/gateway.admission-observer-key")"
-  observer_url="https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
-  curl -fsS --connect-timeout 5 --max-time 15 "$observer_url" \
-    -H "Authorization: Bearer $observer_token" \
-    | jq -e --arg protocol "$GDC_GATEWAY_VERSION" '
+  if ! observer_payload="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
+    set -a; . /srv/dai/ops/gateway-admission-observer.env; set +a
+    curl -fsS --connect-timeout 2 --max-time 10 http://127.0.0.1:18084/v1/status \
+      -H "Authorization: Bearer $GDC_GATEWAY_ADMISSION_OBSERVER_TOKEN"')"; then
+    die "gateway admission observer is unavailable on $GATEWAY_NODE"
+  fi
+  if ! jq -e --arg protocol "$GDC_GATEWAY_VERSION" '
         (.capacity.models // {}) as $models
         | any($models[]?; ((.current_weight // .total_weight // 0) | tonumber) > 0)
         and any(.devshards[]?;
@@ -563,8 +640,9 @@ if [[ "$COMPONENT" == gateway ]]; then
           and .runtime.phase == "active"
           and .runtime.chain_phase == "Inference"
           and .runtime.requests_blocked == false)
-      ' >/dev/null \
-    || die "gateway admission observer does not expose the selected live protocol with positive capacity: url=$observer_url"
+      ' <<<"$observer_payload" >/dev/null; then
+    die "gateway admission observer does not expose the selected live protocol with positive capacity on $GATEWAY_NODE"
+  fi
   step 'Deploy the matching public admission contract'
   deploy_gateway_admission
   ssh "$GATEWAY_NODE" 'test "$(stat -c %a /srv/dai/ops/gateway.env)" = 600'
