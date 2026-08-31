@@ -5,6 +5,53 @@
 
 profile_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
+load_resolved_image_lock() {
+  local lock="$1" line name value current
+  local -A seen=()
+  [[ -r "$lock" ]] || { echo "resolved image lock is unreadable: $lock" >&2; return 2; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    if [[ ! "$line" =~ ^([A-Z][A-Z0-9_]*)=([A-Za-z0-9._/+:@-]+@sha256:[0-9a-f]{64})$ ]]; then
+      echo "resolved image lock has an invalid entry: $lock" >&2
+      return 2
+    fi
+    name="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    case "$name" in
+      TMKMS_IMAGE|INFERENCED_IMAGE|DAPI_IMAGE|EDGE_API_IMAGE|VERSIOND_IMAGE|PROXY_IMAGE|POSTGRES_IMAGE|\
+      MLNODE_GENERIC_IMAGE|MLNODE_PROXY_IMAGE|BRIDGE_IMAGE|EXPLORER_IMAGE|CADDY_IMAGE|PROMETHEUS_IMAGE|\
+      GRAFANA_IMAGE|ALERTMANAGER_IMAGE|BLACKBOX_IMAGE|NODE_EXPORTER_IMAGE|CADVISOR_IMAGE) ;;
+      *)
+        echo "resolved image lock contains an unsupported variable: $name" >&2
+        return 2
+        ;;
+    esac
+    [[ -z "${seen[$name]:-}" ]] || {
+      echo "resolved image lock contains a duplicate variable: $name" >&2
+      return 2
+    }
+    seen[$name]=true
+    current="${!name:-}"
+    [[ -n "$current" ]] || {
+      echo "resolved image lock cannot introduce an undeclared image: $name" >&2
+      return 2
+    }
+    if [[ "$current" == *@sha256:* ]]; then
+      [[ "$value" == "$current" ]] || {
+        echo "resolved image lock conflicts with pinned profile image: $name" >&2
+        return 2
+      }
+    else
+      [[ "$value" == "$current@sha256:"* ]] || {
+        echo "resolved image lock changes the declared profile image: $name" >&2
+        return 2
+      }
+    fi
+    printf -v "$name" '%s' "$value"
+    export "${name?}"
+  done <"$lock"
+}
+
 local_gateway_image_for_protocol() {
   local version="$1" image="${LOCAL_GATEWAY_IMAGE:?LOCAL_GATEWAY_IMAGE is required}"
   [[ "$version" =~ ^v[345]$ ]] || {
@@ -95,6 +142,10 @@ load_profiles() {
   unset CANDIDATE_LOCAL_GATEWAY_IMAGE CANDIDATE_POSTGRES_IMAGE
   unset DEVSHARD_V5_URL DEVSHARD_V5_SHA256 DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL
   unset DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256 CANDIDATE_LAYER CANDIDATE_COMPOSITION
+  unset REQUIRED_DEVSHARD_PROFILE REQUIRED_DEVSHARD_DEFINITION_SHA256
+  unset REQUIRED_DEVSHARD_BUILD_MANIFEST_SHA256 REQUIRED_DEVSHARD_RELEASE_LOCK_SHA256
+  unset GDC_COMPOSITION_DEVSHARD_PROFILE GDC_COMPOSITION_DEVSHARD_DEFINITION_SHA256
+  unset GDC_COMPOSITION_DEVSHARD_BUILD_MANIFEST_SHA256 GDC_COMPOSITION_DEVSHARD_RELEASE_LOCK_SHA256
   # If split devshard lock, load base release lock first for core variables
   if grep -Eq '^CANDIDATE_LAYER=(core|devshard)$' "$root/profiles/releases/$release.lock" 2>/dev/null; then
     local base_profile
@@ -131,6 +182,24 @@ load_profiles() {
     eval "$comp_env"
     export GDC_COMPOSITION="$comp_target"
   fi
+  if [[ -n "${GDC_RESOLVED_IMAGE_LOCK:-}" ]]; then
+    load_resolved_image_lock "$GDC_RESOLVED_IMAGE_LOCK" || return $?
+  fi
+  if [[ -n "${REQUIRED_DEVSHARD_PROFILE:-}" ]]; then
+    [[ -n "${comp_env:-}" ]] || {
+      printf 'release profile %s requires a verified composition with DevShard profile %s; use --composition\n' \
+        "$release" "$REQUIRED_DEVSHARD_PROFILE" >&2
+      return 2
+    }
+    if [[ "${GDC_COMPOSITION_DEVSHARD_PROFILE:-}" != "$REQUIRED_DEVSHARD_PROFILE" \
+      || "${GDC_COMPOSITION_DEVSHARD_DEFINITION_SHA256:-}" != "${REQUIRED_DEVSHARD_DEFINITION_SHA256:-}" \
+      || "${GDC_COMPOSITION_DEVSHARD_BUILD_MANIFEST_SHA256:-}" != "${REQUIRED_DEVSHARD_BUILD_MANIFEST_SHA256:-}" \
+      || "${GDC_COMPOSITION_DEVSHARD_RELEASE_LOCK_SHA256:-}" != "${REQUIRED_DEVSHARD_RELEASE_LOCK_SHA256:-}" ]]; then
+      printf 'verified composition does not match the exact DevShard identity required by release profile %s\n' \
+        "$release" >&2
+      return 2
+    fi
+  fi
   # Chain registration eligibility is an explicit deployment-profile
   # decision, never an inference from the presence of a URL and checksum.
   # Gateway routing capability remains independently fail-closed through
@@ -146,11 +215,6 @@ load_profiles() {
   fi
   if [[ -n "${GDC_COMPOSITION_HASH:-}" ]]; then
     export GDC_COMPOSITION_HASH
-  fi
-  if [[ -n "${GDC_RESOLVED_IMAGE_LOCK:-}" ]]; then
-    [[ -r "$GDC_RESOLVED_IMAGE_LOCK" ]] || { echo "resolved image lock is unreadable: $GDC_RESOLVED_IMAGE_LOCK" >&2; return 2; }
-    # shellcheck disable=SC1090
-    source "$GDC_RESOLVED_IMAGE_LOCK"
   fi
   export GDC_RELEASE_PROFILE="$release" GDC_DEPLOYMENT_PROFILE="$deployment"
   export GDC_MODEL_PROFILE="$model" GDC_OPERATOR_SERVICES_PROFILE="$operator"

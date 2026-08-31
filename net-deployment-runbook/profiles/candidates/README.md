@@ -12,10 +12,10 @@ the bytes consumed by reviewed default-branch automation.
 The lifecycle is:
 
 ```bash
-./gdc.sh release candidate prepare --source-ref upgrade-v0.2.16
-./gdc.sh release candidate build v2026.08.25-rc.0 --wait
-./gdc.sh release candidate profile v2026.08.25-rc.0
-./gdc.sh release candidate verify v2026.08.25-rc.0
+./gdc.sh release candidate prepare --source-ref ak/height-sync-protocol-dapi --layer core
+./gdc.sh release candidate build v2026.08.28-rc.0 --wait
+./gdc.sh release candidate profile v2026.08.28-rc.0
+./gdc.sh release candidate verify v2026.08.28-rc.0
 ```
 
 `prepare` is idempotent for an already frozen source. `build` dispatches only

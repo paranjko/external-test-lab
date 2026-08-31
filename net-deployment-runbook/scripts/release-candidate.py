@@ -58,6 +58,11 @@ DEVSHARD_REQUIRED_BINARIES = {
 }
 REQUIRED_IMAGES = CORE_REQUIRED_IMAGES | DEVSHARD_REQUIRED_IMAGES
 REQUIRED_BINARIES = CORE_REQUIRED_BINARIES | DEVSHARD_REQUIRED_BINARIES
+LEGACY_SOURCE_IDENTITY_DEFINITIONS = {
+    "v2026.08.25-rc.0": "74fc6807051c327631c707a69cb5527370e543f0b9c93cecf8db925287174e0f",
+    "v2026.08.27-rc.0": "71e9b64d931d3eb8e150a3a5de48f2f20efd644bc9f5e3f06f8eda1d0a3891cc",
+    "v2026.08.30-rc.0": "956a7758af5ba16cb47e7c09e8f18a8b3646ee1486d86749e3cf1db5c1820d86",
+}
 
 
 def required_images_for_layer(layer: str) -> set[str]:
@@ -115,6 +120,41 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def component_build_arguments(definition: dict[str, Any], component_id: str) -> dict[str, str]:
+    components = definition.get("components", [])
+    component = next(
+        (
+            item
+            for item in components
+            if isinstance(item, dict) and item.get("id") == component_id
+        ),
+        None,
+    )
+    if component is None:
+        raise CandidateError(f"candidate component is missing: {component_id}")
+    build_args = component.get("build_args", {})
+    if not isinstance(build_args, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in build_args.items()
+    ):
+        raise CandidateError(f"candidate component build arguments are invalid: {component_id}")
+    return build_args
+
+
+def render_build_arguments(build_args: dict[str, str]) -> str:
+    return "\n".join(f"{key}={value}" for key, value in build_args.items())
+
+
+def canonical_github_repository_url(value: str) -> str:
+    if value.startswith("git@github.com:"):
+        value = "https://github.com/" + value.removeprefix("git@github.com:")
+    return value.removesuffix(".git")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -240,6 +280,28 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
         if not str(repository.get("ref", "")).startswith("refs/heads/"):
             raise CandidateError(f"repository ref is not a branch ref: {name}")
 
+    source_identity_contract = definition.get("source_identity_contract")
+    if source_identity_contract is None:
+        if LEGACY_SOURCE_IDENTITY_DEFINITIONS.get(profile) != actual_hash:
+            raise CandidateError(
+                "candidate without a source identity contract is not an exact frozen historical definition"
+            )
+    else:
+        if source_identity_contract != "git-object-and-github-signature-v1":
+            raise CandidateError("candidate source identity contract is unsupported")
+        for name, repository in repositories.items():
+            signature = repository.get("signature")
+            if not isinstance(signature, dict):
+                raise CandidateError(f"repository signature binding is missing: {name}")
+            if (
+                signature.get("provider") != "github"
+                or signature.get("verified") is not True
+                or signature.get("reason") != "valid"
+                or not HASH_RE.fullmatch(str(signature.get("signature_sha256", "")))
+                or not HASH_RE.fullmatch(str(signature.get("payload_sha256", "")))
+            ):
+                raise CandidateError(f"repository signature binding is invalid: {name}")
+
     architectures = definition.get("architectures", {})
     expected_architectures = ["linux/amd64"]
     for key in ("observed_laboratory_hosts", "oci_images", "upgrade_binaries"):
@@ -277,6 +339,50 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
         governance = definition.get("governance", {})
         if governance.get("core_upgrade_name") != "v0.2.16":
             raise CandidateError("candidate core upgrade name must be v0.2.16")
+        core_version = governance["core_upgrade_name"].removeprefix("v")
+        core_commit = str(repositories["gonka_core"]["commit"])
+        inferenced_ldflags = (
+            "-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain "
+            "-X github.com/cosmos/cosmos-sdk/version.AppName=inferenced "
+            f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
+            f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
+        )
+        dapi_ldflags = (
+            "-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api "
+            "-X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api "
+            f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
+            f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
+        )
+        if source_identity_contract is not None:
+            expected_inferenced_args = {
+                "GOOS": "linux",
+                "GOARCH": "amd64",
+                "BLST_PORTABLE": "0",
+                "LDFLAGS": inferenced_ldflags,
+            }
+            expected_dapi_args = {
+                "GOOS": "linux",
+                "GOARCH": "amd64",
+                "BLST_PORTABLE": "0",
+                "DEVSHARD_VERSION": "v5",
+                "LDFLAGS": dapi_ldflags,
+            }
+            if component_build_arguments(definition, "inferenced") != expected_inferenced_args:
+                raise CandidateError("candidate inferenced build arguments are incomplete or unexpected")
+            if component_build_arguments(definition, "decentralized-api") != expected_dapi_args:
+                raise CandidateError("candidate DAPI build arguments are incomplete or unexpected")
+
+            devshard_baseline = definition.get("devshard_baseline")
+            if not isinstance(devshard_baseline, dict):
+                raise CandidateError("core candidate required DevShard profile is missing")
+            if (
+                not PROFILE_RE.fullmatch(str(devshard_baseline.get("profile", "")))
+                or not HASH_RE.fullmatch(str(devshard_baseline.get("definition_sha256", "")))
+                or not HASH_RE.fullmatch(str(devshard_baseline.get("build_manifest_sha256", "")))
+                or not HASH_RE.fullmatch(str(devshard_baseline.get("release_lock_sha256", "")))
+            ):
+                raise CandidateError("core candidate required DevShard identity is invalid")
+
     elif layer == "devshard":
         expected_devshard = {"devshard-runtime", "devshard-host"}
         if not expected_devshard.issubset(component_ids):
@@ -365,6 +471,81 @@ def run(command: list[str], *, capture: bool = True) -> subprocess.CompletedProc
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "command failed").strip()
         raise CandidateError(f"{' '.join(command)}: {detail}") from exc
+
+
+def verify_source_identity(
+    profile: str,
+    repository_key: str,
+    repository_path: Path,
+    verification_path: Path,
+) -> None:
+    definition, _, _ = verify_definition(profile)
+    if definition.get("source_identity_contract") != "git-object-and-github-signature-v1":
+        raise CandidateError("candidate does not declare the source identity verification contract")
+    binding = definition.get("repositories", {}).get(repository_key)
+    if not isinstance(binding, dict):
+        raise CandidateError(f"candidate repository binding is missing: {repository_key}")
+    if not repository_path.is_dir():
+        raise CandidateError(f"candidate source repository is missing: {repository_path}")
+
+    expected_url = str(binding["url"])
+    actual_url = run(
+        ["git", "-C", str(repository_path), "remote", "get-url", "origin"]
+    ).stdout.strip()
+    if canonical_github_repository_url(actual_url) != canonical_github_repository_url(expected_url):
+        raise CandidateError(
+            f"candidate source remote mismatch: {repository_key} expected={expected_url} actual={actual_url}"
+        )
+
+    commit = str(binding["commit"])
+    tree = str(binding["tree"])
+    branch = str(binding["ref"]).removeprefix("refs/heads/")
+    remote_ref = f"refs/remotes/origin/{branch}"
+    run(["git", "-C", str(repository_path), "cat-file", "-e", f"{commit}^{{commit}}"])
+    actual_tree = run(
+        ["git", "-C", str(repository_path), "rev-parse", f"{commit}^{{tree}}"]
+    ).stdout.strip()
+    if actual_tree != tree:
+        raise CandidateError(
+            f"candidate source tree mismatch: {repository_key} expected={tree} actual={actual_tree}"
+        )
+    run(["git", "-C", str(repository_path), "show-ref", "--verify", remote_ref])
+    run(["git", "-C", str(repository_path), "merge-base", "--is-ancestor", commit, remote_ref])
+
+    verification = load_json(verification_path)
+    commit_document = verification.get("commit")
+    if not isinstance(commit_document, dict):
+        raise CandidateError("candidate source verification document is malformed")
+    verification_record = commit_document.get("verification")
+    tree_document = commit_document.get("tree")
+    if not isinstance(verification_record, dict) or not isinstance(tree_document, dict):
+        raise CandidateError("candidate source verification document is incomplete")
+    expected_signature = binding["signature"]
+    signature = verification_record.get("signature")
+    payload = verification_record.get("payload")
+    if (
+        verification.get("sha") != commit
+        or tree_document.get("sha") != tree
+        or verification_record.get("verified") is not True
+        or verification_record.get("reason") != "valid"
+        or not isinstance(signature, str)
+        or not isinstance(payload, str)
+        or sha256_text(signature) != expected_signature["signature_sha256"]
+        or sha256_text(payload) != expected_signature["payload_sha256"]
+    ):
+        raise CandidateError("candidate source signature verification does not match the frozen identity")
+
+
+def command_source_verify(args: argparse.Namespace) -> None:
+    verify_source_identity(
+        args.profile,
+        args.repository_key,
+        Path(args.repository).resolve(),
+        Path(args.verification_json).resolve(),
+    )
+    print(
+        f"PASS source_identity profile={args.profile} repository={args.repository_key}"
+    )
 
 
 def candidate_state(profile: str) -> Path:
@@ -805,6 +986,14 @@ def render_lock(profile: str, manifest: dict[str, Any], manifest_hash: str) -> s
                 f"{publication_contract(definition, profile)['release_url_segment']}"
             ),
         })
+        required_devshard = definition.get("devshard_baseline")
+        if isinstance(required_devshard, dict) and required_devshard.get("profile"):
+            values.update({
+                "REQUIRED_DEVSHARD_PROFILE": required_devshard["profile"],
+                "REQUIRED_DEVSHARD_DEFINITION_SHA256": required_devshard["definition_sha256"],
+                "REQUIRED_DEVSHARD_BUILD_MANIFEST_SHA256": required_devshard["build_manifest_sha256"],
+                "REQUIRED_DEVSHARD_RELEASE_LOCK_SHA256": required_devshard["release_lock_sha256"],
+            })
 
     if layer in {"devshard", "all"}:
         repo_devshard = definition["repositories"].get("devshard_v5") or definition["repositories"].get("devshard", {})
@@ -1009,6 +1198,24 @@ def build_canonical_composition(
     is_candidate_devshard = devshard_lock.get("LAB_CANDIDATE") == "true" and (
         "CANDIDATE_DEVSHARD_COMMIT" in devshard_lock or "DEVSHARDD_IMAGE" in devshard_lock
     )
+
+    required_devshard_profile = core_lock.get("REQUIRED_DEVSHARD_PROFILE")
+    if required_devshard_profile:
+        if devshard_profile != required_devshard_profile:
+            raise CandidateError(
+                f"core candidate {core_profile} requires DevShard profile {required_devshard_profile}, got {devshard_profile}"
+            )
+        required_definition = core_lock.get("REQUIRED_DEVSHARD_DEFINITION_SHA256", "")
+        required_manifest = core_lock.get("REQUIRED_DEVSHARD_BUILD_MANIFEST_SHA256", "")
+        required_release_lock = core_lock.get("REQUIRED_DEVSHARD_RELEASE_LOCK_SHA256", "")
+        if (
+            devshard_lock.get("CANDIDATE_DEFINITION_SHA256") != required_definition
+            or devshard_lock.get("CANDIDATE_BUILD_MANIFEST_SHA256") != required_manifest
+            or devshard_lock_hash != required_release_lock
+        ):
+            raise CandidateError(
+                f"DevShard profile {devshard_profile} release lock does not match the exact identity required by core candidate {core_profile}"
+            )
 
     if is_cand_core:
         if is_candidate_devshard:
@@ -1381,6 +1588,10 @@ def composition_env(manifest: dict[str, Any]) -> str:
     env: dict[str, str] = {
         "GDC_COMPOSITION": comp_name,
         "GDC_COMPOSITION_HASH": manifest_hash,
+        "GDC_COMPOSITION_DEVSHARD_PROFILE": devshard_info["profile"],
+        "GDC_COMPOSITION_DEVSHARD_DEFINITION_SHA256": devshard_info.get("definition_sha256", ""),
+        "GDC_COMPOSITION_DEVSHARD_BUILD_MANIFEST_SHA256": devshard_info.get("build_manifest_sha256", ""),
+        "GDC_COMPOSITION_DEVSHARD_RELEASE_LOCK_SHA256": devshard_info["lock_hash"],
         "GDC_RELEASE_PROFILE": core_profile,
         "GONKA_REPOSITORY": "https://github.com/gonka-ai/gonka.git",
         "GONKA_SOURCE_REF": core_info.get("source_ref", "refs/heads/main"),
@@ -1459,30 +1670,42 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
     v5_short = v5_commit[:8] if v5_commit else ""
     profile_name = str(definition.get("profile", profile))
 
-    inferenced_build_args = (
-        "GOOS=linux\n"
-        "GOARCH=amd64\n"
-        "BLST_PORTABLE=0\n"
-        f"LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain "
-        f"-X github.com/cosmos/cosmos-sdk/version.AppName=inferenced "
-        f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
-        f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
-    )
+    if definition.get("source_identity_contract"):
+        inferenced_build_args = render_build_arguments(
+            component_build_arguments(definition, "inferenced")
+        )
+        dapi_build_args = render_build_arguments(
+            component_build_arguments(definition, "decentralized-api")
+        )
+        edge_api_build_args = render_build_arguments(
+            component_build_arguments(definition, "edge-api")
+        )
+    else:
+        inferenced_build_args = (
+            "GOOS=linux\n"
+            "GOARCH=amd64\n"
+            "BLST_PORTABLE=0\n"
+            f"LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain "
+            f"-X github.com/cosmos/cosmos-sdk/version.AppName=inferenced "
+            f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
+            f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
+        )
 
-    dapi_build_args = (
-        "GOOS=linux\n"
-        "GOARCH=amd64\n"
-        "BLST_PORTABLE=0\n"
-        "DEVSHARD_VERSION=v5\n"
-        f"LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api "
-        f"-X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api "
-        f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
-        f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}\n"
-        f"INFERENCED_LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain "
-        f"-X github.com/cosmos/cosmos-sdk/version.AppName=inferenced "
-        f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
-        f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
-    )
+        dapi_build_args = (
+            "GOOS=linux\n"
+            "GOARCH=amd64\n"
+            "BLST_PORTABLE=0\n"
+            "DEVSHARD_VERSION=v5\n"
+            f"LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api "
+            f"-X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api "
+            f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
+            f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}\n"
+            f"INFERENCED_LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain "
+            f"-X github.com/cosmos/cosmos-sdk/version.AppName=inferenced "
+            f"-X github.com/cosmos/cosmos-sdk/version.Version={core_version} "
+            f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
+        )
+        edge_api_build_args = "GOOS=linux\nGOARCH=amd64\nBLST_PORTABLE=0"
 
     devshardd_build_args = (
         "GOOS=linux\n"
@@ -1491,6 +1714,8 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
         "DEVSHARD_VERSION=v5\n"
         f"DEVSHARD_BINARY_VERSION={profile_name}-{v5_short}"
     )
+
+    legacy_dapi_metadata = definition.get("source_identity_contract") is None
 
     all_images = [
         {
@@ -1508,6 +1733,7 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
             "context": ".",
             "target": "final",
             "build_args": dapi_build_args,
+            "legacy_dapi_metadata": legacy_dapi_metadata,
         },
         {
             "id": "edge-api",
@@ -1515,7 +1741,7 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
             "dockerfile": "edge-api/Dockerfile",
             "context": ".",
             "target": "runtime",
-            "build_args": "GOOS=linux\nGOARCH=amd64\nBLST_PORTABLE=0",
+            "build_args": edge_api_build_args,
         },
         {
             "id": "devshardd",
@@ -1580,6 +1806,7 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
             "source": "core",
             "dockerfile_checkout": "source",
             "dockerfile": "decentralized-api/Dockerfile",
+            "legacy_dapi_metadata": legacy_dapi_metadata,
         },
         {
             "id": "edge-api",
@@ -1695,6 +1922,13 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("profile")
     verify.add_argument("--build-manifest")
     verify.set_defaults(func=command_verify)
+
+    source_verify = subcommands.add_parser("source-verify")
+    source_verify.add_argument("profile")
+    source_verify.add_argument("--repository-key", required=True)
+    source_verify.add_argument("--repository", required=True)
+    source_verify.add_argument("--verification-json", required=True)
+    source_verify.set_defaults(func=command_source_verify)
 
     comp = subcommands.add_parser("composition")
     comp_sub = comp.add_subparsers(dest="composition_command", required=True)

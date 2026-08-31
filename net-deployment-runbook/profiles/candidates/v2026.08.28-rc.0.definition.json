@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-candidate-definition",
+  "profile": "v2026.08.28-rc.0",
+  "layer": "core",
+  "classification": "lab-candidate",
+  "official_gonka_release": false,
+  "source_identity_contract": "git-object-and-github-signature-v1",
+  "prepared_at": "2026-08-31T21:26:33Z",
+  "source_date": "2026-08-28",
+  "upgrade_from_profile": "v2026.08.06",
+  "repositories": {
+    "gonka_core": {
+      "url": "https://github.com/gonka-ai/gonka.git",
+      "ref": "refs/heads/ak/height-sync-protocol-dapi",
+      "commit": "18506d42c510e0cafe6acd748bcd8d83036cba40",
+      "tree": "1e2b267b21868096736b9aece8bb3bdbaf666406",
+      "committer_time": "2026-08-28T06:53:18Z",
+      "signature": {
+        "provider": "github",
+        "verified": true,
+        "reason": "valid",
+        "signature_sha256": "daf17a4d4128bd2ee9f9a6bba84b08e9b7f2d2bde1a53ccccf18bd0705168596",
+        "payload_sha256": "efbc69f1359fbc43497adf873317bd3836a450e840ff185a4e6bdcad11597b02"
+      }
+    }
+  },
+  "upstream_qualification": {
+    "pull_request": "https://github.com/gonka-ai/gonka/pull/1622",
+    "state": "open",
+    "review": "required",
+    "checks": "passing",
+    "base_ref": "refs/heads/upgrade-v0.2.16",
+    "base_commit": "7759adbf1bf454c74f112ed832c5dc7378e070f2",
+    "current_base_head": "1f4f902e59d1ca39b91e26b72a2958150bd2129e",
+    "base_only_runtime_changes": false,
+    "rule": "The selected signed PR head contains the v0.2.16 runtime base plus the hash-aware DAPI source. The newer base-only commit changes README.md and is not a runtime input."
+  },
+  "publication": {
+    "schema_version": 1,
+    "release_tag": "v2026.08.28-rc.0",
+    "binary_assets": {
+      "inferenced-linux-amd64": "inferenced.zip",
+      "inferenced-operator-linux-amd64": "inferenced-operator.zip",
+      "decentralized-api-linux-amd64": "decentralized-api.zip",
+      "edge-api-linux-amd64": "edge-api.zip"
+    }
+  },
+  "devshard_baseline": {
+    "profile": "v2026.08.30-rc.0",
+    "definition_sha256": "956a7758af5ba16cb47e7c09e8f18a8b3646ee1486d86749e3cf1db5c1820d86",
+    "build_manifest_sha256": "0ca70f36cee0a38e44b16d163fc5c1e181e771e01bfec285d7ecd4417eace083",
+    "release_lock_sha256": "3579b8a1d5df84727c9166b2aa6a391f472da894dc53fd099336ef9a4196b64d",
+    "protocol": "v5",
+    "rule": "The core candidate does not contain or rebuild DevShard. Deployment composition must retain the exact independently published v5 artifacts."
+  },
+  "component_boundary": {
+    "includes": [
+      "inferenced",
+      "inferenced-operator",
+      "decentralized-api",
+      "edge-api",
+      "versiond",
+      "versiond-router"
+    ],
+    "excludes": [
+      "devshardd",
+      "devshard-gateway",
+      "devshard-host"
+    ],
+    "rule": "Every core component is built from the exact signed upstream PR head. No laboratory source patch, merge, or cherry-pick is permitted."
+  },
+  "governance": {
+    "core_upgrade_name": "v0.2.16",
+    "upgrade_info": {
+      "enabled_fee_groups": [],
+      "min_gas_prices": {}
+    }
+  },
+  "architectures": {
+    "observed_laboratory_hosts": [
+      "linux/amd64"
+    ],
+    "oci_images": [
+      "linux/amd64"
+    ],
+    "upgrade_binaries": [
+      "linux/amd64"
+    ]
+  },
+  "base_images": [
+    {
+      "reference": "golang:1.24.2-alpine3.21",
+      "digest": "sha256:7772cb5322baa875edd74705556d08f0eeca7b9c4b5367754ce3f2f00041ccee"
+    },
+    {
+      "reference": "golang:1.25.9-alpine3.23",
+      "digest": "sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f"
+    },
+    {
+      "reference": "alpine:3.21",
+      "digest": "sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d"
+    },
+    {
+      "reference": "alpine:3.23",
+      "digest": "sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
+    },
+    {
+      "reference": "nginx:1.27-alpine",
+      "digest": "sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+    }
+  ],
+  "components": [
+    {
+      "id": "inferenced",
+      "source": "gonka_core",
+      "path": "inference-chain",
+      "dockerfile": "inference-chain/Dockerfile",
+      "action": "build-candidate",
+      "artifacts": [
+        "oci-image",
+        "upgrade-binary",
+        "operator-binary"
+      ],
+      "build_args": {
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "BLST_PORTABLE": "0",
+        "LDFLAGS": "-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain -X github.com/cosmos/cosmos-sdk/version.AppName=inferenced -X github.com/cosmos/cosmos-sdk/version.Version=0.2.16 -X github.com/cosmos/cosmos-sdk/version.Commit=18506d42c510e0cafe6acd748bcd8d83036cba40"
+      }
+    },
+    {
+      "id": "decentralized-api",
+      "source": "gonka_core",
+      "path": "decentralized-api",
+      "dockerfile": "decentralized-api/Dockerfile",
+      "action": "build-candidate",
+      "artifacts": [
+        "oci-image",
+        "upgrade-binary"
+      ],
+      "build_args": {
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "BLST_PORTABLE": "0",
+        "DEVSHARD_VERSION": "v5",
+        "LDFLAGS": "-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api -X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api -X github.com/cosmos/cosmos-sdk/version.Version=0.2.16 -X github.com/cosmos/cosmos-sdk/version.Commit=18506d42c510e0cafe6acd748bcd8d83036cba40"
+      }
+    },
+    {
+      "id": "edge-api",
+      "source": "gonka_core",
+      "path": "edge-api",
+      "dockerfile": "edge-api/Dockerfile",
+      "action": "build-candidate",
+      "artifacts": [
+        "oci-image",
+        "upgrade-binary"
+      ],
+      "build_args": {
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "BLST_PORTABLE": "0"
+      }
+    },
+    {
+      "id": "versiond",
+      "source": "gonka_core",
+      "path": "versioned",
+      "dockerfile": "versioned/Dockerfile",
+      "action": "build-candidate",
+      "artifacts": [
+        "oci-image"
+      ],
+      "build_args": {}
+    },
+    {
+      "id": "versiond-router",
+      "source": "gonka_core",
+      "path": "versiond-router",
+      "dockerfile": "versiond-router/Dockerfile",
+      "action": "build-candidate",
+      "artifacts": [
+        "oci-image"
+      ],
+      "build_args": {}
+    },
+    {
+      "id": "mlnode",
+      "source": "gonka_core",
+      "path": "mlnode",
+      "action": "reuse-immutable",
+      "artifacts": [
+        "oci-image"
+      ],
+      "reference": "ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1"
+    },
+    {
+      "id": "proxy",
+      "source": "v2026.08.06",
+      "path": "proxy",
+      "action": "reuse-immutable",
+      "artifacts": [
+        "oci-image"
+      ],
+      "reference": "ghcr.io/product-science/proxy:0.2.15@sha256:88a392f2300e4f303df6c7dde4660944c3f99df1e7d959bb451bd62e2f846d49"
+    },
+    {
+      "id": "tmkms",
+      "source": "v2026.08.06",
+      "path": "tmkms",
+      "action": "reuse-immutable",
+      "artifacts": [
+        "oci-image"
+      ],
+      "reference": "ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21"
+    },
+    {
+      "id": "bridge",
+      "source": "v2026.08.06",
+      "path": "bridge",
+      "action": "reuse-immutable",
+      "artifacts": [
+        "oci-image"
+      ],
+      "reference": "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d"
+    }
+  ],
+  "features": {
+    "dapi_block_oracle": {
+      "enabled": true,
+      "route": "/block/{height}",
+      "payload": "height and canonical block hash",
+      "verification": "compare every populated hash with CometBFT"
+    },
+    "height_sync": {
+      "enabled": true,
+      "devshard_artifact": "v2026.08.30-rc.0",
+      "legacy_dapi_result": "fail",
+      "hash_aware_retest_required": true
+    },
+    "ha": {
+      "enabled": false,
+      "deployment": "excluded",
+      "storage_mode": "memory"
+    }
+  },
+  "excluded_capabilities": [
+    {
+      "id": "devshard-rebuild",
+      "reason": "The exact v5 artifact is an independent frozen input and is not rebuilt by this core candidate."
+    },
+    {
+      "id": "height-sync-strong-proof",
+      "reason": "Strong proof with LightBlock validation is outside PR #1622 and is not claimed by this candidate."
+    },
+    {
+      "id": "official-release-readiness",
+      "reason": "The selected upstream PR is open and still requires upstream review; this is only an independent laboratory candidate."
+    }
+  ]
+}

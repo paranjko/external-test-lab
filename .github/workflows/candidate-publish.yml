@@ -158,6 +158,39 @@ jobs:
           cp "$definition_sidecar" "$trusted_candidates/$PROFILE.definition.sha256"
           python3 automation/net-deployment-runbook/scripts/release-candidate.py \
             workflow-matrix "$PROFILE" >>"$GITHUB_OUTPUT"
+      - name: Verify exact upstream source identities
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROFILE: ${{ steps.request.outputs.profile }}
+        run: |
+          set -Eeuo pipefail
+          definition="request-source/net-deployment-runbook/profiles/candidates/$PROFILE.definition.json"
+          contract="$(jq -r '.source_identity_contract // empty' "$definition")"
+          if [[ -z "$contract" ]]; then
+            exit 0
+          fi
+          [[ "$contract" == git-object-and-github-signature-v1 ]]
+          while IFS=$'\t' read -r repository_key repository_url repository_ref commit; do
+            [[ "$repository_url" == https://github.com/gonka-ai/gonka.git ]]
+            [[ "$repository_ref" == refs/heads/* ]]
+            branch="${repository_ref#refs/heads/}"
+            checkout="$RUNNER_TEMP/candidate-source-$repository_key"
+            verification="$RUNNER_TEMP/candidate-source-$repository_key.json"
+            git init "$checkout"
+            git -C "$checkout" remote add origin "$repository_url"
+            git -C "$checkout" fetch --no-tags --filter=blob:none origin \
+              "$repository_ref:refs/remotes/origin/$branch"
+            gh api "repos/gonka-ai/gonka/commits/$commit" >"$verification"
+            python3 automation/net-deployment-runbook/scripts/release-candidate.py \
+              source-verify "$PROFILE" \
+              --repository-key "$repository_key" \
+              --repository "$checkout" \
+              --verification-json "$verification"
+          done < <(
+            jq -r '.repositories | to_entries[] | [
+              .key, .value.url, .value.ref, .value.commit
+            ] | @tsv' "$definition"
+          )
 
   images:
     needs: prepare
@@ -186,6 +219,7 @@ jobs:
         env:
           BASE_IMAGES_JSON: ${{ needs.prepare.outputs.base_images }}
           IMAGE_ID: ${{ matrix.id }}
+          LEGACY_DAPI_METADATA: ${{ matrix.legacy_dapi_metadata || false }}
           SOURCE_DOCKERFILE: source/${{ matrix.dockerfile }}
           PINNED_DOCKERFILE: source/${{ matrix.context }}/.gdc-candidate-${{ matrix.id }}.Dockerfile
         run: |
@@ -193,7 +227,7 @@ jobs:
           python3 automation/net-deployment-runbook/scripts/pin-candidate-dockerfile.py \
             --source "$SOURCE_DOCKERFILE" --output "$PINNED_DOCKERFILE" \
             --base-images-json "$BASE_IMAGES_JSON"
-          if [[ "$IMAGE_ID" == decentralized-api ]]; then
+          if [[ "$IMAGE_ID" == decentralized-api && "$LEGACY_DAPI_METADATA" == true ]]; then
             python3 automation/net-deployment-runbook/scripts/patch-candidate-dapi-dockerfile.py \
               --source "$PINNED_DOCKERFILE" --output "$PINNED_DOCKERFILE"
           fi
@@ -223,6 +257,7 @@ jobs:
           IMAGE_REFERENCE: ghcr.io/${{ github.repository_owner }}/gdc-${{ matrix.id }}:${{ needs.prepare.outputs.profile }}-${{ needs.prepare.outputs.definition_short }}-${{ github.run_id }}
           CORE_VERSION: ${{ needs.prepare.outputs.core_version }}
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          LEGACY_DAPI_METADATA: ${{ matrix.legacy_dapi_metadata || false }}
         run: |
           set -Eeuo pipefail
           case "$IMAGE_ID" in
@@ -236,12 +271,12 @@ jobs:
           chmod 0755 candidate-executable
           bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
             "$IMAGE_ID" candidate-executable "$CORE_VERSION" "$CORE_COMMIT" metadata
-          if [[ "$IMAGE_ID" == decentralized-api ]]; then
+          if [[ "$IMAGE_ID" == decentralized-api && "$LEGACY_DAPI_METADATA" == true ]]; then
             docker cp "$container:/usr/bin/inferenced" candidate-inferenced
             chmod 0755 candidate-inferenced
             bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
               inferenced candidate-inferenced "$CORE_VERSION" "$CORE_COMMIT" metadata
-          else
+          elif [[ "$IMAGE_ID" != decentralized-api ]]; then
             version_output="$(docker run --rm --entrypoint "$executable" "$IMAGE_REFERENCE" version --long)"
             escaped_version="${CORE_VERSION//./\\.}"
             grep -Eq '^name: "?inference-chain"?$' <<<"$version_output"
@@ -309,6 +344,7 @@ jobs:
         env:
           BASE_IMAGES_JSON: ${{ needs.prepare.outputs.base_images }}
           COMPONENT: ${{ matrix.id }}
+          LEGACY_DAPI_METADATA: ${{ matrix.legacy_dapi_metadata || false }}
           SOURCE_DOCKERFILE: ${{ matrix.dockerfile_checkout }}/${{ matrix.dockerfile }}
           PINNED_DOCKERFILE: source/.gdc-candidate-binary-${{ matrix.id }}.Dockerfile
         run: |
@@ -316,7 +352,7 @@ jobs:
           python3 automation/net-deployment-runbook/scripts/pin-candidate-dockerfile.py \
             --source "$SOURCE_DOCKERFILE" --output "$PINNED_DOCKERFILE" \
             --base-images-json "$BASE_IMAGES_JSON"
-          if [[ "$COMPONENT" == decentralized-api ]]; then
+          if [[ "$COMPONENT" == decentralized-api && "$LEGACY_DAPI_METADATA" == true ]]; then
             python3 automation/net-deployment-runbook/scripts/patch-candidate-dapi-dockerfile.py \
               --source "$PINNED_DOCKERFILE" --output "$PINNED_DOCKERFILE"
           fi
@@ -332,6 +368,7 @@ jobs:
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
           V5_COMMIT: ${{ needs.prepare.outputs.v5_commit }}
           DEVSHARD_REPOSITORY_KEY: ${{ needs.prepare.outputs.devshard_repository_key }}
+          LEGACY_DAPI_METADATA: ${{ matrix.legacy_dapi_metadata || false }}
           PINNED_DOCKERFILE: ${{ steps.dockerfile.outputs.path }}
         run: |
           set -Eeuo pipefail
@@ -352,10 +389,14 @@ jobs:
                 -f "$PINNED_DOCKERFILE" source
               ;;
             decentralized-api)
+              dapi_extra_args=()
+              if [[ "$LEGACY_DAPI_METADATA" == true ]]; then
+                dapi_extra_args+=(--build-arg "INFERENCED_LDFLAGS=$inferenced_ldflags")
+              fi
               docker buildx build --platform linux/amd64 --target binary-exporter --output type=local,dest=package \
                 --build-arg GOOS=linux --build-arg GOARCH=amd64 --build-arg BLST_PORTABLE=0 \
                 --build-arg DEVSHARD_VERSION=v5 --build-arg "LDFLAGS=$dapi_ldflags" \
-                --build-arg "INFERENCED_LDFLAGS=$inferenced_ldflags" \
+                "${dapi_extra_args[@]}" \
                 -f "$PINNED_DOCKERFILE" source
               ;;
             edge-api)
@@ -389,8 +430,10 @@ jobs:
             decentralized-api)
               bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
                 decentralized-api package/build_output/decentralized-api "$CORE_VERSION" "$CORE_COMMIT" metadata
-              bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
-                inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" metadata
+              if [[ "$LEGACY_DAPI_METADATA" == true ]]; then
+                bash automation/net-deployment-runbook/scripts/verify-candidate-binary-identity.sh \
+                  inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" metadata
+              fi
               ;;
           esac
           archive="$COMPONENT-linux-amd64.zip"

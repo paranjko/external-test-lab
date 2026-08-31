@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for candidate DAPI build-metadata patching."""
+"""Regression tests for legacy candidate DAPI build-metadata patching."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def main() -> None:
         else:
             raise AssertionError("already patched DAPI Dockerfile was accepted")
 
-    print("PASS candidate DAPI Dockerfile metadata binding")
+    print("PASS legacy candidate DAPI Dockerfile metadata binding")
 
 
 if __name__ == "__main__":

@@ -93,6 +93,7 @@ test: site-js-check
 	@./scripts/test-upgrade-target-binding.sh
 	@./scripts/test-verify-candidate-release-target.sh
 	@./scripts/test-candidate-workflow.sh
+	@./scripts/test-v0216-hash-dapi-candidate.sh
 	@./scripts/test-composition-manifest.sh
 	@./scripts/test-devshard-governance-proposal-selection.sh
 	@./scripts/test-fetch-governance-proposals.sh

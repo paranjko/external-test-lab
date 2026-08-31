@@ -238,7 +238,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.08.06 bridge contract deploy sepolia
   ./gdc.sh --release v2026.08.06 bridge contract register sepolia
   ./gdc.sh --release v2026.08.06 bridge observer apply|status|verify <SSH_ALIAS>
-  ./gdc.sh release candidate prepare --source-ref upgrade-v0.2.16 [--layer core|devshard]
+  ./gdc.sh release candidate prepare --source-ref ak/height-sync-protocol-dapi --layer core
   ./gdc.sh release candidate build <vYYYY.MM.DD-rc.N> [--dry-run] [--retry] [--wait]
   ./gdc.sh release candidate profile <vYYYY.MM.DD-rc.N> [--build-manifest <PATH>]
   ./gdc.sh release candidate verify <vYYYY.MM.DD-rc.N> [--build-manifest <PATH>]

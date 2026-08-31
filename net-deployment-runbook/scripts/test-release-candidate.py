@@ -173,6 +173,33 @@ def main() -> None:
     source_definition = candidate.load_json(
         candidate.CANDIDATES / "v2026.08.25-rc.0.definition.json"
     )
+    strict_source_definition = candidate.load_json(
+        candidate.CANDIDATES / "v2026.08.28-rc.0.definition.json"
+    )
+    for legacy_profile, legacy_hash in candidate.LEGACY_SOURCE_IDENTITY_DEFINITIONS.items():
+        assert candidate.verify_definition(legacy_profile)[2] == legacy_hash
+    with tempfile.TemporaryDirectory() as strict_temporary_name:
+        strict_temporary = Path(strict_temporary_name)
+        unsigned_strict = json.loads(json.dumps(strict_source_definition))
+        unsigned_strict.pop("source_identity_contract")
+        for repository in unsigned_strict["repositories"].values():
+            repository.pop("signature")
+        unsigned_path = strict_temporary / "v2026.08.28-rc.0.definition.json"
+        write_json(unsigned_path, unsigned_strict)
+        unsigned_hash = candidate.sha256(unsigned_path)
+        unsigned_path.with_suffix(".sha256").write_text(
+            f"{unsigned_hash}  {unsigned_path.name}\n", encoding="utf-8"
+        )
+        original_candidates = candidate.CANDIDATES
+        candidate.CANDIDATES = strict_temporary
+        try:
+            candidate.verify_definition("v2026.08.28-rc.0")
+        except candidate.CandidateError as exc:
+            assert "not an exact frozen historical definition" in str(exc)
+        else:
+            raise AssertionError("new candidate without source identity contract was accepted")
+        finally:
+            candidate.CANDIDATES = original_candidates
     legacy_publication = candidate.publication_contract(
         source_definition, "v2026.08.25-rc.0"
     )
@@ -189,10 +216,153 @@ def main() -> None:
         candidate.RELEASES = releases
         candidate.candidate_state = lambda profile: state / profile
 
+        source_repo = temporary / "source-repository"
+        subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(source_repo), "config", "user.name", "Candidate Test"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(source_repo), "config", "user.email", "candidate@example.invalid"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(source_repo), "config", "commit.gpgsign", "false"],
+            check=True,
+        )
+        (source_repo / "source.txt").write_text("exact source\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(source_repo), "add", "source.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(source_repo), "commit", "-q", "-m", "test source"],
+            check=True,
+        )
+        source_commit = subprocess.run(
+            ["git", "-C", str(source_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        source_tree = subprocess.run(
+            ["git", "-C", str(source_repo), "rev-parse", "HEAD^{tree}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/gonka-ai/gonka.git",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "update-ref",
+                "refs/remotes/origin/source-branch",
+                source_commit,
+            ],
+            check=True,
+        )
+        signature = "fixture signature\n"
+        payload = "fixture payload\n"
+        strict_fixture = json.loads(
+            json.dumps(strict_source_definition).replace(
+                "18506d42c510e0cafe6acd748bcd8d83036cba40", source_commit
+            )
+        )
+        strict_fixture["repositories"]["gonka_core"].update(
+            {
+                "ref": "refs/heads/source-branch",
+                "tree": source_tree,
+                "signature": {
+                    "provider": "github",
+                    "verified": True,
+                    "reason": "valid",
+                    "signature_sha256": candidate.sha256_text(signature),
+                    "payload_sha256": candidate.sha256_text(payload),
+                },
+            }
+        )
+        strict_path = candidates / "v2026.08.28-rc.0.definition.json"
+        write_json(strict_path, strict_fixture)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+        verification = {
+            "sha": source_commit,
+            "commit": {
+                "tree": {"sha": source_tree},
+                "verification": {
+                    "verified": True,
+                    "reason": "valid",
+                    "signature": signature,
+                    "payload": payload,
+                },
+            },
+        }
+        verification_path = temporary / "source-verification.json"
+        write_json(verification_path, verification)
+        candidate.verify_source_identity(
+            "v2026.08.28-rc.0",
+            "gonka_core",
+            source_repo,
+            verification_path,
+        )
+
+        invalid_verification = json.loads(json.dumps(verification))
+        invalid_verification["commit"]["verification"]["signature"] += "tampered"
+        invalid_verification_path = temporary / "invalid-source-verification.json"
+        write_json(invalid_verification_path, invalid_verification)
+        try:
+            candidate.verify_source_identity(
+                "v2026.08.28-rc.0",
+                "gonka_core",
+                source_repo,
+                invalid_verification_path,
+            )
+        except candidate.CandidateError as exc:
+            assert "signature verification does not match" in str(exc)
+        else:
+            raise AssertionError("tampered source signature was accepted")
+
+        strict_tree_tamper = json.loads(json.dumps(strict_fixture))
+        strict_tree_tamper["repositories"]["gonka_core"]["tree"] = "f" * 40
+        write_json(strict_path, strict_tree_tamper)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+        try:
+            candidate.verify_source_identity(
+                "v2026.08.28-rc.0",
+                "gonka_core",
+                source_repo,
+                verification_path,
+            )
+        except candidate.CandidateError as exc:
+            assert "source tree mismatch" in str(exc)
+        else:
+            raise AssertionError("mismatched source tree was accepted")
+        write_json(strict_path, strict_fixture)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+
         definition_path = candidates / "v2026.08.25-rc.0.definition.json"
         write_json(definition_path, source_definition)
         definition_hash = candidate.sha256(definition_path)
         definition_short = definition_hash[:12]
+        candidate.LEGACY_SOURCE_IDENTITY_DEFINITIONS["v2026.08.25-rc.0"] = definition_hash
         definition_path.with_suffix(".sha256").write_text(
             f"{definition_hash}  {definition_path.name}\n", encoding="utf-8"
         )
@@ -225,6 +395,7 @@ def main() -> None:
         devshard_path = candidates / "v2026.08.27-rc.0.definition.json"
         write_json(devshard_path, devshard_only)
         devshard_hash = candidate.sha256(devshard_path)
+        candidate.LEGACY_SOURCE_IDENTITY_DEFINITIONS["v2026.08.27-rc.0"] = devshard_hash
         devshard_path.with_suffix(".sha256").write_text(
             f"{devshard_hash}  {devshard_path.name}\n", encoding="utf-8"
         )
@@ -801,6 +972,7 @@ def main() -> None:
         core_def_path = candidates / "v2026.08.26-rc.0.definition.json"
         write_json(core_def_path, core_definition)
         core_def_hash = candidate.sha256(core_def_path)
+        candidate.LEGACY_SOURCE_IDENTITY_DEFINITIONS["v2026.08.26-rc.0"] = core_def_hash
         core_def_path.with_suffix(".sha256").write_text(
             f"{core_def_hash}  {core_def_path.name}\n", encoding="utf-8"
         )
@@ -933,6 +1105,7 @@ def main() -> None:
         devshard_def_path = candidates / "v2026.08.27-rc.0.definition.json"
         write_json(devshard_def_path, devshard_definition)
         devshard_def_hash = candidate.sha256(devshard_def_path)
+        candidate.LEGACY_SOURCE_IDENTITY_DEFINITIONS["v2026.08.27-rc.0"] = devshard_def_hash
         devshard_def_path.with_suffix(".sha256").write_text(
             f"{devshard_def_hash}  {devshard_def_path.name}\n", encoding="utf-8"
         )
@@ -999,6 +1172,19 @@ def main() -> None:
         )
         candidate.command_verify(
             argparse.Namespace(profile="v2026.08.27-rc.0", build_manifest=str(devshard_manifest_path))
+        )
+
+        devshard_lock_path = releases / "v2026.08.27-rc.0.lock"
+        core_lock_path = releases / "v2026.08.26-rc.0.lock"
+        core_lock_path.write_text(
+            core_lock_path.read_text(encoding="utf-8")
+            + f"REQUIRED_DEVSHARD_PROFILE=v2026.08.27-rc.0\n"
+            + f"REQUIRED_DEVSHARD_DEFINITION_SHA256={devshard_def_hash}\n"
+            + "REQUIRED_DEVSHARD_BUILD_MANIFEST_SHA256="
+            + f"{candidate.sha256(devshard_manifest_path)}\n"
+            + "REQUIRED_DEVSHARD_RELEASE_LOCK_SHA256="
+            + f"{candidate.sha256(devshard_lock_path)}\n",
+            encoding="utf-8",
         )
 
         # --- IMP-013: Deployed-State Composition Manifest Tests ---
@@ -1095,6 +1281,68 @@ def main() -> None:
         assert "postgres" in manifest_cand["components"]["images"]
         candidate.verify_composition(comp_candidate_path)
 
+        try:
+            candidate.build_canonical_composition(
+                "v2026.08.26-rc.0",
+                "v2026.08.06",
+                "wrong-devshard-profile",
+            )
+        except candidate.CandidateError as exc:
+            assert "requires DevShard profile v2026.08.27-rc.0" in str(exc)
+        else:
+            raise AssertionError("core candidate accepted a different DevShard profile")
+
+        exact_devshard_lock = devshard_lock_path.read_text(encoding="utf-8")
+        devshard_lock_path.write_text(
+            exact_devshard_lock.replace(
+                f"CANDIDATE_BUILD_MANIFEST_SHA256={candidate.sha256(devshard_manifest_path)}",
+                f"CANDIDATE_BUILD_MANIFEST_SHA256={'e' * 64}",
+            ),
+            encoding="utf-8",
+        )
+        try:
+            candidate.build_canonical_composition(
+                "v2026.08.26-rc.0",
+                "v2026.08.27-rc.0",
+                "tampered-devshard-build",
+            )
+        except candidate.CandidateError as exc:
+            assert "does not match the exact identity" in str(exc)
+        else:
+            raise AssertionError("core candidate accepted a different DevShard build")
+        devshard_lock_path.write_text(exact_devshard_lock, encoding="utf-8")
+
+        for key in (
+            "DEVSHARD_GATEWAY_IMAGE",
+            "DEVSHARDD_IMAGE",
+            "DEVSHARD_V5_SHA256",
+        ):
+            current_value = candidate.parse_lock(devshard_lock_path)[key]
+            replacement = (
+                "registry.invalid/replaced:latest"
+                if key.endswith("_IMAGE")
+                else "f" * 64
+            )
+            devshard_lock_path.write_text(
+                exact_devshard_lock.replace(
+                    f"{key}={current_value}",
+                    f"{key}={replacement}",
+                ),
+                encoding="utf-8",
+            )
+            try:
+                candidate.build_canonical_composition(
+                    "v2026.08.26-rc.0",
+                    "v2026.08.27-rc.0",
+                    f"tampered-{key.lower()}",
+                )
+            except candidate.CandidateError as exc:
+                assert "release lock does not match the exact identity" in str(exc)
+            else:
+                raise AssertionError(f"core candidate accepted tampered {key}")
+            finally:
+                devshard_lock_path.write_text(exact_devshard_lock, encoding="utf-8")
+
         # Verify candidate composition lock and env bindings
         mat_cand_lock = temporary / "materialized-cand.lock"
         mat_cand_content = candidate.materialize_composition_lock(manifest_cand)
@@ -1113,6 +1361,16 @@ def main() -> None:
 
         env_cand_content = candidate.composition_env(manifest_cand)
         assert "export GDC_COMPOSITION_HASH=" in env_cand_content
+        assert "export GDC_COMPOSITION_DEVSHARD_PROFILE=v2026.08.27-rc.0" in env_cand_content
+        assert f"export GDC_COMPOSITION_DEVSHARD_DEFINITION_SHA256={devshard_def_hash}" in env_cand_content
+        assert (
+            "export GDC_COMPOSITION_DEVSHARD_BUILD_MANIFEST_SHA256="
+            f"{candidate.sha256(devshard_manifest_path)}" in env_cand_content
+        )
+        assert (
+            "export GDC_COMPOSITION_DEVSHARD_RELEASE_LOCK_SHA256="
+            f"{candidate.sha256(devshard_lock_path)}" in env_cand_content
+        )
         assert f"export LOCAL_GATEWAY_IMAGE={candidate_gateway_local}" in env_cand_content
         assert f"export CANDIDATE_LOCAL_GATEWAY_IMAGE={candidate_gateway_local}" in env_cand_content
         assert f"export DEVSHARD_GATEWAY_IMAGE={candidate_gateway}" in env_cand_content
@@ -1127,7 +1385,8 @@ def main() -> None:
         assert manifest_stable["devshard"]["source_commit"] == "3c034a72a80f82c33f71a73737c329f41c7ddf7b"
         assert manifest_stable["devshard"]["host_stack_commit"] == "ce33c851282b8f4c0f63d78d46ddd4d8bb248207"
 
-        # Negative test: incompatible lineage between core candidate and devshard candidate
+        # Negative test: an alternate DevShard lock cannot replace the exact
+        # DevShard candidate required by the core candidate.
         incomp_lock_content = (releases / "v2026.08.27-rc.0.lock").read_text(encoding="utf-8").replace(
             "UPGRADE_FROM_PROFILE=v2026.08.06", "UPGRADE_FROM_PROFILE=v2026.07.23"
         )
@@ -1135,9 +1394,9 @@ def main() -> None:
         try:
             candidate.create_composition("v2026.08.26-rc.0", "incompatible-devshard")
         except candidate.CandidateError as exc:
-            assert "incompatible lineage" in str(exc)
+            assert "requires DevShard profile v2026.08.27-rc.0" in str(exc)
         else:
-            raise AssertionError("incompatible lineage composition was accepted")
+            raise AssertionError("alternate DevShard composition was accepted")
 
         # Negative test: malformed composition name
         try:

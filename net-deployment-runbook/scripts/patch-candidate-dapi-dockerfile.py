@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind the embedded inferenced build in the pinned DAPI Dockerfile."""
+"""Bind the embedded inferenced build in a legacy DAPI Dockerfile."""
 
 from __future__ import annotations
 

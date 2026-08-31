@@ -3,7 +3,12 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+required_core_lock="$ROOT/profiles/releases/core-required-test.lock"
+cleanup() {
+  rm -rf "$tmp"
+  rm -f "$required_core_lock"
+}
+trap cleanup EXIT
 
 comp_out="$tmp/test-composition.json"
 
@@ -115,6 +120,81 @@ printf '%s\n' \
   [[ -n "$POSTGRES_IMAGE" ]]
 )
 rm -f "$ROOT/profiles/releases/core-test-temp.lock"
+
+# A core candidate that binds an exact DevShard identity must never load as a
+# standalone release profile, because that would silently inherit the baseline
+# DevShard runtime. The verified composition is the only accepted path.
+devshard_lock="$ROOT/profiles/releases/v2026.08.30-rc.0.lock"
+devshard_definition_sha256="$(awk -F= '$1 == "CANDIDATE_DEFINITION_SHA256" {print $2}' "$devshard_lock")"
+devshard_build_manifest_sha256="$(awk -F= '$1 == "CANDIDATE_BUILD_MANIFEST_SHA256" {print $2}' "$devshard_lock")"
+devshard_release_lock_sha256="$(sha256sum "$devshard_lock" | awk '{print $1}')"
+cp "$ROOT/profiles/releases/v2026.08.06.lock" "$required_core_lock"
+{
+  printf '%s\n' \
+    'LAB_CANDIDATE=true' \
+    'CANDIDATE_LAYER=core' \
+    'UPGRADE_FROM_PROFILE=v2026.08.06' \
+    'REQUIRED_DEVSHARD_PROFILE=v2026.08.30-rc.0'
+  printf 'REQUIRED_DEVSHARD_DEFINITION_SHA256=%s\n' "$devshard_definition_sha256"
+  printf 'REQUIRED_DEVSHARD_BUILD_MANIFEST_SHA256=%s\n' "$devshard_build_manifest_sha256"
+  printf 'REQUIRED_DEVSHARD_RELEASE_LOCK_SHA256=%s\n' "$devshard_release_lock_sha256"
+} >>"$required_core_lock"
+
+if (
+  # shellcheck source=/dev/null
+  source "$ROOT/scripts/profile.sh"
+  GDC_RELEASE_PROFILE=core-required-test load_profiles
+) >"$tmp/direct-required.out" 2>"$tmp/direct-required.err"; then
+  echo 'core profile with an exact DevShard requirement loaded without a composition' >&2
+  exit 1
+fi
+grep -Fq 'requires a verified composition with DevShard profile v2026.08.30-rc.0' \
+  "$tmp/direct-required.err"
+
+required_comp="$tmp/core-required-composition.json"
+"$ROOT/gdc.sh" release composition create \
+  --core core-required-test \
+  --devshard v2026.08.30-rc.0 \
+  --name core-required-composition \
+  --output "$required_comp" >/dev/null
+(
+  # shellcheck source=/dev/null
+  source "$ROOT/scripts/profile.sh"
+  GDC_COMPOSITION="$required_comp" load_profiles
+  [[ "$GDC_RELEASE_PROFILE" == core-required-test ]]
+  [[ "$GDC_COMPOSITION_DEVSHARD_PROFILE" == v2026.08.30-rc.0 ]]
+  [[ "$GDC_COMPOSITION_DEVSHARD_DEFINITION_SHA256" == "$devshard_definition_sha256" ]]
+  [[ "$GDC_COMPOSITION_DEVSHARD_BUILD_MANIFEST_SHA256" == "$devshard_build_manifest_sha256" ]]
+  [[ "$GDC_COMPOSITION_DEVSHARD_RELEASE_LOCK_SHA256" == "$devshard_release_lock_sha256" ]]
+)
+
+printf 'DEVSHARD_GATEWAY_IMAGE=registry.example/devshard-gateway:v5@sha256:%064d\n' 0 \
+  >"$tmp/unsupported-resolved.lock"
+if (
+  # shellcheck source=/dev/null
+  source "$ROOT/scripts/profile.sh"
+  GDC_COMPOSITION="$required_comp" \
+    GDC_RESOLVED_IMAGE_LOCK="$tmp/unsupported-resolved.lock" load_profiles
+) >"$tmp/unsupported-resolved.out" 2>"$tmp/unsupported-resolved.err"; then
+  echo 'resolved image lock replaced a composition DevShard image' >&2
+  exit 1
+fi
+grep -Fq 'contains an unsupported variable: DEVSHARD_GATEWAY_IMAGE' \
+  "$tmp/unsupported-resolved.err"
+
+printf 'DAPI_IMAGE=registry.example/dapi:other@sha256:%064d\n' 0 \
+  >"$tmp/conflicting-resolved.lock"
+if (
+  # shellcheck source=/dev/null
+  source "$ROOT/scripts/profile.sh"
+  GDC_COMPOSITION="$required_comp" \
+    GDC_RESOLVED_IMAGE_LOCK="$tmp/conflicting-resolved.lock" load_profiles
+) >"$tmp/conflicting-resolved.out" 2>"$tmp/conflicting-resolved.err"; then
+  echo 'resolved image lock replaced a pinned composition core image' >&2
+  exit 1
+fi
+grep -Fq 'conflicts with pinned profile image: DAPI_IMAGE' \
+  "$tmp/conflicting-resolved.err"
 
 # Negative: tampered manifest fails verification
 echo "tampered" >> "$comp_out"

@@ -88,6 +88,10 @@ for isolated_job in "$images_job" "$binaries_job"; do
   ! grep -Eq '(contents|packages|id-token|attestations): write' <<<"$isolated_job"
   ! grep -Eq '(secrets\.|GH_TOKEN|docker/login-action|oras (login|push)|attest-build-provenance)' <<<"$isolated_job"
 done
+grep -Fq 'LEGACY_DAPI_METADATA: ${{ matrix.legacy_dapi_metadata || false }}' <<<"$images_job"
+grep -Fq 'LEGACY_DAPI_METADATA: ${{ matrix.legacy_dapi_metadata || false }}' <<<"$binaries_job"
+grep -Fq 'patch-candidate-dapi-dockerfile.py' <<<"$images_job"
+grep -Fq 'patch-candidate-dapi-dockerfile.py' <<<"$binaries_job"
 grep -Fq 'matrix: ${{ fromJson(needs.prepare.outputs.image_matrix) }}' <<<"$images_job"
 grep -Fq 'matrix: ${{ fromJson(needs.prepare.outputs.binary_matrix) }}' <<<"$binaries_job"
 grep -Fq 'matrix: ${{ fromJson(needs.prepare.outputs.publish_image_matrix) }}' <<<"$publish_images_job"
@@ -100,17 +104,19 @@ grep -Fq 'workflow-matrix "$PROFILE"' <<<"$prepare_job"
 ! grep -Fq 'python3 net-deployment-runbook/scripts/release-candidate.py workflow-matrix' <<<"$prepare_job"
 grep -Fq 'LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain' "$RUNBOOK/scripts/release-candidate.py"
 grep -Fq 'LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api' "$RUNBOOK/scripts/release-candidate.py"
-grep -Fq 'INFERENCED_LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain' "$RUNBOOK/scripts/release-candidate.py"
+grep -Fq 'source-verify "$PROFILE"' <<<"$prepare_job"
+grep -Fq 'gh api "repos/gonka-ai/gonka/commits/$commit"' <<<"$prepare_job"
+grep -Fq 'git -C "$checkout" fetch --no-tags --filter=blob:none origin' <<<"$prepare_job"
 ! grep -Fq '${{ github.run_id }}-${{ github.run_attempt }}' <<<"$images_job"
 ! grep -Fq 'make devshardd-release' <<<"$binaries_job"
 grep -Fq 'package-candidate-binary.sh' <<<"$binaries_job"
 grep -Fq 'Dockerfile.inferenced-operator' "$RUNBOOK/scripts/release-candidate.py"
+grep -Fq 'inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" metadata' <<<"$binaries_job"
 grep -Fq 'inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" operator' <<<"$binaries_job"
+[[ "$(grep -Fc 'inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT"' <<<"$binaries_job")" == 3 ]]
 grep -Fq -- '--build-arg "LDFLAGS=$inferenced_ldflags"' <<<"$binaries_job"
 grep -Fq -- '--build-arg DEVSHARD_VERSION=v5 --build-arg "LDFLAGS=$dapi_ldflags"' <<<"$binaries_job"
-grep -Fq -- '--build-arg "INFERENCED_LDFLAGS=$inferenced_ldflags"' <<<"$binaries_job"
-grep -Fq 'patch-candidate-dapi-dockerfile.py' <<<"$binaries_job"
-grep -Fq 'inferenced package/build_output/inferenced "$CORE_VERSION" "$CORE_COMMIT" metadata' <<<"$binaries_job"
+grep -Fq 'dapi_extra_args+=(--build-arg "INFERENCED_LDFLAGS=$inferenced_ldflags")' <<<"$binaries_job"
 grep -Fq 'generate-candidate-binary-sbom.sh' <<<"$binaries_job"
 ! grep -Fq 'syft "dir:package"' <<<"$binaries_job"
 
@@ -144,7 +150,7 @@ grep -Fq 'COPY --from=builder /build_output/inferenced /build_output/inferenced'
 
 grep -Fq 'contents: write' <<<"$manifest_job"
 ! grep -Eq '(packages|id-token|attestations): write' <<<"$manifest_job"
-grep -Fq './gdc.sh release candidate prepare --source-ref upgrade-v0.2.16' "$RUNBOOK/gdc.sh"
+grep -Fq './gdc.sh release candidate prepare --source-ref ak/height-sync-protocol-dapi --layer core' "$RUNBOOK/gdc.sh"
 # The launcher must remain in process so its single EXIT boundary records a
 # failed release command in the same private failure-envelope contract.
 grep -Fq '"$ROOT/scripts/release-candidate.py" "$@"' "$RUNBOOK/gdc.sh"
