@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 account.json inventory.env target-ngonka" >&2
+  echo "Usage: $0 account.json inventory.env target-ngonka [minimum-ngonka]" >&2
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,9 +60,17 @@ fund_account() {
 }
 
 ensure_account_balance_main() {
-  [[ $# -eq 3 ]] || { usage; return 2; }
-  local account_json="$1" inventory="$2" target="$3" address chain_api current deficit
-  [[ -s "$account_json" && -s "$inventory" && "$target" != 0 ]] && is_safe_integer "$target" || {
+  [[ $# -ge 3 && $# -le 4 ]] || { usage; return 2; }
+  local account_json="$1" inventory="$2" target="$3" minimum="${4:-$3}" address chain_api current deficit
+  [[ -s "$account_json" && -s "$inventory" && "$target" != 0 && "$minimum" != 0 ]] || {
+    usage
+    return 2
+  }
+  is_safe_integer "$target" && is_safe_integer "$minimum" || {
+    usage
+    return 2
+  }
+  (( minimum <= target )) || {
     usage
     return 2
   }
@@ -79,23 +87,25 @@ ensure_account_balance_main() {
   # otherwise cause a repeated invocation to fund the same committed deficit.
   chain_api="https://${GENESIS_PUBLIC_HOST}/chain-api"
   current="$(read_spendable_balance "$chain_api" "$address")"
-  if (( current >= target )); then
-    printf 'PASS managed account reserve current=%s target=%s\n' "$current" "$target"
+  if (( current >= minimum )); then
+    printf 'PASS managed account reserve current=%s minimum=%s target=%s\n' \
+      "$current" "$minimum" "$target"
     return 0
   fi
   deficit="$((target - current))"
   fund_account "$account_json" "$inventory" "$deficit"
   for attempt in $(seq 1 30); do
     current="$(read_spendable_balance "$chain_api" "$address")"
-    if (( current >= target )); then
-      printf 'PASS managed account reserve current=%s target=%s\n' "$current" "$target"
+    if (( current >= minimum )); then
+      printf 'PASS managed account reserve current=%s minimum=%s target=%s\n' \
+        "$current" "$minimum" "$target"
       return 0
     fi
-    printf 'WAIT managed account funding visibility attempt=%s/30 current=%s target=%s\n' \
-      "$attempt" "$current" "$target"
+    printf 'WAIT managed account funding visibility attempt=%s/30 current=%s minimum=%s target=%s\n' \
+      "$attempt" "$current" "$minimum" "$target"
     (( attempt == 30 )) || account_balance_wait
   done
-  echo "managed account reserve remains below target current=$current target=$target" >&2
+  echo "managed account reserve remains below minimum current=$current minimum=$minimum target=$target" >&2
   return 1
 }
 

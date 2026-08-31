@@ -236,9 +236,11 @@ case "$COMPONENT" in
     [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
     [[ "$gateway_max_refill" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be positive'
     [[ "$gateway_funding_source_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
+    (( gateway_max_refill <= gateway_funding_source_target )) \
+      || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must not exceed GDC_FAUCET_INITIAL_NGONKA'
     step 'Reconcile the gateway reserve funding source'
     "$ROOT/scripts/ensure-account-balance.sh" \
-      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$gateway_funding_source_target"
+      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$gateway_funding_source_target" "$gateway_max_refill"
     "$ROOT/04-ops/ensure-gateway-reserve.sh" \
       "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
       "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \
