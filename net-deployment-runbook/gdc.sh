@@ -217,6 +217,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 gateway reconcile v3
   ./gdc.sh gateway status
   ./gdc.sh gateway verify [SLA]
+  ./gdc.sh gateway migrate preflight|verify|drain <SOURCE_VERSION> <TARGET_VERSION>
   ./gdc.sh --release v2026.07.23 gateway continuity
   ./gdc.sh --release v2026.07.23 gateway settle
   ./gdc.sh --release v2026.08.06 gateway ha v4
@@ -640,6 +641,10 @@ case "$COMMAND" in
       continuity)
         [[ $# -eq 0 ]] || { usage; exit 2; }
         run_phase gateway-continuity "$ROOT/scripts/phase-gateway-continuity.sh"
+        ;;
+      migrate)
+        [[ $# -eq 3 && "$1" =~ ^(preflight|verify|drain)$ && "$2" =~ ^v[345]$ && "$3" =~ ^v[345]$ && "$2" != "$3" ]] || { usage; exit 2; }
+        run_phase "gateway-migration-$1-$2-$3" "$ROOT/scripts/phase-gateway-migration.sh" "$@"
         ;;
       settle)
         [[ $# -eq 0 ]] || { usage; exit 2; }

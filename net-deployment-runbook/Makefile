@@ -128,6 +128,7 @@ test: site-js-check
 	@./scripts/test-upgrade-state-comparison.sh
 	@./scripts/test-upgrade-proposal-binding.sh
 	@./scripts/test-gateway-continuity-verdict.sh
+	@./scripts/test-gateway-migration-contract.sh
 	@./scripts/test-recovery-readiness-predicate.sh
 	@./scripts/test-capture-poc-snapshot.sh
 	@$(MAKE) test-gateway-site-state
