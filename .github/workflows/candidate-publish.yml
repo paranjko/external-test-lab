@@ -27,6 +27,8 @@ jobs:
       profile: ${{ steps.request.outputs.profile }}
       definition_sha256: ${{ steps.request.outputs.definition_sha256 }}
       layer: ${{ steps.definition.outputs.layer }}
+      release_tag: ${{ steps.definition.outputs.release_tag }}
+      release_url_segment: ${{ steps.definition.outputs.release_url_segment }}
       core_commit: ${{ steps.definition.outputs.core_commit }}
       core_version: ${{ steps.definition.outputs.core_version }}
       v5_commit: ${{ steps.definition.outputs.v5_commit }}
@@ -39,10 +41,17 @@ jobs:
       publish_image_matrix: ${{ steps.definition.outputs.publish_image_matrix }}
       publish_binary_matrix: ${{ steps.definition.outputs.publish_binary_matrix }}
     steps:
-      - name: Checkout reviewed laboratory automation
+      - name: Checkout exact reviewed request
         uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          path: request-source
+          persist-credentials: false
+      - name: Checkout trusted publication automation
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: automation
           persist-credentials: false
       - name: Download publication request from triggering run
         env:
@@ -90,11 +99,19 @@ jobs:
           set -Eeuo pipefail
           [[ "$PROFILE" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-rc\.[0-9]+$ ]]
           [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          definition="net-deployment-runbook/profiles/candidates/$PROFILE.definition.json"
+          definition="request-source/net-deployment-runbook/profiles/candidates/$PROFILE.definition.json"
+          definition_sidecar="request-source/net-deployment-runbook/profiles/candidates/$PROFILE.definition.sha256"
           [[ -f "$definition" ]]
+          [[ -f "$definition_sidecar" ]]
           actual_sha256="$(sha256sum "$definition" | awk '{print $1}')"
           [[ "$actual_sha256" == "$EXPECTED_SHA256" ]] || {
             echo 'candidate definition checksum mismatch' >&2
+            exit 1
+          }
+          read -r sidecar_sha256 sidecar_name sidecar_extra <"$definition_sidecar"
+          [[ "$sidecar_sha256" == "$EXPECTED_SHA256" &&
+            "$sidecar_name" == "$PROFILE.definition.json" && -z "$sidecar_extra" ]] || {
+            echo 'candidate definition sidecar mismatch' >&2
             exit 1
           }
           layer="$(jq -r '.layer // "all"' "$definition")"
@@ -136,7 +153,11 @@ jobs:
             printf 'base_images=%s\n' \
               "$(jq -c '.base_images | map({key:.reference,value:.digest}) | from_entries' "$definition")"
           } >>"$GITHUB_OUTPUT"
-          python3 net-deployment-runbook/scripts/release-candidate.py workflow-matrix "$PROFILE" >>"$GITHUB_OUTPUT"
+          trusted_candidates="automation/net-deployment-runbook/profiles/candidates"
+          cp "$definition" "$trusted_candidates/$PROFILE.definition.json"
+          cp "$definition_sidecar" "$trusted_candidates/$PROFILE.definition.sha256"
+          python3 automation/net-deployment-runbook/scripts/release-candidate.py \
+            workflow-matrix "$PROFILE" >>"$GITHUB_OUTPUT"
 
   images:
     needs: prepare
@@ -481,13 +502,14 @@ jobs:
           IMAGE_REFERENCE: ${{ steps.publish.outputs.reference }}
           IMAGE_DIGEST: ${{ steps.publish.outputs.subject_digest }}
           PROFILE: ${{ needs.prepare.outputs.profile }}
+          RELEASE_URL_SEGMENT: ${{ needs.prepare.outputs.release_url_segment }}
         run: |
           set -Eeuo pipefail
           archive="$IMAGE_ID-linux-amd64.oci.tar.gz"
           mkdir -p published-image
           cp "image/$archive" "image/$archive.sha256" "image/$archive.spdx.json" published-image/
           archive_sha256="$(awk '{print $1}' "image/$archive.sha256")"
-          archive_url="https://github.com/$GITHUB_REPOSITORY/releases/download/lab-candidate%2F$PROFILE/$archive"
+          archive_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_URL_SEGMENT/$archive"
           jq -n --arg id "$IMAGE_ID" --arg reference "$IMAGE_REFERENCE" --arg digest "$IMAGE_DIGEST" \
             --arg deployment_reference "$IMAGE_REFERENCE" --arg archive_url "$archive_url" --arg archive_sha256 "$archive_sha256" \
             '{id:$id,reference:$reference,digest:$digest,deployment_reference:$deployment_reference,
@@ -574,20 +596,25 @@ jobs:
           OCI_REFERENCE: ${{ steps.publish.outputs.reference }}
           OCI_DIGEST: ${{ steps.publish.outputs.subject_digest }}
           PROFILE: ${{ needs.prepare.outputs.profile }}
+          RELEASE_NAME: ${{ matrix.release_name }}
+          RELEASE_URL_SEGMENT: ${{ needs.prepare.outputs.release_url_segment }}
         run: |
           set -Eeuo pipefail
           archive="$COMPONENT-linux-amd64.zip"
+          [[ "$RELEASE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.zip$ ]]
           mkdir -p published-binary
-          cp "binary/$archive" "binary/$archive.sha256" "binary/$archive.spdx.json" published-binary/
+          cp "binary/$archive" "published-binary/$RELEASE_NAME"
+          cp "binary/$archive.spdx.json" "published-binary/$RELEASE_NAME.spdx.json"
           checksum="$(awk '{print $1}' "binary/$archive.sha256")"
-          url="https://github.com/$GITHUB_REPOSITORY/releases/download/lab-candidate%2F$PROFILE/$archive"
+          printf '%s  %s\n' "$checksum" "$RELEASE_NAME" >"published-binary/$RELEASE_NAME.sha256"
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_URL_SEGMENT/$RELEASE_NAME"
           jq -n --arg id "$BINARY_ID" --arg reference "$OCI_REFERENCE" --arg digest "$OCI_DIGEST" --arg sha256 "$checksum" --arg url "$url" \
             '{id:$id,oci_reference:$reference,oci_digest:$digest,sha256:$sha256,url:$url,sbom:true,provenance:true}' \
             >"published-binary/binary-$COMPONENT.json"
       - name: Upload published binary result
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: candidate-binary-${{ matrix.id }}
+          name: candidate-binary-release-${{ matrix.id }}
           path: published-binary/
           if-no-files-found: error
           retention-days: 90
@@ -614,7 +641,7 @@ jobs:
       - name: Download binary results
         uses: actions/download-artifact@v8.0.1
         with:
-          pattern: candidate-binary-*
+          pattern: candidate-binary-release-*
           path: results/binaries
           merge-multiple: true
       - name: Create immutable build manifest
@@ -671,10 +698,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PROFILE: ${{ needs.prepare.outputs.profile }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -Eeuo pipefail
-          tag="lab-candidate/$PROFILE"
+          tag="$RELEASE_TAG"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease \
               | grep -Fxq true || {

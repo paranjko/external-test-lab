@@ -54,8 +54,124 @@ def main() -> None:
     )[0]
     assert "DEVSHARD_REPOSITORY_KEY: ${{ needs.prepare.outputs.devshard_repository_key }}" in manifest_step
 
+    new_definition, _, new_definition_hash = candidate.verify_definition(
+        "v2026.08.30-rc.0"
+    )
+    new_publication = candidate.publication_contract(
+        new_definition, "v2026.08.30-rc.0"
+    )
+    assert new_publication == {
+        "release_tag": "v2026.08.30-rc.0",
+        "release_url_segment": "v2026.08.30-rc.0",
+        "binary_assets": {"devshardd-linux-amd64": "devshardd.zip"},
+    }
+    new_matrix = candidate.workflow_matrix("v2026.08.30-rc.0")
+    assert new_matrix["release_tag"] == "v2026.08.30-rc.0"
+    assert new_matrix["release_url_segment"] == "v2026.08.30-rc.0"
+    assert new_matrix["publish_binary_matrix"] == {
+        "include": [
+            {
+                "id": "devshardd",
+                "member": "devshardd",
+                "release_name": "devshardd.zip",
+            }
+        ]
+    }
+    malformed_publication = json.loads(json.dumps(new_definition))
+    malformed_publication["publication"]["release_tag"] = "lab-candidate/v2026.08.30-rc.0"
+    try:
+        candidate.publication_contract(malformed_publication, "v2026.08.30-rc.0")
+    except candidate.CandidateError as exc:
+        assert "release tag must equal" in str(exc)
+    else:
+        raise AssertionError("encoded-slash publication tag was accepted")
+
+    with tempfile.TemporaryDirectory() as publication_temporary_name:
+        publication_temporary = Path(publication_temporary_name)
+        new_manifest = {
+            "schema_version": 1,
+            "kind": "external-test-lab-candidate-build",
+            "profile": "v2026.08.30-rc.0",
+            "definition_sha256": new_definition_hash,
+            "architectures": ["linux/amd64"],
+            "source": {"devshard_v5": new_definition["repositories"]["devshard_v5"]["commit"]},
+            "workflow": {
+                "repository": "paranjko/external-test-lab",
+                "ref": (
+                    "paranjko/external-test-lab/.github/workflows/"
+                    "candidate-publish.yml@refs/heads/main"
+                ),
+                "sha": "a" * 40,
+                "request_ref": "refs/heads/main",
+                "request_sha": "b" * 40,
+                "request_run_id": "701",
+                "run_id": "702",
+                "run_attempt": "1",
+            },
+            "images": {
+                name: {
+                    "reference": (
+                        f"ghcr.io/paranjko/gdc-{name}:"
+                        f"v2026.08.30-rc.0-{new_definition_hash[:12]}-702"
+                    ),
+                    "digest": f"sha256:{hashlib.sha256(('new-' + name).encode()).hexdigest()}",
+                    "deployment_reference": (
+                        f"ghcr.io/paranjko/gdc-{name}:"
+                        f"v2026.08.30-rc.0-{new_definition_hash[:12]}-702"
+                    ),
+                    "archive_url": (
+                        "https://github.com/paranjko/external-test-lab/releases/download/"
+                        f"v2026.08.30-rc.0/{name}-linux-amd64.oci.tar.gz"
+                    ),
+                    "archive_sha256": hashlib.sha256((name + "-new-archive").encode()).hexdigest(),
+                    "sbom": True,
+                    "provenance": True,
+                }
+                for name in candidate.DEVSHARD_REQUIRED_IMAGES
+            },
+            "binaries": {
+                "devshardd-linux-amd64": {
+                    "oci_reference": (
+                        "ghcr.io/paranjko/gdc-upgrade-devshardd:"
+                        f"v2026.08.30-rc.0-{new_definition_hash[:12]}-702"
+                    ),
+                    "oci_digest": f"sha256:{'c' * 64}",
+                    "url": (
+                        "https://github.com/paranjko/external-test-lab/releases/download/"
+                        "v2026.08.30-rc.0/devshardd.zip"
+                    ),
+                    "sha256": "d" * 64,
+                    "sbom": True,
+                    "provenance": True,
+                }
+            },
+        }
+        new_manifest_path = publication_temporary / "build-manifest.json"
+        write_json(new_manifest_path, new_manifest)
+        candidate.verify_build_manifest("v2026.08.30-rc.0", new_manifest_path)
+        old_style_manifest = json.loads(json.dumps(new_manifest))
+        old_style_manifest["binaries"]["devshardd-linux-amd64"]["url"] = (
+            "https://github.com/paranjko/external-test-lab/releases/download/"
+            "lab-candidate%2Fv2026.08.30-rc.0/devshardd-linux-amd64.zip"
+        )
+        old_style_path = publication_temporary / "old-style-manifest.json"
+        write_json(old_style_path, old_style_manifest)
+        try:
+            candidate.verify_build_manifest("v2026.08.30-rc.0", old_style_path)
+        except candidate.CandidateError as exc:
+            assert "binary release URL is invalid" in str(exc)
+        else:
+            raise AssertionError("old encoded-slash release URL was accepted")
+
     source_definition = candidate.load_json(
         candidate.CANDIDATES / "v2026.08.25-rc.0.definition.json"
+    )
+    legacy_publication = candidate.publication_contract(
+        source_definition, "v2026.08.25-rc.0"
+    )
+    assert legacy_publication["release_tag"] == "lab-candidate/v2026.08.25-rc.0"
+    assert legacy_publication["release_url_segment"] == (
+        "lab-candidate%2Fv2026.08.25-rc.0"
     )
     with tempfile.TemporaryDirectory() as temporary_name:
         temporary = Path(temporary_name)

@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-candidate-definition",
+  "profile": "v2026.08.30-rc.0",
+  "layer": "devshard",
+  "classification": "lab-candidate",
+  "official_gonka_release": false,
+  "prepared_at": "2026-08-30T23:10:56Z",
+  "source_date": "2026-08-30",
+  "upgrade_from_profile": "v2026.08.06",
+  "core_baseline": {
+    "profile": "v2026.08.06",
+    "gonka_release": "v0.2.15",
+    "rule": "This DevShard-only definition does not create, replace, or include a Gonka core candidate."
+  },
+  "repositories": {
+    "devshard_v5": {
+      "url": "https://github.com/gonka-ai/gonka.git",
+      "ref": "refs/heads/gateway-v4-merge",
+      "commit": "e0814d3c01fe4ad1363d23d6ba4a66e612bb2676",
+      "tree": "76aba1fdd1475e4be94846fca20cdca7931cd0a6",
+      "committer_time": "2026-08-31T00:08:15+03:00",
+      "signature": "unverified"
+    }
+  },
+  "upstream_qualification": {
+    "pull_request": "https://github.com/gonka-ai/gonka/pull/1681",
+    "state": "open",
+    "merge_state": "conflicting",
+    "checks": "absent",
+    "review": "absent",
+    "known_non_passing": [
+      "height-sync H43 OneHostStopped",
+      "height-sync H42 BusyEscrowDischarge"
+    ],
+    "rule": "This is an exact laboratory pre-release input, not an official Gonka release or readiness statement."
+  },
+  "publication": {
+    "schema_version": 1,
+    "release_tag": "v2026.08.30-rc.0",
+    "binary_assets": {
+      "devshardd-linux-amd64": "devshardd.zip"
+    }
+  },
+  "component_boundary": {
+    "includes": [
+      "devshard-runtime",
+      "devshard-host"
+    ],
+    "excludes": [
+      "gonka-core-candidate",
+      "inferenced",
+      "decentralized-api",
+      "edge-api",
+      "versiond",
+      "versiond-router",
+      "mlnode",
+      "proxy",
+      "tmkms",
+      "bridge"
+    ],
+    "rule": "Official Gonka source is observed at the frozen commit and is not patched, merged, or cherry-picked by the laboratory."
+  },
+  "architectures": {
+    "observed_laboratory_hosts": [
+      "linux/amd64"
+    ],
+    "oci_images": [
+      "linux/amd64"
+    ],
+    "upgrade_binaries": [
+      "linux/amd64"
+    ]
+  },
+  "base_images": [
+    {
+      "reference": "golang:1.25.9-alpine3.23",
+      "digest": "sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f"
+    },
+    {
+      "reference": "alpine:3.23",
+      "digest": "sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
+    }
+  ],
+  "components": [
+    {
+      "id": "devshard-runtime",
+      "source": "devshard_v5",
+      "path": "devshard",
+      "build_context_paths": [
+        "common",
+        "inference-chain",
+        "devshard"
+      ],
+      "dockerfile": "devshard/Dockerfile",
+      "action": "build-candidate",
+      "artifacts": [
+        "oci-image",
+        "upgrade-binary"
+      ],
+      "build_args": {
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "BLST_PORTABLE": "0",
+        "DEVSHARD_VERSION": "v5",
+        "DEVSHARD_BINARY_VERSION": "v2026.08.30-rc.0-e0814d3c",
+        "DEVSHARD_BUILD_TAGS": ""
+      }
+    },
+    {
+      "id": "devshard-host",
+      "source": "devshard_v5",
+      "path": "devshard",
+      "build_context_paths": [
+        "common",
+        "inference-chain",
+        "devshard"
+      ],
+      "dockerfile": "devshard/Dockerfile.host",
+      "action": "build-candidate",
+      "artifacts": [
+        "oci-image"
+      ],
+      "build_args": {
+        "DEVSHARD_VERSION": "v5"
+      }
+    }
+  ],
+  "features": {
+    "devshard_protocol_version": "v5",
+    "height_sync": {
+      "enabled": true,
+      "DEVSHARD_HEIGHTSYNC": "true",
+      "DEVSHARD_CHAINORACLE_URL": "optional",
+      "DEVSHARD_HEIGHTSYNC_K": "runtime-configured",
+      "DEVSHARD_HEIGHTSYNC_SLOTS": "runtime-configured",
+      "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL": "runtime-configured",
+      "direct_chain_fallback": true
+    },
+    "ha": {
+      "enabled": false,
+      "deployment": "excluded",
+      "storage_mode": "memory"
+    }
+  },
+  "excluded_capabilities": [
+    {
+      "id": "gonka-core-candidate-or-artifacts",
+      "reason": "The frozen definition is DevShard-only; core remains the stable v0.2.15 baseline."
+    },
+    {
+      "id": "devshard-v5-ha-deployment",
+      "reason": "No reviewed v5 replica, router, and shared-storage lifecycle is included in this definition."
+    },
+    {
+      "id": "non-amd64-candidate-artifacts",
+      "reason": "The observed laboratory, OCI, and upgrade-binary architecture sets are linux/amd64 only."
+    },
+    {
+      "id": "testenv-fault-injection-build-tags",
+      "reason": "The frozen release build sets DEVSHARD_BUILD_TAGS empty; source comments reserve devshard_testenv for testenv builds."
+    },
+    {
+      "id": "unmerged-height-sync-repairs",
+      "reason": "Separate upstream pull requests are not merged or cherry-picked into this exact source candidate."
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,35 @@ def required_binaries_for_layer(layer: str) -> set[str]:
     if layer == "devshard":
         return DEVSHARD_REQUIRED_BINARIES
     return REQUIRED_BINARIES
+
+
+def publication_contract(definition: dict[str, Any], profile: str) -> dict[str, Any]:
+    """Resolve immutable release naming while preserving historical manifests."""
+    layer = str(definition.get("layer", "all"))
+    required_binaries = required_binaries_for_layer(layer)
+    publication = definition.get("publication")
+    if publication is None:
+        tag = f"lab-candidate/{profile}"
+        binary_assets = {name: f"{name}.zip" for name in required_binaries}
+    else:
+        if not isinstance(publication, dict) or publication.get("schema_version") != 1:
+            raise CandidateError("candidate publication contract is invalid")
+        tag = str(publication.get("release_tag", ""))
+        binary_assets = publication.get("binary_assets")
+        if tag != profile:
+            raise CandidateError("candidate release tag must equal its profile")
+        if not isinstance(binary_assets, dict) or set(binary_assets) != required_binaries:
+            raise CandidateError("candidate publication binary asset set is incomplete or unexpected")
+        if len(set(binary_assets.values())) != len(binary_assets):
+            raise CandidateError("candidate publication binary asset names must be unique")
+        for name, asset in binary_assets.items():
+            if not isinstance(asset, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.zip", asset):
+                raise CandidateError(f"candidate publication binary asset name is invalid: {name}")
+    return {
+        "release_tag": tag,
+        "release_url_segment": urllib.parse.quote(tag, safe=""),
+        "binary_assets": binary_assets,
+    }
 
 
 class CandidateError(RuntimeError):
@@ -248,6 +278,7 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
         raise CandidateError(
             "candidate HA must remain excluded until a reviewed v5 deployment lifecycle exists"
         )
+    publication_contract(definition, profile)
     return definition, path, actual_hash
 
 
@@ -551,9 +582,10 @@ def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str
             raise CandidateError(f"candidate build workflow {key} is invalid")
     run_id = str(workflow["run_id"])
     definition_short = definition_hash[:12]
+    publication = publication_contract(definition, profile)
     release_base = (
         "https://github.com/paranjko/external-test-lab/releases/download/"
-        f"lab-candidate%2F{profile}"
+        f"{publication['release_url_segment']}"
     )
     req_images = required_images_for_layer(layer)
     images = manifest.get("images")
@@ -587,7 +619,7 @@ def verify_build_manifest(profile: str, path: Path) -> tuple[dict[str, Any], str
             f"ghcr.io/paranjko/gdc-upgrade-{component}:"
             f"{profile}-{definition_short}-{run_id}"
         )
-        expected_url = f"{release_base}/{name}.zip"
+        expected_url = f"{release_base}/{publication['binary_assets'][name]}"
         if not isinstance(binary, dict) or not HASH_RE.fullmatch(str(binary.get("sha256", ""))):
             raise CandidateError(f"candidate binary checksum is invalid: {name}")
         if not DIGEST_RE.fullmatch(str(binary.get("oci_digest", ""))):
@@ -681,7 +713,10 @@ def render_lock(profile: str, manifest: dict[str, Any], manifest_hash: str) -> s
             "MLNODE_GENERIC_IMAGE": reused.get("mlnode", "ghcr.io/paranjko/gdc-mlnode:3.0.14-post2@sha256:4d602db5cbba5cbceaa16279f64bfcb2ad76a91ee30ebddbfdc00c3b0dfb9c01"),
             "MLNODE_PROXY_IMAGE": "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609",
             "BRIDGE_IMAGE": reused.get("bridge", "ghcr.io/paranjko/gdc-bridge:0.2.15@sha256:88df0a7b4ca2f654aa0989f64bfcb2ad76a91ee30ebddbfdc00c3b0dfb9c02"),
-            "GONKA_UPGRADE_METADATA_URL": f"https://github.com/paranjko/external-test-lab/releases/tag/lab-candidate%2F{profile}",
+            "GONKA_UPGRADE_METADATA_URL": (
+                "https://github.com/paranjko/external-test-lab/releases/tag/"
+                f"{publication_contract(definition, profile)['release_url_segment']}"
+            ),
         })
 
     if layer in {"devshard", "all"}:
@@ -1462,10 +1497,20 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
         binaries = all_binaries
 
     publish_images = [{"id": img["id"]} for img in images]
-    publish_binaries = [{"id": b["id"], "member": b["member"]} for b in binaries]
+    publication = publication_contract(definition, profile)
+    publish_binaries = [
+        {
+            "id": b["id"],
+            "member": b["member"],
+            "release_name": publication["binary_assets"][f"{b['id']}-linux-amd64"],
+        }
+        for b in binaries
+    ]
 
     return {
         "layer": layer,
+        "release_tag": publication["release_tag"],
+        "release_url_segment": publication["release_url_segment"],
         "image_matrix": {"include": images},
         "binary_matrix": {"include": binaries},
         "publish_image_matrix": {"include": publish_images},
@@ -1506,6 +1551,8 @@ def command_composition_export_env(args: argparse.Namespace) -> None:
 def command_workflow_matrix(args: argparse.Namespace) -> None:
     result = workflow_matrix(args.profile)
     print(f"layer={result['layer']}")
+    print(f"release_tag={result['release_tag']}")
+    print(f"release_url_segment={result['release_url_segment']}")
     print(f"image_matrix={json.dumps(result['image_matrix'])}")
     print(f"binary_matrix={json.dumps(result['binary_matrix'])}")
     print(f"publish_image_matrix={json.dumps(result['publish_image_matrix'])}")
