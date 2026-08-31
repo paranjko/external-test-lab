@@ -230,16 +230,24 @@ case "$COMPONENT" in
     [[ "$gateway_rotation_amount" =~ ^[1-9][0-9]*$ ]] || die 'gateway rotation escrow amount must be positive'
     gateway_funding_horizon="${GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS:-1}"
     gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
-    gateway_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
+    gateway_requested_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-}"
     gateway_funding_source_target="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
     [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
     [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
-    if ! is_safe_integer "$gateway_max_refill" || [[ "$gateway_max_refill" == 0 ]]; then
-      die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be a positive safe integer'
-    fi
     if ! is_safe_integer "$gateway_funding_source_target" || [[ "$gateway_funding_source_target" == 0 ]]; then
       die 'GDC_FAUCET_INITIAL_NGONKA must be a positive safe integer'
     fi
+    gateway_max_refill="$(
+      ssh "$GATEWAY_NODE" \
+        "sudo sed -n 's/^FAUCET_GATEWAY_RESERVE_MAX_NGONKA=//p' /srv/dai/ops/gateway-reserve-signer.env"
+    )" || die 'deployed gateway reserve signer maximum is unavailable on the gateway node'
+    if ! is_safe_integer "$gateway_max_refill" || [[ "$gateway_max_refill" == 0 ]]; then
+      die 'deployed gateway reserve signer maximum must be exactly one positive safe integer'
+    fi
+    if [[ -n "$gateway_requested_max_refill" && "$gateway_requested_max_refill" != "$gateway_max_refill" ]]; then
+      die 'GDC_GATEWAY_MAX_REFILL_NGONKA does not match the deployed gateway reserve signer maximum'
+    fi
+    export GDC_GATEWAY_MAX_REFILL_NGONKA="$gateway_max_refill"
     gateway_faucet_claim_amount="$(
       ssh "$GATEWAY_NODE" \
         "sudo sed -n 's/^FAUCET_AMOUNT_NGONKA=//p' /srv/dai/ops/faucet.env"
