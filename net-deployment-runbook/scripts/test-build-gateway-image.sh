@@ -33,11 +33,11 @@ printf '%s\n' '#!/usr/bin/env bash' \
   'set -Eeuo pipefail' \
   'printf "%s\n" "$*" >>"$TEST_GATEWAY_LOG"' \
   'if [[ "$*" == *"docker load"* ]]; then cat >/dev/null; exit 0; fi' \
-  'if [[ "$*" == *"docker image inspect --format {{json .}}"* ]]; then' \
-  '  if [[ "${TEST_EMPTY_INSPECT:-false}" == true ]]; then printf "{}\n"; exit 0; fi' \
-  '  if [[ "$*" == *@sha256:* ]]; then layer=a variant=v1; else layer="${TEST_LOADED_LAYER:-a}" variant="${TEST_LOADED_VARIANT:-v1}"; fi' \
-  '  printf "{\"Architecture\":\"amd64\",\"Os\":\"linux\",\"Variant\":\"%s\",\"OsVersion\":\"\",\"Config\":{\"Entrypoint\":[\"devshardctl\"]},\"RootFS\":{\"Type\":\"layers\",\"Layers\":[\"sha256:%064d\"]},\"Created\":\"2026-08-31T00:00:00Z\",\"Comment\":\"buildkit.dockerfile.v0\",\"Size\":1}\n" "$variant" "0x$layer"' \
-  '  [[ "${TEST_EXTRA_INSPECT_RECORD:-false}" != true ]] || printf "{}\n"' \
+  'if [[ "$*" == *"docker image inspect"* ]]; then' \
+  '  if [[ "${TEST_EMPTY_INSPECT:-false}" == true ]]; then printf "[]\n"; exit 0; fi' \
+  '  if [[ "$*" == *@sha256:* ]]; then layer=a variant=v1 size=2; else layer="${TEST_LOADED_LAYER:-a}" variant="${TEST_LOADED_VARIANT:-v1}" size="${TEST_LOADED_SIZE:-1}"; fi' \
+  '  printf "[{\"Architecture\":\"amd64\",\"Os\":\"linux\",\"Variant\":\"%s\",\"OsVersion\":\"\",\"Config\":{\"Entrypoint\":[\"devshardctl\"]},\"RootFS\":{\"Type\":\"layers\",\"Layers\":[\"sha256:%064d\"]},\"Created\":\"2026-08-31T00:00:00Z\",\"Comment\":\"buildkit.dockerfile.v0\",\"Size\":%s}]\n" "$variant" "0x$layer" "$size"' \
+  '  [[ "${TEST_EXTRA_INSPECT_RECORD:-false}" != true ]] || printf "[]\n"' \
   'fi' >"$temporary/bin/ssh"
 chmod +x "$temporary/bin/curl" "$temporary/bin/ssh"
 
@@ -57,9 +57,9 @@ GATEWAY_NODE=gateway.example \
 mapfile -t ssh_calls <"$temporary/ssh.log"
 [[ "${#ssh_calls[@]}" == 4 ]]
 [[ "${ssh_calls[0]}" == 'gateway.example docker load' ]]
-[[ "${ssh_calls[1]}" == 'gateway.example docker image inspect --format {{json .}} ghcr.io/paranjko/gdc-devshard-gateway:candidate' ]]
+[[ "${ssh_calls[1]}" == 'gateway.example docker image inspect ghcr.io/paranjko/gdc-devshard-gateway:candidate' ]]
 [[ "${ssh_calls[2]}" == 'gateway.example docker pull ghcr.io/paranjko/gdc-devshard-gateway:candidate@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]]
-[[ "${ssh_calls[3]}" == 'gateway.example docker image inspect --format {{json .}} ghcr.io/paranjko/gdc-devshard-gateway:candidate@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]]
+[[ "${ssh_calls[3]}" == 'gateway.example docker image inspect ghcr.io/paranjko/gdc-devshard-gateway:candidate@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]]
 
 : >"$temporary/ssh.log"
 if TEST_LOADED_LAYER=c \

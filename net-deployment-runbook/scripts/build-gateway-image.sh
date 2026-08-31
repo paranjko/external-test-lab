@@ -13,6 +13,8 @@ canonical_runtime_identity() {
   jq -sceS '
     select(length == 1)
     | .[0]
+    | select(type == "array" and length == 1)
+    | .[0]
     | select(type == "object")
     | select(
         (.Architecture | type == "string" and length > 0)
@@ -29,7 +31,7 @@ canonical_runtime_identity() {
         and (.Comment == null or (.Comment | type) == "string")
         and (.Size | type == "number" and . > 0))
     | {Architecture,Os,Variant:(.Variant // ""),OsVersion:(.OsVersion // ""),
-        Config,RootFS,Created,Author:(.Author // ""),Comment:(.Comment // ""),Size}'
+        Config,RootFS,Created,Author:(.Author // ""),Comment:(.Comment // "")}'
 }
 if [[ "$VERSION" == v5 ]]; then
   immutable_image="${DEVSHARD_GATEWAY_IMAGE:?candidate v5 immutable gateway image is required}"
@@ -48,12 +50,12 @@ if [[ "$VERSION" == v5 ]]; then
   # was materialized by docker load.
   gzip -dc "$archive" | ssh "$GATEWAY_NODE" docker load
   loaded_runtime_identity="$(
-    ssh "$GATEWAY_NODE" docker image inspect --format '{{json .}}' "$IMAGE" \
+    ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" \
       | canonical_runtime_identity
   )"
   ssh "$GATEWAY_NODE" docker pull "$immutable_image" >/dev/null
   immutable_runtime_identity="$(
-    ssh "$GATEWAY_NODE" docker image inspect --format '{{json .}}' "$immutable_image" \
+    ssh "$GATEWAY_NODE" docker image inspect "$immutable_image" \
       | canonical_runtime_identity
   )"
   [[ -n "$loaded_runtime_identity" && "$loaded_runtime_identity" == "$immutable_runtime_identity" ]] || {
