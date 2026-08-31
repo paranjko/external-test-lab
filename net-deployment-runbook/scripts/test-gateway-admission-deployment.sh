@@ -79,6 +79,9 @@ if grep -Fq 'gateway-observer-probe.env"' "$ROOT/scripts/phase-ops.sh"; then
 fi
 grep -Fq 'could not determine gateway admission observer state before runtime replacement' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'could not determine public admission state before runtime replacement' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'wait_gateway_admission_observer_ready' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'ltrimstr("v")' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'reason=protocol-or-capacity-transitioning' "$ROOT/scripts/phase-ops.sh"
 
 deploy_block="$(awk '
   /^deploy_gateway_admission\(\)/ { capture=1 }
@@ -122,9 +125,10 @@ fi
 # or Docker state and that the probe credential travels through SSH stdin only.
 route_functions="$tmp/route-functions.sh"
 awk '
-  /^reconcile_gateway_observer_route\(\)/ { capture=1 }
-  capture { print }
-  capture && /^}/ { capture=0 }
+  /^reconcile_gateway_observer_route\(\)/ { capture_brace=1 }
+  /^wait_gateway_admission_observer_ready\(\)/ { capture_brace=1 }
+  capture_brace { print }
+  capture_brace && /^}/ { capture_brace=0; next }
   /^probe_gateway_observer_tls_route\(\)/ { capture_subshell=1 }
   capture_subshell { print }
   capture_subshell && /^\)$/ { capture_subshell=0 }
@@ -139,7 +143,21 @@ cat >"$tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 command_line="$*"
-if [[ "$command_line" == *'systemctl show gdc-gateway-admission-observer.service'* ]]; then
+if [[ "$command_line" == *'gateway-admission-observer.env'* ]]; then
+  count=0
+  [[ ! -s "${GDC_TEST_READINESS_COUNT:-}" ]] || count="$(<"$GDC_TEST_READINESS_COUNT")"
+  count=$((count + 1))
+  [[ -z "${GDC_TEST_READINESS_COUNT:-}" ]] || printf '%s\n' "$count" >"$GDC_TEST_READINESS_COUNT"
+  [[ "${GDC_TEST_READINESS_MODE:-transition}" != unavailable ]] || exit 255
+  active=true
+  phase=active
+  if (( count <= ${GDC_TEST_READINESS_FAILURES_BEFORE_PASS:-0} )); then
+    active=false
+    phase=finalizing
+  fi
+  printf '{"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"routable":true,"total_weight":100}}},"devshards":[{"active":%s,"protocol_version":"%s","runtime":{"session_version":"v5","phase":"%s","chain_phase":"Inference","requests_blocked":false}}]}\n' \
+    "$active" "${GDC_TEST_PROTOCOL_VERSION:-5}" "$phase"
+elif [[ "$command_line" == *'systemctl show gdc-gateway-admission-observer.service'* ]]; then
   case "${GDC_TEST_OBSERVER_STATE:-active}" in
     active) printf 'active\n' ;;
     absent) printf 'absent\n' ;;
@@ -204,6 +222,7 @@ export PATH="$tmp/bin:$PATH"
 export GDC_TEST_ROUTE_LOG="$tmp/route.log"
 export GDC_TEST_PROBE_STDIN="$tmp/probe.stdin"
 export GDC_TEST_PROBE_COUNT="$tmp/probe.count"
+export GDC_TEST_READINESS_COUNT="$tmp/readiness.count"
 export GDC_RELEASE_PROFILE=v2026.08.06
 export GDC_GATEWAY_OBSERVER_ROUTE_INTERVAL_SECONDS=0
 ROOT="$tmp/route-root"
@@ -271,5 +290,42 @@ if (reconcile_gateway_observer_route) >"$tmp/probe.out" 2>"$tmp/probe.err"; then
   exit 1
 fi
 grep -Fq 'did not become ready after 2 attempts' "$tmp/probe.err"
+
+# The gateway can rotate between the local runtime check and the sanitized
+# observer readback. The production predicate must wait through that bounded
+# transition and accept the observer wire value "5" for selected protocol v5.
+: >"$GDC_TEST_READINESS_COUNT"
+export GDC_GATEWAY_VERSION=v5
+export GDC_GATEWAY_OBSERVER_READY_ATTEMPTS=3
+export GDC_GATEWAY_OBSERVER_READY_INTERVAL_SECONDS=0
+export GDC_TEST_READINESS_MODE=transition
+export GDC_TEST_READINESS_FAILURES_BEFORE_PASS=2
+export GDC_TEST_PROTOCOL_VERSION=5
+wait_gateway_admission_observer_ready >"$tmp/readiness.out"
+[[ "$(<"$GDC_TEST_READINESS_COUNT")" == 3 ]]
+grep -Fq 'reason=protocol-or-capacity-transitioning protocol=v5' "$tmp/readiness.out"
+grep -Fq 'READY gateway admission observer exposes v5 with positive capacity' "$tmp/readiness.out"
+
+# A different active protocol never satisfies the selected-profile contract.
+: >"$GDC_TEST_READINESS_COUNT"
+export GDC_GATEWAY_OBSERVER_READY_ATTEMPTS=2
+export GDC_TEST_READINESS_FAILURES_BEFORE_PASS=0
+export GDC_TEST_PROTOCOL_VERSION=4
+if (wait_gateway_admission_observer_ready) >"$tmp/wrong-protocol.out" 2>"$tmp/wrong-protocol.err"; then
+  echo 'observer readiness accepted the wrong protocol' >&2
+  exit 1
+fi
+[[ "$(<"$GDC_TEST_READINESS_COUNT")" == 2 ]]
+grep -Fq 'did not expose v5 with positive capacity after 2 attempts' "$tmp/wrong-protocol.err"
+
+# Transport failures remain fail-closed and report their final reason.
+: >"$GDC_TEST_READINESS_COUNT"
+export GDC_GATEWAY_OBSERVER_READY_ATTEMPTS=2
+export GDC_TEST_READINESS_MODE=unavailable
+if (wait_gateway_admission_observer_ready) >"$tmp/readiness-unavailable.out" 2>"$tmp/readiness-unavailable.err"; then
+  echo 'unavailable observer was accepted as ready' >&2
+  exit 1
+fi
+grep -Fq 'last_reason=observer-unavailable' "$tmp/readiness-unavailable.err"
 
 printf 'PASS gateway admission follows only the selected gateway profile\n'

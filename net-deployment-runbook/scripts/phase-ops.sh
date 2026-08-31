@@ -213,6 +213,44 @@ probe_gateway_observer_tls_route() (
   printf 'READY authenticated gateway observer TLS route is reachable from the managed public edge\n'
 )
 
+wait_gateway_admission_observer_ready() {
+  local attempts interval attempt observer_payload reason
+  attempts="${GDC_GATEWAY_OBSERVER_READY_ATTEMPTS:-60}"
+  interval="${GDC_GATEWAY_OBSERVER_READY_INTERVAL_SECONDS:-3}"
+  [[ "$attempts" =~ ^[1-9][0-9]*$ && "$interval" =~ ^[0-9]+$ ]] \
+    || die 'gateway admission observer readiness retry settings are invalid'
+  reason=observer-unavailable
+  for attempt in $(seq 1 "$attempts"); do
+    if observer_payload="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
+      set -a; . /srv/dai/ops/gateway-admission-observer.env; set +a
+      curl -fsS --connect-timeout 2 --max-time 10 http://127.0.0.1:18084/v1/status \
+        -H "Authorization: Bearer $GDC_GATEWAY_ADMISSION_OBSERVER_TOKEN"')"; then
+      if jq -e --arg protocol "$GDC_GATEWAY_VERSION" '
+            ($protocol | ltrimstr("v")) as $protocol_number
+            | (.capacity.models // {}) as $models
+            | any($models[]?; ((.current_weight // .total_weight // 0) | tonumber) > 0)
+            and any(.devshards[]?;
+              .active == true
+              and (((.protocol_version // "") | tostring | ltrimstr("v")) == $protocol_number)
+              and .runtime.session_version == $protocol
+              and .runtime.phase == "active"
+              and .runtime.chain_phase == "Inference"
+              and .runtime.requests_blocked == false)
+          ' <<<"$observer_payload" >/dev/null; then
+        printf 'READY gateway admission observer exposes %s with positive capacity\n' "$GDC_GATEWAY_VERSION"
+        return 0
+      fi
+      reason=protocol-or-capacity-transitioning
+    else
+      reason=observer-unavailable
+    fi
+    printf 'WAIT gateway admission observer attempt=%s/%s reason=%s protocol=%s\n' \
+      "$attempt" "$attempts" "$reason" "$GDC_GATEWAY_VERSION"
+    (( attempt == attempts )) || sleep "$interval"
+  done
+  die "gateway admission observer did not expose $GDC_GATEWAY_VERSION with positive capacity after $attempts attempts on $GATEWAY_NODE: last_reason=$reason"
+}
+
 GATEWAY_OPTION=''
 CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
 POST_START_COMMAND=true
@@ -624,25 +662,7 @@ if [[ "$COMPONENT" == gateway ]]; then
   done
   [[ "$gateway_ready" == true ]] || die 'gateway did not become ACTIVE before timeout'
   step 'Verify the sanitized read-only admission observer'
-  if ! observer_payload="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
-    set -a; . /srv/dai/ops/gateway-admission-observer.env; set +a
-    curl -fsS --connect-timeout 2 --max-time 10 http://127.0.0.1:18084/v1/status \
-      -H "Authorization: Bearer $GDC_GATEWAY_ADMISSION_OBSERVER_TOKEN"')"; then
-    die "gateway admission observer is unavailable on $GATEWAY_NODE"
-  fi
-  if ! jq -e --arg protocol "$GDC_GATEWAY_VERSION" '
-        (.capacity.models // {}) as $models
-        | any($models[]?; ((.current_weight // .total_weight // 0) | tonumber) > 0)
-        and any(.devshards[]?;
-          .active == true
-          and .protocol_version == $protocol
-          and .runtime.session_version == $protocol
-          and .runtime.phase == "active"
-          and .runtime.chain_phase == "Inference"
-          and .runtime.requests_blocked == false)
-      ' <<<"$observer_payload" >/dev/null; then
-    die "gateway admission observer does not expose the selected live protocol with positive capacity on $GATEWAY_NODE"
-  fi
+  wait_gateway_admission_observer_ready
   step 'Deploy the matching public admission contract'
   deploy_gateway_admission
   ssh "$GATEWAY_NODE" 'test "$(stat -c %a /srv/dai/ops/gateway.env)" = 600'
