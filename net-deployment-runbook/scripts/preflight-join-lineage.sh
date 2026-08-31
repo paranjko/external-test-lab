@@ -79,18 +79,24 @@ done
 (( ${#good_rpcs[@]} >= 2 )) || die rpc_quorum_conflict 'fewer than two readable RPC observations attest the selected chain'
 [[ "$(printf '%s\n' "${domains[@]}" | LC_ALL=C sort -u | wc -l)" -ge 2 ]] || die rpc_fault_domain_alias 'two RPC URLs resolve to one fault domain'
 
-# Keep one endpoint per domain. Extra mirrors cannot turn a one-domain quorum
-# into two observations.
+# Derive the trust window from the latest observed height, then retain only
+# domains that can actually serve that height. A stale joining Host is useful
+# evidence, but must not reduce a healthy independent quorum to its own tip.
+mapfile -t ordered_heights < <(printf '%s\n' "${heights[@]}" | LC_ALL=C sort -nr)
+tip="${ordered_heights[0]}"; (( tip > period )) || die trust_expired 'network tip is below the configured trust window'
+trust_height=$((tip - period))
+
+# Keep one eligible endpoint per domain. Extra mirrors cannot turn a
+# one-domain observation into a quorum, and endpoint order cannot make a
+# stale domain authoritative.
 declare -a quorum_rpcs=() quorum_domains=()
 for i in "${!good_rpcs[@]}"; do
-  if [[ " ${quorum_domains[*]} " != *" ${domains[$i]} "* ]]; then
+  if (( heights[i] >= trust_height )) && [[ " ${quorum_domains[*]} " != *" ${domains[$i]} "* ]]; then
     quorum_rpcs+=("${good_rpcs[$i]}"); quorum_domains+=("${domains[$i]}")
   fi
 done
-quorum_rpcs=("${quorum_rpcs[@]:0:2}"); quorum_domains=("${quorum_domains[@]:0:2}")
-mapfile -t ordered_heights < <(printf '%s\n' "${heights[@]}" | LC_ALL=C sort -n)
-tip="${ordered_heights[0]}"; (( tip > period )) || die trust_expired 'network tip is below the configured trust window'
-trust_height=$((tip - period))
+(( ${#quorum_rpcs[@]} >= 2 )) \
+  || die rpc_quorum_conflict 'fewer than two independent RPC fault domains can serve the trust checkpoint'
 
 declare -a early_records=() trust_records=() applied_heights=()
 for rpc in "${quorum_rpcs[@]}"; do

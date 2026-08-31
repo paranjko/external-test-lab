@@ -7,7 +7,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 cat >"$tmp/bootstrap.json" <<'EOF'
-{"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-devnet-community","genesis":{"sha256":"93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://node0.example.test/chain-rpc","p2p":"tcp://node0.example.test:5000","api":"https://node0.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://node1.example.test/chain-rpc","p2p":"tcp://node1.example.test:5000","api":"https://node1.example.test"}],"brokers":[]}
+{"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-devnet-community","genesis":{"sha256":"93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://node0.example.test/chain-rpc","p2p":"tcp://node0.example.test:5000","api":"https://node0.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://node1.example.test/chain-rpc","p2p":"tcp://node1.example.test:5000","api":"https://node1.example.test"},{"node_id":"fedcba9876543210fedcba9876543210fedcba98","rpc":"https://node2.example.test/chain-rpc","p2p":"tcp://node2.example.test:5000","api":"https://node2.example.test"},{"node_id":"76543210fedcba9876543210fedcba9876543210","rpc":"https://node3.example.test/chain-rpc","p2p":"tcp://node3.example.test:5000","api":"https://node3.example.test"}],"brokers":[]}
 EOF
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'
@@ -17,9 +17,11 @@ url="${!#}"
 case "$url" in
   *node0.example.test*) node=0; id=0123456789abcdef0123456789abcdef01234567 ;;
   *node1.example.test*) node=1; id=89abcdef0123456789abcdef0123456789abcdef ;;
+  *node2.example.test*) node=2; id=fedcba9876543210fedcba9876543210fedcba98 ;;
+  *node3.example.test*) node=3; id=76543210fedcba9876543210fedcba9876543210 ;;
   *) exit 2 ;;
 esac
-[[ "${MODE:-good}" != one_seed || "$node" != 1 ]] || exit 7
+[[ "${MODE:-good}" != one_seed || "$node" == 0 ]] || exit 7
 chain=gonka-devnet-community
 [[ "${MODE:-good}" != wrong_chain || "$node" != 1 ]] || chain=other-chain
 version=0.2.15
@@ -39,7 +41,10 @@ case "$url" in
   */chain-api/productscience/inference/inference/params)
     approvals='[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]'
     [[ "${MODE:-good}" != reordered || "$node" != 1 ]] || approvals='[{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]'
-    [[ "${MODE:-good}" != conflicting_approvals || "$node" != 1 ]] || approvals='[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]'
+    [[ "${MODE:-good}" != approval_outlier || "$node" != 3 ]] || approvals='[]'
+    if [[ "${MODE:-good}" == conflicting_approvals && "$node" -ge 2 ]]; then
+      approvals='[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]'
+    fi
     [[ "${MODE:-good}" != malformed_approval || "$node" != 1 ]] || approvals='[{"name":"v3","binary":"http://example.test/devshard-v3.zip","sha256":"not-a-sha"}]'
     [[ "${MODE:-good}" != duplicate_approval || "$node" != 1 ]] || approvals='[{"name":"v3","binary":"https://example.test/a.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v3","binary":"https://example.test/b.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]'
     printf '{"params":{"devshard_escrow_params":{"approved_versions":%s}}}\n' "$approvals"
@@ -52,7 +57,7 @@ chmod +x "$tmp/bin/curl"
 run_case() {
   local mode="$1" output=''
   output="$tmp/$mode.env"
-  MODE="$mode" PATH="$tmp/bin:$PATH" "$OBSERVE" --bootstrap-file "$tmp/bootstrap.json" --output "$output"
+  MODE="$mode" GDC_JOIN_FAULT_DOMAIN_MAP='node0.example.test=domain-0,node1.example.test=domain-1,node2.example.test=domain-2,node3.example.test=domain-3' PATH="$tmp/bin:$PATH" "$OBSERVE" --bootstrap-file "$tmp/bootstrap.json" --output "$output"
 }
 run_case good
 # shellcheck source=/dev/null
@@ -68,6 +73,10 @@ run_case reordered
 # shellcheck source=/dev/null
 source "$tmp/reordered.env"
 [[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]]
+[[ "$GDC_NETWORK_FINGERPRINT" == "$fingerprint" ]]
+run_case approval_outlier
+# shellcheck source=/dev/null
+source "$tmp/approval_outlier.env"
 [[ "$GDC_NETWORK_FINGERPRINT" == "$fingerprint" ]]
 
 for case_name in one_seed conflict wrong_chain incomplete unknown conflicting_approvals malformed_approval duplicate_approval api_mismatch; do
