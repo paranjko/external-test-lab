@@ -123,8 +123,8 @@ grep -Fq 'has incomplete local governance signing state' "$ROOT/scripts/phase-vo
 ! grep -Fq 'submitted + preexisting' "$ROOT/scripts/phase-vote-proposal.sh"
 grep -Fq 'governance-vote-evidence.sh" receipt' "$ROOT/scripts/phase-vote-proposal.sh"
 [[ "$(grep -Fc '"$ROOT/scripts/verify-approved-devshard-version.sh"' "$ROOT/scripts/phase-ops.sh")" == 2 ]]
-grep -Fq 'is not supported by the pinned gateway artifact' "$ROOT/scripts/phase-ops.sh"
-grep -Fq 'is not supported by the pinned gateway artifact' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'is not supported by the pinned gateway artifact' "$ROOT/scripts/profile.sh"
+grep -Fq 'selected_gateway_protocol_contract >/dev/null' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq '$p.approved_versions as $versions' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'map(.name) | unique | length' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq '.binary == $binary and .sha256 == $sha256' "$ROOT/04-ops/create-gateway.sh"

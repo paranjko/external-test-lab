@@ -68,6 +68,9 @@ fi
 case "$VERSION" in
   v4)
     SOURCE_REF="${DEVSHARD_V4_SOURCE_REF:?DEVSHARD_V4_SOURCE_REF is required for v4}"
+    SOURCE_COMMIT="${DEVSHARD_V4_SOURCE_COMMIT:?DEVSHARD_V4_SOURCE_COMMIT is required for v4}"
+    [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+      || { echo 'DEVSHARD_V4_SOURCE_COMMIT must be a full lowercase Git commit' >&2; exit 2; }
     ;;
   v3)
     # The v3 runtime is an independent governed binary, not the chain release.
@@ -75,8 +78,21 @@ case "$VERSION" in
     ;;
 esac
 if ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "KEEP  $IMAGE already exists on $GATEWAY_NODE"
-  exit 0
+  if [[ "$VERSION" != v4 ]]; then
+    echo "KEEP  $IMAGE already exists on $GATEWAY_NODE"
+    exit 0
+  fi
+  existing_revision="$(
+    ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" 2>/dev/null \
+      | jq -er '.[0].Config.Labels["org.opencontainers.image.revision"] // empty' \
+      || true
+  )"
+  if [[ "$existing_revision" == "$SOURCE_COMMIT" ]]; then
+    echo "KEEP  $IMAGE matches pinned v4 source commit $SOURCE_COMMIT on $GATEWAY_NODE"
+    exit 0
+  fi
+  printf 'REBUILD %s has source revision %s; expected %s\n' \
+    "$IMAGE" "${existing_revision:-unreported}" "$SOURCE_COMMIT"
 fi
 "$ROOT/scripts/fetch-upstream.sh"
 SRC="$ROOT/vendor/gonka"
@@ -84,6 +100,10 @@ BUILD_TREE="$(mktemp -d /tmp/gdc-devshard-source.XXXXXX)"
 cleanup() { git -C "$SRC" worktree remove --force "$BUILD_TREE" >/dev/null 2>&1 || rm -rf "$BUILD_TREE"; }
 trap cleanup EXIT
 git -C "$SRC" fetch --depth 1 origin "refs/tags/$SOURCE_REF:refs/tags/$SOURCE_REF"
+if [[ "$VERSION" == v4 && "$(git -C "$SRC" rev-parse "$SOURCE_REF^{commit}")" != "$SOURCE_COMMIT" ]]; then
+  echo "DevShard v4 source ref $SOURCE_REF does not resolve to pinned commit $SOURCE_COMMIT" >&2
+  exit 1
+fi
 git -C "$SRC" worktree add --detach "$BUILD_TREE" "$SOURCE_REF" >/dev/null
 # The v4 release Dockerfile copies inference-chain/, common/, and devshard/
 # together, so its build context must be the repository root. SOURCE_REF
@@ -101,6 +121,8 @@ else
 fi
 docker build --pull \
   "${build_target[@]}" \
+  --label "org.opencontainers.image.revision=${SOURCE_COMMIT:-$SOURCE_REF}" \
+  --label "org.opencontainers.image.ref.name=$SOURCE_REF" \
   --build-arg DEVSHARD_VERSION="$VERSION" \
   --build-arg DEVSHARD_PROTOCOL_VERSION="$VERSION" \
   -f "$dockerfile" -t "$IMAGE" "$build_context"

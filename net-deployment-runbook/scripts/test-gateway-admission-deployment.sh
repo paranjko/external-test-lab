@@ -32,6 +32,20 @@ candidate_contract="$(sed -n 's/^GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=//p' "$tmp
 jq -e 'keys == ["v3", "v5"] and (has("v4") | not)' <<<"$candidate_contract" >/dev/null
 grep -Fxq 'GDC_GATEWAY_ADMISSION_STATUS_URL=https://validator-a.example.net/ops-gateway-admission-state' "$tmp/candidate.env"
 
+# Each renderer loads profiles in its own process. A parent export cannot be
+# trusted to survive that reload, so prove that an explicit v4 selection
+# produces the independent pinned v4 contract at the actual child boundary.
+GDC_COMPOSITION=core-v2026.08.06+devshard-v2026.08.30-rc.0 \
+GDC_GATEWAY_VERSION=v4 \
+  "$ROOT/04-ops/edge-node/render-env.sh" \
+    --inventory "$tmp/inventory.env" --node-name validator-e --output "$tmp/v4.env"
+v4_contract="$(sed -n 's/^GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=//p' "$tmp/v4.env")"
+jq -e \
+  --arg binary 'https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-devshard-v4.0.1/devshardd.zip' \
+  --arg sha256 'c80d098941fd18caf0159910c1b6c23140fce871f7ce903ceaad134cfe626b25' \
+  'keys == ["v4"] and .v4 == {binary:$binary,sha256:$sha256}' \
+  <<<"$v4_contract" >/dev/null
+
 sed 's/^GDC_PUBLIC_EDGE_NODE=.*/GDC_PUBLIC_EDGE_NODE=validator-a/' "$tmp/inventory.env" >"$tmp/colocated-inventory.env"
 GDC_RELEASE_PROFILE=v2026.08.06 \
   "$ROOT/04-ops/edge-node/render-env.sh" \

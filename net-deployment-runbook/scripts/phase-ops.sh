@@ -14,11 +14,10 @@ fi
 if [[ "$COMPONENT" == gateway ]]; then
   GDC_GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
   [[ "$GDC_GATEWAY_VERSION" =~ ^v[345]$ ]] || die 'GDC_GATEWAY_VERSION must be v3, v4 or v5'
-  gateway_supported_protocols="${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
-  case " $gateway_supported_protocols " in
-    *" $GDC_GATEWAY_VERSION "*) ;;
-    *) die "DevShard $GDC_GATEWAY_VERSION is not supported by the pinned gateway artifact; supported: $gateway_supported_protocols" ;;
-  esac
+  gateway_supported_protocols="$(selected_gateway_protocol_contract)" \
+    || die 'selected gateway protocol has no verified implementation contract'
+  DEVSHARD_SUPPORTED_PROTOCOLS="$gateway_supported_protocols"
+  export DEVSHARD_SUPPORTED_PROTOCOLS
   case "$GDC_GATEWAY_VERSION" in
     v3) gateway_archive_url="$DEVSHARD_V3_URL"; gateway_archive_sha="$DEVSHARD_V3_SHA256" ;;
     v4) gateway_archive_url="$DEVSHARD_V4_URL"; gateway_archive_sha="$DEVSHARD_V4_SHA256" ;;

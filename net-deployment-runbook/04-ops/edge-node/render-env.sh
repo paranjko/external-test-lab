@@ -49,7 +49,8 @@ if [[ "$NODE" != "$GATEWAY_NODE" ]]; then
 fi
 
 gateway_admission_protocols_json='{}'
-read -r -a gateway_supported_protocols <<<"${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}"
+gateway_protocol_contract="$(selected_gateway_protocol_contract)" || exit 2
+read -r -a gateway_supported_protocols <<<"$gateway_protocol_contract"
 (( ${#gateway_supported_protocols[@]} > 0 )) || {
   echo 'gateway admission requires at least one supported DevShard protocol' >&2
   exit 2
