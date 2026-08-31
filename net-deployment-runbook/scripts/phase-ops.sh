@@ -232,15 +232,26 @@ case "$COMPONENT" in
     gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
     gateway_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
     gateway_funding_source_target="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
+    gateway_faucet_claim_amount="${GDC_FAUCET_CLAIM_NGONKA:-100000000000}"
     [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
     [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
     [[ "$gateway_max_refill" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be positive'
     [[ "$gateway_funding_source_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
-    (( gateway_max_refill <= gateway_funding_source_target )) \
-      || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must not exceed GDC_FAUCET_INITIAL_NGONKA'
+    [[ "$gateway_faucet_claim_amount" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_CLAIM_NGONKA must be positive'
+    (( gateway_max_refill < gateway_funding_source_target )) \
+      || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be below GDC_FAUCET_INITIAL_NGONKA'
+    # The funding source is also the active public faucet. Permit one bounded
+    # max-refill window of normal drift from its configured target, but retain
+    # enough for a later maximum reserve refill plus one concurrent full claim.
+    gateway_funding_source_minimum="$((gateway_funding_source_target - gateway_max_refill))"
+    (( gateway_funding_source_minimum >= gateway_max_refill )) \
+      || die 'gateway funding source must retain two maximum reserve refills'
+    (( gateway_faucet_claim_amount <= gateway_funding_source_minimum - gateway_max_refill )) \
+      || die 'gateway funding source must retain one faucet claim above the maximum reserve refill'
     step 'Reconcile the gateway reserve funding source'
     "$ROOT/scripts/ensure-account-balance.sh" \
-      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$gateway_funding_source_target" "$gateway_max_refill"
+      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" \
+      "$gateway_funding_source_target" "$gateway_funding_source_minimum"
     "$ROOT/04-ops/ensure-gateway-reserve.sh" \
       "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
       "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \
