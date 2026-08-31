@@ -81,6 +81,20 @@ observations are incomplete, conflicting, or show a rolling upgrade, preserve
 the retained diagnostic and wait for an explicitly supported network state –
 do not force a profile.
 
+For an upgraded chain lineage, JOIN uses **state sync** before it creates or
+changes anything on the Host. The preflight requires matching observations
+from two independent RPC fault domains, a non-expired trust checkpoint, and a
+compatible post-upgrade snapshot from both domains. It writes a bounded local
+receipt under the selected Host state directory and prints its path for both a
+pass and a terminal refusal. Keep that receipt with the retained diagnostic;
+it contains the observed lineage evidence, not credentials or validator keys.
+
+If no compatible snapshot is available, the command stops with
+`snapshot_unavailable`. It never falls back to historical replay and it never
+guesses an older binary or upgrade schedule. Wait for a supported snapshot or
+ask the network operator for an approved recovery procedure; do not bypass
+the preflight, enable the signer, or retry against a different profile.
+
 Use a lowercase SSH alias beginning with a letter or digit and containing only
 lowercase letters, digits, `_`, or `-`. The alias is also the Docker Compose
 project name on the Host.
