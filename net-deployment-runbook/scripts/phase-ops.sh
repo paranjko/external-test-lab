@@ -229,8 +229,11 @@ wait_gateway_admission_observer_ready() {
             | (.capacity.models // {}) as $models
             | any($models[]?; ((.current_weight // .total_weight // 0) | tonumber) > 0)
             and any(.devshards[]?;
-              .active == true
-              and (((.protocol_version // "") | tostring | ltrimstr("v")) == $protocol_number)
+              ([.protocol_version?, .runtime.session_version?]
+                | map(select(. != null) | tostring | ltrimstr("v"))) as $versions
+              | .active == true
+              and (($versions | length) > 0)
+              and all($versions[]; . == $protocol_number)
               and .runtime.session_version == $protocol
               and .runtime.phase == "active"
               and .runtime.chain_phase == "Inference"
