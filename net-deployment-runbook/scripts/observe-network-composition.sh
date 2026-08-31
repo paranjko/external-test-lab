@@ -92,13 +92,29 @@ IFS='|' read -r api_node_version node_commit api_version api_commit <<<"${unique
 # approved_versions is a compatibility allowlist consumed by Versiond. It does
 # not identify one active DevShard runtime and therefore must never select a
 # Host composition. Retain the complete normalized records as evidence.
-declare -a approval_sets=()
+approval_fault_domain() {
+  local host="$1" entry
+  if [[ -n "${GDC_JOIN_FAULT_DOMAIN_MAP:-}" ]]; then
+    IFS=, read -r -a entries <<<"$GDC_JOIN_FAULT_DOMAIN_MAP"
+    for entry in "${entries[@]}"; do
+      [[ "$entry" == "$host="* ]] && { printf '%s' "${entry#*=}"; return; }
+    done
+    return 1
+  fi
+  getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
+}
+
+declare -A approval_domains=()
 for (( index=0; index<seed_count; index++ )); do
   rpc="$(jq -r ".seeds[$index].rpc" "$BOOTSTRAP")"
   case "$rpc" in
     */chain-rpc) chain_api="${rpc%/chain-rpc}/chain-api/productscience/inference/inference/params" ;;
     *) continue ;;
   esac
+  host="${rpc#https://}"; host="${host%%/*}"
+  domain="$(approval_fault_domain "$host" || true)"
+  [[ "$domain" =~ ^[A-Za-z0-9._:-]+$ ]] \
+    || die incomplete "cannot establish approval fault domain for $host"
   params="$tmp/params-$index.json"
   if fetch_json "$chain_api" "$params"; then
     approval_set="$(jq -cer '
@@ -116,13 +132,20 @@ for (( index=0; index<seed_count; index++ )); do
       | sort_by(.name, .url, .sha256)
     ' "$params" 2>/dev/null)" \
       || die incomplete "seed chain API $chain_api returned malformed governed DevShard state"
-    approval_sets+=("$approval_set")
+    approval_domains["$approval_set"]+="${domain}"$'\n'
   fi
 done
-(( ${#approval_sets[@]} >= 2 )) || die incomplete 'fewer than two seed chain APIs exposed governed DevShard approval state'
-mapfile -t unique_approval_sets < <(printf '%s\n' "${approval_sets[@]}" | LC_ALL=C sort -u)
-(( ${#unique_approval_sets[@]} == 1 )) || die ambiguous 'seed chain APIs disagree about governed DevShard approval records'
-devshard_approvals="${unique_approval_sets[0]}"
+(( ${#approval_domains[@]} >= 1 )) || die incomplete 'no seed chain API exposed governed DevShard approval state'
+declare -a agreed_approval_sets=()
+for approval_set in "${!approval_domains[@]}"; do
+  mapfile -t unique_domains < <(printf '%s' "${approval_domains[$approval_set]}" | sed '/^$/d' | LC_ALL=C sort -u)
+  (( ${#unique_domains[@]} >= 2 )) && agreed_approval_sets+=("$approval_set")
+done
+(( ${#agreed_approval_sets[@]} >= 1 )) \
+  || die incomplete 'fewer than two independent seed fault domains agree on governed DevShard approval records'
+(( ${#agreed_approval_sets[@]} == 1 )) \
+  || die ambiguous 'independent seed fault domains disagree about governed DevShard approval records'
+devshard_approvals="${agreed_approval_sets[0]}"
 
 profile=''
 for lock in "$ROOT"/profiles/releases/*.lock; do
@@ -158,4 +181,4 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf 'GDC_RELEASE_PROFILE=%q\n' "$profile"
 } >"$OUTPUT"
 chmod 0600 "$OUTPUT"
-printf 'PASS observed network software fingerprint=%s profile=%s rpc_seeds=%s api_seeds=%s approval_seeds=%s\n' "$fingerprint" "$profile" "${#rpc_observations[@]}" "${#api_observations[@]}" "${#approval_sets[@]}"
+printf 'PASS observed network software fingerprint=%s profile=%s rpc_seeds=%s api_seeds=%s approval_domains=%s\n' "$fingerprint" "$profile" "${#rpc_observations[@]}" "${#api_observations[@]}" "$(printf '%s' "${approval_domains[$devshard_approvals]}" | sed '/^$/d' | LC_ALL=C sort -u | wc -l)"
