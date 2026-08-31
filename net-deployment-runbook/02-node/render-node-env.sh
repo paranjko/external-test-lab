@@ -30,7 +30,16 @@ P2P_PORT="$(node_p2p_port "$NODE")"
 ADDRESS="$(jq -r .address "$ACCOUNT")"
 PUBKEY="$(jq -r .account_pubkey_b64 "$ACCOUNT")"
 [[ "$ADDRESS" =~ ^gonka1[0-9a-z]{20,90}$ ]] || { echo "Invalid account: $ACCOUNT" >&2; exit 1; }
-if [[ "$BOOTSTRAP" == true ]]; then SEEDS='identity-bootstrap-only'; else SEEDS="$(<"$SEEDS_FILE")"; fi
+if [[ "$BOOTSTRAP" == true ]]; then
+  SEEDS='identity-bootstrap-only'
+else
+  # Compose env files accept one physical line per assignment, while the
+  # validated Bootstrap stage intentionally records one seed per line for
+  # inspection.  CometBFT consumes the same entries as a comma-delimited
+  # list, so serialize them before writing the node environment.
+  SEEDS="$(paste -sd, "$SEEDS_FILE")"
+  [[ -n "$SEEDS" ]] || { echo "seed file is empty: $SEEDS_FILE" >&2; exit 1; }
+fi
 KEYRING_PASSWORD="$(<"$SECRETS/$NODE.keyring")"
 POSTGRES_PASSWORD="$(<"$SECRETS/$NODE.postgres")"
 IS_GENESIS=false; [[ "$NODE" == "$GENESIS_NODE" ]] && IS_GENESIS=true

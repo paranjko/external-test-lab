@@ -35,6 +35,7 @@ record_launcher_failure() {
     [[ -z "${GDC_RUN_ID:-}" ]] || printf 'run_manifest=%s\n' "$GDC_HOME/runs/$GDC_RUN_ID/manifest.env"
     printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
     [[ -z "${GDC_DIAGNOSTIC_ENVELOPE:-}" ]] || printf 'diagnostic_envelope=%s\n' "$GDC_DIAGNOSTIC_ENVELOPE"
+    [[ -z "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || printf 'preflight_receipt=%s\n' "$GDC_JOIN_PREFLIGHT_RECEIPT"
     printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
   } >"$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
   chmod 0600 "$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
@@ -176,6 +177,57 @@ run_phase() {
   return "$rc"
 }
 
+run_join_preflight() {
+  local checkpoint="$1" state="$2" category="$3" tool="$4" summary="$5" rc diagnostic
+  shift 5
+  if "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  # JOIN has not selected a local profile or touched a Host at this point.
+  # Retain a bounded, structured diagnostic in the launcher envelope rather
+  # than manufacturing a lifecycle manifest for an unselected release.
+  GDC_ACTIVE_PHASE='join-preflight'
+  diagnostic="$GDC_LAUNCHER_ENVELOPE_DIR/diagnostic-envelope.v1.json"
+  "$ROOT/scripts/diagnostic-envelope.sh" write "$diagnostic" \
+    join join-preflight "$checkpoint" "$state" "$category" "$tool" "$rc" \
+    safe join-repeat "$summary"
+  export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic"
+  write_join_preflight_receipt "$checkpoint" failed "$category" "$tool"
+  printf 'ERROR JOIN preflight failed checkpoint=%s preflight_receipt=%s\n' \
+    "$checkpoint" "$GDC_JOIN_PREFLIGHT_RECEIPT" >&2
+  return "$rc"
+}
+
+initialize_join_preflight_receipt() {
+  GDC_JOIN_PREFLIGHT_RECEIPT="$STATE/preflight-receipt.env"
+  export GDC_JOIN_PREFLIGHT_RECEIPT
+  write_join_preflight_receipt initialized pending unavailable unavailable
+}
+
+write_join_preflight_receipt() {
+  local checkpoint="$1" result="$2" category="$3" tool="$4" tmp
+  [[ -n "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || return 0
+  tmp="${GDC_JOIN_PREFLIGHT_RECEIPT}.tmp.$$"
+  {
+    printf 'schema_version=1\n'
+    printf 'invocation_id=%s\n' "$GDC_LAUNCHER_INVOCATION_ID"
+    printf 'checkpoint=%s\nresult=%s\ncategory=%s\ntool=%s\n' \
+      "$checkpoint" "$result" "$category" "$tool"
+    printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
+    [[ -z "${GDC_NETWORK_FINGERPRINT:-}" ]] || printf 'network_fingerprint=%s\n' "$GDC_NETWORK_FINGERPRINT"
+    [[ -z "${GDC_NETWORK_CHAIN_ID:-}" ]] || printf 'chain_id=%s\n' "$GDC_NETWORK_CHAIN_ID"
+    [[ -z "${GDC_NETWORK_GENESIS_SHA256:-}" ]] || printf 'genesis_sha256=%s\n' "$GDC_NETWORK_GENESIS_SHA256"
+    [[ -z "${GDC_NETWORK_CORE_VERSION:-}" ]] || printf 'core_version=%s\ncore_commit=%s\n' "$GDC_NETWORK_CORE_VERSION" "$GDC_NETWORK_CORE_COMMIT"
+    [[ -z "${GDC_NETWORK_DAPI_VERSION:-}" ]] || printf 'dapi_version=%s\ndapi_commit=%s\n' "$GDC_NETWORK_DAPI_VERSION" "$GDC_NETWORK_DAPI_COMMIT"
+    [[ -z "${GDC_NETWORK_DEVSHARD_APPROVALS:-}" ]] || printf 'devshard_approvals=%q\n' "$GDC_NETWORK_DEVSHARD_APPROVALS"
+    [[ -z "${GDC_RELEASE_PROFILE:-}" ]] || printf 'release_profile=%s\n' "$GDC_RELEASE_PROFILE"
+  } >"$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$GDC_JOIN_PREFLIGHT_RECEIPT"
+}
+
 use_node_data_home() {
   select_node_data_home "$1"
 }
@@ -290,6 +342,7 @@ COMPOSITION=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release) RELEASE="${2:-}"; shift 2 ;;
+    --release=*) RELEASE="${1#--release=}"; shift ;;
     --composition) COMPOSITION="${2:-}"; shift 2 ;;
     --model) MODEL="${2:-}"; shift 2 ;;
     *) break ;;
@@ -776,8 +829,17 @@ case "$COMMAND" in
     ;;
   join)
     join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' skip_qualification=false verification=false
+    # JOIN derives its exact compatible composition from independently
+    # observed Bootstrap seeds. An operator-selected release or composition
+    # could otherwise turn retained evidence into a software authority.
+    [[ -z "$RELEASE" ]] || { echo 'host join does not accept --release; composition is selected from verified seed observations' >&2; exit 2; }
+    [[ -z "$COMPOSITION" ]] || { echo 'host join does not accept --composition; composition is selected from verified seed observations' >&2; exit 2; }
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --release|--release=*|--composition|--composition=*)
+          echo 'host join does not accept release or composition selectors; composition is selected from verified seed observations' >&2
+          exit 2
+          ;;
         --skip-qualification) skip_qualification=true ;;
         --verification) verification=true ;;
         --public-host)
@@ -825,23 +887,57 @@ case "$COMMAND" in
       [[ "$join_gpu_alias" != "$join_alias" ]] || { echo 'Host and GPU SSH aliases must be different' >&2; exit 2; }
     fi
     use_node_data_home "$join_alias"
-    resolve_join_release_profile "$RELEASE" "$join_restore_archive"
     acquire_operator_lock
-    "$ROOT/scripts/ensure-inferenced-cli.sh"
-    # Bootstrap staging precedes role-input creation. These paths therefore
-    # cannot depend on load_project(), which needs that role input.
+    # Persist a bounded receipt before any Bootstrap fetch or network
+    # observation. It is updated atomically as public facts become available.
+    initialize_join_preflight_receipt
+    # Bootstrap observation precedes both CLI installation and role-input
+    # creation. The public network therefore selects the local immutable
+    # profile before any software download or Host mutation.
     join_genesis="$GDC_HOME/genesis"
     join_secrets="$STATE/secrets"
     if [[ -z "$join_bootstrap_file" ]]; then
       join_bootstrap_file="$STATE/network-bootstrap.json"
-      "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/gonka-devnet-community/bootstrap.json --output "$join_bootstrap_file"
+      run_join_preflight bootstrap-fetch unavailable network curl \
+        'The public Bootstrap descriptor could not be fetched and validated.' \
+        "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/gonka-devnet-community/bootstrap.json --output "$join_bootstrap_file"
     else
-      "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
+      run_join_preflight bootstrap-verify invalid-bootstrap configuration bootstrap \
+        'The supplied Bootstrap descriptor did not satisfy the local validation contract.' \
+        "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
     fi
-    "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$join_genesis" --state-dir "$STATE" --secrets-dir "$join_secrets"
+    join_composition="$STATE/network-composition.env"
+    run_join_preflight software-observation unavailable network seed-observer \
+      'Public seed observations did not establish one safe software composition.' \
+      "$ROOT/scripts/observe-network-composition.sh" --bootstrap-file "$join_bootstrap_file" --output "$join_composition"
+    # The observer only emits fixed-name, shell-quoted values after validating
+    # the complete local lock mapping.
+    unset GDC_COMPOSITION GDC_COMPOSITION_HASH
+    # shellcheck disable=SC1090
+    source "$join_composition"
+    # Sourcing assigns shell variables but does not export them.  Every
+    # subsequent helper is a child process, so export the network-selected
+    # profile before installing its CLI, creating the run manifest, or
+    # invoking the JOIN phase.
+    export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
+    export GDC_NETWORK_COMETBFT_VERSION GDC_NETWORK_CORE_VERSION GDC_NETWORK_CORE_COMMIT
+    export GDC_NETWORK_DAPI_VERSION GDC_NETWORK_DAPI_COMMIT GDC_NETWORK_DEVSHARD_APPROVALS
+    export GDC_RELEASE_PROFILE
+    write_join_preflight_receipt software-observation passed unavailable seed-observer
+    run_join_preflight inferenced-cli unavailable dependency inferenced \
+      'The pinned operator CLI was not available after safe installation checks.' \
+      "$ROOT/scripts/ensure-inferenced-cli.sh"
+    run_join_preflight bootstrap-stage unavailable chain bootstrap \
+       'The validated Bootstrap descriptor could not be staged locally.' \
+       "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$join_genesis" --state-dir "$STATE" --secrets-dir "$join_secrets"
     export GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"
     export GDC_JOIN_VERIFICATION="$verification"
-    [[ -z "$join_restore_archive" ]] || export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
+    if [[ -n "$join_restore_archive" ]]; then
+      export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
+      # Recovery is not a continuation of a historical software decision.
+      # It receives a new manifest bound to the currently observed network.
+      export GDC_JOIN_RECOVERY_NEW_RUN=true
+    fi
     join_role_ready=false
     join_role_config=''
     if [[ -n "${GDC_ENV:-}" && -s "$GDC_ENV" ]]; then

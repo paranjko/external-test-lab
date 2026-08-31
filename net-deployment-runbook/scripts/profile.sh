@@ -18,8 +18,44 @@ local_gateway_image_for_protocol() {
   printf '%s-%s\n' "${image%-v[345]}" "$version"
 }
 
+composition_export_tsv() {
+  local target="$1" root path sidecar expected actual
+  root="$(profile_root)"
+  if [[ -r "$target" ]]; then
+    path="$target"
+  elif [[ "$target" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ && -r "$root/profiles/compositions/$target.json" ]]; then
+    path="$root/profiles/compositions/$target.json"
+  else
+    echo "unknown composition: $target" >&2
+    return 2
+  fi
+  sidecar="${path%.json}.sha256"
+  actual="$(sha256sum "$path" | awk '{print $1}')"
+  expected="$(awk 'NF == 2 {print $1 " " $2; exit}' "$sidecar" 2>/dev/null || true)"
+  [[ "$expected" == "$actual ${path##*/}" ]] || { echo "composition checksum mismatch: $path" >&2; return 2; }
+  jq -er '
+    .schema_version == 1 and .kind == "external-test-lab-composition-manifest" and
+    (.composition | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._+-]*$")) and
+    (.core.profile | type == "string" and test("^[a-z0-9][a-z0-9.-]*$")) and
+    (.devshard.protocol_version | type == "string" and test("^v[0-9]+$")) and
+    (.components.images | type == "object") and (.components.binaries | type == "object")
+  ' "$path" >/dev/null || { echo "invalid composition: $path" >&2; return 2; }
+  jq -r --arg hash "$actual" '
+    [
+      ["GDC_COMPOSITION", .composition], ["GDC_COMPOSITION_HASH", $hash], ["GDC_RELEASE_PROFILE", .core.profile], ["JOIN_BOOTSTRAP_FORMAT", "1"],
+      ["GONKA_REPOSITORY", "https://github.com/gonka-ai/gonka.git"], ["GONKA_SOURCE_REF", .core.source_ref], ["GONKA_COMMIT", .core.source_commit], ["GONKA_RELEASE", (.core.release_version | tostring)],
+      ["TMKMS_IMAGE", .components.images.tmkms], ["INFERENCED_IMAGE", .components.images.inferenced], ["DAPI_IMAGE", .components.images["decentralized-api"]], ["EDGE_API_IMAGE", .components.images["edge-api"]],
+      ["EDGE_API_ENABLED", "true"], ["EDGE_API_COMPOSE_PROFILE", "edge-api"], ["EDGE_API_SERVICE_NAME", "edge-api"], ["VERSIOND_IMAGE", .components.images.versiond], ["VERSIOND_ROUTER_IMAGE", .components.images["versiond-router"]], ["PROXY_IMAGE", .components.images.proxy], ["MLNODE_GENERIC_IMAGE", .components.images.mlnode], ["MLNODE_BLACKWELL_IMAGE", .components.images.mlnode], ["MLNODE_PROXY_IMAGE", "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609"], ["BRIDGE_IMAGE", .components.images.bridge],
+      ["INFERENCED_OPERATOR_URL_LINUX_AMD64", .components.binaries["inferenced-operator-linux-amd64"].url], ["INFERENCED_OPERATOR_SHA256_LINUX_AMD64", .components.binaries["inferenced-operator-linux-amd64"].sha256],
+      ["DEVSHARD_PROTOCOL_VERSION", .devshard.protocol_version], ["DEVSHARD_SUPPORTED_PROTOCOLS", (if .devshard.protocol_version == "v5" then "v3 v5" else "v3" end)], ["DEVSHARD_SOURCE_REF", .devshard.source_ref], ["DEVSHARD_COMMIT", .devshard.source_commit], ["LOCAL_GATEWAY_IMAGE", (.components.images["devshard-gateway"] | split("@sha256:")[0])], ["DEVSHARD_GATEWAY_IMAGE", .components.images["devshard-gateway"]], ["DEVSHARD_HOST_IMAGE", .components.images["devshard-host"]], ["POSTGRES_IMAGE", .components.images.postgres], ["DEVSHARDD_IMAGE", .components.images.devshardd],
+      [(if .devshard.protocol_version == "v5" then "DEVSHARD_V5_URL" else "DEVSHARD_V4_URL" end), .components.binaries["devshardd-linux-amd64"].url], [(if .devshard.protocol_version == "v5" then "DEVSHARD_V5_SHA256" else "DEVSHARD_V4_SHA256" end), .components.binaries["devshardd-linux-amd64"].sha256], ["DEVSHARD_HEIGHTSYNC", (.devshard.features.heightsync | tostring)], ["DEVSHARD_HEIGHTSYNC_K", (.devshard.features.heightsync_k | tostring)], ["DEVSHARD_HEIGHTSYNC_SLOTS", (.devshard.features.heightsync_slots | tostring)], ["DEVSHARD_STORAGE_MODE", .devshard.features.storage_mode], ["GONKA_HOST_STACK_COMMIT", .devshard.host_stack_commit]
+    ] | map(select(.[1] != null and .[1] != "")) | .[] | @tsv
+  ' "$path"
+}
+
 load_profiles() {
-  local root release deployment model operator comp_target comp_env
+  local root release deployment model operator comp_target comp_tsv key value index
+  local -a comp_keys=() comp_values=()
   root="$(profile_root)"
   release="${GDC_RELEASE_PROFILE:-v2026.07.23}"
   deployment="${GDC_DEPLOYMENT_PROFILE:-community-lab}"
@@ -32,12 +68,12 @@ load_profiles() {
   fi
 
   if [[ -n "$comp_target" ]]; then
-    comp_env="$(python3 "$root/scripts/release-candidate.py" composition export-env "$comp_target")" || {
-      echo "invalid or unverified composition: $comp_target" >&2
-      return 2
-    }
-    eval "$comp_env"
-    export GDC_COMPOSITION="$comp_target"
+    comp_tsv="$(composition_export_tsv "$comp_target")" || return 2
+    while IFS=$'\t' read -r key value; do
+      [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || { echo 'composition emitted an invalid environment key' >&2; return 2; }
+      comp_keys+=("$key"); comp_values+=("$value")
+      export "$key=$value"
+    done <<<"$comp_tsv"
     release="$GDC_RELEASE_PROFILE"
   fi
 
@@ -55,7 +91,6 @@ load_profiles() {
   unset CANDIDATE_DEFINITION_SHA256 CANDIDATE_BUILD_MANIFEST_SHA256
   unset CANDIDATE_DEVSHARD_SOURCE_REF CANDIDATE_DEVSHARD_COMMIT
   unset CANDIDATE_DEVSHARD_PROTOCOL_VERSION CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS
-  unset DEVSHARD_GOVERNANCE_PROTOCOLS
   unset CANDIDATE_LOCAL_GATEWAY_IMAGE CANDIDATE_POSTGRES_IMAGE
   unset DEVSHARD_V5_URL DEVSHARD_V5_SHA256 DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL
   unset DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256 CANDIDATE_LAYER CANDIDATE_COMPOSITION
@@ -91,8 +126,14 @@ load_profiles() {
     export DEVSHARD_SOURCE_REF DEVSHARD_COMMIT DEVSHARD_PROTOCOL_VERSION
     export DEVSHARD_SUPPORTED_PROTOCOLS LOCAL_GATEWAY_IMAGE POSTGRES_IMAGE
   fi
-  if [[ -n "${comp_env:-}" ]]; then
-    eval "$comp_env"
+  for ((index=0; index<${#comp_keys[@]}; index++)); do
+    export "${comp_keys[$index]}=${comp_values[$index]}"
+  done
+  # GDC_COMPOSITION identifies the operator-selected manifest (a built-in
+  # name or a file path).  The manifest's internal display name must not
+  # replace that selector: callers use it for a subsequent load and for
+  # attributable profile output.
+  if [[ -n "$comp_target" ]]; then
     export GDC_COMPOSITION="$comp_target"
   fi
   # Chain registration eligibility is an explicit deployment-profile

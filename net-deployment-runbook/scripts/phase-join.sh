@@ -86,7 +86,9 @@ else
 fi
 # Every joining Host creates and owns its local keyring passwords before it
 # creates any account. No Genesis operator key, funding approval, or
-# cross-operator secret transfer is needed.
+# cross-operator secret transfer is needed. A backup supplies its warm
+# mnemonic, so a replaced Host can create a fresh encrypted keyring and then
+# prove that it recreates the recorded public identity.
 if [[ ! -s "$SECRETS/operator.keyring" || ! -s "$SECRETS/$NODE.keyring" || ! -s "$SECRETS/$NODE.postgres" ]]; then
   step "Create scoped operator secrets for $NODE"
   "$ROOT/scripts/make-node-operator-secrets.sh" "$NODE" "$SECRETS"

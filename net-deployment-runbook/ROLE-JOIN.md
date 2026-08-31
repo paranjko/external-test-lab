@@ -70,10 +70,16 @@ For Community DevNet, the simple form downloads the same network document:
 gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
-The command validates and imports the public Genesis bootstrap, creates the
-Host's accounts, installs the pinned release, synchronizes the node, registers
-it, and waits for `ACTIVE`. With an optional GPU SSH alias, it qualifies and
-attaches that MLNode automatically.
+The command validates the Bootstrap and obtains independent public seed
+observations before it downloads `inferenced` or prepares a Host. Those
+observations must agree on one reviewed local composition; `--release` and
+`--composition` are intentionally not accepted by JOIN. It then imports the
+official Genesis for that selected composition, creates the Host's accounts,
+synchronizes the node, registers it, and waits for `ACTIVE`. With an optional
+GPU SSH alias, it qualifies and attaches that MLNode automatically. If seed
+observations are incomplete, conflicting, or show a rolling upgrade, preserve
+the retained diagnostic and wait for an explicitly supported network state –
+do not force a profile.
 
 Use a lowercase SSH alias beginning with a letter or digit and containing only
 lowercase letters, digits, `_`, or `-`. The alias is also the Docker Compose
@@ -121,9 +127,11 @@ For a validated private archive, use the same supported interface:
 gdc host join --restore <validator-backup.tar> --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
-The archive is an assertion, not permission to replace identity. A matching
-running Host is recovered only after identity, lineage, and signer checks; an
-empty Host is restored only after archive validation. Do not bypass
+The archive is an assertion, not permission to replace identity or software
+selection. A matching running Host is recovered only after identity, lineage,
+signer, and selected-composition checks; an empty Host is restored only after
+archive validation. Historical software facts in the archive are diagnostic
+evidence only. Do not bypass
 qualification or use this interface to reset, recreate Genesis, or adopt an
 unknown existing validator.
 

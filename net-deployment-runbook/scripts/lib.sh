@@ -34,78 +34,6 @@ release_profile_lock_sha256() {
   sha256sum "$lock_file" | awk '{print $1}'
 }
 
-# JOIN is an operator workflow, not a release-selection workflow.  A retained
-# lifecycle manifest is the authoritative local record for a recovery; a
-# requested profile may only agree with it.  A first JOIN uses the one current
-# Community DevNet Host profile.  Keeping this resolution before the operator
-# CLI is installed prevents a stale default from replacing an existing Host's
-# runtime merely because the caller omitted an internal implementation detail.
-join_profile_hash() {
-  local release="$1" deployment="$2" model="$3"
-  [[ -r "$ROOT/profiles/releases/$release.lock" ]] \
-    && [[ -r "$ROOT/profiles/deployments/$deployment.lock" ]] \
-    && [[ -r "$ROOT/profiles/models/$model.lock" ]] \
-    || return 1
-  sha256sum "$ROOT/profiles/releases/$release.lock" \
-    "$ROOT/profiles/deployments/$deployment.lock" \
-    "$ROOT/profiles/models/$model.lock" | awk '{print $1}' | sha256sum | awk '{print $1}'
-}
-
-resolve_join_release_profile() {
-  local requested_profile="${1:-}" restore_archive="${2:-}" active_run_id='' manifest='' retained_profile='' retained_hash='' retained_deployment='' retained_model='' candidate='' candidate_hash='' resolved_profile='' matches=()
-  [[ -z "$requested_profile" || "$requested_profile" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
-    || die 'invalid requested JOIN release profile'
-
-  if [[ -s "$STATE/active-run-id" ]]; then
-    active_run_id="$(<"$STATE/active-run-id")"
-    [[ "$active_run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
-      || die 'retained JOIN run ID is malformed; inspect local operator state before recovery'
-    manifest="$GDC_HOME/runs/$active_run_id/manifest.env"
-    if [[ -s "$manifest" ]]; then
-      retained_profile="$(awk -F= '$1 == "release_profile" { print $2; exit }' "$manifest")"
-      [[ "$retained_profile" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
-        || die 'retained JOIN manifest has no valid release profile; inspect local operator state before recovery'
-      retained_hash="$(awk -F= '$1 == "profile_hash" { print $2; exit }' "$manifest")"
-      if [[ -n "$retained_hash" ]]; then
-        [[ "$retained_hash" =~ ^[0-9a-f]{64}$ ]] \
-          || die 'retained JOIN manifest has an invalid profile hash; inspect local operator state before recovery'
-        retained_deployment="$(awk -F= '$1 == "deployment_profile" { print $2; exit }' "$manifest")"
-        retained_model="$(awk -F= '$1 == "model_profile" { print $2; exit }' "$manifest")"
-        [[ "$retained_deployment" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ && "$retained_model" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
-          || die 'retained JOIN manifest lacks a complete profile lineage; inspect local operator state before recovery'
-        for candidate in "$ROOT"/profiles/releases/*.lock; do
-          candidate="${candidate##*/}"
-          candidate="${candidate%.lock}"
-          candidate_hash="$(join_profile_hash "$candidate" "$retained_deployment" "$retained_model" || true)"
-          [[ "$candidate_hash" == "$retained_hash" ]] && matches+=("$candidate")
-        done
-        ((${#matches[@]} == 1)) \
-          || die 'retained JOIN profile hash does not resolve to exactly one available release; inspect local operator state before recovery'
-        resolved_profile="${matches[0]}"
-      else
-        [[ -r "$ROOT/profiles/releases/$retained_profile.lock" ]] \
-          || die "retained JOIN manifest names an unavailable release profile: $retained_profile"
-        resolved_profile="$retained_profile"
-      fi
-      [[ -z "$requested_profile" || "$requested_profile" == "$resolved_profile" ]] \
-        || die "host join release profile conflicts with retained operator lineage ($retained_profile); omit --release"
-      export GDC_RELEASE_PROFILE="$resolved_profile"
-      if [[ -n "$restore_archive" ]]; then
-        # A restore is a new recovery attempt. Its evidence must not append to
-        # an interrupted run whose immutable profile facts may predate it.
-        export GDC_JOIN_RECOVERY_NEW_RUN=true GDC_JOIN_RECOVERY_FROM_RUN_ID="$active_run_id"
-      fi
-      return 0
-    fi
-  fi
-
-  if [[ -n "$requested_profile" ]]; then
-    export GDC_RELEASE_PROFILE="$requested_profile"
-  elif [[ -z "${GDC_RELEASE_PROFILE:-}" ]]; then
-    export GDC_RELEASE_PROFILE=v2026.08.06
-  fi
-}
-
 run_manifest_path() {
   local run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   printf '%s/runs/%s/manifest.env\n' "$GDC_HOME" "$run_id"
@@ -115,7 +43,7 @@ run_manifest_path() {
 # same immutable invocation envelope as mutation phases. This helper also
 # makes direct script execution fail closed instead of creating unbound output.
 ensure_run_manifest() {
-  local phase="$1" run_id manifest commit launcher_sha256 release_profile release_hash existing
+  local phase="$1" run_id manifest commit launcher_sha256 release_profile release_hash existing existing_fingerprint
   [[ -n "$phase" ]] || die 'run manifest requires a phase name'
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   export GDC_RUN_ID="$run_id"
@@ -126,6 +54,11 @@ ensure_run_manifest() {
   if [[ -s "$manifest" ]]; then
     grep -qx "run_id=$run_id" "$manifest" || die "run manifest belongs to another run ID"
     grep -qx "operator_data_home=$GDC_HOME" "$manifest" || die "run manifest belongs to another operator data home"
+    if [[ -n "${GDC_NETWORK_FINGERPRINT:-}" ]]; then
+      existing_fingerprint="$(awk -F= '$1 == "network_fingerprint" {print $2; exit}' "$manifest")"
+      [[ -n "$existing_fingerprint" && "$existing_fingerprint" == "$GDC_NETWORK_FINGERPRINT" ]] \
+        || die 'run_resume_mismatch: retained run does not match the currently observed network software fingerprint'
+    fi
     grep -qx "release_profile=$release_profile" "$manifest" || die "run manifest belongs to another release profile"
     existing="$(awk -F= '$1 == "release_profile_sha256" {print $2; exit}' "$manifest")"
     if [[ -n "$existing" ]]; then
@@ -147,6 +80,9 @@ ensure_run_manifest() {
     printf 'gdc_launcher_sha256=%s\n' "$launcher_sha256"
     printf 'release_profile=%s\n' "$release_profile"
     printf 'release_profile_sha256=%s\n' "$release_hash"
+    [[ -z "${GDC_NETWORK_FINGERPRINT:-}" ]] || printf 'network_fingerprint=%s\n' "$GDC_NETWORK_FINGERPRINT"
+    [[ -z "${GDC_NETWORK_CHAIN_ID:-}" ]] || printf 'network_chain_id=%s\n' "$GDC_NETWORK_CHAIN_ID"
+    [[ -z "${GDC_NETWORK_GENESIS_SHA256:-}" ]] || printf 'network_genesis_sha256=%s\n' "$GDC_NETWORK_GENESIS_SHA256"
     [[ -z "${GDC_JOIN_RECOVERY_FROM_RUN_ID:-}" ]] || printf 'recovery_of_run_id=%s\n' "$GDC_JOIN_RECOVERY_FROM_RUN_ID"
     [[ -z "${GDC_INVOCATION_COMMAND:-}" ]] || printf 'invocation_command=%q\n' "$GDC_INVOCATION_COMMAND"
     [[ -z "${GDC_INVOCATION_CWD:-}" ]] || printf 'invocation_cwd=%q\n' "$GDC_INVOCATION_CWD"

@@ -19,15 +19,45 @@ compose=(docker compose --env-file "$ENV_FILE" -f "$HERE/compose.yaml")
 "${compose[@]}" up -d tmkms
 "${compose[@]}" run --rm --no-deps -e INIT_ONLY=true node >/dev/null
 
+warm_key_restore_failure_reason() {
+  local output="$1"
+  # Do not relay CLI output: it can include interactive material. The bounded
+  # category is sufficient to distinguish an unusable mnemonic, a stale local
+  # keyring and an unexpected runtime failure in retained JOIN evidence.
+  if grep -qiE 'already exists|duplicate key|overwrite' "$output"; then
+    printf 'existing_key_conflict\n'
+  elif grep -qiE 'mnemonic|recovery phrase|bip39' "$output"; then
+    printf 'mnemonic_rejected\n'
+  elif grep -qiE 'passphrase|password|keyring' "$output"; then
+    printf 'keyring_authentication_failed\n'
+  else
+    printf 'inferenced_rejected_recovery\n'
+  fi
+}
+
 # Create or reuse the warm key in the persistent /root/.inference keyring.
 if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
   'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file -a' >/dev/null 2>&1; then
   key_output="$TMP/warm-key.out"
   if [[ -n "$WARM_MNEMONIC" ]]; then
+    # A validator backup is authoritative for the warm identity. A partial
+    # deployment can leave an encrypted file keyring outside that archive;
+    # preserving it lets the backed-up identity be imported and verified.
+    preserved_keyring="keyring-file.gdc-pre-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+    preserved_state="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
+      "if [ -L /root/.inference/keyring-file ]; then exit 64; fi; if [ -e /root/.inference/keyring-file ]; then test ! -e /root/.inference/$preserved_keyring && mv /root/.inference/keyring-file /root/.inference/$preserved_keyring && printf preserved; else printf absent; fi")" || {
+      echo 'Cannot preserve unreadable warm keyring before restoring validator backup' >&2
+      exit 1
+    }
+    case "$preserved_state" in
+      preserved) printf 'READY preserved unreadable Host keyring before restoring validator backup identity\n' ;;
+      absent) ;;
+      *) echo 'Cannot determine whether a stale warm keyring was preserved' >&2; exit 1 ;;
+    esac
     if ! printf '%s\n%s\n%s\n' "$(<"$WARM_MNEMONIC")" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" \
       | "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
         'inferenced keys add "$KEY_NAME" --recover --keyring-backend file' >"$key_output" 2>&1; then
-      echo "Cannot restore warm key from $WARM_MNEMONIC; see $key_output" >&2
+      printf 'Cannot restore warm key: reason=%s\n' "$(warm_key_restore_failure_reason "$key_output")" >&2
       exit 1
     fi
   else
