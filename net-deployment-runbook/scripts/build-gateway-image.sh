@@ -9,6 +9,28 @@ load_profiles
 VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
 IMAGE="$(local_gateway_image_for_protocol "$VERSION")"
+canonical_runtime_identity() {
+  jq -sceS '
+    select(length == 1)
+    | .[0]
+    | select(type == "object")
+    | select(
+        (.Architecture | type == "string" and length > 0)
+        and (.Os | type == "string" and length > 0)
+        and (.Variant == null or (.Variant | type) == "string")
+        and (.OsVersion == null or (.OsVersion | type) == "string")
+        and (.Config | type == "object")
+        and (.RootFS.Type == "layers")
+        and ((.RootFS.Layers | type) == "array")
+        and ((.RootFS.Layers | length) > 0)
+        and (all(.RootFS.Layers[]; type == "string" and test("^sha256:[0-9a-f]{64}$")))
+        and (.Created | type == "string" and length > 0)
+        and (.Author == null or (.Author | type) == "string")
+        and (.Comment == null or (.Comment | type) == "string")
+        and (.Size | type == "number" and . > 0))
+    | {Architecture,Os,Variant:(.Variant // ""),OsVersion:(.OsVersion // ""),
+        Config,RootFS,Created,Author:(.Author // ""),Comment:(.Comment // ""),Size}'
+}
 if [[ "$VERSION" == v5 ]]; then
   immutable_image="${DEVSHARD_GATEWAY_IMAGE:?candidate v5 immutable gateway image is required}"
   [[ "$immutable_image" =~ @sha256:[0-9a-f]{64}$ ]] \
@@ -25,11 +47,17 @@ if [[ "$VERSION" == v5 ]]; then
   # the checksum-bound archive before reuse, then verify that the expected tag
   # was materialized by docker load.
   gzip -dc "$archive" | ssh "$GATEWAY_NODE" docker load
-  loaded_image_id="$(ssh "$GATEWAY_NODE" docker image inspect --format '{{.Id}}' "$IMAGE")"
+  loaded_runtime_identity="$(
+    ssh "$GATEWAY_NODE" docker image inspect --format '{{json .}}' "$IMAGE" \
+      | canonical_runtime_identity
+  )"
   ssh "$GATEWAY_NODE" docker pull "$immutable_image" >/dev/null
-  immutable_image_id="$(ssh "$GATEWAY_NODE" docker image inspect --format '{{.Id}}' "$immutable_image")"
-  [[ "$loaded_image_id" =~ ^sha256:[0-9a-f]{64}$ && "$loaded_image_id" == "$immutable_image_id" ]] || {
-    echo 'candidate v5 gateway archive image does not match the immutable composition digest' >&2
+  immutable_runtime_identity="$(
+    ssh "$GATEWAY_NODE" docker image inspect --format '{{json .}}' "$immutable_image" \
+      | canonical_runtime_identity
+  )"
+  [[ -n "$loaded_runtime_identity" && "$loaded_runtime_identity" == "$immutable_runtime_identity" ]] || {
+    echo 'candidate v5 gateway archive runtime payload does not match the immutable composition image' >&2
     exit 1
   }
   echo "READY $IMAGE loaded from its verified candidate archive on $GATEWAY_NODE"
