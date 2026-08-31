@@ -18,6 +18,42 @@ local_gateway_image_for_protocol() {
   printf '%s-%s\n' "${image%-v[345]}" "$version"
 }
 
+gateway_protocol_contract_for_selection() {
+  local version="$1" declared="${2:-}"
+  [[ "$version" =~ ^v[345]$ ]] || {
+    echo 'gateway protocol must be v3, v4 or v5' >&2
+    return 2
+  }
+  # v4 is built from its own pinned source tree and image, independently of
+  # the stable or candidate gateway artifact selected by the release profile.
+  # Its capability therefore cannot be inferred from that artifact's declared
+  # protocol list.
+  if [[ "$version" == v4 ]]; then
+    [[ -n "${DEVSHARD_V4_URL:-}" && -n "${DEVSHARD_V4_SHA256:-}" \
+      && -n "${DEVSHARD_V4_SOURCE_REF:-}" \
+      && "${DEVSHARD_V4_SOURCE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || {
+      echo 'DevShard v4 gateway requires its pinned archive, source ref and source commit' >&2
+      return 2
+    }
+    printf 'v4\n'
+    return 0
+  fi
+  case " $declared " in
+    *" $version "*) printf '%s\n' "$declared" ;;
+    *)
+      printf 'DevShard %s is not supported by the pinned gateway artifact; supported: %s\n' \
+        "$version" "${declared:-none}" >&2
+      return 2
+      ;;
+  esac
+}
+
+selected_gateway_protocol_contract() {
+  local version="${GDC_GATEWAY_VERSION:-${DEVSHARD_PROTOCOL_VERSION:-}}"
+  gateway_protocol_contract_for_selection \
+    "$version" "${DEVSHARD_SUPPORTED_PROTOCOLS:-${DEVSHARD_PROTOCOL_VERSION:-}}"
+}
+
 load_profiles() {
   local root release deployment model operator comp_target comp_env
   root="$(profile_root)"

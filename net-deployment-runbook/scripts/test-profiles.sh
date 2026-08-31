@@ -133,7 +133,7 @@ grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS", 900' "$ROOT/04-ops/edge-n
 grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS:-900}' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK=${GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK:-1}' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=$gateway_admission_protocols_json' "$ROOT/04-ops/edge-node/render-env.sh"
-grep -Fq 'DEVSHARD_SUPPORTED_PROTOCOLS' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'gateway_protocol_contract="$(selected_gateway_protocol_contract)"' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'env_file: [./gateway-admission.env]' "$ROOT/04-ops/edge-node/compose.yaml"
 grep -Fq 'Deploy the matching public admission contract' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'GDC_GATEWAY_ADMISSION_URL=https://${API_HOST}' "$ROOT/04-ops/create-gateway.sh"
@@ -325,6 +325,26 @@ grep -Fq 'IMAGE="$(local_gateway_image_for_protocol "$VERSION")"' "$ROOT/scripts
   export DEVSHARD_PROTOCOL_VERSION=v4
   [[ "$(local_gateway_image_for_protocol v4)" == "$LOCAL_GATEWAY_IMAGE" ]]
   [[ "$(local_gateway_image_for_protocol v3)" == gdc/devshard-gateway:0.2.15-v3 ]]
+
+  export DEVSHARD_V4_URL=https://example.invalid/devshardd-v4.zip
+  DEVSHARD_V4_SHA256="$(printf '4%.0s' {1..64})"
+  export DEVSHARD_V4_SHA256
+  export DEVSHARD_V4_SOURCE_REF=release/v0.2.15-devshard-v4.0.1
+  export DEVSHARD_V4_SOURCE_COMMIT=3c034a72a80f82c33f71a73737c329f41c7ddf7b
+  [[ "$(gateway_protocol_contract_for_selection v4 'v3 v5')" == v4 ]]
+  [[ "$(gateway_protocol_contract_for_selection v5 'v3 v5')" == 'v3 v5' ]]
+  if gateway_protocol_contract_for_selection v5 'v3 v4' >/dev/null 2>&1; then
+    echo 'undeclared candidate v5 gateway protocol was accepted' >&2
+    exit 1
+  fi
+)
+(
+  export GDC_COMPOSITION=core-v2026.08.06+devshard-v2026.08.30-rc.0
+  export GDC_GATEWAY_VERSION=v4
+  load_profiles
+  [[ "$DEVSHARD_SUPPORTED_PROTOCOLS" == 'v3 v5' ]]
+  [[ "$DEVSHARD_V4_SOURCE_COMMIT" == 3c034a72a80f82c33f71a73737c329f41c7ddf7b ]]
+  [[ "$(selected_gateway_protocol_contract)" == v4 ]]
 )
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"

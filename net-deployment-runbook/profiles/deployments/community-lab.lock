@@ -13,6 +13,7 @@ DEVSHARD_V3_SHA256=ca1294fc8db3f0907a01f362eb4b13665f66d0fd12cfc6f01468b1e27f0ba
 DEVSHARD_V4_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-devshard-v4.0.1/devshardd.zip
 DEVSHARD_V4_SHA256=c80d098941fd18caf0159910c1b6c23140fce871f7ce903ceaad134cfe626b25
 DEVSHARD_V4_SOURCE_REF=release/v0.2.15-devshard-v4.0.1
+DEVSHARD_V4_SOURCE_COMMIT=3c034a72a80f82c33f71a73737c329f41c7ddf7b
 # Host-side governance registration and gateway routing are separate
 # capabilities.  The official v4 Host artifact is pinned for concurrent
 # registration and runtime qualification, while the published gateway build
