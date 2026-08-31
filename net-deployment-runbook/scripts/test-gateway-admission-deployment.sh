@@ -169,8 +169,12 @@ if [[ "$command_line" == *'gateway-admission-observer.env'* ]]; then
     active=false
     phase=finalizing
   fi
-  printf '{"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"routable":true,"total_weight":100}}},"devshards":[{"active":%s,"protocol_version":"%s","runtime":{"session_version":"v5","phase":"%s","chain_phase":"Inference","requests_blocked":false}}]}\n' \
-    "$active" "${GDC_TEST_PROTOCOL_VERSION:-5}" "$phase"
+  protocol_field=''
+  if [[ "${GDC_TEST_PROTOCOL_VERSION:-5}" != absent ]]; then
+    protocol_field=",\"protocol_version\":\"${GDC_TEST_PROTOCOL_VERSION:-5}\""
+  fi
+  printf '{"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"routable":true,"total_weight":100}}},"devshards":[{"active":%s%s,"runtime":{"session_version":"%s","phase":"%s","chain_phase":"Inference","requests_blocked":false}}]}\n' \
+    "$active" "$protocol_field" "${GDC_TEST_RUNTIME_VERSION:-v5}" "$phase"
 elif [[ "$command_line" == *'systemctl show gdc-gateway-admission-observer.service'* ]]; then
   case "${GDC_TEST_OBSERVER_STATE:-active}" in
     active) printf 'active\n' ;;
@@ -320,11 +324,25 @@ wait_gateway_admission_observer_ready >"$tmp/readiness.out"
 grep -Fq 'reason=protocol-or-capacity-transitioning protocol=v5' "$tmp/readiness.out"
 grep -Fq 'READY gateway admission observer exposes v5 with positive capacity' "$tmp/readiness.out"
 
+# The official v4 gateway exposes its selected protocol only as the sanitized
+# runtime session version. Readiness accepts that unambiguous current field
+# without requiring the legacy top-level protocol_version field.
+: >"$GDC_TEST_READINESS_COUNT"
+export GDC_GATEWAY_VERSION=v4
+export GDC_GATEWAY_OBSERVER_READY_ATTEMPTS=1
+export GDC_TEST_READINESS_FAILURES_BEFORE_PASS=0
+export GDC_TEST_PROTOCOL_VERSION=absent
+export GDC_TEST_RUNTIME_VERSION=v4
+wait_gateway_admission_observer_ready >"$tmp/readiness-v4.out"
+grep -Fq 'READY gateway admission observer exposes v4 with positive capacity' "$tmp/readiness-v4.out"
+
 # A different active protocol never satisfies the selected-profile contract.
 : >"$GDC_TEST_READINESS_COUNT"
+export GDC_GATEWAY_VERSION=v5
 export GDC_GATEWAY_OBSERVER_READY_ATTEMPTS=2
 export GDC_TEST_READINESS_FAILURES_BEFORE_PASS=0
 export GDC_TEST_PROTOCOL_VERSION=4
+export GDC_TEST_RUNTIME_VERSION=v5
 if (wait_gateway_admission_observer_ready) >"$tmp/wrong-protocol.out" 2>"$tmp/wrong-protocol.err"; then
   echo 'observer readiness accepted the wrong protocol' >&2
   exit 1
