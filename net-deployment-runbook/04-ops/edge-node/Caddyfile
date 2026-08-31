@@ -61,6 +61,17 @@
     handle /ops-prometheus/* {
       respond 403
     }
+    @gateway_admission_observer_from_public_edge {
+      path /ops-gateway-admission-state
+      remote_ip {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @gateway_admission_observer_from_public_edge {
+      rewrite * /v1/status
+      reverse_proxy 127.0.0.1:18084
+    }
+    handle /ops-gateway-admission-state {
+      respond 403
+    }
     # The Telegram consumer itself is bound to loopback on its configured Host.
   # Expose only its safe readiness summary here so the public edge can present
   # it without needing a host port or a second bot process.

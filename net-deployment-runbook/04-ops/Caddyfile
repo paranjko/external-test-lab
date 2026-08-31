@@ -19,11 +19,6 @@
 		respond 403
 	}
 
-  handle /ops-gateway-admission-state {
-    rewrite * /v1/status
-    reverse_proxy 127.0.0.1:18084
-  }
-
 			handle_path /faucet/* {
 				reverse_proxy 127.0.0.1:18081
 			}
