@@ -8,6 +8,14 @@ mkdir -p "$RUN"
 install_evidence_exit_trap 'DevShard governance'
 record_phase_profile governance-devshard
 creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
+mutable_protocol=none
+if [[ -n "${GDC_COMPOSITION:-}" && "${LAB_CANDIDATE:-false}" == true ]]; then
+  [[ "${GDC_COMPOSITION_HASH:-}" =~ ^[0-9a-f]{64}$ \
+    && "${CANDIDATE_DEVSHARD_PROTOCOL_VERSION:-}" == v5 \
+    && "${DEVSHARD_PROTOCOL_VERSION:-}" == v5 ]] \
+    || die 'DevShard tuple replacement requires a verified v5 candidate composition'
+  mutable_protocol=v5
+fi
 poc_exchange_duration="${GDC_POC_EXCHANGE_DURATION:-8}"
 [[ "$poc_exchange_duration" =~ ^[1-9][0-9]*$ ]] || die 'GDC_POC_EXCHANGE_DURATION must be positive'
 governance_candidates="${DEVSHARD_GOVERNANCE_PROTOCOLS:-${DEVSHARD_SUPPORTED_PROTOCOLS:-$DEVSHARD_PROTOCOL_VERSION}}"
@@ -65,7 +73,8 @@ capture_public_params "$RUN/params-before.json" params-before
 jq '(.params // .)' "$RUN/params-before.json" >"$RUN/params-before.normalized.json"
 printf '%s\n' "$approved_versions" >"$RUN/requested-approved-versions.json"
 governance_state="$("$ROOT/scripts/prepare-devshard-governance-state.sh" \
-  "$RUN/params-before.json" "$RUN/requested-approved-versions.json" "$creator")" \
+  "$RUN/params-before.json" "$RUN/requested-approved-versions.json" "$creator" \
+  "$mutable_protocol")" \
   || die "requested DevShard governance transition is not state-preserving (evidence=$RUN/params-before.json)"
 current_protocols="$(jq -er '
   (.params // .).devshard_escrow_params.approved_versions | map(.name) | join(" ")
@@ -99,7 +108,8 @@ jq --arg authority "$authority" --arg creator "$creator" --argjson approved_vers
      summary:"Registers immutable supported DevShard archives, preserves the live creator policy while keeping the gateway authorized, keeps the 0.2.14 PoC distribution retry window open, and preserves the protocol default 50 percent PoC slot allocation."}
 ' "$RUN/params-before.json" >"$RUN/proposal.json"
 message_hash="$(jq -cS '.messages' "$RUN/proposal.json" | sha256sum | awk '{print $1}')"
-proposal_metadata="gdc-message-sha256:$message_hash"
+params_before_hash="$(jq -cS '(.params // .)' "$RUN/params-before.json" | sha256sum | awk '{print $1}')"
+proposal_metadata="gdc-devshard-v1:mutable=$mutable_protocol;before-sha256=$params_before_hash;message-sha256=$message_hash"
 jq --arg metadata "$proposal_metadata" '.metadata = $metadata' "$RUN/proposal.json" >"$RUN/proposal.with-metadata.json"
 mv "$RUN/proposal.with-metadata.json" "$RUN/proposal.json"
 jq -e --argjson allowed_creators "$allowed_creators" --argjson approved_versions "$approved_versions" '
@@ -110,20 +120,52 @@ jq -e --argjson allowed_creators "$allowed_creators" --argjson approved_versions
   and ($p.max_nonce | tonumber > 0)
   and (.messages[0].params.epoch_params.poc_slot_allocation == {value:"5", exponent:-1})
 ' "$RUN/proposal.json" >/dev/null
+expected_v5_url=-
+expected_v5_sha256=-
+if [[ "$mutable_protocol" == v5 ]]; then
+  expected_v5_url="$DEVSHARD_V5_URL"
+  expected_v5_sha256="$DEVSHARD_V5_SHA256"
+fi
+"$ROOT/scripts/verify-devshard-governance-transition.sh" before \
+  "$RUN/params-before.json" "$RUN/proposal.json" "$creator" "$mutable_protocol" \
+  "$expected_v5_url" "$expected_v5_sha256" "$poc_exchange_duration" \
+  || die "rendered DevShard proposal is outside the verified composition transition (evidence=$RUN/proposal.json)"
 
-if jq -e --arg creator "$creator" --argjson allowed_creators "$allowed_creators" \
-  --argjson approved_versions "$approved_versions" --arg exchange "$poc_exchange_duration" '
-  (.params // .).devshard_escrow_params as $p
-  | ($p.allowed_creator_addresses == $allowed_creators)
-  and (($p.allowed_creator_addresses | length) == 0
-    or ($p.allowed_creator_addresses | index($creator) != null))
-  and ($p.devshard_requests_enabled == true)
-  and $p.approved_versions == $approved_versions
-  and (((.params // .).epoch_params.poc_exchange_duration | tonumber) == ($exchange | tonumber))
-  and (((.params // .).epoch_params.poc_validation_delay | tonumber) >= 10)
-  and ((((.params // .).epoch_params.poc_slot_allocation.value // "0") | tonumber) == 5)
-  and ((((.params // .).epoch_params.poc_slot_allocation.exponent // 0) | tonumber) == -1)
-' "$RUN/params-before.json" >/dev/null; then
+if "$ROOT/scripts/verify-devshard-governance-snapshot.sh" after \
+  "$RUN/proposal.json" "$RUN/params-before.json" "$mutable_protocol" >/dev/null 2>&1 \
+  && "$ROOT/scripts/verify-devshard-governance-transition.sh" after \
+    "$RUN/params-before.json" "$RUN/proposal.json" "$creator" "$mutable_protocol" \
+    "$expected_v5_url" "$expected_v5_sha256" "$poc_exchange_duration" >/dev/null 2>&1; then
+  supplied_proposal_id="${GDC_GOVERNANCE_PROPOSAL_ID:-}"
+  if [[ -n "$supplied_proposal_id" ]]; then
+    [[ "$supplied_proposal_id" =~ ^[1-9][0-9]*$ ]] || die 'governance proposal ID must be a positive integer'
+    ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$supplied_proposal_id" \
+      >"$RUN/proposal-status.json"
+    jq -e '.proposal.status == "PROPOSAL_STATUS_PASSED"' "$RUN/proposal-status.json" >/dev/null \
+      || die "proposal $supplied_proposal_id has not passed"
+    proposal_metadata="$(jq -er '.proposal.metadata' "$RUN/proposal-status.json")"
+    metadata_pattern='^gdc-devshard-v1:mutable=(none|v5);before-sha256=([0-9a-f]{64});message-sha256=([0-9a-f]{64})$'
+    [[ "$proposal_metadata" =~ $metadata_pattern ]] \
+      || die "proposal $supplied_proposal_id has malformed DevShard state-binding metadata"
+    trusted_prestate="$("$ROOT/scripts/find-devshard-governance-prestate.sh" \
+      "$GDC_HOME/runs" "$supplied_proposal_id" "$RUN/proposal-status.json" "${BASH_REMATCH[2]}")" \
+      || die "passed DevShard proposal $supplied_proposal_id lacks trusted local pre-state evidence"
+    cp "$trusted_prestate" "$RUN/params-trusted-before.json"
+    "$ROOT/scripts/verify-devshard-governance-snapshot.sh" before \
+      "$RUN/proposal-status.json" "$RUN/params-trusted-before.json" "$mutable_protocol" \
+      || die "proposal $supplied_proposal_id has invalid trusted pre-state evidence"
+    "$ROOT/scripts/verify-devshard-governance-transition.sh" before \
+      "$RUN/params-trusted-before.json" "$RUN/proposal-status.json" "$creator" "$mutable_protocol" \
+      "$expected_v5_url" "$expected_v5_sha256" "$poc_exchange_duration" \
+      || die "proposal $supplied_proposal_id is outside the verified DevShard transition"
+    "$ROOT/scripts/verify-devshard-governance-snapshot.sh" after \
+      "$RUN/proposal-status.json" "$RUN/params-before.json" "$mutable_protocol" \
+      || die "proposal $supplied_proposal_id does not match the exact effective state"
+    "$ROOT/scripts/verify-devshard-governance-transition.sh" after \
+      "$RUN/params-before.json" "$RUN/proposal-status.json" "$creator" "$mutable_protocol" \
+      "$expected_v5_url" "$expected_v5_sha256" "$poc_exchange_duration" \
+      || die "proposal $supplied_proposal_id does not match the verified DevShard post-state"
+  fi
   cp "$RUN/params-before.json" "$RUN/params-after.json"
   cat >"$RUN/verdict.md" <<EOF
 # DevShard governance: PASS
@@ -143,6 +185,10 @@ if [[ -z "$proposal_id" ]]; then
   [[ -z "$proposal_id" ]] || printf 'READY reuse DevShard governance proposal %s\n' "$proposal_id"
 fi
 if [[ -z "$proposal_id" && "${GDC_GOVERNANCE_SUBMIT:-false}" == true ]]; then
+  capture_public_params "$RUN/params-pre-submit.json" params-pre-submit
+  "$ROOT/scripts/verify-devshard-governance-snapshot.sh" before \
+    "$RUN/proposal.json" "$RUN/params-pre-submit.json" "$mutable_protocol" \
+    || die "live inference parameters changed after proposal rendering; rerun from a fresh snapshot (evidence=$RUN/params-pre-submit.json)"
   step 'Submit governance proposal from the dedicated operator account'
   password="$(<"$SECRETS/operator.keyring")"
   tx="$(printf '%s\n' "$password" | "$ROOT/scripts/inferenced.sh" tx gov submit-proposal "$RUN/proposal.json" \
@@ -192,6 +238,10 @@ EOF
 fi
 proposal_status="$(jq -er '.proposal.status' "$RUN/proposal-status.json")"
 if [[ "$proposal_status" == PROPOSAL_STATUS_VOTING_PERIOD && "${GDC_GOVERNANCE_AUTO_VOTE:-false}" == true ]]; then
+  capture_public_params "$RUN/params-pre-vote.json" params-pre-vote
+  "$ROOT/scripts/verify-devshard-governance-snapshot.sh" before \
+    "$RUN/proposal.json" "$RUN/params-pre-vote.json" "$mutable_protocol" \
+    || die "live inference parameters changed before voting; proposal is stale and will not be voted (evidence=$RUN/params-pre-vote.json)"
   "$ROOT/scripts/phase-vote-proposal.sh" "$proposal_id" yes
   deadline=$((SECONDS + 120))
   while (( SECONDS < deadline )); do
@@ -215,6 +265,13 @@ EOF
 
 step 'Verify effective versions, creator allowlist, and live escrow limits'
 capture_public_params "$RUN/params-after.json" params-after
+"$ROOT/scripts/verify-devshard-governance-snapshot.sh" after \
+  "$RUN/proposal.json" "$RUN/params-after.json" "$mutable_protocol" \
+  || die "passed proposal did not produce the exact rendered inference parameters (evidence=$RUN/params-after.json)"
+"$ROOT/scripts/verify-devshard-governance-transition.sh" after \
+  "$RUN/params-after.json" "$RUN/proposal.json" "$creator" "$mutable_protocol" \
+  "$expected_v5_url" "$expected_v5_sha256" "$poc_exchange_duration" \
+  || die "passed proposal state is outside the verified composition transition (evidence=$RUN/params-after.json)"
 jq -e --arg creator "$creator" --argjson allowed_creators "$allowed_creators" \
   --argjson approved_versions "$approved_versions" --arg exchange "$poc_exchange_duration" '
   (.params // .).devshard_escrow_params as $p

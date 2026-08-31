@@ -25,10 +25,82 @@ ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$pr
 jq -e '.proposal.status == "PROPOSAL_STATUS_VOTING_PERIOD" or .proposal.status == "PROPOSAL_STATUS_PASSED"' "$RUN/proposal-before.json" >/dev/null || die "proposal $proposal_id is not votable or passed"
 ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$proposal_id/votes" >"$RUN/votes-before.json"
 
+proposal_status="$(jq -er '.proposal.status' "$RUN/proposal-before.json")"
+proposal_metadata="$(jq -er '.proposal.metadata // ""' "$RUN/proposal-before.json")"
+devshard_update=false
+if jq -e '
+  any(.proposal.messages[]?;
+    .["@type"] == "/inference.inference.MsgUpdateParams")
+' "$RUN/proposal-before.json" >/dev/null; then
+  devshard_update=true
+fi
+if [[ "$devshard_update" == true ]]; then
+  [[ "$proposal_metadata" == gdc-devshard-v1:* ]] \
+    || die "proposal $proposal_id changes DevShard parameters without state-binding metadata"
+  metadata_pattern='^gdc-devshard-v1:mutable=(none|v5);before-sha256=([0-9a-f]{64});message-sha256=([0-9a-f]{64})$'
+  [[ "$proposal_metadata" =~ $metadata_pattern ]] \
+    || die "proposal $proposal_id has malformed DevShard state-binding metadata"
+  metadata_before_hash="${BASH_REMATCH[2]}"
+  mutable_protocol=none
+  expected_v5_url=-
+  expected_v5_sha256=-
+  if [[ -n "${GDC_COMPOSITION:-}" && "${LAB_CANDIDATE:-false}" == true ]]; then
+    [[ "${GDC_COMPOSITION_HASH:-}" =~ ^[0-9a-f]{64}$ \
+      && "${CANDIDATE_DEVSHARD_PROTOCOL_VERSION:-}" == v5 \
+      && "${DEVSHARD_PROTOCOL_VERSION:-}" == v5 ]] \
+      || die 'DevShard tuple replacement vote requires a verified v5 candidate composition'
+    mutable_protocol=v5
+    expected_v5_url="$DEVSHARD_V5_URL"
+    expected_v5_sha256="$DEVSHARD_V5_SHA256"
+  fi
+  params_url="${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
+  params_url="${params_url%/}/productscience/inference/inference/params"
+  stderr_file="$RUN/params-pre-vote.curl.stderr"
+  set +e
+  http_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUN/params-pre-vote.json" \
+    -w '%{http_code}' "$params_url" 2>"$stderr_file")"
+  curl_exit=$?
+  set -e
+  if (( curl_exit != 0 )) || [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+    error_detail="$(tr '\n' ' ' <"$stderr_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//' | cut -c1-240)"
+    die "cannot verify DevShard proposal freshness before voting (url=$params_url http_status=${http_status:-000} curl_exit=$curl_exit curl_status=$(curl_exit_status "$curl_exit")${error_detail:+ detail=$error_detail})"
+  fi
+  if [[ "$proposal_status" == PROPOSAL_STATUS_PASSED ]]; then
+    verification_mode=after
+  else
+    verification_mode=before
+  fi
+  "$ROOT/scripts/verify-devshard-governance-snapshot.sh" "$verification_mode" \
+    "$RUN/proposal-before.json" "$RUN/params-pre-vote.json" "$mutable_protocol" \
+    || die "proposal $proposal_id is stale or malformed and will not be accepted (evidence=$RUN/params-pre-vote.json)"
+  creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
+  poc_exchange_duration="${GDC_POC_EXCHANGE_DURATION:-8}"
+  transition_params="$RUN/params-pre-vote.json"
+  if [[ "$proposal_status" == PROPOSAL_STATUS_PASSED ]]; then
+    trusted_prestate="$("$ROOT/scripts/find-devshard-governance-prestate.sh" \
+      "$GDC_HOME/runs" "$proposal_id" "$RUN/proposal-before.json" "$metadata_before_hash")" \
+      || die "passed DevShard proposal $proposal_id lacks trusted local pre-state evidence"
+    cp "$trusted_prestate" "$RUN/params-trusted-before.json"
+    "$ROOT/scripts/verify-devshard-governance-snapshot.sh" before \
+      "$RUN/proposal-before.json" "$RUN/params-trusted-before.json" "$mutable_protocol" \
+      || die "passed DevShard proposal $proposal_id has invalid trusted pre-state evidence"
+    transition_params="$RUN/params-trusted-before.json"
+  fi
+  "$ROOT/scripts/verify-devshard-governance-transition.sh" before \
+    "$transition_params" "$RUN/proposal-before.json" "$creator" "$mutable_protocol" \
+    "$expected_v5_url" "$expected_v5_sha256" "$poc_exchange_duration" \
+    || die "proposal $proposal_id is outside the verified DevShard transition and will not be accepted"
+  if [[ "$proposal_status" == PROPOSAL_STATUS_PASSED ]]; then
+    "$ROOT/scripts/verify-devshard-governance-transition.sh" after \
+      "$RUN/params-pre-vote.json" "$RUN/proposal-before.json" "$creator" "$mutable_protocol" \
+      "$expected_v5_url" "$expected_v5_sha256" "$poc_exchange_duration" \
+      || die "proposal $proposal_id passed without the exact verified DevShard post-state"
+  fi
+fi
+
 # Cosmos may discard the individual vote list when the short test-lab voting
 # period closes. A rerun must not try to vote on an inactive proposal or claim
 # that every configured account voted. Record only the final chain outcome.
-proposal_status="$(jq -er '.proposal.status' "$RUN/proposal-before.json")"
 if [[ "$proposal_status" == PROPOSAL_STATUS_PASSED ]]; then
   tally_field="${option}_count"
   tally="$(jq -er --arg field "$tally_field" '.proposal.final_tally_result[$field] | tonumber' "$RUN/proposal-before.json")"
