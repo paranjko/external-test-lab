@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [[ $# -ne 3 ]]; then
-  echo 'usage: prepare-devshard-governance-state.sh CURRENT_PARAMS.json REQUESTED_VERSIONS.json GATEWAY_CREATOR' >&2
+if [[ $# -ne 4 ]]; then
+  echo 'usage: prepare-devshard-governance-state.sh CURRENT_PARAMS.json REQUESTED_VERSIONS.json GATEWAY_CREATOR MUTABLE_PROTOCOL' >&2
   exit 2
 fi
 
 current_params="$1"
 requested_versions="$2"
 creator="$3"
+mutable_protocol="$4"
 
 [[ "$creator" =~ ^gonka1[0-9a-z]+$ ]] || {
   echo 'gateway creator address is invalid' >&2
+  exit 2
+}
+[[ "$mutable_protocol" == none || "$mutable_protocol" == v5 ]] || {
+  echo 'mutable DevShard protocol must be none or v5' >&2
   exit 2
 }
 
@@ -39,6 +44,7 @@ jq -e '
   and ($params.approved_versions | type) == "array"
   and all($params.approved_versions[];
     type == "object"
+    and (keys | sort) == ["binary", "name", "sha256"]
     and (.name | type == "string" and test("^v[1-9][0-9]*$"))
     and (.binary | type == "string" and test("^https://"))
     and (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))
@@ -49,15 +55,17 @@ jq -e '
   exit 2
 }
 
-if ! jq -e --slurpfile requested "$requested_versions" '
+if ! jq -e --slurpfile requested "$requested_versions" --arg mutable "$mutable_protocol" '
   (.params // .).devshard_escrow_params.approved_versions as $current
-  | all($current[]; . as $live
-      | any($requested[0][];
-          .name == $live.name
-          and .binary == $live.binary
-          and .sha256 == $live.sha256))
+  | (($mutable == "none" or any($requested[0][]; .name == $mutable))
+    and all($current[]; . as $live
+        | any($requested[0][];
+            .name == $live.name
+            and (($mutable != "none" and $live.name == $mutable)
+              or (.binary == $live.binary
+                and .sha256 == $live.sha256)))))
 ' "$current_params" >/dev/null; then
-  echo 'requested governance transition would rebind or omit an approved DevShard protocol tuple' >&2
+  echo "requested governance transition would rebind or omit a protected DevShard protocol tuple (mutable=$mutable_protocol)" >&2
   exit 1
 fi
 
