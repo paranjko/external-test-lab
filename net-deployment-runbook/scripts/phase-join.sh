@@ -59,6 +59,7 @@ fi
 GENESIS_SHA256="$(genesis_sha256 "$GENESIS/genesis.json")"
 GENESIS_CHAIN_ID="$(jq -er .chain_id "$GENESIS/genesis.json")"
 write_phase_lineage "$RUN" "$GENESIS_CHAIN_ID" "$GENESIS_SHA256"
+record_join_state "$NODE" PREPARED
 
 if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
   step "Validate $NODE validator identity from operator backup"
@@ -168,6 +169,8 @@ step "Render $NODE"
 NODE_DIR="$GENERATED/nodes/$NODE"
 mkdir -p "$NODE_DIR" "$GENERATED/edge" "$GENERATED/agents"
 env_args=(--inventory "$INVENTORY" --node-name "$NODE" --account-public "$ACCOUNT" --seeds-file "$GENESIS/genesis-seeds.txt" --secrets-dir "$SECRETS")
+[[ -r "${GDC_JOIN_LINEAGE_RECEIPT:-}" ]] || die 'JOIN lacks a completed lineage preflight receipt'
+env_args+=(--state-sync-env "$STATE/lineage-preflight.env")
 ML_HOST="$(node_ml_host "$NODE" || true)"
 if [[ -n "$ML_HOST" ]]; then
   # The public hostname may resolve to the shared edge.  The ML runtime must
@@ -227,13 +230,20 @@ if [[ -n "$ML_HOST" ]]; then
 fi
 
 step "Start $NODE"
+record_join_state "$NODE" SYNCING "$ADDRESS"
 start_stack "$NODE" /srv/dai/edge
 start_stack "$NODE" /srv/dai/monitoring-agent
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
 
 step "Wait until $NODE is synchronized"
 "$ROOT/03-join/wait-synced.sh" "$URL/chain-rpc" "https://$GENESIS_PUBLIC_HOST/chain-rpc"
-record_join_state "$NODE" NODE_SYNCED "$ADDRESS"
+record_join_state "$NODE" CAUGHT_UP "$ADDRESS"
+step "Verify $NODE acquired the quorum-attested lineage before enabling its signer"
+"$ROOT/scripts/verify-join-lineage-state.sh" "$URL/chain-rpc" "$GDC_JOIN_LINEAGE_RECEIPT"
+record_join_state "$NODE" LINEAGE_VERIFIED "$ADDRESS"
+step "Enable $NODE consensus signer after lineage verification"
+ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --enable-signer"
+record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"
 step "Restart $NODE API and colocated MLNode only after synchronization"
 "$ROOT/03-join/restart-api-after-sync.sh" "$NODE"
 participant_body="$(curl --connect-timeout 5 --max-time 10 -fsS "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"

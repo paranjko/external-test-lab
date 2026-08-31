@@ -43,7 +43,7 @@ run_manifest_path() {
 # same immutable invocation envelope as mutation phases. This helper also
 # makes direct script execution fail closed instead of creating unbound output.
 ensure_run_manifest() {
-  local phase="$1" run_id manifest commit launcher_sha256 release_profile release_hash existing existing_fingerprint
+  local phase="$1" run_id manifest commit launcher_sha256 release_profile release_hash existing existing_fingerprint key expected
   [[ -n "$phase" ]] || die 'run manifest requires a phase name'
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   export GDC_RUN_ID="$run_id"
@@ -59,6 +59,21 @@ ensure_run_manifest() {
       [[ -n "$existing_fingerprint" && "$existing_fingerprint" == "$GDC_NETWORK_FINGERPRINT" ]] \
         || die 'run_resume_mismatch: retained run does not match the currently observed network software fingerprint'
     fi
+    # A JOIN may resume only the exact preflight that supplied its trust and
+    # snapshot inputs. The network fingerprint alone intentionally does not
+    # authorize a newer snapshot or an expired trust tuple.
+    for key in join_bootstrap_mode join_trust_height join_trust_hash join_snapshot_height lineage_receipt_sha256; do
+      case "$key" in
+        join_bootstrap_mode) expected="${GDC_JOIN_BOOTSTRAP_MODE:-}" ;;
+        join_trust_height) expected="${GDC_JOIN_TRUST_HEIGHT:-}" ;;
+        join_trust_hash) expected="${GDC_JOIN_TRUST_HASH:-}" ;;
+        join_snapshot_height) expected="${GDC_JOIN_SNAPSHOT_HEIGHT:-}" ;;
+        lineage_receipt_sha256) expected="${GDC_JOIN_LINEAGE_RECEIPT_SHA256:-}" ;;
+      esac
+      [[ -z "$expected" ]] && continue
+      existing="$(awk -F= -v key="$key" '$1 == key {print $2; exit}' "$manifest")"
+      [[ "$existing" == "$expected" ]] || die "run_resume_mismatch: retained run does not match the lineage preflight $key"
+    done
     grep -qx "release_profile=$release_profile" "$manifest" || die "run manifest belongs to another release profile"
     existing="$(awk -F= '$1 == "release_profile_sha256" {print $2; exit}' "$manifest")"
     if [[ -n "$existing" ]]; then
@@ -83,6 +98,11 @@ ensure_run_manifest() {
     [[ -z "${GDC_NETWORK_FINGERPRINT:-}" ]] || printf 'network_fingerprint=%s\n' "$GDC_NETWORK_FINGERPRINT"
     [[ -z "${GDC_NETWORK_CHAIN_ID:-}" ]] || printf 'network_chain_id=%s\n' "$GDC_NETWORK_CHAIN_ID"
     [[ -z "${GDC_NETWORK_GENESIS_SHA256:-}" ]] || printf 'network_genesis_sha256=%s\n' "$GDC_NETWORK_GENESIS_SHA256"
+    [[ -z "${GDC_JOIN_BOOTSTRAP_MODE:-}" ]] || printf 'join_bootstrap_mode=%s\n' "$GDC_JOIN_BOOTSTRAP_MODE"
+    [[ -z "${GDC_JOIN_TRUST_HEIGHT:-}" ]] || printf 'join_trust_height=%s\n' "$GDC_JOIN_TRUST_HEIGHT"
+    [[ -z "${GDC_JOIN_TRUST_HASH:-}" ]] || printf 'join_trust_hash=%s\n' "$GDC_JOIN_TRUST_HASH"
+    [[ -z "${GDC_JOIN_SNAPSHOT_HEIGHT:-}" ]] || printf 'join_snapshot_height=%s\n' "$GDC_JOIN_SNAPSHOT_HEIGHT"
+    [[ -z "${GDC_JOIN_LINEAGE_RECEIPT_SHA256:-}" ]] || printf 'lineage_receipt_sha256=%s\n' "$GDC_JOIN_LINEAGE_RECEIPT_SHA256"
     [[ -z "${GDC_JOIN_RECOVERY_FROM_RUN_ID:-}" ]] || printf 'recovery_of_run_id=%s\n' "$GDC_JOIN_RECOVERY_FROM_RUN_ID"
     [[ -z "${GDC_INVOCATION_COMMAND:-}" ]] || printf 'invocation_command=%q\n' "$GDC_INVOCATION_COMMAND"
     [[ -z "${GDC_INVOCATION_CWD:-}" ]] || printf 'invocation_cwd=%q\n' "$GDC_INVOCATION_CWD"

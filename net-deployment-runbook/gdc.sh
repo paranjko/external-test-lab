@@ -178,12 +178,18 @@ run_phase() {
 }
 
 run_join_preflight() {
-  local checkpoint="$1" state="$2" category="$3" tool="$4" summary="$5" rc diagnostic
+  local checkpoint="$1" state="$2" category="$3" tool="$4" summary="$5" rc diagnostic typed
   shift 5
   if "$@"; then
     return 0
   else
     rc=$?
+  fi
+  if [[ "$category" == lineage && -r "${GDC_JOIN_LINEAGE_FAILURE_FILE:-}" ]]; then
+    typed="$(<"$GDC_JOIN_LINEAGE_FAILURE_FILE")"
+    if [[ "$typed" =~ ^(rpc_quorum_conflict|rpc_fault_domain_alias|snapshot_unavailable|snapshot_incompatible|trust_expired|historical_replay_unsupported|apphash_divergence|lineage_verification_failed|signer_activation_unsafe)$ ]]; then
+      tool="${typed//_/-}"
+    fi
   fi
   # JOIN has not selected a local profile or touched a Host at this point.
   # Retain a bounded, structured diagnostic in the launcher envelope rather
@@ -924,6 +930,24 @@ case "$COMMAND" in
     export GDC_NETWORK_DAPI_VERSION GDC_NETWORK_DAPI_COMMIT GDC_NETWORK_DEVSHARD_APPROVALS
     export GDC_RELEASE_PROFILE
     write_join_preflight_receipt software-observation passed unavailable seed-observer
+    join_lineage_receipt="$STATE/lineage-preflight.json"
+    join_lineage_env="$STATE/lineage-preflight.env"
+    GDC_JOIN_LINEAGE_FAILURE_FILE="$STATE/lineage-preflight.failure"
+    export GDC_JOIN_LINEAGE_FAILURE_FILE
+    rm -f "$GDC_JOIN_LINEAGE_FAILURE_FILE"
+    run_join_preflight lineage-preflight refused lineage lineage-preflight \
+      'Independent RPC lineage, trust, and compatible state-sync snapshot were not established.' \
+      "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$join_bootstrap_file" --composition-env "$join_composition" \
+        --receipt "$join_lineage_receipt" --env "$join_lineage_env"
+    # The preflight writes fixed-name, shell-quoted values only after it has
+    # bound them to the observed runtime fingerprint and two fault domains.
+    # shellcheck disable=SC1090
+    source "$join_lineage_env"
+    export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_HEIGHT
+    export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
+    GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
+    export GDC_JOIN_LINEAGE_RECEIPT_SHA256
+    write_join_preflight_receipt lineage-preflight passed unavailable lineage-preflight
     run_join_preflight inferenced-cli unavailable dependency inferenced \
       'The pinned operator CLI was not available after safe installation checks.' \
       "$ROOT/scripts/ensure-inferenced-cli.sh"
