@@ -232,12 +232,21 @@ case "$COMPONENT" in
     gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
     gateway_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
     gateway_funding_source_target="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
-    gateway_faucet_claim_amount="${GDC_FAUCET_CLAIM_NGONKA:-100000000000}"
     [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
     [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
-    [[ "$gateway_max_refill" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be positive'
-    [[ "$gateway_funding_source_target" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
-    [[ "$gateway_faucet_claim_amount" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_CLAIM_NGONKA must be positive'
+    if ! is_safe_integer "$gateway_max_refill" || [[ "$gateway_max_refill" == 0 ]]; then
+      die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be a positive safe integer'
+    fi
+    if ! is_safe_integer "$gateway_funding_source_target" || [[ "$gateway_funding_source_target" == 0 ]]; then
+      die 'GDC_FAUCET_INITIAL_NGONKA must be a positive safe integer'
+    fi
+    gateway_faucet_claim_amount="$(
+      ssh "$GATEWAY_NODE" \
+        "sudo sed -n 's/^FAUCET_AMOUNT_NGONKA=//p' /srv/dai/ops/faucet.env"
+    )" || die 'deployed faucet claim amount is unavailable on the gateway node'
+    if ! is_safe_integer "$gateway_faucet_claim_amount" || [[ "$gateway_faucet_claim_amount" == 0 ]]; then
+      die 'deployed faucet claim amount must be exactly one positive safe integer'
+    fi
     (( gateway_max_refill < gateway_funding_source_target )) \
       || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be below GDC_FAUCET_INITIAL_NGONKA'
     # The funding source is also the active public faucet. Permit one bounded

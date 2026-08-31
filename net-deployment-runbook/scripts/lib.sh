@@ -19,6 +19,20 @@ init_gdc_paths() {
 
 init_gdc_paths
 
+is_safe_integer() {
+  local value="$1" maximum=9223372036854775807 index value_digit maximum_digit
+  [[ "$value" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+  (( ${#value} < ${#maximum} )) && return 0
+  (( ${#value} == ${#maximum} )) || return 1
+  for ((index = 0; index < ${#maximum}; index++)); do
+    value_digit="${value:index:1}"
+    maximum_digit="${maximum:index:1}"
+    (( value_digit < maximum_digit )) && return 0
+    (( value_digit > maximum_digit )) && return 1
+  done
+  return 0
+}
+
 runbook_revision() {
   git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'UNAVAILABLE'
 }

@@ -3,6 +3,16 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/profile.sh"
 source "$ROOT/scripts/lib.sh"
+
+is_safe_integer 9223372036854775807
+if is_safe_integer 9223372036854775808; then
+  echo 'safe-integer validation accepted INT64_MAX + 1' >&2
+  exit 1
+fi
+if is_safe_integer 18446744073709551617; then
+  echo 'safe-integer validation accepted an overflowing unsigned value' >&2
+  exit 1
+fi
 while IFS= read -r -d '' script; do
   bash -n "$script"
 done < <(find "$ROOT" -type f -name '*.sh' -print0)
@@ -191,6 +201,8 @@ grep -Fq 'ML callback ingress source is stale' "$ROOT/00-host-prep/verify-host.s
 grep -Fq 'ensure-gateway-reserve.sh' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway_funding_source_minimum="$((gateway_funding_source_target - gateway_max_refill))"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway_faucet_claim_amount <= gateway_funding_source_minimum - gateway_max_refill' "$ROOT/scripts/phase-ops.sh"
+grep -Fq "s/^FAUCET_AMOUNT_NGONKA=//p' /srv/dai/ops/faucet.env" "$ROOT/scripts/phase-ops.sh"
+grep -Fq "deployed faucet claim amount must be exactly one positive safe integer" "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'reset-stale-gateway-state.sh' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway_creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'and .escrow.creator == $creator' "$ROOT/scripts/phase-ops.sh"
