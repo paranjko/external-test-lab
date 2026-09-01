@@ -50,6 +50,10 @@ services:
       CONFIG_statesync__trust_height: ${GDC_JOIN_TRUST_HEIGHT:-0}
       CONFIG_statesync__trust_hash: ${GDC_JOIN_TRUST_HASH:-}
       CONFIG_p2p__persistent_peers: ${GDC_JOIN_SNAPSHOT_PEERS:-}
+      # A cold state-sync canary must use its generated, unregistered local
+      # validator key.  The promotion run restores this listener and starts
+      # TMKMS only after the canary's lineage evidence has been recorded.
+      CONFIG_priv_validator_laddr: ${CONFIG_PRIV_VALIDATOR_LADDR:-tcp://0.0.0.0:26658}
       SNAPSHOT_INTERVAL: ${SNAPSHOT_INTERVAL:-1000}
       SNAPSHOT_KEEP_RECENT: ${SNAPSHOT_KEEP_RECENT:-5}
       P2P_EXTERNAL_ADDRESS: ${P2P_EXTERNAL_ADDRESS:?P2P_EXTERNAL_ADDRESS is required}

@@ -30,12 +30,17 @@ files=(-f "$HERE/compose.yaml")
 [[ -e "$HERE/.ha-enabled" ]] && files+=(-f "$HERE/compose.devshard-ha.yaml")
 profiles=()
 [[ "$enable_signer" == true ]] && profiles=(--profile signer)
-docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" config --quiet
-run_long 'pull node images' "$HERE/start.log" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull
+canary_env=()
+# CometBFT needs a validator key even while state-syncing.  The image creates
+# an unregistered local key; blanking the remote listener ensures it cannot
+# access the restored TMKMS signer before the post-sync checks pass.
+[[ "$canary" == true ]] && canary_env=(env CONFIG_PRIV_VALIDATOR_LADDR=)
+"${canary_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" config --quiet
+run_long 'pull node images' "$HERE/start.log" "${canary_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull
 printf 'WAIT  start node services\n'
 services=()
 [[ "$canary" == true ]] && services=(node)
-if ! docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" up -d "${services[@]}" >>"$HERE/start.log" 2>&1; then
+if ! "${canary_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" up -d "${services[@]}" >>"$HERE/start.log" 2>&1; then
   tail -100 "$HERE/start.log" >&2
   exit 1
 fi

@@ -10,7 +10,13 @@ trust_hash="$(jq -er '.bootstrap.trust.block_id' "$receipt")"
 rpc_1="$(jq -er '.fault_domains[0].rpc_url' "$receipt")"
 rpc_2="$(jq -er '.fault_domains[1].rpc_url' "$receipt")"
 peers="$(jq -er '.bootstrap.snapshot.providers | join(",")' "$receipt")"
-config="$(docker compose --env-file "$deploy/.env" -f "$deploy/compose.yaml" exec -T node sh -c 'cat /root/.inference/config/config.toml')" || { echo 'lineage_verification_failed: cannot read canary config.toml' >&2; exit 1; }
+config=''
+deadline=$((SECONDS + 30))
+while (( SECONDS < deadline )); do
+  config="$(docker compose --env-file "$deploy/.env" -f "$deploy/compose.yaml" exec -T node sh -c 'cat /root/.inference/config/config.toml' 2>/dev/null || true)"
+  grep -Eq '^enable = true$' <<<"$config" && break
+  sleep 2
+done
 grep -Eq '^enable = true$' <<<"$config" || { echo 'lineage_verification_failed: statesync is not enabled in canary config' >&2; exit 1; }
 grep -Fq "rpc_servers = \"$rpc_1,$rpc_2\"" <<<"$config" || { echo 'lineage_verification_failed: canary RPC servers differ from receipt' >&2; exit 1; }
 grep -Fq "trust_height = $trust_height" <<<"$config" || { echo 'lineage_verification_failed: canary trust height differs from receipt' >&2; exit 1; }
