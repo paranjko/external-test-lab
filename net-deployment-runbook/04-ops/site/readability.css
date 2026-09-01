@@ -178,7 +178,7 @@ body * {
 
 footer {
   display: grid;
-  grid-template-columns: max-content minmax(180px, 1fr) max-content max-content max-content max-content;
+  grid-template-columns: max-content minmax(180px, 1fr) repeat(4, max-content);
   align-items: center;
   gap: 14px 28px;
   font-size: 13px;
@@ -196,6 +196,38 @@ footer > * {
 footer > :last-child {
   padding-right: 0;
   border-right: 0;
+}
+
+.footer-github {
+  box-sizing: border-box;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding-right: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+}
+
+.footer-github svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.footer-identity {
+  display: grid;
+  gap: 4px;
+}
+
+.site-revision {
+  display: block;
+  font-size: 9px;
+  letter-spacing: .02em !important;
+  word-spacing: normal !important;
+  text-decoration-line: none;
 }
 
 @media (max-width: 1320px) and (min-width: 521px) {

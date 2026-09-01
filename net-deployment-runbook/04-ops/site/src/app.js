@@ -492,9 +492,9 @@ function set(card: HTMLElement, key: string, value: mixed): void {
   card.querySelector(`[data-k="${key}"]`).textContent = value;
 }
 
-const buildRevision = $("site-build-revision");
+const siteRevision = $("site-revision");
 if (
-  buildRevision &&
+  siteRevision &&
   typeof siteBuild.revision === "string" &&
   /^[0-9a-f]{40}$/.test(siteBuild.revision) &&
   typeof siteBuild.artifactDigest === "string" &&
@@ -502,10 +502,9 @@ if (
   typeof siteBuild.appDigest === "string" &&
   /^[0-9a-f]{64}$/.test(siteBuild.appDigest)
 ) {
-  buildRevision.textContent = `build:${siteBuild.revision.slice(0, 7)} · ${siteBuild.artifactDigest.slice(0, 12)}`;
-  buildRevision.setAttribute("data-revision", siteBuild.revision);
-  buildRevision.setAttribute("data-artifact-digest", siteBuild.artifactDigest);
-  buildRevision.setAttribute("data-app-digest", siteBuild.appDigest);
+  siteRevision.setAttribute("data-revision", siteBuild.revision);
+  siteRevision.setAttribute("data-artifact-digest", siteBuild.artifactDigest);
+  siteRevision.setAttribute("data-app-digest", siteBuild.appDigest);
 }
 
 function setUtcTime(id: string, date: Date, label: string): void {
