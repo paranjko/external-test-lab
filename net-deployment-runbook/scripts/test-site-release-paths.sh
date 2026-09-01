@@ -14,6 +14,7 @@ const release = process.argv[2];
 const index = fs.readFileSync(path.join(release, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(release, 'contract.css'), 'utf8');
 const app = fs.readFileSync(path.join(release, 'app.js'), 'utf8');
+const build = fs.readFileSync(path.join(release, 'site-build.js'), 'utf8');
 const preview = 'http://gonka-dev.net/preview/83/';
 
 const relativeAssets = [...index.matchAll(/(?:href|src)="([^"]+)"/g)]
@@ -38,6 +39,16 @@ if (new URL('/config.js', preview).pathname !== '/config.js' || !index.includes(
 if (!app.includes('"/status/participants"') || new URL('/status/participants', preview).pathname !== '/status/participants') {
   throw new Error('preview must retain root status endpoints');
 }
+if (!/"revision":"[0-9a-f]{40}"/.test(build) || !/"artifactDigest":"[0-9a-f]{64}"/.test(build) || !/"appDigest":"[0-9a-f]{64}"/.test(build)) {
+  throw new Error('release must expose its exact revision, static payload digest and app.js digest');
+}
 NODE
+
+declared_digest="$(sed -n 's/.*"artifactDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$tmp/site/site-build.js")"
+actual_digest="$(bash "$ROOT/scripts/site-static-digest.sh" "$tmp/site")"
+[[ "$declared_digest" == "$actual_digest" ]] || {
+  echo 'release manifest does not describe the final static payload' >&2
+  exit 1
+}
 
 printf 'PASS static release resolves local assets below its publication directory\n'

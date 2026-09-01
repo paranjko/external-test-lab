@@ -9,7 +9,11 @@ OUTPUT="${2:-}"
 
 REPOSITORY="$(git -C "$ROOT" rev-parse --show-toplevel)"
 SITE_PATH="$(realpath --relative-to="$REPOSITORY" "$ROOT/04-ops/site")"
-COMMIT="$(git -C "$REPOSITORY" log -n 1 --pretty=format:%H -- "$SITE_PATH")"
+if [[ -n "${SITE_REVISION:-}" ]]; then
+  COMMIT="$SITE_REVISION"
+else
+  COMMIT="$(git -C "$REPOSITORY" log -n 1 --pretty=format:%H -- "$SITE_PATH")"
+fi
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "cannot determine the site source revision" >&2; exit 1; }
 SHORT_COMMIT="${COMMIT:0:7}"
 REFERENCE_URL="https://github.com/paranjko/external-test-lab/tree/$COMMIT/$SITE_PATH"

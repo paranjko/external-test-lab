@@ -14,6 +14,7 @@ concurrency:
 permissions:
   actions: read
   contents: read
+  deployments: write
   pull-requests: read
 
 jobs:
@@ -27,29 +28,18 @@ jobs:
     outputs:
       publish: ${{ steps.pr.outputs.publish }}
       number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
     steps:
-      - id: pr
-        uses: actions/github-script@v9.0.0
+      - name: Checkout the trusted publication revision
+        uses: actions/checkout@v7.0.1
         with:
-          script: |
-            const number = context.payload.workflow_run.pull_requests[0].number;
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: number,
-            });
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: number,
-              per_page: 100,
-            });
-            const eligible = pr.state === 'open' && !pr.draft &&
-              pr.head.sha === context.payload.workflow_run.head_sha &&
-              pr.head.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
-              files.some(({ filename }) => filename.startsWith('net-deployment-runbook/04-ops/site/'));
-            core.setOutput('publish', String(eligible));
-            core.setOutput('number', String(number));
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make -C net-deployment-runbook site-preview-publish-context
 
   publish:
     needs: publish-context
@@ -74,6 +64,12 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/gonka-dev-site-preview
 
+      - name: Verify the artifact identity before deployment
+        env:
+          preview_revision: ${{ needs.publish-context.outputs.head_sha }}
+          site_release_dir: ${{ runner.temp }}/gonka-dev-site-preview
+        run: make -C net-deployment-runbook verify-site-preview-artifact
+
       - name: Publish the static preview without executing artifact code
         env:
           DEPLOY_HOST: ${{ secrets.GONKA_DEV_SITE_DEPLOY_HOST }}
@@ -86,6 +82,28 @@ jobs:
           site_publish_prefix="preview/${{ needs.publish-context.outputs.number }}"
           deploy_host="$DEPLOY_HOST" deploy_user="$DEPLOY_USER"
 
+      - name: Verify the live preview revision and payload digest
+        env:
+          preview_revision: ${{ needs.publish-context.outputs.head_sha }}
+          site_publish_prefix: preview/${{ needs.publish-context.outputs.number }}
+          site_release_dir: ${{ runner.temp }}/gonka-dev-site-preview
+        run: make -C net-deployment-runbook verify-site-preview-live
+
+      - name: Smoke-test the live preview in a cache-disabled browser
+        env:
+          preview_revision: ${{ needs.publish-context.outputs.head_sha }}
+          site_publish_prefix: preview/${{ needs.publish-context.outputs.number }}
+          site_release_dir: ${{ runner.temp }}/gonka-dev-site-preview
+          site_origin: https://gonka-dev.net
+        run: make -C net-deployment-runbook smoke-site-preview
+
+      - name: Record the verified preview for the PR revision
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          preview_number: ${{ needs.publish-context.outputs.number }}
+          preview_revision: ${{ needs.publish-context.outputs.head_sha }}
+        run: make -C net-deployment-runbook record-site-preview-deployment
+
   cleanup-context:
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
@@ -93,24 +111,16 @@ jobs:
       remove: ${{ steps.pr.outputs.remove }}
       number: ${{ steps.pr.outputs.number }}
     steps:
-      - id: pr
-        uses: actions/github-script@v9.0.0
+      - name: Checkout the trusted publication revision
+        uses: actions/checkout@v7.0.1
         with:
-          script: |
-            const pr = context.payload.pull_request;
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-              per_page: 100,
-            });
-            const sameRepository = pr.head.repo?.full_name === `${context.repo.owner}/${context.repo.repo}`;
-            const hasSiteChange = files.some(({ filename }) =>
-              filename.startsWith('net-deployment-runbook/04-ops/site/'));
-            const remove = sameRepository &&
-              (context.payload.action === 'closed' || pr.draft || !hasSiteChange);
-            core.setOutput('remove', String(remove));
-            core.setOutput('number', String(pr.number));
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make -C net-deployment-runbook site-preview-cleanup-context
 
   cleanup:
     needs: cleanup-context

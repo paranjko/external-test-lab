@@ -5,6 +5,15 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
     paths:
       - 'net-deployment-runbook/04-ops/site/**'
+      - 'net-deployment-runbook/scripts/render-site-build-info.sh'
+      - 'net-deployment-runbook/scripts/render-site-revision.sh'
+      - 'net-deployment-runbook/scripts/install-site-vendor.sh'
+      - 'net-deployment-runbook/scripts/test-validator-map-fixture.mjs'
+      - 'net-deployment-runbook/package.json'
+      - 'net-deployment-runbook/package-lock.json'
+      - 'net-deployment-runbook/Makefile'
+      - '.github/workflows/site-preview-build.yml'
+      - '.github/workflows/site-preview-publish.yml'
 
 concurrency:
   group: gonka-dev-site-preview-build-${{ github.event.pull_request.number }}
@@ -34,10 +43,16 @@ jobs:
       - name: Build and validate browser assets
         run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths
 
+      - name: Run validator-map CDP regression
+        run: >-
+          make -C net-deployment-runbook test-validator-map
+          map_evidence_dir="$RUNNER_TEMP/validator-map-regressions"
+
       - name: Prepare the static site artifact
         run: >-
           make -C net-deployment-runbook prepare-static-site
           site_release_dir="$RUNNER_TEMP/gonka-dev-site-preview"
+          site_revision="${{ github.event.pull_request.head.sha }}"
 
       - name: Upload the static site artifact
         uses: actions/upload-artifact@v7.0.1

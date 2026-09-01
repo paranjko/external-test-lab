@@ -10,10 +10,11 @@ const width = Number(widthText);
 const height = Number(heightText);
 const visibleNodes = Number(visibleNodesText);
 const expectResetState = process.env.GDC_EXPECT_RESET_STATE === 'true';
-const checkMapZoom = process.env.GDC_CHECK_MAP_ZOOM === 'true';
 const checkMapFullscreen = process.env.GDC_CHECK_MAP_FULLSCREEN === 'true';
 const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
 const expectGatewayReady = process.env.GDC_EXPECT_GATEWAY_READY === 'true';
+const expectedSiteRevision = process.env.GDC_EXPECT_SITE_REVISION || '';
+const expectedAppDigest = process.env.GDC_EXPECT_APP_DIGEST || '';
 const reportBrowserFailure = error => {
   const detail = String(error?.message || error).replace(/\s+/g, ' ').trim();
   process.stderr.write(`WAIT homepage browser check unavailable reason=${detail}\n`);
@@ -44,7 +45,7 @@ const browser = spawn(chrome, [
 ], { stdio: 'ignore' });
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const mapCoverageExpression = 'JSON.stringify((()=>{const map=document.querySelector("#validator-map");if(!map)return null;const mapRect=map.getBoundingClientRect();const tiles=[...map.querySelectorAll(".leaflet-tile-loaded")].filter(tile=>{const style=getComputedStyle(tile);return style.display!=="none"&&style.visibility!=="hidden"&&style.opacity!=="0"}).map(tile=>tile.getBoundingClientRect());const edgeCovered=y=>{const ranges=tiles.filter(rect=>rect.top<=y&&rect.bottom>=y).map(rect=>[rect.left,rect.right]).sort((left,right)=>left[0]-right[0]);let coveredUntil=mapRect.left;for(const [left,right] of ranges){if(right<=coveredUntil)continue;if(left>coveredUntil+1)return false;coveredUntil=right;if(coveredUntil>=mapRect.right-1)return true}return coveredUntil>=mapRect.right-1};return{tileCount:tiles.length,topCovered:edgeCovered(mapRect.top+1),bottomCovered:edgeCovered(mapRect.bottom-1),leftCovered:tiles.some(rect=>rect.left<=mapRect.left+1),rightCovered:tiles.some(rect=>rect.right>=mapRect.right-1),zoom:Number(map.dataset.zoom),markersVisible:[...map.querySelectorAll(".validator-marker")].every(marker=>{const rect=marker.getBoundingClientRect();return rect.width>0&&rect.height>0&&rect.right>=mapRect.left&&rect.left<=mapRect.right&&rect.bottom>=mapRect.top&&rect.top<=mapRect.bottom})}})())';
+const mapCoverageExpression = 'JSON.stringify((()=>{const map=document.querySelector("#validator-map");if(!map)return null;const mapRect=map.getBoundingClientRect(),world=map.querySelector(".validator-map-world");return{worldLoaded:Boolean(world?.complete&&world?.naturalWidth),markersVisible:[...map.querySelectorAll(".validator-marker")].every(marker=>{const rect=marker.getBoundingClientRect();return rect.width>0&&rect.height>0&&rect.right>=mapRect.left&&rect.left<=mapRect.right&&rect.bottom>=mapRect.top&&rect.top<=mapRect.bottom})}})())';
 let socket;
 let sequence = 0;
 const pending = new Map();
@@ -73,6 +74,8 @@ try {
   const { targetId } = await call('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await call('Target.attachToTarget', { targetId, flatten: true });
   await call('Page.enable', {}, sessionId);
+  await call('Network.enable', {}, sessionId);
+  await call('Network.setCacheDisabled', { cacheDisabled: true }, sessionId);
   await call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true }, sessionId);
   await call('Page.navigate', { url }, sessionId);
   const gatewayStateReadyExpression = expectGatewayReady
@@ -88,13 +91,22 @@ try {
     await delay(1000);
   }
   const { result } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapMarkers:Number(document.querySelector("#validator-map")?.dataset.markerCount||0),mapValidators:Number(document.querySelector("#validator-map")?.dataset.validatorCount||0),mapLeaflet:document.querySelector("#validator-map")?.classList.contains("leaflet-container"),gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,join:(e=>({exists:Boolean(e),title:e?.querySelector("h2")?.textContent,code:e?.querySelector("code")?.textContent,link:e?.querySelector("a")?.href}))(document.querySelector("#join-node")),nodes:[...document.querySelectorAll("#nodes .node")].map(n=>{const r=n.getBoundingClientRect();const metric=key=>{const row=n.querySelector(`[data-k-row="${key}"]`);const value=row?.querySelector("b");return {text:value?.textContent?.trim(),clipped:Boolean(value&&(value.scrollWidth>value.clientWidth||value.scrollHeight>value.clientHeight||row.scrollHeight>row.clientHeight))}};return {name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,vp:n.querySelector("[data-k=vp]")?.textContent,sync:n.querySelector("[data-k=sync]")?.textContent,endpoint:n.querySelector("[data-k=endpoint]")?.textContent,versions:n.querySelector("[data-k=versions]")?.textContent,software:metric("software"),gpu:metric("gpu"),top:r.top,bottom:r.bottom,height:r.height,clientHeight:n.clientHeight,scrollHeight:n.scrollHeight}})})',
+    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapMarkers:Number(document.querySelector("#validator-map")?.dataset.markerCount||0),mapValidators:Number(document.querySelector("#validator-map")?.dataset.validatorCount||0),mapWorld:Boolean(document.querySelector("#validator-map .validator-map-world")?.complete&&document.querySelector("#validator-map .validator-map-world")?.naturalWidth),mapMarkerGeometry:[...document.querySelectorAll("#validator-map .validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return {width:r.width,height:r.height,filter:getComputedStyle(marker).filter}}),siteRevision:document.querySelector("#site-build-revision")?.dataset.revision||"",appDigest:document.querySelector("#site-build-revision")?.dataset.appDigest||"",gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,join:(e=>({exists:Boolean(e),title:e?.querySelector("h2")?.textContent,code:e?.querySelector("code")?.textContent,link:e?.querySelector("a")?.href}))(document.querySelector("#join-node")),nodes:[...document.querySelectorAll("#nodes .node")].map(n=>{const r=n.getBoundingClientRect();const metric=key=>{const row=n.querySelector(`[data-k-row="${key}"]`);const value=row?.querySelector("b");return {text:value?.textContent?.trim(),clipped:Boolean(value&&(value.scrollWidth>value.clientWidth||value.scrollHeight>value.clientHeight||row.scrollHeight>row.clientHeight))}};return {name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,vp:n.querySelector("[data-k=vp]")?.textContent,sync:n.querySelector("[data-k=sync]")?.textContent,endpoint:n.querySelector("[data-k=endpoint]")?.textContent,versions:n.querySelector("[data-k=versions]")?.textContent,software:metric("software"),gpu:metric("gpu"),top:r.top,bottom:r.bottom,height:r.height,clientHeight:n.clientHeight,scrollHeight:n.scrollHeight}})})',
     returnByValue: true,
   }, sessionId);
   const state = JSON.parse(result.value);
+  const { result: appDigestResult } = await call('Runtime.evaluate', {
+    expression: '(async()=>{const script=[...document.scripts].find(item=>new URL(item.src,location.href).pathname.endsWith("/app.js"));if(!script)return"";const bytes=await fetch(script.src,{cache:"no-store"}).then(response=>{if(!response.ok)throw new Error(`app.js fetch failed ${response.status}`);return response.arrayBuffer()});const digest=await crypto.subtle.digest("SHA-256",bytes);return [...new Uint8Array(digest)].map(byte=>byte.toString(16).padStart(2,"0")).join("")})()',
+    awaitPromise: true,
+    returnByValue: true,
+  }, sessionId);
+  state.loadedAppDigest = appDigestResult.value;
   if (state.width !== width || state.height !== height) throw new Error(`emulation mismatch ${state.width}x${state.height}`);
+  if (expectedSiteRevision && state.siteRevision !== expectedSiteRevision) throw new Error(`preview revision mismatch ${JSON.stringify(state)}`);
+  if (expectedAppDigest && (state.loadedAppDigest !== expectedAppDigest || state.appDigest !== expectedAppDigest)) throw new Error(`preview app digest mismatch ${JSON.stringify(state)}`);
+  if (state.mapMarkerGeometry.some(marker => marker.width < 5 || marker.height < 5 || marker.width > 21 || marker.height > 21 || marker.filter !== 'none')) throw new Error(`validator marker geometry or halo contract failed ${JSON.stringify(state.mapMarkerGeometry)}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
-  if ((!expectResetState && state.nodes.length < 1) || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapLeaflet) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
+  if ((!expectResetState && state.nodes.length < 1) || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapWorld) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
   if (!state.join.exists || state.join.title !== 'How to Join node' || state.join.code !== 'git clone https://github.com/paranjko/external-test-lab.git\nalias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"\ngdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' || state.join.link !== 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host') throw new Error(`JOIN guide did not render ${JSON.stringify(state.join)}`);
   const mappedNodes = state.nodes;
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
@@ -116,30 +128,19 @@ try {
   if (expectedGatewayState === 'UNAVAILABLE' && !state.gatewayAccessHidden) {
     throw new Error(`gateway access card must be hidden while unavailable ${JSON.stringify(state)}`);
   }
-  if (checkMapZoom) {
-    await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map .leaflet-control-zoom-out")?.click()' }, sessionId);
-    await delay(300);
-    const { result: coverageResult } = await call('Runtime.evaluate', { expression: mapCoverageExpression, returnByValue: true }, sessionId);
-    const coverage = JSON.parse(coverageResult.value);
-    if (!coverage || !coverage.tileCount || !coverage.topCovered || !coverage.bottomCovered || !coverage.leftCovered || !coverage.rightCovered || coverage.markersVisible !== true) throw new Error(`validator map tiles do not cover every edge after zoom out ${JSON.stringify(coverage)}`);
-  }
-  await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map .leaflet-control-zoom-in")?.click()' }, sessionId);
-  await delay(300);
-  await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map .leaflet-control-zoom-out")?.click()' }, sessionId);
-  await delay(300);
-  const { result: mapCoverageResult } = await call('Runtime.evaluate', {
-    expression: '(()=>{const map=document.querySelector("#validator-map");return Boolean(map&&getComputedStyle(map).backgroundColor!=="rgb(221, 221, 221)")})()',
-    returnByValue: true,
-  }, sessionId);
-  if (!mapCoverageResult.value) throw new Error('validator map restored Leaflet default light background after zoom in/out');
   if (checkMapFullscreen) {
     await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map-fullscreen")?.click()' }, sessionId);
     await delay(350);
     const { result: fullscreenResult } = await call('Runtime.evaluate', { expression: `JSON.stringify({coverage:${mapCoverageExpression},rect:(()=>{const r=document.querySelector("#validator-map")?.getBoundingClientRect();return r&&{left:r.left,top:r.top,right:r.right,bottom:r.bottom}})(),pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed")})`, returnByValue: true }, sessionId);
     const fullscreen = JSON.parse(fullscreenResult.value);
     const coverage = JSON.parse(fullscreen.coverage);
-    if (!coverage || !coverage.topCovered || !coverage.bottomCovered || !coverage.leftCovered || !coverage.rightCovered || !coverage.markersVisible || fullscreen.pressed !== 'true' || fullscreen.rect.left > 1 || fullscreen.rect.top > 1 || fullscreen.rect.right < width - 1 || fullscreen.rect.bottom < height - 1) throw new Error(`validator map does not cover fullscreen viewport ${JSON.stringify(fullscreen)}`);
-    await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map-fullscreen")?.click()' }, sessionId);
+    if (!coverage || !coverage.worldLoaded || !coverage.markersVisible || fullscreen.pressed !== 'true' || fullscreen.rect.left > 1 || fullscreen.rect.top > 1 || fullscreen.rect.right < width - 1 || fullscreen.rect.bottom < height - 1) throw new Error(`validator map does not cover fullscreen viewport ${JSON.stringify(fullscreen)}`);
+    await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+    await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+    await delay(350);
+    const { result: fullscreenExitResult } = await call('Runtime.evaluate', { expression: 'JSON.stringify({pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),active:document.querySelector("#validator-map-shell")?.classList.contains("is-fullscreen")})', returnByValue: true }, sessionId);
+    const fullscreenExit = JSON.parse(fullscreenExitResult.value);
+    if (fullscreenExit.pressed !== 'false' || fullscreenExit.active) throw new Error(`validator map did not exit fullscreen ${JSON.stringify(fullscreenExit)}`);
   }
   const { result: accessResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify({code:document.querySelectorAll("#gateway-access pre,#gateway-access code").length,scroll:[...document.querySelectorAll("#gateway-access,#gateway-access *")].some(e=>{const s=getComputedStyle(e);return (s.overflowX==="auto"||s.overflowX==="scroll"||s.overflowY==="auto"||s.overflowY==="scroll")&&(e.scrollWidth>e.clientWidth||e.scrollHeight>e.clientHeight)})})',

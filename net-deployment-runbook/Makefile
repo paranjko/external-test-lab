@@ -11,10 +11,16 @@ cmd ?= bash
 authorized_key_file ?=
 site_release_dir ?= $(CURDIR)/.data/site-release
 site_publish_prefix ?=
+site_revision ?=
 deploy_host ?=
 deploy_user ?=
+map_evidence_dir ?= $(CURDIR)/.data/validator-map-regressions
+chrome_bin ?= google-chrome
+preview_number ?=
+preview_revision ?=
+site_origin ?= http://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-js site-js-check test-gateway-site-state test-site-release-paths test-site-publisher prepare-static-site publish-site-release remove-site-release verify-site-release test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
+.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -47,6 +53,9 @@ shellcheck:
 		--severity=warning \
 		$(SHELL_SCRIPTS)
 
+site-vendor:
+	@./scripts/install-site-vendor.sh
+
 site-js:
 	@./scripts/build-site-js.sh --write
 
@@ -56,12 +65,18 @@ site-js-check:
 test-gateway-site-state: site-js-check
 	@node ./scripts/test-gateway-site-state.js
 
-prepare-static-site:
+test-validator-map: site-vendor site-js-check
+	@mkdir -p "$(map_evidence_dir)"
+	@CHROME_BIN="$(chrome_bin)" node ./scripts/test-validator-map-fixture.mjs \
+		04-ops/site "$(map_evidence_dir)"
+
+prepare-static-site: site-vendor
 	@mkdir -p "$(site_release_dir)"
 	@rsync -a --exclude src/ 04-ops/site/ "$(site_release_dir)/"
-	@./scripts/render-site-revision.sh 04-ops/site/index.html "$(site_release_dir)/index.html"
+	@SITE_REVISION="$(site_revision)" ./scripts/render-site-revision.sh 04-ops/site/index.html "$(site_release_dir)/index.html"
 	@./scripts/build-site-js.sh --output "$(site_release_dir)"
 	@rm -f "$(site_release_dir)/config.js"
+	@revision="$(site_revision)"; test -n "$$revision" || revision="$$(git rev-parse HEAD)"; ./scripts/render-site-build-info.sh "$(site_release_dir)" "$$revision"
 	@test -s "$(site_release_dir)/index.html"
 	@test ! -e "$(site_release_dir)/config.js"
 
@@ -74,12 +89,33 @@ remove-site-release:
 test-site-release-paths:
 	@./scripts/test-site-release-paths.sh
 
-test-site-publisher:
+test-site-publisher: test-site-preview-context
 	@./scripts/test-site-publisher.sh
+
+test-site-preview-context:
+	@./scripts/test-site-preview-context.sh
 
 verify-site-release:
 	@test -d "$(site_release_dir)" || { echo 'run prepare-static-site first' >&2; exit 2; }
 	@GDC_SITE_RENDERED_ASSETS="$(site_release_dir)" ./scripts/verify-public-homepage.sh
+
+verify-site-preview-artifact:
+	@./scripts/verify-site-preview-artifact.sh "$(site_release_dir)" "$(preview_revision)"
+
+verify-site-preview-live:
+	@./scripts/verify-site-preview-live.sh "$(site_release_dir)" "$(site_publish_prefix)" "$(preview_revision)" "$(site_origin)"
+
+smoke-site-preview:
+	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" node ./scripts/capture-homepage-viewport.mjs "$(site_origin)/$(site_publish_prefix)/" 1280 900 "$(site_release_dir).png" 0
+
+record-site-preview-deployment:
+	@PREVIEW_NUMBER="$(preview_number)" PREVIEW_REVISION="$(preview_revision)" ./scripts/record-site-preview-deployment.sh
+
+site-preview-publish-context:
+	@./scripts/site-preview-context.sh publish
+
+site-preview-cleanup-context:
+	@./scripts/site-preview-context.sh cleanup
 
 test: site-js-check
 	@python3 ./scripts/test-release-candidate.py
