@@ -65,7 +65,7 @@ site-js-check:
 test-gateway-site-state: site-js-check
 	@node ./scripts/test-gateway-site-state.js
 
-test-validator-map: site-vendor site-js-check
+test-validator-map: site-vendor site-js
 	@mkdir -p "$(map_evidence_dir)"
 	@CHROME_BIN="$(chrome_bin)" node ./scripts/test-validator-map-fixture.mjs \
 		04-ops/site "$(map_evidence_dir)"

@@ -53,6 +53,7 @@ type SiteConfig = {
   model: string,
   gatewayNode?: string,
   chainRpcHost?: string,
+  chainRpcOrigin?: string,
   telegramBot?: string,
   grafana?: string,
   grafanaNetwork?: string,
@@ -203,6 +204,8 @@ const chainRpcHost =
   cfg.chainRpcHost ||
   cfg.nodes.find((node) => node.name === cfg.gatewayNode)?.publicHost ||
   cfg.nodes[0]?.publicHost;
+const chainRpcOrigin =
+  cfg.chainRpcOrigin || (chainRpcHost ? `https://${chainRpcHost}` : "");
 $("chain-id").textContent = cfg.chainId;
 $("model-id").textContent = cfg.model;
 async function refreshTelegramConsumer(): Promise<void> {
@@ -744,10 +747,10 @@ async function participantNode(
 }
 
 async function reconcileParticipants(): Promise<number> {
-  if (!chainRpcHost) throw new Error("chain RPC host is missing");
+  if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
   const [participantResult, validatorResult] = await Promise.allSettled([
     json("/status/participants"),
-    json(`https://${chainRpcHost}/chain-rpc/validators?per_page=100`),
+    json(`${chainRpcOrigin}/chain-rpc/validators?per_page=100`),
   ]);
   if (participantResult.status !== "fulfilled") {
     observedNodes = observedNodes.map((node) => ({
@@ -1496,8 +1499,8 @@ async function refresh(): Promise<void> {
     best = await reconcileParticipants();
   } catch {}
   try {
-    if (!chainRpcHost) throw new Error("chain RPC host is missing");
-    const reference = await json(`https://${chainRpcHost}/chain-rpc/status`);
+    if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
+    const reference = await json(`${chainRpcOrigin}/chain-rpc/status`);
     referenceHeight = Number(reference.result.sync_info.latest_block_height);
     if (Number.isFinite(referenceHeight) && referenceHeight > 0) {
       best = Math.max(best, referenceHeight);
@@ -1582,9 +1585,9 @@ async function refresh(): Promise<void> {
   $("best-height").textContent = best ? best.toLocaleString() : "–";
   setUtcTime("updated", new Date(), "Updated");
   try {
-    if (!chainRpcHost) throw new Error("chain RPC host is missing");
+    if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
     const v = await json(
-      `https://${chainRpcHost}/chain-rpc/validators?per_page=100`,
+      `${chainRpcOrigin}/chain-rpc/validators?per_page=100`,
     );
     const vals = v.result.validators || [];
     const powers = vals.map((x) => BigInt(x.voting_power));
