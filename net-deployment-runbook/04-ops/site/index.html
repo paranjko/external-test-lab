@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="overrides.css">
   <link rel="stylesheet" href="contract.css">
   <link rel="stylesheet" href="readability.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 </head>
 <body>
   <main>
@@ -38,8 +38,14 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
     </section>
     <section class="network-map-section" aria-labelledby="network-map-title">
       <div class="section-title"><div><span class="eyebrow">VALIDATOR MAP</span><h2 id="network-map-title">Validator locations</h2></div><p class="map-note">Approximate public IP locations</p></div>
+      <ul class="validator-map-legend" aria-label="Validator status legend">
+        <li class="validator-map-legend--validating">Validating</li>
+        <li class="validator-map-legend--active">Active – not validating</li>
+        <li class="validator-map-legend--inactive">Inactive</li>
+        <li class="validator-map-legend--unknown">Unknown – status unavailable</li>
+      </ul>
       <div id="validator-map-shell" class="validator-map-shell">
-        <div id="validator-map" class="validator-map" aria-label="Interactive map of active validators by approximate public IP location"></div>
+        <div id="validator-map" class="validator-map" aria-label="Interactive map of validator status by approximate public IP location"></div>
         <button id="validator-map-fullscreen" class="validator-map-fullscreen" type="button" aria-label="Open validator map fullscreen" aria-pressed="false">Fullscreen</button>
       </div>
     </section>
@@ -73,12 +79,14 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
         <small class="access-note">The Telegram bot consumes inference and does not issue API keys – direct MLNode responses remain diagnostic only</small>
       </div>
     </section>
-  <footer><a class="wordmark" href="#top">EXTERNAL TEST LAB</a><span>Public operational evidence</span><a href="https://github.com/gonka-ai/gonka/discussions/1388" target="_blank" rel="noopener">Why this test lab exists ↗</a><a href="https://github.com/paranjko/external-test-lab" target="_blank" rel="noopener">Test Lab repository ↗</a><a href="https://github.com/paranjko/external-test-lab/tree/3041f903ef36a16cf06858b8e0daeaa6e1065f4b/net-deployment-runbook/04-ops/site" target="_blank" rel="noopener">ref:3041f90</a><a href="https://github.com/users/paranjko/projects/1" target="_blank" rel="noopener">Task board ↗</a></footer>
+  <footer><a class="wordmark" href="#top">EXTERNAL TEST LAB</a><span>Public operational evidence</span><a href="https://github.com/gonka-ai/gonka/discussions/1388" target="_blank" rel="noopener">Why this test lab exists ↗</a><a href="https://github.com/paranjko/external-test-lab" target="_blank" rel="noopener">Test Lab repository ↗</a><a href="https://github.com/paranjko/external-test-lab/tree/3041f903ef36a16cf06858b8e0daeaa6e1065f4b/net-deployment-runbook/04-ops/site" target="_blank" rel="noopener">ref:3041f90</a><span id="site-build-revision">build: source</span><a href="https://github.com/users/paranjko/projects/1" target="_blank" rel="noopener">Task board ↗</a></footer>
   </main>
   <script src="/config.js"></script>
   <script src="gateway-state.js"></script>
   <script src="host-state.js"></script>
   <script src="software-versions.js"></script>
+  <script src="site-build.js"></script>
+  <script src="vendor/leaflet/leaflet.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

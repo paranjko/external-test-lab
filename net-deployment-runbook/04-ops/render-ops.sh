@@ -53,22 +53,48 @@ nodes='[]'; validators='[]'; node_catalog='[]'
 # homepage verifier will reject a deployment that claims a map while active
 # nodes have no resolved positions.
 declare -A geo_by_ip=() geo_by_node=()
+operator_geo() {
+  # These are operator-approved regional display points for the current
+  # DevNet aliases. They intentionally describe an approximate region rather
+  # than a rack or street address; unknown and newly joined hosts still use
+  # the separately labelled GeoIP fallback below.
+  case "$1" in
+    node0.gonka-dev.net) printf '%s\n' '{"latitude":39.0997,"longitude":-94.5786,"rawLatitude":39.0997,"rawLongitude":-94.5786,"displayLatitude":39.0997,"displayLongitude":-94.5786,"city":"Kansas City","country":"United States","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node0-region","locationLabel":"Kansas City, United States"}' ;;
+    node1.gonka-dev.net) printf '%s\n' '{"latitude":60.1695,"longitude":24.9354,"rawLatitude":60.1695,"rawLongitude":24.9354,"displayLatitude":60.1695,"displayLongitude":24.9354,"city":"Helsinki","country":"Finland","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node1-region","locationLabel":"Helsinki, Finland"}' ;;
+    node2.gonka-dev.net) printf '%s\n' '{"latitude":52.3785,"longitude":4.9,"rawLatitude":52.3785,"rawLongitude":4.9,"displayLatitude":52.3785,"displayLongitude":4.9,"city":"Amsterdam","country":"Netherlands","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node2-region","locationLabel":"Amsterdam, Netherlands"}' ;;
+    node3.gonka-dev.net) printf '%s\n' '{"latitude":51.5074,"longitude":-0.1278,"rawLatitude":51.5074,"rawLongitude":-0.1278,"displayLatitude":51.5074,"displayLongitude":-0.1278,"city":"London","country":"United Kingdom","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node3-region","locationLabel":"London, United Kingdom"}' ;;
+    node4.gonka-dev.net) printf '%s\n' '{"latitude":45.4416,"longitude":-122.749,"rawLatitude":45.4416,"rawLongitude":-122.749,"displayLatitude":45.4416,"displayLongitude":-122.749,"city":"Portland metro","country":"United States","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node4-region","locationLabel":"Portland metro, United States"}' ;;
+    *) printf 'null\n' ;;
+  esac
+}
 resolve_geo() {
-  local ip="$1" response geo
+  local ip="$1" response geo observed_at
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { printf 'null\n'; return 0; }
   if [[ -v "geo_by_ip[$ip]" ]]; then
     printf '%s\n' "${geo_by_ip[$ip]}"
     return 0
   fi
   response="$(curl -fsS --connect-timeout 3 --max-time 10 "https://ipwho.is/$ip" 2>/dev/null || true)"
-  geo="$(jq -cer '
+  observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  geo="$(jq -cer --arg ip "$ip" --arg observed_at "$observed_at" '
     select(.success == true)
     | {
         latitude: (.latitude | tonumber),
         longitude: (.longitude | tonumber),
+        rawLatitude: (.latitude | tonumber),
+        rawLongitude: (.longitude | tonumber),
+        displayLatitude: (.latitude | tonumber),
+        displayLongitude: (.longitude | tonumber),
         city: (.city | strings),
         country: (.country | strings),
-        isp: (.connection.isp // "unknown" | strings)
+        isp: (.connection.isp // "unknown" | strings),
+        source: "ip-geolocation",
+        displaySource: "ip-geolocation",
+        adjustmentKm: 0,
+        resolvedIp: $ip,
+        observedAt: $observed_at,
+        accuracy: "city",
+        locationLabel: ((.city | strings) + ", " + (.country | strings))
       }
   ' <<<"$response" 2>/dev/null || printf 'null')"
   geo_by_ip[$ip]="$geo"
@@ -77,8 +103,27 @@ resolve_geo() {
 for node in "${GDC_NODES[@]}"; do
   host="$(node_public_host "$node")"
   gpu_host="$(node_ml_host "$node" || printf '%s' "$node")"
-  ip="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
-  geo="$(resolve_geo "$ip")"
+  mapfile -t ips < <(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u)
+  ip="${ips[0]:-}"
+  geo="$(operator_geo "$host")"
+  if [[ "$geo" != null ]]; then
+    : # Known topology uses its approved coarse regional display location.
+  elif ((${#ips[@]} == 1)); then
+    geo="$(resolve_geo "$ip")"
+  elif ((${#ips[@]} > 1)); then
+    locations='[]'
+    for candidate_ip in "${ips[@]}"; do
+      candidate_geo="$(resolve_geo "$candidate_ip")"
+      [[ "$candidate_geo" == null ]] || locations="$(jq --argjson geo "$candidate_geo" '. + [$geo]' <<<"$locations")"
+    done
+    # A DNS name resolving to materially different city locations is
+    # ambiguous. The site deliberately omits the marker rather than selecting
+    # the first A record and presenting it as a physical validator location.
+    if [[ "$(jq 'length' <<<"$locations")" == "${#ips[@]}" ]] &&
+      [[ "$(jq -r 'unique_by([.city, .country]) | length' <<<"$locations")" == 1 ]]; then
+      geo="$(jq -c '.[0]' <<<"$locations")"
+    fi
+  fi
   geo_by_node[$node]="$geo"
   node_catalog="$(jq --arg name "$node" --arg host "$host" --arg status "/status/$node" --arg ip "$ip" --arg gpuHost "$gpu_host" --argjson geo "$geo" \
     '. + [{name:$name,publicHost:$host,statusBase:$status,ip:$ip,geo:$geo,gpuHost:$gpuHost}]' <<<"$node_catalog")"

@@ -81,8 +81,11 @@
 
       if (!participantKnown) {
         return {
-          primaryLabel: "Participant data unavailable",
-          primaryClass: "status bad",
+          state: "unknown",
+          stateLabel: "Unknown",
+          reason: "Participant data unavailable",
+          primaryLabel: "Unknown",
+          primaryClass: "status unknown",
           votingPower: "Unavailable",
           endpointLabel,
           syncLabel,
@@ -91,8 +94,11 @@
       }
       if (!isActiveParticipant(input.participantStatus)) {
         return {
-          primaryLabel: "Participant inactive",
-          primaryClass: "status bad",
+          state: "inactive",
+          stateLabel: "Inactive",
+          reason: "Participant inactive",
+          primaryLabel: "Inactive",
+          primaryClass: "status inactive",
           votingPower: "Unavailable",
           endpointLabel,
           syncLabel,
@@ -101,8 +107,11 @@
       }
       if (!validatorKnown) {
         return {
-          primaryLabel: "Validator data unavailable",
-          primaryClass: "status bad",
+          state: "unknown",
+          stateLabel: "Unknown",
+          reason: "Validator data unavailable",
+          primaryLabel: "Unknown",
+          primaryClass: "status unknown",
           votingPower: "Unavailable",
           endpointLabel,
           syncLabel,
@@ -111,8 +120,11 @@
       }
       if (power === null) {
         return {
-          primaryLabel: "Validator data unavailable",
-          primaryClass: "status bad",
+          state: "unknown",
+          stateLabel: "Unknown",
+          reason: "Validator voting power unavailable",
+          primaryLabel: "Unknown",
+          primaryClass: "status unknown",
           votingPower: "Unavailable",
           endpointLabel,
           syncLabel,
@@ -121,9 +133,16 @@
       }
       const confirmedPower = String(power);
       if (BigInt(confirmedPower) > 0n) {
+        const validating =
+          endpointState === "reachable" && syncLabel === "Synced";
         return {
-          primaryLabel: "Effective validator",
-          primaryClass: "status ok",
+          state: validating ? "validating" : "active",
+          stateLabel: validating ? "Validating" : "Active",
+          reason: validating
+            ? "Effective and synchronized validator"
+            : "Active participant, currently not validating",
+          primaryLabel: validating ? "Validating" : "Active",
+          primaryClass: validating ? "status validating" : "status active",
           votingPower: confirmedPower,
           endpointLabel,
           syncLabel,
@@ -131,8 +150,13 @@
         };
       }
       return {
-        primaryLabel: "Not in validator set",
-        primaryClass: "status skip",
+        // An active participant with zero voting power is still available to
+        // the network; it is simply not validating in the current set.
+        state: "active",
+        stateLabel: "Active",
+        reason: "Not in validator set",
+        primaryLabel: "Active",
+        primaryClass: "status active",
         votingPower: "0",
         endpointLabel,
         syncLabel,

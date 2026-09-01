@@ -97,8 +97,11 @@ assert.deepEqual(hostState.classify({
   referenceKnown: true,
   referenceAgrees: true,
 }), {
-  primaryLabel: 'Effective validator',
-  primaryClass: 'status ok',
+  state: 'validating',
+  stateLabel: 'Validating',
+  reason: 'Effective and synchronized validator',
+  primaryLabel: 'Validating',
+  primaryClass: 'status validating',
   votingPower: '42',
   endpointLabel: 'Reachable',
   syncLabel: 'Synced',
@@ -117,8 +120,11 @@ assert.deepEqual(hostState.classify({
   referenceKnown: true,
   referenceAgrees: true,
 }), {
-  primaryLabel: 'Not in validator set',
-  primaryClass: 'status skip',
+  state: 'active',
+  stateLabel: 'Active',
+  reason: 'Not in validator set',
+  primaryLabel: 'Active',
+  primaryClass: 'status active',
   votingPower: '0',
   endpointLabel: 'Reachable',
   syncLabel: 'Lagging – 17 blocks',
@@ -131,8 +137,11 @@ assert.deepEqual(hostState.classify({
   endpointState: 'unavailable',
   endpointDiagnostic: 'HTTP 502',
 }), {
-  primaryLabel: 'Validator data unavailable',
-  primaryClass: 'status bad',
+  state: 'unknown',
+  stateLabel: 'Unknown',
+  reason: 'Validator data unavailable',
+  primaryLabel: 'Unknown',
+  primaryClass: 'status unknown',
   votingPower: 'Unavailable',
   endpointLabel: 'Unavailable – HTTP 502',
   syncLabel: 'Unavailable',
@@ -145,8 +154,11 @@ assert.deepEqual(hostState.classify({
   endpointState: 'unavailable',
   endpointDiagnostic: 'Network error',
 }), {
-  primaryLabel: 'Validator data unavailable',
-  primaryClass: 'status bad',
+  state: 'unknown',
+  stateLabel: 'Unknown',
+  reason: 'Validator data unavailable',
+  primaryLabel: 'Unknown',
+  primaryClass: 'status unknown',
   votingPower: 'Unavailable',
   endpointLabel: 'Unavailable – Network error',
   syncLabel: 'Unavailable',
@@ -155,13 +167,46 @@ assert.deepEqual(hostState.classify({
 assert.equal(hostState.classify({
   participantKnown: false,
   endpointState: 'unknown',
-}).primaryLabel, 'Participant data unavailable');
+}).primaryLabel, 'Unknown');
 assert.equal(hostState.classify({
   participantKnown: true,
   participantStatus: 'INACTIVE',
   validatorKnown: true,
   votingPower: '88',
-}).primaryLabel, 'Participant inactive');
+}).primaryLabel, 'Inactive');
+const node2Inactive = hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: true,
+  votingPower: '0',
+  endpointState: 'reachable',
+  catchingUp: false,
+  blocksBehind: 0,
+  blockAgeSeconds: 1,
+  progressing: true,
+  referenceKnown: true,
+  referenceAgrees: true,
+});
+assert.equal(node2Inactive.state, 'active');
+assert.equal(node2Inactive.stateLabel, 'Active');
+assert.equal(node2Inactive.primaryClass, 'status active');
+assert.equal(node2Inactive.reason, 'Not in validator set');
+const activeButStale = hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: true,
+  votingPower: '42',
+  endpointState: 'reachable',
+  catchingUp: false,
+  blocksBehind: 0,
+  blockAgeSeconds: 120,
+  progressing: false,
+  referenceKnown: true,
+  referenceAgrees: true,
+});
+assert.equal(activeButStale.state, 'active');
+assert.equal(activeButStale.stateLabel, 'Active');
+assert.equal(activeButStale.primaryClass, 'status active');
 assert.equal(hostState.classify({
   participantKnown: true,
   participantStatus: 'ACTIVE',

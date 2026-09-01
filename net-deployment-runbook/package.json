@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "devDependencies": {
+    "leaflet": "1.9.4"
+  }
+}

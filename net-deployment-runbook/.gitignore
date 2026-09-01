@@ -3,6 +3,7 @@ inventory.env
 wireguard.env
 VERSION.runtime.lock
 vendor/
+node_modules/
 
 # Runtime exports and reports
 *.tar.zst
