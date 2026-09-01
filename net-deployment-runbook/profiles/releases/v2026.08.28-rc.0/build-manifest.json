@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-candidate-build",
+  "profile": "v2026.08.28-rc.0",
+  "layer": "core",
+  "definition_sha256": "3f1001cf1e5e2012654f2b13c087bdc6cb73b5fc3502d87dbe028bb4e54f14c7",
+  "architectures": [
+    "linux/amd64"
+  ],
+  "source": {
+    "gonka_core": "18506d42c510e0cafe6acd748bcd8d83036cba40"
+  },
+  "workflow": {
+    "repository": "paranjko/external-test-lab",
+    "ref": "paranjko/external-test-lab/.github/workflows/candidate-publish.yml@refs/heads/main",
+    "sha": "8b3c5ab0d232725a0af0caa2ba30b99d161ebd61",
+    "request_ref": "refs/heads/main",
+    "request_sha": "8b3c5ab0d232725a0af0caa2ba30b99d161ebd61",
+    "request_run_id": "33456938746",
+    "run_id": "33456953603",
+    "run_attempt": "1"
+  },
+  "images": {
+    "decentralized-api": {
+      "reference": "ghcr.io/paranjko/gdc-decentralized-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "digest": "sha256:9f3fcb4314dd1f2b1969c770ea5df5d4bea33cee8efa1ca939f5b22ea978703a",
+      "deployment_reference": "ghcr.io/paranjko/gdc-decentralized-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/decentralized-api-linux-amd64.oci.tar.gz",
+      "archive_sha256": "d44ed4607cd070ae3d5d23f9f7eedc1643c912de76dfe9b7deb397068561fcdc",
+      "sbom": true,
+      "provenance": true
+    },
+    "edge-api": {
+      "reference": "ghcr.io/paranjko/gdc-edge-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "digest": "sha256:98055c11f72ad81c7c56dd2aa59b8360941bfac3973e65399b5ae735990be255",
+      "deployment_reference": "ghcr.io/paranjko/gdc-edge-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/edge-api-linux-amd64.oci.tar.gz",
+      "archive_sha256": "6bfcfb170d622186ea4196f58998e73a269584ffab36707d142fdf91f7414c79",
+      "sbom": true,
+      "provenance": true
+    },
+    "inferenced": {
+      "reference": "ghcr.io/paranjko/gdc-inferenced:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "digest": "sha256:987661da7a00886994e0f1647155979d8ad09f903f5310aedf9d1c462fa31cea",
+      "deployment_reference": "ghcr.io/paranjko/gdc-inferenced:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/inferenced-linux-amd64.oci.tar.gz",
+      "archive_sha256": "b1fd54dd3d6239d4482c8f858ff7c4ff548a5dc223cfcc600b4494b0c59901f7",
+      "sbom": true,
+      "provenance": true
+    },
+    "versiond-router": {
+      "reference": "ghcr.io/paranjko/gdc-versiond-router:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "digest": "sha256:3d99b56bf6907f83204b14b839672c36f9a69f68ce657f15683f2d2d485818e9",
+      "deployment_reference": "ghcr.io/paranjko/gdc-versiond-router:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/versiond-router-linux-amd64.oci.tar.gz",
+      "archive_sha256": "6494f65c84aad21960e7f01f75b136372d19d40820983086031ba6ceab1fb78f",
+      "sbom": true,
+      "provenance": true
+    },
+    "versiond": {
+      "reference": "ghcr.io/paranjko/gdc-versiond:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "digest": "sha256:5ecce4aea849affe02fc3bec8545e8f62070d01cd37cd10d53eedc85dce8af2d",
+      "deployment_reference": "ghcr.io/paranjko/gdc-versiond:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/versiond-linux-amd64.oci.tar.gz",
+      "archive_sha256": "3732dbae147975cbcf0058b842b7dfccbce4325ebd8b40be0776a74edadabfde",
+      "sbom": true,
+      "provenance": true
+    }
+  },
+  "binaries": {
+    "decentralized-api-linux-amd64": {
+      "oci_reference": "ghcr.io/paranjko/gdc-upgrade-decentralized-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "oci_digest": "sha256:d3df620238a83e1eef0dfcde3cfe97a34e8a0bb7a3c4978d886af20715200427",
+      "sha256": "8a126f7d159179fdf59a910ad23a945a96f4ec13fbb781c7cd8d7e67882203da",
+      "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/decentralized-api.zip",
+      "sbom": true,
+      "provenance": true
+    },
+    "edge-api-linux-amd64": {
+      "oci_reference": "ghcr.io/paranjko/gdc-upgrade-edge-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "oci_digest": "sha256:8a58be09cab192b35435c9297aeb6df3434e46b41f5dc56003a010e48954a895",
+      "sha256": "1f113f8c289558caeb7b064927c8bc2aca812cf437f9d638e3e966476ceb6f81",
+      "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/edge-api.zip",
+      "sbom": true,
+      "provenance": true
+    },
+    "inferenced-operator-linux-amd64": {
+      "oci_reference": "ghcr.io/paranjko/gdc-upgrade-inferenced-operator:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "oci_digest": "sha256:cc9f5bf9d8fd05bd636a833fb0ed6da72a3867b41a7c7431a24ecb82493d13f1",
+      "sha256": "d21e7d71a47684310bdf86f5f805a8315e46d1e349b851146c976f2906780c69",
+      "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/inferenced-operator.zip",
+      "sbom": true,
+      "provenance": true
+    },
+    "inferenced-linux-amd64": {
+      "oci_reference": "ghcr.io/paranjko/gdc-upgrade-inferenced:v2026.08.28-rc.0-3f1001cf1e5e-33456953603",
+      "oci_digest": "sha256:ffd876922a2dcb91a7bf1e08ba0b14af2dd0c8cda694e204dc68e65c9c542134",
+      "sha256": "407dd2907b6bb40d155321aacf6914cf5d92a980d4deebf125ef60b507b09613",
+      "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/inferenced.zip",
+      "sbom": true,
+      "provenance": true
+    }
+  }
+}

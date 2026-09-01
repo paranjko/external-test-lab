@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-composition-manifest",
+  "composition": "core-v2026.08.28-rc.0+devshard-v2026.08.30-rc.0",
+  "network": {
+    "chain_id": "gonka-devnet-community",
+    "genesis_sha256": "9b29115a1090532546ce9cc1dfb7d37f09c661deb82cb4f20f41da832c98254d",
+    "baseline_profile": "v2026.08.06"
+  },
+  "core": {
+    "profile": "v2026.08.28-rc.0",
+    "classification": "lab-candidate",
+    "release_version": "0.2.16",
+    "source_commit": "18506d42c510e0cafe6acd748bcd8d83036cba40",
+    "source_ref": "refs/heads/ak/height-sync-protocol-dapi",
+    "lock_hash": "7a39d1a8f3b359291557c30bd6bce40f68864824c6fc785c6f636cd06be4640c",
+    "upgrade_from_profile": "v2026.08.06",
+    "definition_sha256": "3f1001cf1e5e2012654f2b13c087bdc6cb73b5fc3502d87dbe028bb4e54f14c7",
+    "build_manifest_sha256": "60dd7e0b49f4fc3b4acd6f4709ba5c2d4fac0609e13a624488ebca12e66ee33b",
+    "images": {
+      "inferenced": "ghcr.io/paranjko/gdc-inferenced:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:987661da7a00886994e0f1647155979d8ad09f903f5310aedf9d1c462fa31cea",
+      "decentralized-api": "ghcr.io/paranjko/gdc-decentralized-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:9f3fcb4314dd1f2b1969c770ea5df5d4bea33cee8efa1ca939f5b22ea978703a",
+      "edge-api": "ghcr.io/paranjko/gdc-edge-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:98055c11f72ad81c7c56dd2aa59b8360941bfac3973e65399b5ae735990be255",
+      "versiond": "ghcr.io/paranjko/gdc-versiond:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:5ecce4aea849affe02fc3bec8545e8f62070d01cd37cd10d53eedc85dce8af2d",
+      "versiond-router": "ghcr.io/paranjko/gdc-versiond-router:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:3d99b56bf6907f83204b14b839672c36f9a69f68ce657f15683f2d2d485818e9",
+      "proxy": "ghcr.io/product-science/proxy:0.2.15@sha256:88a392f2300e4f303df6c7dde4660944c3f99df1e7d959bb451bd62e2f846d49",
+      "mlnode": "ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1",
+      "tmkms": "ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21",
+      "bridge": "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d"
+    },
+    "binaries": {
+      "inferenced-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/inferenced.zip",
+        "sha256": "407dd2907b6bb40d155321aacf6914cf5d92a980d4deebf125ef60b507b09613"
+      },
+      "inferenced-operator-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/inferenced-operator.zip",
+        "sha256": "d21e7d71a47684310bdf86f5f805a8315e46d1e349b851146c976f2906780c69"
+      },
+      "decentralized-api-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/decentralized-api.zip",
+        "sha256": "8a126f7d159179fdf59a910ad23a945a96f4ec13fbb781c7cd8d7e67882203da"
+      }
+    }
+  },
+  "devshard": {
+    "profile": "v2026.08.30-rc.0",
+    "classification": "lab-candidate",
+    "protocol_version": "v5",
+    "source_commit": "e0814d3c01fe4ad1363d23d6ba4a66e612bb2676",
+    "source_ref": "refs/heads/gateway-v4-merge",
+    "lock_hash": "3579b8a1d5df84727c9166b2aa6a391f472da894dc53fd099336ef9a4196b64d",
+    "upgrade_from_profile": "v2026.08.06",
+    "features": {
+      "heightsync": true,
+      "heightsync_k": 10,
+      "heightsync_slots": 1,
+      "storage_mode": "memory"
+    },
+    "images": {
+      "devshardd": "ghcr.io/paranjko/gdc-devshardd:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:7911023585fec09eaab1c6f738718b3f004b19865baf396ded15a9da69b92139",
+      "devshard-gateway": "ghcr.io/paranjko/gdc-devshard-gateway:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:29ec3a7d273b523425539dbf348688c1731304516ac75868b5abde476c4c636f",
+      "devshard-host": "ghcr.io/paranjko/gdc-devshard-host:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:e33660fd57a67882b02c1eadc4b184100c0d2bdee2db14c44e4ddfd9689f44b2"
+    },
+    "binaries": {
+      "devshardd-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.30-rc.0/devshardd.zip",
+        "sha256": "ca8346493e4fb92b1ffd25e3a792e2bb916f60bf6d0daa0aebcc1c49d4b8f39b"
+      }
+    },
+    "gateway_archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.30-rc.0/devshard-gateway-linux-amd64.oci.tar.gz",
+    "gateway_archive_sha256": "dc7a8eaf0e859d7ed4ba876f0efe5fc19e52bfdc138b624a0f47b31be7781d0b",
+    "definition_sha256": "956a7758af5ba16cb47e7c09e8f18a8b3646ee1486d86749e3cf1db5c1820d86",
+    "build_manifest_sha256": "0ca70f36cee0a38e44b16d163fc5c1e181e771e01bfec285d7ecd4417eace083"
+  },
+  "components": {
+    "images": {
+      "inferenced": "ghcr.io/paranjko/gdc-inferenced:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:987661da7a00886994e0f1647155979d8ad09f903f5310aedf9d1c462fa31cea",
+      "decentralized-api": "ghcr.io/paranjko/gdc-decentralized-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:9f3fcb4314dd1f2b1969c770ea5df5d4bea33cee8efa1ca939f5b22ea978703a",
+      "edge-api": "ghcr.io/paranjko/gdc-edge-api:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:98055c11f72ad81c7c56dd2aa59b8360941bfac3973e65399b5ae735990be255",
+      "versiond": "ghcr.io/paranjko/gdc-versiond:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:5ecce4aea849affe02fc3bec8545e8f62070d01cd37cd10d53eedc85dce8af2d",
+      "versiond-router": "ghcr.io/paranjko/gdc-versiond-router:v2026.08.28-rc.0-3f1001cf1e5e-33456953603@sha256:3d99b56bf6907f83204b14b839672c36f9a69f68ce657f15683f2d2d485818e9",
+      "proxy": "ghcr.io/product-science/proxy:0.2.15@sha256:88a392f2300e4f303df6c7dde4660944c3f99df1e7d959bb451bd62e2f846d49",
+      "mlnode": "ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1",
+      "tmkms": "ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21",
+      "bridge": "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d",
+      "devshardd": "ghcr.io/paranjko/gdc-devshardd:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:7911023585fec09eaab1c6f738718b3f004b19865baf396ded15a9da69b92139",
+      "devshard-gateway": "ghcr.io/paranjko/gdc-devshard-gateway:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:29ec3a7d273b523425539dbf348688c1731304516ac75868b5abde476c4c636f",
+      "devshard-host": "ghcr.io/paranjko/gdc-devshard-host:v2026.08.30-rc.0-956a7758af5b-33345010954@sha256:e33660fd57a67882b02c1eadc4b184100c0d2bdee2db14c44e4ddfd9689f44b2"
+    },
+    "binaries": {
+      "inferenced-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/inferenced.zip",
+        "sha256": "407dd2907b6bb40d155321aacf6914cf5d92a980d4deebf125ef60b507b09613"
+      },
+      "inferenced-operator-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/inferenced-operator.zip",
+        "sha256": "d21e7d71a47684310bdf86f5f805a8315e46d1e349b851146c976f2906780c69"
+      },
+      "decentralized-api-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.28-rc.0/decentralized-api.zip",
+        "sha256": "8a126f7d159179fdf59a910ad23a945a96f4ec13fbb781c7cd8d7e67882203da"
+      },
+      "devshardd-linux-amd64": {
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.08.30-rc.0/devshardd.zip",
+        "sha256": "ca8346493e4fb92b1ffd25e3a792e2bb916f60bf6d0daa0aebcc1c49d4b8f39b"
+      }
+    }
+  }
+}
