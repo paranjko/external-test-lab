@@ -35,9 +35,10 @@ install_ipv4() {
   if [[ "${GATEWAY_SERVICES:-false}" == true ]]; then
     [[ -n "${PUBLIC_EDGE_CIDR:-}" ]] || { echo 'PUBLIC_EDGE_CIDR is required for gateway services' >&2; exit 1; }
     iptables -w -t mangle -A "$CHAIN" -p tcp -m multiport --dports 3000,8000,8081,8082 -j ACCEPT
-    # The host-network gateway is raw TCP/18080. Only the managed public edge
-    # may reach it; every other external source reaches the terminal DROP.
-    iptables -w -t mangle -A "$CHAIN" -s "$PUBLIC_EDGE_CIDR" -p tcp -m multiport --dports 9099,18080 -j ACCEPT
+    # The canonical and side-by-side migration gateways are raw host-network
+    # listeners. Only the managed public edge may reach them; every other
+    # external source reaches the terminal DROP.
+    iptables -w -t mangle -A "$CHAIN" -s "$PUBLIC_EDGE_CIDR" -p tcp -m multiport --dports 9099,18080,18085 -j ACCEPT
   fi
   iptables -w -t mangle -A "$CHAIN" -s "$MONITORING_CIDR" -p tcp \
     -m multiport --dports 26660,8088,9101 -j ACCEPT

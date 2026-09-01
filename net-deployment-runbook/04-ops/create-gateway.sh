@@ -13,6 +13,11 @@ source "$ROOT/scripts/profile.sh"
 load_profiles
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$GATEWAY_VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
+GATEWAY_PORT="${GDC_GATEWAY_PORT:-18080}"
+if [[ ! "$GATEWAY_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( GATEWAY_PORT > 65535 )); then
+  echo 'GDC_GATEWAY_PORT must be a valid TCP port' >&2
+  exit 2
+fi
 selected_gateway_protocol_contract >/dev/null || exit 2
 case "$GATEWAY_VERSION" in
   v3) PROFILE_GATEWAY_ARCHIVE_URL="$DEVSHARD_V3_URL"; PROFILE_GATEWAY_ARCHIVE_SHA256="$DEVSHARD_V3_SHA256" ;;
@@ -106,7 +111,16 @@ active_participant_count="$(jq '[.participant[] | select(.status == "ACTIVE" or 
 (( active_participant_count > 0 )) || { echo 'No ACTIVE model participant exists in public chain state' >&2; exit 1; }
 
 EXISTING_ESCROW_ID="${GDC_ESCROW_ID:-}"
-if [[ -n "$EXISTING_ESCROW_ID" ]]; then
+DEFER_ESCROW_CREATE="${GDC_GATEWAY_DEFER_ESCROW_CREATE:-false}"
+[[ "$DEFER_ESCROW_CREATE" =~ ^(true|false)$ ]] \
+  || { echo 'GDC_GATEWAY_DEFER_ESCROW_CREATE must be true or false' >&2; exit 2; }
+if [[ "$DEFER_ESCROW_CREATE" == true ]]; then
+  [[ -z "$EXISTING_ESCROW_ID" ]] \
+    || { echo 'deferred gateway escrow creation cannot reuse GDC_ESCROW_ID' >&2; exit 2; }
+  ESCROW_ID=''
+  TX=''
+  BALANCE_AFTER_FUNDING="$BALANCE_BEFORE"
+elif [[ -n "$EXISTING_ESCROW_ID" ]]; then
   [[ "$EXISTING_ESCROW_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_ESCROW_ID must be a positive integer' >&2; exit 2; }
   EXISTING_ESCROW="$("$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$EXISTING_ESCROW_ID" --node "$RPC" --chain-id "$CHAIN_ID" --output json)"
   jq -e --arg creator "$CREATOR" --arg model "$MODEL_ID" '.found == true and .escrow.creator == $creator and .escrow.model_id == $model' <<<"$EXISTING_ESCROW" >/dev/null || {
@@ -149,26 +163,46 @@ BALANCE_AFTER_FUNDING="$(ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/co
 fi
 PRIVATE="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys export gdc-gateway-cold --keyring-backend file --unarmored-hex --unsafe --yes | grep -Eo '[0-9a-fA-F]{64}' | tail -n1)"
 [[ "$PRIVATE" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Cannot export gateway private key' >&2; exit 1; }
+gateway_volume="gateway-data-${GATEWAY_VERSION}"
+gateway_volume_name="${GDC_GATEWAY_DATA_VOLUME_NAME:-gdc-ops_${gateway_volume}}"
+[[ "$gateway_volume_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
+  echo 'GDC_GATEWAY_DATA_VOLUME_NAME must be a valid exact Docker volume name' >&2
+  exit 2
+}
+case "$GATEWAY_VERSION" in
+  v3) gateway_volume_selector="DEVSHARD_GATEWAY_DATA_VOLUME_V3_NAME=${gateway_volume_name}" ;;
+  v4) gateway_volume_selector="DEVSHARD_GATEWAY_DATA_VOLUME_V4_NAME=${gateway_volume_name}" ;;
+  v5) gateway_volume_selector="DEVSHARD_GATEWAY_DATA_VOLUME_V5_NAME=${gateway_volume_name}" ;;
+esac
+if [[ "$DEFER_ESCROW_CREATE" == true ]]; then
+  escrow_bootstrap_env='DEVSHARDS_JSON=[]'
+else
+  escrow_bootstrap_env="DEVSHARD_ESCROW_ID=${ESCROW_ID}"
+fi
 umask 077; mkdir -p "$(dirname "$OUT")"
 cat >"$OUT" <<EOF
 DEVSHARD_CHAIN_GRPC=127.0.0.1:9090
 DEVSHARD_CHAIN_RPC=http://127.0.0.1:26657
 DEVSHARD_CHAIN_ID=${CHAIN_ID}
 DEVSHARD_PUBLIC_API=http://127.0.0.1:9000
-DEVSHARD_PORT=18080
+DEVSHARD_PORT=${GATEWAY_PORT}
 DEVSHARD_STORAGE_DIR=/root/.devshardctl
 DEVSHARD_API_KEYS=${CLIENT_KEYS}
 DEVSHARD_ADMIN_API_KEY=${ADMIN_KEY}
 DEVSHARD_PRIVATE_KEY=${PRIVATE}
-DEVSHARD_ESCROW_ID=${ESCROW_ID}
+${escrow_bootstrap_env}
 DEVSHARD_MODEL=${MODEL_ID}
 DEVSHARD_ROUTE_PREFIX=/devshard/${GATEWAY_VERSION}
 DEVSHARD_BINARY_URL=${GATEWAY_ARCHIVE_URL}
 DEVSHARD_BINARY_SHA256=${GATEWAY_ARCHIVE_SHA256}
-DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-${GATEWAY_VERSION}
+DEVSHARD_GATEWAY_DATA_VOLUME=${gateway_volume}
+DEVSHARD_GATEWAY_DATA_VOLUME_NAME=${gateway_volume_name}
+${gateway_volume_selector}
 DEVSHARD_HEIGHTSYNC=${DEVSHARD_HEIGHTSYNC:-false}
 DEVSHARD_HEIGHTSYNC_K=${DEVSHARD_HEIGHTSYNC_K:-10}
 DEVSHARD_HEIGHTSYNC_SLOTS=${DEVSHARD_HEIGHTSYNC_SLOTS:-1}
+DEVSHARD_ESCROW_ROTATION_ENABLED=${GDC_GATEWAY_ESCROW_ROTATION_ENABLED:-true}
+DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED=${GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED:-true}
 GONKA_HA=${GONKA_HA:-false}
 DEVSHARD_STORAGE_MODE=${DEVSHARD_STORAGE_MODE:-memory}
 # Escrows are pruned by the chain after their retention window.  Persist the
@@ -185,7 +219,8 @@ GDC_GATEWAY_FEE_RESERVE_NGONKA=${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}
 GDC_GATEWAY_MAX_REFILL_NGONKA=${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}
 GDC_GATEWAY_RESERVE_SIGNER_URL=${GDC_GATEWAY_RESERVE_SIGNER_URL:-http://127.0.0.1:18083}
 GDC_GATEWAY_RESERVE_TOKEN=$(<"$SECRETS/gateway.reserve-signer-token")
-GDC_GATEWAY_ADMIN_URL=http://127.0.0.1:18080
+GDC_GATEWAY_ADMIN_URL=http://127.0.0.1:${GATEWAY_PORT}
+GDC_GATEWAY_RECONCILIATION_URL=http://127.0.0.1:${GATEWAY_PORT}
 GDC_GATEWAY_ADMISSION_URL=https://${API_HOST}
 GDC_GATEWAY_REPLACEMENT_MAX_ATTEMPTS=${GDC_GATEWAY_REPLACEMENT_MAX_ATTEMPTS:-1}
 GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true
@@ -222,4 +257,8 @@ if [[ -n "$TX" ]]; then
     >"${OUT%.env}.escrow-create.json"
   chmod 600 "${OUT%.env}.escrow-create.json"
 fi
-printf 'READY gateway escrow=%s\n' "$ESCROW_ID"
+if [[ "$DEFER_ESCROW_CREATE" == true ]]; then
+  printf 'READY gateway escrow creation deferred to authenticated target admin API\n'
+else
+  printf 'READY gateway escrow=%s\n' "$ESCROW_ID"
+fi

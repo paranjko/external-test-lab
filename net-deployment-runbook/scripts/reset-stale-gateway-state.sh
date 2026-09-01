@@ -29,6 +29,12 @@ fi
   printf 'ERROR gateway state reset refused: invalid managed volume name\n' >&2
   exit 1
 }
+if [[ -n "${DEVSHARD_GATEWAY_DATA_VOLUME_NAME:-}" ]]; then
+  [[ "$DEVSHARD_GATEWAY_DATA_VOLUME_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
+    printf 'ERROR gateway state reset refused: invalid exact managed volume name\n' >&2
+    exit 1
+  }
+fi
 
 admin_state="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:18080/v1/admin/devshards \
   -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY")" || {
@@ -62,9 +68,22 @@ mapfile -t gateway_containers < <(docker ps -aq \
   --filter label=com.docker.compose.project=gdc-ops \
   --filter label=com.docker.compose.service=devshard-gateway)
 (( ${#gateway_containers[@]} == 0 )) || docker rm -f "${gateway_containers[@]}" >/dev/null
-mapfile -t volumes < <(docker volume ls -q \
-  --filter label=com.docker.compose.project=gdc-ops \
-  --filter "label=com.docker.compose.volume=$DEVSHARD_GATEWAY_DATA_VOLUME")
+if [[ -n "${DEVSHARD_GATEWAY_DATA_VOLUME_NAME:-}" ]]; then
+  volumes=()
+  if docker volume inspect "$DEVSHARD_GATEWAY_DATA_VOLUME_NAME" >/dev/null 2>&1; then
+    volume_project="$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$DEVSHARD_GATEWAY_DATA_VOLUME_NAME")"
+    volume_logical="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$DEVSHARD_GATEWAY_DATA_VOLUME_NAME")"
+    [[ "$volume_project" == gdc-ops && "$volume_logical" == "$DEVSHARD_GATEWAY_DATA_VOLUME" ]] || {
+      printf 'ERROR gateway state reset refused: exact volume ownership differs\n' >&2
+      exit 1
+    }
+    volumes+=("$DEVSHARD_GATEWAY_DATA_VOLUME_NAME")
+  fi
+else
+  mapfile -t volumes < <(docker volume ls -q \
+    --filter label=com.docker.compose.project=gdc-ops \
+    --filter "label=com.docker.compose.volume=$DEVSHARD_GATEWAY_DATA_VOLUME")
+fi
 if (( ${#volumes[@]} == 0 )); then
   printf 'READY stale gateway containers removed; managed state volume is already absent\n'
   exit 0

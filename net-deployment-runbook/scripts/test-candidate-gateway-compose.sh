@@ -13,6 +13,7 @@ touch "$temporary/gateway.env" "$temporary/faucet.env" \
 
 config="$({
   DEVSHARD_GATEWAY_DATA_VOLUME=gateway-data-v5 \
+  DEVSHARD_GATEWAY_DATA_VOLUME_V5_NAME=gdc-ops_gateway-data-v5-test \
   LOCAL_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:candidate-v5 \
   INFERENCED_IMAGE=ghcr.io/paranjko/gdc-inferenced:candidate \
   SITE_HOST=site.example.invalid \
@@ -28,7 +29,9 @@ jq -e '
   .services["devshard-gateway"].volumes
   | any(.type == "volume" and .source == "gateway-data-v5" and .target == "/root/.devshardctl")
 ' <<<"$config" >/dev/null
-jq -e '.volumes | has("gateway-data-v5")' <<<"$config" >/dev/null
+jq -e '.volumes["gateway-data-v5"].name == "gdc-ops_gateway-data-v5-test"' <<<"$config" >/dev/null
+jq -e '.services["devshard-gateway"].healthcheck.test[1] | contains("$${DEVSHARD_PORT}")' \
+  <<<"$config" >/dev/null
 
 export LOCAL_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:candidate
 export LAB_CANDIDATE=true

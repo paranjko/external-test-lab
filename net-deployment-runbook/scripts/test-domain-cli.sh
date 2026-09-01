@@ -25,6 +25,11 @@ for contract in \
   './gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>' \
   './gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>' \
   './gdc.sh --release v2026.07.23 gateway apply v3' \
+  './gdc.sh --composition <COMPOSITION> gateway migration prepare v5' \
+  './gdc.sh --composition <COMPOSITION> gateway migration status' \
+  './gdc.sh --composition <COMPOSITION> gateway migration cutover' \
+  './gdc.sh --composition <COMPOSITION> gateway migration drain [SECONDS]' \
+  './gdc.sh --composition <COMPOSITION> gateway migration rollback|complete' \
   './gdc.sh --composition <COMPOSITION> governance devshard submit [--protocols v3,v4,v5]' \
   './gdc.sh --release v2026.08.06 bridge contract deploy sepolia' \
   './gdc.sh --release v2026.08.06 bridge observer apply|status|verify <SSH_ALIAS>'; do
@@ -104,6 +109,12 @@ grep -Fq 'invalid Host SSH alias: Validator.West' "$tmp/invalid-alias.stderr"
 grep -Fq 'COMMAND=node; set -- "$subcommand" "$@"' "$ROOT/gdc.sh"
 grep -Fq 'ERROR gdc command failed phase=%s exit=%s run_log=%s command=%s' "$ROOT/gdc.sh"
 grep -Fq 'run_phase "gateway-$gateway_action-$GDC_GATEWAY_VERSION"' "$ROOT/gdc.sh"
+grep -Fq 'phase-gateway-migration.sh" prepare "$1"' "$ROOT/gdc.sh"
+grep -Fq 'previous observer and upstream were restored before admission restart' \
+  "$ROOT/scripts/phase-gateway-migration.sh"
+grep -Fq 'admission is verified stopped' "$ROOT/scripts/phase-gateway-migration.sh"
+grep -Fq "jq -e 'type == \"object\"'" "$ROOT/scripts/phase-gateway-migration.sh"
+! grep -Fq -- '--fresh-state' "$ROOT/gdc.sh"
 grep -Fq 'phase-gateway-observe.sh' "$ROOT/gdc.sh"
 grep -Fq 'verify_evidence=' "$ROOT/scripts/phase-gateway-observe.sh"
 grep -Fq 'sla="${1:-300s}"' "$ROOT/scripts/phase-gateway-observe.sh"
@@ -130,6 +141,10 @@ grep -Fq 'map(.name) | unique | length' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq '.binary == $binary and .sha256 == $sha256' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'DEVSHARD_BINARY_URL=${GATEWAY_ARCHIVE_URL}' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'DEVSHARD_BINARY_SHA256=${GATEWAY_ARCHIVE_SHA256}' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq "escrow_bootstrap_env='DEVSHARDS_JSON=[]'" "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'GDC_GATEWAY_DEFER_ESCROW_CREATE' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'DEVSHARD_ESCROW_ROTATION_ENABLED=${GDC_GATEWAY_ESCROW_ROTATION_ENABLED:-true}' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED=${GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED:-true}' "$ROOT/04-ops/create-gateway.sh"
 if GDC_HOME="$tmp/governance-home" "$ROOT/gdc.sh" \
   --composition core-v2026.08.06+devshard-v2026.08.27-rc.0 \
   governance devshard submit --protocols v3,v3 >"$tmp/governance.stdout" 2>"$tmp/governance.stderr"; then

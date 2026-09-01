@@ -47,6 +47,7 @@ DISPATCH_LOCK = threading.Lock()
 AUDIT_LOCK = threading.Lock()
 DISPATCHES_BY_HEIGHT = {}
 COMPLETION_PATH = re.compile(r"^/(?:v1/chat/completions|devshard/[0-9]+/v1/chat/completions)$")
+READ_ONLY_PATHS = {"/v1/models", "/v1/status"}
 UPSTREAM_CONTENT_TYPES = {
     "application/json": "application/json",
     "text/event-stream": "text/event-stream",
@@ -324,6 +325,15 @@ class Handler(BaseHTTPRequestHandler):
         if record.get("safe_generation"):
             self.send_header("X-GDC-Safe-Generation", record["safe_generation"])
 
+    def respond_error(self, status, code):
+        payload = json.dumps({"error": {"code": code}}).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def reject(self, status, code, record, admission="pre_dispatch_rejected", deadline=None):
         payload = json.dumps({"error": {"code": code}}).encode()
         record.update({
@@ -398,6 +408,44 @@ class Handler(BaseHTTPRequestHandler):
                     DISPATCH_PERMIT.release()
             time.sleep(min(POLL, max(0, deadline - time.monotonic())))
         return None, "admission_deadline_elapsed"
+
+    def do_GET(self):
+        """Proxy only the public read-only gateway surface to the active runtime."""
+        path = self.path.split("?", 1)[0]
+        if path not in READ_ONLY_PATHS:
+            self.respond_error(404, "not_found")
+            return
+        headers = {"Accept": "application/json", "Host": UPSTREAM.netloc}
+        authorization = self.headers.get("Authorization")
+        if authorization:
+            headers["Authorization"] = authorization
+        connection = http.client.HTTPConnection(
+            UPSTREAM.hostname, UPSTREAM.port or 80, timeout=MAX_WAIT)
+        try:
+            connection.request("GET", self.path, headers=headers)
+            response = connection.getresponse()
+            payload = response.read(MAX_BODY + 1)
+            if len(payload) > MAX_BODY:
+                self.respond_error(502, "upstream_response_too_large")
+                return
+            self.send_response(response.status, response.reason)
+            self.send_header("Content-Type", safe_upstream_content_type(
+                response.getheader("Content-Type", "")))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        except Exception as error:
+            status, error_class = dispatch_failure(error)
+            payload = json.dumps({"error": {"code": error_class}}).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        finally:
+            connection.close()
 
     def do_POST(self):
         record = {
