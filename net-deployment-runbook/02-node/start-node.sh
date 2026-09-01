@@ -2,6 +2,16 @@
 set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -s "$HERE/.env" ]] || { echo "Missing $HERE/.env" >&2; exit 1; }
+enable_signer=false; canary=false
+while (($#)); do
+  case "$1" in
+    --enable-signer) enable_signer=true ;;
+    --canary) canary=true ;;
+    *) echo "Usage: $0 [--canary] [--enable-signer]" >&2; exit 2 ;;
+  esac
+  shift
+done
+[[ "$canary" == false || "$enable_signer" == false ]] || { echo 'canary must not enable signer' >&2; exit 2; }
 run_long() {
   local label="$1" log="$2" pid elapsed=0
   shift 2
@@ -18,12 +28,21 @@ run_long() {
 files=(-f "$HERE/compose.yaml")
 [[ "$(cat "$HERE/.local-ml" 2>/dev/null || echo false)" == true ]] && files+=(-f "$HERE/compose.ml-local.yaml")
 [[ -e "$HERE/.ha-enabled" ]] && files+=(-f "$HERE/compose.devshard-ha.yaml")
-docker compose --env-file "$HERE/.env" "${files[@]}" config --quiet
-run_long 'pull node images' "$HERE/start.log" docker compose --env-file "$HERE/.env" "${files[@]}" pull
+profiles=()
+[[ "$enable_signer" == true ]] && profiles=(--profile signer)
+canary_env=()
+# CometBFT needs a validator key even while state-syncing.  The image creates
+# an unregistered local key; blanking the remote listener ensures it cannot
+# access the restored TMKMS signer before the post-sync checks pass.
+[[ "$canary" == true ]] && canary_env=(env CONFIG_PRIV_VALIDATOR_LADDR=)
+"${canary_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" config --quiet
+run_long 'pull node images' "$HERE/start.log" "${canary_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull
 printf 'WAIT  start node services\n'
-if ! docker compose --env-file "$HERE/.env" "${files[@]}" up -d >>"$HERE/start.log" 2>&1; then
+services=()
+[[ "$canary" == true ]] && services=(node)
+if ! "${canary_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" up -d "${services[@]}" >>"$HERE/start.log" 2>&1; then
   tail -100 "$HERE/start.log" >&2
   exit 1
 fi
-"$HERE/sync-node-config.sh"
-printf 'READY node services started\n'
+[[ "$canary" == true ]] || "$HERE/sync-node-config.sh"
+printf 'READY node services started signer_enabled=%s canary=%s\n' "$enable_signer" "$canary"

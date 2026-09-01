@@ -238,6 +238,10 @@ addr = "tcp://node:26658"
 secret_key = "/root/.tmkms/secrets/kms-identity.key"
 protocol_version = "v0.34"
 EOF
+cp "$material/tmkms/tmkms.toml" "$tmp/tmkms-with-runtime-options.toml"
+sed -i '2i key_format = { type = "bech32", account_key_prefix = "gonka", consensus_key_prefix = "gonka" }' "$tmp/tmkms-with-runtime-options.toml"
+printf 'reconnect = true\n' >>"$tmp/tmkms-with-runtime-options.toml"
+cp "$tmp/tmkms-with-runtime-options.toml" "$material/tmkms/tmkms.toml"
 jq -n '{height:"10",round:"0",step:6,block_id:{hash:("A" * 64),
   part_set_header:{total:1,hash:("B" * 64)}}}' \
   >"$material/tmkms/state/priv_validator_state.json"
@@ -407,11 +411,18 @@ genesis_acceptance_line="$(grep -n 'phase-join-acceptance.sh' "$ROOT/scripts/pha
 genesis_backup_line="$(grep -n 'validator-backup.sh" create' "$ROOT/scripts/phase-genesis.sh" | tail -n1 | cut -d: -f1)"
 [[ "$genesis_backup_line" -gt "$genesis_acceptance_line" ]]
 grep -Fq 'keys add "$KEY_NAME" --recover --keyring-backend file' "$ROOT/02-node/init-identity.sh"
+grep -Fq 'warm_key_restore_failure_reason' "$ROOT/02-node/init-identity.sh"
+grep -Fq 'reason=%s' "$ROOT/02-node/init-identity.sh"
+grep -Fq 'preserved unreadable Host keyring' "$ROOT/02-node/init-identity.sh"
 grep -Fq -- '--warm-mnemonic' "$ROOT/01-identities-genesis/collect-identities.sh"
 grep -Fq 'verify_checksum_manifest "$extracted"' "$BACKUP"
 grep -Fq 'MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES=$((66 * 1024 * 1024))' "$BACKUP"
 grep -Fq 'MAX_VALIDATOR_BACKUP_TRAILING_BYTES=$((1024 * 1024))' "$BACKUP"
-grep -Fq 'raw_archive.read(min(TRAILING_READ_SIZE, remaining))' "$BACKUP"
+! grep -Fq 'python3' "$BACKUP" || {
+  echo 'validator backup restore must not require Python on the operator path' >&2
+  exit 1
+}
+grep -Fq 'This deliberately accepts only plain USTAR regular-file/directory archives.' "$BACKUP"
 ! grep -Fq 'install -m 0600 "$archive" "$stage/input.tar"' "$BACKUP"
 grep -Fq 'sudo env GDC_VALIDATOR_IDENTITY_REMOTE=true bash -s --' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'tmkms-softsign-public-key.sh' "$BACKUP"

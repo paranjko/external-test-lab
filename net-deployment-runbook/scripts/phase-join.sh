@@ -59,6 +59,7 @@ fi
 GENESIS_SHA256="$(genesis_sha256 "$GENESIS/genesis.json")"
 GENESIS_CHAIN_ID="$(jq -er .chain_id "$GENESIS/genesis.json")"
 write_phase_lineage "$RUN" "$GENESIS_CHAIN_ID" "$GENESIS_SHA256"
+record_join_state "$NODE" PREPARED
 
 if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
   step "Validate $NODE validator identity from operator backup"
@@ -86,7 +87,9 @@ else
 fi
 # Every joining Host creates and owns its local keyring passwords before it
 # creates any account. No Genesis operator key, funding approval, or
-# cross-operator secret transfer is needed.
+# cross-operator secret transfer is needed. A backup supplies its warm
+# mnemonic, so a replaced Host can create a fresh encrypted keyring and then
+# prove that it recreates the recorded public identity.
 if [[ ! -s "$SECRETS/operator.keyring" || ! -s "$SECRETS/$NODE.keyring" || ! -s "$SECRETS/$NODE.postgres" ]]; then
   step "Create scoped operator secrets for $NODE"
   "$ROOT/scripts/make-node-operator-secrets.sh" "$NODE" "$SECRETS"
@@ -166,6 +169,9 @@ step "Render $NODE"
 NODE_DIR="$GENERATED/nodes/$NODE"
 mkdir -p "$NODE_DIR" "$GENERATED/edge" "$GENERATED/agents"
 env_args=(--inventory "$INVENTORY" --node-name "$NODE" --account-public "$ACCOUNT" --seeds-file "$GENESIS/genesis-seeds.txt" --secrets-dir "$SECRETS")
+[[ -r "${GDC_JOIN_LINEAGE_RECEIPT:-}" ]] || die 'JOIN lacks a completed lineage preflight receipt'
+generation_dir="/srv/dai/data/${NODE}.generations/${GDC_RUN_ID}"
+env_args+=(--state-sync-env "$STATE/lineage-preflight.env" --data-dir "$generation_dir")
 ML_HOST="$(node_ml_host "$NODE" || true)"
 if [[ -n "$ML_HOST" ]]; then
   # The public hostname may resolve to the shared edge.  The ML runtime must
@@ -201,9 +207,11 @@ scp -q "$NODE_DIR/node-config.json" "$NODE:$REMOTE/node-config.json"
 scp -q "$GENERATED/edge/$NODE.env" "$NODE:$REMOTE/edge.env"
 scp -q "$GENERATED/agents/$NODE.env" "$NODE:$REMOTE/agent.env"
 scp -q "$GENESIS/genesis.json" "$NODE:$REMOTE/genesis.json"
+scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
+scp -q "$ROOT/scripts/verify-join-lineage-state.sh" "$NODE:$REMOTE/verify-join-lineage-state.sh"
 local_ml=(); gpu=()
 [[ -z "$ML_HOST" ]] && local_ml=(--local-ml) && gpu=(--gpu)
-ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}; rm -rf '$REMOTE'"
+ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"
 
 # Persist the explicit external-GPU association as soon as the validator
 # deployment exists.  A join can fail later (for example, while claiming the
@@ -224,14 +232,31 @@ if [[ -n "$ML_HOST" ]]; then
   printf 'READY recorded network GPU %s for %s before activation\n' "$ML_HOST" "$NODE"
 fi
 
-step "Start $NODE"
+step "Start signerless P2P state-sync canary for $NODE"
+record_join_state "$NODE" SYNCING "$ADDRESS"
+ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --canary"
+ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-state-sync-config.sh /srv/dai/deploy/$NODE '$REMOTE/lineage-receipt.json'"
+
+step "Wait until signerless P2P canary for $NODE is synchronized"
+ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./wait-state-sync-canary.sh /srv/dai/deploy/$NODE '${GDC_JOIN_RPC_SERVER_1%/}'"
+record_join_state "$NODE" CAUGHT_UP "$ADDRESS"
+step "Verify $NODE acquired the quorum-attested lineage before enabling its signer"
+ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json'"
+ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./record-state-sync-canary.sh /srv/dai/deploy/$NODE '$REMOTE/lineage-receipt.json'"
+scp -q "$NODE:$REMOTE/lineage-receipt.json" "$RUN/lineage-state-sync-receipt.json"
+printf 'READY retained verified signerless P2P canary receipt=%s\n' "$RUN/lineage-state-sync-receipt.json"
+record_join_state "$NODE" LINEAGE_VERIFIED "$ADDRESS"
+step "Fence existing $NODE signer before promoting recovered state"
+ssh "$NODE" "sudo /srv/dai/deploy/$NODE/fence-existing-signer.sh /srv/dai/deploy/$NODE"
+record_join_state "$NODE" OLD_SIGNER_FENCED "$ADDRESS"
+step "Promote verified $NODE state-sync generation atomically"
+ssh "$NODE" "sudo /srv/dai/deploy/$NODE/promote-state-sync-generation.sh '$NODE' '$generation_dir' '/srv/dai/data/$NODE'"
+step "Enable $NODE consensus signer after lineage verification"
 start_stack "$NODE" /srv/dai/edge
 start_stack "$NODE" /srv/dai/monitoring-agent
-ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
-
-step "Wait until $NODE is synchronized"
-"$ROOT/03-join/wait-synced.sh" "$URL/chain-rpc" "https://$GENESIS_PUBLIC_HOST/chain-rpc"
-record_join_state "$NODE" NODE_SYNCED "$ADDRESS"
+ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --enable-signer"
+ssh "$NODE" "rm -rf '$REMOTE'"
+record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"
 step "Restart $NODE API and colocated MLNode only after synchronization"
 "$ROOT/03-join/restart-api-after-sync.sh" "$NODE"
 participant_body="$(curl --connect-timeout 5 --max-time 10 -fsS "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"

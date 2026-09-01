@@ -43,9 +43,18 @@ source "$ROOT/scripts/profile.sh"
 load_profiles
 topology_contains_node "$NODE" || { echo "node is not configured in inventory: $NODE" >&2; exit 2; }
 
+# A one-host JOIN role intentionally has no local gateway, public-edge, or
+# Telegram role. Its Bootstrap descriptor still binds PUBLIC_EDGE_HOST to a
+# validated seed, which is the only safe auxiliary control-plane origin until
+# the joining Host is admitted. Never call node_public_host with an empty role.
+gateway_public_host="$PUBLIC_EDGE_HOST"
+[[ -z "${GATEWAY_NODE:-}" ]] || gateway_public_host="$(node_public_host "$GATEWAY_NODE")"
+telegram_bot_public_host="$PUBLIC_EDGE_HOST"
+[[ -z "${TELEGRAM_BOT_HOST:-}" ]] || telegram_bot_public_host="$(node_public_host "$TELEGRAM_BOT_HOST")"
+
 prometheus_url='http://127.0.0.1:9099'
-if [[ "$NODE" != "$GATEWAY_NODE" ]]; then
-  prometheus_url="https://$(node_public_host "$GATEWAY_NODE")/ops-prometheus"
+if [[ "$NODE" != "${GATEWAY_NODE:-}" ]]; then
+  prometheus_url="https://${gateway_public_host}/ops-prometheus"
 fi
 
 gateway_admission_protocols_json='{}'
@@ -75,8 +84,8 @@ for protocol in "${gateway_supported_protocols[@]}"; do
     '. + {($protocol):{binary:$url,sha256:$sha256}}' <<<"$gateway_admission_protocols_json")"
 done
 
-gateway_admission_status_url="https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
-if [[ "$NODE" == "$GATEWAY_NODE" && "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
+gateway_admission_status_url="https://${gateway_public_host}/ops-gateway-admission-state"
+if [[ -n "${GATEWAY_NODE:-}" && "$NODE" == "$GATEWAY_NODE" && "$NODE" == "${PUBLIC_EDGE_NODE:-}" ]]; then
   gateway_admission_status_url='http://127.0.0.1:18084/v1/status'
 fi
 
@@ -87,8 +96,8 @@ values=(
   "MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE"
   "GRAFANA_IMAGE=$GRAFANA_IMAGE"
   "PYTHON_IMAGE=${PYTHON_IMAGE:-python:3.13-alpine}"
-  "GATEWAY_PUBLIC_HOST=$(node_public_host "$GATEWAY_NODE")"
-  "GDC_GATEWAY_ADMISSION_UPSTREAM=http://$(node_public_host "$GATEWAY_NODE"):18080"
+  "GATEWAY_PUBLIC_HOST=$gateway_public_host"
+  "GDC_GATEWAY_ADMISSION_UPSTREAM=http://${gateway_public_host}:18080"
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
   # identity and positive capacity instead of deployment intent. The gateway
@@ -107,7 +116,7 @@ values=(
   "GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES=${GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES:-1048576}"
   "GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK=${GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK:-1}"
   "GDC_GATEWAY_ADMISSION_AUDIT_FILE=/edge/status/gateway-admission.jsonl"
-  "TELEGRAM_BOT_PUBLIC_HOST=$(node_public_host "$TELEGRAM_BOT_HOST")"
+  "TELEGRAM_BOT_PUBLIC_HOST=$telegram_bot_public_host"
   "PUBLIC_GRAFANA_PROMETHEUS_URL=$prometheus_url"
   "MONITORING_CIDR=$MONITORING_CIDR"
   "PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR"

@@ -8,6 +8,10 @@ x-logging: &logging
 
 services:
   tmkms:
+    # A cold JOIN can download and verify state without a consensus signer.
+    # The JOIN phase enables this profile only after independent checkpoints
+    # prove the acquired lineage.
+    profiles: [signer]
     image: ${TMKMS_IMAGE:-ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15}
     restart: unless-stopped
     entrypoint: ["sh", "/usr/local/bin/gdc-tmkms-entrypoint"]
@@ -38,6 +42,18 @@ services:
       RPC_SERVER_URL_2: ${RPC_SERVER_URL_2:?RPC_SERVER_URL_2 is required}
       SYNC_WITH_SNAPSHOTS: ${SYNC_WITH_SNAPSHOTS:-false}
       TRUSTED_BLOCK_PERIOD: ${TRUSTED_BLOCK_PERIOD:-2000}
+      # The upstream init script otherwise derives these values from exactly
+      # one seed RPC.  A JOIN receipt is authoritative only when the chosen
+      # two-origin trust tuple is written into config.toml after that helper.
+      CONFIG_statesync__enable: ${GDC_JOIN_STATESYNC_ENABLE:-false}
+      CONFIG_statesync__rpc_servers: ${GDC_JOIN_RPC_SERVERS:-}
+      CONFIG_statesync__trust_height: ${GDC_JOIN_TRUST_HEIGHT:-0}
+      CONFIG_statesync__trust_hash: ${GDC_JOIN_TRUST_HASH:-}
+      CONFIG_p2p__persistent_peers: ${GDC_JOIN_SNAPSHOT_PEERS:-}
+      # A cold state-sync canary must use its generated, unregistered local
+      # validator key.  The promotion run restores this listener and starts
+      # TMKMS only after the canary's lineage evidence has been recorded.
+      CONFIG_priv_validator_laddr: ${CONFIG_PRIV_VALIDATOR_LADDR:-tcp://0.0.0.0:26658}
       SNAPSHOT_INTERVAL: ${SNAPSHOT_INTERVAL:-1000}
       SNAPSHOT_KEEP_RECENT: ${SNAPSHOT_KEEP_RECENT:-5}
       P2P_EXTERNAL_ADDRESS: ${P2P_EXTERNAL_ADDRESS:?P2P_EXTERNAL_ADDRESS is required}
@@ -61,7 +77,9 @@ services:
     expose:
       - "${TMKMS_PORT:-26658}"
     depends_on:
-      - tmkms
+      tmkms:
+        condition: service_started
+        required: false
     logging: *logging
 
   payload-postgres:
