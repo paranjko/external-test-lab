@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-usage() { echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS --account-public FILE [--seeds-file FILE|--bootstrap] --secrets-dir DIR [--state-sync-env FILE] [--poc-callback-url URL --ml-callback-bind IP] --output FILE" >&2; }
-INVENTORY=''; NODE=''; ACCOUNT=''; SEEDS_FILE=''; SECRETS=''; OUTPUT=''; STATE_SYNC_ENV=''; BOOTSTRAP=false; POC_CALLBACK_URL='http://api:9100'; ML_CALLBACK_BIND='127.0.0.1'
+usage() { echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS --account-public FILE [--seeds-file FILE|--bootstrap] --secrets-dir DIR [--state-sync-env FILE --data-dir DIR] [--poc-callback-url URL --ml-callback-bind IP] --output FILE" >&2; }
+INVENTORY=''; NODE=''; ACCOUNT=''; SEEDS_FILE=''; SECRETS=''; OUTPUT=''; STATE_SYNC_ENV=''; DATA_DIR_OVERRIDE=''; BOOTSTRAP=false; POC_CALLBACK_URL='http://api:9100'; ML_CALLBACK_BIND='127.0.0.1'
 while (($#)); do case "$1" in
   --inventory) INVENTORY="$2"; shift 2 ;;
   --node-name) NODE="$2"; shift 2 ;;
@@ -11,12 +11,14 @@ while (($#)); do case "$1" in
   --bootstrap) BOOTSTRAP=true; shift ;;
   --secrets-dir) SECRETS="$2"; shift 2 ;;
   --state-sync-env) STATE_SYNC_ENV="$2"; shift 2 ;;
+  --data-dir) DATA_DIR_OVERRIDE="$2"; shift 2 ;;
   --poc-callback-url) POC_CALLBACK_URL="$2"; shift 2 ;;
   --ml-callback-bind) ML_CALLBACK_BIND="$2"; shift 2 ;;
   --output) OUTPUT="$2"; shift 2 ;;
   *) usage; exit 2 ;;
 esac; done
 [[ "$NODE" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { usage; exit 2; }
+[[ -z "$DATA_DIR_OVERRIDE" || "$DATA_DIR_OVERRIDE" =~ ^/srv/dai/data/[a-z0-9][a-z0-9_.-]*$ ]] || { echo 'state-sync data directory must be under /srv/dai/data' >&2; exit 2; }
 [[ "$POC_CALLBACK_URL" =~ ^http://([0-9]{1,3}\.){3}[0-9]{1,3}:9100$|^http://api:9100$ ]] || { echo 'PoC callback URL must be http://api:9100 or an IPv4 address on port 9100' >&2; exit 2; }
 [[ "$ML_CALLBACK_BIND" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo 'ML callback bind must be an IPv4 address' >&2; exit 2; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -50,6 +52,8 @@ if [[ -n "$STATE_SYNC_ENV" ]]; then
     || { echo 'state-sync environment is incomplete' >&2; exit 1; }
   [[ "${GDC_JOIN_RPC_SERVER_1:-}" =~ ^https://[A-Za-z0-9.-]+/chain-rpc/$ && "${GDC_JOIN_RPC_SERVER_2:-}" =~ ^https://[A-Za-z0-9.-]+/chain-rpc/$ && "$GDC_JOIN_RPC_SERVER_1" != "$GDC_JOIN_RPC_SERVER_2" ]] \
     || { echo 'state-sync environment lacks independent RPC URLs' >&2; exit 1; }
+  [[ "${GDC_JOIN_SNAPSHOT_PEERS:-}" =~ ^[0-9a-f]{40}@tcp://[A-Za-z0-9.-]+:[0-9]{2,5}(,[0-9a-f]{40}@tcp://[A-Za-z0-9.-]+:[0-9]{2,5})+$ ]] \
+    || { echo 'state-sync environment lacks two P2P snapshot providers' >&2; exit 1; }
 fi
 KEYRING_PASSWORD="$(<"$SECRETS/$NODE.keyring")"
 POSTGRES_PASSWORD="$(<"$SECRETS/$NODE.postgres")"
@@ -60,12 +64,16 @@ write_env "$OUTPUT" \
   "PUBLIC_HOST=$PUBLIC_HOST" "PUBLIC_URL=https://$PUBLIC_HOST" "P2P_PORT=$P2P_PORT" \
   "GDC_STOP_POC_AT_WINDDOWN=${GDC_STOP_POC_AT_WINDDOWN:-true}" \
   "P2P_EXTERNAL_ADDRESS=tcp://$PUBLIC_HOST:$P2P_PORT" "LOCAL_PROXY_PORT=8000" \
-  "DATA_DIR=${DATA_ROOT%/}/$NODE" "HF_HOME=$HF_CACHE_ROOT" "GENESIS_FILE=$GENESIS_INSTALL_PATH" \
+  "DATA_DIR=${DATA_DIR_OVERRIDE:-${DATA_ROOT%/}/$NODE}" "HF_HOME=$HF_CACHE_ROOT" "GENESIS_FILE=$GENESIS_INSTALL_PATH" \
   "PROXY_BIND_ADDRESS=$([[ "$IS_GENESIS" == true ]] && echo 0.0.0.0 || echo 127.0.0.1)" \
   "NODE_CONFIG_FILE=./node-config.json" "ACCOUNT_ADDRESS=$ADDRESS" "ACCOUNT_PUBKEY=$PUBKEY" \
   "KEY_NAME=$NODE-warm" "KEYRING_PASSWORD=$KEYRING_PASSWORD" "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
   "DAPI_API__POC_CALLBACK_URL=$POC_CALLBACK_URL" "ML_CALLBACK_BIND=$ML_CALLBACK_BIND" \
   "IS_GENESIS=$IS_GENESIS" "INIT_ONLY=false" "GENESIS_SEEDS=$SEEDS" "SYNC_WITH_SNAPSHOTS=$([[ -n "$STATE_SYNC_ENV" ]] && echo true || echo false)" \
+  "GDC_JOIN_STATESYNC_ENABLE=$([[ -n "$STATE_SYNC_ENV" ]] && echo true || echo false)" \
+  "GDC_JOIN_RPC_SERVERS=${GDC_JOIN_RPC_SERVER_1:-},${GDC_JOIN_RPC_SERVER_2:-}" \
+  "GDC_JOIN_TRUST_HEIGHT=${GDC_JOIN_TRUST_HEIGHT:-0}" "GDC_JOIN_TRUST_HASH=${GDC_JOIN_TRUST_HASH:-}" \
+  "GDC_JOIN_SNAPSHOT_PEERS=${GDC_JOIN_SNAPSHOT_PEERS:-}" \
   "TRUSTED_BLOCK_PERIOD=${GDC_JOIN_TRUSTED_BLOCK_PERIOD:-2000}" \
   "SEED_API_URL=https://$GENESIS_PUBLIC_HOST" "SEED_NODE_RPC_URL=${GDC_JOIN_RPC_SERVER_1:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}" \
   "SEED_NODE_P2P_URL=tcp://$GENESIS_PUBLIC_HOST:$GENESIS_P2P_PORT" \

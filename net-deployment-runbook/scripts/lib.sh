@@ -74,14 +74,14 @@ ensure_run_manifest() {
         || die 'run_resume_mismatch: retained run does not match the currently observed network software fingerprint'
     fi
     # A JOIN may resume only the exact preflight that supplied its trust and
-    # snapshot inputs. The network fingerprint alone intentionally does not
-    # authorize a newer snapshot or an expired trust tuple.
-    for key in join_bootstrap_mode join_trust_height join_trust_hash join_snapshot_height lineage_receipt_sha256; do
+    # P2P-provider inputs. The network fingerprint alone intentionally does
+    # not authorize a different trust tuple or snapshot-provider set.
+    for key in join_bootstrap_mode join_trust_height join_trust_hash join_snapshot_peers lineage_receipt_sha256; do
       case "$key" in
         join_bootstrap_mode) expected="${GDC_JOIN_BOOTSTRAP_MODE:-}" ;;
         join_trust_height) expected="${GDC_JOIN_TRUST_HEIGHT:-}" ;;
         join_trust_hash) expected="${GDC_JOIN_TRUST_HASH:-}" ;;
-        join_snapshot_height) expected="${GDC_JOIN_SNAPSHOT_HEIGHT:-}" ;;
+        join_snapshot_peers) expected="${GDC_JOIN_SNAPSHOT_PEERS:-}" ;;
         lineage_receipt_sha256) expected="${GDC_JOIN_LINEAGE_RECEIPT_SHA256:-}" ;;
       esac
       [[ -z "$expected" ]] && continue
@@ -115,7 +115,7 @@ ensure_run_manifest() {
     [[ -z "${GDC_JOIN_BOOTSTRAP_MODE:-}" ]] || printf 'join_bootstrap_mode=%s\n' "$GDC_JOIN_BOOTSTRAP_MODE"
     [[ -z "${GDC_JOIN_TRUST_HEIGHT:-}" ]] || printf 'join_trust_height=%s\n' "$GDC_JOIN_TRUST_HEIGHT"
     [[ -z "${GDC_JOIN_TRUST_HASH:-}" ]] || printf 'join_trust_hash=%s\n' "$GDC_JOIN_TRUST_HASH"
-    [[ -z "${GDC_JOIN_SNAPSHOT_HEIGHT:-}" ]] || printf 'join_snapshot_height=%s\n' "$GDC_JOIN_SNAPSHOT_HEIGHT"
+    [[ -z "${GDC_JOIN_SNAPSHOT_PEERS:-}" ]] || printf 'join_snapshot_peers=%s\n' "$GDC_JOIN_SNAPSHOT_PEERS"
     [[ -z "${GDC_JOIN_LINEAGE_RECEIPT_SHA256:-}" ]] || printf 'lineage_receipt_sha256=%s\n' "$GDC_JOIN_LINEAGE_RECEIPT_SHA256"
     [[ -z "${GDC_JOIN_RECOVERY_FROM_RUN_ID:-}" ]] || printf 'recovery_of_run_id=%s\n' "$GDC_JOIN_RECOVERY_FROM_RUN_ID"
     [[ -z "${GDC_INVOCATION_COMMAND:-}" ]] || printf 'invocation_command=%q\n' "$GDC_INVOCATION_COMMAND"

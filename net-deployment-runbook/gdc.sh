@@ -936,14 +936,14 @@ case "$COMMAND" in
     export GDC_JOIN_LINEAGE_FAILURE_FILE
     rm -f "$GDC_JOIN_LINEAGE_FAILURE_FILE"
     run_join_preflight lineage-preflight refused lineage lineage-preflight \
-      'Independent RPC lineage, trust, and compatible state-sync snapshot were not established.' \
+      'Independent RPC lineage and trust were not established for native P2P state sync.' \
       "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$join_bootstrap_file" --composition-env "$join_composition" \
         --receipt "$join_lineage_receipt" --env "$join_lineage_env"
     # The preflight writes fixed-name, shell-quoted values only after it has
     # bound them to the observed runtime fingerprint and two fault domains.
     # shellcheck disable=SC1090
     source "$join_lineage_env"
-    export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_HEIGHT
+    export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
     export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
     GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
     export GDC_JOIN_LINEAGE_RECEIPT_SHA256

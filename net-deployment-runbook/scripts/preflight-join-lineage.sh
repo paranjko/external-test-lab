@@ -63,6 +63,15 @@ one_record() {
   printf '%s' "${unique[0]}"
 }
 api_for_rpc() { local rpc="$1"; printf '%s' "${rpc%/chain-rpc}"; }
+p2p_for_rpc() {
+  local rpc="$1" index node_id p2p
+  index="$(jq -r --arg rpc "$rpc" '.seeds | to_entries[] | select(.value.rpc == $rpc) | .key' "$BOOTSTRAP" | head -1)"
+  [[ "$index" =~ ^[0-9]+$ ]] || return 1
+  node_id="$(jq -r ".seeds[$index].node_id" "$BOOTSTRAP")"
+  p2p="$(jq -r ".seeds[$index].p2p" "$BOOTSTRAP")"
+  [[ "$node_id" =~ ^[0-9a-f]{40}$ && "$p2p" =~ ^tcp://[A-Za-z0-9.-]+:[0-9]{2,5}$ ]] || return 1
+  printf '%s@%s' "$node_id" "$p2p"
+}
 
 mapfile -t rpcs < <(jq -r '.seeds[].rpc' "$BOOTSTRAP")
 (( ${#rpcs[@]} >= 2 )) || die rpc_quorum_conflict 'Bootstrap has fewer than two RPC seeds'
@@ -76,20 +85,55 @@ for rpc in "${rpcs[@]}"; do
   jq -e --arg chain "$GDC_NETWORK_CHAIN_ID" '.result.node_info.network == $chain and (.result.sync_info.latest_block_height|tonumber) > 0' "$status" >/dev/null || continue
   good_rpcs+=("$rpc"); domains+=("$domain"); heights+=("$(jq -r '.result.sync_info.latest_block_height' "$status")")
 done
-(( ${#good_rpcs[@]} >= 2 )) || die rpc_quorum_conflict 'fewer than two readable RPC observations attest the selected chain'
 [[ "$(printf '%s\n' "${domains[@]}" | LC_ALL=C sort -u | wc -l)" -ge 2 ]] || die rpc_fault_domain_alias 'two RPC URLs resolve to one fault domain'
+(( ${#good_rpcs[@]} >= 2 )) || die rpc_quorum_conflict 'fewer than two readable RPC observations attest the selected chain'
 
-# Keep one endpoint per domain. Extra mirrors cannot turn a one-domain quorum
-# into two observations.
+# Choose the highest attested tip. A status height is only a proposal: two
+# independent domains must serve the same header/AppHash there. A failed block
+# read is a non-vote, while a malformed successful response is unsafe. One
+# outlier is tolerated; A,A,B,C is not.
 declare -a quorum_rpcs=() quorum_domains=()
-for i in "${!good_rpcs[@]}"; do
-  if [[ " ${quorum_domains[*]} " != *" ${domains[$i]} "* ]]; then
-    quorum_rpcs+=("${good_rpcs[$i]}"); quorum_domains+=("${domains[$i]}")
-  fi
-done
-quorum_rpcs=("${quorum_rpcs[@]:0:2}"); quorum_domains=("${quorum_domains[@]:0:2}")
-mapfile -t ordered_heights < <(printf '%s\n' "${heights[@]}" | LC_ALL=C sort -n)
-tip="${ordered_heights[0]}"; (( tip > period )) || die trust_expired 'network tip is below the configured trust window'
+select_tip_quorum() {
+  local candidate i file record best='' best_count=0 group_count=0 responding count
+  local -a records=() indices=() groups=() candidates=() candidate_domains=()
+  mapfile -t candidates < <(printf '%s\n' "${heights[@]}" | LC_ALL=C sort -nr -u)
+  for candidate in "${candidates[@]}"; do
+    records=(); indices=(); candidate_domains=()
+    for i in "${!good_rpcs[@]}"; do
+      (( heights[i] >= candidate )) || continue
+      [[ " ${candidate_domains[*]} " == *" ${domains[$i]} "* ]] && continue
+      file="$tmp/tip-${candidate}-${i}.json"
+      curl -fsS --connect-timeout 5 --max-time 15 "${good_rpcs[$i]%/}/block?height=$candidate" >"$file" 2>/dev/null || continue
+      record="$(record_from_block <"$file")" || die rpc_quorum_conflict "malformed tip checkpoint from ${good_rpcs[$i]}"
+      records+=("$record"); indices+=("$i"); candidate_domains+=("${domains[$i]}")
+    done
+    (( ${#records[@]} >= 2 )) || continue
+    mapfile -t groups < <(printf '%s\n' "${records[@]}" | LC_ALL=C sort | uniq -c)
+    best=''; best_count=0; group_count=0
+    for group in "${groups[@]}"; do
+      count="$(awk '{print $1}' <<<"$group")"
+      # shellcheck disable=SC2001 # preserve the JSON record after uniq's count
+      record="$(sed 's/^[[:space:]]*[0-9][0-9]*[[:space:]]*//' <<<"$group")"
+      if (( count >= 2 )); then
+        group_count=$((group_count + 1))
+        if (( count > best_count )); then best="$record"; best_count="$count"; fi
+      fi
+    done
+    responding="${#records[@]}"
+    (( group_count == 1 && best_count >= 2 && responding - best_count <= 1 )) || continue
+    quorum_rpcs=(); quorum_domains=()
+    for i in "${!records[@]}"; do
+      [[ "${records[$i]}" == "$best" ]] || continue
+      quorum_rpcs+=("${good_rpcs[${indices[$i]}]}")
+      quorum_domains+=("${domains[${indices[$i]}]}")
+    done
+    tip="$candidate"
+    return 0
+  done
+  return 1
+}
+select_tip_quorum || die rpc_quorum_conflict 'no unique 2-of-3 RPC header/AppHash quorum exists at a common tip'
+(( tip > period )) || die trust_expired 'quorum-attested network tip is below the configured trust window'
 trust_height=$((tip - period))
 
 declare -a early_records=() trust_records=() applied_heights=()
@@ -110,24 +154,19 @@ done
 early="$(one_record early "${early_records[@]}")"
 trust="$(one_record trust "${trust_records[@]}")"
 post_height="$(one_record post_upgrade_height "${applied_heights[@]}")"; post_height=$((post_height + 1))
-declare -a post_records=() snapshot_records=()
+declare -a post_records=() snapshot_providers=()
 for rpc in "${quorum_rpcs[@]}"; do
   post_file="$tmp/post-${#post_records[@]}.json"
   curl -fsS --connect-timeout 5 --max-time 15 "${rpc%/}/block?height=$post_height" >"$post_file" 2>/dev/null || die rpc_quorum_conflict "cannot read post-upgrade checkpoint from $rpc"
   post_records+=("$(record_from_block <"$post_file")")
-  snapshots="$tmp/snapshots-${#snapshot_records[@]}.json"
-  curl -fsS --connect-timeout 5 --max-time 15 "${rpc%/}/snapshots" >"$snapshots" 2>/dev/null || die snapshot_unavailable "no snapshot inventory at $rpc"
-  snapshot_records+=("$(jq -cer --argjson post "$post_height" '
-    (.result.snapshots // [])
-    | map(select((.height|tonumber) > $post and (.format|tonumber) > 0 and (.chunks|tonumber) > 0))
-    | map({height:(.height|tonumber),format:(.format|tonumber),chunks:(.chunks|tonumber),hash:(.hash|ascii_downcase)})
-    | sort_by(.height,.format,.chunks,.hash) | last
-  ' "$snapshots")")
+  provider="$(p2p_for_rpc "$rpc")" || die configuration "Bootstrap has no valid P2P provider for quorum RPC $rpc"
+  snapshot_providers+=("$provider")
 done
 post="$(one_record post_upgrade "${post_records[@]}")"
-snapshot="$(one_record snapshot "${snapshot_records[@]}")"
-[[ "$snapshot" != null ]] || die snapshot_unavailable 'no compatible post-upgrade snapshot is available from two independent domains'
-[[ "$(jq -r '.hash | type == "string" and test("^[0-9a-f]{64}$")' <<<"$snapshot")" == true ]] || die snapshot_incompatible 'snapshot format or hash is unsupported'
+# CometBFT v0.38 has no HTTP /snapshots RPC. Snapshot metadata and chunks are
+# discovered through P2P channels and ABCI; actual availability is therefore
+# proven by the signerless canary, not by a made-up HTTP endpoint.
+snapshot="$(printf '%s\n' "${snapshot_providers[@]}" | jq -R . | jq -s '{discovery:"p2p_canary_pending",providers:.}')"
 
 expires_at="$(date -u -d "+${ttl} seconds" +%FT%TZ)"
 empty_digest="$(printf '' | sha256sum | awk '{print $1}')"
@@ -140,16 +179,16 @@ jq -n \
   --argjson early "$early" --argjson post "$post" --argjson trust "$trust" --argjson snapshot "$snapshot" \
   --argjson domains "$(for i in "${!quorum_rpcs[@]}"; do jq -cn --arg id "${quorum_domains[$i]}" --arg rpc "${quorum_rpcs[$i]}" --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" '{id:$id,rpc_url:$rpc,chain_id:$chain,genesis_sha256:$genesis}'; done | jq -s .)" \
   --arg empty "$empty_digest" \
-  '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{observed_runtime_profile:$profile,network_fingerprint:$fingerprint,profile_hash:$profile_hash,core_version:$core_version,core_commit:$core_commit,dapi_version:$dapi_version,dapi_commit:$dapi_commit,image_digest:($image|split("@")[1])},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,trust:($trust+{expires_at:$expires}),snapshot:{rpc_url:$domains[0].rpc_url,height:$snapshot.height,format:"cometbft_state_sync",runtime_compatible:true}},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:true},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$RECEIPT"
+  '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{observed_runtime_profile:$profile,network_fingerprint:$fingerprint,profile_hash:$profile_hash,core_version:$core_version,core_commit:$core_commit,dapi_version:$dapi_version,dapi_commit:$dapi_commit,image_digest:($image|split("@")[1])},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,trust:($trust+{expires_at:$expires}),snapshot:$snapshot},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$RECEIPT"
 {
   printf 'GDC_JOIN_BOOTSTRAP_MODE=%q\n' state_sync
   printf 'GDC_JOIN_TRUST_HEIGHT=%q\n' "$(jq -r .height <<<"$trust")"
   printf 'GDC_JOIN_TRUST_HASH=%q\n' "$(jq -r .block_id <<<"$trust")"
-  printf 'GDC_JOIN_SNAPSHOT_HEIGHT=%q\n' "$(jq -r .height <<<"$snapshot")"
+  printf 'GDC_JOIN_SNAPSHOT_PEERS=%q\n' "$(IFS=,; echo "${snapshot_providers[*]}")"
   printf 'GDC_JOIN_RPC_SERVER_1=%q\n' "${quorum_rpcs[0]}/"
   printf 'GDC_JOIN_RPC_SERVER_2=%q\n' "${quorum_rpcs[1]}/"
   printf 'GDC_JOIN_TRUSTED_BLOCK_PERIOD=%q\n' "$period"
   printf 'GDC_JOIN_LINEAGE_RECEIPT=%q\n' "$RECEIPT"
 } >"$ENV_FILE"
 chmod 0600 "$RECEIPT" "$ENV_FILE"
-printf 'PASS JOIN lineage preflight mode=state_sync trust_height=%s snapshot_height=%s fault_domains=%s receipt=%s\n' "$(jq -r .height <<<"$trust")" "$(jq -r .height <<<"$snapshot")" "${#quorum_rpcs[@]}" "$RECEIPT"
+printf 'PASS JOIN lineage preflight mode=state_sync trust_height=%s p2p_snapshot_providers=%s fault_domains=%s receipt=%s\n' "$(jq -r .height <<<"$trust")" "${#snapshot_providers[@]}" "${#quorum_rpcs[@]}" "$RECEIPT"

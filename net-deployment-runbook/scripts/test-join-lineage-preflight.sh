@@ -27,6 +27,7 @@ block() {
   local height="$1" block app
   case "$height" in
     5) block=1111111111111111111111111111111111111111111111111111111111111111; app=2222222222222222222222222222222222222222222222222222222222222222 ;;
+    5000) block=7777777777777777777777777777777777777777777777777777777777777777; app=8888888888888888888888888888888888888888888888888888888888888888 ;;
     3000) block=3333333333333333333333333333333333333333333333333333333333333333; app=4444444444444444444444444444444444444444444444444444444444444444 ;;
     101) block=5555555555555555555555555555555555555555555555555555555555555555; app=6666666666666666666666666666666666666666666666666666666666666666 ;;
     *) exit 22 ;;
@@ -53,12 +54,17 @@ run_preflight() {
 run_preflight >"$tmp/out"
 jq -e '
   .runtime.observed_runtime_profile == "v2026.08.06" and
-  .bootstrap.mode == "state_sync" and .bootstrap.snapshot.height == 200 and
+  .bootstrap.mode == "state_sync" and
+  .bootstrap.snapshot.discovery == "p2p_canary_pending" and
+  (.bootstrap.snapshot.providers | length == 2) and
   (.fault_domains | length == 2) and .signer.state == "PREPARED" and
   .result.terminal_state == "prepared"
 ' "$tmp/receipt.json" >/dev/null
 grep -qx 'GDC_JOIN_BOOTSTRAP_MODE=state_sync' "$tmp/lineage.env"
 grep -qx 'GDC_JOIN_RPC_SERVER_1=https://rpc-a.example.test/chain-rpc/' "$tmp/lineage.env"
+# shellcheck source=/dev/null
+source "$tmp/lineage.env"
+[[ "$GDC_JOIN_SNAPSHOT_PEERS" == '0123456789abcdef0123456789abcdef01234567@tcp://rpc-a.example.test:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://rpc-b.example.test:5000' ]]
 
 if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=one,rpc-b.example.test=one' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --composition-env "$tmp/composition.env" --receipt "$tmp/alias.json" --env "$tmp/alias.env" >"$tmp/alias.out" 2>"$tmp/alias.err"; then
@@ -66,10 +72,7 @@ if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=one,rpc-b
 fi
 grep -Fq 'lineage_rpc_fault_domain_alias:' "$tmp/alias.err"
 
-if PATH="$tmp/bin:$PATH" GDC_TEST_NO_SNAPSHOT=true GDC_JOIN_LINEAGE_FAILURE_FILE="$tmp/failure.category" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' \
-  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --composition-env "$tmp/composition.env" --receipt "$tmp/missing.json" --env "$tmp/missing.env" >"$tmp/missing.out" 2>"$tmp/missing.err"; then
-  echo 'missing state-sync snapshot unexpectedly passed' >&2; exit 1
-fi
-grep -Fq 'lineage_snapshot_unavailable:' "$tmp/missing.err"
-grep -qx snapshot_unavailable "$tmp/failure.category"
-printf 'PASS JOIN lineage preflight requires independent RPCs and a compatible snapshot\n'
+PATH="$tmp/bin:$PATH" GDC_TEST_NO_SNAPSHOT=true GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --composition-env "$tmp/composition.env" --receipt "$tmp/no-http.json" --env "$tmp/no-http.env" >"$tmp/no-http.out"
+jq -e '.bootstrap.snapshot.discovery == "p2p_canary_pending"' "$tmp/no-http.json" >/dev/null
+printf 'PASS JOIN lineage preflight requires independent RPCs and defers snapshot discovery to P2P\n'
