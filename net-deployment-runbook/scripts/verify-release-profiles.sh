@@ -82,7 +82,8 @@ assert_registry_digest() {
 
 for item in \
   'v2026.07.23|release/v0.2.14' \
-  'v2026.08.06|release/v0.2.15'
+  'v2026.08.06|release/v0.2.15' \
+  'v2026.08.13|release/v0.2.15'
 do
   IFS='|' read -r profile ref <<<"$item"
   GDC_RELEASE_PROFILE="$profile" load_profiles

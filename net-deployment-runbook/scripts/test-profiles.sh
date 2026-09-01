@@ -376,7 +376,7 @@ if grep -Fq 'ssh_ready gdc-node4' "$ROOT/scripts/phase-bootstrap-access.sh"; the
   exit 1
 fi
 
-for release in v2026.07.23 v2026.08.06; do
+for release in v2026.07.23 v2026.08.06 v2026.08.13; do
   GDC_RELEASE_PROFILE="$release" GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
   [[ "$GDC_DEPLOYMENT_PROFILE" == community-lab ]]
   [[ "$GDC_OPERATOR_SERVICES_PROFILE" == gdc-lab ]]
@@ -413,13 +413,22 @@ for release in v2026.07.23 v2026.08.06; do
     [[ "$DAPI_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-post3/decentralized-api-amd64.zip ]]
     [[ "$INFERENCED_UPGRADE_SHA256" == 91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e ]]
     [[ "$DAPI_UPGRADE_SHA256" == 8cfa7345f5b7f968d5a1b765837b8319084c02d3dd2691b698c368774e20b55e ]]
+  elif [[ "$release" == v2026.08.13 ]]; then
+    [[ "$GONKA_HOST_STACK_COMMIT" == ce33c851282b8f4c0f63d78d46ddd4d8bb248207 ]]
+    [[ "$GONKA_HOST_STACK_DOC_SHA256" == 5a69a2d82f77b4ecd1e207af1119063f32693afdc01bca58433f71ffe4061f82 ]]
+    [[ "$GONKA_HOST_STACK_COMPOSE_SHA256" == d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94 ]]
+    [[ "$DAPI_SOURCE_REF" == release/v0.2.15-post5 ]]
+    [[ "$DAPI_COMMIT" == 6009b539a36b83169835ebbf1dcbbbe1b7eb1ec7 ]]
+    [[ "$DAPI_IMAGE" == ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c ]]
+    [[ "$DAPI_UPGRADE_URL" == https://github.com/product-science/race-releases/releases/download/release/v0.2.15-post5/decentralized-api-amd64.zip ]]
+    [[ "$DAPI_UPGRADE_SHA256" == f2b880371f782ff531510bf294b91b1f2945ee366780ef6f7583b91b3bc34ee7 ]]
   fi
   summary="$(profile_summary)"
   grep -qx "inferenced_image=$INFERENCED_IMAGE" <<<"$summary"
   grep -qx "dapi_image=$DAPI_IMAGE" <<<"$summary"
   grep -qx "mlnode_generic_image=$MLNODE_GENERIC_IMAGE" <<<"$summary"
   grep -qx "bridge_image=$BRIDGE_IMAGE" <<<"$summary"
-  if [[ "$release" == v2026.08.06 ]]; then
+  if [[ "$release" == v2026.08.06 || "$release" == v2026.08.13 ]]; then
     grep -qx "gonka_host_stack_commit=$GONKA_HOST_STACK_COMMIT" <<<"$summary"
     grep -qx "dapi_source_ref=$DAPI_SOURCE_REF" <<<"$summary"
     grep -qx "dapi_commit=$DAPI_COMMIT" <<<"$summary"
@@ -579,6 +588,7 @@ grep -Fq 'stage-network-bootstrap.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'claim-devnet-faucet.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'JOIN_BOOTSTRAP_FORMAT=1' "$ROOT/profiles/releases/v2026.07.23.lock"
 grep -Fq 'JOIN_BOOTSTRAP_FORMAT=1' "$ROOT/profiles/releases/v2026.08.06.lock"
+! grep -Eq '^(GENESIS_|DEVSHARD_|JOIN_BOOTSTRAP_FORMAT=)' "$ROOT/profiles/releases/v2026.08.13.lock"
 ! grep -Rq 'JOIN_BOOTSTRAP_FORMAT\|join_bootstrap_format' "$ROOT/scripts" --exclude='test-*' --exclude='release-candidate.py'
 grep -Fq 'GDC_FAUCET_CLAIM_NGONKA' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'GDC_FAUCET_INITIAL_NGONKA' "$ROOT/01-identities-genesis/build-genesis.sh"

@@ -27,11 +27,28 @@ complete lock are not accepted by `gdc.sh`.
 | --- | --- | --- |
 | v2026.07.23 | release/v0.2.14 | 2bfd85c958732992c7a9c5be1d796affe29f3ab4 | v0.2.14 executed on mainnet |
 | v2026.08.06 | release/v0.2.15 | 4d687ed6782bcea3931d2d9135bf322f84e190ab | latest upstream host-stack snapshot |
+| v2026.08.13 | release/v0.2.15 | 4d687ed6782bcea3931d2d9135bf322f84e190ab | Mainnet-observed core plus DAPI post5 |
 
 `v2026.08.06` additionally pins
 [host-stack snapshot `ce33c851`](https://github.com/gonka-ai/gonka/blob/ce33c851282b8f4c0f63d78d46ddd4d8bb248207/docs/host-stack-latest.md): DAPI
 `release/v0.2.15-post3` and the `0.2.15` bridge image. The snapshot document
 and upstream Compose file are hash-bound in the release lock.
+
+`v2026.08.13` preserves that compatible container stack and pins the later
+[DAPI `release/v0.2.15-post5`](https://github.com/gonka-ai/gonka/tree/6009b539a36b83169835ebbf1dcbbbe1b7eb1ec7)
+Cosmovisor binary published by the upstream
+[race-releases repository](https://github.com/product-science/race-releases/releases/tag/release/v0.2.15-post5).
+Both canonical Mainnet seeds reported core `v0.2.15` at `4d687ed6` and DAPI
+`v0.2.15-post5` at `6009b539` when this profile was verified on 2026-09-01.
+No post5 API container or replacement full-stack snapshot was published, so
+the profile does not invent either one.
+
+A release profile describes a reproducible software target. It does not own
+the chain ID, Genesis, seeds, governed DevShard allowlist, epoch settings or
+other protocol state. Those values come from the network Bootstrap, live chain
+state and the selected deployment profile. MLNode versions observed across
+Mainnet are heterogeneous; the lock keeps the documented compatible MLNode
+baseline and does not claim that every operator runs the same ML image.
 
 ## Verification findings
 
@@ -45,6 +62,9 @@ The dated snapshots preserve three baseline corrections:
 The v2026.08.06 chain remains pinned to its core tag. Its host stack follows
 the later upstream snapshot: DAPI `0.2.15-post3` (container and Cosmovisor
 asset) and bridge `0.2.15`, each pinned by digest.
+The v2026.08.13 profile records the subsequent Mainnet DAPI-only rollout. Its
+container stays at post3 while the executed DAPI binary is post5, matching the
+upstream Cosmovisor deployment model and the public Mainnet version readback.
 Registry verification also exposed that upstream Explorer latest had moved.
 Explorer therefore remains digest-pinned as operator software and does not
 participate in the network release hash.

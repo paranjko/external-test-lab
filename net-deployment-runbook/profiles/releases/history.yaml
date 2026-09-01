@@ -1,5 +1,5 @@
 schema_version: 1
-observed_at: "2026-08-09"
+observed_at: "2026-09-01"
 sources:
   network_updates: https://gonka.ai/docs/network-updates/
   repository: https://github.com/gonka-ai/gonka
@@ -91,6 +91,16 @@ component_updates:
     version: v0.2.15
     upstream_commit: f040d0a5b5ef207a0c431894c9f9e2608f9d3073
     kind: compose_tag_correction
+  - date: "2026-08-13"
+    component: decentralized-api
+    version: v0.2.15-post5
+    upstream_ref: release/v0.2.15-post5
+    upstream_commit: 6009b539a36b83169835ebbf1dcbbbe1b7eb1ec7
+    artifact_repository: https://github.com/product-science/race-releases
+    artifact_sha256: f2b880371f782ff531510bf294b91b1f2945ee366780ef6f7583b91b3bc34ee7
+    kind: mainnet_observed_api_patch
+    executable_lock: true
+    lock: v2026.08.13.lock
 
 release_candidates:
   - core_release: v0.2.16
