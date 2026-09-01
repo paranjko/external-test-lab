@@ -7,8 +7,11 @@ deploy="$1"; receipt="$2"
 [[ -d "$deploy" && -r "$receipt" ]] || { echo 'invalid state-sync config verification input' >&2; exit 2; }
 trust_height="$(jq -er '.bootstrap.trust.height | tonumber' "$receipt")"
 trust_hash="$(jq -er '.bootstrap.trust.block_id' "$receipt")"
-rpc_1="$(jq -er '.fault_domains[0].rpc_url' "$receipt")"
-rpc_2="$(jq -er '.fault_domains[1].rpc_url' "$receipt")"
+# The upstream init helper canonicalizes Comet RPC paths with a trailing slash.
+# Receipts intentionally retain network URLs without that presentation detail,
+# so normalize both receipt records to the value written into config.toml.
+rpc_1="$(jq -er '.fault_domains[0].rpc_url | rtrimstr("/") + "/"' "$receipt")"
+rpc_2="$(jq -er '.fault_domains[1].rpc_url | rtrimstr("/") + "/"' "$receipt")"
 peers="$(jq -er '.bootstrap.snapshot.providers | join(",")' "$receipt")"
 config=''
 deadline=$((SECONDS + 30))
