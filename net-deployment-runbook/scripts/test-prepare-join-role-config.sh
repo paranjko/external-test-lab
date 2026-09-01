@@ -36,6 +36,16 @@ grep -Fxq 'PUBLIC_HOST=host.example.net' "$temporary/node.env"
 printf '%s\n%s\n' 'first@one.example:5000' 'second@two.example:5000' >"$temporary/genesis-seeds.txt"
 "$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --output "$temporary/node-with-seeds.env" >/dev/null
 grep -Fxq 'GENESIS_SEEDS=first@one.example:5000,second@two.example:5000' "$temporary/node-with-seeds.env"
+cat >"$temporary/lineage.env" <<'EOF'
+GDC_JOIN_BOOTSTRAP_MODE=state_sync
+GDC_JOIN_TRUST_HEIGHT=123
+GDC_JOIN_TRUST_HASH=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+GDC_JOIN_RPC_SERVER_1=https://one.example/chain-rpc/
+GDC_JOIN_RPC_SERVER_2=https://two.example/chain-rpc/
+GDC_JOIN_SNAPSHOT_PEERS=0123456789abcdef0123456789abcdef01234567@tcp://one.example:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://two.example:5000
+EOF
+"$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --state-sync-env "$temporary/lineage.env" --data-dir /srv/dai/data/mitch-demo.generations/test-run --output "$temporary/node-state-sync.env" >/dev/null
+grep -Fxq 'DATA_DIR=/srv/dai/data/mitch-demo.generations/test-run' "$temporary/node-state-sync.env"
 # A joining Host has no local gateway or Telegram role. Its participant edge
 # must still render, with auxiliary routes directed to the validated seed.
 "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --output "$temporary/edge.env" >/dev/null
