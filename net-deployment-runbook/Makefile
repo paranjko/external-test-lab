@@ -20,7 +20,7 @@ preview_number ?=
 preview_revision ?=
 site_origin ?= http://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
+.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context test-site-preview-live prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -89,11 +89,14 @@ remove-site-release:
 test-site-release-paths:
 	@./scripts/test-site-release-paths.sh
 
-test-site-publisher: test-site-preview-context
+test-site-publisher: test-site-preview-context test-site-preview-live
 	@./scripts/test-site-publisher.sh
 
 test-site-preview-context:
 	@./scripts/test-site-preview-context.sh
+
+test-site-preview-live:
+	@bash ./scripts/test-site-preview-live.sh
 
 verify-site-release:
 	@test -d "$(site_release_dir)" || { echo 'run prepare-static-site first' >&2; exit 2; }

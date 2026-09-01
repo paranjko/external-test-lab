@@ -46,6 +46,58 @@ const browser = spawn(chrome, [
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const mapCoverageExpression = 'JSON.stringify((()=>{const map=document.querySelector("#validator-map");if(!map)return null;const mapRect=map.getBoundingClientRect(),world=map.querySelector(".validator-map-world");return{worldLoaded:Boolean(world?.complete&&world?.naturalWidth),markersVisible:[...map.querySelectorAll(".validator-marker")].every(marker=>{const rect=marker.getBoundingClientRect();return rect.width>0&&rect.height>0&&rect.right>=mapRect.left&&rect.left<=mapRect.right&&rect.bottom>=mapRect.top&&rect.top<=mapRect.bottom})}})())';
+const homepageStateExpression = `JSON.stringify({
+  width: innerWidth,
+  height: innerHeight,
+  scrollWidth: document.documentElement.scrollWidth,
+  updated: document.querySelector("#updated")?.textContent,
+  updatedDateTime: document.querySelector("#updated")?.dateTime,
+  updatedTag: document.querySelector("#updated")?.tagName,
+  bestHeight: document.querySelector("#best-height")?.textContent,
+  mapPoints: document.querySelectorAll("#validator-map .validator-marker").length,
+  mapMarkers: Number(document.querySelector("#validator-map")?.dataset.markerCount || 0),
+  mapValidators: Number(document.querySelector("#validator-map")?.dataset.validatorCount || 0),
+  mapWorld: Boolean(document.querySelector("#validator-map .validator-map-world")?.complete && document.querySelector("#validator-map .validator-map-world")?.naturalWidth),
+  mapMarkerGeometry: [...document.querySelectorAll("#validator-map .validator-marker")].map(marker => {
+    const rect = marker.getBoundingClientRect();
+    return { width: rect.width, height: rect.height, filter: getComputedStyle(marker).filter };
+  }),
+  siteRevision: document.querySelector("#site-revision")?.dataset.revision || "",
+  appDigest: document.querySelector("#site-revision")?.dataset.appDigest || "",
+  gatewayAccessHidden: document.querySelector("#gateway-access")?.hidden,
+  join: ((element) => ({
+    exists: Boolean(element),
+    title: element?.querySelector("h2")?.textContent,
+    code: element?.querySelector("code")?.textContent,
+    link: element?.querySelector("a")?.href,
+  }))(document.querySelector("#join-node")),
+  nodes: [...document.querySelectorAll("#nodes .node")].map(node => {
+    const rect = node.getBoundingClientRect();
+    const metric = key => {
+      const row = node.querySelector("[data-k-row=" + key + "]");
+      const value = row?.querySelector("b");
+      return {
+        text: value?.textContent?.trim(),
+        clipped: Boolean(value && (value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || row.scrollHeight > row.clientHeight)),
+      };
+    };
+    return {
+      name: node.querySelector("h3")?.textContent,
+      status: node.querySelector("[data-k=status]")?.textContent,
+      vp: node.querySelector("[data-k=vp]")?.textContent,
+      sync: node.querySelector("[data-k=sync]")?.textContent,
+      endpoint: node.querySelector("[data-k=endpoint]")?.textContent,
+      versions: node.querySelector("[data-k=versions]")?.textContent,
+      software: metric("software"),
+      gpu: metric("gpu"),
+      top: rect.top,
+      bottom: rect.bottom,
+      height: rect.height,
+      clientHeight: node.clientHeight,
+      scrollHeight: node.scrollHeight,
+    };
+  }),
+})`;
 let socket;
 let sequence = 0;
 const pending = new Map();
@@ -91,7 +143,7 @@ try {
     await delay(1000);
   }
   const { result } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,updated:document.querySelector("#updated")?.textContent,updatedDateTime:document.querySelector("#updated")?.dateTime,updatedTag:document.querySelector("#updated")?.tagName,bestHeight:document.querySelector("#best-height")?.textContent,mapPoints:document.querySelectorAll("#validator-map .validator-marker").length,mapMarkers:Number(document.querySelector("#validator-map")?.dataset.markerCount||0),mapValidators:Number(document.querySelector("#validator-map")?.dataset.validatorCount||0),mapWorld:Boolean(document.querySelector("#validator-map .validator-map-world")?.complete&&document.querySelector("#validator-map .validator-map-world")?.naturalWidth),mapMarkerGeometry:[...document.querySelectorAll("#validator-map .validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return {width:r.width,height:r.height,filter:getComputedStyle(marker).filter}}),siteRevision:document.querySelector("#site-build-revision")?.dataset.revision||"",appDigest:document.querySelector("#site-build-revision")?.dataset.appDigest||"",gatewayAccessHidden:document.querySelector("#gateway-access")?.hidden,join:(e=>({exists:Boolean(e),title:e?.querySelector("h2")?.textContent,code:e?.querySelector("code")?.textContent,link:e?.querySelector("a")?.href}))(document.querySelector("#join-node")),nodes:[...document.querySelectorAll("#nodes .node")].map(n=>{const r=n.getBoundingClientRect();const metric=key=>{const row=n.querySelector(`[data-k-row="${key}"]`);const value=row?.querySelector("b");return {text:value?.textContent?.trim(),clipped:Boolean(value&&(value.scrollWidth>value.clientWidth||value.scrollHeight>value.clientHeight||row.scrollHeight>row.clientHeight))}};return {name:n.querySelector("h3")?.textContent,status:n.querySelector("[data-k=status]")?.textContent,vp:n.querySelector("[data-k=vp]")?.textContent,sync:n.querySelector("[data-k=sync]")?.textContent,endpoint:n.querySelector("[data-k=endpoint]")?.textContent,versions:n.querySelector("[data-k=versions]")?.textContent,software:metric("software"),gpu:metric("gpu"),top:r.top,bottom:r.bottom,height:r.height,clientHeight:n.clientHeight,scrollHeight:n.scrollHeight}})})',
+    expression: homepageStateExpression,
     returnByValue: true,
   }, sessionId);
   const state = JSON.parse(result.value);

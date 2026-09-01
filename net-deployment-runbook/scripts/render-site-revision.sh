@@ -22,7 +22,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 TEMPORARY="$(mktemp "$(dirname "$OUTPUT")/.site-index.XXXXXX")"
 trap 'rm -f "$TEMPORARY"' EXIT
 
-sed -E "s#https://github\.com/paranjko/external-test-lab/tree/[0-9a-f]+/$SITE_PATH\"[^>]*>ref:[0-9a-f]+#${REFERENCE_URL}\" target=\"_blank\" rel=\"noopener\">ref:${SHORT_COMMIT}#" "$SOURCE" >"$TEMPORARY"
+sed -E "s#href=\"https://github\.com/paranjko/external-test-lab/tree/(main|[0-9a-f]+)/$SITE_PATH\"([^>]*)>v(source|[0-9a-f]+)#href=\"${REFERENCE_URL}\"\\2>v${SHORT_COMMIT}#" "$SOURCE" >"$TEMPORARY"
 grep -Fq "$REFERENCE_URL" "$TEMPORARY" || { echo "site source revision link was not rendered" >&2; exit 1; }
-grep -Fq "ref:$SHORT_COMMIT" "$TEMPORARY" || { echo "site source short revision was not rendered" >&2; exit 1; }
+grep -Fq "v$SHORT_COMMIT" "$TEMPORARY" || { echo "site source short revision was not rendered" >&2; exit 1; }
 mv "$TEMPORARY" "$OUTPUT"
