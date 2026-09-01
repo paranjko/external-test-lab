@@ -18,7 +18,7 @@ new_hash="$(awk -F= '$1 == "GDC_PROFILE_HASH" {print $2}' "$ENV_FILE")"
 if [[ -s "$DEST/.gdc-release" ]] && ! cmp -s <(printf '%s %s\n' "$new_release" "$new_hash") "$DEST/.gdc-release"; then
   [[ "$ALLOW_RELEASE_CHANGE" == true ]] || { echo "mixed release family on $NODE; use the explicit upgrade phase" >&2; exit 1; }
 fi
-rm -rf "$DEST/node-entrypoint.sh"
+rm -rf "$DEST/node-entrypoint.sh" "$DEST/api-entrypoint.sh"
 install -m 0644 "$(dirname "$0")/compose.yaml" "$DEST/compose.yaml"
 install -m 0644 "$(dirname "$0")/compose.ml-local.yaml" "$DEST/compose.ml-local.yaml"
 install -m 0644 "$(dirname "$0")/compose.devshard-ha.yaml" "$DEST/compose.devshard-ha.yaml"
@@ -27,6 +27,7 @@ install -d -m 0755 "$DEST/versiond-router"
 install -m 0644 "$(dirname "$0")/vendor-router/nginx.conf.template" "$DEST/versiond-router/nginx.conf.template"
 install -m 0644 "$(dirname "$0")/nginx-mlnode.conf" "$DEST/nginx-mlnode.conf"
 install -m 0755 "$(dirname "$0")/node-entrypoint.sh" "$DEST/node-entrypoint.sh"
+install -m 0755 "$(dirname "$0")/api-entrypoint.sh" "$DEST/api-entrypoint.sh"
 install -m 0755 "$(dirname "$0")/tmkms-entrypoint.sh" "$DEST/tmkms-entrypoint.sh"
 install -m 0755 "$(dirname "$0")/start-node.sh" "$DEST/start-node.sh"
 install -m 0755 "$(dirname "$0")/sync-node-config.sh" "$DEST/sync-node-config.sh"

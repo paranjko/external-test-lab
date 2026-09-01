@@ -347,6 +347,12 @@ grep -Fq 'IMAGE="$(local_gateway_image_for_protocol "$VERSION")"' "$ROOT/scripts
   [[ "$(selected_gateway_protocol_contract)" == v4 ]]
 )
 grep -Fq 'CHAIN_RPC_RATE_UNIT: s' "$ROOT/02-node/compose.yaml"
+grep -Fq 'command: ["sh", "/usr/local/bin/gdc-api-entrypoint"]' "$ROOT/02-node/compose.yaml"
+grep -Fq './api-entrypoint.sh:/usr/local/bin/gdc-api-entrypoint:ro' "$ROOT/02-node/compose.yaml"
+grep -Fq 'exec cosmovisor run' "$ROOT/02-node/api-entrypoint.sh"
+grep -Fq 'selection=/root/.dapi/.gdc-runtime-binary' "$ROOT/02-node/api-entrypoint.sh"
+grep -Fq 'cosmovisor/upgrades/*/bin/decentralized-api' "$ROOT/02-node/api-entrypoint.sh"
+grep -Fq 'install -m 0755 "$(dirname "$0")/api-entrypoint.sh" "$DEST/api-entrypoint.sh"' "$ROOT/02-node/install-node.sh"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
 grep -Fq 'ops consumer telegram apply' "$ROOT/gdc.sh"
