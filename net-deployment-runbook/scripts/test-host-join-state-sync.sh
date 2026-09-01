@@ -35,5 +35,7 @@ grep -Fq 'CONFIG_statesync__rpc_servers' "$ROOT/02-node/compose.yaml"
 grep -Fq 'CONFIG_p2p__persistent_peers' "$ROOT/02-node/compose.yaml"
 grep -Fq 'GDC_JOIN_SNAPSHOT_PEERS' "$ROOT/02-node/render-node-env.sh"
 grep -Fq 'verify-join-lineage-state.sh' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'record-state-sync-canary.sh' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'lineage-state-sync-receipt.json' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'gdc-stage.XXXXXX' "$ROOT/02-node/install-node.sh"
 printf 'PASS JOIN pins receipt trust and verifies a fresh post-sync checkpoint\n'

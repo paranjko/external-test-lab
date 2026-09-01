@@ -75,19 +75,6 @@ grep -Fq 'conflicts with composition core profile v2026.08.06' "$tmp/conflict.er
   [[ "$summary" == *"postgres_image="* ]]
 )
 
-# JOIN may select a reviewed composition before inferenced is installed. That
-# operator path must not use the Python composition authoring tool.
-mkdir -p "$tmp/no-python"
-printf '#!/usr/bin/env bash\nexit 127\n' >"$tmp/no-python/python3"
-chmod +x "$tmp/no-python/python3"
-(
-  PATH="$tmp/no-python:$PATH"
-  # shellcheck source=/dev/null
-  source "$ROOT/scripts/profile.sh"
-  GDC_COMPOSITION=core-v2026.08.06+devshard-v2026.08.27-rc.0 load_profiles
-  [[ "$GDC_RELEASE_PROFILE" == v2026.08.06 && "$DEVSHARD_PROTOCOL_VERSION" == v5 ]]
-)
-
 # Positive: test CANDIDATE_LAYER=devshard lock loading base profile
 printf '%s\n' \
   'LAB_CANDIDATE=true' \

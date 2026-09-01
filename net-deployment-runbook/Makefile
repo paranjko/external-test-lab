@@ -160,6 +160,7 @@ test: site-js-check
 	@./scripts/test-join-preflight-diagnostics.sh
 	@./scripts/test-join-lineage-preflight.sh
 	@./scripts/test-host-join-state-sync.sh
+	@./scripts/test-record-state-sync-canary.sh
 	@./scripts/test-signer-activation-gate.sh
 	@./scripts/test-init-identity-restore-diagnostics.sh
 	@./scripts/test-cleanroom-no-python-restore.sh
