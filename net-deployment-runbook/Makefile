@@ -72,7 +72,7 @@ test-validator-map: site-vendor site-js
 
 prepare-static-site: site-vendor
 	@mkdir -p "$(site_release_dir)"
-	@rsync -a --exclude src/ 04-ops/site/ "$(site_release_dir)/"
+	@rsync -a --exclude src/ --exclude .gitignore 04-ops/site/ "$(site_release_dir)/"
 	@SITE_REVISION="$(site_revision)" ./scripts/render-site-revision.sh 04-ops/site/index.html "$(site_release_dir)/index.html"
 	@./scripts/build-site-js.sh --output "$(site_release_dir)"
 	@rm -f "$(site_release_dir)/config.js"
