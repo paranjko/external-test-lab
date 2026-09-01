@@ -43,5 +43,10 @@ grep -Fxq 'PUBLIC_EDGE=false' "$temporary/edge.env"
 grep -Fxq 'GATEWAY_PUBLIC_HOST=one.example' "$temporary/edge.env"
 grep -Fxq 'TELEGRAM_BOT_PUBLIC_HOST=one.example' "$temporary/edge.env"
 grep -Fxq 'PUBLIC_GRAFANA_PROMETHEUS_URL=https://one.example/ops-prometheus' "$temporary/edge.env"
+sed -i 's/^GDC_GATEWAY_NODE=.*/GDC_GATEWAY_NODE=/; s/^GDC_PUBLIC_EDGE_NODE=.*/GDC_PUBLIC_EDGE_NODE=/; s/^TELEGRAM_BOT_HOST=.*/TELEGRAM_BOT_HOST=/' "$temporary/inventory.env"
+"$ROOT/04-ops/edge-node/render-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --output "$temporary/edge-no-roles.env" >/dev/null
+grep -Fxq 'GATEWAY_PUBLIC_HOST=one.example' "$temporary/edge-no-roles.env"
+grep -Fxq 'TELEGRAM_BOT_PUBLIC_HOST=one.example' "$temporary/edge-no-roles.env"
+grep -Fxq 'PUBLIC_GRAFANA_PROMETHEUS_URL=https://one.example/ops-prometheus' "$temporary/edge-no-roles.env"
 ! grep -Rq 'JOIN_BOOTSTRAP_FORMAT\|join-bootstrap\|topology.env\|profile/genesis.env' "$ROOT/scripts/prepare-join-role-config.sh"
 printf 'PASS one-file JOIN role preparation accepts arbitrary local aliases without topology import\n'
