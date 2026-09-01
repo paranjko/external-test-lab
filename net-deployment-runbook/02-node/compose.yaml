@@ -83,10 +83,12 @@ services:
   api:
     image: ${DAPI_IMAGE:-ghcr.io/product-science/api:0.2.15}
     restart: always
+    command: ["sh", "/usr/local/bin/gdc-api-entrypoint"]
     volumes:
       - ${DATA_DIR}/inference:/root/.inference
       - ${DATA_DIR}/dapi:/root/.dapi
       - ${NODE_CONFIG_FILE:?NODE_CONFIG_FILE is required}:/root/node_config.json:ro
+      - ./api-entrypoint.sh:/usr/local/bin/gdc-api-entrypoint:ro
     environment:
       KEY_NAME: ${KEY_NAME}
       ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY:?ACCOUNT_PUBKEY is required}

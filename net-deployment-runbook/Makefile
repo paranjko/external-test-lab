@@ -149,6 +149,7 @@ test: site-js-check
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh
+	@./scripts/test-api-entrypoint.sh
 	@./scripts/test-network-verify-identity-resolution.sh
 	@./scripts/test-phase-verify-broker-models.sh
 	@./scripts/test-deployed-ml-evidence.sh

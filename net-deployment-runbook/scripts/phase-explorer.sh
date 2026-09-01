@@ -18,8 +18,9 @@ for node in "${nodes[@]}"; do
   fi
   step "Install pinned explorer dashboard on $node"
   ssh "$node" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
-  rsync -a "$ROOT/02-node/compose.yaml" "$ROOT/02-node/start-node.sh" "$ROOT/02-node/install-explorer.sh" "$node:$REMOTE/"
-  ssh -T "$node" "sudo '$REMOTE/install-explorer.sh' '$node' '$REMOTE/compose.yaml' '$REMOTE/start-node.sh' '$EXPLORER_IMAGE' '$DASHBOARD_PORT'; rm -rf '$REMOTE'"
+  rsync -a "$ROOT/02-node/compose.yaml" "$ROOT/02-node/start-node.sh" \
+    "$ROOT/02-node/api-entrypoint.sh" "$ROOT/02-node/install-explorer.sh" "$node:$REMOTE/"
+  ssh -T "$node" "sudo '$REMOTE/install-explorer.sh' '$node' '$REMOTE/compose.yaml' '$REMOTE/start-node.sh' '$REMOTE/api-entrypoint.sh' '$EXPLORER_IMAGE' '$DASHBOARD_PORT'; rc=\$?; rm -rf '$REMOTE'; exit \$rc"
 
   edge_env="$GENERATED/edge/$node.env"
   mkdir -p "$(dirname "$edge_env")"
