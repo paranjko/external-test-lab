@@ -61,7 +61,7 @@ services:
   devshard-gateway:
     image: ${LOCAL_GATEWAY_IMAGE:-gdc/devshard-gateway:0.2.15-v4}
     restart: unless-stopped
-    env_file: [./gateway.env]
+    env_file: ["${GDC_GATEWAY_ENV_FILE:-./gateway.env}"]
     volumes:
       # DevShard persists protocol-specific session state. Never mount v3, v4
       # and v5 gateways over the same state store: each runtime rejects a
@@ -76,7 +76,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          wget -qO- http://127.0.0.1:18080/v1/status
+          wget -qO- http://127.0.0.1:$${DEVSHARD_PORT}/v1/status
           | grep -Eq '"routable"[[:space:]]*:[[:space:]]*true'
       interval: 30s
       timeout: 5s
@@ -137,5 +137,8 @@ volumes:
   alertmanager-data:
   grafana-data:
   gateway-data-v3:
+    name: ${DEVSHARD_GATEWAY_DATA_VOLUME_V3_NAME:-gdc-ops_gateway-data-v3}
   gateway-data-v4:
+    name: ${DEVSHARD_GATEWAY_DATA_VOLUME_V4_NAME:-gdc-ops_gateway-data-v4}
   gateway-data-v5:
+    name: ${DEVSHARD_GATEWAY_DATA_VOLUME_V5_NAME:-gdc-ops_gateway-data-v5}

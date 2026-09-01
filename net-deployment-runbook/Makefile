@@ -178,6 +178,7 @@ test: site-js-check
 	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-observer.py
 	@python3 ./scripts/test-gateway-admission-proxy.py
+	@./scripts/test-gateway-migration.sh
 	@./scripts/test-host-sync-verdict.sh
 	@./scripts/test-ensure-account-balance.sh
 	@./scripts/test-gateway-reserve-policy.sh

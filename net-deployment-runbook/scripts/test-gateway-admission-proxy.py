@@ -55,7 +55,7 @@ class Backend(BaseHTTPRequestHandler):
         if State.state_delay:
             time.sleep(State.state_delay)
         if self.path == "/v1/status":
-            if self.headers.get("Authorization") != "Bearer test-status":
+            if self.headers.get("Authorization") not in {"Bearer test-status", "Bearer test-client"}:
                 self.send_response(401)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
@@ -63,6 +63,13 @@ class Backend(BaseHTTPRequestHandler):
             body = State.status_override
             if body is None:
                 body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}}, "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False, "session_version": State.session_version}}]}
+        elif self.path == "/v1/models":
+            if self.headers.get("Authorization") != "Bearer test-client":
+                self.send_response(401)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = {"data": [{"id": "model"}]}
         elif self.path == "/epoch":
             epoch = State.epochs[State.epoch_index % len(State.epochs)]
             State.epoch_index += 1
@@ -136,6 +143,16 @@ def post(proxy_port, deadline=None, authorization=True):
     return status, body
 
 
+def get(proxy_port, path, authorization=True):
+    connection = http.client.HTTPConnection("127.0.0.1", proxy_port, timeout=3)
+    headers = {"Authorization": "Bearer test-client"} if authorization else {}
+    connection.request("GET", path, headers=headers)
+    response = connection.getresponse()
+    body = response.read()
+    connection.close()
+    return response.status, body, response.getheader("Content-Type")
+
+
 audit_files = {}
 
 
@@ -195,6 +212,17 @@ try:
         valid_approval,
         {"name": "v3", "binary": "https://example.invalid/other.zip", "sha256": "b" * 64},
     ])
+
+    # Read-only gateway discovery follows the same selected upstream as
+    # completions, while arbitrary paths remain closed.
+    State.ready = True
+    process, proxy_port = start_proxy(backend_port); processes.append(process)
+    assert get(proxy_port, "/v1/status")[0] == 200
+    assert json.loads(get(proxy_port, "/v1/models")[1]) == {"data": [{"id": "model"}]}
+    assert get(proxy_port, "/v1/models", authorization=False)[0] == 401
+    missing = get(proxy_port, "/v1/unknown")
+    assert missing[0] == 404 and json.loads(missing[1]) == {"error": {"code": "not_found"}}
+    process.terminate(); process.wait(2); processes.remove(process)
 
     # A request queued while phase state is unsafe dispatches only after two
     # fresh, matching generation observations and never replays a 429 outcome.

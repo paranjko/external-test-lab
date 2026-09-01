@@ -214,6 +214,11 @@ See the role guides for required input, then run:
   ./gdc.sh gateway access-key revoke telegram
   ./gdc.sh gateway access-key list
   ./gdc.sh --release v2026.07.23 gateway apply v3
+  ./gdc.sh --composition <COMPOSITION> gateway migration prepare v5
+  ./gdc.sh --composition <COMPOSITION> gateway migration status
+  ./gdc.sh --composition <COMPOSITION> gateway migration cutover
+  ./gdc.sh --composition <COMPOSITION> gateway migration drain [SECONDS]
+  ./gdc.sh --composition <COMPOSITION> gateway migration rollback|complete
   ./gdc.sh --release v2026.07.23 gateway reconcile v3
   ./gdc.sh gateway status
   ./gdc.sh gateway verify [SLA]
@@ -631,6 +636,25 @@ case "$COMMAND" in
         [[ $# -le 1 && "${1:-v3}" =~ ^v[345]$ ]] || { usage; exit 2; }
         export GDC_GATEWAY_VERSION="${1:-v3}"
         run_phase "gateway-$gateway_action-$GDC_GATEWAY_VERSION" "$ROOT/scripts/phase-ops.sh" gateway
+        ;;
+      migration)
+        migration_action="${1:-}"
+        shift || true
+        case "$migration_action" in
+          prepare)
+            [[ $# -eq 1 && "$1" =~ ^v[45]$ ]] || { usage; exit 2; }
+            run_phase "gateway-migration-prepare-$1" "$ROOT/scripts/phase-gateway-migration.sh" prepare "$1"
+            ;;
+          status|cutover|rollback|complete)
+            [[ $# -eq 0 ]] || { usage; exit 2; }
+            run_phase "gateway-migration-$migration_action" "$ROOT/scripts/phase-gateway-migration.sh" "$migration_action"
+            ;;
+          drain)
+            [[ $# -le 1 && "${1:-900}" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
+            run_phase gateway-migration-drain "$ROOT/scripts/phase-gateway-migration.sh" drain "${1:-900}"
+            ;;
+          *) usage; exit 2 ;;
+        esac
         ;;
       status|verify)
         [[ "$gateway_action" == verify || $# -eq 0 ]] || { usage; exit 2; }

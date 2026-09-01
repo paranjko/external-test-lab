@@ -79,6 +79,9 @@ gateway_admission_status_url="https://$(node_public_host "$GATEWAY_NODE")/ops-ga
 if [[ "$NODE" == "$GATEWAY_NODE" && "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
   gateway_admission_status_url='http://127.0.0.1:18084/v1/status'
 fi
+gateway_upstream_port="${GDC_GATEWAY_ADMISSION_UPSTREAM_PORT:-18080}"
+[[ "$gateway_upstream_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( gateway_upstream_port <= 65535 )) \
+  || { echo 'GDC_GATEWAY_ADMISSION_UPSTREAM_PORT must be a valid TCP port' >&2; exit 2; }
 
 values=(
   "PUBLIC_HOST=$(node_public_host "$NODE")"
@@ -88,7 +91,7 @@ values=(
   "GRAFANA_IMAGE=$GRAFANA_IMAGE"
   "PYTHON_IMAGE=${PYTHON_IMAGE:-python:3.13-alpine}"
   "GATEWAY_PUBLIC_HOST=$(node_public_host "$GATEWAY_NODE")"
-  "GDC_GATEWAY_ADMISSION_UPSTREAM=http://$(node_public_host "$GATEWAY_NODE"):18080"
+  "GDC_GATEWAY_ADMISSION_UPSTREAM=http://$(node_public_host "$GATEWAY_NODE"):$gateway_upstream_port"
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
   # identity and positive capacity instead of deployment intent. The gateway

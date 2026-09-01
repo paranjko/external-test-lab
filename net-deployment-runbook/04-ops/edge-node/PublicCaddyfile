@@ -171,6 +171,13 @@ www.{$SITE_HOST} {
   handle @governed_completion {
     reverse_proxy 127.0.0.1:18083
   }
+  @gateway_readonly {
+    method GET
+    path /v1/status /v1/models
+  }
+  handle @gateway_readonly {
+    reverse_proxy 127.0.0.1:18083
+  }
   handle {
     reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:18080 {
       header_up Host {$GATEWAY_PUBLIC_HOST}
