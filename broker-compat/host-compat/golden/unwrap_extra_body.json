@@ -1,0 +1,24 @@
+{
+  "id": "unwrap_extra_body",
+  "in": {
+    "extra_body": {
+      "reasoning_split": true
+    },
+    "extra_headers": {
+      "X-Foo": "1"
+    },
+    "max_completion_tokens": 64,
+    "messages": [],
+    "think": true
+  },
+  "out": {
+    "max_tokens": 64,
+    "messages": [],
+    "reasoning_split": true
+  },
+  "shims": [
+    "unwrap_extra_body",
+    "drop_unknown_knobs",
+    "max_completion_tokens"
+  ]
+}

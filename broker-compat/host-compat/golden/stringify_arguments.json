@@ -1,0 +1,42 @@
+{
+  "id": "stringify_arguments",
+  "in": {
+    "messages": [
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": {
+                "a": 1
+              },
+              "name": "add"
+            },
+            "id": "call_1"
+          }
+        ]
+      }
+    ]
+  },
+  "out": {
+    "messages": [
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"a\":1}",
+              "name": "add"
+            },
+            "id": "call_1",
+            "type": "function"
+          }
+        ]
+      }
+    ]
+  },
+  "shims": [
+    "stringify_arguments",
+    "default_tool_call_type"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "id": "sanitize_json_schema",
+  "host_400_substring": "schema reference keyword is forbidden",
+  "in": {
+    "response_format": {
+      "json_schema": {
+        "name": "out",
+        "schema": {
+          "$defs": {
+            "Item": {
+              "pattern": "^.{1,4096}$",
+              "type": "string"
+            }
+          },
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/Item"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "json_schema"
+    }
+  },
+  "out": {
+    "response_format": {
+      "json_schema": {
+        "name": "out",
+        "schema": {
+          "properties": {
+            "x": {
+              "pattern": "^.{1,1000}$",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "json_schema"
+    }
+  },
+  "shims": [
+    "sanitize_json_schema"
+  ]
+}

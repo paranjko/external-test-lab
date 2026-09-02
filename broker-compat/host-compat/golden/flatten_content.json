@@ -1,0 +1,33 @@
+{
+  "id": "flatten_content",
+  "in": {
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Hello",
+            "type": "text"
+          },
+          {
+            "text": " world",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "x"
+  },
+  "out": {
+    "messages": [
+      {
+        "content": "Hello world",
+        "role": "user"
+      }
+    ],
+    "model": "x"
+  },
+  "shims": [
+    "flatten_content"
+  ]
+}

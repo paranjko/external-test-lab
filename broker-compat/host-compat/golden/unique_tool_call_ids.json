@@ -1,0 +1,56 @@
+{
+  "id": "unique_tool_call_ids",
+  "in": {
+    "messages": [
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "a"
+            },
+            "id": "dup",
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "b"
+            },
+            "id": "dup",
+            "type": "function"
+          }
+        ]
+      }
+    ]
+  },
+  "out": {
+    "messages": [
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "a"
+            },
+            "id": "dup",
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "b"
+            },
+            "id": "dup_2",
+            "type": "function"
+          }
+        ]
+      }
+    ]
+  },
+  "shims": [
+    "unique_tool_call_ids"
+  ]
+}

@@ -25,6 +25,15 @@ This repository hosts the public artifacts of the 4-month pilot approved by Gonk
 | **Burst GPU testing** | Temporary rental of large GPU capacity for release-candidate, model-compatibility, and load tests. Usage itemized in monthly reports. |
 | **External Testing Team** | Two QA / infrastructure testing engineers validating pre-release builds, DevShards, and deliverables from external teams. See [open positions](jobs/). |
 
+## Broker OpenAI compatibility
+
+Specs for each broker's OpenAI HTTP proxy, before the inference gateway:
+
+| | |
+|---|---|
+| Chat Completions host-compat | [`broker-compat/host-compat/`](broker-compat/host-compat/) |
+| Responses adapter (`POST /v1/responses`) | [`broker-compat/responses-adapter/`](broker-compat/responses-adapter/) |
+
 ## Team
 
 | Role | Owner |
@@ -46,6 +55,7 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | M1→M2 | Monthly public report #1 | [`reports/monthly/2026-08-month-1.md`](reports/monthly/2026-08-month-1.md) | published |
 | M2 | Join guide, regional layout | [`net-deployment-runbook/ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md), `devnet/regions.md` | join guide published — regional layout planned |
 | M2 | Smoke & regression checklists, live task board | [`testing/`](testing/), [task board](https://github.com/users/paranjko/projects/1) | task board **live** — checklists planned |
+| M2 | Broker OpenAI host-compat + Responses adapter | [`broker-compat/`](broker-compat/) | published |
 | M2 | External join opening (genesis params, seeds) | `devnet/` | planned — gates on M2 stability |
 | M3 | Test automation scripts (smoke-level) | `automation/` | planned |
 | M3 | Incident log, participant onboarding guide | `runbooks/incidents/`, `devnet/` | planned |
