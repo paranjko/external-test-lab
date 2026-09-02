@@ -300,13 +300,17 @@ const readability = fs.readFileSync(
 );
 assert.match(readability, /\.nodes\.compact \{\s*grid-auto-rows: 424px;/);
 assert.match(readability, /\.nodes\.compact \.node \{\s*box-sizing: border-box;\s*height: 424px;/);
+assert.match(readability, /overflow-x: clip;\s*overflow-y: visible;/);
+assert.match(readability, /\.nodes\.compact \.node h3 \{[\s\S]*overflow: visible;/);
+assert.match(readability, /\.nodes\.compact \.node > small \{[\s\S]*overflow: visible;/);
+assert.match(readability, /\.nodes\.compact \.status \{[\s\S]*overflow: visible;/);
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;/);
 assert.match(readability, /\.nodes\.compact \.metric\.software,\s*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{/);
 assert.match(readability, /grid-template-columns: 72px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric\.software \{\s*min-height: 60px;/);
-assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{[\s\S]*min-height: 52px;[\s\S]*border-top: 2px solid var\(--line\);/);
+assert.match(readability, /\.nodes\.compact \.metric\.software \{\s*min-height: 52px;/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{[\s\S]*min-height: 44px;[\s\S]*border-top: 2px solid var\(--line\);/);
 assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{\s*grid-template-columns: 28px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric\.gpu b \{\s*overflow-wrap: normal;\s*white-space: nowrap;/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu b \{\s*overflow-wrap: anywhere;\s*white-space: normal;/);
 assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*white-space: normal;/);
 assert.match(readability, /text-overflow: ellipsis/);
 
