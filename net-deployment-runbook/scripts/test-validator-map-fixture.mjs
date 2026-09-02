@@ -641,7 +641,7 @@ try {
     const nextOverlap = Boolean(next && contentBottom > next.bounds.top + 0.5);
     const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
     return {
-      pass: Math.abs(cardRect.height - 424) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && document.documentElement.scrollWidth <= innerWidth,
+      pass: Math.abs(cardRect.height - (innerWidth >= 1400 ? 420 : 424)) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && document.documentElement.scrollWidth <= innerWidth,
       card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight },
       fields,
       rowOverlap,

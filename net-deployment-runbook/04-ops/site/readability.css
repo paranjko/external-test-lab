@@ -390,3 +390,15 @@ footer > :last-child {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+@media (min-width: 1400px) {
+  .nodes.compact {
+    grid-auto-rows: 420px;
+  }
+
+  .nodes.compact .node {
+    height: 420px;
+    min-height: 420px;
+    max-height: 420px;
+  }
+}
