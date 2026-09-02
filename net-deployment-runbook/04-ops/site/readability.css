@@ -22,7 +22,7 @@ body * {
 .nodes.compact .metric.gpu:not([hidden]) {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
-  align-items: center;
+  align-items: start;
   column-gap: 8px;
 }
 
@@ -30,7 +30,7 @@ body * {
  * without allowing it to visually merge with the GPU row below it. */
 .nodes.compact .metric.software {
   min-height: 52px;
-  max-height: 52px;
+  max-height: none;
 }
 
 .nodes.compact .metric.software b,
@@ -55,7 +55,7 @@ body * {
   grid-template-columns: 28px minmax(0, 1fr);
   column-gap: 6px;
   min-height: 44px;
-  max-height: 44px;
+  max-height: none;
   margin-top: 2px;
   padding-top: 5px;
   border-top: 2px solid var(--line);
@@ -282,27 +282,24 @@ footer > :last-child {
   display: none;
 }
 
-/* Host state has a fixed visual budget at every supported breakpoint.  A
- * network diagnostic must remain a compact field, never resize this grid. */
+/* Host cards keep a compact minimum footprint, but rows grow with their
+ * complete values.  Fixed child heights caused wrapped status, software and
+ * GPU text to paint over the next row or the next card. */
 .nodes.compact {
-  grid-auto-rows: 424px;
+  grid-auto-rows: minmax(424px, auto);
 }
 
 .nodes.compact .node {
   box-sizing: border-box;
-  height: 424px;
   min-height: 424px;
-  max-height: 424px;
-  /* Preserve the fixed row contract without hiding a complete field behind
-   * the card boundary.  The compact budget leaves room for status,
-   * voting-power, software, and GPU values on desktop and mobile. */
-  overflow-x: clip;
-  overflow-y: visible;
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .nodes.compact .node h3 {
   min-height: 30px;
-  max-height: 30px;
+  max-height: none;
   margin-bottom: 8px;
   overflow: visible;
   overflow-wrap: anywhere;
@@ -310,7 +307,7 @@ footer > :last-child {
 
 .nodes.compact .node > small {
   min-height: 22px;
-  max-height: 34px;
+  max-height: none;
   overflow: visible;
   overflow-wrap: anywhere;
   line-height: 1.35;
@@ -318,7 +315,7 @@ footer > :last-child {
 
 .nodes.compact .status {
   min-height: 30px;
-  max-height: 30px;
+  max-height: none;
   margin-bottom: 4px;
   overflow: visible;
 }
@@ -327,19 +324,26 @@ footer > :last-child {
   box-sizing: border-box;
   min-width: 0;
   min-height: 26px;
-  max-height: 26px;
+  max-height: none;
+  align-items: flex-start;
 }
 
 .nodes.compact .metric b {
   min-width: 0;
-  overflow: hidden;
+  flex: 1 1 auto;
+  overflow: visible;
+  overflow-wrap: anywhere;
   text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.nodes.compact .metric > span {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 520px) {
   .nodes.compact {
-    grid-auto-rows: 424px;
+    grid-auto-rows: minmax(424px, auto);
   }
 }

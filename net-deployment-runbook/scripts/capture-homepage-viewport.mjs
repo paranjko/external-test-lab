@@ -73,6 +73,24 @@ const homepageStateExpression = `JSON.stringify({
   }))(document.querySelector("#join-node")),
   nodes: [...document.querySelectorAll("#nodes .node")].map(node => {
     const rect = node.getBoundingClientRect();
+    const bounds = element => {
+      const value = element?.getBoundingClientRect();
+      return value && { top: value.top, bottom: value.bottom, left: value.left, right: value.right };
+    };
+    const textBounds = element => {
+      if (!element) return null;
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return bounds(range);
+    };
+    const rowInfo = element => {
+      const value = textBounds(element);
+      return {
+        bounds: bounds(element),
+        textBounds: value,
+        clipped: Boolean(element && value && (element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || value.right > element.getBoundingClientRect().right + 0.5 || value.bottom > element.getBoundingClientRect().bottom + 0.5)),
+      };
+    };
     const metric = key => {
       const row = node.querySelector("[data-k-row=" + key + "]");
       const value = row?.querySelector("b");
@@ -81,20 +99,37 @@ const homepageStateExpression = `JSON.stringify({
         clipped: Boolean(value && (value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || row.scrollHeight > row.clientHeight)),
       };
     };
+    const valueField = key => {
+      const value = node.querySelector("[data-k=" + key + "]");
+      return {
+        text: value?.textContent?.trim(),
+        clipped: Boolean(value && (value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight)),
+      };
+    };
+    const rows = [...node.children]
+      .filter(row => row.matches("h3,.status,small,.metric") && row.offsetParent !== null)
+      .map(rowInfo);
+    const rowOverlap = rows.slice(0, -1).some((row, index) => row.textBounds && rows[index + 1].bounds && row.textBounds.bottom > rows[index + 1].bounds.top + 0.5);
+    const contentBottom = rows.reduce((bottom, row) => Math.max(bottom, row.textBounds?.bottom ?? -Infinity), -Infinity);
     return {
       name: node.querySelector("h3")?.textContent,
       status: node.querySelector("[data-k=status]")?.textContent,
+      statusReason: node.querySelector("[data-k=status-reason]")?.textContent,
+      scope: node.querySelector("[data-k=scope]")?.textContent,
       vp: node.querySelector("[data-k=vp]")?.textContent,
       sync: node.querySelector("[data-k=sync]")?.textContent,
       endpoint: node.querySelector("[data-k=endpoint]")?.textContent,
       versions: node.querySelector("[data-k=versions]")?.textContent,
       software: metric("software"),
       gpu: metric("gpu"),
+      valueFields: ["height", "vp", "sync", "endpoint"].map(valueField),
       top: rect.top,
       bottom: rect.bottom,
       height: rect.height,
       clientHeight: node.clientHeight,
       scrollHeight: node.scrollHeight,
+      rowOverlap,
+      contentOverflowsCard: contentBottom > rect.bottom + 0.5,
     };
   }),
 })`;
@@ -164,13 +199,12 @@ try {
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
   if (mappedNodes.some(node => !node.versions || node.versions === 'checking')) throw new Error(`participant software versions did not resolve ${JSON.stringify(state)}`);
-  const hostHeights = new Set(mappedNodes.map(node => Math.round(node.height)));
   const hasUnboundedHostDiagnostic = node => {
     const endpoint = node.endpoint || '';
     return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
       || (/\b[45]\d\d\b/.test(endpoint) && !/^Unavailable – HTTP [45]\d\d$/.test(endpoint));
   };
-  if (hostHeights.size !== 1 || !hostHeights.has(424) || mappedNodes.some(node => node.scrollHeight > node.clientHeight || !node.vp || !node.sync || !node.endpoint || !node.software.text || node.software.clipped || (node.gpu.text && node.gpu.clipped) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or complete field contract failed ${JSON.stringify(mappedNodes)}`);
+  if (mappedNodes.some(node => node.height < 424 || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.status || !node.statusReason || !node.scope || node.valueFields.some(field => !field.text || field.clipped) || !node.software.text || node.software.clipped || (node.gpu.text && node.gpu.clipped) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or complete field contract failed ${JSON.stringify(mappedNodes)}`);
   if (expectResetState) {
     const active = state.nodes;
     if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapValidators !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {
