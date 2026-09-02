@@ -30,8 +30,9 @@ Codex / Agents SDK
 ```
 
 **Port:** spec, not a library. Same process as `POST /v1/chat/completions`.
-After ToChat, run the host-compat catalog on that chat body
-(`[broker-compat/host-compat/](../host-compat/)` must be in the repo).
+After ToChat, run a host-compat layer on that chat body (this catalog
+[`broker-compat/host-compat/`](../host-compat/) or the equivalent already on
+the proxy).
 Do not flatten Responses `input` inside host-compat. Any language.
 Do not start a new process.
 
@@ -46,10 +47,8 @@ landing.
 
 Log one line per request: stream flag, tool count, model (no prompts, no keys).
 
-After `ToChat`, run the same **OpenAI host-compat shims** catalog on the chat
-body (`broker-compat/host-compat/`). Do not flatten Responses
-`input` items or strip Responses-only keys inside those shims — `ToChat` must
-already emit a chat-only body.
+Do not flatten Responses `input` items or strip Responses-only keys inside
+host-compat — `ToChat` must already emit a chat-only body.
 
 ## Shipped catalog
 

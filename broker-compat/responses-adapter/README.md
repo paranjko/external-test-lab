@@ -27,6 +27,8 @@ for clients that **hard-call** Responses (Codex CLI, Agents SDK
 |------|------|
 | [SKILL.md](SKILL.md) | Catalog, 400 vs strip, Codex provider, probes |
 | [reference.md](reference.md) | Field maps, SSE order, error codes |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to add a mapping / 400-vs-strip / probe |
 
-Host-compat shims (required after `ToChat`):
+After `ToChat`, run a host-compat layer on the chat body — this catalog or
+the equivalent already on the proxy:
 [`broker-compat/host-compat/`](../host-compat/).
