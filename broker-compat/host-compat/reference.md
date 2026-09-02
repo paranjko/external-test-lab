@@ -61,8 +61,10 @@ fetch remote refs.
 ## 4. RE2 `pattern` repeats (same sanitizers)
 
 In every string `pattern`, replace `{low,high}` when `high > 1000` with
-`{low,1000}`. Also cap `{10000}` (single bound) to `{1000}`. Do not invent a
-full regex parser; a conservative replace on `{n,m}` digits is enough.
+`{low,1000}`. If `low > 1000`, set `low = 1000` as well (so `{2000,4096}`
+becomes `{1000,1000}`, not the invalid `{2000,1000}`). Also cap `{10000}`
+(single bound) to `{1000}`. Do not invent a full regex parser; a conservative
+replace on `{n,m}` digits is enough.
 
 ## 5. Blank content beside tool_calls (`blank_tool_content`, `empty_content_array`)
 

@@ -47,7 +47,7 @@ new id or flatten twice).
 | `default_tool_call_type` | Missing/empty `tool_calls[].type` → `"function"` |
 | `fill_tool_call_ids` | Empty `tool_calls[].id` → stable `call_` + hex; pair following empty `tool_call_id` |
 | `unique_tool_call_ids` | Duplicate non-empty ids → suffix `_2`, `_3` (do not silent-dedup) |
-| `sanitize_tool_schemas` | Inline local `$ref`, strip `$defs` / `$ref` / `$dynamicRef` / `$anchor`, clamp `pattern` `{n,m}` so `m ≤ 1000` |
+| `sanitize_tool_schemas` | Inline local `$ref`, strip `$defs` / `$ref` / `$dynamicRef` / `$anchor`, clamp `pattern` `{n,m}` so `n` and `m` ≤ 1000 |
 | `sanitize_json_schema` | Same sanitizer on `response_format.json_schema` |
 
 **Dropped knobs** (`drop_unknown_knobs`): `extra_headers`, `think`, `cache_key`,
