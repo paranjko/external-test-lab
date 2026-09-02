@@ -298,6 +298,14 @@ const readability = fs.readFileSync(
   path.join(__dirname, '..', '04-ops', 'site', 'readability.css'),
   'utf8',
 );
+const mapFixture = fs.readFileSync(
+  path.join(__dirname, 'test-validator-map-fixture.mjs'),
+  'utf8',
+);
+const homepageCapture = fs.readFileSync(
+  path.join(__dirname, 'capture-homepage-viewport.mjs'),
+  'utf8',
+);
 assert.match(readability, /\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[\s\S]*grid-auto-rows: 424px;/);
 assert.match(
   readability,
@@ -315,7 +323,13 @@ assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{\s
 assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*\.nodes\.compact \.metric\.gpu b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: 1fr;/);
+assert.match(readability, /@media \(max-width: 1320px\) and \(min-width: 1101px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
 assert.match(readability, /@media \(max-width: 1100px\) and \(min-width: 701px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+assert.match(mapFixture, /name: "fixture-dynamic",\s*mode: "skip",\s*reason: "fixture skip path"/);
+assert.match(mapFixture, /\[1101, 720\][\s\S]*\[1100, 720\][\s\S]*\[701, 720\][\s\S]*\[700, 720\][\s\S]*\[521, 720\][\s\S]*\[390, 844\]/);
+assert.match(mapFixture, /\[1280, 1101, 1100, 701, 700, 521, 390\]\.includes\(width\)/);
+assert.match(mapFixture, /skippedGpu\.hidden[\s\S]*skippedGpu\.text === ""[\s\S]*skippedGpu\.clientHeight === 0/);
+assert.match(homepageCapture, /return value && \{[\s\S]*width: value\.width,[\s\S]*height: value\.height/);
 
 fs.rmSync(siteBuild, { recursive: true, force: true });
 console.log('PASS gateway public-site state contract');

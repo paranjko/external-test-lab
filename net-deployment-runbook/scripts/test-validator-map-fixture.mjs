@@ -267,6 +267,8 @@ const config = (port) =>
       },
       {
         name: "fixture-dynamic",
+        mode: "skip",
+        reason: "fixture skip path",
         address: "gonka1fixturedynamic",
         publicHost: "geo-fixture.invalid",
         statusBase: `http://127.0.0.1:${port}`,
@@ -580,7 +582,7 @@ try {
     setText('[data-k="gpu"]', "RTX PRO 2000 Blackwell ×8 + GeForce RTX 4090 SUPER Extremely Long Vendor Edition ×8 + Accelerator Model With An UnbrokenIdentifier012345678901234567890123456789 – net");
     const bounds = element => {
       const rect = element?.getBoundingClientRect();
-      return rect && { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+      return rect && { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
     };
     const textBounds = element => {
       if (!element) return null;
@@ -626,15 +628,26 @@ try {
     const hiddenVisible = Boolean(hiddenProbe && hiddenProbe.offsetParent !== null && hiddenRect && hiddenRect.width > 0 && hiddenRect.height > 0 && hiddenRange && hiddenRange.width > 0 && hiddenRange.height > 0);
     const hiddenRejected = Boolean(hiddenProbe && (!hiddenVisible || getComputedStyle(hiddenProbe).display === "none"));
     if (hiddenProbe) hiddenProbe.style.display = hiddenBefore;
+    const skippedCard = cards.find((candidate) => candidate.classList.contains("skip"));
+    const skippedGpuRow = skippedCard?.querySelector('[data-k-row="gpu"]');
+    const skippedGpuValue = skippedGpuRow?.querySelector('[data-k="gpu"]');
+    const skippedGpu = {
+      exists: Boolean(skippedCard),
+      hidden: Boolean(skippedGpuRow?.hidden),
+      display: skippedGpuRow ? getComputedStyle(skippedGpuRow).display : null,
+      text: skippedGpuValue?.textContent?.trim() || "",
+      clientHeight: skippedGpuRow?.clientHeight || 0,
+    };
     const nextOverlap = Boolean(next && contentBottom > next.bounds.top + 0.5);
     const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
     return {
-      pass: Math.abs(cardRect.height - 424) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && document.documentElement.scrollWidth <= innerWidth,
+      pass: Math.abs(cardRect.height - 424) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && document.documentElement.scrollWidth <= innerWidth,
       card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight },
       fields,
       rowOverlap,
       nextOverlap,
       hiddenRequiredFieldRejected: hiddenRejected,
+      skippedGpu,
       cardBounds: bounds(card),
       contentBottom,
       nextBounds: next?.bounds || null,
@@ -718,6 +731,10 @@ try {
   ];
   for (const [width, height] of [
     [1280, 720],
+    [1101, 720],
+    [1100, 720],
+    [701, 720],
+    [700, 720],
     [521, 720],
     [1440, 900],
     [1920, 1080],
@@ -1081,13 +1098,17 @@ try {
       );
     await call("Emulation.setDeviceMetricsOverride", {
       width: 1280,
-      height: 3000,
+      height: 5000,
       deviceScaleFactor: 1,
       mobile: false,
     });
-    await call("Emulation.setVisibleSize", { width: 1280, height: 3000 });
+    await call("Emulation.setVisibleSize", { width: 1280, height: 5000 });
     await call("Runtime.evaluate", {
       expression: `validatorMapController.update(${JSON.stringify(overlappingEuropeanMarkers)})`,
+    });
+    await delay(80);
+    await call("Runtime.evaluate", {
+      expression: 'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
     });
     await delay(80);
     const { result: overlappingResult } = await call("Runtime.evaluate", {
@@ -1443,7 +1464,7 @@ try {
           `fullscreen Escape contract failed: ${JSON.stringify(exit)}`,
         );
     }
-    if ([1280, 521, 390].includes(width)) {
+    if ([1280, 1101, 1100, 701, 700, 521, 390].includes(width)) {
       const { result: hostGeometryResult } = await call("Runtime.evaluate", {
         expression: hostGeometryExpression,
         returnByValue: true,

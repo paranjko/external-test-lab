@@ -75,7 +75,7 @@ const homepageStateExpression = `JSON.stringify({
     const rect = node.getBoundingClientRect();
     const bounds = element => {
       const value = element?.getBoundingClientRect();
-      return value && { top: value.top, bottom: value.bottom, left: value.left, right: value.right };
+      return value && { top: value.top, bottom: value.bottom, left: value.left, right: value.right, width: value.width, height: value.height };
     };
     const textBounds = element => {
       if (!element) return null;

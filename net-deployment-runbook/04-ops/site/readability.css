@@ -379,6 +379,12 @@ footer > :last-child {
   }
 }
 
+@media (max-width: 1320px) and (min-width: 1101px) {
+  .nodes.compact {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 1100px) and (min-width: 701px) {
   .nodes.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
