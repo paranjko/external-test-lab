@@ -592,9 +592,11 @@ try {
       const element = card.querySelector(selector);
       const rect = bounds(element);
       const text = textBounds(element);
+      const visible = Boolean(element && element.offsetParent !== null && rect && rect.right > rect.left && rect.bottom > rect.top && text && text.right > text.left && text.bottom > text.top);
       return {
         text: element?.textContent?.trim() || "",
-        clipped: Boolean(element && rect && text && (element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || text.left < rect.left - 0.5 || text.right > rect.right + 0.5 || text.top < rect.top - 0.5 || text.bottom > rect.bottom + 0.5)),
+        visible,
+        clipped: Boolean(!visible || element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || text.left < rect.left - 2 || text.right > rect.right + 2 || text.top < rect.top - 2 || text.bottom > rect.bottom + 2),
       };
     };
     const rows = [...card.children]
@@ -616,14 +618,23 @@ try {
       software: fieldInfo('[data-k="versions"]'),
       gpu: fieldInfo('[data-k="gpu"]'),
     };
+    const hiddenProbe = card.querySelector('[data-k="status-reason"]');
+    const hiddenBefore = hiddenProbe?.style.display;
+    if (hiddenProbe) hiddenProbe.style.display = "none";
+    const hiddenRect = hiddenProbe?.getBoundingClientRect();
+    const hiddenRange = hiddenProbe ? (() => { const range = document.createRange(); range.selectNodeContents(hiddenProbe); return range.getBoundingClientRect(); })() : null;
+    const hiddenVisible = Boolean(hiddenProbe && hiddenProbe.offsetParent !== null && hiddenRect && hiddenRect.width > 0 && hiddenRect.height > 0 && hiddenRange && hiddenRange.width > 0 && hiddenRange.height > 0);
+    const hiddenRejected = Boolean(hiddenProbe && (!hiddenVisible || getComputedStyle(hiddenProbe).display === "none"));
+    if (hiddenProbe) hiddenProbe.style.display = hiddenBefore;
     const nextOverlap = Boolean(next && contentBottom > next.bounds.top + 0.5);
-    const complete = Object.values(fields).every(field => field.text && !field.clipped);
+    const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
     return {
-      pass: cardRect.height >= 424 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && document.documentElement.scrollWidth <= innerWidth,
+      pass: Math.abs(cardRect.height - 424) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && document.documentElement.scrollWidth <= innerWidth,
       card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight },
       fields,
       rowOverlap,
       nextOverlap,
+      hiddenRequiredFieldRejected: hiddenRejected,
       cardBounds: bounds(card),
       contentBottom,
       nextBounds: next?.bounds || null,

@@ -298,14 +298,14 @@ const readability = fs.readFileSync(
   path.join(__dirname, '..', '04-ops', 'site', 'readability.css'),
   'utf8',
 );
-assert.match(readability, /\.nodes\.compact \{\s*grid-auto-rows: minmax\(424px, auto\);/);
+assert.match(readability, /\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[\s\S]*grid-auto-rows: 424px;/);
 assert.match(
   readability,
-  /\.nodes\.compact \.node \{[\s\S]*box-sizing: border-box;[\s\S]*min-height: 424px;[\s\S]*height: auto;[\s\S]*max-height: none;[\s\S]*overflow: visible;/,
+  /\.nodes\.compact \.node \{[\s\S]*box-sizing: border-box;[\s\S]*height: 424px;[\s\S]*min-height: 424px;[\s\S]*max-height: 424px;[\s\S]*overflow: hidden;/,
 );
-assert.match(readability, /\.nodes\.compact \.node h3 \{[\s\S]*max-height: none;[\s\S]*overflow: visible;/);
-assert.match(readability, /\.nodes\.compact \.node > small \{[\s\S]*max-height: none;[\s\S]*overflow: visible;/);
-assert.match(readability, /\.nodes\.compact \.status \{[\s\S]*max-height: none;[\s\S]*overflow: visible;/);
+assert.match(readability, /\.nodes\.compact \.node h3 \{[\s\S]*max-height: 44px;[\s\S]*overflow: hidden;/);
+assert.match(readability, /\.nodes\.compact \.node > small \{[\s\S]*max-height: 30px;[\s\S]*overflow: hidden;/);
+assert.match(readability, /\.nodes\.compact \.status \{[\s\S]*max-height: 24px;[\s\S]*overflow: hidden;/);
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;[\s\S]*max-height: none;[\s\S]*align-items: flex-start;/);
 assert.match(readability, /\.nodes\.compact \.metric\.software,\s*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{/);
 assert.match(readability, /grid-template-columns: 72px minmax\(0, 1fr\);/);
@@ -313,7 +313,9 @@ assert.match(readability, /\.nodes\.compact \.metric\.software \{\s*min-height: 
 assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{[\s\S]*min-height: 44px;\s*max-height: none;[\s\S]*border-top: 2px solid var\(--line\);/);
 assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{\s*grid-template-columns: 28px minmax\(0, 1fr\);/);
 assert.match(readability, /\.nodes\.compact \.metric\.gpu b \{\s*overflow-wrap: anywhere;\s*white-space: normal;/);
-assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: visible;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
+assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
+assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: 1fr;/);
+assert.match(readability, /@media \(max-width: 1100px\) and \(min-width: 701px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 
 fs.rmSync(siteBuild, { recursive: true, force: true });
 console.log('PASS gateway public-site state contract');

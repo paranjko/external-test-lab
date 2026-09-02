@@ -282,56 +282,63 @@ footer > :last-child {
   display: none;
 }
 
-/* Host cards keep a compact minimum footprint, but rows grow with their
- * complete values.  Fixed child heights caused wrapped status, software and
- * GPU text to paint over the next row or the next card. */
+/* Host cards keep the existing fixed visual budget.  The responsive column
+ * count and compact wrapping rules give complete status, software and GPU
+ * values enough width to fit without allowing one card to stretch its row. */
 .nodes.compact {
-  grid-auto-rows: minmax(424px, auto);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: 424px;
 }
 
 .nodes.compact .node {
   box-sizing: border-box;
+  display: block;
+  height: 424px;
   min-height: 424px;
-  height: auto;
-  max-height: none;
-  overflow: visible;
+  max-height: 424px;
+  overflow: hidden;
 }
 
 .nodes.compact .node h3 {
   min-height: 30px;
-  max-height: none;
-  margin-bottom: 8px;
-  overflow: visible;
+  max-height: 44px;
+  margin-bottom: 6px;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  line-height: 1.25;
 }
 
 .nodes.compact .node > small {
   min-height: 22px;
-  max-height: none;
-  overflow: visible;
+  max-height: 30px;
+  overflow: hidden;
   overflow-wrap: anywhere;
-  line-height: 1.35;
+  line-height: 1.2;
 }
 
 .nodes.compact .status {
-  min-height: 30px;
-  max-height: none;
-  margin-bottom: 4px;
-  overflow: visible;
+  min-height: 24px;
+  max-height: 24px;
+  margin-bottom: 2px;
+  overflow: hidden;
+  line-height: 1.2;
 }
 
 .nodes.compact .metric {
   box-sizing: border-box;
   min-width: 0;
-  min-height: 26px;
+  min-height: 24px;
   max-height: none;
   align-items: flex-start;
+  padding: 3px 0;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .nodes.compact .metric b {
   min-width: 0;
   flex: 1 1 auto;
-  overflow: visible;
+  overflow: hidden;
   overflow-wrap: anywhere;
   text-align: right;
   text-overflow: clip;
@@ -342,8 +349,34 @@ footer > :last-child {
   flex: 0 0 auto;
 }
 
-@media (max-width: 520px) {
+.nodes.compact .metric.software {
+  min-height: 24px;
+  margin-top: 0;
+  padding: 3px 0;
+}
+
+.nodes.compact .metric.gpu:not([hidden]) {
+  min-height: 24px;
+  margin-top: 0;
+  padding: 3px 0;
+  border-top-width: 1px;
+}
+
+.nodes.compact .metric.software b,
+.nodes.compact .metric.gpu b {
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+@media (max-width: 700px) {
   .nodes.compact {
-    grid-auto-rows: minmax(424px, auto);
+    grid-template-columns: 1fr;
+    grid-auto-rows: 424px;
+  }
+}
+
+@media (max-width: 1100px) and (min-width: 701px) {
+  .nodes.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

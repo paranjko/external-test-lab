@@ -85,27 +85,50 @@ const homepageStateExpression = `JSON.stringify({
     };
     const rowInfo = element => {
       const value = textBounds(element);
+      const rect = element?.getBoundingClientRect();
+      const visible = Boolean(element && element.offsetParent !== null && rect && rect.width > 0 && rect.height > 0 && value && value.width > 0 && value.height > 0);
       return {
         bounds: bounds(element),
         textBounds: value,
-        clipped: Boolean(element && value && (element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || value.right > element.getBoundingClientRect().right + 0.5 || value.bottom > element.getBoundingClientRect().bottom + 0.5)),
+        visible,
+        clipped: Boolean(!visible || element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || value.right > rect.right + 2 || value.bottom > rect.bottom + 2 || value.left < rect.left - 2 || value.top < rect.top - 2),
       };
     };
     const metric = key => {
       const row = node.querySelector("[data-k-row=" + key + "]");
       const value = row?.querySelector("b");
+      const rect = value?.getBoundingClientRect();
+      const visible = Boolean(value && value.offsetParent !== null && rect && rect.width > 0 && rect.height > 0);
       return {
         text: value?.textContent?.trim(),
-        clipped: Boolean(value && (value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || row.scrollHeight > row.clientHeight)),
+        visible,
+        clipped: Boolean(!visible || value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || row.scrollHeight > row.clientHeight),
       };
     };
     const valueField = key => {
       const value = node.querySelector("[data-k=" + key + "]");
+      const rect = value?.getBoundingClientRect();
+      const visible = Boolean(value && value.offsetParent !== null && rect && rect.width > 0 && rect.height > 0);
       return {
         text: value?.textContent?.trim(),
-        clipped: Boolean(value && (value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight)),
+        visible,
+        clipped: Boolean(!visible || value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight),
       };
     };
+    const textField = selector => {
+      const value = node.querySelector(selector);
+      const rect = value?.getBoundingClientRect();
+      const range = textBounds(value);
+      const visible = Boolean(value && value.offsetParent !== null && rect && rect.width > 0 && rect.height > 0 && range && range.width > 0 && range.height > 0);
+      return {
+        text: value?.textContent?.trim(),
+        visible,
+        clipped: Boolean(!visible || value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || (range && (range.left < rect.left - 2 || range.right > rect.right + 2 || range.top < rect.top - 2 || range.bottom > rect.bottom + 2))),
+      };
+    };
+    const statusField = textField("[data-k=status]");
+    const statusReasonField = textField("[data-k=status-reason]");
+    const scopeField = textField("[data-k=scope]");
     const rows = [...node.children]
       .filter(row => row.matches("h3,.status,small,.metric") && row.offsetParent !== null)
       .map(rowInfo);
@@ -113,9 +136,15 @@ const homepageStateExpression = `JSON.stringify({
     const contentBottom = rows.reduce((bottom, row) => Math.max(bottom, row.textBounds?.bottom ?? -Infinity), -Infinity);
     return {
       name: node.querySelector("h3")?.textContent,
-      status: node.querySelector("[data-k=status]")?.textContent,
-      statusReason: node.querySelector("[data-k=status-reason]")?.textContent,
-      scope: node.querySelector("[data-k=scope]")?.textContent,
+      status: statusField.text,
+      statusVisible: statusField.visible,
+      statusClipped: statusField.clipped,
+      statusReason: statusReasonField.text,
+      statusReasonVisible: statusReasonField.visible,
+      statusReasonClipped: statusReasonField.clipped,
+      scope: scopeField.text,
+      scopeVisible: scopeField.visible,
+      scopeClipped: scopeField.clipped,
       vp: node.querySelector("[data-k=vp]")?.textContent,
       sync: node.querySelector("[data-k=sync]")?.textContent,
       endpoint: node.querySelector("[data-k=endpoint]")?.textContent,
@@ -204,7 +233,7 @@ try {
     return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
       || (/\b[45]\d\d\b/.test(endpoint) && !/^Unavailable – HTTP [45]\d\d$/.test(endpoint));
   };
-  if (mappedNodes.some(node => node.height < 424 || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.status || !node.statusReason || !node.scope || node.valueFields.some(field => !field.text || field.clipped) || !node.software.text || node.software.clipped || (node.gpu.text && node.gpu.clipped) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or complete field contract failed ${JSON.stringify(mappedNodes)}`);
+  if (mappedNodes.some(node => Math.abs(node.height - 424) > 0.5 || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.status || !node.statusVisible || node.statusClipped || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || !node.software.text || !node.software.visible || node.software.clipped || (node.gpu.text && (!node.gpu.visible || node.gpu.clipped)) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or complete field contract failed ${JSON.stringify(mappedNodes)}`);
   if (expectResetState) {
     const active = state.nodes;
     if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapValidators !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {
