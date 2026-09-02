@@ -309,10 +309,10 @@ assert.match(readability, /\.nodes\.compact \.status \{[\s\S]*max-height: 24px;[
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;[\s\S]*max-height: none;[\s\S]*align-items: flex-start;/);
 assert.match(readability, /\.nodes\.compact \.metric\.software,\s*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{/);
 assert.match(readability, /grid-template-columns: 72px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric\.software \{\s*min-height: 52px;\s*max-height: none;/);
-assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{[\s\S]*min-height: 44px;\s*max-height: none;[\s\S]*border-top: 2px solid var\(--line\);/);
+assert.match(readability, /\.nodes\.compact \.metric\.software \{\s*min-height: 24px;\s*margin-top: 0;\s*padding: 3px 0;/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{\s*min-height: 24px;\s*margin-top: 0;\s*padding: 3px 0;\s*border-top-width: 1px;/);
 assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{\s*grid-template-columns: 28px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric\.gpu b \{\s*overflow-wrap: anywhere;\s*white-space: normal;/);
+assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*\.nodes\.compact \.metric\.gpu b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: 1fr;/);
 assert.match(readability, /@media \(max-width: 1100px\) and \(min-width: 701px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);

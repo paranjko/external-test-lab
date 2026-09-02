@@ -366,6 +366,10 @@ footer > :last-child {
 .nodes.compact .metric.gpu b {
   font-size: 9px;
   line-height: 1.15;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 @media (max-width: 700px) {
