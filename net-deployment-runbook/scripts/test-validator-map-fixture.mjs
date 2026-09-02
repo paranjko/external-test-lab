@@ -731,6 +731,8 @@ try {
   ];
   for (const [width, height] of [
     [1280, 720],
+    [1321, 720],
+    [1320, 720],
     [1101, 720],
     [1100, 720],
     [701, 720],
@@ -1464,7 +1466,7 @@ try {
           `fullscreen Escape contract failed: ${JSON.stringify(exit)}`,
         );
     }
-    if ([1280, 1101, 1100, 701, 700, 521, 390].includes(width)) {
+    if ([1280, 1321, 1320, 1101, 1100, 701, 700, 521, 390].includes(width)) {
       const { result: hostGeometryResult } = await call("Runtime.evaluate", {
         expression: hostGeometryExpression,
         returnByValue: true,

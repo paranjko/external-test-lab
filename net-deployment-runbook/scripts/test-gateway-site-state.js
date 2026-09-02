@@ -326,8 +326,8 @@ assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact
 assert.match(readability, /@media \(max-width: 1320px\) and \(min-width: 1101px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
 assert.match(readability, /@media \(max-width: 1100px\) and \(min-width: 701px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 assert.match(mapFixture, /name: "fixture-dynamic",\s*mode: "skip",\s*reason: "fixture skip path"/);
-assert.match(mapFixture, /\[1101, 720\][\s\S]*\[1100, 720\][\s\S]*\[701, 720\][\s\S]*\[700, 720\][\s\S]*\[521, 720\][\s\S]*\[390, 844\]/);
-assert.match(mapFixture, /\[1280, 1101, 1100, 701, 700, 521, 390\]\.includes\(width\)/);
+assert.match(mapFixture, /\[1321, 720\][\s\S]*\[1320, 720\][\s\S]*\[1101, 720\][\s\S]*\[1100, 720\][\s\S]*\[701, 720\][\s\S]*\[700, 720\][\s\S]*\[521, 720\][\s\S]*\[390, 844\]/);
+assert.match(mapFixture, /\[1280, 1321, 1320, 1101, 1100, 701, 700, 521, 390\]\.includes\(width\)/);
 assert.match(mapFixture, /skippedGpu\.hidden[\s\S]*skippedGpu\.text === ""[\s\S]*skippedGpu\.clientHeight === 0/);
 assert.match(homepageCapture, /return value && \{[\s\S]*width: value\.width,[\s\S]*height: value\.height/);
 
