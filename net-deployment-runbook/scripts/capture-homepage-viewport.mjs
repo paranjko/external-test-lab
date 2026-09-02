@@ -85,28 +85,92 @@ const homepageStateExpression = `JSON.stringify({
   }))(document.querySelector("#join-node")),
   nodes: [...document.querySelectorAll("#nodes .node")].map(node => {
     const rect = node.getBoundingClientRect();
+    const bounds = element => {
+      const value = element?.getBoundingClientRect();
+      return value && { top: value.top, bottom: value.bottom, left: value.left, right: value.right, width: value.width, height: value.height };
+    };
+    const textBounds = element => {
+      if (!element) return null;
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return bounds(range);
+    };
+    const rowInfo = element => {
+      const value = textBounds(element);
+      const rect = element?.getBoundingClientRect();
+      const visible = Boolean(element && element.offsetParent !== null && rect && rect.width > 0 && rect.height > 0 && value && value.width > 0 && value.height > 0);
+      return {
+        bounds: bounds(element),
+        textBounds: value,
+        visible,
+        clipped: Boolean(!visible || element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || value.right > rect.right + 2 || value.bottom > rect.bottom + 2 || value.left < rect.left - 2 || value.top < rect.top - 2),
+      };
+    };
     const metric = key => {
       const row = node.querySelector("[data-k-row=" + key + "]");
       const value = row?.querySelector("b");
+      const rect = value?.getBoundingClientRect();
+      const visible = Boolean(value && value.offsetParent !== null && rect && rect.width > 0 && rect.height > 0);
       return {
         text: value?.textContent?.trim(),
-        clipped: Boolean(value && (value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || row.scrollHeight > row.clientHeight)),
+        visible,
+        clipped: Boolean(!visible || value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || row.scrollHeight > row.clientHeight),
       };
     };
+    const valueField = key => {
+      const value = node.querySelector("[data-k=" + key + "]");
+      const rect = value?.getBoundingClientRect();
+      const visible = Boolean(value && value.offsetParent !== null && rect && rect.width > 0 && rect.height > 0);
+      return {
+        text: value?.textContent?.trim(),
+        visible,
+        clipped: Boolean(!visible || value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight),
+      };
+    };
+    const textField = selector => {
+      const value = node.querySelector(selector);
+      const rect = value?.getBoundingClientRect();
+      const range = textBounds(value);
+      const visible = Boolean(value && value.offsetParent !== null && rect && rect.width > 0 && rect.height > 0 && range && range.width > 0 && range.height > 0);
+      return {
+        text: value?.textContent?.trim(),
+        visible,
+        clipped: Boolean(!visible || value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || (range && (range.left < rect.left - 2 || range.right > rect.right + 2 || range.top < rect.top - 2 || range.bottom > rect.bottom + 2))),
+      };
+    };
+    const statusField = textField("[data-k=status]");
+    const statusReasonField = textField("[data-k=status-reason]");
+    const scopeField = textField("[data-k=scope]");
+    const rows = [...node.children]
+      .filter(row => row.matches("h3,.status,small,.metric") && row.offsetParent !== null)
+      .map(rowInfo);
+    const rowOverlap = rows.slice(0, -1).some((row, index) => row.textBounds && rows[index + 1].bounds && row.textBounds.bottom > rows[index + 1].bounds.top + 0.5);
+    const contentBottom = rows.reduce((bottom, row) => Math.max(bottom, row.textBounds?.bottom ?? -Infinity), -Infinity);
     return {
       name: node.querySelector("h3")?.textContent,
-      status: node.querySelector("[data-k=status]")?.textContent,
+      status: statusField.text,
+      statusVisible: statusField.visible,
+      statusClipped: statusField.clipped,
+      statusReason: statusReasonField.text,
+      statusReasonVisible: statusReasonField.visible,
+      statusReasonClipped: statusReasonField.clipped,
+      scope: scopeField.text,
+      scopeVisible: scopeField.visible,
+      scopeClipped: scopeField.clipped,
       vp: node.querySelector("[data-k=vp]")?.textContent,
       sync: node.querySelector("[data-k=sync]")?.textContent,
       endpoint: node.querySelector("[data-k=endpoint]")?.textContent,
       versions: node.querySelector("[data-k=versions]")?.textContent,
       software: metric("software"),
       gpu: metric("gpu"),
+      valueFields: ["height", "vp", "sync", "endpoint"].map(valueField),
       top: rect.top,
       bottom: rect.bottom,
       height: rect.height,
       clientHeight: node.clientHeight,
       scrollHeight: node.scrollHeight,
+      rowOverlap,
+      contentOverflowsCard: contentBottom > rect.bottom + 0.5,
     };
   }),
 })`;
@@ -185,13 +249,12 @@ try {
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
   if (mappedNodes.some(node => !node.versions || node.versions === 'checking')) throw new Error(`participant software versions did not resolve ${JSON.stringify(state)}`);
-  const hostHeights = new Set(mappedNodes.map(node => Math.round(node.height)));
   const hasUnboundedHostDiagnostic = node => {
     const endpoint = node.endpoint || '';
     return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
       || (/\b[45]\d\d\b/.test(endpoint) && !/^Unavailable – HTTP [45]\d\d$/.test(endpoint));
   };
-  if (hostHeights.size !== 1 || !hostHeights.has(424) || mappedNodes.some(node => node.scrollHeight > node.clientHeight || !node.vp || !node.sync || !node.endpoint || !node.software.text || node.software.clipped || (node.gpu.text && node.gpu.clipped) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or complete field contract failed ${JSON.stringify(mappedNodes)}`);
+  if (mappedNodes.some(node => Math.abs(node.height - 424) > 0.5 || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.status || !node.statusVisible || node.statusClipped || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || !node.software.text || !node.software.visible || node.software.clipped || (node.gpu.text && (!node.gpu.visible || node.gpu.clipped)) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or complete field contract failed ${JSON.stringify(mappedNodes)}`);
   if (expectResetState) {
     const active = state.nodes;
     if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapValidators !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {

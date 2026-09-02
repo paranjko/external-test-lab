@@ -267,6 +267,8 @@ const config = (port) =>
       },
       {
         name: "fixture-dynamic",
+        mode: "skip",
+        reason: "fixture skip path",
         address: "gonka1fixturedynamic",
         publicHost: "geo-fixture.invalid",
         statusBase: `http://127.0.0.1:${port}`,
@@ -556,6 +558,103 @@ try {
   const reports = [];
   const mapStateExpression =
     'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),rect=map?.getBoundingClientRect(),world=map?.querySelector(".validator-map-world"),worldRect=world?.getBoundingClientRect(),markers=[...map.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",classes:[...marker.classList],fill:marker.getAttribute("fill"),left:r.left+r.width/2,top:r.top+r.height/2,width:r.width,height:r.height}});return{world:Boolean(world?.complete&&world?.naturalWidth),worldRatio:worldRect?worldRect.width/worldRect.height:0,validators:Number(map?.dataset.validatorCount),markerCount:Number(map?.dataset.markerCount),hitTargetCount:map?.querySelectorAll(".validator-marker-hit").length||0,centersInside:markers.every(marker=>marker.left>=rect.left-.1&&marker.left<=rect.right+.1&&marker.top>=rect.top-.1&&marker.top<=rect.bottom+.1),markerNodes:markers,mapRect:rect&&{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},worldRect:worldRect&&{left:worldRect.left,top:worldRect.top,width:worldRect.width,height:worldRect.height},scrollWidth:document.documentElement.scrollWidth,width:innerWidth}})())';
+  const hostGeometryExpression = `JSON.stringify((() => {
+    const card = document.querySelector("#nodes .node");
+    const cards = [...document.querySelectorAll("#nodes .node")];
+    if (!card) return { pass: false, error: "no Host card" };
+    const setText = (selector, value) => {
+      const element = card.querySelector(selector);
+      if (element) element.textContent = value;
+      return element;
+    };
+    setText("h3", "node0.example.test with a deliberately long hostname");
+    setText('[data-k="status"]', "VALIDATING");
+    setText('[data-k="status-reason"]', "Effective and synchronized validator with a long diagnostic reason");
+    setText('[data-k="scope"]', "gonka1abcdefghijklmnopqrstuvwxyz0123456789");
+    setText('[data-k="height"]', "123456789");
+    setText('[data-k="vp"]', "9223372036854775807");
+    setText('[data-k="sync"]', "Synced");
+    setText('[data-k="endpoint"]', "Unavailable – Network error");
+    setText('[data-k="peers"]', "123");
+    setText('[data-k="versions"]', "chain v2026.09.02-extremely-long-build-identifier · DAPI v0.2.16-post999999999999 · MLNode v3.0.14-post2-with-another-extremely-long-build-identifier");
+    const gpuRow = card.querySelector('[data-k-row="gpu"]');
+    if (gpuRow) gpuRow.hidden = false;
+    setText('[data-k="gpu"]', "RTX PRO 2000 Blackwell ×8 + GeForce RTX 4090 SUPER Extremely Long Vendor Edition ×8 + Accelerator Model With An UnbrokenIdentifier012345678901234567890123456789 – net");
+    const bounds = element => {
+      const rect = element?.getBoundingClientRect();
+      return rect && { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
+    };
+    const textBounds = element => {
+      if (!element) return null;
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return bounds(range);
+    };
+    const fieldInfo = selector => {
+      const element = card.querySelector(selector);
+      const rect = bounds(element);
+      const text = textBounds(element);
+      const visible = Boolean(element && element.offsetParent !== null && rect && rect.right > rect.left && rect.bottom > rect.top && text && text.right > text.left && text.bottom > text.top);
+      return {
+        text: element?.textContent?.trim() || "",
+        visible,
+        clipped: Boolean(!visible || element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || text.left < rect.left - 2 || text.right > rect.right + 2 || text.top < rect.top - 2 || text.bottom > rect.bottom + 2),
+      };
+    };
+    const rows = [...card.children]
+      .filter(row => row.matches("h3,.status,small,.metric") && row.offsetParent !== null)
+      .map(element => ({ bounds: bounds(element), textBounds: textBounds(element) }));
+    const rowOverlap = rows.slice(0, -1).some((row, index) => row.textBounds && rows[index + 1].bounds && row.textBounds.bottom > rows[index + 1].bounds.top + 0.5);
+    const cardRect = card.getBoundingClientRect();
+    const contentBottom = rows.reduce((bottom, row) => Math.max(bottom, row.textBounds?.bottom ?? -Infinity), -Infinity);
+    const next = cards
+      .slice(1)
+      .map(candidate => ({ candidate, bounds: candidate.getBoundingClientRect() }))
+      .filter(item => item.bounds.top >= cardRect.bottom - 0.5 && item.bounds.left < cardRect.right && item.bounds.right > cardRect.left)
+      .sort((left, right) => left.bounds.top - right.bounds.top)[0];
+    const fields = {
+      status: fieldInfo('[data-k="status"]'),
+      statusReason: fieldInfo('[data-k="status-reason"]'),
+      scope: fieldInfo('[data-k="scope"]'),
+      votingPower: fieldInfo('[data-k="vp"]'),
+      software: fieldInfo('[data-k="versions"]'),
+      gpu: fieldInfo('[data-k="gpu"]'),
+    };
+    const hiddenProbe = card.querySelector('[data-k="status-reason"]');
+    const hiddenBefore = hiddenProbe?.style.display;
+    if (hiddenProbe) hiddenProbe.style.display = "none";
+    const hiddenRect = hiddenProbe?.getBoundingClientRect();
+    const hiddenRange = hiddenProbe ? (() => { const range = document.createRange(); range.selectNodeContents(hiddenProbe); return range.getBoundingClientRect(); })() : null;
+    const hiddenVisible = Boolean(hiddenProbe && hiddenProbe.offsetParent !== null && hiddenRect && hiddenRect.width > 0 && hiddenRect.height > 0 && hiddenRange && hiddenRange.width > 0 && hiddenRange.height > 0);
+    const hiddenRejected = Boolean(hiddenProbe && (!hiddenVisible || getComputedStyle(hiddenProbe).display === "none"));
+    if (hiddenProbe) hiddenProbe.style.display = hiddenBefore;
+    const skippedCard = cards.find((candidate) => candidate.classList.contains("skip"));
+    const skippedGpuRow = skippedCard?.querySelector('[data-k-row="gpu"]');
+    const skippedGpuValue = skippedGpuRow?.querySelector('[data-k="gpu"]');
+    const skippedGpu = {
+      exists: Boolean(skippedCard),
+      hidden: Boolean(skippedGpuRow?.hidden),
+      display: skippedGpuRow ? getComputedStyle(skippedGpuRow).display : null,
+      text: skippedGpuValue?.textContent?.trim() || "",
+      clientHeight: skippedGpuRow?.clientHeight || 0,
+    };
+    const nextOverlap = Boolean(next && contentBottom > next.bounds.top + 0.5);
+    const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
+    return {
+      pass: Math.abs(cardRect.height - 424) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && document.documentElement.scrollWidth <= innerWidth,
+      card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight },
+      fields,
+      rowOverlap,
+      nextOverlap,
+      hiddenRequiredFieldRejected: hiddenRejected,
+      skippedGpu,
+      cardBounds: bounds(card),
+      contentBottom,
+      nextBounds: next?.bounds || null,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: innerWidth,
+    };
+  })())`;
   const bubbleNodes = [1, 2, 4, 9].flatMap((count) =>
     Array.from({ length: count }, (_, index) => ({
       address: `bubble-${count}-${index}`,
@@ -632,6 +731,13 @@ try {
   ];
   for (const [width, height] of [
     [1280, 720],
+    [1321, 720],
+    [1320, 720],
+    [1101, 720],
+    [1100, 720],
+    [701, 720],
+    [700, 720],
+    [521, 720],
     [1440, 900],
     [1920, 1080],
     [390, 844],
@@ -672,6 +778,7 @@ try {
       returnByValue: true,
     });
     const state = JSON.parse(result.value);
+    let hostGeometry = null;
     if (width === 1280) {
       const { result: geoIpResult } = await call("Runtime.evaluate", {
         expression:
@@ -993,13 +1100,17 @@ try {
       );
     await call("Emulation.setDeviceMetricsOverride", {
       width: 1280,
-      height: 3000,
+      height: 5000,
       deviceScaleFactor: 1,
       mobile: false,
     });
-    await call("Emulation.setVisibleSize", { width: 1280, height: 3000 });
+    await call("Emulation.setVisibleSize", { width: 1280, height: 5000 });
     await call("Runtime.evaluate", {
       expression: `validatorMapController.update(${JSON.stringify(overlappingEuropeanMarkers)})`,
+    });
+    await delay(80);
+    await call("Runtime.evaluate", {
+      expression: 'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
     });
     await delay(80);
     const { result: overlappingResult } = await call("Runtime.evaluate", {
@@ -1355,6 +1466,17 @@ try {
           `fullscreen Escape contract failed: ${JSON.stringify(exit)}`,
         );
     }
+    if ([1280, 1321, 1320, 1101, 1100, 701, 700, 521, 390].includes(width)) {
+      const { result: hostGeometryResult } = await call("Runtime.evaluate", {
+        expression: hostGeometryExpression,
+        returnByValue: true,
+      });
+      hostGeometry = JSON.parse(hostGeometryResult.value);
+      if (!hostGeometry.pass)
+        throw new Error(
+          `Host-card geometry contract failed at ${width}x${height}: ${JSON.stringify(hostGeometry)}`,
+        );
+    }
     await call("Runtime.evaluate", {
       expression:
         'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
@@ -1366,7 +1488,7 @@ try {
       join(evidenceDir, `validator-map-${width}x${height}.png`),
       Buffer.from(screenshot.data, "base64"),
     );
-    reports.push({ width, height, ...state });
+    reports.push({ width, height, ...state, hostGeometry });
   }
   const forbidden = requests.filter((url) => forbiddenMapRequest.test(url));
   if (forbidden.length)
