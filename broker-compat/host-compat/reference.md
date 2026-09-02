@@ -52,8 +52,8 @@ Walk `tools[].function.parameters` and `response_format.json_schema.schema`
 1. Resolve local `$ref` (`#/$defs/Foo`, `#/definitions/Foo`) by inlining.
 2. Delete keys: `$defs`, `definitions`, `$ref`, `$dynamicRef`, `$dynamicAnchor`,
    `$anchor` (after inlining).
-3. Recurse into `properties`, `items`, `anyOf` / `oneOf` / `allOf`,
-   `additionalProperties`.
+3. Recurse into every nested object and array, not only `properties`,
+   `items`, `anyOf` / `oneOf` / `allOf`, `additionalProperties`.
 
 If a `$ref` is external (`http://…`) and cannot be inlined, strip that subtree
 or replace with `"type":"object"` — better a weaker schema than a 400. Do not
