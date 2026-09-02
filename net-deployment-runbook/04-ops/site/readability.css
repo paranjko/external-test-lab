@@ -390,3 +390,24 @@ footer > :last-child {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+@media (min-width: 1400px) {
+  .nodes.compact {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-auto-rows: 480px;
+  }
+
+  .nodes.compact .node {
+    height: 480px;
+    min-height: 480px;
+    max-height: 480px;
+  }
+
+  .nodes.compact .node > small[data-k="status-reason"] {
+    max-height: 44px;
+  }
+
+  .nodes.compact .node h3 {
+    max-height: 66px;
+  }
+}

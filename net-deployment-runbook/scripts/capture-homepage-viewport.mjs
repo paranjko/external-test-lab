@@ -9,6 +9,7 @@ const [url, widthText, heightText, output, visibleNodesText = '0'] = process.arg
 const width = Number(widthText);
 const height = Number(heightText);
 const visibleNodes = Number(visibleNodesText);
+const expectedHostCardHeight = width >= 1400 ? 480 : 424;
 const expectResetState = process.env.GDC_EXPECT_RESET_STATE === 'true';
 const checkMapFullscreen = process.env.GDC_CHECK_MAP_FULLSCREEN === 'true';
 const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
@@ -254,7 +255,7 @@ try {
     return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
       || (/\b[45]\d\d\b/.test(endpoint) && !/^Unavailable – HTTP [45]\d\d$/.test(endpoint));
   };
-  if (mappedNodes.some(node => Math.abs(node.height - 424) > 0.5 || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.status || !node.statusVisible || node.statusClipped || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || !node.software.text || !node.software.visible || node.software.clipped || (node.gpu.text && (!node.gpu.visible || node.gpu.clipped)) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or complete field contract failed ${JSON.stringify(mappedNodes)}`);
+  if (mappedNodes.some(node => Math.abs(node.height - expectedHostCardHeight) > 0.5 || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.status || !node.statusVisible || node.statusClipped || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || !node.software.text || !node.software.visible || node.software.clipped || (node.gpu.text && (!node.gpu.visible || node.gpu.clipped)) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card geometry or complete field contract failed ${JSON.stringify(mappedNodes)}`);
   if (expectResetState) {
     const active = state.nodes;
     if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapValidators !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {
