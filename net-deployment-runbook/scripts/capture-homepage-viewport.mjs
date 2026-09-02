@@ -76,9 +76,9 @@ const homepageStateExpression = `JSON.stringify({
     link: element?.querySelector("a")?.href,
     summary: element?.querySelector("summary")?.textContent?.replace(/\\s+/g, " ").trim(),
     requirementsOpen: element?.querySelector(".join-requirements")?.open,
-    requirements: [...(element?.querySelectorAll(".join-requirements-grid > div") || [])].map(item => ({
-      label: item.querySelector("dt")?.textContent,
-      value: item.querySelector("dd")?.textContent,
+    requirements: [...(element?.querySelectorAll(".join-requirements-table tbody > tr") || [])].map(item => ({
+      label: item.querySelector("th")?.textContent,
+      value: item.querySelector("td")?.textContent,
     })),
     requirementsNote: element?.querySelector(".join-requirements-note")?.textContent,
     modelLink: element?.querySelector(".join-requirements-note a")?.href,
@@ -175,12 +175,16 @@ try {
   await call('Runtime.evaluate', { expression: 'document.querySelector(".join-requirements-toggle")?.click()' }, sessionId);
   await delay(100);
   const { result: joinRequirementsResult } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({open:document.querySelector(".join-requirements")?.open,page:document.documentElement.scrollWidth,viewport:innerWidth,nested:[...document.querySelectorAll(".join-requirements,.join-requirements *")].some(e=>e.scrollWidth>e.clientWidth)})',
+    expression: 'JSON.stringify((()=>{const details=document.querySelector(".join-requirements"),summary=details?.querySelector("summary"),toggle=details?.querySelector(".join-requirements-toggle"),guide=details?.querySelector(".join-requirements-guide"),table=details?.querySelector(".join-requirements-table"),rect=e=>{const r=e?.getBoundingClientRect();return r&&{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width}};return{open:details?.open,page:document.documentElement.scrollWidth,viewport:innerWidth,nested:[...document.querySelectorAll(".join-requirements,.join-requirements *")].some(e=>e.scrollWidth>e.clientWidth),summary:rect(summary),toggle:rect(toggle),guide:rect(guide),table:{tag:table?.tagName,rect:rect(table),columns:[...table?.querySelectorAll("thead th")||[]].map(e=>e.textContent),rows:table?.querySelectorAll("tbody tr").length}}})())',
     returnByValue: true,
   }, sessionId);
   const joinRequirements = JSON.parse(joinRequirementsResult.value);
   if (!joinRequirements.open || joinRequirements.page > joinRequirements.viewport || joinRequirements.nested) throw new Error(`JOIN requirements interaction or overflow failed ${JSON.stringify(joinRequirements)}`);
-  await call('Runtime.evaluate', { expression: 'document.querySelector(".join-requirements-toggle")?.click()' }, sessionId);
+  if (joinRequirements.table.tag !== 'TABLE' || JSON.stringify(joinRequirements.table.columns) !== JSON.stringify(['Component', 'Minimum']) || joinRequirements.table.rows !== expectedJoinRequirements.length || joinRequirements.table.rect.width > joinRequirements.summary.width) throw new Error(`JOIN requirements table contract failed ${JSON.stringify(joinRequirements)}`);
+  const summarySpacingValid = width <= 520
+    ? joinRequirements.guide.top - joinRequirements.toggle.bottom >= 5 && Math.abs(joinRequirements.guide.left - joinRequirements.toggle.left) <= 2
+    : joinRequirements.guide.left - joinRequirements.toggle.right >= 12 && Math.abs(joinRequirements.guide.top - joinRequirements.toggle.top) <= 2;
+  if (!summarySpacingValid) throw new Error(`JOIN requirements summary spacing failed ${JSON.stringify(joinRequirements)}`);
   const mappedNodes = state.nodes;
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
