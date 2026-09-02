@@ -641,7 +641,7 @@ try {
     const nextOverlap = Boolean(next && contentBottom > next.bounds.top + 0.5);
     const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
     return {
-      pass: Math.abs(cardRect.height - (innerWidth >= 1400 ? 420 : 424)) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && document.documentElement.scrollWidth <= innerWidth,
+      pass: Math.abs(cardRect.height - (innerWidth >= 1400 ? 480 : 424)) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && document.documentElement.scrollWidth <= innerWidth,
       card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight },
       fields,
       rowOverlap,
@@ -731,6 +731,7 @@ try {
   ];
   for (const [width, height] of [
     [1280, 720],
+    [1399, 720],
     [1321, 720],
     [1320, 720],
     [1101, 720],
@@ -738,6 +739,7 @@ try {
     [701, 720],
     [700, 720],
     [521, 720],
+    [1400, 900],
     [1440, 900],
     [1920, 1080],
     [390, 844],
@@ -1466,7 +1468,7 @@ try {
           `fullscreen Escape contract failed: ${JSON.stringify(exit)}`,
         );
     }
-    if ([1280, 1321, 1320, 1101, 1100, 701, 700, 521, 390].includes(width)) {
+    if ([1280, 1399, 1321, 1320, 1101, 1100, 701, 700, 521, 1400, 1440, 1920, 390].includes(width)) {
       const { result: hostGeometryResult } = await call("Runtime.evaluate", {
         expression: hostGeometryExpression,
         returnByValue: true,
