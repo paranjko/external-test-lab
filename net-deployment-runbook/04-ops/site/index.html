@@ -24,7 +24,22 @@
       <pre><code>git clone https://github.com/paranjko/external-test-lab.git
 alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
 gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
-      <p>For more details, read <a href="https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host" target="_blank" rel="noopener">Community DevNet runbook/JOIN: add a Host</a></p>
+      <details class="join-requirements">
+        <summary><span class="join-requirements-toggle">Minimum Host requirements</span> <span class="join-requirements-guide">For more details, read <a href="https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host" target="_blank" rel="noopener">Community DevNet runbook/JOIN: add a Host</a></span></summary>
+        <dl class="join-requirements-grid">
+          <div><dt>OS</dt><dd>Ubuntu 22.04, 24.04, or 26.04 (amd64)</dd></div>
+          <div><dt>GPU</dt><dd>NVIDIA GPU with 16 GB VRAM</dd></div>
+          <div><dt>Driver</dt><dd>NVIDIA R580 or newer</dd></div>
+          <div><dt>CUDA</dt><dd>GPU works in a CUDA 12.8 Docker container</dd></div>
+          <div><dt>CPU</dt><dd>8 threads or more (practical baseline)</dd></div>
+          <div><dt>Memory</dt><dd>32 GB RAM or more (practical baseline)</dd></div>
+          <div><dt>Storage</dt><dd>50 GiB free required, with 100–150 GB NVMe recommended</dd></div>
+          <div><dt>Network</dt><dd>Stable internet with a stable public IPv4 address or a DNS name that resolves to it</dd></div>
+          <div><dt>Ingress</dt><dd>TCP 80, 443, 5000, and the configured SSH port, plus UDP 443</dd></div>
+          <div><dt>Uptime</dt><dd>Always on with sleep and address changes disabled</dd></div>
+        </dl>
+        <p class="join-requirements-note">Community DevNet currently runs <code>Qwen/Qwen3-0.6B</code>, its on-chain model profile declares <code>v_ram: 16</code>, check the <a href="https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all" target="_blank" rel="noopener">live model registry</a>, <code>gdc</code> does not accept a GPU from the VRAM number alone: qualification loads the model, checks <code>/v1/models</code>, completes an inference request, and records VRAM evidence, an 8 GB RTX 3070 may run this small model experimentally, but it is below the declared 16 GB and is not a guaranteed supported configuration</p>
+      </details>
     </section>
     <section class="summary" aria-label="Network summary">
       <article><span>Chain ID</span><strong id="chain-id">–</strong><small>Shared ledger</small></article>

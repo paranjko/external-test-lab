@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -15,6 +15,10 @@ const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
 const expectGatewayReady = process.env.GDC_EXPECT_GATEWAY_READY === 'true';
 const expectedSiteRevision = process.env.GDC_EXPECT_SITE_REVISION || '';
 const expectedAppDigest = process.env.GDC_EXPECT_APP_DIGEST || '';
+const hostRequirementsProfile = JSON.parse(await readFile(new URL('../profiles/devnet-hadware.json', import.meta.url), 'utf8'));
+const expectedJoinRequirements = hostRequirementsProfile.requirements.map(({ label, description }) => ({ label, value: description }));
+const expectedJoinSummary = 'Minimum Host requirements For more details, read Community DevNet runbook/JOIN: add a Host';
+const expectedJoinRequirementsNote = hostRequirementsProfile.model_context.description;
 const reportBrowserFailure = error => {
   const detail = String(error?.message || error).replace(/\s+/g, ' ').trim();
   process.stderr.write(`WAIT homepage browser check unavailable reason=${detail}\n`);
@@ -70,6 +74,14 @@ const homepageStateExpression = `JSON.stringify({
     title: element?.querySelector("h2")?.textContent,
     code: element?.querySelector("code")?.textContent,
     link: element?.querySelector("a")?.href,
+    summary: element?.querySelector("summary")?.textContent?.replace(/\\s+/g, " ").trim(),
+    requirementsOpen: element?.querySelector(".join-requirements")?.open,
+    requirements: [...(element?.querySelectorAll(".join-requirements-grid > div") || [])].map(item => ({
+      label: item.querySelector("dt")?.textContent,
+      value: item.querySelector("dd")?.textContent,
+    })),
+    requirementsNote: element?.querySelector(".join-requirements-note")?.textContent,
+    modelLink: element?.querySelector(".join-requirements-note a")?.href,
   }))(document.querySelector("#join-node")),
   nodes: [...document.querySelectorAll("#nodes .node")].map(node => {
     const rect = node.getBoundingClientRect();
@@ -159,7 +171,16 @@ try {
   if (state.mapMarkerGeometry.some(marker => marker.width < 5 || marker.height < 5 || marker.width > 21 || marker.height > 21 || marker.filter !== 'none')) throw new Error(`validator marker geometry or halo contract failed ${JSON.stringify(state.mapMarkerGeometry)}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
   if ((!expectResetState && state.nodes.length < 1) || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapWorld) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
-  if (!state.join.exists || state.join.title !== 'How to Join node' || state.join.code !== 'git clone https://github.com/paranjko/external-test-lab.git\nalias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"\ngdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' || state.join.link !== 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host') throw new Error(`JOIN guide did not render ${JSON.stringify(state.join)}`);
+  if (!state.join.exists || state.join.title !== 'How to Join node' || state.join.code !== 'git clone https://github.com/paranjko/external-test-lab.git\nalias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"\ngdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' || state.join.link !== 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host' || state.join.summary !== expectedJoinSummary || state.join.requirementsOpen || JSON.stringify(state.join.requirements) !== JSON.stringify(expectedJoinRequirements) || state.join.requirementsNote !== expectedJoinRequirementsNote || state.join.modelLink !== 'https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all') throw new Error(`JOIN guide did not render ${JSON.stringify(state.join)}`);
+  await call('Runtime.evaluate', { expression: 'document.querySelector(".join-requirements-toggle")?.click()' }, sessionId);
+  await delay(100);
+  const { result: joinRequirementsResult } = await call('Runtime.evaluate', {
+    expression: 'JSON.stringify({open:document.querySelector(".join-requirements")?.open,page:document.documentElement.scrollWidth,viewport:innerWidth,nested:[...document.querySelectorAll(".join-requirements,.join-requirements *")].some(e=>e.scrollWidth>e.clientWidth)})',
+    returnByValue: true,
+  }, sessionId);
+  const joinRequirements = JSON.parse(joinRequirementsResult.value);
+  if (!joinRequirements.open || joinRequirements.page > joinRequirements.viewport || joinRequirements.nested) throw new Error(`JOIN requirements interaction or overflow failed ${JSON.stringify(joinRequirements)}`);
+  await call('Runtime.evaluate', { expression: 'document.querySelector(".join-requirements-toggle")?.click()' }, sessionId);
   const mappedNodes = state.nodes;
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);

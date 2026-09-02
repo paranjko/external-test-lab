@@ -624,6 +624,8 @@ case "$COMPONENT" in
   site)
     SITE_INDEX_RENDER="$OPS_RENDER/site/index.html"
     SITE_ASSETS_RENDER="$OPS_RENDER/site/assets"
+    node "$ROOT/scripts/verify-devnet-hardware-profile.mjs" \
+      "$ROOT/profiles/devnet-hadware.json" "$ROOT/04-ops/site/index.html"
     "$ROOT/scripts/render-site-revision.sh" "$ROOT/04-ops/site/index.html" "$SITE_INDEX_RENDER"
     mkdir -p "$SITE_ASSETS_RENDER"
     rsync -a --exclude src/ "$ROOT/04-ops/site/" "$SITE_ASSETS_RENDER/"

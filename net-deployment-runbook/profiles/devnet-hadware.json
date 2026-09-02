@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-devnet-host-requirements",
+  "network": "gonka-devnet-community",
+  "deployment_profile": "community-lab",
+  "publication": {
+    "status": "informational",
+    "automated_host_compliance": false
+  },
+  "requirements": [
+    {
+      "id": "os",
+      "label": "OS",
+      "description": "Ubuntu 22.04, 24.04, or 26.04 (amd64)",
+      "classification": "required",
+      "minimum": {
+        "distribution": "ubuntu",
+        "versions": ["22.04", "24.04", "26.04"],
+        "architecture": "amd64"
+      }
+    },
+    {
+      "id": "gpu",
+      "label": "GPU",
+      "description": "NVIDIA GPU with 16 GB VRAM",
+      "classification": "declared_minimum",
+      "minimum": {
+        "vendor": "nvidia",
+        "vram_gb": 16
+      }
+    },
+    {
+      "id": "driver",
+      "label": "Driver",
+      "description": "NVIDIA R580 or newer",
+      "classification": "required",
+      "minimum": {
+        "vendor": "nvidia",
+        "branch": 580,
+        "comparison": "greater_than_or_equal"
+      }
+    },
+    {
+      "id": "cuda",
+      "label": "CUDA",
+      "description": "GPU works in a CUDA 12.8 Docker container",
+      "classification": "required",
+      "minimum": {
+        "docker_cuda_version": "12.8",
+        "gpu_visible_in_container": true
+      }
+    },
+    {
+      "id": "cpu",
+      "label": "CPU",
+      "description": "8 threads or more (practical baseline)",
+      "classification": "practical_baseline",
+      "minimum": {
+        "threads": 8
+      }
+    },
+    {
+      "id": "memory",
+      "label": "Memory",
+      "description": "32 GB RAM or more (practical baseline)",
+      "classification": "practical_baseline",
+      "minimum": {
+        "ram_gb": 32
+      }
+    },
+    {
+      "id": "storage",
+      "label": "Storage",
+      "description": "50 GiB free required, with 100–150 GB NVMe recommended",
+      "classification": "required",
+      "minimum": {
+        "free_gib": 50
+      },
+      "recommended": {
+        "type": "nvme",
+        "capacity_gb": {
+          "minimum": 100,
+          "maximum": 150
+        }
+      }
+    },
+    {
+      "id": "network",
+      "label": "Network",
+      "description": "Stable internet with a stable public IPv4 address or a DNS name that resolves to it",
+      "classification": "required",
+      "minimum": {
+        "stable_internet": true,
+        "public_endpoint": {
+          "accepted": ["ipv4", "dns"],
+          "stable_address": true
+        }
+      }
+    },
+    {
+      "id": "ingress",
+      "label": "Ingress",
+      "description": "TCP 80, 443, 5000, and the configured SSH port, plus UDP 443",
+      "classification": "required",
+      "minimum": {
+        "tcp_ports": [80, 443, 5000],
+        "tcp_services": ["ssh"],
+        "udp_ports": [443]
+      }
+    },
+    {
+      "id": "uptime",
+      "label": "Uptime",
+      "description": "Always on with sleep and address changes disabled",
+      "classification": "required",
+      "minimum": {
+        "always_on": true,
+        "sleep_disabled": true,
+        "stable_address": true
+      }
+    }
+  ],
+  "model_context": {
+    "active_model": "Qwen/Qwen3-0.6B",
+    "on_chain_profile": {
+      "v_ram_gb": 16,
+      "registry_url": "https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all"
+    },
+    "qualification": {
+      "tool": "gdc",
+      "models_endpoint": "/v1/models",
+      "checks": ["model_load", "models_endpoint", "completion", "vram_evidence"]
+    },
+    "experimental_example": {
+      "gpu": "NVIDIA GeForce RTX 3070",
+      "vram_gb": 8,
+      "may_run_experimentally": true,
+      "guaranteed_supported": false
+    },
+    "description": "Community DevNet currently runs Qwen/Qwen3-0.6B, its on-chain model profile declares v_ram: 16, check the live model registry, gdc does not accept a GPU from the VRAM number alone: qualification loads the model, checks /v1/models, completes an inference request, and records VRAM evidence, an 8 GB RTX 3070 may run this small model experimentally, but it is below the declared 16 GB and is not a guaranteed supported configuration"
+  }
+}

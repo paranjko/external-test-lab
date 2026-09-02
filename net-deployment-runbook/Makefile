@@ -20,7 +20,7 @@ preview_number ?=
 preview_revision ?=
 site_origin ?= http://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context test-site-preview-live prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
+.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context test-site-preview-live prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -62,15 +62,18 @@ site-js:
 site-js-check:
 	@./scripts/build-site-js.sh --check
 
+site-host-requirements-check:
+	@node ./scripts/verify-devnet-hardware-profile.mjs profiles/devnet-hadware.json 04-ops/site/index.html
+
 test-gateway-site-state: site-js-check
 	@node ./scripts/test-gateway-site-state.js
 
-test-validator-map: site-vendor site-js
+test-validator-map: site-vendor site-js site-host-requirements-check
 	@mkdir -p "$(map_evidence_dir)"
 	@CHROME_BIN="$(chrome_bin)" node ./scripts/test-validator-map-fixture.mjs \
 		04-ops/site "$(map_evidence_dir)"
 
-prepare-static-site: site-vendor
+prepare-static-site: site-vendor site-host-requirements-check
 	@mkdir -p "$(site_release_dir)"
 	@rsync -a --exclude src/ --exclude .gitignore 04-ops/site/ "$(site_release_dir)/"
 	@SITE_REVISION="$(site_revision)" ./scripts/render-site-revision.sh 04-ops/site/index.html "$(site_release_dir)/index.html"
@@ -120,7 +123,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: site-js-check
+test: site-js-check site-host-requirements-check
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-network-bootstrap.py
 	@./scripts/test-network-bootstrap-shell.sh

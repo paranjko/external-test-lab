@@ -5,6 +5,8 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
     paths:
       - 'net-deployment-runbook/04-ops/site/**'
+      - 'net-deployment-runbook/profiles/devnet-hadware.json'
+      - 'net-deployment-runbook/scripts/verify-devnet-hardware-profile.mjs'
       - 'net-deployment-runbook/scripts/render-site-build-info.sh'
       - 'net-deployment-runbook/scripts/render-site-revision.sh'
       - 'net-deployment-runbook/scripts/install-site-vendor.sh'

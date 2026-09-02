@@ -13,6 +13,17 @@ The network profile hash covers release + deployment + model. Operator-service
 software has a separate hash, so updating Grafana cannot silently change the
 identity of the network release under test.
 
+## Community DevNet Host requirements
+
+[`devnet-hadware.json`](devnet-hadware.json) is the machine-readable source
+for the minimum Host requirements shown on the Community DevNet site. It keeps
+display text beside structured values for operating system, GPU, driver, CUDA,
+CPU, memory, storage, network, ingress, and uptime.
+
+The profile is informational and does not currently accept or reject a Host.
+Its `automated_host_compliance` field remains `false` until a separate checker
+implements and verifies that behavior.
+
 ## Dated release snapshots
 
 Profile names use the UTC date on which the compatible release snapshot became
