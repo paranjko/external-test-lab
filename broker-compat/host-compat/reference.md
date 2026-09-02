@@ -33,7 +33,8 @@ For each `messages[i].tool_calls[j]`:
   (`call_` + 8–24 hex). Same message, same index → same id if you rewrite twice
   in one request (hash of name+arguments+index is enough).
 - Walk following `role: "tool"` messages with empty `tool_call_id` in order and
-  assign the generated ids (1:1 with the preceding assistant tool_calls).
+  assign pending ids 1:1. Pending is every assistant `tool_calls[].id` in
+  order — already set or newly minted.
 - Reset the pending id list when a new assistant `tool_calls` array appears.
 
 Then `unique_tool_call_ids`: if two slots share a non-empty id, keep the first

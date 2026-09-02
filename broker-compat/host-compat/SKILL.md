@@ -19,6 +19,15 @@ Developed by [Dahl](https://inference.dahl.global) together with
 Agent → broker proxy (shims) → gateway → host validator → model
 ```
 
+**Port:** this is a spec, not a library. Find the existing
+`POST /v1/chat/completions` handler; rewrite the JSON body after auth,
+before the gateway. Any language. Do not start a new process.
+
+**Before coding:** read [reference.md](reference.md).
+**Done when:** each [golden/](golden/) file matches `in` → `out`
+(JSON equality; opaque `call_*` ids may differ if pairing holds and a
+second pass does not change them). See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 Log one line per rewrite: which shim fired (no prompts, no API keys).
 
 Toggle with one env flag (e.g. `HOST_COMPAT_SHIMS=true`, default on) so a bad

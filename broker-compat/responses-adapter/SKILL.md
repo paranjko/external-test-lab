@@ -29,6 +29,17 @@ Codex / Agents SDK
     → FromChat / SSE translator
 ```
 
+**Port:** spec, not a library. Same process as `POST /v1/chat/completions`.
+After ToChat, run the host-compat catalog on that chat body
+(`[broker-compat/host-compat/](../host-compat/)` must be in the repo).
+Do not flatten Responses `input` inside host-compat. Any language.
+Do not start a new process.
+
+**Before coding:** read [reference.md](reference.md) (SSE order).
+**Done when:** the probes below pass: `object=response`, stream has
+`response.created` + `response.completed` and no `[DONE]`,
+`previous_response_id` → 400, `/v1/chat/completions` still works.
+
 Toggle with one env flag (e.g. `RESPONSES_ADAPTER=true`, default on). When
 off, `POST /v1/responses` must return **404 JSON**, not a bare mux 405 / HTML
 landing.

@@ -5,6 +5,8 @@ Catalog of request rewrites for a Gonka **broker** OpenAI HTTP proxy
 (Cursor, Cline, Zod, MCP) send bodies that stricter MiniMax / Kimi / DeepSeek
 hosts 400; these steps reshape the JSON so the host validator accepts it.
 
+This is a spec to implement on the proxy. It is not code to drop in.
+
 Developed by [Dahl](https://inference.dahl.global) together with
 [Gonka External TestLab](https://github.com/paranjko/external-test-lab).
 
