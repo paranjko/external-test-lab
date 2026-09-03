@@ -1,0 +1,14 @@
+{
+  "id": "reasoning_effort",
+  "in": {
+    "messages": [],
+    "reasoning_effort": "max"
+  },
+  "out": {
+    "messages": [],
+    "reasoning_effort": "high"
+  },
+  "shims": [
+    "reasoning_effort"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "drop_null_parallel_tool_calls",
+  "in": {
+    "messages": [],
+    "parallel_tool_calls": null
+  },
+  "out": {
+    "messages": []
+  },
+  "shims": [
+    "drop_null_parallel_tool_calls"
+  ]
+}

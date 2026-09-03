@@ -1,0 +1,22 @@
+{
+  "id": "developer_role",
+  "in": {
+    "messages": [
+      {
+        "content": "hi",
+        "role": "developer"
+      }
+    ]
+  },
+  "out": {
+    "messages": [
+      {
+        "content": "hi",
+        "role": "system"
+      }
+    ]
+  },
+  "shims": [
+    "developer_role"
+  ]
+}

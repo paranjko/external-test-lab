@@ -1,0 +1,33 @@
+{
+  "id": "legacy_functions",
+  "in": {
+    "function_call": "auto",
+    "functions": [
+      {
+        "name": "f",
+        "parameters": {
+          "type": "object"
+        }
+      }
+    ],
+    "messages": []
+  },
+  "out": {
+    "messages": [],
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "function": {
+          "name": "f",
+          "parameters": {
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "shims": [
+    "legacy_functions"
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "id": "sanitize_tool_schemas",
+  "host_400_substring": "schema reference keyword is forbidden",
+  "in": {
+    "tools": [
+      {
+        "function": {
+          "name": "f",
+          "parameters": {
+            "$defs": {
+              "Item": {
+                "pattern": "^.{1,4096}$",
+                "type": "string"
+              }
+            },
+            "properties": {
+              "x": {
+                "$ref": "#/$defs/Item"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "out": {
+    "tools": [
+      {
+        "function": {
+          "name": "f",
+          "parameters": {
+            "properties": {
+              "x": {
+                "pattern": "^.{1,1000}$",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "shims": [
+    "sanitize_tool_schemas"
+  ]
+}

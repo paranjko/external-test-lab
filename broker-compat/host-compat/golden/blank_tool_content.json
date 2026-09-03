@@ -1,0 +1,42 @@
+{
+  "id": "blank_tool_content",
+  "in": {
+    "messages": [
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "f"
+            },
+            "id": "call_1",
+            "type": "function"
+          }
+        ]
+      }
+    ]
+  },
+  "out": {
+    "messages": [
+      {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "f"
+            },
+            "id": "call_1",
+            "type": "function"
+          }
+        ]
+      }
+    ]
+  },
+  "shims": [
+    "blank_tool_content"
+  ]
+}

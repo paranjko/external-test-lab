@@ -1,0 +1,22 @@
+{
+  "id": "keep_thinking",
+  "in": {
+    "chat_template_kwargs": {
+      "enable_thinking": true
+    },
+    "messages": [],
+    "thinking": {
+      "type": "enabled"
+    }
+  },
+  "out": {
+    "chat_template_kwargs": {
+      "enable_thinking": true
+    },
+    "messages": [],
+    "thinking": {
+      "type": "enabled"
+    }
+  },
+  "shims": []
+}

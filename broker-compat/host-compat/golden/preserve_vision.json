@@ -1,0 +1,42 @@
+{
+  "id": "preserve_vision",
+  "in": {
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "what",
+            "type": "text"
+          },
+          {
+            "image_url": {
+              "url": "https://example.com/a.png"
+            },
+            "type": "image_url"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "out": {
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "what",
+            "type": "text"
+          },
+          {
+            "image_url": {
+              "url": "https://example.com/a.png"
+            },
+            "type": "image_url"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "shims": []
+}
