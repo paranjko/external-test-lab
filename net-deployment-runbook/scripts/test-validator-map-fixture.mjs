@@ -743,12 +743,13 @@ try {
     [1440, 900],
     [1920, 1080],
     [390, 844],
+    [844, 390],
   ]) {
     await call("Emulation.setDeviceMetricsOverride", {
       width,
       height,
       deviceScaleFactor: 1,
-      mobile: width < 500,
+      mobile: width < 500 || (width === 844 && height === 390),
     });
     await call("Page.navigate", {
       url: `http://127.0.0.1:${server.address().port}/`,
@@ -1241,7 +1242,7 @@ try {
       width,
       height,
       deviceScaleFactor: 1,
-      mobile: width < 500,
+      mobile: width < 500 || (width === 844 && height === 390),
     });
     await call("Emulation.setVisibleSize", { width, height });
     await delay(80);
@@ -1428,7 +1429,11 @@ try {
     });
     if (!JSON.parse(idleEscapeResult.value))
       throw new Error("Escape without a popup was consumed by the map");
-    if (width < 500) {
+    if (
+      width < 500 ||
+      (width === 844 && height === 390) ||
+      (width === 1280 && height === 720)
+    ) {
       await call("Runtime.evaluate", {
         expression:
           'document.querySelector("#validator-map-fullscreen")?.click()',
