@@ -959,6 +959,20 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   let clampingWorld = false;
   let popupOpen = false;
   let restoreWorld = (): void => {};
+  const worldCoversMap = (): boolean => {
+    const mapRect = container.getBoundingClientRect();
+    const worldRect = container
+      .querySelector(".validator-map-world")
+      ?.getBoundingClientRect();
+    return Boolean(
+      worldRect
+        ? worldRect.left <= mapRect.left + 1 &&
+            worldRect.right >= mapRect.right - 1 &&
+            worldRect.top <= mapRect.top + 1 &&
+            worldRect.bottom >= mapRect.bottom - 1
+        : worldBounds.contains(map.getBounds()),
+    );
+  };
   map.on("moveend", () => {
     const popupElement = container.querySelector(".leaflet-popup");
     const mapRect = container.getBoundingClientRect();
@@ -974,11 +988,12 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
             worldRect.top < mapRect.top - 1 ||
             worldRect.bottom > mapRect.bottom + 1),
       );
+    const coversMap = worldCoversMap();
     if (
       clampingWorld ||
       (popupOpen && !fullscreenWorldOutside) ||
       popupElement ||
-      (!fullscreenWorldOutside && worldBounds.contains(map.getBounds()))
+      (!fullscreenWorldOutside && coversMap)
     )
       return;
     clampingWorld = true;
@@ -1079,7 +1094,15 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     map.getPane("popupPane")?.replaceChildren();
     popupOpen = true;
     openMarkerKey = key;
+    const popup = marker.getPopup();
+    if (popup) {
+      marker.options.autoPanPadding = popupAutoPanPadding();
+      popup.options.autoPan = container.clientWidth >= 500;
+      popup.options.maxWidth = popupMaxWidth();
+      popup.options.autoPanPadding = popupAutoPanPadding();
+    }
     marker.openPopup();
+    if (popup) schedulePopupLayout(marker, popup);
   };
   const nearestMarkerAt = (event: any): ?any => {
     const pointerEvent = event.originalEvent || event;
@@ -1134,25 +1157,88 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   container.addEventListener("click", activateNearest, true);
   container.addEventListener("mousemove", showNearestTooltip, true);
   container.addEventListener("mouseleave", closeNearestTooltip, true);
+  const popupMaxWidth = (): number => {
+    const width = container.clientWidth || container.getBoundingClientRect().width;
+    return Math.max(120, Math.min(340, width - 52));
+  };
+  const popupAutoPanPadding = (): Array<number> => {
+    const width = container.clientWidth || container.getBoundingClientRect().width;
+    if (width >= 500) return [16, 48];
+    const horizontal = Math.max(
+      16,
+      Math.min(width / 2 - 1, popupMaxWidth() / 2 + 16),
+    );
+    return [horizontal, 48];
+  };
+  const adjustPopupToMap = (popup: any): void => {
+    const mapRect = container.getBoundingClientRect();
+    const popupElement = container.querySelector(".leaflet-popup") || popup._container;
+    const popupRect = popupElement?.getBoundingClientRect();
+    if (!popupRect) return;
+    const padding = 8;
+    const horizontal =
+      popupRect.right > mapRect.right - padding
+        ? popupRect.right - mapRect.right + padding
+        : popupRect.left < mapRect.left + padding
+          ? popupRect.left - mapRect.left - padding
+          : 0;
+    const vertical =
+      popupRect.bottom > mapRect.bottom - padding
+        ? popupRect.bottom - mapRect.bottom + padding
+        : popupRect.top < mapRect.top + padding
+          ? popupRect.top - mapRect.top - padding
+          : 0;
+    if (container.clientWidth < 500) {
+      const left = Number.parseFloat(popupElement.style.left);
+      const bottom = Number.parseFloat(popupElement.style.bottom);
+      if (horizontal && Number.isFinite(left))
+        popupElement.style.left = `${left - horizontal}px`;
+      if (vertical && Number.isFinite(bottom))
+        popupElement.style.bottom = `${bottom + vertical}px`;
+      return;
+    }
+    if (horizontal || vertical)
+      map.panBy([horizontal, vertical], { animate: false });
+  };
+  const settlePopupBoundary = (
+    marker: any,
+    popup: any,
+    attempt: number = 0,
+  ): void => {
+    window.requestAnimationFrame(() => {
+      if (!marker.isPopupOpen()) return;
+      adjustPopupToMap(popup);
+      if (attempt < 6) settlePopupBoundary(marker, popup, attempt + 1);
+    });
+  };
+  const schedulePopupLayout = (marker: any, popup: any): void => {
+    window.requestAnimationFrame(() => {
+      if (!marker.isPopupOpen()) return;
+      marker.options.autoPanPadding = popupAutoPanPadding();
+      popup.options.autoPan = container.clientWidth >= 500;
+      popup.options.maxWidth = popupMaxWidth();
+      popup.options.autoPanPadding = popupAutoPanPadding();
+      popup.update();
+      settlePopupBoundary(marker, popup);
+    });
+  };
   const popupMarkerKey = (): ?string => {
     for (const [key, marker] of markerRegistry) {
       if (marker.isPopupOpen()) return key;
     }
     return null;
   };
+  const finalizePopupClose = (): void => {
+    if (popupMarkerKey() || container.querySelector(".leaflet-popup")) return;
+    openMarkerKey = null;
+    popupOpen = false;
+    restoreWorld();
+  };
   map.on("popupopen", (event: any) => {
     for (const [key, marker] of markerRegistry) {
       if (marker.getPopup() === event.popup) {
         popupOpen = true;
         openMarkerKey = key;
-        const popup: any = event.popup;
-        window.requestAnimationFrame(() => {
-          if (
-            marker.isPopupOpen() &&
-            typeof popup._adjustPan === "function"
-          )
-            popup._adjustPan();
-        });
         return;
       }
     }
@@ -1165,11 +1251,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     if (marker?.getPopup() === event.popup)
       window.requestAnimationFrame(() => {
         if (marker.isPopupOpen() || openMarkerKey !== closedMarkerKey) return;
-        openMarkerKey = null;
-        if (!popupMarkerKey()) {
-          popupOpen = false;
-          restoreWorld();
-        }
+        finalizePopupClose();
       });
   });
   const gridStyle = { color: "#73788e", weight: 1, opacity: 0.35 };
@@ -1213,7 +1295,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     map.setMinZoom(zoom);
   };
   restoreWorld = (): void => {
-    if (worldBounds.contains(map.getBounds())) return;
+    if (worldCoversMap()) return;
     clampingWorld = true;
     map.panInsideBounds(worldBounds, { animate: false });
     window.requestAnimationFrame(() => {
@@ -1259,7 +1341,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       const popup = document.querySelector(".leaflet-popup");
       if (popup && !marker?.isPopupOpen()) popup.remove();
       marker?.getElement()?.focus();
-      openMarkerKey = null;
+      window.requestAnimationFrame(finalizePopupClose);
       event.preventDefault();
       event.stopPropagation();
     }
@@ -1410,12 +1492,14 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
           fillOpacity: 0.9,
           opacity: 1,
           className: `validator-marker validator-marker--${markerState}`,
+          autoPan: container.clientWidth >= 500,
+          autoPanPadding: popupAutoPanPadding(),
         })
           .bindTooltip(tooltip, { direction: "top", offset: [0, -radius] })
           .bindPopup(popupHtml, {
             closeButton: true,
-            maxWidth: 340,
-            autoPanPadding: [48, 48],
+            maxWidth: popupMaxWidth(),
+            autoPanPadding: popupAutoPanPadding(),
           });
         marker.__tooltip = tooltip;
         marker.__popupHtml = popupHtml;

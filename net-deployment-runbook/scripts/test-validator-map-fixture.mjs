@@ -755,6 +755,9 @@ try {
     [1440, 900],
     [1920, 1080],
     [390, 844],
+    [375, 667],
+    [360, 640],
+    [320, 568],
     [844, 390],
   ]) {
     await call("Emulation.setDeviceMetricsOverride", {
@@ -1419,6 +1422,59 @@ try {
       escape.observed
     )
       throw new Error(`Escape contract failed: ${JSON.stringify(escape)}`);
+    if (width === 1280) {
+      const { result: dragStartResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify((()=>{const rect=document.querySelector("#validator-map")?.getBoundingClientRect();return{x:(rect?.left||0)+(rect?.width||0)/2,y:(rect?.top||0)+(rect?.height||0)/2}})())',
+        returnByValue: true,
+      });
+      const dragStart = JSON.parse(dragStartResult.value);
+      await call("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: dragStart.x,
+        y: dragStart.y,
+      });
+      await call("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: dragStart.x,
+        y: dragStart.y,
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+      });
+      await call("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: dragStart.x + 160,
+        y: dragStart.y,
+        button: "left",
+        buttons: 1,
+      });
+      await call("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: dragStart.x + 500,
+        y: dragStart.y,
+        button: "left",
+        buttons: 1,
+      });
+      await call("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: dragStart.x + 500,
+        y: dragStart.y,
+        button: "left",
+        clickCount: 1,
+      });
+      await delay(1000);
+      const { result: restoredBoundsResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect(),covers=(value,bounds)=>Boolean(value&&bounds&&value.left<=bounds.left+1&&value.right>=bounds.right-1);return{worldCoversMap:covers(world,mr),popup:Boolean(document.querySelector(".leaflet-popup")),world:world&&{left:world.left,right:world.right},map:mr&&{left:mr.left,right:mr.right}}})())',
+        returnByValue: true,
+      });
+      const restoredBounds = JSON.parse(restoredBoundsResult.value);
+      if (!restoredBounds.worldCoversMap || restoredBounds.popup)
+        throw new Error(
+          `Escape popup restoration failed: ${JSON.stringify(restoredBounds)}`,
+        );
+    }
     await call("Runtime.evaluate", {
       expression:
         'window.__escapeObserved=false;document.addEventListener("keydown",event=>{if(event.key==="Escape")window.__escapeObserved=true},{once:true});',
