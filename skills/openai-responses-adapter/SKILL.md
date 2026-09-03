@@ -1,10 +1,14 @@
 ---
 name: openai-responses-adapter
+license: Apache-2.0
 description: >-
-  OpenAI Responses adapter for Gonka broker HTTP proxies: POST /v1/responses
-  translates to chat-completions, then host-compat shims, then the same
-  gateway. Developed by Dahl (https://inference.dahl.global) together with
-  Gonka External TestLab (https://github.com/paranjko/external-test-lab).
+  Use when adding POST /v1/responses on a Gonka broker OpenAI HTTP proxy
+  (Codex CLI, Agents SDK). Translates Responses to chat-completions in the
+  same process, before the gateway. After ToChat, run a host-compat layer:
+  install openai-host-compat as well, or use the equivalent already on the
+  proxy. Chat Completions-only brokers (Cursor) do not need this skill.
+  Developed by Dahl (https://inference.dahl.global) together with Gonka
+  External TestLab.
 ---
 
 # OpenAI Responses adapter
@@ -31,7 +35,7 @@ Codex / Agents SDK
 
 **Port:** spec, not a library. Same process as `POST /v1/chat/completions`.
 After ToChat, run a host-compat layer on that chat body (this catalog
-[`broker-compat/host-compat/`](../host-compat/) or the equivalent already on
+[`openai-host-compat`](../openai-host-compat/) or the equivalent already on
 the proxy).
 Do not flatten Responses `input` inside host-compat. Any language.
 Do not start a new process.
@@ -117,4 +121,5 @@ See [reference.md](reference.md) for field maps, SSE order, and error codes.
 
 ## Related
 
-Host-compat shims (chat-body rewrites): `broker-compat/host-compat/`.
+Host-compat shims (chat-body rewrites):
+[`openai-host-compat`](../openai-host-compat/).

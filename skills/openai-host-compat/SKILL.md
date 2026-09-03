@@ -1,10 +1,13 @@
 ---
 name: openai-host-compat
+license: Apache-2.0
 description: >-
-  OpenAI host-compat shims for Gonka broker HTTP proxies: rewrite agent
-  chat-completions (Cursor, Cline, Zod, MCP) so stricter MiniMax/Kimi/DeepSeek
-  hosts do not 400. Developed by Dahl (https://inference.dahl.global) together
-  with Gonka External TestLab (https://github.com/paranjko/external-test-lab).
+  Use when implementing or debugging a Gonka broker OpenAI HTTP proxy that
+  400s on POST /v1/chat/completions from Cursor, Cline, Zod, or MCP against
+  MiniMax, Kimi, or DeepSeek hosts. Rewrite the chat JSON after auth, before
+  the gateway. Do not use for POST /v1/responses (that is
+  openai-responses-adapter). Developed by Dahl (https://inference.dahl.global)
+  together with Gonka External TestLab.
 ---
 
 # OpenAI host-compat shims
@@ -124,4 +127,4 @@ See [reference.md](reference.md) for rewrite sketches and golden JSON.
 ## Related
 
 `POST /v1/responses` is a separate adapter (ToChat → these shims → FromChat):
-`broker-compat/responses-adapter/`.
+[`openai-responses-adapter`](../openai-responses-adapter/).

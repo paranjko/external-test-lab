@@ -40,12 +40,12 @@ Need all of:
 There is no `golden/` runner in this folder yet. A before/after sketch in
 `reference.md` is enough for a first PR. Toy payloads only.
 
-Chat-body rewrites belong in [`host-compat/`](../host-compat/) (see that
-[CONTRIBUTING](../host-compat/CONTRIBUTING.md)).
+Chat-body rewrites belong in [`openai-host-compat`](../openai-host-compat/)
+(see that [CONTRIBUTING](../openai-host-compat/CONTRIBUTING.md)).
 
 ## Do not
 
-- Put Responses field maps or SSE notes in `host-compat/`
+- Put Responses field maps or SSE notes in `openai-host-compat/`
 - Put prompts or API keys in the PR
 
 ## Review
