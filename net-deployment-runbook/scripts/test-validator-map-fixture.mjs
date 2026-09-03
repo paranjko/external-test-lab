@@ -1161,6 +1161,10 @@ try {
             throw new Error("previous marker popup did not close");
           await delay(20);
         }
+        // Leaflet may finish the popup's auto-pan on the next frame after
+        // removing its DOM node. Measure the click target only after that
+        // transition settles, or the test can dispatch at stale coordinates.
+        await delay(80);
         const { result: currentMarkersResult } = await call(
           "Runtime.evaluate",
           {
