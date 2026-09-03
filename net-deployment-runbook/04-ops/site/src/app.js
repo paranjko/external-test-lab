@@ -960,9 +960,11 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   let popupOpen = false;
   let restoreWorld = (): void => {};
   map.on("moveend", () => {
+    const popupElement = container.querySelector(".leaflet-popup");
     if (
       clampingWorld ||
       popupOpen ||
+      popupElement ||
       worldBounds.contains(map.getBounds())
     )
       return;
@@ -1130,17 +1132,26 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       if (marker.getPopup() === event.popup) {
         popupOpen = true;
         openMarkerKey = key;
+        const popup: any = event.popup;
+        window.requestAnimationFrame(() => {
+          if (
+            marker.isPopupOpen() &&
+            typeof popup._adjustPan === "function"
+          )
+            popup._adjustPan();
+        });
         return;
       }
     }
   });
   map.on("popupclose", (event: any) => {
+    const closedMarkerKey = openMarkerKey;
     const marker: any = openMarkerKey
       ? markerRegistry.get(openMarkerKey)
       : null;
     if (marker?.getPopup() === event.popup)
       window.requestAnimationFrame(() => {
-        if (marker.isPopupOpen()) return;
+        if (marker.isPopupOpen() || openMarkerKey !== closedMarkerKey) return;
         openMarkerKey = null;
         if (!popupMarkerKey()) {
           popupOpen = false;
