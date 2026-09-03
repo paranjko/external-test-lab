@@ -1675,6 +1675,52 @@ try {
         throw new Error(
           `fullscreen popup containment failed: ${JSON.stringify(popupGeometry)}`,
         );
+      if (width === 390 && height === 844) {
+        await call("Emulation.setDeviceMetricsOverride", {
+          width: 320,
+          height: 568,
+          deviceScaleFactor: 1,
+          mobile: true,
+        });
+        await call("Emulation.setVisibleSize", { width: 320, height: 568 });
+        await delay(180);
+        const { result: resizedPopupResult } = await call("Runtime.evaluate", {
+          expression:
+            'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),popup=document.querySelector(".leaflet-popup"),pr=popup?.getBoundingClientRect(),content=popup?.querySelector(".leaflet-popup-content"),cr=content?.getBoundingClientRect(),rect=(value)=>value?{left:value.left,top:value.top,right:value.right,bottom:value.bottom,width:value.width,height:value.height}:null,inside=(value,bounds)=>Boolean(value&&bounds&&value.left>=bounds.left-1&&value.right<=bounds.right+1&&value.top>=bounds.top-1&&value.bottom<=bounds.bottom+1);return{open:Boolean(popup),visible:Boolean(inside(pr,mr)&&inside(cr,mr)&&content.scrollHeight<=content.clientHeight+1),map:rect(mr),popup:rect(pr),content:rect(cr),text:content?.textContent||""}})())',
+          returnByValue: true,
+        });
+        const resizedPopup = JSON.parse(resizedPopupResult.value);
+        if (
+          !resizedPopup.open ||
+          !resizedPopup.visible ||
+          !resizedPopup.text.includes("Bratislava,")
+        )
+          throw new Error(
+            `open-popup resize containment failed: ${JSON.stringify(resizedPopup)}`,
+          );
+        await call("Emulation.setDeviceMetricsOverride", {
+          width: 390,
+          height: 844,
+          deviceScaleFactor: 1,
+          mobile: true,
+        });
+        await call("Emulation.setVisibleSize", { width: 390, height: 844 });
+        await delay(180);
+        const { result: restoredPopupResult } = await call("Runtime.evaluate", {
+          expression:
+            'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),popup=document.querySelector(".leaflet-popup"),pr=popup?.getBoundingClientRect(),content=popup?.querySelector(".leaflet-popup-content"),cr=content?.getBoundingClientRect(),rect=(value)=>value?{left:value.left,top:value.top,right:value.right,bottom:value.bottom,width:value.width,height:value.height}:null,inside=(value,bounds)=>Boolean(value&&bounds&&value.left>=bounds.left-1&&value.right<=bounds.right+1&&value.top>=bounds.top-1&&value.bottom<=bounds.bottom+1);return{open:Boolean(popup),visible:Boolean(inside(pr,mr)&&inside(cr,mr)&&content.scrollHeight<=content.clientHeight+1),map:rect(mr),popup:rect(pr),content:rect(cr),text:content?.textContent||""}})())',
+          returnByValue: true,
+        });
+        const restoredPopup = JSON.parse(restoredPopupResult.value);
+        if (
+          !restoredPopup.open ||
+          !restoredPopup.visible ||
+          !restoredPopup.text.includes("Bratislava,")
+        )
+          throw new Error(
+            `open-popup restore containment failed: ${JSON.stringify(restoredPopup)}`,
+          );
+      }
       await call("Input.dispatchKeyEvent", {
         type: "keyDown",
         key: "Escape",

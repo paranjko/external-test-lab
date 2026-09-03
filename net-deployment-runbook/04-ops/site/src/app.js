@@ -1234,6 +1234,12 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     popupOpen = false;
     restoreWorld();
   };
+  const refreshOpenPopupLayout = (): void => {
+    const popupKey = openMarkerKey || popupMarkerKey();
+    const marker: any = popupKey ? markerRegistry.get(popupKey) : null;
+    const popup = marker?.getPopup();
+    if (marker?.isPopupOpen() && popup) schedulePopupLayout(marker, popup);
+  };
   map.on("popupopen", (event: any) => {
     for (const [key, marker] of markerRegistry) {
       if (marker.getPopup() === event.popup) {
@@ -1308,7 +1314,10 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     document.body.classList.toggle("validator-map-fullscreen-open", open);
     button.setAttribute("aria-pressed", String(open));
     button.textContent = open ? "Close" : "Fullscreen";
-    window.requestAnimationFrame(fitWorld);
+    window.requestAnimationFrame(() => {
+      fitWorld();
+      refreshOpenPopupLayout();
+    });
   };
 
   button.addEventListener("click", () =>
@@ -1352,6 +1361,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     resizeFrame = window.requestAnimationFrame(() => {
       resizeFrame = null;
       fitWorld();
+      refreshOpenPopupLayout();
     });
   });
   observer.observe(container);
