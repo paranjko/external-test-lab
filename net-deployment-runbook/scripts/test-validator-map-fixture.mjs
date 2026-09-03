@@ -3,11 +3,13 @@
 // and validator markers. It never contacts a public DevNet or map provider.
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
-import { createServer as createNetServer } from "node:net";
-import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
+import {
+  startChromeDevTools,
+  stopChromeDevTools,
+} from "./chrome-devtools.mjs";
 
 const [siteRootText, evidenceDir] = process.argv.slice(2);
 if (!siteRootText || !evidenceDir) {
@@ -274,24 +276,44 @@ const config = (port) =>
         statusBase: `http://127.0.0.1:${port}`,
         gpuProfile: "a5000-24g",
       },
+      ...Array.from({ length: 11 }, (_, index) => ({
+        name: `fixture-overflow-${index + 1}`,
+        mode: "skip",
+        reason: "fixture dense Host deck",
+        address: `gonka1fixtureoverflow${index + 1}`,
+        publicHost: `overflow-${index + 1}.fixture.local`,
+        statusBase: `http://127.0.0.1:${port}`,
+        ip: `192.0.2.${index + 1}`,
+        geo: {
+          latitude: "NaN",
+          longitude: 0,
+          city: "Dense deck only",
+          country: "Fixtureland",
+          isp: "fixture",
+        },
+        gpuProfile: "a5000-24g",
+      })),
     ],
   })};\n`;
+const participantKeys = [
+  "a",
+  "b",
+  "c",
+  "d",
+  "greenwich",
+  "kansas",
+  "south",
+  "antimeridian",
+  "southpole",
+  "NorthPole",
+  "dynamic",
+  ...Array.from({ length: 11 }, (_, index) => `overflow${index + 1}`),
+];
+let participantLimit = 11;
 const api = (port) => ({
   "/status/participants": {
     block_height: "424",
-    participant: [
-      "a",
-      "b",
-      "c",
-      "d",
-      "greenwich",
-      "kansas",
-      "south",
-      "antimeridian",
-      "southpole",
-      "NorthPole",
-      "dynamic",
-    ].map((key) => ({
+    participant: participantKeys.slice(0, participantLimit).map((key) => ({
       address: `gonka1fixture${key}`,
       inference_url:
         key === "dynamic"
@@ -400,38 +422,8 @@ await new Promise((resolvePromise, reject) => {
   server.once("error", reject);
   server.listen(0, "127.0.0.1", resolvePromise);
 });
-const freePort = await new Promise((resolvePromise, reject) => {
-  const probe = createNetServer();
-  probe.once("error", reject);
-  probe.listen(0, "127.0.0.1", () => {
-    const port = probe.address().port;
-    probe.close((error) => (error ? reject(error) : resolvePromise(port)));
-  });
-});
 const profile = await mkdtemp(join(tmpdir(), "gdc-map-fixture-"));
-const devtoolsReadyAttempts = 300;
-const browser = spawn(
-  process.env.CHROME_BIN || "google-chrome",
-  [
-    "--headless=new",
-    "--no-sandbox",
-    "--disable-gpu",
-    "--disable-dev-shm-usage",
-    "--remote-debugging-address=127.0.0.1",
-    `--remote-debugging-port=${freePort}`,
-    `--user-data-dir=${profile}`,
-    "about:blank",
-  ],
-  { stdio: ["ignore", "ignore", "pipe"] },
-);
-let browserStderr = "";
-let browserLaunchError = "";
-browser.stderr.on("data", (chunk) => {
-  browserStderr = `${browserStderr}${chunk}`.slice(-4096);
-});
-browser.on("error", (error) => {
-  browserLaunchError = error.message;
-});
+let browser;
 let socket;
 let sequence = 0;
 let sessionId;
@@ -451,35 +443,86 @@ const call = (method, params = {}, target = sessionId) =>
       }),
     );
   });
-async function devtools() {
-  let lastConnectionError = "";
-  for (let attempt = 0; attempt < devtoolsReadyAttempts; attempt += 1) {
-    if (browserLaunchError) break;
-    if (browser.exitCode !== null || browser.signalCode !== null) break;
-    try {
-      return await (
-        await fetch(`http://127.0.0.1:${freePort}/json/version`)
-      ).json();
-    } catch (error) {
-      lastConnectionError = error.message;
-      await delay(100);
-    }
+const mapRestorationExpression =
+  'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect(),covers=(value,bounds)=>Boolean(value&&bounds&&value.left<=bounds.left+1&&value.right>=bounds.right-1);return{worldCoversMap:covers(world,mr),popup:Boolean(document.querySelector(".leaflet-popup")),world:world&&{left:world.left,right:world.right,top:world.top,bottom:world.bottom},map:mr&&{left:mr.left,right:mr.right,top:mr.top,bottom:mr.bottom}}})())';
+const waitForMapRestoration = async (context) => {
+  let state;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const { result } = await call("Runtime.evaluate", {
+      expression: mapRestorationExpression,
+      returnByValue: true,
+    });
+    state = JSON.parse(result.value);
+    if (state.worldCoversMap && !state.popup) return state;
+    await delay(100);
   }
-  const diagnostics = [
-    browserLaunchError && `launch error: ${browserLaunchError}`,
-    browser.exitCode !== null && `exit code: ${browser.exitCode}`,
-    browser.signalCode !== null && `signal: ${browser.signalCode}`,
-    lastConnectionError && `last connection error: ${lastConnectionError}`,
-    browserStderr && `stderr: ${browserStderr.trim()}`,
-  ].filter(Boolean);
-  throw new Error(
-    `Chrome DevTools endpoint did not become ready within ${
-      (devtoolsReadyAttempts * 100) / 1000
-    } seconds${diagnostics.length ? `: ${diagnostics.join("; ")}` : ""}`,
-  );
-}
+  throw new Error(`${context} failed: ${JSON.stringify(state)}`);
+};
+const dragMapRight = async (distance = 500) => {
+  await call("Runtime.evaluate", {
+    expression:
+      'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
+  });
+  await delay(80);
+  const { result } = await call("Runtime.evaluate", {
+    expression:
+      'JSON.stringify((()=>{const rect=document.querySelector("#validator-map")?.getBoundingClientRect();return{x:(rect?.left||0)+(rect?.width||0)/2,y:(rect?.top||0)+(rect?.height||0)/2,right:innerWidth-2,map:rect&&{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},world:(()=>{const value=document.querySelector(".validator-map-world")?.getBoundingClientRect();return value&&{left:value.left,top:value.top,right:value.right,bottom:value.bottom}})()}})())',
+    returnByValue: true,
+  });
+  const start = JSON.parse(result.value);
+  const endX = Math.min(start.right, start.x + distance);
+  const middleX = start.x + (endX - start.x) / 3;
+  if (endX - start.x < 100)
+    throw new Error(`map drag target is too narrow: ${JSON.stringify(start)}`);
+  await call("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: start.x,
+    y: start.y,
+  });
+  await call("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: start.x,
+    y: start.y,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await delay(100);
+  await call("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: middleX,
+    y: start.y,
+    button: "left",
+    buttons: 1,
+  });
+  await delay(120);
+  await call("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: endX,
+    y: start.y,
+    button: "left",
+    buttons: 1,
+  });
+  await delay(120);
+  await call("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: endX,
+    y: start.y,
+    button: "left",
+    clickCount: 1,
+  });
+  return { ...start, endX };
+};
 try {
-  socket = new WebSocket((await devtools()).webSocketDebuggerUrl);
+  const chromeSession = await startChromeDevTools({
+    chrome: process.env.CHROME_BIN || "google-chrome",
+    profile,
+    context: "validator-map fixture",
+  });
+  browser = chromeSession.browser;
+  socket = new WebSocket(
+    (await chromeSession.waitForEndpoint()).webSocketDebuggerUrl,
+  );
   await new Promise((resolvePromise, reject) => {
     socket.addEventListener("open", resolvePromise, { once: true });
     socket.addEventListener("error", reject, { once: true });
@@ -559,15 +602,53 @@ try {
   const mapStateExpression =
     'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),rect=map?.getBoundingClientRect(),world=map?.querySelector(".validator-map-world"),worldRect=world?.getBoundingClientRect(),markers=[...map.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",classes:[...marker.classList],fill:marker.getAttribute("fill"),left:r.left+r.width/2,top:r.top+r.height/2,width:r.width,height:r.height}});return{world:Boolean(world?.complete&&world?.naturalWidth),worldRatio:worldRect?worldRect.width/worldRect.height:0,validators:Number(map?.dataset.validatorCount),markerCount:Number(map?.dataset.markerCount),hitTargetCount:map?.querySelectorAll(".validator-marker-hit").length||0,centersInside:markers.every(marker=>marker.left>=rect.left-.1&&marker.left<=rect.right+.1&&marker.top>=rect.top-.1&&marker.top<=rect.bottom+.1),markerNodes:markers,mapRect:rect&&{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},worldRect:worldRect&&{left:worldRect.left,top:worldRect.top,width:worldRect.width,height:worldRect.height},scrollWidth:document.documentElement.scrollWidth,width:innerWidth}})())';
   const hostGeometryExpression = `JSON.stringify((() => {
-    const card = document.querySelector("#nodes .node");
+    const deck = document.querySelector("#nodes");
     const cards = [...document.querySelectorAll("#nodes .node")];
-    if (!card) return { pass: false, error: "no Host card" };
+    const expandedCards = cards.filter(card => card.classList.contains("is-expanded"));
+    const collapsedCards = cards.filter(card => card.classList.contains("is-collapsed"));
+    const card = expandedCards[0];
+    if (!deck || !card) return { pass: false, error: "no expanded Host card" };
     const setText = (selector, value) => {
       const element = card.querySelector(selector);
       if (element) element.textContent = value;
       return element;
     };
-    setText("h3", "node0.example.test with a deliberately long hostname");
+    const bounds = element => {
+      const rect = element?.getBoundingClientRect();
+      return rect && { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
+    };
+    const geometrySnapshot = () => Object.fromEntries([
+      ...cards.map((candidate, index) => [\`card-\${index}\`, bounds(candidate)]),
+      ["header", bounds(card.querySelector("h3"))],
+      ["host", bounds(card.querySelector('[data-k="host"]'))],
+      ["status", bounds(card.querySelector('[data-k="status"]'))],
+      ...[...(card.querySelector(".node-details")?.children || [])].map((element, index) => [\`detail-\${index}-\${element.dataset.kRow || element.dataset.k || element.tagName.toLowerCase()}\`, bounds(element)]),
+    ]);
+    const statusProbe = {
+      participantKnown: true,
+      participantState: "ACTIVE",
+      validatorKnown: true,
+      votingPower: "10",
+      catchingUp: false,
+      blocksBehind: 0,
+      blockAgeSeconds: 0,
+      progressing: true,
+      referenceKnown: true,
+      referenceAgrees: true,
+    };
+    renderHostState(card, { ...statusProbe, endpointState: "reachable" });
+    const validatingGeometry = geometrySnapshot();
+    renderHostState(card, { ...statusProbe, endpointState: "unavailable", endpointDiagnostic: "Network error" });
+    const activeGeometry = geometrySnapshot();
+    const statusLayoutShifts = Object.keys(validatingGeometry).flatMap(key => {
+      const before = validatingGeometry[key];
+      const after = activeGeometry[key];
+      if (!before || !after) return [{ key, before, after }];
+      return ["top", "left", "width", "height"].some(metric => Math.abs(before[metric] - after[metric]) > 0.1)
+        ? [{ key, before, after }]
+        : [];
+    });
+    setText('[data-k="host"]', "node0.example.test with a deliberately long hostname");
     setText('[data-k="status"]', "VALIDATING");
     setText('[data-k="status-reason"]', "Effective and synchronized validator with a long diagnostic reason");
     setText('[data-k="scope"]', "gonka1abcdefghijklmnopqrstuvwxyz0123456789");
@@ -580,10 +661,6 @@ try {
     const gpuRow = card.querySelector('[data-k-row="gpu"]');
     if (gpuRow) gpuRow.hidden = false;
     setText('[data-k="gpu"]', "RTX PRO 2000 Blackwell ×8 + GeForce RTX 4090 SUPER Extremely Long Vendor Edition ×8 + Accelerator Model With An UnbrokenIdentifier012345678901234567890123456789 – net");
-    const bounds = element => {
-      const rect = element?.getBoundingClientRect();
-      return rect && { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
-    };
     const textBounds = element => {
       if (!element) return null;
       const range = document.createRange();
@@ -601,22 +678,80 @@ try {
         clipped: Boolean(!visible || element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || text.left < rect.left - 2 || text.right > rect.right + 2 || text.top < rect.top - 2 || text.bottom > rect.bottom + 2),
       };
     };
-    const rows = [...card.children]
-      .filter(row => row.matches("h3,.status,small,.metric") && row.offsetParent !== null)
-      .map(element => ({ bounds: bounds(element), textBounds: textBounds(element) }));
-    const rowOverlap = rows.slice(0, -1).some((row, index) => row.textBounds && rows[index + 1].bounds && row.textBounds.bottom > rows[index + 1].bounds.top + 0.5);
+    const details = card.querySelector(".node-details");
+    const rows = [card.querySelector("h3"), ...(details?.children || [])]
+      .filter(row => row && row.offsetParent !== null)
+      .map(element => ({
+        key: element.dataset.kRow || element.dataset.k || element.tagName.toLowerCase(),
+        bounds: bounds(element),
+        textBounds: textBounds(element),
+      }));
+    const rowOverlaps = rows.slice(0, -1).flatMap((row, index) => {
+      const next = rows[index + 1];
+      return row.textBounds && next.bounds && row.textBounds.bottom > next.bounds.top + 0.5
+        ? [{ from: row.key, to: next.key, textBottom: row.textBounds.bottom, nextTop: next.bounds.top }]
+        : [];
+    });
     const cardRect = card.getBoundingClientRect();
     const contentBottom = rows.reduce((bottom, row) => Math.max(bottom, row.textBounds?.bottom ?? -Infinity), -Infinity);
-    const next = cards
-      .slice(1)
-      .map(candidate => ({ candidate, bounds: candidate.getBoundingClientRect() }))
-      .filter(item => item.bounds.top >= cardRect.bottom - 0.5 && item.bounds.left < cardRect.right && item.bounds.right > cardRect.left)
-      .sort((left, right) => left.bounds.top - right.bounds.top)[0];
+    const deckRect = deck.getBoundingClientRect();
+    const cardRects = cards.map(candidate => candidate.getBoundingClientRect());
+    const deckStyle = getComputedStyle(deck);
+    const mobile = innerWidth <= 700;
+    let expectedExpandedCount = Math.min(innerWidth <= 900 ? 1 : innerWidth < 1200 ? 2 : 4, cards.length);
+    while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 270) expectedExpandedCount -= 1;
+    const oneRow = cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5 && Math.abs(rect.bottom - cardRects[0].bottom) <= 0.5);
+    const cardsInside = cardRects.every(rect => rect.left >= deckRect.left - 1 && rect.right <= deckRect.right + 1);
+    const initialDeckScrollLeft = deck.scrollLeft;
+    deck.scrollLeft = 0;
+    const firstCardAtStart = (() => {
+      const rect = cards[0]?.getBoundingClientRect();
+      return Boolean(rect && rect.left >= deckRect.left - 1 && rect.right <= deckRect.right + 1);
+    })();
+    const maximumDeckScrollLeft = Math.max(0, deck.scrollWidth - deck.clientWidth);
+    deck.scrollLeft = maximumDeckScrollLeft;
+    const lastCardAtEnd = (() => {
+      const rect = cards.at(-1)?.getBoundingClientRect();
+      return Boolean(rect && rect.left >= deckRect.left - 1 && rect.right <= deckRect.right + 1);
+    })();
+    const appliedDeckScrollLeft = deck.scrollLeft;
+    deck.scrollLeft = initialDeckScrollLeft;
+    const deckOverflows = maximumDeckScrollLeft > 1;
+    const minimumDeckWidth = mobile
+      ? deck.clientWidth
+      : expectedExpandedCount * 270 + (cards.length - expectedExpandedCount) * 32;
+    const overflowExpected = !mobile && minimumDeckWidth > deck.clientWidth + 1;
+    const cardsReachable = firstCardAtStart && (!deckOverflows || (appliedDeckScrollLeft > 1 && lastCardAtEnd));
+    const expandedGeometry = expandedCards.every(candidate => {
+      const rect = candidate.getBoundingClientRect();
+      return mobile
+        ? Math.abs(rect.width - deck.clientWidth) <= 1
+        : Math.abs(rect.height - 424) <= 0.5 && rect.width >= 269;
+    });
+    const collapsedGeometry = collapsedCards.every(candidate => {
+      const rect = candidate.getBoundingClientRect();
+      return mobile
+        ? Math.abs(rect.height - 52) <= 0.5 && Math.abs(rect.width - deck.clientWidth) <= 1
+        : Math.abs(rect.height - 424) <= 0.5 && rect.width >= 31 && rect.width <= 33;
+    });
+    const collapsedSemantics = collapsedCards.every(candidate => {
+      const host = candidate.querySelector('[data-k="host"]');
+      const status = candidate.querySelector('[data-k="status"]');
+      const candidateDetails = candidate.querySelector(".node-details");
+      const button = candidate.querySelector(".node-toggle");
+      if (status) status.textContent = "VALIDATING";
+      return Boolean(host?.offsetParent && status?.offsetParent && status.scrollWidth <= status.clientWidth && status.scrollHeight <= status.clientHeight && candidateDetails?.hidden && button?.getAttribute("aria-expanded") === "false" && button?.getAttribute("aria-controls") === candidateDetails?.id);
+    });
     const fields = {
+      host: fieldInfo('[data-k="host"]'),
       status: fieldInfo('[data-k="status"]'),
       statusReason: fieldInfo('[data-k="status-reason"]'),
       scope: fieldInfo('[data-k="scope"]'),
+      height: fieldInfo('[data-k="height"]'),
       votingPower: fieldInfo('[data-k="vp"]'),
+      sync: fieldInfo('[data-k="sync"]'),
+      endpoint: fieldInfo('[data-k="endpoint"]'),
+      peers: fieldInfo('[data-k="peers"]'),
       software: fieldInfo('[data-k="versions"]'),
       gpu: fieldInfo('[data-k="gpu"]'),
     };
@@ -638,19 +773,97 @@ try {
       text: skippedGpuValue?.textContent?.trim() || "",
       clientHeight: skippedGpuRow?.clientHeight || 0,
     };
-    const nextOverlap = Boolean(next && contentBottom > next.bounds.top + 0.5);
+    const initialExpandedKey = expandedCards[0]?.dataset.nodeKey;
+    const activatedCard = collapsedCards[0];
+    const activatedKey = activatedCard?.dataset.nodeKey;
+    activatedCard?.querySelector(".node-toggle")?.click();
+    const afterExpanded = cards.filter(candidate => candidate.classList.contains("is-expanded"));
+    const activated = cards.find(candidate => candidate.dataset.nodeKey === activatedKey);
+    const evicted = cards.find(candidate => candidate.dataset.nodeKey === initialExpandedKey);
+    const activationValid = Boolean(
+      activated &&
+      activated.classList.contains("is-expanded") &&
+      activated.querySelector(".node-toggle")?.getAttribute("aria-expanded") === "true" &&
+      !activated.querySelector(".node-details")?.hidden &&
+      evicted &&
+      evicted.classList.contains("is-collapsed") &&
+      evicted.querySelector(".node-toggle")?.getAttribute("aria-expanded") === "false" &&
+      evicted.querySelector(".node-details")?.hidden &&
+      afterExpanded.length === expectedExpandedCount
+    );
+    const activatedButton = activated?.querySelector(".node-toggle");
+    activatedButton?.focus();
+    activatedButton?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    const activatedIndex = cards.indexOf(activated);
+    const expectedFocusedKey = cards[(activatedIndex + 1) % cards.length]?.dataset.nodeKey;
+    const focusedKey = document.activeElement?.closest(".node")?.dataset.nodeKey;
+    const keyboardValid = Boolean(activatedButton && focusedKey === expectedFocusedKey);
     const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
+    const negativeTracking = [...document.querySelectorAll("body *")]
+      .filter(element => {
+        const spacing = getComputedStyle(element).letterSpacing;
+        return spacing !== "normal" && Number.parseFloat(spacing) < 0;
+      })
+      .map(element => element.tagName + "." + element.className);
+    const desktopLayout = !mobile && deckStyle.flexDirection === "row" && oneRow;
+    const mobileLayout = mobile && deckStyle.flexDirection === "column" && !oneRow;
     return {
-      pass: Math.abs(cardRect.height - (innerWidth >= 1400 ? 480 : 424)) <= 0.5 && card.scrollHeight <= card.clientHeight && !rowOverlap && contentBottom <= cardRect.bottom + 0.5 && !nextOverlap && complete && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && document.documentElement.scrollWidth <= innerWidth,
-      card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight },
+      pass: cards.length > 5 && expandedCards.length === expectedExpandedCount && collapsedCards.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && deck.getAttribute("role") === "list" && deck.getAttribute("aria-label")?.includes("Host accordion") && deckStyle.overflowX === (mobile ? "visible" : "auto") && deckOverflows === overflowExpected && cardsReachable && (deckOverflows || cardsInside) && expandedGeometry && collapsedGeometry && collapsedSemantics && (mobile ? mobileLayout : desktopLayout) && card.scrollHeight <= card.clientHeight && rowOverlaps.length === 0 && contentBottom <= cardRect.bottom + 0.5 && complete && negativeTracking.length === 0 && statusLayoutShifts.length === 0 && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && activationValid && keyboardValid && document.documentElement.scrollWidth <= innerWidth,
+      expectedExpandedCount,
+      initialExpandedCount: expandedCards.length,
+      collapsedCount: collapsedCards.length,
+      layout: { mobile, flexDirection: deckStyle.flexDirection, oneRow, cardsInside, cardsReachable, firstCardAtStart, lastCardAtEnd, deckOverflows, overflowExpected, maximumDeckScrollLeft, appliedDeckScrollLeft, minimumDeckWidth, expandedGeometry, collapsedGeometry, clientWidth: deck.clientWidth, scrollWidth: deck.scrollWidth, cardWidths: cardRects.map(rect => rect.width), cardHeights: cardRects.map(rect => rect.height) },
       fields,
-      rowOverlap,
-      nextOverlap,
+      negativeTracking,
+      statusLayoutShifts,
+      rowOverlaps,
       hiddenRequiredFieldRejected: hiddenRejected,
       skippedGpu,
-      cardBounds: bounds(card),
-      contentBottom,
-      nextBounds: next?.bounds || null,
+      card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight, contentBottom },
+      interaction: { initialExpandedKey, activatedKey, activationValid, expectedFocusedKey, focusedKey, keyboardValid },
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: innerWidth,
+    };
+  })())`;
+  const denseHostDeckExpression = `JSON.stringify((() => {
+    const deck = document.querySelector("#nodes");
+    const cards = [...document.querySelectorAll("#nodes .node")];
+    if (!deck || cards.length !== 22) return { pass: false, error: "dense Host fixture did not render", count: cards.length };
+    const mobile = innerWidth <= 700;
+    const expanded = cards.filter(card => card.classList.contains("is-expanded"));
+    const collapsed = cards.filter(card => card.classList.contains("is-collapsed"));
+    const style = getComputedStyle(deck);
+    const deckRect = deck.getBoundingClientRect();
+    const cardRects = cards.map(card => card.getBoundingClientRect());
+    let expectedExpandedCount = Math.min(innerWidth <= 900 ? 1 : innerWidth < 1200 ? 2 : 4, cards.length);
+    while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 270) expectedExpandedCount -= 1;
+    deck.scrollLeft = 0;
+    const firstRect = cards[0].getBoundingClientRect();
+    const firstAtStart = firstRect.left >= deckRect.left - 1 && firstRect.right <= deckRect.right + 1;
+    const maximumScrollLeft = Math.max(0, deck.scrollWidth - deck.clientWidth);
+    deck.scrollLeft = maximumScrollLeft;
+    const lastRect = cards.at(-1).getBoundingClientRect();
+    const lastAtEnd = lastRect.left >= deckRect.left - 1 && lastRect.right <= deckRect.right + 1;
+    const appliedScrollLeft = deck.scrollLeft;
+    deck.scrollLeft = 0;
+    const desktopGeometry = !mobile && style.flexDirection === "row" && cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5 && Math.abs(rect.bottom - cardRects[0].bottom) <= 0.5) && expanded.every(card => card.getBoundingClientRect().width >= 269) && collapsed.every(card => { const rect = card.getBoundingClientRect(); return rect.width >= 31 && rect.width <= 33; });
+    const mobileGeometry = mobile && style.flexDirection === "column" && deck.scrollWidth <= deck.clientWidth + 1 && expanded.every(card => Math.abs(card.getBoundingClientRect().width - deck.clientWidth) <= 1) && collapsed.every(card => { const rect = card.getBoundingClientRect(); return Math.abs(rect.width - deck.clientWidth) <= 1 && Math.abs(rect.height - 52) <= 0.5; });
+    const desktopReachability = !mobile && style.overflowX === "auto" && maximumScrollLeft > 1 && appliedScrollLeft > 1 && firstAtStart && lastAtEnd;
+    const mobileReachability = mobile && style.overflowX === "visible" && maximumScrollLeft <= 1 && firstAtStart && lastAtEnd;
+    return {
+      pass: expanded.length === expectedExpandedCount && collapsed.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && (mobile ? mobileGeometry && mobileReachability : desktopGeometry && desktopReachability) && document.documentElement.scrollWidth <= innerWidth,
+      mobile,
+      count: cards.length,
+      expandedCount: expanded.length,
+      collapsedCount: collapsed.length,
+      expectedExpandedCount,
+      overflowX: style.overflowX,
+      clientWidth: deck.clientWidth,
+      scrollWidth: deck.scrollWidth,
+      maximumScrollLeft,
+      appliedScrollLeft,
+      firstAtStart,
+      lastAtEnd,
       documentScrollWidth: document.documentElement.scrollWidth,
       viewportWidth: innerWidth,
     };
@@ -797,6 +1010,7 @@ try {
     });
     const state = JSON.parse(result.value);
     let hostGeometry = null;
+    let denseHostGeometry = null;
     if (width === 1280) {
       const { result: geoIpResult } = await call("Runtime.evaluate", {
         expression:
@@ -947,6 +1161,24 @@ try {
         throw new Error(
           `resize without reload contract failed: ${JSON.stringify(resized)}`,
         );
+      const { result: mobileHostResizeResult } = await call(
+        "Runtime.evaluate",
+        {
+          expression:
+            'JSON.stringify((()=>{const deck=document.querySelector("#nodes"),cards=[...document.querySelectorAll("#nodes .node")];return{layout:deck?.dataset.layout,flexDirection:getComputedStyle(deck).flexDirection,expanded:cards.filter(card=>card.classList.contains("is-expanded")).length,collapsed:cards.filter(card=>card.classList.contains("is-collapsed")).length}})())',
+          returnByValue: true,
+        },
+      );
+      const mobileHostResize = JSON.parse(mobileHostResizeResult.value);
+      if (
+        mobileHostResize.layout !== "mobile" ||
+        mobileHostResize.flexDirection !== "column" ||
+        mobileHostResize.expanded !== 1 ||
+        mobileHostResize.collapsed !== 10
+      )
+        throw new Error(
+          `Host accordion mobile resize failed: ${JSON.stringify(mobileHostResize)}`,
+        );
       await call("Emulation.setDeviceMetricsOverride", {
         width,
         height,
@@ -954,6 +1186,24 @@ try {
         mobile: false,
       });
       await delay(200);
+      const { result: desktopHostResizeResult } = await call(
+        "Runtime.evaluate",
+        {
+          expression:
+            'JSON.stringify((()=>{const deck=document.querySelector("#nodes"),cards=[...document.querySelectorAll("#nodes .node")];return{layout:deck?.dataset.layout,flexDirection:getComputedStyle(deck).flexDirection,expanded:cards.filter(card=>card.classList.contains("is-expanded")).length,collapsed:cards.filter(card=>card.classList.contains("is-collapsed")).length}})())',
+          returnByValue: true,
+        },
+      );
+      const desktopHostResize = JSON.parse(desktopHostResizeResult.value);
+      if (
+        desktopHostResize.layout !== "rail" ||
+        desktopHostResize.flexDirection !== "row" ||
+        desktopHostResize.expanded !== 3 ||
+        desktopHostResize.collapsed !== 8
+      )
+        throw new Error(
+          `Host accordion desktop resize failed: ${JSON.stringify(desktopHostResize)}`,
+        );
     }
     if (width === 390) {
       const { result: controlBaseResult } = await call("Runtime.evaluate", {
@@ -1128,7 +1378,8 @@ try {
     });
     await delay(80);
     await call("Runtime.evaluate", {
-      expression: 'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
+      expression:
+        'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
     });
     await delay(80);
     const { result: overlappingResult } = await call("Runtime.evaluate", {
@@ -1161,6 +1412,39 @@ try {
       throw new Error(
         `fixture no longer exercises overlapping hit areas: ${JSON.stringify({ overlappingState, hitDistance, combinedHitRadius })}`,
       );
+    const waitForSettledOverlappingMarker = async (expected) => {
+      let previous = null;
+      let stableSamples = 0;
+      let observed = null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const { result: markerResult } = await call(
+          "Runtime.evaluate",
+          {
+            expression:
+              'JSON.stringify((()=>({animating:Boolean(document.querySelector(".leaflet-pan-anim,.leaflet-zoom-anim")),markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const rect=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",x:rect.left+rect.width/2,y:rect.top+rect.height/2}})}))())',
+            returnByValue: true,
+          },
+        );
+        observed = JSON.parse(markerResult.value);
+        const position = observed.markers.find((marker) =>
+          marker.label.startsWith(expected),
+        );
+        if (
+          position &&
+          previous &&
+          !observed.animating &&
+          Math.hypot(position.x - previous.x, position.y - previous.y) <= 0.1
+        )
+          stableSamples += 1;
+        else stableSamples = 0;
+        if (stableSamples >= 3) return position;
+        previous = position;
+        await delay(50);
+      }
+      throw new Error(
+        `overlapping marker did not settle ${JSON.stringify({ expected, observed })}`,
+      );
+    };
     const assertOverlappingPointers = async () => {
       for (const expected of ["Singleton,", "Prague,"]) {
         await call("Runtime.evaluate", {
@@ -1177,22 +1461,10 @@ try {
             throw new Error("previous marker popup did not close");
           await delay(20);
         }
-        // Leaflet may finish the popup's auto-pan on the next frame after
-        // removing its DOM node. Measure the click target only after that
-        // transition settles, or the test can dispatch at stale coordinates.
-        await delay(80);
-        const { result: currentMarkersResult } = await call(
-          "Runtime.evaluate",
-          {
-            expression:
-              'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label"),x:r.left+r.width/2,y:r.top+r.height/2}}))',
-            returnByValue: true,
-          },
-        );
-        const marker = JSON.parse(currentMarkersResult.value).find((item) =>
-          item.label?.startsWith(expected),
-        );
-        if (!marker) throw new Error(`overlapping marker missing ${expected}`);
+        // Leaflet can continue popup auto-pan after removing the popup DOM.
+        // Bind the pointer coordinates to three stable geometry samples so a
+        // slower runner cannot dispatch at a stale marker position.
+        const marker = await waitForSettledOverlappingMarker(expected);
         await call("Input.dispatchMouseEvent", {
           type: "mouseMoved",
           x: marker.x,
@@ -1394,7 +1666,7 @@ try {
     });
     await call("Runtime.evaluate", {
       expression:
-        'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
+        'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
     });
     await delay(100);
     await call("Input.dispatchKeyEvent", {
@@ -1423,57 +1695,14 @@ try {
     )
       throw new Error(`Escape contract failed: ${JSON.stringify(escape)}`);
     if (width === 1280) {
-      const { result: dragStartResult } = await call("Runtime.evaluate", {
-        expression:
-          'JSON.stringify((()=>{const rect=document.querySelector("#validator-map")?.getBoundingClientRect();return{x:(rect?.left||0)+(rect?.width||0)/2,y:(rect?.top||0)+(rect?.height||0)/2}})())',
-        returnByValue: true,
-      });
-      const dragStart = JSON.parse(dragStartResult.value);
-      await call("Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x: dragStart.x,
-        y: dragStart.y,
-      });
-      await call("Input.dispatchMouseEvent", {
-        type: "mousePressed",
-        x: dragStart.x,
-        y: dragStart.y,
-        button: "left",
-        buttons: 1,
-        clickCount: 1,
-      });
-      await call("Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x: dragStart.x + 160,
-        y: dragStart.y,
-        button: "left",
-        buttons: 1,
-      });
-      await call("Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x: dragStart.x + 500,
-        y: dragStart.y,
-        button: "left",
-        buttons: 1,
-      });
-      await call("Input.dispatchMouseEvent", {
-        type: "mouseReleased",
-        x: dragStart.x + 500,
-        y: dragStart.y,
-        button: "left",
-        clickCount: 1,
-      });
-      await delay(1000);
-      const { result: restoredBoundsResult } = await call("Runtime.evaluate", {
-        expression:
-          'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect(),covers=(value,bounds)=>Boolean(value&&bounds&&value.left<=bounds.left+1&&value.right>=bounds.right-1);return{worldCoversMap:covers(world,mr),popup:Boolean(document.querySelector(".leaflet-popup")),world:world&&{left:world.left,right:world.right},map:mr&&{left:mr.left,right:mr.right}}})())',
-        returnByValue: true,
-      });
-      const restoredBounds = JSON.parse(restoredBoundsResult.value);
-      if (!restoredBounds.worldCoversMap || restoredBounds.popup)
+      const dragStart = await dragMapRight();
+      try {
+        await waitForMapRestoration("Escape popup restoration");
+      } catch (error) {
         throw new Error(
-          `Escape popup restoration failed: ${JSON.stringify(restoredBounds)}`,
+          `${error.message} drag=${JSON.stringify(dragStart)}`,
         );
+      }
     }
     await call("Runtime.evaluate", {
       expression:
@@ -1568,7 +1797,7 @@ try {
         await delay(500);
         await call("Runtime.evaluate", {
           expression:
-            'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
+            'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
         });
         await delay(80);
         const { result: edgeRequestResult } = await call("Runtime.evaluate", {
@@ -1593,58 +1822,15 @@ try {
           expression:
             'document.querySelector(".leaflet-popup-close-button")?.click()',
         });
-        await delay(160);
-        const { result: dragStartResult } = await call("Runtime.evaluate", {
-          expression:
-            'JSON.stringify((()=>{const rect=document.querySelector("#validator-map")?.getBoundingClientRect();return{x:(rect?.left||0)+(rect?.width||0)/2,y:(rect?.top||0)+(rect?.height||0)/2}})())',
-          returnByValue: true,
-        });
-        const dragStart = JSON.parse(dragStartResult.value);
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: dragStart.x,
-          y: dragStart.y,
-        });
-        await call("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x: dragStart.x,
-          y: dragStart.y,
-          button: "left",
-          buttons: 1,
-          clickCount: 1,
-        });
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: dragStart.x + 160,
-          y: dragStart.y,
-          button: "left",
-          buttons: 1,
-        });
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: dragStart.x + 500,
-          y: dragStart.y,
-          button: "left",
-          buttons: 1,
-        });
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x: dragStart.x + 500,
-          y: dragStart.y,
-          button: "left",
-          clickCount: 1,
-        });
-        await delay(1000);
-        const { result: restoredBoundsResult } = await call("Runtime.evaluate", {
-          expression:
-            'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect(),covers=(value,bounds)=>Boolean(value&&bounds&&value.left<=bounds.left+1&&value.right>=bounds.right-1);return{worldCoversMap:covers(world,mr),popup:Boolean(document.querySelector(".leaflet-popup")),world:world&&{left:world.left,right:world.right,top:world.top,bottom:world.bottom},map:mr&&{left:mr.left,right:mr.right,top:mr.top,bottom:mr.bottom}}})())',
-          returnByValue: true,
-        });
-        const restoredBounds = JSON.parse(restoredBoundsResult.value);
-        if (!restoredBounds.worldCoversMap || restoredBounds.popup)
+        await waitForMapRestoration("popup replacement close restoration");
+        const dragStart = await dragMapRight();
+        try {
+          await waitForMapRestoration("popup replacement restoration");
+        } catch (error) {
           throw new Error(
-            `popup replacement restoration failed: ${JSON.stringify(restoredBounds)}`,
+            `${error.message} drag=${JSON.stringify(dragStart)}`,
           );
+        }
         await call("Runtime.evaluate", {
           expression:
             'document.querySelector("#validator-map-fullscreen")?.click()',
@@ -1757,7 +1943,139 @@ try {
           `fullscreen Escape contract failed: ${JSON.stringify(exit)}`,
         );
     }
-    if ([1280, 1399, 1321, 1320, 1101, 1100, 701, 700, 521, 1400, 1440, 1920, 390].includes(width)) {
+    if ([1920, 1280, 390, 320].includes(width)) {
+      await call("Runtime.evaluate", {
+        expression:
+          'document.querySelector("#nodes")?.scrollIntoView({behavior:"instant",block:"start"})',
+      });
+      await delay(80);
+      const hostRowScreenshot = await call("Page.captureScreenshot", {
+        format: "png",
+      });
+      await mkdir(evidenceDir, { recursive: true });
+      await writeFile(
+        join(evidenceDir, `host-row-${width}x${height}.png`),
+        Buffer.from(hostRowScreenshot.data, "base64"),
+      );
+      const { result: fiveHostInitialResult } = await call(
+        "Runtime.evaluate",
+        {
+          expression:
+            'JSON.stringify((()=>{const cards=[...document.querySelectorAll("#nodes .node")];cards.slice(5).forEach(card=>card.remove());layoutHostCards();const remaining=[...document.querySelectorAll("#nodes .node")];return{count:remaining.length,expanded:remaining.filter(card=>card.classList.contains("is-expanded")).map(card=>card.dataset.nodeKey),collapsed:remaining.filter(card=>card.classList.contains("is-collapsed")).map(card=>card.dataset.nodeKey)}})())',
+          returnByValue: true,
+        },
+      );
+      const fiveHostInitial = JSON.parse(fiveHostInitialResult.value);
+      const fiveHostExpectedExpanded = width <= 900 ? 1 : 4;
+      if (
+        fiveHostInitial.count !== 5 ||
+        fiveHostInitial.expanded.length !== fiveHostExpectedExpanded ||
+        fiveHostInitial.collapsed.length !== 5 - fiveHostExpectedExpanded
+      )
+        throw new Error(
+          `five-Host initial accordion contract failed at ${width}x${height}: ${JSON.stringify(fiveHostInitial)}`,
+        );
+      await delay(380);
+      const fiveHostScreenshot = await call("Page.captureScreenshot", {
+        format: "png",
+      });
+      await writeFile(
+        join(evidenceDir, `host-row-five-${width}x${height}.png`),
+        Buffer.from(fiveHostScreenshot.data, "base64"),
+      );
+      const { result: fiveHostActivatedResult } = await call(
+        "Runtime.evaluate",
+        {
+          expression:
+            'JSON.stringify((()=>{const cards=[...document.querySelectorAll("#nodes .node")],first=cards[0],fifth=cards[4];fifth?.querySelector(".node-toggle")?.click();return{expanded:cards.filter(card=>card.classList.contains("is-expanded")).map(card=>card.dataset.nodeKey),firstCollapsed:first?.classList.contains("is-collapsed"),firstHidden:Boolean(first?.querySelector(".node-details")?.hidden),fifthExpanded:fifth?.classList.contains("is-expanded"),fifthOpen:fifth?.querySelector(".node-toggle")?.getAttribute("aria-expanded")}})())',
+          returnByValue: true,
+        },
+      );
+      const fiveHostActivated = JSON.parse(fiveHostActivatedResult.value);
+      if (
+        fiveHostActivated.expanded.length !== fiveHostExpectedExpanded ||
+        !fiveHostActivated.firstCollapsed ||
+        !fiveHostActivated.firstHidden ||
+        !fiveHostActivated.fifthExpanded ||
+        fiveHostActivated.fifthOpen !== "true"
+      )
+        throw new Error(
+          `five-Host activation contract failed at ${width}x${height}: ${JSON.stringify(fiveHostActivated)}`,
+        );
+      await delay(380);
+      const fiveHostActivatedScreenshot = await call(
+        "Page.captureScreenshot",
+        { format: "png" },
+      );
+      await writeFile(
+        join(
+          evidenceDir,
+          `host-row-five-selected-${width}x${height}.png`,
+        ),
+        Buffer.from(fiveHostActivatedScreenshot.data, "base64"),
+      );
+      await call("Page.navigate", {
+        url: `http://127.0.0.1:${server.address().port}/`,
+      });
+      await waitForInitialMap();
+      await delay(500);
+    }
+    if ([1280, 390, 320].includes(width)) {
+      await call("Runtime.evaluate", {
+        expression:
+          '(()=>{const details=document.querySelector(".join-requirements");if(details)details.open=true;document.querySelector("#join-node")?.scrollIntoView({behavior:"instant",block:"start"})})()',
+      });
+      await delay(80);
+      const joinScreenshot = await call("Page.captureScreenshot", {
+        format: "png",
+      });
+      await mkdir(evidenceDir, { recursive: true });
+      await writeFile(
+        join(evidenceDir, `join-requirements-${width}x${height}.png`),
+        Buffer.from(joinScreenshot.data, "base64"),
+      );
+      if (width <= 390) {
+        await call("Runtime.evaluate", {
+          expression:
+            'document.querySelector(".join-requirements-note")?.scrollIntoView({behavior:"instant",block:"end"})',
+        });
+        await delay(80);
+        const joinNoteScreenshot = await call("Page.captureScreenshot", {
+          format: "png",
+        });
+        await writeFile(
+          join(evidenceDir, `join-requirements-note-${width}x${height}.png`),
+          Buffer.from(joinNoteScreenshot.data, "base64"),
+        );
+      }
+    }
+    if ([701, 700].includes(width)) {
+      participantLimit = 22;
+      await call("Runtime.evaluate", {
+        expression: "refresh()",
+        awaitPromise: true,
+      });
+      await delay(380);
+      const { result: denseHostGeometryResult } = await call(
+        "Runtime.evaluate",
+        {
+          expression: denseHostDeckExpression,
+          returnByValue: true,
+        },
+      );
+      denseHostGeometry = JSON.parse(denseHostGeometryResult.value);
+      if (!denseHostGeometry.pass)
+        throw new Error(
+          `Dense Host-deck reachability failed at ${width}x${height}: ${JSON.stringify(denseHostGeometry)}`,
+        );
+      participantLimit = 11;
+      await call("Runtime.evaluate", {
+        expression: "refresh()",
+        awaitPromise: true,
+      });
+      await delay(380);
+    }
+    if ([1920, 1440, 1400, 1399, 1321, 1320, 1280, 1101, 1100, 844, 701, 700, 521, 390, 375, 360, 320].includes(width)) {
       const { result: hostGeometryResult } = await call("Runtime.evaluate", {
         expression: hostGeometryExpression,
         returnByValue: true,
@@ -1770,7 +2088,7 @@ try {
     }
     await call("Runtime.evaluate", {
       expression:
-        'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
+        'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
     });
     await delay(80);
     const screenshot = await call("Page.captureScreenshot", { format: "png" });
@@ -1779,7 +2097,7 @@ try {
       join(evidenceDir, `validator-map-${width}x${height}.png`),
       Buffer.from(screenshot.data, "base64"),
     );
-    reports.push({ width, height, ...state, hostGeometry });
+    reports.push({ width, height, ...state, hostGeometry, denseHostGeometry });
   }
   const forbidden = requests.filter((url) => forbiddenMapRequest.test(url));
   if (forbidden.length)
@@ -1793,6 +2111,7 @@ try {
   );
 } finally {
   socket?.close();
-  browser.kill("SIGTERM");
+  await stopChromeDevTools(browser);
+  await rm(profile, { recursive: true, force: true });
   await new Promise((resolvePromise) => server.close(resolvePromise));
 }

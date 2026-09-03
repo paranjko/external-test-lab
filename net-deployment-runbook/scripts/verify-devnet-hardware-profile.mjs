@@ -180,19 +180,27 @@ assert(
   "model context description is invalid",
 );
 
-const listMatch = homepage.match(
-  /<dl class="join-requirements-grid">([\s\S]*?)<\/dl>/u,
+const tableMatch = homepage.match(
+  /<table class="join-requirements-table">([\s\S]*?)<\/table>/u,
 );
-assert(listMatch, "homepage Host requirements list is missing");
-const renderedEntries = listMatch[1].match(/<div>/gu) || [];
+assert(tableMatch, "homepage Host requirements table is missing");
+assert(
+  tableMatch[1].includes(
+    '<thead><tr><th scope="col">Component</th><th scope="col">Minimum</th></tr></thead>',
+  ),
+  "homepage Host requirements table headings are missing",
+);
+const bodyMatch = tableMatch[1].match(/<tbody>([\s\S]*?)<\/tbody>/u);
+assert(bodyMatch, "homepage Host requirements table body is missing");
+const renderedEntries = bodyMatch[1].match(/<tr>/gu) || [];
 assert(
   renderedEntries.length === profile.requirements.length,
   "homepage Host requirements count differs from the profile",
 );
 for (const requirement of profile.requirements) {
-  const expected = `<div><dt>${escapeHtml(requirement.label)}</dt><dd>${escapeHtml(requirement.description)}</dd></div>`;
+  const expected = `<tr><th scope="row">${escapeHtml(requirement.label)}</th><td>${escapeHtml(requirement.description)}</td></tr>`;
   assert(
-    listMatch[1].includes(expected),
+    bodyMatch[1].includes(expected),
     `homepage does not match requirement ${requirement.id}`,
   );
 }

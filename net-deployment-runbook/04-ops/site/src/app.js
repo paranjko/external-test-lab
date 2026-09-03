@@ -234,49 +234,165 @@ const cards: Map<string, HTMLElement> = new Map();
 let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({ ...node }));
 let cardGpuInventory: GpuInventory = new Map();
 let cardSoftwareInventory: SoftwareInventory = new Map();
+let expandedCardKeys: Array<string> = [];
+let selectedCardKey = "";
+let cardSequence = 0;
+let hostDeckResizeFrame: ?number;
 
 function nodeKey(node: SiteNode): string {
   return node.address || node.name;
 }
 
+function hostCardCapacity(totalCards: number): number {
+  const width = document.documentElement.clientWidth || window.innerWidth;
+  if (width <= 900) return 1;
+  let capacity = Math.min(width < 1200 ? 2 : 4, totalCards);
+  const deckWidth = $("nodes")?.clientWidth || width;
+  const collapsedWidth = 32;
+  const minimumExpandedWidth = 270;
+  while (
+    capacity > 1 &&
+    (deckWidth - (totalCards - capacity) * collapsedWidth) / capacity <
+      minimumExpandedWidth
+  )
+    capacity -= 1;
+  return capacity;
+}
+
+function updateCardToggleLabel(card: HTMLElement): void {
+  const button = card.querySelector(".node-toggle");
+  if (!button) return;
+  const host = card.querySelector('[data-k="host"]')?.textContent || "Host";
+  const status = card.querySelector('[data-k="status"]')?.textContent || "Unknown";
+  const expanded = card.classList.contains("is-expanded");
+  button.setAttribute("aria-expanded", String(expanded));
+  button.setAttribute(
+    "aria-label",
+    `${expanded ? "Host details for" : "Expand Host"} ${host}, status ${status}`,
+  );
+  button.title = expanded ? `${host} details are open` : `Expand ${host}`;
+}
+
+function setCardExpanded(card: HTMLElement, expanded: boolean): void {
+  card.classList.toggle("is-expanded", expanded);
+  card.classList.toggle("is-collapsed", !expanded);
+  const details = card.querySelector(".node-details");
+  if (details) details.hidden = !expanded;
+  updateCardToggleLabel(card);
+}
+
+function layoutHostCards(): void {
+  const deck = $("nodes");
+  if (!deck) return;
+  const orderedCards = [...deck.querySelectorAll(".node")];
+  const orderedKeys = orderedCards
+    .map((card) => card.dataset.nodeKey || "")
+    .filter(Boolean);
+  if (!orderedKeys.length) {
+    expandedCardKeys = [];
+    selectedCardKey = "";
+    deck.dataset.expandedCount = "0";
+    return;
+  }
+  const liveKeys = new Set(orderedKeys);
+  expandedCardKeys = expandedCardKeys.filter((key) => liveKeys.has(key));
+  if (!selectedCardKey || !liveKeys.has(selectedCardKey))
+    selectedCardKey = expandedCardKeys[0] || orderedKeys[0];
+  const capacity = hostCardCapacity(orderedKeys.length);
+  if (!expandedCardKeys.length) {
+    expandedCardKeys = orderedKeys.slice(0, capacity);
+  } else {
+    if (!expandedCardKeys.includes(selectedCardKey))
+      expandedCardKeys.push(selectedCardKey);
+    while (expandedCardKeys.length > capacity) {
+      const removable = expandedCardKeys.findIndex(
+        (key) => key !== selectedCardKey,
+      );
+      expandedCardKeys.splice(removable < 0 ? 0 : removable, 1);
+    }
+    for (const key of orderedKeys) {
+      if (expandedCardKeys.length >= capacity) break;
+      if (!expandedCardKeys.includes(key)) expandedCardKeys.push(key);
+    }
+  }
+  const expanded = new Set(expandedCardKeys);
+  for (const card of orderedCards)
+    setCardExpanded(card, expanded.has(card.dataset.nodeKey || ""));
+  deck.dataset.expandedCount = String(expandedCardKeys.length);
+  deck.dataset.layout = window.innerWidth <= 700 ? "mobile" : "rail";
+}
+
+function activateHostCard(key: string): void {
+  if (!cards.has(key)) return;
+  selectedCardKey = key;
+  if (!expandedCardKeys.includes(key)) expandedCardKeys.push(key);
+  layoutHostCards();
+}
+
+function moveHostCardFocus(event: any, key: string): void {
+  const buttons = [...$("nodes").querySelectorAll(".node-toggle")];
+  const current = buttons.indexOf(cards.get(key)?.querySelector(".node-toggle"));
+  if (current < 0) return;
+  let next = current;
+  if (event.key === "ArrowRight" || event.key === "ArrowDown")
+    next = (current + 1) % buttons.length;
+  else if (event.key === "ArrowLeft" || event.key === "ArrowUp")
+    next = (current - 1 + buttons.length) % buttons.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = buttons.length - 1;
+  else return;
+  event.preventDefault();
+  buttons[next]?.focus();
+}
+
 function createCard(node: SiteNode): HTMLElement {
+  const key = nodeKey(node);
   const el = document.createElement("article");
-  el.className = `node ${node.mode || "active"}`;
+  const detailsId = `host-details-${++cardSequence}`;
+  el.className = `node ${node.mode || "active"} is-collapsed`;
+  el.dataset.nodeKey = key;
+  el.setAttribute("role", "listitem");
   el.innerHTML = `
-    <h3></h3>
-    <div class="status" data-k="status"></div>
-    <small data-k="status-reason"></small>
-    <small data-k="scope"></small>
-    <div class="metric">
-      <span>height</span>
-      <b data-k="height"></b>
-    </div>
-    <div class="metric">
-      <span>voting power</span>
-      <b data-k="vp"></b>
-    </div>
-    <div class="metric">
-      <span>chain sync</span>
-      <b data-k="sync"></b>
-    </div>
-    <div class="metric">
-      <span>endpoint</span>
-      <b data-k="endpoint"></b>
-    </div>
-    <div class="metric">
-      <span>peers</span>
-      <b data-k="peers"></b>
-    </div>
-    <div class="metric software" data-k-row="software">
-      <span>software</span>
-      <b data-k="versions"></b>
-    </div>
-    <div class="metric gpu" data-k-row="gpu" hidden>
-      <span>GPU</span>
-      <b data-k="gpu"></b>
+    <h3>
+      <button class="node-toggle" type="button" aria-expanded="false" aria-controls="${detailsId}">
+        <span class="node-host" data-k="host"></span>
+        <span class="status" data-k="status"></span>
+      </button>
+    </h3>
+    <div class="node-details" id="${detailsId}" hidden>
+      <small data-k="status-reason"></small>
+      <small data-k="scope"></small>
+      <div class="metric">
+        <span>height</span>
+        <b data-k="height"></b>
+      </div>
+      <div class="metric">
+        <span>voting power</span>
+        <b data-k="vp"></b>
+      </div>
+      <div class="metric">
+        <span>chain sync</span>
+        <b data-k="sync"></b>
+      </div>
+      <div class="metric">
+        <span>endpoint</span>
+        <b data-k="endpoint"></b>
+      </div>
+      <div class="metric">
+        <span>peers</span>
+        <b data-k="peers"></b>
+      </div>
+      <div class="metric software" data-k-row="software">
+        <span>software</span>
+        <b data-k="versions"></b>
+      </div>
+      <div class="metric gpu" data-k-row="gpu" hidden>
+        <span>GPU</span>
+        <b data-k="gpu"></b>
+      </div>
     </div>
   `;
-  el.querySelector("h3").textContent = node.publicHost || node.name;
+  set(el, "host", node.publicHost || node.name);
   set(el, "status", node.mode === "skip" ? "SKIP" : "checking…");
   set(el, "scope", node.mode === "skip" ? node.reason : node.address);
   set(el, "height", node.mode === "skip" ? "–" : "…");
@@ -290,7 +406,14 @@ function createCard(node: SiteNode): HTMLElement {
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
   $("nodes").append(el);
-  cards.set(nodeKey(node), el);
+  cards.set(key, el);
+  el.querySelector(".node-toggle").addEventListener("click", () =>
+    activateHostCard(key),
+  );
+  el.querySelector(".node-toggle").addEventListener("keydown", (event) =>
+    moveHostCardFocus(event, key),
+  );
+  updateCardToggleLabel(el);
   return el;
 }
 
@@ -462,6 +585,15 @@ async function refreshGpuInventory(): Promise<void> {
   }
 }
 for (const node of observedNodes) createCard(node);
+layoutHostCards();
+window.addEventListener("resize", () => {
+  if (hostDeckResizeFrame != null)
+    window.cancelAnimationFrame(hostDeckResizeFrame);
+  hostDeckResizeFrame = window.requestAnimationFrame(() => {
+    hostDeckResizeFrame = null;
+    layoutHostCards();
+  });
+});
 async function response(
   url: string,
   options: RequestOptions = {},
@@ -490,6 +622,7 @@ async function text(url: string): Promise<string> {
 
 function set(card: HTMLElement, key: string, value: mixed): void {
   card.querySelector(`[data-k="${key}"]`).textContent = value;
+  if (key === "host" || key === "status") updateCardToggleLabel(card);
 }
 
 const siteRevision = $("site-revision");
@@ -590,6 +723,7 @@ function renderHostState(card: HTMLElement, node: SiteNode): boolean {
   set(card, "status", display.primaryLabel);
   set(card, "status-reason", display.reason);
   card.querySelector('[data-k="status"]').className = display.primaryClass;
+  updateCardToggleLabel(card);
   set(card, "vp", display.votingPower);
   set(card, "sync", display.syncLabel);
   set(card, "endpoint", display.endpointLabel);
@@ -794,11 +928,12 @@ async function reconcileParticipants(): Promise<number> {
   for (const node of next) {
     let card = cards.get(nodeKey(node));
     if (!card) card = createCard(node);
-    card.querySelector("h3").textContent = node.publicHost || node.name;
+    set(card, "host", node.publicHost || node.name);
     set(card, "scope", node.address);
     renderHostState(card, node);
   }
   observedNodes = next;
+  layoutHostCards();
   return Number(state.block_height) || 0;
 }
 
@@ -957,7 +1092,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     className: "validator-map-world",
   }).addTo(map);
   let clampingWorld = false;
-  let popupOpen = false;
   let restoreWorld = (): void => {};
   const worldCoversMap = (): boolean => {
     const mapRect = container.getBoundingClientRect();
@@ -991,7 +1125,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     const coversMap = worldCoversMap();
     if (
       clampingWorld ||
-      (popupOpen && !fullscreenWorldOutside) ||
       popupElement ||
       (!fullscreenWorldOutside && coversMap)
     )
@@ -1092,7 +1225,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     // is reconciled. This map owns its popup pane, so clear only that pane
     // before attaching the one current popup.
     map.getPane("popupPane")?.replaceChildren();
-    popupOpen = true;
     openMarkerKey = key;
     const popup = marker.getPopup();
     if (popup) {
@@ -1231,7 +1363,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const finalizePopupClose = (): void => {
     if (popupMarkerKey() || container.querySelector(".leaflet-popup")) return;
     openMarkerKey = null;
-    popupOpen = false;
     restoreWorld();
   };
   const refreshOpenPopupLayout = (): void => {
@@ -1243,7 +1374,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   map.on("popupopen", (event: any) => {
     for (const [key, marker] of markerRegistry) {
       if (marker.getPopup() === event.popup) {
-        popupOpen = true;
         openMarkerKey = key;
         return;
       }

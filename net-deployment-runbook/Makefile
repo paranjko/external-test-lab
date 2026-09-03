@@ -18,9 +18,9 @@ map_evidence_dir ?= $(CURDIR)/.data/validator-map-regressions
 chrome_bin ?= google-chrome
 preview_number ?=
 preview_revision ?=
-site_origin ?= http://gonka-dev.net
+site_origin ?= https://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context test-site-preview-live prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
+.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context test-site-preview-live prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -65,7 +65,11 @@ site-js-check:
 site-host-requirements-check:
 	@node ./scripts/verify-devnet-hardware-profile.mjs profiles/devnet-hadware.json 04-ops/site/index.html
 
-test-gateway-site-state: site-js-check
+test-browser-devtools:
+	@node --check ./scripts/capture-homepage-viewport.mjs
+	@node ./scripts/test-chrome-devtools.mjs
+
+test-gateway-site-state: site-js-check test-browser-devtools
 	@node ./scripts/test-gateway-site-state.js
 
 test-validator-map: site-vendor site-js site-host-requirements-check

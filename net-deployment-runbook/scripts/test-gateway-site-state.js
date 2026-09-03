@@ -279,6 +279,15 @@ assert.match(siteApp, /data-k="vp"/);
 assert.match(siteApp, /<span>voting power<\/span>/);
 assert.match(siteApp, /class="metric software" data-k-row="software"/);
 assert.match(siteApp, /class="metric gpu" data-k-row="gpu" hidden/);
+assert.match(siteApp, /function hostCardCapacity\(totalCards\)/);
+assert.match(siteApp, /width < 1200 \? 2 : 4/);
+assert.match(siteApp, /minimumExpandedWidth = 270/);
+assert.match(siteApp, /class="node-toggle"/);
+assert.match(siteApp, /aria-expanded="false"/);
+assert.match(siteApp, /class="node-details"/);
+assert.match(siteApp, /function activateHostCard\(key\)/);
+assert.match(siteApp, /event.key === "ArrowRight"/);
+assert.match(siteApp, /deck.dataset.expandedCount/);
 assert.match(siteApp, /data-k="endpoint"/);
 assert.match(siteApp, /Promise\.allSettled/);
 assert.match(siteApp, /participantKnown: false/);
@@ -289,6 +298,7 @@ assert.match(siteApp, /catchingUp/);
 assert.match(siteApp, /blockAgeSeconds/);
 assert.match(siteApp, /referenceKnown/);
 assert.match(siteApp, /chain-rpc\/status/);
+assert.doesNotMatch(siteApp, /let popupOpen = false/);
 assert.doesNotMatch(siteApp, /waiting for validator set/);
 assert.doesNotMatch(siteApp, /effective validator – endpoint/);
 assert.doesNotMatch(siteApp, /\$\{display\.text\} \(\$\{e\.message\}\)/);
@@ -306,32 +316,66 @@ const homepageCapture = fs.readFileSync(
   path.join(__dirname, 'capture-homepage-viewport.mjs'),
   'utf8',
 );
-assert.match(readability, /\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);[\s\S]*grid-auto-rows: 424px;/);
 assert.match(
   readability,
-  /\.nodes\.compact \.node \{[\s\S]*box-sizing: border-box;[\s\S]*height: 424px;[\s\S]*min-height: 424px;[\s\S]*max-height: 424px;[\s\S]*overflow: hidden;/,
+  /\.nodes\.compact \{[\s\S]*display: flex;[\s\S]*height: auto;[\s\S]*min-height: 424px;[\s\S]*overflow-x: auto;[\s\S]*overflow-y: hidden;[\s\S]*overscroll-behavior-x: contain;/,
 );
-assert.match(readability, /\.nodes\.compact \.node h3 \{[\s\S]*max-height: 44px;[\s\S]*overflow: hidden;/);
-assert.match(readability, /\.nodes\.compact \.node > small \{[\s\S]*max-height: 30px;[\s\S]*overflow: hidden;/);
-assert.match(readability, /\.nodes\.compact \.status \{[\s\S]*max-height: 24px;[\s\S]*overflow: hidden;/);
+assert.match(
+  readability,
+  /\.nodes\.compact \.node \{[\s\S]*flex: 1 1 0;[\s\S]*height: 424px;[\s\S]*min-height: 424px;[\s\S]*max-height: 424px;[\s\S]*transition:/,
+);
+assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \{[\s\S]*flex: 0 0 var\(--collapsed-host-width\);[\s\S]*width: var\(--collapsed-host-width\);/);
+assert.match(readability, /\.nodes\.compact \.node\.is-expanded \{[\s\S]*min-width: 270px;/);
+assert.match(readability, /--collapsed-host-width: 32px;/);
+assert.match(readability, /\.nodes\.compact \.node-toggle:focus-visible \{[\s\S]*outline: 2px solid var\(--lime\);/);
+assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \.node-toggle \{[\s\S]*writing-mode: vertical-rl;[\s\S]*transform: rotate\(180deg\);/);
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;[\s\S]*max-height: none;[\s\S]*align-items: flex-start;/);
 assert.match(readability, /\.nodes\.compact \.metric\.software,\s*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{/);
-assert.match(readability, /grid-template-columns: 72px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric\.software \{\s*min-height: 24px;\s*margin-top: 0;\s*padding: 3px 0;/);
-assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{\s*min-height: 24px;\s*margin-top: 0;\s*padding: 3px 0;\s*border-top-width: 1px;/);
-assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{\s*grid-template-columns: 28px minmax\(0, 1fr\);/);
+assert.match(readability, /grid-template-columns: 64px minmax\(0, 1fr\);/);
 assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*\.nodes\.compact \.metric\.gpu b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
-assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: 1fr;/);
-assert.match(readability, /@media \(max-width: 1320px\) and \(min-width: 1101px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
-assert.match(readability, /@media \(max-width: 1100px\) and \(min-width: 701px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
-assert.match(readability, /@media \(min-width: 1400px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);[\s\S]*grid-auto-rows: 480px;[\s\S]*\.nodes\.compact \.node \{[\s\S]*height: 480px;[\s\S]*min-height: 480px;[\s\S]*max-height: 480px;[\s\S]*\.nodes\.compact \.node > small\[data-k="status-reason"\] \{[\s\S]*max-height: 44px;[\s\S]*\.nodes\.compact \.node h3 \{[\s\S]*max-height: 66px;/);
+assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*flex-direction: column;[\s\S]*height: auto;[\s\S]*overflow: visible;[\s\S]*\.nodes\.compact \.node\.is-collapsed \{[\s\S]*height: 52px;/);
+assert.match(readability, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*transition: none;/);
 assert.match(mapFixture, /name: "fixture-dynamic",\s*mode: "skip",\s*reason: "fixture skip path"/);
+assert.match(mapFixture, /\.\.\.Array\.from\(\{ length: 11 \}, \(_, index\) => \(\{\s*name: `fixture-overflow-\$\{index \+ 1\}`/);
 assert.match(mapFixture, /\[1399, 720\][\s\S]*\[1321, 720\][\s\S]*\[1320, 720\][\s\S]*\[1101, 720\][\s\S]*\[1100, 720\][\s\S]*\[701, 720\][\s\S]*\[700, 720\][\s\S]*\[521, 720\][\s\S]*\[1400, 900\][\s\S]*\[1440, 900\][\s\S]*\[1920, 1080\][\s\S]*\[390, 844\]/);
-assert.match(mapFixture, /\[1280, 1399, 1321, 1320, 1101, 1100, 701, 700, 521, 1400, 1440, 1920, 390\]\.includes\(width\)/);
+assert.match(mapFixture, /\[1920, 1440, 1400, 1399, 1321, 1320, 1280, 1101, 1100, 844, 701, 700, 521, 390, 375, 360, 320\]\.includes\(width\)/);
 assert.match(mapFixture, /skippedGpu\.hidden[\s\S]*skippedGpu\.text === ""[\s\S]*skippedGpu\.clientHeight === 0/);
+assert.match(mapFixture, /cards\.length > 5[\s\S]*cardsReachable[\s\S]*activationValid[\s\S]*keyboardValid/);
+assert.match(mapFixture, /cards\.length !== 22[\s\S]*desktopReachability[\s\S]*mobileReachability/);
+assert.match(mapFixture, /waitForSettledOverlappingMarker[\s\S]*stableSamples >= 3/);
+assert.doesNotMatch(mapFixture, /startsWith\(\$\{JSON\.stringify\(expected\)\}\)/);
 assert.match(homepageCapture, /return value && \{[\s\S]*width: value\.width,[\s\S]*height: value\.height/);
-assert.match(homepageCapture, /const expectedHostCardHeight = width >= 1400 \? 480 : 424;/);
+assert.match(homepageCapture, /state\.nodeDeck/);
+assert.match(homepageCapture, /const deckInternalOverflow = deck\.scrollWidth > deck\.clientWidth \+ 1;/);
+assert.match(homepageCapture, /deck\.firstAtStart && deck\.lastAtEnd && deck\.appliedScrollLeft > 1/);
+assert.match(homepageCapture, /Host accordion layout contract failed/);
+assert.match(homepageCapture, /Host accordion activation contract failed/);
+assert.match(homepageCapture, /visualWidth: visualViewport\?\.width \|\| innerWidth/);
+assert.match(homepageCapture, /Math\.abs\(state\.visualWidth - width\) > 0\.5/);
+assert.ok(
+  homepageCapture.includes(
+    'requirementsNote: element?.querySelector(".join-requirements-note")?.textContent?.trim(),',
+  ),
+);
+assert.ok(
+  homepageCapture.includes(
+    "await call('Emulation.setVisibleSize', { width, height }, sessionId);",
+  ),
+);
+assert.match(
+  homepageCapture,
+  /validator-map \.validator-map-world[\s\S]*naturalWidth[\s\S]*gatewayStateReadyExpression/,
+);
+assert.match(
+  homepageCapture,
+  /startChromeDevTools\(\{[\s\S]*context: `homepage viewport \$\{width\}x\$\{height\}`/,
+);
+assert.match(homepageCapture, /await stopChromeDevTools\(browser\)/);
+assert.match(
+  homepageCapture,
+  /await rm\(profile, \{ recursive: true, force: true \}\)/,
+);
 
 fs.rmSync(siteBuild, { recursive: true, force: true });
 console.log('PASS gateway public-site state contract');

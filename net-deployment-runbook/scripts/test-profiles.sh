@@ -315,7 +315,7 @@ grep -Fq '!expectResetState && state.mapValidators !== mappedNodes.length' "$ROO
 grep -Fq '(!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers' "$ROOT/scripts/capture-homepage-viewport.mjs"
 grep -Fq 'state.mapMarkers !== 0 || state.mapPoints !== 0' "$ROOT/scripts/capture-homepage-viewport.mjs"
 grep -Fq 'JOIN guide did not render' "$ROOT/scripts/capture-homepage-viewport.mjs"
-grep -Fq 'scrollIntoView({block:"start"})' "$ROOT/scripts/capture-homepage-viewport.mjs"
+grep -Fq 'scrollIntoView({block:"start",behavior:"instant"})' "$ROOT/scripts/capture-homepage-viewport.mjs"
 grep -Fq 'WAIT homepage browser check unavailable reason=${detail}' "$ROOT/scripts/capture-homepage-viewport.mjs"
 grep -Fq "process.on('uncaughtException', reportBrowserFailure)" "$ROOT/scripts/capture-homepage-viewport.mjs"
 grep -Fq 'GDC_MONITOR_HOST=$HOST' "$ROOT/04-ops/agent/render-env.sh"

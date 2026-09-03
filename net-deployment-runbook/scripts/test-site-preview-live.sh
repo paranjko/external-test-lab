@@ -7,6 +7,10 @@ trap 'rm -rf -- "$tmp"' EXIT
 release="$tmp/release"
 mkdir -p "$release" "$tmp/bin"
 
+grep -Fq 'site_origin ?= https://gonka-dev.net' "$root/Makefile"
+grep -Fq 'url: https://gonka-dev.net/preview/${{ needs.publish-context.outputs.number }}/' \
+  "$root/../.github/workflows/site-preview-publish.yml"
+
 printf '%s\n' '<main>preview</main>' >"$release/index.html"
 digest="$(bash "$root/scripts/site-static-digest.sh" "$release")"
 revision=0123456789012345678901234567890123456789
