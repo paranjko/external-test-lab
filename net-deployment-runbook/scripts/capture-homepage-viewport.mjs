@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
-import { createServer } from 'node:net';
+import { startChromeDevTools, stopChromeDevTools } from './chrome-devtools.mjs';
 
 const [url, widthText, heightText, output, visibleNodesText = '0'] = process.argv.slice(2);
 const width = Number(widthText);
@@ -32,25 +31,10 @@ if (!url || !Number.isInteger(width) || !Number.isInteger(height) || !output || 
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'gdc-homepage-chrome-'));
-// A fixed DevTools port can be owned by another concurrent browser check,
-// which leaves reset waiting forever for the wrong Chrome instance. Reserve an
-// ephemeral loopback port for this invocation instead.
-const port = await new Promise((resolve, reject) => {
-  const server = createServer();
-  server.once('error', reject);
-  server.listen(0, '127.0.0.1', () => {
-    const address = server.address();
-    server.close(error => error ? reject(error) : resolve(address.port));
-  });
-});
 const chrome = process.env.CHROME_BIN || 'google-chrome';
-const browser = spawn(chrome, [
-  '--headless=new', '--no-sandbox', '--disable-gpu', `--remote-debugging-port=${port}`,
-  `--user-data-dir=${profile}`, 'about:blank',
-], { stdio: 'ignore' });
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const mapCoverageExpression = 'JSON.stringify((()=>{const map=document.querySelector("#validator-map");if(!map)return null;const mapRect=map.getBoundingClientRect(),world=map.querySelector(".validator-map-world");return{worldLoaded:Boolean(world?.complete&&world?.naturalWidth),markersVisible:[...map.querySelectorAll(".validator-marker")].every(marker=>{const rect=marker.getBoundingClientRect();return rect.width>0&&rect.height>0&&rect.right>=mapRect.left&&rect.left<=mapRect.right&&rect.bottom>=mapRect.top&&rect.top<=mapRect.bottom})}})())';
+const mapCoverageExpression = 'JSON.stringify((()=>{const map=document.querySelector("#validator-map");if(!map)return null;const mapRect=map.getBoundingClientRect(),world=map.querySelector(".validator-map-world"),worldRect=world?.getBoundingClientRect(),markers=[...map.querySelectorAll(".validator-marker")].map(marker=>{const rect=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label"),left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom,width:rect.width,height:rect.height,visible:rect.width>0&&rect.height>0&&rect.left>=mapRect.left-1&&rect.right<=mapRect.right+1&&rect.top>=mapRect.top-1&&rect.bottom<=mapRect.bottom+1}});return{worldLoaded:Boolean(world?.complete&&world?.naturalWidth),worldFits:Boolean(worldRect&&worldRect.left>=mapRect.left-1&&worldRect.right<=mapRect.right+1&&worldRect.top>=mapRect.top-1&&worldRect.bottom<=mapRect.bottom+1),markersVisible:markers.every(marker=>marker.visible),markers}})())';
 const homepageStateExpression = `JSON.stringify({
   width: innerWidth,
   height: innerHeight,
@@ -176,16 +160,17 @@ const homepageStateExpression = `JSON.stringify({
   }),
 })`;
 let socket;
+let browser;
 let sequence = 0;
 const pending = new Map();
-async function endpoint() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    try { return await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); } catch { await delay(100); }
-  }
-  throw new Error('Chrome DevTools endpoint did not become ready');
-}
 try {
-  const version = await endpoint();
+  const chromeSession = await startChromeDevTools({
+    chrome,
+    profile,
+    context: `homepage viewport ${width}x${height}`,
+  });
+  browser = chromeSession.browser;
+  const version = await chromeSession.waitForEndpoint();
   socket = new WebSocket(version.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
   socket.addEventListener('message', event => {
@@ -267,17 +252,25 @@ try {
   }
   if (checkMapFullscreen) {
     await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map-fullscreen")?.click()' }, sessionId);
-    await delay(350);
-    const { result: fullscreenResult } = await call('Runtime.evaluate', { expression: `JSON.stringify({coverage:${mapCoverageExpression},rect:(()=>{const r=document.querySelector("#validator-map")?.getBoundingClientRect();return r&&{left:r.left,top:r.top,right:r.right,bottom:r.bottom}})(),pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed")})`, returnByValue: true }, sessionId);
-    const fullscreen = JSON.parse(fullscreenResult.value);
-    const coverage = JSON.parse(fullscreen.coverage);
-    if (!coverage || !coverage.worldLoaded || !coverage.markersVisible || fullscreen.pressed !== 'true' || fullscreen.rect.left > 1 || fullscreen.rect.top > 1 || fullscreen.rect.right < width - 1 || fullscreen.rect.bottom < height - 1) throw new Error(`validator map does not cover fullscreen viewport ${JSON.stringify(fullscreen)}`);
+    let fullscreen;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const { result: fullscreenResult } = await call('Runtime.evaluate', { expression: `JSON.stringify({coverage:${mapCoverageExpression},rect:(()=>{const r=document.querySelector("#validator-map")?.getBoundingClientRect();return r&&{left:r.left,top:r.top,right:r.right,bottom:r.bottom}})(),pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed")})`, returnByValue: true }, sessionId);
+      fullscreen = JSON.parse(fullscreenResult.value);
+      const coverage = JSON.parse(fullscreen.coverage);
+      if (coverage?.worldLoaded && coverage.worldFits && coverage.markersVisible && fullscreen.pressed === 'true' && fullscreen.rect.left <= 1 && fullscreen.rect.top <= 1 && fullscreen.rect.right >= width - 1 && fullscreen.rect.bottom >= height - 1) break;
+      if (attempt === 49) throw new Error(`validator map does not cover fullscreen viewport ${JSON.stringify(fullscreen)}`);
+      await delay(100);
+    }
     await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
     await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
-    await delay(350);
-    const { result: fullscreenExitResult } = await call('Runtime.evaluate', { expression: 'JSON.stringify({pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),active:document.querySelector("#validator-map-shell")?.classList.contains("is-fullscreen")})', returnByValue: true }, sessionId);
-    const fullscreenExit = JSON.parse(fullscreenExitResult.value);
-    if (fullscreenExit.pressed !== 'false' || fullscreenExit.active) throw new Error(`validator map did not exit fullscreen ${JSON.stringify(fullscreenExit)}`);
+    let fullscreenExit;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const { result: fullscreenExitResult } = await call('Runtime.evaluate', { expression: 'JSON.stringify({pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),active:document.querySelector("#validator-map-shell")?.classList.contains("is-fullscreen")})', returnByValue: true }, sessionId);
+      fullscreenExit = JSON.parse(fullscreenExitResult.value);
+      if (fullscreenExit.pressed === 'false' && !fullscreenExit.active) break;
+      if (attempt === 19) throw new Error(`validator map did not exit fullscreen ${JSON.stringify(fullscreenExit)}`);
+      await delay(100);
+    }
   }
   const { result: accessResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify({code:document.querySelectorAll("#gateway-access pre,#gateway-access code").length,scroll:[...document.querySelectorAll("#gateway-access,#gateway-access *")].some(e=>{const s=getComputedStyle(e);return (s.overflowX==="auto"||s.overflowX==="scroll"||s.overflowY==="auto"||s.overflowY==="scroll")&&(e.scrollWidth>e.clientWidth||e.scrollHeight>e.clientHeight)})})',
@@ -310,7 +303,7 @@ try {
   const typography = JSON.parse(typeResult.value);
   const footerOverlap = typography.footerChildren.some((box, index, boxes) => boxes.slice(index + 1).some(other => box.left < other.right && other.left < box.right && box.top < other.bottom && other.top < box.bottom));
   if (typography.heading < 0 || typography.prose <= 0 || typography.footer <= 0 || typography.footerSize < 13 || typography.negativeTracking.length || footerOverlap) throw new Error(`unreadable typography contract ${JSON.stringify(typography)}`);
-  await call('Runtime.evaluate', { expression: 'document.querySelector("#nodes")?.scrollIntoView({block:"start"})' }, sessionId);
+  await call('Runtime.evaluate', { expression: 'document.querySelector("#nodes")?.scrollIntoView({block:"start",behavior:"instant"})' }, sessionId);
   await delay(300);
   const { result: nodeViewportResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify({height:innerHeight,nodes:[...document.querySelectorAll("#nodes .node")].map(n=>{const r=n.getBoundingClientRect();return {top:r.top,bottom:r.bottom}})})',
@@ -319,11 +312,12 @@ try {
   const nodeViewport = JSON.parse(nodeViewportResult.value);
   const visible = nodeViewport.nodes.filter(node => node.top >= 0 && node.bottom <= nodeViewport.height).length;
   if (visible < visibleNodes) throw new Error(`only ${visible}/${visibleNodes} required node cards are visible after scrolling to participant status`);
-  await call('Runtime.evaluate', { expression: 'document.querySelector("#join-node")?.scrollIntoView({block:"start"})' }, sessionId);
+  await call('Runtime.evaluate', { expression: 'document.querySelector("#join-node")?.scrollIntoView({block:"start",behavior:"instant"})' }, sessionId);
   await delay(300);
   const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);
   await writeFile(output, Buffer.from(screenshot.data, 'base64'));
 } finally {
   socket?.close();
-  browser.kill('SIGTERM');
+  await stopChromeDevTools(browser);
+  await rm(profile, { recursive: true, force: true });
 }

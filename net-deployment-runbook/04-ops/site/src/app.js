@@ -1154,16 +1154,20 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const fitWorld = (): void => {
     map.invalidateSize({ animate: false, pan: false });
     const size = map.getSize();
-    const worldPixels = Math.max(1, Math.min(size.x - 16, size.y * 2 - 16));
+    const fullscreen = shell.classList.contains("is-fullscreen");
+    const worldPixels = fullscreen
+      ? Math.max(1, Math.min(size.x - 24, (size.y - 24) * 2))
+      : Math.max(1, Math.min(size.x - 16, size.y * 2 - 16));
     const requestedZoom =
-      Math.log2(worldPixels / 512) + initialZoomOffset;
+      Math.log2(worldPixels / 512) + (fullscreen ? 0 : initialZoomOffset);
     const step = map.options.zoomSnap || 1;
     const zoom = Math.floor(requestedZoom / step) * step;
     // The former desktop minimum must not prevent a smaller viewport from
     // fitting the whole world before its new minimum is installed.
     map.setMinZoom(-2);
     map.setView([0, 0], zoom, { animate: false });
-    map.panBy([0, -initialVerticalOffset], { animate: false });
+    if (!fullscreen)
+      map.panBy([0, -initialVerticalOffset], { animate: false });
     map.setMinZoom(zoom);
   };
 

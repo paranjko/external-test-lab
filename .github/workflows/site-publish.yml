@@ -6,8 +6,14 @@ on:
     paths:
       - 'net-deployment-runbook/04-ops/site/**'
       - 'net-deployment-runbook/profiles/devnet-hadware.json'
+      - 'net-deployment-runbook/scripts/chrome-devtools.mjs'
+      - 'net-deployment-runbook/scripts/capture-homepage-viewport.mjs'
+      - 'net-deployment-runbook/scripts/test-chrome-devtools.mjs'
+      - 'net-deployment-runbook/scripts/test-gateway-site-state.js'
       - 'net-deployment-runbook/scripts/verify-devnet-hardware-profile.mjs'
+      - 'net-deployment-runbook/scripts/verify-public-homepage.sh'
       - 'net-deployment-runbook/Makefile'
+      - '.github/workflows/site-publish.yml'
 
 concurrency:
   group: gonka-dev-site-publish

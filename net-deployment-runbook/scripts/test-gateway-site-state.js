@@ -332,6 +332,15 @@ assert.match(mapFixture, /\[1280, 1399, 1321, 1320, 1101, 1100, 701, 700, 521, 1
 assert.match(mapFixture, /skippedGpu\.hidden[\s\S]*skippedGpu\.text === ""[\s\S]*skippedGpu\.clientHeight === 0/);
 assert.match(homepageCapture, /return value && \{[\s\S]*width: value\.width,[\s\S]*height: value\.height/);
 assert.match(homepageCapture, /const expectedHostCardHeight = width >= 1400 \? 480 : 424;/);
+assert.match(
+  homepageCapture,
+  /startChromeDevTools\(\{[\s\S]*context: `homepage viewport \$\{width\}x\$\{height\}`/,
+);
+assert.match(homepageCapture, /await stopChromeDevTools\(browser\)/);
+assert.match(
+  homepageCapture,
+  /await rm\(profile, \{ recursive: true, force: true \}\)/,
+);
 
 fs.rmSync(siteBuild, { recursive: true, force: true });
 console.log('PASS gateway public-site state contract');

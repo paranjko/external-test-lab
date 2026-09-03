@@ -3,11 +3,13 @@
 // and validator markers. It never contacts a public DevNet or map provider.
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
-import { createServer as createNetServer } from "node:net";
-import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
+import {
+  startChromeDevTools,
+  stopChromeDevTools,
+} from "./chrome-devtools.mjs";
 
 const [siteRootText, evidenceDir] = process.argv.slice(2);
 if (!siteRootText || !evidenceDir) {
@@ -400,38 +402,8 @@ await new Promise((resolvePromise, reject) => {
   server.once("error", reject);
   server.listen(0, "127.0.0.1", resolvePromise);
 });
-const freePort = await new Promise((resolvePromise, reject) => {
-  const probe = createNetServer();
-  probe.once("error", reject);
-  probe.listen(0, "127.0.0.1", () => {
-    const port = probe.address().port;
-    probe.close((error) => (error ? reject(error) : resolvePromise(port)));
-  });
-});
 const profile = await mkdtemp(join(tmpdir(), "gdc-map-fixture-"));
-const devtoolsReadyAttempts = 300;
-const browser = spawn(
-  process.env.CHROME_BIN || "google-chrome",
-  [
-    "--headless=new",
-    "--no-sandbox",
-    "--disable-gpu",
-    "--disable-dev-shm-usage",
-    "--remote-debugging-address=127.0.0.1",
-    `--remote-debugging-port=${freePort}`,
-    `--user-data-dir=${profile}`,
-    "about:blank",
-  ],
-  { stdio: ["ignore", "ignore", "pipe"] },
-);
-let browserStderr = "";
-let browserLaunchError = "";
-browser.stderr.on("data", (chunk) => {
-  browserStderr = `${browserStderr}${chunk}`.slice(-4096);
-});
-browser.on("error", (error) => {
-  browserLaunchError = error.message;
-});
+let browser;
 let socket;
 let sequence = 0;
 let sessionId;
@@ -451,35 +423,16 @@ const call = (method, params = {}, target = sessionId) =>
       }),
     );
   });
-async function devtools() {
-  let lastConnectionError = "";
-  for (let attempt = 0; attempt < devtoolsReadyAttempts; attempt += 1) {
-    if (browserLaunchError) break;
-    if (browser.exitCode !== null || browser.signalCode !== null) break;
-    try {
-      return await (
-        await fetch(`http://127.0.0.1:${freePort}/json/version`)
-      ).json();
-    } catch (error) {
-      lastConnectionError = error.message;
-      await delay(100);
-    }
-  }
-  const diagnostics = [
-    browserLaunchError && `launch error: ${browserLaunchError}`,
-    browser.exitCode !== null && `exit code: ${browser.exitCode}`,
-    browser.signalCode !== null && `signal: ${browser.signalCode}`,
-    lastConnectionError && `last connection error: ${lastConnectionError}`,
-    browserStderr && `stderr: ${browserStderr.trim()}`,
-  ].filter(Boolean);
-  throw new Error(
-    `Chrome DevTools endpoint did not become ready within ${
-      (devtoolsReadyAttempts * 100) / 1000
-    } seconds${diagnostics.length ? `: ${diagnostics.join("; ")}` : ""}`,
-  );
-}
 try {
-  socket = new WebSocket((await devtools()).webSocketDebuggerUrl);
+  const chromeSession = await startChromeDevTools({
+    chrome: process.env.CHROME_BIN || "google-chrome",
+    profile,
+    context: "validator-map fixture",
+  });
+  browser = chromeSession.browser;
+  socket = new WebSocket(
+    (await chromeSession.waitForEndpoint()).webSocketDebuggerUrl,
+  );
   await new Promise((resolvePromise, reject) => {
     socket.addEventListener("open", resolvePromise, { once: true });
     socket.addEventListener("error", reject, { once: true });
@@ -1112,7 +1065,8 @@ try {
     });
     await delay(80);
     await call("Runtime.evaluate", {
-      expression: 'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
+      expression:
+        'document.querySelector("#validator-map")?.scrollIntoView({block:"center",behavior:"instant"})',
     });
     await delay(80);
     const { result: overlappingResult } = await call("Runtime.evaluate", {
@@ -1374,7 +1328,7 @@ try {
     });
     await call("Runtime.evaluate", {
       expression:
-        'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
+        'document.querySelector("#validator-map")?.scrollIntoView({block:"center",behavior:"instant"})',
     });
     await delay(100);
     await call("Input.dispatchKeyEvent", {
@@ -1432,13 +1386,15 @@ try {
       await delay(80);
       const { result: fullResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const r=document.querySelector("#validator-map")?.getBoundingClientRect();return{left:r?.left,top:r?.top,right:r?.right,bottom:r?.bottom,pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),locked:document.body.classList.contains("validator-map-fullscreen-open")}})())',
+          'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),r=map?.getBoundingClientRect(),world=map?.querySelector(".validator-map-world"),wr=world?.getBoundingClientRect(),markers=[...(map?.querySelectorAll(".validator-marker")||[])].map(marker=>marker.getBoundingClientRect());return{left:r?.left,top:r?.top,right:r?.right,bottom:r?.bottom,worldFits:Boolean(wr&&r&&wr.left>=r.left-1&&wr.right<=r.right+1&&wr.top>=r.top-1&&wr.bottom<=r.bottom+1),markersVisible:markers.length>0&&markers.every(mr=>mr.width>0&&mr.height>0&&mr.left>=r.left-1&&mr.right<=r.right+1&&mr.top>=r.top-1&&mr.bottom<=r.bottom+1),pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),locked:document.body.classList.contains("validator-map-fullscreen-open")}})())',
         returnByValue: true,
       });
       const full = JSON.parse(fullResult.value);
       if (
         full.pressed !== "true" ||
         !full.locked ||
+        !full.worldFits ||
+        !full.markersVisible ||
         full.left > 1 ||
         full.top > 1 ||
         full.right < width - 1 ||
@@ -1481,7 +1437,7 @@ try {
     }
     await call("Runtime.evaluate", {
       expression:
-        'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
+        'document.querySelector("#validator-map")?.scrollIntoView({block:"center",behavior:"instant"})',
     });
     await delay(80);
     const screenshot = await call("Page.captureScreenshot", { format: "png" });
@@ -1504,6 +1460,7 @@ try {
   );
 } finally {
   socket?.close();
-  browser.kill("SIGTERM");
+  await stopChromeDevTools(browser);
+  await rm(profile, { recursive: true, force: true });
   await new Promise((resolvePromise) => server.close(resolvePromise));
 }

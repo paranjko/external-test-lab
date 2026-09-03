@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: gonka-dev-site-preview
-      url: http://gonka-dev.net/preview/${{ needs.publish-context.outputs.number }}/
+      url: https://gonka-dev.net/preview/${{ needs.publish-context.outputs.number }}/
     steps:
       - name: Checkout the trusted publication revision
         uses: actions/checkout@v7.0.1
