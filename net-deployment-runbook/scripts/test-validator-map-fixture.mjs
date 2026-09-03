@@ -1432,13 +1432,15 @@ try {
       await delay(80);
       const { result: fullResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const r=document.querySelector("#validator-map")?.getBoundingClientRect();return{left:r?.left,top:r?.top,right:r?.right,bottom:r?.bottom,pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),locked:document.body.classList.contains("validator-map-fullscreen-open")}})())',
+          'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),r=map?.getBoundingClientRect(),world=document.querySelector("#validator-map .validator-map-world"),wr=world?.getBoundingClientRect();const markers=[...(map?.querySelectorAll(".validator-marker")||[])];return{left:r?.left,top:r?.top,right:r?.right,bottom:r?.bottom,worldFits:Boolean(wr&&r&&wr.left>=r.left-1&&wr.right<=r.right+1&&wr.top>=r.top-1&&wr.bottom<=r.bottom+1),markersVisible:markers.every(marker=>{const mr=marker.getBoundingClientRect();return mr.width>0&&mr.height>0&&mr.right>=r.left&&mr.left<=r.right&&mr.bottom>=r.top&&mr.top<=r.bottom}),pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),locked:document.body.classList.contains("validator-map-fullscreen-open")}})())',
         returnByValue: true,
       });
       const full = JSON.parse(fullResult.value);
       if (
         full.pressed !== "true" ||
         !full.locked ||
+        !full.worldFits ||
+        !full.markersVisible ||
         full.left > 1 ||
         full.top > 1 ||
         full.right < width - 1 ||

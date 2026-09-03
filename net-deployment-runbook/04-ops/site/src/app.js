@@ -1155,8 +1155,13 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     map.invalidateSize({ animate: false, pan: false });
     const size = map.getSize();
     const worldPixels = Math.max(1, Math.min(size.x - 16, size.y * 2 - 16));
-    const requestedZoom =
-      Math.log2(worldPixels / 512) + initialZoomOffset;
+    // The local EPSG:4326 overlay is 512 CSS pixels wide at zoom zero. The
+    // normal map keeps its established visual offset, while fullscreen must
+    // fit the world itself so a narrow viewport cannot lose a valid marker.
+    const zoomOffset = shell.classList.contains("is-fullscreen")
+      ? 0
+      : initialZoomOffset;
+    const requestedZoom = Math.log2(worldPixels / 512) + zoomOffset;
     const step = map.options.zoomSnap || 1;
     const zoom = Math.floor(requestedZoom / step) * step;
     // The former desktop minimum must not prevent a smaller viewport from
