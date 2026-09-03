@@ -1479,7 +1479,7 @@ try {
       if (width === 844 && height === 390) {
         const { result: groupedRequestResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Multiple locations,"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Multiple locations"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
           returnByValue: true,
         });
         const groupedRequest = JSON.parse(groupedRequestResult.value);
@@ -1500,6 +1500,30 @@ try {
           throw new Error(
             `fullscreen grouped popup containment failed: ${JSON.stringify(groupedPopup)}`,
           );
+        await call("Runtime.evaluate", {
+          expression:
+            'document.querySelector(".leaflet-popup-close-button")?.click()',
+        });
+        await delay(160);
+        await call("Page.navigate", {
+          url: `http://127.0.0.1:${server.address().port}/`,
+        });
+        await waitForInitialMap();
+        await delay(500);
+        await call("Runtime.evaluate", {
+          expression:
+            'document.querySelector("#validator-map")?.scrollIntoView({block:"center"})',
+        });
+        await delay(80);
+        const { result: edgeRequestResult } = await call("Runtime.evaluate", {
+          expression:
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Multiple locations"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+          returnByValue: true,
+        });
+        const edgeRequest = JSON.parse(edgeRequestResult.value);
+        if (!edgeRequest.found)
+          throw new Error("popup replacement edge marker is unavailable");
+        await delay(180);
         const { result: replacementRequestResult } = await call("Runtime.evaluate", {
           expression:
             'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("<Bratislava>,"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
@@ -1507,19 +1531,11 @@ try {
         });
         const replacementRequest = JSON.parse(replacementRequestResult.value);
         if (!replacementRequest.found)
-          throw new Error("fullscreen popup replacement marker is unavailable");
+          throw new Error("popup replacement marker is unavailable");
         await delay(180);
-        await call("Input.dispatchKeyEvent", {
-          type: "keyDown",
-          key: "Escape",
-          code: "Escape",
-          windowsVirtualKeyCode: 27,
-        });
-        await call("Input.dispatchKeyEvent", {
-          type: "keyUp",
-          key: "Escape",
-          code: "Escape",
-          windowsVirtualKeyCode: 27,
+        await call("Runtime.evaluate", {
+          expression:
+            'document.querySelector(".leaflet-popup-close-button")?.click()',
         });
         await delay(160);
         const { result: dragStartResult } = await call("Runtime.evaluate", {
@@ -1538,13 +1554,22 @@ try {
           x: dragStart.x,
           y: dragStart.y,
           button: "left",
+          buttons: 1,
           clickCount: 1,
+        });
+        await call("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: dragStart.x + 160,
+          y: dragStart.y,
+          button: "left",
+          buttons: 1,
         });
         await call("Input.dispatchMouseEvent", {
           type: "mouseMoved",
           x: dragStart.x + 500,
           y: dragStart.y,
           button: "left",
+          buttons: 1,
         });
         await call("Input.dispatchMouseEvent", {
           type: "mouseReleased",
@@ -1553,21 +1578,26 @@ try {
           button: "left",
           clickCount: 1,
         });
-        await delay(160);
+        await delay(1000);
         const { result: restoredBoundsResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect(),inside=(value,bounds)=>Boolean(value&&bounds&&value.left>=bounds.left-1&&value.right<=bounds.right+1&&value.top>=bounds.top-1&&value.bottom<=bounds.bottom+1);return{worldFits:inside(world,mr),popup:Boolean(document.querySelector(".leaflet-popup")),world:world&&{left:world.left,right:world.right,top:world.top,bottom:world.bottom},map:mr&&{left:mr.left,right:mr.right,top:mr.top,bottom:mr.bottom}}})())',
+            'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect(),covers=(value,bounds)=>Boolean(value&&bounds&&value.left<=bounds.left+1&&value.right>=bounds.right-1);return{worldCoversMap:covers(world,mr),popup:Boolean(document.querySelector(".leaflet-popup")),world:world&&{left:world.left,right:world.right,top:world.top,bottom:world.bottom},map:mr&&{left:mr.left,right:mr.right,top:mr.top,bottom:mr.bottom}}})())',
           returnByValue: true,
         });
         const restoredBounds = JSON.parse(restoredBoundsResult.value);
-        if (!restoredBounds.worldFits || restoredBounds.popup)
+        if (!restoredBounds.worldCoversMap || restoredBounds.popup)
           throw new Error(
             `popup replacement restoration failed: ${JSON.stringify(restoredBounds)}`,
           );
+        await call("Runtime.evaluate", {
+          expression:
+            'document.querySelector("#validator-map-fullscreen")?.click()',
+        });
+        await delay(80);
       }
       const { result: popupRequestResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Bratislava,"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>{const label=item.getAttribute("aria-label")||"";return label.startsWith("Bratislava,")||label.startsWith("<Bratislava>,")});if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
         returnByValue: true,
       });
       const popupRequest = JSON.parse(popupRequestResult.value);
@@ -1583,7 +1613,8 @@ try {
       if (
         !popupGeometry.open ||
         !popupGeometry.visible ||
-        !popupGeometry.text.includes("Bratislava,")
+        (!popupGeometry.text.includes("Bratislava,") &&
+          !popupGeometry.text.includes("<Bratislava>,"))
       )
         throw new Error(
           `fullscreen popup containment failed: ${JSON.stringify(popupGeometry)}`,

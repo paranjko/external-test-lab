@@ -961,11 +961,24 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   let restoreWorld = (): void => {};
   map.on("moveend", () => {
     const popupElement = container.querySelector(".leaflet-popup");
+    const mapRect = container.getBoundingClientRect();
+    const worldRect = container
+      .querySelector(".validator-map-world")
+      ?.getBoundingClientRect();
+    const fullscreenWorldOutside =
+      shell.classList.contains("is-fullscreen") &&
+      Boolean(
+        worldRect &&
+          (worldRect.left < mapRect.left - 1 ||
+            worldRect.right > mapRect.right + 1 ||
+            worldRect.top < mapRect.top - 1 ||
+            worldRect.bottom > mapRect.bottom + 1),
+      );
     if (
       clampingWorld ||
-      popupOpen ||
+      (popupOpen && !fullscreenWorldOutside) ||
       popupElement ||
-      worldBounds.contains(map.getBounds())
+      (!fullscreenWorldOutside && worldBounds.contains(map.getBounds()))
     )
       return;
     clampingWorld = true;
@@ -1402,7 +1415,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
           .bindPopup(popupHtml, {
             closeButton: true,
             maxWidth: 340,
-            autoPanPadding: [32, 32],
+            autoPanPadding: [48, 48],
           });
         marker.__tooltip = tooltip;
         marker.__popupHtml = popupHtml;
