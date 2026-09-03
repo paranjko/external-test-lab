@@ -757,14 +757,14 @@ try {
     for (let attempt = 0; attempt < 120; attempt += 1) {
       const { result } = await call("Runtime.evaluate", {
         expression:
-          'Boolean(document.querySelector("#updated")?.dateTime && document.querySelector(".validator-map-world")?.complete && Number(document.querySelector("#validator-map")?.dataset.markerCount)===7)',
+          'Boolean(document.querySelector("#updated")?.dateTime && document.querySelector(".validator-map-world")?.complete && Number(document.querySelector("#validator-map")?.dataset.markerCount)===7 && (document.querySelector("#validator-map")?.getBoundingClientRect().height||0)>0)',
         returnByValue: true,
       });
       if (result.value) break;
       if (attempt === 119) {
         const { result: mapResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify({text:document.querySelector("#validator-map")?.textContent,leaflet:typeof window.L,updated:document.querySelector("#updated")?.dateTime||"",nodes:document.querySelectorAll("#nodes .node").length,validators:document.querySelector("#validator-map")?.dataset.validatorCount||"",markers:document.querySelector("#validator-map")?.dataset.markerCount||"",world:Boolean(document.querySelector(".validator-map-world")?.complete&&document.querySelector(".validator-map-world")?.naturalWidth)})',
+            'JSON.stringify({text:document.querySelector("#validator-map")?.textContent,leaflet:typeof window.L,updated:document.querySelector("#updated")?.dateTime||"",nodes:document.querySelectorAll("#nodes .node").length,validators:document.querySelector("#validator-map")?.dataset.validatorCount||"",markers:document.querySelector("#validator-map")?.dataset.markerCount||"",mapRect:(()=>{const rect=document.querySelector("#validator-map")?.getBoundingClientRect();return rect?{width:rect.width,height:rect.height}:null})(),world:Boolean(document.querySelector(".validator-map-world")?.complete&&document.querySelector(".validator-map-world")?.naturalWidth)})',
           returnByValue: true,
         });
         throw new Error(
@@ -1441,7 +1441,7 @@ try {
       await delay(80);
       const { result: fullResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),r=map?.getBoundingClientRect(),world=document.querySelector("#validator-map .validator-map-world"),wr=world?.getBoundingClientRect();const markers=[...(map?.querySelectorAll(".validator-marker")||[])];return{left:r?.left,top:r?.top,right:r?.right,bottom:r?.bottom,worldFits:Boolean(wr&&r&&wr.left>=r.left-1&&wr.right<=r.right+1&&wr.top>=r.top-1&&wr.bottom<=r.bottom+1),markersVisible:markers.every(marker=>{const mr=marker.getBoundingClientRect();return mr.width>0&&mr.height>0&&mr.right>=r.left&&mr.left<=r.right&&mr.bottom>=r.top&&mr.top<=r.bottom}),pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),locked:document.body.classList.contains("validator-map-fullscreen-open")}})())',
+          'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),r=map?.getBoundingClientRect(),world=document.querySelector("#validator-map .validator-map-world"),wr=world?.getBoundingClientRect();const markers=[...(map?.querySelectorAll(".validator-marker")||[])],hits=[...(map?.querySelectorAll(".validator-marker-hit")||[])],inside=(element,rect)=>{const er=element.getBoundingClientRect();return er.width>0&&er.height>0&&er.left>=rect.left-1&&er.right<=rect.right+1&&er.top>=rect.top-1&&er.bottom<=rect.bottom+1};return{left:r?.left,top:r?.top,right:r?.right,bottom:r?.bottom,worldFits:Boolean(wr&&r&&wr.left>=r.left-1&&wr.right<=r.right+1&&wr.top>=r.top-1&&wr.bottom<=r.bottom+1),markersVisible:Boolean(r&&markers.every(marker=>inside(marker,r))),hitsVisible:Boolean(r&&hits.every(hit=>inside(hit,r))),pressed:document.querySelector("#validator-map-fullscreen")?.getAttribute("aria-pressed"),locked:document.body.classList.contains("validator-map-fullscreen-open")}})())',
         returnByValue: true,
       });
       const full = JSON.parse(fullResult.value);
@@ -1450,12 +1450,49 @@ try {
         !full.locked ||
         !full.worldFits ||
         !full.markersVisible ||
+        !full.hitsVisible ||
         full.left > 1 ||
         full.top > 1 ||
         full.right < width - 1 ||
         full.bottom < height - 1
       )
         throw new Error(`fullscreen coverage failed: ${JSON.stringify(full)}`);
+      const { result: popupRequestResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Bratislava,"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+        returnByValue: true,
+      });
+      const popupRequest = JSON.parse(popupRequestResult.value);
+      if (!popupRequest.found)
+        throw new Error("fullscreen popup fixture marker is unavailable");
+      await delay(160);
+      const { result: popupGeometryResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),popup=document.querySelector(".leaflet-popup"),pr=popup?.getBoundingClientRect(),content=popup?.querySelector(".leaflet-popup-content"),cr=content?.getBoundingClientRect(),rect=(value)=>value?{left:value.left,top:value.top,right:value.right,bottom:value.bottom,width:value.width,height:value.height}:null;const inside=(value,bounds)=>Boolean(value&&bounds&&value.left>=bounds.left-1&&value.right<=bounds.right+1&&value.top>=bounds.top-1&&value.bottom<=bounds.bottom+1);return{open:Boolean(popup),visible:Boolean(inside(pr,mr)&&inside(cr,mr)&&content.scrollHeight<=content.clientHeight+1),map:rect(mr),popup:rect(pr),content:rect(cr),contentScrollHeight:content?.scrollHeight||0,contentClientHeight:content?.clientHeight||0,text:content?.textContent||""}})())',
+        returnByValue: true,
+      });
+      const popupGeometry = JSON.parse(popupGeometryResult.value);
+      if (
+        !popupGeometry.open ||
+        !popupGeometry.visible ||
+        !popupGeometry.text.includes("Bratislava,")
+      )
+        throw new Error(
+          `fullscreen popup containment failed: ${JSON.stringify(popupGeometry)}`,
+        );
+      await call("Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key: "Escape",
+        code: "Escape",
+        windowsVirtualKeyCode: 27,
+      });
+      await call("Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key: "Escape",
+        code: "Escape",
+        windowsVirtualKeyCode: 27,
+      });
+      await delay(120);
       await call("Input.dispatchKeyEvent", {
         type: "keyDown",
         key: "Escape",

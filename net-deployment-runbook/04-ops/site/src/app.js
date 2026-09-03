@@ -957,8 +957,15 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     className: "validator-map-world",
   }).addTo(map);
   let clampingWorld = false;
+  let popupOpen = false;
+  let restoreWorld = (): void => {};
   map.on("moveend", () => {
-    if (clampingWorld || worldBounds.contains(map.getBounds())) return;
+    if (
+      clampingWorld ||
+      popupOpen ||
+      worldBounds.contains(map.getBounds())
+    )
+      return;
     clampingWorld = true;
     map.panInsideBounds(worldBounds, { animate: false });
     window.requestAnimationFrame(() => {
@@ -1055,6 +1062,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     // is reconciled. This map owns its popup pane, so clear only that pane
     // before attaching the one current popup.
     map.getPane("popupPane")?.replaceChildren();
+    popupOpen = true;
     openMarkerKey = key;
     marker.openPopup();
   };
@@ -1120,6 +1128,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   map.on("popupopen", (event: any) => {
     for (const [key, marker] of markerRegistry) {
       if (marker.getPopup() === event.popup) {
+        popupOpen = true;
         openMarkerKey = key;
         return;
       }
@@ -1131,7 +1140,12 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       : null;
     if (marker?.getPopup() === event.popup)
       window.requestAnimationFrame(() => {
-        if (!marker.isPopupOpen()) openMarkerKey = null;
+        if (marker.isPopupOpen()) return;
+        openMarkerKey = null;
+        if (!popupMarkerKey()) {
+          popupOpen = false;
+          restoreWorld();
+        }
       });
   });
   const gridStyle = { color: "#73788e", weight: 1, opacity: 0.35 };
@@ -1154,11 +1168,13 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const fitWorld = (): void => {
     map.invalidateSize({ animate: false, pan: false });
     const size = map.getSize();
-    const worldPixels = Math.max(1, Math.min(size.x - 16, size.y * 2 - 16));
+    const isFullscreen = shell.classList.contains("is-fullscreen");
+    const worldPixels = isFullscreen
+      ? Math.max(1, Math.min(size.x - 32, (size.y - 32) * 2))
+      : Math.max(1, Math.min(size.x - 16, size.y * 2 - 16));
     // The local EPSG:4326 overlay is 512 CSS pixels wide at zoom zero. The
     // normal map keeps its established visual offset, while fullscreen must
     // fit the world itself so a narrow viewport cannot lose a valid marker.
-    const isFullscreen = shell.classList.contains("is-fullscreen");
     const zoomOffset = isFullscreen ? 0 : initialZoomOffset;
     const requestedZoom = Math.log2(worldPixels / 512) + zoomOffset;
     const step = map.options.zoomSnap || 1;
@@ -1171,6 +1187,14 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       animate: false,
     });
     map.setMinZoom(zoom);
+  };
+  restoreWorld = (): void => {
+    if (worldBounds.contains(map.getBounds())) return;
+    clampingWorld = true;
+    map.panInsideBounds(worldBounds, { animate: false });
+    window.requestAnimationFrame(() => {
+      clampingWorld = false;
+    });
   };
 
   const setFullscreen = (open: boolean): void => {
@@ -1364,7 +1388,11 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
           className: `validator-marker validator-marker--${markerState}`,
         })
           .bindTooltip(tooltip, { direction: "top", offset: [0, -radius] })
-          .bindPopup(popupHtml, { closeButton: true, maxWidth: 340 });
+          .bindPopup(popupHtml, {
+            closeButton: true,
+            maxWidth: 340,
+            autoPanPadding: [32, 32],
+          });
         marker.__tooltip = tooltip;
         marker.__popupHtml = popupHtml;
         marker
