@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "policy_id": "gdc-join-software-quorum/v1",
+  "default": {
+    "minimum_valid_observations": 3,
+    "minimum_independent_discovery_roots": 2
+  },
+  "networks": {
+    "gonka-devnet-community": {
+      "minimum_valid_observations": 2,
+      "minimum_independent_discovery_roots": 2
+    }
+  }
+}

@@ -8,214 +8,138 @@ MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES=$((66 * 1024 * 1024))
 MAX_VALIDATOR_BACKUP_TRAILING_BYTES=$((1024 * 1024))
 
 usage() {
-  echo "Usage: $0 create SSH_ALIAS | restore SSH_ALIAS ARCHIVE" >&2
+  echo "Usage: $0 create SSH_ALIAS | verify SSH_ALIAS ARCHIVE | restore SSH_ALIAS ARCHIVE" >&2
 }
 
 safe_extract() {
   local archive="$1" destination="$2" archive_kind="$3" node="$4"
-  command -v python3 >/dev/null 2>&1 \
-    || die 'python3 is required to inspect validator backup archives safely'
-  python3 - "$archive" "$destination" "$archive_kind" "$node" \
-    "$MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES" "$MAX_VALIDATOR_BACKUP_TRAILING_BYTES" <<'PY' \
+  local archive_size block=0 member_count=0 total_size=0 trailing_block=-1 header
+  local path prefix name type size_field size blocks parent actual_checksum stored_checksum
+  local -a paths=() types=() starts=() sizes=() blocks_list=()
+  local -A seen=() required_dirs=() required_files=()
+
+  # This deliberately accepts only plain USTAR regular-file/directory archives.
+  # PAX, GNU long-name, links and device members are rejected before anything is
+  # written.  That is narrower than a generic tar reader, but matches the
+  # archive this runbook creates and keeps clean-room restore Python-free.
+  [[ -f "$archive" && ! -L "$archive" ]] || die 'validator backup archive structure is invalid or ambiguous'
+  archive_size="$(stat -c %s -- "$archive" 2>/dev/null || true)"
+  [[ "$archive_size" =~ ^[0-9]+$ && "$archive_size" -ge 1024 && "$archive_size" -le "$MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES" && $((archive_size % 512)) -eq 0 ]] \
     || die 'validator backup archive structure is invalid or ambiguous'
-import os
-import re
-import shutil
-import stat
-import sys
-import tarfile
+  case "$archive_kind" in
+    remote-state)
+      for path in tmkms tmkms/secrets tmkms/state inference inference/config; do required_dirs["$path"]=1; done
+      for path in tmkms/tmkms.toml tmkms/secrets/priv_validator_key.softsign tmkms/secrets/kms-identity.key tmkms/state/priv_validator_state.json inference/config/node_key.json; do required_files["$path"]=1; done
+      ;;
+    backup)
+      for path in mnemonics remote-state remote-state/tmkms remote-state/tmkms/secrets remote-state/tmkms/state remote-state/inference remote-state/inference/config; do required_dirs["$path"]=1; done
+      for path in manifest.json manifest.sha256 identity.json "mnemonics/$node-cold.mnemonic" "mnemonics/$node-warm.mnemonic" remote-state/tmkms/tmkms.toml remote-state/tmkms/secrets/priv_validator_key.softsign remote-state/tmkms/secrets/kms-identity.key remote-state/tmkms/state/priv_validator_state.json remote-state/inference/config/node_key.json; do required_files["$path"]=1; done
+      ;;
+    *) die 'validator backup archive structure is invalid or ambiguous' ;;
+  esac
 
-archive, destination, archive_kind, node = sys.argv[1:5]
-MAX_MEMBERS = 1024
-MAX_FILE_SIZE = 8 * 1024 * 1024
-MAX_TOTAL_SIZE = 64 * 1024 * 1024
-MAX_ARCHIVE_SIZE = int(sys.argv[5])
-MAX_TRAILING_PADDING = int(sys.argv[6])
-TRAILING_READ_SIZE = 64 * 1024
-
-def reject_name(name):
-    if not name or name.startswith('/') or '\\' in name:
-        return True
-    if re.fullmatch(r'[A-Za-z0-9._/-]+', name) is None:
-        return True
-    if any(ord(char) < 32 or ord(char) == 127 for char in name):
-        return True
-    parts = name.rstrip('/').split('/')
-    return any(part in ('', '.', '..') for part in parts)
-
-def allowed(path):
-    if archive_kind == 'backup':
-        exact = {
-            'manifest.json', 'manifest.sha256', 'identity.json',
-            'mnemonics', f'mnemonics/{node}-cold.mnemonic',
-            f'mnemonics/{node}-warm.mnemonic', 'remote-state',
-            'remote-state/tmkms', 'remote-state/inference',
-            'remote-state/inference/config',
-            'remote-state/inference/config/node_key.json',
-        }
-        return path in exact or path.startswith('remote-state/tmkms/')
-    exact = {
-        'tmkms', 'inference', 'inference/config',
-        'inference/config/node_key.json',
-    }
-    return path in exact or path.startswith('tmkms/')
-
-try:
-    required_dirs = {
-        'tmkms', 'tmkms/secrets', 'tmkms/state', 'inference', 'inference/config'
-    }
-    required_files = {
-        'tmkms/tmkms.toml', 'tmkms/secrets/priv_validator_key.softsign',
-        'tmkms/secrets/kms-identity.key',
-        'tmkms/state/priv_validator_state.json',
-        'inference/config/node_key.json',
-    }
-    if archive_kind == 'backup':
-        required_dirs = {'mnemonics', 'remote-state'} | {
-            f'remote-state/{path}' for path in required_dirs
-        }
-        required_files = {
-            'manifest.json', 'manifest.sha256', 'identity.json',
-            f'mnemonics/{node}-cold.mnemonic',
-            f'mnemonics/{node}-warm.mnemonic',
-        } | {f'remote-state/{path}' for path in required_files}
-    elif archive_kind != 'remote-state':
-        raise ValueError('unknown archive kind')
-
-    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
-    descriptor = os.open(archive, flags)
-    with os.fdopen(descriptor, 'rb') as raw_archive:
-      archive_status = os.fstat(raw_archive.fileno())
-      archive_size = archive_status.st_size
-      if not stat.S_ISREG(archive_status.st_mode):
-          raise ValueError('archive type')
-      if archive_size < 1024 or archive_size > MAX_ARCHIVE_SIZE:
-          raise ValueError('archive size')
-      if archive_size % 512 != 0:
-          raise ValueError('archive alignment')
-      with tarfile.open(fileobj=raw_archive, mode='r:') as source:
-        members = []
-        for member in source:
-            members.append(member)
-            if len(members) > MAX_MEMBERS:
-                raise ValueError('member count')
-        end_offset = source.offset
-        if not members:
-            raise ValueError('member count')
-        seen = {}
-        total_size = 0
-        for member in members:
-            if reject_name(member.name):
-                raise ValueError('unsafe name')
-            path = member.name.rstrip('/')
-            if path in seen or not allowed(path):
-                raise ValueError('duplicate or unexpected member')
-            if not (member.isdir() or member.isreg()):
-                raise ValueError('wrong member type')
-            if member.isdir() and path in required_files:
-                raise ValueError('file is directory')
-            if member.isreg() and path in required_dirs:
-                raise ValueError('directory is file')
-            if member.size < 0 or member.size > MAX_FILE_SIZE:
-                raise ValueError('file size')
-            total_size += member.size
-            if total_size > MAX_TOTAL_SIZE:
-                raise ValueError('total size')
-            seen[path] = member
-        if not required_dirs.issubset(seen) or not required_files.issubset(seen):
-            raise ValueError('missing member')
-        if any(not seen[path].isdir() for path in required_dirs):
-            raise ValueError('wrong directory type')
-        if any(not seen[path].isreg() for path in required_files):
-            raise ValueError('wrong file type')
-        for path in seen:
-            parent = path.rpartition('/')[0]
-            if parent and parent not in seen:
-                raise ValueError('missing parent member')
-            if parent and not seen[parent].isdir():
-                raise ValueError('non-directory parent')
-
-        trailing_size = archive_size - end_offset
-        if trailing_size < 1024 or trailing_size > MAX_TRAILING_PADDING:
-            raise ValueError('trailing padding size')
-        raw_archive.seek(end_offset)
-        remaining = trailing_size
-        while remaining:
-            chunk = raw_archive.read(min(TRAILING_READ_SIZE, remaining))
-            if not chunk or len(chunk) > remaining or any(chunk):
-                raise ValueError('trailing archive payload')
-            remaining -= len(chunk)
-
-        os.makedirs(destination, mode=0o700, exist_ok=True)
-        for path, member in seen.items():
-            target = os.path.join(destination, *path.split('/'))
-            if member.isdir():
-                os.mkdir(target, mode=0o700)
-                continue
-            source_file = source.extractfile(member)
-            if source_file is None:
-                raise ValueError('missing file body')
-            descriptor = os.open(
-                target,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0),
-                0o600,
-            )
-            with os.fdopen(descriptor, 'wb') as output:
-                shutil.copyfileobj(source_file, output)
-except Exception:
-    sys.exit(1)
-PY
+  header="$(mktemp)"
+  trap 'rm -f -- "$header"' RETURN
+  while (( block * 512 < archive_size )); do
+    dd if="$archive" of="$header" bs=512 skip="$block" count=1 status=none
+    if [[ "$(LC_ALL=C od -An -tu1 -v "$header" | awk '{for (i=1;i<=NF;i++) sum+=$i} END {print sum+0}')" == 0 ]]; then
+      trailing_block="$block"
+      break
+    fi
+    name="$(dd if="$header" bs=1 count=100 status=none | tr -d '\000')"
+    prefix="$(dd if="$header" bs=1 skip=345 count=155 status=none | tr -d '\000')"
+    type="$(dd if="$header" bs=1 skip=156 count=1 status=none | tr -d '\000')"
+    size_field="$(dd if="$header" bs=1 skip=124 count=12 status=none | tr -d '\000 ' )"
+    stored_checksum="$(dd if="$header" bs=1 skip=148 count=8 status=none | tr -d '\000 ' )"
+    actual_checksum="$(LC_ALL=C od -An -tu1 -v "$header" | awk '{for (i=1;i<=NF;i++) {n++; sum += (n >= 149 && n <= 156 ? 32 : $i)}} END {print sum+0}')"
+    [[ "$stored_checksum" =~ ^[0-7]{1,6}$ && $((8#$stored_checksum)) -eq "$actual_checksum" ]] \
+      || die 'validator backup archive structure is invalid or ambiguous'
+    [[ "$(dd if="$header" bs=1 skip=257 count=5 status=none | tr -d '\000')" == ustar ]] \
+      || die 'validator backup archive structure is invalid or ambiguous'
+    path="${prefix:+$prefix/}$name"; path="${path%/}"; type="${type:-0}"
+    [[ "$path" =~ ^[A-Za-z0-9._/-]+$ && "$path" != /* && "$path" != *'//' && "$path" != *'/./'* && "$path" != *'/../'* && "$path" != . && "$path" != .. ]] \
+      || die 'validator backup archive structure is invalid or ambiguous'
+    [[ -z "${seen[$path]:-}" ]] || die 'validator backup archive structure is invalid or ambiguous'
+    if [[ "$archive_kind" == backup ]]; then
+      [[ -n "${required_dirs[$path]:-}" || -n "${required_files[$path]:-}" || "$path" == remote-state/tmkms/* ]] \
+        || die 'validator backup archive structure is invalid or ambiguous'
+    else
+      [[ -n "${required_dirs[$path]:-}" || -n "${required_files[$path]:-}" || "$path" == tmkms/* ]] \
+        || die 'validator backup archive structure is invalid or ambiguous'
+    fi
+    [[ "$type" == 0 || "$type" == 5 ]] || die 'validator backup archive structure is invalid or ambiguous'
+    [[ "$size_field" =~ ^[0-7]*$ ]] || die 'validator backup archive structure is invalid or ambiguous'
+    size=0; [[ -z "$size_field" ]] || size=$((8#$size_field))
+    (( size <= 8 * 1024 * 1024 )) || die 'validator backup archive structure is invalid or ambiguous'
+    ((total_size += size, total_size <= 64 * 1024 * 1024, ++member_count <= 1024)) || die 'validator backup archive structure is invalid or ambiguous'
+    if [[ "$type" == 5 ]]; then
+      [[ -n "${required_files[$path]:-}" ]] && die 'validator backup archive structure is invalid or ambiguous'
+      (( size == 0 )) || die 'validator backup archive structure is invalid or ambiguous'
+    else
+      [[ -n "${required_dirs[$path]:-}" ]] && die 'validator backup archive structure is invalid or ambiguous'
+    fi
+    parent="${path%/*}"; [[ "$parent" == "$path" ]] && parent=''
+    [[ -z "$parent" || ( -n "${seen[$parent]:-}" && "${seen[$parent]}" == d ) ]] \
+      || die 'validator backup archive structure is invalid or ambiguous'
+    seen["$path"]="$([[ "$type" == 5 ]] && printf d || printf f)"
+    blocks=$(((size + 511) / 512))
+    paths+=("$path"); types+=("${seen[$path]}"); starts+=($((block + 1))); sizes+=("$size"); blocks_list+=("$blocks")
+    block=$((block + 1 + blocks))
+  done
+  (( member_count > 0 && trailing_block >= 0 )) || die 'validator backup archive structure is invalid or ambiguous'
+  (( archive_size - trailing_block * 512 >= 1024 && archive_size - trailing_block * 512 <= MAX_VALIDATOR_BACKUP_TRAILING_BYTES )) \
+    || die 'validator backup archive structure is invalid or ambiguous'
+  for ((block=trailing_block; block * 512 < archive_size; block++)); do
+    dd if="$archive" of="$header" bs=512 skip="$block" count=1 status=none
+    [[ "$(LC_ALL=C od -An -tu1 -v "$header" | awk '{for (i=1;i<=NF;i++) sum+=$i} END {print sum+0}')" == 0 ]] \
+      || die 'validator backup archive structure is invalid or ambiguous'
+  done
+  for path in "${!required_dirs[@]}"; do [[ "${seen[$path]:-}" == d ]] || die 'validator backup archive structure is invalid or ambiguous'; done
+  for path in "${!required_files[@]}"; do [[ "${seen[$path]:-}" == f ]] || die 'validator backup archive structure is invalid or ambiguous'; done
+  [[ ! -e "$destination" ]] || die 'validator backup archive structure is invalid or ambiguous'
+  install -d -m 0700 "$destination"
+  for ((block=0; block<${#paths[@]}; block++)); do
+    path="${paths[$block]}"
+    if [[ "${types[$block]}" == d ]]; then
+      install -d -m 0700 "$destination/$path"
+    else
+      dd if="$archive" bs=512 skip="${starts[$block]}" count="${blocks_list[$block]}" status=none >"$destination/$path"
+      truncate -s "${sizes[$block]}" "$destination/$path"
+      chmod 0600 "$destination/$path"
+    fi
+  done
+  trap - RETURN
+  rm -f -- "$header"
 }
 
 verify_checksum_manifest() {
   local root="$1"
-  python3 - "$root" <<'PY' \
+  local manifest="$root/manifest.sha256" line digest path actual
+  local -A listed=() actual_files=()
+  [[ -f "$manifest" && ! -L "$manifest" && "$(wc -c <"$manifest")" -le 65536 && -s "$manifest" ]] \
     || die 'validator backup checksum manifest is malformed or inconsistent'
-import hashlib
-import os
-import re
-import sys
-
-root = sys.argv[1]
-manifest_path = os.path.join(root, 'manifest.sha256')
-try:
-    data = open(manifest_path, 'rb').read()
-    if len(data) > 65536 or not data or b'\x00' in data:
-        raise ValueError('manifest size')
-    text = data.decode('ascii')
-    pattern = re.compile(r'^([0-9a-f]{64})  ([A-Za-z0-9._/-]+)$')
-    listed = {}
-    for line in text.splitlines():
-        match = pattern.fullmatch(line)
-        if not match:
-            raise ValueError('line')
-        digest, path = match.groups()
-        parts = path.split('/')
-        if path.startswith('/') or any(part in ('', '.', '..') for part in parts):
-            raise ValueError('path')
-        if path in listed or path == 'manifest.sha256':
-            raise ValueError('duplicate')
-        listed[path] = digest
-    actual = set()
-    for directory, directories, files in os.walk(root, followlinks=False):
-        if any(os.path.islink(os.path.join(directory, name)) for name in directories + files):
-            raise ValueError('link')
-        for name in files:
-            path = os.path.relpath(os.path.join(directory, name), root)
-            if path != 'manifest.sha256':
-                actual.add(path)
-    if set(listed) != actual:
-        raise ValueError('coverage')
-    for path, expected in listed.items():
-        digest = hashlib.sha256()
-        with open(os.path.join(root, *path.split('/')), 'rb') as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b''):
-                digest.update(chunk)
-        if digest.hexdigest() != expected:
-            raise ValueError('digest')
-except Exception:
-    sys.exit(1)
-PY
+  LC_ALL=C od -An -tu1 -v "$manifest" | awk '{for (i = 1; i <= NF; i++) if ($i < 10 || $i > 126) exit 1}' \
+    || die 'validator backup checksum manifest is malformed or inconsistent'
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^([0-9a-f]{64})\ \ ([A-Za-z0-9._/-]+)$ ]] || die 'validator backup checksum manifest is malformed or inconsistent'
+    digest="${BASH_REMATCH[1]}"; path="${BASH_REMATCH[2]}"
+    [[ "$path" != manifest.sha256 && "$path" != /* && "$path" != *'//' && "$path" != *'/./'* && "$path" != *'/../'* && "$path" != . && "$path" != .. && -z "${listed[$path]:-}" ]] \
+      || die 'validator backup checksum manifest is malformed or inconsistent'
+    listed["$path"]="$digest"
+  done <"$manifest"
+  ((${#listed[@]} > 0)) || die 'validator backup checksum manifest is malformed or inconsistent'
+  if find "$root" -type l -print -quit | grep -q .; then
+    die 'validator backup checksum manifest is malformed or inconsistent'
+  fi
+  while IFS= read -r -d '' path; do
+    actual_files["$path"]=1
+  done < <(cd "$root" && find . -type f ! -name manifest.sha256 -printf '%P\0' | LC_ALL=C sort -z)
+  ((${#listed[@]} == ${#actual_files[@]})) || die 'validator backup checksum manifest is malformed or inconsistent'
+  for path in "${!listed[@]}"; do
+    [[ -n "${actual_files[$path]:-}" ]] || die 'validator backup checksum manifest is malformed or inconsistent'
+    actual="$(sha256sum "$root/$path" | awk '{print $1}')"
+    [[ "$actual" == "${listed[$path]}" ]] || die 'validator backup checksum manifest is malformed or inconsistent'
+  done
 }
 
 validate_base64_file() {
@@ -319,43 +243,26 @@ validate_manifest_json() {
 
 validate_tmkms_config() {
   local config="$1" expected_chain="$2"
-  python3 - "$config" "$expected_chain" <<'PY' \
+  local line chain_count=0 softsign_count=0 validator_count=0
+  local tcp_addr_re='^addr = "tcp://[A-Za-z0-9._-]+:[1-9][0-9]{0,4}"$'
+  [[ -f "$config" && ! -L "$config" && "$(wc -c <"$config")" -le 65536 ]] \
     || die 'validator backup contains a malformed or inconsistent TMKMS configuration'
-import sys
-import tomllib
-
-path, expected_chain = sys.argv[1:]
-try:
-    with open(path, 'rb') as source:
-        config = tomllib.load(source)
-    chains = config.get('chain')
-    softsign = config.get('providers', {}).get('softsign')
-    validators = config.get('validator')
-    if not isinstance(chains, list) or len(chains) != 1:
-        raise ValueError('chain')
-    if not isinstance(softsign, list) or len(softsign) != 1:
-        raise ValueError('softsign')
-    if not isinstance(validators, list) or len(validators) != 1:
-        raise ValueError('validator')
-    if chains[0].get('id') != expected_chain:
-        raise ValueError('chain id')
-    if chains[0].get('state_file') != '/root/.tmkms/state/priv_validator_state.json':
-        raise ValueError('state path')
-    if softsign[0].get('chain_ids') != [expected_chain]:
-        raise ValueError('softsign chain')
-    if softsign[0].get('key_type') != 'consensus':
-        raise ValueError('key type')
-    if softsign[0].get('path') != '/root/.tmkms/secrets/priv_validator_key.softsign':
-        raise ValueError('key path')
-    if validators[0].get('chain_id') != expected_chain:
-        raise ValueError('validator chain')
-    if validators[0].get('secret_key') != '/root/.tmkms/secrets/kms-identity.key':
-        raise ValueError('identity path')
-    if validators[0].get('protocol_version') != 'v0.34':
-        raise ValueError('protocol')
-except Exception:
-    sys.exit(1)
-PY
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      ''|'#'*) ;;
+      '[[chain]]') ((chain_count += 1)) ;;
+      '[[providers.softsign]]') ((softsign_count += 1)) ;;
+      '[[validator]]') ((validator_count += 1)) ;;
+      "id = \"$expected_chain\""|'state_file = "/root/.tmkms/state/priv_validator_state.json"'|"chain_ids = [\"$expected_chain\"]"|'key_type = "consensus"'|'path = "/root/.tmkms/secrets/priv_validator_key.softsign"'|"chain_id = \"$expected_chain\""|'secret_key = "/root/.tmkms/secrets/kms-identity.key"'|'protocol_version = "v0.34"'|'key_format = { type = "bech32", account_key_prefix = "gonka", consensus_key_prefix = "gonka" }'|'reconnect = true') ;;
+      'addr = "tcp://'*) [[ "$line" =~ $tcp_addr_re ]] || die 'validator backup contains a malformed or inconsistent TMKMS configuration' ;;
+      *) die 'validator backup contains a malformed or inconsistent TMKMS configuration' ;;
+    esac
+  done <"$config"
+  (( chain_count == 1 && softsign_count == 1 && validator_count == 1 )) \
+    || die 'validator backup contains a malformed or inconsistent TMKMS configuration'
+  for line in "id = \"$expected_chain\"" 'state_file = "/root/.tmkms/state/priv_validator_state.json"' "chain_ids = [\"$expected_chain\"]" 'key_type = "consensus"' 'path = "/root/.tmkms/secrets/priv_validator_key.softsign"' "chain_id = \"$expected_chain\"" 'secret_key = "/root/.tmkms/secrets/kms-identity.key"' 'protocol_version = "v0.34"'; do
+    [[ "$(grep -Fxc "$line" "$config" || true)" == 1 ]] || die 'validator backup contains a malformed or inconsistent TMKMS configuration'
+  done
 }
 
 validate_tmkms_state() {
@@ -438,6 +345,41 @@ identity_tree_digest() {
   ) | sha256sum | awk '{print $1}'
 }
 
+# Validate a completed archive exactly as a restore would validate its local
+# inputs, but never stages, copies or changes data on a Host.  Creation calls
+# this before publishing the archive filename, so RECOVERY_ARCHIVE_VERIFIED is
+# backed by more than successful tar assembly.
+verify_backup_archive() (
+  local archive="$1" node="$2" expected_chain="$3" expected_genesis="$4"
+  local stage extracted manifest actual_chain actual_genesis
+  [[ -f "$archive" && -r "$archive" && ! -L "$archive" ]] \
+    || die 'validator backup archive is not readable'
+  [[ "$expected_chain" =~ ^[A-Za-z0-9._-]+$ && "$expected_genesis" =~ ^[0-9a-f]{64}$ ]] \
+    || die 'validator backup verification context is malformed'
+  archive="$(realpath -e -- "$archive")"
+  stage="$(mktemp -d)"
+  trap 'rm -rf -- "$stage"' EXIT
+  umask 077
+  extracted="$stage/extracted"
+  safe_extract "$archive" "$extracted" backup "$node"
+  verify_checksum_manifest "$extracted"
+  manifest="$extracted/manifest.json"
+  validate_identity_json "$extracted/identity.json" "$node"
+  validate_manifest_json "$manifest" "$extracted/identity.json" "$node"
+  actual_chain="$(jq -er .chain_id "$manifest" 2>/dev/null)" \
+    || die 'validator backup manifest metadata is malformed or inconsistent'
+  actual_genesis="$(jq -er .genesis_sha256 "$manifest" 2>/dev/null)" \
+    || die 'validator backup manifest metadata is malformed or inconsistent'
+  [[ "$actual_chain" == "$expected_chain" ]] \
+    || die 'validator backup archive belongs to a different chain'
+  [[ "$actual_genesis" == "$expected_genesis" ]] \
+    || die 'validator backup archive belongs to a different Genesis'
+  validate_mnemonic_file "$extracted/mnemonics/$node-cold.mnemonic"
+  validate_mnemonic_file "$extracted/mnemonics/$node-warm.mnemonic"
+  validate_recovery_material "$extracted/remote-state" "$extracted/identity.json" "$node" "$expected_chain"
+  printf 'PASS validator recovery archive dry-run verified: %s\n' "$archive"
+)
+
 create_backup() (
   local node="$1" archive archive_tmp stage configured_gpu chain_id
   archive="$GDC_DATA_ROOT/$node-validator-backup.tar"
@@ -460,10 +402,16 @@ create_backup() (
   install -m 0600 "$identity" "$stage/identity.json"
   if ! ssh -T "$node" "set +x
     set -Eeuo pipefail
-    state='/srv/dai/$node'
-    test -d \"\$state/tmkms\"
-    test -s \"\$state/inference/config/node_key.json\"
-    sudo tar -C \"\$state\" -cf - tmkms inference/config/node_key.json 2>/dev/null" \
+    identity='/srv/dai/identity/$node'
+    signer='/srv/dai/signer/$node'
+    sudo test -d \"\$signer/tmkms\"
+    sudo test -s \"\$identity/p2p/node_key.json\"
+    stage=\$(mktemp -d)
+    trap 'rm -rf \"\$stage\"' EXIT
+    mkdir -p \"\$stage/inference/config\"
+    sudo tar -C \"\$signer\" -cf - tmkms | tar -C \"\$stage\" -xf -
+    sudo install -m 0600 \"\$identity/p2p/node_key.json\" \"\$stage/inference/config/node_key.json\"
+    sudo tar -C \"\$stage\" -cf - tmkms inference/config/node_key.json 2>/dev/null" \
     >"$stage/remote-state.tar" 2>/dev/null; then
     die "cannot create validator backup for $node: remote validator identity is unavailable"
   fi
@@ -494,6 +442,7 @@ create_backup() (
     [[ "$(stat -c %s -- "$archive_tmp" 2>/dev/null)" -le "$MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES" ]] \
       || { rm -f -- "$archive_tmp"; die 'validator backup archive exceeds the strict byte limit'; }
     chmod 600 "$archive_tmp"
+    verify_backup_archive "$archive_tmp" "$node" "$chain_id" "$(genesis_sha256 "$GENESIS/genesis.json")"
     mv "$archive_tmp" "$archive"
   )
   trap - EXIT
@@ -563,7 +512,7 @@ restore_backup() (
     die "validator backup restore refused protected identity state on $node"
   fi
   case "$remote_state" in
-    existing)
+    stable_existing|existing)
       restore_mode=existing
       ;;
     installed)
@@ -573,6 +522,11 @@ restore_backup() (
       die "cannot classify validator identity state on $node"
       ;;
   esac
+  if [[ "$remote_state" != stable_existing ]]; then
+    if ! ssh -T "$node" "sudo bash -s -- '$node'" <"$ROOT/02-node/migrate-v1-validator-identity.sh" >/dev/null; then
+      die "validator backup restore could not migrate stable identity layout on $node"
+    fi
+  fi
   mkdir -p "$GDC_HOME/mnemonics" "$STATE/restore/$node"
   for mnemonic in cold warm; do
     install -m 0600 "$extracted/mnemonics/$node-$mnemonic.mnemonic" \
@@ -580,6 +534,8 @@ restore_backup() (
   done
   install -m 0600 "$manifest" "$STATE/restore/$node/manifest.json"
   install -m 0600 "$extracted/identity.json" "$STATE/restore/$node/identity.json"
+  install -m 0600 "$extracted/remote-state/tmkms/state/priv_validator_state.json" \
+    "$STATE/restore/$node/tmkms-signing-state.json"
   printf '%s\n' "$restore_mode" >"$STATE/restore/$node/mode"
   chmod 0600 "$STATE/restore/$node/mode"
   export GDC_RESTORE_VALIDATOR_BACKUP=true
@@ -618,6 +574,11 @@ if [[ "${GDC_VALIDATOR_BACKUP_TEST_MODE:-false}" == true ]]; then
       validate_mnemonic_file "$2"
       exit 0
       ;;
+    verify-archive)
+      [[ $# == 5 ]] || die 'validator backup verification test requires ARCHIVE NODE CHAIN_ID GENESIS_SHA256'
+      verify_backup_archive "$2" "$3" "$4" "$5"
+      exit 0
+      ;;
     *) die 'unknown validator backup test operation' ;;
   esac
 fi
@@ -629,6 +590,13 @@ case "$1" in
     [[ $# -eq 2 ]] || { usage; exit 2; }
     topology_contains_node "$2" || die "unknown SSH alias: $2"
     create_backup "$2"
+    ;;
+  verify)
+    [[ $# -eq 3 ]] || { usage; exit 2; }
+    topology_contains_node "$2" || die "unknown SSH alias: $2"
+    chain_id="$(jq -er .chain_id "$GENESIS/genesis.json" 2>/dev/null)" \
+      || die 'local Genesis chain ID is malformed'
+    verify_backup_archive "$3" "$2" "$chain_id" "$(genesis_sha256 "$GENESIS/genesis.json")"
     ;;
   restore)
     [[ $# -eq 3 ]] || { usage; exit 2; }

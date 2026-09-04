@@ -34,12 +34,16 @@ printf '%s\n' \
   'exec /usr/bin/rm "$@"' >"$fake_bin/rm"
 chmod +x "$fake_bin/docker" "$fake_bin/systemctl" "$fake_bin/rm"
 
+printf 'fixture archive\n' >"$home/gdc-node0-validator-backup.tar"
+chmod 600 "$home/gdc-node0-validator-backup.tar"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$home" PATH="$fake_bin:$PATH" \
   "$ROOT/gdc.sh" host reset gdc-node0 >"$tmp/output"
 
 grep -Fq 'PASS gdc-node0 reset' "$tmp/output"
+grep -Fq 'READY preserved local validator recovery archive for gdc-node0' "$tmp/output"
 grep -Fq 'END phase=node-reset-gdc-node0 status=0' "$tmp/output"
+[[ -r "$home/gdc-node0-validator-backup.tar" ]]
 [[ -f "$home/gdc-node0/state/.lifecycle.lock" ]]
 [[ -f "$home/gdc-node0/state/active-run-id" ]]
 [[ ! -e "$home/.env" ]]
@@ -176,5 +180,6 @@ grep -Fq 'lock_file="$STATE/.lifecycle.lock"' "$ROOT/gdc.sh"
 ! grep -Fq '.gdc.lock' "$ROOT/gdc.sh"
 grep -Fq 'No resource found to remove for project' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'ERROR failed to remove managed Compose deployment directory=%s exit=%s' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'removed managed Compose resources without reading invalid env' "$ROOT/scripts/phase-node.sh"
 
 printf 'PASS Host reset requires only an SSH alias and no role input\n'

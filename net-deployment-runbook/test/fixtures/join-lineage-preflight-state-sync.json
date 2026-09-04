@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "kind": "gdc-host-join-lineage-preflight",
+  "runtime": {
+    "network_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "observation_sha256": null,
+    "source": {"kind": "fixture", "id": "join-lineage-preflight-state-sync"},
+    "core": {"version": "0.2.15", "commit": "4d687ed6782bcea3931d2d9135bf322f84e190ab"},
+    "dapi": {"version": "0.2.15-post3", "commit": "5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}
+  },
+  "bootstrap": {
+    "mode": "state_sync",
+    "chain_id": "gonka-fixture",
+    "genesis_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "trust": {"height": 120, "block_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "app_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "expires_at": "2026-09-01T00:00:00Z"},
+    "snapshot": {"discovery": "p2p_canary_pending", "providers": ["0123456789abcdef0123456789abcdef01234567@tcp://rpc-a.example:5000", "89abcdef0123456789abcdef0123456789abcdef@tcp://rpc-b.example:5000"]}
+  },
+  "fault_domains": [
+    {"id": "domain-a", "rpc_url": "https://rpc-a.example/chain-rpc", "chain_id": "gonka-fixture", "genesis_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+    {"id": "domain-b", "rpc_url": "https://rpc-b.example/chain-rpc", "chain_id": "gonka-fixture", "genesis_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+  ],
+  "checkpoints": {
+    "early": {"height": 5, "block_id": "1111111111111111111111111111111111111111111111111111111111111111", "app_hash": "2222222222222222222222222222222222222222222222222222222222222222"},
+    "post_upgrade": {"height": 100, "block_id": "3333333333333333333333333333333333333333333333333333333333333333", "app_hash": "4444444444444444444444444444444444444444444444444444444444444444"},
+    "trust": {"height": 120, "block_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "app_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
+  },
+  "devshard_compatibility": {
+    "approvals": [{"name": "v3", "url": "https://example.test/devshard-v3.zip", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+    "sources": [{"chain_api_url": "https://rpc-a.example/chain-api/"}, {"chain_api_url": "https://rpc-b.example/chain-api/"}]
+  },
+  "staging": {"previous_deployment_digest": "5555555555555555555555555555555555555555555555555555555555555555", "rendered_config_digest": "6666666666666666666666666666666666666666666666666666666666666666", "compose_validated": true},
+  "signer": {"state": "LINEAGE_VERIFIED", "tmkms_monotonic": false},
+  "result": {"terminal_state": "prepared", "category": "none", "resume": "safe_exact_resume"}
+}
