@@ -424,7 +424,14 @@ try {
   await call('Runtime.evaluate', { expression: 'document.querySelector("#join-node")?.scrollIntoView({block:"start",behavior:"instant"})' }, sessionId);
   await delay(300);
   const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);
-  await writeFile(output, Buffer.from(screenshot.data, 'base64'));
+  const screenshotBytes = Buffer.from(screenshot.data, 'base64');
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (screenshotBytes.length < 24 || !screenshotBytes.subarray(0, 8).equals(pngSignature)) throw new Error('homepage screenshot is not a PNG');
+  if (screenshotBytes.readUInt32BE(8) !== 13 || screenshotBytes.toString('ascii', 12, 16) !== 'IHDR') throw new Error('homepage screenshot has an invalid PNG IHDR');
+  const screenshotWidth = screenshotBytes.readUInt32BE(16);
+  const screenshotHeight = screenshotBytes.readUInt32BE(20);
+  if (screenshotWidth !== width || screenshotHeight !== height) throw new Error(`homepage screenshot dimensions ${screenshotWidth}x${screenshotHeight} do not match ${width}x${height}`);
+  await writeFile(output, screenshotBytes);
 } finally {
   socket?.close();
   await stopChromeDevTools(browser);
