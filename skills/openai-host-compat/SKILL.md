@@ -1,6 +1,6 @@
 ---
 name: openai-host-compat
-license: Apache-2.0
+license: LICENSE.txt
 description: >-
   Use when implementing or debugging a Gonka broker OpenAI HTTP proxy that
   400s on POST /v1/chat/completions from Cursor, Cline, Zod, or MCP against
@@ -126,5 +126,6 @@ See [reference.md](reference.md) for rewrite sketches and golden JSON.
 
 ## Related
 
-`POST /v1/responses` is a separate adapter (ToChat → these shims → FromChat):
-[`openai-responses-adapter`](../openai-responses-adapter/).
+`POST /v1/responses` is a separate adapter (ToChat → these shims → FromChat).
+Install: `npx skills add paranjko/external-test-lab --skill openai-responses-adapter`
+https://github.com/paranjko/external-test-lab/tree/main/skills/openai-responses-adapter

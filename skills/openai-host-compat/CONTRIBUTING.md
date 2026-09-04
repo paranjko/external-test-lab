@@ -4,7 +4,9 @@ This folder is a **catalog**. Each broker implements the
 rewrite on their own OpenAI HTTP proxy (`POST /v1/chat/completions`), before
 the inference gateway.
 
-`/v1/responses` belongs in `skills/openai-responses-adapter/`, not here.
+`/v1/responses` belongs in the Responses adapter skill, not here:
+`npx skills add paranjko/external-test-lab --skill openai-responses-adapter`
+https://github.com/paranjko/external-test-lab/tree/main/skills/openai-responses-adapter
 
 ## Add a shim
 

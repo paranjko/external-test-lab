@@ -29,6 +29,8 @@ for clients that **hard-call** Responses (Codex CLI, Agents SDK
 | [reference.md](reference.md) | Field maps, SSE order, error codes |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add a mapping / 400-vs-strip / probe |
 
-After `ToChat`, run a host-compat layer on the chat body — this catalog or
-the equivalent already on the proxy:
-[`openai-host-compat`](../openai-host-compat/).
+After `ToChat`, run a host-compat layer on the chat body — install
+`openai-host-compat`
+(`npx skills add paranjko/external-test-lab --skill openai-host-compat`)
+or use the equivalent already on the proxy.
+https://github.com/paranjko/external-test-lab/tree/main/skills/openai-host-compat
