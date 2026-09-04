@@ -61,5 +61,14 @@ jobs:
 
           list_out="$(npx --yes "$SKILLS_CLI" add . --list -y)"
           printf '%s\n' "$list_out"
-          printf '%s\n' "$list_out" | grep -Fq openai-host-compat
-          printf '%s\n' "$list_out" | grep -Fq openai-responses-adapter
+          # Name rows only. Descriptions mention the companion skill, so
+          # substring grep would stay green if one package disappeared.
+          printf '%s\n' "$list_out" | sed $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' | awk '
+          {
+            line = $0
+            sub(/^[^A-Za-z0-9_-]+/, "", line)
+            if (line == "openai-host-compat") host = 1
+            if (line == "openai-responses-adapter") resp = 1
+          }
+          END { if (!host || !resp) exit 1 }
+          '
