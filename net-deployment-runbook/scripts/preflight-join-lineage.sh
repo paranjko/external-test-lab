@@ -95,6 +95,33 @@ fault_domain() {
   fi
   getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
 }
+resolved_ipv4() {
+  local host="$1" entry
+  if [[ -n "${GDC_JOIN_RPC_IP_MAP:-}" ]]; then
+    IFS=, read -r -a entries <<<"$GDC_JOIN_RPC_IP_MAP"
+    for entry in "${entries[@]}"; do [[ "$entry" == "$host="* ]] && { printf '%s' "${entry#*=}"; return; }; done
+    return 1
+  fi
+  getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
+}
+rpc_connection() {
+  local rpc="$1" scheme host port
+  [[ "$rpc" =~ ^(http|https)://([A-Za-z0-9.-]+)(:([1-9][0-9]{0,4}))?(/.*)?$ ]] || return 1
+  scheme="${BASH_REMATCH[1]}"; host="${BASH_REMATCH[2]}"; port="${BASH_REMATCH[4]}"
+  if [[ -z "$port" ]]; then
+    [[ "$scheme" == https ]] && port=443 || port=80
+  fi
+  printf '%s %s\n' "$host" "$port"
+}
+pinned_get() {
+  local base="$1" host="$2" port="$3" ip="$4" path="$5" output="$6"
+  curl -fsS --connect-timeout 5 --max-time 15 --resolve "${host}:${port}:${ip}" "${base%/}${path}" >"$output" 2>/dev/null
+}
+chain_api_for_rpc() {
+  local rpc="${1%/}"
+  [[ "$rpc" == */chain-rpc ]] || return 1
+  printf '%s/chain-api/productscience/inference/inference/params' "${rpc%/chain-rpc}"
+}
 
 record_from_block() {
   jq -cer '{height:(.result.block.header.height|tonumber),block_id:(.result.block_id.hash|ascii_downcase),app_hash:(.result.block.header.app_hash|ascii_downcase)}'
@@ -108,7 +135,7 @@ one_record() {
 }
 p2p_for_rpc() {
   local rpc="$1" index node_id p2p
-  index="$(jq -r --arg rpc "$rpc" '.seeds | to_entries[] | select(.value.rpc == $rpc) | .key' "$BOOTSTRAP" | head -1)"
+  index="$(jq -r --arg rpc "$rpc" '.seeds | to_entries[] | select(.value.rpc | rtrimstr("/") == $rpc) | .key' "$BOOTSTRAP" | head -1)"
   [[ "$index" =~ ^[0-9]+$ ]] || return 1
   node_id="$(jq -r ".seeds[$index].node_id" "$BOOTSTRAP")"
   p2p="$(jq -r ".seeds[$index].p2p" "$BOOTSTRAP")"
@@ -116,17 +143,25 @@ p2p_for_rpc() {
   printf '%s@%s' "$node_id" "$p2p"
 }
 
-mapfile -t rpcs < <(jq -r '.seeds[].rpc' "$BOOTSTRAP")
+mapfile -t rpcs < <(jq -r '.seeds[].rpc | rtrimstr("/")' "$BOOTSTRAP")
 (( ${#rpcs[@]} >= 2 )) || die rpc_quorum_conflict 'Bootstrap has fewer than two RPC seeds'
-declare -a good_rpcs=() domains=() heights=()
+declare -a good_rpcs=() domains=() heights=() good_hosts=() good_ports=() good_ips=()
 for rpc in "${rpcs[@]}"; do
-  host="${rpc#https://}"; host="${host%%/*}"
-  domain="$(fault_domain "$host" || true)"
+  read -r host port < <(rpc_connection "$rpc") || die rpc_quorum_conflict "cannot parse RPC connection for $rpc"
+  ip="$(resolved_ipv4 "$host" || true)"
+  # A Bootstrap seed that cannot currently resolve is an unavailable
+  # observation, not a fatal preflight error. The quorum and fault-domain
+  # minima below decide whether the remaining seeds suffice.
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || continue
+  # In production the fault domain is the exact IP pinned into curl. Tests
+  # can provide explicit independent domains together with pinned test IPs.
+  if [[ -n "${GDC_JOIN_FAULT_DOMAIN_MAP:-}" ]]; then domain="$(fault_domain "$host" || true)"; else domain="$ip"; fi
   [[ "$domain" =~ ^[A-Za-z0-9._:-]+$ ]] || die rpc_quorum_conflict "cannot establish fault domain for $host"
   status="$tmp/status-${#good_rpcs[@]}.json"
-  curl -fsS --connect-timeout 5 --max-time 15 "${rpc%/}/status" >"$status" 2>/dev/null || continue
-  jq -e --arg chain "$GDC_NETWORK_CHAIN_ID" '.result.node_info.network == $chain and (.result.sync_info.latest_block_height|tonumber) > 0' "$status" >/dev/null || continue
-  good_rpcs+=("$rpc"); domains+=("$domain"); heights+=("$(jq -r '.result.sync_info.latest_block_height' "$status")")
+  pinned_get "$rpc" "$host" "$port" "$ip" /status "$status" || continue
+  expected_node_id="$(jq -r --arg rpc "$rpc" '.seeds[] | select(.rpc | rtrimstr("/") == $rpc) | .node_id' "$BOOTSTRAP" | head -1)"
+  jq -e --arg chain "$GDC_NETWORK_CHAIN_ID" --arg node_id "$expected_node_id" '.result.node_info.network == $chain and .result.node_info.id == $node_id and (.result.sync_info.latest_block_height|tonumber) > 0' "$status" >/dev/null || continue
+  good_rpcs+=("$rpc"); domains+=("$domain"); heights+=("$(jq -r '.result.sync_info.latest_block_height' "$status")"); good_hosts+=("$host"); good_ports+=("$port"); good_ips+=("$ip")
 done
 [[ "$(printf '%s\n' "${domains[@]}" | LC_ALL=C sort -u | wc -l)" -ge 2 ]] || die rpc_fault_domain_alias 'two RPC URLs resolve to one fault domain'
 (( ${#good_rpcs[@]} >= 2 )) || die rpc_quorum_conflict 'fewer than two readable RPC observations attest the selected chain'
@@ -135,7 +170,7 @@ done
 # independent domains must serve the same header/AppHash there. A failed block
 # read is a non-vote, while a malformed successful response is unsafe. One
 # outlier is tolerated; A,A,B,C is not.
-declare -a quorum_rpcs=() quorum_domains=()
+declare -a quorum_rpcs=() quorum_domains=() quorum_hosts=() quorum_ports=() quorum_ips=()
 select_tip_quorum() {
   local candidate i file record best='' best_count=0 group_count=0 responding count
   local -a records=() indices=() groups=() candidates=() candidate_domains=()
@@ -146,7 +181,7 @@ select_tip_quorum() {
       (( heights[i] >= candidate )) || continue
       [[ " ${candidate_domains[*]} " == *" ${domains[$i]} "* ]] && continue
       file="$tmp/tip-${candidate}-${i}.json"
-      curl -fsS --connect-timeout 5 --max-time 15 "${good_rpcs[$i]%/}/block?height=$candidate" >"$file" 2>/dev/null || continue
+      pinned_get "${good_rpcs[$i]}" "${good_hosts[$i]}" "${good_ports[$i]}" "${good_ips[$i]}" "/block?height=$candidate" "$file" || continue
       record="$(record_from_block <"$file")" || die rpc_quorum_conflict "malformed tip checkpoint from ${good_rpcs[$i]}"
       records+=("$record"); indices+=("$i"); candidate_domains+=("${domains[$i]}")
     done
@@ -164,11 +199,14 @@ select_tip_quorum() {
     done
     responding="${#records[@]}"
     (( group_count == 1 && best_count >= 2 && responding - best_count <= 1 )) || continue
-    quorum_rpcs=(); quorum_domains=()
+    quorum_rpcs=(); quorum_domains=(); quorum_hosts=(); quorum_ports=(); quorum_ips=()
     for i in "${!records[@]}"; do
       [[ "${records[$i]}" == "$best" ]] || continue
       quorum_rpcs+=("${good_rpcs[${indices[$i]}]}")
       quorum_domains+=("${domains[${indices[$i]}]}")
+      quorum_hosts+=("${good_hosts[${indices[$i]}]}")
+      quorum_ports+=("${good_ports[${indices[$i]}]}")
+      quorum_ips+=("${good_ips[${indices[$i]}]}")
     done
     tip="$candidate"
     return 0
@@ -180,11 +218,12 @@ select_tip_quorum || die rpc_quorum_conflict 'no unique 2-of-3 RPC header/AppHas
 trust_height=$((tip - period))
 
 declare -a early_records=() trust_records=()
-for rpc in "${quorum_rpcs[@]}"; do
+for i in "${!quorum_rpcs[@]}"; do
+  rpc="${quorum_rpcs[$i]}"
   for checkpoint in "early:$early_height" "trust:$trust_height"; do
     IFS=: read -r label height <<<"$checkpoint"
     file="$tmp/$label-${#early_records[@]}-$height.json"
-    curl -fsS --connect-timeout 5 --max-time 15 "${rpc%/}/block?height=$height" >"$file" 2>/dev/null || die rpc_quorum_conflict "cannot read $label checkpoint from $rpc"
+    pinned_get "$rpc" "${quorum_hosts[$i]}" "${quorum_ports[$i]}" "${quorum_ips[$i]}" "/block?height=$height" "$file" || die rpc_quorum_conflict "cannot read $label checkpoint from $rpc"
     record="$(record_from_block <"$file")" || die rpc_quorum_conflict "malformed $label checkpoint from $rpc"
     case "$label" in early) early_records+=("$record");; trust) trust_records+=("$record");; esac
   done
@@ -212,9 +251,10 @@ else
   post_height="$(jq -r .height <<<"$trust")"
 fi
 declare -a post_records=() snapshot_providers=()
-for rpc in "${quorum_rpcs[@]}"; do
+for i in "${!quorum_rpcs[@]}"; do
+  rpc="${quorum_rpcs[$i]}"
   post_file="$tmp/post-${#post_records[@]}.json"
-  curl -fsS --connect-timeout 5 --max-time 15 "${rpc%/}/block?height=$post_height" >"$post_file" 2>/dev/null || die rpc_quorum_conflict "cannot read post-upgrade checkpoint from $rpc"
+  pinned_get "$rpc" "${quorum_hosts[$i]}" "${quorum_ports[$i]}" "${quorum_ips[$i]}" "/block?height=$post_height" "$post_file" || die rpc_quorum_conflict "cannot read post-upgrade checkpoint from $rpc"
   post_records+=("$(record_from_block <"$post_file")")
   provider="$(p2p_for_rpc "$rpc")" || die configuration "Bootstrap has no valid P2P provider for quorum RPC $rpc"
   snapshot_providers+=("$provider")
@@ -232,13 +272,12 @@ snapshot="$(printf '%s\n' "${snapshot_providers[@]}" | jq -R . | jq -s '{discove
 # in this later lineage receipt rather than smuggling a protocol choice into the
 # immutable Join Profile.
 declare -a approval_sets=() approval_sources=()
-for rpc in "${quorum_rpcs[@]}"; do
-  case "$rpc" in
-    */chain-rpc) chain_api="${rpc%/chain-rpc}/chain-api/productscience/inference/inference/params" ;;
-    *) continue ;;
-  esac
+for i in "${!quorum_rpcs[@]}"; do
+  rpc="${quorum_rpcs[$i]}"
+  chain_api="$(chain_api_for_rpc "$rpc" || true)"
+  [[ -n "$chain_api" ]] || die configuration "Bootstrap RPC cannot derive a chain API: $rpc"
   params="$tmp/params-${#approval_sets[@]}.json"
-  if ! curl -fsS --connect-timeout 5 --max-time 15 "$chain_api" >"$params" 2>/dev/null; then
+  if ! curl -fsS --connect-timeout 5 --max-time 15 --resolve "${quorum_hosts[$i]}:${quorum_ports[$i]}:${quorum_ips[$i]}" "$chain_api" >"$params" 2>/dev/null; then
     continue
   fi
   approval_set="$(jq -cer '
@@ -280,7 +319,7 @@ jq -n \
   --argjson early "$early" --argjson post "$post" --argjson trust "$trust" --argjson snapshot "$snapshot" \
   --argjson devshard_approvals "$devshard_approvals" \
   --argjson devshard_sources "$(for source in "${approval_sources[@]}"; do jq -cn --arg url "$source" '{chain_api_url:$url}'; done | jq -s .)" \
-  --argjson domains "$(for i in "${!quorum_rpcs[@]}"; do jq -cn --arg id "${quorum_domains[$i]}" --arg rpc "${quorum_rpcs[$i]}" --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" '{id:$id,rpc_url:$rpc,chain_id:$chain,genesis_sha256:$genesis}'; done | jq -s .)" \
+  --argjson domains "$(for i in "${!quorum_rpcs[@]}"; do jq -cn --arg id "${quorum_domains[$i]}" --arg rpc "${quorum_rpcs[$i]}" --arg host "${quorum_hosts[$i]}" --argjson port "${quorum_ports[$i]}" --arg ip "${quorum_ips[$i]}" --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" '{id:$id,rpc_url:$rpc,host:$host,port:$port,ip:$ip,chain_id:$chain,genesis_sha256:$genesis}'; done | jq -s .)" \
   --arg empty "$empty_digest" \
   '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:(if $observation_sha256 == "" then null else $observation_sha256 end),source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,trust:($trust+{expires_at:$expires}),snapshot:$snapshot},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},devshard_compatibility:{approvals:$devshard_approvals,sources:$devshard_sources},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
 {

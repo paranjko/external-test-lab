@@ -5,6 +5,12 @@ set -Eeuo pipefail
 [[ $# -eq 2 ]] || { echo "Usage: $0 DEPLOY_DIR RECEIPT" >&2; exit 2; }
 deploy="$1"; receipt="$2"
 [[ -d "$deploy" && -r "$receipt" ]] || { echo 'invalid state-sync config verification input' >&2; exit 2; }
+expires_at="$(jq -er '.bootstrap.trust.expires_at // empty' "$receipt" 2>/dev/null || true)"
+expires_epoch="$(date -u -d "$expires_at" +%s 2>/dev/null || true)"
+[[ "$expires_epoch" =~ ^[0-9]+$ && "$expires_epoch" -gt "$(date -u +%s)" ]] || {
+  echo 'lineage_trust_expired: state-sync trust receipt has expired; run a fresh JOIN lineage preflight before accepting the canary' >&2
+  exit 1
+}
 trust_height="$(jq -er '.bootstrap.trust.height | tonumber' "$receipt")"
 trust_hash="$(jq -er '.bootstrap.trust.block_id' "$receipt")"
 # The upstream init helper canonicalizes Comet RPC paths with a trailing slash.

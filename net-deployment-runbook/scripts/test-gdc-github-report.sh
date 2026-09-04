@@ -30,6 +30,57 @@ mkdir -p "$tmp/operator/runs/diagnostic-fixture"
 "$ROOT/scripts/diagnostic-envelope.sh" write "$tmp/operator/runs/diagnostic-fixture/diagnostic-envelope.v1.json" \
   join join-node failed interrupted network curl 28 safe join-repeat 'network readback timed out'
 printf 'diagnostic_envelope=%s\n' "$tmp/operator/runs/diagnostic-fixture/diagnostic-envelope.v1.json" >>"$failure"
+# Current JOIN failures may also retain the private preflight receipt path.
+# It is intentionally not copied into the public report.
+printf 'preflight_receipt=%s\n' "$tmp/operator/runs/diagnostic-fixture/preflight-receipt.env" >>"$failure"
+
+sort_root="$tmp/sort-operator"
+if GDC_HOME="$sort_root" "$ROOT/gdc.sh" invalid-command >"$tmp/sort-pre.out" 2>"$tmp/sort-pre.err"; then
+  echo 'failure-order fixture unexpectedly succeeded' >&2
+  exit 1
+fi
+sort_pointer="$sort_root/reporting/failures/latest-failure"
+sort_id="$(<"$sort_pointer")"
+sort_failure="$sort_root/reporting/invocations/invocation.$sort_id/failure.env"
+for entry in \
+  'report-old-a 2026-09-02T12:00:00Z' \
+  'report-old-b 2026-09-03T12:00:00Z' \
+  'report-old-c 2026-09-01T12:00:00Z' \
+  'report-old-d 2026-08-31T12:00:00Z' \
+  'report-old-e 2026-08-30T12:00:00Z' \
+  'report-old-f 2026-08-29T12:00:00Z' \
+  'report-old-g 2026-08-28T12:00:00Z' \
+  'report-old-h 2026-08-27T12:00:00Z' \
+  'report-old-i 2026-08-26T12:00:00Z' \
+  'report-old-j 2026-08-25T12:00:00Z' \
+  'report-old-k 2026-08-24T12:00:00Z'; do
+  read -r old_id old_timestamp <<<"$entry"
+  old_dir="$sort_root/reporting/invocations/invocation.$old_id"
+  mkdir -p "$old_dir"
+  sed -e "s/^invocation_id=.*/invocation_id=$old_id/" \
+    -e "s/^recorded_at=.*/recorded_at=$old_timestamp/" \
+    "$sort_failure" >"$old_dir/failure.env"
+done
+if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/sort-gh.args" FAKE_GH_BODY="$tmp/sort-gh.md" \
+  GDC_REPORT_TEST_INTERACTIVE=true GDC_HOME="$sort_root" \
+  "$ROOT/gdc.sh" report github >"$tmp/sort.out" 2>"$tmp/sort.err" <<'EOF'
+1
+0
+EOF
+then
+  :
+fi
+grep -Fq 'Publication cancelled' "$tmp/sort.err" || {
+  printf '%s\n' 'failure-order fixture did not reach cancellation' >&2
+  sed -n '1,120p' "$tmp/sort.out" >&2
+  sed -n '1,120p' "$tmp/sort.err" >&2
+  exit 1
+}
+newer_line="$(grep -n '2026-09-03T12:00:00Z' "$tmp/sort.out" | cut -d: -f1)"
+older_line="$(grep -n '2026-09-02T12:00:00Z' "$tmp/sort.out" | cut -d: -f1)"
+[[ "$newer_line" =~ ^[0-9]+$ && "$older_line" =~ ^[0-9]+$ && "$newer_line" -lt "$older_line" ]]
+[[ "$(grep -Ec '^[0-9]+\) 2026-' "$tmp/sort.out")" == 10 ]]
+! grep -Eq '^11\) 2026-' "$tmp/sort.out"
 
 PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/gh.args" FAKE_GH_BODY="$tmp/published.md" GDC_REPORT_TEST_INTERACTIVE=true \
   run_gdc report github >"$tmp/new.out" 2>"$tmp/new.err" <<'EOF'
@@ -38,7 +89,12 @@ PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/gh.args" FAKE_GH_BODY="$tmp/published.m
 .
 y
 EOF
-grep -Fq 'Published and verified: https://github.com/paranjko/external-test-lab/issues/9001' "$tmp/new.out"
+grep -Fq 'Published and verified: https://github.com/paranjko/external-test-lab/issues/9001' "$tmp/new.out" || {
+  printf '%s\n' 'initial report publication fixture failed' >&2
+  sed -n '1,120p' "$tmp/new.out" >&2
+  sed -n '1,120p' "$tmp/new.err" >&2
+  exit 1
+}
 grep -Fq -- '--body-file ' "$tmp/gh.args"
 ! grep -Fq 'report contents' "$tmp/gh.args"
 grep -Fq 'gdc-report-id:' "$tmp/published.md"
@@ -63,6 +119,12 @@ archive="$report_dir.tar.gz"
 tar -tzf "$archive" | grep -qx 'report.txt'
 tar -tzf "$archive" | grep -qx 'report.md'
 ! tar -tzf "$archive" | grep -Eiq '(^|/)(\.env|.*keyring.*|.*secret.*|.*backup.*|run\.log)$'
+
+printf '1\ntest report 09 04 19\r\n.\ny\n' | \
+  PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/custom-title.args" FAKE_GH_BODY="$tmp/custom-title.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  run_gdc report github >"$tmp/custom-title.out" 2>"$tmp/custom-title.err"
+grep -Fq 'Published and verified: https://github.com/paranjko/external-test-lab/issues/9001' "$tmp/custom-title.out"
+grep -Fq 'test\ report\ 09\ 04\ 19' "$tmp/custom-title.args"
 
 FAKE_GH_ISSUES_JSON='[{"number":9001,"title":"Existing fixture","url":"https://github.com/paranjko/external-test-lab/issues/9001","author":{"login":"fixture-user"}}]' \
 PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/comment.args" FAKE_GH_BODY="$tmp/comment.md" FAKE_GH_COMMENT_MODE=true GDC_REPORT_TEST_INTERACTIVE=true \

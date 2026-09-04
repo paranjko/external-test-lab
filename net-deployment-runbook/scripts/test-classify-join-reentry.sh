@@ -35,6 +35,26 @@ jq -cn --arg sha "$sha" '{schema_version:1,kind:"gdc-host-join-result",outcome:"
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$run" --current-profile "$profile")"
 jq -e '.classification == "completed_matched"' <<<"$result" >/dev/null
 "$ROOT/scripts/verify-completed-join-signer-state.sh" --node node-a --run-dir "$run" >/dev/null
+# A repeated COMPLETE must keep the original succeeded receipt: node start
+# relies on that result to authorize a later signer restart.
+grep -Fq 'Keep the successful completion receipt intact' "$ROOT/gdc.sh"
+grep -Fq 'verify-complete-join-state.sh" "$join_alias" "$previous_join_run/join-profile.v1.json"' "$ROOT/gdc.sh"
+
+# A fresh lifecycle process recovers the profile bound to its active JOIN run
+# before it loads any launcher-default release profile.
+lifecycle_home="$tmp/lifecycle-home"
+mkdir -p "$lifecycle_home/state" "$lifecycle_home/runs/previous/join-node-a"
+printf 'previous\n' >"$lifecycle_home/state/active-run-id"
+install -m 0600 "$profile" "$lifecycle_home/runs/previous/join-node-a/join-profile.v1.json"
+lifecycle_sha="$(sha256sum "$lifecycle_home/runs/previous/join-node-a/join-profile.v1.json" | awk '{print $1}')"
+printf 'schema_version=2\nrun_id=previous\noperator_data_home=%s\nprofile_kind=generated_join\njoin_profile_sha256=%s\n' "$lifecycle_home" "$lifecycle_sha" >"$lifecycle_home/runs/previous/manifest.env"
+chmod 600 "$lifecycle_home/runs/previous/manifest.env"
+(
+  export GDC_HOME="$lifecycle_home"
+  source "$ROOT/scripts/lib.sh"
+  load_retained_join_profile_for_node node-a
+  [[ "$GDC_JOIN_PROFILE" == "$lifecycle_home/runs/previous/join-node-a/join-profile.v1.json" ]]
+)
 jq '.target.public_host = "different.example.test" | .target.public_p2p_address = "tcp://different.example.test:5000"' "$spec" >"$tmp/different-spec.json"
 "$ROOT/scripts/join-profile.sh" create --observation "$observation" --spec "$tmp/different-spec.json" --operation new --run-id different --output "$tmp/different.json" >/dev/null
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$run" --current-profile "$tmp/different.json")"

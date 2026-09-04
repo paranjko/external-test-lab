@@ -210,6 +210,7 @@ test: site-js-check site-host-requirements-check
 	@./scripts/test-telegram-consumer-probe-loop.sh
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
+	@./scripts/test-host-backup-context.sh
 	@./scripts/test-validator-backup-contract.sh
 	@./scripts/test-observe-network-composition.sh
 	@./scripts/test-observe-network-state.sh
@@ -225,6 +226,7 @@ test: site-js-check site-host-requirements-check
 	@./scripts/test-join-lineage-preflight.sh
 	@./scripts/test-join-lineage-quorum-adversarial.sh
 	@./scripts/test-host-join-state-sync.sh
+	@./scripts/test-verify-state-sync-config.sh
 	@./scripts/test-migrate-v1-validator-identity.sh
 	@./scripts/test-verify-canonical-join-state.sh
 	@./scripts/test-verify-complete-join-state.sh

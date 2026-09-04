@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: sudo $0 --node-name ssh-alias --env FILE --node-config FILE --genesis FILE [--local-ml] [--allow-release-change]" >&2; }
-NODE=""; ENV_FILE=""; NODE_CONFIG=""; GENESIS=""; LOCAL_ML=false; ALLOW_RELEASE_CHANGE=false
+usage(){ echo "Usage: sudo $0 --node-name ssh-alias --env FILE --node-config FILE --genesis FILE [--join-profile FILE] [--local-ml] [--allow-release-change]" >&2; }
+NODE=""; ENV_FILE=""; NODE_CONFIG=""; GENESIS=""; JOIN_PROFILE=""; LOCAL_ML=false; ALLOW_RELEASE_CHANGE=false
 while (($#)); do
   case "$1" in
     --node-name) NODE="$2"; shift 2;; --env) ENV_FILE="$2"; shift 2;;
-    --node-config) NODE_CONFIG="$2"; shift 2;; --genesis) GENESIS="$2"; shift 2;;
+    --node-config) NODE_CONFIG="$2"; shift 2;; --genesis) GENESIS="$2"; shift 2;; --join-profile) JOIN_PROFILE="$2"; shift 2;;
     --local-ml) LOCAL_ML=true; shift;; --allow-release-change) ALLOW_RELEASE_CHANGE=true; shift;; *) usage; exit 2;;
   esac
 done
@@ -40,6 +40,7 @@ case "$profile_kind" in
   generated_join)
     new_join_profile="$(awk -F= '$1 == "GDC_JOIN_PROFILE_SHA256" {print $2}' "$ENV_FILE")"
     [[ "$new_join_profile" =~ ^[0-9a-f]{64}$ ]] || { echo 'rendered environment lacks generated JOIN profile identity' >&2; exit 1; }
+    [[ -r "$JOIN_PROFILE" && "$(sha256sum "$JOIN_PROFILE" | awk '{print $1}')" == "$new_join_profile" ]] || { echo 'generated JOIN profile file is missing or does not match the rendered environment' >&2; exit 1; }
     if [[ -s "$DEST/.gdc-release" ]]; then
       [[ "$ALLOW_RELEASE_CHANGE" == true ]] || { echo "legacy release deployment exists on $NODE; use the explicit migration path" >&2; exit 1; }
     fi
@@ -92,6 +93,7 @@ install -m 0600 "$ENV_FILE" "$STAGE/.env"
 if [[ "$profile_kind" == generated_join ]]; then
   printf '%s\n' "$new_join_profile" >"$STAGE/.gdc-join-profile"
   chmod 600 "$STAGE/.gdc-join-profile"
+  install -m 0600 "$JOIN_PROFILE" "$STAGE/gdc-join-profile.v1.json"
 else
   printf '%s %s\n' "$new_release" "$new_hash" >"$STAGE/.gdc-release"
   chmod 600 "$STAGE/.gdc-release"

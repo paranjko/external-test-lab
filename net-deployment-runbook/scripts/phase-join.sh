@@ -140,7 +140,14 @@ if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
   [[ -r "$GDC_RESTORE_TMKMS_STATE_FILE" ]] || die 'validator backup restore did not retain its TMKMS signing state'
   install -m 0600 "$GDC_RESTORE_TMKMS_STATE_FILE" "$RUN/restore-tmkms-signing-state.json"
   if [[ "$(<"$STATE/restore/$NODE/mode")" == existing ]]; then
+    [[ "${GDC_JOIN_PREVIOUS_RUN_ID:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+      || die 'existing Host recovery lacks the prior completed run authority'
     "$ROOT/scripts/recover-running-host-state.sh" "$NODE" "$GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE"
+    # Recovery validates and repairs the deployment in place.  Keep node
+    # restart authority bound to the prior completed run, whose profile and
+    # terminal result describe the live deployment.
+    printf '%s\n' "$GDC_JOIN_PREVIOUS_RUN_ID" >"$STATE/active-run-id"
+    : >"$RUN/preserve-prior-run"
     exit 0
   fi
 fi
@@ -289,6 +296,7 @@ rsync -a "$ROOT/04-ops/edge-node/" "$NODE:$REMOTE/edge/"
 rsync -a "$ROOT/04-ops/agent/" "$NODE:$REMOTE/agent/"
 scp -q "$NODE_DIR/.env" "$NODE:$REMOTE/node.env"
 scp -q "$NODE_DIR/node-config.json" "$NODE:$REMOTE/node-config.json"
+scp -q "$GDC_JOIN_PROFILE" "$NODE:$REMOTE/join-profile.v1.json"
 scp -q "$GENERATED/edge/$NODE.env" "$NODE:$REMOTE/edge.env"
 scp -q "$GENERATED/agents/$NODE.env" "$NODE:$REMOTE/agent.env"
 scp -q "$GENESIS/genesis.json" "$NODE:$REMOTE/genesis.json"
@@ -296,7 +304,7 @@ scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
 scp -q "$ROOT/scripts/verify-join-lineage-state.sh" "$NODE:$REMOTE/verify-join-lineage-state.sh"
 local_ml=(); gpu=()
 [[ -z "$ML_HOST" ]] && local_ml=(--local-ml) && gpu=(--gpu)
-ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"
+ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"
 
 # Persist the explicit external-GPU association as soon as the validator
 # deployment exists.  A join can fail later (for example, while claiming the
@@ -318,6 +326,10 @@ if [[ -n "$ML_HOST" ]]; then
 fi
 
 step "Start signerless P2P state-sync canary for $NODE"
+# A state-sync trust checkpoint is deliberately short-lived. Do not launch a
+# canary that would already consume an expired decision; a new preflight is
+# required instead.
+"$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
 record_join_state "$NODE" SYNCING "$ADDRESS"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --canary"
 record_join_transition CANARY_RUNNING
@@ -507,7 +519,12 @@ step "Fence existing $NODE signer after membership reconciliation"
 signer_consensus_pubkey="$(jq -er .consensus_pubkey "$IDENTITY")"
 signer_fence_remote="/srv/dai/deploy/$NODE/.gdc/runs/${GDC_RUN_ID:-manual}/signer-fence-receipt.v1.json"
 ssh "$NODE" "sudo /srv/dai/deploy/$NODE/fence-existing-signer.sh /srv/dai/deploy/$NODE '${GDC_RUN_ID:-manual}' '$signer_consensus_pubkey' '$NODE'"
-scp -q "$NODE:$signer_fence_remote" "$RUN/signer-fence-receipt.v1.json"
+# The fence helper is deliberately root-owned: it observed and stopped a
+# privileged service. Do not weaken its remote permissions merely to make an
+# ordinary SSH account read it. Retrieve this bounded document through the
+# same sudo authority that ran the helper, then keep the local copy private.
+ssh "$NODE" "sudo cat '$signer_fence_remote'" >"$RUN/signer-fence-receipt.v1.json"
+chmod 600 "$RUN/signer-fence-receipt.v1.json"
 "$ROOT/scripts/verify-signer-fence-receipt.sh" --receipt "$RUN/signer-fence-receipt.v1.json" \
   --run-id "${GDC_RUN_ID:-manual}" --consensus-pubkey "$signer_consensus_pubkey"
 record_join_state "$NODE" SIGNER_FENCE_VERIFIED "$ADDRESS"

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 [[ $# -eq 2 ]] || { echo "Usage: $0 DEPLOY_DIR REFERENCE_RPC" >&2; exit 2; }
 deploy="$1"; reference="${2%/}"
-[[ -d "$deploy" && "$reference" =~ ^https://[A-Za-z0-9.-]+/chain-rpc$ ]] || { echo 'invalid canary wait input' >&2; exit 2; }
+[[ -d "$deploy" && "$reference" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc$ ]] || { echo 'invalid canary wait input' >&2; exit 2; }
 max_lag="${GDC_JOIN_CANARY_MAX_LAG_BLOCKS:-5}"
 [[ "$max_lag" =~ ^[0-9]+$ ]] || { echo 'invalid canary lag bound' >&2; exit 2; }
 deadline=$((SECONDS + ${GDC_JOIN_SYNC_TIMEOUT_SECONDS:-3600}))

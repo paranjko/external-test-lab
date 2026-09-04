@@ -57,7 +57,7 @@ if [[ -n "$STATE_SYNC_ENV" ]]; then
   source "$STATE_SYNC_ENV"
   [[ "${GDC_JOIN_BOOTSTRAP_MODE:-}" == state_sync && "${GDC_JOIN_TRUST_HEIGHT:-}" =~ ^[1-9][0-9]*$ && "${GDC_JOIN_TRUST_HASH:-}" =~ ^[0-9a-f]{64}$ ]] \
     || { echo 'state-sync environment is incomplete' >&2; exit 1; }
-  [[ "${GDC_JOIN_RPC_SERVER_1:-}" =~ ^https://[A-Za-z0-9.-]+/chain-rpc/$ && "${GDC_JOIN_RPC_SERVER_2:-}" =~ ^https://[A-Za-z0-9.-]+/chain-rpc/$ && "$GDC_JOIN_RPC_SERVER_1" != "$GDC_JOIN_RPC_SERVER_2" ]] \
+  [[ "${GDC_JOIN_RPC_SERVER_1:-}" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc/$ && "${GDC_JOIN_RPC_SERVER_2:-}" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc/$ && "$GDC_JOIN_RPC_SERVER_1" != "$GDC_JOIN_RPC_SERVER_2" ]] \
     || { echo 'state-sync environment lacks independent RPC URLs' >&2; exit 1; }
   [[ "${GDC_JOIN_SNAPSHOT_PEERS:-}" =~ ^[0-9a-f]{40}@tcp://[A-Za-z0-9.-]+:[0-9]{2,5}(,[0-9a-f]{40}@tcp://[A-Za-z0-9.-]+:[0-9]{2,5})+$ ]] \
     || { echo 'state-sync environment lacks two P2P snapshot providers' >&2; exit 1; }

@@ -104,6 +104,6 @@ PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/gdc-home" GDC_JOIN_PROFILE="$tmp/join-profi
   "$tmp/runbook/scripts/inferenced.sh" version >"$tmp/profile-wrapper.out"
 grep -Fxq 'inferenced v9.9.9' "$tmp/profile-wrapper.out"
 ! grep -Fq wrong-path-cli "$tmp/profile-wrapper.out"
-grep -Fq 'ensure-inferenced-cli.sh" --join-profile "$GDC_JOIN_PROFILE"' "$ROOT/01-identities-genesis/create-cold-accounts.sh"
+grep -Fq 'ensure-inferenced-cli.sh" --allow-expired --join-profile "$GDC_JOIN_PROFILE"' "$ROOT/01-identities-genesis/create-cold-accounts.sh"
 
 printf 'PASS inferenced installation binds downstream CLI calls to the exact Join Profile\n'

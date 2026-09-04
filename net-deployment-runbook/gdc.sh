@@ -209,7 +209,12 @@ run_phase() {
     [[ -z "$diagnostic_envelope" ]] || export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic_envelope"
   fi
   if [[ "$phase" == join-* && -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]]; then
-    if (( rc == 0 )); then
+    # Existing-Host operator-state recovery deliberately runs in a fresh
+    # evidence directory but does not create a new deployment authority.  The
+    # prior completed run remains the only signer restart authority.
+    if [[ "${GDC_JOIN_PRESERVE_PRIOR_RUN:-false}" == true || -n "$(find "$run_dir" -maxdepth 2 -type f -name preserve-prior-run -print -quit 2>/dev/null)" ]]; then
+      printf 'READY JOIN recovery preserved the prior completed run authority\n'
+    elif (( rc == 0 )); then
       # A successful phase has completed the guarded signer readback, so it
       # may replace the pre-start conservative terminal result.
       if ! record_join_terminal_result succeeded acceptance internal join_complete 0 signer_may_be_on enabled not_applicable; then
@@ -579,7 +584,7 @@ case "$COMMAND" in
     [[ -s "$backup_role_config" ]] || { echo "host backup requires retained operator state for $backup_alias; a running Host cannot recreate cold or warm recovery material" >&2; exit 1; }
     export GDC_ENV="$backup_role_config"
     source "$ROOT/scripts/lib.sh"
-    load_project
+    load_project host-recovery
     run_phase "backup-$backup_alias" "$ROOT/scripts/phase-host-backup.sh" "$backup_alias"
     ;;
   prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit)
@@ -816,6 +821,7 @@ case "$COMMAND" in
     if [[ "$node_action" != reset ]]; then
       use_node_data_home "$1"
       source "$ROOT/scripts/lib.sh"
+      load_retained_join_profile_for_node "$1"
       load_project
       topology_contains_node "$1" || { echo "node $node_action expects an alias from GDC_NODE_ALIASES, got: $1" >&2; exit 2; }
     fi
@@ -1015,6 +1021,7 @@ case "$COMMAND" in
         echo 'host join refuses an unsafe retained active run identifier' >&2; exit 2;
       }
     fi
+    export GDC_JOIN_PREVIOUS_RUN_ID="$join_previous_run_id"
     [[ -n "$join_public_host" ]] || { echo 'host join requires --public-host for a generated Join Profile' >&2; exit 2; }
     if [[ -n "$join_resume_run" ]]; then
       join_run="$GDC_HOME/runs/$join_resume_run/join-$join_alias"
@@ -1042,7 +1049,9 @@ case "$COMMAND" in
             "$join_alias" "$join_run"
           ;;
         COMPLETE)
-          record_join_terminal_result no_op acceptance internal join_complete_no_op 0 signer_may_be_on enabled resume_same_run
+          # Keep the successful completion receipt intact: node start uses it
+          # as the authority to restart the signer.  This invocation is
+          # recorded in its run log, not by downgrading the retained result.
           printf 'PASS Host JOIN resume is already complete; no Host action was performed\n'
           ;;
         *)
@@ -1135,7 +1144,10 @@ case "$COMMAND" in
           ;;
         completed_matched)
           head_name="$(find "$previous_join_run/receipts" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json' -printf '%f\n' | LC_ALL=C sort | tail -n1)"
-          if ! "$ROOT/scripts/verify-complete-join-state.sh" "$join_alias" "$GDC_JOIN_PROFILE" "$previous_join_run/receipts/$head_name"; then
+          # Semantic equality was established against the fresh profile above.
+          # Remote deployment binding is intentionally checked against the
+          # original retained file, whose invocation metadata has its own SHA.
+          if ! "$ROOT/scripts/verify-complete-join-state.sh" "$join_alias" "$previous_join_run/join-profile.v1.json" "$previous_join_run/receipts/$head_name"; then
             record_join_terminal_result refused acceptance host completed_join_readback_failed 1 none unknown manual_recovery
             echo 'host join completed-state readback failed; do not rerun a completed JOIN as a deployment mutation' >&2
             exit 1

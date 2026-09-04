@@ -36,6 +36,7 @@ class TestBootstrap(unittest.TestCase):
    d=Path(t)
    for name,mutate in (("api",lambda x:[s.pop("api",None) for s in x["seeds"]]),("one",lambda x:x.__setitem__("seeds",x["seeds"][:1])),("chain",lambda x:x.__setitem__("chain_id","bad/path"))):
     bad=document();mutate(bad);self.assertNotEqual(self.tool("verify",self.write(d,name+".json",bad)).returncode,0)
+   bad=document();bad["seeds"][0]["rpc"]="https://one.example/rpc";self.assertNotEqual(self.tool("verify",self.write(d,"unsupported-rpc-path.json",bad)).returncode,0)
  def test_pair_publication_retains_previous_pair(self):
   publisher=ROOT/"scripts/publish-network-bootstrap-pair.sh"
   with tempfile.TemporaryDirectory() as t:

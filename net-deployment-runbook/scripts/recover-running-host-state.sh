@@ -528,17 +528,39 @@ PROFILE_KIND=release
 case "$PROFILE_KIND" in
   generated_join)
     [[ -r "${GDC_JOIN_PROFILE:-}" ]] \
-      || die "$NODE recovery requires the generated JOIN profile used for the running deployment"
-    JOIN_PROFILE_HASH="$(sha256sum "$GDC_JOIN_PROFILE" | awk '{print $1}')"
+      || die "$NODE recovery requires a generated JOIN profile"
+    # The newly observed restore profile intentionally has a new run ID,
+    # operation and archive binding.  Read the immutable deployed profile
+    # from the Host, authenticate it against its deployment marker, then
+    # reconcile stable network/runtime/target fields with this restore intent.
+    DEPLOYED_JOIN_PROFILE="$RUN/deployed-join-profile.v1.json"
+    if ! ssh -T "$NODE" "cat /srv/dai/deploy/$NODE/gdc-join-profile.v1.json" >"$DEPLOYED_JOIN_PROFILE" 2>/dev/null; then
+      rm -f -- "$DEPLOYED_JOIN_PROFILE"
+      die "$NODE running deployment does not retain its generated JOIN profile"
+    fi
+    chmod 600 "$DEPLOYED_JOIN_PROFILE"
+    "$ROOT/scripts/join-profile.sh" validate --allow-expired "$DEPLOYED_JOIN_PROFILE" >/dev/null \
+      || die "$NODE retained deployment JOIN profile is invalid"
+    JOIN_PROFILE_HASH="$(sha256sum "$DEPLOYED_JOIN_PROFILE" | awk '{print $1}')"
     [[ "$JOIN_PROFILE_HASH" =~ ^[0-9a-f]{64}$ ]] \
       || die "$NODE generated JOIN profile hash is malformed"
     REMOTE_JOIN_PROFILE="$(ssh -T "$NODE" "cat /srv/dai/deploy/$NODE/.gdc-join-profile 2>/dev/null || true")"
     [[ "$REMOTE_JOIN_PROFILE" == "$JOIN_PROFILE_HASH" ]] \
       || die "$NODE running deployment does not match the generated JOIN profile"
-    EXPECTED_PROFILE_CORE_VERSION="$(jq -er '.spec.components.core.expected_runtime.version' "$GDC_JOIN_PROFILE")"
-    EXPECTED_PROFILE_CORE_COMMIT="$(jq -er '.spec.components.core.expected_runtime.commit' "$GDC_JOIN_PROFILE")"
-    EXPECTED_PROFILE_DAPI_VERSION="$(jq -er '.spec.components.dapi.expected_runtime.version' "$GDC_JOIN_PROFILE")"
-    EXPECTED_PROFILE_DAPI_COMMIT="$(jq -er '.spec.components.dapi.expected_runtime.commit' "$GDC_JOIN_PROFILE")"
+    jq -e --slurpfile fresh "$GDC_JOIN_PROFILE" '
+      .spec.network.chain_id == $fresh[0].spec.network.chain_id and
+      .spec.network.genesis_sha256 == $fresh[0].spec.network.genesis_sha256 and
+      .spec.target.node_name == $fresh[0].spec.target.node_name and
+      .spec.target.public_host == $fresh[0].spec.target.public_host and
+      .spec.target.public_p2p_address == $fresh[0].spec.target.public_p2p_address and
+      .spec.components.core.expected_runtime == $fresh[0].spec.components.core.expected_runtime and
+      .spec.components.dapi.expected_runtime == $fresh[0].spec.components.dapi.expected_runtime
+    ' "$DEPLOYED_JOIN_PROFILE" >/dev/null \
+      || die "$NODE fresh restore profile does not match the retained deployment network, runtime and target"
+    EXPECTED_PROFILE_CORE_VERSION="$(jq -er '.spec.components.core.expected_runtime.version' "$DEPLOYED_JOIN_PROFILE")"
+    EXPECTED_PROFILE_CORE_COMMIT="$(jq -er '.spec.components.core.expected_runtime.commit' "$DEPLOYED_JOIN_PROFILE")"
+    EXPECTED_PROFILE_DAPI_VERSION="$(jq -er '.spec.components.dapi.expected_runtime.version' "$DEPLOYED_JOIN_PROFILE")"
+    EXPECTED_PROFILE_DAPI_COMMIT="$(jq -er '.spec.components.dapi.expected_runtime.commit' "$DEPLOYED_JOIN_PROFILE")"
     [[ "$EXPECTED_PROFILE_CORE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ \
       && "$EXPECTED_PROFILE_CORE_COMMIT" =~ ^[0-9a-f]{40}$ \
       && "$EXPECTED_PROFILE_DAPI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ \

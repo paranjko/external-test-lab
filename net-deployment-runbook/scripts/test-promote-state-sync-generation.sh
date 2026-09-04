@@ -23,9 +23,12 @@ promote() {
 
 new="$data/${node}.generations/new"
 printf 'DATA_DIR=%s\n' "$new" >"$deploy/.env"
+env_owner="$(stat -c %u "$deploy/.env")"
+env_group="$(stat -c %g "$deploy/.env")"
 promote "$new" >"$tmp/first.out"
 [[ -L "$data/$node" && "$(readlink "$data/$node")" == "$new" ]]
 grep -qx "DATA_DIR=$data/$node" "$deploy/.env"
+[[ "$(stat -c %u "$deploy/.env")" == "$env_owner" && "$(stat -c %g "$deploy/.env")" == "$env_group" ]]
 jq -e '.state == "PROMOTED" and .generation == $generation' --arg generation "$new" "$deploy/.promotion-receipt.json" >/dev/null
 promote "$new" >"$tmp/repeat.out"
 grep -Fq 'already promoted' "$tmp/repeat.out"

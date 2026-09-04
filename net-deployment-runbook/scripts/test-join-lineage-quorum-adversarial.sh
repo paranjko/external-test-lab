@@ -20,11 +20,28 @@ cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 url="${!#}"; host="${url#https://}"; host="${host%%.*}"
+if [[ "$url" == */status || "$url" == */block\?height=* || "$url" == */chain-api/productscience/inference/inference/params ]]; then
+  resolved=''
+  for ((i = 1; i <= $#; i++)); do
+    [[ "${!i}" == --resolve ]] || continue
+    next=$((i + 1)); resolved="${!next}"; break
+  done
+  [[ "$resolved" == "${host}.example.test:"* ]] || { echo "missing pinned connection for $url" >&2; exit 23; }
+fi
 [[ "$MODE" != unavailable || "$host" != rpc-c ]] || exit 22
 height=5000
 [[ "$MODE" != ahead || "$host" != rpc-c ]] || height=100000
 case "$url" in
-  */status) printf '{"result":{"node_info":{"network":"gonka-fixture"},"sync_info":{"latest_block_height":"%s"}}}\n' "$height" ;;
+  */status)
+    case "$host" in
+      rpc-a) node_id=0123456789abcdef0123456789abcdef01234567 ;;
+      rpc-b) node_id=89abcdef0123456789abcdef0123456789abcdef ;;
+      rpc-c) node_id=1111111111111111111111111111111111111111 ;;
+      rpc-d) node_id=2222222222222222222222222222222222222222 ;;
+      *) exit 22 ;;
+    esac
+    printf '{"result":{"node_info":{"id":"%s","network":"gonka-fixture"},"sync_info":{"latest_block_height":"%s"}}}\n' "$node_id" "$height"
+    ;;
   */last_upgrade_height) printf '%s\n' '{"lastUpgradeHeight":"100","found":true}' ;;
   */chain-api/productscience/inference/inference/params)
     printf '%s\n' '{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v3","binary":"https://downloads.example.test/devshard-v3","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}}'
@@ -44,7 +61,7 @@ case "$url" in
 esac
 EOF
 chmod 0755 "$tmp/bin/curl"
-run() { PATH="$tmp/bin:$PATH" MODE="$1" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=a,rpc-b.example.test=b,rpc-c.example.test=c,rpc-d.example.test=d' "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --composition-env "$tmp/composition.env" --receipt "$tmp/$1.json" --env "$tmp/$1.env"; }
+run() { PATH="$tmp/bin:$PATH" MODE="$1" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=a,rpc-b.example.test=b,rpc-c.example.test=c,rpc-d.example.test=d' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12,rpc-d.example.test=192.0.2.13' "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --composition-env "$tmp/composition.env" --receipt "$tmp/$1.json" --env "$tmp/$1.env"; }
 run ahead
 run unavailable
 run incomplete

@@ -61,11 +61,17 @@ write_receipt() {
 }
 
 set_canonical_env() {
-  local temporary
+  local temporary owner group
+  owner="$(stat -c %u "$deploy/.env")"
+  group="$(stat -c %g "$deploy/.env")"
+  [[ "$owner" =~ ^[0-9]+$ && "$group" =~ ^[0-9]+$ ]] \
+    || { echo 'promotion_pointer_conflict: deployment environment ownership is unreadable' >&2; exit 1; }
   temporary="$(mktemp "$deploy/.env.XXXXXX")"
   chmod 600 "$temporary"
   awk -v canonical="$canonical" 'BEGIN {seen=0} /^DATA_DIR=/ {print "DATA_DIR=" canonical; seen=1; next} {print} END {if (!seen) exit 1}' "$deploy/.env" >"$temporary" \
     || { rm -f "$temporary"; echo 'promotion_pointer_conflict: deployment environment has no DATA_DIR' >&2; exit 1; }
+  chown "$owner:$group" "$temporary" \
+    || { rm -f "$temporary"; echo 'promotion_pointer_conflict: cannot preserve deployment environment ownership' >&2; exit 1; }
   sync -f "$temporary"
   mv -f "$temporary" "$deploy/.env"
   sync_dir "$deploy"

@@ -31,7 +31,7 @@ jq -e '.bootstrap.mode == "historical_replay" and .result.category == "historica
   "$ROOT/test/fixtures/join-lineage-preflight-unsupported-replay.json" >/dev/null
 
 cat >"$tmp/bootstrap.json" <<'EOF'
-{"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-fixture","genesis":{"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://rpc-a.example.test/chain-rpc","p2p":"tcp://rpc-a.example.test:5000","api":"https://rpc-a.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://rpc-b.example.test/chain-rpc","p2p":"tcp://rpc-b.example.test:5000","api":"https://rpc-b.example.test"}],"brokers":[]}
+{"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-fixture","genesis":{"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://rpc-a.example.test/chain-rpc","p2p":"tcp://rpc-a.example.test:5000","api":"https://rpc-a.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://rpc-b.example.test/chain-rpc/","p2p":"tcp://rpc-b.example.test:5000","api":"https://rpc-b.example.test"},{"node_id":"fedcba9876543210fedcba9876543210fedcba98","rpc":"https://rpc-c.example.test/chain-rpc","p2p":"tcp://rpc-c.example.test:5000"}],"brokers":[]}
 EOF
 jq -n --arg bootstrap_sha "$(sha256sum "$tmp/bootstrap.json" | awk '{print $1}')" '
   {schema_version:1,kind:"gdc-network-observation",network_state_id:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",expires_at:"2999-01-01T00:00:00Z",bootstrap:{document_sha256:$bootstrap_sha,chain_id:"gonka-fixture",genesis_sha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},runtime:{core:{version:"0.2.15",commit:"4d687ed6782bcea3931d2d9135bf322f84e190ab"},dapi:{version:"0.2.15-post3",commit:"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}},runtime_api_origins:[{api_url:"https://rpc-a.example.test"}],result:{state:"ready",reason:"none"}}' >"$tmp/observation.json"
@@ -41,6 +41,15 @@ cat >"$tmp/bin/curl" <<'EOF'
 set -Eeuo pipefail
 url="${!#}"
 printf '%s\n' "$url" >>"${CURL_SPY:-/dev/null}"
+if [[ "$url" == */status || "$url" == */block\?height=* || "$url" == */chain-api/productscience/inference/inference/params ]]; then
+  resolved=''
+  for ((i = 1; i <= $#; i++)); do
+    [[ "${!i}" == --resolve ]] || continue
+    next=$((i + 1)); resolved="${!next}"; break
+  done
+  host="${url#*://}"; host="${host%%/*}"; host="${host%%:*}"
+  [[ "$resolved" == "${host}:"* ]] || { echo "missing pinned connection for $url" >&2; exit 23; }
+fi
 block() {
   local height="$1" block app
   case "$height" in
@@ -53,7 +62,14 @@ block() {
   printf '{"result":{"block_id":{"hash":"%s"},"block":{"header":{"height":"%s","app_hash":"%s"}}}}\n' "$block" "$height" "$app"
 }
 case "$url" in
-  */status) printf '%s\n' '{"result":{"node_info":{"network":"gonka-fixture"},"sync_info":{"latest_block_height":"5000"}}}' ;;
+  */status)
+    case "$url" in
+      *rpc-a.example.test*) node_id=0123456789abcdef0123456789abcdef01234567 ;;
+      *rpc-b.example.test*) node_id=89abcdef0123456789abcdef0123456789abcdef ;;
+      *) exit 22 ;;
+    esac
+    printf '{"result":{"node_info":{"id":"%s","network":"gonka-fixture"},"sync_info":{"latest_block_height":"5000"}}}\n' "$node_id"
+    ;;
   */last_upgrade_height) printf '%s\n' '{"lastUpgradeHeight":"100","found":true}' ;;
   */chain-api/productscience/inference/inference/params)
     printf '%s\n' '{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"3333333333333333333333333333333333333333333333333333333333333333"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"4444444444444444444444444444444444444444444444444444444444444444"},{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"5555555555555555555555555555555555555555555555555555555555555555"}]}}}'
@@ -69,7 +85,7 @@ EOF
 chmod 0755 "$tmp/bin/curl"
 
 run_preflight() {
-  PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/curl-spy" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' \
+  PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/curl-spy" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
     "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/receipt.json" --env "$tmp/lineage.env"
 }
 run_preflight >"$tmp/out"
@@ -84,6 +100,7 @@ jq -e '
   .bootstrap.snapshot.discovery == "p2p_canary_pending" and
   (.bootstrap.snapshot.providers | length == 2) and
   (.fault_domains | length == 2) and .signer.state == "PREPARED" and
+  ([.fault_domains[].rpc_url] | index("https://rpc-b.example.test/chain-rpc")) and
   (.devshard_compatibility.approvals | map(.name) == ["v3","v4","v5"]) and
   (.devshard_compatibility.sources | length == 2) and
   .result.terminal_state == "prepared"
@@ -111,18 +128,18 @@ source "$tmp/lineage.env"
 jq -e 'keys == ["v3","v4","v5"] and .v4.binary == "https://example.test/devshard-v4.zip"' \
   <<<"$GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON" >/dev/null
 
-if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=one,rpc-b.example.test=one' \
+if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=one,rpc-b.example.test=one' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/alias.json" --env "$tmp/alias.env" >"$tmp/alias.out" 2>"$tmp/alias.err"; then
   echo 'two aliases for one RPC fault domain unexpectedly passed' >&2; exit 1
 fi
 grep -Fq 'lineage_rpc_fault_domain_alias:' "$tmp/alias.err"
 
-PATH="$tmp/bin:$PATH" GDC_TEST_NO_SNAPSHOT=true GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' \
+PATH="$tmp/bin:$PATH" GDC_TEST_NO_SNAPSHOT=true GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/no-http.json" --env "$tmp/no-http.env" >"$tmp/no-http.out"
 jq -e '.bootstrap.snapshot.discovery == "p2p_canary_pending"' "$tmp/no-http.json" >/dev/null
 expired="$tmp/expired-observation.json"
 jq '.expires_at = "2000-01-01T00:00:00Z"' "$tmp/observation.json" >"$expired"
-if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' \
+if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$expired" --receipt "$tmp/expired.json" --env "$tmp/expired.env" >"$tmp/expired.out" 2>"$tmp/expired.err"; then
   echo 'expired observation unexpectedly passed' >&2; exit 1
 fi

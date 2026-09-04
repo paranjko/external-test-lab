@@ -3,13 +3,18 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf -- "$tmp"' EXIT
 cat >"$tmp/receipt.json" <<'EOF'
-{"bootstrap":{"trust":{"height":3000}},"fault_domains":[{"rpc_url":"https://rpc-a.example.test/chain-rpc"},{"rpc_url":"https://rpc-b.example.test/chain-rpc"}]}
+{"bootstrap":{"trust":{"height":3000,"expires_at":"2999-01-01T00:00:00Z"}},"fault_domains":[{"rpc_url":"https://rpc-a.example.test/chain-rpc","host":"rpc-a.example.test","port":443,"ip":"192.0.2.10"},{"rpc_url":"https://rpc-b.example.test/chain-rpc","host":"rpc-b.example.test","port":443,"ip":"192.0.2.11"}]}
 EOF
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 url="${!#}"
+if [[ "$url" == */status || "$url" == *height=* ]]; then
+  found=''
+  for ((i=1; i<=$#; i++)); do [[ "${!i}" == --resolve ]] && { j=$((i+1)); found="${!j}"; break; }; done
+  [[ "$found" == rpc-a.example.test:443:192.0.2.10 || "$found" == rpc-b.example.test:443:192.0.2.11 || "$url" == *join.example.test* ]] || exit 24
+fi
 case "$url" in
   */status) printf '%s\n' '{"result":{"sync_info":{"latest_block_height":"5000"}}}' ;;
   *height=5000)
@@ -29,6 +34,13 @@ if PATH="$tmp/bin:$PATH" GDC_TEST_BAD_APPHASH=true "$ROOT/scripts/verify-join-li
   echo 'fresh AppHash divergence unexpectedly verified' >&2; exit 1
 fi
 grep -Fq 'apphash_divergence:' "$tmp/divergence.err"
+PATH="$tmp/bin:$PATH" "$ROOT/scripts/verify-join-lineage-state.sh" http://join.example.test:8000/chain-rpc "$tmp/receipt.json" >"$tmp/http-port.out"
+expired="$tmp/expired-receipt.json"
+jq '.bootstrap.trust.expires_at = "2000-01-01T00:00:00Z"' "$tmp/receipt.json" >"$expired"
+if PATH="$tmp/bin:$PATH" "$ROOT/scripts/verify-join-lineage-state.sh" https://join.example.test/chain-rpc "$expired" >"$tmp/expired.out" 2>"$tmp/expired.err"; then
+  echo 'expired lineage trust unexpectedly verified' >&2; exit 1
+fi
+grep -Fq 'lineage_trust_expired:' "$tmp/expired.err"
 grep -Fq 'CONFIG_statesync__trust_height' "$ROOT/02-node/compose.yaml"
 grep -Fq 'CONFIG_statesync__trust_hash' "$ROOT/02-node/compose.yaml"
 grep -Fq 'CONFIG_statesync__rpc_servers' "$ROOT/02-node/compose.yaml"
@@ -42,6 +54,8 @@ grep -Fq 'enable_signer=true' "$ROOT/02-node/start-node.sh"
 grep -Fq 'unregistered local key' "$ROOT/02-node/start-node.sh"
 grep -Fq 'rtrimstr("/") + "/"' "$ROOT/02-node/verify-state-sync-config.sh"
 grep -Fq 'config_matches_receipt' "$ROOT/02-node/verify-state-sync-config.sh"
+grep -Fq 'lineage_trust_expired:' "$ROOT/02-node/verify-state-sync-config.sh"
+grep -Fq 'verify-lineage-trust-fresh.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify-join-lineage-state.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'record-state-sync-canary.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'lineage-state-sync-receipt.json' "$ROOT/scripts/phase-join.sh"
@@ -77,6 +91,8 @@ grep -Fq 'gdc-stage.XXXXXX' "$ROOT/02-node/install-node.sh"
 grep -Fq 'GDC_PROFILE_KIND' "$ROOT/02-node/install-node.sh"
 grep -Fq 'generated_join)' "$ROOT/02-node/install-node.sh"
 grep -Fq 'GDC_JOIN_PROFILE_SHA256' "$ROOT/02-node/install-node.sh"
+grep -Fq 'gdc-join-profile.v1.json' "$ROOT/02-node/install-node.sh"
+grep -Fq -- '--join-profile' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'different generated JOIN profile exists' "$ROOT/02-node/install-node.sh"
 grep -Fq 'legacy release deployment exists' "$ROOT/02-node/install-node.sh"
 grep -Fq 'generated JOIN deployment exists' "$ROOT/02-node/install-node.sh"
@@ -88,6 +104,8 @@ grep -Fq 'deployment_move_started=false' "$ROOT/02-node/install-node.sh"
 grep -Fq 'if [[ -e "$BACKUP" ]]; then' "$ROOT/02-node/install-node.sh"
 grep -Fq 'backup_move_started=true' "$ROOT/02-node/install-node.sh"
 grep -Fq 'deployment_move_started=true' "$ROOT/02-node/install-node.sh"
+grep -Fq '^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc/$' "$ROOT/02-node/render-node-env.sh"
+grep -Fq '^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc$' "$ROOT/02-node/wait-state-sync-canary.sh"
 grep -Fq 'restore-validator-backup.tar' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'restore_archive_sha256' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'validator backup archive changed after the JOIN profile was resolved' "$ROOT/scripts/phase-join.sh"

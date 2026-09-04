@@ -39,5 +39,17 @@ head="$(find "$receipts" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json'
 jq -e --arg run_id "$run_id" --arg node "$node_name" --arg profile "$profile_sha256" --arg observation "$observation_sha256" '
   .run_id == $run_id and .node_name == $node and .join_profile_sha256 == $profile and .network_observation_sha256 == $observation
 ' "$receipts/$head" >/dev/null || { echo 'resume receipt does not bind retained profile and observation' >&2; exit 1; }
+if [[ "$(jq -r .last_state <<<"$chain")" == COMPLETE ]]; then
+  result="$run_dir/join-result.v1.json"
+  [[ -f "$result" && ! -L "$result" && "$(stat -c %a "$result")" == 600 ]] \
+    || { echo 'COMPLETE resume is missing its successful terminal result' >&2; exit 1; }
+  jq -e --arg profile "$profile_sha256" '
+    type == "object" and .schema_version == 1 and .kind == "gdc-host-join-result"
+    and .outcome == "succeeded" and .phase == "acceptance" and .category == "internal"
+    and .reason == "join_complete" and .exit_code == 0
+    and .mutation == "signer_may_be_on" and .signer_state == "enabled"
+    and .resume == "not_applicable" and .join_profile_sha256 == $profile
+  ' "$result" >/dev/null || { echo 'COMPLETE resume terminal result is invalid or not bound to its profile' >&2; exit 1; }
+fi
 jq -cn --arg profile_sha256 "$profile_sha256" --arg observation_sha256 "$observation_sha256" --argjson receipt_chain "$chain" \
   '{resume_input_state:"verified",join_profile_sha256:$profile_sha256,network_observation_sha256:$observation_sha256,receipt_chain:$receipt_chain}'

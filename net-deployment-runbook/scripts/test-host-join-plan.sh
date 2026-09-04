@@ -112,8 +112,11 @@ observation_sha256="$(sha256sum "$observation" | awk '{print $1}')"
 completed_id=completed-join
 completed_run="$tmp/operator/validator-a/runs/$completed_id/join-validator-a"
 mkdir -p "$completed_run/receipts"
-install -m 0600 "$profile" "$completed_run/join-profile.v1.json"
 install -m 0600 "$observation" "$completed_run/network-observation.v1.json"
+jq -cS .spec "$profile" >"$tmp/completed-spec.json"
+"$ROOT/scripts/join-profile.sh" create --observation "$completed_run/network-observation.v1.json" \
+  --spec "$tmp/completed-spec.json" --operation restore --run-id "$completed_id" \
+  --output "$completed_run/join-profile.v1.json" >/dev/null
 completed_profile_sha256="$(sha256sum "$completed_run/join-profile.v1.json" | awk '{print $1}')"
 jq -cn --arg run_id "$completed_id" --arg profile "$completed_profile_sha256" --arg observation "$observation_sha256" '
   {schema_version:2,kind:"gdc-host-join-receipt",run_id:$run_id,operation:"restore",node_name:"validator-a",state:"COMPLETE",join_profile_sha256:$profile,network_observation_sha256:$observation,generation_id:$run_id,identity_fingerprints:{participant_address:"gonka1fixtureparticipant",consensus_pubkey:"fixture-consensus-key",p2p_node_id:"0123456789abcdef0123456789abcdef01234567",warm_address:"gonka1fixturewarm"},signer_ever_started:true,tmkms_state:{height:42,round:0,step:0,block_id:""},evidence:[{kind:"join_profile",sha256:$profile},{kind:"network_observation",sha256:$observation}],outcome:"succeeded",resume_policy:"resume_same_run"}
@@ -132,6 +135,21 @@ exit 0
 EOF
 chmod 0755 "$tmp/bin/ssh"
 : >"$tmp/remote-effects.log"
+# A receipt-chain COMPLETE is not enough to resume.  It must be paired with
+# the exact successful terminal result emitted by a completed JOIN.
+if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
+  "$ROOT/gdc.sh" host join --plan --resume "$completed_id" --public-host validator-a.example.test validator-a >"$tmp/complete-resume-invalid.out" 2>"$tmp/complete-resume-invalid.err"; then
+  echo 'COMPLETE resume accepted a terminal result with the wrong resume policy' >&2; exit 1
+fi
+grep -Fq 'COMPLETE resume terminal result is invalid or not bound to its profile' "$tmp/complete-resume-invalid.err" || {
+  sed -n '1,120p' "$tmp/complete-resume-invalid.err" >&2
+  exit 1
+}
+jq '.resume = "not_applicable"' "$completed_run/join-result.v1.json" >"$tmp/completed-result-fixed.json"
+install -m 0600 "$tmp/completed-result-fixed.json" "$completed_run/join-result.v1.json"
+PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
+  "$ROOT/gdc.sh" host join --plan --resume "$completed_id" --public-host validator-a.example.test validator-a >"$tmp/complete-resume-valid.out" 2>"$tmp/complete-resume-valid.err"
+grep -Fq "PASS Host JOIN resume plan verified run_id=$completed_id; no Host action was performed" "$tmp/complete-resume-valid.out"
 if ! PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
   "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
     --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/reentry.out" 2>"$tmp/reentry.err"; then

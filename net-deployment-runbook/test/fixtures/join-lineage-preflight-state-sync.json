@@ -16,8 +16,8 @@
     "snapshot": {"discovery": "p2p_canary_pending", "providers": ["0123456789abcdef0123456789abcdef01234567@tcp://rpc-a.example:5000", "89abcdef0123456789abcdef0123456789abcdef@tcp://rpc-b.example:5000"]}
   },
   "fault_domains": [
-    {"id": "domain-a", "rpc_url": "https://rpc-a.example/chain-rpc", "chain_id": "gonka-fixture", "genesis_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-    {"id": "domain-b", "rpc_url": "https://rpc-b.example/chain-rpc", "chain_id": "gonka-fixture", "genesis_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+    {"id": "domain-a", "rpc_url": "https://rpc-a.example/chain-rpc", "host": "rpc-a.example", "port": 443, "ip": "192.0.2.10", "chain_id": "gonka-fixture", "genesis_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+    {"id": "domain-b", "rpc_url": "https://rpc-b.example/chain-rpc", "host": "rpc-b.example", "port": 443, "ip": "192.0.2.11", "chain_id": "gonka-fixture", "genesis_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
   ],
   "checkpoints": {
     "early": {"height": 5, "block_id": "1111111111111111111111111111111111111111111111111111111111111111", "app_hash": "2222222222222222222222222222222222222222222222222222222222222222"},
