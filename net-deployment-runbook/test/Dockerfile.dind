@@ -2,7 +2,7 @@ FROM bats/bats:1.14.0 AS bats
 
 FROM docker:27-dind
 
-RUN apk add --no-cache bash coreutils curl jq openssl python3
+RUN apk add --no-cache bash coreutils curl findutils jq openssl py3-jsonschema python3
 COPY --from=bats /opt/bats /opt/bats
 
 ENV PATH="/opt/bats/bin:${PATH}"

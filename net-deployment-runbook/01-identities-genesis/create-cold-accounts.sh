@@ -4,7 +4,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 PASSWORD_FILE="${1:-$STATE/secrets/operator.keyring}"
 [[ -s "$PASSWORD_FILE" ]] || { echo "Missing $PASSWORD_FILE; run scripts/make-secrets.sh" >&2; exit 1; }
-"$ROOT/scripts/ensure-inferenced-cli.sh"
+if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+  "$ROOT/scripts/ensure-inferenced-cli.sh" --join-profile "$GDC_JOIN_PROFILE"
+else
+  "$ROOT/scripts/ensure-inferenced-cli.sh"
+fi
 PASSWORD="$(<"$PASSWORD_FILE")"
 shift || true
 BACKUP_DIR="$GDC_HOME/mnemonics"

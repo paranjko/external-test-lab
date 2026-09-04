@@ -48,104 +48,78 @@ release_profile_lock_sha256() {
   sha256sum "$lock_file" | awk '{print $1}'
 }
 
-# JOIN is an operator workflow, not a release-selection workflow.  A retained
-# lifecycle manifest is the authoritative local record for a recovery; a
-# requested profile may only agree with it.  A first JOIN uses the one current
-# Community DevNet Host profile.  Keeping this resolution before the operator
-# CLI is installed prevents a stale default from replacing an existing Host's
-# runtime merely because the caller omitted an internal implementation detail.
-join_profile_hash() {
-  local release="$1" deployment="$2" model="$3"
-  [[ -r "$ROOT/profiles/releases/$release.lock" ]] \
-    && [[ -r "$ROOT/profiles/deployments/$deployment.lock" ]] \
-    && [[ -r "$ROOT/profiles/models/$model.lock" ]] \
-    || return 1
-  sha256sum "$ROOT/profiles/releases/$release.lock" \
-    "$ROOT/profiles/deployments/$deployment.lock" \
-    "$ROOT/profiles/models/$model.lock" | awk '{print $1}' | sha256sum | awk '{print $1}'
-}
-
-resolve_join_release_profile() {
-  local requested_profile="${1:-}" restore_archive="${2:-}" active_run_id='' manifest='' retained_profile='' retained_hash='' retained_deployment='' retained_model='' candidate='' candidate_hash='' resolved_profile='' matches=()
-  [[ -z "$requested_profile" || "$requested_profile" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
-    || die 'invalid requested JOIN release profile'
-
-  if [[ -s "$STATE/active-run-id" ]]; then
-    active_run_id="$(<"$STATE/active-run-id")"
-    [[ "$active_run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
-      || die 'retained JOIN run ID is malformed; inspect local operator state before recovery'
-    manifest="$GDC_HOME/runs/$active_run_id/manifest.env"
-    if [[ -s "$manifest" ]]; then
-      retained_profile="$(awk -F= '$1 == "release_profile" { print $2; exit }' "$manifest")"
-      [[ "$retained_profile" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
-        || die 'retained JOIN manifest has no valid release profile; inspect local operator state before recovery'
-      retained_hash="$(awk -F= '$1 == "profile_hash" { print $2; exit }' "$manifest")"
-      if [[ -n "$retained_hash" ]]; then
-        [[ "$retained_hash" =~ ^[0-9a-f]{64}$ ]] \
-          || die 'retained JOIN manifest has an invalid profile hash; inspect local operator state before recovery'
-        retained_deployment="$(awk -F= '$1 == "deployment_profile" { print $2; exit }' "$manifest")"
-        retained_model="$(awk -F= '$1 == "model_profile" { print $2; exit }' "$manifest")"
-        [[ "$retained_deployment" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ && "$retained_model" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
-          || die 'retained JOIN manifest lacks a complete profile lineage; inspect local operator state before recovery'
-        for candidate in "$ROOT"/profiles/releases/*.lock; do
-          candidate="${candidate##*/}"
-          candidate="${candidate%.lock}"
-          candidate_hash="$(join_profile_hash "$candidate" "$retained_deployment" "$retained_model" || true)"
-          [[ "$candidate_hash" == "$retained_hash" ]] && matches+=("$candidate")
-        done
-        ((${#matches[@]} == 1)) \
-          || die 'retained JOIN profile hash does not resolve to exactly one available release; inspect local operator state before recovery'
-        resolved_profile="${matches[0]}"
-      else
-        [[ -r "$ROOT/profiles/releases/$retained_profile.lock" ]] \
-          || die "retained JOIN manifest names an unavailable release profile: $retained_profile"
-        resolved_profile="$retained_profile"
-      fi
-      [[ -z "$requested_profile" || "$requested_profile" == "$resolved_profile" ]] \
-        || die "host join release profile conflicts with retained operator lineage ($retained_profile); omit --release"
-      export GDC_RELEASE_PROFILE="$resolved_profile"
-      if [[ -n "$restore_archive" ]]; then
-        # A restore is a new recovery attempt. Its evidence must not append to
-        # an interrupted run whose immutable profile facts may predate it.
-        export GDC_JOIN_RECOVERY_NEW_RUN=true GDC_JOIN_RECOVERY_FROM_RUN_ID="$active_run_id"
-      fi
-      return 0
-    fi
-  fi
-
-  if [[ -n "$requested_profile" ]]; then
-    export GDC_RELEASE_PROFILE="$requested_profile"
-  elif [[ -z "${GDC_RELEASE_PROFILE:-}" ]]; then
-    export GDC_RELEASE_PROFILE=v2026.08.06
-  fi
-}
-
 run_manifest_path() {
   local run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   printf '%s/runs/%s/manifest.env\n' "$GDC_HOME" "$run_id"
+}
+
+join_profile_manifest_fields() {
+  local profile="${GDC_JOIN_PROFILE:-}"
+  [[ -r "$profile" ]] || die 'generated JOIN profile is not readable'
+  # The profile was freshness-checked immediately before the first mutating
+  # phase.  Later consumers use that immutable, receipt-bound document even
+  # when a long state-sync run crosses its short preflight TTL.
+  "$ROOT/scripts/join-profile.sh" validate --allow-expired "$profile" >/dev/null
+  JOIN_PROFILE_SHA256="$(sha256sum "$profile" | awk '{print $1}')"
+  JOIN_PROFILE_ID="$(jq -r .profile_id "$profile")"
+  JOIN_OBSERVATION_SHA256="$(jq -r .observation.sha256 "$profile")"
+  JOIN_NETWORK_STATE_ID="$(jq -r .observation.network_state_id "$profile")"
+  export JOIN_PROFILE_SHA256 JOIN_PROFILE_ID JOIN_OBSERVATION_SHA256 JOIN_NETWORK_STATE_ID
 }
 
 # Public observers do not load an operator role file, but they still need the
 # same immutable invocation envelope as mutation phases. This helper also
 # makes direct script execution fail closed instead of creating unbound output.
 ensure_run_manifest() {
-  local phase="$1" run_id manifest commit launcher_sha256 release_profile release_hash existing
+  local phase="$1" run_id manifest commit launcher_sha256 release_profile release_hash existing existing_fingerprint key expected profile_kind
   [[ -n "$phase" ]] || die 'run manifest requires a phase name'
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   export GDC_RUN_ID="$run_id"
   manifest="$(run_manifest_path)"
-  release_profile="${GDC_RELEASE_PROFILE:-v2026.07.23}"
-  release_hash="$(release_profile_lock_sha256)"
+  if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+    join_profile_manifest_fields
+    profile_kind=generated_join
+  else
+    profile_kind=release
+    release_profile="${GDC_RELEASE_PROFILE:-v2026.07.23}"
+    release_hash="$(release_profile_lock_sha256)"
+  fi
   mkdir -p "$(dirname "$manifest")"
   if [[ -s "$manifest" ]]; then
     grep -qx "run_id=$run_id" "$manifest" || die "run manifest belongs to another run ID"
     grep -qx "operator_data_home=$GDC_HOME" "$manifest" || die "run manifest belongs to another operator data home"
-    grep -qx "release_profile=$release_profile" "$manifest" || die "run manifest belongs to another release profile"
-    existing="$(awk -F= '$1 == "release_profile_sha256" {print $2; exit}' "$manifest")"
-    if [[ -n "$existing" ]]; then
-      [[ "$existing" == "$release_hash" ]] || die 'run manifest has a different release profile hash'
+    if [[ -n "${GDC_NETWORK_FINGERPRINT:-}" ]]; then
+      existing_fingerprint="$(awk -F= '$1 == "network_fingerprint" {print $2; exit}' "$manifest")"
+      [[ -n "$existing_fingerprint" && "$existing_fingerprint" == "$GDC_NETWORK_FINGERPRINT" ]] \
+        || die 'run_resume_mismatch: retained run does not match the currently observed network software fingerprint'
+    fi
+    # A JOIN may resume only the exact preflight that supplied its trust and
+    # P2P-provider inputs. The network fingerprint alone intentionally does
+    # not authorize a different trust tuple or snapshot-provider set.
+    for key in join_bootstrap_mode join_trust_height join_trust_hash join_snapshot_peers lineage_receipt_sha256; do
+      case "$key" in
+        join_bootstrap_mode) expected="${GDC_JOIN_BOOTSTRAP_MODE:-}" ;;
+        join_trust_height) expected="${GDC_JOIN_TRUST_HEIGHT:-}" ;;
+        join_trust_hash) expected="${GDC_JOIN_TRUST_HASH:-}" ;;
+        join_snapshot_peers) expected="${GDC_JOIN_SNAPSHOT_PEERS:-}" ;;
+        lineage_receipt_sha256) expected="${GDC_JOIN_LINEAGE_RECEIPT_SHA256:-}" ;;
+      esac
+      [[ -z "$expected" ]] && continue
+      existing="$(awk -F= -v key="$key" '$1 == key {print $2; exit}' "$manifest")"
+      [[ "$existing" == "$expected" ]] || die "run_resume_mismatch: retained run does not match the lineage preflight $key"
+    done
+    if [[ "$profile_kind" == generated_join ]]; then
+      grep -qx 'profile_kind=generated_join' "$manifest" || die 'run manifest belongs to another profile kind'
+      grep -qx "join_profile_sha256=$JOIN_PROFILE_SHA256" "$manifest" || die 'run manifest belongs to another generated JOIN profile'
+      grep -qx "network_observation_sha256=$JOIN_OBSERVATION_SHA256" "$manifest" || die 'run manifest belongs to another network observation'
     else
-      printf 'release_profile_sha256=%s\n' "$release_hash" >>"$manifest"
+      grep -qx "release_profile=$release_profile" "$manifest" || die "run manifest belongs to another release profile"
+      existing="$(awk -F= '$1 == "release_profile_sha256" {print $2; exit}' "$manifest")"
+      if [[ -n "$existing" ]]; then
+        [[ "$existing" == "$release_hash" ]] || die 'run manifest has a different release profile hash'
+      else
+        printf 'release_profile_sha256=%s\n' "$release_hash" >>"$manifest"
+      fi
     fi
     return 0
   fi
@@ -159,8 +133,22 @@ ensure_run_manifest() {
     printf 'operator_data_home=%s\n' "$GDC_HOME"
     printf 'runbook_commit=%s\n' "$commit"
     printf 'gdc_launcher_sha256=%s\n' "$launcher_sha256"
-    printf 'release_profile=%s\n' "$release_profile"
-    printf 'release_profile_sha256=%s\n' "$release_hash"
+    printf 'profile_kind=%s\n' "$profile_kind"
+    if [[ "$profile_kind" == generated_join ]]; then
+      printf 'join_profile_id=%s\njoin_profile_sha256=%s\nnetwork_observation_sha256=%s\nnetwork_state_id=%s\n' \
+        "$JOIN_PROFILE_ID" "$JOIN_PROFILE_SHA256" "$JOIN_OBSERVATION_SHA256" "$JOIN_NETWORK_STATE_ID"
+    else
+      printf 'release_profile=%s\n' "$release_profile"
+      printf 'release_profile_sha256=%s\n' "$release_hash"
+    fi
+    [[ -z "${GDC_NETWORK_FINGERPRINT:-}" ]] || printf 'network_fingerprint=%s\n' "$GDC_NETWORK_FINGERPRINT"
+    [[ -z "${GDC_NETWORK_CHAIN_ID:-}" ]] || printf 'network_chain_id=%s\n' "$GDC_NETWORK_CHAIN_ID"
+    [[ -z "${GDC_NETWORK_GENESIS_SHA256:-}" ]] || printf 'network_genesis_sha256=%s\n' "$GDC_NETWORK_GENESIS_SHA256"
+    [[ -z "${GDC_JOIN_BOOTSTRAP_MODE:-}" ]] || printf 'join_bootstrap_mode=%s\n' "$GDC_JOIN_BOOTSTRAP_MODE"
+    [[ -z "${GDC_JOIN_TRUST_HEIGHT:-}" ]] || printf 'join_trust_height=%s\n' "$GDC_JOIN_TRUST_HEIGHT"
+    [[ -z "${GDC_JOIN_TRUST_HASH:-}" ]] || printf 'join_trust_hash=%s\n' "$GDC_JOIN_TRUST_HASH"
+    [[ -z "${GDC_JOIN_SNAPSHOT_PEERS:-}" ]] || printf 'join_snapshot_peers=%s\n' "$GDC_JOIN_SNAPSHOT_PEERS"
+    [[ -z "${GDC_JOIN_LINEAGE_RECEIPT_SHA256:-}" ]] || printf 'lineage_receipt_sha256=%s\n' "$GDC_JOIN_LINEAGE_RECEIPT_SHA256"
     [[ -z "${GDC_JOIN_RECOVERY_FROM_RUN_ID:-}" ]] || printf 'recovery_of_run_id=%s\n' "$GDC_JOIN_RECOVERY_FROM_RUN_ID"
     [[ -z "${GDC_INVOCATION_COMMAND:-}" ]] || printf 'invocation_command=%q\n' "$GDC_INVOCATION_COMMAND"
     [[ -z "${GDC_INVOCATION_CWD:-}" ]] || printf 'invocation_cwd=%q\n' "$GDC_INVOCATION_CWD"
@@ -169,7 +157,7 @@ ensure_run_manifest() {
 }
 
 write_phase_lineage() {
-  local bundle="$1" chain_id="$2" hash="$3" manifest lineage release_hash profile_hash commit
+  local bundle="$1" chain_id="$2" hash="$3" manifest lineage release_hash profile_hash commit profile_kind join_profile_sha
   [[ -d "$bundle" ]] || die "phase bundle directory is absent: $bundle"
   [[ "$chain_id" =~ ^[A-Za-z0-9._-]+$ ]] || die 'phase lineage requires a chain ID'
   [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die 'phase lineage requires a Genesis SHA-256'
@@ -178,15 +166,19 @@ write_phase_lineage() {
   manifest="$(run_manifest_path)"
   require_run_manifest_lineage "$manifest" "$hash" "$chain_id"
   lineage="$bundle/lineage.env"
+  profile_kind="$(awk -F= '$1 == "profile_kind" {print $2; exit}' "$manifest")"
   release_hash="$(awk -F= '$1 == "release_profile_sha256" {print $2; exit}' "$manifest")"
+  join_profile_sha="$(awk -F= '$1 == "join_profile_sha256" {print $2; exit}' "$manifest")"
   profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$manifest")"
   commit="$(awk -F= '$1 == "runbook_commit" {print $2; exit}' "$manifest")"
   if [[ -s "$lineage" ]]; then
-    grep -qx "run_id=$GDC_RUN_ID" "$lineage" \
-      && grep -qx "chain_id=$chain_id" "$lineage" \
-      && grep -qx "genesis_sha256=$hash" "$lineage" \
-      && grep -qx "release_profile_sha256=$release_hash" "$lineage" \
-      || die 'phase bundle lineage is stale or mismatched'
+    grep -qx "run_id=$GDC_RUN_ID" "$lineage" && grep -qx "chain_id=$chain_id" "$lineage" \
+      && grep -qx "genesis_sha256=$hash" "$lineage" || die 'phase bundle lineage is stale or mismatched'
+    if [[ "$profile_kind" == generated_join ]]; then
+      grep -qx "join_profile_sha256=$join_profile_sha" "$lineage" || die 'phase bundle lineage is stale or mismatched'
+    else
+      grep -qx "release_profile_sha256=$release_hash" "$lineage" || die 'phase bundle lineage is stale or mismatched'
+    fi
     return 0
   fi
   {
@@ -194,8 +186,13 @@ write_phase_lineage() {
     printf 'run_id=%s\n' "$GDC_RUN_ID"
     printf 'chain_id=%s\n' "$chain_id"
     printf 'genesis_sha256=%s\n' "$hash"
-    printf 'release_profile=%s\n' "${GDC_RELEASE_PROFILE:-v2026.07.23}"
-    printf 'release_profile_sha256=%s\n' "$release_hash"
+    printf 'profile_kind=%s\n' "${profile_kind:-release}"
+    if [[ "$profile_kind" == generated_join ]]; then
+      printf 'join_profile_sha256=%s\n' "$join_profile_sha"
+    else
+      printf 'release_profile=%s\n' "${GDC_RELEASE_PROFILE:-v2026.07.23}"
+      printf 'release_profile_sha256=%s\n' "$release_hash"
+    fi
     [[ -z "$profile_hash" ]] || printf 'profile_hash=%s\n' "$profile_hash"
     printf 'runbook_commit=%s\n' "$commit"
   } >"$lineage"
@@ -457,7 +454,11 @@ genesis_sha256() {
 # Variables initialized here are consumed by scripts that source this library.
 # shellcheck disable=SC2034
 load_project() {
-  ROOT="$(kit_root)"
+  # A launcher may be invoked from a dedicated worktree.  In that case it
+  # sets ROOT from its own resolved path before sourcing this library; do not
+  # replace it with the caller's current source-stack root.  Stand-alone
+  # scripts do not pre-set ROOT and retain the conventional kit-root lookup.
+  ROOT="${ROOT:-$(kit_root)}"
   init_gdc_paths
   ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"
   # OPS owns the root .env, while GENESIS and JOIN own their per-Host data
@@ -505,11 +506,15 @@ load_project() {
   fi
   # shellcheck disable=SC1091
   source "$ROOT/scripts/profile.sh"
-  resolved_profile_key="${GDC_RELEASE_PROFILE:-v2026.07.23}+${GDC_DEPLOYMENT_PROFILE:-community-lab}+${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
-  if [[ -z "${GDC_RESOLVED_IMAGE_LOCK:-}" && -r "$STATE/resolved-images/$resolved_profile_key.lock" ]]; then
-    export GDC_RESOLVED_IMAGE_LOCK="$STATE/resolved-images/$resolved_profile_key.lock"
+  if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+    load_join_profile "$GDC_JOIN_PROFILE"
+  else
+    resolved_profile_key="${GDC_RELEASE_PROFILE:-v2026.07.23}+${GDC_DEPLOYMENT_PROFILE:-community-lab}+${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
+    if [[ -z "${GDC_RESOLVED_IMAGE_LOCK:-}" && -r "$STATE/resolved-images/$resolved_profile_key.lock" ]]; then
+      export GDC_RESOLVED_IMAGE_LOCK="$STATE/resolved-images/$resolved_profile_key.lock"
+    fi
+    load_profiles
   fi
-  load_profiles
   set +a
   if [[ "$caller_genesis_node_set" == true ]]; then export GDC_GENESIS_NODE="$caller_genesis_node"; fi
   if [[ "$caller_public_edge_node_set" == true ]]; then export GDC_PUBLIC_EDGE_NODE="$caller_public_edge_node"; fi
@@ -557,6 +562,16 @@ record_phase_profile() {
   local phase="$1" file
   file="$STATE/phase-profiles/$phase.env"
   mkdir -p "$(dirname "$file")"
+  if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+    join_profile_manifest_fields
+    {
+      printf 'profile_kind=generated_join\njoin_profile_id=%s\njoin_profile_sha256=%s\nnetwork_observation_sha256=%s\n' \
+        "$JOIN_PROFILE_ID" "$JOIN_PROFILE_SHA256" "$JOIN_OBSERVATION_SHA256"
+    } >"$file"
+    while IFS= read -r line; do printf 'PROFILE phase=%s %s\n' "$phase" "$line"; done <"$file"
+    record_run_manifest "$phase"
+    return 0
+  fi
   {
     profile_summary
     printf 'profile_hash=%s\n' "$(profile_hash)"
@@ -574,6 +589,7 @@ record_phase_profile() {
 record_run_manifest() {
   local phase="$1" run_id manifest commit existing_profile
   ensure_run_manifest "$phase"
+  [[ -z "${GDC_JOIN_PROFILE:-}" ]] || return 0
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   manifest="$GDC_HOME/runs/$run_id/manifest.env"
   mkdir -p "$(dirname "$manifest")"

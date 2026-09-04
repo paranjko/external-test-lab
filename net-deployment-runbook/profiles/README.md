@@ -1,6 +1,6 @@
 # Profile boundaries and upstream verification
 
-The runbook deliberately keeps four independent profile classes:
+The runbook deliberately keeps five independent profile classes:
 
 | Profile | Owns | Does not claim |
 | --- | --- | --- |
@@ -8,6 +8,7 @@ The runbook deliberately keeps four independent profile classes:
 | deployments | Community Test Lab chain parameters, storage dependencies, hardware compatibility and governed DevShard overlays | That these inputs belong to the core Gonka tag |
 | models | Model identity, revision and PoC/runtime parameters | A Gonka software release |
 | operator-services | Caddy, Prometheus, Grafana, Alertmanager and exporters | Consensus, inference or protocol compatibility |
+| join-host-defaults | Runbook-owned Host defaults used by a generated JOIN profile | A network runtime target, release selection or per-chain policy |
 
 The network profile hash covers release + deployment + model. Operator-service
 software has a separate hash, so updating Grafana cannot silently change the
@@ -60,6 +61,31 @@ other protocol state. Those values come from the network Bootstrap, live chain
 state and the selected deployment profile. MLNode versions observed across
 Mainnet are heterogeneous; the lock keeps the documented compatible MLNode
 baseline and does not claim that every operator runs the same ML image.
+
+## Generated Host JOIN profiles
+
+Ordinary `gdc host join` does not select a local release profile. Bootstrap
+seeds establish chain identity and expose connected peers. Each unique public
+software endpoint receives at most one vote, and a peer vote also requires an
+address-bound CometBFT identity or DAPI block header for the requested chain.
+JOIN selects the strict-majority DAPI tuple, selects the strict-majority Core
+tuple inside that DAPI cohort, and requires quorum support for the resulting
+observed pair. It then resolves matching Core/DAPI binary release assets and
+OCI manifest digests from the official Gonka and race-releases GitHub
+publishers and GHCR.
+For a Cosmovisor-only DAPI update, it separately verifies the immutable
+upstream Host-stack Compose snapshot in `join-host-defaults.lock`: its Core
+image tag must equal the observed Core version, and its API image remains the
+verified base container for the observed DAPI binary. That source, its digest
+and the resolved API digest are recorded in the generated Join Profile. The
+local defaults supply only this Host-stack baseline, non-runtime Host defaults,
+the MLNode baseline and bounded JOIN timing. They cannot substitute a candidate
+or infer a different Core or DAPI version.
+
+If an observed tuple has no exact official release asset, tag-to-commit binding
+or registry manifest, JOIN writes its bounded preflight receipt and stops
+before Host mutation. Operators must not repair that condition by choosing a
+nearby local release lock.
 
 ## Verification findings
 
