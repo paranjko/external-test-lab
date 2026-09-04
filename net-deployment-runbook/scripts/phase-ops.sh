@@ -839,7 +839,8 @@ if [[ "$COMPONENT" == site ]]; then
   rsync -a --delete "$SITE_ASSETS_RENDER/" "$PUBLIC_EDGE_NODE:$site_remote/site/"
   ssh -T "$PUBLIC_EDGE_NODE" "set -Eeuo pipefail
     sudo install -d -m 0755 /srv/dai/edge/site
-    sudo rsync -a --delete --exclude preview/ '$site_remote/site/' /srv/dai/edge/site/
+    site_owner_group=\"\$(sudo stat -c '%u:%g' /srv/dai/edge/site)\"
+    sudo rsync -a --delete --chown=\"\$site_owner_group\" --exclude preview/ '$site_remote/site/' /srv/dai/edge/site/
     rm -rf '$site_remote'
     cd /srv/dai/edge
     if [[ \"${GDC_SITE_KEEP_CADDY:-false}\" == true ]]; then

@@ -37,9 +37,11 @@ printf '%s\n' "$OPS_AUTHORIZED_KEY" >"/home/$OPS_USER/.ssh/authorized_keys"
 chown "$OPS_USER:$OPS_USER" "/home/$OPS_USER/.ssh/authorized_keys"
 
 # The workflow preserves config.js. The deploy account owns only the static
-# site directory required to replace browser assets without changing it.
+# site tree required to replace browser assets without changing it.
 install -d -o "$OPS_USER" -g "$OPS_USER" -m 0775 "$SITE_ROOT"
-chown "$OPS_USER:$OPS_USER" "$SITE_ROOT"
+# Repair ownership of existing root-owned releases as well as the directory
+# itself. This is intentionally idempotent so provisioning repairs drift.
+chown -R "$OPS_USER:$OPS_USER" "$SITE_ROOT"
 # `/srv/dai` deliberately remains private to the deployment owner. Grant the
 # deploy account traversal only; it cannot list or read other operator data.
 "$SETFACL_BIN" -m "u:$OPS_USER:--x" /srv/dai
