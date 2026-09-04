@@ -2,8 +2,8 @@
 set -eu
 
 # Read one official gateway /v1/status JSON document from stdin. The official
-# single-runtime response exposes `routable`; pooled v3 omits it and instead
-# exposes capacity plus runtime lifecycle state.
+# Single-runtime responses may expose either `routable` or only the exact
+# escrow lifecycle. Pooled responses expose capacity plus runtime state.
 jq -e '
   def active_unblocked:
     [.devshards[]?
@@ -20,10 +20,20 @@ jq -e '
   # intentionally suspended. A positive snapshot is not safely routable then.
   def normal_confirmation:
     ([.confirmation_poc_phase?, (.devshards[]? | .confirmation_poc_phase?)]
-      | map(select(type == "string" and . != "" and . != "NORMAL_OPERATION"))
+      | map(select(type == "string"
+          and . != ""
+          and . != "NORMAL_OPERATION"
+          and . != "CONFIRMATION_POC_COMPLETED"))
       | length) == 0;
+  def single_runtime_ready:
+    ((.escrow_id // "") | tostring | test("^[1-9][0-9]*$"))
+    and (.phase // "") == "active"
+    and (.chain_phase // "") == "Inference"
+    and (.requests_blocked == false)
+    and ((.balance // 0) | tonumber) > 0;
   normal_confirmation and (
     ((.routable == true) and (([.devshards[]?] | length) == 0 or active_unblocked))
     or (positive_capacity and active_unblocked)
+    or single_runtime_ready
   )
 ' >/dev/null

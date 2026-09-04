@@ -99,6 +99,15 @@ case "$url" in
   http://127.0.0.1:1317/productscience/inference/inference/params)
     payload='{"params":{"epoch_params":{"epoch_length":"100","epoch_shift":"0","poc_stage_duration":"2","poc_exchange_duration":"2","poc_validation_delay":"2","poc_validation_duration":"2","set_new_validators_delay":"2"}}}'
     ;;
+  http://127.0.0.1:1317/productscience/inference/inference/devshard_escrow/*)
+    escrow_id="${url##*/}"
+    if [[ -s "$GDC_TEST_CHAIN_ESCROW_ABSENT" \
+      && "$(<"$GDC_TEST_CHAIN_ESCROW_ABSENT")" == "$escrow_id" ]]; then
+      payload='{"escrow":null,"found":false}'
+    else
+      payload='{"escrow":{"id":"'"$escrow_id"'","model_id":"Qwen/Qwen3-0.6B","settled":false},"found":true}'
+    fi
+    ;;
   http://127.0.0.1:18080/v1/admin/settings|http://127.0.0.1:18085/v1/admin/settings)
     if [[ "$method" == GET && "$url" == http://127.0.0.1:18085/* \
       && -e "$GDC_TEST_TARGET_SETTINGS_DELAY" ]]; then
@@ -127,25 +136,43 @@ case "$url" in
     printf '%s\n' "$data" >"$GDC_TEST_LAST_ESCROW_CREATE"
     printf 'create\n' >>"$GDC_TEST_ESCROW_CREATE_COUNT"
     : >"$GDC_TEST_TARGET_CREATED"
-    payload='{"escrow_id":"52","registered":true}'
+    rm -f "$GDC_TEST_TARGET_ESCROW_MISSING"
+    created_escrow=52
+    [[ ! -s "$GDC_TEST_ESCROW_CREATE_ID" ]] \
+      || created_escrow="$(<"$GDC_TEST_ESCROW_CREATE_ID")"
+    payload='{"escrow_id":"'"$created_escrow"'","registered":true}'
     if [[ -e "$GDC_TEST_CREATE_RESPONSE_LOSS" ]]; then
       exit 28
     fi
     ;;
   http://127.0.0.1:18080/v1/admin/state)
     if [[ -e "$GDC_TEST_PROMOTED" ]]; then
-      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{"Qwen/Qwen3-0.6B":{"routable":true}}},"devshards":[{"id":"52","model":"Qwen/Qwen3-0.6B","active":true,"protocol_version":"v5","route_prefix":"/devshard/v5","runtime":{"phase":"active","chain_phase":"Inference","session_version":"v5","active_requests":0}}]}'
+      promoted_escrow=52
+      [[ ! -s "$GDC_TEST_PROMOTED_ESCROW_OVERRIDE" ]] \
+        || promoted_escrow="$(<"$GDC_TEST_PROMOTED_ESCROW_OVERRIDE")"
+      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"total_weight":100,"routable":true}}},"devshards":[{"id":"'"$promoted_escrow"'","model":"Qwen/Qwen3-0.6B","active":true,"protocol_version":"v5","route_prefix":"/devshard/v5","runtime":{"phase":"active","chain_phase":"Inference","session_version":"v5","active_requests":0}}]}'
     elif [[ -e "$GDC_TEST_FREEZE_NO_ESCROW" ]]; then
       payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{}},"devshards":[]}'
     else
-      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{"Qwen/Qwen3-0.6B":{"routable":true}}},"devshards":[{"id":"41","model":"Qwen/Qwen3-0.6B","active":true,"protocol_version":"v4","route_prefix":"/devshard/v4","runtime":{"phase":"active","chain_phase":"Inference","session_version":"v4","active_requests":0}}]}'
+      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"total_weight":100,"routable":true}}},"devshards":[{"id":"41","model":"Qwen/Qwen3-0.6B","active":true,"route_prefix":"/devshard/v4","runtime":{"phase":"active","chain_phase":"Inference","session_version":"v4","active_requests":0}}]}'
+      if [[ -s "$GDC_TEST_SOURCE_ESCROW_OVERRIDE" ]]; then
+        payload="$(jq -c --arg id "$(<"$GDC_TEST_SOURCE_ESCROW_OVERRIDE")" '.devshards[0].id=$id' <<<"$payload")"
+      fi
     fi
     ;;
   http://127.0.0.1:18085/v1/admin/state)
-    if [[ -e "$GDC_TEST_AMBIGUOUS_TARGET" ]]; then
-      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{"Qwen/Qwen3-0.6B":{"routable":true}}},"devshards":[{"id":"52","model":"Qwen/Qwen3-0.6B","route_prefix":"/devshard/v5"},{"id":"53","model":"Qwen/Qwen3-0.6B","route_prefix":"/devshard/v5"}]}'
+    if [[ -e "$GDC_TEST_TARGET_ESCROW_MISSING" ]]; then
+      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{}},"devshards":[]}'
+    elif [[ -e "$GDC_TEST_AMBIGUOUS_TARGET" ]]; then
+      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"total_weight":100,"routable":true}}},"devshards":[{"id":"52","model":"Qwen/Qwen3-0.6B","route_prefix":"/devshard/v5"},{"id":"53","model":"Qwen/Qwen3-0.6B","route_prefix":"/devshard/v5"}]}'
     elif [[ -e "$GDC_TEST_TARGET_CREATED" ]]; then
-      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{"Qwen/Qwen3-0.6B":{"routable":true}}},"devshards":[{"id":"52","model":"Qwen/Qwen3-0.6B","active":true,"protocol_version":"v5","route_prefix":"/devshard/v5","runtime":{"phase":"active","chain_phase":"Inference","session_version":"v5","requests_blocked":false,"active_requests":0}}]}'
+      created_escrow=52
+      [[ ! -s "$GDC_TEST_ESCROW_CREATE_ID" ]] \
+        || created_escrow="$(<"$GDC_TEST_ESCROW_CREATE_ID")"
+      payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"total_weight":100,"routable":true}}},"devshards":[{"id":"'"$created_escrow"'","model":"Qwen/Qwen3-0.6B","active":true,"protocol_version":"v5","route_prefix":"/devshard/v5","runtime":{"phase":"active","chain_phase":"Inference","session_version":"v5","requests_blocked":false,"active_requests":0}}]}'
+      if [[ -e "$GDC_TEST_ZERO_CAPACITY" ]]; then
+        payload="$(jq -c '.capacity.models[].current_weight=0 | .capacity.models[].total_weight=0' <<<"$payload")"
+      fi
     else
       payload='{"limiter":{"in_flight_requests":0},"capacity":{"models":{}},"devshards":[]}'
     fi
@@ -185,6 +212,7 @@ DEVSHARD_ADMIN_API_KEY=admin-key
 DEVSHARD_API_KEYS=client-key
 DEVSHARD_PRIVATE_KEY=private-key-secret
 DEVSHARD_MODEL=Qwen/Qwen3-0.6B
+GDC_GATEWAY_CHAIN_REST=http://127.0.0.1:1317
 DEVSHARD_PORT=$port
 DEVSHARD_ROUTE_PREFIX=/devshard/$version
 DEVSHARD_BINARY_SHA256=$(if [[ "$version" == v4 ]]; then printf '%064d' 4; else printf '%064d' 5; fi)
@@ -216,6 +244,7 @@ export PATH="$tmp/bin:$PATH"
 export GDC_TEST_MIGRATION_LOG="$log"
 export GDC_TEST_LAST_SETTINGS="$tmp/last-settings.json"
 export GDC_TEST_PROMOTED="$tmp/promoted"
+export GDC_TEST_PROMOTED_ESCROW_OVERRIDE="$tmp/promoted-escrow-override"
 export GDC_TEST_WRONG_TARGET_VOLUME="$tmp/wrong-target-volume"
 export GDC_TEST_BAD_SMOKE="$tmp/bad-smoke"
 export GDC_TEST_LAST_ESCROW_CREATE="$tmp/last-escrow-create.json"
@@ -232,6 +261,11 @@ export GDC_TEST_SOURCE_RESTORE_FAIL="$tmp/source-restore-fail"
 export GDC_TEST_PROMOTION_IDENTITY_FAIL="$tmp/promotion-identity-fail"
 export GDC_TEST_TARGET_SETTINGS_DELAY="$tmp/target-settings-delay"
 export GDC_TEST_TARGET_SETTINGS_DELAY_COUNT="$tmp/target-settings-delay-count"
+export GDC_TEST_ZERO_CAPACITY="$tmp/zero-capacity"
+export GDC_TEST_SOURCE_ESCROW_OVERRIDE="$tmp/source-escrow-override"
+export GDC_TEST_CHAIN_ESCROW_ABSENT="$tmp/chain-escrow-absent"
+export GDC_TEST_TARGET_ESCROW_MISSING="$tmp/target-escrow-missing"
+export GDC_TEST_ESCROW_CREATE_ID="$tmp/escrow-create-id"
 export GDC_GATEWAY_OPS_ROOT="$ops"
 helper="$ROOT/04-ops/gateway-migration-remote.sh"
 
@@ -250,6 +284,54 @@ grep -Fq 'source gateway has no active escrow' "$tmp/freeze-failure.err"
 jq -e '.escrow_rotation.enabled == true and .escrow_rotation.settlement_enabled == true' \
   "$GDC_TEST_LAST_SETTINGS" >/dev/null
 rm -f "$GDC_TEST_FREEZE_NO_ESCROW"
+
+# The reconciler may retire the rendered bootstrap escrow while keeping newer
+# matching escrows active. Once rotation is frozen, select the first active ID
+# from authenticated state instead of rejecting the otherwise healthy source.
+write_gateway_env "$ops/gateway.env" v4 18080 gdc-ops_gateway-data-v4-source 40
+rotated_source="$ops/gateway-migrations/rotated-source"
+mkdir -p "$rotated_source/04-ops"
+cp "$ROOT/04-ops/compose.yaml" "$rotated_source/04-ops/compose.yaml"
+"$helper" freeze "$rotated_source" 18080 >"$tmp/rotated-source.out"
+grep -Fq 'configured=40 selected_active=41' "$tmp/rotated-source.out"
+grep -Fxq 'source_escrow_id=41' "$rotated_source/freeze.env"
+"$helper" prepare "$rotated_source" "$tmp/target.env" "$tmp/target-compose.env" \
+  gdc-ops-migrate-v5-rotated-source 18080 18085 >/dev/null
+grep -Fxq 'source_escrow_id=41' "$rotated_source/manifest.env"
+"$helper" restore-source "$rotated_source" >/dev/null
+printf '%s\n' 42 >"$GDC_TEST_SOURCE_ESCROW_OVERRIDE"
+"$helper" freeze "$rotated_source" 18080 >/dev/null
+"$helper" prepare "$rotated_source" "$tmp/target.env" "$tmp/target-compose.env" \
+  gdc-ops-migrate-v5-rotated-source 18080 18085 >"$tmp/rotated-source-resume.out"
+grep -Fq 'rebound rolled-back source escrow previous=41 current=42' "$tmp/rotated-source-resume.out"
+grep -Fxq 'source_escrow_id=42' "$rotated_source/manifest.env"
+"$helper" restore-source "$rotated_source" >/dev/null
+rm -f "$GDC_TEST_SOURCE_ESCROW_OVERRIDE"
+rm -f "$GDC_TEST_ESCROW_CREATE_COUNT" "$GDC_TEST_TARGET_CREATED"
+write_gateway_env "$ops/gateway.env" v4 18080 gdc-ops_gateway-data-v4-source ''
+
+# A rolled-back target can outlive its original on-chain escrow. Replacement
+# is allowed only after an authoritative absent readback, while the previous
+# exact creation evidence is preserved instead of overwritten.
+retired_target="$ops/gateway-migrations/retired-target"
+mkdir -p "$retired_target/04-ops"
+cp "$ROOT/04-ops/compose.yaml" "$retired_target/04-ops/compose.yaml"
+"$helper" freeze "$retired_target" 18080 >/dev/null
+"$helper" prepare "$retired_target" "$tmp/target.env" "$tmp/target-compose.env" \
+  gdc-ops-migrate-v5-retired-target 18080 18085 >/dev/null
+"$helper" restore-source "$retired_target" >/dev/null
+printf '%s\n' 52 >"$GDC_TEST_CHAIN_ESCROW_ABSENT"
+printf '%s\n' 53 >"$GDC_TEST_ESCROW_CREATE_ID"
+touch "$GDC_TEST_TARGET_ESCROW_MISSING"
+"$helper" freeze "$retired_target" 18080 >/dev/null
+"$helper" prepare "$retired_target" "$tmp/target.env" "$tmp/target-compose.env" \
+  gdc-ops-migrate-v5-retired-target 18080 18085 >/dev/null
+grep -Fxq 'target_escrow_id=53' "$retired_target/manifest.env"
+grep -Fxq 'escrow_id=52' "$retired_target/target-escrow-create.retired-52.env"
+[[ "$(wc -l <"$GDC_TEST_ESCROW_CREATE_COUNT")" == 2 ]]
+"$helper" restore-source "$retired_target" >/dev/null
+rm -f "$GDC_TEST_CHAIN_ESCROW_ABSENT" "$GDC_TEST_ESCROW_CREATE_ID" \
+  "$GDC_TEST_TARGET_ESCROW_MISSING" "$GDC_TEST_ESCROW_CREATE_COUNT" "$GDC_TEST_TARGET_CREATED"
 
 # A gateway deployed by the previous Compose contract may not report an
 # explicit physical volume name in gateway.env. Resolve and retain the exact
@@ -401,8 +483,10 @@ jq -e '.escrow_rotation.enabled == false and .escrow_rotation.settlement_enabled
   "$GDC_TEST_LAST_SETTINGS" >/dev/null
 [[ "$(wc -l <"$GDC_TEST_TARGET_SETTINGS_DELAY_COUNT")" == 3 ]]
 rm -f "$GDC_TEST_PROMOTION_IDENTITY_FAIL"
+printf '%s\n' 54 >"$GDC_TEST_PROMOTED_ESCROW_OVERRIDE"
 "$helper" promote "$promote_migration"
 grep -Fxq 'phase=completed' "$promote_migration/manifest.env"
+grep -Fxq 'target_escrow_id=54' "$promote_migration/manifest.env"
 grep -Fxq 'LOCAL_GATEWAY_IMAGE=target-image' "$ops/.env"
 grep -Fxq 'DEVSHARD_PORT=18080' "$ops/gateway.env"
 if grep -Fq '# retained-source-compose-contract' "$ops/compose.yaml"; then
@@ -464,6 +548,25 @@ fi
 grep -Fq 'target direct inference returned an invalid completion' "$tmp/bad-smoke.err"
 rm -f "$GDC_TEST_BAD_SMOKE"
 
+zero_capacity="$ops/gateway-migrations/zero-capacity-run"
+mkdir -p "$zero_capacity/04-ops"
+cp "$ROOT/04-ops/compose.yaml" "$zero_capacity/04-ops/compose.yaml"
+"$helper" freeze "$zero_capacity" 18080 >/dev/null
+rm -f "$GDC_TEST_TARGET_CREATED"
+touch "$GDC_TEST_ZERO_CAPACITY"
+smokes_before="$(awk '$0 == "curl POST http://127.0.0.1:18085/v1/chat/completions" { count++ } END { print count + 0 }' "$log")"
+if GDC_GATEWAY_MIGRATION_READY_TIMEOUT_SECONDS=1 \
+  "$helper" prepare "$zero_capacity" "$tmp/target.env" "$tmp/target-compose.env" \
+  gdc-ops-migrate-v5-zero-capacity 18080 18085 \
+  >"$tmp/zero-capacity.out" 2>"$tmp/zero-capacity.err"; then
+  echo 'gateway migration accepted a target with zero inference capacity' >&2
+  exit 1
+fi
+grep -Fq 'target gateway did not become routable' "$tmp/zero-capacity.err"
+smokes_after="$(awk '$0 == "curl POST http://127.0.0.1:18085/v1/chat/completions" { count++ } END { print count + 0 }' "$log")"
+[[ "$smokes_before" == "$smokes_after" ]]
+rm -f "$GDC_TEST_ZERO_CAPACITY"
+
 ambiguous="$ops/gateway-migrations/ambiguous-run"
 mkdir -p "$ambiguous/04-ops"
 cp "$ROOT/04-ops/compose.yaml" "$ambiguous/04-ops/compose.yaml"
@@ -479,6 +582,12 @@ grep -Fq 'ambiguous matching escrows' "$tmp/ambiguous.err"
 rm -f "$GDC_TEST_AMBIGUOUS_TARGET"
 
 orchestrator="$ROOT/scripts/phase-gateway-migration.sh"
+grep -Fq 'action_argument="${2:-}"' "$orchestrator"
+grep -Fq 'timeout="${action_argument:-900}"' "$orchestrator"
+if grep -Fq 'timeout="${target_version:-900}"' "$orchestrator"; then
+  echo 'gateway migration drain still aliases its timeout with retained target_version' >&2
+  exit 1
+fi
 suspend_route_line="$(grep -nF '  suspend_and_verify_admission' "$orchestrator" | head -1 | cut -d: -f1)"
 observer_bind_line="$(grep -nF '  step "Bind the admission observer' "$orchestrator" | cut -d: -f1)"
 (( suspend_route_line < observer_bind_line ))
@@ -495,14 +604,34 @@ rollback_admission_start_line="$(grep -nF 'restart-gateway-admission-after-rollb
   && rollback_suspend_line < rollback_observer_line \
   && rollback_observer_line < rollback_admission_start_line ))
 grep -Fq 'observer_port" != "$upstream_port' "$orchestrator"
+grep -Fq '/v1/admin/(state|devshards)' "$orchestrator"
 grep -Fq 'route recovery is incomplete; admission was not restarted' "$orchestrator"
+grep -Fq 'GDC_GATEWAY_VERSION="$route_version"' "$orchestrator"
+grep -Fq 'GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON_OVERRIDE="$role_protocol_contract"' "$orchestrator"
+grep -Fq 'verify-approved-devshard-version.sh' "$orchestrator"
+grep -Fq 'gateway runtime does not match one unique approved protocol' "$orchestrator"
+grep -Fq 'public edge cannot reach gateway role=$role' "$orchestrator"
+edge_preflight_line="$(grep -nF '  step "Verify the public edge can reach the $role gateway"' "$orchestrator" | cut -d: -f1)"
+suspend_route_line="$(grep -nF '  suspend_and_verify_admission' "$orchestrator" | head -1 | cut -d: -f1)"
+(( edge_preflight_line < suspend_route_line ))
+route_ready_line="$(grep -nF '  wait_public_gateway_routable "$client_key" "$role"' "$orchestrator" | cut -d: -f1)"
+route_smoke_line="$(grep -nF '    "$ROOT/04-ops/test-inference-until-ready.sh"' "$orchestrator" | cut -d: -f1)"
+(( route_ready_line < route_smoke_line ))
+smoke_timeout_line="$(grep -nF '  GDC_INFERENCE_REQUEST_TIMEOUT_SECONDS=25' "$orchestrator" | cut -d: -f1)"
+(( route_ready_line < smoke_timeout_line && smoke_timeout_line < route_smoke_line ))
+grep -Fq '"$route_dir/inference-smoke-completion.json" 300' "$orchestrator"
+grep -Fq 'GDC_GATEWAY_MIGRATION_CUTOVER_RUNWAY_BLOCKS:-30' "$orchestrator"
+grep -Fq "'\$remote_helper' preflight-window '\$timeout'" "$orchestrator"
+cutover_window_lines="$(grep -cF '        wait_cutover_window' "$orchestrator")"
+[[ "$cutover_window_lines" == 2 ]]
 # shellcheck disable=SC2016
 pending_line="$(grep -nF "mark '\$remote_dir' cutover_pending" "$orchestrator" | cut -d: -f1)"
 # shellcheck disable=SC2016
 target_route_line="$(grep -nF 'install_route "$target_port" target' "$orchestrator" | head -1 | cut -d: -f1)"
+cutover_window_line="$(grep -nF '        wait_cutover_window' "$orchestrator" | head -1 | cut -d: -f1)"
 # shellcheck disable=SC2016
 cutover_line="$(grep -nF "mark '\$remote_dir' cutover\"" "$orchestrator" | head -1 | cut -d: -f1)"
-(( pending_line < target_route_line && target_route_line < cutover_line ))
+(( cutover_window_line < pending_line && pending_line < target_route_line && target_route_line < cutover_line ))
 grep -Fq 'prepared|cutover_pending|cutover|drained|failed|preparing)' "$orchestrator"
 # shellcheck disable=SC2016
 grep -Fq '[[ "$phase" =~ ^(drained|promoting)$ ]]' "$orchestrator"

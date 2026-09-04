@@ -193,6 +193,7 @@ test: site-js-check site-host-requirements-check
 	@./scripts/test-ensure-account-balance.sh
 	@./scripts/test-gateway-reserve-policy.sh
 	@./scripts/test-select-compatible-gateway-escrows.sh
+	@./scripts/test-inference-request.sh
 	@./scripts/test-inference-until-ready.sh
 	@./scripts/test-gateway-escrow-reconciler.sh
 	@./scripts/test-faucet-caddy-config.sh

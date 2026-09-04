@@ -5,6 +5,7 @@ load_project
 
 action="${1:-}"
 target_version="${2:-}"
+action_argument="${2:-}"
 migration_state="$STATE/gateway-migrations/active.env"
 
 load_migration_state() {
@@ -40,27 +41,112 @@ suspend_and_verify_admission() {
     }'
 }
 
+wait_public_gateway_routable() {
+  local client_key="$1" role="$2" timeout deadline attempt=0 response stderr_file http_status curl_rc
+  timeout="${GDC_GATEWAY_MIGRATION_READY_TIMEOUT_SECONDS:-600}"
+  [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || die 'gateway migration readiness timeout must be a positive integer'
+  deadline=$((SECONDS + timeout))
+  response="$(mktemp)"
+  stderr_file="$(mktemp)"
+  while (( SECONDS < deadline )); do
+    set +e
+    http_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$response" -w '%{http_code}' \
+      "https://$API_HOST/v1/status" -H "Authorization: Bearer $client_key" 2>"$stderr_file")"
+    curl_rc=$?
+    set -e
+    if (( curl_rc == 0 )) && [[ "$http_status" == 200 ]] \
+      && "$ROOT/04-ops/gateway-status-routable.sh" <"$response" >/dev/null 2>&1; then
+      rm -f "$response" "$stderr_file"
+      printf 'PASS public gateway is routable role=%s\n' "$role"
+      return 0
+    fi
+    (( attempt += 1 ))
+    if (( attempt == 1 || attempt % 5 == 0 )); then
+      printf 'WAIT public gateway is not routable role=%s http_status=%s curl_exit=%s curl_status=%s\n' \
+        "$role" "${http_status:-000}" "$curl_rc" "$(curl_exit_status "$curl_rc")"
+    fi
+    sleep 3
+  done
+  rm -f "$response" "$stderr_file"
+  echo "ERROR public gateway did not become routable within ${timeout}s role=$role" >&2
+  return 1
+}
+
+wait_cutover_window() {
+  local timeout runway
+  timeout="${GDC_GATEWAY_MIGRATION_WINDOW_TIMEOUT_SECONDS:-600}"
+  runway="${GDC_GATEWAY_MIGRATION_CUTOVER_RUNWAY_BLOCKS:-30}"
+  [[ "$timeout" =~ ^[1-9][0-9]*$ ]] \
+    || die 'gateway migration window timeout must be a positive integer'
+  [[ "$runway" =~ ^[1-9][0-9]*$ ]] \
+    || die 'gateway migration cutover runway must be a positive integer'
+  step 'Wait for an Inference window before changing the public gateway route'
+  ssh -T "$GATEWAY_NODE" \
+    "sudo env GDC_GATEWAY_MIGRATION_MIN_RUNWAY_BLOCKS='$runway' \
+      '$remote_helper' preflight-window '$timeout'"
+}
+
 install_route() (
   local port="$1" role="$2" failure_mode="${3:-rollback}"
-  local route_dir observer_env edge_env remote token expected_sha remote_sha client_key
+  local route_dir observer_env edge_env remote token expected_sha remote_sha client_key route_version gateway_host
+  local migration_status role_binary_sha chain_params chain_params_stderr chain_params_http chain_params_rc
+  local role_protocol_url role_protocol_contract chain_api_base
   local observer_backup edge_backup_ready=false observer_backup_ready=false route_committed=false
   if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )); then
     die 'gateway route port is invalid'
   fi
   [[ "$failure_mode" =~ ^(rollback|fail-closed)$ ]] || die 'gateway route failure mode is invalid'
+  case "$role" in
+    source) route_version="$source_version" ;;
+    target) route_version="$target_version" ;;
+    *) die 'gateway route role is invalid' ;;
+  esac
+  gateway_host="$(node_public_host "$GATEWAY_NODE")"
   route_dir="$GDC_HOME/runs/${GDC_RUN_ID:?}/gateway-migration-route-$role"
   observer_env="$route_dir/gateway-admission-observer.env"
   edge_env="$route_dir/gateway-admission.env"
   remote="/tmp/gdc-gateway-route-$$"
   observer_backup="/tmp/gdc-gateway-observer-backup-$$.env"
   mkdir -p "$route_dir"
+  migration_status="$(ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' status '$remote_dir'")" \
+    || die "cannot read retained gateway identities before route switch role=$role"
+  role_binary_sha="$(jq -er --arg role "$role" '.images[$role].binary_sha256
+    | select(type == "string" and test("^[0-9a-f]{64}$"))' <<<"$migration_status")" \
+    || die "retained gateway binary identity is unavailable role=$role"
+  chain_api_base="${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
+  chain_params="$route_dir/inference-params.json"
+  chain_params_stderr="$route_dir/inference-params.curl.stderr"
+  set +e
+  chain_params_http="$(curl -sS --connect-timeout 5 --max-time 20 -o "$chain_params" -w '%{http_code}' \
+    "${chain_api_base%/}/productscience/inference/inference/params" 2>"$chain_params_stderr")"
+  chain_params_rc=$?
+  set -e
+  if (( chain_params_rc != 0 )) || [[ "$chain_params_http" != 200 ]]; then
+    die "cannot read approved DevShard contracts before route switch role=$role url=${chain_api_base%/}/productscience/inference/inference/params http_status=${chain_params_http:-000} curl_exit=$chain_params_rc curl_status=$(curl_exit_status "$chain_params_rc")"
+  fi
+  role_protocol_url="$(jq -er --arg version "$route_version" --arg sha "$role_binary_sha" '
+    [.params.devshard_escrow_params.approved_versions[]?
+      | select(.name == $version and .sha256 == $sha)]
+    | if length == 1 then .[0].binary
+      | select(type == "string" and test("^https://"))
+      else error("missing or ambiguous protocol") end
+  ' "$chain_params")" \
+    || die "gateway runtime does not match one unique approved protocol role=$role version=$route_version sha256=$role_binary_sha"
+  "$ROOT/scripts/verify-approved-devshard-version.sh" \
+    "$chain_params" "$route_version" "$role_protocol_url" "$role_binary_sha" >/dev/null \
+    || die "gateway runtime protocol is not approved role=$role version=$route_version"
+  role_protocol_contract="$(jq -cnS \
+    --arg version "$route_version" --arg binary "$role_protocol_url" --arg sha256 "$role_binary_sha" \
+    '{($version):{binary:$binary,sha256:$sha256}}')"
   token="$(<"$SECRETS/gateway.admission-observer-key")"
   [[ "$token" =~ ^[A-Za-z0-9._:-]{16,256}$ ]] || die 'gateway observer credential is invalid'
   write_env "$observer_env" \
     "DEVSHARD_ADMIN_API_KEY=$(<"$SECRETS/gateway.admin-key")" \
     "GDC_GATEWAY_ADMISSION_OBSERVER_TOKEN=$token" \
     "GDC_GATEWAY_ADMIN_STATE_URL=http://127.0.0.1:$port/v1/admin/state"
-  GDC_GATEWAY_ADMISSION_UPSTREAM_PORT="$port" \
+  GDC_GATEWAY_VERSION="$route_version" \
+    GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON_OVERRIDE="$role_protocol_contract" \
+    GDC_GATEWAY_ADMISSION_UPSTREAM_PORT="$port" \
     "$ROOT/04-ops/edge-node/render-env.sh" \
       --inventory "$INVENTORY" --node-name "$PUBLIC_EDGE_NODE" --output "$edge_env" >/dev/null
   printf 'GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN=%s\n' "$token" >>"$edge_env"
@@ -103,7 +189,7 @@ install_route() (
             "sudo awk -F= '\$1 == \"GDC_GATEWAY_ADMISSION_UPSTREAM\" {print substr(\$0, index(\$0, \"=\") + 1)}' /srv/dai/edge/gateway-admission.env")" \
             || recovery_failed=true
           if [[ "$recovery_failed" != true ]]; then
-            if [[ "$observer_url" =~ ^http://127\.0\.0\.1:([1-9][0-9]{0,4})/v1/admin/state$ ]]; then
+            if [[ "$observer_url" =~ ^http://127\.0\.0\.1:([1-9][0-9]{0,4})/v1/admin/(state|devshards)$ ]]; then
               observer_port="${BASH_REMATCH[1]}"
             else
               recovery_failed=true
@@ -147,6 +233,13 @@ install_route() (
   }
   trap rollback_route EXIT
 
+  step "Verify the public edge can reach the $role gateway"
+  if ! ssh -T "$PUBLIC_EDGE_NODE" "set -Eeuo pipefail
+    curl -sS --connect-timeout 3 --max-time 8 'http://$gateway_host:$port/v1/status' \
+      | jq -e 'type == \"object\"' >/dev/null"; then
+    die "public edge cannot reach gateway role=$role host=$gateway_host port=$port; apply the current gateway Host firewall policy"
+  fi
+
   step "Stage a reversible public route change for the $role gateway"
   ssh "$PUBLIC_EDGE_NODE" "rm -rf '$remote' && mkdir -p '$remote/backup'"
   rsync -a "$ROOT/04-ops/edge-node/" "$PUBLIC_EDGE_NODE:$remote/edge/"
@@ -188,13 +281,14 @@ install_route() (
     || die "public gateway route differs after installation role=$role expected=$expected_sha actual=${remote_sha:-unavailable}"
 
   client_key="$(cut -d, -f1 "$SECRETS/gateway.client-keys")"
-  curl -fsS --connect-timeout 5 --max-time 30 "https://$API_HOST/v1/status" \
-    -H "Authorization: Bearer $client_key" \
-    | jq -e 'type == "object"' >/dev/null
+  wait_public_gateway_routable "$client_key" "$role"
   curl -fsS --connect-timeout 5 --max-time 30 "https://$API_HOST/v1/models" \
     -H "Authorization: Bearer $client_key" \
     | jq -e --arg model "$MODEL_ID" '.data | any(.id == $model)' >/dev/null
-  "$ROOT/04-ops/test-inference.sh" "https://$API_HOST" "$client_key" >/dev/null
+  GDC_INFERENCE_REQUEST_TIMEOUT_SECONDS=25 \
+    "$ROOT/04-ops/test-inference-until-ready.sh" \
+      "https://$API_HOST" "$client_key" "$route_dir/inference-smoke" \
+      "$route_dir/inference-smoke-completion.json" 300 >/dev/null
   route_committed=true
   ssh -T "$PUBLIC_EDGE_NODE" "sudo rm -rf '$remote'"
   ssh -T "$GATEWAY_NODE" "sudo rm -f '$observer_backup'"
@@ -251,11 +345,13 @@ case "$action" in
     phase="$(remote_phase)"
     case "$phase" in
       prepared)
+        wait_cutover_window
         ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' mark '$remote_dir' cutover_pending"
         install_route "$target_port" target
         ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' mark '$remote_dir' cutover"
         ;;
       cutover_pending)
+        wait_cutover_window
         install_route "$target_port" target
         ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' mark '$remote_dir' cutover"
         ;;
@@ -266,7 +362,7 @@ case "$action" in
   drain)
     [[ $# -le 2 ]] || die 'gateway migration drain accepts one optional timeout'
     load_migration_state
-    timeout="${target_version:-900}"
+    timeout="${action_argument:-900}"
     [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || die 'gateway migration drain timeout must be a positive integer'
     phase="$(remote_phase)"
     case "$phase" in
