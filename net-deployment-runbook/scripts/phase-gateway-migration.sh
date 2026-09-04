@@ -86,6 +86,32 @@ wait_cutover_window() {
       '$remote_helper' preflight-window '$timeout'"
 }
 
+archive_completed_migration_state() {
+  local migration_id archive_root archive_dir archive_path
+  migration_id="${remote_dir##*/}"
+  archive_root="$STATE/gateway-migrations/completed"
+  archive_dir="$archive_root/$migration_id"
+  archive_path="$archive_dir/active.env"
+  mkdir -p "$archive_root"
+  [[ ! -e "$archive_dir" && ! -L "$archive_dir" ]] \
+    || die "completed gateway migration archive already exists path=$archive_dir"
+  mkdir "$archive_dir" \
+    || die "cannot reserve completed gateway migration archive path=$archive_dir"
+  [[ ! -e "$archive_path" && ! -L "$archive_path" ]] \
+    || die "completed gateway migration archive is not empty path=$archive_path"
+  cp --preserve=mode,timestamps -- "$migration_state" "$archive_path" \
+    || die "cannot archive completed gateway migration state path=$archive_path"
+  cmp -s "$migration_state" "$archive_path" \
+    || die "completed gateway migration archive differs from active state path=$archive_path"
+  rm -- "$migration_state"
+  printf 'ARCHIVED completed gateway migration state path=%s\n' "$archive_path"
+}
+
+refresh_target_before_cutover() {
+  step 'Refresh and prove the target gateway immediately before cutover'
+  ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' refresh-target '$remote_dir'"
+}
+
 install_route() (
   local port="$1" role="$2" failure_mode="${3:-rollback}"
   local route_dir observer_env edge_env remote token expected_sha remote_sha client_key route_version gateway_host
@@ -302,33 +328,50 @@ case "$action" in
     if [[ -s "$migration_state" ]]; then
       requested_target="$target_version"
       load_migration_state
-      [[ "$target_version" == "$requested_target" ]] \
-        || die "another gateway migration is active target=$target_version requested=$requested_target"
       remote_status=''
       remote_status_rc=0
       remote_status="$(ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' status '$remote_dir'" 2>/dev/null)" \
         || remote_status_rc=$?
-      if (( remote_status_rc != 0 )); then
-        remote_manifest_presence="$(ssh -T "$GATEWAY_NODE" \
-          "if sudo test -s '$remote_dir/manifest.env'; then printf present; else printf absent; fi")" \
-          || die 'retained gateway migration host is unreachable'
-        if [[ "$remote_manifest_presence" != absent || "$phase" != preparing ]]; then
-          die "retained gateway migration status is unavailable local_phase=$phase remote_manifest=$remote_manifest_presence"
+      if [[ "$phase" == completed ]]; then
+        (( remote_status_rc == 0 )) \
+          || die 'completed gateway migration status could not be verified; refusing to rotate retained state'
+        [[ "$(jq -r '.phase // empty' <<<"$remote_status" 2>/dev/null || true)" == completed ]] \
+          || die 'local completed gateway migration disagrees with remote state; refusing to rotate retained state'
+        archive_completed_migration_state
+        target_version="$requested_target"
+      else
+        [[ "$target_version" == "$requested_target" ]] \
+          || die "another gateway migration is active target=$target_version requested=$requested_target"
+        if (( remote_status_rc != 0 )); then
+          remote_manifest_presence="$(ssh -T "$GATEWAY_NODE" \
+            "if sudo test -s '$remote_dir/manifest.env'; then printf present; else printf absent; fi")" \
+            || die 'retained gateway migration host is unreachable'
+          if [[ "$remote_manifest_presence" != absent || "$phase" != preparing ]]; then
+            die "retained gateway migration status is unavailable local_phase=$phase remote_manifest=$remote_manifest_presence"
+          fi
         fi
+        remote_status_phase="$(jq -r '.phase // empty' <<<"$remote_status" 2>/dev/null || true)"
+        case "$remote_status_phase" in
+          prepared|cutover_pending|cutover|drained)
+            printf 'READY matching gateway migration is already retained target=%s phase=%s\n' \
+              "$target_version" "$remote_status_phase"
+            exit 0
+            ;;
+          preparing|failed|rolled_back|'')
+            printf 'READY resume incomplete gateway migration target=%s phase=%s\n' \
+              "$target_version" "${remote_status_phase:-unmaterialized}"
+            ;;
+          *) die "retained gateway migration is not resumable phase=$remote_status_phase" ;;
+        esac
       fi
-      remote_status_phase="$(jq -r '.phase // empty' <<<"$remote_status" 2>/dev/null || true)"
-      case "$remote_status_phase" in
-        prepared|cutover_pending|cutover|drained|completed)
-          printf 'READY matching gateway migration is already retained target=%s phase=%s\n' \
-            "$target_version" "$remote_status_phase"
-          exit 0
-          ;;
-        preparing|failed|rolled_back|'')
-          printf 'READY resume incomplete gateway migration target=%s phase=%s\n' \
-            "$target_version" "${remote_status_phase:-unmaterialized}"
-          ;;
-        *) die "retained gateway migration is not resumable phase=$remote_status_phase" ;;
-      esac
+    fi
+    if [[ -s "$migration_state" ]]; then
+      # phase-ops creates a unique migration identity for a new cycle. A retry
+      # must reuse the exact retained identity rather than deriving another
+      # remote directory, Compose project, or data volume.
+      export GDC_GATEWAY_MIGRATION_ID="${remote_dir##*/}"
+      export GDC_GATEWAY_MIGRATION_TARGET_PROJECT="$target_project"
+      export GDC_GATEWAY_MIGRATION_TARGET_PORT="$target_port"
     fi
     export GDC_GATEWAY_VERSION="$target_version"
     export GDC_GATEWAY_MIGRATION_PREPARE=true
@@ -345,12 +388,14 @@ case "$action" in
     phase="$(remote_phase)"
     case "$phase" in
       prepared)
+        refresh_target_before_cutover
         wait_cutover_window
         ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' mark '$remote_dir' cutover_pending"
         install_route "$target_port" target
         ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' mark '$remote_dir' cutover"
         ;;
       cutover_pending)
+        refresh_target_before_cutover
         wait_cutover_window
         install_route "$target_port" target
         ssh -T "$GATEWAY_NODE" "sudo '$remote_helper' mark '$remote_dir' cutover"
