@@ -195,6 +195,46 @@ validate_mnemonic_file() {
     || die 'validator backup contains malformed account recovery material'
 }
 
+validate_mnemonic_bindings() {
+  local root="$1" manifest="$2" identity="$3" node="$4"
+  local participant warm_address warm_pubkey password_file helper recovery_cli='' cold_result warm_result
+  participant="$(jq -er .participant_address "$manifest" 2>/dev/null)" \
+    || die 'validator backup manifest metadata is malformed or inconsistent'
+  warm_address="$(jq -er .warm_address "$identity" 2>/dev/null)" \
+    || die 'validator backup identity metadata is malformed'
+  warm_pubkey="$(jq -er .warm_pubkey_b64 "$identity" 2>/dev/null)" \
+    || die 'validator backup identity metadata is malformed'
+  password_file="$(mktemp "$root/.recovery-keyring-password.XXXXXX")"
+  chmod 0600 "$password_file"
+  if ! od -An -N32 -tu1 /dev/urandom | tr -d ' ' | tr -d '\n' >"$password_file"; then
+    rm -f -- "$password_file"
+    die 'validator backup cannot prepare an isolated keyring password'
+  fi
+  printf '\n' >>"$password_file"
+  helper="${GDC_VALIDATOR_BACKUP_IDENTITY_HELPER:-$ROOT/scripts/derive-mnemonic-identity.sh}"
+  [[ -x "$helper" ]] || die 'validator backup mnemonic identity helper is unavailable'
+  if [[ "$helper" == "$ROOT/scripts/derive-mnemonic-identity.sh" && -z "${GDC_JOIN_PROFILE:-}" ]]; then
+    recovery_cli="$(realpath -e -- "$HOME/.local/bin/inferenced" 2>/dev/null || true)"
+    [[ "$recovery_cli" == /* && -x "$recovery_cli" ]] \
+      || die 'runbook-managed inferenced CLI is unavailable for cryptographic backup verification'
+  fi
+  cold_result="$(GDC_INFERENCED_CLI_QUIET=true GDC_RECOVERY_INFERENCED_BIN="$recovery_cli" "$helper" \
+    "$root/mnemonics/$node-cold.mnemonic" "$password_file" "$node-cold-recovery" \
+    "$participant" 2>/dev/null)" \
+    || die 'validator backup cold mnemonic cannot be cryptographically verified'
+  warm_result="$(GDC_INFERENCED_CLI_QUIET=true GDC_RECOVERY_INFERENCED_BIN="$recovery_cli" "$helper" \
+    "$root/mnemonics/$node-warm.mnemonic" "$password_file" "$node-warm-recovery" \
+    "$warm_address" "$warm_pubkey" 2>/dev/null)" \
+    || die 'validator backup warm mnemonic cannot be cryptographically verified'
+  jq -e --arg participant "$participant" --arg warm "$warm_address" \
+    '.address == $participant' <<<"$cold_result" >/dev/null 2>&1 \
+    || die 'validator backup cold mnemonic does not match the recorded participant identity'
+  jq -e --arg warm "$warm_address" --arg pubkey "$warm_pubkey" \
+    '.address == $warm and .pubkey == $pubkey' <<<"$warm_result" >/dev/null 2>&1 \
+    || die 'validator backup warm mnemonic does not match the recorded warm identity'
+  rm -f -- "$password_file"
+}
+
 validate_identity_json() {
   local identity="$1" node="$2" expected_consensus_key warm_public_key
   jq -e --arg node "$node" '
@@ -376,6 +416,7 @@ verify_backup_archive() (
     || die 'validator backup archive belongs to a different Genesis'
   validate_mnemonic_file "$extracted/mnemonics/$node-cold.mnemonic"
   validate_mnemonic_file "$extracted/mnemonics/$node-warm.mnemonic"
+  validate_mnemonic_bindings "$extracted" "$manifest" "$extracted/identity.json" "$node"
   validate_recovery_material "$extracted/remote-state" "$extracted/identity.json" "$node" "$expected_chain"
   printf 'PASS validator recovery archive dry-run verified: %s\n' "$archive"
 )
@@ -396,10 +437,18 @@ create_backup() (
   stage="$(mktemp -d)"
   trap 'rm -rf "$stage"' EXIT
   umask 077
-  mkdir -p "$stage/mnemonics" "$stage/remote-state"
+  mkdir -p "$stage/mnemonics"
   install -m 0600 "$cold" "$stage/mnemonics/$node-cold.mnemonic"
   install -m 0600 "$warm" "$stage/mnemonics/$node-warm.mnemonic"
   install -m 0600 "$identity" "$stage/identity.json"
+  # Older deployed Hosts may predate the stable split identity roots. Bring
+  # them through the existing idempotent migration first, then read only the
+  # current layout below. The migration retains the source tree and refuses
+  # partial or conflicting destinations.
+  if ! ssh -T "$node" "sudo test -s '/srv/dai/identity/$node/p2p/node_key.json' && sudo test -d '/srv/dai/identity/$node/warm/keyring-file' && sudo test -d '/srv/dai/signer/$node/tmkms'"; then
+    ssh -T "$node" "sudo bash -s -- '$node'" <"$ROOT/02-node/migrate-v1-validator-identity.sh" \
+      || die "cannot create validator backup for $node: stable identity migration failed"
+  fi
   if ! ssh -T "$node" "set +x
     set -Eeuo pipefail
     identity='/srv/dai/identity/$node'
@@ -411,11 +460,10 @@ create_backup() (
     mkdir -p \"\$stage/inference/config\"
     sudo tar -C \"\$signer\" -cf - tmkms | tar -C \"\$stage\" -xf -
     sudo install -m 0600 \"\$identity/p2p/node_key.json\" \"\$stage/inference/config/node_key.json\"
-    sudo tar -C \"\$stage\" -cf - tmkms inference/config/node_key.json 2>/dev/null" \
+    sudo tar -C \"\$stage\" -cf - tmkms inference 2>/dev/null" \
     >"$stage/remote-state.tar" 2>/dev/null; then
     die "cannot create validator backup for $node: remote validator identity is unavailable"
   fi
-  mkdir -p "$stage/remote-state"
   safe_extract "$stage/remote-state.tar" "$stage/remote-state" remote-state "$node"
   rm -f "$stage/remote-state.tar"
   validate_recovery_material "$stage/remote-state" "$stage/identity.json" "$node" "$chain_id"
@@ -483,6 +531,7 @@ restore_backup() (
   [[ "$(jq -er .genesis_sha256 "$manifest")" == "$(genesis_sha256 "$GENESIS/genesis.json")" ]] || die "validator backup archive belongs to a different Genesis"
   validate_mnemonic_file "$extracted/mnemonics/$node-cold.mnemonic"
   validate_mnemonic_file "$extracted/mnemonics/$node-warm.mnemonic"
+  validate_mnemonic_bindings "$extracted" "$manifest" "$extracted/identity.json" "$node"
   validate_recovery_material "$extracted/remote-state" "$extracted/identity.json" "$node" "$chain_id"
   for mnemonic in cold warm; do
     target="$GDC_HOME/mnemonics/$node-$mnemonic.mnemonic"
@@ -583,7 +632,7 @@ if [[ "${GDC_VALIDATOR_BACKUP_TEST_MODE:-false}" == true ]]; then
   esac
 fi
 
-load_project
+load_project host-recovery
 [[ $# -ge 2 ]] || { usage; exit 2; }
 case "$1" in
   create)

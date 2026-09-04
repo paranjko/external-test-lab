@@ -576,7 +576,7 @@ case "$COMMAND" in
     [[ -s "$backup_role_config" ]] || { echo "host backup requires retained operator state for $backup_alias; a running Host cannot recreate cold or warm recovery material" >&2; exit 1; }
     export GDC_ENV="$backup_role_config"
     source "$ROOT/scripts/lib.sh"
-    load_project
+    load_project host-recovery
     run_phase "backup-$backup_alias" "$ROOT/scripts/phase-host-backup.sh" "$backup_alias"
     ;;
   prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit)

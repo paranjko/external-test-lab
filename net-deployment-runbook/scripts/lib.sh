@@ -76,7 +76,9 @@ ensure_run_manifest() {
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   export GDC_RUN_ID="$run_id"
   manifest="$(run_manifest_path)"
-  if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+  if [[ "${GDC_RUN_CONTEXT:-}" == host-recovery ]]; then
+    profile_kind=host_recovery
+  elif [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
     join_profile_manifest_fields
     profile_kind=generated_join
   else
@@ -108,7 +110,9 @@ ensure_run_manifest() {
       existing="$(awk -F= -v key="$key" '$1 == key {print $2; exit}' "$manifest")"
       [[ "$existing" == "$expected" ]] || die "run_resume_mismatch: retained run does not match the lineage preflight $key"
     done
-    if [[ "$profile_kind" == generated_join ]]; then
+    if [[ "$profile_kind" == host_recovery ]]; then
+      return 0
+    elif [[ "$profile_kind" == generated_join ]]; then
       grep -qx 'profile_kind=generated_join' "$manifest" || die 'run manifest belongs to another profile kind'
       grep -qx "join_profile_sha256=$JOIN_PROFILE_SHA256" "$manifest" || die 'run manifest belongs to another generated JOIN profile'
       grep -qx "network_observation_sha256=$JOIN_OBSERVATION_SHA256" "$manifest" || die 'run manifest belongs to another network observation'
@@ -137,7 +141,7 @@ ensure_run_manifest() {
     if [[ "$profile_kind" == generated_join ]]; then
       printf 'join_profile_id=%s\njoin_profile_sha256=%s\nnetwork_observation_sha256=%s\nnetwork_state_id=%s\n' \
         "$JOIN_PROFILE_ID" "$JOIN_PROFILE_SHA256" "$JOIN_OBSERVATION_SHA256" "$JOIN_NETWORK_STATE_ID"
-    else
+    elif [[ "$profile_kind" == release ]]; then
       printf 'release_profile=%s\n' "$release_profile"
       printf 'release_profile_sha256=%s\n' "$release_hash"
     fi
@@ -377,6 +381,50 @@ load_topology() {
   done
 }
 
+# Backup and restore operate on operator-owned local identity state. They need
+# the managed SSH aliases and optional split-GPU association, but they do not
+# consume Bootstrap seed discovery or public service routing.
+load_host_recovery_topology() {
+  [[ -n "${GDC_NODE_ALIASES:-}" ]] || die 'set GDC_NODE_ALIASES in the retained role configuration'
+  read -r -a GDC_NODES <<<"$GDC_NODE_ALIASES"
+  (( ${#GDC_NODES[@]} >= 1 )) || die 'GDC_NODE_ALIASES must contain at least one SSH alias'
+  local -A seen=() ml_seen=()
+  local node ml_alias
+  for node in "${GDC_NODES[@]}"; do
+    [[ "$node" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid SSH alias in GDC_NODE_ALIASES: $node"
+    [[ -z "${seen[$node]:-}" ]] || die "duplicate SSH alias in GDC_NODE_ALIASES: $node"
+    seen[$node]=1
+  done
+  for node in "${GDC_NODES[@]}"; do
+    ml_alias="$(node_ml_host "$node" || true)"
+    [[ -z "$ml_alias" || "$ml_alias" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid ML SSH alias for $node: $ml_alias"
+    [[ -z "$ml_alias" || -z "${seen[$ml_alias]:-}" ]] || die "ML SSH alias must differ from a validator alias: $ml_alias"
+    [[ -z "$ml_alias" || -z "${ml_seen[$ml_alias]:-}" ]] || die "network GPU SSH alias is mapped more than once: $ml_alias"
+    [[ -z "$ml_alias" ]] || ml_seen[$ml_alias]=1
+  done
+  GENESIS_NODE="${GDC_GENESIS_NODE:-}"
+  PUBLIC_EDGE_NODE=''
+  GATEWAY_NODE=''
+  TELEGRAM_BOT_HOST=''
+}
+
+# Variables initialized here are consumed by scripts that source this library.
+# shellcheck disable=SC2034
+initialize_project_state_paths() {
+  SECRETS="$STATE/secrets"
+  IDENTITIES="$STATE/identities"
+  GENERATED="$STATE/generated"
+  GENESIS="$GDC_HOME/genesis"
+  ACCOUNTS="$GDC_HOME/accounts"
+  INVENTORY="$STATE/inventory.env"
+  mkdir -p "$STATE" "$GDC_HOME"
+  GDC_RUN_ID="${GDC_RUN_ID:-$(cat "$STATE/active-run-id" 2>/dev/null || true)}"
+  if [[ -n "$GDC_RUN_ID" ]]; then
+    GDC_RUN_LOG="${GDC_RUN_LOG:-$GDC_HOME/runs/$GDC_RUN_ID/run.log}"
+    export GDC_RUN_ID GDC_RUN_LOG
+  fi
+}
+
 write_env() {
   local file="$1"
   shift
@@ -454,6 +502,8 @@ genesis_sha256() {
 # Variables initialized here are consumed by scripts that source this library.
 # shellcheck disable=SC2034
 load_project() {
+  local context="${1:-network}"
+  [[ "$context" == network || "$context" == host-recovery ]] || die "unknown project load context: $context"
   # A launcher may be invoked from a dedicated worktree.  In that case it
   # sets ROOT from its own resolved path before sourcing this library; do not
   # replace it with the caller's current source-stack root.  Stand-alone
@@ -504,16 +554,22 @@ load_project() {
     [[ -n "$runtime_telegram_bot_host" ]] && GDC_TELEGRAM_BOT_HOST="$runtime_telegram_bot_host"
     [[ -n "$runtime_guardian_enabled" ]] && GDC_GENESIS_GUARDIAN_ENABLED="$runtime_guardian_enabled"
   fi
-  # shellcheck disable=SC1091
-  source "$ROOT/scripts/profile.sh"
-  if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
-    load_join_profile "$GDC_JOIN_PROFILE"
-  else
-    resolved_profile_key="${GDC_RELEASE_PROFILE:-v2026.07.23}+${GDC_DEPLOYMENT_PROFILE:-community-lab}+${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
-    if [[ -z "${GDC_RESOLVED_IMAGE_LOCK:-}" && -r "$STATE/resolved-images/$resolved_profile_key.lock" ]]; then
-      export GDC_RESOLVED_IMAGE_LOCK="$STATE/resolved-images/$resolved_profile_key.lock"
+  if [[ "$context" == host-recovery ]]; then
+    load_host_recovery_topology
+    export GDC_RUN_CONTEXT=host-recovery
+  fi
+  if [[ "$context" != host-recovery ]]; then
+    # shellcheck disable=SC1091
+    source "$ROOT/scripts/profile.sh"
+    if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+      load_join_profile "$GDC_JOIN_PROFILE"
+    else
+      resolved_profile_key="${GDC_RELEASE_PROFILE:-v2026.07.23}+${GDC_DEPLOYMENT_PROFILE:-community-lab}+${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
+      if [[ -z "${GDC_RESOLVED_IMAGE_LOCK:-}" && -r "$STATE/resolved-images/$resolved_profile_key.lock" ]]; then
+        export GDC_RESOLVED_IMAGE_LOCK="$STATE/resolved-images/$resolved_profile_key.lock"
+      fi
+      load_profiles
     fi
-    load_profiles
   fi
   set +a
   if [[ "$caller_genesis_node_set" == true ]]; then export GDC_GENESIS_NODE="$caller_genesis_node"; fi
@@ -532,10 +588,14 @@ load_project() {
   ACME_EMAIL="${ACME_EMAIL:-}"
   load_public_observability_hosts
   API_HOST=api.gonka-dev.net
-  load_topology
   DATA_ROOT=/srv/dai
   GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
   HF_CACHE_ROOT=/srv/dai/hf-cache
+  if [[ "$context" == host-recovery ]]; then
+    initialize_project_state_paths
+    return 0
+  fi
+  load_topology
   mapfile -t genesis_addresses < <(getent ahostsv4 "$GENESIS_PUBLIC_HOST" | awk '{print $1}' | sort -u)
   (( ${#genesis_addresses[@]} == 1 )) || die "$GENESIS_PUBLIC_HOST must resolve to exactly one IPv4 address"
   MONITORING_CIDR="${genesis_addresses[0]}/32"
@@ -543,18 +603,7 @@ load_project() {
   (( ${#edge_addresses[@]} == 1 )) || die "$PUBLIC_EDGE_HOST must resolve to exactly one IPv4 address"
   PUBLIC_EDGE_CIDR="${edge_addresses[0]}/32"
 
-  SECRETS="$STATE/secrets"
-  IDENTITIES="$STATE/identities"
-  GENERATED="$STATE/generated"
-  GENESIS="$GDC_HOME/genesis"
-  ACCOUNTS="$GDC_HOME/accounts"
-  INVENTORY="$STATE/inventory.env"
-  mkdir -p "$STATE" "$GDC_HOME"
-  GDC_RUN_ID="${GDC_RUN_ID:-$(cat "$STATE/active-run-id" 2>/dev/null || true)}"
-  if [[ -n "$GDC_RUN_ID" ]]; then
-    GDC_RUN_LOG="${GDC_RUN_LOG:-$GDC_HOME/runs/$GDC_RUN_ID/run.log}"
-    export GDC_RUN_ID GDC_RUN_LOG
-  fi
+  initialize_project_state_paths
   write_inventory
 }
 
@@ -589,6 +638,7 @@ record_phase_profile() {
 record_run_manifest() {
   local phase="$1" run_id manifest commit existing_profile
   ensure_run_manifest "$phase"
+  [[ "${GDC_RUN_CONTEXT:-}" != host-recovery ]] || return 0
   [[ -z "${GDC_JOIN_PROFILE:-}" ]] || return 0
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   manifest="$GDC_HOME/runs/$run_id/manifest.env"
