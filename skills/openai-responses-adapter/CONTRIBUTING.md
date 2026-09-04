@@ -8,9 +8,9 @@ body, translate the chat response (JSON or SSE) back.
 It is a **spec**. PR the playbook, not a proxy binary. Any language on your
 side.
 
-Contributors are welcome. After TestLab validation, packages are made from
-this catalog with credit to the contributors. Do not publish a parallel
-skills.sh / npm skill for the same layer on your own.
+Contributors are welcome. TestLab validates PRs against a live client path
+and keeps contributor credit on this catalog. Prefer a PR here rather than
+a parallel skills.sh listing for the same layer.
 
 ## What to add here
 
@@ -40,15 +40,16 @@ Need all of:
 There is no `golden/` runner in this folder yet. A before/after sketch in
 `reference.md` is enough for a first PR. Toy payloads only.
 
-Chat-body rewrites belong in [`host-compat/`](../host-compat/) (see that
-[CONTRIBUTING](../host-compat/CONTRIBUTING.md)).
+Chat-body rewrites belong in the host-compat skill
+(`npx skills add paranjko/external-test-lab --skill openai-host-compat`).
+https://github.com/paranjko/external-test-lab/tree/main/skills/openai-host-compat
 
 ## Do not
 
-- Put Responses field maps or SSE notes in `host-compat/`
+- Put Responses field maps or SSE notes in the host-compat skill
 - Put prompts or API keys in the PR
 
 ## Review
 
 TestLab reviews the spec against a live client path. Credit stays with the
-contributor when the catalog is later packaged.
+contributor.

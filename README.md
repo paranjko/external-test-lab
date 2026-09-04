@@ -27,12 +27,24 @@ This repository hosts the public artifacts of the 4-month pilot approved by Gonk
 
 ## Broker OpenAI compatibility
 
-Specs for each broker's OpenAI HTTP proxy, before the inference gateway:
+[![skills.sh](https://skills.sh/b/paranjko/external-test-lab)](https://skills.sh/paranjko/external-test-lab)
+
+Specs for each broker's OpenAI HTTP proxy, before the inference gateway.
+Two independent skills (folder names match YAML `name`):
 
 | | |
 |---|---|
-| Chat Completions host-compat | [`broker-compat/host-compat/`](broker-compat/host-compat/) |
-| Responses adapter (`POST /v1/responses`) | [`broker-compat/responses-adapter/`](broker-compat/responses-adapter/) |
+| Chat Completions host-compat | [`skills/openai-host-compat/`](skills/openai-host-compat/) |
+| Responses adapter (`POST /v1/responses`) | [`skills/openai-responses-adapter/`](skills/openai-responses-adapter/) |
+
+Install (one or both; not `--all` as the default):
+
+```bash
+npx skills add paranjko/external-test-lab --skill openai-host-compat
+npx skills add paranjko/external-test-lab --skill openai-responses-adapter
+```
+
+Human catalog pointers: [`broker-compat/`](broker-compat/).
 
 ## Team
 
