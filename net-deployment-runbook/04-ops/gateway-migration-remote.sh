@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 preflight-window [TIMEOUT] | freeze DIR SOURCE_PORT | prepare DIR TARGET_ENV TARGET_COMPOSE_ENV TARGET_PROJECT SOURCE_PORT TARGET_PORT | status DIR | drain DIR [TIMEOUT] | drain-target DIR [TIMEOUT] | restore-source DIR | promote DIR | mark DIR PHASE" >&2
+  echo "Usage: $0 preflight-window [TIMEOUT] | freeze DIR SOURCE_PORT | prepare DIR TARGET_ENV TARGET_COMPOSE_ENV TARGET_PROJECT SOURCE_PORT TARGET_PORT | refresh-target DIR | status DIR | drain DIR [TIMEOUT] | drain-target DIR [TIMEOUT] | restore-source DIR | promote DIR | mark DIR PHASE" >&2
 }
 
 action="${1:-}"
@@ -194,6 +194,33 @@ admin_json() {
   )
 }
 
+admin_post_json() {
+  local env_file="$1" port="$2" path="$3"
+  (
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+    curl -fsS --connect-timeout 5 --max-time 30 -X POST \
+      "http://127.0.0.1:${port}${path}" \
+      -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
+      -H 'Content-Type: application/json' --data '{}'
+  )
+}
+
+admin_delete_json() {
+  local env_file="$1" port="$2" path="$3"
+  (
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+    curl -fsS --connect-timeout 5 --max-time 30 -X DELETE \
+      "http://127.0.0.1:${port}${path}" \
+      -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY"
+  )
+}
+
 post_settings_file() {
   local env_file="$1" port="$2" payload="$3"
   (
@@ -206,6 +233,22 @@ post_settings_file() {
       -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
       -H 'Content-Type: application/json' --data-binary "@$payload"
   )
+}
+
+restore_settings_file() {
+  local env_file="$1" port="$2" payload="$3" role="$4" actual
+  post_settings_file "$env_file" "$port" "$payload" >/dev/null || {
+    echo "ERROR $role gateway settings restoration request failed port=$port" >&2
+    return 1
+  }
+  actual="$(admin_json "$env_file" "$port" /v1/admin/settings)" || {
+    echo "ERROR $role gateway settings readback failed after restoration port=$port" >&2
+    return 1
+  }
+  jq -e --slurpfile expected "$payload" '. == $expected[0]' <<<"$actual" >/dev/null || {
+    echo "ERROR $role gateway settings differ after restoration port=$port" >&2
+    return 1
+  }
 }
 
 matching_target_escrows() {
@@ -221,23 +264,199 @@ matching_target_escrows() {
   ' <<<"$state"
 }
 
-matching_active_escrows() {
-  local env_file="$1" port="$2" model="$3" route="$4" state
-  state="$(admin_json "$env_file" "$port" /v1/admin/state)"
-  jq -r --arg model "$model" --arg route "$route" '
+chain_escrow_status() {
+  local env_file="$1" escrow="$2" model="${3:-}" chain_rest payload
+  chain_rest="$(value "$env_file" GDC_GATEWAY_CHAIN_REST)"
+  if [[ ! "$chain_rest" =~ ^https?://[^[:space:]]+$ ]] \
+    || ! payload="$(curl -fsS --connect-timeout 5 --max-time 15 \
+      "${chain_rest%/}/productscience/inference/inference/devshard_escrow/$escrow" \
+      2>/dev/null)"; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if jq -e --arg escrow "$escrow" --arg model "$model" '
+    .found == true
+    and (.escrow.id | tostring) == $escrow
+    and ($model == "" or .escrow.model_id == $model)
+    and (.escrow.settled // false) == false
+  ' <<<"$payload" >/dev/null 2>&1; then
+    printf 'current\n'
+  elif jq -e '.found == false and (.escrow == null)' <<<"$payload" >/dev/null 2>&1; then
+    printf 'absent\n'
+  elif jq -e --arg escrow "$escrow" --arg model "$model" '
+    .found == true
+    and (.escrow.id | tostring) == $escrow
+    and ($model == "" or .escrow.model_id == $model)
+    and .escrow.settled == true
+  ' <<<"$payload" >/dev/null 2>&1; then
+    printf 'retired\n'
+  elif jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1; then
+    printf 'conflict\n'
+  else
+    printf 'unavailable\n'
+  fi
+}
+
+chain_escrow_current() {
+  [[ "$(chain_escrow_status "$1" "$2" "$3")" == current ]]
+}
+
+chain_escrow_absent() {
+  [[ "$(chain_escrow_status "$1" "$2")" == absent ]]
+}
+
+retire_absent_target_runtime() {
+  local env_file="$1" port="$2" escrow="$3" model="$4" route="$5"
+  local state active response
+  chain_escrow_absent "$env_file" "$escrow" || {
+    echo "ERROR target runtime cannot be retired without an authoritative absent chain readback escrow=$escrow" >&2
+    return 1
+  }
+  state="$(admin_json "$env_file" "$port" /v1/admin/state)" || {
+    echo "ERROR target runtime state is unavailable before local retirement escrow=$escrow port=$port" >&2
+    return 1
+  }
+  if jq -e --arg escrow "$escrow" '
+    [.devshards[]? | select((.id | tostring) == $escrow)] | length == 0
+  ' <<<"$state" >/dev/null; then
+    return 0
+  fi
+  jq -e --arg escrow "$escrow" --arg model "$model" --arg route "$route" '
+    def counter:
+      if type == "number" and . >= 0 and floor == . then .
+      elif type == "string" and test("^[0-9]+$") then tonumber
+      else error("invalid counter")
+      end;
+    (.limiter.in_flight_requests | counter) == 0
+    and ([.devshards[]? | select((.id | tostring) == $escrow)] | length) == 1
+    and ([.devshards[] | select((.id | tostring) == $escrow)][0]
+      | (.model // .runtime.model // "") == $model
+      and (.route_prefix // .runtime.route_prefix // "") == $route
+      and ((.runtime.active_requests // .active_requests) | counter) == 0)
+  ' <<<"$state" >/dev/null || {
+    echo "ERROR absent target runtime does not have a complete zero-request state escrow=$escrow port=$port" >&2
+    return 1
+  }
+  active="$(jq -r --arg escrow "$escrow" \
+    '[.devshards[] | select((.id | tostring) == $escrow)][0].active // false' <<<"$state")"
+  if [[ "$active" == true ]]; then
+    response="$(admin_post_json "$env_file" "$port" "/v1/admin/devshards/$escrow/deactivate")" || {
+      echo "ERROR absent target runtime could not be deactivated escrow=$escrow port=$port" >&2
+      return 1
+    }
+    jq -e --arg escrow "$escrow" '(.id | tostring) == $escrow and .active == false' \
+      <<<"$response" >/dev/null || {
+      echo "ERROR absent target runtime deactivation response is invalid escrow=$escrow port=$port" >&2
+      return 1
+    }
+  fi
+  response="$(admin_delete_json "$env_file" "$port" "/v1/admin/devshards/$escrow")" || {
+    echo "ERROR absent target runtime could not be deleted escrow=$escrow port=$port" >&2
+    return 1
+  }
+  jq -e --arg escrow "$escrow" '(.id | tostring) == $escrow and .deleted == true' \
+    <<<"$response" >/dev/null || {
+    echo "ERROR absent target runtime deletion response is invalid escrow=$escrow port=$port" >&2
+    return 1
+  }
+  state="$(admin_json "$env_file" "$port" /v1/admin/state)" || {
+    echo "ERROR target runtime state is unavailable after local retirement escrow=$escrow port=$port" >&2
+    return 1
+  }
+  jq -e --arg escrow "$escrow" '
+    [.devshards[]? | select((.id | tostring) == $escrow)] | length == 0
+  ' <<<"$state" >/dev/null || {
+    echo "ERROR absent target runtime remained registered after deletion escrow=$escrow port=$port" >&2
+    return 1
+  }
+  printf 'READY retired absent target runtime before replacement escrow=%s\n' "$escrow" >&2
+}
+
+runtime_ready_in_state() {
+  local state="$1" escrow="$2" route="$3" session="$4" model="$5" version="$6"
+  jq -e --arg escrow "$escrow" --arg route "$route" --arg session "$session" \
+    --arg model "$model" --arg version "$version" '
+    (.devshards | type) == "array"
+    and any(.devshards[];
+      (.id | tostring) == $escrow
+      and (.model // .runtime.model // "") == $model
+      and (.active // false) == true
+      and ((.route_prefix // .runtime.route_prefix // "") as $reported_route
+        | $reported_route == $route
+          or ($version == "v4" and $reported_route == ""))
+      and ((.protocol_version // .runtime.protocol_version // null) as $reported_protocol
+        | $reported_protocol == null
+          or (($reported_protocol | tostring | ltrimstr("v")) == $session))
+      and ((.runtime.session_version // "") | tostring | ltrimstr("v")) == $session
+      and (.runtime.phase // .phase // "") == "active"
+      and (.runtime.chain_phase // .chain_phase // "") == "Inference"
+      and (.runtime.requests_blocked // .requests_blocked // false) == false)
+    and (.capacity.models | type) == "object"
+    and ((.capacity.models[$model].current_weight
+      // .capacity.models[$model].total_weight
+      // 0) | tonumber) > 0
+    and (.capacity.models[$model].routable // false) == true
+    and ([.confirmation_poc_phase?, (.devshards[]? | .confirmation_poc_phase?)]
+      | map(select(type == "string"
+          and . != ""
+          and . != "NORMAL_OPERATION"
+          and . != "CONFIRMATION_POC_COMPLETED"))
+      | length) == 0
+  ' <<<"$state" >/dev/null 2>&1
+}
+
+matching_ready_runtime_escrows() {
+  local state="$1" route="$2" session="$3" model="$4" version="$5"
+  jq -r --arg route "$route" --arg session "$session" --arg model "$model" \
+    --arg version "$version" '
     [.devshards[]?
       | select((.model // .runtime.model // "") == $model)
-      | select((.route_prefix // .runtime.route_prefix // "") == $route)
       | select((.active // false) == true)
+      | select((.route_prefix // .runtime.route_prefix // "") as $reported_route
+        | $reported_route == $route
+          or ($version == "v4" and $reported_route == ""))
+      | select(((.protocol_version // .runtime.protocol_version // null) as $reported_protocol
+        | $reported_protocol == null
+          or (($reported_protocol | tostring | ltrimstr("v")) == $session)))
+      | select(((.runtime.session_version // "") | tostring | ltrimstr("v")) == $session)
       | (.id | tostring)
       | select(test("^[1-9][0-9]*$"))]
     | unique | sort_by(tonumber)[]
   ' <<<"$state"
 }
 
+current_runtime_escrows() {
+  local env_file="$1" port="$2" version="$3" model route session state ids=() id status
+  model="$(value "$env_file" DEVSHARD_MODEL)"
+  route="/devshard/$version"
+  session="${version#v}"
+  state="$(admin_json "$env_file" "$port" /v1/admin/state)" || return 1
+  mapfile -t ids < <(
+    matching_ready_runtime_escrows "$state" "$route" "$session" "$model" "$version"
+  )
+  for id in "${ids[@]}"; do
+    status="$(chain_escrow_status "$env_file" "$id" "$model")"
+    case "$status" in
+      current) printf '%s\n' "$id" ;;
+      absent|retired) ;;
+      unavailable)
+        echo "ERROR chain escrow readback is unavailable escrow=$id" >&2
+        return 1
+        ;;
+      *)
+        echo "ERROR chain escrow readback conflicts with the local runtime escrow=$id" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
 ensure_target_escrow() {
   local env_file="$1" port="$2" version="$3" expected="$4" directory="$5"
-  local model route amount attempt response http_status curl_rc=0 response_id ids=() id
+  local allow_replacement="${6:-false}" model route amount attempt retired_attempt
+  local response http_status curl_rc=0 response_id ids=() ids_output id attempt_state attempt_escrow
+  local replacing_absent=false
+  [[ "$allow_replacement" =~ ^(true|false)$ ]] || return 2
   model="$(value "$env_file" DEVSHARD_MODEL)"
   route="/devshard/$version"
   amount="$(value "$env_file" DEVSHARD_ROTATION_ESCROW_AMOUNT)"
@@ -247,7 +466,56 @@ ensure_target_escrow() {
     return 1
   }
 
+  if [[ "$expected" =~ ^[1-9][0-9]*$ ]]; then
+    ids_output="$(current_runtime_escrows "$env_file" "$port" "$version")" || return 1
+    [[ -z "$ids_output" ]] || mapfile -t ids <<<"$ids_output"
+    if (( ${#ids[@]} > 0 )); then
+      if printf '%s\n' "${ids[@]}" | grep -Fxq "$expected"; then
+        id="$expected"
+      elif (( ${#ids[@]} == 1 )); then
+        id="${ids[0]}"
+        printf 'READY rebound rotated target gateway escrow previous=%s current=%s\n' \
+          "$expected" "$id" >&2
+      else
+        echo "ERROR target gateway has ambiguous current rotated escrows expected=$expected count=${#ids[@]}" >&2
+        return 1
+      fi
+      printf '%s\n' "$id"
+      return 0
+    fi
+    if [[ "$allow_replacement" == true ]] && chain_escrow_absent "$env_file" "$expected"; then
+      retire_absent_target_runtime "$env_file" "$port" "$expected" "$model" "$route" || return 1
+      if [[ -s "$attempt" ]]; then
+        attempt_state="$(value "$attempt" state)"
+        attempt_escrow="$(value "$attempt" escrow_id)"
+        [[ "$attempt_state" == created && "$attempt_escrow" =~ ^[1-9][0-9]*$ ]] || {
+          echo "ERROR retained target escrow is absent but its creation evidence is ambiguous expected=$expected evidence=$attempt" >&2
+          return 1
+        }
+        if [[ "$attempt_escrow" != "$expected" ]] \
+          && ! chain_escrow_absent "$env_file" "$attempt_escrow"; then
+          echo "ERROR retained target escrow is absent but its prior creation remains on-chain expected=$expected prior=$attempt_escrow" >&2
+          return 1
+        fi
+        retired_attempt="$directory/target-escrow-create.retired-$attempt_escrow.env"
+        [[ ! -e "$retired_attempt" ]] || {
+          echo "ERROR retired target escrow evidence already exists expected=$expected evidence=$retired_attempt" >&2
+          return 1
+        }
+        mv "$attempt" "$retired_attempt"
+      fi
+      printf 'READY retained target escrow is absent on-chain; creating one replacement previous=%s\n' \
+        "$expected" >&2
+      expected=pending
+      replacing_absent=true
+    fi
+  fi
+
   mapfile -t ids < <(matching_target_escrows "$env_file" "$port" "$model" "$route")
+  if [[ "$replacing_absent" == true && ${#ids[@]} -gt 0 ]]; then
+    echo "ERROR stale target runtime remains after local retirement model=$model route=$route count=${#ids[@]}" >&2
+    return 1
+  fi
   if (( ${#ids[@]} > 1 )); then
     echo "ERROR target gateway has ambiguous matching escrows model=$model route=$route count=${#ids[@]}" >&2
     return 1
@@ -395,7 +663,9 @@ wait_admin_settings_ready() {
 }
 
 wait_runtime_ready() {
-  local env_file="$1" port="$2" version="$3" escrow="$4" role="$5" deadline state route session model
+  local env_file="$1" port="$2" version="$3" escrow="$4" role="$5"
+  local allow_rebind="${6:-false}" deadline state route session model candidate candidates=() candidates_output
+  [[ "$allow_rebind" =~ ^(true|false)$ ]] || return 2
   model="$(value "$env_file" DEVSHARD_MODEL)"
   deadline=$((SECONDS + ${GDC_GATEWAY_MIGRATION_READY_TIMEOUT_SECONDS:-600}))
   while (( SECONDS < deadline )); do
@@ -403,22 +673,42 @@ wait_runtime_ready() {
     if [[ -n "$state" ]]; then
       route="/devshard/$version"
       session="${version#v}"
-      if jq -e --arg escrow "$escrow" --arg route "$route" --arg session "$session" --arg model "$model" '
-        (.devshards | type) == "array"
-        and any(.devshards[];
-          (.id | tostring) == $escrow
-          and (.model // .runtime.model // "") == $model
-          and (.active // false) == true
-          and (.route_prefix // .runtime.route_prefix // "") == $route
-          and ((.protocol_version // .runtime.protocol_version // "") | tostring | ltrimstr("v")) == $session
-          and ((.runtime.session_version // "") | tostring | ltrimstr("v")) == $session
-          and (.runtime.phase // .phase // "") == "active"
-          and (.runtime.chain_phase // .chain_phase // "") == "Inference"
-          and (.runtime.requests_blocked // .requests_blocked // false) == false)
-        and (.capacity.models | type) == "object"
-        and any(.capacity.models[]; (.routable // false) == true)
-      ' <<<"$state" >/dev/null 2>&1; then
+      if runtime_ready_in_state "$state" "$escrow" "$route" "$session" "$model" "$version" \
+        && chain_escrow_current "$env_file" "$escrow" "$model"; then
         return 0
+      fi
+      if [[ "$allow_rebind" == true ]]; then
+        candidates=()
+        candidates_output="$(current_runtime_escrows "$env_file" "$port" "$version")" || {
+          sleep 3
+          continue
+        }
+        [[ -z "$candidates_output" ]] || mapfile -t candidates <<<"$candidates_output"
+        if (( ${#candidates[@]} > 1 )); then
+          echo "ERROR $role gateway has ambiguous current rotated escrows count=${#candidates[@]}" >&2
+          return 1
+        fi
+        if (( ${#candidates[@]} == 1 )); then
+          candidate="${candidates[0]}"
+          if runtime_ready_in_state "$state" "$candidate" "$route" "$session" "$model" "$version"; then
+            if [[ "$candidate" != "$escrow" ]]; then
+              printf 'READY rebound rotated %s gateway escrow previous=%s current=%s\n' \
+                "$role" "$escrow" "$candidate"
+              case "$role" in
+                source)
+                  source_escrow_id="$candidate"
+                  write_manifest_value "$manifest" source_escrow_id "$candidate"
+                  ;;
+                target)
+                  target_escrow_id="$candidate"
+                  write_manifest_value "$manifest" target_escrow_id "$candidate"
+                  ;;
+                *) return 2 ;;
+              esac
+            fi
+            return 0
+          fi
+        fi
       fi
     fi
     sleep 3
@@ -481,13 +771,71 @@ sanitized_state() {
 
 drain_runtime() {
   local env_file="$1" port="$2" role="$3" timeout="$4" expected_escrow="$5"
-  local deadline state in_flight schema poll_seconds
+  local deadline state in_flight schema poll_seconds version model candidate current_ids=()
+  local current_ids_output chain_status
   [[ "$timeout" =~ ^[1-9][0-9]*$ && "$expected_escrow" =~ ^[1-9][0-9]*$ ]] || return 2
   poll_seconds="${GDC_GATEWAY_MIGRATION_DRAIN_POLL_SECONDS:-5}"
   [[ "$poll_seconds" =~ ^[0-9]+$ ]] || return 2
+  case "$role" in
+    source) version="$source_version" ;;
+    target) version="$target_version" ;;
+    *) return 2 ;;
+  esac
+  model="$(value "$env_file" DEVSHARD_MODEL)"
   deadline=$((SECONDS + timeout))
   while (( SECONDS < deadline )); do
     state="$(admin_json "$env_file" "$port" /v1/admin/state 2>/dev/null || true)"
+    chain_status="$(chain_escrow_status "$env_file" "$expected_escrow" "$model")"
+    case "$chain_status" in
+      current) ;;
+      absent|retired)
+        current_ids=()
+        if ! current_ids_output="$(current_runtime_escrows "$env_file" "$port" "$version")"; then
+          printf 'WAIT %s gateway drain chain readback unavailable expected_escrow=%s\n' \
+            "$role" "$expected_escrow"
+          sleep "$poll_seconds"
+          continue
+        fi
+        [[ -z "$current_ids_output" ]] || mapfile -t current_ids <<<"$current_ids_output"
+        if (( ${#current_ids[@]} > 1 )); then
+          echo "ERROR $role gateway has ambiguous current rotated escrows before drain count=${#current_ids[@]}" >&2
+          return 1
+        fi
+        if (( ${#current_ids[@]} == 1 )); then
+          candidate="${current_ids[0]}"
+          printf 'READY rebound rotated %s gateway escrow before drain previous=%s current=%s\n' \
+            "$role" "$expected_escrow" "$candidate"
+        expected_escrow="$candidate"
+        case "$role" in
+          source)
+            source_escrow_id="$candidate"
+            write_manifest_value "$manifest" source_escrow_id "$candidate"
+            ;;
+          target)
+            target_escrow_id="$candidate"
+            write_manifest_value "$manifest" target_escrow_id "$candidate"
+            ;;
+          esac
+          state="$(admin_json "$env_file" "$port" /v1/admin/state 2>/dev/null || true)"
+          chain_status=current
+        else
+          printf 'WAIT %s gateway drain has no current replacement escrow previous=%s chain_status=%s\n' \
+            "$role" "$expected_escrow" "$chain_status"
+          sleep "$poll_seconds"
+          continue
+        fi
+        ;;
+      unavailable)
+        printf 'WAIT %s gateway drain chain readback unavailable expected_escrow=%s\n' \
+          "$role" "$expected_escrow"
+        sleep "$poll_seconds"
+        continue
+        ;;
+      *)
+        echo "ERROR $role gateway chain escrow conflicts with retained identity escrow=$expected_escrow" >&2
+        return 1
+        ;;
+    esac
     if jq -e --arg escrow "$expected_escrow" '
       def counter:
         if type == "number" and . >= 0 and floor == . then .
@@ -501,12 +849,12 @@ drain_runtime() {
       and (.devshards | type) == "array"
       and (.devshards | length) > 0
       and ([.devshards[] | select((.id | tostring) == $escrow)] | length) == 1
-      and all(.devshards[];
+      and (all(.devshards[];
         ((if (.runtime | type) == "object" and (.runtime | has("active_requests"))
           then .runtime.active_requests
           elif has("active_requests") then .active_requests
           else error("missing active_requests")
-          end) | counter) == 0)
+          end) | counter) == 0))
     ' <<<"$state" >/dev/null 2>&1; then
       printf 'PASS %s gateway drained through authenticated admin state escrow=%s\n' "$role" "$expected_escrow"
       return 0
@@ -519,7 +867,7 @@ drain_runtime() {
       elif ([.devshards[] | select((.id | tostring) == $escrow)] | length) != 1 then "missing-retained-escrow"
       elif any(.devshards[];
         ((.runtime | type) != "object" or (.runtime | has("active_requests") | not))
-        and (has("active_requests") | not)) then "missing-active-request-counter"
+          and (has("active_requests") | not)) then "missing-active-request-counter"
       else "requests-active-or-counter-invalid"
       end
     ' <<<"$state" 2>/dev/null || printf unavailable)"
@@ -569,6 +917,8 @@ restore_source_runtime() {
     GDC_GATEWAY_ENV_FILE="$OPS/gateway.env" docker compose \
       --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway
   ) || return 1
+  wait_admin_settings_ready "$source_env" "$source_port" source || return 1
+  restore_settings_file "$source_env" "$source_port" "$source_settings" source || return 1
   (
     cd "$directory/04-ops"
     GDC_GATEWAY_ENV_FILE="$target_env" docker compose -p "$target_project" \
@@ -586,8 +936,8 @@ restore_source_runtime() {
       >/dev/null || return 1
   assert_runtime_identity "$source_port" "$source_image_ref" "$source_image_id" "$source_volume" || return 1
   assert_runtime_identity "$target_port" "$target_image_ref" "$target_image_id" "$target_volume" || return 1
-  wait_runtime_ready "$source_env" "$source_port" "$source_version" "$source_escrow_id" source || return 1
-  wait_runtime_ready "$target_env" "$target_port" "$target_version" "$target_escrow_id" target || return 1
+  wait_runtime_ready "$source_env" "$source_port" "$source_version" "$source_escrow_id" source true || return 1
+  wait_runtime_ready "$target_env" "$target_port" "$target_version" "$target_escrow_id" target true || return 1
 }
 
 wait_safe_window() {
@@ -654,6 +1004,11 @@ case "$action" in
       exit 2
     fi
     install -d -m 0700 "$directory"
+    if [[ -s "$directory/manifest.env" ]] \
+      && [[ "$(value "$directory/manifest.env" phase)" == completed ]]; then
+      echo 'ERROR a completed gateway migration directory cannot be reused; start a fresh migration cycle' >&2
+      exit 1
+    fi
     source_env="$directory/source.env"
     source_compose_env="$directory/source-compose.env"
     source_compose_yaml="$directory/source-compose.yaml"
@@ -694,18 +1049,32 @@ case "$action" in
     source_version="${source_route##*/}"
     source_model="$(value "$source_env" DEVSHARD_MODEL)"
     configured_source_escrow_id="$(value "$source_env" DEVSHARD_ESCROW_ID)"
-    mapfile -t source_escrow_ids < <(
-      matching_active_escrows "$source_env" "$source_port" "$source_model" "$source_route"
-    )
+    source_escrow_ids_output="$(
+      current_runtime_escrows "$source_env" "$source_port" "$source_version"
+    )" || { echo 'ERROR source gateway chain escrow inventory is unavailable' >&2; exit 1; }
+    source_escrow_ids=()
+    [[ -z "$source_escrow_ids_output" ]] || mapfile -t source_escrow_ids <<<"$source_escrow_ids_output"
     (( ${#source_escrow_ids[@]} > 0 )) \
       || { echo 'ERROR source gateway has no active escrow for its model and route' >&2; exit 1; }
     if [[ -n "$configured_source_escrow_id" ]]; then
       [[ "$configured_source_escrow_id" =~ ^[1-9][0-9]*$ ]] \
         || { echo 'ERROR configured source gateway escrow identity is invalid' >&2; exit 1; }
-      printf '%s\n' "${source_escrow_ids[@]}" | grep -Fxq "$configured_source_escrow_id" \
-        || { echo 'ERROR configured source gateway escrow is absent from active admin state' >&2; exit 1; }
-      source_escrow_id="$configured_source_escrow_id"
+      if printf '%s\n' "${source_escrow_ids[@]}" | grep -Fxq "$configured_source_escrow_id"; then
+        source_escrow_id="$configured_source_escrow_id"
+      elif (( ${#source_escrow_ids[@]} > 1 )); then
+        echo "ERROR source gateway has ambiguous current rotated escrows configured=$configured_source_escrow_id count=${#source_escrow_ids[@]}" >&2
+        exit 1
+      else
+        # Automatic rotation intentionally leaves the rendered bootstrap ID
+        # behind. Rotation is already frozen above, so the authenticated,
+        # numerically sorted runtime inventory is now stable and authoritative.
+        source_escrow_id="${source_escrow_ids[0]}"
+        printf 'READY configured source gateway escrow is retired configured=%s selected_active=%s\n' \
+          "$configured_source_escrow_id" "$source_escrow_id"
+      fi
     else
+      (( ${#source_escrow_ids[@]} == 1 )) \
+        || { echo "ERROR source gateway current escrow identity is ambiguous count=${#source_escrow_ids[@]}" >&2; exit 1; }
       source_escrow_id="${source_escrow_ids[0]}"
     fi
     [[ "$source_version" =~ ^v[345]$ ]] \
@@ -747,7 +1116,7 @@ case "$action" in
         prepared|cutover|drained|completed)
           if [[ "$phase" == completed ]]; then
             assert_runtime_identity 18080 "$target_image_ref" "$target_image_id" "$target_volume"
-            wait_runtime_ready "$OPS/gateway.env" 18080 "$target_version" "$target_escrow_id" target
+            wait_runtime_ready "$OPS/gateway.env" 18080 "$target_version" "$target_escrow_id" target true
           else
             assert_runtime_identity "$source_port" "$source_image_ref" "$source_image_id" "$source_volume"
             assert_runtime_identity "$target_port" "$target_image_ref" "$target_image_id" "$target_volume"
@@ -763,6 +1132,7 @@ case "$action" in
             && "$requested_target_port" == "$target_port" ]] \
             || { echo 'ERROR retained gateway migration arguments changed during resume' >&2; exit 1; }
           retained_source_version="$source_version"
+          retained_phase="$phase"
           retained_target_version="$target_version"
           retained_source_volume="$source_volume"
           retained_target_volume="$target_volume"
@@ -797,9 +1167,11 @@ case "$action" in
     source_volume="$(value "$source_env" DEVSHARD_GATEWAY_DATA_VOLUME_NAME)"
     [[ -n "$source_volume" ]] || source_volume="$(runtime_volume_for_port "$source_port")"
     target_volume="$(value "$target_env" DEVSHARD_GATEWAY_DATA_VOLUME_NAME)"
-    source_escrow_id="$(value "$source_env" DEVSHARD_ESCROW_ID)"
+    # freeze.env binds the exact active source after rotation is disabled.
+    # The rendered bootstrap ID can legitimately be retired by the reconciler.
+    source_escrow_id="$(value "$directory/freeze.env" source_escrow_id)"
     [[ -n "$source_escrow_id" ]] \
-      || source_escrow_id="$(value "$directory/freeze.env" source_escrow_id)"
+      || source_escrow_id="$(value "$source_env" DEVSHARD_ESCROW_ID)"
     target_escrow_id=pending
     source_binary_sha256="$(value "$source_env" DEVSHARD_BINARY_SHA256)"
     target_binary_sha256="$(value "$target_env" DEVSHARD_BINARY_SHA256)"
@@ -821,7 +1193,6 @@ case "$action" in
         && "$target_version" == "$retained_target_version" \
         && "$source_volume" == "$retained_source_volume" \
         && "$target_volume" == "$retained_target_volume" \
-        && "$source_escrow_id" == "$retained_source_escrow_id" \
         && "$source_image_ref" == "$retained_source_image_ref" \
         && "$source_image_id" == "$retained_source_image_id" \
         && "$target_image_ref" == "$retained_target_image_ref" \
@@ -829,6 +1200,13 @@ case "$action" in
         && "$source_binary_sha256" == "$retained_source_binary_sha256" \
         && "$target_binary_sha256" == "$retained_target_binary_sha256" ]] \
         || { echo 'ERROR retained gateway migration identity changed during resume' >&2; exit 1; }
+      if [[ "$source_escrow_id" != "$retained_source_escrow_id" ]]; then
+        [[ "$retained_phase" =~ ^(failed|rolled_back)$ ]] \
+          || { echo 'ERROR retained source escrow changed before a safe rollback' >&2; exit 1; }
+        printf 'READY rebound rolled-back source escrow previous=%s current=%s\n' \
+          "$retained_source_escrow_id" "$source_escrow_id"
+        write_manifest_value "$manifest" source_escrow_id "$source_escrow_id"
+      fi
       target_escrow_id="$retained_target_escrow_id"
       write_phase "$manifest" preparing
     else
@@ -880,8 +1258,12 @@ EOF
     done
     admin_json "$target_env" "$target_port" /v1/admin/settings >/dev/null
     assert_runtime_identity "$target_port" "$target_image_ref" "$target_image_id" "$target_volume"
+    allow_target_replacement=false
+    if [[ "$resume_manifest" == true && "$retained_phase" =~ ^(failed|rolled_back)$ ]]; then
+      allow_target_replacement=true
+    fi
     target_escrow_id="$(ensure_target_escrow "$target_env" "$target_port" "$target_version" \
-      "$target_escrow_id" "$directory")"
+      "$target_escrow_id" "$directory" "$allow_target_replacement")"
     write_manifest_value "$manifest" target_escrow_id "$target_escrow_id"
     configure_target "$target_env" "$target_port" false false
     wait_runtime_ready "$target_env" "$target_port" "$target_version" "$target_escrow_id" target
@@ -901,6 +1283,21 @@ EOF
       --argjson source "$(sanitized_state "$source_env" "$source_port" source)" \
       --argjson target "$(sanitized_state "$target_env" "$target_port" target)" \
       '{phase:$phase,images:{source:{reference:$source_image_ref,id:$source_image_id,binary_sha256:$source_binary_sha256},target:{reference:$target_image_ref,id:$target_image_id,binary_sha256:$target_binary_sha256}},source:$source,target:$target}'
+    ;;
+  refresh-target)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    directory="$1"
+    load_manifest "$directory"
+    [[ "$phase" =~ ^(prepared|cutover_pending)$ ]] \
+      || { echo "ERROR target refresh requires a pre-cutover phase current=$phase" >&2; exit 1; }
+    assert_runtime_identity "$target_port" "$target_image_ref" "$target_image_id" "$target_volume"
+    target_escrow_id="$(ensure_target_escrow "$target_env" "$target_port" "$target_version" \
+      "$target_escrow_id" "$directory" true)"
+    write_manifest_value "$manifest" target_escrow_id "$target_escrow_id"
+    configure_target "$target_env" "$target_port" false false
+    wait_runtime_ready "$target_env" "$target_port" "$target_version" "$target_escrow_id" target
+    direct_smoke "$target_env" "$target_port"
+    printf 'PASS target gateway refreshed immediately before cutover escrow=%s\n' "$target_escrow_id"
     ;;
   drain)
     [[ $# -ge 1 && $# -le 2 ]] || { usage; exit 2; }
@@ -937,7 +1334,7 @@ EOF
     if [[ -n "$manifest" && "$phase" == promoting ]]; then
       restore_source_runtime
     fi
-    post_settings_file "$source_env" "$source_port" "$source_settings" >/dev/null
+    restore_settings_file "$source_env" "$source_port" "$source_settings" source
     [[ -z "$manifest" ]] || write_phase "$manifest" rolled_back
     printf 'READY source gateway lifecycle settings restored\n'
     ;;
@@ -946,7 +1343,7 @@ EOF
     directory="$1"
     load_manifest "$directory"
     if [[ "$phase" == completed ]]; then
-      wait_runtime_ready "$OPS/gateway.env" 18080 "$target_version" "$target_escrow_id" target
+      wait_runtime_ready "$OPS/gateway.env" 18080 "$target_version" "$target_escrow_id" target true
       printf 'READY target gateway is already promoted to the canonical port\n'
       exit 0
     fi
@@ -999,7 +1396,7 @@ EOF
     wait_admin_settings_ready "$OPS/gateway.env" 18080 target
     configure_target "$OPS/gateway.env" 18080 true true
     assert_runtime_identity 18080 "$target_image_ref" "$target_image_id" "$target_volume"
-    wait_runtime_ready "$OPS/gateway.env" 18080 "$target_version" "$target_escrow_id" target
+    wait_runtime_ready "$OPS/gateway.env" 18080 "$target_version" "$target_escrow_id" target true
     write_phase "$manifest" completed
     trap - EXIT
     printf 'PASS target gateway promoted to canonical port; source volume preserved=%s\n' "$source_volume"

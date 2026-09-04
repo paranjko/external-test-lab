@@ -133,6 +133,7 @@ grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS", 900' "$ROOT/04-ops/edge-n
 grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS:-900}' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK=${GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK:-1}' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=$gateway_admission_protocols_json' "$ROOT/04-ops/edge-node/render-env.sh"
+grep -Fq 'GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON_OVERRIDE' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'gateway_protocol_contract="$(selected_gateway_protocol_contract)"' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'env_file: [./gateway-admission.env]' "$ROOT/04-ops/edge-node/compose.yaml"
 grep -Fq 'Deploy the matching public admission contract' "$ROOT/scripts/phase-ops.sh"
