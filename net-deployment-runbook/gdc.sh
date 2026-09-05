@@ -12,6 +12,30 @@ fi
 
 GDC_LAUNCHER_EXIT_RECORDED=false
 
+record_join_terminal_result() {
+  local outcome="$1" phase="$2" category="$3" reason="$4" exit_code="$5" mutation="$6" signer_state="$7" resume="$8" profile_sha='null' input
+  [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] || return 0
+  [[ -x "$ROOT/scripts/record-join-result.sh" ]] || return 70
+  # Preflight adapters use broader diagnostic categories. Terminal results
+  # deliberately have a smaller closed vocabulary.
+  case "$category" in
+    network) category=observation ;;
+    configuration) category=profile ;;
+    dependency) category=artifact ;;
+  esac
+  if [[ -r "${GDC_JOIN_PROFILE:-}" ]]; then
+    profile_sha="\"$(sha256sum "$GDC_JOIN_PROFILE" | awk '{print $1}')\""
+  fi
+  input="$(mktemp "$(dirname "$GDC_JOIN_RESULT_OUTPUT")/.join-result-input.XXXXXX")"
+  chmod 600 "$input"
+  jq -cn --arg outcome "$outcome" --arg phase "$phase" --arg category "$category" --arg reason "$reason" \
+    --argjson exit_code "$exit_code" --arg mutation "$mutation" --arg signer_state "$signer_state" --arg resume "$resume" \
+    --argjson profile_sha "$profile_sha" \
+    '{schema_version:1,kind:"gdc-host-join-result",outcome:$outcome,phase:$phase,category:$category,reason:$reason,exit_code:$exit_code,mutation:$mutation,signer_state:$signer_state,resume:$resume,join_profile_sha256:$profile_sha,evidence:[]}' >"$input"
+  "$ROOT/scripts/record-join-result.sh" --output "$GDC_JOIN_RESULT_OUTPUT" --input "$input" >/dev/null
+  rm -f "$input"
+}
+
 record_launcher_failure() {
   local rc="$1" tmp failure_dir
   [[ "$rc" -ne 0 && -n "${GDC_LAUNCHER_ENVELOPE_DIR:-}" ]] || return 0
@@ -35,6 +59,7 @@ record_launcher_failure() {
     [[ -z "${GDC_RUN_ID:-}" ]] || printf 'run_manifest=%s\n' "$GDC_HOME/runs/$GDC_RUN_ID/manifest.env"
     printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
     [[ -z "${GDC_DIAGNOSTIC_ENVELOPE:-}" ]] || printf 'diagnostic_envelope=%s\n' "$GDC_DIAGNOSTIC_ENVELOPE"
+    [[ -z "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || printf 'preflight_receipt=%s\n' "$GDC_JOIN_PREFLIGHT_RECEIPT"
     printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
   } >"$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
   chmod 0600 "$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
@@ -136,6 +161,14 @@ run_phase() {
   if [[ -n "${GDC_ASSURANCE_RUN_ID:-}" ]]; then
     run_id="assurance-${GDC_ASSURANCE_RUN_ID}"
     printf '%s\n' "$run_id" >"$run_id_file"
+  # Host JOIN has already created its private profile, preflight receipt and
+  # terminal-result location under this ID before it reaches run_phase. A
+  # restore must keep that evidence namespace: GDC_JOIN_RECOVERY_NEW_RUN
+  # means "do not reuse a historical recovery", not "split this invocation
+  # into independent preflight and mutation runs".
+  elif [[ -n "${GDC_RUN_ID:-}" ]]; then
+    run_id="$GDC_RUN_ID"
+    printf '%s\n' "$run_id" >"$run_id_file"
   elif [[ "${GDC_FORCE_NEW_RUN:-false}" == true || "${GDC_JOIN_RECOVERY_NEW_RUN:-false}" == true ]]; then
     run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     printf '%s\n' "$run_id" >"$run_id_file"
@@ -172,8 +205,91 @@ run_phase() {
     fi
     [[ -z "$diagnostic_envelope" ]] || export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic_envelope"
   fi
+  if [[ "$phase" == join-* && -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]]; then
+    if (( rc == 0 )); then
+      # A successful phase has completed the guarded signer readback, so it
+      # may replace the pre-start conservative terminal result.
+      if ! record_join_terminal_result succeeded acceptance internal join_complete 0 signer_may_be_on enabled not_applicable; then
+        printf 'ERROR JOIN completed without a terminal result receipt\n' >&2
+        rc=70
+      fi
+    elif [[ -f "$GDC_JOIN_RESULT_OUTPUT" ]]; then
+      # A phase may have recorded a more precise bounded terminal outcome
+      # (for example a signerless restore refusal or activation guard).  Do
+      # not overwrite it with the launcher-wide conservative fallback.
+      :
+    else
+      # A phase may fail after an interrupted signer start. Be conservative:
+      # a retained operator must read it back, never infer a retry point.
+      if ! record_join_terminal_result failed signer internal join_phase_failed "$rc" signer_may_be_on unknown automatic_retry_forbidden; then
+        printf 'ERROR JOIN failed and its terminal result receipt could not be persisted\n' >&2
+        rc=70
+      fi
+    fi
+  fi
   set -e
   return "$rc"
+}
+
+run_join_preflight() {
+  local checkpoint="$1" state="$2" category="$3" tool="$4" summary="$5" rc diagnostic typed
+  shift 5
+  if "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  if [[ "$category" == lineage && -r "${GDC_JOIN_LINEAGE_FAILURE_FILE:-}" ]]; then
+    typed="$(<"$GDC_JOIN_LINEAGE_FAILURE_FILE")"
+    if [[ "$typed" =~ ^(rpc_quorum_conflict|rpc_fault_domain_alias|snapshot_unavailable|snapshot_incompatible|trust_expired|historical_replay_unsupported|apphash_divergence|lineage_verification_failed|signer_activation_unsafe)$ ]]; then
+      tool="${typed//_/-}"
+    fi
+  fi
+  # JOIN has not selected a local profile or touched a Host at this point.
+  # Retain a bounded, structured diagnostic in the launcher envelope rather
+  # than manufacturing a lifecycle manifest for an unselected release.
+  GDC_ACTIVE_PHASE='join-preflight'
+  diagnostic="$GDC_LAUNCHER_ENVELOPE_DIR/diagnostic-envelope.v1.json"
+  "$ROOT/scripts/diagnostic-envelope.sh" write "$diagnostic" \
+    join join-preflight "$checkpoint" "$state" "$category" "$tool" "$rc" \
+    safe join-repeat "$summary"
+  export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic"
+  write_join_preflight_receipt "$checkpoint" failed "$category" "$tool"
+  if ! record_join_terminal_result refused profile "$category" join_preflight_failed "$rc" none absent new_profile; then
+    printf 'ERROR JOIN preflight failed and its terminal result receipt could not be persisted\n' >&2
+    return 70
+  fi
+  printf 'ERROR JOIN preflight failed checkpoint=%s preflight_receipt=%s result=%s\n' \
+    "$checkpoint" "$GDC_JOIN_PREFLIGHT_RECEIPT" "${GDC_JOIN_RESULT_OUTPUT:-unavailable}" >&2
+  return "$rc"
+}
+
+initialize_join_preflight_receipt() {
+  GDC_JOIN_PREFLIGHT_RECEIPT="$STATE/preflight-receipt.env"
+  export GDC_JOIN_PREFLIGHT_RECEIPT
+  write_join_preflight_receipt initialized pending unavailable unavailable
+}
+
+write_join_preflight_receipt() {
+  local checkpoint="$1" result="$2" category="$3" tool="$4" tmp
+  [[ -n "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || return 0
+  tmp="${GDC_JOIN_PREFLIGHT_RECEIPT}.tmp.$$"
+  {
+    printf 'schema_version=1\n'
+    printf 'invocation_id=%s\n' "$GDC_LAUNCHER_INVOCATION_ID"
+    printf 'checkpoint=%s\nresult=%s\ncategory=%s\ntool=%s\n' \
+      "$checkpoint" "$result" "$category" "$tool"
+    printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
+    [[ -z "${GDC_NETWORK_FINGERPRINT:-}" ]] || printf 'network_fingerprint=%s\n' "$GDC_NETWORK_FINGERPRINT"
+    [[ -z "${GDC_NETWORK_CHAIN_ID:-}" ]] || printf 'chain_id=%s\n' "$GDC_NETWORK_CHAIN_ID"
+    [[ -z "${GDC_NETWORK_GENESIS_SHA256:-}" ]] || printf 'genesis_sha256=%s\n' "$GDC_NETWORK_GENESIS_SHA256"
+    [[ -z "${GDC_NETWORK_CORE_VERSION:-}" ]] || printf 'core_version=%s\ncore_commit=%s\n' "$GDC_NETWORK_CORE_VERSION" "$GDC_NETWORK_CORE_COMMIT"
+    [[ -z "${GDC_NETWORK_DAPI_VERSION:-}" ]] || printf 'dapi_version=%s\ndapi_commit=%s\n' "$GDC_NETWORK_DAPI_VERSION" "$GDC_NETWORK_DAPI_COMMIT"
+    [[ -z "${GDC_NETWORK_DEVSHARD_APPROVALS:-}" ]] || printf 'devshard_approvals=%q\n' "$GDC_NETWORK_DEVSHARD_APPROVALS"
+    [[ -z "${GDC_RELEASE_PROFILE:-}" ]] || printf 'release_profile=%s\n' "$GDC_RELEASE_PROFILE"
+  } >"$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$GDC_JOIN_PREFLIGHT_RECEIPT"
 }
 
 use_node_data_home() {
@@ -200,7 +316,8 @@ See the role guides for required input, then run:
   ./gdc.sh report github
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
-  ./gdc.sh host join --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
@@ -295,6 +412,7 @@ COMPOSITION=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release) RELEASE="${2:-}"; shift 2 ;;
+    --release=*) RELEASE="${1#--release=}"; shift ;;
     --composition) COMPOSITION="${2:-}"; shift 2 ;;
     --model) MODEL="${2:-}"; shift 2 ;;
     *) break ;;
@@ -458,7 +576,7 @@ case "$COMMAND" in
     [[ -s "$backup_role_config" ]] || { echo "host backup requires retained operator state for $backup_alias; a running Host cannot recreate cold or warm recovery material" >&2; exit 1; }
     export GDC_ENV="$backup_role_config"
     source "$ROOT/scripts/lib.sh"
-    load_project
+    load_project host-recovery
     run_phase "backup-$backup_alias" "$ROOT/scripts/phase-host-backup.sh" "$backup_alias"
     ;;
   prepare|verify|reset|baseline|settle|bootstrap-access|gateway-continuity|audit)
@@ -799,11 +917,39 @@ case "$COMMAND" in
     esac
     ;;
   join)
-    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' skip_qualification=false verification=false
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_chain_id=gonka-devnet-community skip_qualification=false verification=false plan_only=false
+    # JOIN derives its exact compatible runtime from the first healthy
+    # Bootstrap seed. An operator-selected release or composition could
+    # otherwise turn retained evidence into a software authority.
+    [[ -z "$RELEASE" ]] || { echo 'host join does not accept --release; composition is selected from verified seed observations' >&2; exit 2; }
+    [[ -z "$COMPOSITION" ]] || { echo 'host join does not accept --composition; composition is selected from verified seed observations' >&2; exit 2; }
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --release|--release=*|--composition|--composition=*)
+          echo 'host join does not accept release or composition selectors; composition is selected from verified seed observations' >&2
+          exit 2
+          ;;
         --skip-qualification) skip_qualification=true ;;
         --verification) verification=true ;;
+        --plan) plan_only=true ;;
+        --resume) join_resume_run="${2:-}"; shift ;;
+        --old-signer-fence)
+          join_old_signer_fence="${2:-}"
+          [[ -n "$join_old_signer_fence" && -f "$join_old_signer_fence" && -r "$join_old_signer_fence" ]] || {
+            echo 'host join --old-signer-fence requires a readable receipt file' >&2; exit 2;
+          }
+          join_old_signer_fence="$(realpath -e -- "$join_old_signer_fence")"
+          shift
+          ;;
+        --chain-id)
+          join_chain_id="${2:-}"
+          [[ "$join_chain_id" =~ ^[a-z0-9][a-z0-9-]{0,127}$ ]] || { echo 'host join --chain-id requires a safe chain identifier' >&2; exit 2; }
+          shift
+          ;;
+        --chain-id=*)
+          join_chain_id="${1#--chain-id=}"
+          [[ "$join_chain_id" =~ ^[a-z0-9][a-z0-9-]{0,127}$ ]] || { echo 'host join --chain-id requires a safe chain identifier' >&2; exit 2; }
+          ;;
         --public-host)
           join_public_host="${2:-}"
           [[ "$join_public_host" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'host join --public-host requires an IP address or domain' >&2; exit 2; }
@@ -843,29 +989,220 @@ case "$COMMAND" in
       shift
     done
     [[ -n "$join_alias" ]] || { echo 'host join requires an SSH alias' >&2; usage; exit 2; }
+    [[ -z "$join_resume_run" || "$join_resume_run" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { echo 'host join --resume requires a valid run ID' >&2; exit 2; }
+    [[ -z "$join_old_signer_fence" || -n "$join_resume_run" ]] || { echo 'host join --old-signer-fence requires --resume <run-id>' >&2; exit 2; }
+    [[ -z "$join_old_signer_fence" ]] || {
+      echo 'host join does not accept an externally authored signer-fence receipt: independent prior-Host evidence is not implemented' >&2
+      exit 2
+    }
     [[ "$join_alias" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "invalid Host SSH alias: $join_alias (use lowercase letters, digits, _ or -)" >&2; exit 2; }
     if [[ -n "$join_gpu_alias" ]]; then
       [[ "$join_gpu_alias" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "invalid GPU SSH alias: $join_gpu_alias (use lowercase letters, digits, _ or -)" >&2; exit 2; }
       [[ "$join_gpu_alias" != "$join_alias" ]] || { echo 'Host and GPU SSH aliases must be different' >&2; exit 2; }
     fi
     use_node_data_home "$join_alias"
-    resolve_join_release_profile "$RELEASE" "$join_restore_archive"
     acquire_operator_lock
-    "$ROOT/scripts/ensure-inferenced-cli.sh"
-    # Bootstrap staging precedes role-input creation. These paths therefore
-    # cannot depend on load_project(), which needs that role input.
+    # Preserve the prior controller run before allocating this invocation's
+    # evidence directory.  A normal JOIN may only be a no-op after a retained
+    # COMPLETE; an incomplete run is resumed solely by its receipt-bound path.
+    join_previous_run_id=''
+    if [[ -s "$STATE/active-run-id" ]]; then
+      join_previous_run_id="$(<"$STATE/active-run-id")"
+      [[ "$join_previous_run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+        echo 'host join refuses an unsafe retained active run identifier' >&2; exit 2;
+      }
+    fi
+    [[ -n "$join_public_host" ]] || { echo 'host join requires --public-host for a generated Join Profile' >&2; exit 2; }
+    if [[ -n "$join_resume_run" ]]; then
+      join_run="$GDC_HOME/runs/$join_resume_run/join-$join_alias"
+      join_resume_verification="$("$ROOT/scripts/verify-join-resume-inputs.sh" --run-dir "$join_run" \
+        --run-id "$join_resume_run" --node-name "$join_alias" --public-host "$join_public_host")"
+      printf '%s\n' "$join_resume_verification"
+      if [[ "$plan_only" == true ]]; then
+        [[ -z "$join_old_signer_fence" ]] || {
+          echo 'host join --plan --resume does not accept an old-signer fence because it performs no activation' >&2; exit 2;
+        }
+        printf 'PASS Host JOIN resume plan verified run_id=%s; no Host action was performed\n' "$join_resume_run"
+        exit 0
+      fi
+      GDC_RUN_ID="$join_resume_run"
+      GDC_JOIN_PROFILE="$join_run/join-profile.v1.json"
+      GDC_JOIN_OBSERVATION="$join_run/network-observation.v1.json"
+      GDC_JOIN_RESULT_OUTPUT="$join_run/join-result.v1.json"
+      export GDC_RUN_ID GDC_JOIN_PROFILE GDC_JOIN_OBSERVATION GDC_JOIN_RESULT_OUTPUT
+      printf '%s\n' "$GDC_RUN_ID" >"$STATE/active-run-id"
+      join_resume_state="$(jq -er .receipt_chain.last_state <<<"$join_resume_verification")"
+      case "$join_resume_state" in
+        SIGNER_ACTIVE_VERIFIED)
+          [[ "$verification" == true ]] || { echo 'host join signer acceptance resume requires --verification' >&2; exit 2; }
+          run_phase "join-resume-acceptance-$join_alias" "$ROOT/scripts/phase-join-resume-acceptance.sh" \
+            "$join_alias" "$join_run"
+          ;;
+        COMPLETE)
+          record_join_terminal_result no_op acceptance internal join_complete_no_op 0 signer_may_be_on enabled resume_same_run
+          printf 'PASS Host JOIN resume is already complete; no Host action was performed\n'
+          ;;
+        *)
+          echo "host join --resume has no safe dispatcher for retained state=$join_resume_state" >&2
+          exit 2
+          ;;
+      esac
+      exit 0
+    fi
+    if [[ -z "${GDC_RUN_ID:-}" ]]; then
+      GDC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+      export GDC_RUN_ID
+    fi
+    # Persist bounded terminal evidence before any Bootstrap fetch or network
+    # observation. The result location is fixed for this invocation even if
+    # no phase manifest can be created safely.
+    join_run="$GDC_HOME/runs/$GDC_RUN_ID/join-$join_alias"
+    [[ ! -e "$join_run" ]] || { echo 'host join run directory already exists; use the receipt-bound resume command' >&2; exit 2; }
+    install -d -m 0700 "$join_run"
+    GDC_JOIN_RESULT_OUTPUT="$join_run/join-result.v1.json"
+    export GDC_JOIN_RESULT_OUTPUT
+    # Persist a bounded receipt before any Bootstrap fetch or network
+    # observation. It is updated atomically as public facts become available.
+    initialize_join_preflight_receipt
+    # Bootstrap observation precedes both CLI installation and role-input
+    # creation. The public network therefore selects the local immutable
+    # profile before any software download or Host mutation.
     join_genesis="$GDC_HOME/genesis"
     join_secrets="$STATE/secrets"
+    join_bootstrap_url="https://gonka-dev.net/${join_chain_id}/bootstrap.json"
     if [[ -z "$join_bootstrap_file" ]]; then
       join_bootstrap_file="$STATE/network-bootstrap.json"
-      "$ROOT/scripts/fetch-network-bootstrap.sh" --url https://gonka-dev.net/gonka-devnet-community/bootstrap.json --output "$join_bootstrap_file"
+      run_join_preflight bootstrap-fetch unavailable network curl \
+        'The public Bootstrap descriptor could not be fetched and validated.' \
+        "$ROOT/scripts/fetch-network-bootstrap.sh" --url "$join_bootstrap_url" --output "$join_bootstrap_file"
     else
-      "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
+      run_join_preflight bootstrap-verify invalid-bootstrap configuration bootstrap \
+        'The supplied Bootstrap descriptor did not satisfy the local validation contract.' \
+        "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
     fi
-    "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$join_genesis" --state-dir "$STATE" --secrets-dir "$join_secrets"
+    run_join_preflight bootstrap-chain-id invalid-bootstrap configuration bootstrap \
+      'The Bootstrap descriptor chain ID does not match the requested Host JOIN network.' \
+      jq -e --arg chain "$join_chain_id" '.chain_id == $chain' "$join_bootstrap_file" >/dev/null
+    join_observation="$STATE/network-observation.v1.json"
+    run_join_preflight software-observation unavailable network seed-observer \
+      'No Bootstrap seed established a complete healthy runtime identity.' \
+      "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID" --output "$join_observation"
+    GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$join_observation")"
+    GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$join_observation")"
+    GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$join_observation")"
+    export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
+    write_join_preflight_receipt software-observation passed unavailable seed-observer
+    # Discovery produces the local immutable execution profile before any
+    # state-sync, snapshot or signer gate. Those later gates receive this
+    # profile; they cannot change the selected seed tuple.
+    join_components="$STATE/join-components.v1.json"
+    run_join_preflight component-resolution unavailable dependency official-artifact-resolver \
+      'Official immutable artifacts could not be resolved for the selected Core and DAPI runtime bytes.' \
+      "$ROOT/scripts/resolve-join-components.sh" --observation "$join_observation" --output "$join_components"
+    join_profile="$STATE/join-profile.v1.json"
+    join_operation=new
+    [[ -z "$join_restore_archive" ]] || join_operation=restore
+    join_profile_args=(--observation "$join_observation" --components "$join_components" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_profile")
+    [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
+    [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
+    run_join_preflight join-profile unavailable profile join-profile \
+      'The observed network could not be compiled into an executable Join Profile.' \
+      "$ROOT/scripts/resolve-join-profile.sh" "${join_profile_args[@]}"
+    # The state directory is mutable across invocations. Keep the exact
+    # inputs for this run under its private evidence directory.
+    install -m 0600 "$join_observation" "$join_run/network-observation.v1.json"
+    install -m 0600 "$join_profile" "$join_run/join-profile.v1.json"
+    GDC_JOIN_PROFILE="$join_run/join-profile.v1.json"
+    GDC_JOIN_OBSERVATION="$join_run/network-observation.v1.json"
+    export GDC_JOIN_PROFILE GDC_JOIN_OBSERVATION
+    write_join_preflight_receipt join-profile passed unavailable join-profile
+    install -m 0600 "$GDC_JOIN_PREFLIGHT_RECEIPT" "$join_run/preflight-receipt.env"
+    if [[ "$plan_only" == true ]]; then
+      record_join_terminal_result no_op profile internal plan_completed 0 none absent new_profile
+      printf 'PASS Host JOIN plan profile=%s observation=%s preflight_receipt=%s result=%s\n' \
+        "$GDC_JOIN_PROFILE" "$GDC_JOIN_OBSERVATION" "$join_run/preflight-receipt.env" "$GDC_JOIN_RESULT_OUTPUT"
+      exit 0
+    fi
+    if [[ -n "$join_previous_run_id" && "$join_previous_run_id" != "$GDC_RUN_ID" ]]; then
+      previous_join_run="$GDC_HOME/runs/$join_previous_run_id/join-$join_alias"
+      join_reentry="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$previous_join_run" --current-profile "$GDC_JOIN_PROFILE")"
+      join_reentry_class="$(jq -er '.classification' <<<"$join_reentry")"
+      case "$join_reentry_class" in
+        no_prior_run)
+          ;;
+        completed_matched)
+          head_name="$(find "$previous_join_run/receipts" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json' -printf '%f\n' | LC_ALL=C sort | tail -n1)"
+          if ! "$ROOT/scripts/verify-complete-join-state.sh" "$join_alias" "$GDC_JOIN_PROFILE" "$previous_join_run/receipts/$head_name"; then
+            record_join_terminal_result refused acceptance host completed_join_readback_failed 1 none unknown manual_recovery
+            echo 'host join completed-state readback failed; do not rerun a completed JOIN as a deployment mutation' >&2
+            exit 1
+          fi
+          record_join_terminal_result no_op acceptance internal join_complete_no_op 0 signer_may_be_on enabled not_applicable
+          printf 'PASS Host JOIN is already complete with the current immutable profile; no Host mutation was performed\n'
+          exit 0
+          ;;
+        resume_required)
+          record_join_terminal_result refused identity internal join_reentry_requires_resume 1 none unknown manual_recovery
+          printf 'host join found a retained incomplete run; use gdc host join --resume %s --public-host %s %s\n' \
+            "$join_previous_run_id" "$join_public_host" "$join_alias" >&2
+          exit 1
+          ;;
+        manual_recovery_required)
+          record_join_terminal_result refused signer internal join_reentry_manual_recovery_required 1 none unknown manual_recovery
+          echo 'host join retained state has no safe automatic resume dispatcher; preserve evidence and use an owner-authorized recovery protocol' >&2
+          exit 1
+          ;;
+        profile_changed)
+          record_join_terminal_result refused profile internal join_reentry_profile_changed 1 none unknown new_profile
+          echo 'host join refuses to redeploy a completed validator with a different Join Profile; use the explicit upgrade workflow' >&2
+          exit 1
+          ;;
+        blocked)
+          record_join_terminal_result refused identity internal join_reentry_evidence_invalid 1 none unknown manual_recovery
+          echo 'host join refuses retained incomplete or invalid JOIN evidence; inspect the retained run before any recovery action' >&2
+          exit 1
+          ;;
+        *)
+          echo 'host join received an invalid retained JOIN re-entry classification' >&2
+          exit 70
+          ;;
+      esac
+    fi
+    join_lineage_receipt="$STATE/lineage-preflight.json"
+    join_lineage_env="$STATE/lineage-preflight.env"
+    GDC_JOIN_LINEAGE_FAILURE_FILE="$STATE/lineage-preflight.failure"
+    export GDC_JOIN_LINEAGE_FAILURE_FILE
+    rm -f "$GDC_JOIN_LINEAGE_FAILURE_FILE"
+    run_join_preflight lineage-preflight refused lineage lineage-preflight \
+      'Independent RPC lineage and trust were not established for native P2P state sync.' \
+      "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$join_bootstrap_file" --observation "$join_observation" \
+        --receipt "$join_lineage_receipt" --env "$join_lineage_env"
+    # The preflight writes fixed-name, shell-quoted values only after it has
+    # bound them to the observed runtime fingerprint and two fault domains.
+    # shellcheck disable=SC1090
+    source "$join_lineage_env"
+    export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
+    export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
+    export GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON
+    GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
+    export GDC_JOIN_LINEAGE_RECEIPT_SHA256
+    write_join_preflight_receipt lineage-preflight passed unavailable lineage-preflight
+    install -m 0600 "$join_lineage_receipt" "$join_run/lineage-preflight.v1.json"
+    install -m 0600 "$join_lineage_env" "$join_run/lineage-preflight.env"
+    run_join_preflight inferenced-cli unavailable dependency inferenced \
+      'The pinned operator CLI was not available after safe installation checks.' \
+      "$ROOT/scripts/ensure-inferenced-cli.sh" --join-profile "$GDC_JOIN_PROFILE"
+    run_join_preflight bootstrap-stage unavailable chain bootstrap \
+       'The validated Bootstrap descriptor could not be staged locally.' \
+       "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$join_genesis" --state-dir "$STATE" --secrets-dir "$join_secrets"
     export GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"
     export GDC_JOIN_VERIFICATION="$verification"
-    [[ -z "$join_restore_archive" ]] || export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
+    if [[ -n "$join_restore_archive" ]]; then
+      export GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$join_restore_archive"
+      # Recovery is not a continuation of a historical software decision.
+      # It receives a new manifest bound to the currently observed network.
+      export GDC_JOIN_RECOVERY_NEW_RUN=true
+    fi
     join_role_ready=false
     join_role_config=''
     if [[ -n "${GDC_ENV:-}" && -s "$GDC_ENV" ]]; then
@@ -912,6 +1249,11 @@ case "$COMMAND" in
       # shellcheck disable=SC1090
       source "$join_role_config"
     fi
+    # A plan is diagnostic output, not execution history.  Publish this run
+    # as active only after all no-mutation preflight gates have passed and the
+    # profile is still fresh immediately before the first mutating phase.
+    "$ROOT/scripts/join-profile.sh" validate "$GDC_JOIN_PROFILE" >/dev/null
+    printf '%s\n' "$GDC_RUN_ID" >"$STATE/active-run-id"
     run_phase "join-$join_alias" "$ROOT/scripts/phase-join.sh" "$join_alias"
     ;;
   ml)

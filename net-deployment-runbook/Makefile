@@ -20,7 +20,7 @@ preview_number ?=
 preview_revision ?=
 site_origin ?= https://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
+.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind cleanroom cleanroom-reset node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -154,10 +154,13 @@ test: site-js-check site-host-requirements-check
 	@./scripts/test-build-gateway-image.sh
 	@./scripts/test-gdc-home.sh
 	@./scripts/test-ensure-inferenced-cli-output.sh
+	@./scripts/test-ensure-warm-key.sh
+	@./scripts/test-launcher-root-contract.sh
 	@./scripts/test-gdc-github-report.sh
 	@./scripts/test-diagnostic-envelope.sh
 	@./scripts/test-phase-diagnostic-adapter.sh
 	@./scripts/test-classify-join-state.sh
+	@./scripts/test-classify-join-reentry.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/verify-release-profiles.sh
@@ -207,7 +210,33 @@ test: site-js-check site-host-requirements-check
 	@./scripts/test-telegram-consumer-probe-loop.sh
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
+	@./scripts/test-host-backup-context.sh
 	@./scripts/test-validator-backup-contract.sh
+	@./scripts/test-observe-network-composition.sh
+	@./scripts/test-observe-network-state.sh
+	@./scripts/test-select-runtime-majority.sh
+	@./scripts/test-observe-network-peer-discovery.sh
+	@./scripts/test-probe-public-peer.sh
+	@./scripts/test-join-profile.sh
+	@./scripts/test-join-transition-receipts.sh
+	@./scripts/test-resolve-join-components.sh
+	@./scripts/test-resolve-join-profile.sh
+	@./scripts/test-host-join-plan.sh
+	@./scripts/test-join-preflight-diagnostics.sh
+	@./scripts/test-join-lineage-preflight.sh
+	@./scripts/test-join-lineage-quorum-adversarial.sh
+	@./scripts/test-host-join-state-sync.sh
+	@./scripts/test-migrate-v1-validator-identity.sh
+	@./scripts/test-verify-canonical-join-state.sh
+	@./scripts/test-verify-complete-join-state.sh
+	@./scripts/test-wait-state-sync-canary.sh
+	@./scripts/test-promote-state-sync-generation.sh
+	@./scripts/test-record-state-sync-canary.sh
+	@./scripts/test-verify-tmkms-signing-state.sh
+	@./scripts/test-signer-activation-gate.sh
+	@./scripts/test-init-identity-restore-diagnostics.sh
+	@./scripts/test-collect-identities-transport-resume.sh
+	@./scripts/test-cleanroom-no-python-restore.sh
 	@./scripts/test-validator-identity-restore-command.sh
 	@./scripts/test-running-host-deployment-secrets.sh
 	@./scripts/test-running-host-recovery-state.sh
@@ -238,3 +267,15 @@ bats-docker:
 bats-dind:
 	@docker build --file test/Dockerfile.dind --tag $(BATS_DIND_IMAGE) .
 	@docker run --rm --privileged -e GDC_BATS_CONTAINER=true -e GDC_BATS_DIND=true $(BATS_DIND_IMAGE) test
+
+# Named JOIN gates stay local and disposable. The cleanroom contract exercises
+# the no-Python restore path plus planning with all remote tools poisoned;
+# DinD runs the repository's containerised JOIN contracts, including
+# test/join_reliability.bats for the promotion, trust, signer and re-entry
+# safety contracts.
+test-join-cleanroom:
+	@./scripts/test-cleanroom-contract.sh
+	@./scripts/test-cleanroom-no-python-restore.sh
+	@./scripts/test-host-join-plan.sh
+
+test-join-dind: bats-dind

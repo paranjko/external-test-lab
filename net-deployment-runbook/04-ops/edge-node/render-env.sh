@@ -2,12 +2,14 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS --output FILE" >&2
+  echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS [--join-profile FILE] [--gateway-admission-protocols-json JSON] --output FILE" >&2
 }
 
 INVENTORY=''
 NODE=''
 OUTPUT=''
+JOIN_PROFILE=''
+GATEWAY_ADMISSION_PROTOCOLS_JSON=''
 
 while (($#)); do
   case "$1" in
@@ -21,6 +23,14 @@ while (($#)); do
       ;;
     --output)
       OUTPUT="$2"
+      shift 2
+      ;;
+    --join-profile)
+      JOIN_PROFILE="$2"
+      shift 2
+      ;;
+    --gateway-admission-protocols-json)
+      GATEWAY_ADMISSION_PROTOCOLS_JSON="$2"
       shift 2
       ;;
     *)
@@ -40,43 +50,69 @@ source "$ROOT/scripts/lib.sh"
 load_env "$INVENTORY"
 load_topology
 source "$ROOT/scripts/profile.sh"
-load_profiles
+if [[ -n "$JOIN_PROFILE" ]]; then load_join_profile "$JOIN_PROFILE"; else load_profiles; fi
 topology_contains_node "$NODE" || { echo "node is not configured in inventory: $NODE" >&2; exit 2; }
 
+# A one-host JOIN role intentionally has no local gateway, public-edge, or
+# Telegram role. Its Bootstrap descriptor still binds PUBLIC_EDGE_HOST to a
+# validated seed, which is the only safe auxiliary control-plane origin until
+# the joining Host is admitted. Never call node_public_host with an empty role.
+gateway_public_host="$PUBLIC_EDGE_HOST"
+[[ -z "${GATEWAY_NODE:-}" ]] || gateway_public_host="$(node_public_host "$GATEWAY_NODE")"
+telegram_bot_public_host="$PUBLIC_EDGE_HOST"
+[[ -z "${TELEGRAM_BOT_HOST:-}" ]] || telegram_bot_public_host="$(node_public_host "$TELEGRAM_BOT_HOST")"
+
 prometheus_url='http://127.0.0.1:9099'
-if [[ "$NODE" != "$GATEWAY_NODE" ]]; then
-  prometheus_url="https://$(node_public_host "$GATEWAY_NODE")/ops-prometheus"
+if [[ "$NODE" != "${GATEWAY_NODE:-}" ]]; then
+  prometheus_url="https://${gateway_public_host}/ops-prometheus"
 fi
 
 gateway_admission_protocols_json='{}'
-gateway_protocol_contract="$(selected_gateway_protocol_contract)" || exit 2
-read -r -a gateway_supported_protocols <<<"$gateway_protocol_contract"
-(( ${#gateway_supported_protocols[@]} > 0 )) || {
-  echo 'gateway admission requires at least one supported DevShard protocol' >&2
-  exit 2
-}
-for protocol in "${gateway_supported_protocols[@]}"; do
-  case "$protocol" in
-    v3) protocol_url="$DEVSHARD_V3_URL"; protocol_sha256="$DEVSHARD_V3_SHA256" ;;
-    v4) protocol_url="$DEVSHARD_V4_URL"; protocol_sha256="$DEVSHARD_V4_SHA256" ;;
-    v5) protocol_url="${DEVSHARD_V5_URL:-}"; protocol_sha256="${DEVSHARD_V5_SHA256:-}" ;;
-    *) echo "unsupported DevShard gateway protocol in profile: $protocol" >&2; exit 2 ;;
-  esac
-  [[ "$protocol_url" =~ ^https?:// && "$protocol_sha256" =~ ^[0-9a-f]{64}$ ]] || {
-    echo "DevShard $protocol gateway admission contract is incomplete" >&2
+if [[ -n "$JOIN_PROFILE" ]]; then
+  # Runtime discovery and DevShard governance are deliberately separate.
+  # The immutable Join Profile binds the quorum-backed Core/DAPI pair selected
+  # from chain-bound seed and public-peer observations. A later lineage
+  # preflight observes the governed compatibility set
+  # and passes it here without electing one active DevShard protocol.
+  gateway_admission_protocols_json="$(jq -ce '
+    type == "object" and length > 0 and
+    all(to_entries[];
+      (.key | test("^v[1-9][0-9]*$")) and
+      (.value | type == "object" and (keys | sort) == ["binary","sha256"]) and
+      (.value.binary | type == "string" and test("^https://[^[:space:]]+$")) and
+      (.value.sha256 | type == "string" and test("^[0-9a-f]{64}$")))
+  ' <<<"$GATEWAY_ADMISSION_PROTOCOLS_JSON")" \
+    || { echo 'JOIN lineage preflight did not provide a valid DevShard compatibility set' >&2; exit 2; }
+else
+  gateway_protocol_contract="$(selected_gateway_protocol_contract)" || exit 2
+  read -r -a gateway_supported_protocols <<<"$gateway_protocol_contract"
+  (( ${#gateway_supported_protocols[@]} > 0 )) || {
+    echo 'gateway admission requires at least one supported DevShard protocol' >&2
     exit 2
   }
-  if jq -e --arg protocol "$protocol" 'has($protocol)' <<<"$gateway_admission_protocols_json" >/dev/null; then
-    echo "duplicate DevShard gateway protocol in profile: $protocol" >&2
-    exit 2
-  fi
-  gateway_admission_protocols_json="$(jq -c \
-    --arg protocol "$protocol" --arg url "$protocol_url" --arg sha256 "$protocol_sha256" \
-    '. + {($protocol):{binary:$url,sha256:$sha256}}' <<<"$gateway_admission_protocols_json")"
-done
+  for protocol in "${gateway_supported_protocols[@]}"; do
+    case "$protocol" in
+      v3) protocol_url="$DEVSHARD_V3_URL"; protocol_sha256="$DEVSHARD_V3_SHA256" ;;
+      v4) protocol_url="$DEVSHARD_V4_URL"; protocol_sha256="$DEVSHARD_V4_SHA256" ;;
+      v5) protocol_url="${DEVSHARD_V5_URL:-}"; protocol_sha256="${DEVSHARD_V5_SHA256:-}" ;;
+      *) echo "unsupported DevShard gateway protocol in profile: $protocol" >&2; exit 2 ;;
+    esac
+    [[ "$protocol_url" =~ ^https?:// && "$protocol_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+      echo "DevShard $protocol gateway admission contract is incomplete" >&2
+      exit 2
+    }
+    if jq -e --arg protocol "$protocol" 'has($protocol)' <<<"$gateway_admission_protocols_json" >/dev/null; then
+      echo "duplicate DevShard gateway protocol in profile: $protocol" >&2
+      exit 2
+    fi
+    gateway_admission_protocols_json="$(jq -c \
+      --arg protocol "$protocol" --arg url "$protocol_url" --arg sha256 "$protocol_sha256" \
+      '. + {($protocol):{binary:$url,sha256:$sha256}}' <<<"$gateway_admission_protocols_json")"
+  done
+fi
 
-gateway_admission_status_url="https://$(node_public_host "$GATEWAY_NODE")/ops-gateway-admission-state"
-if [[ "$NODE" == "$GATEWAY_NODE" && "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
+gateway_admission_status_url="https://${gateway_public_host}/ops-gateway-admission-state"
+if [[ -n "${GATEWAY_NODE:-}" && "$NODE" == "$GATEWAY_NODE" && "$NODE" == "${PUBLIC_EDGE_NODE:-}" ]]; then
   gateway_admission_status_url='http://127.0.0.1:18084/v1/status'
 fi
 gateway_upstream_port="${GDC_GATEWAY_ADMISSION_UPSTREAM_PORT:-18080}"
@@ -90,8 +126,8 @@ values=(
   "MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE"
   "GRAFANA_IMAGE=$GRAFANA_IMAGE"
   "PYTHON_IMAGE=${PYTHON_IMAGE:-python:3.13-alpine}"
-  "GATEWAY_PUBLIC_HOST=$(node_public_host "$GATEWAY_NODE")"
-  "GDC_GATEWAY_ADMISSION_UPSTREAM=http://$(node_public_host "$GATEWAY_NODE"):$gateway_upstream_port"
+  "GATEWAY_PUBLIC_HOST=$gateway_public_host"
+  "GDC_GATEWAY_ADMISSION_UPSTREAM=http://${gateway_public_host}:$gateway_upstream_port"
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
   # identity and positive capacity instead of deployment intent. The gateway
@@ -110,7 +146,7 @@ values=(
   "GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES=${GDC_GATEWAY_ADMISSION_MAX_BODY_BYTES:-1048576}"
   "GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK=${GDC_GATEWAY_ADMISSION_MAX_DISPATCHES_PER_BLOCK:-1}"
   "GDC_GATEWAY_ADMISSION_AUDIT_FILE=/edge/status/gateway-admission.jsonl"
-  "TELEGRAM_BOT_PUBLIC_HOST=$(node_public_host "$TELEGRAM_BOT_HOST")"
+  "TELEGRAM_BOT_PUBLIC_HOST=$telegram_bot_public_host"
   "PUBLIC_GRAFANA_PROMETHEUS_URL=$prometheus_url"
   "MONITORING_CIDR=$MONITORING_CIDR"
   "PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR"

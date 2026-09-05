@@ -20,34 +20,60 @@ bash -n "$BACKUP" "$RUNNING_RECOVERY" "$RECOVERY_EVALUATOR" "$DEPLOYMENT_SECRET_
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 secret_canary='VALIDATOR_ARCHIVE_SECRET_CANARY_51'
+cold_mnemonic="$(printf 'abandon %.0s' {1..23})art"
+warm_mnemonic='legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title'
+fixture_participant='gonka13wm6a6sea08j7auq63wy42l8fsrwd9jks89lt4'
+fixture_warm='gonka16s0dp897vdfqvf02a00s9afdvrt70nm6pczf0c'
+fixture_warm_pubkey='A7lHeLlwbcHee+m9zpuU0CbxxIqP0A4ODIB3VSXbMGmy'
 
-# Execute the production mnemonic validator through the host awk. Fixtures are
-# synthetic, outputs are captured, and diagnostics must never echo their words.
-mnemonic_word='syntheticword'
-awk -v word="$mnemonic_word" 'BEGIN {
-  for (i = 1; i <= 24; i++) printf "%s%s", (i == 1 ? "" : " "), word
-  print ""
-}' >"$tmp/valid.mnemonic"
+# Production validation delegates to derive-mnemonic-identity.sh, which uses
+# the pinned inferenced CLI and an isolated file keyring. The test-only helper
+# lets this contract run in the minimal Bats image without shipping a wallet
+# binary or any real account material; it still requires the valid BIP39
+# fixture and checks both recorded identities.
+cat >"$tmp/identity-helper" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "$3" in
+  gdc-node1-cold-recovery)
+    [[ "$(tr -d '\r\n' <"$1")" == "$GDC_COLD_MNEMONIC" && "$4" == "$GDC_VALID_PARTICIPANT" ]] || exit 1
+    jq -n --arg address "$4" '{address:$address,pubkey:"fixture-cold-pubkey"}'
+    ;;
+  gdc-node1-warm-recovery)
+    [[ "$(tr -d '\r\n' <"$1")" == "$GDC_WARM_MNEMONIC" && "$4" == "$GDC_VALID_WARM" && "$5" == "$GDC_VALID_WARM_PUBKEY" ]] || exit 1
+    jq -n --arg address "$4" --arg pubkey "$5" '{address:$address,pubkey:$pubkey}'
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 0755 "$tmp/identity-helper"
+export GDC_VALIDATOR_BACKUP_IDENTITY_HELPER="$tmp/identity-helper"
+export GDC_COLD_MNEMONIC="$cold_mnemonic"
+export GDC_WARM_MNEMONIC="$warm_mnemonic"
+export GDC_VALID_PARTICIPANT="$fixture_participant"
+export GDC_VALID_WARM="$fixture_warm"
+export GDC_VALID_WARM_PUBKEY="$fixture_warm_pubkey"
+
+# Execute the production mnemonic shape validator with a valid BIP39 fixture.
+# Outputs are captured, and diagnostics must never echo its words.
+printf '%s\n' "$cold_mnemonic" >"$tmp/valid.mnemonic"
 GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" validate-mnemonic \
   "$tmp/valid.mnemonic" >"$tmp/valid-mnemonic.out" 2>"$tmp/valid-mnemonic.err"
 [[ ! -s "$tmp/valid-mnemonic.out" && ! -s "$tmp/valid-mnemonic.err" ]]
 
-awk -v word="$mnemonic_word" 'BEGIN {
-  for (i = 1; i <= 23; i++) printf "%s%s", (i == 1 ? "" : " "), word
-  print ""
-}' >"$tmp/short.mnemonic"
+awk '{NF--; print}' "$tmp/valid.mnemonic" >"$tmp/short.mnemonic"
 cp "$tmp/valid.mnemonic" "$tmp/multiline.mnemonic"
-printf '%s\n' "$mnemonic_word" >>"$tmp/multiline.mnemonic"
+printf '%s\n' abandon >>"$tmp/multiline.mnemonic"
 for mnemonic_case in short multiline; do
   if GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" validate-mnemonic \
     "$tmp/$mnemonic_case.mnemonic" >"$tmp/$mnemonic_case-mnemonic.out" \
     2>"$tmp/$mnemonic_case-mnemonic.err"; then
-    echo "malformed synthetic mnemonic was accepted: $mnemonic_case" >&2
+    echo "malformed mnemonic was accepted: $mnemonic_case" >&2
     exit 1
   fi
   grep -Fq 'validator backup contains malformed account recovery material' \
     "$tmp/$mnemonic_case-mnemonic.err"
-  ! grep -Fq "$mnemonic_word" "$tmp/$mnemonic_case-mnemonic.out" \
+  ! grep -Fq "$cold_mnemonic" "$tmp/$mnemonic_case-mnemonic.out" \
     "$tmp/$mnemonic_case-mnemonic.err"
 done
 
@@ -238,6 +264,10 @@ addr = "tcp://node:26658"
 secret_key = "/root/.tmkms/secrets/kms-identity.key"
 protocol_version = "v0.34"
 EOF
+cp "$material/tmkms/tmkms.toml" "$tmp/tmkms-with-runtime-options.toml"
+sed -i '2i key_format = { type = "bech32", account_key_prefix = "gonka", consensus_key_prefix = "gonka" }' "$tmp/tmkms-with-runtime-options.toml"
+printf 'reconnect = true\n' >>"$tmp/tmkms-with-runtime-options.toml"
+cp "$tmp/tmkms-with-runtime-options.toml" "$material/tmkms/tmkms.toml"
 jq -n '{height:"10",round:"0",step:6,block_id:{hash:("A" * 64),
   part_set_header:{total:1,hash:("B" * 64)}}}' \
   >"$material/tmkms/state/priv_validator_state.json"
@@ -250,9 +280,9 @@ node_private="$(base64 <"$tmp/node-key.raw" | tr -d '\n')"
 jq -n --arg value "$node_private" \
   '{priv_key:{type:"tendermint/PrivKeyEd25519",value:$value}}' \
   >"$material/inference/config/node_key.json"
-warm_public="$(printf '123456789012345678901234567890123' | base64 | tr -d '\n')"
-jq -n --arg consensus "$consensus_key" --arg warm "$warm_public" --arg node_id "$node_id" \
-  '{node_name:"gdc-node1",node_id:$node_id,consensus_pubkey:$consensus,warm_address:"gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",warm_pubkey_b64:$warm}' \
+jq -n --arg consensus "$consensus_key" --arg warm "$fixture_warm_pubkey" --arg node_id "$node_id" \
+  --arg warm_address "$fixture_warm" \
+  '{node_name:"gdc-node1",node_id:$node_id,consensus_pubkey:$consensus,warm_address:$warm_address,warm_pubkey_b64:$warm}' \
   >"$tmp/identity.json"
 
 printf 'abcdefghijklmnopqrstuvwxzy123456' | base64 >"$tmp/other-node-seed.base64"
@@ -303,6 +333,60 @@ done
 
 GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" validate-material \
   "$material" "$tmp/identity.json" gdc-node1 test-chain
+
+# A newly written archive must pass the same bounded, local-only validation
+# before create() publishes it. This is the recovery-archive dry run used by
+# the JOIN transition, not a remote restore attempt.
+backup_tree="$tmp/backup-tree"
+install -d -m 0700 "$backup_tree/mnemonics" "$backup_tree/remote-state"
+cp -a "$material/." "$backup_tree/remote-state/"
+install -m 0600 "$tmp/identity.json" "$backup_tree/identity.json"
+printf '%s\n' "$cold_mnemonic" >"$backup_tree/mnemonics/gdc-node1-cold.mnemonic"
+printf '%s\n' "$warm_mnemonic" >"$backup_tree/mnemonics/gdc-node1-warm.mnemonic"
+test_genesis_sha="$(printf 'a%.0s' {1..64})"
+jq -n --arg genesis "$test_genesis_sha" --arg participant "$fixture_participant" --slurpfile identity "$tmp/identity.json" '
+  {schema_version:1,node_name:"gdc-node1",created_at:"2026-09-02T00:00:00Z",
+   chain_id:"test-chain",genesis_sha256:$genesis,
+   participant_address:$participant,ml_host:null,
+   identity:$identity[0]}
+' >"$backup_tree/manifest.json"
+(
+  cd "$backup_tree"
+  find manifest.json identity.json mnemonics remote-state -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >manifest.sha256
+  tar -cf "$tmp/valid-validator-backup.tar" manifest.json manifest.sha256 identity.json mnemonics remote-state
+)
+GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" verify-archive \
+  "$tmp/valid-validator-backup.tar" gdc-node1 test-chain "$test_genesis_sha" \
+  >"$tmp/verify-archive.out"
+grep -Fq 'PASS validator recovery archive dry-run verified:' "$tmp/verify-archive.out"
+
+binding_tree="$tmp/wrong-mnemonic-binding"
+cp -a "$backup_tree" "$binding_tree"
+cp "$binding_tree/mnemonics/gdc-node1-warm.mnemonic" \
+  "$binding_tree/mnemonics/gdc-node1-cold.mnemonic"
+(
+  cd "$binding_tree"
+  find manifest.json identity.json mnemonics remote-state -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >manifest.sha256
+  tar -cf "$tmp/wrong-mnemonic-binding.tar" manifest.json manifest.sha256 identity.json mnemonics remote-state
+)
+if GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" verify-archive \
+  "$tmp/wrong-mnemonic-binding.tar" gdc-node1 test-chain "$test_genesis_sha" \
+  >"$tmp/wrong-mnemonic-binding.out" 2>"$tmp/wrong-mnemonic-binding.err"; then
+  echo 'validator backup accepted a mnemonic bound to another account' >&2
+  exit 1
+fi
+grep -Fq 'validator backup cold mnemonic cannot be cryptographically verified' \
+  "$tmp/wrong-mnemonic-binding.err"
+
+cp "$tmp/valid-validator-backup.tar" "$tmp/tampered-validator-backup.tar"
+printf '\000' | dd of="$tmp/tampered-validator-backup.tar" bs=1 seek=0 conv=notrunc status=none
+if GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" verify-archive \
+  "$tmp/tampered-validator-backup.tar" gdc-node1 test-chain "$test_genesis_sha" \
+  >"$tmp/tampered-verify.out" 2>"$tmp/tampered-verify.err"; then
+  echo 'tampered validator backup unexpectedly passed the local restore dry run' >&2
+  exit 1
+fi
+! grep -Fq "$secret_canary" "$tmp/tampered-verify.out" "$tmp/tampered-verify.err"
 
 declare -a material_cases=(
   malformed-softsign
@@ -390,7 +474,12 @@ grep -Fq 'validator-backup.sh" create' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'validator-backup.sh" create' "$ROOT/scripts/phase-genesis.sh"
 grep -Fq 'topology_contains_node "$2" || die "unknown SSH alias: $2"' "$BACKUP"
 grep -Fq 'create_backup "$2"' "$BACKUP"
+grep -Fq 'verify_backup_archive "$archive_tmp" "$node" "$chain_id"' "$BACKUP"
+grep -Fq 'verify_backup_archive "$3" "$2" "$chain_id"' "$BACKUP"
 grep -Fq 'configured_gpu="$(node_ml_host "$node" || true)"' "$BACKUP"
+grep -Fq "identity='/srv/dai/identity/\$node'" "$BACKUP"
+grep -Fq "signer='/srv/dai/signer/\$node'" "$BACKUP"
+grep -Fq 'identity/p2p/node_key.json' "$BACKUP"
 ! grep -Fq 'create_backup "$(node_name "$2")"' "$BACKUP"
 grep -Fq 'refusing to create a duplicate participant' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'cold and warm mnemonics alone cannot restore it' "$ROOT/scripts/phase-join.sh"
@@ -407,11 +496,19 @@ genesis_acceptance_line="$(grep -n 'phase-join-acceptance.sh' "$ROOT/scripts/pha
 genesis_backup_line="$(grep -n 'validator-backup.sh" create' "$ROOT/scripts/phase-genesis.sh" | tail -n1 | cut -d: -f1)"
 [[ "$genesis_backup_line" -gt "$genesis_acceptance_line" ]]
 grep -Fq 'keys add "$KEY_NAME" --recover --keyring-backend file' "$ROOT/02-node/init-identity.sh"
+grep -Fq 'warm_key_restore_failure_reason' "$ROOT/02-node/init-identity.sh"
+grep -Fq 'reason=%s' "$ROOT/02-node/init-identity.sh"
+grep -Fq 'cleared stale Host keyring' "$ROOT/02-node/init-identity.sh"
+grep -Fq 'find /root/.inference/keyring-file -mindepth 1 -maxdepth 1' "$ROOT/02-node/init-identity.sh"
 grep -Fq -- '--warm-mnemonic' "$ROOT/01-identities-genesis/collect-identities.sh"
 grep -Fq 'verify_checksum_manifest "$extracted"' "$BACKUP"
 grep -Fq 'MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES=$((66 * 1024 * 1024))' "$BACKUP"
 grep -Fq 'MAX_VALIDATOR_BACKUP_TRAILING_BYTES=$((1024 * 1024))' "$BACKUP"
-grep -Fq 'raw_archive.read(min(TRAILING_READ_SIZE, remaining))' "$BACKUP"
+! grep -Fq 'python3' "$BACKUP" || {
+  echo 'validator backup restore must not require Python on the operator path' >&2
+  exit 1
+}
+grep -Fq 'This deliberately accepts only plain USTAR regular-file/directory archives.' "$BACKUP"
 ! grep -Fq 'install -m 0600 "$archive" "$stage/input.tar"' "$BACKUP"
 grep -Fq 'sudo env GDC_VALIDATOR_IDENTITY_REMOTE=true bash -s --' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'tmkms-softsign-public-key.sh' "$BACKUP"
@@ -419,7 +516,7 @@ grep -Fq 'build-validator-identity-restore-command.sh' "$BACKUP"
 grep -Fq 'validator backup contains an invalid consensus public key' "$REMOTE_RESTORE_COMMAND"
 grep -Fq "printf ' %q'" "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'ssh -T "$node"' "$BACKUP"
-grep -Fq 'sudo tar -C \"\$state\" -cf -' "$BACKUP"
+grep -Fq 'sudo tar -C \"\$signer\" -cf - tmkms' "$BACKUP"
 ! grep -Fq 'validator-backup-$$.tar' "$BACKUP"
 grep -Fq '"$remote_restore_command"' "$BACKUP"
 grep -Fq '<"$ROOT/scripts/build-validator-identity-restore-command.sh"' "$BACKUP"
@@ -435,6 +532,18 @@ grep -Fq 'chown root:root "$candidate"' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'staged validator identity contains a link or special file' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'validator identity state is partial, mixed, or ambiguous' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'remote state was not changed' "$BACKUP"
+grep -Fq 'stable validator identity conflicts with the supplied backup' "$REMOTE_RESTORE_COMMAND"
+grep -Fq 'stable validator identity roots are partial or ambiguous' "$REMOTE_RESTORE_COMMAND"
+grep -Fq 'printf '\''stable_existing\n'\''' "$REMOTE_RESTORE_COMMAND"
+grep -Fq 'stable_existing|existing)' "$BACKUP"
+grep -Fq 'if [[ "$remote_state" != stable_existing ]]; then' "$BACKUP"
+stable_preflight_line="$(grep -n 'validate_stable_material' "$REMOTE_RESTORE_COMMAND" | tail -n1 | cut -d: -f1)"
+legacy_validation_line="$(grep -nF 'if [[ -s "$deployment_env" ]]' "$REMOTE_RESTORE_COMMAND" | head -n1 | cut -d: -f1)"
+[[ -n "$stable_preflight_line" && -n "$legacy_validation_line" \
+  && "$stable_preflight_line" -lt "$legacy_validation_line" ]] || {
+  echo 'stable identity roots must be checked before legacy restore validation' >&2
+  exit 1
+}
 material_validation_line="$(grep -n -F 'validate_recovery_material "$extracted/remote-state"' \
   "$BACKUP" | head -n1 | cut -d: -f1)"
 remote_stage_line="$(grep -n -F 'remote="$(ssh -T "$node"' "$BACKUP" | head -n1 | cut -d: -f1)"

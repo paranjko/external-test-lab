@@ -222,6 +222,61 @@ load_profiles() {
   export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
 }
 
+# JOIN does not select a release lock. Its generated profile already binds the
+# observed Core/DAPI identities and the qualified Host envelope needed by the
+# renderer. This loader intentionally exports only those runtime values.
+load_join_profile() {
+  local profile="$1" core_image dapi_image
+  [[ -r "$profile" ]] || { echo 'generated JOIN profile is unreadable' >&2; return 2; }
+  # Generated JOIN profiles are fresh at the mutation boundary.  Subsequent
+  # renderer calls consume the retained immutable receipt-bound document.
+  "$(profile_root)/scripts/join-profile.sh" validate --allow-expired "$profile" >/dev/null || return 2
+  GDC_JOIN_PROFILE="$profile"
+  GDC_JOIN_PROFILE_ID="$(jq -r .profile_id "$profile")"
+  GONKA_RELEASE="$(jq -r .spec.components.core.expected_runtime.version "$profile")"
+  GONKA_COMMIT="$(jq -r .spec.components.core.expected_runtime.commit "$profile")"
+  core_image="$(jq -r '.spec.components.core.installation.image.repository + "@" + .spec.components.core.installation.image.digest' "$profile")"
+  dapi_image="$(jq -r '.spec.components.dapi.installation.image.repository + "@" + .spec.components.dapi.installation.image.digest' "$profile")"
+  INFERENCED_IMAGE="$core_image"
+  DAPI_IMAGE="$dapi_image"
+  DAPI_UPGRADE_URL="$(jq -r .spec.components.dapi.installation.binary.url "$profile")"
+  DAPI_UPGRADE_SHA256="$(jq -r .spec.components.dapi.installation.binary.sha256 "$profile")"
+  DAPI_EXPECTED_VERSION="$(jq -r .spec.components.dapi.expected_runtime.version "$profile")"
+  DAPI_EXPECTED_COMMIT="$(jq -r .spec.components.dapi.expected_runtime.commit "$profile")"
+  TMKMS_IMAGE="$(jq -r .spec.deployment.host_envelope.tmkms_image "$profile")"
+  POSTGRES_IMAGE="$(jq -r .spec.deployment.host_envelope.postgres_image "$profile")"
+  EDGE_API_IMAGE="$(jq -r .spec.deployment.host_envelope.edge_api_image "$profile")"
+  VERSIOND_IMAGE="$(jq -r .spec.deployment.host_envelope.versiond_image "$profile")"
+  PROXY_IMAGE="$(jq -r .spec.deployment.host_envelope.proxy_image "$profile")"
+  EXPLORER_IMAGE="$(jq -r .spec.deployment.host_envelope.explorer_image "$profile")"
+  MLNODE_GENERIC_IMAGE="$(jq -r .spec.deployment.host_envelope.mlnode_image "$profile")"
+  MLNODE_PROXY_IMAGE="$(jq -r .spec.deployment.host_envelope.mlnode_proxy_image "$profile")"
+  CADDY_IMAGE="$(jq -r .spec.deployment.host_envelope.caddy_image "$profile")"
+  GRAFANA_IMAGE="$(jq -r .spec.deployment.host_envelope.grafana_image "$profile")"
+  NODE_EXPORTER_IMAGE="$(jq -r .spec.deployment.host_envelope.node_exporter_image "$profile")"
+  CADVISOR_IMAGE="$(jq -r .spec.deployment.host_envelope.cadvisor_image "$profile")"
+  DASHBOARD_PORT="$(jq -r .spec.deployment.host_envelope.dashboard_port "$profile")"
+  EDGE_API_COMPOSE_PROFILE="$(jq -r .spec.deployment.host_envelope.edge_api_compose_profile "$profile")"
+  EDGE_API_SERVICE_NAME="$(jq -r .spec.deployment.host_envelope.edge_api_service_name "$profile")"
+  MODEL_ID="$(jq -r .spec.deployment.host_envelope.model_id "$profile")"
+  MODEL_REVISION="$(jq -r .spec.deployment.host_envelope.model_revision "$profile")"
+  MLNODE_CONTEXT_LENGTH="$(jq -r .spec.deployment.host_envelope.mlnode_context_length "$profile")"
+  MLNODE_MAX_NUM_SEQS="$(jq -r .spec.deployment.host_envelope.mlnode_max_num_seqs "$profile")"
+  MLNODE_GPU_MEMORY_UTILIZATION="$(jq -r .spec.deployment.host_envelope.mlnode_gpu_memory_utilization "$profile")"
+  MLNODE_DTYPE="$(jq -r .spec.deployment.host_envelope.mlnode_dtype "$profile")"
+  MLNODE_TENSOR_PARALLEL_SIZE="$(jq -r .spec.deployment.host_envelope.mlnode_tensor_parallel_size "$profile")"
+  GDC_JOIN_EFFECTIVE_EPOCHS="$(jq -r .spec.deployment.host_envelope.join_effective_epochs "$profile")"
+  GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS="$(jq -r .spec.deployment.host_envelope.join_effective_timeout_seconds "$profile")"
+  GDC_JOIN_PROFILE_SHA256="$(sha256sum "$profile" | awk '{print $1}')"
+  export GDC_JOIN_PROFILE GDC_JOIN_PROFILE_ID GDC_JOIN_PROFILE_SHA256
+  export GONKA_RELEASE GONKA_COMMIT INFERENCED_IMAGE DAPI_IMAGE DAPI_UPGRADE_URL DAPI_UPGRADE_SHA256 DAPI_EXPECTED_VERSION DAPI_EXPECTED_COMMIT TMKMS_IMAGE POSTGRES_IMAGE
+  export EDGE_API_IMAGE VERSIOND_IMAGE PROXY_IMAGE EXPLORER_IMAGE MLNODE_GENERIC_IMAGE MLNODE_PROXY_IMAGE
+  export CADDY_IMAGE GRAFANA_IMAGE NODE_EXPORTER_IMAGE CADVISOR_IMAGE DASHBOARD_PORT
+  export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
+  export MODEL_ID MODEL_REVISION MLNODE_CONTEXT_LENGTH MLNODE_MAX_NUM_SEQS MLNODE_GPU_MEMORY_UTILIZATION
+  export MLNODE_DTYPE MLNODE_TENSOR_PARALLEL_SIZE GDC_JOIN_EFFECTIVE_EPOCHS GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS
+}
+
 profile_summary() {
   if [[ -n "${GDC_COMPOSITION:-}" ]]; then
     printf 'composition=%s\ncomposition_hash=%s\n' "$GDC_COMPOSITION" "${GDC_COMPOSITION_HASH:-}"

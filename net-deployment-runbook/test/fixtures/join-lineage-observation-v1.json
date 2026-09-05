@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "gdc-host-join-lineage-observation",
+  "observation_scope": "sanitized_disposable_replay",
+  "chain_id": "gonka-devnet-community",
+  "runtime": {
+    "release_profile": "v2026.08.06",
+    "core_version": "0.2.15",
+    "core_commit": "4d687ed6782bcea3931d2d9135bf322f84e190ab",
+    "image_digest": "sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112"
+  },
+  "bootstrap_genesis_sha256": "93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6",
+  "checkpoint_quorum": {
+    "fault_domain_ids": ["node0", "node1", "node3", "node4"],
+    "agreed_checkpoints": [
+      {"height": 1, "block_id": "AA76DE190F496F6D79669670A8171FBABC42195B43530EB10A746935A2F781F8", "app_hash": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"},
+      {"height": 4, "block_id": "76850D2B6784EDBDF21563B948E96623F5398A0DA7CDE8230336F89FD3F52E47", "app_hash": "3EDB00F9180C645E6C257D8155D11E4556F3966DC7367A42F9B0627EBB7997AF"},
+      {"height": 5, "block_id": "11FD32AB1FFC9532929BD2653EAB243784D89ABABF43C28E3584E94C75A9412B", "app_hash": "DDCEF59C52DD7CBEBA0B8F11298E191FC1FBAD6769A74533F732A6020019CE46"}
+    ]
+  },
+  "cold_replay": {
+    "state_sync_enabled": false,
+    "last_committed_height": 4,
+    "local_computed_app_hash_for_block_5": "B13FDF81EA4973117D3FA2AE3CC47B9F6E1CD81FBB4ECB8AFD5AB52A5FF2A524",
+    "public_block_5_header_app_hash": "DDCEF59C52DD7CBEBA0B8F11298E191FC1FBAD6769A74533F732A6020019CE46",
+    "app_hash_match": false,
+    "classification": "historical_replay_apphash_divergence"
+  },
+  "state_sync_inventory": {
+    "public_rpc_snapshot_inventory": "unavailable",
+    "seed_snapshot_directories": "empty",
+    "classification": "snapshot_unavailable"
+  },
+  "limitations": [
+    "The record proves a current-runtime replay mismatch, not its root cause.",
+    "It does not authorize a fallback to historical replay or a Host mutation.",
+    "It contains no operator identity, keyring, archive, endpoint URL, or local path."
+  ]
+}

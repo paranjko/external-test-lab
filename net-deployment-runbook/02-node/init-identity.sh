@@ -19,15 +19,54 @@ compose=(docker compose --env-file "$ENV_FILE" -f "$HERE/compose.yaml")
 "${compose[@]}" up -d tmkms
 "${compose[@]}" run --rm --no-deps -e INIT_ONLY=true node >/dev/null
 
+# First-time identity bootstrap lets the upstream initializer create a P2P
+# key in its disposable data directory once, then installs that key into the
+# stable identity mount.  Restores already provide this file and never replace
+# it with candidate-generation state.
+if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh node -c 'test -s /gdc-identity/p2p/node_key.json'; then
+  "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh node -c \
+    'install -d -m 0700 /gdc-identity/p2p; install -m 0600 /root/.inference/config/node_key.json /gdc-identity/p2p/node_key.json'
+fi
+
+warm_key_restore_failure_reason() {
+  local output="$1"
+  # Do not relay CLI output: it can include interactive material. The bounded
+  # category is sufficient to distinguish an unusable mnemonic, a stale local
+  # keyring and an unexpected runtime failure in retained JOIN evidence.
+  if grep -qiE 'already exists|duplicate key|overwrite' "$output"; then
+    printf 'existing_key_conflict\n'
+  elif grep -qiE 'mnemonic|recovery phrase|bip39' "$output"; then
+    printf 'mnemonic_rejected\n'
+  elif grep -qiE 'passphrase|password|keyring' "$output"; then
+    printf 'keyring_authentication_failed\n'
+  else
+    printf 'inferenced_rejected_recovery\n'
+  fi
+}
+
 # Create or reuse the warm key in the persistent /root/.inference keyring.
 if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
   'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file -a' >/dev/null 2>&1; then
   key_output="$TMP/warm-key.out"
   if [[ -n "$WARM_MNEMONIC" ]]; then
+    # A validator backup's mnemonic is authoritative for the warm identity.
+    # `keyring-file` is now a stable bind mount, so renaming that mount fails
+    # with EBUSY.  Refuse links and clear only its contents before importing
+    # the archived identity; the mount point itself must remain in place.
+    keyring_state="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
+      'if [ -L /root/.inference/keyring-file ]; then exit 64; fi; if [ -e /root/.inference/keyring-file ]; then test -d /root/.inference/keyring-file && find /root/.inference/keyring-file -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && printf cleared; else printf absent; fi')" || {
+      echo 'Cannot clear stale warm keyring before restoring validator backup' >&2
+      exit 1
+    }
+    case "$keyring_state" in
+      cleared) printf 'READY cleared stale Host keyring before restoring validator backup identity\n' ;;
+      absent) ;;
+      *) echo 'Cannot determine whether a stale warm keyring was cleared' >&2; exit 1 ;;
+    esac
     if ! printf '%s\n%s\n%s\n' "$(<"$WARM_MNEMONIC")" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" \
       | "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
         'inferenced keys add "$KEY_NAME" --recover --keyring-backend file' >"$key_output" 2>&1; then
-      echo "Cannot restore warm key from $WARM_MNEMONIC; see $key_output" >&2
+      printf 'Cannot restore warm key: reason=%s\n' "$(warm_key_restore_failure_reason "$key_output")" >&2
       exit 1
     fi
   else
@@ -58,4 +97,21 @@ mkdir -p "$(dirname "$OUTPUT")"
 jq -n --arg name "$NODE_NAME" --arg node "$NODE_ID" --arg consensus "$CONSENSUS" \
   --arg warm "$WARM_ADDRESS" --arg pub "$WARM_PUB" \
   '{node_name:$name,node_id:$node,consensus_pubkey:$consensus,warm_address:$warm,warm_pubkey_b64:$pub}' >"$OUTPUT"
-"${compose[@]}" stop tmkms >/dev/null || true
+
+if ! "${compose[@]}" stop tmkms >/dev/null; then
+  echo 'Temporary TMKMS signer stop failed; refusing to accept generated identity' >&2
+  exit 1
+fi
+
+compose_project="${COMPOSE_PROJECT_NAME:-$NODE_NAME}"
+tmkms_states="$(docker ps -a --filter "name=^/${compose_project}-tmkms-" --format '{{.State}}')" || {
+  echo 'Unable to verify temporary TMKMS signer state; refusing to accept generated identity' >&2
+  exit 1
+}
+while IFS= read -r tmkms_state; do
+  [[ -z "$tmkms_state" ]] && continue
+  if [[ "$tmkms_state" != exited ]]; then
+    printf 'Temporary TMKMS signer is not definitively stopped: state=%s\n' "$tmkms_state" >&2
+    exit 1
+  fi
+done <<<"$tmkms_states"

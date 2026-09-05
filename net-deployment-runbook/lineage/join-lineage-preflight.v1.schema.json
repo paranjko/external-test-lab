@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gonka-dev.net/schemas/join-lineage-preflight.v1.schema.json",
+  "title": "GDC Host JOIN lineage preflight receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "runtime", "bootstrap", "fault_domains", "checkpoints", "devshard_compatibility", "staging", "signer", "result"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "gdc-host-join-lineage-preflight"},
+    "runtime": {"$ref": "#/$defs/runtime"},
+    "bootstrap": {"$ref": "#/$defs/bootstrap"},
+    "fault_domains": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/fault_domain"}},
+    "checkpoints": {"$ref": "#/$defs/checkpoints"},
+    "devshard_compatibility": {"$ref": "#/$defs/devshard_compatibility"},
+    "staging": {"$ref": "#/$defs/staging"},
+    "signer": {"$ref": "#/$defs/signer"},
+    "result": {"$ref": "#/$defs/result"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "height": {"type": "integer", "minimum": 1},
+    "url": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+/chain-rpc$"},
+    "runtime": {
+      "type": "object", "additionalProperties": false,
+      "required": ["network_fingerprint", "observation_sha256", "source", "core", "dapi"],
+      "properties": {
+        "network_fingerprint": {"$ref": "#/$defs/sha256"},
+        "observation_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "source": {"type": "object", "additionalProperties": false, "required": ["kind", "id"], "properties": {"kind": {"type": "string", "minLength": 1}, "id": {"type": "string", "minLength": 1}}},
+        "core": {"$ref": "#/$defs/runtime_component"},
+        "dapi": {"$ref": "#/$defs/runtime_component"}
+      }
+    },
+    "runtime_component": {"type": "object", "additionalProperties": false, "required": ["version", "commit"], "properties": {"version": {"type": "string", "minLength": 1, "maxLength": 64}, "commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"}}},
+    "bootstrap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "chain_id", "genesis_sha256"],
+      "properties": {
+        "mode": {"enum": ["state_sync", "historical_replay"]},
+        "chain_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "genesis_sha256": {"$ref": "#/$defs/sha256"},
+        "trust": {"$ref": "#/$defs/trust"},
+        "snapshot": {"$ref": "#/$defs/snapshot"},
+        "history": {"$ref": "#/$defs/history"}
+      },
+      "allOf": [
+        {"if": {"properties": {"mode": {"const": "state_sync"}}}, "then": {"required": ["trust", "snapshot"]}},
+        {"if": {"properties": {"mode": {"const": "historical_replay"}}}, "then": {"required": ["history"]}}
+      ]
+    },
+    "fault_domain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "rpc_url", "chain_id", "genesis_sha256"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+        "rpc_url": {"$ref": "#/$defs/url"},
+        "chain_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "genesis_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "checkpoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["height", "block_id", "app_hash"],
+      "properties": {"height": {"$ref": "#/$defs/height"}, "block_id": {"$ref": "#/$defs/sha256"}, "app_hash": {"$ref": "#/$defs/sha256"}}
+    },
+    "checkpoints": {
+      "type": "object", "additionalProperties": false,
+      "required": ["early", "post_upgrade", "trust"],
+      "properties": {"early": {"$ref": "#/$defs/checkpoint"}, "post_upgrade": {"$ref": "#/$defs/checkpoint"}, "trust": {"$ref": "#/$defs/checkpoint"}}
+    },
+    "trust": {
+      "type": "object", "additionalProperties": false,
+      "required": ["height", "block_id", "app_hash", "expires_at"],
+      "properties": {"height": {"$ref": "#/$defs/height"}, "block_id": {"$ref": "#/$defs/sha256"}, "app_hash": {"$ref": "#/$defs/sha256"}, "expires_at": {"type": "string", "format": "date-time"}}
+    },
+    "snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["discovery", "providers"],
+      "properties": {
+        "discovery": {"enum": ["p2p_canary_pending", "p2p_canary_caught_up"]},
+        "providers": {"type": "array", "minItems": 2, "items": {"type": "string", "pattern": "^[a-f0-9]{40}@tcp://[A-Za-z0-9.-]+:[0-9]{2,5}$"}},
+        "canary_height": {"$ref": "#/$defs/height"},
+        "canary_node_id": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "observed_at": {"type": "string", "format": "date-time"}
+      },
+      "allOf": [{"if": {"properties": {"discovery": {"const": "p2p_canary_caught_up"}}}, "then": {"required": ["canary_height", "canary_node_id", "observed_at"]}}]
+    },
+    "history": {
+      "type": "object", "additionalProperties": false,
+      "required": ["initial_runtime_digest", "upgrades"],
+      "properties": {"initial_runtime_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}, "upgrades": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/upgrade"}}}
+    },
+    "upgrade": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "height", "runtime_digest"],
+      "properties": {"name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}, "height": {"$ref": "#/$defs/height"}, "runtime_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}}
+    },
+    "staging": {
+      "type": "object", "additionalProperties": false,
+      "required": ["previous_deployment_digest", "rendered_config_digest", "compose_validated"],
+      "properties": {"previous_deployment_digest": {"$ref": "#/$defs/sha256"}, "rendered_config_digest": {"$ref": "#/$defs/sha256"}, "compose_validated": {"type": "boolean"}}
+    },
+    "devshard_compatibility": {
+      "type": "object", "additionalProperties": false, "required": ["approvals", "sources"],
+      "properties": {
+        "approvals": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["name", "url", "sha256"], "properties": {"name": {"type": "string", "pattern": "^v[1-9][0-9]*$"}, "url": {"type": "string", "pattern": "^https://[^\\s]+$"}, "sha256": {"$ref": "#/$defs/sha256"}}}},
+        "sources": {"type": "array", "minItems": 2, "items": {"type": "object", "additionalProperties": false, "required": ["chain_api_url"], "properties": {"chain_api_url": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+/chain-api/"}}}}
+      }
+    },
+    "signer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "tmkms_monotonic"],
+      "properties": {"state": {"enum": ["PREPARED", "SYNCING", "CAUGHT_UP", "LINEAGE_VERIFIED", "OLD_SIGNER_FENCED", "SIGNER_ENABLED"]}, "tmkms_monotonic": {"type": "boolean"}}
+    },
+    "result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["terminal_state", "category", "resume"],
+      "properties": {
+        "terminal_state": {"enum": ["prepared", "canary_verified", "refused", "failed"]},
+        "category": {"enum": ["none", "rpc_quorum_conflict", "rpc_fault_domain_alias", "snapshot_unavailable", "snapshot_incompatible", "trust_expired", "historical_replay_unsupported", "apphash_divergence", "lineage_verification_failed", "signer_activation_unsafe"]},
+        "resume": {"enum": ["safe_exact_resume", "new_lineage_required", "manual_action_required", "unsafe"]}
+      }
+    }
+  }
+}

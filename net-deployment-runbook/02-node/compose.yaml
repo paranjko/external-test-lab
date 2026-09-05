@@ -8,6 +8,10 @@ x-logging: &logging
 
 services:
   tmkms:
+    # A cold JOIN can download and verify state without a consensus signer.
+    # The JOIN phase enables this profile only after independent checkpoints
+    # prove the acquired lineage.
+    profiles: [signer]
     image: ${TMKMS_IMAGE:-ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15}
     restart: unless-stopped
     entrypoint: ["sh", "/usr/local/bin/gdc-tmkms-entrypoint"]
@@ -15,7 +19,7 @@ services:
       CHAIN_ID: ${CHAIN_ID:?CHAIN_ID is required}
       VALIDATOR_LISTEN_ADDRESS: tcp://node:${TMKMS_PORT:-26658}
     volumes:
-      - ${DATA_DIR:?DATA_DIR is required}/tmkms:/root/.tmkms
+      - ${SIGNER_DIR:?SIGNER_DIR is required}/tmkms:/root/.tmkms
       - ./tmkms-entrypoint.sh:/usr/local/bin/gdc-tmkms-entrypoint:ro
     logging: *logging
 
@@ -25,6 +29,9 @@ services:
     command: ["sh", "/usr/local/bin/gdc-node-entrypoint"]
     volumes:
       - ${DATA_DIR}/inference:/root/.inference
+      # The P2P identity is not part of a replaceable state-sync generation.
+      # Node bootstrap copies this mounted stable source before Core starts.
+      - ${IDENTITY_DIR:?IDENTITY_DIR is required}:/gdc-identity
       - ${GENESIS_FILE:?GENESIS_FILE is required}:/root/genesis.json:ro
       - ./node-entrypoint.sh:/usr/local/bin/gdc-node-entrypoint:ro
     environment:
@@ -38,6 +45,22 @@ services:
       RPC_SERVER_URL_2: ${RPC_SERVER_URL_2:?RPC_SERVER_URL_2 is required}
       SYNC_WITH_SNAPSHOTS: ${SYNC_WITH_SNAPSHOTS:-false}
       TRUSTED_BLOCK_PERIOD: ${TRUSTED_BLOCK_PERIOD:-2000}
+      # The upstream init script otherwise derives these values from exactly
+      # one seed RPC.  A JOIN receipt is authoritative only when the chosen
+      # two-origin trust tuple is written into config.toml after that helper.
+      CONFIG_statesync__enable: ${GDC_JOIN_STATESYNC_ENABLE:-false}
+      CONFIG_statesync__rpc_servers: ${GDC_JOIN_RPC_SERVERS:-}
+      CONFIG_statesync__trust_height: ${GDC_JOIN_TRUST_HEIGHT:-0}
+      CONFIG_statesync__trust_hash: ${GDC_JOIN_TRUST_HASH:-}
+      CONFIG_p2p__persistent_peers: ${GDC_JOIN_PERSISTENT_PEERS:-}
+      # A cold state-sync canary must use its generated, unregistered local
+      # validator key.  The promotion run restores this listener and starts
+      # TMKMS only after the canary's lineage evidence has been recorded.
+      # `--canary` deliberately supplies an empty value, which selects the
+      # image's generated local, unregistered validator key.  Do not use
+      # `:-` here: it converts that intentional empty value back to the
+      # restored TMKMS listener and makes a signerless canary restart-loop.
+      CONFIG_priv_validator_laddr: ${CONFIG_PRIV_VALIDATOR_LADDR-tcp://0.0.0.0:26658}
       SNAPSHOT_INTERVAL: ${SNAPSHOT_INTERVAL:-1000}
       SNAPSHOT_KEEP_RECENT: ${SNAPSHOT_KEEP_RECENT:-5}
       P2P_EXTERNAL_ADDRESS: ${P2P_EXTERNAL_ADDRESS:?P2P_EXTERNAL_ADDRESS is required}
@@ -61,7 +84,9 @@ services:
     expose:
       - "${TMKMS_PORT:-26658}"
     depends_on:
-      - tmkms
+      tmkms:
+        condition: service_started
+        required: false
     logging: *logging
 
   payload-postgres:
@@ -86,6 +111,7 @@ services:
     command: ["sh", "/usr/local/bin/gdc-api-entrypoint"]
     volumes:
       - ${DATA_DIR}/inference:/root/.inference
+      - ${IDENTITY_DIR:?IDENTITY_DIR is required}/warm/keyring-file:/root/.inference/keyring-file
       - ${DATA_DIR}/dapi:/root/.dapi
       - ${NODE_CONFIG_FILE:?NODE_CONFIG_FILE is required}:/root/node_config.json:ro
       - ./api-entrypoint.sh:/usr/local/bin/gdc-api-entrypoint:ro
@@ -94,6 +120,13 @@ services:
       ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY:?ACCOUNT_PUBKEY is required}
       KEYRING_BACKEND: file
       KEYRING_PASSWORD: ${KEYRING_PASSWORD:?KEYRING_PASSWORD is required}
+      # Generated JOIN profiles pin the DAPI Cosmovisor payload separately
+      # from the immutable API base image.  Empty values preserve the legacy
+      # release-profile path.
+      GDC_JOIN_DAPI_UPGRADE_URL: ${DAPI_UPGRADE_URL:-}
+      GDC_JOIN_DAPI_UPGRADE_SHA256: ${DAPI_UPGRADE_SHA256:-}
+      GDC_JOIN_DAPI_EXPECTED_VERSION: ${DAPI_EXPECTED_VERSION:-}
+      GDC_JOIN_DAPI_EXPECTED_COMMIT: ${DAPI_EXPECTED_COMMIT:-}
       # Local MLNodes reach this over the Compose network. A split ML host
       # receives an explicit, firewall-restricted callback URL in .env.
       DAPI_API__POC_CALLBACK_URL: ${DAPI_API__POC_CALLBACK_URL:-http://api:9100}
@@ -162,6 +195,7 @@ services:
       DEVSHARD_OTEL_ENABLED: "false"
     volumes:
       - ${DATA_DIR}/inference:/root/.inference:ro
+      - ${IDENTITY_DIR:?IDENTITY_DIR is required}/warm/keyring-file:/root/.inference/keyring-file:ro
       - ${DATA_DIR}/devshards/bin:/opt/versiond/bin
       - ${DATA_DIR}/devshards/data:/opt/versiond/data
     depends_on:
