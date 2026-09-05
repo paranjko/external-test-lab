@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 phase="$ROOT/scripts/phase-ops.sh"
 renderer="$ROOT/04-ops/render-ops.sh"
+user_ops="$ROOT/../ops/chore/user-ops.sh"
 
 grep -Fq 'docker compose --profile public-edge up -d --force-recreate public-grafana' "$phase"
 grep -Fq 'curl -fsS http://127.0.0.1:3001/api/health' "$phase"
@@ -29,7 +30,13 @@ grep -Fq 'root * /edge/bootstrap/current' "$ROOT/04-ops/edge-node/PublicCaddyfil
 ! grep -Fq 'reconcile-join-bootstrap.sh' "$ROOT/04-ops/edge-node/install-edge.sh"
 grep -Fq 'Publish the static status site on the public edge' "$phase"
 grep -Fq 'rsync -a --delete "$SITE_ASSETS_RENDER/" "$PUBLIC_EDGE_NODE:$site_remote/site/"' "$phase"
-grep -Fq "sudo rsync -a --delete --exclude preview/ '\$site_remote/site/' /srv/dai/edge/site/" "$phase"
+grep -Fq 'site_owner_group=\"\$(sudo stat -c '\''%u:%g'\'' /srv/dai/edge/site)\"' "$phase"
+grep -Fq "sudo rsync -a --delete --chown=\\\"\\\$site_owner_group\\\" --exclude preview/ '\$site_remote/site/' /srv/dai/edge/site/" "$phase"
+owner_line="$(grep -nF 'site_owner_group=\"\$(sudo stat -c '\''%u:%g'\'' /srv/dai/edge/site)\"' "$phase" | cut -d: -f1)"
+rsync_line="$(grep -nF 'sudo rsync -a --delete --chown=\"\$site_owner_group\" --exclude preview/' "$phase" | cut -d: -f1)"
+(( owner_line < rsync_line ))
+grep -Fq 'chown -R "$OPS_USER:$OPS_USER" "$SITE_ROOT"' "$user_ops"
+! grep -Fq 'chown "$OPS_USER:$OPS_USER" "$SITE_ROOT"' "$user_ops"
 ! grep -Fq 'join-bootstrap' "$phase"
 ! grep -Fq 'docker compose up -d --force-recreate bootstrap' "$phase"
 ! grep -Fq 'cd /srv/dai/edge && docker compose down' "$phase"

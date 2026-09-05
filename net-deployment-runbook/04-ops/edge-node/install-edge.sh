@@ -44,5 +44,10 @@ else
   sed '/^[[:space:]]*email {\$ACME_EMAIL}[[:space:]]*$/d' "$caddy_source" >"$DEST/Caddyfile"
   chmod 0644 "$DEST/Caddyfile"
 fi
-chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$DEST"
+edge_owner="${SUDO_USER:-root}:${SUDO_USER:-root}"
+chown "$edge_owner" "$DEST"
+# The site is provisioned by the OPS/site publisher and may include a
+# separately-owned preview tree. Preserve those owners while retaining the
+# installer ownership for every other edge file.
+find "$DEST" -mindepth 1 -maxdepth 1 ! -name site -exec chown -R "$edge_owner" {} +
 printf 'READY installed edge proxy in %s\n' "$DEST"

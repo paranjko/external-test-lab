@@ -86,3 +86,6 @@ jobs:
         run: >-
           GONKA_UPSTREAM_WORKTREE="$GITHUB_WORKSPACE/net-deployment-runbook/vendor/gonka"
           make -C net-deployment-runbook test
+      - name: Test edge installation ownership in disposable root
+        if: runner.name != 'external-test-lab-gdc-node4'
+        run: sudo make -C net-deployment-runbook test-edge-install-ownership
