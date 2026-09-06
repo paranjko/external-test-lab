@@ -169,7 +169,13 @@ jobs:
           if [[ -z "$contract" ]]; then
             exit 0
           fi
-          [[ "$contract" == git-object-and-github-signature-v1 ]]
+          case "$contract" in
+            git-object-and-github-signature-v1|git-object-and-github-unsigned-commit-v1) ;;
+            *)
+              echo "unsupported candidate source identity contract: $contract" >&2
+              exit 1
+              ;;
+          esac
           while IFS=$'\t' read -r repository_key repository_url repository_ref commit; do
             [[ "$repository_url" == https://github.com/gonka-ai/gonka.git ]]
             [[ "$repository_ref" == refs/heads/* ]]

@@ -13,6 +13,8 @@ The lifecycle is:
 
 ```bash
 ./gdc.sh release candidate prepare --source-ref ak/height-sync-protocol-dapi --layer core
+# Select the exact candidate when the moving source ref has historical definitions.
+./gdc.sh release candidate prepare --source-ref devshard-0.2.15-v5 --layer devshard --profile v2026.09.05-rc.0
 ./gdc.sh release candidate build v2026.08.28-rc.0 --wait
 ./gdc.sh release candidate profile v2026.08.28-rc.0
 ./gdc.sh release candidate verify v2026.08.28-rc.0

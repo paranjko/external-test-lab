@@ -63,6 +63,25 @@ LEGACY_SOURCE_IDENTITY_DEFINITIONS = {
     "v2026.08.27-rc.0": "71e9b64d931d3eb8e150a3a5de48f2f20efd644bc9f5e3f06f8eda1d0a3891cc",
     "v2026.08.30-rc.0": "956a7758af5ba16cb47e7c09e8f18a8b3646ee1486d86749e3cf1db5c1820d86",
 }
+REQUIRED_CORETEAM_UNIT_EVIDENCE = {
+    "Host reports a lower height than the roster": {
+        ("devshard/heightsync/logplane_test.go", "TestLogPlane_AckBelowFloorRejectedAndLiftAccepted")
+    },
+    "Host reports a slightly future fabricated hash": {
+        ("devshard/heightsync/logplane_test.go", "TestLogPlane_FutureDatedStampDeferredFail")
+    },
+    "Warm wait timeout does not cause an outage": {
+        (
+            "versioned/internal/process/manager_recovery_wait_test.go",
+            "TestWaitForChildRecoveryComplete_TimeoutAborts",
+        )
+    },
+}
+REQUIRED_CORETEAM_MANUAL_PATHS = {
+    "height-sync": "devshard/docs/v5-manual-height-sync.md",
+    "residual": "devshard/docs/v5-manual-residual.md",
+}
+CORETEAM_UNIT_TEST_PATH_PREFIXES = ("devshard/", "versioned/")
 
 
 def required_images_for_layer(layer: str) -> set[str]:
@@ -227,6 +246,114 @@ def definition_path(profile: str) -> Path:
     return CANDIDATES / f"{profile}.definition.json"
 
 
+def gherkin_scenarios(content: str) -> list[str]:
+    return re.findall(r"^\s*Scenario:\s*(.+?)\s*$", content, flags=re.MULTILINE)
+
+
+def verify_test_contract(
+    definition: dict[str, Any],
+    repository_path: Path | None = None,
+    source_commit: str | None = None,
+) -> None:
+    contract = definition.get("coreteam_test_contract")
+    if contract is None:
+        return
+    if not isinstance(contract, dict) or contract.get("schema_version") != 1:
+        raise CandidateError("candidate Coreteam test contract is invalid")
+    if contract.get("owner") != "Coreteam":
+        raise CandidateError("candidate Coreteam test contract owner is invalid")
+    manuals = contract.get("manuals")
+    if (
+        not isinstance(manuals, list)
+        or len(manuals) != len(REQUIRED_CORETEAM_MANUAL_PATHS)
+        or {item.get("id") for item in manuals if isinstance(item, dict)}
+        != set(REQUIRED_CORETEAM_MANUAL_PATHS)
+    ):
+        raise CandidateError("candidate Coreteam test contract manuals are incomplete")
+    for manual in manuals:
+        if not isinstance(manual, dict):
+            raise CandidateError("candidate Coreteam test manual is invalid")
+        path = manual.get("path")
+        digest = manual.get("sha256")
+        scenarios = manual.get("scenarios")
+        if (
+            path != REQUIRED_CORETEAM_MANUAL_PATHS[manual["id"]]
+            or not HASH_RE.fullmatch(str(digest))
+        ):
+            raise CandidateError("candidate Coreteam test manual binding is invalid")
+        if not isinstance(scenarios, list) or not scenarios:
+            raise CandidateError("candidate Coreteam test manual scenarios are missing")
+        names: list[str] = []
+        for scenario in scenarios:
+            if not isinstance(scenario, dict) or not isinstance(scenario.get("name"), str):
+                raise CandidateError("candidate Coreteam test scenario is invalid")
+            evidence = scenario.get("evidence")
+            if not isinstance(evidence, list) or not evidence or not all(
+                item in {"upstream-unit", "upstream-e2e", "upstream-testenv", "etl-safe", "defer-isolated-rig"}
+                for item in evidence
+            ):
+                raise CandidateError("candidate Coreteam test scenario evidence is invalid")
+            unit_tests = scenario.get("unit_tests", [])
+            if unit_tests and "upstream-unit" not in evidence:
+                raise CandidateError("candidate Coreteam unit-test evidence is unexpected")
+            if not isinstance(unit_tests, list) or not all(
+                isinstance(item, dict)
+                and isinstance(item.get("path"), str)
+                and item["path"].startswith(CORETEAM_UNIT_TEST_PATH_PREFIXES)
+                and item["path"].endswith("_test.go")
+                and isinstance(item.get("name"), str)
+                and re.fullmatch(r"Test[A-Za-z0-9_]+", item["name"])
+                for item in unit_tests
+            ):
+                raise CandidateError("candidate Coreteam unit-test evidence is invalid")
+            unit_identities = [(item["path"], item["name"]) for item in unit_tests]
+            if len(unit_identities) != len(set(unit_identities)):
+                raise CandidateError("candidate Coreteam unit-test evidence is duplicated")
+            required_unit_identities = REQUIRED_CORETEAM_UNIT_EVIDENCE.get(scenario["name"])
+            if required_unit_identities is not None and set(unit_identities) != required_unit_identities:
+                raise CandidateError("candidate Coreteam unit-test evidence is missing")
+            names.append(scenario["name"])
+        if len(names) != len(set(names)):
+            raise CandidateError("candidate Coreteam test scenario is duplicated")
+        if repository_path is not None:
+            try:
+                source = run(
+                    ["git", "-C", str(repository_path), "show", f"{source_commit}:{path}"]
+                ).stdout.encode("utf-8")
+            except CandidateError as exc:
+                raise CandidateError(f"candidate Coreteam test manual is unavailable: {path}") from exc
+            if hashlib.sha256(source).hexdigest() != digest:
+                raise CandidateError(f"candidate Coreteam test manual checksum mismatch: {path}")
+            observed = gherkin_scenarios(source.decode("utf-8"))
+            if names != observed:
+                raise CandidateError(f"candidate Coreteam test scenarios do not match: {path}")
+            for scenario in scenarios:
+                for unit_test in scenario.get("unit_tests", []):
+                    unit_source = run(
+                        [
+                            "git",
+                            "-C",
+                            str(repository_path),
+                            "show",
+                            f"{source_commit}:{unit_test['path']}",
+                        ]
+                    ).stdout
+                    if re.search(
+                        rf"^func\s+{re.escape(unit_test['name'])}\s*\(",
+                        unit_source,
+                        flags=re.MULTILINE,
+                    ) is None:
+                        raise CandidateError(
+                            "candidate Coreteam unit-test evidence does not match source: "
+                            f"{unit_test['path']}::{unit_test['name']}"
+                        )
+    security = contract.get("security_h1")
+    if not isinstance(security, dict) or security.get("manual_exploit_tests") is not False:
+        raise CandidateError("candidate Coreteam security test contract is invalid")
+    if security.get("required_evidence") != ["unit", "e2e"]:
+        raise CandidateError("candidate Coreteam security evidence contract is invalid")
+
+
 def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
     path = definition_path(profile)
     definition = load_json(path)
@@ -287,20 +414,26 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
                 "candidate without a source identity contract is not an exact frozen historical definition"
             )
     else:
-        if source_identity_contract != "git-object-and-github-signature-v1":
+        if source_identity_contract not in {
+            "git-object-and-github-signature-v1",
+            "git-object-and-github-unsigned-commit-v1",
+        }:
             raise CandidateError("candidate source identity contract is unsupported")
         for name, repository in repositories.items():
             signature = repository.get("signature")
             if not isinstance(signature, dict):
                 raise CandidateError(f"repository signature binding is missing: {name}")
-            if (
-                signature.get("provider") != "github"
-                or signature.get("verified") is not True
-                or signature.get("reason") != "valid"
-                or not HASH_RE.fullmatch(str(signature.get("signature_sha256", "")))
-                or not HASH_RE.fullmatch(str(signature.get("payload_sha256", "")))
-            ):
-                raise CandidateError(f"repository signature binding is invalid: {name}")
+            if source_identity_contract == "git-object-and-github-signature-v1":
+                if (
+                    signature.get("provider") != "github"
+                    or signature.get("verified") is not True
+                    or signature.get("reason") != "valid"
+                    or not HASH_RE.fullmatch(str(signature.get("signature_sha256", "")))
+                    or not HASH_RE.fullmatch(str(signature.get("payload_sha256", "")))
+                ):
+                    raise CandidateError(f"repository signature binding is invalid: {name}")
+            elif signature != {"provider": "github", "verified": False, "reason": "unsigned"}:
+                raise CandidateError(f"repository unsigned commit binding is invalid: {name}")
 
     architectures = definition.get("architectures", {})
     expected_architectures = ["linux/amd64"]
@@ -417,6 +550,7 @@ def verify_definition(profile: str) -> tuple[dict[str, Any], Path, str]:
             "candidate HA must remain excluded until a reviewed v5 deployment lifecycle exists"
         )
     publication_contract(definition, profile)
+    verify_test_contract(definition)
     return definition, path, actual_hash
 
 
@@ -424,6 +558,25 @@ def command_prepare(args: argparse.Namespace) -> None:
     source_ref = args.source_ref.removeprefix("refs/heads/")
     expected_ref = f"refs/heads/{source_ref}"
     target_layer = getattr(args, "layer", None)
+    requested_profile = getattr(args, "profile", None)
+    if requested_profile:
+        definition, path, definition_hash = verify_definition(requested_profile)
+        profile_layer = definition.get("layer", "all")
+        if target_layer and profile_layer != target_layer:
+            raise CandidateError("candidate profile layer does not match requested layer")
+        repositories = definition.get("repositories", {})
+        if not isinstance(repositories, dict) or not any(
+            isinstance(repository, dict) and repository.get("ref") == expected_ref
+            for repository in repositories.values()
+        ):
+            raise CandidateError("candidate profile source ref does not match requested source ref")
+        repository = next(
+            repository for repository in repositories.values()
+            if isinstance(repository, dict) and repository.get("ref") == expected_ref
+        )
+        print(f"READY profile={requested_profile} layer={profile_layer} definition_sha256={definition_hash}")
+        print(f"source_ref={repository['ref']} source_commit={repository['commit']} definition={path}")
+        return
     matches: list[tuple[str, str]] = []
     for path in sorted(CANDIDATES.glob("*.definition.json")):
         candidate = load_json(path)
@@ -480,7 +633,11 @@ def verify_source_identity(
     verification_path: Path,
 ) -> None:
     definition, _, _ = verify_definition(profile)
-    if definition.get("source_identity_contract") != "git-object-and-github-signature-v1":
+    identity_contract = definition.get("source_identity_contract")
+    if identity_contract not in {
+        "git-object-and-github-signature-v1",
+        "git-object-and-github-unsigned-commit-v1",
+    }:
         raise CandidateError("candidate does not declare the source identity verification contract")
     binding = definition.get("repositories", {}).get(repository_key)
     if not isinstance(binding, dict):
@@ -523,17 +680,26 @@ def verify_source_identity(
     expected_signature = binding["signature"]
     signature = verification_record.get("signature")
     payload = verification_record.get("payload")
-    if (
-        verification.get("sha") != commit
-        or tree_document.get("sha") != tree
-        or verification_record.get("verified") is not True
-        or verification_record.get("reason") != "valid"
-        or not isinstance(signature, str)
-        or not isinstance(payload, str)
-        or sha256_text(signature) != expected_signature["signature_sha256"]
-        or sha256_text(payload) != expected_signature["payload_sha256"]
+    if verification.get("sha") != commit or tree_document.get("sha") != tree:
+        raise CandidateError("candidate source verification does not match the frozen identity")
+    if identity_contract == "git-object-and-github-signature-v1":
+        if (
+            verification_record.get("verified") is not True
+            or verification_record.get("reason") != "valid"
+            or not isinstance(signature, str)
+            or not isinstance(payload, str)
+            or sha256_text(signature) != expected_signature["signature_sha256"]
+            or sha256_text(payload) != expected_signature["payload_sha256"]
+        ):
+            raise CandidateError("candidate source signature verification does not match the frozen identity")
+    elif (
+        verification_record.get("verified") is not False
+        or verification_record.get("reason") != "unsigned"
+        or signature is not None
+        or payload is not None
     ):
-        raise CandidateError("candidate source signature verification does not match the frozen identity")
+        raise CandidateError("candidate source unsigned commit verification does not match the frozen identity")
+    verify_test_contract(definition, repository_path, commit)
 
 
 def command_source_verify(args: argparse.Namespace) -> None:
@@ -1670,7 +1836,7 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
     v5_short = v5_commit[:8] if v5_commit else ""
     profile_name = str(definition.get("profile", profile))
 
-    if definition.get("source_identity_contract"):
+    if definition.get("source_identity_contract") and layer != "devshard":
         inferenced_build_args = render_build_arguments(
             component_build_arguments(definition, "inferenced")
         )
@@ -1680,7 +1846,7 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
         edge_api_build_args = render_build_arguments(
             component_build_arguments(definition, "edge-api")
         )
-    else:
+    elif layer != "devshard":
         inferenced_build_args = (
             "GOOS=linux\n"
             "GOARCH=amd64\n"
@@ -1706,6 +1872,12 @@ def workflow_matrix(profile: str) -> dict[str, Any]:
             f"-X github.com/cosmos/cosmos-sdk/version.Commit={core_commit}"
         )
         edge_api_build_args = "GOOS=linux\nGOARCH=amd64\nBLST_PORTABLE=0"
+    else:
+        # A DevShard-only definition deliberately has no core components.
+        # Build arguments for filtered-out core images must not be resolved.
+        inferenced_build_args = ""
+        dapi_build_args = ""
+        edge_api_build_args = ""
 
     devshardd_build_args = (
         "GOOS=linux\n"
@@ -1903,7 +2075,8 @@ def parser() -> argparse.ArgumentParser:
 
     prepare = subcommands.add_parser("prepare")
     prepare.add_argument("--source-ref", required=True)
-    prepare.add_argument("--layer", choices=["core", "devshard", "all"], default="all")
+    prepare.add_argument("--layer", choices=["core", "devshard", "all"])
+    prepare.add_argument("--profile", help="select one exact candidate when a source ref has historical definitions")
     prepare.set_defaults(func=command_prepare)
 
     build = subcommands.add_parser("build")

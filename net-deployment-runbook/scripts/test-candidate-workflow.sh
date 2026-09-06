@@ -106,6 +106,7 @@ grep -Fq 'LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=inference-chain' 
 grep -Fq 'LDFLAGS=-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api' "$RUNBOOK/scripts/release-candidate.py"
 grep -Fq 'source-verify "$PROFILE"' <<<"$prepare_job"
 grep -Fq 'gh api "repos/gonka-ai/gonka/commits/$commit"' <<<"$prepare_job"
+grep -Fq 'git-object-and-github-unsigned-commit-v1' <<<"$prepare_job"
 grep -Fq 'git -C "$checkout" fetch --no-tags --filter=blob:none origin' <<<"$prepare_job"
 ! grep -Fq '${{ github.run_id }}-${{ github.run_attempt }}' <<<"$images_job"
 ! grep -Fq 'make devshardd-release' <<<"$binaries_job"

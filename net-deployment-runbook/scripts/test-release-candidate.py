@@ -57,6 +57,57 @@ def main() -> None:
     new_definition, _, new_definition_hash = candidate.verify_definition(
         "v2026.08.30-rc.0"
     )
+    finalized_definition, _, _ = candidate.verify_definition("v2026.09.05-rc.0")
+    assert finalized_definition["source_identity_contract"] == "git-object-and-github-unsigned-commit-v1"
+    assert finalized_definition["coreteam_test_contract"]["owner"] == "Coreteam"
+    finalized_height_scenarios = {
+        scenario["name"]: scenario
+        for manual in finalized_definition["coreteam_test_contract"]["manuals"]
+        if manual["id"] == "height-sync"
+        for scenario in manual["scenarios"]
+    }
+    assert finalized_height_scenarios["Host reports a lower height than the roster"]["unit_tests"] == [
+        {
+            "path": "devshard/heightsync/logplane_test.go",
+            "name": "TestLogPlane_AckBelowFloorRejectedAndLiftAccepted",
+        }
+    ]
+    assert finalized_height_scenarios["Host reports a slightly future fabricated hash"]["unit_tests"] == [
+        {
+            "path": "devshard/heightsync/logplane_test.go",
+            "name": "TestLogPlane_FutureDatedStampDeferredFail",
+        }
+    ]
+    finalized_residual_scenarios = {
+        scenario["name"]: scenario
+        for manual in finalized_definition["coreteam_test_contract"]["manuals"]
+        if manual["id"] == "residual"
+        for scenario in manual["scenarios"]
+    }
+    assert finalized_residual_scenarios["Warm wait timeout does not cause an outage"][
+        "unit_tests"
+    ] == [
+        {
+            "path": "versioned/internal/process/manager_recovery_wait_test.go",
+            "name": "TestWaitForChildRecoveryComplete_TimeoutAborts",
+        }
+    ]
+    missing_unit_evidence = json.loads(json.dumps(finalized_definition))
+    missing_unit_evidence["coreteam_test_contract"]["manuals"][0]["scenarios"][1].pop(
+        "unit_tests"
+    )
+    try:
+        candidate.verify_test_contract(missing_unit_evidence)
+    except candidate.CandidateError as exc:
+        assert "unit-test evidence is missing" in str(exc)
+    else:
+        raise AssertionError("Coreteam unit-only assertion was accepted without a test mapping")
+    finalized_matrix = candidate.workflow_matrix("v2026.09.05-rc.0")
+    assert finalized_matrix["layer"] == "devshard"
+    assert {item["id"] for item in finalized_matrix["image_matrix"]["include"]} == candidate.DEVSHARD_REQUIRED_IMAGES
+    assert {
+        f"{item['id']}-linux-amd64" for item in finalized_matrix["binary_matrix"]["include"]
+    } == candidate.DEVSHARD_REQUIRED_BINARIES
     new_publication = candidate.publication_contract(
         new_definition, "v2026.08.30-rc.0"
     )
@@ -231,7 +282,28 @@ def main() -> None:
             check=True,
         )
         (source_repo / "source.txt").write_text("exact source\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(source_repo), "add", "source.txt"], check=True)
+        height_manual = source_repo / "devshard/docs/v5-manual-height-sync.md"
+        height_manual.parent.mkdir(parents=True)
+        height_manual.write_text(
+            "Feature: Height sync\n\n"
+            "  Scenario: Host reports a lower height than the roster\n"
+            "  Scenario: Host reports a slightly future fabricated hash\n",
+            encoding="utf-8",
+        )
+        logplane_test = source_repo / "devshard/heightsync/logplane_test.go"
+        logplane_test.parent.mkdir(parents=True)
+        logplane_test.write_text(
+            "package heightsync\n\n"
+            "func TestLogPlane_AckBelowFloorRejectedAndLiftAccepted() {}\n"
+            "func TestLogPlane_FutureDatedStampDeferredFail() {}\n",
+            encoding="utf-8",
+        )
+        residual_manual = source_repo / "devshard/docs/v5-manual-residual.md"
+        residual_manual.write_text(
+            "Feature: Residual\n\n  Scenario: Host ping remains observational\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "-C", str(source_repo), "add", "-f", "source.txt", "devshard"], check=True)
         subprocess.run(
             ["git", "-C", str(source_repo), "commit", "-q", "-m", "test source"],
             check=True,
@@ -316,6 +388,181 @@ def main() -> None:
             "gonka_core",
             source_repo,
             verification_path,
+        )
+
+        unsigned_fixture = json.loads(json.dumps(strict_fixture))
+        unsigned_fixture["source_identity_contract"] = "git-object-and-github-unsigned-commit-v1"
+        unsigned_fixture["repositories"]["gonka_core"]["signature"] = {
+            "provider": "github",
+            "verified": False,
+            "reason": "unsigned",
+        }
+        unsigned_fixture["coreteam_test_contract"] = {
+            "schema_version": 1,
+            "owner": "Coreteam",
+            "manuals": [
+                {
+                    "id": "height-sync",
+                    "path": "devshard/docs/v5-manual-height-sync.md",
+                    "sha256": candidate.sha256(height_manual),
+                    "scenarios": [
+                        {
+                            "name": "Host reports a lower height than the roster",
+                            "evidence": ["upstream-unit", "upstream-testenv"],
+                            "unit_tests": [
+                                {
+                                    "path": "devshard/heightsync/logplane_test.go",
+                                    "name": "TestLogPlane_AckBelowFloorRejectedAndLiftAccepted",
+                                }
+                            ],
+                        },
+                        {
+                            "name": "Host reports a slightly future fabricated hash",
+                            "evidence": ["upstream-unit", "upstream-testenv"],
+                            "unit_tests": [
+                                {
+                                    "path": "devshard/heightsync/logplane_test.go",
+                                    "name": "TestLogPlane_FutureDatedStampDeferredFail",
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "id": "residual",
+                    "path": "devshard/docs/v5-manual-residual.md",
+                    "sha256": candidate.sha256(residual_manual),
+                    "scenarios": [
+                        {
+                            "name": "Host ping remains observational",
+                            "evidence": ["upstream-e2e", "etl-safe"],
+                        }
+                    ],
+                },
+            ],
+            "security_h1": {
+                "manual_exploit_tests": False,
+                "required_evidence": ["unit", "e2e"],
+            },
+        }
+        write_json(strict_path, unsigned_fixture)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+        unsigned_verification = {
+            "sha": source_commit,
+            "commit": {
+                "tree": {"sha": source_tree},
+                "verification": {
+                    "verified": False,
+                    "reason": "unsigned",
+                    "signature": None,
+                    "payload": None,
+                },
+            },
+        }
+        unsigned_verification_path = temporary / "unsigned-source-verification.json"
+        write_json(unsigned_verification_path, unsigned_verification)
+        candidate.verify_source_identity(
+            "v2026.08.28-rc.0",
+            "gonka_core",
+            source_repo,
+            unsigned_verification_path,
+        )
+        substituted_manual = json.loads(json.dumps(unsigned_fixture))
+        residual_manual_binding = substituted_manual["coreteam_test_contract"]["manuals"][1]
+        substituted_manual["coreteam_test_contract"]["manuals"][0] = {
+            **residual_manual_binding,
+            "id": "height-sync",
+        }
+        write_json(strict_path, substituted_manual)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+        try:
+            candidate.verify_definition("v2026.08.28-rc.0")
+        except candidate.CandidateError as exc:
+            assert "manual binding is invalid" in str(exc)
+        else:
+            raise AssertionError("Coreteam manual substitution was accepted")
+        duplicate_manual = json.loads(json.dumps(unsigned_fixture))
+        duplicate_manual["coreteam_test_contract"]["manuals"].append(
+            json.loads(json.dumps(duplicate_manual["coreteam_test_contract"]["manuals"][0]))
+        )
+        write_json(strict_path, duplicate_manual)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+        try:
+            candidate.verify_definition("v2026.08.28-rc.0")
+        except candidate.CandidateError as exc:
+            assert "manuals are incomplete" in str(exc)
+        else:
+            raise AssertionError("duplicate Coreteam manuals were accepted")
+        missing_unit_symbol = json.loads(json.dumps(unsigned_fixture))
+        missing_unit_symbol["coreteam_test_contract"]["manuals"][0]["scenarios"][0][
+            "unit_tests"
+        ][0]["name"] = "TestLogPlane_NotPresent"
+        write_json(strict_path, missing_unit_symbol)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+        try:
+            candidate.verify_source_identity(
+                "v2026.08.28-rc.0",
+                "gonka_core",
+                source_repo,
+                unsigned_verification_path,
+            )
+        except candidate.CandidateError as exc:
+            assert "unit-test evidence is missing" in str(exc)
+        else:
+            raise AssertionError("Coreteam unit-test mapping drift was accepted")
+        mismatched_scenario = json.loads(json.dumps(unsigned_fixture))
+        mismatched_scenario["coreteam_test_contract"]["manuals"][0]["scenarios"][0]["name"] = "Wrong scenario"
+        write_json(strict_path, mismatched_scenario)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+        try:
+            candidate.verify_source_identity(
+                "v2026.08.28-rc.0",
+                "gonka_core",
+                source_repo,
+                unsigned_verification_path,
+            )
+        except candidate.CandidateError as exc:
+            assert "test scenarios do not match" in str(exc)
+        else:
+            raise AssertionError("Coreteam scenario contract drift was accepted")
+        missing_scenario = json.loads(json.dumps(unsigned_fixture))
+        missing_scenario["coreteam_test_contract"]["manuals"][0]["scenarios"] = []
+        write_json(strict_path, missing_scenario)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+        try:
+            candidate.verify_definition("v2026.08.28-rc.0")
+        except candidate.CandidateError as exc:
+            assert "manual scenarios are missing" in str(exc)
+        else:
+            raise AssertionError("Coreteam scenario contract without scenarios was accepted")
+        write_json(strict_path, unsigned_fixture)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
+        )
+
+        write_json(strict_path, strict_fixture)
+        strict_path.with_suffix(".sha256").write_text(
+            f"{candidate.sha256(strict_path)}  {strict_path.name}\n",
+            encoding="utf-8",
         )
 
         invalid_verification = json.loads(json.dumps(verification))
@@ -403,6 +650,37 @@ def main() -> None:
         with redirect_stdout(output):
             candidate.command_prepare(
                 argparse.Namespace(source_ref="devshard-0.2.15-v5", layer="devshard")
+            )
+        assert "READY profile=v2026.08.27-rc.0 layer=devshard" in output.getvalue()
+        output = io.StringIO()
+        with redirect_stdout(output):
+            candidate.command_prepare(
+                argparse.Namespace(
+                    source_ref="devshard-0.2.15-v5",
+                    layer=None,
+                    profile="v2026.08.27-rc.0",
+                )
+            )
+        assert "READY profile=v2026.08.27-rc.0 layer=devshard" in output.getvalue()
+        duplicate_devshard = json.loads(json.dumps(devshard_only))
+        duplicate_devshard["profile"] = "v2026.09.05-rc.0"
+        write_json(candidates / "v2026.09.05-rc.0.definition.json", duplicate_devshard)
+        try:
+            candidate.command_prepare(
+                argparse.Namespace(source_ref="devshard-0.2.15-v5", layer="devshard")
+            )
+        except candidate.CandidateError as exc:
+            assert "bound by multiple candidate definitions" in str(exc)
+        else:
+            raise AssertionError("ambiguous moving source ref was accepted")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            candidate.command_prepare(
+                argparse.Namespace(
+                    source_ref="devshard-0.2.15-v5",
+                    layer="devshard",
+                    profile="v2026.08.27-rc.0",
+                )
             )
         assert "READY profile=v2026.08.27-rc.0 layer=devshard" in output.getvalue()
 
