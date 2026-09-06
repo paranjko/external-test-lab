@@ -64,6 +64,9 @@ trap 'on_launcher_error "$LINENO"' ERR
 
 source "$ROOT/scripts/lib.sh"
 init_gdc_data_root
+# This capability is set only after an exact retained JOIN lineage resolves.
+# An inherited environment value must not make a retired profile fresh-selectable.
+unset GDC_ALLOW_RETIRED_PROFILE_RECOVERY
 
 initialize_launcher_envelope() {
   local base

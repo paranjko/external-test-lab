@@ -8,6 +8,8 @@ trap 'rm -rf "$tmp"' EXIT
 GDC_HOME="$tmp/operator/gdc-node2"
 STATE="$GDC_HOME/state"
 export ROOT GDC_HOME STATE
+# shellcheck source=scripts/profile.sh
+source "$ROOT/scripts/profile.sh"
 # shellcheck source=scripts/lib.sh
 source "$ROOT/scripts/lib.sh"
 
@@ -63,5 +65,32 @@ resolve_join_release_profile ''
 unset GDC_RELEASE_PROFILE
 resolve_join_release_profile v2026.07.23
 [[ "$GDC_RELEASE_PROFILE" == v2026.07.23 ]]
+
+# The retained post5 identity is not a fresh selection, but an exact retained
+# hash still resolves and loads for diagnosis or recovery.
+rm -rf "$GDC_HOME/runs" "$STATE"
+mkdir -p "$GDC_HOME/runs/retained-post5" "$STATE"
+printf 'retained-post5\n' >"$STATE/active-run-id"
+retained_post5_hash="$(join_profile_hash v2026.08.13 community-lab qwen3-0.6b)"
+printf '%s\n' \
+  'release_profile=v2026.08.13' \
+  'deployment_profile=community-lab' \
+  'model_profile=qwen3-0.6b' \
+  "profile_hash=$retained_post5_hash" \
+  >"$GDC_HOME/runs/retained-post5/manifest.env"
+unset GDC_RELEASE_PROFILE GDC_ALLOW_RETIRED_PROFILE_RECOVERY
+resolve_join_release_profile ''
+[[ "$GDC_RELEASE_PROFILE" == v2026.08.13 ]]
+[[ "$GDC_ALLOW_RETIRED_PROFILE_RECOVERY" == true ]]
+GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
+[[ "$DAPI_SOURCE_REF" == release/v0.2.15-post5 ]]
+
+rm -rf "$GDC_HOME/runs" "$STATE"
+mkdir -p "$STATE"
+if (resolve_join_release_profile v2026.08.13) >"$tmp/retired.out" 2>"$tmp/retired.err"; then
+  echo 'fresh JOIN selection accepted retired v2026.08.13' >&2
+  exit 1
+fi
+grep -Fq 'retired' "$tmp/retired.err"
 
 printf 'PASS Host JOIN profile resolution\n'

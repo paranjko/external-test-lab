@@ -102,7 +102,7 @@ selected_gateway_protocol_contract() {
 }
 
 load_profiles() {
-  local root release deployment model operator comp_target comp_env
+  local root release deployment model operator comp_target comp_env retired_marker
   root="$(profile_root)"
   release="${GDC_RELEASE_PROFILE:-v2026.07.23}"
   deployment="${GDC_DEPLOYMENT_PROFILE:-community-lab}"
@@ -129,6 +129,17 @@ load_profiles() {
   [[ "$model" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "invalid model profile: $model" >&2; return 2; }
   [[ "$operator" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "invalid operator-services profile: $operator" >&2; return 2; }
   [[ -r "$root/profiles/releases/$release.lock" ]] || { echo "unknown release profile: $release" >&2; return 2; }
+  retired_marker="$root/profiles/releases/$release.retired"
+  if [[ -e "$retired_marker" ]]; then
+    grep -Fxq 'RETIRED=true' "$retired_marker" || {
+      echo "invalid retired release marker: $retired_marker" >&2
+      return 2
+    }
+    [[ "${GDC_ALLOW_RETIRED_PROFILE_RECOVERY:-false}" == true ]] || {
+      echo "release profile $release is retired and available only for retained recovery identity" >&2
+      return 2
+    }
+  fi
   [[ -r "$root/profiles/deployments/$deployment.lock" ]] || { echo "unknown deployment profile: $deployment" >&2; return 2; }
   [[ -r "$root/profiles/models/$model.lock" ]] || { echo "unknown model profile: $model" >&2; return 2; }
   [[ -r "$root/profiles/operator-services/$operator.lock" ]] || { echo "unknown operator-services profile: $operator" >&2; return 2; }
