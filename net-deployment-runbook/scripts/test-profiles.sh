@@ -384,7 +384,7 @@ if grep -Fq 'ssh_ready gdc-node4' "$ROOT/scripts/phase-bootstrap-access.sh"; the
   exit 1
 fi
 
-for release in v2026.07.23 v2026.08.06 v2026.08.13; do
+for release in v2026.07.23 v2026.08.06; do
   GDC_RELEASE_PROFILE="$release" GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
   [[ "$GDC_DEPLOYMENT_PROFILE" == community-lab ]]
   [[ "$GDC_OPERATOR_SERVICES_PROFILE" == gdc-lab ]]
@@ -421,22 +421,13 @@ for release in v2026.07.23 v2026.08.06 v2026.08.13; do
     [[ "$DAPI_UPGRADE_URL" == https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15-post3/decentralized-api-amd64.zip ]]
     [[ "$INFERENCED_UPGRADE_SHA256" == 91af67df9ef5c576a1695e5e85c8ee344f9f1a69d941bfc28fb339d9fd33617e ]]
     [[ "$DAPI_UPGRADE_SHA256" == 8cfa7345f5b7f968d5a1b765837b8319084c02d3dd2691b698c368774e20b55e ]]
-  elif [[ "$release" == v2026.08.13 ]]; then
-    [[ "$GONKA_HOST_STACK_COMMIT" == ce33c851282b8f4c0f63d78d46ddd4d8bb248207 ]]
-    [[ "$GONKA_HOST_STACK_DOC_SHA256" == 5a69a2d82f77b4ecd1e207af1119063f32693afdc01bca58433f71ffe4061f82 ]]
-    [[ "$GONKA_HOST_STACK_COMPOSE_SHA256" == d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94 ]]
-    [[ "$DAPI_SOURCE_REF" == release/v0.2.15-post5 ]]
-    [[ "$DAPI_COMMIT" == 6009b539a36b83169835ebbf1dcbbbe1b7eb1ec7 ]]
-    [[ "$DAPI_IMAGE" == ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c ]]
-    [[ "$DAPI_UPGRADE_URL" == https://github.com/product-science/race-releases/releases/download/release/v0.2.15-post5/decentralized-api-amd64.zip ]]
-    [[ "$DAPI_UPGRADE_SHA256" == f2b880371f782ff531510bf294b91b1f2945ee366780ef6f7583b91b3bc34ee7 ]]
   fi
   summary="$(profile_summary)"
   grep -qx "inferenced_image=$INFERENCED_IMAGE" <<<"$summary"
   grep -qx "dapi_image=$DAPI_IMAGE" <<<"$summary"
   grep -qx "mlnode_generic_image=$MLNODE_GENERIC_IMAGE" <<<"$summary"
   grep -qx "bridge_image=$BRIDGE_IMAGE" <<<"$summary"
-  if [[ "$release" == v2026.08.06 || "$release" == v2026.08.13 ]]; then
+  if [[ "$release" == v2026.08.06 ]]; then
     grep -qx "gonka_host_stack_commit=$GONKA_HOST_STACK_COMMIT" <<<"$summary"
     grep -qx "dapi_source_ref=$DAPI_SOURCE_REF" <<<"$summary"
     grep -qx "dapi_commit=$DAPI_COMMIT" <<<"$summary"
@@ -447,6 +438,70 @@ for release in v2026.07.23 v2026.08.06 v2026.08.13; do
   grep -qx "network_profile_hash=$expected_network_hash" <<<"$summary"
   grep -qx "operator_services_profile_hash=$expected_operator_hash" <<<"$summary"
 done
+
+[[ -r "$ROOT/profiles/releases/v2026.08.13.lock" ]]
+[[ -r "$ROOT/profiles/releases/v2026.08.13.retired" ]]
+grep -Fxq 'unset GDC_ALLOW_RETIRED_PROFILE_RECOVERY' "$ROOT/gdc.sh"
+if (GDC_RELEASE_PROFILE=v2026.08.13 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles >/dev/null 2>&1); then
+  echo 'retired v2026.08.13 was selectable without recovery authorization' >&2
+  exit 1
+fi
+GDC_ALLOW_RETIRED_PROFILE_RECOVERY=true GDC_RELEASE_PROFILE=v2026.08.13 \
+  GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
+[[ "$DAPI_SOURCE_REF" == release/v0.2.15-post5 ]]
+[[ "$(sha256sum "$ROOT/profiles/releases/v2026.08.13.lock" | awk '{print $1}')" == 259dcdcb7c62e90eb4d48bcca1a7dfadb12585bc1570911c5913a00901e2926e ]]
+
+(
+  unset GDC_RELEASE_PROFILE GDC_MODEL_PROFILE GDC_DEPLOYMENT_PROFILE GDC_OPERATOR_SERVICES_PROFILE
+  load_profiles
+  [[ "$GDC_RELEASE_PROFILE" == v2026.07.23 ]]
+)
+
+mainnet_default_history="$(awk '
+  $0 == "  - date: \"2026-08-06\"" { capture = 1 }
+  capture && $0 == "" { exit }
+  capture { print }
+' "$ROOT/profiles/releases/history.yaml")"
+[[ -n "$mainnet_default_history" ]]
+grep -Fxq '    component: host-stack' <<<"$mainnet_default_history"
+grep -Fxq '    version: v2026.08.06' <<<"$mainnet_default_history"
+grep -Fxq '    profile_class: official_mainnet_compatible_reference' <<<"$mainnet_default_history"
+grep -Fxq '    basis: immutable_official_main_and_upgrade_compose_snapshots' <<<"$mainnet_default_history"
+grep -Fxq '    mainnet_reference: true' <<<"$mainnet_default_history"
+grep -Fxq '    lock: v2026.08.06.lock' <<<"$mainnet_default_history"
+
+post5_overlay_history="$(awk '
+  $0 == "  - date: \"2026-08-13\"" { capture = 1 }
+  capture && $0 == "" { exit }
+  capture { print }
+' "$ROOT/profiles/releases/history.yaml")"
+[[ -n "$post5_overlay_history" ]]
+grep -Fxq '    component: decentralized-api' <<<"$post5_overlay_history"
+grep -Fxq '    version: v0.2.15-post5' <<<"$post5_overlay_history"
+grep -Fxq '    kind: historical_post5_publication' <<<"$post5_overlay_history"
+grep -Fxq '    profile_class: retired_recovery_identity' <<<"$post5_overlay_history"
+grep -Fxq '    lock: v2026.08.13.lock' <<<"$post5_overlay_history"
+grep -Fxq '    model_scope: "DeepSeek V4 Flash model_override"' <<<"$post5_overlay_history"
+grep -Fxq '    mainnet_target: false' <<<"$post5_overlay_history"
+grep -Fxq '    executable_lock: false' <<<"$post5_overlay_history"
+grep -Fxq '    fresh_selectable: false' <<<"$post5_overlay_history"
+grep -Fxq '    recovery_identity_only: true' <<<"$post5_overlay_history"
+
+mlnode_default_history="$(awk '
+  $0 == "  - date: \"2026-08-17\"" { capture = 1 }
+  capture && $0 == "" { exit }
+  capture { print }
+' "$ROOT/profiles/releases/history.yaml")"
+[[ -n "$mlnode_default_history" ]]
+grep -Fxq '    component: mlnode' <<<"$mlnode_default_history"
+grep -Fxq '    version: 3.0.16' <<<"$mlnode_default_history"
+grep -Fxq '    kind: official_compose_default_update' <<<"$mlnode_default_history"
+grep -Fxq '    live_mainnet_deployment: unverified' <<<"$mlnode_default_history"
+grep -Fxq '    executable_lock: false' <<<"$mlnode_default_history"
+
+grep -Fq 'network_updates_2026_08_13: https://github.com/gonka-ai/gonka-docs/blob/9224c85c4f4c50becc1bd142553faa730a95e7f7/docs/network-updates.md#L353-L383' "$ROOT/profiles/releases/history.yaml"
+! grep -Fq 'mainnet_observations:' "$ROOT/profiles/releases/history.yaml"
+! grep -Eq 'peer_count|matching_observations|valid_observations|majority' "$ROOT/profiles/releases/history.yaml" "$ROOT/profiles/releases/HISTORY.md" "$ROOT/profiles/README.md"
 
 for variable in EXPLORER_IMAGE DASHBOARD_PORT CADDY_IMAGE PROMETHEUS_IMAGE GRAFANA_IMAGE ALERTMANAGER_IMAGE BLACKBOX_IMAGE NODE_EXPORTER_IMAGE CADVISOR_IMAGE; do
   ! grep -q "^$variable=" "$ROOT"/profiles/releases/*.lock
@@ -596,7 +651,8 @@ grep -Fq 'stage-network-bootstrap.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'claim-devnet-faucet.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'JOIN_BOOTSTRAP_FORMAT=1' "$ROOT/profiles/releases/v2026.07.23.lock"
 grep -Fq 'JOIN_BOOTSTRAP_FORMAT=1' "$ROOT/profiles/releases/v2026.08.06.lock"
-! grep -Eq '^(GENESIS_|DEVSHARD_|JOIN_BOOTSTRAP_FORMAT=)' "$ROOT/profiles/releases/v2026.08.13.lock"
+[[ -r "$ROOT/profiles/releases/v2026.08.13.lock" ]]
+[[ -r "$ROOT/profiles/releases/v2026.08.13.retired" ]]
 ! grep -Rq 'JOIN_BOOTSTRAP_FORMAT\|join_bootstrap_format' "$ROOT/scripts" --exclude='test-*' --exclude='release-candidate.py'
 grep -Fq 'GDC_FAUCET_CLAIM_NGONKA' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'GDC_FAUCET_INITIAL_NGONKA' "$ROOT/01-identities-genesis/build-genesis.sh"

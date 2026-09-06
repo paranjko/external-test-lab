@@ -18,8 +18,7 @@ OCI digests can be selected by `gdc.sh`.
 | `v2026.05.26` | `v0.2.13` | `c716df26` | history only |
 | `v2026.07.23` | `v0.2.14` | `2bfd85c9` | executable baseline |
 | `v2026.07.30` | `v0.2.15` | `4d687ed6` | core event; use the later compatible stack |
-| `v2026.08.06` | `v0.2.15` plus DAPI post3 and DevShard v4.0.1 lineage | `ce33c851` host-stack snapshot | executable target |
-| `v2026.08.13` | `v0.2.15` plus DAPI post5 | `6009b539` DAPI patch | Mainnet-observed executable target |
+| `v2026.08.06` | `v0.2.15` plus DAPI post3 and DevShard v4.0.1 lineage | `ce33c851` host-stack snapshot | current Mainnet-compatible reference |
 
 The dates through 2026-07-30 are execution dates published by
 [Gonka Network Updates](https://gonka.ai/docs/network-updates/). The
@@ -38,12 +37,18 @@ every compatible image digest and host-stack input required by this runbook.
 - 2026-08-06: documented compatible host stack used by `v2026.08.06.lock`
 - 2026-08-07: main updated the HA Compose overlay from unavailable
   `0.2.14-devshard-v4` images to versiond and versiond-router `0.2.15`
-- 2026-08-13: DAPI `v0.2.15-post5` was published to race-releases and later
-  observed on both canonical Mainnet seeds while core remained `v0.2.15`
+- 2026-08-13: DAPI `v0.2.15-post5` was published to race-releases for the new
+  DeepSeek V4 Flash `model_override` format; Network Updates recommends
+  gradual rollout
+- 2026-08-17: the official `main` and `upgrade-v0.2.16` Compose defaults moved
+  MLNode to `3.0.16`; public version responses do not prove that OCI image is
+  deployed across Mainnet
 
-The 2026-08-13 row is a software snapshot, not a protocol snapshot. Mainnet
-Genesis and seed identity are verified through Gonka Network Bootstrap;
-governed DevShard versions and epoch parameters are read from chain state.
+The 2026-08-13 post5 publication is retained as identity only. Its restored
+`v2026.08.13.lock` has `fresh_selectable: false`, `mainnet_target: false`, and
+`recovery_identity_only: true`; it is not an executable active profile and does
+not replace `v2026.08.06`. The v2026.08.06 classification is based on immutable
+official `main` and `upgrade-v0.2.16` Compose snapshots.
 
 ## Observed next release train
 

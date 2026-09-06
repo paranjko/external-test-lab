@@ -65,6 +65,11 @@ join_profile_hash() {
     "$ROOT/profiles/models/$model.lock" | awk '{print $1}' | sha256sum | awk '{print $1}'
 }
 
+retired_release_profile() {
+  local profile="$1" marker="$ROOT/profiles/releases/$1.retired"
+  [[ -f "$marker" ]] && grep -Fxq 'RETIRED=true' "$marker"
+}
+
 resolve_join_release_profile() {
   local requested_profile="${1:-}" restore_archive="${2:-}" active_run_id='' manifest='' retained_profile='' retained_hash='' retained_deployment='' retained_model='' candidate='' candidate_hash='' resolved_profile='' matches=()
   [[ -z "$requested_profile" || "$requested_profile" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
@@ -103,6 +108,9 @@ resolve_join_release_profile() {
       fi
       [[ -z "$requested_profile" || "$requested_profile" == "$resolved_profile" ]] \
         || die "host join release profile conflicts with retained operator lineage ($retained_profile); omit --release"
+      if retired_release_profile "$resolved_profile"; then
+        export GDC_ALLOW_RETIRED_PROFILE_RECOVERY=true
+      fi
       export GDC_RELEASE_PROFILE="$resolved_profile"
       if [[ -n "$restore_archive" ]]; then
         # A restore is a new recovery attempt. Its evidence must not append to
@@ -114,6 +122,8 @@ resolve_join_release_profile() {
   fi
 
   if [[ -n "$requested_profile" ]]; then
+    retired_release_profile "$requested_profile" \
+      && die "release profile $requested_profile is retired and may only be used for retained recovery identity"
     export GDC_RELEASE_PROFILE="$requested_profile"
   elif [[ -z "${GDC_RELEASE_PROFILE:-}" ]]; then
     export GDC_RELEASE_PROFILE=v2026.08.06

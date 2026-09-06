@@ -1,8 +1,13 @@
 schema_version: 1
-observed_at: "2026-09-01"
+observed_at: "2026-09-06"
 sources:
   network_updates: https://gonka.ai/docs/network-updates/
+  network_updates_2026_08_13: https://github.com/gonka-ai/gonka-docs/blob/9224c85c4f4c50becc1bd142553faa730a95e7f7/docs/network-updates.md#L353-L383
   repository: https://github.com/gonka-ai/gonka
+  official_main_compose_2026_09_06: https://github.com/gonka-ai/gonka/blob/379bebced638aeb5e6077bfd51c986f898443832/deploy/join/docker-compose.yml
+  official_main_mlnode_compose_2026_09_06: https://github.com/gonka-ai/gonka/blob/379bebced638aeb5e6077bfd51c986f898443832/deploy/join/docker-compose.mlnode.yml
+  official_upgrade_compose_2026_09_06: https://github.com/gonka-ai/gonka/blob/2657b7e98cd6befd664268a1d9cf7b037a110926/deploy/join/docker-compose.yml
+  official_upgrade_mlnode_compose_2026_09_06: https://github.com/gonka-ai/gonka/blob/2657b7e98cd6befd664268a1d9cf7b037a110926/deploy/join/docker-compose.mlnode.yml
 
 network_upgrades:
   - profile_id: v2026.01.08
@@ -84,6 +89,9 @@ component_updates:
     version: v2026.08.06
     upstream_commit: ce33c851282b8f4c0f63d78d46ddd4d8bb248207
     kind: compatible_stack_snapshot
+    profile_class: official_mainnet_compatible_reference
+    basis: immutable_official_main_and_upgrade_compose_snapshots
+    mainnet_reference: true
     executable_lock: true
     lock: v2026.08.06.lock
   - date: "2026-08-07"
@@ -98,9 +106,24 @@ component_updates:
     upstream_commit: 6009b539a36b83169835ebbf1dcbbbe1b7eb1ec7
     artifact_repository: https://github.com/product-science/race-releases
     artifact_sha256: f2b880371f782ff531510bf294b91b1f2945ee366780ef6f7583b91b3bc34ee7
-    kind: mainnet_observed_api_patch
-    executable_lock: true
+    kind: historical_post5_publication
+    profile_class: retired_recovery_identity
     lock: v2026.08.13.lock
+    fresh_selectable: false
+    mainnet_target: false
+    recovery_identity_only: true
+    model_scope: "DeepSeek V4 Flash model_override"
+    executable_lock: false
+  - date: "2026-08-17"
+    component: mlnode
+    version: 3.0.16
+    upstream_commit: 379bebced638aeb5e6077bfd51c986f898443832
+    image: ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1
+    kind: official_compose_default_update
+    official_main: true
+    official_upgrade_branch: true
+    live_mainnet_deployment: unverified
+    executable_lock: false
 
 release_candidates:
   - core_release: v0.2.16

@@ -82,8 +82,7 @@ assert_registry_digest() {
 
 for item in \
   'v2026.07.23|release/v0.2.14' \
-  'v2026.08.06|release/v0.2.15' \
-  'v2026.08.13|release/v0.2.15'
+  'v2026.08.06|release/v0.2.15'
 do
   IFS='|' read -r profile ref <<<"$item"
   GDC_RELEASE_PROFILE="$profile" load_profiles
@@ -150,6 +149,20 @@ do
     printf 'PASS %s matches %s (%s)\n' "$profile" "$ref" "$GONKA_COMMIT"
   fi
 done
+
+[[ -r "$ROOT/profiles/releases/v2026.08.13.lock" ]] || {
+  echo 'retained v2026.08.13 identity lock is missing' >&2
+  exit 1
+}
+[[ -r "$ROOT/profiles/releases/v2026.08.13.retired" ]] || {
+  echo 'retired v2026.08.13 marker is missing' >&2
+  exit 1
+}
+[[ "$(sha256sum "$ROOT/profiles/releases/v2026.08.13.lock" | awk '{print $1}')" == 259dcdcb7c62e90eb4d48bcca1a7dfadb12585bc1570911c5913a00901e2926e ]] || {
+  echo 'retained v2026.08.13 identity lock checksum changed' >&2
+  exit 1
+}
+printf 'PASS v2026.08.13 retained identity checksum (retired, not active)\n'
 
 operator_vars='EXPLORER_IMAGE DASHBOARD_PORT CADDY_IMAGE PROMETHEUS_IMAGE GRAFANA_IMAGE ALERTMANAGER_IMAGE BLACKBOX_IMAGE NODE_EXPORTER_IMAGE CADVISOR_IMAGE'
 for lock in "$ROOT"/profiles/releases/*.lock; do

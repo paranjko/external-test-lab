@@ -37,22 +37,18 @@ complete lock are not accepted by `gdc.sh`.
 | Runbook release snapshot | Upstream ref | Commit | Basis |
 | --- | --- | --- |
 | v2026.07.23 | release/v0.2.14 | 2bfd85c958732992c7a9c5be1d796affe29f3ab4 | v0.2.14 executed on mainnet |
-| v2026.08.06 | release/v0.2.15 | 4d687ed6782bcea3931d2d9135bf322f84e190ab | latest upstream host-stack snapshot |
-| v2026.08.13 | release/v0.2.15 | 4d687ed6782bcea3931d2d9135bf322f84e190ab | Mainnet-observed core plus DAPI post5 |
+| v2026.08.06 | release/v0.2.15 | 4d687ed6782bcea3931d2d9135bf322f84e190ab | current Mainnet-compatible reference |
 
 `v2026.08.06` additionally pins
 [host-stack snapshot `ce33c851`](https://github.com/gonka-ai/gonka/blob/ce33c851282b8f4c0f63d78d46ddd4d8bb248207/docs/host-stack-latest.md): DAPI
 `release/v0.2.15-post3` and the `0.2.15` bridge image. The snapshot document
 and upstream Compose file are hash-bound in the release lock.
 
-`v2026.08.13` preserves that compatible container stack and pins the later
-[DAPI `release/v0.2.15-post5`](https://github.com/gonka-ai/gonka/tree/6009b539a36b83169835ebbf1dcbbbe1b7eb1ec7)
-Cosmovisor binary published by the upstream
-[race-releases repository](https://github.com/product-science/race-releases/releases/tag/release/v0.2.15-post5).
-Both canonical Mainnet seeds reported core `v0.2.15` at `4d687ed6` and DAPI
-`v0.2.15-post5` at `6009b539` when this profile was verified on 2026-09-01.
-No post5 API container or replacement full-stack snapshot was published, so
-the profile does not invent either one.
+The 2026-08-13 history entry preserves the immutable observation of DAPI
+`v0.2.15-post5` from the [race-releases repository](https://github.com/product-science/race-releases/releases/tag/release/v0.2.15-post5).
+It is a non-release observation: it is not a Mainnet target and is not
+executable. No post5 API container or replacement full-stack
+snapshot was published, so no selectable profile is invented or inferred.
 
 A release profile describes a reproducible software target. It does not own
 the chain ID, Genesis, seeds, governed DevShard allowlist, epoch settings or
@@ -70,13 +66,30 @@ The dated snapshots preserve three baseline corrections:
 - its TMKMS now uses upstream 0.2.14 instead of 0.2.11-testnet; and
 - its ordinary MLNode now uses upstream 3.0.14-post2 instead of 3.0.12-post4.
 
-The v2026.08.06 chain remains pinned to its core tag. Its host stack follows
-the later upstream snapshot: DAPI `0.2.15-post3` (container and Cosmovisor
-asset) and bridge `0.2.15`, each pinned by digest.
-The v2026.08.13 profile records the subsequent Mainnet DAPI-only rollout. Its
-container stays at post3 while the executed DAPI binary is post5, matching the
-upstream Cosmovisor deployment model and the public Mainnet version readback.
-Registry verification also exposed that upstream Explorer latest had moved.
+The v2026.08.06 chain remains pinned to its core tag. Its host stack is the
+complete broadly compatible snapshot: DAPI `0.2.15-post3` (container and
+Cosmovisor asset) and bridge `0.2.15`, each pinned by digest. It remains the
+current Mainnet-compatible reference. The generic runbook fallback remains
+`v2026.07.23`; Host JOIN resolves its profile independently.
+Public `/v1/versions` responses are not published as raw Mainnet observations
+in this runbook. The v2026.08.06 classification is based on immutable official
+`main` and `upgrade-v0.2.16` Compose snapshots, with the host-stack snapshot
+and registry pins hash-bound in the lock.
+
+At the immutable official branch snapshots checked on 2026-09-06, both
+[`main`](https://github.com/gonka-ai/gonka/blob/379bebced638aeb5e6077bfd51c986f898443832/deploy/join/docker-compose.yml)
+and [`upgrade-v0.2.16`](https://github.com/gonka-ai/gonka/blob/2657b7e98cd6befd664268a1d9cf7b037a110926/deploy/join/docker-compose.yml)
+still select DAPI post3. Their MLNode Compose default is `3.0.16`, introduced
+after 2026-08-13. Repository defaults are compatibility evidence, not proof of
+what every independent Mainnet operator currently runs, so they do not rewrite
+an earlier immutable lock or create a dated Mainnet profile by inference.
+
+The historical 2026-08-13 publication records post5 while the compatible
+container baseline remained post3, matching the upstream Cosmovisor deployment
+model. Its restored lock is retained identity only: fresh_selectable is false,
+mainnet_target is false, recovery_identity_only is true, and it is not an
+executable active profile. Registry verification also exposed that
+upstream Explorer latest had moved.
 Explorer therefore remains digest-pinned as operator software and does not
 participate in the network release hash.
 
