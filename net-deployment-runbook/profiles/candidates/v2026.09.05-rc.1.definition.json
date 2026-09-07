@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-candidate-definition",
+  "profile": "v2026.09.05-rc.1",
+  "layer": "devshard",
+  "classification": "lab-candidate",
+  "official_gonka_release": false,
+  "source_identity_contract": "git-object-and-github-unsigned-commit-v1",
+  "prepared_at": "2026-09-07T00:00:00Z",
+  "source_date": "2026-09-05",
+  "upgrade_from_profile": "v2026.08.06",
+  "core_baseline": {
+    "profile": "v2026.08.06",
+    "gonka_release": "v0.2.15",
+    "rule": "This DevShard-only definition does not create, replace, or include a Gonka core candidate."
+  },
+  "repositories": {
+    "devshard_v5": {
+      "url": "https://github.com/gonka-ai/gonka.git",
+      "ref": "refs/heads/devshard-0.2.15-v5",
+      "commit": "5ed5f391f5c68daeb22740b9023f1453d3158279",
+      "tree": "baba520177f6d1eaef7a341bf366c3bd6ab84a16",
+      "committer_time": "2026-09-05T11:17:57+03:00",
+      "signature": {
+        "provider": "github",
+        "verified": false,
+        "reason": "unsigned"
+      }
+    }
+  },
+  "upstream_qualification": {
+    "state": "Coreteam-finalized-test-plan",
+    "checks": "required-at-exact-candidate-revision",
+    "rule": "The source is frozen for the laboratory candidate. Upstream unit, E2E and testenv results are candidate evidence, not an External Test Lab live verdict."
+  },
+  "coreteam_test_contract": {
+    "schema_version": 1,
+    "owner": "Coreteam",
+    "manuals": [
+      {
+        "id": "height-sync",
+        "path": "devshard/docs/v5-manual-height-sync.md",
+        "sha256": "a6e7d5b50399c3036f0b8848ff5d9fa63c0eec1899c1fc8051b0f197d900714d",
+        "scenarios": [
+          {"name": "First chat seeds and chat keeps working", "evidence": ["upstream-testenv", "etl-safe"]},
+          {"name": "Host reports a lower height than the roster", "evidence": ["upstream-unit", "upstream-testenv", "defer-isolated-rig"], "unit_tests": [{"path": "devshard/heightsync/logplane_test.go", "name": "TestLogPlane_AckBelowFloorRejectedAndLiftAccepted"}]},
+          {"name": "Host reports a future height with unknown hash beyond D", "evidence": ["upstream-testenv", "defer-isolated-rig"]},
+          {"name": "Host reports a slightly future fabricated hash", "evidence": ["upstream-unit", "upstream-testenv", "defer-isolated-rig"], "unit_tests": [{"path": "devshard/heightsync/logplane_test.go", "name": "TestLogPlane_FutureDatedStampDeferredFail"}]},
+          {"name": "Quiet escrow heartbeats", "evidence": ["upstream-testenv", "etl-safe"]},
+          {"name": "Busy escrow discharges by inference", "evidence": ["upstream-testenv", "etl-safe"]},
+          {"name": "Floor survives snapshot restore", "evidence": ["upstream-unit", "upstream-testenv", "defer-isolated-rig"]}
+        ]
+      },
+      {
+        "id": "residual",
+        "path": "devshard/docs/v5-manual-residual.md",
+        "sha256": "a9bd4819a7f4f4f05aa71d1a8e91d9d50d4c8832a2a76c3f3f2ff136e19cd4d6",
+        "scenarios": [
+          {"name": "Solo boot serves before recovery finishes", "evidence": ["upstream-testenv", "etl-safe"]},
+          {"name": "Overlap SHA swap waits for warm", "evidence": ["upstream-testenv", "defer-isolated-rig"]},
+          {"name": "Warm wait timeout does not cause an outage", "evidence": ["upstream-unit", "defer-isolated-rig"], "unit_tests": [{"path": "versioned/internal/process/manager_recovery_wait_test.go", "name": "TestWaitForChildRecoveryComplete_TimeoutAborts"}]},
+          {"name": "Solo restart does not wait for warm", "evidence": ["upstream-testenv", "defer-isolated-rig"]},
+          {"name": "Snapshot restore keeps sealed inferences", "evidence": ["upstream-unit", "defer-isolated-rig"]},
+          {"name": "Epoch prune drops in-memory hosts", "evidence": ["upstream-unit", "defer-isolated-rig"]},
+          {"name": "Unused hosts are not probed", "evidence": ["upstream-testenv", "etl-safe"]},
+          {"name": "Used hosts appear in ping metrics", "evidence": ["upstream-testenv", "etl-safe"]},
+          {"name": "Kill switch does not affect chat", "evidence": ["upstream-testenv", "defer-isolated-rig"]},
+          {"name": "Probe failure does not quarantine", "evidence": ["upstream-testenv", "defer-isolated-rig"]},
+          {"name": "Dapi mlnode ping is independent", "evidence": ["upstream-e2e", "etl-safe"]},
+          {"name": "TLS cert install is crash-consistent", "evidence": ["upstream-e2e", "defer-isolated-rig"]},
+          {"name": "Rotation stamp strips a leading v", "evidence": ["upstream-e2e", "etl-safe"]}
+        ]
+      }
+    ],
+    "security_h1": {
+      "manual_exploit_tests": false,
+      "required_evidence": ["unit", "e2e"],
+      "rule": "Each in-scope H1 fix requires an exact-candidate source-to-test mapping and terminal unit/E2E result before release readiness."
+    }
+  },
+  "publication": {
+    "schema_version": 1,
+    "release_tag": "v2026.09.05-rc.1",
+    "binary_assets": {
+      "devshardd-linux-amd64": "devshardd.zip"
+    }
+  },
+  "component_boundary": {
+    "includes": ["devshard-runtime", "devshard-host"],
+    "excludes": ["gonka-core-candidate", "inferenced", "decentralized-api", "edge-api", "versiond", "versiond-router", "mlnode", "proxy", "tmkms", "bridge"],
+    "rule": "Official Gonka source is observed at the frozen commit and is not patched, merged, or cherry-picked by the laboratory."
+  },
+  "architectures": {
+    "observed_laboratory_hosts": ["linux/amd64"],
+    "oci_images": ["linux/amd64"],
+    "upgrade_binaries": ["linux/amd64"]
+  },
+  "base_images": [
+    {"reference": "golang:1.25.9-alpine3.23", "digest": "sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f"},
+    {"reference": "alpine:3.23", "digest": "sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"}
+  ],
+  "components": [
+    {
+      "id": "devshard-runtime",
+      "source": "devshard_v5",
+      "path": "devshard",
+      "build_context_paths": ["common", "inference-chain", "devshard"],
+      "dockerfile": "devshard/Dockerfile",
+      "action": "build-candidate",
+      "artifacts": ["oci-image", "upgrade-binary"],
+      "build_args": {"GOOS": "linux", "GOARCH": "amd64", "BLST_PORTABLE": "0", "DEVSHARD_VERSION": "v5", "DEVSHARD_BINARY_VERSION": "v2026.09.05-rc.1-5ed5f391", "DEVSHARD_BUILD_TAGS": ""}
+    },
+    {
+      "id": "devshard-host",
+      "source": "devshard_v5",
+      "path": "devshard",
+      "build_context_paths": ["common", "inference-chain", "devshard"],
+      "dockerfile": "devshard/Dockerfile.host",
+      "action": "build-candidate",
+      "artifacts": ["oci-image"],
+      "build_args": {"DEVSHARD_VERSION": "v5"}
+    }
+  ],
+  "features": {
+    "devshard_protocol_version": "v5",
+    "height_sync": {"enabled": true, "DEVSHARD_HEIGHTSYNC": "true", "DEVSHARD_CHAINORACLE_URL": "optional", "DEVSHARD_HEIGHTSYNC_K": "runtime-configured", "DEVSHARD_HEIGHTSYNC_SLOTS": "runtime-configured", "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL": "runtime-configured", "direct_chain_fallback": true},
+    "ha": {"enabled": false, "deployment": "excluded", "storage_mode": "memory"}
+  },
+  "excluded_capabilities": [
+    {"id": "gonka-core-candidate-or-artifacts", "reason": "The frozen definition is DevShard-only; core remains the stable v0.2.15 baseline."},
+    {"id": "devshard-v5-ha-deployment", "reason": "No reviewed v5 replica, router, and shared-storage lifecycle is included in this definition."},
+    {"id": "non-amd64-candidate-artifacts", "reason": "The observed laboratory, OCI, and upgrade-binary architecture sets are linux/amd64 only."},
+    {"id": "testenv-fault-injection-build-tags", "reason": "The frozen release build sets DEVSHARD_BUILD_TAGS empty; source comments reserve devshard_testenv for testenv builds."}
+  ]
+}
