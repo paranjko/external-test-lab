@@ -30,6 +30,8 @@ for contract in \
   './gdc.sh --composition <COMPOSITION> gateway migration cutover' \
   './gdc.sh --composition <COMPOSITION> gateway migration drain [SECONDS]' \
   './gdc.sh --composition <COMPOSITION> gateway migration rollback|complete' \
+  './gdc.sh --composition <COMPOSITION> gateway canary prepare v4|v5' \
+  './gdc.sh --composition <COMPOSITION> gateway canary status|stop' \
   './gdc.sh --composition <COMPOSITION> governance devshard submit [--protocols v3,v4,v5]' \
   './gdc.sh --release v2026.08.06 bridge contract deploy sepolia' \
   './gdc.sh --release v2026.08.06 bridge observer apply|status|verify <SSH_ALIAS>'; do
@@ -37,6 +39,7 @@ for contract in \
 done
 
 grep -Fq 'case "$COMMAND" in' "$ROOT/gdc.sh"
+grep -Fq 'phase-gateway-canary.sh' "$ROOT/gdc.sh"
 grep -Fq 'format_safe_invocation' "$ROOT/gdc.sh"
 grep -Fq 'INVOCATION command=%s' "$ROOT/gdc.sh"
 grep -Fq 'invocation_command=%q' "$ROOT/scripts/lib.sh"

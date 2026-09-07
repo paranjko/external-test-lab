@@ -67,6 +67,12 @@ if [[ "$PWD" == "$GDC_GATEWAY_OPS_ROOT" && " $* " == *' up '* \
     rm -f "$GDC_TEST_PROMOTED"
   fi
 fi
+if [[ "$PWD" == "${GDC_TEST_CANARY_OPS_ROOT:-}" && " $* " == *' stop devshard-gateway '* ]]; then
+  : >"$GDC_TEST_CANARY_STOPPED"
+fi
+if [[ "$PWD" == "${GDC_TEST_CANARY_OPS_ROOT:-}" && " $* " == *' up '* ]]; then
+  rm -f "$GDC_TEST_CANARY_STOPPED"
+fi
 EOF
 
 cat >"$tmp/bin/curl" <<'EOF'
@@ -92,6 +98,9 @@ while (($#)); do
   esac
 done
 printf 'curl %s %s\n' "$method" "$url" >>"$GDC_TEST_MIGRATION_LOG"
+if [[ "$url" == http://127.0.0.1:18085/* && -e "$GDC_TEST_CANARY_STOPPED" ]]; then
+  exit 22
+fi
 case "$url" in
   http://127.0.0.1:26657/status)
     payload='{"result":{"sync_info":{"latest_block_height":"40"}}}'
@@ -232,6 +241,7 @@ export GDC_TEST_SOURCE_RESTORE_FAIL="$tmp/source-restore-fail"
 export GDC_TEST_PROMOTION_IDENTITY_FAIL="$tmp/promotion-identity-fail"
 export GDC_TEST_TARGET_SETTINGS_DELAY="$tmp/target-settings-delay"
 export GDC_TEST_TARGET_SETTINGS_DELAY_COUNT="$tmp/target-settings-delay-count"
+export GDC_TEST_CANARY_STOPPED="$tmp/canary-stopped"
 export GDC_GATEWAY_OPS_ROOT="$ops"
 helper="$ROOT/04-ops/gateway-migration-remote.sh"
 
@@ -477,6 +487,48 @@ if "$helper" prepare "$ambiguous" "$tmp/target.env" "$tmp/target-compose.env" \
 fi
 grep -Fq 'ambiguous matching escrows' "$tmp/ambiguous.err"
 rm -f "$GDC_TEST_AMBIGUOUS_TARGET"
+
+# A QA canary is not a source migration. It creates a separately bound target
+# runtime and must not read or mutate the canonical source gateway settings.
+canary="$ops/gateway-canaries/v5-qa"
+mkdir -p "$canary/04-ops"
+cp "$ROOT/04-ops/compose.yaml" "$canary/04-ops/compose.yaml"
+export GDC_TEST_CANARY_OPS_ROOT="$canary/04-ops"
+rm -f "$GDC_TEST_TARGET_CREATED" "$GDC_TEST_LAST_SETTINGS"
+canary_log_lines="$(wc -l <"$log")"
+"$helper" canary-prepare "$canary" "$tmp/target.env" "$tmp/target-compose.env" \
+  gdc-ops-canary-v5 18085
+grep -Fxq 'kind=canary' "$canary/manifest.env"
+grep -Fxq 'phase=prepared' "$canary/manifest.env"
+if tail -n "+$((canary_log_lines + 1))" "$log" | grep -Fq 'POST http://127.0.0.1:18080/v1/admin/settings'; then
+  echo 'gateway canary changed canonical source settings' >&2
+  exit 1
+fi
+"$helper" canary-status "$canary" \
+  | jq -e '.phase == "prepared" and .target.available == true' >/dev/null
+"$helper" canary-stop "$canary"
+grep -Fxq 'phase=stopped' "$canary/manifest.env"
+"$helper" canary-status "$canary" \
+  | jq -e '.phase == "stopped" and .target.available == false' >/dev/null
+"$helper" canary-prepare "$canary" "$tmp/target.env" "$tmp/target-compose.env" \
+  gdc-ops-canary-v5 18085
+grep -Fxq 'phase=prepared' "$canary/manifest.env"
+"$helper" canary-status "$canary" \
+  | jq -e '.phase == "prepared" and .target.available == true' >/dev/null
+
+# Canary render output must remain separate from the canonical operator render
+# directory. The canary phase therefore cannot overwrite canonical escrow or
+# route configuration before the target is uploaded.
+grep -Fq 'OPS_RENDER="$GENERATED/ops/gateway-canaries/$canary_render_id"' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'write_canary_state stopped "$target_escrow_id"' "$ROOT/scripts/phase-gateway-canary.sh"
+grep -Fq "jq -r '.target.available // false'" "$ROOT/scripts/phase-gateway-canary.sh"
+grep -Fq 'restage_unmaterialized_canary' "$ROOT/scripts/phase-gateway-canary.sh"
+grep -Fq 'gateway canary state is unavailable' "$ROOT/scripts/phase-gateway-canary.sh"
+grep -Fq 'if [[ "$gateway_migration_prepare" == true || "$gateway_canary_prepare" == true ]]; then' \
+  "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'migration_upload="/tmp/gdc-gateway-canary-target-$$.env"' "$ROOT/scripts/phase-ops.sh"
+sed -n '635,665p' "$ROOT/scripts/phase-ops.sh" \
+  | grep -Fq 'trap cleanup_uploads EXIT'
 
 orchestrator="$ROOT/scripts/phase-gateway-migration.sh"
 suspend_route_line="$(grep -nF '  suspend_and_verify_admission' "$orchestrator" | head -1 | cut -d: -f1)"

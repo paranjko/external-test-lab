@@ -222,6 +222,8 @@ See the role guides for required input, then run:
   ./gdc.sh --composition <COMPOSITION> gateway migration cutover
   ./gdc.sh --composition <COMPOSITION> gateway migration drain [SECONDS]
   ./gdc.sh --composition <COMPOSITION> gateway migration rollback|complete
+  ./gdc.sh --composition <COMPOSITION> gateway canary prepare v4|v5
+  ./gdc.sh --composition <COMPOSITION> gateway canary status|stop
   ./gdc.sh --release v2026.07.23 gateway reconcile v3
   ./gdc.sh gateway status
   ./gdc.sh gateway verify [SLA]
@@ -655,6 +657,21 @@ case "$COMMAND" in
           drain)
             [[ $# -le 1 && "${1:-900}" =~ ^[1-9][0-9]*$ ]] || { usage; exit 2; }
             run_phase gateway-migration-drain "$ROOT/scripts/phase-gateway-migration.sh" drain "${1:-900}"
+            ;;
+          *) usage; exit 2 ;;
+        esac
+        ;;
+      canary)
+        canary_action="${1:-}"
+        shift || true
+        case "$canary_action" in
+          prepare)
+            [[ $# -eq 1 && "$1" =~ ^v[45]$ ]] || { usage; exit 2; }
+            run_phase "gateway-canary-prepare-$1" "$ROOT/scripts/phase-gateway-canary.sh" prepare "$1"
+            ;;
+          status|stop)
+            [[ $# -eq 0 ]] || { usage; exit 2; }
+            run_phase "gateway-canary-$canary_action" "$ROOT/scripts/phase-gateway-canary.sh" "$canary_action"
             ;;
           *) usage; exit 2 ;;
         esac

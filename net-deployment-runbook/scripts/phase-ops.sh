@@ -35,7 +35,14 @@ if [[ "$COMPONENT" == gateway ]]; then
   GDC_GATEWAY_ARCHIVE_SHA256="$gateway_archive_sha"
   export GDC_GATEWAY_VERSION GDC_GATEWAY_ARCHIVE_URL GDC_GATEWAY_ARCHIVE_SHA256
 fi
-OPS_RENDER="$GENERATED/ops"
+gateway_canary_prepare="${GDC_GATEWAY_CANARY_PREPARE:-false}"
+if [[ "$COMPONENT" == gateway && "$gateway_canary_prepare" == true ]]; then
+  canary_render_id="${CHAIN_ID}-${GDC_GATEWAY_VERSION}-canary"
+  canary_render_id="${canary_render_id//[^A-Za-z0-9_.-]/-}"
+  OPS_RENDER="$GENERATED/ops/gateway-canaries/$canary_render_id"
+else
+  OPS_RENDER="$GENERATED/ops"
+fi
 GATEWAY_ENV="$OPS_RENDER/gateway.env"
 GATEWAY_OBSERVER_ENV="$OPS_RENDER/gateway-admission-observer.env"
 FAUCET_ENV="$OPS_RENDER/faucet.env"
@@ -330,6 +337,13 @@ case "$COMPONENT" in
     gateway_migration_prepare="${GDC_GATEWAY_MIGRATION_PREPARE:-false}"
     [[ "$gateway_migration_prepare" =~ ^(true|false)$ ]] \
       || die 'GDC_GATEWAY_MIGRATION_PREPARE must be true or false'
+    [[ "$gateway_canary_prepare" =~ ^(true|false)$ ]] \
+      || die 'GDC_GATEWAY_CANARY_PREPARE must be true or false'
+    [[ "$gateway_migration_prepare:$gateway_canary_prepare" != true:true ]] \
+      || die 'gateway migration and gateway canary preparation are mutually exclusive'
+    gateway_sidecar_prepare=false
+    [[ "$gateway_migration_prepare" == true || "$gateway_canary_prepare" == true ]] \
+      && gateway_sidecar_prepare=true
     if [[ "$gateway_migration_prepare" == true ]]; then
       [[ -z "${GDC_ESCROW_ID:-}" ]] || die 'gateway migration cannot reuse an explicit target escrow'
       migration_source_metadata="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
@@ -356,6 +370,21 @@ case "$COMPONENT" in
       export GDC_GATEWAY_DEFER_ESCROW_CREATE=true
       printf 'READY side-by-side gateway migration source=%s:%s target=%s:%s\n' \
         "$migration_source_version" "$migration_source_port" "$GDC_GATEWAY_VERSION" "$migration_target_port"
+    elif [[ "$gateway_canary_prepare" == true ]]; then
+      migration_target_port="${GDC_GATEWAY_CANARY_TARGET_PORT:-18085}"
+      [[ "$migration_target_port" =~ ^[1-9][0-9]{0,4}$ && "$migration_target_port" != 18080 ]] \
+        || die 'gateway canary target port must be valid and distinct from the canonical gateway port'
+      migration_id="${CHAIN_ID}-${GDC_GATEWAY_VERSION}-canary"
+      migration_id="${migration_id//[^A-Za-z0-9_.-]/-}"
+      migration_remote_dir="/srv/dai/ops/gateway-canaries/$migration_id"
+      migration_target_project="gdc-ops-canary-${GDC_GATEWAY_VERSION}-${migration_id:0:24}"
+      export GDC_GATEWAY_PORT="$migration_target_port"
+      export GDC_GATEWAY_DATA_VOLUME_NAME="gdc-ops_gateway-data-${GDC_GATEWAY_VERSION}-${migration_id}"
+      export GDC_GATEWAY_ESCROW_ROTATION_ENABLED=false
+      export GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED=false
+      export GDC_GATEWAY_DEFER_ESCROW_CREATE=true
+      printf 'READY isolated gateway canary target=%s:%s; canonical v4 gateway remains unchanged\n' \
+        "$GDC_GATEWAY_VERSION" "$migration_target_port"
     else
       step 'Discard only gateway state whose every escrow is absent from committed chain state'
       "$ROOT/scripts/reset-stale-gateway-state.sh" "$GATEWAY_NODE" "${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
@@ -428,7 +457,7 @@ case "$COMPONENT" in
       [[ "$GDC_ESCROW_ID" == "$configured_escrow" && "$configured_route" == "/devshard/$GDC_GATEWAY_VERSION" ]] \
         || die 'GDC_ESCROW_ID may reuse only the rendered escrow for the selected DevShard protocol'
     fi
-    if [[ "$gateway_migration_prepare" == true ]]; then
+    if [[ "$gateway_sidecar_prepare" == true ]]; then
       printf 'READY target escrow will be created or resumed by the authenticated target gateway admin API\n'
     elif [[ -z "${GDC_ESCROW_ID:-}" ]]; then
       gateway_creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
@@ -473,7 +502,7 @@ case "$COMPONENT" in
         fi
       fi
     fi
-    if [[ "$gateway_migration_prepare" == true ]]; then
+    if [[ "$gateway_sidecar_prepare" == true ]]; then
       step 'Render an empty target gateway with deferred route-bound escrow creation'
     elif [[ -z "${GDC_ESCROW_ID:-}" ]]; then
       step 'Create a replacement gateway escrow from the reconciled reserve'
@@ -504,6 +533,15 @@ case "$COMPONENT" in
         sudo '$migration_remote_dir/04-ops/gateway-migration-remote.sh' preflight-window \
           '${GDC_GATEWAY_MIGRATION_WINDOW_TIMEOUT_SECONDS:-600}'
         sudo '$migration_remote_dir/04-ops/gateway-migration-remote.sh' freeze '$migration_remote_dir' '$migration_source_port'"
+    elif [[ "$gateway_canary_prepare" == true ]]; then
+      ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
+      rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
+      ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
+        sudo install -d -m 0700 '$migration_remote_dir'
+        sudo rm -rf '$migration_remote_dir/04-ops'
+        sudo cp -a '$REMOTE/04-ops' '$migration_remote_dir/04-ops'
+        sudo chmod 0755 '$migration_remote_dir/04-ops/gateway-migration-remote.sh'
+        rm -rf '$REMOTE'"
     fi
     step 'Create DevShard escrow and gateway credentials'
     "$ROOT/04-ops/create-gateway.sh" "$INVENTORY" "$SECRETS" "$GATEWAY_ENV"
@@ -537,11 +575,13 @@ case "$COMPONENT" in
     [[ "$gateway_rotation_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED must be true or false'
     [[ "$gateway_rotation_settlement_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED must be true or false'
     [[ "$gateway_ingress_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_INGRESS_TIMEOUT_SECONDS must be positive'
-    if [[ "$gateway_migration_prepare" == true ]]; then
+    if [[ "$gateway_migration_prepare" == true || "$gateway_canary_prepare" == true ]]; then
       printf '%s\n' \
         "GDC_GATEWAY_PRE_POC_BLOCKS=$gateway_pre_poc_blocks" \
         'DEVSHARD_STATS_ENABLED=false' \
         >>"$GATEWAY_ENV"
+    fi
+    if [[ "$gateway_migration_prepare" == true ]]; then
       migration_upload="/tmp/gdc-gateway-target-$$.env"
       migration_compose_upload="/tmp/gdc-gateway-target-compose-$$.env"
       migration_state="$STATE/gateway-migrations/active.env"
@@ -592,6 +632,53 @@ case "$COMPONENT" in
       migration_source_frozen=false
       trap - EXIT
       printf 'PASS side-by-side gateway prepared; public traffic remains on source=%s\n' "$migration_source_version"
+      exit 0
+    elif [[ "$gateway_canary_prepare" == true ]]; then
+      # The staging directory is deliberately removed after installing the
+      # trusted remote helper.  Upload the short-lived target inputs to a path
+      # that exists independently of that staging directory.
+      migration_upload="/tmp/gdc-gateway-canary-target-$$.env"
+      migration_compose_upload="/tmp/gdc-gateway-canary-compose-$$.env"
+      migration_state="$STATE/gateway-canaries/active.env"
+      mkdir -p "$(dirname "$migration_state")"
+      write_env "$migration_state" \
+        'schema_version=1' 'kind=canary' 'phase=preparing' \
+        "remote_dir=$migration_remote_dir" "target_version=$GDC_GATEWAY_VERSION" \
+        "target_port=$migration_target_port" "target_project=$migration_target_project" \
+        'target_escrow_id=pending'
+      chmod 0600 "$migration_state"
+      step "Start and verify isolated $GDC_GATEWAY_VERSION gateway canary"
+      scp -q "$GATEWAY_ENV" "$GATEWAY_NODE:$migration_upload"
+      scp -q "$OPS_RENDER/.env" "$GATEWAY_NODE:$migration_compose_upload"
+      ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
+        cleanup_uploads() {
+          local rc=\$?
+          rm -f '$migration_upload' '$migration_compose_upload'
+          exit \"\$rc\"
+        }
+        trap cleanup_uploads EXIT
+        sudo '$migration_remote_dir/04-ops/gateway-migration-remote.sh' canary-prepare \
+          '$migration_remote_dir' '$migration_upload' '$migration_compose_upload' '$migration_target_project' \
+          '$migration_target_port'"
+      migration_receipt="$GDC_HOME/runs/$GDC_RUN_ID/gateway-canary-status.json"
+      ssh -T "$GATEWAY_NODE" \
+        "sudo '$migration_remote_dir/04-ops/gateway-migration-remote.sh' canary-status '$migration_remote_dir'" \
+        >"$migration_receipt"
+      migration_target_escrow_id="$(jq -er --arg route "/devshard/$GDC_GATEWAY_VERSION" \
+        --arg model "$MODEL_ID" '
+        [.target.devshards[]? | select(.route_prefix == $route and .model == $model) | .id]
+        | unique | if length == 1 then .[0] | tostring else error("ambiguous target escrow") end
+      ' "$migration_receipt")"
+      [[ "$migration_target_escrow_id" =~ ^[1-9][0-9]*$ ]] \
+        || die 'prepared gateway canary escrow identity is unavailable'
+      write_env "$migration_state" \
+        'schema_version=1' 'kind=canary' 'phase=prepared' \
+        "remote_dir=$migration_remote_dir" "target_version=$GDC_GATEWAY_VERSION" \
+        "target_port=$migration_target_port" "target_project=$migration_target_project" \
+        "target_escrow_id=$migration_target_escrow_id"
+      chmod 0600 "$migration_state"
+      jq -e '.phase == "prepared" and .target.available == true' "$migration_receipt" >/dev/null
+      printf 'PASS isolated gateway canary prepared; canonical source gateway was not changed\n'
       exit 0
     fi
     GATEWAY_OPTION="--gateway-env '$REMOTE/rendered/gateway.env' --gateway-observer-env '$REMOTE/rendered/gateway-admission-observer.env'"
