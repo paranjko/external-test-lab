@@ -29,3 +29,8 @@ reconstructs the lock from the immutable definition and build manifest.
 
 Generated release locks belong under `profiles/releases/` and require their
 own reviewed change before live use.
+
+Use [release-notes.template.md](release-notes.template.md) for every candidate
+release description. It lists the OCI and upgrade artifacts, reproducible build
+commands, and checksum plus GitHub-attestation verification without a
+workflow-path policy.
