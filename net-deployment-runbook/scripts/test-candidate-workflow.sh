@@ -125,10 +125,15 @@ for publication_job in "$publish_images_job" "$publish_binaries_job"; do
   grep -Fq 'packages: write' <<<"$publication_job"
   grep -Fq 'id-token: write' <<<"$publication_job"
   grep -Fq 'attestations: write' <<<"$publication_job"
+  grep -Fq 'artifact-metadata: write' <<<"$publication_job"
   ! grep -Fq 'repository: gonka-ai/gonka' <<<"$publication_job"
   ! grep -Fq 'actions/checkout@' <<<"$publication_job"
   ! grep -Eq '(docker/build-push-action|docker buildx build|make devshardd-release)' <<<"$publication_job"
 done
+[[ "$(grep -Fc 'uses: actions/attest@v4' <<<"$publish_images_job")" == 2 ]]
+[[ "$(grep -Fc 'uses: actions/attest@v4' <<<"$publish_binaries_job")" == 2 ]]
+grep -Fq 'sbom-path: image/${{ matrix.id }}-linux-amd64.oci.tar.gz.spdx.json' <<<"$publish_images_job"
+grep -Fq 'sbom-path: binary/${{ matrix.id }}-linux-amd64.zip.spdx.json' <<<"$publish_binaries_job"
 grep -Fq 'IMAGE_REFERENCE="$(cat image/image-reference.txt)"' <<<"$publish_images_job"
 grep -Fq 'IMAGE_REFERENCE: ${{ steps.image.outputs.reference }}' <<<"$publish_images_job"
 ! grep -Fq '${{ github.run_id }}-${{ github.run_attempt }}' <<<"$publish_images_job"

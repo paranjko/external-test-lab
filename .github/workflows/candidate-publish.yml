@@ -483,6 +483,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.publish_image_matrix) }}
@@ -545,6 +546,15 @@ jobs:
           subject-name: ${{ steps.publish.outputs.subject_name }}
           subject-digest: ${{ steps.publish.outputs.subject_digest }}
           push-to-registry: true
+      - name: Attest release OCI archive provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: image/${{ matrix.id }}-linux-amd64.oci.tar.gz
+      - name: Attest release OCI archive SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: image/${{ matrix.id }}-linux-amd64.oci.tar.gz
+          sbom-path: image/${{ matrix.id }}-linux-amd64.oci.tar.gz.spdx.json
       - name: Record published image result
         env:
           IMAGE_ID: ${{ matrix.id }}
@@ -581,6 +591,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.publish_binary_matrix) }}
@@ -638,6 +649,15 @@ jobs:
           subject-name: ${{ steps.publish.outputs.subject_name }}
           subject-digest: ${{ steps.publish.outputs.subject_digest }}
           push-to-registry: true
+      - name: Attest release binary provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: binary/${{ matrix.id }}-linux-amd64.zip
+      - name: Attest release binary SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: binary/${{ matrix.id }}-linux-amd64.zip
+          sbom-path: binary/${{ matrix.id }}-linux-amd64.zip.spdx.json
       - name: Record published binary result
         env:
           BINARY_ID: ${{ matrix.id }}-linux-amd64
