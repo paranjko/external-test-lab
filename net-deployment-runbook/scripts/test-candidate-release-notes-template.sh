@@ -6,8 +6,8 @@ TEMPLATE="$ROOT/profiles/candidates/release-notes.template.md"
 
 [[ -s "$TEMPLATE" ]]
 for field in \
-  '{{PROFILE}}' '{{LAYER}}' '{{SOURCE_REPOSITORY}}' '{{SOURCE_REF}}' '{{SOURCE_COMMIT}}' \
-  '{{RUNTIME_OCI_ARCHIVE}}' '{{HOST_OCI_ARCHIVE}}' '{{GATEWAY_OCI_ARCHIVE}}' '{{UPGRADE_ARCHIVE}}'; do
+  '{{PROFILE}}' '{{LAYER}}' '{{CORE_BASELINE}}' '{{SOURCE_LINES}}' '{{DEFINITION_SHA256}}' \
+  '{{ARTIFACT_ROWS}}' '{{EXAMPLE_ARTIFACT}}'; do
   grep -Fq -- "$field" "$TEMPLATE"
 done
 

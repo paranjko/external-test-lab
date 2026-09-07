@@ -6,12 +6,11 @@ Independent laboratory build for {{LAYER}} evaluation. This is not an official G
 
 - Candidate profile: `{{PROFILE}}`
 - Layer: `{{LAYER}}`
-- Stable core baseline: `{{CORE_PROFILE}}` – Gonka `{{GONKA_RELEASE}}`
-- Source repository: `{{SOURCE_REPOSITORY}}`
-- Source ref: `{{SOURCE_REF}}`
-- Source commit: `{{SOURCE_COMMIT}}`
+- Stable core baseline: {{CORE_BASELINE}}
+- Candidate definition SHA-256: `{{DEFINITION_SHA256}}`
 - Target platform: `linux/amd64`
-- Protocol version: `{{PROTOCOL_VERSION}}`
+
+{{SOURCE_LINES}}
 
 The candidate includes only the components declared in its immutable candidate definition. Components outside that definition are unchanged.
 
@@ -19,10 +18,7 @@ The candidate includes only the components declared in its immutable candidate d
 
 | Artifact | Purpose | SHA-256 / OCI digest |
 | --- | --- | --- |
-| `{{RUNTIME_OCI_ARCHIVE}}` | DevShard runtime OCI archive | `{{RUNTIME_ARCHIVE_SHA256}}` / `{{RUNTIME_OCI_DIGEST}}` |
-| `{{HOST_OCI_ARCHIVE}}` | DevShard Host OCI archive | `{{HOST_ARCHIVE_SHA256}}` / `{{HOST_OCI_DIGEST}}` |
-| `{{GATEWAY_OCI_ARCHIVE}}` | DevShard Gateway OCI archive | `{{GATEWAY_ARCHIVE_SHA256}}` / `{{GATEWAY_OCI_DIGEST}}` |
-| `{{UPGRADE_ARCHIVE}}` | Upgrade binary archive | `{{UPGRADE_ARCHIVE_SHA256}}` |
+{{ARTIFACT_ROWS}}
 
 Each artifact has a SHA-256 sidecar and an SPDX SBOM. The candidate build manifest is the authoritative binding for source, components, image digests, binary checksums, and build workflow provenance.
 
@@ -35,7 +31,7 @@ git clone https://github.com/paranjko/external-test-lab.git
 cd external-test-lab/net-deployment-runbook
 
 ./gdc.sh release candidate prepare \
-  --source-ref {{SOURCE_REF}} \
+  --source-ref <frozen-source-ref> \
   --layer {{LAYER}} \
   --profile {{PROFILE}}
 ./gdc.sh release candidate build {{PROFILE}} --wait
@@ -49,7 +45,7 @@ cd external-test-lab/net-deployment-runbook
 For every downloaded artifact, first check its release checksum and then its GitHub provenance certificate:
 
 ```bash
-artifact={{UPGRADE_ARCHIVE}}
+artifact={{EXAMPLE_ARTIFACT}}
 curl -fLO "https://github.com/paranjko/external-test-lab/releases/download/{{PROFILE}}/$artifact"
 curl -fLO "https://github.com/paranjko/external-test-lab/releases/download/{{PROFILE}}/$artifact.sha256"
 sha256sum --check "$artifact.sha256"

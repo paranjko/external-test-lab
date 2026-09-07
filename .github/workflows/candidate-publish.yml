@@ -763,6 +763,16 @@ jobs:
                 run_attempt:$run_attempt},
               images:$images,binaries:$binaries}' >build-manifest.json
           sha256sum build-manifest.json >build-manifest.sha256
+      - name: Render candidate release notes
+        env:
+          PROFILE: ${{ needs.prepare.outputs.profile }}
+        run: |
+          set -Eeuo pipefail
+          python3 automation/net-deployment-runbook/scripts/render-candidate-release-notes.py \
+            --template automation/net-deployment-runbook/profiles/candidates/release-notes.template.md \
+            --definition "automation/net-deployment-runbook/profiles/candidates/$PROFILE.definition.json" \
+            --build-manifest build-manifest.json \
+            --output release-notes.md
       - name: Publish idempotent laboratory prerelease assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -783,7 +793,7 @@ jobs:
           else
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$TARGET_SHA" --prerelease \
               --title "External Test Lab candidate $PROFILE" \
-              --notes "Independent laboratory build. This is not an official Gonka release or readiness statement."
+              --notes-file release-notes.md
           fi
           for asset in results/images/*.oci.tar.gz results/images/*.oci.tar.gz.sha256 \
             results/images/*.oci.tar.gz.spdx.json \
