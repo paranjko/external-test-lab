@@ -89,6 +89,9 @@ set -e
 [[ "$rc" == 1 ]]
 [[ "$(wc -l <"$tmp/dispatched-evidence/inference-attempts.jsonl")" == 1 ]]
 jq -e '.reason == "http_503" and .admission == "dispatched_once" and .attempts == 1' "$tmp/dispatched-evidence/inference-verdict.json" >/dev/null
+jq -e '.error.code == "upstream_unavailable"' "$tmp/dispatched-evidence/completion-1.json" >/dev/null
+grep -Eqi '^X-GDC-Admission:[[:space:]]*dispatched_once' "$tmp/dispatched-evidence/completion-1.headers"
+grep -Fq "evidence=$tmp/dispatched-evidence" "$tmp/dispatched.stderr"
 
 kill "$server_pid" 2>/dev/null || true
 wait "$server_pid" 2>/dev/null || true

@@ -46,6 +46,23 @@ jq -e \
   'keys == ["v4"] and .v4 == {binary:$binary,sha256:$sha256}' \
   <<<"$v4_contract" >/dev/null
 
+override_contract='{"v5":{"binary":"https://example.invalid/devshardd-v5.zip","sha256":"5555555555555555555555555555555555555555555555555555555555555555"}}'
+GDC_RELEASE_PROFILE=v2026.08.13 \
+GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON_OVERRIDE="$override_contract" \
+  "$ROOT/04-ops/edge-node/render-env.sh" \
+    --inventory "$tmp/inventory.env" --node-name validator-e --output "$tmp/override.env"
+rendered_override="$(sed -n 's/^GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=//p' "$tmp/override.env")"
+jq -e --argjson expected "$override_contract" '. == $expected' <<<"$rendered_override" >/dev/null
+if GDC_RELEASE_PROFILE=v2026.08.13 \
+  GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON_OVERRIDE='{"v5":{"binary":"http://insecure.invalid/devshardd.zip","sha256":"bad"}}' \
+  "$ROOT/04-ops/edge-node/render-env.sh" \
+    --inventory "$tmp/inventory.env" --node-name validator-e --output "$tmp/invalid-override.env" \
+    >"$tmp/invalid-override.stdout" 2>"$tmp/invalid-override.stderr"; then
+  echo 'gateway admission accepted an invalid protocol override' >&2
+  exit 1
+fi
+grep -Fq 'gateway admission protocol override is invalid' "$tmp/invalid-override.stderr"
+
 sed 's/^GDC_PUBLIC_EDGE_NODE=.*/GDC_PUBLIC_EDGE_NODE=validator-a/' "$tmp/inventory.env" >"$tmp/colocated-inventory.env"
 GDC_RELEASE_PROFILE=v2026.08.06 \
   "$ROOT/04-ops/edge-node/render-env.sh" \

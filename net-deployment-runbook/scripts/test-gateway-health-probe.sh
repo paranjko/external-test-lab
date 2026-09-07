@@ -6,6 +6,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 {"routable":true}
 EOF
 "$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
+{"escrow_id":"123","balance":999,"phase":"active","chain_phase":"Inference","requests_blocked":false,"confirmation_poc_phase":"CONFIRMATION_POC_COMPLETED"}
+EOF
+"$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
 {"mode":"gateway","capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":1}}},"devshards":[{"active":true,"runtime":{"phase":"active","requests_blocked":false}}]}
 EOF
 if "$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
@@ -25,6 +28,18 @@ if "$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
 EOF
 then
   echo 'non-Inference lifecycle was routable' >&2; exit 1
+fi
+if "$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
+{"escrow_id":"123","balance":999,"phase":"active","chain_phase":"PoCGenerateWindDown","requests_blocked":false}
+EOF
+then
+  echo 'single-runtime non-Inference lifecycle was routable' >&2; exit 1
+fi
+if "$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
+{"escrow_id":"123","balance":0,"phase":"active","chain_phase":"Inference","requests_blocked":false}
+EOF
+then
+  echo 'single-runtime zero balance was routable' >&2; exit 1
 fi
 tmp="$(mktemp -d)"
 server_pid=''

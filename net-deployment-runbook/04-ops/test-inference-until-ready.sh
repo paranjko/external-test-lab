@@ -159,8 +159,12 @@ while (( SECONDS < deadline )); do
   fi
   elapsed_ms=$(( $(date +%s%3N) - started_ms ))
   record_attempt "${status_http:-0}" "${completion_http:-0}" "$status_ready" false "$last_reason" "$elapsed_ms" "$status_rc" "$completion_rc" "$admission" "$completion_error_code"
-  rm -f "$status_file" "$completion_file" "$status_stderr" "$completion_stderr" "$completion_headers"
-  printf 'WAIT inference attempt=%s reason=%s status_ready=%s\n' "$attempt" "$last_reason" "$status_ready" >&2
+  # Keep the response body, headers and curl diagnostics for every failed
+  # request.  In particular, a dispatched-once response is deliberately not
+  # retried, so deleting its only upstream explanation creates an incident
+  # analysis blind spot.
+  printf 'WAIT inference attempt=%s reason=%s status_ready=%s evidence=%s\n' \
+    "$attempt" "$last_reason" "$status_ready" "$evidence_dir" >&2
 
   # A retry is safe only when the admission proxy proves that no upstream
   # dispatch occurred. Transport failures, missing headers, dispatched_once,

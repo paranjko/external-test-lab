@@ -390,7 +390,10 @@ try:
     # A final lookup that reaches the deadline must not erase the concrete
     # state-source failure observed throughout the request's wait window.
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
-    process, proxy_port = start_proxy(backend_port, wait=0.08, state_paths={"epoch": "/missing"}); processes.append(process)
+    # Keep this above the normal four-source loop budget.  The assertion is
+    # about retaining the concrete source failure at the deadline, not about
+    # winning an 80 ms scheduler race on a busy runner.
+    process, proxy_port = start_proxy(backend_port, wait=0.3, state_paths={"epoch": "/missing"}); processes.append(process)
     assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_epoch_unavailable"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "deadline edge erased the state-source failure after dispatch"
     process.terminate(); process.wait(2); processes.remove(process)

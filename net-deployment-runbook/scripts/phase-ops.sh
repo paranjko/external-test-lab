@@ -345,10 +345,20 @@ case "$COMPONENT" in
       migration_target_port="${GDC_GATEWAY_MIGRATION_TARGET_PORT:-18085}"
       [[ "$migration_target_port" =~ ^[1-9][0-9]{0,4}$ && "$migration_target_port" != "$migration_source_port" ]] \
         || die 'gateway migration target port must be valid and distinct'
-      migration_id="${CHAIN_ID}-${migration_source_version}-to-${GDC_GATEWAY_VERSION}"
+      migration_base="${CHAIN_ID}-${migration_source_version}-to-${GDC_GATEWAY_VERSION}"
+      migration_id="${GDC_GATEWAY_MIGRATION_ID:-}"
+      if [[ -n "$migration_id" ]]; then
+        [[ "$migration_id" == "$migration_base" || "$migration_id" == "$migration_base-"* ]] \
+          || die 'retained gateway migration identity does not match the source and target protocols'
+      else
+        migration_id="$migration_base-$(date -u +%Y%m%d-%H%M%S)-$$"
+      fi
       migration_id="${migration_id//[^A-Za-z0-9_.-]/-}"
       migration_remote_dir="/srv/dai/ops/gateway-migrations/$migration_id"
-      migration_target_project="gdc-ops-migrate-${GDC_GATEWAY_VERSION}-${migration_id:0:24}"
+      default_migration_project="gdc-ops-migrate-${GDC_GATEWAY_VERSION}-${migration_id,,}"
+      migration_target_project="${GDC_GATEWAY_MIGRATION_TARGET_PROJECT:-$default_migration_project}"
+      [[ "$migration_target_project" =~ ^[a-z0-9][a-z0-9_.-]*$ ]] \
+        || die 'retained gateway migration target project is invalid'
       export GDC_GATEWAY_PORT="$migration_target_port"
       export GDC_GATEWAY_DATA_VOLUME_NAME="gdc-ops_gateway-data-${GDC_GATEWAY_VERSION}-${migration_id}"
       export GDC_GATEWAY_ESCROW_ROTATION_ENABLED=false
@@ -486,9 +496,11 @@ case "$COMPONENT" in
       cleanup_gateway_migration_prepare() {
         local rc=$?
         if (( rc != 0 )) && [[ "${migration_source_frozen:-false}" == true ]]; then
-          ssh -T "$GATEWAY_NODE" \
+          if ! ssh -T "$GATEWAY_NODE" \
             "sudo '$migration_remote_dir/04-ops/gateway-migration-remote.sh' restore-source '$migration_remote_dir'" \
-            >/dev/null 2>&1 || true
+            >/dev/null; then
+            echo "ERROR source gateway lifecycle restoration failed after migration preparation error remote_dir=$migration_remote_dir" >&2
+          fi
         fi
         exit "$rc"
       }

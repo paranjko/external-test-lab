@@ -113,7 +113,7 @@ grep -Fq 'phase-gateway-migration.sh" prepare "$1"' "$ROOT/gdc.sh"
 grep -Fq 'previous observer and upstream were restored before admission restart' \
   "$ROOT/scripts/phase-gateway-migration.sh"
 grep -Fq 'admission is verified stopped' "$ROOT/scripts/phase-gateway-migration.sh"
-grep -Fq "jq -e 'type == \"object\"'" "$ROOT/scripts/phase-gateway-migration.sh"
+grep -Fq 'gateway-status-routable.sh' "$ROOT/scripts/phase-gateway-migration.sh"
 ! grep -Fq -- '--fresh-state' "$ROOT/gdc.sh"
 grep -Fq 'phase-gateway-observe.sh' "$ROOT/gdc.sh"
 grep -Fq 'verify_evidence=' "$ROOT/scripts/phase-gateway-observe.sh"
