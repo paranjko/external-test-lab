@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
-assert_baseline_release
+# A joining Host qualifies under the release profile it resolved from the
+# network bootstrap. The baseline gate belongs to network-owner role inputs.
+[[ "${GDC_JOIN_ROLE_INPUT:-false}" == true ]] || assert_baseline_release
 record_phase_profile ml-qualification
 
 RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-ml-qualification"
