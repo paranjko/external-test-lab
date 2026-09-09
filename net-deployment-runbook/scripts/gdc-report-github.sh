@@ -115,6 +115,10 @@ collect_manifest_identity() {
   local key value manifest="$FAILURE_RUN_MANIFEST"
   MANIFEST_RELEASE_PROFILE='unavailable' MANIFEST_RELEASE_SHA256='unavailable' MANIFEST_PROFILE_SHA256='unavailable' MANIFEST_GENESIS_SHA256='unavailable' MANIFEST_CHAIN_ID='unavailable'
   [[ -n "$manifest" && "$manifest" != unavailable ]] || return 0
+  # JOIN preflight can fail before its optional lifecycle manifest exists.
+  # A genuinely absent path is therefore unavailable, but symlinks (including
+  # dangling ones), nonregular files, and out-of-root paths remain unsafe.
+  [[ -e "$manifest" || -L "$manifest" ]] || return 0
   require_regular_beneath "$GDC_DATA_ROOT" "$manifest" || die 'run manifest is unsafe; retained report was not published'
   while IFS='=' read -r key value; do
     case "$key" in

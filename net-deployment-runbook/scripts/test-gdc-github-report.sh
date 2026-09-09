@@ -108,6 +108,27 @@ grep -Fq 'permits repeating the supported `gdc host join` operation' "$tmp/publi
 ! grep -Eq '^\| (docker|gh|docker_compose|nvidia_gpu|filesystem_free_kib) \|' "$tmp/published.md"
 grep -Eq '^\| bash \| [0-9][0-9A-Za-z()._-]* \|$' "$tmp/published.md"
 ! grep -Eiq 'authorization|private key|mnemonic|cookie|token=' "$tmp/published.md"
+
+# An early JOIN preflight can retain a run ID before its optional lifecycle
+# manifest exists. The report must render that identity as unavailable.
+early_root="$tmp/early-preflight-operator"
+if GDC_HOME="$early_root" GDC_RUN_ID=early-preflight-run "$ROOT/gdc.sh" invalid-command >"$tmp/early.out" 2>"$tmp/early.err"; then
+  echo 'early-preflight fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+early_id="$(<"$early_root/reporting/failures/latest-failure")"
+early_failure="$early_root/reporting/invocations/invocation.$early_id/failure.env"
+grep -qx 'run_id=early-preflight-run' "$early_failure"
+grep -qx 'run_manifest=unavailable' "$early_failure"
+if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/early.args" FAKE_GH_BODY="$tmp/early.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$early_root" "$ROOT/gdc.sh" report github >"$tmp/early-report.out" 2>"$tmp/early-report.err" <<'EOF'
+0
+EOF
+then
+  :
+fi
+grep -Fq 'Local sanitized report:' "$tmp/early-report.out"
+grep -Fq 'Publication cancelled' "$tmp/early-report.err"
 report_dir="$(find "$tmp/operator/reporting/reports" -maxdepth 1 -mindepth 1 -type d -print -quit)"
 [[ -d "$report_dir" ]]
 [[ "$(stat -c '%a' "$report_dir")" == 700 ]]

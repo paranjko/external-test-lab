@@ -37,7 +37,7 @@ record_join_terminal_result() {
 }
 
 record_launcher_failure() {
-  local rc="$1" tmp failure_dir
+  local rc="$1" tmp failure_dir run_manifest
   [[ "$rc" -ne 0 && -n "${GDC_LAUNCHER_ENVELOPE_DIR:-}" ]] || return 0
   # A report-publication failure retains its own local draft; making it the
   # latest incident would recursively hide the selected operational failure.
@@ -56,7 +56,20 @@ record_launcher_failure() {
     printf 'active_phase=%s\n' "${GDC_ACTIVE_PHASE:-unavailable}"
     printf 'run_id=%s\n' "${GDC_RUN_ID:-unavailable}"
     printf 'run_log=%s\n' "${GDC_RUN_LOG:-unavailable}"
-    [[ -z "${GDC_RUN_ID:-}" ]] || printf 'run_manifest=%s\n' "$GDC_HOME/runs/$GDC_RUN_ID/manifest.env"
+    if [[ -n "${GDC_RUN_ID:-}" ]]; then
+      run_manifest="$GDC_HOME/runs/$GDC_RUN_ID/manifest.env"
+      # Early JOIN preflight failures intentionally happen before a lifecycle
+      # manifest can be created. Preserve an explicit unavailable value for
+      # that case, while retaining any existing path for the reporter's
+      # fail-closed safety checks.
+      if [[ -e "$run_manifest" || -L "$run_manifest" ]]; then
+        printf 'run_manifest=%s\n' "$run_manifest"
+      else
+        printf 'run_manifest=unavailable\n'
+      fi
+    else
+      printf 'run_manifest=unavailable\n'
+    fi
     printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
     [[ -z "${GDC_DIAGNOSTIC_ENVELOPE:-}" ]] || printf 'diagnostic_envelope=%s\n' "$GDC_DIAGNOSTIC_ENVELOPE"
     [[ -z "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || printf 'preflight_receipt=%s\n' "$GDC_JOIN_PREFLIGHT_RECEIPT"
