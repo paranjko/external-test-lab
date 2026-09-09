@@ -69,6 +69,20 @@ assert.deepEqual(state.classify(zeroCapacity, 1, readyProbe, now), {
   available: false,
   message: 'Gateway unavailable – no current eligible inference capacity',
 });
+assert.deepEqual(state.classify({ ...zeroCapacity, capacity: { total_weight: 468 } }, 1, readyProbe, now, 30000, {
+  available: false, reason: 'runtime_unavailable',
+}), {
+  state: 'UNAVAILABLE',
+  available: false,
+  message: 'Gateway unavailable – runtime unavailable',
+});
+assert.deepEqual(state.classify(zeroCapacity, 1, readyProbe, now, 30000, {
+  available: true,
+}), {
+  state: 'UNAVAILABLE',
+  available: false,
+  message: 'Gateway unavailable – no current eligible inference capacity',
+});
 
 const liveCapacity = {
   ...zeroCapacity,

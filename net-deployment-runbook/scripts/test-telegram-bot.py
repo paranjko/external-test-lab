@@ -53,6 +53,9 @@ class TelegramConsumerTest(unittest.TestCase):
         if BOT.METRICS_FILE.exists():
             BOT.METRICS_FILE.unlink()
 
+    def admission_ready(self):
+        return patch.object(BOT, "require_gateway_admission")
+
     def test_conversation_is_reused_and_reset_without_key_issuance_tables(self):
         with BOT.connection() as db:
             first = BOT.create_conversation(db, 42)
@@ -69,7 +72,7 @@ class TelegramConsumerTest(unittest.TestCase):
         }
         with BOT.connection() as db:
             conversation = BOT.create_conversation(db, 43)
-            with patch.object(BOT, "urlopen", return_value=FakeResponse(payload)):
+            with self.admission_ready(), patch.object(BOT, "urlopen", return_value=FakeResponse(payload)):
                 response = BOT.gateway_completion(db, conversation, "hello")
             self.assertEqual(response["status"], "completed")
             self.assertEqual(response["output_text"], "GDC_OK")
@@ -88,7 +91,7 @@ class TelegramConsumerTest(unittest.TestCase):
         }
         with BOT.connection() as db:
             conversation = BOT.create_conversation(db, 44)
-            with patch.object(BOT, "urlopen", return_value=FakeResponse(payload)):
+            with self.admission_ready(), patch.object(BOT, "urlopen", return_value=FakeResponse(payload)):
                 response = BOT.gateway_completion(db, conversation, "hello")
             assistant = db.execute(
                 "SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant'",
@@ -101,7 +104,7 @@ class TelegramConsumerTest(unittest.TestCase):
     def test_gateway_completion_classifies_malformed_json_as_invalid_response(self):
         with BOT.connection() as db:
             conversation = BOT.create_conversation(db, 45)
-            with patch.object(BOT, "urlopen", return_value=FakeMalformedResponse(None)):
+            with self.admission_ready(), patch.object(BOT, "urlopen", return_value=FakeMalformedResponse(None)):
                 with self.assertRaisesRegex(RuntimeError, "gateway returned invalid JSON"):
                     BOT.gateway_completion(db, conversation, "hello")
             outcome = db.execute(
@@ -115,7 +118,7 @@ class TelegramConsumerTest(unittest.TestCase):
         error = HTTPError("https://api.example/v1/chat/completions", 503, "Unavailable", headers, None)
         with BOT.connection() as db:
             conversation = BOT.create_conversation(db, 46)
-            with patch.object(BOT, "urlopen", side_effect=error):
+            with self.admission_ready(), patch.object(BOT, "urlopen", side_effect=error):
                 with self.assertRaisesRegex(RuntimeError, "gateway pre dispatch rejected"):
                     BOT.gateway_completion(db, conversation, "hello")
             outcome = db.execute(
@@ -129,7 +132,7 @@ class TelegramConsumerTest(unittest.TestCase):
         error = HTTPError("https://api.example/v1/chat/completions", 503, "Unavailable", headers, None)
         with BOT.connection() as db:
             conversation = BOT.create_conversation(db, 47)
-            with patch.object(BOT, "urlopen", side_effect=error):
+            with self.admission_ready(), patch.object(BOT, "urlopen", side_effect=error):
                 with self.assertRaisesRegex(RuntimeError, "gateway returned HTTP 503"):
                     BOT.gateway_completion(db, conversation, "hello")
             outcome = db.execute(
@@ -243,6 +246,20 @@ class TelegramConsumerTest(unittest.TestCase):
         self.assertEqual(typing, [4004])
         self.assertEqual(replies, ["Inference is temporarily unavailable, please try again later."])
         self.assertEqual(outcome, "error")
+
+    def test_gateway_completion_stops_before_dispatch_when_admission_is_unavailable(self):
+        with BOT.connection() as db:
+            conversation = BOT.create_conversation(db, 4005)
+            with patch.object(BOT, "urlopen", return_value=FakeResponse({
+                "state": "UNAVAILABLE", "available": False, "reason": "runtime_unavailable",
+            })) as request:
+                with self.assertRaisesRegex(RuntimeError, "gateway pre dispatch rejected"):
+                    BOT.gateway_completion(db, conversation, "hello")
+            self.assertEqual(request.call_count, 1)
+            outcome = db.execute(
+                "SELECT outcome FROM inference_events ORDER BY id DESC LIMIT 1"
+            ).fetchone()["outcome"]
+        self.assertEqual(outcome, "pre_dispatch_runtime_unavailable")
 
     def test_handle_replies_to_non_text_private_messages(self):
         update = {

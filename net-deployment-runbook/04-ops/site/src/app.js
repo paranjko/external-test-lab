@@ -76,6 +76,7 @@ type GatewayStateApi = {
     probe: any,
     nowMs?: number,
     maxAgeMs?: number,
+    admission?: any,
   ) => GatewayAvailability,
 };
 
@@ -1883,14 +1884,21 @@ async function refresh(): Promise<void> {
   }
   let gatewayState: any = null;
   let gatewayProbe: any = null;
+  let gatewayAdmission: any = null;
   try {
-    [gatewayState, gatewayProbe] = await Promise.all([
+    [gatewayState, gatewayProbe, gatewayAdmission] = await Promise.all([
       json("/status/gateway/v1/status"),
       json("/status/gateway-health"),
+      json("/status/gateway/v1/admission-status"),
     ]);
-  } catch {}
+  } catch {
+    gatewayAdmission = {
+      available: false,
+      reason: "admission_status_unavailable",
+    };
+  }
   try {
-    if (!gatewayStatus.classify(gatewayState, healthy, gatewayProbe).available)
+    if (!gatewayStatus.classify(gatewayState, healthy, gatewayProbe, undefined, undefined, gatewayAdmission).available)
       throw new Error("gateway unavailable");
     const runtime = gatewayState.escrow_id
       ? gatewayState
@@ -1912,6 +1920,9 @@ async function refresh(): Promise<void> {
       gatewayState,
       healthy,
       gatewayProbe,
+      undefined,
+      undefined,
+      gatewayAdmission,
     );
     if (!availability.available) throw new Error(availability.message);
     const metricText = await text("/status/gateway/metrics");
@@ -1954,6 +1965,9 @@ async function refresh(): Promise<void> {
       gatewayState,
       healthy,
       gatewayProbe,
+      undefined,
+      undefined,
+      gatewayAdmission,
     );
     const recovery = $("quality-recovery");
     $("quality-health-state").textContent = availability.state;

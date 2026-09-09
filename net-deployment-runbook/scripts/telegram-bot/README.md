@@ -5,6 +5,11 @@ It accepts private Telegram messages, keeps a durable conversation for each
 Telegram account, and sends every model turn through chain-accounted inference.
 It does not issue API keys.
 
+Before creating a completion, the consumer reads the gateway's bounded
+`/v1/admission-status` contract. If the current chain phase has no eligible
+capacity, it sends one temporary-unavailability reply instead of waiting for a
+completion timeout or sending a request that cannot dispatch.
+
 The pinned Gonka gateway exposes `/v1/chat/completions`, not the OpenAI
 Conversations and Responses endpoints. The bot therefore runs a loopback-only
 compatibility API:
