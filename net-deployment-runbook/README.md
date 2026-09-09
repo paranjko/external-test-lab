@@ -30,6 +30,50 @@ gdc host join [--public-host <dns-name>] <ssh-alias> [<gpu-ssh-alias>]
 For JOIN, use a lowercase SSH alias beginning with a letter or digit and
 containing only lowercase letters, digits, `_`, or `-`.
 
+## Local operator requirements
+
+The supported macOS/Linux Host-operator contract requires stock command-line
+tools, `Bash >= 5`, and `jq >= 1.6`. It covers `host join`, restore and plan
+variants, `host backup`, and local report generation. `ssh` must be configured
+for the Linux Host being managed. Docker, Python, Node.js, GNU coreutils, GNU
+findutils, GNU sed, `flock`, `getent`, and GNU `timeout` are not local runtime
+prerequisites for those commands. Other runbook command families remain
+Linux-oriented and are outside this portability promise.
+
+macOS ships Bash 3.2, which is intentionally unsupported. Install the two
+required dependencies through Homebrew:
+
+```bash
+brew install bash jq
+```
+
+`gdc.sh` finds the brewed Bash automatically in `PATH`, `/opt/homebrew/bin`,
+or `/usr/local/bin`. `gh` is optional and is needed only when publishing a
+sanitized report with `gdc report github`. This contract is release evidence,
+not a promise made by an in-progress checkout: it applies only after the
+portable-operator CI gate passes for the exact release.
+
+Check the required local capability before beginning an operation:
+
+```bash
+bash --version
+jq --version
+```
+
+GDC serializes lifecycle writes for one operator state directory with an
+atomic directory lock. A concurrent command fails without mutating state and
+prints the lock location. Inspect it with:
+
+```bash
+gdc host lock inspect <ssh-alias>
+```
+
+GDC never deletes an existing lock automatically. If a process was interrupted,
+first inspect the owner record, confirm that its PID and command are no longer
+active, retain it with the incident evidence, and only then remove the owner
+file and empty lock directory manually. Do not clear a lock for an active or
+unknown owner.
+
 Setup network:
 
 ```bash

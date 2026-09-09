@@ -3,6 +3,12 @@ set -Eeuo pipefail
 
 kit_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
+# Direct phase scripts may source lib.sh without the public launcher.
+if ! declare -F gdc_sha256 >/dev/null 2>&1; then
+  # shellcheck disable=SC1090
+  . "$(kit_root)/scripts/portable.sh"
+fi
+
 init_gdc_paths() {
   ROOT="${ROOT:-$(kit_root)}"
   local configured_home="${GDC_HOME:-$HOME/.gdc-data}"
@@ -10,7 +16,7 @@ init_gdc_paths() {
   if [[ "$configured_home" != /* ]]; then
     configured_home="$PWD/$configured_home"
   fi
-  configured_home="$(realpath -m -- "$configured_home")"
+  configured_home="$(gdc_normalize_path "$configured_home")" || { echo 'error: GDC_HOME is not a safe path' >&2; return 1; }
   [[ "$configured_home" != / ]] || { echo 'error: GDC_HOME must not be /' >&2; return 1; }
   GDC_HOME="$configured_home"
   STATE="$GDC_HOME/state"
@@ -38,14 +44,17 @@ runbook_revision() {
 }
 
 gdc_launcher_sha256() {
-  sha256sum "$ROOT/gdc.sh" | awk '{print $1}'
+  # The POSIX bootstrap selects Bash, but gdc-bash.sh is the executable
+  # dispatcher that performs every operation. Bind persisted run evidence to
+  # both files so either launcher layer cannot be changed independently.
+  gdc_sha256_digest_list "$ROOT/gdc.sh" "$ROOT/gdc-bash.sh"
 }
 
 release_profile_lock_sha256() {
   local release_profile="${GDC_RELEASE_PROFILE:-v2026.07.23}" lock_file
   lock_file="$ROOT/profiles/releases/$release_profile.lock"
   [[ -s "$lock_file" ]] || die "unknown release profile: $release_profile"
-  sha256sum "$lock_file" | awk '{print $1}'
+  gdc_sha256 "$lock_file"
 }
 
 run_manifest_path() {
@@ -60,7 +69,7 @@ join_profile_manifest_fields() {
   # phase.  Later consumers use that immutable, receipt-bound document even
   # when a long state-sync run crosses its short preflight TTL.
   "$ROOT/scripts/join-profile.sh" validate --allow-expired "$profile" >/dev/null
-  JOIN_PROFILE_SHA256="$(sha256sum "$profile" | awk '{print $1}')"
+  JOIN_PROFILE_SHA256="$(gdc_sha256 "$profile")"
   JOIN_PROFILE_ID="$(jq -r .profile_id "$profile")"
   JOIN_OBSERVATION_SHA256="$(jq -r .observation.sha256 "$profile")"
   JOIN_NETWORK_STATE_ID="$(jq -r .observation.network_state_id "$profile")"
@@ -222,7 +231,7 @@ init_gdc_data_root() {
   if [[ "$GDC_DATA_ROOT" != /* ]]; then
     GDC_DATA_ROOT="$PWD/$GDC_DATA_ROOT"
   fi
-  GDC_DATA_ROOT="$(realpath -m -- "$GDC_DATA_ROOT")"
+  GDC_DATA_ROOT="$(gdc_normalize_path "$GDC_DATA_ROOT")" || die 'error: GDC_DATA_ROOT is not a safe path'
   [[ "$GDC_DATA_ROOT" != / ]] || die 'error: GDC_DATA_ROOT must not be /'
   GDC_INTERNAL_DATA_ROOT="$GDC_DATA_ROOT"
   export GDC_INTERNAL_DATA_ROOT GDC_DATA_ROOT
@@ -246,13 +255,13 @@ load_retained_join_profile_for_node() {
   run="$(<"$STATE/active-run-id")"
   [[ "$run" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'retained active run identifier is unsafe'
   manifest="$GDC_HOME/runs/$run/manifest.env"
-  [[ -f "$manifest" && ! -L "$manifest" && "$(stat -c %a "$manifest")" == 600 ]] || die 'retained active run manifest is missing or unsafe'
+  [[ -f "$manifest" && ! -L "$manifest" && "$(gdc_file_mode "$manifest")" == 600 ]] || die 'retained active run manifest is missing or unsafe'
   grep -qx 'profile_kind=generated_join' "$manifest" || return 0
   profile="$GDC_HOME/runs/$run/join-$node/join-profile.v1.json"
-  [[ -f "$profile" && ! -L "$profile" && "$(stat -c %a "$profile")" == 600 ]] || die 'retained generated JOIN profile is missing or unsafe'
+  [[ -f "$profile" && ! -L "$profile" && "$(gdc_file_mode "$profile")" == 600 ]] || die 'retained generated JOIN profile is missing or unsafe'
   "$ROOT/scripts/join-profile.sh" validate --allow-expired "$profile" >/dev/null
   expected_sha="$(awk -F= '$1 == "join_profile_sha256" {print $2; exit}' "$manifest")"
-  actual_sha="$(sha256sum "$profile" | awk '{print $1}')"
+  actual_sha="$(gdc_sha256 "$profile")"
   [[ "$expected_sha" =~ ^[0-9a-f]{64}$ && "$actual_sha" == "$expected_sha" ]] \
     || die 'retained generated JOIN profile does not match its run manifest'
   GDC_JOIN_PROFILE="$profile"
@@ -272,8 +281,8 @@ step() { printf '\n== %s ==\n' "$*"; }
 inferenced_runs_path() {
   local host_path runs_root
   [[ $# -eq 1 ]] || die 'inferenced_runs_path expects one host path'
-  runs_root="$(realpath -m -- "$GDC_HOME/runs")"
-  host_path="$(realpath -m -- "$1")"
+  runs_root="$(gdc_normalize_path "$GDC_HOME/runs")"
+  host_path="$(gdc_normalize_path "$1")"
   [[ "$host_path" == "$runs_root/"* ]] || die "inferenced input is outside $GDC_HOME/runs: $host_path"
   printf '/gdc-runs/%s\n' "${host_path#"$runs_root/"}"
 }
@@ -519,7 +528,7 @@ genesis_sha256() {
       else
         .
       end
-  ' "$1" | sha256sum | awk '{print $1}'
+  ' "$1" | gdc_sha256_stdin
 }
 
 # Variables initialized here are consumed by scripts that source this library.
@@ -619,10 +628,10 @@ load_project() {
     return 0
   fi
   load_topology
-  mapfile -t genesis_addresses < <(getent ahostsv4 "$GENESIS_PUBLIC_HOST" | awk '{print $1}' | sort -u)
+  mapfile -t genesis_addresses < <(gdc_resolve_ipv4 "$GENESIS_PUBLIC_HOST" | sort -u)
   (( ${#genesis_addresses[@]} == 1 )) || die "$GENESIS_PUBLIC_HOST must resolve to exactly one IPv4 address"
   MONITORING_CIDR="${genesis_addresses[0]}/32"
-  mapfile -t edge_addresses < <(getent ahostsv4 "$PUBLIC_EDGE_HOST" | awk '{print $1}' | sort -u)
+  mapfile -t edge_addresses < <(gdc_resolve_ipv4 "$PUBLIC_EDGE_HOST" | sort -u)
   (( ${#edge_addresses[@]} == 1 )) || die "$PUBLIC_EDGE_HOST must resolve to exactly one IPv4 address"
   PUBLIC_EDGE_CIDR="${edge_addresses[0]}/32"
 
@@ -1058,7 +1067,7 @@ runtime_id_for_participant() {
 
 runtime_identity_file() {
   local runtime_id="$1"
-  printf '%s/state/runtime-identities/%s.env\n' "$GDC_DATA_ROOT" "$(printf '%s' "$runtime_id" | sha256sum | awk '{print $1}')"
+  printf '%s/state/runtime-identities/%s.env\n' "$GDC_DATA_ROOT" "$(printf '%s' "$runtime_id" | gdc_sha256_stdin)"
 }
 
 # Detect a collision before touching a remote Host.  The chain is the final
@@ -1195,9 +1204,9 @@ latest_baseline_pass_bundle() {
   [[ -n "$genesis_profile_hash" ]] || return 1
   root="$(profile_root)"
   [[ -r "$root/profiles/releases/$profile.lock" && -r "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" && -r "$root/profiles/models/$GDC_MODEL_PROFILE.lock" ]] || return 1
-  expected_profile_hash="$(sha256sum "$root/profiles/releases/$profile.lock" \
+  expected_profile_hash="$(gdc_sha256_digest_list "$root/profiles/releases/$profile.lock" \
     "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+    "$root/profiles/models/$GDC_MODEL_PROFILE.lock")"
   [[ -n "$expected_profile_hash" ]] || return 1
   if [[ "$profile" == v2026.07.23 && "$expected_profile_hash" != "$genesis_profile_hash" ]]; then return 1; fi
   while IFS= read -r verdict; do
@@ -1232,9 +1241,9 @@ require_current_baseline_pass() {
   root="$(profile_root)"
   [[ -r "$root/profiles/releases/$profile.lock" && -r "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" && -r "$root/profiles/models/$GDC_MODEL_PROFILE.lock" ]] \
     || die "unknown profile inputs for $profile ($GDC_DEPLOYMENT_PROFILE / $GDC_MODEL_PROFILE)"
-  expected_profile_hash="$(sha256sum "$root/profiles/releases/$profile.lock" \
+  expected_profile_hash="$(gdc_sha256_digest_list "$root/profiles/releases/$profile.lock" \
     "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+    "$root/profiles/models/$GDC_MODEL_PROFILE.lock")"
 
   source_release="$(awk -F= '$1 == "GONKA_RELEASE" {gsub(/\"/, "", $2); print $2; exit}' "$root/profiles/releases/$profile.lock")"
   source_commit="$(awk -F= '$1 == "GONKA_COMMIT" {gsub(/\"/, "", $2); print $2; exit}' "$root/profiles/releases/$profile.lock")"

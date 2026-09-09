@@ -38,13 +38,13 @@ printf 'fixture archive\n' >"$home/gdc-node0-validator-backup.tar"
 chmod 600 "$home/gdc-node0-validator-backup.tar"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$home" PATH="$fake_bin:$PATH" \
-  "$ROOT/gdc.sh" host reset gdc-node0 >"$tmp/output"
+  "$ROOT/gdc-bash.sh" host reset gdc-node0 >"$tmp/output"
 
 grep -Fq 'PASS gdc-node0 reset' "$tmp/output"
 grep -Fq 'READY preserved local validator recovery archive for gdc-node0' "$tmp/output"
 grep -Fq 'END phase=node-reset-gdc-node0 status=0' "$tmp/output"
 [[ -r "$home/gdc-node0-validator-backup.tar" ]]
-[[ -f "$home/gdc-node0/state/.lifecycle.lock" ]]
+[[ ! -e "$home/gdc-node0/state/.lifecycle.lock" ]]
 [[ -f "$home/gdc-node0/state/active-run-id" ]]
 [[ ! -e "$home/.env" ]]
 [[ ! -e "$home/gdc-node0/state/active-role-config" ]]
@@ -56,7 +56,7 @@ grep -Fq 'END phase=node-reset-gdc-node0 status=0' "$tmp/output"
 idempotent_home="$tmp/gdc-idempotent-reset"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$idempotent_home" GDC_TEST_EXEC_REMOTE=true GDC_TEST_REMOTE_BIN="$fake_bin" PATH="$fake_bin:$PATH" \
-  "$ROOT/gdc.sh" host reset gdc-node1 >"$tmp/idempotent-output"
+  "$ROOT/gdc-bash.sh" host reset gdc-node1 >"$tmp/idempotent-output"
 grep -Fq 'PASS gdc-node1 reset' "$tmp/idempotent-output"
 ! grep -Fq 'No resource found to remove for project' "$tmp/idempotent-output"
 
@@ -76,7 +76,7 @@ printf '%s\n' \
   >"$profile_conflict_home/gdc-node1/runs/old-profile/manifest.env"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$profile_conflict_home" PATH="$fake_bin:$PATH" \
-  "$ROOT/gdc.sh" host reset gdc-node1 >"$tmp/profile-conflict-output"
+  "$ROOT/gdc-bash.sh" host reset gdc-node1 >"$tmp/profile-conflict-output"
 grep -Fq 'PASS gdc-node1 reset' "$tmp/profile-conflict-output"
 [[ "$(<"$profile_conflict_state/active-run-id")" != old-profile ]]
 [[ -f "$profile_conflict_home/gdc-node1/runs/old-profile/manifest.env" ]]
@@ -89,7 +89,7 @@ printf '%s\n' gdc-node0-ml >"$paired_home/gdc-node0/state/ml-attached/gdc-node0"
 ssh_log="$tmp/paired-reset-ssh.log"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$paired_home" GDC_TEST_SSH_LOG="$ssh_log" PATH="$fake_bin:$PATH" \
-  "$ROOT/gdc.sh" host reset gdc-node0 >"$tmp/paired-output"
+  "$ROOT/gdc-bash.sh" host reset gdc-node0 >"$tmp/paired-output"
 grep -Fq 'READY detected linked GPU host gdc-node0-ml for gdc-node0 (operator state)' "$tmp/paired-output"
 grep -Fq 'PASS gdc-node0-ml linked GPU reset' "$tmp/paired-output"
 grep -Fq 'PASS gdc-node0 reset' "$tmp/paired-output"
@@ -100,7 +100,7 @@ grep -Fq 'gdc-node0-ml' "$ssh_log"
 # association, reset must fail rather than guessing an alias from its name.
 if env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$tmp/missing-ml-state" GDC_TEST_EXTERNAL_ML_ENDPOINT=203.0.113.10 \
-  PATH="$fake_bin:$PATH" "$ROOT/gdc.sh" host reset gdc-node0 >"$tmp/missing-ml-output" 2>&1; then
+  PATH="$fake_bin:$PATH" "$ROOT/gdc-bash.sh" host reset gdc-node0 >"$tmp/missing-ml-output" 2>&1; then
   echo 'Host reset guessed a GPU SSH alias from an external ML endpoint' >&2
   exit 1
 fi
@@ -114,7 +114,7 @@ record='{"schema_version":1,"validator_alias":"gdc-node0","ml_ssh_alias":"operat
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$record_home" GDC_TEST_EXTERNAL_ML_ENDPOINT=203.0.113.10 \
   GDC_TEST_SSH_HOST=203.0.113.10 GDC_TEST_LINK_RECORD="$record" \
-  PATH="$fake_bin:$PATH" "$ROOT/gdc.sh" host reset gdc-node0 >"$tmp/record-output"
+  PATH="$fake_bin:$PATH" "$ROOT/gdc-bash.sh" host reset gdc-node0 >"$tmp/record-output"
 grep -Fq 'READY detected linked GPU host operator-gpu for gdc-node0 (Network Node deployment record)' "$tmp/record-output"
 grep -Fq 'PASS operator-gpu linked GPU reset' "$tmp/record-output"
 
@@ -130,14 +130,14 @@ env -u GDC_ENV -u GDC_NODE_ALIASES GDC_HOME="$cleanroom_home" \
   "$cleanroom_root/gdc.sh" host reset gdc-node2 >"$tmp/cleanroom-output"
 grep -Fq 'PASS gdc-node2 reset' "$tmp/cleanroom-output"
 grep -Fq 'END phase=node-reset-gdc-node2 status=0' "$tmp/cleanroom-output"
-[[ -f "$cleanroom_home/gdc-node2/state/.lifecycle.lock" ]]
+[[ ! -e "$cleanroom_home/gdc-node2/state/.lifecycle.lock" ]]
 [[ -f "$cleanroom_home/gdc-node2/state/active-run-id" ]]
 [[ ! -e "$cleanroom_root/.env" ]]
 [[ ! -e "$cleanroom_root/state" ]]
 
 if env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$home" PATH="$fake_bin:$PATH" \
-  "$ROOT/gdc.sh" host reset -unsafe-alias >"$tmp/invalid-output" 2>&1; then
+  "$ROOT/gdc-bash.sh" host reset -unsafe-alias >"$tmp/invalid-output" 2>&1; then
   echo 'Host reset accepted an option-shaped SSH alias' >&2
   exit 1
 fi
@@ -148,7 +148,7 @@ grep -Fq 'invalid SSH alias' "$tmp/invalid-output"
 multi_home="$tmp/gdc-multi-home"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$multi_home" PATH="$fake_bin:$PATH" \
-  "$ROOT/gdc.sh" host reset gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4 >"$tmp/multi-output"
+  "$ROOT/gdc-bash.sh" host reset gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4 >"$tmp/multi-output"
 grep -Fq 'BEGIN phase=node-reset-gdc-node0' "$tmp/multi-output"
 grep -Fq 'END phase=node-reset-gdc-node0 status=0' "$tmp/multi-output"
 grep -Fq 'BEGIN phase=node-reset-gdc-node1' "$tmp/multi-output"
@@ -160,7 +160,7 @@ grep -Fq 'END phase=node-reset-gdc-node3 status=0' "$tmp/multi-output"
 grep -Fq 'BEGIN phase=node-reset-gdc-node4' "$tmp/multi-output"
 grep -Fq 'END phase=node-reset-gdc-node4 status=0' "$tmp/multi-output"
 for alias in gdc-node0 gdc-node1 gdc-node2 gdc-node3 gdc-node4; do
-  [[ -f "$multi_home/$alias/state/.lifecycle.lock" ]]
+  [[ ! -e "$multi_home/$alias/state/.lifecycle.lock" ]]
 done
 [[ ! -e "$multi_home/gdc-node0/gdc-node1" ]]
 
@@ -176,8 +176,8 @@ grep -Fq '"workspaceFolder": "/home/operator"' "$cleanroom_config"
 grep -Fq '"workspaceMount": "type=tmpfs,target=/tmp/empty-workspace"' "$cleanroom_config"
 grep -Fq 'target=/home/operator/.gdc-data,type=bind' "$cleanroom_config"
 grep -Fq 'exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)' "$ROOT/Makefile"
-grep -Fq 'lock_file="$STATE/.lifecycle.lock"' "$ROOT/gdc.sh"
-! grep -Fq '.gdc.lock' "$ROOT/gdc.sh"
+grep -Fq 'gdc_lock_acquire "$STATE"' "$ROOT/gdc-bash.sh"
+! grep -Fq '.gdc.lock' "$ROOT/gdc-bash.sh"
 grep -Fq 'No resource found to remove for project' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'ERROR failed to remove managed Compose deployment directory=%s exit=%s' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'removed managed Compose resources without reading invalid env' "$ROOT/scripts/phase-node.sh"

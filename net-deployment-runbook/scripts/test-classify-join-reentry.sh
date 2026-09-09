@@ -37,8 +37,8 @@ jq -e '.classification == "completed_matched"' <<<"$result" >/dev/null
 "$ROOT/scripts/verify-completed-join-signer-state.sh" --node node-a --run-dir "$run" >/dev/null
 # A repeated COMPLETE must keep the original succeeded receipt: node start
 # relies on that result to authorize a later signer restart.
-grep -Fq 'Keep the successful completion receipt intact' "$ROOT/gdc.sh"
-grep -Fq 'verify-complete-join-state.sh" "$join_alias" "$previous_join_run/join-profile.v1.json"' "$ROOT/gdc.sh"
+grep -Fq 'Keep the successful completion receipt intact' "$ROOT/gdc-bash.sh"
+grep -Fq 'verify-complete-join-state.sh" "$join_alias" "$previous_join_run/join-profile.v1.json"' "$ROOT/gdc-bash.sh"
 
 # A fresh lifecycle process recovers the profile bound to its active JOIN run
 # before it loads any launcher-default release profile.

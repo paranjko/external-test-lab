@@ -1,29 +1,32 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$ROOT/scripts/lib.sh"
-HOME_DIR="${GDC_OPERATOR_HOME:-$STATE/operator-home}"
-if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
-  [[ -r "$GDC_JOIN_PROFILE" ]] || { echo 'generated JOIN profile is unreadable' >&2; exit 1; }
-  # The launcher checked freshness before the first Host mutation.  This
-  # invocation consumes the same immutable run-bound profile later in the
-  # supported state-sync/acceptance workflow.
+#!/bin/sh
+# Execute the GDC-managed local inferenced CLI without loading Bash profiles.
+set -eu
+
+ROOT=$(CDPATH='' cd -P "$(dirname "$0")/.." && pwd -P)
+# shellcheck source=portable.sh
+. "$ROOT/scripts/portable.sh"
+gdc_require_jq || exit $?
+
+if [ -n "${GDC_JOIN_PROFILE:-}" ]; then
+  [ -r "$GDC_JOIN_PROFILE" ] || { printf 'generated JOIN profile is unreadable\n' >&2; exit 1; }
+  # The launcher proved freshness before Host mutation. Later supported phases
+  # consume the same immutable, run-bound profile after its short window.
   "$ROOT/scripts/join-profile.sh" validate --allow-expired "$GDC_JOIN_PROFILE" >/dev/null
-  profile_id="$(jq -r .profile_id "$GDC_JOIN_PROFILE")"
-  [[ "$profile_id" =~ ^[a-f0-9]{64}$ ]] || { echo 'generated JOIN profile has an invalid profile ID' >&2; exit 1; }
-  # A JOIN's immutable profile, rather than the operator PATH or a release
-  # lock, is the only authority for every CLI query and transaction.
-  BIN_DIR="$GDC_HOME/bin/$profile_id"
+  profile_id=$(jq -r .profile_id "$GDC_JOIN_PROFILE")
+  printf '%s\n' "$profile_id" | grep -Eq '^[a-f0-9]{64}$' \
+    || { printf 'generated JOIN profile has an invalid profile ID\n' >&2; exit 1; }
+  [ -n "${GDC_HOME:-}" ] || { printf 'generated JOIN profile requires GDC_HOME\n' >&2; exit 1; }
+  BIN_DIR=$GDC_HOME/bin/$profile_id
   GDC_INFERENCED_CLI_QUIET=true "$ROOT/scripts/ensure-inferenced-cli.sh" --allow-expired --join-profile "$GDC_JOIN_PROFILE"
+  HOME_DIR=${GDC_OPERATOR_HOME:-$GDC_HOME/state/operator-home}
 else
-  # shellcheck disable=SC1091
-  source "$ROOT/scripts/profile.sh"
-  load_profiles
-  BIN_DIR="${GDC_INFERENCED_BIN_DIR:-$HOME/.local/bin}"
+  BIN_DIR=${GDC_INFERENCED_BIN_DIR:-${HOME:?}/.local/bin}
   GDC_INFERENCED_CLI_QUIET=true "$ROOT/scripts/ensure-inferenced-cli.sh"
+  HOME_DIR=${GDC_OPERATOR_HOME:-${GDC_HOME:-${HOME:?}/.gdc-data}/state/operator-home}
 fi
-BIN="$BIN_DIR/inferenced"
+
+BIN=$BIN_DIR/inferenced
 mkdir -p "$HOME_DIR"
-chmod 700 "$HOME_DIR"
-[[ -x "$BIN" ]] || { echo "inferenced CLI was not installed at $BIN" >&2; exit 1; }
+chmod 0700 "$HOME_DIR"
+[ -x "$BIN" ] || { printf 'inferenced CLI was not installed at %s\n' "$BIN" >&2; exit 1; }
 exec "$BIN" --home "$HOME_DIR" "$@"

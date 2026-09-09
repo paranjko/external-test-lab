@@ -15,8 +15,7 @@ url="${!#}"
 case "$url" in
   */chain-rpc/status)
     [[ "${CHAIN_RPC_ENABLED:-false}" == true ]] || exit 22
-    printf '{"result":{"node_info":{"id":"%s","network":"%s"}}}\n' \
-      "${CHAIN_NODE_ID:-0000000000000000000000000000000000000003}" "${OBSERVED_CHAIN:-gonka-fixture}"
+    printf '{"result":{"node_info":{"id":"%s","network":"%s"}}}\n' "${CHAIN_NODE_ID:-0000000000000000000000000000000000000003}" "${OBSERVED_CHAIN:-gonka-fixture}"
     printf '\n__GDC_REMOTE_IP__=%s\n' "${CHAIN_REMOTE_IP:-8.8.8.3}"
     ;;
   */v1/epochs/current/participants)
@@ -25,8 +24,7 @@ case "$url" in
     printf '\n__GDC_REMOTE_IP__=%s\n' "${CHAIN_REMOTE_IP:-8.8.8.3}"
     ;;
   */v1/versions)
-    printf '{"node_version":{"application_name":"%s","version":"0.2.15","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"api_version":{"application_name":"%s","version":"0.2.15-post3","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}\n' \
-      "${NODE_APPLICATION:-inference-chain}" "${API_APPLICATION:-decentralized-api}"
+    printf '{"node_version":{"application_name":"%s","version":"0.2.15","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"api_version":{"application_name":"%s","version":"0.2.15-post3","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}\n' "${NODE_APPLICATION:-inference-chain}" "${API_APPLICATION:-decentralized-api}"
     printf '\n__GDC_REMOTE_IP__=%s\n' "${VERSION_REMOTE_IP:-8.8.8.3}"
     ;;
   *) exit 2 ;;
@@ -72,4 +70,14 @@ fi
 jq -e '.status == "unavailable" and .reason == "chain_identity_unavailable"' "$tmp/no-chain.json" >/dev/null
 PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/spy" CHAIN_RPC_ENABLED=true "$PROBE" --node-id "$id" --ip 8.8.8.3 --chain-id gonka-fixture --output "$tmp/rpc.json" >/dev/null
 jq -e '.status == "usable" and .chain_identity.binding == "chain_rpc" and .chain_identity.chain_id == "gonka-fixture"' "$tmp/rpc.json" >/dev/null
-printf 'PASS public peer probe: public-address enforcement, chain and node identity binding, response-address binding, and application identity\n'
+
+for ip in '1.1.1' '01.1.1.1' '1.1.1.256' '1.1.1.1@evil' '1.1.1.1%eth0' '[1.1.1.1]' '1.1.1.1:8000' '2001:db8::1' '10.0.0.1'; do
+  : >"$tmp/spy"
+  if PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/spy" "$PROBE" --node-id "$id" --ip "$ip" --chain-id gonka-fixture --output "$tmp/rejected.json"; then
+    echo "rejected peer unexpectedly passed: $ip" >&2; exit 1
+  fi
+  jq -e '.reason == "non_public_peer" and .status == "unavailable" and .remote_ip == "redacted"' "$tmp/rejected.json" >/dev/null
+  [[ ! -s "$tmp/spy" ]]
+done
+
+printf 'PASS public peer probe: public-address enforcement, strict IPv4 validation, chain and node identity binding, response-address binding, and application identity\n'

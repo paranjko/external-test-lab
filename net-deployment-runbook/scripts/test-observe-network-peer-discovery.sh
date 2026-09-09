@@ -127,6 +127,7 @@ case "$url" in
   http://8.8.8.*:8000/v1/versions)
     [[ "${PEERS_DOWN:-false}" == true ]] && exit 7
     octet="${url#http://8.8.8.}"; octet="${octet%%:*}"; n=$((octet - 7))
+    [[ "${SLOW_PEER:-}" == "$n" ]] && sleep 2
     [[ "${UNREACHABLE_PEER:-}" == "$n" ]] && exit 7
     core=0.2.15
     core_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -171,10 +172,20 @@ run_case() {
     OTHER_CHAIN_PEER="${OTHER_CHAIN_PEER:-}" CHAIN_EVIDENCE_DOWN_PEER="${CHAIN_EVIDENCE_DOWN_PEER:-}" \
     CHAIN_PRIVATE_REMOTE_PEER="${CHAIN_PRIVATE_REMOTE_PEER:-}" \
     FORCE_DAPI="${FORCE_DAPI:-}" SPLIT_TWO="${SPLIT_TWO:-false}" \
+    SLOW_PEER="${SLOW_PEER:-}" GDC_NETWORK_OBSERVATION_COLLECTION_TIMEOUT_SECONDS="${GDC_NETWORK_OBSERVATION_COLLECTION_TIMEOUT_SECONDS:-600}" \
     PATH="$tmp/bin:$PATH" "$OBSERVE" --bootstrap-file "$bootstrap" \
       --bootstrap-url "https://gonka.dev/${chain}/bootstrap.json" --chain-id "$chain" \
       --run-id peer-discovery-fixture --output "$output"
 }
+
+# A slow peer must not yield a ready receipt whose expiry is already behind
+# the collection clock. The observer enforces one bounded collection deadline
+# and computes the receipt TTL after collection completes.
+SLOW_PEER=1 GDC_NETWORK_OBSERVATION_COLLECTION_TIMEOUT_SECONDS=10 run_case "$tmp/bootstrap.json" "$tmp/slow.json"
+slow_expires=$(jq -r .expires_at "$tmp/slow.json")
+[[ "$(date -u -d "$slow_expires" +%s)" -gt "$(date -u +%s)" ]]
+slow_observed=$(jq -r .observed_at "$tmp/slow.json")
+[[ $(( $(date -u -d "$slow_expires" +%s) - $(date -u -d "$slow_observed" +%s) )) -ge 601 ]]
 
 run_case "$tmp/bootstrap.json" "$tmp/normal.json"
 jq -e '

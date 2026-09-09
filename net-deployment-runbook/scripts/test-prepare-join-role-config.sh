@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; temporary="$(mktemp -d)"; trap 'rm -rf -- "$temporary"' EXIT
+. "$ROOT/scripts/portable.sh"
 cat >"$temporary/bootstrap.json" <<'EOF'
 {"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-fixture","genesis":{"sha256":"dd6dc738e3856745253925b77596e1cfc1680a2eefc44fd2d7879e0f879fbce5"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"http://one.example:8000/chain-rpc","p2p":"tcp://one.example:5000","api":"http://one.example:8000"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"http://two.example:8000/chain-rpc","p2p":"tcp://two.example:5000"}],"brokers":[]}
 EOF
@@ -12,6 +13,17 @@ chmod +x "$temporary/inferenced"
 INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/mitch-demo.env" --ssh-alias mitch-demo --public-host host.example.net --p2p-port 5200 --gpu-ssh-alias mitch-ml --bootstrap-file "$temporary/bootstrap.json"
 source "$temporary/mitch-demo.env"
 [[ "$GDC_NODE_ALIASES" == mitch-demo && "$GDC_NODE_ML_HOSTS" == mitch-demo=mitch-ml && "$SEED_API_URL" == http://one.example:8000 ]]
+
+# Local role input must preserve paths through the POSIX quoting boundary.
+portable_dir="$temporary/operator state – ü"
+mkdir -p "$portable_dir"
+cp "$temporary/bootstrap.json" "$portable_dir/bootstrap file.json"
+INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" \
+  --output "$portable_dir/join role.env" --ssh-alias mitch-demo \
+  --public-host host.example.net --bootstrap-file "$portable_dir/bootstrap file.json"
+source "$portable_dir/join role.env"
+portable_bootstrap_file="$(gdc_realpath_existing "$portable_dir/bootstrap file.json")"
+[[ "$GDC_JOIN_BOOTSTRAP_FILE" == "$portable_bootstrap_file" ]]
 cat >"$temporary/account.json" <<'EOF'
 {"address":"gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq","account_pubkey_b64":"YWJj"}
 EOF
@@ -55,7 +67,9 @@ grep -Fxq 'PUBLIC_EDGE=false' "$temporary/edge.env"
 grep -Fxq 'GATEWAY_PUBLIC_HOST=one.example' "$temporary/edge.env"
 grep -Fxq 'TELEGRAM_BOT_PUBLIC_HOST=one.example' "$temporary/edge.env"
 grep -Fxq 'PUBLIC_GRAFANA_PROMETHEUS_URL=https://one.example/ops-prometheus' "$temporary/edge.env"
-sed -i 's/^GDC_GATEWAY_NODE=.*/GDC_GATEWAY_NODE=/; s/^GDC_PUBLIC_EDGE_NODE=.*/GDC_PUBLIC_EDGE_NODE=/; s/^TELEGRAM_BOT_HOST=.*/TELEGRAM_BOT_HOST=/' "$temporary/inventory.env"
+gdc_sed_inplace 's/^GDC_GATEWAY_NODE=.*/GDC_GATEWAY_NODE=/' "$temporary/inventory.env"
+gdc_sed_inplace 's/^GDC_PUBLIC_EDGE_NODE=.*/GDC_PUBLIC_EDGE_NODE=/' "$temporary/inventory.env"
+gdc_sed_inplace 's/^TELEGRAM_BOT_HOST=.*/TELEGRAM_BOT_HOST=/' "$temporary/inventory.env"
 "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --output "$temporary/edge-no-roles.env" >/dev/null
 grep -Fxq 'GATEWAY_PUBLIC_HOST=one.example' "$temporary/edge-no-roles.env"
 grep -Fxq 'TELEGRAM_BOT_PUBLIC_HOST=one.example' "$temporary/edge-no-roles.env"

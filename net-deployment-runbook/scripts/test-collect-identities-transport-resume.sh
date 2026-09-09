@@ -8,6 +8,7 @@ mkdir -p "$tmp/bin" "$tmp/home/accounts" "$tmp/out" "$tmp/mnemonics" "$tmp/secre
   "$runbook/01-identities-genesis" "$runbook/02-node" "$runbook/scripts"
 cp "$ROOT/01-identities-genesis/collect-identities.sh" "$runbook/01-identities-genesis/collect-identities.sh"
 cp "$ROOT/scripts/lib.sh" "$runbook/scripts/lib.sh"
+cp "$ROOT/scripts/portable.sh" "$runbook/scripts/portable.sh"
 cat >"$tmp/inventory.env" <<EOF
 GDC_NODE_ALIASES=test-node
 GDC_NODE_PUBLIC_HOSTS='test-node=join.example.test'

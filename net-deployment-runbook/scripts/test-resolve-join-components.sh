@@ -72,7 +72,7 @@ if [[ "${1:-}" == *host-stack-compose.yml ]]; then
     printf '%s  %s\n' d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94 "$1"
   fi
 else
-  /usr/bin/sha256sum "$@"
+  exec shasum -a 256 "$@"
 fi
 EOF
 chmod +x "$tmp/bin/sha256sum"

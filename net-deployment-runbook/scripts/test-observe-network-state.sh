@@ -18,6 +18,9 @@ cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 url="${!#}"
+if [[ -n "${CURL_ARGS_FILE:-}" ]]; then
+  printf '%s\n' "$*" >>"$CURL_ARGS_FILE"
+fi
 write_remote=false
 for arg in "$@"; do
   [[ "$arg" == --write-out ]] && write_remote=true
@@ -27,6 +30,9 @@ case "$url" in
   https://node[0-4].example.test/chain-rpc/*)
     host="${url#https://node}"; node="${host%%.*}"
     id="$(sed -n "$((node + 1))p" "$IDS_FILE")"
+    if [[ "${MODE:-good}:$node:$url" == deadline_expired:0:*status ]]; then
+      sleep 2
+    fi
     case "${MODE:-good}:$node:$url" in
       all_roots_down:*:*status) exit 7 ;;
     esac
@@ -42,6 +48,9 @@ case "$url" in
           ((peer == 0)) || printf ','
           printf '{"node_info":{"id":"%s"},"remote_ip":"8.8.4.%d"}' "$(sed -n "$((peer + 1))p" "$IDS_FILE")" "$((peer + 1))"
         done
+        printf ',{"node_info":{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"remote_ip":"8.8.4.1@poison.example"}'
+        printf ',{"node_info":{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"remote_ip":"[8.8.4.2]"}'
+        printf ',{"node_info":{"id":"cccccccccccccccccccccccccccccccccccccccc"},"remote_ip":"10.0.0.1"}'
         printf ']}}\n'
         ;;
       *) exit 2 ;;
@@ -83,13 +92,24 @@ chmod 0755 "$tmp/bin/curl"
 
 run_case() {
   local mode="$1"
-  MODE="$mode" IDS_FILE="$tmp/ids" PATH="$tmp/bin:$PATH" "$OBSERVE" \
+  : >"$tmp/curl.args"
+  MODE="$mode" IDS_FILE="$tmp/ids" CURL_ARGS_FILE="$tmp/curl.args" PATH="$tmp/bin:$PATH" "$OBSERVE" \
     --bootstrap-file "$tmp/bootstrap.json" \
     --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
     --chain-id gonka-devnet-community --run-id fixture-run --output "$tmp/$mode.json"
 }
 
 run_case good
+! grep -F -- '--max-time 15' "$tmp/curl.args" 2>/dev/null || {
+  echo 'seed request retained a fixed timeout instead of the remaining collection budget' >&2
+  exit 1
+}
+if grep -F -- '8.8.4.1@poison.example' "$tmp/curl.args" 2>/dev/null ||
+  grep -F -- '[8.8.4.2]' "$tmp/curl.args" 2>/dev/null ||
+  grep -F -- '10.0.0.1:8000' "$tmp/curl.args" 2>/dev/null; then
+  echo 'rejected net_info peer was passed to curl/probe' >&2
+  exit 1
+fi
 jq -e '
   .runtime_api_origins[0].seed_index == -1 and
   .runtime_api_origins[0].api_source == "derived" and
@@ -117,6 +137,17 @@ jq -e '.runtime.dapi.version == "0.2.15-post3" and .policy.authority.strict_majo
 run_case catching_root
 jq -e '.seeds[0].status == "unavailable" and .seeds[0].reason == "catching_up" and .policy.authority.valid_observation_count == 5' "$tmp/catching_root.json" >/dev/null
 
+if MODE=deadline_expired IDS_FILE="$tmp/ids" CURL_ARGS_FILE="$tmp/deadline-curl.args" \
+  GDC_NETWORK_OBSERVATION_COLLECTION_TIMEOUT_SECONDS=1 PATH="$tmp/bin:$PATH" "$OBSERVE" \
+  --bootstrap-file "$tmp/bootstrap.json" \
+  --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+  --chain-id gonka-devnet-community --run-id fixture-run --output "$tmp/deadline.json" \
+  >"$tmp/deadline.out" 2>"$tmp/deadline.err"; then
+  echo 'seed request exceeded the global collection deadline without failing closed' >&2
+  exit 1
+fi
+grep -Fq 'network_observation_observation_deadline:' "$tmp/deadline.err"
+
 if run_case all_roots_down >"$tmp/all-roots-down.out" 2>"$tmp/all-roots-down.err"; then
   echo 'unavailable discovery roots unexpectedly formed a runtime observation' >&2
   exit 1
@@ -130,5 +161,36 @@ if IDS_FILE="$tmp/ids" PATH="$tmp/bin:$PATH" "$OBSERVE" --bootstrap-file "$tmp/b
   exit 1
 fi
 grep -Fq 'network_observation_chain_id_mismatch:' "$tmp/mismatch.err"
+
+# The observer must retain argument boundaries when its checkout and output
+# path contain spaces. This reproduces the operator layout that xargs used to
+# split before a peer process was launched.
+space_root="$tmp/operator checkout"
+cp -R "$ROOT" "$space_root"
+SPACE_OBSERVE="$space_root/scripts/observe-network-state.sh"
+MODE=good IDS_FILE="$tmp/ids" PATH="$tmp/bin:$PATH" "$SPACE_OBSERVE" \
+  --bootstrap-file "$tmp/bootstrap.json" \
+  --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+  --chain-id gonka-devnet-community --run-id fixture-run \
+  --output "$tmp/observation output/with spaces.json"
+jq -e '.result.state == "ready"' "$tmp/observation output/with spaces.json" >/dev/null
+
+# A peer can be unavailable and write a bounded unavailable receipt (covered
+# above). A probe process that cannot launch or cannot write any receipt is a
+# local error and must stop the observation rather than be hidden as PASS.
+cat >"$space_root/scripts/probe-public-peer.sh" <<'EOF'
+#!/bin/sh
+exit 97
+EOF
+chmod 0755 "$space_root/scripts/probe-public-peer.sh"
+if MODE=good IDS_FILE="$tmp/ids" PATH="$tmp/bin:$PATH" "$SPACE_OBSERVE" \
+  --bootstrap-file "$tmp/bootstrap.json" \
+  --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+  --chain-id gonka-devnet-community --run-id fixture-run \
+  --output "$tmp/local launch failure.json" >"$tmp/local-launch.out" 2>"$tmp/local-launch.err"; then
+  echo 'local peer launch failure unexpectedly reported success' >&2
+  exit 1
+fi
+grep -Fq 'network_observation_local_probe_launch:' "$tmp/local-launch.err"
 
 printf 'PASS network observation: Community quorum, peer majority, catching-root rejection, unavailable peers, and fail-closed discovery\n'

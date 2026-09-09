@@ -64,6 +64,19 @@ jobs:
       - name: Check runbook shell scripts
         run: make -C net-deployment-runbook shellcheck
 
+  macos-portable-operator:
+    needs: changes
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      needs.changes.outputs.shell == 'true'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install the supported operator dependencies
+        run: brew install bash jq
+      - name: Exercise scoped operator paths with stock macOS tools
+        run: make -C net-deployment-runbook test-macos-portable-operator
+
   runbook-contracts:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ vars.GDC_NODE4_RUNNER_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && fromJSON('["self-hosted", "linux", "x64", "gdc-node4"]') || 'ubuntu-latest' }}

@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOL="$ROOT/scripts/network-bootstrap.sh"
+# shellcheck source=portable.sh
+. "$ROOT/scripts/portable.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 
@@ -10,8 +12,9 @@ bootstrap="$tmp/bootstrap.json"
 genesis="$tmp/genesis.json"
 printf '%s\n' '{"chain_id":"gonka-fixture","genesis":{"sha256":"__SHA__"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://one.example/chain-rpc","p2p":"tcp://one.example:5000","api":"https://one.example"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://two.example/chain-rpc","p2p":"tcp://two.example:5000"}],"brokers":[{"api_urls":["https://broker.example/v1"]}],"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json"}' >"$bootstrap"
 printf '%s\n' '{"chain_id":"gonka-fixture"}' >"$genesis"
-digest="$(sha256sum "$genesis" | awk '{print $1}')"
-sed -i "s/__SHA__/$digest/" "$bootstrap"
+digest="$(gdc_sha256 "$genesis")"
+sed "s/__SHA__/$digest/" "$bootstrap" >"$tmp/bootstrap.rendered"
+mv "$tmp/bootstrap.rendered" "$bootstrap"
 
 "$TOOL" verify "$bootstrap" >"$tmp/verify"
 grep -Fq 'PASS offline network bootstrap' "$tmp/verify"
@@ -32,7 +35,7 @@ EOF
 chmod 0755 "$tmp/bin/inferenced"
 PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$genesis" "$TOOL" stage "$bootstrap" "$tmp/stage" >"$tmp/stage.out"
 cmp -s "$genesis" "$tmp/stage/genesis.json"
-[[ "$(stat -c '%a' "$tmp/stage/genesis.json")" == 600 ]]
+[[ "$(gdc_file_mode "$tmp/stage/genesis.json")" == 600 ]]
 
 if INFERENCED=missing-inferenced "$TOOL" stage "$bootstrap" "$tmp/missing-cli-stage" >"$tmp/missing-cli.out" 2>"$tmp/missing-cli.err"; then
   echo 'bootstrap staging unexpectedly worked without inferenced' >&2

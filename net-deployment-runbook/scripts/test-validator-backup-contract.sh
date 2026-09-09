@@ -10,10 +10,12 @@ REMOTE_IDENTITY_RESTORE="$ROOT/scripts/restore-validator-identity-remote.sh"
 TMKMS_PUBLIC_KEY="$ROOT/scripts/tmkms-softsign-public-key.sh"
 MNEMONIC_IDENTITY="$ROOT/scripts/derive-mnemonic-identity.sh"
 REMOTE_RESTORE_COMMAND="$ROOT/scripts/build-validator-identity-restore-command.sh"
+# Keep fixture decoding on the same portable path as production validation.
+. "$ROOT/scripts/portable.sh"
 
 bash -n "$BACKUP" "$RUNNING_RECOVERY" "$RECOVERY_EVALUATOR" "$DEPLOYMENT_SECRET_RECOVERY" \
   "$REMOTE_IDENTITY_RESTORE" "$REMOTE_RESTORE_COMMAND" "$TMKMS_PUBLIC_KEY" "$MNEMONIC_IDENTITY" \
-  "$ROOT/gdc.sh" "$ROOT/scripts/phase-join.sh" "$ROOT/scripts/phase-genesis.sh" \
+  "$ROOT/gdc-bash.sh" "$ROOT/scripts/phase-join.sh" "$ROOT/scripts/phase-genesis.sh" \
   "$ROOT/01-identities-genesis/collect-identities.sh" "$ROOT/02-node/init-identity.sh" \
   "$ROOT/03-join/grant-ml-ops.sh"
 
@@ -147,6 +149,14 @@ elif case == 'symlink':
     members.append(symlink('tmkms/secret-link', f'/{canary}'))
 elif case == 'secret-redaction':
     members.append(regular(canary, canary.encode('ascii')))
+elif case == 'aggregate-overflow':
+    # Keep the archive below its 66 MiB file bound while the sum of regular
+    # members exceeds the separate 64 MiB extraction bound. Extra files are
+    # deliberately under the accepted tmkms subtree, so this reaches the
+    # aggregate accounting rather than a pathname rejection.
+    for index in range(8):
+        members.append(regular(f'tmkms/payload-{index}', b'0' * (8 * 1024 * 1024)))
+    members.append(regular('tmkms/payload-final', b'1'))
 elif case in ('duplicate-control', 'ambiguous-checksum'):
     prefixed = []
     for path in remote_dirs:
@@ -231,8 +241,18 @@ if GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" inspect-archive remote-state \
   echo 'oversized sparse validator archive was accepted' >&2
   exit 1
 fi
-[[ "$(stat -c %s "$tmp/oversized-sparse.tar")" == $((max_archive_size + 512)) ]]
+[[ "$(gdc_file_size "$tmp/oversized-sparse.tar")" == $((max_archive_size + 512)) ]]
 [[ ! -e "$tmp/extract-oversized-sparse" ]]
+
+python3 "$tmp/make-archive.py" aggregate-overflow "$tmp/aggregate-overflow.tar" "$secret_canary"
+[[ "$(gdc_file_size "$tmp/aggregate-overflow.tar")" -le "$max_archive_size" ]]
+if GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" inspect-archive remote-state \
+  "$tmp/aggregate-overflow.tar" "$tmp/extract-aggregate-overflow" gdc-node1 \
+  >"$tmp/aggregate-overflow.out" 2>"$tmp/aggregate-overflow.err"; then
+  echo 'archive above the aggregate payload boundary was accepted' >&2
+  exit 1
+fi
+[[ ! -e "$tmp/extract-aggregate-overflow" ]]
 
 for test_case in duplicate-control ambiguous-checksum; do
   python3 "$tmp/make-archive.py" "$test_case" "$tmp/$test_case.tar" "$secret_canary"
@@ -434,7 +454,7 @@ for test_case in "${material_cases[@]}"; do
         >"$candidate/tmkms/state/priv_validator_state.json"
       ;;
     inconsistent-expanded-key)
-      base64 -d "$material/tmkms/secrets/priv_validator_key.softsign" >"$tmp/expanded.raw"
+      gdc_base64_decode "$material/tmkms/secrets/priv_validator_key.softsign" >"$tmp/expanded.raw"
       printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' >>"$tmp/expanded.raw"
       base64 <"$tmp/expanded.raw" >"$candidate/tmkms/secrets/priv_validator_key.softsign"
       ;;
@@ -466,8 +486,8 @@ for test_case in "${material_cases[@]}"; do
   ! grep -Fq "$secret_canary" "$tmp/material-$test_case.out" "$tmp/material-$test_case.err"
 done
 
-grep -Fq -- '--restore)' "$ROOT/gdc.sh"
-grep -Fq 'GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE' "$ROOT/gdc.sh"
+grep -Fq -- '--restore)' "$ROOT/gdc-bash.sh"
+grep -Fq 'GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE' "$ROOT/gdc-bash.sh"
 grep -Fq 'validator-backup.sh" restore' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'recover-running-host-state.sh" "$NODE"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'deployed-join-profile.v1.json' "$RUNNING_RECOVERY"

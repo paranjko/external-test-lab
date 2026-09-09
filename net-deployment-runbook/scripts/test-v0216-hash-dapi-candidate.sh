@@ -40,7 +40,7 @@ jq -e --arg profile "$profile" '
 ' "$definition" >/dev/null
 
 prepare="$(
-  "$ROOT/gdc.sh" release candidate prepare \
+  "$ROOT/gdc-bash.sh" release candidate prepare \
     --source-ref ak/height-sync-protocol-dapi --layer core
 )"
 grep -Fq "READY profile=$profile layer=core" <<<"$prepare"

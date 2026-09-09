@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 retired_host_filter='GDC_SKIP_''HOSTS'
 retired_host_helper='host_is_''skipped'
 if grep -REq "$retired_host_filter|$retired_host_helper" \
-  "$ROOT/.env.example" "$ROOT/gdc.sh" "$ROOT/scripts" "$ROOT/04-ops" \
+  "$ROOT/.env.example" "$ROOT/gdc-bash.sh" "$ROOT/scripts" "$ROOT/04-ops" \
   "$ROOT/profiles" "$ROOT"/ROLE-*.md "$ROOT/README.md"; then
   echo 'Per-host topology exclusion must not be part of the runbook contract' >&2
   exit 1

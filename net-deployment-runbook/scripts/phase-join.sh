@@ -18,8 +18,8 @@ JOIN_RECEIPT_DIR="$RUN/receipts"
 JOIN_OBSERVATION="${GDC_JOIN_OBSERVATION:-$STATE/network-observation.v1.json}"
 [[ -r "${GDC_JOIN_PROFILE:-}" && -r "$JOIN_OBSERVATION" ]] \
   || die 'JOIN lacks a generated profile or observed network required for transition receipts'
-join_profile_sha256="$(sha256sum "$GDC_JOIN_PROFILE" | awk '{print $1}')"
-join_observation_sha256="$(sha256sum "$JOIN_OBSERVATION" | awk '{print $1}')"
+join_profile_sha256="$(gdc_sha256 "$GDC_JOIN_PROFILE")"
+join_observation_sha256="$(gdc_sha256 "$JOIN_OBSERVATION")"
 join_operation=new
 [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]] && join_operation=restore
 record_join_transition() {
@@ -35,11 +35,11 @@ record_join_transition() {
   fi
   evidence="$(jq -cn --arg profile "$join_profile_sha256" --arg observation "$join_observation_sha256" '[{kind:"join_profile",sha256:$profile},{kind:"network_observation",sha256:$observation}]')"
   if [[ "$join_operation" == restore && -r "$RUN/restore-tmkms-signing-state.json" ]]; then
-    evidence="$(jq -c --arg sha "$(sha256sum "$RUN/restore-tmkms-signing-state.json" | awk '{print $1}')" '. + [{kind:"restore_tmkms_state",sha256:$sha}]' <<<"$evidence")"
+    evidence="$(jq -c --arg sha "$(gdc_sha256 "$RUN/restore-tmkms-signing-state.json")" '. + [{kind:"restore_tmkms_state",sha256:$sha}]' <<<"$evidence")"
   fi
   if [[ "$state" == SIGNER_FENCE_VERIFIED ]]; then
     [[ -r "$RUN/signer-fence-receipt.v1.json" ]] || die 'JOIN signer fence transition lacks its verified receipt'
-    evidence="$(jq -c --arg sha "$(sha256sum "$RUN/signer-fence-receipt.v1.json" | awk '{print $1}')" '. + [{kind:"signer_fence",sha256:$sha}]' <<<"$evidence")"
+    evidence="$(jq -c --arg sha "$(gdc_sha256 "$RUN/signer-fence-receipt.v1.json")" '. + [{kind:"signer_fence",sha256:$sha}]' <<<"$evidence")"
   fi
   jq -cn \
     --arg run_id "${GDC_RUN_ID:-manual}" --arg operation "$join_operation" --arg node "$NODE" --arg state "$state" \
@@ -78,7 +78,7 @@ record_join_transition JOIN_PROFILE_READY
 ML_TARGET="$(node_ml_host "$NODE" || printf '%s' "$NODE")"
 URL="$(node_url "$NODE")"
 PUBLIC_HOST="${URL#https://}"
-getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve to IPv4"
+gdc_resolve_ipv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve to IPv4"
 ACCOUNT="$ACCOUNTS/$NODE-cold.json"
 IDENTITY="$IDENTITIES/$NODE.json"
 JOIN_CLASSIFICATION="$("$ROOT/scripts/classify-join-state.sh" "$IDENTITY" "$ACCOUNT" "$STATE/joined/$NODE" "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}")"
@@ -127,7 +127,7 @@ if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
   restore_archive="$RUN/restore-validator-backup.tar"
   install -m 0600 -- "$GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE" "$restore_archive" \
     || die 'cannot retain validator backup inside the private JOIN run directory'
-  restore_archive_sha256="$(sha256sum "$restore_archive" | awk '{print $1}')"
+  restore_archive_sha256="$(gdc_sha256 "$restore_archive")"
   expected_restore_archive_sha256="$(jq -er '.spec.identity.restore_archive_sha256' "$GDC_JOIN_PROFILE" 2>/dev/null)" \
     || die 'restore JOIN profile lacks its archive digest binding'
   [[ "$restore_archive_sha256" == "$expected_restore_archive_sha256" ]] \
@@ -262,7 +262,7 @@ if [[ -n "$ML_HOST" ]]; then
   # endpoint that identifies that Host and only use DNS as a fallback.
   callback_address="$(ssh -G "$NODE" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}' || true)"
   if [[ ! "$callback_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    callback_address="$(getent ahostsv4 "$(node_public_host "$NODE")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    callback_address="$(gdc_resolve_ipv4 "$(node_public_host "$NODE")" 2>/dev/null || true)"
   fi
   [[ "$callback_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "cannot determine callback IPv4 for $NODE"
   env_args+=(--poc-callback-url "http://$callback_address:9100" --ml-callback-bind 0.0.0.0)
@@ -302,6 +302,7 @@ scp -q "$GENERATED/agents/$NODE.env" "$NODE:$REMOTE/agent.env"
 scp -q "$GENESIS/genesis.json" "$NODE:$REMOTE/genesis.json"
 scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
 scp -q "$ROOT/scripts/verify-join-lineage-state.sh" "$NODE:$REMOTE/verify-join-lineage-state.sh"
+scp -q "$ROOT/scripts/portable.sh" "$NODE:$REMOTE/portable.sh"
 local_ml=(); gpu=()
 [[ -z "$ML_HOST" ]] && local_ml=(--local-ml) && gpu=(--gpu)
 ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"

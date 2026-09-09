@@ -213,6 +213,6 @@ grep -Fq 'GDC_GATEWAY_CONTINUITY_REQUEST_TIMEOUT_SECONDS:-930' "$ROOT/scripts/ph
 grep -Fq "printf 'continuity_timeout_seconds=%s\\n'" "$ROOT/scripts/phase-gateway-continuity.sh"
 grep -Fq "printf 'request_timeout_seconds=%s\\n'" "$ROOT/scripts/phase-gateway-continuity.sh"
 grep -Fq "printf 'post_success_target=%s\\n'" "$ROOT/scripts/phase-gateway-continuity.sh"
-grep -Fq 'use_operator_inventory' "$ROOT/gdc.sh"
+grep -Fq 'use_operator_inventory' "$ROOT/gdc-bash.sh"
 
 printf 'PASS gateway continuity verdict contract\n'

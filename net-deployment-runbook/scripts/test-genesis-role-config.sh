@@ -20,11 +20,12 @@ runtime_state="$tmp/runtime-state"
 mkdir -p "$runtime_state"
 printf '%s\n' 'GDC_PUBLIC_EDGE_NODE=gdc-node0' >"$runtime_state/runtime-topology.env"
 mkdir -p "$tmp/bin"
-cat >"$tmp/bin/getent" <<'EOF'
+cat >"$tmp/bin/ping" <<'EOF'
 #!/usr/bin/env bash
-printf '192.0.2.10 STREAM test\n'
+printf 'PING %s (192.0.2.10): 56 data bytes\n' "$2"
+exit 1
 EOF
-chmod +x "$tmp/bin/getent"
+chmod +x "$tmp/bin/ping"
 (
   PATH="$tmp/bin:$PATH"
   export GDC_HOME="$tmp/operator-home"
@@ -35,10 +36,10 @@ chmod +x "$tmp/bin/getent"
   load_project
   [[ "$PUBLIC_EDGE_NODE" == gdc-node4 ]]
 )
-grep -Fq 'write-genesis-role-config.sh' "$ROOT/gdc.sh"
+grep -Fq 'write-genesis-role-config.sh' "$ROOT/gdc-bash.sh"
 grep -Fq 'detect-public-host.sh' "$ROOT/scripts/write-genesis-role-config.sh"
 grep -Fq -- '--public-edge-ssh-alias' "$ROOT/scripts/write-genesis-role-config.sh"
-grep -Fq 'active-role-config' "$ROOT/gdc.sh"
+grep -Fq 'active-role-config' "$ROOT/gdc-bash.sh"
 grep -Fq 'active-role-config' "$ROOT/scripts/lib.sh"
 grep -Fq 'phase-qualify-ml.sh' "$ROOT/scripts/phase-genesis.sh"
 grep -Fq 'ensure_ml_qualification' "$ROOT/scripts/phase-join.sh"

@@ -1,18 +1,22 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Append one immutable, secret-safe GDC Host JOIN transition receipt.
-set -Eeuo pipefail
+set -eu
+
+ROOT="$(CDPATH='' cd -P "$(dirname "$0")/.." && pwd -P)"
+# shellcheck source=portable.sh
+. "$ROOT/scripts/portable.sh"
 
 usage() { echo "Usage: $0 --receipt-dir DIR --input FILE" >&2; }
 RECEIPT_DIR=''; INPUT=''
-while (($#)); do
+while [ "$#" -gt 0 ]; do
   case "$1" in
-    --receipt-dir) RECEIPT_DIR="${2:-}"; shift 2 ;;
-    --input) INPUT="${2:-}"; shift 2 ;;
+    --receipt-dir) [ "$#" -ge 2 ] || { usage; exit 2; }; RECEIPT_DIR="$2"; shift 2 ;;
+    --input) [ "$#" -ge 2 ] || { usage; exit 2; }; INPUT="$2"; shift 2 ;;
     *) usage; exit 2 ;;
   esac
 done
-[[ -n "$RECEIPT_DIR" && -r "$INPUT" ]] || { usage; exit 2; }
-command -v jq >/dev/null || { echo 'jq is required to record a JOIN receipt' >&2; exit 2; }
+[ -n "$RECEIPT_DIR" ] && [ -r "$INPUT" ] || { usage; exit 2; }
+gdc_require_jq || exit $?
 
 state_rank() {
   case "$1" in
@@ -52,30 +56,37 @@ jq -e '
 
 umask 077
 mkdir -p "$RECEIPT_DIR"
-if find "$RECEIPT_DIR" -maxdepth 1 -type f -name '*.json' -print -quit | grep -q .; then
+receipt_present=false
+for receipt_candidate in "$RECEIPT_DIR"/*.json; do
+  [ -f "$receipt_candidate" ] || continue
+  receipt_present=true
+  break
+done
+if [ "$receipt_present" = true ]; then
   "$(dirname "$0")/verify-join-receipt-chain.sh" --receipt-dir "$RECEIPT_DIR" >/dev/null
 fi
-mapfile -t receipts < <(find "$RECEIPT_DIR" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json' -printf '%f\n' | LC_ALL=C sort)
-sequence=$(( ${#receipts[@]} + 1 ))
+receipt_count="$(gdc_count_join_receipts "$RECEIPT_DIR")" || { echo 'JOIN receipt names are unsafe' >&2; exit 1; }
+sequence=$((receipt_count + 1))
 previous=''
-if (( sequence > 1 )); then
-  previous_file="$RECEIPT_DIR/${receipts[-1]}"
-  previous="$(sha256sum "$previous_file" | awk '{print $1}')"
+if [ "$sequence" -gt 1 ]; then
+  previous_name="$(gdc_latest_join_receipt_name "$RECEIPT_DIR")" || { echo 'JOIN receipt names are unsafe' >&2; exit 1; }
+  previous_file="$RECEIPT_DIR/$previous_name"
+  previous="$(gdc_sha256 "$previous_file")"
   jq -e --arg expected "$previous" --argjson expected_sequence "$((sequence - 1))" '
     .sequence == $expected_sequence
   ' "$previous_file" >/dev/null || { echo 'latest JOIN receipt is invalid or tampered' >&2; exit 1; }
   previous_signer="$(jq -r .signer_ever_started "$previous_file")"
   next_signer="$(jq -r .signer_ever_started "$INPUT")"
-  [[ "$previous_signer" != true || "$next_signer" == true ]] || { echo 'JOIN receipt would regress signer_ever_started' >&2; exit 1; }
+  [ "$previous_signer" != true ] || [ "$next_signer" = true ] || { echo 'JOIN receipt would regress signer_ever_started' >&2; exit 1; }
   previous_rank="$(state_rank "$(jq -r .state "$previous_file")")"
   next_rank="$(state_rank "$(jq -r .state "$INPUT")")"
-  (( next_rank > previous_rank )) || { echo 'JOIN receipt would regress or repeat lifecycle state' >&2; exit 1; }
+  [ "$next_rank" -gt "$previous_rank" ] || { echo 'JOIN receipt would regress or repeat lifecycle state' >&2; exit 1; }
   # A receipt chain is the authority for one operation only. Refuse a caller
   # that tries to append a valid-looking transition for another observed
   # network, profile, identity operation or generation.
   previous_binding="$(jq -cS '{run_id,operation,node_name,join_profile_sha256,network_observation_sha256,generation_id}' "$previous_file")"
   next_binding="$(jq -cS '{run_id,operation,node_name,join_profile_sha256,network_observation_sha256,generation_id}' "$INPUT")"
-  [[ "$previous_binding" == "$next_binding" ]] || { echo 'JOIN receipt would change the immutable run binding' >&2; exit 1; }
+  [ "$previous_binding" = "$next_binding" ] || { echo 'JOIN receipt would change the immutable run binding' >&2; exit 1; }
   previous_identity="$(jq -cS .identity_fingerprints "$previous_file")"
   next_identity="$(jq -cS .identity_fingerprints "$INPUT")"
   jq -en --argjson previous "$previous_identity" --argjson next "$next_identity" '
@@ -86,14 +97,14 @@ fi
 
 basename="$(printf '%04d-%s.json' "$sequence" "$(jq -r .state "$INPUT" | tr '[:upper:]' '[:lower:]')")"
 destination="$RECEIPT_DIR/$basename"
-[[ ! -e "$destination" ]] || { echo 'JOIN receipt sequence collision' >&2; exit 1; }
+[ ! -e "$destination" ] || { echo 'JOIN receipt sequence collision' >&2; exit 1; }
 temporary="$(mktemp "$RECEIPT_DIR/.join-receipt.XXXXXX")"
 chmod 600 "$temporary"
 jq -cS --arg recorded_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg previous "$previous" --argjson sequence "$sequence" '
   . + {sequence:$sequence, recorded_at:$recorded_at}
   | if $previous == "" then . else . + {previous_receipt_sha256:$previous} end
 ' "$INPUT" >"$temporary"
-sync -f "$temporary"
+gdc_sync "$temporary"
 mv -f "$temporary" "$destination"
-sync -f "$RECEIPT_DIR"
+gdc_sync "$RECEIPT_DIR"
 printf '%s\n' "$destination"
