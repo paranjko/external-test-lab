@@ -135,6 +135,7 @@ test: site-js-check site-host-requirements-check
 	@python3 ./scripts/test-network-bootstrap.py
 	@./scripts/test-network-bootstrap-shell.sh
 	@python3 ./scripts/test-pin-candidate-dockerfile.py
+	@python3 ./scripts/test-patch-candidate-go-mod-download.py
 	@python3 ./scripts/test-patch-candidate-dapi-dockerfile.py
 	@./scripts/test-package-candidate-binary.sh
 	@./scripts/test-generate-candidate-binary-sbom.sh

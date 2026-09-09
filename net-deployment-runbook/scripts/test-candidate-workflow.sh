@@ -92,6 +92,7 @@ for isolated_job in "$images_job" "$binaries_job"; do
   grep -Fq 'repository: gonka-ai/gonka' <<<"$isolated_job"
   grep -Fq 'ref: ${{ github.workflow_sha }}' <<<"$isolated_job"
   grep -Fq 'pin-candidate-dockerfile.py' <<<"$isolated_job"
+  grep -Fq 'patch-candidate-go-mod-download.py' <<<"$isolated_job"
   grep -Fq 'BASE_IMAGES_JSON: ${{ needs.prepare.outputs.base_images }}' <<<"$isolated_job"
   ! grep -Eq '(contents|packages|id-token|attestations): write' <<<"$isolated_job"
   ! grep -Eq '(secrets\.|GH_TOKEN|docker/login-action|oras (login|push)|attest-build-provenance)' <<<"$isolated_job"

@@ -233,6 +233,8 @@ jobs:
           python3 automation/net-deployment-runbook/scripts/pin-candidate-dockerfile.py \
             --source "$SOURCE_DOCKERFILE" --output "$PINNED_DOCKERFILE" \
             --base-images-json "$BASE_IMAGES_JSON"
+          python3 automation/net-deployment-runbook/scripts/patch-candidate-go-mod-download.py \
+            --source "$PINNED_DOCKERFILE" --output "$PINNED_DOCKERFILE"
           if [[ "$IMAGE_ID" == decentralized-api && "$LEGACY_DAPI_METADATA" == true ]]; then
             python3 automation/net-deployment-runbook/scripts/patch-candidate-dapi-dockerfile.py \
               --source "$PINNED_DOCKERFILE" --output "$PINNED_DOCKERFILE"
@@ -358,6 +360,8 @@ jobs:
           python3 automation/net-deployment-runbook/scripts/pin-candidate-dockerfile.py \
             --source "$SOURCE_DOCKERFILE" --output "$PINNED_DOCKERFILE" \
             --base-images-json "$BASE_IMAGES_JSON"
+          python3 automation/net-deployment-runbook/scripts/patch-candidate-go-mod-download.py \
+            --source "$PINNED_DOCKERFILE" --output "$PINNED_DOCKERFILE"
           if [[ "$COMPONENT" == decentralized-api && "$LEGACY_DAPI_METADATA" == true ]]; then
             python3 automation/net-deployment-runbook/scripts/patch-candidate-dapi-dockerfile.py \
               --source "$PINNED_DOCKERFILE" --output "$PINNED_DOCKERFILE"
