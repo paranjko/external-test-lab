@@ -773,7 +773,7 @@ jobs:
             --definition "automation/net-deployment-runbook/profiles/candidates/$PROFILE.definition.json" \
             --build-manifest build-manifest.json \
             --output release-notes.md
-      - name: Publish idempotent laboratory prerelease assets
+      - name: Publish idempotent laboratory candidate assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PROFILE: ${{ needs.prepare.outputs.profile }}
@@ -783,16 +783,15 @@ jobs:
           set -Eeuo pipefail
           tag="$RELEASE_TAG"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease \
-              | grep -Fxq true || {
-                echo 'existing candidate release is not a prerelease' >&2
-                exit 1
-              }
             bash automation/net-deployment-runbook/scripts/verify-candidate-release-target.sh \
               "$GITHUB_REPOSITORY" "$tag" "$TARGET_SHA"
+            release_id="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json id --jq .id)"
+            jq -n --arg name "$PROFILE" --rawfile body release-notes.md \
+              '{name:$name,body:$body,prerelease:false,make_latest:true}' >release-edit.json
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" --input release-edit.json
           else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$TARGET_SHA" --prerelease \
-              --title "External Test Lab candidate $PROFILE" \
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$TARGET_SHA" --latest \
+              --title "$PROFILE" \
               --notes-file release-notes.md
           fi
           for asset in results/images/*.oci.tar.gz results/images/*.oci.tar.gz.sha256 \

@@ -48,7 +48,7 @@ manifest = {
 
 rendered = renderer.render(template, definition, manifest)
 for expected in (
-    "# External Test Lab candidate v2026.09.05-rc.1",
+    "External Test Lab devshard evaluation build.",
     "`v2026.08.06` – Gonka `v0.2.15`",
     "refs/heads/devshard-0.2.15-v5",
     "`devshardd-linux-amd64.oci.tar.gz`",

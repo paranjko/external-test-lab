@@ -1,6 +1,4 @@
-# External Test Lab candidate {{PROFILE}}
-
-Independent laboratory build for {{LAYER}} evaluation. This is not an official Gonka release or readiness statement.
+External Test Lab {{LAYER}} evaluation build. This is not an official Gonka release or readiness statement.
 
 ## Build scope
 
