@@ -48,7 +48,7 @@ fi
 grep -Fq 'ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"' "$ROOT/scripts/lib.sh"
 grep -Fq 'GDC_HOME="$GDC_DATA_ROOT/$node"' "$ROOT/scripts/lib.sh"
 grep -Fq 'ENV_FILE="${GDC_ENV:-$GDC_HOME/.env}"' "$ROOT/scripts/deploy-telegram-bot.sh"
-grep -Fq 'export GDC_ENV="$GDC_DATA_ROOT/.env"' "$ROOT/gdc.sh"
+grep -Fq 'export GDC_ENV="$GDC_DATA_ROOT/.env"' "$ROOT/gdc-bash.sh"
 grep -Fq 'exec "$BIN" --home "$HOME_DIR" "$@"' "$ROOT/scripts/inferenced.sh"
 ! grep -Fq 'docker run' "$ROOT/scripts/inferenced.sh"
 ! grep -R -q 'inferenced_runs_path' "$ROOT/scripts/phase-"*.sh

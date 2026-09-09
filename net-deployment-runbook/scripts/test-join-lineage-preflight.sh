@@ -36,6 +36,22 @@ EOF
 jq -n --arg bootstrap_sha "$(sha256sum "$tmp/bootstrap.json" | awk '{print $1}')" '
   {schema_version:1,kind:"gdc-network-observation",network_state_id:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",expires_at:"2999-01-01T00:00:00Z",bootstrap:{document_sha256:$bootstrap_sha,chain_id:"gonka-fixture",genesis_sha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},runtime:{core:{version:"0.2.15",commit:"4d687ed6782bcea3931d2d9135bf322f84e190ab"},dapi:{version:"0.2.15-post3",commit:"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}},runtime_api_origins:[{api_url:"https://rpc-a.example.test"}],result:{state:"ready",reason:"none"}}' >"$tmp/observation.json"
 mkdir -p "$tmp/bin"
+cat >"$tmp/bin/date" <<'EOF'
+#!/usr/bin/env bash
+# Emulate the relevant stock BSD-date boundary while using Linux date only to
+# make this contract executable in Linux CI. GNU -d must fail; the portable
+# helper must reach BSD -j/-f and -v forms instead.
+set -Eeuo pipefail
+for arg in "$@"; do [[ "$arg" == -d ]] && exit 1; done
+if [[ "${1:-}" == -j ]]; then
+  exec /bin/date -u -d "${5:-}" +%s
+fi
+if [[ "${1:-}" == -u && "${2:-}" =~ ^-v\+([0-9]+)S$ ]]; then
+  exec /bin/date -u -d "+${BASH_REMATCH[1]} seconds" "${@:3}"
+fi
+exec /bin/date "$@"
+EOF
+chmod 0755 "$tmp/bin/date"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -152,6 +168,12 @@ grep -Fq 'lineage_rpc_fault_domain_alias:' "$tmp/alias.err"
 PATH="$tmp/bin:$PATH" GDC_TEST_NO_SNAPSHOT=true GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/no-http.json" --env "$tmp/no-http.env" >"$tmp/no-http.out"
 jq -e '.bootstrap.snapshot.discovery == "p2p_canary_pending"' "$tmp/no-http.json" >/dev/null
+fresh="$tmp/fresh-observation.json"
+fresh_expiry="$(date -u -d '+600 seconds' +%FT%TZ)"
+jq --arg expiry "$fresh_expiry" '.expires_at = $expiry' "$tmp/observation.json" >"$fresh"
+PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$fresh" --receipt "$tmp/fresh.json" --env "$tmp/fresh.env" >"$tmp/fresh.out"
+jq -e '.result.terminal_state == "prepared"' "$tmp/fresh.json" >/dev/null
 expired="$tmp/expired-observation.json"
 jq '.expires_at = "2000-01-01T00:00:00Z"' "$tmp/observation.json" >"$expired"
 if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \

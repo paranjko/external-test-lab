@@ -97,7 +97,7 @@ fi
 grep -Fq 'JOIN role input lacks a network seed host' "$temporary/network.err"
 [[ ! -e "$temporary/network-getent-called" ]]
 
-grep -Fq 'load_project host-recovery' "$ROOT/gdc.sh"
+grep -Fq 'load_project host-recovery' "$ROOT/gdc-bash.sh"
 grep -Fq 'load_project host-recovery' "$ROOT/scripts/validator-backup.sh"
 grep -Fq "stable identity migration failed" "$ROOT/scripts/validator-backup.sh"
 grep -Fq 'tmkms inference 2>/dev/null' "$ROOT/scripts/validator-backup.sh"
@@ -105,7 +105,7 @@ grep -Fq 'generated JOIN deliberately keeps its exact CLI outside PATH' "$ROOT/s
 grep -Fq 'GDC_HOME/bin/$profile_id/inferenced' "$ROOT/scripts/validator-backup.sh"
 grep -Fq 'docker inspect -f' "$ROOT/scripts/validator-backup.sh"
 grep -Fq '"/srv/dai/$node/tmkms") signer=' "$ROOT/scripts/validator-backup.sh"
-grep -Fq 'load_retained_join_profile_for_node "$1"' "$ROOT/gdc.sh"
+grep -Fq 'load_retained_join_profile_for_node "$1"' "$ROOT/gdc-bash.sh"
 grep -Fq 'retained generated JOIN profile does not match its run manifest' "$ROOT/scripts/lib.sh"
 ! grep -Fq 'mkdir -p "$stage/remote-state"' "$ROOT/scripts/validator-backup.sh"
 [[ -x "$ROOT/scripts/phase-host-backup.sh" ]]

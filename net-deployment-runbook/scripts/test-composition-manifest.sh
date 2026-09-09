@@ -13,7 +13,7 @@ trap cleanup EXIT
 comp_out="$tmp/test-composition.json"
 
 # Positive: create composition manifest via gdc.sh
-out="$("$ROOT/gdc.sh" release composition create \
+out="$("$ROOT/gdc-bash.sh" release composition create \
   --core v2026.08.06 \
   --devshard v2026.08.06 \
   --name test-gdc-comp \
@@ -24,12 +24,12 @@ out="$("$ROOT/gdc.sh" release composition create \
 [[ -s "$tmp/test-composition.sha256" ]]
 
 # Positive: verify composition manifest via gdc.sh
-verify_out="$("$ROOT/gdc.sh" release composition verify "$comp_out")"
+verify_out="$("$ROOT/gdc-bash.sh" release composition verify "$comp_out")"
 [[ "$verify_out" == *"PASS composition=test-gdc-comp"* ]]
 
 # Positive: materialize lock via gdc.sh
 mat_lock="$tmp/materialized.lock"
-mat_out="$("$ROOT/gdc.sh" release composition materialize "$comp_out" --output "$mat_lock")"
+mat_out="$("$ROOT/gdc-bash.sh" release composition materialize "$comp_out" --output "$mat_lock")"
 [[ "$mat_out" == *"READY composition=test-gdc-comp lock="* ]]
 [[ -s "$mat_lock" ]]
 grep -q "LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v3" "$mat_lock"
@@ -58,11 +58,11 @@ grep -q "LOCAL_GATEWAY_IMAGE=gdc/devshard-gateway:0.2.15-v3" "$mat_lock"
 )
 
 # Positive: gdc.sh CLI accepts direct composition file path
-gdc_out="$("$ROOT/gdc.sh" --composition "$comp_out" release composition verify "$comp_out")"
+gdc_out="$("$ROOT/gdc-bash.sh" --composition "$comp_out" release composition verify "$comp_out")"
 [[ "$gdc_out" == *"PASS composition=test-gdc-comp"* ]]
 
 # Negative: an explicit release cannot contradict the composition core profile.
-if "$ROOT/gdc.sh" --composition "$comp_out" --release v2026.07.23 \
+if "$ROOT/gdc-bash.sh" --composition "$comp_out" --release v2026.07.23 \
   release composition verify "$comp_out" >"$tmp/conflict.out" 2>"$tmp/conflict.err"; then
   echo 'composition CLI accepted a conflicting release profile' >&2
   exit 1
@@ -152,7 +152,7 @@ grep -Fq 'requires a verified composition with DevShard profile v2026.08.30-rc.0
   "$tmp/direct-required.err"
 
 required_comp="$tmp/core-required-composition.json"
-"$ROOT/gdc.sh" release composition create \
+"$ROOT/gdc-bash.sh" release composition create \
   --core core-required-test \
   --devshard v2026.08.30-rc.0 \
   --name core-required-composition \
@@ -198,6 +198,6 @@ grep -Fq 'conflicts with pinned profile image: DAPI_IMAGE' \
 
 # Negative: tampered manifest fails verification
 echo "tampered" >> "$comp_out"
-! "$ROOT/gdc.sh" release composition verify "$comp_out" >/dev/null 2>&1
+! "$ROOT/gdc-bash.sh" release composition verify "$comp_out" >/dev/null 2>&1
 
 printf 'PASS composition manifest CLI contract\n'

@@ -63,7 +63,7 @@ fi
 EOF
 chmod 0755 "$tmp/bin/curl"
 
-if PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc.sh" host join \
+if PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc-bash.sh" host join \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/out" 2>"$tmp/err"; then
   echo 'unsafe mixed seed observation unexpectedly entered JOIN' >&2
   exit 1
@@ -99,7 +99,7 @@ jq -e '
   .join_profile_sha256 == null
 ' "$result" >/dev/null
 
-if MODE=component_failure PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/component-operator" "$ROOT/gdc.sh" host join \
+if MODE=component_failure PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/component-operator" "$ROOT/gdc-bash.sh" host join \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/component.out" 2>"$tmp/component.err"; then
   echo 'missing official artifact unexpectedly entered JOIN' >&2
   exit 1

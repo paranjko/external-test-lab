@@ -30,6 +30,8 @@ expected_network_hash="$({
 expected_operator_hash="$(sha256sum "$ROOT/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
 [[ "$(profile_hash)" == "$expected_network_hash" ]]
 [[ "$(operator_profile_hash)" == "$expected_operator_hash" ]]
+! sed -n '/^latest_baseline_pass_bundle()/,/^}/p' "$ROOT/scripts/lib.sh" | grep -Fq 'gdc_sha256_paths'
+! sed -n '/^require_current_baseline_pass()/,/^}/p' "$ROOT/scripts/lib.sh" | grep -Fq 'gdc_sha256_paths'
 
 (
   unset SITE_HOST GRAFANA_HOST GDC_SITE_HOST GDC_GRAFANA_HOST
@@ -49,7 +51,7 @@ grep -Fq 'site_ready=true' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'grafana_ready=true' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'status.json.tmp' "$ROOT/scripts/qualify-ml-remote.sh"
 grep -Fq '2>>"$WORK/control.log"' "$ROOT/scripts/qualify-ml-remote.sh"
-grep -Fq 'phase-bootstrap-access.sh' "$ROOT/gdc.sh"
+grep -Fq 'phase-bootstrap-access.sh' "$ROOT/gdc-bash.sh"
 grep -Fq 'GDC_CHAIN_RPC_URL' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'GDC_GATEWAY_PUBLIC_URL="https://${API_HOST}"' "$ROOT/scripts/phase-bootstrap-access.sh"
 if grep -Fq 'deploy-telegram-bot.sh' "$ROOT/scripts/phase-bootstrap-access.sh"; then
@@ -57,10 +59,10 @@ if grep -Fq 'deploy-telegram-bot.sh' "$ROOT/scripts/phase-bootstrap-access.sh"; 
   exit 1
 fi
 grep -Fq 'GDC_RUN_ID' "$ROOT/scripts/phase-reset.sh"
-grep -Fq 'export GDC_ENV="$GDC_DATA_ROOT/.env"' "$ROOT/gdc.sh"
-grep -Fq 'gdc_launcher_sha256' "$ROOT/gdc.sh"
+grep -Fq 'export GDC_ENV="$GDC_DATA_ROOT/.env"' "$ROOT/gdc-bash.sh"
+grep -Fq 'gdc_launcher_sha256' "$ROOT/gdc-bash.sh"
 grep -Fq 'gdc_launcher_sha256' "$ROOT/scripts/lib.sh"
-grep -Fq 'export GDC_FORCE_NEW_RUN=true' "$ROOT/gdc.sh"
+grep -Fq 'export GDC_FORCE_NEW_RUN=true' "$ROOT/gdc-bash.sh"
 grep -Fq 'GDC_PUBLIC_EDGE_VERIFY=false' "$ROOT/scripts/phase-reset.sh"
 ! grep -Fq 'telegram-metrics' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'for project in gdc-edge gdc-ops' "$ROOT/scripts/reset-remote-host.sh"
@@ -71,7 +73,7 @@ grep -Fq 'GDC_GOVERNANCE_AUTO_VOTE=true' "$ROOT/scripts/phase-bootstrap-access.s
 grep -Fq 'ensure-genesis-validation-weight.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'GDC_SITE_PUBLIC_READY_WAIT_SECONDS' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'public homepage upstream after site restart' "$ROOT/scripts/phase-ops.sh"
-grep -Fq 'inventory_public_edge=' "$ROOT/gdc.sh"
+grep -Fq 'inventory_public_edge=' "$ROOT/gdc-bash.sh"
 grep -Fq 'transient DNS, TLS or browser failure' "$ROOT/scripts/phase-reset.sh"
 grep -Fq '"admission","admission_id","arrival_height","checked_at","curl_exit","dispatch_height","http_status","latency_ms","permit_height","reason","response_height","safe_generation","state"' "$ROOT/scripts/verify-public-homepage.sh"
 grep -Fq 'public gateway health response has an invalid schema' "$ROOT/scripts/verify-public-homepage.sh"
@@ -374,13 +376,13 @@ grep -Fq "'\$REMOTE/api-entrypoint.sh'" "$ROOT/scripts/phase-explorer.sh"
 grep -Fq 'install -m 0755 "$API_ENTRYPOINT" "$DEST/api-entrypoint.sh"' "$ROOT/02-node/install-explorer.sh"
 grep -Fq 'TELEGRAM_BOT_TOKEN=replace-with-BotFather-token' "$ROOT/.env.example"
 [[ ! -e "$ROOT/scripts/telegram-bot/.env.example" ]]
-grep -Fq 'ops consumer telegram apply' "$ROOT/gdc.sh"
-grep -Fq 'phase-telegram-consumer.sh' "$ROOT/gdc.sh"
+grep -Fq 'ops consumer telegram apply' "$ROOT/gdc-bash.sh"
+grep -Fq 'phase-telegram-consumer.sh' "$ROOT/gdc-bash.sh"
 grep -Fq 'gateway.telegram-client-key' "$ROOT/scripts/make-secrets.sh"
 grep -Fq 'gateway.admission-observer-key' "$ROOT/scripts/make-secrets.sh"
 grep -Fq 'telegram.conversation-api-token' "$ROOT/scripts/make-secrets.sh"
 ! grep -Eq 'telegram-key-probe|gateway-key-pool|create-telegram-key-pool' \
-  "$ROOT/gdc.sh" \
+  "$ROOT/gdc-bash.sh" \
   "$ROOT/scripts/deploy-telegram-bot.sh" \
   "$ROOT/scripts/phase-gateway-continuity.sh" \
   "$ROOT/scripts/phase-reset.sh" \
@@ -448,7 +450,7 @@ done
 
 [[ -r "$ROOT/profiles/releases/v2026.08.13.lock" ]]
 [[ -r "$ROOT/profiles/releases/v2026.08.13.retired" ]]
-grep -Fxq 'unset GDC_ALLOW_RETIRED_PROFILE_RECOVERY' "$ROOT/gdc.sh"
+grep -Fxq 'unset GDC_ALLOW_RETIRED_PROFILE_RECOVERY' "$ROOT/gdc-bash.sh"
 if (GDC_RELEASE_PROFILE=v2026.08.13 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles >/dev/null 2>&1); then
   echo 'retired v2026.08.13 was selectable without recovery authorization' >&2
   exit 1
@@ -623,7 +625,7 @@ grep -Fq 'participants-chain.json' "$ROOT/scripts/phase-verify.sh"
 grep -Fq 'public-chain-participant' "$ROOT/scripts/lib.sh"
 grep -Fq 'current-lineage receipt conflicts with public chain identity' "$ROOT/scripts/lib.sh"
 grep -Fq 'ACTIVE chain participants differ from the complete expected identity set' "$ROOT/scripts/phase-verify.sh"
-grep -Fq 'use_operator_inventory' "$ROOT/gdc.sh"
+grep -Fq 'use_operator_inventory' "$ROOT/gdc-bash.sh"
 grep -Fq 'trap on_exit EXIT' "$ROOT/scripts/phase-verify.sh"
 for evidence_phase in phase-settle.sh phase-ha-v4.sh phase-bridge-observer.sh phase-governance-devshard.sh phase-propose-upgrade.sh phase-vote-proposal.sh phase-audit-lifecycle.sh; do
   grep -Fq 'install_evidence_exit_trap' "$ROOT/scripts/$evidence_phase"
@@ -650,7 +652,7 @@ grep -Fq 'PROFILE phase=genesis' "$ROOT/scripts/phase-genesis.sh"
 grep -Fq '/usr/local/bin/gateway-status-routable.sh' "$ROOT/04-ops/compose.yaml"
 grep -Fq 'gateway-status-routable.sh:/usr/local/bin/gateway-status-routable.sh:ro' "$ROOT/04-ops/compose.yaml"
 grep -Fq 'grep -Eq' "$ROOT/04-ops/compose.yaml"
-if grep -Eq 'handoff\)|phase-handoff|GDC_NODE_HANDOFF_DIR' "$ROOT/gdc.sh" "$ROOT/scripts/phase-join.sh"; then
+if grep -Eq 'handoff\)|phase-handoff|GDC_NODE_HANDOFF_DIR' "$ROOT/gdc-bash.sh" "$ROOT/scripts/phase-join.sh"; then
   echo 'Host join must not depend on a central handoff or approval flow' >&2
   exit 1
 fi

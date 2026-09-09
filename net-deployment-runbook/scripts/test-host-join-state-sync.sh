@@ -6,6 +6,16 @@ cat >"$tmp/receipt.json" <<'EOF'
 {"bootstrap":{"trust":{"height":3000,"expires_at":"2999-01-01T00:00:00Z"}},"fault_domains":[{"rpc_url":"https://rpc-a.example.test/chain-rpc","host":"rpc-a.example.test","port":443,"ip":"192.0.2.10"},{"rpc_url":"https://rpc-b.example.test/chain-rpc","host":"rpc-b.example.test","port":443,"ip":"192.0.2.11"}]}
 EOF
 mkdir -p "$tmp/bin"
+cat >"$tmp/bin/date" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+for arg in "$@"; do [[ "$arg" == -d ]] && exit 1; done
+if [[ "${1:-}" == -j ]]; then
+  exec /bin/date -u -d "${5:-}" +%s
+fi
+exec /bin/date "$@"
+EOF
+chmod 0755 "$tmp/bin/date"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -28,6 +38,8 @@ case "$url" in
 esac
 EOF
 chmod 0755 "$tmp/bin/curl"
+PATH="$tmp/bin:$PATH" "$ROOT/scripts/verify-lineage-trust-fresh.sh" "$tmp/receipt.json" >"$tmp/fresh-trust.out"
+grep -Fq 'PASS lineage trust remains fresh' "$tmp/fresh-trust.out"
 PATH="$tmp/bin:$PATH" "$ROOT/scripts/verify-join-lineage-state.sh" https://join.example.test/chain-rpc "$tmp/receipt.json" >"$tmp/out"
 grep -Fq 'PASS JOIN fresh post-sync checkpoint matches' "$tmp/out"
 if PATH="$tmp/bin:$PATH" GDC_TEST_BAD_APPHASH=true "$ROOT/scripts/verify-join-lineage-state.sh" https://join.example.test/chain-rpc "$tmp/receipt.json" >"$tmp/divergence.out" 2>"$tmp/divergence.err"; then
@@ -57,6 +69,7 @@ grep -Fq 'config_matches_receipt' "$ROOT/02-node/verify-state-sync-config.sh"
 grep -Fq 'lineage_trust_expired:' "$ROOT/02-node/verify-state-sync-config.sh"
 grep -Fq 'verify-lineage-trust-fresh.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify-join-lineage-state.sh' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'scripts/portable.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'record-state-sync-canary.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'lineage-state-sync-receipt.json' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON' "$ROOT/scripts/phase-join.sh"

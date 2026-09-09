@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/portable.sh"
 tmp="$(mktemp -d)"; trap 'rm -rf -- "$tmp"' EXIT
 receipts="$tmp/receipts"
 profile="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -19,15 +20,15 @@ input() {
 
 input RUN_CREATED false >"$tmp/first.json"
 first="$($ROOT/scripts/record-join-receipt.sh --receipt-dir "$receipts" --input "$tmp/first.json")"
-[[ "$first" == "$receipts/0001-run_created.json" && "$(stat -c %a "$first")" == 600 ]]
+[[ "$first" == "$receipts/0001-run_created.json" && "$(gdc_file_mode "$first")" == 600 ]]
 jq -e '.sequence == 1 and (has("previous_receipt_sha256") | not) and .signer_ever_started == false' "$first" >/dev/null
 
 input SIGNER_ACTIVATING true >"$tmp/second.json"
 second="$($ROOT/scripts/record-join-receipt.sh --receipt-dir "$receipts" --input "$tmp/second.json")"
-first_sha="$(sha256sum "$first" | awk '{print $1}')"
+first_sha="$(gdc_sha256 "$first")"
 jq -e --arg first_sha "$first_sha" '.sequence == 2 and .previous_receipt_sha256 == $first_sha and .signer_ever_started == true' "$second" >/dev/null
 chain="$($ROOT/scripts/verify-join-receipt-chain.sh --receipt-dir "$receipts")"
-jq -e --arg second_sha "$(sha256sum "$second" | awk '{print $1}')" '.receipt_count == 2 and .head_sha256 == $second_sha and .signer_ever_started == true' <<<"$chain" >/dev/null
+jq -e --arg second_sha "$(gdc_sha256 "$second")" '.receipt_count == 2 and .head_sha256 == $second_sha and .signer_ever_started == true' <<<"$chain" >/dev/null
 cp "$second" "$tmp/second.saved"
 jq '.identity_fingerprints.p2p_node_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$second" >"$tmp/identity-tampered.json"
 chmod 600 "$tmp/identity-tampered.json"
@@ -70,7 +71,7 @@ grep -Fq 'invalid or tampered JOIN receipt' "$tmp/tampered.err"
 cp "$first" "$tmp/first.saved"
 rm -rf "$receipts"; mkdir -m 700 "$receipts"
 cp "$tmp/first.saved" "$receipts/0001-run_created.json"; chmod 600 "$receipts/0001-run_created.json"
-jq --arg first_sha "$(sha256sum "$receipts/0001-run_created.json" | awk '{print $1}')" '.join_profile_sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" | .sequence = 2 | .previous_receipt_sha256 = $first_sha' "$tmp/first.saved" >"$receipts/0002-profile_changed.json"
+jq --arg first_sha "$(gdc_sha256 "$receipts/0001-run_created.json")" '.join_profile_sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" | .sequence = 2 | .previous_receipt_sha256 = $first_sha' "$tmp/first.saved" >"$receipts/0002-profile_changed.json"
 chmod 600 "$receipts/0002-profile_changed.json"
 if "$ROOT/scripts/verify-join-receipt-chain.sh" --receipt-dir "$receipts" >"$tmp/binding.out" 2>"$tmp/binding.err"; then
   echo 'changed receipt binding unexpectedly verified' >&2; exit 1
@@ -80,7 +81,7 @@ grep -Fq 'immutable binding changed' "$tmp/binding.err"
 jq -cn --arg profile "$profile" --arg evidence "$evidence" '
   {schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"profile",category:"profile",reason:"join_profile_invalid",exit_code:10,mutation:"none",signer_state:"absent",resume:"new_profile",join_profile_sha256:$profile,evidence:[{kind:"fixture",sha256:$evidence}]}' >"$tmp/result.json"
 result="$($ROOT/scripts/record-join-result.sh --output "$tmp/result/join-result.v1.json" --input "$tmp/result.json")"
-[[ "$result" == "$tmp/result/join-result.v1.json" && "$(stat -c %a "$result")" == 600 ]]
+[[ "$result" == "$tmp/result/join-result.v1.json" && "$(gdc_file_mode "$result")" == 600 ]]
 jq -e '.outcome == "refused" and .mutation == "none"' "$result" >/dev/null
 jq '.reason = "bad reason"' "$tmp/result.json" >"$tmp/invalid-result.json"
 if "$ROOT/scripts/record-join-result.sh" --output "$tmp/result/invalid.json" --input "$tmp/invalid-result.json" >"$tmp/invalid.out" 2>"$tmp/invalid.err"; then
