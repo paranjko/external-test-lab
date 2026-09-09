@@ -66,6 +66,7 @@ case "$url" in
     case "$url" in
       *rpc-a.example.test*) node_id=0123456789abcdef0123456789abcdef01234567 ;;
       *rpc-b.example.test*) node_id=89abcdef0123456789abcdef0123456789abcdef ;;
+      *rpc-c.example.test*) node_id=fedcba9876543210fedcba9876543210fedcba98 ;;
       *) exit 22 ;;
     esac
     printf '{"result":{"node_info":{"id":"%s","network":"gonka-fixture"},"sync_info":{"latest_block_height":"5000"}}}\n' "$node_id"
@@ -74,7 +75,19 @@ case "$url" in
   */chain-api/productscience/inference/inference/params)
     printf '%s\n' '{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"3333333333333333333333333333333333333333333333333333333333333333"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"4444444444444444444444444444444444444444444444444444444444444444"},{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"5555555555555555555555555555555555555555555555555555555555555555"}]}}}'
     ;;
-  */block?height=*) block "${url##*=}" ;;
+  */block?height=*)
+    # This seed is reachable and agrees at the tip, but has pruned the
+    # historical checkpoints required by the JOIN receipt. It must be
+    # excluded while the two independent complete providers remain usable.
+    if [[ "$url" == *rpc-c.example.test* && "${url##*=}" != 5000 ]]; then
+      case "${GDC_TEST_PRUNED_PAYLOAD:-error}" in
+        error) printf '%s\n' '{"jsonrpc":"2.0","error":{"code":-32603,"message":"height is not available"}}' ;;
+        null) printf '%s\n' '{"result":{"block":null}}' ;;
+        *) exit 22 ;;
+      esac
+      exit 0
+    fi
+    block "${url##*=}" ;;
   */snapshots)
     [[ "${GDC_TEST_NO_SNAPSHOT:-false}" != true ]] || exit 22
     printf '%s\n' '{"result":{"snapshots":[{"height":200,"format":1,"chunks":2,"hash":"7777777777777777777777777777777777777777777777777777777777777777"}]}}'
@@ -85,13 +98,15 @@ EOF
 chmod 0755 "$tmp/bin/curl"
 
 run_preflight() {
-  PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/curl-spy" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
+  PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/curl-spy" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
     "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/receipt.json" --env "$tmp/lineage.env"
 }
 run_preflight >"$tmp/out"
+GDC_TEST_PRUNED_PAYLOAD=null run_preflight >"$tmp/null-pruned.out"
 grep -Fqx 'https://rpc-a.example.test/chain-api/productscience/inference/inference/last_upgrade_height' "$tmp/curl-spy"
 grep -Fqx 'https://rpc-a.example.test/chain-api/productscience/inference/inference/params' "$tmp/curl-spy"
 grep -Fqx 'https://rpc-b.example.test/chain-api/productscience/inference/inference/params' "$tmp/curl-spy"
+grep -Fqx 'https://rpc-c.example.test/chain-rpc/status' "$tmp/curl-spy"
 jq -e '
   .runtime.source.kind == "network_observation" and
   .runtime.observation_sha256 == "'"$(sha256sum "$tmp/observation.json" | awk '{print $1}')"'" and
@@ -134,12 +149,12 @@ if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=one,rpc-b
 fi
 grep -Fq 'lineage_rpc_fault_domain_alias:' "$tmp/alias.err"
 
-PATH="$tmp/bin:$PATH" GDC_TEST_NO_SNAPSHOT=true GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
+PATH="$tmp/bin:$PATH" GDC_TEST_NO_SNAPSHOT=true GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/no-http.json" --env "$tmp/no-http.env" >"$tmp/no-http.out"
 jq -e '.bootstrap.snapshot.discovery == "p2p_canary_pending"' "$tmp/no-http.json" >/dev/null
 expired="$tmp/expired-observation.json"
 jq '.expires_at = "2000-01-01T00:00:00Z"' "$tmp/observation.json" >"$expired"
-if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
+if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$expired" --receipt "$tmp/expired.json" --env "$tmp/expired.env" >"$tmp/expired.out" 2>"$tmp/expired.err"; then
   echo 'expired observation unexpectedly passed' >&2; exit 1
 fi

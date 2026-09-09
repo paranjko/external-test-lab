@@ -172,10 +172,14 @@ done
 # outlier is tolerated; A,A,B,C is not.
 declare -a quorum_rpcs=() quorum_domains=() quorum_hosts=() quorum_ports=() quorum_ips=()
 select_tip_quorum() {
-  local candidate i file record best='' best_count=0 group_count=0 responding count
+  local candidate candidate_trust_height i file record best='' best_count=0 group_count=0 responding count probe_rc
   local -a records=() indices=() groups=() candidates=() candidate_domains=()
+  local -a eligible_records=() eligible_indices=() eligible_domains=()
   mapfile -t candidates < <(printf '%s\n' "${heights[@]}" | LC_ALL=C sort -nr -u)
   for candidate in "${candidates[@]}"; do
+    candidate_trust_height=$((candidate - period))
+    (( candidate_trust_height > 0 )) || continue
+    trust_height="$candidate_trust_height"
     records=(); indices=(); candidate_domains=()
     for i in "${!good_rpcs[@]}"; do
       (( heights[i] >= candidate )) || continue
@@ -199,23 +203,76 @@ select_tip_quorum() {
     done
     responding="${#records[@]}"
     (( group_count == 1 && best_count >= 2 && responding - best_count <= 1 )) || continue
-    quorum_rpcs=(); quorum_domains=(); quorum_hosts=(); quorum_ports=(); quorum_ips=()
+    # A tip quorum is useful only when its independent members can all serve
+    # the historical checkpoints that the receipt will bind.  A reachable
+    # seed may have pruned one of those heights; treat that seed as
+    # unavailable for this candidate rather than letting it abort the whole
+    # preflight.  Successful but malformed checkpoint responses remain a
+    # fail-closed safety error.
+    eligible_records=(); eligible_indices=(); eligible_domains=()
     for i in "${!records[@]}"; do
       [[ "${records[$i]}" == "$best" ]] || continue
-      quorum_rpcs+=("${good_rpcs[${indices[$i]}]}")
-      quorum_domains+=("${domains[${indices[$i]}]}")
-      quorum_hosts+=("${good_hosts[${indices[$i]}]}")
-      quorum_ports+=("${good_ports[${indices[$i]}]}")
-      quorum_ips+=("${good_ips[${indices[$i]}]}")
+      if provider_serves_checkpoints "${indices[$i]}"; then
+        eligible_records+=("${records[$i]}")
+        eligible_indices+=("${indices[$i]}")
+        eligible_domains+=("${candidate_domains[$i]}")
+      else
+        probe_rc=$?
+        (( probe_rc == 1 )) || die rpc_quorum_conflict "malformed historical checkpoint from ${good_rpcs[${indices[$i]}]}"
+      fi
     done
-    tip="$candidate"
+    best_count="${#eligible_records[@]}"
+    responding="$best_count"
+    (( best_count >= 2 && responding - best_count <= 1 )) || continue
+    quorum_rpcs=(); quorum_domains=(); quorum_hosts=(); quorum_ports=(); quorum_ips=()
+    for i in "${!eligible_indices[@]}"; do
+      quorum_rpcs+=("${good_rpcs[${eligible_indices[$i]}]}")
+      quorum_domains+=("${eligible_domains[$i]}")
+      quorum_hosts+=("${good_hosts[${eligible_indices[$i]}]}")
+      quorum_ports+=("${good_ports[${eligible_indices[$i]}]}")
+      quorum_ips+=("${good_ips[${eligible_indices[$i]}]}")
+    done
     return 0
   done
   return 1
 }
-select_tip_quorum || die rpc_quorum_conflict 'no unique 2-of-3 RPC header/AppHash quorum exists at a common tip'
-(( tip > period )) || die trust_expired 'quorum-attested network tip is below the configured trust window'
-trust_height=$((tip - period))
+
+# Derive the post-upgrade checkpoint before selecting the tip quorum so
+# provider eligibility can cover every historical checkpoint in one pass.
+declare -a applied_heights=()
+if [[ -n "$OBSERVATION" ]]; then
+  mapfile -t runtime_apis < <(jq -r '.runtime_api_origins[].api_url' "$OBSERVATION" | LC_ALL=C sort -u)
+else
+  mapfile -t runtime_apis < <(jq -r '[.seeds[].api // empty] | unique[]' "$BOOTSTRAP")
+fi
+for api in "${runtime_apis[@]}"; do
+  applied="$tmp/applied-${#applied_heights[@]}.json"
+  curl -fsS --connect-timeout 5 --max-time 15 "$api/chain-api/productscience/inference/inference/last_upgrade_height" >"$applied" 2>/dev/null || continue
+  applied_height="$(jq -er 'select(.found == true) | (.lastUpgradeHeight // .last_upgrade_height) | tonumber' "$applied" 2>/dev/null || true)"
+  [[ "$applied_height" =~ ^[0-9]+$ ]] && applied_heights+=("$applied_height")
+done
+if (( ${#applied_heights[@]} > 0 )); then
+  post_height="$(one_record post_upgrade_height "${applied_heights[@]}")"; post_height=$((post_height + 1))
+else
+  post_height=''
+fi
+
+provider_serves_checkpoints() {
+  local index="$1" checkpoint height file record
+  for checkpoint in "early:$early_height" "trust:$trust_height" "post:${post_height:-$trust_height}"; do
+    IFS=: read -r _ height <<<"$checkpoint"
+    file="$tmp/eligibility-${index}-${height}.json"
+    pinned_get "${good_rpcs[$index]}" "${good_hosts[$index]}" "${good_ports[$index]}" "${good_ips[$index]}" "/block?height=$height" "$file" || return 1
+    # CometBFT can acknowledge a request for a pruned height with a JSON-RPC
+    # error or a null block. Neither response is a checkpoint observation, so
+    # exclude this provider just as for an HTTP failure. A present but invalid
+    # block structure remains fail-closed below.
+    jq -e '(.error? != null) or (.result.block? == null)' "$file" >/dev/null && return 1
+    record="$(record_from_block <"$file")" || return 2
+  done
+}
+
+select_tip_quorum || die rpc_quorum_conflict 'no unique 2-of-3 RPC header/AppHash quorum exists at a common tip with all required checkpoints'
 
 declare -a early_records=() trust_records=()
 for i in "${!quorum_rpcs[@]}"; do
@@ -233,18 +290,6 @@ trust="$(one_record trust "${trust_records[@]}")"
 # Upgrade-plan names are not derived from the Core version. Gonka exposes the
 # actual most-recent applied height through its inference query API; the
 # Bootstrap-declared runtime API is its only discovery authority.
-declare -a applied_heights=()
-if [[ -n "$OBSERVATION" ]]; then
-  mapfile -t runtime_apis < <(jq -r '.runtime_api_origins[].api_url' "$OBSERVATION" | LC_ALL=C sort -u)
-else
-  mapfile -t runtime_apis < <(jq -r '[.seeds[].api // empty] | unique[]' "$BOOTSTRAP")
-fi
-for api in "${runtime_apis[@]}"; do
-  applied="$tmp/applied-${#applied_heights[@]}.json"
-  curl -fsS --connect-timeout 5 --max-time 15 "$api/chain-api/productscience/inference/inference/last_upgrade_height" >"$applied" 2>/dev/null || continue
-  applied_height="$(jq -er 'select(.found == true) | (.lastUpgradeHeight // .last_upgrade_height) | tonumber' "$applied" 2>/dev/null || true)"
-  [[ "$applied_height" =~ ^[0-9]+$ ]] && applied_heights+=("$applied_height")
-done
 if (( ${#applied_heights[@]} > 0 )); then
   post_height="$(one_record post_upgrade_height "${applied_heights[@]}")"; post_height=$((post_height + 1))
 else
