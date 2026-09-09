@@ -16,6 +16,10 @@ EOL
 To add one independently operated Host, use the [JOIN guide](ROLE-JOIN.md).
 Its complete interface is one optional local state directory and one command:
 
+`gdc` runs on a GNU/Linux workstation or inside the
+[cleanroom devcontainer](.devcontainer/cleanroom/README.md); it does not run
+natively on macOS.
+
 ```bash
 git clone https://github.com/paranjko/external-test-lab.git
 alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"

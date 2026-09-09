@@ -38,6 +38,11 @@ download-genesis`, not a consensus-defined chain fingerprint.
 
 ## Join
 
+Add the SSH alias on your machine. Run `gdc` on a GNU/Linux workstation or
+inside the [cleanroom devcontainer](.devcontainer/cleanroom/README.md), which
+mounts your SSH configuration read-only and keeps its own working directory;
+`gdc.sh` does not run natively on macOS.
+
 ```bash
 cat >> ~/.ssh/config <<'EOL'
 Host <ssh-alias>

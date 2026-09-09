@@ -6,6 +6,11 @@ others.
 
 ## Prerequisites
 
+`gdc` runs on a GNU/Linux workstation with GNU coreutils, util-linux, and
+bash 4 or newer. It does not run natively on macOS; use the cleanroom
+devcontainer there, see
+[.devcontainer/cleanroom/README.md](.devcontainer/cleanroom/README.md).
+
 Add the SSH alias:
 
 ```bash
