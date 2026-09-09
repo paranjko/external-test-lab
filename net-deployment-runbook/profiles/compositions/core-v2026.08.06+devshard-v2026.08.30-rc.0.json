@@ -4,7 +4,7 @@
   "composition": "core-v2026.08.06+devshard-v2026.08.30-rc.0",
   "network": {
     "chain_id": "gonka-devnet-community",
-    "genesis_sha256": "9b29115a1090532546ce9cc1dfb7d37f09c661deb82cb4f20f41da832c98254d",
+    "genesis_sha256": "93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6",
     "baseline_profile": "v2026.08.06"
   },
   "core": {
@@ -13,7 +13,7 @@
     "release_version": "0.2.15",
     "source_commit": "4d687ed6782bcea3931d2d9135bf322f84e190ab",
     "source_ref": "release/v0.2.15",
-    "lock_hash": "41731c04b1655b9ff6bbf608395dfd735e848fa00c7896689a39cc8180a2947d",
+    "lock_hash": "c468ee2cfda6ecdce098d65bd81d8fb34585272e1516c43c3e0bc56d73b4b5e0",
     "upgrade_from_profile": "v2026.08.06",
     "images": {
       "inferenced": "ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112",

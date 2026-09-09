@@ -7,7 +7,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 GDC_HOME="$tmp/observer"
 GDC_RUN_ID='lineage-a'
-GDC_INVOCATION_COMMAND='/opt/gdc/gdc.sh --release v2026.07.23 host join --skip-qualification --public-host node1.example.test gdc-node1'
+GDC_INVOCATION_COMMAND='/opt/gdc/gdc.sh host join --skip-qualification --public-host node1.example.test gdc-node1'
 GDC_INVOCATION_CWD='/home/operator'
 export ROOT GDC_HOME GDC_RUN_ID GDC_INVOCATION_COMMAND GDC_INVOCATION_CWD
 # shellcheck source=scripts/lib.sh

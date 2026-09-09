@@ -52,6 +52,7 @@ validate() {
     [[ -z "${ids[$node_id]:-}" && -z "${rpcs[$rpc]:-}" && -z "${p2ps[$p2p]:-}" ]] || die semantics "seeds[$i]" 'duplicate seed identity or endpoint'
     ids[$node_id]=1; rpcs[$rpc]=1; p2ps[$p2p]=1
     valid_http_url "$rpc" "seeds[$i].rpc"; valid_p2p_url "$p2p" "seeds[$i].p2p"
+    [[ "$rpc" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc/?$ ]] || die semantics "seeds[$i].rpc" 'must use the supported /chain-rpc path'
     if jq -e ".seeds[$i] | has(\"api\")" "$file" >/dev/null; then api=$(jq -r ".seeds[$i].api" "$file"); valid_http_url "$api" "seeds[$i].api"; ((api_count+=1)); fi
   done
   (( api_count > 0 )) || die semantics seeds 'at least one seed must provide api'

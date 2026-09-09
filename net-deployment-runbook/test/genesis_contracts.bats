@@ -314,6 +314,51 @@ validator_identity_digest() {
   [ "$(find "$state" -type f -print0 | sort -z | xargs -0 sha256sum)" = "$before" ]
 }
 
+@test "stable validator identity is recognized before legacy state and keeps its live signing height" {
+  [[ "${GDC_BATS_CONTAINER:-}" == true ]] || skip 'requires make bats-docker'
+  root="$BATS_TEST_TMPDIR/stable-layout"
+  state="$root/gdc-node1"
+  candidate="$BATS_TEST_TMPDIR/stable-candidate"
+  identity="$root/identity/gdc-node1"
+  signer="$root/signer/gdc-node1"
+  deployment_env="$root/deploy/gdc-node1/.env"
+  helper="$RUNBOOK/scripts/build-validator-identity-restore-command.sh"
+  pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"
+  prepare_validator_identity "$candidate" \
+    01234567890123456789012345678901 \
+    abcdefghijklmnopqrstuvwxyzABCDEF \
+    12345678901234567890123456789012
+  consensus_key="$("$pubkey_helper" "$candidate/tmkms/secrets/priv_validator_key.softsign")"
+  bundle_sha256="$(validator_identity_digest "$candidate")"
+  install -d -m 0700 "$identity/p2p" "$identity/warm/keyring-file" "$signer"
+  install -m 0600 "$candidate/inference/config/node_key.json" "$identity/p2p/node_key.json"
+  cp -a "$candidate/tmkms" "$signer/tmkms"
+  jq '.height = "999"' "$signer/tmkms/state/priv_validator_state.json" \
+    >"$BATS_TEST_TMPDIR/live-signing-state.json"
+  mv "$BATS_TEST_TMPDIR/live-signing-state.json" "$signer/tmkms/state/priv_validator_state.json"
+
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = stable_existing ]
+  [ "$(jq -r .height "$signer/tmkms/state/priv_validator_state.json")" = 999 ]
+  [ ! -e "$state" ]
+
+  candidate="$BATS_TEST_TMPDIR/conflicting-stable-candidate"
+  prepare_validator_identity "$candidate" \
+    01234567890123456789012345678901 \
+    ZYXWVUTSRQPONMLKJIHGFEDCBA987654 \
+    12345678901234567890123456789012
+  bundle_sha256="$(validator_identity_digest "$candidate")"
+  run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
+    "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'stable validator identity conflicts with the supplied backup'* ]]
+  [ "$(jq -r .height "$signer/tmkms/state/priv_validator_state.json")" = 999 ]
+}
+
 @test "validator restore command rejects archive shell injection before SSH" {
   command_builder="$RUNBOOK/scripts/build-validator-identity-restore-command.sh"
   pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"

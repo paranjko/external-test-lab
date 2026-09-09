@@ -9,6 +9,6 @@ make cleanroom
 known_hosts, and the forwarded SSH agent.
 
 ```bash
-git clone -b feat/honest-lifecycle-gate-b-upgrade https://github.com/paranjko/external-test-lab.git
-./external-test-lab/net-deployment-runbook/gdc.sh --release v2026.07.23 host join --public-host node3.gonka-dev.net gdc-node3
+git clone https://github.com/paranjko/external-test-lab.git
+./external-test-lab/net-deployment-runbook/gdc.sh host join --public-host node3.gonka-dev.net gdc-node3
 ```

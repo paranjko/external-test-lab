@@ -24,18 +24,26 @@ check_home="$(mktemp -d)"
 trap 'rm -rf "$check_home"' EXIT
 password="$(<"$PASSWORD_FILE")"
 output="$check_home/recover.out"
+
+run_inferenced() {
+  if [[ -n "${GDC_RECOVERY_INFERENCED_BIN:-}" ]]; then
+    [[ "$GDC_RECOVERY_INFERENCED_BIN" == /* && -x "$GDC_RECOVERY_INFERENCED_BIN" ]] \
+      || { echo 'recovery inferenced CLI is unavailable' >&2; return 1; }
+    "$GDC_RECOVERY_INFERENCED_BIN" --home "$check_home/keyring" "$@"
+  else
+    GDC_OPERATOR_HOME="$check_home/keyring" "$ROOT/scripts/inferenced.sh" "$@"
+  fi
+}
+
 if ! printf '%s\n%s\n%s\n' "$(<"$MNEMONIC_FILE")" "$password" "$password" \
-  | GDC_OPERATOR_HOME="$check_home/keyring" "$ROOT/scripts/inferenced.sh" \
-    keys add "$KEY_NAME" --recover --keyring-backend file >"$output" 2>&1; then
+  | run_inferenced keys add "$KEY_NAME" --recover --keyring-backend file >"$output" 2>&1; then
   echo 'recovery mnemonic cannot be imported in an isolated keyring' >&2
   exit 1
 fi
 address="$(printf '%s\n' "$password" \
-  | GDC_OPERATOR_HOME="$check_home/keyring" "$ROOT/scripts/inferenced.sh" \
-    keys show "$KEY_NAME" --keyring-backend file -a | tail -n1 | tr -d '\r')"
+  | run_inferenced keys show "$KEY_NAME" --keyring-backend file -a | tail -n1 | tr -d '\r')"
 pubkey_json="$(printf '%s\n' "$password" \
-  | GDC_OPERATOR_HOME="$check_home/keyring" "$ROOT/scripts/inferenced.sh" \
-    keys show "$KEY_NAME" --keyring-backend file --pubkey)"
+  | run_inferenced keys show "$KEY_NAME" --keyring-backend file --pubkey)"
 pubkey="$(jq -er .key <<<"$pubkey_json")"
 [[ "$address" =~ ^gonka1[0-9a-z]{20,90}$ ]] \
   || { echo 'recovery mnemonic produced an invalid account address' >&2; exit 1; }

@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 preflight-window [TIMEOUT] | freeze DIR SOURCE_PORT | prepare DIR TARGET_ENV TARGET_COMPOSE_ENV TARGET_PROJECT SOURCE_PORT TARGET_PORT | status DIR | drain DIR [TIMEOUT] | drain-target DIR [TIMEOUT] | restore-source DIR | promote DIR | mark DIR PHASE" >&2
+  echo "Usage: $0 preflight-window [TIMEOUT] | freeze DIR SOURCE_PORT | prepare DIR TARGET_ENV TARGET_COMPOSE_ENV TARGET_PROJECT SOURCE_PORT TARGET_PORT | status DIR | drain DIR [TIMEOUT] | drain-target DIR [TIMEOUT] | restore-source DIR | promote DIR | mark DIR PHASE | canary-prepare DIR TARGET_ENV TARGET_COMPOSE_ENV TARGET_PROJECT TARGET_PORT | canary-status DIR | canary-stop DIR" >&2
 }
 
 action="${1:-}"
@@ -42,7 +42,7 @@ write_manifest_value() {
 
 write_phase() {
   local manifest="$1" phase="$2" tmp
-  [[ "$phase" =~ ^(preparing|prepared|cutover_pending|cutover|drained|promoting|rolled_back|completed|failed)$ ]] || return 2
+  [[ "$phase" =~ ^(preparing|prepared|cutover_pending|cutover|drained|promoting|rolled_back|completed|failed|stopped)$ ]] || return 2
   tmp="${manifest}.tmp.$$"
   awk -F= -v phase="$phase" '
     $1 == "phase" { print "phase=" phase; found=1; next }
@@ -394,32 +394,36 @@ wait_admin_settings_ready() {
   return 1
 }
 
-wait_runtime_ready() {
-  local env_file="$1" port="$2" version="$3" escrow="$4" role="$5" deadline state route session model
+runtime_ready_now() {
+  local env_file="$1" port="$2" version="$3" escrow="$4" state route session model
   model="$(value "$env_file" DEVSHARD_MODEL)"
+  state="$(admin_json "$env_file" "$port" /v1/admin/state 2>/dev/null || true)"
+  [[ -n "$state" ]] || return 1
+  route="/devshard/$version"
+  session="${version#v}"
+  jq -e --arg escrow "$escrow" --arg route "$route" --arg session "$session" --arg model "$model" '
+    (.devshards | type) == "array"
+    and any(.devshards[];
+      (.id | tostring) == $escrow
+      and (.model // .runtime.model // "") == $model
+      and (.active // false) == true
+      and (.route_prefix // .runtime.route_prefix // "") == $route
+      and ((.protocol_version // .runtime.protocol_version // "") | tostring | ltrimstr("v")) == $session
+      and ((.runtime.session_version // "") | tostring | ltrimstr("v")) == $session
+      and (.runtime.phase // .phase // "") == "active"
+      and (.runtime.chain_phase // .chain_phase // "") == "Inference"
+      and (.runtime.requests_blocked // .requests_blocked // false) == false)
+    and (.capacity.models | type) == "object"
+    and any(.capacity.models[]; (.routable // false) == true)
+  ' <<<"$state" >/dev/null 2>&1
+}
+
+wait_runtime_ready() {
+  local env_file="$1" port="$2" version="$3" escrow="$4" role="$5" deadline
   deadline=$((SECONDS + ${GDC_GATEWAY_MIGRATION_READY_TIMEOUT_SECONDS:-600}))
   while (( SECONDS < deadline )); do
-    state="$(admin_json "$env_file" "$port" /v1/admin/state 2>/dev/null || true)"
-    if [[ -n "$state" ]]; then
-      route="/devshard/$version"
-      session="${version#v}"
-      if jq -e --arg escrow "$escrow" --arg route "$route" --arg session "$session" --arg model "$model" '
-        (.devshards | type) == "array"
-        and any(.devshards[];
-          (.id | tostring) == $escrow
-          and (.model // .runtime.model // "") == $model
-          and (.active // false) == true
-          and (.route_prefix // .runtime.route_prefix // "") == $route
-          and ((.protocol_version // .runtime.protocol_version // "") | tostring | ltrimstr("v")) == $session
-          and ((.runtime.session_version // "") | tostring | ltrimstr("v")) == $session
-          and (.runtime.phase // .phase // "") == "active"
-          and (.runtime.chain_phase // .chain_phase // "") == "Inference"
-          and (.runtime.requests_blocked // .requests_blocked // false) == false)
-        and (.capacity.models | type) == "object"
-        and any(.capacity.models[]; (.routable // false) == true)
-      ' <<<"$state" >/dev/null 2>&1; then
-        return 0
-      fi
+    if runtime_ready_now "$env_file" "$port" "$version" "$escrow"; then
+      return 0
     fi
     sleep 3
   done
@@ -641,6 +645,121 @@ wait_safe_window() {
 }
 
 case "$action" in
+  canary-prepare)
+    [[ $# -eq 5 ]] || { usage; exit 2; }
+    directory="$1" uploaded_target_env="$2" uploaded_target_compose_env="$3"
+    target_project="$4" target_port="$5"
+    valid_port "$target_port" && valid_name "$target_project" \
+      && [[ "$directory" == "$OPS/gateway-canaries/"* ]] \
+      || { echo 'ERROR gateway canary paths, project, or port are unsafe' >&2; exit 2; }
+    target_env="$directory/target.env"
+    target_compose_env="$directory/target-compose.env"
+    manifest="$directory/manifest.env"
+    [[ -f "$uploaded_target_env" && -f "$uploaded_target_compose_env" ]] \
+      || { echo 'ERROR gateway canary target environment is unavailable' >&2; exit 1; }
+    target_route="$(value "$uploaded_target_env" DEVSHARD_ROUTE_PREFIX)"
+    target_version="${target_route##*/}"
+    target_volume="$(value "$uploaded_target_env" DEVSHARD_GATEWAY_DATA_VOLUME_NAME)"
+    target_binary_sha256="$(value "$uploaded_target_env" DEVSHARD_BINARY_SHA256)"
+    IFS=$'\t' read -r target_image_ref target_image_id < <(image_identity "$uploaded_target_compose_env") \
+      || { echo 'ERROR gateway canary target image identity is unavailable' >&2; exit 1; }
+    [[ "$target_version" =~ ^v[45]$ && "$target_volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ \
+      && "$target_binary_sha256" =~ ^[0-9a-f]{64}$ && -n "$target_image_ref" && -n "$target_image_id" ]] \
+      || { echo 'ERROR gateway canary target identity is incomplete' >&2; exit 1; }
+    retained_phase=''
+    target_escrow_id=pending
+    if [[ -s "$manifest" ]]; then
+      retained_phase="$(value "$manifest" phase)"
+      [[ "$(value "$manifest" schema_version)" == 1 && "$(value "$manifest" kind)" == canary \
+        && "$retained_phase" =~ ^(prepared|stopped|failed)$ \
+        && "$target_project" == "$(value "$manifest" target_project)" \
+        && "$target_version" == "$(value "$manifest" target_version)" \
+        && "$target_port" == "$(value "$manifest" target_port)" \
+        && "$target_volume" == "$(value "$manifest" target_volume)" \
+        && "$target_binary_sha256" == "$(value "$manifest" target_binary_sha256)" \
+        && "$target_image_id" == "$(value "$manifest" target_image_id)" ]] \
+        || { echo 'ERROR gateway canary retained state is not resumable' >&2; exit 1; }
+      [[ -s "$target_env" && -s "$target_compose_env" ]] \
+        || { echo 'ERROR gateway canary retained runtime inputs are unavailable' >&2; exit 1; }
+      target_escrow_id="$(value "$manifest" target_escrow_id)"
+      if [[ "$retained_phase" == prepared ]]; then
+        [[ "$target_escrow_id" =~ ^[1-9][0-9]*$ ]] \
+          || { echo 'ERROR gateway canary escrow identity is invalid' >&2; exit 1; }
+        if runtime_ready_now "$target_env" "$target_port" "$target_version" "$target_escrow_id"; then
+          printf 'READY gateway canary is already prepared protocol=%s port=%s\n' "$target_version" "$target_port"
+          exit 0
+        fi
+      fi
+      [[ "$target_escrow_id" =~ ^([1-9][0-9]*|pending)$ ]] \
+        || { echo 'ERROR gateway canary retained escrow identity is invalid' >&2; exit 1; }
+      write_phase "$manifest" preparing
+    else
+      install -d -m 0700 "$directory"
+      install -m 0600 "$uploaded_target_env" "$target_env"
+      install -m 0600 "$uploaded_target_compose_env" "$target_compose_env"
+      cat >"$manifest" <<EOF
+schema_version=1
+kind=canary
+phase=preparing
+target_version=$target_version
+target_port=$target_port
+target_volume=$target_volume
+target_project=$target_project
+target_escrow_id=pending
+target_image_ref=$target_image_ref
+target_image_id=$target_image_id
+target_binary_sha256=$target_binary_sha256
+created_at=$(date -u +%FT%TZ)
+EOF
+      chmod 0600 "$manifest"
+    fi
+    cleanup_canary_prepare() {
+      local rc=$?
+      if (( rc != 0 )); then
+        ( cd "$directory/04-ops" && GDC_GATEWAY_ENV_FILE="$target_env" docker compose -p "$target_project" \
+          --env-file "$target_compose_env" --env-file "$target_env" stop devshard-gateway >/dev/null 2>&1 || true )
+        write_phase "$manifest" failed || true
+      fi
+      exit "$rc"
+    }
+    trap cleanup_canary_prepare EXIT
+    ( cd "$directory/04-ops" && export GDC_GATEWAY_ENV_FILE="$target_env" && docker compose -p "$target_project" \
+      --env-file "$target_compose_env" --env-file "$target_env" up -d --force-recreate devshard-gateway )
+    wait_admin_settings_ready "$target_env" "$target_port" target
+    target_escrow_id="$(ensure_target_escrow "$target_env" "$target_port" "$target_version" "$target_escrow_id" "$directory")"
+    write_manifest_value "$manifest" target_escrow_id "$target_escrow_id"
+    configure_target "$target_env" "$target_port" false false
+    wait_runtime_ready "$target_env" "$target_port" "$target_version" "$target_escrow_id" target
+    direct_smoke "$target_env" "$target_port"
+    write_phase "$manifest" prepared
+    trap - EXIT
+    printf 'PASS gateway canary prepared protocol=%s port=%s; source gateway was not changed\n' "$target_version" "$target_port"
+    ;;
+  canary-status)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    directory="$1"
+    manifest="$directory/manifest.env"
+    [[ -s "$manifest" ]] || { echo 'ERROR gateway canary state is unavailable' >&2; exit 1; }
+    [[ "$(value "$manifest" kind)" == canary ]] || { echo 'ERROR gateway canary state kind is invalid' >&2; exit 1; }
+    target_env="$directory/target.env"
+    target_port="$(value "$manifest" target_port)"
+    jq -n --arg phase "$(value "$manifest" phase)" \
+      --argjson target "$(sanitized_state "$target_env" "$target_port" target)" '{phase:$phase,target:$target}'
+    ;;
+  canary-stop)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    directory="$1"
+    manifest="$directory/manifest.env"
+    [[ -s "$manifest" && "$(value "$manifest" kind)" == canary ]] \
+      || { echo 'ERROR gateway canary state is unavailable' >&2; exit 1; }
+    target_env="$directory/target.env"
+    target_compose_env="$directory/target-compose.env"
+    target_project="$(value "$manifest" target_project)"
+    ( cd "$directory/04-ops" && GDC_GATEWAY_ENV_FILE="$target_env" docker compose -p "$target_project" \
+      --env-file "$target_compose_env" --env-file "$target_env" stop devshard-gateway )
+    write_phase "$manifest" stopped
+    printf 'READY gateway canary stopped; source gateway was not changed\n'
+    ;;
   preflight-window)
     [[ $# -le 1 ]] || { usage; exit 2; }
     wait_safe_window "${1:-600}"

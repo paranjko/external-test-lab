@@ -17,6 +17,12 @@ sed -i "s/__SHA__/$digest/" "$bootstrap"
 grep -Fq 'PASS offline network bootstrap' "$tmp/verify"
 "$TOOL" env "$bootstrap" >"$tmp/bootstrap.env"
 grep -Fq 'export SEED_NODE_RPC_URL=https://one.example/chain-rpc' "$tmp/bootstrap.env"
+bad_path="$tmp/unsupported-rpc-path.json"
+sed 's#https://one.example/chain-rpc#https://one.example/rpc#' "$bootstrap" >"$bad_path"
+if "$TOOL" verify "$bad_path" >/dev/null 2>&1; then
+  echo 'unsupported Bootstrap RPC path unexpectedly validated' >&2
+  exit 1
+fi
 
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/inferenced" <<'EOF'

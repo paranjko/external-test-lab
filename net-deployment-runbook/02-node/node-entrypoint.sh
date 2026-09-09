@@ -4,6 +4,14 @@ set -eu
 STATE_DIR=${STATE_DIR:-/root/.inference}
 INIT_FLAG="$STATE_DIR/.node_initialized"
 
+# The active data directory is a replaceable state-sync generation.  Never
+# let its initialisation choose a new P2P key when the Host identity mounted
+# by Compose is already authoritative.
+if [ -s /gdc-identity/p2p/node_key.json ]; then
+  install -d -m 0700 "$STATE_DIR/config"
+  install -m 0600 /gdc-identity/p2p/node_key.json "$STATE_DIR/config/node_key.json"
+fi
+
 if [ "${INIT_ONLY:-false}" = true ]; then
   exec sh ./init-docker.sh
 fi

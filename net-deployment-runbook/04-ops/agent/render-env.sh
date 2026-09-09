@@ -2,12 +2,13 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 --inventory FILE --host HOST --output FILE" >&2
+  echo "Usage: $0 --inventory FILE --host HOST [--join-profile FILE] --output FILE" >&2
 }
 
 INVENTORY=''
 HOST=''
 OUTPUT=''
+JOIN_PROFILE=''
 
 while (($#)); do
   case "$1" in
@@ -21,6 +22,10 @@ while (($#)); do
       ;;
     --output)
       OUTPUT="$2"
+      shift 2
+      ;;
+    --join-profile)
+      JOIN_PROFILE="$2"
       shift 2
       ;;
     *)
@@ -39,7 +44,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 load_env "$INVENTORY"
 source "$ROOT/scripts/profile.sh"
-load_profiles
+if [[ -n "$JOIN_PROFILE" ]]; then load_join_profile "$JOIN_PROFILE"; else load_profiles; fi
 valid_host=false
 for node in $GDC_NODE_ALIASES; do
   [[ "$HOST" == "$node" ]] && valid_host=true

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gonka-dev.net/schemas/signer-fence-receipt.v1.schema.json",
+  "title": "GDC Host JOIN signer fence receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "run_id", "consensus_pubkey", "old_host_identity", "observed_at", "method", "controls", "old_signer_process_absent", "old_signer_network_path_disabled", "fence_height", "evidence_sha256"],
+  "properties": {
+    "schema_version": {"const": 1}, "kind": {"const": "gdc-signer-fence-receipt"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "consensus_pubkey": {"type": "string", "minLength": 1, "maxLength": 256},
+    "old_host_identity": {"type": "string", "minLength": 1, "maxLength": 256},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "method": {"enum": ["same_host_controlled_stop", "remote_host_controlled_stop", "infrastructure_hard_fence"]},
+    "controls": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["power_off", "service_disabled", "network_acl", "credentials_revoked", "disk_detached", "old_identity_removed", "compose_stop", "process_readback"]}},
+    "old_signer_process_absent": {"const": true}, "old_signer_network_path_disabled": {"type": "boolean"},
+    "fence_height": {"type": "integer", "minimum": 0}, "evidence_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "allOf": [{"if": {"properties": {"method": {"const": "infrastructure_hard_fence"}}}, "then": {"properties": {"controls": {"minItems": 2}}, "required": ["old_signer_network_path_disabled"]}}]
+}

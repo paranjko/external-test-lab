@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "kind": "external-test-lab-candidate-build",
+  "profile": "v2026.09.08-rc.0",
+  "layer": "devshard",
+  "definition_sha256": "5c75659d3ec46adc69958eb82c680074ca800e46846e78091a72ae9fc0ffc456",
+  "architectures": [
+    "linux/amd64"
+  ],
+  "source": {
+    "devshard_v5": "a7d3034d499202b8504f3028b1ee3b1b0678b1e3"
+  },
+  "workflow": {
+    "repository": "paranjko/external-test-lab",
+    "ref": "paranjko/external-test-lab/.github/workflows/candidate-publish.yml@refs/heads/main",
+    "sha": "320d990c12d9ce72539e23d3f38f7d93f2c41e90",
+    "request_ref": "refs/heads/main",
+    "request_sha": "320d990c12d9ce72539e23d3f38f7d93f2c41e90",
+    "request_run_id": "34320705815",
+    "run_id": "34320725239",
+    "run_attempt": "1"
+  },
+  "images": {
+    "devshard-gateway": {
+      "reference": "ghcr.io/paranjko/gdc-devshard-gateway:v2026.09.08-rc.0-5c75659d3ec4-34320725239",
+      "digest": "sha256:a6417ca62ef195a8e00c5a70429e1a0f787ac7f9a5bbcf7ee2fee1cc47ca369f",
+      "deployment_reference": "ghcr.io/paranjko/gdc-devshard-gateway:v2026.09.08-rc.0-5c75659d3ec4-34320725239",
+      "archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.09.08-rc.0/devshard-gateway-linux-amd64.oci.tar.gz",
+      "archive_sha256": "58049b91e5955f8159f490a14bbccb9a3a2632b3bf1a018a78f9fe188e0c4d98",
+      "sbom": true,
+      "provenance": true
+    },
+    "devshard-host": {
+      "reference": "ghcr.io/paranjko/gdc-devshard-host:v2026.09.08-rc.0-5c75659d3ec4-34320725239",
+      "digest": "sha256:f16cd26f5cdcdc422d68b8d3b38b89effcb8bb9982a87d0e4c996afaec20ed2a",
+      "deployment_reference": "ghcr.io/paranjko/gdc-devshard-host:v2026.09.08-rc.0-5c75659d3ec4-34320725239",
+      "archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.09.08-rc.0/devshard-host-linux-amd64.oci.tar.gz",
+      "archive_sha256": "9f5eda5e0d34fc25715318eb4f82069fcb2ad205de28cc038dd44179145d7851",
+      "sbom": true,
+      "provenance": true
+    },
+    "devshardd": {
+      "reference": "ghcr.io/paranjko/gdc-devshardd:v2026.09.08-rc.0-5c75659d3ec4-34320725239",
+      "digest": "sha256:f1fc355519f1dc5162d607a4f4a80655ea42c4f02b4bd922bfe5f0eead6063bb",
+      "deployment_reference": "ghcr.io/paranjko/gdc-devshardd:v2026.09.08-rc.0-5c75659d3ec4-34320725239",
+      "archive_url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.09.08-rc.0/devshardd-linux-amd64.oci.tar.gz",
+      "archive_sha256": "31827a0ebcc3d426d3c3f99b824b15f0d733ce914b40c7b39b387ecb468afb76",
+      "sbom": true,
+      "provenance": true
+    }
+  },
+  "binaries": {
+    "devshardd-linux-amd64": {
+      "oci_reference": "ghcr.io/paranjko/gdc-upgrade-devshardd:v2026.09.08-rc.0-5c75659d3ec4-34320725239",
+      "oci_digest": "sha256:8bad55e35454b15b9f14a57e3453e9483c18c57a059d6ecf53d2da542da3b5c6",
+      "sha256": "b39c1c85e1bed04e1162022b424be9e4183a4bbc3c33fee99f9be97f55a1fc03",
+      "url": "https://github.com/paranjko/external-test-lab/releases/download/v2026.09.08-rc.0/devshardd.zip",
+      "sbom": true,
+      "provenance": true
+    }
+  }
+}
