@@ -134,6 +134,13 @@ www.{$SITE_HOST} {
   # Dynamic status data is fetched from the gateway Host.  The page itself is
   # served locally below, so a reset of that Host leaves a visible, honest
   # OFFLINE state instead of taking the public site down.
+  # Admission readiness is produced by the public-edge proxy itself. It must
+  # stay ahead of the generic status route, which otherwise forwards it to the
+  # DevShard runtime where this local contract does not exist.
+  handle /status/gateway/v1/admission-status {
+    rewrite * /v1/admission-status
+    reverse_proxy 127.0.0.1:18083
+  }
   @status_data {
     path /status/*
     not path /status/telegram-consumer
@@ -173,7 +180,7 @@ www.{$SITE_HOST} {
   }
   @gateway_readonly {
     method GET
-    path /v1/status /v1/models
+    path /v1/status /v1/models /v1/admission-status
   }
   handle @gateway_readonly {
     reverse_proxy 127.0.0.1:18083

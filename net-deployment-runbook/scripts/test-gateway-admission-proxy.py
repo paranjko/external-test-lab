@@ -38,6 +38,8 @@ class State:
     max_in_flight = 0
     dispatch_delay = 0
     state_delay = 0
+    state_in_flight = 0
+    max_state_in_flight = 0
     chain_phase = "Inference"
     session_version = "v3"
     protocol_approved = True
@@ -52,51 +54,62 @@ class Backend(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if State.state_delay:
-            time.sleep(State.state_delay)
-        if self.path == "/v1/status":
-            if self.headers.get("Authorization") not in {"Bearer test-status", "Bearer test-client"}:
-                self.send_response(401)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            body = State.status_override
-            if body is None:
-                body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}}, "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False, "session_version": State.session_version}}]}
-        elif self.path == "/v1/models":
-            if self.headers.get("Authorization") != "Bearer test-client":
-                self.send_response(401)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
-            body = {"data": [{"id": "model"}]}
-        elif self.path == "/epoch":
-            epoch = State.epochs[State.epoch_index % len(State.epochs)]
-            State.epoch_index += 1
-            body = {"epoch_group_data": {"epoch_index": epoch}}
-        elif self.path == "/chain-status":
-            height = State.height
-            if State.advance_height:
-                State.height += 1
-            body = {"result": {"sync_info": {"latest_block_height": str(height)}}}
-        elif self.path == "/params":
-            approved = [{"name": State.session_version, "binary": "https://example.invalid/devshardd-%s.zip" % State.session_version, "sha256": State.protocol_sha256}] if State.protocol_approved else []
-            body = State.params_override
-            if body is None:
-                body = {"params": {"epoch_params": {"epoch_length": "100", "poc_stage_duration": "2", "poc_exchange_duration": "2", "poc_validation_delay": "2", "poc_validation_duration": "2", "set_new_validators_delay": "2"}, "devshard_escrow_params": {"approved_versions": approved}}}
-        else:
-            self.send_error(404)
-            return
-        encoded = json.dumps(body).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
+        state_path = self.path in {"/v1/status", "/epoch", "/chain-status", "/params"}
+        if state_path:
+            with State.lock:
+                State.state_in_flight += 1
+                State.max_state_in_flight = max(
+                    State.max_state_in_flight, State.state_in_flight)
         try:
-            self.wfile.write(encoded)
-        except BrokenPipeError:
-            # The deadline regression intentionally closes this state request.
-            pass
+            if State.state_delay:
+                time.sleep(State.state_delay)
+            if self.path == "/v1/status":
+                if self.headers.get("Authorization") not in {"Bearer test-status", "Bearer test-client"}:
+                    self.send_response(401)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = State.status_override
+                if body is None:
+                    body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}}, "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False, "session_version": State.session_version}}]}
+            elif self.path == "/v1/models":
+                if self.headers.get("Authorization") != "Bearer test-client":
+                    self.send_response(401)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = {"data": [{"id": "model"}]}
+            elif self.path == "/epoch":
+                epoch = State.epochs[State.epoch_index % len(State.epochs)]
+                State.epoch_index += 1
+                body = {"epoch_group_data": {"epoch_index": epoch}}
+            elif self.path == "/chain-status":
+                height = State.height
+                if State.advance_height:
+                    State.height += 1
+                body = {"result": {"sync_info": {"latest_block_height": str(height)}}}
+            elif self.path == "/params":
+                approved = [{"name": State.session_version, "binary": "https://example.invalid/devshardd-%s.zip" % State.session_version, "sha256": State.protocol_sha256}] if State.protocol_approved else []
+                body = State.params_override
+                if body is None:
+                    body = {"params": {"epoch_params": {"epoch_length": "100", "poc_stage_duration": "2", "poc_exchange_duration": "2", "poc_validation_delay": "2", "poc_validation_duration": "2", "set_new_validators_delay": "2"}, "devshard_escrow_params": {"approved_versions": approved}}}
+            else:
+                self.send_error(404)
+                return
+            encoded = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            try:
+                self.wfile.write(encoded)
+            except BrokenPipeError:
+                # The deadline regression intentionally closes this state request.
+                pass
+        finally:
+            if state_path:
+                with State.lock:
+                    State.state_in_flight -= 1
 
     def do_POST(self):
         length = int(self.headers["Content-Length"])
@@ -219,9 +232,35 @@ try:
     process, proxy_port = start_proxy(backend_port); processes.append(process)
     assert get(proxy_port, "/v1/status")[0] == 200
     assert json.loads(get(proxy_port, "/v1/models")[1]) == {"data": [{"id": "model"}]}
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1]) == {
+        "state": "READY", "available": True, "reason": None,
+    }
+    assert get(proxy_port, "/v1/admission-status", authorization=False)[0] == 200
     assert get(proxy_port, "/v1/models", authorization=False)[0] == 401
     missing = get(proxy_port, "/v1/unknown")
     assert missing[0] == 404 and json.loads(missing[1]) == {"error": {"code": "not_found"}}
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    # Public admission status has one non-blocking backend observation slot.
+    # Concurrent callers fail closed instead of amplifying traffic to local
+    # gateway and chain services.
+    State.ready = True; State.epochs = ["7"]; State.epoch_index = 0; State.height = 50
+    State.state_delay = 0.1; State.state_in_flight = 0; State.max_state_in_flight = 0
+    process, proxy_port = start_proxy(backend_port); processes.append(process)
+    first = []
+    worker = threading.Thread(target=lambda: first.append(get(proxy_port, "/v1/admission-status")))
+    worker.start()
+    for _ in range(50):
+        if State.state_in_flight:
+            break
+        time.sleep(0.01)
+    assert State.state_in_flight == 1, "status observation did not reach the backend fixture"
+    second = json.loads(get(proxy_port, "/v1/admission-status")[1])
+    worker.join(2)
+    assert second == {"state": "UNAVAILABLE", "available": False, "reason": "status_observation_busy"}
+    assert first and json.loads(first[0][1])["available"] is True
+    assert State.max_state_in_flight == 1, "concurrent public status calls reached backend services"
+    State.state_delay = 0
     process.terminate(); process.wait(2); processes.remove(process)
 
     # A request queued while phase state is unsafe dispatches only after two
@@ -336,6 +375,9 @@ try:
     State.dispatches = 0
     State.status_override["capacity"]["models"]["model"]["current_weight"] = 0
     process, proxy_port = start_proxy(backend_port, wait=0.2); processes.append(process)
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1]) == {
+        "state": "UNAVAILABLE", "available": False, "reason": "runtime_unavailable",
+    }
     assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_runtime_unavailable"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "zero-capacity single-runtime status dispatched"
     State.status_override = None

@@ -20,6 +20,9 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 GATEWAY_API_KEY = os.environ["GATEWAY_API_KEY"]
 INTERNAL_API_TOKEN = os.environ["INTERNAL_API_TOKEN"]
 GATEWAY_API_BASE_URL = os.environ.get("GATEWAY_API_BASE_URL", "https://api.gonka-dev.net/v1").rstrip("/")
+GATEWAY_ADMISSION_STATUS_URL = os.environ.get(
+    "GATEWAY_ADMISSION_STATUS_URL", f"{GATEWAY_API_BASE_URL}/admission-status"
+)
 INTERNAL_API_BASE_URL = os.environ.get("INTERNAL_API_BASE_URL", "http://127.0.0.1:9464").rstrip("/")
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-0.6B")
 DB_FILE = Path(os.environ.get("STATE_DB", "/data/bot.sqlite3"))
@@ -32,6 +35,7 @@ MAX_USER_MESSAGE_CHARS = int(os.environ.get("USER_MESSAGE_MAX_CHARS", "2000"))
 MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "512"))
 HEALTH_MAX_AGE_SECONDS = int(os.environ.get("HEALTH_MAX_AGE_SECONDS", "900"))
 GATEWAY_TIMEOUT_SECONDS = int(os.environ.get("GATEWAY_TIMEOUT_SECONDS", "30"))
+GATEWAY_ADMISSION_TIMEOUT_SECONDS = int(os.environ.get("GATEWAY_ADMISSION_TIMEOUT_SECONDS", "7"))
 INTERNAL_API_TIMEOUT_SECONDS = int(os.environ.get("INTERNAL_API_TIMEOUT_SECONDS", "35"))
 TELEGRAM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "10"))
 TELEGRAM_POLL_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_POLL_TIMEOUT_SECONDS", "35"))
@@ -312,12 +316,33 @@ def record_inference(db: sqlite3.Connection, outcome: str, usage=None) -> None:
     publish_metrics(db)
 
 
+def require_gateway_admission(db: sqlite3.Connection) -> None:
+    """Fail before conversation dispatch when the shared gateway says no."""
+    request = Request(
+        GATEWAY_ADMISSION_STATUS_URL,
+        headers={"Authorization": f"Bearer {GATEWAY_API_KEY}", "Accept": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=GATEWAY_ADMISSION_TIMEOUT_SECONDS) as response:
+            payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
+        record_inference(db, "pre_dispatch_status_unavailable")
+        raise RuntimeError("gateway pre dispatch rejected") from error
+    if not isinstance(payload, dict) or payload.get("available") is not True:
+        reason = payload.get("reason") if isinstance(payload, dict) else None
+        if not isinstance(reason, str) or not re.fullmatch(r"[a-z0-9_]+", reason):
+            reason = "runtime_unavailable"
+        record_inference(db, f"pre_dispatch_{reason}")
+        raise RuntimeError("gateway pre dispatch rejected")
+
+
 def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text: str):
     conversation = db.execute(
         "SELECT conversation_id FROM conversations WHERE conversation_id = ?", (conversation_id,)
     ).fetchone()
     if not conversation:
         raise ValueError("conversation not found")
+    require_gateway_admission(db)
     messages = bounded_history(db, conversation_id)
     messages.append({"role": "user", "content": input_text})
     body = json.dumps({

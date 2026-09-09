@@ -43,11 +43,17 @@ if not (MAX_QUEUE > 0 and MAX_WAIT > 0 and MAX_DEADLINE_WAIT >= MAX_WAIT
     raise SystemExit("gateway admission configuration must be positive")
 SLOTS = threading.BoundedSemaphore(MAX_QUEUE)
 DISPATCH_PERMIT = threading.BoundedSemaphore(1)
+# The public status endpoint must never amplify unauthenticated traffic into
+# concurrent gateway and chain RPC probes. A busy observation fails closed;
+# it neither waits unboundedly nor consumes another backend connection set.
+STATUS_OBSERVATION_PERMIT = threading.BoundedSemaphore(1)
 DISPATCH_LOCK = threading.Lock()
 AUDIT_LOCK = threading.Lock()
 DISPATCHES_BY_HEIGHT = {}
 COMPLETION_PATH = re.compile(r"^/(?:v1/chat/completions|devshard/[0-9]+/v1/chat/completions)$")
 READ_ONLY_PATHS = {"/v1/models", "/v1/status"}
+ADMISSION_STATUS_PATH = "/v1/admission-status"
+ADMISSION_STATUS_MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_STATUS_MAX_WAIT_SECONDS", 5))
 UPSTREAM_CONTENT_TYPES = {
     "application/json": "application/json",
     "text/event-stream": "text/event-stream",
@@ -410,8 +416,34 @@ class Handler(BaseHTTPRequestHandler):
         return None, "admission_deadline_elapsed"
 
     def do_GET(self):
-        """Proxy only the public read-only gateway surface to the active runtime."""
+        """Serve the local admission contract or proxy public gateway discovery."""
         path = self.path.split("?", 1)[0]
+        if path == ADMISSION_STATUS_PATH:
+            # This is a read-only preflight, not a dispatch permit: one fresh
+            # observation answers whether a user request should be attempted.
+            # It deliberately shares safe_generation with POST admission so
+            # the site and clients cannot call a zero-capacity runtime READY.
+            if not STATUS_OBSERVATION_PERMIT.acquire(blocking=False):
+                _generation, reason = None, "status_observation_busy"
+            else:
+                try:
+                    _generation, reason = safe_generation(
+                        time.monotonic() + ADMISSION_STATUS_MAX_WAIT)
+                finally:
+                    STATUS_OBSERVATION_PERMIT.release()
+            available = reason is None
+            payload = json.dumps({
+                "state": "READY" if available else "UNAVAILABLE",
+                "available": available,
+                "reason": None if available else reason,
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if path not in READ_ONLY_PATHS:
             self.respond_error(404, "not_found")
             return

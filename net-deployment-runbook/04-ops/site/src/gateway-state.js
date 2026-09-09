@@ -38,6 +38,11 @@ type GatewayProbe = {
   recovery?: GatewayRecovery,
 };
 
+type GatewayAdmission = {
+  available?: boolean,
+  reason?: string,
+};
+
 type GatewayAvailability = {
   state: string,
   available: boolean,
@@ -59,6 +64,7 @@ type GatewayStateApi = {
     probe: ?GatewayProbe,
     nowMs?: number,
     maxAgeMs?: number,
+    admission?: ?GatewayAdmission,
   ) => GatewayAvailability,
 };
 (function attachGatewayState(root: any, factory: () => GatewayStateApi) {
@@ -144,6 +150,7 @@ type GatewayStateApi = {
       probe: ?GatewayProbe,
       nowMs: number = Date.now(),
       maxAgeMs: number = 30000,
+      admission: ?GatewayAdmission = null,
     ): GatewayAvailability {
       const currentProbe: GatewayProbe = probe || {};
       const currentState: GatewayState = state || {};
@@ -152,6 +159,17 @@ type GatewayStateApi = {
           state: "OFFLINE",
           available: false,
           message: "Network reset – no nodes online",
+        };
+      }
+      if (admission && admission.available === false) {
+        const reason =
+          typeof admission.reason === "string" && admission.reason
+            ? admission.reason.replaceAll("_", " ")
+            : "admission state is unavailable";
+        return {
+          state: "UNAVAILABLE",
+          available: false,
+          message: `Gateway unavailable – ${reason}`,
         };
       }
       if (
