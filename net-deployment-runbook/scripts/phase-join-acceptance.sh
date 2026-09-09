@@ -341,7 +341,7 @@ write_receipt() {
     --arg participant_address "$ADDRESS" --arg validator_key "$VALIDATOR_KEY" \
     --arg runtime_id "$RUNTIME_ID" --arg public_host "$(node_public_host "$NODE")" \
     --arg runbook_commit "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf UNAVAILABLE)" \
-    --arg profile_hash "$(profile_hash)" --arg operator_mode "independent-host" \
+    --arg profile_hash "${GDC_JOIN_PROFILE_SHA256:-$(profile_hash)}" --arg operator_mode "independent-host" \
     --argjson deadline_epoch "$deadline_epoch" \
     --argjson poc_accepted_once "$poc_accepted_once" --argjson poc_accepted_epoch "$poc_accepted_epoch" \
     --argjson poc_participant_weight "$poc_participant_weight" --argjson poc_accepted_weight_sum "$poc_accepted_weight_sum" --argjson poc_committed_total "$poc_committed_total" \

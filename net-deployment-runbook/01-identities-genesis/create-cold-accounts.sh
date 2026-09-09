@@ -4,7 +4,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 PASSWORD_FILE="${1:-$STATE/secrets/operator.keyring}"
 [[ -s "$PASSWORD_FILE" ]] || { echo "Missing $PASSWORD_FILE; run scripts/make-secrets.sh" >&2; exit 1; }
-"$ROOT/scripts/ensure-inferenced-cli.sh"
+if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+  # Host preparation begins only after the launcher has fresh-validated this
+  # immutable profile.  Account creation can legitimately follow a long ML
+  # qualification, so consume the same receipt-bound profile afterwards.
+  "$ROOT/scripts/ensure-inferenced-cli.sh" --allow-expired --join-profile "$GDC_JOIN_PROFILE"
+else
+  "$ROOT/scripts/ensure-inferenced-cli.sh"
+fi
 PASSWORD="$(<"$PASSWORD_FILE")"
 shift || true
 BACKUP_DIR="$GDC_HOME/mnemonics"

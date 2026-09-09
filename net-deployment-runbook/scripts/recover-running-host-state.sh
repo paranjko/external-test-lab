@@ -523,11 +523,63 @@ COMMON_HEIGHT="$chain_height"
 ((remote_height < COMMON_HEIGHT)) && COMMON_HEIGHT="$remote_height"
 capture_common_state common "$COMMON_HEIGHT"
 
-BASELINE_PROFILE_HASH="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env")"
-[[ "$BASELINE_PROFILE_HASH" =~ ^[0-9a-f]{64}$ ]] || die 'current Genesis baseline profile hash is unavailable'
-REMOTE_RELEASE="$(ssh -T "$NODE" "cat /srv/dai/deploy/$NODE/.gdc-release 2>/dev/null || true")"
-[[ "$REMOTE_RELEASE" == "v2026.07.23 $BASELINE_PROFILE_HASH" ]] \
-  || die "$NODE running deployment is not the current v2026.07.23 baseline"
+PROFILE_KIND=release
+[[ -z "${GDC_JOIN_PROFILE:-}" ]] || PROFILE_KIND=generated_join
+case "$PROFILE_KIND" in
+  generated_join)
+    [[ -r "${GDC_JOIN_PROFILE:-}" ]] \
+      || die "$NODE recovery requires a generated JOIN profile"
+    # The newly observed restore profile intentionally has a new run ID,
+    # operation and archive binding.  Read the immutable deployed profile
+    # from the Host, authenticate it against its deployment marker, then
+    # reconcile stable network/runtime/target fields with this restore intent.
+    DEPLOYED_JOIN_PROFILE="$RUN/deployed-join-profile.v1.json"
+    if ! ssh -T "$NODE" "cat /srv/dai/deploy/$NODE/gdc-join-profile.v1.json" >"$DEPLOYED_JOIN_PROFILE" 2>/dev/null; then
+      rm -f -- "$DEPLOYED_JOIN_PROFILE"
+      die "$NODE running deployment does not retain its generated JOIN profile"
+    fi
+    chmod 600 "$DEPLOYED_JOIN_PROFILE"
+    "$ROOT/scripts/join-profile.sh" validate --allow-expired "$DEPLOYED_JOIN_PROFILE" >/dev/null \
+      || die "$NODE retained deployment JOIN profile is invalid"
+    JOIN_PROFILE_HASH="$(sha256sum "$DEPLOYED_JOIN_PROFILE" | awk '{print $1}')"
+    [[ "$JOIN_PROFILE_HASH" =~ ^[0-9a-f]{64}$ ]] \
+      || die "$NODE generated JOIN profile hash is malformed"
+    REMOTE_JOIN_PROFILE="$(ssh -T "$NODE" "cat /srv/dai/deploy/$NODE/.gdc-join-profile 2>/dev/null || true")"
+    [[ "$REMOTE_JOIN_PROFILE" == "$JOIN_PROFILE_HASH" ]] \
+      || die "$NODE running deployment does not match the generated JOIN profile"
+    jq -e --slurpfile fresh "$GDC_JOIN_PROFILE" '
+      .spec.network.chain_id == $fresh[0].spec.network.chain_id and
+      .spec.network.genesis_sha256 == $fresh[0].spec.network.genesis_sha256 and
+      .spec.target.node_name == $fresh[0].spec.target.node_name and
+      .spec.target.public_host == $fresh[0].spec.target.public_host and
+      .spec.target.public_p2p_address == $fresh[0].spec.target.public_p2p_address and
+      .spec.components.core.expected_runtime == $fresh[0].spec.components.core.expected_runtime and
+      .spec.components.dapi.expected_runtime == $fresh[0].spec.components.dapi.expected_runtime
+    ' "$DEPLOYED_JOIN_PROFILE" >/dev/null \
+      || die "$NODE fresh restore profile does not match the retained deployment network, runtime and target"
+    EXPECTED_PROFILE_CORE_VERSION="$(jq -er '.spec.components.core.expected_runtime.version' "$DEPLOYED_JOIN_PROFILE")"
+    EXPECTED_PROFILE_CORE_COMMIT="$(jq -er '.spec.components.core.expected_runtime.commit' "$DEPLOYED_JOIN_PROFILE")"
+    EXPECTED_PROFILE_DAPI_VERSION="$(jq -er '.spec.components.dapi.expected_runtime.version' "$DEPLOYED_JOIN_PROFILE")"
+    EXPECTED_PROFILE_DAPI_COMMIT="$(jq -er '.spec.components.dapi.expected_runtime.commit' "$DEPLOYED_JOIN_PROFILE")"
+    [[ "$EXPECTED_PROFILE_CORE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ \
+      && "$EXPECTED_PROFILE_CORE_COMMIT" =~ ^[0-9a-f]{40}$ \
+      && "$EXPECTED_PROFILE_DAPI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ \
+      && "$EXPECTED_PROFILE_DAPI_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+      || die "$NODE generated JOIN profile has malformed Core or DAPI runtime identity"
+    ssh -T "$NODE" "cd '/srv/dai/deploy/$NODE' && ./verify-canonical-join-state.sh '/srv/dai/deploy/$NODE' '$EXPECTED_CHAIN_ID' '$EXPECTED_NODE_ID' '$EXPECTED_PROFILE_CORE_VERSION' '$EXPECTED_PROFILE_CORE_COMMIT' '$EXPECTED_PROFILE_DAPI_VERSION' '$EXPECTED_PROFILE_DAPI_COMMIT' running" \
+      || die "$NODE running deployment does not match the generated JOIN profile Core/DAPI tuple"
+    ;;
+  release)
+    BASELINE_PROFILE_HASH="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env")"
+    [[ "$BASELINE_PROFILE_HASH" =~ ^[0-9a-f]{64}$ ]] || die 'current Genesis baseline profile hash is unavailable'
+    REMOTE_RELEASE="$(ssh -T "$NODE" "cat /srv/dai/deploy/$NODE/.gdc-release 2>/dev/null || true")"
+    [[ "$REMOTE_RELEASE" == "v2026.07.23 $BASELINE_PROFILE_HASH" ]] \
+      || die "$NODE running deployment is not the current v2026.07.23 baseline"
+    ;;
+  *)
+    die "$NODE recovery profile kind is missing or unsupported"
+    ;;
+esac
 archive_ml_host="$(jq -r '.ml_host // empty' "$RESTORE_MANIFEST")"
 archive_has_ml_host="$(jq -r 'has("ml_host")' "$RESTORE_MANIFEST")"
 EXPECTED_ML_ENDPOINT=''

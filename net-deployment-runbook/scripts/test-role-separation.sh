@@ -24,6 +24,8 @@ grep -Fq '[ROLE-DEVELOPER.md](ROLE-DEVELOPER.md)' "$ROOT/README.md"
 grep -Fq 'gdc --release v2026.07.23 genesis gdc-node0' "$ROOT/ROLE-GENESIS.md"
 grep -Fq 'alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' "$ROOT/ROLE-JOIN.md"
+grep -Fq '`--release` and `--composition` are' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'intentionally not accepted by JOIN' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'GDC_HOME=$HOME/.gdc-data' "$ROOT/ROLE-JOIN.md"
 if grep -Eq 'GDC_DATA_ROOT|GDC_OPERATOR_MODE|GDC_JOIN_GATEWAY_CLIENT_KEY_FILE|Gate [AB]|Post-merge' "$ROOT/ROLE-JOIN.md"; then
   echo 'JOIN documentation must not expose internal controls or processes' >&2

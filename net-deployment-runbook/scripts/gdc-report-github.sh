@@ -7,6 +7,7 @@ readonly REPORT_REPOSITORY='paranjko/external-test-lab'
 readonly REPORT_SCHEMA_VERSION=1
 readonly GH_INSTALL_URL='https://cli.github.com/'
 readonly MAX_BODY_BYTES=48000
+readonly MAX_FAILURE_CHOICES=10
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GDC_DATA_ROOT="${GDC_DATA_ROOT:?gdc report github must be launched by gdc.sh}"
@@ -51,6 +52,11 @@ read_failure_record() {
       run_log) FAILURE_RUN_LOG="$value" ;;
       envelope) : ;; # Private paths are deliberately not collected.
       diagnostic_envelope) FAILURE_DIAGNOSTIC_ENVELOPE="$value" ;;
+      # JOIN preflight receipts are private, bounded evidence referenced by
+      # the current launcher failure contract.  The public report is built
+      # from the typed failure fields and diagnostic envelope only, so retain
+      # the schema field without importing its local path or contents.
+      preflight_receipt) : ;;
       recorded_at) [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$ ]] || die 'unsafe failure timestamp'; FAILURE_RECORDED_AT="$value" ;;
       *) die 'failure record has an unsupported field' ;;
     esac
@@ -122,8 +128,8 @@ collect_manifest_identity() {
 }
 
 select_failure() {
-  local pointer selected record choice index
-  local -a records=()
+  local pointer selected record choice index recorded
+  local -a records=() recent=()
   pointer="$FAILURES_ROOT/latest-failure"
   require_regular_beneath "$FAILURES_ROOT" "$pointer" || die 'no safe recorded failure exists; run a failed GDC command first'
   selected="$(<"$pointer")"
@@ -132,11 +138,20 @@ select_failure() {
   # The pointer contains an identifier, never a path supplied by an operator.
   require_regular_beneath "$REPORTING_ROOT" "$record" || die 'latest failure record is unsafe; inspect the local reporting directory'
   records+=("$record")
-  while IFS= read -r record; do
+  while IFS= read -r -d '' record; do
     [[ "$record" == "${records[0]}" ]] && continue
     require_regular_beneath "$REPORTING_ROOT" "$record" || die 'recent failure record is unsafe; inspect the local reporting directory'
-    records+=("$record")
-  done < <(find -P "$REPORTING_ROOT/invocations" -mindepth 2 -maxdepth 2 -type f -name failure.env -print 2>/dev/null | LC_ALL=C sort -r)
+    [[ "$record" != *$'\n'* && "$record" != *$'\t'* ]] || die 'recent failure record path is unsafe; inspect the local reporting directory'
+    read_failure_record "$record"
+    recent+=("$FAILURE_RECORDED_AT"$'\t'"$record")
+  done < <(find -P "$REPORTING_ROOT/invocations" -mindepth 2 -maxdepth 2 -type f -name failure.env -print0 2>/dev/null)
+  if (( ${#recent[@]} > 0 )); then
+    while IFS=$'\t' read -r recorded record; do
+      [[ "$recorded" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$ && -n "$record" ]] || die 'recent failure ordering metadata is unsafe'
+      records+=("$record")
+      (( ${#records[@]} >= MAX_FAILURE_CHOICES )) && break
+    done < <(printf '%s\n' "${recent[@]}" | LC_ALL=C sort -r)
+  fi
   if (( ${#records[@]} > 1 )) && interactive; then
     printf 'Recent failed GDC invocations:\n'
     index=1
@@ -381,6 +396,9 @@ read_issue_title() {
   local candidate title_file="$REPORT_DIR/issue-title.txt"
   printf 'New issue title [%s]: ' "$title"
   read -r candidate || candidate=''
+  # Some terminals and pasted input preserve the carriage return from CRLF.
+  # Remove exactly one trailing delimiter; embedded controls still fail.
+  candidate="${candidate%$'\r'}"
   [[ -n "$candidate" ]] || return 0
   [[ "${#candidate}" -le 160 ]] && is_public_single_line "$candidate" || die "issue title is unsafe; retained $REPORT_DIR"
   printf '%s\n' "$candidate" >"$title_file"

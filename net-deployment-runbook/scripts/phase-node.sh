@@ -78,9 +78,10 @@ wait_for_node_sync() {
 }
 
 reset_node() {
-  local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias
+  local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias backup_archive
   linked_ml_host=''
   source=''
+  backup_archive="$GDC_DATA_ROOT/$NODE-validator-backup.tar"
   endpoint="$(ssh -T "$NODE" "jq -r '.[]?.host // empty' /srv/dai/deploy/$NODE/node-config.json 2>/dev/null" 2>/dev/null | head -n 1 || true)"
 
   # `phase-ml-attach.sh` records this relationship in the operator state. It
@@ -152,6 +153,14 @@ compose_down_dir() {
   # Docker Compose prints this warning when an already-empty managed project
   # is reset. It is an expected idempotent state, not an operator warning.
   sed -E '/level=warning msg="Warning: No resource found to remove for project /d' "$output"
+  # A previous interrupted render may have left a syntactically invalid .env.
+  # The label-based cleanup immediately below does not read that file and is
+  # the authoritative fallback for this managed deployment. Do not let the
+  # broken input prevent recovery/reset from removing it.
+  if (( rc != 0 )) && grep -Fq 'failed to read ' "$output" && grep -Fq '/.env:' "$output"; then
+    printf 'READY removed managed Compose resources without reading invalid env directory=%s\n' "$dir"
+    rc=0
+  fi
   rm -f "$output"
   if (( rc != 0 )); then
     printf 'ERROR failed to remove managed Compose deployment directory=%s exit=%s\n' "$dir" "$rc" >&2
@@ -197,6 +206,12 @@ REMOTE
   if [[ -e "$STATE/joined/$NODE" ]]; then
     rm -f "$STATE/joined/$NODE"
   fi
+  # The operator recovery archive deliberately lives at the data root rather
+  # than inside the reset node directory. Confirm that a reset retained it,
+  # without logging the archive's potentially private local path.
+  if [[ -f "$backup_archive" && ! -L "$backup_archive" && -r "$backup_archive" ]]; then
+    printf 'READY preserved local validator recovery archive for %s\n' "$NODE"
+  fi
   if [[ -n "$linked_ml_host" ]]; then
     step "Reset linked GPU host $linked_ml_host for $NODE"
     reset_remote_host "$linked_ml_host" false
@@ -214,7 +229,30 @@ case "$ACTION" in
     ;;
   start)
     step "Start Network Node services on $NODE from deployed release inputs"
-    ssh -T "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
+    start_args=''
+    remote_profile_kind="$(ssh -T "$NODE" "awk -F= '\$1 == \"GDC_PROFILE_KIND\" {print \$2; exit}' /srv/dai/deploy/$NODE/.env" 2>/dev/null || true)"
+    if [[ "$remote_profile_kind" == generated_join ]]; then
+      [[ -s "$STATE/active-run-id" ]] \
+        || die "$NODE has a generated JOIN deployment but no retained active run for signer authorization"
+      join_run_id="$(<"$STATE/active-run-id")"
+      [[ "$join_run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+        || die "$NODE has an unsafe retained JOIN run identifier"
+      join_run="$GDC_HOME/runs/$join_run_id/join-$NODE"
+      "$ROOT/scripts/verify-completed-join-signer-state.sh" --node "$NODE" --run-dir "$join_run" \
+        || die "$NODE completed JOIN receipt does not authorize signer restart"
+      join_profile_sha256="$(sha256sum "$join_run/join-profile.v1.json" | awk '{print $1}')"
+      remote_profile_binding="$(ssh -T "$NODE" "set -Eeuo pipefail
+        deploy='/srv/dai/deploy/$NODE'
+        marker=\$(cat \"\$deploy/.gdc-join-profile\" 2>/dev/null || true)
+        rendered=\$(awk -F= '\$1 == \"GDC_JOIN_PROFILE_SHA256\" {print \$2; exit}' \"\$deploy/.env\")
+        printf '%s %s\\n' \"\$marker\" \"\$rendered\"")" \
+        || die "$NODE generated JOIN deployment profile binding is unreadable"
+      [[ "$remote_profile_binding" == "$join_profile_sha256 $join_profile_sha256" ]] \
+        || die "$NODE generated JOIN deployment does not match its completed signer receipt"
+      start_args=' --enable-signer'
+      printf 'READY %s signer restart authorized by completed JOIN receipt\n' "$NODE"
+    fi
+    ssh -T "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh$start_args"
     wait_for_node_sync
     verify_node
     ;;

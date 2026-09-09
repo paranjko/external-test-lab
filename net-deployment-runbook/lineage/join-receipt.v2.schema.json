@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gonka-dev.net/schemas/join-receipt.v2.schema.json",
+  "title": "GDC Host JOIN transition receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "run_id", "sequence", "recorded_at", "operation", "node_name", "state", "join_profile_sha256", "network_observation_sha256", "generation_id", "identity_fingerprints", "signer_ever_started", "tmkms_state", "evidence", "outcome", "resume_policy"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "kind": {"const": "gdc-host-join-receipt"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "operation": {"enum": ["new", "restore"]},
+    "node_name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"},
+    "state": {"enum": ["RUN_CREATED", "BOOTSTRAP_VERIFIED", "NETWORK_OBSERVED", "JOIN_PROFILE_READY", "TARGET_CLASSIFIED", "HOST_BASE_PREPARED", "IDENTITY_READY", "CANDIDATE_RENDERED", "CANARY_RUNNING", "CANARY_CAUGHT_UP", "CANARY_VERIFIED", "CANARY_STOPPED", "PROMOTION_PREPARED", "PROMOTING", "PROMOTED", "CANONICAL_RUNNING", "CANONICAL_VERIFIED", "APPLICATION_ACTIVE", "MEMBERSHIP_RECONCILED", "PERMISSIONS_RECONCILED", "SIGNER_FENCE_VERIFIED", "SIGNER_ACTIVATING", "SIGNER_ACTIVE_VERIFIED", "ACTIVE_CONFIRMED", "RECOVERY_ARCHIVE_VERIFIED", "COMPLETE", "REFUSED", "FAILED"]},
+    "previous_receipt_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "join_profile_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "network_observation_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "generation_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "identity_fingerprints": {"type": "object", "additionalProperties": false, "required": ["participant_address", "consensus_pubkey", "p2p_node_id", "warm_address"], "properties": {"participant_address": {"type": "string", "maxLength": 128}, "consensus_pubkey": {"type": "string", "maxLength": 256}, "p2p_node_id": {"type": "string", "pattern": "^$|^[a-f0-9]{40}$"}, "warm_address": {"type": "string", "maxLength": 128}}},
+    "signer_ever_started": {"type": "boolean"},
+    "tmkms_state": {"type": "object", "additionalProperties": false, "required": ["height", "round", "step", "block_id"], "properties": {"height": {"type": "integer", "minimum": 0}, "round": {"type": "integer", "minimum": 0}, "step": {"type": "integer", "minimum": 0}, "block_id": {"type": "string", "pattern": "^[a-f0-9]{0,64}$"}}},
+    "evidence": {"type": "array", "maxItems": 16, "items": {"type": "object", "additionalProperties": false, "required": ["kind", "sha256"], "properties": {"kind": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}}},
+    "outcome": {"enum": ["in_progress", "succeeded", "no_op", "refused", "failed", "manual_recovery_required"]},
+    "resume_policy": {"enum": ["resume_same_run", "new_profile", "manual_recovery", "automatic_retry_forbidden", "not_applicable"]}
+  },
+  "allOf": [
+    {"if": {"properties": {"sequence": {"const": 1}}}, "then": {"not": {"required": ["previous_receipt_sha256"]}}},
+    {"if": {"properties": {"sequence": {"minimum": 2}}}, "then": {"required": ["previous_receipt_sha256"]}}
+  ]
+}

@@ -177,20 +177,54 @@ validate_candidate_material() {
   decode_canonical_base64 "$kms_identity" "$work/kms-identity.raw" 32
   validate_tmkms_state "$signing_state"
   validate_node_key "$node_key"
-  grep -Eq '^state_file[[:space:]]*=[[:space:]]*"/root/\.tmkms/state/priv_validator_state\.json"[[:space:]]*$' \
-    "$tmkms_config" \
-    && grep -Eq '^path[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/priv_validator_key\.softsign"[[:space:]]*$' \
-      "$tmkms_config" \
-    && grep -Eq '^secret_key[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/kms-identity\.key"[[:space:]]*$' \
-      "$tmkms_config" \
-    || die 'validator identity contains a malformed TMKMS configuration'
+  if ! grep -Eq '^state_file[[:space:]]*=[[:space:]]*"/root/\.tmkms/state/priv_validator_state\.json"[[:space:]]*$' "$tmkms_config" \
+    || ! grep -Eq '^path[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/priv_validator_key\.softsign"[[:space:]]*$' "$tmkms_config" \
+    || ! grep -Eq '^secret_key[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/kms-identity\.key"[[:space:]]*$' "$tmkms_config"; then
+    die 'validator identity contains a malformed TMKMS configuration'
+  fi
+  trap - RETURN
+  rm -rf -- "$work"
+}
+
+validate_stable_material() {
+  local identity="$1" signer="$2" expected_consensus_key="$3" work actual_consensus_key path
+  local softsign="$signer/tmkms/secrets/priv_validator_key.softsign"
+  local kms_identity="$signer/tmkms/secrets/kms-identity.key"
+  local signing_state="$signer/tmkms/state/priv_validator_state.json"
+  local tmkms_config="$signer/tmkms/tmkms.toml"
+  local node_key="$identity/p2p/node_key.json"
+  [[ -d "$identity" && ! -L "$identity" \
+    && -d "$identity/p2p" && ! -L "$identity/p2p" \
+    && -d "$identity/warm/keyring-file" && ! -L "$identity/warm/keyring-file" \
+    && -d "$signer" && ! -L "$signer" \
+    && -d "$signer/tmkms" && ! -L "$signer/tmkms" \
+    && -d "$signer/tmkms/secrets" && ! -L "$signer/tmkms/secrets" \
+    && -d "$signer/tmkms/state" && ! -L "$signer/tmkms/state" ]] \
+    || die 'stable validator identity roots are partial or ambiguous'
+  for path in "$softsign" "$kms_identity" "$signing_state" "$tmkms_config" "$node_key"; do
+    [[ -f "$path" && ! -L "$path" && -s "$path" ]] \
+      || die 'stable validator identity roots are partial or ambiguous'
+  done
+  actual_consensus_key="$(derive_ed25519_public_key "$softsign")"
+  [[ "$actual_consensus_key" == "$expected_consensus_key" ]] \
+    || die 'stable validator identity conflicts with the supplied backup'
+  work="$(mktemp -d)"
+  trap 'rm -rf -- "$work"' RETURN
+  decode_canonical_base64 "$kms_identity" "$work/kms-identity.raw" 32
+  validate_tmkms_state "$signing_state"
+  validate_node_key "$node_key"
+  if ! grep -Eq '^state_file[[:space:]]*=[[:space:]]*"/root/\.tmkms/state/priv_validator_state\.json"[[:space:]]*$' "$tmkms_config" \
+    || ! grep -Eq '^path[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/priv_validator_key\.softsign"[[:space:]]*$' "$tmkms_config" \
+    || ! grep -Eq '^secret_key[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/kms-identity\.key"[[:space:]]*$' "$tmkms_config"; then
+    die 'stable validator identity contains a malformed TMKMS configuration'
+  fi
   trap - RETURN
   rm -rf -- "$work"
 }
 
 remote_restore() {
   local state="$1" candidate="$2" expected_consensus_key="$3" deployment_env="$4"
-  local expected_bundle_sha256="$5" lock marker transaction='' current_digest
+  local expected_bundle_sha256="$5" lock marker transaction='' current_digest node stable_identity stable_signer
   validate_paths "$state" "$candidate" "$deployment_env"
   validate_consensus_key "$expected_consensus_key"
   [[ "$expected_bundle_sha256" =~ ^[0-9a-f]{64}$ ]] \
@@ -219,18 +253,37 @@ remote_restore() {
   [[ "$current_digest" == "$expected_bundle_sha256" ]] \
     || die 'staged validator identity does not match the validated backup bundle'
 
+  node="$(basename "$state")"
+  stable_identity="${state%/*}/identity/$node"
+  stable_signer="${state%/*}/signer/$node"
+  if [[ -e "$stable_identity" || -e "$stable_signer" ]]; then
+    validate_stable_material "$stable_identity" "$stable_signer" "$expected_consensus_key"
+    if ! cmp -s "$candidate/inference/config/node_key.json" "$stable_identity/p2p/node_key.json" \
+      || ! cmp -s "$candidate/tmkms/secrets/priv_validator_key.softsign" \
+        "$stable_signer/tmkms/secrets/priv_validator_key.softsign" \
+      || ! cmp -s "$candidate/tmkms/secrets/kms-identity.key" \
+        "$stable_signer/tmkms/secrets/kms-identity.key"; then
+      die 'stable validator identity conflicts with the supplied backup'
+    fi
+    # The signing-state height advances after an archive is created. The
+    # current, validated Host state wins and is never rolled back to backup.
+    printf 'stable_existing\n'
+    return 0
+  fi
+
   marker="$state/.gdc-validator-identity-restore.sha256"
   if [[ -s "$deployment_env" ]]; then
     [[ -d "$state" && ! -L "$state" ]] \
       || die 'running validator identity state is inaccessible'
     validate_candidate_material "$state" "$expected_consensus_key"
-    cmp -s "$candidate/tmkms/secrets/priv_validator_key.softsign" \
+    if ! cmp -s "$candidate/tmkms/secrets/priv_validator_key.softsign" \
       "$state/tmkms/secrets/priv_validator_key.softsign" \
-      && cmp -s "$candidate/tmkms/secrets/kms-identity.key" \
+      || ! cmp -s "$candidate/tmkms/secrets/kms-identity.key" \
         "$state/tmkms/secrets/kms-identity.key" \
-      && cmp -s "$candidate/inference/config/node_key.json" \
-        "$state/inference/config/node_key.json" \
-      || die 'running validator identity does not match the supplied backup'
+      || ! cmp -s "$candidate/inference/config/node_key.json" \
+        "$state/inference/config/node_key.json"; then
+      die 'running validator identity does not match the supplied backup'
+    fi
     printf 'existing\n'
     return 0
   fi
@@ -239,10 +292,11 @@ remote_restore() {
     if [[ -f "$marker" && ! -L "$marker" \
       && "$(<"$marker")" == "$expected_bundle_sha256" ]]; then
       validate_candidate_material "$state" "$expected_consensus_key"
-      diff -qr "$candidate/tmkms" "$state/tmkms" >/dev/null 2>&1 \
-        && cmp -s "$candidate/inference/config/node_key.json" \
-          "$state/inference/config/node_key.json" \
-        || die 'interrupted validator identity restore is inconsistent'
+      if ! diff -qr "$candidate/tmkms" "$state/tmkms" >/dev/null 2>&1 \
+        || ! cmp -s "$candidate/inference/config/node_key.json" \
+          "$state/inference/config/node_key.json"; then
+        die 'interrupted validator identity restore is inconsistent'
+      fi
       printf 'installed\n'
       return 0
     fi

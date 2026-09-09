@@ -1,0 +1,16 @@
+# Runbook-owned defaults for a generated Host JOIN profile.
+# Core/DAPI executable versions and commits come from identity-bound Bootstrap
+# seed and public peer observations. DAPI is selected by strict majority, Core
+# by strict majority within that DAPI cohort, and the observed pair must meet
+# the reviewed local quorum: two observations on Community DevNet and three on
+# larger or unknown networks. This immutable official Compose snapshot provides a
+# compatible Host container baseline, but is accepted only when its Core image
+# tag matches the observed Core version. It cannot select a release, DAPI
+# binary, candidate, or per-network policy.
+GDC_JOIN_HOST_STACK_REPOSITORY=gonka-ai/gonka
+GDC_JOIN_HOST_STACK_COMMIT=ce33c851282b8f4c0f63d78d46ddd4d8bb248207
+GDC_JOIN_HOST_STACK_COMPOSE_SHA256=d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94
+MLNODE_GENERIC_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.14-post2@sha256:41d765d1bf2b0f2e1c2aa7b131ff5a5da7a6eaebfe8c3276f67478924e466cd5
+MLNODE_PROXY_IMAGE=nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+GDC_JOIN_EFFECTIVE_EPOCHS=4
+GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS=7200

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gonka-dev.net/schemas/join-result.v1.schema.json",
+  "title": "GDC Host JOIN terminal result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "outcome", "phase", "category", "reason", "exit_code", "mutation", "signer_state", "resume", "join_profile_sha256", "evidence"],
+  "properties": {
+    "schema_version": {"const": 1}, "kind": {"const": "gdc-host-join-result"},
+    "outcome": {"enum": ["succeeded", "no_op", "refused", "failed", "manual_recovery_required"]},
+    "phase": {"enum": ["profile", "identity", "staging", "state_sync", "promotion", "membership", "signer", "acceptance"]},
+    "category": {"enum": ["bootstrap", "observation", "profile", "artifact", "identity", "host", "state_sync", "lineage", "signer", "chain", "internal"]},
+    "reason": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+    "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+    "mutation": {"enum": ["none", "staging_only", "canonical_signer_off", "signer_may_be_on"]},
+    "signer_state": {"enum": ["absent", "fenced", "disabled", "enabled", "unknown"]},
+    "resume": {"enum": ["new_profile", "resume_same_run", "manual_recovery", "automatic_retry_forbidden", "not_applicable"]},
+    "join_profile_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "evidence": {"type": "array", "maxItems": 16, "items": {"type": "object", "additionalProperties": false, "required": ["kind", "sha256"], "properties": {"kind": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}}}
+  }
+}

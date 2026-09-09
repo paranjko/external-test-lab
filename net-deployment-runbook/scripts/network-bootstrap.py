@@ -44,7 +44,9 @@ def validate(doc):
  for i,seed in enumerate(doc["seeds"]):
   pre=f"seeds[{i}]"
   if not NODE_ID_RE.fullmatch(seed["node_id"]):raise BootstrapError("semantics",pre+".node_id","must be 40 lowercase hexadecimal characters")
-  valid_url(seed["rpc"],pre+".rpc",{"http","https"}); p=valid_url(seed["p2p"],pre+".p2p",{"tcp"})
+  rpc=valid_url(seed["rpc"],pre+".rpc",{"http","https"})
+  if rpc.path.rstrip("/") != "/chain-rpc":raise BootstrapError("semantics",pre+".rpc","must use the supported /chain-rpc path")
+  p=valid_url(seed["p2p"],pre+".p2p",{"tcp"})
   if p.port is None:raise BootstrapError("semantics",pre+".p2p","must have an explicit port")
   if seed["node_id"] in ids or seed["rpc"] in rpcs or seed["p2p"] in p2ps:raise BootstrapError("semantics",pre,"duplicate seed identity or endpoint")
   ids.add(seed["node_id"]);rpcs.add(seed["rpc"]);p2ps.add(seed["p2p"])

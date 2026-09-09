@@ -24,7 +24,9 @@ write_env "$ML_ENV" \
   "MLNODE_IMAGE=$MLNODE_GENERIC_IMAGE" \
   "MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE" \
   'POC_BATCH_SIZE_DEFAULT=32'
-"$ROOT/04-ops/agent/render-env.sh" --inventory "$INVENTORY" --host "$ML_HOST" --output "$AGENT_ENV" >/dev/null
+agent_env_args=(--inventory "$INVENTORY" --host "$ML_HOST" --output "$AGENT_ENV")
+[[ -z "${GDC_JOIN_PROFILE:-}" ]] || agent_env_args+=(--join-profile "$GDC_JOIN_PROFILE")
+"$ROOT/04-ops/agent/render-env.sh" "${agent_env_args[@]}" >/dev/null
 
 step "Install and start network GPU $ML_HOST for $NODE"
 REMOTE="/tmp/gdc-deploy-$$-$ML_HOST"

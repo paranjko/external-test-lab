@@ -2,11 +2,15 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
-step "Resolve immutable OCI references for $GDC_RELEASE_PROFILE"
-resolved_lock="$STATE/resolved-images/$GDC_RELEASE_PROFILE.lock"
-GDC_RESOLVED_IMAGE_LOCK='' "$ROOT/scripts/resolve-images.sh" "$resolved_lock" >/dev/null
-export GDC_RESOLVED_IMAGE_LOCK="$resolved_lock"
-load_profiles
+if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+  step 'Use immutable images bound by the generated Join Profile'
+else
+  step "Resolve immutable OCI references for $GDC_RELEASE_PROFILE"
+  resolved_lock="$STATE/resolved-images/$GDC_RELEASE_PROFILE.lock"
+  GDC_RESOLVED_IMAGE_LOCK='' "$ROOT/scripts/resolve-images.sh" "$resolved_lock" >/dev/null
+  export GDC_RESOLVED_IMAGE_LOCK="$resolved_lock"
+  load_profiles
+fi
 record_phase_profile prepare
 
 ready_hosts=(); reboot_hosts=(); skipped_hosts=(); failed_hosts=()
