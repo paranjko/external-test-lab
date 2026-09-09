@@ -4,6 +4,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
+# shellcheck source=portable.sh
+. "$ROOT/scripts/portable.sh"
 MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES=$((66 * 1024 * 1024))
 MAX_VALIDATOR_BACKUP_TRAILING_BYTES=$((1024 * 1024))
 
@@ -23,7 +25,7 @@ safe_extract() {
   # written.  That is narrower than a generic tar reader, but matches the
   # archive this runbook creates and keeps clean-room restore Python-free.
   [[ -f "$archive" && ! -L "$archive" ]] || die 'validator backup archive structure is invalid or ambiguous'
-  archive_size="$(stat -c %s -- "$archive" 2>/dev/null || true)"
+  archive_size="$(gdc_file_size "$archive" 2>/dev/null || true)"
   [[ "$archive_size" =~ ^[0-9]+$ && "$archive_size" -ge 1024 && "$archive_size" -le "$MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES" && $((archive_size % 512)) -eq 0 ]] \
     || die 'validator backup archive structure is invalid or ambiguous'
   case "$archive_kind" in
@@ -41,20 +43,20 @@ safe_extract() {
   header="$(mktemp)"
   trap 'rm -f -- "$header"' RETURN
   while (( block * 512 < archive_size )); do
-    dd if="$archive" of="$header" bs=512 skip="$block" count=1 status=none
+    dd if="$archive" of="$header" bs=512 skip="$block" count=1 2>/dev/null
     if [[ "$(LC_ALL=C od -An -tu1 -v "$header" | awk '{for (i=1;i<=NF;i++) sum+=$i} END {print sum+0}')" == 0 ]]; then
       trailing_block="$block"
       break
     fi
-    name="$(dd if="$header" bs=1 count=100 status=none | tr -d '\000')"
-    prefix="$(dd if="$header" bs=1 skip=345 count=155 status=none | tr -d '\000')"
-    type="$(dd if="$header" bs=1 skip=156 count=1 status=none | tr -d '\000')"
-    size_field="$(dd if="$header" bs=1 skip=124 count=12 status=none | tr -d '\000 ' )"
-    stored_checksum="$(dd if="$header" bs=1 skip=148 count=8 status=none | tr -d '\000 ' )"
+    name="$(dd if="$header" bs=1 count=100 2>/dev/null | tr -d '\000')"
+    prefix="$(dd if="$header" bs=1 skip=345 count=155 2>/dev/null | tr -d '\000')"
+    type="$(dd if="$header" bs=1 skip=156 count=1 2>/dev/null | tr -d '\000')"
+    size_field="$(dd if="$header" bs=1 skip=124 count=12 2>/dev/null | tr -d '\000 ' )"
+    stored_checksum="$(dd if="$header" bs=1 skip=148 count=8 2>/dev/null | tr -d '\000 ' )"
     actual_checksum="$(LC_ALL=C od -An -tu1 -v "$header" | awk '{for (i=1;i<=NF;i++) {n++; sum += (n >= 149 && n <= 156 ? 32 : $i)}} END {print sum+0}')"
     [[ "$stored_checksum" =~ ^[0-7]{1,6}$ && $((8#$stored_checksum)) -eq "$actual_checksum" ]] \
       || die 'validator backup archive structure is invalid or ambiguous'
-    [[ "$(dd if="$header" bs=1 skip=257 count=5 status=none | tr -d '\000')" == ustar ]] \
+    [[ "$(dd if="$header" bs=1 skip=257 count=5 2>/dev/null | tr -d '\000')" == ustar ]] \
       || die 'validator backup archive structure is invalid or ambiguous'
     path="${prefix:+$prefix/}$name"; path="${path%/}"; type="${type:-0}"
     [[ "$path" =~ ^[A-Za-z0-9._/-]+$ && "$path" != /* && "$path" != *'//' && "$path" != *'/./'* && "$path" != *'/../'* && "$path" != . && "$path" != .. ]] \
@@ -71,7 +73,10 @@ safe_extract() {
     [[ "$size_field" =~ ^[0-7]*$ ]] || die 'validator backup archive structure is invalid or ambiguous'
     size=0; [[ -z "$size_field" ]] || size=$((8#$size_field))
     (( size <= 8 * 1024 * 1024 )) || die 'validator backup archive structure is invalid or ambiguous'
-    ((total_size += size, total_size <= 64 * 1024 * 1024, ++member_count <= 1024)) || die 'validator backup archive structure is invalid or ambiguous'
+    total_size=$((total_size + size))
+    (( total_size <= 64 * 1024 * 1024 )) || die 'validator backup archive structure is invalid or ambiguous'
+    member_count=$((member_count + 1))
+    (( member_count <= 1024 )) || die 'validator backup archive structure is invalid or ambiguous'
     if [[ "$type" == 5 ]]; then
       [[ -n "${required_files[$path]:-}" ]] && die 'validator backup archive structure is invalid or ambiguous'
       (( size == 0 )) || die 'validator backup archive structure is invalid or ambiguous'
@@ -90,7 +95,7 @@ safe_extract() {
   (( archive_size - trailing_block * 512 >= 1024 && archive_size - trailing_block * 512 <= MAX_VALIDATOR_BACKUP_TRAILING_BYTES )) \
     || die 'validator backup archive structure is invalid or ambiguous'
   for ((block=trailing_block; block * 512 < archive_size; block++)); do
-    dd if="$archive" of="$header" bs=512 skip="$block" count=1 status=none
+    dd if="$archive" of="$header" bs=512 skip="$block" count=1 2>/dev/null
     [[ "$(LC_ALL=C od -An -tu1 -v "$header" | awk '{for (i=1;i<=NF;i++) sum+=$i} END {print sum+0}')" == 0 ]] \
       || die 'validator backup archive structure is invalid or ambiguous'
   done
@@ -103,8 +108,9 @@ safe_extract() {
     if [[ "${types[$block]}" == d ]]; then
       install -d -m 0700 "$destination/$path"
     else
-      dd if="$archive" bs=512 skip="${starts[$block]}" count="${blocks_list[$block]}" status=none >"$destination/$path"
-      truncate -s "${sizes[$block]}" "$destination/$path"
+      # BSD macOS lacks GNU truncate. The archive member size was checked
+      # above and is bounded, so extract exactly the declared byte range.
+      dd if="$archive" bs=1 skip="$(( ${starts[$block]} * 512 ))" count="${sizes[$block]}" 2>/dev/null >"$destination/$path"
       chmod 0600 "$destination/$path"
     fi
   done
@@ -131,13 +137,17 @@ verify_checksum_manifest() {
   if find "$root" -type l -print -quit | grep -q .; then
     die 'validator backup checksum manifest is malformed or inconsistent'
   fi
-  while IFS= read -r -d '' path; do
+  # safe_extract has already rejected whitespace and control characters from
+  # every member name, so deterministic line records preserve exact paths.
+  while IFS= read -r path; do
+    path="${path#./}"
+    [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || die 'validator backup checksum manifest is malformed or inconsistent'
     actual_files["$path"]=1
-  done < <(cd "$root" && find . -type f ! -name manifest.sha256 -printf '%P\0' | LC_ALL=C sort -z)
+  done < <(cd "$root" && find . -type f ! -name manifest.sha256 -print | LC_ALL=C sort)
   ((${#listed[@]} == ${#actual_files[@]})) || die 'validator backup checksum manifest is malformed or inconsistent'
   for path in "${!listed[@]}"; do
     [[ -n "${actual_files[$path]:-}" ]] || die 'validator backup checksum manifest is malformed or inconsistent'
-    actual="$(sha256sum "$root/$path" | awk '{print $1}')"
+    actual="$(gdc_sha256 "$root/$path")"
     [[ "$actual" == "${listed[$path]}" ]] || die 'validator backup checksum manifest is malformed or inconsistent'
   done
 }
@@ -145,7 +155,7 @@ verify_checksum_manifest() {
 validate_base64_file() {
   local source_file="$1" expected_size="$2" work encoded canonical
   work="$(mktemp -d)"
-  if ! base64 -d "$source_file" >"$work/value.raw" 2>/dev/null; then
+  if ! gdc_base64_decode "$source_file" >"$work/value.raw" 2>/dev/null; then
     rm -rf -- "$work"
     die 'validator backup contains malformed key material'
   fi
@@ -161,7 +171,7 @@ validate_base64_file() {
 validate_expanded_ed25519_key() {
   local key_file="$1" derived_public="$2" work key_size embedded_public
   work="$(mktemp -d)"
-  base64 -d "$key_file" >"$work/key.raw" 2>/dev/null \
+  gdc_base64_decode "$key_file" >"$work/key.raw" 2>/dev/null \
     || { rm -rf -- "$work"; die 'validator backup contains malformed Ed25519 key material'; }
   key_size="$(wc -c <"$work/key.raw" | tr -d ' ')"
   [[ "$key_size" == 32 || "$key_size" == 64 ]] \
@@ -214,7 +224,7 @@ validate_mnemonic_bindings() {
   helper="${GDC_VALIDATOR_BACKUP_IDENTITY_HELPER:-$ROOT/scripts/derive-mnemonic-identity.sh}"
   [[ -x "$helper" ]] || die 'validator backup mnemonic identity helper is unavailable'
   if [[ "$helper" == "$ROOT/scripts/derive-mnemonic-identity.sh" && -z "${GDC_JOIN_PROFILE:-}" ]]; then
-    recovery_cli="$(realpath -e -- "$HOME/.local/bin/inferenced" 2>/dev/null || true)"
+    recovery_cli="$(gdc_realpath_existing "$HOME/.local/bin/inferenced" 2>/dev/null || true)"
     if [[ ! "$recovery_cli" == /* || ! -x "$recovery_cli" ]]; then
       # A generated JOIN deliberately keeps its exact CLI outside PATH.  A
       # standalone backup must recover that retained local authority without
@@ -229,7 +239,7 @@ validate_mnemonic_bindings() {
       [[ "$profile_id" =~ ^[0-9a-f]{64}$ ]] \
         || die 'retained generated JOIN profile has an invalid tool identity'
       candidate="$GDC_HOME/bin/$profile_id/inferenced"
-      recovery_cli="$(realpath -e -- "$candidate" 2>/dev/null || true)"
+      recovery_cli="$(gdc_realpath_existing "$candidate" 2>/dev/null || true)"
       [[ "$recovery_cli" == "$GDC_HOME/bin/$profile_id/inferenced" && -x "$recovery_cli" ]] \
         || die 'runbook-managed inferenced CLI is unavailable for cryptographic backup verification'
     fi
@@ -358,11 +368,11 @@ validate_node_key() {
   validate_base64_file "$work/node-key.base64" 64
   node_public="$("$ROOT/scripts/tmkms-softsign-public-key.sh" "$work/node-key.base64" 2>/dev/null)" \
     || { rm -rf -- "$work"; die 'validator backup P2P node key cannot be verified'; }
-  base64 -d "$work/node-key.base64" >"$work/node-key.raw" 2>/dev/null
+  gdc_base64_decode "$work/node-key.base64" >"$work/node-key.raw" 2>/dev/null
   tail -c 32 "$work/node-key.raw" >"$work/node-public.raw"
   embedded_public="$(base64 <"$work/node-public.raw" | tr -d '\n')"
   # Tendermint/CometBFT P2P node ID: lowercase hex of the first 20 SHA-256 bytes.
-  actual_node_id="$(sha256sum "$work/node-public.raw" | awk '{print substr($1, 1, 40)}')"
+  actual_node_id="$(gdc_sha256 "$work/node-public.raw" | cut -c1-40)"
   rm -rf -- "$work"
   [[ "$node_public" == "$embedded_public" ]] \
     || die 'validator backup P2P node key is cryptographically inconsistent'
@@ -395,10 +405,11 @@ identity_tree_digest() {
   local root="$1"
   (
     cd "$root"
-    find . -xdev -type f -print0 \
-      | LC_ALL=C sort -z \
-      | xargs -0 -r sha256sum
-  ) | sha256sum | awk '{print $1}'
+    find . -xdev -type f -print | LC_ALL=C sort | while IFS= read -r path; do
+      [[ "$path" =~ ^\.?/[A-Za-z0-9._/-]+$ ]] || exit 1
+      printf '%s  %s\n' "$(gdc_sha256 "$path")" "$path"
+    done
+  ) | gdc_sha256_stdin
 }
 
 # Validate a completed archive exactly as a restore would validate its local
@@ -412,7 +423,7 @@ verify_backup_archive() (
     || die 'validator backup archive is not readable'
   [[ "$expected_chain" =~ ^[A-Za-z0-9._-]+$ && "$expected_genesis" =~ ^[0-9a-f]{64}$ ]] \
     || die 'validator backup verification context is malformed'
-  archive="$(realpath -e -- "$archive")"
+  archive="$(gdc_realpath_existing "$archive")"
   stage="$(mktemp -d)"
   trap 'rm -rf -- "$stage"' EXIT
   umask 077
@@ -504,14 +515,17 @@ create_backup() (
     >"$stage/manifest.json"
   (
     cd "$stage"
-    find manifest.json identity.json mnemonics remote-state -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >manifest.sha256
+    find manifest.json identity.json mnemonics remote-state -type f -print | LC_ALL=C sort | while IFS= read -r path; do
+      [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || die 'cannot assemble validator backup archive'
+      printf '%s  %s\n' "$(gdc_sha256 "$path")" "$path"
+    done >manifest.sha256
     archive_tmp="$(mktemp "$archive.tmp.XXXXXX")"
     if ! tar -cf "$archive_tmp" manifest.json manifest.sha256 identity.json mnemonics remote-state \
       >/dev/null 2>&1; then
       rm -f -- "$archive_tmp"
       die 'cannot assemble validator backup archive'
     fi
-    [[ "$(stat -c %s -- "$archive_tmp" 2>/dev/null)" -le "$MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES" ]] \
+    [[ "$(gdc_file_size "$archive_tmp" 2>/dev/null)" -le "$MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES" ]] \
       || { rm -f -- "$archive_tmp"; die 'validator backup archive exceeds the strict byte limit'; }
     chmod 600 "$archive_tmp"
     verify_backup_archive "$archive_tmp" "$node" "$chain_id" "$(genesis_sha256 "$GENESIS/genesis.json")"
@@ -526,7 +540,7 @@ restore_backup() (
   local node="$1" archive="$2" stage extracted manifest remote remote_state restore_mode
   local expected_consensus_key remote_restore_command bundle_sha256 chain_id
   [[ -f "$archive" && -r "$archive" ]] || die "validator backup archive is not readable: $archive"
-  archive="$(realpath -e -- "$archive")"
+  archive="$(gdc_realpath_existing "$archive")"
   stage="$(mktemp -d)"
   remote=''
   cleanup_restore() {

@@ -1,12 +1,15 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+#!/bin/sh
+set -eu
 
 usage() { echo "Usage: $0 create --observation FILE --spec FILE --operation new|restore --run-id ID --output FILE | validate [--allow-expired] FILE" >&2; }
 die() { printf 'join_profile_invalid: %s\n' "$1" >&2; exit 1; }
-sha256_file() { sha256sum "$1" | awk '{print $1}'; }
+ROOT="$(CDPATH='' cd -P "$(dirname "$0")/.." && pwd -P)"
+# shellcheck source=portable.sh
+. "$ROOT/scripts/portable.sh"
+sha256_file() { gdc_sha256 "$1"; }
 
 validate() {
-  local file="$1" allow_expired="${2:-false}" expected_id actual_id operation identity_mode valid_until_epoch now_epoch
+  file="$1"; allow_expired="${2:-false}"
   jq -e '
     type == "object" and (keys | sort) == ["created_at","decision","kind","observation","operation","profile_id","run_id","schema_version","spec","valid_until"] and
     .schema_version == 1 and .kind == "gdc-host-join-profile" and
@@ -48,42 +51,42 @@ validate() {
     (.spec.components.core | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
     and (.spec.components.dapi | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.url | test("^https://github.com/")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
   ' "$file" >/dev/null || die 'document has an invalid closed v1 shape'
-  expected_id="$(jq -cS .spec "$file" | sha256sum | awk '{print $1}')"
+  expected_id="$(jq -cS .spec "$file" | gdc_sha256_stdin)"
   actual_id="$(jq -r .profile_id "$file")"
-  [[ "$expected_id" == "$actual_id" ]] || die 'profile_id does not bind the canonical executable spec'
+  [ "$expected_id" = "$actual_id" ] || die 'profile_id does not bind the canonical executable spec'
   operation="$(jq -r .operation "$file")"; identity_mode="$(jq -r .spec.identity.mode "$file")"
-  [[ "$operation" == new && "$identity_mode" == generate || "$operation" == restore && "$identity_mode" == restore ]] \
-    || die 'operation and identity mode disagree'
-  valid_until_epoch="$(date -u -d "$(jq -r .valid_until "$file")" +%s 2>/dev/null)" \
+  case "$operation:$identity_mode" in new:generate|restore:restore) ;; *) die 'operation and identity mode disagree' ;; esac
+  valid_until_epoch="$(gdc_utc_epoch "$(jq -r .valid_until "$file")" 2>/dev/null)" \
     || die 'valid_until is not a parseable UTC timestamp'
   now_epoch="$(date -u +%s)"
-  [[ "$allow_expired" == true || "$valid_until_epoch" -gt "$now_epoch" ]] \
-    || die 'profile has expired; observe the network and create a new profile'
-  if [[ "$operation" == restore ]]; then jq -e '.spec.identity.restore_archive_sha256 | test("^[a-f0-9]{64}$")' "$file" >/dev/null || die 'restore profile lacks archive digest'; fi
+  [ "$allow_expired" = true ] || [ "$valid_until_epoch" -gt "$now_epoch" ] || die 'profile has expired; observe the network and create a new profile'
+  if [ "$operation" = restore ]; then jq -e '.spec.identity.restore_archive_sha256 | test("^[a-f0-9]{64}$")' "$file" >/dev/null || die 'restore profile lacks archive digest'; fi
 }
 
 case "${1:-}" in
   validate)
     allow_expired=false
-    if [[ "${2:-}" == --allow-expired ]]; then
+    if [ "${2:-}" = --allow-expired ]; then
       allow_expired=true
       shift
     fi
-    [[ $# -eq 2 && -r "$2" ]] || { usage; exit 2; }
+    [ "$#" -eq 2 ] && [ -r "$2" ] || { usage; exit 2; }
     validate "$2" "$allow_expired"; printf 'PASS valid Join Profile file=%s profile_id=%s\n' "$2" "$(jq -r .profile_id "$2")"
     ;;
   create)
     shift
     observation=''; spec=''; operation=''; run_id=''; output=''
-    while (($#)); do case "$1" in
-      --observation) observation="${2:-}"; shift 2 ;;
-      --spec) spec="${2:-}"; shift 2 ;;
-      --operation) operation="${2:-}"; shift 2 ;;
-      --run-id) run_id="${2:-}"; shift 2 ;;
-      --output) output="${2:-}"; shift 2 ;;
+    while [ "$#" -gt 0 ]; do case "$1" in
+      --observation) [ "$#" -ge 2 ] || { usage; exit 2; }; observation="$2"; shift 2 ;;
+      --spec) [ "$#" -ge 2 ] || { usage; exit 2; }; spec="$2"; shift 2 ;;
+      --operation) [ "$#" -ge 2 ] || { usage; exit 2; }; operation="$2"; shift 2 ;;
+      --run-id) [ "$#" -ge 2 ] || { usage; exit 2; }; run_id="$2"; shift 2 ;;
+      --output) [ "$#" -ge 2 ] || { usage; exit 2; }; output="$2"; shift 2 ;;
       *) usage; exit 2 ;;
     esac; done
-    [[ -r "$observation" && -r "$spec" && "$operation" =~ ^(new|restore)$ && "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ && -n "$output" ]] || { usage; exit 2; }
+    [ -r "$observation" ] && [ -r "$spec" ] && [ -n "$output" ] || { usage; exit 2; }
+    case "$operation" in new|restore) ;; *) usage; exit 2 ;; esac
+    printf '%s\n' "$run_id" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' || { usage; exit 2; }
     jq -e '.schema_version == 1 and .kind == "gdc-network-observation" and .result == {state:"ready",reason:"none"} and (.network_state_id | test("^[a-f0-9]{64}$"))' "$observation" >/dev/null || die 'observation is not ready'
     jq -e --arg op "$operation" --slurpfile observation "$observation" '
       type == "object" and
@@ -92,9 +95,9 @@ case "${1:-}" in
       (.seeds.usable | type == "array" and length >= 1) and (.seeds.unavailable | type == "array") and
       .identity.mode == (if $op == "new" then "generate" else "restore" end)
     ' "$spec" >/dev/null || die 'spec is not bound exactly to the observation and operation'
-    profile_id="$(jq -cS . "$spec" | sha256sum | awk '{print $1}')"
+    profile_id="$(jq -cS . "$spec" | gdc_sha256_stdin)"
     observation_sha="$(sha256_file "$observation")"; state_id="$(jq -r .network_state_id "$observation")"
-    created="$(date -u +%FT%TZ)"; valid_until="$(date -u -d '+600 seconds' +%FT%TZ)"
+    created="$(date -u +%FT%TZ)"; valid_until="$(gdc_utc_after_seconds 600)"
     mkdir -p "$(dirname "$output")"; temp="$(mktemp "$(dirname "$output")/.join-profile.XXXXXX")"
     jq -cn --arg run_id "$run_id" --arg created "$created" --arg valid "$valid_until" --arg op "$operation" --arg sha "$observation_sha" --arg state "$state_id" --arg profile "$profile_id" --argjson spec "$(jq -cS . "$spec")" \
       '{schema_version:1,kind:"gdc-host-join-profile",run_id:$run_id,created_at:$created,valid_until:$valid,operation:$op,observation:{sha256:$sha,network_state_id:$state},profile_id:$profile,spec:$spec,decision:"ready_full"}' | jq -cS . >"$temp"

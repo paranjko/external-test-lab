@@ -3,6 +3,9 @@
 # profiles are separate inputs. Operator observability changes must not alter
 # the identity of the Gonka release under test.
 
+# shellcheck source=portable.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/portable.sh"
+
 profile_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
 load_resolved_image_lock() {
@@ -278,7 +281,7 @@ load_join_profile() {
   MLNODE_TENSOR_PARALLEL_SIZE="$(jq -r .spec.deployment.host_envelope.mlnode_tensor_parallel_size "$profile")"
   GDC_JOIN_EFFECTIVE_EPOCHS="$(jq -r .spec.deployment.host_envelope.join_effective_epochs "$profile")"
   GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS="$(jq -r .spec.deployment.host_envelope.join_effective_timeout_seconds "$profile")"
-  GDC_JOIN_PROFILE_SHA256="$(sha256sum "$profile" | awk '{print $1}')"
+  GDC_JOIN_PROFILE_SHA256="$(gdc_sha256 "$profile")"
   export GDC_JOIN_PROFILE GDC_JOIN_PROFILE_ID GDC_JOIN_PROFILE_SHA256
   export GONKA_RELEASE GONKA_COMMIT INFERENCED_IMAGE DAPI_IMAGE DAPI_UPGRADE_URL DAPI_UPGRADE_SHA256 DAPI_EXPECTED_VERSION DAPI_EXPECTED_COMMIT TMKMS_IMAGE POSTGRES_IMAGE
   export EDGE_API_IMAGE VERSIOND_IMAGE PROXY_IMAGE EXPLORER_IMAGE MLNODE_GENERIC_IMAGE MLNODE_PROXY_IMAGE
@@ -320,21 +323,32 @@ profile_hash() {
   local root
   root="$(profile_root)"
   if [[ -n "${GDC_COMPOSITION_HASH:-}" ]]; then
-    {
-      printf '%s\n' "$GDC_COMPOSITION_HASH"
-      sha256sum "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-        "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}'
-    } | sha256sum | awk '{print $1}'
-    return
+    local tmp rc
+    tmp="$(gdc_mktemp_file)" || return $?
+    printf '%s\n' "$GDC_COMPOSITION_HASH" >"$tmp" || { rm -f "$tmp"; return 1; }
+    gdc_sha256 "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" >>"$tmp" || {
+      rc=$?
+      rm -f "$tmp"
+      return "$rc"
+    }
+    gdc_sha256 "$root/profiles/models/$GDC_MODEL_PROFILE.lock" >>"$tmp" || {
+      rc=$?
+      rm -f "$tmp"
+      return "$rc"
+    }
+    gdc_sha256 "$tmp"
+    local rc=$?
+    rm -f "$tmp"
+    return "$rc"
   fi
-  sha256sum "$root/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
+  gdc_sha256_digest_list \
+    "$root/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
     "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}'
+    "$root/profiles/models/$GDC_MODEL_PROFILE.lock"
 }
 
 operator_profile_hash() {
   local root
   root="$(profile_root)"
-  sha256sum "$root/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" \
-    | awk '{print $1}' | sha256sum | awk '{print $1}'
+  gdc_sha256_digest_list "$root/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock"
 }

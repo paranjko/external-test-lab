@@ -25,6 +25,7 @@ esac; done
 [[ -z "$OBSERVATION" || -z "$COMPOSITION" ]] || { usage; exit 2; }
 [[ -n "$OBSERVATION" || -n "$COMPOSITION" ]] || { usage; exit 2; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT/scripts/portable.sh"
 command -v curl >/dev/null || die dependency 'curl is required'
 command -v jq >/dev/null || die dependency 'jq is required'
 "$ROOT/scripts/network-bootstrap.sh" verify "$BOOTSTRAP" >/dev/null
@@ -46,11 +47,14 @@ if [[ -n "$OBSERVATION" ]]; then
     || die configuration 'observation and Bootstrap chain IDs differ'
   [[ "$(jq -r .bootstrap.genesis_sha256 "$OBSERVATION")" == "$(jq -r .genesis.sha256 "$BOOTSTRAP")" ]] \
     || die configuration 'observation and Bootstrap Genesis digests differ'
-  [[ "$(jq -r .bootstrap.document_sha256 "$OBSERVATION")" == "$(sha256sum "$BOOTSTRAP" | awk '{print $1}')" ]] \
+  [[ "$(jq -r .bootstrap.document_sha256 "$OBSERVATION")" == "$(gdc_sha256 "$BOOTSTRAP")" ]] \
     || die configuration 'observation does not bind this Bootstrap document'
   observation_expiry="$(jq -r .expires_at "$OBSERVATION")"
-  observation_expiry_epoch="$(date -u -d "$observation_expiry" +%s 2>/dev/null || true)"
-  [[ "$observation_expiry_epoch" =~ ^[0-9]+$ && "$observation_expiry_epoch" -gt "$(date -u +%s)" ]] \
+  observation_expiry_epoch="$(gdc_utc_epoch "$observation_expiry" 2>/dev/null)" \
+    || die configuration 'network observation expiry is not a valid UTC timestamp'
+  [[ "$observation_expiry_epoch" =~ ^[0-9]+$ ]] \
+    || die configuration 'network observation expiry is not a valid UTC timestamp'
+  [[ "$observation_expiry_epoch" -gt "$(date -u +%s)" ]] \
     || die observation_expired 'network observation is no longer fresh'
   GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$OBSERVATION")"
   GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$OBSERVATION")"
@@ -59,7 +63,7 @@ if [[ -n "$OBSERVATION" ]]; then
   GDC_NETWORK_CORE_COMMIT="$(jq -r .runtime.core.commit "$OBSERVATION")"
   GDC_NETWORK_DAPI_VERSION="$(jq -r .runtime.dapi.version "$OBSERVATION")"
   GDC_NETWORK_DAPI_COMMIT="$(jq -r .runtime.dapi.commit "$OBSERVATION")"
-  OBSERVATION_SHA256="$(sha256sum "$OBSERVATION" | awk '{print $1}')"
+  OBSERVATION_SHA256="$(gdc_sha256 "$OBSERVATION")"
   RUNTIME_SOURCE_KIND=network_observation
   RUNTIME_SOURCE_ID="$GDC_NETWORK_FINGERPRINT"
 else
@@ -93,7 +97,7 @@ fault_domain() {
     for entry in "${entries[@]}"; do [[ "$entry" == "$host="* ]] && { printf '%s' "${entry#*=}"; return; }; done
     return 1
   fi
-  getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
+  gdc_resolve_ipv4 "$host" 2>/dev/null
 }
 resolved_ipv4() {
   local host="$1" entry
@@ -102,7 +106,7 @@ resolved_ipv4() {
     for entry in "${entries[@]}"; do [[ "$entry" == "$host="* ]] && { printf '%s' "${entry#*=}"; return; }; done
     return 1
   fi
-  getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
+  gdc_resolve_ipv4 "$host" 2>/dev/null
 }
 rpc_connection() {
   local rpc="$1" scheme host port
@@ -351,8 +355,8 @@ gateway_admission_protocols="$(jq -ce '
     . + {($record.name):{binary:$record.url,sha256:$record.sha256}})
 ' <<<"$devshard_approvals")"
 
-expires_at="$(date -u -d "+${ttl} seconds" +%FT%TZ)"
-empty_digest="$(printf '' | sha256sum | awk '{print $1}')"
+expires_at="$(gdc_utc_after_seconds "$ttl")" || die dependency 'UTC date arithmetic is unavailable'
+empty_digest="$(printf '' | gdc_sha256_stdin)"
 mkdir -p "$(dirname "$RECEIPT")" "$(dirname "$ENV_FILE")"
 receipt_tmp="$(mktemp "$(dirname "$RECEIPT")/.join-lineage-receipt.XXXXXX")"
 env_tmp="$(mktemp "$(dirname "$ENV_FILE")/.join-lineage-env.XXXXXX")"

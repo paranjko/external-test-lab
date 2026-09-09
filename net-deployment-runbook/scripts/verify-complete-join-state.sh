@@ -5,10 +5,12 @@ set -Eeuo pipefail
 usage() { echo "Usage: $0 NODE JOIN_PROFILE RECEIPT_HEAD" >&2; }
 [[ $# -eq 3 ]] || { usage; exit 2; }
 node="$1"; profile="$2"; receipt="$3"
-[[ "$node" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ && -r "$profile" && -f "$receipt" && ! -L "$receipt" && "$(stat -c %a "$receipt")" == 600 ]] || {
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=portable.sh
+. "$ROOT/scripts/portable.sh"
+[[ "$node" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ && -r "$profile" && -f "$receipt" && ! -L "$receipt" && "$(gdc_file_mode "$receipt")" == 600 ]] || {
   echo 'invalid completed JOIN readback input' >&2; exit 2;
 }
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # This is a post-mutation readback. The profile's immutable spec and
 # profile_id remain mandatory, but its short preflight TTL may have elapsed.
 "$ROOT/scripts/join-profile.sh" validate --allow-expired "$profile" >/dev/null
@@ -18,7 +20,7 @@ core_commit="$(jq -er '.spec.components.core.expected_runtime.commit' "$profile"
 dapi_version="$(jq -er '.spec.components.dapi.expected_runtime.version' "$profile")"
 dapi_commit="$(jq -er '.spec.components.dapi.expected_runtime.commit' "$profile")"
 dapi_image="$(jq -er '.spec.components.dapi.installation.image | .repository + "@" + .digest' "$profile")"
-profile_sha256="$(sha256sum "$profile" | awk '{print $1}')"
+profile_sha256="$(gdc_sha256 "$profile")"
 p2p_node_id="$(jq -er '.identity_fingerprints.p2p_node_id | select(test("^[a-f0-9]{40}$"))' "$receipt")"
 [[ "$chain_id" =~ ^[a-z0-9][a-z0-9-]{0,127}$ \
   && "$core_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ \

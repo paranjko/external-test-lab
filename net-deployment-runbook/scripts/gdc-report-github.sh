@@ -10,6 +10,8 @@ readonly MAX_BODY_BYTES=48000
 readonly MAX_FAILURE_CHOICES=10
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/portable.sh"
 GDC_DATA_ROOT="${GDC_DATA_ROOT:?gdc report github must be launched by gdc.sh}"
 REPORTING_ROOT="$GDC_DATA_ROOT/reporting"
 FAILURES_ROOT="$REPORTING_ROOT/failures"
@@ -18,15 +20,18 @@ die() { printf 'ERROR gdc report github: %s\n' "$*" >&2; exit 1; }
 notice() { printf '%s\n' "$*" >&2; }
 
 require_regular_beneath() {
-  local root="$1" candidate="$2" resolved_root resolved
+  local root="$1" candidate="$2" resolved_root resolved candidate_parent_resolved
   [[ -d "$root" && ! -L "$root" ]] || return 1
-  resolved_root="$(realpath -e -- "$root")" || return 1
+  resolved_root="$(gdc_realpath_existing "$root")" || return 1
   [[ -f "$candidate" && ! -L "$candidate" ]] || return 1
-  resolved="$(realpath -e -- "$candidate")" || return 1
+  resolved="$(gdc_realpath_existing "$candidate")" || return 1
   [[ "$resolved" == "$resolved_root/"* ]] || return 1
-  while [[ "$candidate" != "$root" ]]; do
+  while :; do
     [[ ! -L "$candidate" ]] || return 1
+    candidate_parent_resolved="$(gdc_realpath_existing "$candidate")" || return 1
+    [[ "$candidate_parent_resolved" == "$resolved_root" ]] && return 0
     candidate="$(dirname "$candidate")"
+    [[ "$candidate" != / ]] || return 1
   done
 }
 
@@ -65,13 +70,25 @@ read_failure_record() {
 }
 
 collect_diagnostic_envelope() {
-  DIAGNOSTIC_SUMMARY='Limited legacy context: no validated diagnostic envelope was retained.'
+  DIAGNOSTIC_FAMILY='unavailable'
+  DIAGNOSTIC_PHASE='unavailable'
+  DIAGNOSTIC_CHECKPOINT='unavailable'
+  DIAGNOSTIC_STATE='unavailable'
+  DIAGNOSTIC_CATEGORY='unavailable'
+  DIAGNOSTIC_TOOL='unavailable'
+  DIAGNOSTIC_EXIT_CODE='unavailable'
   DIAGNOSTIC_RESUME='not_applicable'
   DIAGNOSTIC_RESUME_TOKEN='none'
   [[ -n "${FAILURE_DIAGNOSTIC_ENVELOPE:-}" ]] || return 0
   require_regular_beneath "$GDC_DATA_ROOT" "$FAILURE_DIAGNOSTIC_ENVELOPE" || die 'diagnostic envelope is unsafe; retained report was not published'
   "$ROOT/scripts/diagnostic-envelope.sh" validate "$FAILURE_DIAGNOSTIC_ENVELOPE" || die 'diagnostic envelope is invalid; retained report was not published'
-  DIAGNOSTIC_SUMMARY="$(jq -r .summary "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_FAMILY="$(jq -r .command_family "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_PHASE="$(jq -r .phase "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_CHECKPOINT="$(jq -r .checkpoint "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_STATE="$(jq -r .state "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_CATEGORY="$(jq -r .category "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_TOOL="$(jq -r .tool "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_EXIT_CODE="$(jq -r .exit_code "$FAILURE_DIAGNOSTIC_ENVELOPE")"
   DIAGNOSTIC_RESUME="$(jq -r .resume.decision "$FAILURE_DIAGNOSTIC_ENVELOPE")"
   DIAGNOSTIC_RESUME_TOKEN="$(jq -r .resume.token "$FAILURE_DIAGNOSTIC_ENVELOPE")"
 }
@@ -142,13 +159,14 @@ select_failure() {
   # The pointer contains an identifier, never a path supplied by an operator.
   require_regular_beneath "$REPORTING_ROOT" "$record" || die 'latest failure record is unsafe; inspect the local reporting directory'
   records+=("$record")
-  while IFS= read -r -d '' record; do
+  for record in "$REPORTING_ROOT"/invocations/invocation.*/failure.env; do
+    [[ -f "$record" ]] || continue
     [[ "$record" == "${records[0]}" ]] && continue
     require_regular_beneath "$REPORTING_ROOT" "$record" || die 'recent failure record is unsafe; inspect the local reporting directory'
     [[ "$record" != *$'\n'* && "$record" != *$'\t'* ]] || die 'recent failure record path is unsafe; inspect the local reporting directory'
     read_failure_record "$record"
     recent+=("$FAILURE_RECORDED_AT"$'\t'"$record")
-  done < <(find -P "$REPORTING_ROOT/invocations" -mindepth 2 -maxdepth 2 -type f -name failure.env -print0 2>/dev/null)
+  done
   if (( ${#recent[@]} > 0 )); then
     while IFS=$'\t' read -r recorded record; do
       [[ "$recorded" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$ && -n "$record" ]] || die 'recent failure ordering metadata is unsafe'
@@ -230,7 +248,11 @@ escape_html() {
 safe_probe() {
   local label="$1"; shift
   local value
-  value="$(timeout 3 "$@" 2>/dev/null | head -c 160 | tr '\n' ' ' | strip_controls || true)"
+  local probe
+  probe="$(gdc_mktemp_file)" || return 1
+  gdc_run_with_timeout 3 "$@" >"$probe" 2>/dev/null || true
+  value="$(head -c 160 "$probe" | tr '\n' ' ' | strip_controls || true)"
+  rm -f "$probe"
   [[ -n "$value" ]] || value='unavailable'
   value="$(printf '%s' "$value" | LC_ALL=C tr -c 'A-Za-z0-9 .,_+:/()=-' '_')"
   printf '%s=%s\n' "$label" "$value"
@@ -271,7 +293,7 @@ write_report() {
     printf 'genesis_sha256=%s\n' "$MANIFEST_GENESIS_SHA256"
     printf 'runbook_revision=%s\n' "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)"
     printf 'diagnostic_resume=%s\n' "$DIAGNOSTIC_RESUME"
-    printf 'launcher_sha256=%s\n' "$(sha256sum "$ROOT/gdc.sh" | awk '{print $1}')"
+    printf 'launcher_sha256=%s\n' "$(gdc_sha256 "$ROOT/gdc.sh")"
     safe_probe 'os' uname -s
     safe_probe 'kernel' uname -r
     safe_probe 'architecture' uname -m
@@ -286,7 +308,14 @@ write_report() {
     printf '| Field | Value |\n| --- | --- |\n'
     awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(report_id|created_at|failure_recorded_at|failure_stage|active_phase|exit_code|run_id|release_profile|release_profile_sha256|profile_sha256|chain_id|genesis_sha256|runbook_revision|launcher_sha256)$/ { print "| " $1, $2 " |" }' "$metadata"
     printf '\n## Typed diagnostic\n\n'
-    printf '%s\n' "$DIAGNOSTIC_SUMMARY" | escape_html
+    printf '| Field | Value |\n| --- | --- |\n'
+    printf '| command_family | %s |\n' "$DIAGNOSTIC_FAMILY"
+    printf '| phase | %s |\n' "$DIAGNOSTIC_PHASE"
+    printf '| checkpoint | %s |\n' "$DIAGNOSTIC_CHECKPOINT"
+    printf '| state | %s |\n' "$DIAGNOSTIC_STATE"
+    printf '| category | %s |\n' "$DIAGNOSTIC_CATEGORY"
+    printf '| tool | %s |\n' "$DIAGNOSTIC_TOOL"
+    printf '| exit_code | %s |\n' "$DIAGNOSTIC_EXIT_CODE"
     printf '\n\nResume decision: `%s`.\n\n' "$DIAGNOSTIC_RESUME"
     render_resume_guidance
     printf '\n## Environment\n\n| Field | Value |\n| --- | --- |\n'
@@ -305,24 +334,45 @@ write_report() {
 
 finalize_report() {
   local report_dir="$1" metadata="$1/report.txt" body="$1/report.md" inventory="$1/SHA256SUMS" body_hash
-  sed -i '/^<!-- gdc-report-sha256:/d' "$body"
-  sed -i '/^body_sha256=/d' "$metadata"
+  gdc_sed_inplace '/^<!-- gdc-report-sha256:/d' "$body"
+  gdc_sed_inplace '/^body_sha256=/d' "$metadata"
   scan_public_text "$metadata" || die "unsafe generated metadata; retained $report_dir"
   scan_public_text "$body" || die "unsafe generated report body; retained $report_dir"
   [[ "$(wc -c <"$body")" -le "$MAX_BODY_BYTES" ]] || die "mandatory report body exceeds $MAX_BODY_BYTES bytes; retained $report_dir"
-  body_hash="$(sha256sum "$body" | awk '{print $1}')"
+  body_hash="$(gdc_sha256 "$body")"
   printf '<!-- gdc-report-sha256:%s -->\n' "$body_hash" >>"$body"
   printf 'body_sha256=%s\n' "$body_hash" >>"$metadata"
-  (cd "$report_dir" && sha256sum report.txt report.md >"$inventory")
+  {
+    printf '%s  report.txt\n' "$(gdc_sha256 "$metadata")"
+    printf '%s  report.md\n' "$(gdc_sha256 "$body")"
+  } >"$inventory"
   scan_inventory "$inventory" || die "unsafe generated inventory; retained $report_dir"
   REPORT_HASH="$body_hash"
 }
 
 archive_report() {
-  local report_dir archive extracted
+  local report_dir archive extracted archive_stage
+  local -a tar_metadata_args=()
   report_dir="$1"
   archive="$report_dir.tar.gz"
-  tar --no-recursion --numeric-owner --owner=0 --group=0 --mode='u=rw,go=' -C "$report_dir" -czf "$archive" report.txt report.md SHA256SUMS
+  # Public archives must not disclose the operator's local owner/group or
+  # inherit permissive source modes.  BSD tar has no GNU --mode option, so
+  # make neutral read-only copies before applying the portable owner flags.
+  archive_stage="$(mktemp -d "$report_dir/.archive-stage.XXXXXX")" || die "cannot prepare sanitized archive; retained $report_dir"
+  cp "$report_dir/report.txt" "$archive_stage/report.txt"
+  cp "$report_dir/report.md" "$archive_stage/report.md"
+  cp "$report_dir/SHA256SUMS" "$archive_stage/SHA256SUMS"
+  chmod 0444 "$archive_stage/report.txt" "$archive_stage/report.md" "$archive_stage/SHA256SUMS"
+  if tar --help 2>&1 | grep -Fq -- '--owner='; then
+    tar_metadata_args=(--owner=0 --group=0 --numeric-owner)
+  else
+    tar_metadata_args=(--uid=0 --gid=0 --uname=root --gname=root)
+  fi
+  if ! tar -C "$archive_stage" "${tar_metadata_args[@]}" -czf "$archive" report.txt report.md SHA256SUMS; then
+    rm -rf "$archive_stage"
+    die "cannot create sanitized archive; retained $report_dir"
+  fi
+  rm -rf "$archive_stage"
   chmod 0600 "$archive"
   if tar -tzf "$archive" | grep -E '(^|/)(\.env|.*keyring.*|.*secret.*|.*backup.*|run\.log)$' >/dev/null; then
     die "unsafe archive member; retained $report_dir"

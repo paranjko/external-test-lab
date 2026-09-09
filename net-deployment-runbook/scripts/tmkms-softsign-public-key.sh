@@ -2,6 +2,10 @@
 set -Eeuo pipefail
 { set +x; } 2>/dev/null
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=portable.sh
+. "$ROOT/scripts/portable.sh"
+
 die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
@@ -13,7 +17,7 @@ command -v openssl >/dev/null 2>&1 || die 'openssl is required to verify the TMK
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-if ! base64 -d "$key_file" >"$work/key.raw" 2>/dev/null; then
+if ! gdc_base64_decode "$key_file" >"$work/key.raw" 2>/dev/null; then
   die 'TMKMS softsign key is not valid base64'
 fi
 key_size="$(wc -c <"$work/key.raw" | tr -d ' ')"

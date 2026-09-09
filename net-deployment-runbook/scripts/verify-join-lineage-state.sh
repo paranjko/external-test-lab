@@ -6,8 +6,13 @@ set -Eeuo pipefail
 [[ $# -eq 2 ]] || { echo "Usage: $0 JOIN_RPC_URL LINEAGE_RECEIPT" >&2; exit 2; }
 rpc="${1%/}"; receipt="$2"
 [[ ( "$rpc" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc$ || "$rpc" == http://127.0.0.1:26657 ) && -r "$receipt" ]] || { echo 'invalid lineage verification input' >&2; exit 2; }
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+portable="$ROOT/scripts/portable.sh"
+[[ -r "$portable" ]] || portable="$(dirname "${BASH_SOURCE[0]}")/portable.sh"
+# shellcheck source=portable.sh
+. "$portable"
 expires_at="$(jq -er '.bootstrap.trust.expires_at // empty' "$receipt" 2>/dev/null || true)"
-expires_epoch="$(date -u -d "$expires_at" +%s 2>/dev/null || true)"
+expires_epoch="$(gdc_utc_epoch "$expires_at" 2>/dev/null || true)"
 [[ "$expires_epoch" =~ ^[0-9]+$ && "$expires_epoch" -gt "$(date -u +%s)" ]] || {
   echo 'lineage_trust_expired: state-sync trust receipt has expired; run a fresh JOIN lineage preflight before accepting the canary' >&2
   exit 1

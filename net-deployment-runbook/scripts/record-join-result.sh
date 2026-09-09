@@ -1,15 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Atomically persist the bounded terminal outcome of one JOIN invocation.
-set -Eeuo pipefail
+set -eu
 usage() { echo "Usage: $0 --output FILE --input FILE" >&2; }
 OUTPUT=''; INPUT=''
-while (($#)); do case "$1" in
-  --output) OUTPUT="${2:-}"; shift 2 ;;
-  --input) INPUT="${2:-}"; shift 2 ;;
+while [ "$#" -gt 0 ]; do case "$1" in
+  --output) [ "$#" -ge 2 ] || { usage; exit 2; }; OUTPUT="$2"; shift 2 ;;
+  --input) [ "$#" -ge 2 ] || { usage; exit 2; }; INPUT="$2"; shift 2 ;;
   *) usage; exit 2 ;;
 esac; done
-[[ -n "$OUTPUT" && -r "$INPUT" ]] || { usage; exit 2; }
-command -v jq >/dev/null || { echo 'jq is required to record a JOIN result' >&2; exit 2; }
+[ -n "$OUTPUT" ] && [ -r "$INPUT" ] || { usage; exit 2; }
+ROOT="$(CDPATH='' cd -P "$(dirname "$0")/.." && pwd -P)"
+. "$ROOT/scripts/portable.sh"
+gdc_require_jq || exit $?
 jq -e '
   type == "object" and .schema_version == 1 and .kind == "gdc-host-join-result" and
   (keys | sort) == ["category","evidence","exit_code","join_profile_sha256","kind","mutation","outcome","phase","reason","resume","schema_version","signer_state"] and
@@ -29,7 +31,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 temporary="$(mktemp "$(dirname "$OUTPUT")/.join-result.XXXXXX")"
 chmod 600 "$temporary"
 jq -cS . "$INPUT" >"$temporary"
-sync -f "$temporary"
+gdc_sync "$temporary"
 mv -f "$temporary" "$OUTPUT"
-sync -f "$(dirname "$OUTPUT")"
+gdc_sync "$(dirname "$OUTPUT")"
 printf '%s\n' "$OUTPUT"
