@@ -2,8 +2,9 @@
 
 A disposable Ubuntu 24.04 devcontainer with the GNU userland that `gdc.sh`
 needs: bash 5, GNU coreutils, util-linux, git, gh, jq, rsync, and an OpenSSH
-client. Use it on macOS, where `gdc.sh` does not run natively, or anywhere you
-want to run `gdc` from a fresh clone that holds no local secrets.
+client. This optional environment works on macOS or anywhere you want to run
+`gdc` from a fresh clone that holds no local secrets. For native operator setup
+and its verification limits, see [native macOS](../../NATIVE-MACOS.md).
 
 ```bash
 make cleanroom cmd=bash

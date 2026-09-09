@@ -38,10 +38,22 @@ download-genesis`, not a consensus-defined chain fingerprint.
 
 ## Join
 
-Add the SSH alias on your machine. Run `gdc` on a GNU/Linux workstation or
-inside the [cleanroom devcontainer](.devcontainer/cleanroom/README.md), which
-mounts your SSH configuration read-only and keeps its own working directory;
-`gdc.sh` does not run natively on macOS.
+Add the SSH alias on your machine. Run `gdc` with the required operator
+dependencies on Linux or follow [native macOS setup](NATIVE-MACOS.md). The
+[cleanroom devcontainer](.devcontainer/cleanroom/README.md) remains optional.
+The target Host remains Linux; native macOS verification limits and a controlled
+manual JOIN procedure are documented separately.
+
+On macOS, install and select the operator dependencies before anything else,
+then keep this `PATH` in the shell you invoke `gdc` from. Linux needs no such
+step:
+
+```bash
+brew install bash coreutils findutils gnu-sed gnu-tar flock jq openssl@3 python rsync
+BREW_PREFIX="$(brew --prefix)"
+export PATH="$BREW_PREFIX/opt/bash/bin:$BREW_PREFIX/opt/coreutils/libexec/gnubin:$BREW_PREFIX/opt/findutils/libexec/gnubin:$BREW_PREFIX/opt/gnu-sed/libexec/gnubin:$BREW_PREFIX/opt/gnu-tar/libexec/gnubin:$BREW_PREFIX/opt/openssl@3/bin:$BREW_PREFIX/bin:$PATH"
+hash -r
+```
 
 ```bash
 cat >> ~/.ssh/config <<'EOL'
@@ -62,6 +74,18 @@ gdc network bootstrap verify gonka-devnet-community.bootstrap.json
 gdc network bootstrap verify --online gonka-devnet-community.bootstrap.json
 gdc host join --bootstrap-file gonka-devnet-community.bootstrap.json --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
+
+Before the first deployment against a Host, confirm the operator environment
+and the generated plan. `--plan` resolves the runtime, writes a Join Profile
+and stops; it performs no Host action:
+
+```bash
+gdc host join --plan --public-host <IP_or_DOMAIN> <ssh-alias>
+```
+
+On macOS the resulting profile binds a Darwin operator CLI while the Host
+artifacts stay Linux AMD64. If a required tool or flag is missing, the run
+stops here and names it, before any remote change.
 
 `bootstrap.env` is a generated compatibility projection, not an independent
 input. Download it only alongside the matching JSON, verify its attestation,

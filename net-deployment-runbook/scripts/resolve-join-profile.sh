@@ -31,7 +31,7 @@ done
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v jq >/dev/null || die dependency 'jq is required'
 jq -e '.schema_version == 1 and .kind == "gdc-network-observation" and .result == {state:"ready",reason:"none"} and (.runtime_api_origins | type == "array" and length == 1)' "$observation" >/dev/null || die observation 'network observation is not ready'
-jq -e 'type == "object" and (keys | sort) == ["core","dapi","host_envelope"] and (.core.mapping_source.kind == "official_artifact") and (.dapi.mapping_source.kind == "official_artifact") and (.core.installation.binary.sha256 | test("^[a-f0-9]{64}$")) and (.dapi.installation.binary.url | test("^https://github.com/")) and (.dapi.installation.binary.sha256 | test("^[a-f0-9]{64}$"))' "$components" >/dev/null || die component 'exact component resolution is invalid'
+jq -e 'type == "object" and ((keys | sort) == ["core","dapi","host_envelope"] or (keys | sort) == ["core","dapi","host_envelope","operator_cli"]) and (.core.mapping_source.kind == "official_artifact") and (.dapi.mapping_source.kind == "official_artifact") and (.core.installation.binary.sha256 | test("^[a-f0-9]{64}$")) and (.dapi.installation.binary.url | test("^https://github.com/")) and (.dapi.installation.binary.sha256 | test("^[a-f0-9]{64}$"))' "$components" >/dev/null || die component 'exact component resolution is invalid'
 [[ "$(jq -cS .runtime.core "$observation")" == "$(jq -cS .core.observed "$components")" && "$(jq -cS .runtime.dapi "$observation")" == "$(jq -cS .dapi.observed "$components")" ]] || die component 'component resolution does not bind the selected runtime tuple'
 
 identity='{"mode":"generate","stable_identity_layout":"gdc-identity-layout/v2"}'
@@ -51,9 +51,10 @@ jq -cn \
   --arg node "$node_name" --arg host "$public_host" --argjson port "$p2p_port" \
   --arg commit "$(git -C "$ROOT" rev-parse HEAD)" \
   --argjson core "$(jq -c .core "$components")" --argjson dapi "$(jq -c .dapi "$components")" \
+  --argjson operator_cli "$(jq -c .operator_cli "$components")" \
   --argjson host_envelope "$(jq -c .host_envelope "$components")" \
   --argjson usable '[{"selection_policy":"net-info-software-majority/v1"}]' \
   --argjson unavailable '[]' \
   --argjson identity "$identity" --argjson fence "$([[ "$operation" == restore ]] && echo true || echo false)" \
-  '{network:{chain_id:$chain,genesis_sha256:$genesis,bootstrap_sha256:$bootstrap,bootstrap_url:$bootstrap_url},seeds:{usable:$usable,unavailable:$unavailable},target:{node_name:$node,public_host:$host,public_p2p_address:("tcp://" + $host + ":" + ($port|tostring)),platform:"linux-amd64"},deployment:{gdc_source_commit:$commit,data_layout:"gdc-data-layout/v2",host_envelope:$host_envelope},components:{core:$core,dapi:$dapi},state_acquisition:{mode:"pending",providers:[],minimum_providers:0},identity:$identity,activation_policy:{application_required_for_complete:true,signer_allowed_in_profile:false,old_signer_fence_required:$fence}}' | jq -cS . >"$spec_tmp"
+  '{network:{chain_id:$chain,genesis_sha256:$genesis,bootstrap_sha256:$bootstrap,bootstrap_url:$bootstrap_url},seeds:{usable:$usable,unavailable:$unavailable},target:{node_name:$node,public_host:$host,public_p2p_address:("tcp://" + $host + ":" + ($port|tostring)),platform:"linux-amd64"},deployment:{gdc_source_commit:$commit,data_layout:"gdc-data-layout/v2",host_envelope:$host_envelope},components:({core:$core,dapi:$dapi} + (if $operator_cli == null then {} else {operator_cli:$operator_cli} end)),state_acquisition:{mode:"pending",providers:[],minimum_providers:0},identity:$identity,activation_policy:{application_required_for_complete:true,signer_allowed_in_profile:false,old_signer_fence_required:$fence}}' | jq -cS . >"$spec_tmp"
 "$ROOT/scripts/join-profile.sh" create --observation "$observation" --spec "$spec_tmp" --operation "$operation" --run-id "$run_id" --output "$output"

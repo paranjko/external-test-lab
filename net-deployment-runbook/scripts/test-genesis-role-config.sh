@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+TEST_REAL_PYTHON3="$(command -v python3)"
+export TEST_REAL_PYTHON3
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -20,11 +22,16 @@ runtime_state="$tmp/runtime-state"
 mkdir -p "$runtime_state"
 printf '%s\n' 'GDC_PUBLIC_EDGE_NODE=gdc-node0' >"$runtime_state/runtime-topology.env"
 mkdir -p "$tmp/bin"
-cat >"$tmp/bin/getent" <<'EOF'
+cat >"$tmp/bin/python3" <<'EOF'
 #!/usr/bin/env bash
-printf '192.0.2.10 STREAM test\n'
+[[ "$1" == */resolve-ipv4.py ]] || exec "$TEST_REAL_PYTHON3" "$@"
+case "${TEST_DNS_MODE:-single}" in
+  multiple) printf '192.0.2.10\n192.0.2.11\n' ;;
+  failed) exit 1 ;;
+  *) printf '192.0.2.10\n' ;;
+esac
 EOF
-chmod +x "$tmp/bin/getent"
+chmod +x "$tmp/bin/python3"
 (
   PATH="$tmp/bin:$PATH"
   export GDC_HOME="$tmp/operator-home"
@@ -48,3 +55,16 @@ if "$ROOT/scripts/write-genesis-role-config.sh" --output "$tmp/invalid" --ssh-al
   exit 1
 fi
 printf 'PASS explicit Genesis role input contract\n'
+
+for mode in multiple failed; do
+  if (
+    export PATH="$tmp/bin:$PATH" TEST_DNS_MODE="$mode"
+    export GDC_HOME="$tmp/operator-$mode" GDC_DATA_ROOT="$tmp/root-$mode" GDC_ENV="$tmp/genesis-input"
+    source "$ROOT/scripts/lib.sh"
+    load_project
+  ) >"$tmp/dns-$mode.out" 2>&1; then
+    echo 'configuration accepted non-single IPv4 resolution' >&2; exit 1
+  fi
+  grep -Fq 'must resolve to exactly one IPv4 address' "$tmp/dns-$mode.out"
+done
+echo 'PASS shared configuration rejects multiple IPv4 addresses and resolver failure'

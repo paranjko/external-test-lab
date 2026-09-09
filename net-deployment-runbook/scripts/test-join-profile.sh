@@ -61,3 +61,31 @@ grep -Fq 'invalid closed v1 shape' "$tmp/missing-envelope.err"
 if "$TOOL" create --observation "$tmp/observation.json" --spec "$tmp/spec.json" --operation restore --run-id fixture-run --output "$tmp/restore.json" >"$tmp/restore.out" 2>"$tmp/restore.err"; then echo 'restore accepted generate identity' >&2; exit 1; fi
 grep -Fq 'not bound exactly' "$tmp/restore.err"
 printf 'PASS Join Profile is observation-bound, deterministic and tamper-evident\n'
+
+# Independent operator artifact is covered by the executable profile hash.
+for platform in linux-amd64 darwin-amd64 darwin-arm64; do
+  jq --arg p "$platform" '
+    .components.operator_cli = {
+      platform:$p,expected_runtime:.components.core.expected_runtime,
+      binary:{url:("https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-" + $p + ".zip"),sha256:("1" * 64)},
+      source:{component:"operator",provider:"github",repository:"gonka-ai/gonka",tag_authority_repository:"gonka-ai/gonka",release_tag:"release/v0.2.15",commit:.components.core.observed.commit,
+        asset:{name:("inferenced-" + $p + ".zip"),browser_download_url:("https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-" + $p + ".zip"),digest:("sha256:" + ("1" * 64))}}}
+  ' "$tmp/spec.json" >"$tmp/operator-spec.json"
+  "$TOOL" create --observation "$tmp/observation.json" --spec "$tmp/operator-spec.json" --operation new --run-id fixture-run --output "$tmp/operator-profile.json" >/dev/null
+  for expression in '.components.operator_cli.platform = "darwin-arm64-wrong"' \
+    '.components.operator_cli.source.commit = ("a" * 40)' \
+    '.components.operator_cli.binary.sha256 = ("2" * 64)' \
+    '.components.operator_cli.source.release_tag = "release/v9.9.9"' \
+    '.components.operator_cli.expected_runtime.version = "9.9.9"'; do
+    jq "$expression" "$tmp/operator-spec.json" >"$tmp/bad-operator-spec.json"
+    if "$TOOL" create --observation "$tmp/observation.json" --spec "$tmp/bad-operator-spec.json" --operation new --run-id fixture-run --output "$tmp/bad-operator-profile.json" >"$tmp/bad.out" 2>&1; then
+      echo 'invalid operator binding accepted' >&2; exit 1
+    fi
+    grep -Fq 'operator artifact is not bound' "$tmp/bad.out"
+  done
+done
+# Optional fixture export for opt-in native binary/keyring tests only.
+if [[ -n "${GDC_TEST_PROFILE_OUTPUT:-}" ]]; then
+  cp "$tmp/operator-profile.json" "$GDC_TEST_PROFILE_OUTPUT"
+fi
+echo 'PASS operator profile rejects platform, version, source and digest mismatches'

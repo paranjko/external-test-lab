@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() { echo "Usage: $0 SSH_ALIAS [PUBLIC_DNS]" >&2; }
 
@@ -17,8 +18,8 @@ same_ipv4_target() {
   while read -r candidate_ip; do
     while read -r ssh_ip; do
       [[ "$candidate_ip" == "$ssh_ip" ]] && return 0
-    done < <(getent ahostsv4 "$ssh_host" 2>/dev/null | awk '{ print $1 }' | sort -u)
-  done < <(getent ahostsv4 "$candidate" 2>/dev/null | awk '{ print $1 }' | sort -u)
+    done < <(python3 "$ROOT/scripts/resolve-ipv4.py" "$ssh_host" 2>/dev/null | awk '{ print $1 }' | sort -u)
+  done < <(python3 "$ROOT/scripts/resolve-ipv4.py" "$candidate" 2>/dev/null | awk '{ print $1 }' | sort -u)
   return 1
 }
 
@@ -44,7 +45,7 @@ fi
 
 # A DNS name explicitly configured as SSH HostName is already sufficient.
 if [[ "$ssh_host" =~ [A-Za-z] && "$ssh_host" =~ ^[A-Za-z0-9.-]+$ ]] \
-  && getent ahostsv4 "$ssh_host" >/dev/null 2>&1; then
+  && python3 "$ROOT/scripts/resolve-ipv4.py" "$ssh_host" >/dev/null 2>&1; then
   printf '%s\n' "$ssh_host"
   exit 0
 fi

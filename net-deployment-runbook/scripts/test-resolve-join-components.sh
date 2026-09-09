@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TOOL="$ROOT/scripts/resolve-join-components.sh"
+TEST_REAL_SHA256SUM="$(command -v sha256sum)"
+export TEST_REAL_SHA256SUM
 tmp="$(mktemp -d)"; trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 
@@ -26,7 +28,7 @@ case "$url" in
     printf 'services:\n  node:\n    image: ghcr.io/product-science/inferenced:%s\n  api:\n    image: ghcr.io/product-science/api:0.2.15-post3\n' "$node_tag"
     ;;
   *'/releases/tags/release%2Fv0.2.15')
-    printf '%s\n' '{"tag_name":"release/v0.2.15","assets":[{"name":"inferenced-linux-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-linux-amd64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]}'
+    jq -cn --arg mode "${MODE:-good}" '{tag_name:"release/v0.2.15",assets:(["linux-amd64","linux-arm64","darwin-amd64","darwin-arm64"] | map(select($mode != "missing_operator" or . == "linux-amd64") | {name:("inferenced-" + . + ".zip"),browser_download_url:("https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-" + . + ".zip"),digest:"sha256:1111111111111111111111111111111111111111111111111111111111111111"}))}'
     ;;
   *'/repos/gonka-ai/gonka/releases/tags/release%2Fv0.2.15-post5')
     exit 22
@@ -72,7 +74,7 @@ if [[ "${1:-}" == *host-stack-compose.yml ]]; then
     printf '%s  %s\n' d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94 "$1"
   fi
 else
-  /usr/bin/sha256sum "$@"
+  "$TEST_REAL_SHA256SUM" "$@"
 fi
 EOF
 chmod +x "$tmp/bin/sha256sum"
@@ -125,3 +127,23 @@ if MODE=host_stack_core_conflict PATH="$tmp/bin:$PATH" "$TOOL" --observation "$t
 fi
 grep -Fq 'runtime_artifact_unavailable: official Host-stack Core tag 9.9.9 disagrees with observed Core 0.2.15' "$tmp/host-core.err"
 printf 'PASS official artifact resolver preserves observed runtime without a local release lock\n'
+
+# Platform fixtures exercise selection only; they are not native execution.
+cat >"$tmp/bin/uname" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in -s) echo "${TEST_OS:-Linux}" ;; -m) echo "${TEST_ARCH:-x86_64}" ;; esac
+EOF
+chmod +x "$tmp/bin/uname"
+for pair in Darwin/arm64 Darwin/x86_64 Linux/x86_64; do
+  os="${pair%/*}"; arch="${pair#*/}"
+  PATH="$tmp/bin:$PATH" TEST_OS="$os" TEST_ARCH="$arch" "$TOOL" --observation "$tmp/observation.json" --output "$tmp/platform.json"
+  expected="${os,,}-${arch}"
+  expected="${expected/x86_64/amd64}"
+  jq -e --arg p "$expected" '.operator_cli.platform == $p and .operator_cli.expected_runtime == .core.expected_runtime and (.operator_cli.binary.url | endswith("inferenced-" + $p + ".zip")) and (.core.installation.binary.url | endswith("inferenced-linux-amd64.zip"))' "$tmp/platform.json" >/dev/null
+ done
+if PATH="$tmp/bin:$PATH" TEST_OS=Darwin TEST_ARCH=arm64 MODE=missing_operator "$TOOL" --observation "$tmp/observation.json" --output "$tmp/missing-operator.json" >"$tmp/missing.out" 2>&1; then
+  echo 'missing Darwin artifact was accepted' >&2; exit 1
+fi
+grep -Fq 'no exact verified operator artifact' "$tmp/missing.out"
+[[ ! -e "$tmp/missing-operator.json" ]]
+echo 'PASS operator selection is independent of Linux Host and refuses missing artifacts'

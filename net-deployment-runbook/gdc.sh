@@ -1,6 +1,51 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Check operator capabilities, not the kernel of the remote Linux Host.
+gdc_preflight_error() {
+  printf 'error: %s\n' "$*" >&2
+  printf 'See NATIVE-MACOS.md for native dependencies and PATH, or use: cd net-deployment-runbook && make cleanroom cmd=bash\n' >&2
+  exit 2
+}
+gdc_preflight() {
+  local tool missing=()
+  (( BASH_VERSINFO[0] >= 4 )) || gdc_preflight_error "gdc.sh requires Bash 4 or newer; running $BASH_VERSION"
+  for tool in bash python3 jq curl ssh rsync git flock realpath stat sha256sum date base64 find tar unzip openssl sed; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+  done
+  ((${#missing[@]} == 0)) || gdc_preflight_error "missing operator commands: ${missing[*]}"
+  # Child scripts use /usr/bin/env bash, which may differ from this interpreter.
+  bash -c '(( BASH_VERSINFO[0] >= 4 ))' || gdc_preflight_error 'bash on PATH must also be Bash 4 or newer'
+  (
+    umask 077
+    tmp="$(mktemp -d)" || exit 2
+    trap 'rm -rf -- "$tmp"' EXIT
+    printf abc >"$tmp/file"
+    [[ "$(realpath -e -- "$tmp/file")" == "$(cd "$tmp" && pwd -P)/file" ]] || gdc_preflight_error 'realpath -e is incompatible'
+    [[ "$(realpath -m -- "$tmp/missing/../new")" == "$(cd "$tmp" && pwd -P)/new" ]] || gdc_preflight_error 'realpath -m is incompatible'
+    [[ "$(stat -c %s -- "$tmp/file")" == 3 ]] || gdc_preflight_error 'stat -c is incompatible'
+    [[ "$(sha256sum "$tmp/file" | cut -d ' ' -f1)" == ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad ]] || gdc_preflight_error 'SHA-256 implementation is incompatible'
+    [[ "$(date -u -d '1970-01-01T00:00:00Z' +%s)" == 0 ]] || gdc_preflight_error 'date -d is incompatible'
+    base64 <"$tmp/file" >"$tmp/encoded"
+    [[ "$(base64 -d "$tmp/encoded")" == abc ]] || gdc_preflight_error 'base64 -d FILE is incompatible'
+    [[ -n "$(find "$tmp" -type f -name file -print -quit)" ]] || gdc_preflight_error 'find -print -quit is incompatible'
+    sed -i 's/abc/abc/' "$tmp/file" || gdc_preflight_error 'sed -i is incompatible'
+    mkdir "$tmp/extract"
+    tar -czf "$tmp/probe.tar.gz" -C "$tmp" file && tar -xzf "$tmp/probe.tar.gz" -C "$tmp/extract" || gdc_preflight_error 'tar archive round trip failed'
+    cmp "$tmp/file" "$tmp/extract/file" || gdc_preflight_error 'tar archive contents differ'
+    # RFC 8032 test vector 1: derive the known Ed25519 public key.
+    python3 -c 'import sys; sys.stdout.buffer.write(bytes.fromhex("302e020100300506032b6570042204209d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"))' >"$tmp/key.der"
+    openssl pkey -inform DER -in "$tmp/key.der" -pubout -outform DER >"$tmp/public.der" 2>/dev/null || gdc_preflight_error 'OpenSSL Ed25519 derivation is unavailable'
+    [[ "$(od -An -tx1 "$tmp/public.der" | tr -d ' \n')" == 302a300506032b6570032100d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a ]] || gdc_preflight_error 'OpenSSL Ed25519 result is incompatible'
+    exec 9>"$tmp/lock"
+    flock -n 9 || gdc_preflight_error 'flock does not support file descriptor locks'
+    if (exec 9>&-; flock -n "$tmp/lock" true); then gdc_preflight_error 'flock does not preserve lock contention'; fi
+    exec 9>&-
+    flock -n "$tmp/lock" true || gdc_preflight_error 'flock does not release descriptor locks'
+  ) || gdc_preflight_error 'operator capability checks failed'
+}
+gdc_preflight
+
 LAUNCHER_SOURCE="${BASH_SOURCE[0]}"
 LAUNCHER_PATH="$(realpath -e -- "$LAUNCHER_SOURCE")"
 ROOT="$(cd "$(dirname "$LAUNCHER_PATH")" && pwd)"
@@ -337,8 +382,9 @@ See the role guides for required input, then run:
   ./gdc.sh report github
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
-  ./gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
-  ./gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join [--plan] [--verification] [--skip-qualification] [--chain-id <CHAIN_ID>] [--p2p-port <PORT>] [--bootstrap-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join --restore <BACKUP_TAR> [--verification] [--old-signer-fence <RECEIPT>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join --resume <RUN_ID> [--plan] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet

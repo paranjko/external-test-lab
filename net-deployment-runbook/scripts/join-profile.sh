@@ -4,6 +4,15 @@ set -Eeuo pipefail
 usage() { echo "Usage: $0 create --observation FILE --spec FILE --operation new|restore --run-id ID --output FILE | validate [--allow-expired] FILE" >&2; }
 die() { printf 'join_profile_invalid: %s\n' "$1" >&2; exit 1; }
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
+# The profile identity covers what is deployed to the Host. The operator CLI
+# describes the workstation that drives the deployment, not the deployment
+# itself, so it is bound and verified in the profile but excluded from the
+# canonical identity. Otherwise the same JOIN would carry a different
+# profile_id depending on the operator platform, and re-entry, resume and
+# completed-state comparison would not match across operator machines.
+# Deleting an absent key is a no-op, so retained pre-operator_cli profiles
+# keep their existing identity.
+canonical_spec() { jq -cS 'del(.components.operator_cli)' "$1"; }
 
 validate() {
   local file="$1" allow_expired="${2:-false}" expected_id actual_id operation identity_mode valid_until_epoch now_epoch
@@ -48,7 +57,30 @@ validate() {
     (.spec.components.core | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
     and (.spec.components.dapi | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.url | test("^https://github.com/")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
   ' "$file" >/dev/null || die 'document has an invalid closed v1 shape'
-  expected_id="$(jq -cS .spec "$file" | sha256sum | awk '{print $1}')"
+  # Old retained Linux profiles have no operator_cli. New profiles bind the
+  # operator archive independently, including platform, release and source.
+  jq -e '
+    .spec.components as $components |
+    if ($components | has("operator_cli")) then
+      $components.operator_cli as $op |
+      ($op | type == "object" and (keys | sort) == ["binary","expected_runtime","platform","source"]) and
+      ($op.platform | IN("linux-amd64","linux-arm64","darwin-amd64","darwin-arm64")) and
+      $op.expected_runtime == $components.core.expected_runtime and
+      $components.core.observed == $components.core.expected_runtime and
+      ($op.binary | (keys | sort) == ["sha256","url"] and (.sha256 | test("^[a-f0-9]{64}$"))) and
+      ($op.source | (keys | sort) == ["asset","commit","component","provider","release_tag","repository","tag_authority_repository"]) and
+      $op.source.component == "operator" and $op.source.provider == "github" and
+      $op.source.repository == "gonka-ai/gonka" and $op.source.tag_authority_repository == "gonka-ai/gonka" and
+      $op.source.commit == $components.core.observed.commit and
+      $op.source.release_tag == ("release/v" + $components.core.observed.version) and
+      ($op.source.asset | (keys | sort) == ["browser_download_url","digest","name"]) and
+      $op.source.asset.name == ("inferenced-" + $op.platform + ".zip") and
+      $op.binary.url == ("https://github.com/gonka-ai/gonka/releases/download/" + $op.source.release_tag + "/" + $op.source.asset.name) and
+      $op.source.asset.browser_download_url == $op.binary.url and
+      $op.source.asset.digest == ("sha256:" + $op.binary.sha256)
+    else true end
+  ' "$file" >/dev/null || die 'operator artifact is not bound to platform and exact observed Core release'
+  expected_id="$(jq -c .spec "$file" | canonical_spec /dev/stdin | sha256sum | awk '{print $1}')"
   actual_id="$(jq -r .profile_id "$file")"
   [[ "$expected_id" == "$actual_id" ]] || die 'profile_id does not bind the canonical executable spec'
   operation="$(jq -r .operation "$file")"; identity_mode="$(jq -r .spec.identity.mode "$file")"
@@ -92,7 +124,7 @@ case "${1:-}" in
       (.seeds.usable | type == "array" and length >= 1) and (.seeds.unavailable | type == "array") and
       .identity.mode == (if $op == "new" then "generate" else "restore" end)
     ' "$spec" >/dev/null || die 'spec is not bound exactly to the observation and operation'
-    profile_id="$(jq -cS . "$spec" | sha256sum | awk '{print $1}')"
+    profile_id="$(canonical_spec "$spec" | sha256sum | awk '{print $1}')"
     observation_sha="$(sha256_file "$observation")"; state_id="$(jq -r .network_state_id "$observation")"
     created="$(date -u +%FT%TZ)"; valid_until="$(date -u -d '+600 seconds' +%FT%TZ)"
     mkdir -p "$(dirname "$output")"; temp="$(mktemp "$(dirname "$output")/.join-profile.XXXXXX")"

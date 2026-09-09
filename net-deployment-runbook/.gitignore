@@ -24,3 +24,6 @@ TREE.txt
 SHA256SUMS
 *.zip
 *.tar.gz
+
+# Local Python environment for the developer test suite
+.venv-runbook/

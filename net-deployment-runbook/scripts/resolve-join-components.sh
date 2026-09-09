@@ -176,6 +176,13 @@ dapi_commit="$(jq -r .runtime.dapi.commit "$observation")"
 # shellcheck disable=SC1090
 source "$ROOT/profiles/join-host-defaults.lock"
 core_metadata="$(official_core_release)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/operator-platform.sh"
+operator_platform_name="$(operator_platform)" || die artifact_unavailable 'unsupported operator platform'
+operator_metadata="$(official_release_asset operator gonka-ai/gonka "$core_version" "$core_commit" "inferenced-${operator_platform_name}.zip")" \
+  || die artifact_unavailable "no exact verified operator artifact for ${operator_platform_name} at release/v${core_version}"
+operator_cli="$(jq -cn --arg platform "$operator_platform_name" --argjson runtime "$core_runtime" --argjson source "$operator_metadata" \
+  '{platform:$platform,expected_runtime:$runtime,source:$source,binary:{url:$source.asset.browser_download_url,sha256:($source.asset.digest | ltrimstr("sha256:"))}}')"
 dapi_metadata="$(official_dapi_release)"
 core_image="$(registry_image product-science/inferenced "$core_version")"
 resolve_host_stack_images
@@ -209,7 +216,7 @@ host_envelope="$(jq -cn --arg tmkms "$tmkms_image" --arg postgres "$POSTGRES_IMA
 
 mkdir -p "$(dirname "$output")"
 output_tmp="$(mktemp "$(dirname "$output")/.join-components.XXXXXX")"
-jq -cn --argjson core "$core" --argjson dapi "$dapi" --argjson host_envelope "$host_envelope" '{core:$core,dapi:$dapi,host_envelope:$host_envelope}' | jq -cS . >"$output_tmp"
+jq -cn --argjson core "$core" --argjson dapi "$dapi" --argjson host_envelope "$host_envelope" --argjson operator_cli "$operator_cli" '{core:$core,dapi:$dapi,host_envelope:$host_envelope,operator_cli:$operator_cli}' | jq -cS . >"$output_tmp"
 chmod 0600 "$output_tmp"
 mv -f "$output_tmp" "$output"
 printf 'PASS resolved selected runtime from official artifacts output=%s\n' "$output"

@@ -82,7 +82,7 @@ for host in "${hosts[@]}"; do
     # hostname. Prefer the SSH endpoint and use public DNS only as a fallback.
     client_address="$(ssh -G "$network_node" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}' || true)"
     if [[ ! "$client_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-      client_address="$(getent ahostsv4 "$(node_public_host "$network_node")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+      client_address="$(python3 "$ROOT/scripts/resolve-ipv4.py" "$(node_public_host "$network_node")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
     fi
     [[ "$client_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "cannot determine ML client IPv4 for $network_node"
     remote_env+=("ML_CLIENT_CIDR='$client_address/32'")

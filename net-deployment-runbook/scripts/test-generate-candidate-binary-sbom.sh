@@ -38,7 +38,11 @@ make_archive() {
   local archive="$1" member="$2"
   local staging="$temporary/archive/$member"
   mkdir -p "$staging"
-  install -m 0755 /bin/true "$staging/$member"
+  # A stub executable stands in for the real binary; syft is stubbed above and
+  # never inspects the content. Do not copy a system binary: /bin/true does not
+  # exist on macOS, where the operator toolchain is also supported.
+  printf '#!/bin/sh\nexit 0\n' >"$staging/$member"
+  chmod 0755 "$staging/$member"
   (cd "$staging" && zip -X -q "$archive" "$member")
 }
 

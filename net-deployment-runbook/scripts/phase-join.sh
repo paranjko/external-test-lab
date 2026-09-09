@@ -78,7 +78,7 @@ record_join_transition JOIN_PROFILE_READY
 ML_TARGET="$(node_ml_host "$NODE" || printf '%s' "$NODE")"
 URL="$(node_url "$NODE")"
 PUBLIC_HOST="${URL#https://}"
-getent ahostsv4 "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve to IPv4"
+python3 "$ROOT/scripts/resolve-ipv4.py" "$PUBLIC_HOST" | grep -q . || die "$PUBLIC_HOST does not resolve to IPv4"
 ACCOUNT="$ACCOUNTS/$NODE-cold.json"
 IDENTITY="$IDENTITIES/$NODE.json"
 JOIN_CLASSIFICATION="$("$ROOT/scripts/classify-join-state.sh" "$IDENTITY" "$ACCOUNT" "$STATE/joined/$NODE" "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}")"
@@ -262,7 +262,7 @@ if [[ -n "$ML_HOST" ]]; then
   # endpoint that identifies that Host and only use DNS as a fallback.
   callback_address="$(ssh -G "$NODE" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}' || true)"
   if [[ ! "$callback_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    callback_address="$(getent ahostsv4 "$(node_public_host "$NODE")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    callback_address="$(python3 "$ROOT/scripts/resolve-ipv4.py" "$(node_public_host "$NODE")" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
   fi
   [[ "$callback_address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "cannot determine callback IPv4 for $NODE"
   env_args+=(--poc-callback-url "http://$callback_address:9100" --ml-callback-bind 0.0.0.0)

@@ -93,7 +93,7 @@ fault_domain() {
     for entry in "${entries[@]}"; do [[ "$entry" == "$host="* ]] && { printf '%s' "${entry#*=}"; return; }; done
     return 1
   fi
-  getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
+  python3 "$ROOT/scripts/resolve-ipv4.py" "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
 }
 resolved_ipv4() {
   local host="$1" entry
@@ -102,7 +102,7 @@ resolved_ipv4() {
     for entry in "${entries[@]}"; do [[ "$entry" == "$host="* ]] && { printf '%s' "${entry#*=}"; return; }; done
     return 1
   fi
-  getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
+  python3 "$ROOT/scripts/resolve-ipv4.py" "$host" 2>/dev/null | awk 'NR == 1 {print $1}'
 }
 rpc_connection() {
   local rpc="$1" scheme host port

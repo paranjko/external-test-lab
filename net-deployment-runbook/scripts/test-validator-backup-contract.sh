@@ -359,6 +359,20 @@ GDC_VALIDATOR_BACKUP_TEST_MODE=true "$BACKUP" verify-archive \
   "$tmp/valid-validator-backup.tar" gdc-node1 test-chain "$test_genesis_sha" \
   >"$tmp/verify-archive.out"
 grep -Fq 'PASS validator recovery archive dry-run verified:' "$tmp/verify-archive.out"
+# Optional synthetic fixture export for Mac/Linux archive round-trip tests.
+if [[ -n "${GDC_TEST_BACKUP_EXPORT_DIR:-}" ]]; then
+  mkdir -p "$GDC_TEST_BACKUP_EXPORT_DIR"
+  cp "$tmp/valid-validator-backup.tar" "$GDC_TEST_BACKUP_EXPORT_DIR/native-backup.tar"
+  cp "$tmp/identity-helper" "$GDC_TEST_BACKUP_EXPORT_DIR/identity-helper"
+  (
+    umask 077
+    for variable in GDC_COLD_MNEMONIC GDC_WARM_MNEMONIC GDC_VALID_PARTICIPANT GDC_VALID_WARM GDC_VALID_WARM_PUBKEY; do
+      printf 'export %s=%q\n' "$variable" "${!variable}"
+    done
+    printf 'export TEST_GENESIS_SHA=%q\n' "$test_genesis_sha"
+  ) >"$GDC_TEST_BACKUP_EXPORT_DIR/fixture.env"
+fi
+
 
 binding_tree="$tmp/wrong-mnemonic-binding"
 cp -a "$backup_tree" "$binding_tree"

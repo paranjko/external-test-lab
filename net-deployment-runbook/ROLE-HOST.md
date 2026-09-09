@@ -6,10 +6,10 @@ others.
 
 ## Prerequisites
 
-`gdc` runs on a GNU/Linux workstation with GNU coreutils, util-linux, and
-bash 4 or newer. It does not run natively on macOS; use the cleanroom
-devcontainer there, see
-[.devcontainer/cleanroom/README.md](.devcontainer/cleanroom/README.md).
+The target Host requires Linux and remote Docker. The operator workstation
+requires Bash 4+ and compatible tools; see [native macOS setup](NATIVE-MACOS.md)
+for dependencies and verification limits. The
+[cleanroom devcontainer](.devcontainer/cleanroom/README.md) is optional.
 
 Add the SSH alias:
 

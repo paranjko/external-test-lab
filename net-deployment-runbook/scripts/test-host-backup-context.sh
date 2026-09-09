@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+TEST_REAL_PYTHON3="$(command -v python3)"
+export TEST_REAL_PYTHON3
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
 
 mkdir -p "$temporary/bin"
-cat >"$temporary/bin/getent" <<'EOF'
+cat >"$temporary/bin/python3" <<'EOF'
 #!/usr/bin/env bash
+[[ "$1" == */resolve-ipv4.py ]] || exec "$TEST_REAL_PYTHON3" "$@"
 printf 'called\n' >"$HOST_RECOVERY_GETENT_MARKER"
 exit 99
 EOF
-chmod +x "$temporary/bin/getent"
+chmod +x "$temporary/bin/python3"
 
 cat >"$temporary/role-input.env" <<'EOF'
 GDC_NODE_ALIASES=backup-node

@@ -107,8 +107,8 @@ reset_node() {
 
   if [[ -n "$linked_ml_host" && -n "$endpoint" && "$endpoint" != inference ]]; then
     candidate_host="$(ssh -G "$linked_ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
-    candidate_ip="$(getent ahostsv4 "$candidate_host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
-    endpoint_ip="$(getent ahostsv4 "$endpoint" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    candidate_ip="$(python3 "$ROOT/scripts/resolve-ipv4.py" "$candidate_host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    endpoint_ip="$(python3 "$ROOT/scripts/resolve-ipv4.py" "$endpoint" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
     { [[ "$endpoint" == "$candidate_host" ]] || [[ -n "$endpoint_ip" && "$endpoint_ip" == "$candidate_ip" ]]; } \
       || die "linked GPU host $linked_ml_host does not match $NODE ML endpoint $endpoint; no reset was performed"
   fi

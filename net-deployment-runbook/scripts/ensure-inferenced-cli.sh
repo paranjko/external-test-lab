@@ -21,7 +21,7 @@ if [[ -n "$JOIN_PROFILE" ]]; then
     "$ROOT/scripts/join-profile.sh" validate "$JOIN_PROFILE" >/dev/null
   fi
   [[ "$(jq -r .spec.target.platform "$JOIN_PROFILE")" == linux-amd64 ]] \
-    || die 'JOIN profile does not support this operator platform'
+    || die 'JOIN profile has an unsupported target Host platform'
   GONKA_RELEASE="$(jq -r .spec.components.core.expected_runtime.version "$JOIN_PROFILE")"
   url="$(jq -r .spec.components.core.installation.binary.url "$JOIN_PROFILE")"
   expected_sha="$(jq -r .spec.components.core.installation.binary.sha256 "$JOIN_PROFILE")"
@@ -78,7 +78,18 @@ sha256_file() {
 
 key="$(platform_key)"
 if [[ -n "$JOIN_PROFILE" ]]; then
-  [[ "$key" == LINUX_AMD64 ]] || die "JOIN profile requires LINUX_AMD64, got $key"
+  if jq -e '.spec.components.operator_cli != null' "$JOIN_PROFILE" >/dev/null; then
+    operator_platform_name="${key,,}"
+    operator_platform_name="${operator_platform_name//_/-}"
+    [[ "$(jq -r .spec.components.operator_cli.platform "$JOIN_PROFILE")" == "$operator_platform_name" ]] \
+      || die "JOIN profile operator artifact does not match $operator_platform_name; keep the original operator platform for a retained run, or resolve a fresh profile before starting a new JOIN"
+    url="$(jq -r .spec.components.operator_cli.binary.url "$JOIN_PROFILE")"
+    expected_sha="$(jq -r .spec.components.operator_cli.binary.sha256 "$JOIN_PROFILE")"
+  else
+    # Retained v1 profiles predate separate operator selection. Never use their
+    # Linux Host artifact on Darwin or silently substitute another release.
+    [[ "$key" == LINUX_AMD64 ]] || die "legacy JOIN profile requires LINUX_AMD64; use that environment for this retained run (current platform: $key)"
+  fi
 else
   url_var="INFERENCED_OPERATOR_URL_${key}"
   sha_var="INFERENCED_OPERATOR_SHA256_${key}"

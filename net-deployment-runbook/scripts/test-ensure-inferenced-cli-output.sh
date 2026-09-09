@@ -5,6 +5,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/runbook/scripts" "$tmp/payload" "$tmp/home" "$tmp/bin"
+mkdir "$tmp/platform-bin"
+cat >"$tmp/platform-bin/uname" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  -s) echo "${TEST_CLI_OS:-Linux}" ;;
+  -m) echo "${TEST_CLI_ARCH:-x86_64}" ;;
+esac
+SH
+chmod +x "$tmp/platform-bin/uname"
+export PATH="$tmp/platform-bin:$PATH"
+
 cp "$ROOT/scripts/ensure-inferenced-cli.sh" "$tmp/runbook/scripts/ensure-inferenced-cli.sh"
 cp "$ROOT/scripts/inferenced.sh" "$tmp/runbook/scripts/inferenced.sh"
 
@@ -107,3 +118,23 @@ grep -Fxq 'inferenced v9.9.9' "$tmp/profile-wrapper.out"
 grep -Fq 'ensure-inferenced-cli.sh" --allow-expired --join-profile "$GDC_JOIN_PROFILE"' "$ROOT/01-identities-genesis/create-cold-accounts.sh"
 
 printf 'PASS inferenced installation binds downstream CLI calls to the exact Join Profile\n'
+
+# Platform selection tests use a tiny fixture CLI, not a native executable.
+for arch in arm64 x86_64; do
+  platform=darwin-arm64
+  [[ "$arch" != x86_64 ]] || platform=darwin-amd64
+  jq --arg p "$platform" '.spec.components.operator_cli = {platform:$p,binary:.spec.components.core.installation.binary}' "$tmp/join-profile.json" >"$tmp/darwin-profile.json"
+  TEST_CLI_OS=Darwin TEST_CLI_ARCH="$arch" GDC_HOME="$tmp/$arch" "$tmp/runbook/scripts/ensure-inferenced-cli.sh" --join-profile "$tmp/darwin-profile.json" >"$tmp/darwin.out" 2>&1
+  [[ -x "$tmp/$arch/bin/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/inferenced" ]]
+done
+if TEST_CLI_OS=Darwin TEST_CLI_ARCH=arm64 GDC_HOME="$tmp/wrong-platform" "$tmp/runbook/scripts/ensure-inferenced-cli.sh" --join-profile "$tmp/darwin-profile.json" >"$tmp/wrong.out" 2>&1; then
+  echo 'operator platform mismatch accepted' >&2; exit 1
+fi
+grep -Fq 'operator artifact does not match' "$tmp/wrong.out"
+jq '.spec.components.operator_cli.binary.sha256 = ("0" * 64)' "$tmp/darwin-profile.json" >"$tmp/bad-sha.json"
+if TEST_CLI_OS=Darwin TEST_CLI_ARCH=x86_64 GDC_HOME="$tmp/bad-sha" "$tmp/runbook/scripts/ensure-inferenced-cli.sh" --join-profile "$tmp/bad-sha.json" >"$tmp/bad-sha.out" 2>&1; then
+  echo 'operator archive digest mismatch accepted' >&2; exit 1
+fi
+grep -Fq 'checksum mismatch' "$tmp/bad-sha.out"
+[[ ! -e "$tmp/bad-sha/bin/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/inferenced" ]]
+echo 'PASS operator installer platform and archive digest boundaries'

@@ -4,6 +4,8 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TEST_REAL_SHA256SUM="$(command -v sha256sum)"
+export TEST_REAL_SHA256SUM
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/bin"
@@ -48,7 +50,7 @@ case "$url" in
   *raw.githubusercontent.com/gonka-ai/gonka/ce33c851282b8f4c0f63d78d46ddd4d8bb248207/deploy/join/docker-compose.yml)
     emit $'services:\n  node:\n    image: ghcr.io/product-science/inferenced:0.2.15\n  api:\n    image: ghcr.io/product-science/api:0.2.15-post3'
     ;;
-  *'/releases/tags/release%2Fv0.2.15') emit '{"tag_name":"release/v0.2.15","assets":[{"name":"inferenced-linux-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-linux-amd64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]}' ;;
+  *'/releases/tags/release%2Fv0.2.15') emit '{"tag_name":"release/v0.2.15","assets":[{"name":"inferenced-linux-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-linux-amd64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"},{"name":"inferenced-linux-arm64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-linux-arm64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"},{"name":"inferenced-darwin-arm64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-darwin-arm64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"},{"name":"inferenced-darwin-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-darwin-amd64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]}' ;;
   *'/releases/tags/release%2Fv0.2.16') emit '{"tag_name":"release/v0.2.16","assets":[{"name":"decentralized-api-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.16/decentralized-api-amd64.zip","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"}]}' ;;
   *'/git/matching-refs/tags/release/v0.2.15') emit '[{"ref":"refs/tags/release/v0.2.15","object":{"type":"commit","sha":"4d687ed6782bcea3931d2d9135bf322f84e190ab"}}]' ;;
   *'/git/matching-refs/tags/release/v0.2.16') emit '[{"ref":"refs/tags/release/v0.2.16","object":{"type":"commit","sha":"18506d42c510e0cafe6acd748bcd8d83036cba40"}}]' ;;
@@ -67,7 +69,7 @@ set -Eeuo pipefail
 if [[ "${1:-}" == *host-stack-compose.yml ]]; then
   printf '%s  %s\n' d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94 "$1"
 else
-  /usr/bin/sha256sum "$@"
+  "$TEST_REAL_SHA256SUM" "$@"
 fi
 EOF
 

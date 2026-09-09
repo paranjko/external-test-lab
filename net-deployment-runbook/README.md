@@ -16,9 +16,24 @@ EOL
 To add one independently operated Host, use the [JOIN guide](ROLE-JOIN.md).
 Its complete interface is one optional local state directory and one command:
 
-`gdc` runs on a GNU/Linux workstation or inside the
-[cleanroom devcontainer](.devcontainer/cleanroom/README.md); it does not run
-natively on macOS.
+`gdc` checks operator dependencies on Linux and macOS. For a native Mac,
+follow [native setup and controlled JOIN](NATIVE-MACOS.md); the
+[cleanroom devcontainer](.devcontainer/cleanroom/README.md) is optional.
+The remote target Host still requires Linux.
+
+On macOS, install and select the operator dependencies first. `gdc` cannot run
+on the system Bash 3.2 or the BSD userland, and it stops with a named tool and
+flag instead of a cryptic error:
+
+```bash
+brew install bash coreutils findutils gnu-sed gnu-tar flock jq openssl@3 python rsync
+BREW_PREFIX="$(brew --prefix)"
+export PATH="$BREW_PREFIX/opt/bash/bin:$BREW_PREFIX/opt/coreutils/libexec/gnubin:$BREW_PREFIX/opt/findutils/libexec/gnubin:$BREW_PREFIX/opt/gnu-sed/libexec/gnubin:$BREW_PREFIX/opt/gnu-tar/libexec/gnubin:$BREW_PREFIX/opt/openssl@3/bin:$BREW_PREFIX/bin:$PATH"
+hash -r
+```
+
+Keep that `PATH` in the shell you invoke `gdc` from; child scripts use
+`#!/usr/bin/env bash` and inherit it. Linux needs no such step.
 
 ```bash
 git clone https://github.com/paranjko/external-test-lab.git
