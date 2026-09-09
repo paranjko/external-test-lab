@@ -519,6 +519,10 @@ grep -Fxq 'phase=prepared' "$canary/manifest.env"
 # Canary render output must remain separate from the canonical operator render
 # directory. The canary phase therefore cannot overwrite canonical escrow or
 # route configuration before the target is uploaded.
+[[ -x "$ROOT/scripts/phase-gateway-canary.sh" ]] || {
+  echo 'gateway canary phase must be executable by the launcher' >&2
+  exit 1
+}
 grep -Fq 'OPS_RENDER="$GENERATED/ops/gateway-canaries/$canary_render_id"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'write_canary_state stopped "$target_escrow_id"' "$ROOT/scripts/phase-gateway-canary.sh"
 grep -Fq "jq -r '.target.available // false'" "$ROOT/scripts/phase-gateway-canary.sh"
