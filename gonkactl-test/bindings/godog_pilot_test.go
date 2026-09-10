@@ -279,3 +279,37 @@ func TestPersistentPathsRejectSystemTempAndCoverChildren(t *testing.T) {
 		t.Fatal("hardcoded child /tmp usage accepted")
 	}
 }
+
+func TestActualChildEnvironmentReceiptAndHardcodedTempControl(t *testing.T) {
+	if os.Getenv("GONKACTL_CHILD_ENV_PROBE") != "" {
+		for _, key := range persistentEnv {
+			value := os.Getenv(key)
+			if os.Getenv("GONKACTL_CHILD_ENV_PROBE") == "hardcoded-temp" && key == "TMPDIR" {
+				value = "/tmp/hardcoded-child"
+			}
+			fmt.Printf("%s=%s\n", key, value)
+		}
+		os.Exit(0)
+	}
+	root := filepath.Join(os.Getenv("GONKACTL_TEST_DATA_ROOT"), "actual-child-env")
+	t.Setenv("GONKACTL_CHILD_ENV_PROBE", "persistent")
+	receipt, err := ProbeChildEnvironment(context.Background(), root, os.Args[0], "-test.run=^TestActualChildEnvironmentReceiptAndHardcodedTempControl$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(receipt); err != nil {
+		t.Fatalf("missing actual-child receipt %s: %v", receipt, err)
+	}
+	t.Setenv("GONKACTL_CHILD_ENV_PROBE", "hardcoded-temp")
+	negativeReceipt, err := ProbeChildEnvironment(context.Background(), root, os.Args[0], "-test.run=^TestActualChildEnvironmentReceiptAndHardcodedTempControl$")
+	if err == nil || !strings.Contains(err.Error(), "forbidden temporary path") {
+		t.Fatalf("hardcoded child temp control err=%v", err)
+	}
+	contents, readErr := os.ReadFile(negativeReceipt)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(contents), `"TMPDIR": "/tmp/hardcoded-child"`) || !strings.Contains(string(contents), `"valid": false`) {
+		t.Fatalf("negative receipt did not retain hardcoded temp: %s", contents)
+	}
+}
