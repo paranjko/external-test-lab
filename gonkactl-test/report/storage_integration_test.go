@@ -43,6 +43,14 @@ func TestStoragePrefixIntegration(t *testing.T) {
 	if err := os.MkdirAll(absRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	bundleRoot := os.Getenv("GONKACTL_TEST_ALLURE_BUNDLE")
+	if bundleRoot == "" {
+		t.Fatal("GONKACTL_TEST_ALLURE_BUNDLE is required; synthetic HTML is not accepted")
+	}
+	bundleRoot, err = filepath.Abs(bundleRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	containerName := fmt.Sprintf("gonkactl-test-m0-storage-%d", os.Getpid())
 	containerLog := filepath.Join(absRoot, "storage-container.log")
@@ -98,14 +106,14 @@ func TestStoragePrefixIntegration(t *testing.T) {
 	token := issueStorageToken(t, httpProxy.Client(), httpProxy.URL, bootstrapToken)
 	reportID := fmt.Sprintf("m0-storage-prefix-%d", os.Getpid())
 	createStorageReport(t, httpProxy.Client(), httpProxy.URL, token, reportID)
-	uploadStorageFile(t, httpProxy.Client(), httpProxy.URL+"/report/api/reports/"+reportID+"/upload", token, "index.html", []byte("<a href=\"/report-link\">root link</a>"))
-	uploadStorageFile(t, httpProxy.Client(), httpProxy.URL+"/report/api/reports/"+reportID+"/upload", token, "attachments/evidence.txt", []byte("attachment"))
-	uploadStorageFile(t, httpProxy.Client(), httpProxy.URL+"/report/api/assets/upload", token, "app.js", []byte("console.log('asset')"))
+	uploaded := uploadAllureBundle(t, httpProxy.Client(), httpProxy.URL+"/report/api/reports/"+reportID+"/upload", token, bundleRoot)
 	completeStorageReport(t, httpProxy.Client(), httpProxy.URL, token, reportID)
 	assertStorageHistory(t, httpProxy.Client(), httpProxy.URL, token)
 
-	assertStoragePrefixSurface(t, httpProxy.Client(), httpProxy.URL, reportID)
-	assertStoragePrefixSurface(t, tlsProxy.Client(), tlsProxy.URL, reportID)
+	assertStoragePrefixSurface(t, httpProxy.Client(), httpProxy.URL, reportID, uploaded)
+	assertStoragePrefixSurface(t, tlsProxy.Client(), tlsProxy.URL, reportID, uploaded)
+	assertStorageBrowser(t, httpProxy.URL+"/report/"+reportID+"/index.html")
+	assertStorageBrowser(t, tlsProxy.URL+"/report/"+reportID+"/index.html")
 	issueStorageToken(t, tlsProxy.Client(), tlsProxy.URL, bootstrapToken)
 	if err := writeStorageReceipt(filepath.Join(absRoot, "receipt.json"), reportID, storageURL, httpProxy.URL, tlsProxy.URL); err != nil {
 		t.Fatal(err)
@@ -223,12 +231,55 @@ func completeStorageReport(t *testing.T, client *http.Client, proxyURL, token, r
 	}
 }
 
-func assertStoragePrefixSurface(t *testing.T, client *http.Client, proxyURL, reportID string) {
+func uploadAllureBundle(t *testing.T, client *http.Client, endpoint, token, root string) []string {
 	t.Helper()
-	for _, path := range []string{
-		"/report/assets/app.js",
-		"/report/" + reportID + "/attachments/evidence.txt",
-	} {
+	var uploaded []string
+	hasIndex, hasAsset := false, false
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		uploadStorageFile(t, client, endpoint, token, rel, body)
+		uploaded = append(uploaded, rel)
+		if rel == "index.html" {
+			hasIndex = true
+		}
+		if strings.HasSuffix(rel, ".js") || strings.HasSuffix(rel, ".css") {
+			hasAsset = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasIndex || !hasAsset {
+		t.Fatalf("generated Allure bundle incomplete: index=%v asset=%v", hasIndex, hasAsset)
+	}
+	return uploaded
+}
+
+func assertStoragePrefixSurface(t *testing.T, client *http.Client, proxyURL, reportID string, uploaded []string) {
+	t.Helper()
+	paths := []string{"/report/" + reportID + "/index.html"}
+	for _, rel := range uploaded {
+		if strings.HasSuffix(rel, ".js") || strings.HasSuffix(rel, ".css") {
+			paths = append(paths, "/report/"+reportID+"/"+rel)
+			break
+		}
+	}
+	for _, path := range paths {
 		response, err := client.Get(proxyURL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
@@ -250,7 +301,7 @@ func assertStoragePrefixSurface(t *testing.T, client *http.Client, proxyURL, rep
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "root link") {
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "gonkactl-test M0 authentic event qualification") {
 		t.Fatalf("deep reload status=%d body=%q", response.StatusCode, body)
 	}
 	response, err = client.Get(proxyURL + "/report/reports/tree?repo=gonkactl-test/lab-mock/m0/v1")
@@ -271,6 +322,26 @@ func assertStoragePrefixSurface(t *testing.T, client *http.Client, proxyURL, rep
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusFound || response.Header.Get("Location") != "/report/"+reportID+"/index.html" {
 		t.Fatalf("report redirect status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+}
+
+func assertStorageBrowser(t *testing.T, endpoint string) {
+	t.Helper()
+	chrome, err := exec.LookPath("google-chrome")
+	if err != nil {
+		t.Fatalf("BLOCKED: google-chrome unavailable for Storage browser qualification: %v", err)
+	}
+	cmd := exec.Command(chrome, "--headless", "--no-sandbox", "--disable-gpu", "--ignore-certificate-errors", "--dump-dom", endpoint+"#/test-result/case-unknown")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Storage browser navigation %s: %v: %s", endpoint, err, out)
+	}
+	if !bytes.Contains(out, []byte("gonkactl-test M0 authentic event qualification")) {
+		t.Fatalf("Storage browser DOM lacks report identity at %s", endpoint)
+	}
+	cmd = exec.Command(chrome, "--headless", "--no-sandbox", "--disable-gpu", "--ignore-certificate-errors", "--dump-dom", endpoint+"#/test-result/case-unknown")
+	if out, err = cmd.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("gonkactl-test M0 authentic event qualification")) {
+		t.Fatalf("Storage browser deep reload failed at %s: %v", endpoint, err)
 	}
 }
 

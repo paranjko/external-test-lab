@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/paranjko/external-test-lab/gonkactl-test/bindings"
-	"github.com/paranjko/external-test-lab/gonkactl-test/contracts"
 	"github.com/paranjko/external-test-lab/gonkactl-test/report"
 )
 
@@ -16,25 +15,25 @@ func main() {
 		runID = "m0-run-1"
 	}
 	root := filepath.Join("..", "build", "gonkactl-test", "report", "results", runID)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		panic(err)
-	}
-	identity, err := (contracts.SemanticIdentityV1{ScenarioID: "m0-godog-pilot", ContractRevision: "v1", VariantID: "v5-mock", EnvironmentClass: "lab-mock", ComputeMode: "mock", ComparisonSlot: "candidate", HistoryPolicyRevision: "v1"}).HistoryID()
+	root, err := filepath.Abs(root)
 	if err != nil {
 		panic(err)
 	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		panic(err)
+	}
 	positiveJournal := filepath.Join(root, "pilot-events.jsonl")
-	if status := bindings.RunGodogPilot(filepath.Join("bindings", "features", "pilot.feature"), positiveJournal); status != 0 {
+	if status := bindings.RunGodogPilotWithOptions(bindings.PilotOptions{RunID: runID + "-positive", AttemptID: runID + "-positive-attempt", FeaturePath: filepath.Join("bindings", "features", "pilot.feature"), JournalPath: positiveJournal, EvidenceDir: filepath.Join(root, "positive-evidence")}); status != 0 {
 		panic(fmt.Sprintf("positive pilot exited %d", status))
 	}
-	if err := report.ConvertScenario(positiveJournal, filepath.Join(root, "pilot-result.json"), report.Identity{UUID: runID + "-pilot-attempt", HistoryID: identity, Feature: "M0 Godog pilot", Scenario: "Проверки не выводятся из renderer"}); err != nil {
+	if _, err := report.ConvertJournal(positiveJournal, root, runID, "M0 Godog pilot"); err != nil {
 		panic(err)
 	}
 	failureJournal := filepath.Join(root, "given-failure-events.jsonl")
-	if status := bindings.RunGodogPilot(filepath.Join("bindings", "features", "failure.feature"), failureJournal); status == 0 {
+	if status := bindings.RunGodogPilotWithOptions(bindings.PilotOptions{RunID: runID + "-negative", AttemptID: runID + "-negative-attempt", FeaturePath: filepath.Join("bindings", "features", "failure.feature"), JournalPath: failureJournal, EvidenceDir: filepath.Join(root, "negative-evidence")}); status == 0 {
 		panic("negative pilot unexpectedly passed")
 	}
-	if err := report.ConvertScenario(failureJournal, filepath.Join(root, "given-failure-result.json"), report.Identity{UUID: runID + "-given-failure-attempt", HistoryID: identity + "-negative", Feature: "M0 Godog pilot", Scenario: "Given прекращает assertions", FailureDomain: "fixture"}); err != nil {
+	if _, err := report.ConvertJournal(failureJournal, root, runID, "M0 controlled negative pilot"); err != nil {
 		panic(err)
 	}
 }

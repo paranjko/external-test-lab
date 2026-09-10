@@ -17,17 +17,17 @@ test-stand:
 	env $(PERSISTENT_ENV) go test ./stand
 
 test-report:
-	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/history/m0-v2/receipts
+	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/history/m0-v3/receipts $(DATA_ROOT)/terminal-receipts
 	env $(PERSISTENT_ENV) go test ./report
-	cd report && env $(PERSISTENT_ENV) npm ci --ignore-scripts --offline
-	if test ! -f $(DATA_ROOT)/history/m0-v2/receipts/m0-run-1; then env $(PERSISTENT_ENV) GONKACTL_TEST_RUN_ID=m0-run-1 go run ./cmd/m0report && cd report && env $(PERSISTENT_ENV) GONKACTL_TEST_REPORT_OUTPUT=$(DATA_ROOT)/report/render/run-1 GONKACTL_TEST_HISTORY_PATH=$(DATA_ROOT)/history/m0-v2/history.jsonl GONKACTL_TEST_APPEND_HISTORY=true ./node_modules/.bin/allure generate --config allurerc.mjs $(DATA_ROOT)/report/results/m0-run-1 && touch $(DATA_ROOT)/history/m0-v2/receipts/m0-run-1; fi
-	if test ! -f $(DATA_ROOT)/history/m0-v2/receipts/m0-run-2; then env $(PERSISTENT_ENV) GONKACTL_TEST_RUN_ID=m0-run-2 go run ./cmd/m0report && cd report && env $(PERSISTENT_ENV) GONKACTL_TEST_REPORT_OUTPUT=$(DATA_ROOT)/report/render/run-2 GONKACTL_TEST_HISTORY_PATH=$(DATA_ROOT)/history/m0-v2/history.jsonl GONKACTL_TEST_APPEND_HISTORY=true ./node_modules/.bin/allure generate --config allurerc.mjs $(DATA_ROOT)/report/results/m0-run-2 && touch $(DATA_ROOT)/history/m0-v2/receipts/m0-run-2; fi
-	cd report && env $(PERSISTENT_ENV) GONKACTL_TEST_REPORT_OUTPUT=$(DATA_ROOT)/report/render/rerender-run-2 GONKACTL_TEST_HISTORY_PATH=$(DATA_ROOT)/history/m0-v2/history.jsonl GONKACTL_TEST_APPEND_HISTORY=false ./node_modules/.bin/allure generate --config allurerc.mjs $(DATA_ROOT)/report/results/m0-run-2
-	test "$$(wc -l < $(DATA_ROOT)/history/m0-v2/history.jsonl)" -eq 2
+	@set +e; cd report && env $(PERSISTENT_ENV) npm ci --ignore-scripts --offline; status=$$?; cd ..; printf 'target=test-report\nstage=npm-ci-offline\nexit_code=%s\nlog_dir=%s\n' "$$status" '$(DATA_ROOT)/npm-cache/_logs' >$(DATA_ROOT)/terminal-receipts/test-report-npm.receipt; exit "$$status"
+	if test ! -f $(DATA_ROOT)/history/m0-v3/receipts/m0-run-1; then env $(PERSISTENT_ENV) GONKACTL_TEST_RUN_ID=m0-run-1 go run ./cmd/m0report && cd report && env $(PERSISTENT_ENV) bash render-transaction.sh $(DATA_ROOT) m0-run-1; fi
+	if test ! -f $(DATA_ROOT)/history/m0-v3/receipts/m0-run-2; then env $(PERSISTENT_ENV) GONKACTL_TEST_RUN_ID=m0-run-2 go run ./cmd/m0report && cd report && env $(PERSISTENT_ENV) bash render-transaction.sh $(DATA_ROOT) m0-run-2; fi
+	cd report && env $(PERSISTENT_ENV) GONKACTL_TEST_REPORT_OUTPUT=$(DATA_ROOT)/report/render/rerender-run-2 GONKACTL_TEST_HISTORY_PATH=$(DATA_ROOT)/history/m0-v3/history.jsonl GONKACTL_TEST_APPEND_HISTORY=false ./node_modules/.bin/allure generate --config allurerc.mjs $(DATA_ROOT)/report/results/m0-run-2
+	test "$$(wc -l < $(DATA_ROOT)/history/m0-v3/history.jsonl)" -eq 2
 	env $(PERSISTENT_ENV) bash report/browser-smoke.sh $(DATA_ROOT)
 
 test-storage:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/storage-prefix
-	env $(PERSISTENT_ENV) GONKACTL_TEST_STORAGE_INTEGRATION=1 GONKACTL_TEST_STORAGE_DATA_ROOT=$(DATA_ROOT)/storage-prefix go test ./report -run '^TestStoragePrefixIntegration$$' -count=1 -v
+	@set +e; env $(PERSISTENT_ENV) GONKACTL_TEST_STORAGE_INTEGRATION=1 GONKACTL_TEST_STORAGE_DATA_ROOT=$(DATA_ROOT)/storage-prefix GONKACTL_TEST_ALLURE_BUNDLE=$(DATA_ROOT)/report/render/rerender-run-2/awesomeBDD go test ./report -run '^TestStoragePrefixIntegration$$' -count=1 -v >$(DATA_ROOT)/storage-prefix/test-storage.log 2>&1; status=$$?; cat $(DATA_ROOT)/storage-prefix/test-storage.log; printf 'target=test-storage\nexit_code=%s\nlog=%s\nbundle=%s\n' "$$status" '$(DATA_ROOT)/storage-prefix/test-storage.log' '$(DATA_ROOT)/report/render/rerender-run-2/awesomeBDD' >$(DATA_ROOT)/storage-prefix/test-storage.receipt; exit "$$status"
 
 check: test-contracts test-bindings test-stand test-report

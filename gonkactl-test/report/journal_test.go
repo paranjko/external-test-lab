@@ -13,7 +13,7 @@ func TestConvertScenarioDoesNotInventUnreachedPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	journal := filepath.Join(directory, "failure.jsonl")
-	if err := os.WriteFile(journal, []byte("{\"kind\":\"assertion\",\"case_id\":\"attempt-failure\",\"assertion_id\":\"Given\",\"outcome\":\"failed\"}\n{\"kind\":\"case_finished\",\"case_id\":\"attempt-failure\",\"outcome\":\"failed\"}\n"), 0o644); err != nil {
+	if err := os.WriteFile(journal, []byte("{\"kind\":\"case_started\",\"case_id\":\"attempt-failure\",\"elapsed_ms\":10}\n{\"kind\":\"step_started\",\"case_id\":\"attempt-failure\",\"step_id\":\"Given\",\"elapsed_ms\":11}\n{\"kind\":\"assertion\",\"case_id\":\"attempt-failure\",\"step_id\":\"Given\",\"assertion_id\":\"Given\",\"outcome\":\"failed\",\"elapsed_ms\":12}\n{\"kind\":\"case_finished\",\"case_id\":\"attempt-failure\",\"outcome\":\"failed\",\"elapsed_ms\":13}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	output := filepath.Join(directory, "failure-result.json")
@@ -46,7 +46,7 @@ func TestConvertScenarioRejectsMissingTerminalOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	journal := filepath.Join(directory, "partial.jsonl")
-	if err := os.WriteFile(journal, []byte("{\"kind\":\"assertion\",\"case_id\":\"attempt-partial\",\"assertion_id\":\"Given\",\"outcome\":\"passed\"}\n"), 0o644); err != nil {
+	if err := os.WriteFile(journal, []byte("{\"kind\":\"case_started\",\"case_id\":\"attempt-partial\"}\n{\"kind\":\"step_started\",\"case_id\":\"attempt-partial\",\"step_id\":\"Given\"}\n{\"kind\":\"assertion\",\"case_id\":\"attempt-partial\",\"step_id\":\"Given\",\"assertion_id\":\"Given\",\"outcome\":\"passed\"}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := ConvertScenario(journal, filepath.Join(directory, "partial.json"), Identity{UUID: "attempt-partial", HistoryID: "history-partial", Feature: "M0", Scenario: "partial"}); err == nil {
