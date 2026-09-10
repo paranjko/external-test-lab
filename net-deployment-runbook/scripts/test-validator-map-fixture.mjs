@@ -362,10 +362,12 @@ const api = (port) => ({
   },
   "/status/gateway-health": {
     state: "READY",
+    readiness: "TRAFFIC_READY",
     checked_at: now,
     curl_exit: 0,
     http_status: 200,
     latency_ms: 1,
+    completion_finished_ms: Date.parse(now),
     reason: "",
     admission: "dispatched_once",
     admission_id: "fixture",

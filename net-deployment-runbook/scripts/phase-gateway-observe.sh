@@ -36,6 +36,29 @@ fi
 step 'Prove authenticated chain-accounted inference'
 verify_evidence="${GDC_GATEWAY_VERIFY_EVIDENCE_DIR:-$GDC_HOME/runs/${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}-gateway-verify}"
 mkdir -p "$verify_evidence"
-timeout "${sla%s}" "$ROOT/04-ops/test-inference-until-ready.sh" \
-  "$gateway_url" "$client_key" "$verify_evidence" "$verify_evidence/completion.json" "${sla%s}" >/dev/null
+verification_started_ms="$(date +%s%3N)"
+verification_deadline_ms="$(( verification_started_ms + ${sla%s} * 1000 ))"
+remaining_verification_seconds() {
+  local phase="$1" now_ms remaining_ms
+  now_ms="$(date +%s%3N)"
+  remaining_ms=$(( verification_deadline_ms - now_ms ))
+  # Use whole seconds rounded down so no child can run beyond the one
+  # externally advertised verification SLA.
+  (( remaining_ms >= 1000 )) || die "gateway verification SLA exhausted before ${phase}"
+  printf '%s\n' "$(( remaining_ms / 1000 ))"
+}
+
+inference_timeout_seconds="$(remaining_verification_seconds authenticated_inference)"
+timeout "$inference_timeout_seconds" "$ROOT/04-ops/test-inference-until-ready.sh" \
+  "$gateway_url" "$client_key" "$verify_evidence" "$verify_evidence/completion.json" "$inference_timeout_seconds" >/dev/null
+site_url="${GDC_SITE_PUBLIC_URL:-https://$SITE_HOST}"
+max_age_seconds="${GDC_GATEWAY_PUBLIC_READINESS_MAX_AGE_SECONDS:-30}"
+[[ "$max_age_seconds" =~ ^[1-9][0-9]*$ ]] || die 'gateway public readiness maximum age must be a positive integer'
+step 'Poll for a fresh post-recovery public traffic-readiness receipt'
+readiness_poll_seconds="${GDC_GATEWAY_PUBLIC_READINESS_POLL_SECONDS:-2}"
+readiness_timeout_seconds="$(remaining_verification_seconds public_readiness)"
+"$ROOT/04-ops/wait-public-traffic-readiness.sh" \
+  "$site_url" "$verify_evidence/public-readiness.json" "$verification_started_ms" \
+  "$max_age_seconds" "$readiness_timeout_seconds" "$readiness_poll_seconds" \
+  || die "public readiness canary did not prove a fresh post-recovery traffic receipt evidence=$verify_evidence/public-readiness.json"
 printf 'PASS gateway completed authenticated inference within %s\n' "$sla"

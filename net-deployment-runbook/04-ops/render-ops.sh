@@ -181,6 +181,13 @@ CADDY
     header Cache-Control "no-store"
     file_server
   }
+  handle /status/gateway-health.prom {
+    root * /status
+    rewrite * /gateway-health.prom
+    header Cache-Control "no-store"
+    header Content-Type "text/plain; version=0.0.4"
+    file_server
+  }
   # Publish only the fixed GPU inventory query. Do not expose the general
   # Prometheus query API through the public status origin. Exclude series whose
   # latest exporter sample is older than the live-inventory freshness bound.
@@ -277,6 +284,11 @@ YAML
     metrics_path: /metrics
     static_configs:
       - targets: ['$API_HOST:443']
+        labels: {host: '$GATEWAY_NODE'}
+  - job_name: gateway-readiness
+    metrics_path: /status/gateway-health.prom
+    static_configs:
+      - targets: ['host.docker.internal:8081']
         labels: {host: '$GATEWAY_NODE'}
   - job_name: telegram-consumer
     scheme: https

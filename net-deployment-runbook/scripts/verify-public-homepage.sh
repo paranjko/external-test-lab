@@ -72,12 +72,14 @@ cmp "$expected_gateway_state" "$OUT/gateway-state.js"
 curl -fsS "https://$SITE_HOST/status/gateway-health" -o "$OUT/gateway-health.json"
 jq -e '
   def iso_epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
-  (((keys - ["recovery"]) | sort) == ["admission","admission_id","arrival_height","checked_at","curl_exit","dispatch_height","http_status","latency_ms","permit_height","reason","response_height","safe_generation","state"])
+  (((keys - ["recovery"]) | sort) == ["admission","admission_id","arrival_height","checked_at","completion_finished_ms","curl_exit","dispatch_height","http_status","latency_ms","permit_height","readiness","reason","response_height","safe_generation","state"])
   and (.state == "READY" or .state == "DEGRADED" or .state == "UNAVAILABLE" or .state == "RECOVERING")
+  and (.readiness == "CONTROL_READY" or .readiness == "ROUTING_READY" or .readiness == "TRAFFIC_READY" or .readiness == "RECOVERING" or .readiness == "SATURATED" or .readiness == "UNAVAILABLE")
   and (.checked_at | iso_epoch > 0)
   and (.curl_exit | type == "number")
   and (.http_status | type == "number")
   and (.latency_ms | type == "number")
+  and (.completion_finished_ms | type == "number")
   and (.reason | type == "string")
   and (.admission == "not_observed" or .admission == "dispatched_once" or .admission == "pre_dispatch_rejected" or .admission == "dispatch_attempt_failed")
   and (.admission_id | type == "string")

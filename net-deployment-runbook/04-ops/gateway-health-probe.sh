@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 gateway_env="${GDC_GATEWAY_ENV:-/srv/dai/ops/gateway.env}"
 output="${GDC_GATEWAY_HEALTH_FILE:-/srv/dai/ops/status/gateway-health.json}"
+prom_output="${GDC_GATEWAY_HEALTH_PROM_FILE:-${output%.json}.prom}"
 gateway_url="${GDC_GATEWAY_HEALTH_URL:-}"
 # Public health runs every ten seconds. Keep its acknowledgement within the
 # same small, bounded response budget as gateway verification so it observes
@@ -12,10 +13,11 @@ reconciliation_file="${GDC_GATEWAY_RECONCILIATION_FILE:-/srv/dai/ops/status/gate
 reserve_file="${GDC_GATEWAY_RESERVE_FILE:-/srv/dai/ops/status/gateway-reserve.json}"
 mkdir -p "$(dirname "$output")"
 tmp="$(mktemp "${output}.tmp.XXXXXX")"
+prom_tmp="$(mktemp "${prom_output}.tmp.XXXXXX")"
 response="$(mktemp)"
 response_headers="$(mktemp)"
 curl_error="$(mktemp)"
-trap 'rm -f "$tmp" "$response" "$response_headers" "$curl_error"' EXIT
+trap 'rm -f "$tmp" "$prom_tmp" "$response" "$response_headers" "$curl_error"' EXIT
 
 started_ms="$(date +%s%3N)"
 state=UNAVAILABLE
@@ -32,6 +34,9 @@ permit_height=0
 dispatch_height=0
 response_height=0
 safe_generation=''
+readiness=UNAVAILABLE
+completion_observed=false
+completion_finished_ms=0
 [[ "$max_output_tokens" =~ ^[1-9][0-9]*$ ]] || {
   echo 'GDC_GATEWAY_HEALTH_MAX_OUTPUT_TOKENS must be a positive integer' >&2
   exit 2
@@ -85,11 +90,17 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
   if [[ -n "$client_key" && -n "$model" && "$gateway_url" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
     # READY must prove a bounded completion without consuming capacity needed
     # by interactive requests during a one-model PoC.
-    payload="$(jq -cn --arg model "$model" --argjson max_tokens "$max_output_tokens" '{model:$model,messages:[{role:"user",content:"Reply with OK"}],max_tokens:$max_tokens}')"
+    canary_nonce="${started_ms}-$$-${RANDOM}"
+    # The gateway validates top-level Chat Completions fields before dispatch.
+    # Put the per-request cache buster in supported message content instead of
+    # inventing a top-level parameter. The gateway cache key includes the
+    # normalized request body, so this produces a distinct admission attempt.
+    canary_prompt="Reply with OK [readiness-canary:${canary_nonce}]"
+    payload="$(jq -cn --arg model "$model" --arg prompt "$canary_prompt" --argjson max_tokens "$max_output_tokens" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:$max_tokens}')"
     set +e
     request_deadline_ms="$(( $(date +%s%3N) + 20000 ))"
     http_code="$(curl -sS --connect-timeout 3 --max-time 20 -D "$response_headers" -o "$response" -w '%{http_code}' \
-      "$gateway_url/v1/chat/completions" \
+      "$gateway_url/v1/chat/completions?gdc_canary=$canary_nonce" \
       -H "Authorization: Bearer $client_key" \
       -H "X-Request-Deadline-Ms: $request_deadline_ms" \
       -H 'Content-Type: application/json' \
@@ -114,11 +125,49 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
     [[ "$candidate_permit_height" =~ ^[0-9]+$ ]] && permit_height="$candidate_permit_height"
     [[ "$candidate_dispatch_height" =~ ^[0-9]+$ ]] && dispatch_height="$candidate_dispatch_height"
     [[ "$candidate_response_height" =~ ^[0-9]+$ ]] && response_height="$candidate_response_height"
-    [[ "$candidate_safe_generation" =~ ^[A-Za-z0-9:,_-]{1,256}$ ]] && safe_generation="$candidate_safe_generation"
+    [[ "$candidate_safe_generation" =~ ^sha256:[a-f0-9]{64}$ ]] && safe_generation="$candidate_safe_generation"
     if [[ "$curl_rc" == 0 && "$http_code" == 200 ]] \
+      && [[ "$admission" == dispatched_once ]] \
+      && [[ "$admission_id" =~ ^[a-f0-9]{32}$ ]] \
+      && [[ -n "$safe_generation" ]] \
+      && (( arrival_height > 0 && arrival_height <= permit_height && permit_height <= dispatch_height && dispatch_height <= response_height )) \
       && jq -e '.choices | type == "array" and length > 0' "$response" >/dev/null 2>&1; then
+      completion_observed=true
+      # This timestamp belongs to the completed canary itself, before the
+      # follow-up status read. Consumers can therefore distinguish an old
+      # completion from one executed during their verification window.
+      completion_finished_ms="$(date +%s%3N)"
       gateway_status="$(curl -fsS --connect-timeout 3 --max-time 10 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" 2>/dev/null || true)"
-      if ! "$(dirname "$0")/gateway-status-routable.sh" <<<"$gateway_status" >/dev/null 2>&1; then
+      if ! jq -e '
+        def valid_flags:
+          type == "object"
+          # gateway-status-routable.sh consumes all three values and defaults
+          # missing flags. A public traffic proof must not infer those defaults.
+          and (has("phase") and (.phase | type == "string"))
+          and (has("requests_blocked") and (.requests_blocked | type == "boolean"))
+          and (has("chain_phase") and (.chain_phase | type == "string"));
+        def valid_runtime:
+          type == "object"
+          and (.active | type == "boolean")
+          and (if has("runtime") then
+                 (.runtime | valid_flags)
+               else valid_flags end);
+        type == "object"
+        and (if has("devshards") then
+               (.devshards | type == "array" and all(.[]; valid_runtime))
+             else true end)
+        and (
+          (.routable | type == "boolean")
+          or (
+            (.mode | type == "string")
+            and (.capacity | type == "object")
+            and (.devshards | type == "array")
+          )
+        )
+      ' <<<"$gateway_status" >/dev/null 2>&1; then
+        state=UNAVAILABLE
+        reason=status_unusable
+      elif ! "$(dirname "$0")/gateway-status-routable.sh" <<<"$gateway_status" >/dev/null 2>&1; then
         state=UNAVAILABLE
         reason=runtime_not_routable
       elif ! jq -e '.state == "READY" and (.current_balance|tonumber) >= (.low_watermark|tonumber)' "$reserve_file" >/dev/null 2>&1; then
@@ -128,6 +177,9 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
         state=READY
         reason=completion_succeeded
       fi
+    elif [[ "$curl_rc" == 0 && "$http_code" == 200 ]]; then
+      state=UNAVAILABLE
+      reason=completion_identity_unavailable
     elif [[ "$curl_rc" != 0 ]]; then
       reason=request_failed
     elif [[ "$http_code" != 200 ]]; then
@@ -139,6 +191,31 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
     reason=admission_url_unavailable
   fi
 fi
+
+# `state` remains compatible with existing public consumers. `readiness` is
+# the stricter contract for operators and alerts: it says which layer was
+# actually observed rather than treating a listening process or HTTP 200 as
+# traffic acceptance.
+case "$state" in
+  READY)
+    readiness=TRAFFIC_READY
+    ;;
+  RECOVERING)
+    readiness=RECOVERING
+    ;;
+  DEGRADED)
+    # A successful routed completion with a reserve guard is not traffic-ready
+    # for new work, but proves the control and routing layers separately.
+    [[ "$completion_observed" == true ]] && readiness=ROUTING_READY
+    ;;
+  UNAVAILABLE)
+    case "$reason" in
+      http_429) readiness=SATURATED ;;
+      runtime_not_routable) readiness=CONTROL_READY ;;
+      *) readiness=UNAVAILABLE ;;
+    esac
+    ;;
+esac
 
 finished_ms="$(date +%s%3N)"
 latency_ms=$((finished_ms - started_ms))
@@ -155,19 +232,35 @@ jq -n \
   --arg admission "$admission" \
   --arg admission_id "$admission_id" \
   --arg safe_generation "$safe_generation" \
+  --arg readiness "$readiness" \
   --arg recovery_escrow "$recovery_escrow" \
   --arg recovery_started_at "$recovery_started_at" \
   --argjson http_status "$http_status" \
   --argjson curl_exit "$curl_exit" \
   --argjson latency_ms "$latency_ms" \
+  --argjson completion_finished_ms "$completion_finished_ms" \
   --argjson arrival_height "$arrival_height" \
   --argjson permit_height "$permit_height" \
   --argjson dispatch_height "$dispatch_height" \
   --argjson response_height "$response_height" \
   --argjson next_check_seconds "$next_check_seconds" \
-  '{state:$state,checked_at:$checked_at,http_status:$http_status,curl_exit:$curl_exit,latency_ms:$latency_ms,reason:$reason,admission:$admission,admission_id:$admission_id,safe_generation:$safe_generation,arrival_height:$arrival_height,permit_height:$permit_height,dispatch_height:$dispatch_height,response_height:$response_height}
+  '{state:$state,readiness:$readiness,checked_at:$checked_at,http_status:$http_status,curl_exit:$curl_exit,latency_ms:$latency_ms,completion_finished_ms:$completion_finished_ms,reason:$reason,admission:$admission,admission_id:$admission_id,safe_generation:$safe_generation,arrival_height:$arrival_height,permit_height:$permit_height,dispatch_height:$dispatch_height,response_height:$response_height}
    + if $state == "RECOVERING" and $recovery_started_at != "" then {
        recovery:{stage:$reason,escrow_id:$recovery_escrow,started_at:$recovery_started_at,next_check_seconds:$next_check_seconds}
      } else {} end' >"$tmp"
 chmod 0644 "$tmp"
 mv -fT -- "$tmp" "$output"
+
+# Prometheus scrapes this local, generated textfile through the OPS status
+# service. Keep a one-hot enum rather than converting an unavailable sample to
+# zero or omitting it: alerts can distinguish a stale probe from each observed
+# readiness layer.
+for candidate in CONTROL_READY ROUTING_READY TRAFFIC_READY RECOVERING SATURATED UNAVAILABLE; do
+  value=0
+  [[ "$readiness" == "$candidate" ]] && value=1
+  printf 'gdc_gateway_readiness_state{state="%s"} %s\n' "$candidate" "$value" >>"$prom_tmp"
+done
+printf 'gdc_gateway_readiness_observed_timestamp_seconds %s\n' "$(date -u +%s)" >>"$prom_tmp"
+printf 'gdc_gateway_readiness_latency_milliseconds %s\n' "$latency_ms" >>"$prom_tmp"
+chmod 0644 "$prom_tmp"
+mv -fT -- "$prom_tmp" "$prom_output"

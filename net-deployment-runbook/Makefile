@@ -203,6 +203,7 @@ test: site-js-check site-host-requirements-check
 	@$(MAKE) test-site-release-paths test-site-publisher
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
+	@./scripts/test-public-traffic-readiness.sh
 	@./scripts/test-gateway-admission-deployment.sh
 	@./scripts/test-suspend-gateway-admission.sh
 	@./scripts/test-firewall-policy.sh

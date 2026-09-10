@@ -4,6 +4,7 @@ import http.client
 import importlib.util
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -473,7 +474,8 @@ try:
                and record["error_class"] == "upstream_http_429" for record in records)
     assert all(isinstance(record["arrival_height"], int) and isinstance(record["permit_height"], int)
                and isinstance(record["dispatch_height"], int) and isinstance(record["response_height"], int)
-               and record["safe_generation"] for record in records)
+               and re.fullmatch(r"sha256:[a-f0-9]{64}", record["safe_generation"] or "")
+               for record in records)
     State.advance_height = False; State.dispatch_delay = 0
     process.terminate(); process.wait(2); processes.remove(process)
 

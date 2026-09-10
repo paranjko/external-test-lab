@@ -69,3 +69,17 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "Public endpoint {{ $labels.instance }} is unavailable"
+  - name: gdc-gateway-readiness
+    rules:
+      - alert: GdcGatewayTrafficUnavailable
+        expr: (gdc_gateway_readiness_state{state="TRAFFIC_READY"} != 1) or absent(gdc_gateway_readiness_state{state="TRAFFIC_READY"}) or absent(gdc_gateway_readiness_observed_timestamp_seconds) or (time() - gdc_gateway_readiness_observed_timestamp_seconds > 30)
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Gateway cannot prove traffic-ready inference"
+      - alert: GdcGatewayReadinessProbeStale
+        expr: time() - gdc_gateway_readiness_observed_timestamp_seconds > 30
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "Gateway readiness observation is stale"

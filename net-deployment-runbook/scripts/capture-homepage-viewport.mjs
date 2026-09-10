@@ -254,8 +254,8 @@ try {
   await call('Emulation.setVisibleSize', { width, height }, sessionId);
   await call('Page.navigate', { url }, sessionId);
   const gatewayStateReadyExpression = expectGatewayReady
-    ? '/^READY – /.test(document.querySelector("#quality-health-state")?.textContent || "")'
-    : '["READY – verified inference; processing requests","READY – verified inference; no requests in flight","RECOVERING","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || "")';
+    ? '/^TRAFFIC_READY – /.test(document.querySelector("#quality-health-state")?.textContent || "")'
+    : '["TRAFFIC_READY – verified inference; processing requests","TRAFFIC_READY – verified inference; no requests in flight","CONTROL_READY","ROUTING_READY","RECOVERING","SATURATED","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || "")';
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const { result } = await call('Runtime.evaluate', {
       expression: `Boolean(document.querySelector("#updated")?.dateTime && /^Updated .* UTC$/.test(document.querySelector("#updated")?.textContent || "") && document.querySelector("#validator-map .validator-map-world")?.complete && document.querySelector("#validator-map .validator-map-world")?.naturalWidth && ${gatewayStateReadyExpression})`,
@@ -399,10 +399,10 @@ try {
     returnByValue: true,
   }, sessionId);
   const gateway = JSON.parse(gatewayResult.value);
-  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["READY – verified inference; processing requests", "READY – verified inference; no requests in flight", "RECOVERING", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
+  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["TRAFFIC_READY – verified inference; processing requests", "TRAFFIC_READY – verified inference; no requests in flight", "CONTROL_READY", "ROUTING_READY", "RECOVERING", "SATURATED", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
   if (expectResetState && gateway.health !== 'OFFLINE') throw new Error(`gateway must be OFFLINE after reset ${JSON.stringify(gateway)}`);
   if (expectedGatewayState && gateway.health !== expectedGatewayState) throw new Error(`gateway state ${gateway.health} does not match expected ${expectedGatewayState}`);
-  if (expectGatewayReady && !/^READY – /.test(gateway.health || '')) {
+  if (expectGatewayReady && !/^TRAFFIC_READY – /.test(gateway.health || '')) {
     throw new Error(`public page shows a non-ready gateway state ${gateway.health}`);
   }
   const { result: typeResult } = await call('Runtime.evaluate', {

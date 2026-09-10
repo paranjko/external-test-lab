@@ -33,6 +33,21 @@ jq -c \
       | select((.runtime.phase // .phase // "") == "active")
       | select((.runtime.requests_blocked // .requests_blocked // false) != true)
       | select((.runtime.chain_phase // .chain_phase // "") == "Inference")];
+  def traffic_receipt:
+    .public_health as $health
+    | ($health.state == "READY")
+    and ($health.readiness == "TRAFFIC_READY")
+    and ($health.reason == "completion_succeeded")
+    and ($health.http_status == 200)
+    and ($health.admission == "dispatched_once")
+    and ($health.admission_id | type == "string" and test("^[a-f0-9]{32}$"))
+    and ($health.safe_generation | type == "string" and test("^sha256:[a-f0-9]{64}$"))
+    and ($health.completion_finished_ms | type == "number" and . > 0)
+    and ([$health.arrival_height,$health.permit_height,$health.dispatch_height,$health.response_height]
+      | all(.[]; type == "number" and . > 0))
+    and ($health.arrival_height <= $health.permit_height)
+    and ($health.permit_height <= $health.dispatch_height)
+    and ($health.dispatch_height <= $health.response_height);
   .expected_hosts as $expected_hosts
   | .participants as $participants
   | .validators as $validators
@@ -67,7 +82,7 @@ jq -c \
         shared_status_routable:$gateway_status_routable,
         active_unblocked_inference_runtimes:($active_inference | length)
       },
-      health:{state:(.public_health.state // null),reason:(.public_health.reason // null),http_status:(.public_health.http_status // null)},
+      health:{state:(.public_health.state // null),readiness:(.public_health.readiness // null),reason:(.public_health.reason // null),http_status:(.public_health.http_status // null)},
       reserve:{state:(.reserve.state // null),reason:(.reserve.reason // null)},
       reconciliation:{state:(.reconciliation.state // null),reason:(.reconciliation.reason // null),last_confirmed_state:(.reconciliation.last_confirmed_state // null)},
       diagnostics:{
@@ -85,7 +100,7 @@ jq -c \
         model_routable:$model_routable,
         gateway_status_routable:$gateway_status_routable,
         active_unblocked_inference_runtime:(($active_inference | length) > 0),
-        public_health_ready:(.public_health.state == "READY" and .public_health.reason == "completion_succeeded" and .public_health.http_status == 200),
+        public_health_ready:traffic_receipt,
         reserve_ready:(.reserve.state == "READY" and ((.reserve.current_balance // 0) | number_or_zero) >= ((.reserve.low_watermark // 0) | number_or_zero)),
         reconciliation_ready:(.reconciliation.state == "READY" and .reconciliation.last_confirmed_state == "READY")
       }

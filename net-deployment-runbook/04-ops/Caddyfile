@@ -66,6 +66,13 @@ http://:8081 {
     header Cache-Control "no-store"
     file_server
   }
+  handle /status/gateway-health.prom {
+    root * /status
+    rewrite * /gateway-health.prom
+    header Cache-Control "no-store"
+    header Content-Type "text/plain; version=0.0.4"
+    file_server
+  }
 
   root * /srv
   file_server

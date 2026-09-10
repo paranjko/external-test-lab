@@ -1898,7 +1898,15 @@ async function refresh(): Promise<void> {
     };
   }
   try {
-    if (!gatewayStatus.classify(gatewayState, healthy, gatewayProbe, undefined, undefined, gatewayAdmission).available)
+    const availability = gatewayStatus.classify(
+      gatewayState,
+      healthy,
+      gatewayProbe,
+      undefined,
+      undefined,
+      gatewayAdmission,
+    );
+    if (availability.available !== true || availability.state !== "TRAFFIC_READY")
       throw new Error("gateway unavailable");
     const runtime = gatewayState.escrow_id
       ? gatewayState
@@ -1924,7 +1932,8 @@ async function refresh(): Promise<void> {
       undefined,
       gatewayAdmission,
     );
-    if (!availability.available) throw new Error(availability.message);
+    if (availability.available !== true || availability.state !== "TRAFFIC_READY")
+      throw new Error(availability.message);
     const metricText = await text("/status/gateway/metrics");
     const metricValue = (name: string): number =>
       [
@@ -1956,8 +1965,8 @@ async function refresh(): Promise<void> {
     health.dataset.state = state;
     $("quality-health-state").textContent =
       inflight > 0
-        ? "READY – verified inference; processing requests"
-        : "READY – verified inference; no requests in flight";
+        ? "TRAFFIC_READY – verified inference; processing requests"
+        : "TRAFFIC_READY – verified inference; no requests in flight";
     $("quality-recovery").hidden = true;
     setUtcTime("quality-updated", new Date(), "Updated");
   } catch (error) {

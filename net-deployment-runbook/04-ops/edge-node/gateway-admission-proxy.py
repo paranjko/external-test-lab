@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bounded public-edge admission with one and only one gateway dispatch."""
 import http.client
+import hashlib
 import json
 import os
 import re
@@ -293,8 +294,14 @@ def safe_generation(deadline=None):
     # Height proves this observation is fresh and fences the next transition,
     # but it is not itself a phase generation.  Including it would reject every
     # request on chains that produce blocks faster than the polling interval.
+    # The admission receipt crosses an HTTP header boundary, so publish a fixed
+    # length digest rather than an unbounded list of active runtimes.  It still
+    # changes for every epoch or participant-set change that matters to a permit.
+    generation_input = "%s:%s" % (epoch, ",".join(sorted(participants)))
     return {
-        "generation": "%s:%s" % (epoch, ",".join(sorted(participants))),
+        "generation": "sha256:" + hashlib.sha256(
+            generation_input.encode("utf-8")
+        ).hexdigest(),
         "height": height,
     }, None
 

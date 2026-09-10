@@ -15,7 +15,7 @@ ready_fixture() {
     validators:{result:{validators:[range(0;5) as $n | {pub_key:{value:("key"+($n|tostring))},voting_power:"100"}]}},
     epoch_group:{epoch_group_data:{validation_weights:[range(0;5) as $n | {member_address:("addr"+($n|tostring)),weight:"100",voting_power:"100"}]}},
     gateway_status:{capacity:{host_count:5,available_host_count:5,total_weight:500,models:{($model):{current_weight:500,routable:true}}},devshards:[{active:true,runtime:{phase:"active",chain_phase:"Inference",requests_blocked:false}}]},
-    public_health:{state:"READY",reason:"completion_succeeded",http_status:200},
+    public_health:{state:"READY",readiness:"TRAFFIC_READY",reason:"completion_succeeded",http_status:200,completion_finished_ms:1,admission:"dispatched_once",admission_id:"0123456789abcdef0123456789abcdef",safe_generation:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",arrival_height:100,permit_height:101,dispatch_height:101,response_height:102},
     reserve:{state:"READY",reason:"within_policy",current_balance:"10",low_watermark:"5"},
     reconciliation:{state:"READY",reason:"confirmed",last_confirmed_state:"READY"}
   }'
@@ -23,6 +23,14 @@ ready_fixture() {
 
 ready_fixture | "$ROOT/scripts/evaluate-recovery-readiness.sh" "$MODEL" >"$WORK/ready.json"
 jq -e '.overall_ready == true and (.failed_predicates | length) == 0 and .gateway.shared_status_routable == true' "$WORK/ready.json" >/dev/null
+
+ready_fixture | jq 'del(.public_health.admission_id)' \
+  | "$ROOT/scripts/evaluate-recovery-readiness.sh" "$MODEL" >"$WORK/missing-receipt.json"
+jq -e '.overall_ready == false and (.failed_predicates | index("public_health_ready"))' "$WORK/missing-receipt.json" >/dev/null
+
+ready_fixture | jq '.public_health.dispatch_height=99' \
+  | "$ROOT/scripts/evaluate-recovery-readiness.sh" "$MODEL" >"$WORK/contradictory-receipt.json"
+jq -e '.overall_ready == false and (.failed_predicates | index("public_health_ready"))' "$WORK/contradictory-receipt.json" >/dev/null
 
 ready_fixture | jq --arg model "$MODEL" 'del(.gateway_status.capacity.models[$model].routable)' \
   | "$ROOT/scripts/evaluate-recovery-readiness.sh" "$MODEL" >"$WORK/pooled-v3.json"

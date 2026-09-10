@@ -16,6 +16,15 @@ const generatedGatewayState = fs.readFileSync(path.join(siteBuild, 'gateway-stat
 assert.doesNotMatch(generatedGatewayState, /run make site-js\n\n\n/);
 const now = Date.parse('2026-08-06T10:30:00Z');
 const readyProbe = { state: 'READY', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
+const trafficReadyProbe = {
+  ...readyProbe, readiness: 'TRAFFIC_READY', reason: 'completion_succeeded',
+  completion_finished_ms: now - 1000, admission: 'dispatched_once',
+  admission_id: '0123456789abcdef0123456789abcdef',
+  safe_generation: `sha256:${'a'.repeat(64)}`,
+  arrival_height: 100, permit_height: 101, dispatch_height: 101, response_height: 102,
+};
+const unknownReadinessProbe = { ...readyProbe, readiness: 'FUTURE_READY' };
+const arrayReadinessProbe = { ...readyProbe, readiness: ['TRAFFIC_READY'] };
 const failedProbe = { state: 'UNAVAILABLE', checked_at: '2026-08-06T10:29:50Z', http_status: 429 };
 const degradedProbe = { state: 'DEGRADED', reason: 'escrow_reserve_low', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
 const recoveringProbe = {
@@ -37,7 +46,7 @@ assert.deepEqual(state.classify(undefined, 0), {
   message: 'Network reset – no nodes online',
 });
 
-assert.equal(state.classify({ mode: 'gateway', runtimes: 0, devshards: [] }, 1, readyProbe, now).state, 'PENDING');
+assert.equal(state.classify({ mode: 'gateway', runtimes: 0, devshards: [] }, 1, readyProbe, now).state, 'UNAVAILABLE');
 assert.deepEqual(state.classify({ mode: 'gateway', runtimes: 0, devshards: [] }, 1, {
   ...failedProbe,
   reason: 'replacement_escrow_creation_failed',
@@ -47,6 +56,16 @@ assert.deepEqual(state.classify({ mode: 'gateway', runtimes: 0, devshards: [] },
   message: 'Gateway unavailable – replacement escrow creation failed',
 });
 assert.equal(state.classify({ mode: 'gateway', runtimes: 1, devshards: [] }, 1, readyProbe, now).state, 'UNAVAILABLE');
+assert.deepEqual(state.classify({ mode: 'gateway', runtimes: 1, devshards: [activeShard] }, 1, unknownReadinessProbe, now), {
+  state: 'UNAVAILABLE', available: false,
+  message: 'Gateway unavailable – traffic readiness is unknown',
+});
+assert.deepEqual(state.classify({ mode: 'gateway', runtimes: 1, devshards: [activeShard] }, 1, arrayReadinessProbe, now), {
+  state: 'UNAVAILABLE', available: false,
+  message: 'Gateway unavailable – traffic readiness is unknown',
+});
+assert.equal(state.classify({ mode: 'gateway', runtimes: 1, devshards: [{ ...activeShard, requests_blocked: null }] }, 1, trafficReadyProbe, now).state, 'UNAVAILABLE');
+assert.equal(state.classify({ mode: 'gateway', runtimes: 1, devshards: [{ ...activeShard, active: 'true' }] }, 1, trafficReadyProbe, now).state, 'UNAVAILABLE');
 assert.deepEqual(state.classify({ mode: 'gateway', runtimes: 1, devshards: [] }, 1, recoveringProbe, now), {
   state: 'RECOVERING', available: false,
   message: 'Escrow #123 is active – waiting for its versiond inference session – next check within 15 seconds',
@@ -64,7 +83,7 @@ const zeroCapacity = {
   devshards: [{ ...activeShard, chain_phase: 'PoCValidate', block_reason: 'poc' }],
 };
 assert.equal(state.classify(zeroCapacity, 1, failedProbe, now).state, 'UNAVAILABLE');
-assert.deepEqual(state.classify(zeroCapacity, 1, readyProbe, now), {
+assert.deepEqual(state.classify(zeroCapacity, 1, trafficReadyProbe, now), {
   state: 'UNAVAILABLE',
   available: false,
   message: 'Gateway unavailable – no current eligible inference capacity',
@@ -76,7 +95,7 @@ assert.deepEqual(state.classify({ ...zeroCapacity, capacity: { total_weight: 468
   available: false,
   message: 'Gateway unavailable – runtime unavailable',
 });
-assert.deepEqual(state.classify(zeroCapacity, 1, readyProbe, now, 30000, {
+assert.deepEqual(state.classify(zeroCapacity, 1, trafficReadyProbe, now, 30000, {
   available: true,
 }), {
   state: 'UNAVAILABLE',
@@ -89,14 +108,33 @@ const liveCapacity = {
   capacity: { total_weight: 468, baseline_weight: 468, lost_weight: 0, available_percent: 100 },
   devshards: [activeShard],
 };
-assert.equal(state.classify(liveCapacity, 1, readyProbe, now).state, 'AVAILABLE');
-assert.equal(state.classify(liveCapacity, 1, readyProbe, now).available, true);
+assert.equal(state.classify(liveCapacity, 1, readyProbe, now).state, 'UNAVAILABLE');
+assert.equal(state.classify(liveCapacity, 1, readyProbe, now).available, false);
+assert.equal(state.classify(liveCapacity, 1, trafficReadyProbe, now).state, 'TRAFFIC_READY');
+assert.deepEqual(state.classify(liveCapacity, 1, { ...trafficReadyProbe, admission_id: '' }, now), {
+  state: 'UNAVAILABLE', available: false,
+  message: 'Gateway unavailable – traffic receipt is incomplete',
+});
+assert.deepEqual(state.classify(liveCapacity, 1, { ...trafficReadyProbe, completion_finished_ms: now + 1 }, now), {
+  state: 'UNAVAILABLE', available: false,
+  message: 'Gateway unavailable – traffic receipt is incomplete',
+});
+assert.equal(state.classify(liveCapacity, 1, { ...trafficReadyProbe, permit_height: 99 }, now).state, 'UNAVAILABLE');
+assert.equal(state.classify(liveCapacity, 1, readyProbe, now).state, 'UNAVAILABLE');
+assert.equal(state.classify(liveCapacity, 1, readyProbe, now).available, false);
+assert.equal(state.classify(liveCapacity, 1, unknownReadinessProbe, now).state, 'UNAVAILABLE');
+const gatewaySiteSource = fs.readFileSync(path.join(__dirname, '..', '04-ops/site/src/app.js'), 'utf8');
+assert.equal((gatewaySiteSource.match(/availability\.state !== "TRAFFIC_READY"/g) || []).length, 2);
+assert.equal((gatewaySiteSource.match(/availability\.available !== true/g) || []).length, 2);
+assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, readiness: 'CONTROL_READY' }, now).state, 'CONTROL_READY');
+assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, readiness: 'ROUTING_READY' }, now).state, 'ROUTING_READY');
+assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, readiness: 'SATURATED' }, now).state, 'SATURATED');
 assert.equal(state.classify(liveCapacity, 1, failedProbe, now).state, 'UNAVAILABLE');
 assert.equal(state.classify(liveCapacity, 1, degradedProbe, now).state, 'UNAVAILABLE');
 assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, checked_at: '2026-08-06T10:28:00Z' }, now).state, 'UNAVAILABLE');
 
 const legacy = { escrow_id: '7', phase: 'active', requests_blocked: false };
-assert.equal(state.classify(legacy, 1, readyProbe, now).state, 'AVAILABLE');
+assert.equal(state.classify(legacy, 1, trafficReadyProbe, now).state, 'TRAFFIC_READY');
 
 assert.deepEqual(hostState.classify({
   participantKnown: true,
@@ -265,8 +303,8 @@ assert.equal(hostState.endpointDiagnostic(new Error('Failed to fetch')), 'Networ
 assert.equal(hostState.endpointDiagnostic(new Error('timeout exceeded')), 'Timed out');
 
 const siteApp = fs.readFileSync(path.join(siteBuild, 'app.js'), 'utf8');
-assert.match(siteApp, /READY – verified inference; processing requests/);
-assert.match(siteApp, /READY – verified inference; no requests in flight/);
+assert.match(siteApp, /TRAFFIC_READY – verified inference; processing requests/);
+assert.match(siteApp, /TRAFFIC_READY – verified inference; no requests in flight/);
 assert.match(siteApp, /quality-recovery/);
 assert.match(siteApp, /document\.createElement\(["']time["']\)/);
 assert.match(siteApp, /started.*UTC/);
@@ -381,6 +419,8 @@ assert.match(
   homepageCapture,
   /validator-map \.validator-map-world[\s\S]*naturalWidth[\s\S]*gatewayStateReadyExpression/,
 );
+assert.match(homepageCapture, /\/\^TRAFFIC_READY – \/\.test/);
+assert.match(homepageCapture, /"CONTROL_READY","ROUTING_READY","RECOVERING","SATURATED"/);
 assert.match(
   homepageCapture,
   /startChromeDevTools\(\{[\s\S]*context: `homepage viewport \$\{width\}x\$\{height\}`/,

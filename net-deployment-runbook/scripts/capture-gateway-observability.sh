@@ -92,16 +92,18 @@ jq --argjson routable "$gateway_status_routable" '
      chain_phase:(.runtime.chain_phase // .chain_phase // null), requests_blocked:(.runtime.requests_blocked // .requests_blocked // false)}])}
 ' <<<"$gateway_status" >"$out/gateway-status.json"
 
-public_health="$(curl_dns_retry curl -fsS --connect-timeout 5 --max-time 15 "https://$SITE_HOST/status/gateway-health")"
+public_health="$(curl_dns_retry curl -fsS --connect-timeout 5 --max-time 15 "https://$SITE_HOST/status/gateway-health?gdc_canary=$(date +%s%3N)")"
 printf '%s\n' "$public_health" | jq . >"$out/public-health-raw.json"
 printf '%s\n' "$public_health" | jq -e '
     def iso_epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
-    (((keys - ["recovery"]) | sort) == ["checked_at","curl_exit","http_status","latency_ms","reason","state"])
+    (((keys - ["recovery"]) | sort) == ["admission","admission_id","arrival_height","checked_at","completion_finished_ms","curl_exit","dispatch_height","http_status","latency_ms","permit_height","readiness","reason","response_height","safe_generation","state"])
     and (.state == "READY" or .state == "DEGRADED" or .state == "UNAVAILABLE" or .state == "RECOVERING")
+    and (.readiness == "CONTROL_READY" or .readiness == "ROUTING_READY" or .readiness == "TRAFFIC_READY" or .readiness == "RECOVERING" or .readiness == "SATURATED" or .readiness == "UNAVAILABLE")
     and (.checked_at | iso_epoch > 0)
     and (.curl_exit | type == "number")
     and (.http_status | type == "number")
     and (.latency_ms | type == "number")
+    and (.completion_finished_ms | type == "number")
     and (.reason | type == "string")
     and (
       if .state == "RECOVERING" then

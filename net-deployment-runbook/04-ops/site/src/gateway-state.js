@@ -33,8 +33,17 @@ type GatewayRecovery = {
 
 type GatewayProbe = {
   state?: string,
+  readiness?: string,
   reason?: string,
   checked_at?: string,
+  completion_finished_ms?: number,
+  admission?: string,
+  admission_id?: string,
+  safe_generation?: string,
+  arrival_height?: number,
+  permit_height?: number,
+  dispatch_height?: number,
+  response_height?: number,
   recovery?: GatewayRecovery,
 };
 
@@ -88,14 +97,22 @@ type GatewayStateApi = {
       if (!state || typeof state !== "object") return false;
       if (!hasCurrentCapacity(state)) return false;
       if (state.escrow_id) {
-        return state.phase === "active" && state.requests_blocked !== true;
+        return (
+          typeof state.phase === "string" &&
+          typeof state.requests_blocked === "boolean" &&
+          state.phase === "active" &&
+          state.requests_blocked === false
+        );
       }
       return (Array.isArray(state.devshards) ? state.devshards : []).some(
         (item) =>
           item &&
+          typeof item.active === "boolean" &&
+          typeof item.phase === "string" &&
+          typeof item.requests_blocked === "boolean" &&
           item.active === true &&
           item.phase === "active" &&
-          item.requests_blocked !== true,
+          item.requests_blocked === false,
       );
     }
 
@@ -109,6 +126,33 @@ type GatewayStateApi = {
         Number.isFinite(checkedAt) &&
         nowMs - checkedAt >= 0 &&
         nowMs - checkedAt <= maxAgeMs
+      );
+    }
+
+    function hasTrafficReceipt(probe: GatewayProbe, nowMs: number): boolean {
+      const completionFinishedMs = Number(probe?.completion_finished_ms);
+      const arrivalHeight = Number(probe?.arrival_height);
+      const permitHeight = Number(probe?.permit_height);
+      const dispatchHeight = Number(probe?.dispatch_height);
+      const responseHeight = Number(probe?.response_height);
+      return (
+        probe?.state === "READY" &&
+        probe?.readiness === "TRAFFIC_READY" &&
+        probe?.reason === "completion_succeeded" &&
+        probe?.admission === "dispatched_once" &&
+        typeof probe?.admission_id === "string" &&
+        /^[a-f0-9]{32}$/.test(probe.admission_id) &&
+        typeof probe?.safe_generation === "string" &&
+        /^sha256:[a-f0-9]{64}$/.test(probe.safe_generation) &&
+        Number.isFinite(completionFinishedMs) &&
+        completionFinishedMs > 0 &&
+        completionFinishedMs <= nowMs &&
+        [arrivalHeight, permitHeight, dispatchHeight, responseHeight].every(
+          (height) => Number.isInteger(height) && height > 0,
+        ) &&
+        arrivalHeight <= permitHeight &&
+        permitHeight <= dispatchHeight &&
+        dispatchHeight <= responseHeight
       );
     }
 
@@ -184,6 +228,30 @@ type GatewayStateApi = {
             (currentProbe.recovery && currentProbe.recovery.started_at) || "",
         };
       }
+      const readiness =
+        typeof currentProbe.readiness === "string"
+          ? currentProbe.readiness
+          : "";
+      if (
+        probeIsFresh(currentProbe, nowMs, maxAgeMs) &&
+        ["CONTROL_READY", "ROUTING_READY", "SATURATED"].includes(
+          readiness,
+        )
+      ) {
+        const messages: { [string]: string } = {
+          CONTROL_READY:
+            "Gateway control plane is ready – inference route is not ready",
+          ROUTING_READY:
+            "Gateway route is ready – traffic is paused by the reserve guard",
+          SATURATED:
+            "Gateway is saturated – retry after capacity is available",
+        };
+        return {
+          state: readiness,
+          available: false,
+          message: messages[readiness],
+        };
+      }
       if (
         probeIsFresh(currentProbe, nowMs, maxAgeMs) &&
         currentProbe.state !== "READY"
@@ -195,6 +263,13 @@ type GatewayStateApi = {
           state: "UNAVAILABLE",
           available: false,
           message: `Gateway unavailable – ${reason}`,
+        };
+      }
+      if (probeIsFresh(currentProbe, nowMs, maxAgeMs) && readiness !== "TRAFFIC_READY") {
+        return {
+          state: "UNAVAILABLE",
+          available: false,
+          message: "Gateway unavailable – traffic readiness is unknown",
         };
       }
       const devshards = Array.isArray(currentState.devshards)
@@ -234,8 +309,16 @@ type GatewayStateApi = {
           message: "Gateway unavailable – inference health check failed",
         };
       }
+      if (!hasTrafficReceipt(currentProbe, nowMs)) {
+        return {
+          state: "UNAVAILABLE",
+          available: false,
+          message: "Gateway unavailable – traffic receipt is incomplete",
+        };
+      }
       return {
-        state: "AVAILABLE",
+        state:
+          readiness === "TRAFFIC_READY" ? "TRAFFIC_READY" : "AVAILABLE",
         available: true,
         message: "Gateway is accepting inference traffic",
       };
