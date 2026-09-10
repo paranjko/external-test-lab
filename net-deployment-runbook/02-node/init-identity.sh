@@ -11,6 +11,26 @@ set -a
 source "$ENV_FILE"
 set +a
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# Error lines only: Cobra usage and flag help mention keyring, passphrase and mnemonic.
+cli_error_lines() {
+  awk '/^(Usage|Aliases|Examples|Available Commands|Flags|Global Flags):/ {next} /^[[:space:]]/ {next} NF {print}' "$1"
+}
+warm_key_creation_failure_reason() {
+  local output="$1" errors
+  # Do not relay CLI output: the same capture holds the generated mnemonic on
+  # the success path. A bounded category is enough for retained JOIN evidence.
+  errors="$(cli_error_lines "$output")"
+  if grep -qiE 'sigill|sigsegv|illegal instruction|blst_cgo_init' "$output"; then
+    printf 'inferenced_runtime_aborted\n'
+  elif grep -qiE 'already exists|duplicate key|overwrite' <<<"$errors"; then
+    printf 'existing_key_conflict\n'
+  elif grep -qiE 'passphrase|password' <<<"$errors"; then
+    printf 'keyring_authentication_failed\n'
+  else
+    printf 'inferenced_rejected_key_creation\n'
+  fi
+}
+
 printf '{}\n' > "$TMP/genesis.json"
 printf '[]\n' > "$TMP/node-config.json"
 # Shell variables override --env-file values, allowing identity init before final genesis exists.
@@ -29,15 +49,16 @@ if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh node -c 'test -s
 fi
 
 warm_key_restore_failure_reason() {
-  local output="$1"
+  local output="$1" errors
   # Do not relay CLI output: it can include interactive material. The bounded
   # category is sufficient to distinguish an unusable mnemonic, a stale local
   # keyring and an unexpected runtime failure in retained JOIN evidence.
-  if grep -qiE 'already exists|duplicate key|overwrite' "$output"; then
+  errors="$(cli_error_lines "$output")"
+  if grep -qiE 'already exists|duplicate key|overwrite' <<<"$errors"; then
     printf 'existing_key_conflict\n'
-  elif grep -qiE 'mnemonic|recovery phrase|bip39' "$output"; then
+  elif grep -qiE 'mnemonic|recovery phrase|bip39' <<<"$errors"; then
     printf 'mnemonic_rejected\n'
-  elif grep -qiE 'passphrase|password|keyring' "$output"; then
+  elif grep -qiE 'passphrase|password' <<<"$errors"; then
     printf 'keyring_authentication_failed\n'
   else
     printf 'inferenced_rejected_recovery\n'
@@ -72,7 +93,10 @@ if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
   else
     "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
       'printf "%s\n%s\n" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" | inferenced keys add "$KEY_NAME" --keyring-backend file' \
-      >"$key_output" 2>&1
+      >"$key_output" 2>&1 || {
+        printf 'Cannot create warm key: reason=%s\n' "$(warm_key_creation_failure_reason "$key_output")" >&2
+        exit 1
+      }
     mapfile -t phrases < <(awk 'NF == 24 {valid=1; for (i=1; i<=NF; i++) if ($i !~ /^[a-z]+$/) valid=0; if (valid) print}' "$key_output")
     (( ${#phrases[@]} == 1 )) || { echo 'Cannot extract one warm-key mnemonic' >&2; exit 1; }
     umask 077

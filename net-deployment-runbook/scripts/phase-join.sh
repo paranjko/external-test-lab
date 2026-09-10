@@ -187,14 +187,27 @@ record_runtime_identity "$NODE" "$ADDRESS" "$RUNTIME_ID"
 # its validator identity.  Check this before generating anything on the Host:
 # otherwise a reset Host could acquire a new TMKMS/P2P/warm identity and appear
 # to resume an existing participant.
+# Retry transport errors and 5xx so a transient failure does not strand a new
+# cold account. No --fail: 404 is the answer for a new participant.
+lookup_participant() {
+  local endpoint="$1" body_file="$2" stderr_file="$3" attempts=6
+  participant_attempt=0
+  while :; do
+    participant_attempt=$((participant_attempt + 1))
+    participant_curl_exit=0
+    participant_http_status="$(curl -sS --connect-timeout 10 --max-time 30 -o "$body_file" -w '%{http_code}' "$endpoint" 2>"$stderr_file")" || participant_curl_exit=$?
+    if (( participant_curl_exit == 0 )) && [[ ! "$participant_http_status" =~ ^5[0-9][0-9]$ ]]; then
+      return 0
+    fi
+    (( participant_attempt < attempts )) || return 0
+    printf 'WAIT  participant lookup attempt %s failed (curl_exit=%s http_status=%s); retrying\n' "$participant_attempt" "$participant_curl_exit" "${participant_http_status:-000}"
+    sleep 10
+  done
+}
 participant_endpoint="https://${GENESIS_PUBLIC_HOST}/v2/participants/$ADDRESS"
 participant_body_file="$(mktemp)"
 participant_stderr_file="$(mktemp)"
-if participant_http_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$participant_body_file" -w '%{http_code}' "$participant_endpoint" 2>"$participant_stderr_file")"; then
-  participant_curl_exit=0
-else
-  participant_curl_exit=$?
-fi
+lookup_participant "$participant_endpoint" "$participant_body_file" "$participant_stderr_file"
 participant_error_detail="$(tr '\n' ' ' <"$participant_stderr_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
 participant_body="$(<"$participant_body_file")"
 rm -f "$participant_body_file" "$participant_stderr_file"
@@ -211,7 +224,7 @@ case "$participant_http_status" in
     participant_state=new
     ;;
   *)
-    die "cannot determine whether $NODE participant already exists (url=$participant_endpoint http_status=$participant_http_status)"
+    die "cannot determine whether $NODE participant already exists (url=$participant_endpoint http_status=$participant_http_status attempts=$participant_attempt)"
     ;;
 esac
 
