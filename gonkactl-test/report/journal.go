@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/paranjko/external-test-lab/gonkactl-test/bindings"
 )
@@ -124,13 +125,21 @@ func convertEvents(events []bindings.JournalEvent, journalPath, outputPath strin
 				return fmt.Errorf("scenario %q has duplicate start", id.Scenario)
 			}
 			started = true
-			r.Start = e.ElapsedMS
+			startTime, err := eventTimeMS(e, false)
+			if err != nil {
+				return err
+			}
+			r.Start = startTime
 		case "step_started":
 			if !started || e.StepID == nil {
 				return fmt.Errorf("scenario %q has invalid step start", id.Scenario)
 			}
 			indexes[*e.StepID] = len(r.Steps)
-			r.Steps = append(r.Steps, allureStep{Name: *e.StepID, Stage: "finished", Start: e.ElapsedMS, Attachments: []allureAttachment{}})
+			stepStart, err := eventTimeMS(e, false)
+			if err != nil {
+				return err
+			}
+			r.Steps = append(r.Steps, allureStep{Name: *e.StepID, Stage: "finished", Start: stepStart, Attachments: []allureAttachment{}})
 		case "assertion":
 			if e.StepID == nil {
 				return fmt.Errorf("assertion has no step")
@@ -140,9 +149,13 @@ func convertEvents(events []bindings.JournalEvent, journalPath, outputPath strin
 				return fmt.Errorf("assertion precedes step")
 			}
 			r.Steps[i].Status = allureStatus(value(e.Outcome))
-			r.Steps[i].Stop = e.ElapsedMS
-			if r.Steps[i].Stop < r.Steps[i].Start {
-				return fmt.Errorf("negative step duration")
+			stepStop, err := eventTimeMS(e, true)
+			if err != nil {
+				return err
+			}
+			r.Steps[i].Stop = stepStop
+			if r.Steps[i].Stop <= r.Steps[i].Start {
+				return fmt.Errorf("step %q has no positive observed duration", r.Steps[i].Name)
 			}
 		case "attachment":
 			if e.StepID == nil || len(e.AttachmentRefs) == 0 {
@@ -164,7 +177,11 @@ func convertEvents(events []bindings.JournalEvent, journalPath, outputPath strin
 			}
 		case "case_finished":
 			r.Status = allureStatus(value(e.Outcome))
-			r.Stop = e.ElapsedMS
+			stopTime, err := eventTimeMS(e, true)
+			if err != nil {
+				return err
+			}
+			r.Stop = stopTime
 			terminal = true
 			if e.Reason != nil {
 				r.StatusDetails = &statusDetails{Message: *e.Reason}
@@ -174,8 +191,8 @@ func convertEvents(events []bindings.JournalEvent, journalPath, outputPath strin
 	if !started || !terminal {
 		return fmt.Errorf("scenario %q has incomplete start/terminal evidence", id.Scenario)
 	}
-	if r.Stop < r.Start {
-		return fmt.Errorf("negative scenario duration")
+	if r.Stop <= r.Start {
+		return fmt.Errorf("scenario %q has no positive observed duration", id.Scenario)
 	}
 	if len(r.Steps) == 0 {
 		return fmt.Errorf("scenario %q has no reached step evidence", id.Scenario)
@@ -264,6 +281,18 @@ func value(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func eventTimeMS(event bindings.JournalEvent, roundUp bool) (int64, error) {
+	observed, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+	if err != nil {
+		return 0, fmt.Errorf("event %q has invalid observed timestamp: %w", event.EventID, err)
+	}
+	nanos := observed.UnixNano()
+	if roundUp && nanos%int64(time.Millisecond) != 0 {
+		return nanos/int64(time.Millisecond) + 1, nil
+	}
+	return nanos / int64(time.Millisecond), nil
 }
 func allureStatus(v string) string {
 	switch strings.ToLower(v) {
