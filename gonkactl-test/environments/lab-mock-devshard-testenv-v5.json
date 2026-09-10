@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "environment_id": "lab-mock-devshard-testenv-v5",
+  "environment_kind": "lab-mock",
+  "backend": {
+    "name": "devshard-testenv",
+    "source_repository": "https://github.com/gonka-ai/gonka.git",
+    "source_revision": "1eaa0413f58899f48f8ba19d16f9653b16dc4987",
+    "source_path_argument": "--gonka-source",
+    "transport": "owned Docker Compose plus loopback HTTP",
+    "fixture_identity": {"chain_id": null, "genesis_hash": null, "source": "simulated", "fixture_seed_hash": "required-at-run-time"}
+  },
+  "lease_authority": "gonkactl-test instance lease; no shared Compose project, ports, volumes, or testenv images",
+  "baseline": {
+    "status": "unqualified",
+    "reason": "The preserved v5 qualification attempt reached a circular harness gate: readiness requires height_seed before the named first-request can start that seed. It is not a known-good baseline.",
+    "required_control": "A separately frozen compatible composition must pass before candidate comparison."
+  },
+  "adapters": [
+    {"protocol": "v3", "status": "unqualified", "reason": "No exact v3 route and request contract was established by the inspected v5 fixture."},
+    {"protocol": "v4", "status": "unqualified", "reason": "No exact v4 route and request contract was established by the inspected v5 fixture."},
+    {"protocol": "v5", "status": "candidate", "health": {"path": "/v5/healthz", "expected_status": 200}, "chat": {"path": "/v1/chat/completions", "status": "requires executable contract probe"}, "negative": {"status": "requires executable contract probe"}}
+  ],
+  "gates": ["SG01", "SG02", "SG03", "SG04", "SG05"],
+  "persistent_data_root": "build/gonkactl-test"
+}

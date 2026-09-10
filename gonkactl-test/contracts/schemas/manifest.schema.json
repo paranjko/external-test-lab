@@ -1,0 +1,14 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema", "$id":"https://gonka.dev/gonkactl-test/schemas/v1/manifest.schema.json",
+  "title":"gonkactl-test manifest v1", "type":"object", "additionalProperties":false,
+  "required":["schema_version","run_id","parent_run_id","runner_build","plan_hash","immutable_target","environment_instance_id","lease_id","inventory_refs","execution_state","gate_state","report_state","raw_exit","raw_signal","started_at","finished_at","evidence_refs"],
+  "properties":{
+    "schema_version":{"type":"string","pattern":"^1\\.[0-9]+\\.[0-9]+$"}, "run_id":{"type":"string","minLength":1}, "parent_run_id":{"type":["string","null"]},
+    "runner_build":{"type":"string","minLength":1}, "plan_hash":{"$ref":"#/$defs/sha256"}, "immutable_target":{"type":"object","minProperties":1},
+    "environment_instance_id":{"type":"string","minLength":1}, "lease_id":{"type":"string","minLength":1},
+    "inventory_refs":{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"string","minLength":1},"end":{"type":["string","null"]}}},
+    "execution_state":{"enum":["planned","running","complete","interrupted"]}, "gate_state":{"enum":["pending","passed","failed","incomplete"]}, "report_state":{"enum":["pending","generated","failed","published"]},
+    "raw_exit":{"type":["integer","null"]}, "raw_signal":{"type":["string","null"]}, "started_at":{"$ref":"#/$defs/dateTime"}, "finished_at":{"anyOf":[{"$ref":"#/$defs/dateTime"},{"type":"null"}]},
+    "evidence_refs":{"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1}}
+  }, "$defs":{"sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},"dateTime":{"type":"string","format":"date-time"}}
+}

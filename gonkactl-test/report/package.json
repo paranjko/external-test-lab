@@ -1,0 +1,12 @@
+{
+  "name": "gonkactl-test-report",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned Allure 3 renderer for gonkactl-test M0 qualification",
+  "engines": {
+    "node": ">=24 <27"
+  },
+  "devDependencies": {
+    "allure": "3.16.0"
+  }
+}

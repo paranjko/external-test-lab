@@ -1,0 +1,12 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema", "$id":"https://gonka.dev/gonkactl-test/schemas/v1/event.schema.json",
+  "title":"gonkactl-test event v1", "type":"object", "additionalProperties":false,
+  "required":["schema_version","run_id","case_id","attempt_id","event_id","sequence","timestamp","elapsed_ms","kind","step_id","assertion_id","outcome","reason","attachment_refs"],
+  "properties":{
+    "schema_version":{"type":"string","pattern":"^1\\.[0-9]+\\.[0-9]+$"}, "run_id":{"type":"string","minLength":1}, "case_id":{"type":["string","null"]}, "attempt_id":{"type":["string","null"]}, "event_id":{"type":"string","minLength":1},
+    "sequence":{"type":"integer","minimum":1}, "timestamp":{"type":"string","format":"date-time"}, "elapsed_ms":{"type":"integer","minimum":0},
+    "kind":{"enum":["run_started","case_started","step_started","assertion","attachment","case_finished","run_finished","interrupted"]}, "step_id":{"type":["string","null"]}, "assertion_id":{"type":["string","null"]},
+    "outcome":{"type":["string","null"],"enum":[null,"passed","failed","broken","skipped","unknown"]}, "reason":{"type":["string","null"]}, "attachment_refs":{"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1}},
+    "expected":{}, "actual":{}
+  }
+}
