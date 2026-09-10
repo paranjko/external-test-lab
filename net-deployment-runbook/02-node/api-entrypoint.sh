@@ -36,7 +36,8 @@ verify_join_binary() {
 }
 
 install_join_binary() {
-  archive="$(mktemp /tmp/gdc-join-dapi.XXXXXX.zip)"
+  # BusyBox mktemp requires trailing Xs without a suffix
+  archive="$(mktemp /tmp/gdc-join-dapi.XXXXXX)"
   candidate="$(mktemp /tmp/gdc-join-decentralized-api.XXXXXX)"
   trap 'rm -f "$archive" "$candidate"' EXIT HUP INT TERM
   curl -fsSL --connect-timeout 15 --max-time 600 "$join_url" -o "$archive" || {
@@ -54,7 +55,10 @@ install_join_binary() {
   }
   [ -s "$candidate" ] || { printf 'ERROR generated JOIN DAPI archive is empty\n' >&2; exit 1; }
   chmod 0755 "$candidate"
-  verify_join_binary "$candidate"
+  # The profile digest verifies the archive before DAPI config permits version checks
+  if [ -f "${API_CONFIG_PATH:-$dapi_home/api-config.yaml}" ]; then
+    verify_join_binary "$candidate"
+  fi
   install -m 0755 "$candidate" /usr/bin/decentralized-api
 }
 

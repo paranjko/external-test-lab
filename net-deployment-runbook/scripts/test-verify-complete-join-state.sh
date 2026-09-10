@@ -76,6 +76,7 @@ case "$args" in
   *'image inspect --format {{.Id}} example/core:0.2.15@sha256:'*) printf '%s\n' sha256:coreimage ;;
   *'image inspect --format {{.Id}} example/dapi:0.2.15-post3@sha256:'*) printf '%s\n' sha256:dapiimage ;;
   *'exec 0123456789ab readlink -f /proc/1/exe') printf '%s\n' /root/.inference/cosmovisor/current/bin/inferenced ;;
+  *'exec 0123456789ab /root/.inference/cosmovisor/current/bin/inferenced version') printf '%s\n' '0.2.15' ;;
   *'exec 0123456789ab /root/.inference/cosmovisor/current/bin/inferenced version --long') printf '%s\n' "version: 0.2.15" "commit: 4d687ed6782bcea3931d2d9135bf322f84e190ab" ;;
   *'exec abcdef012345 readlink -f /proc/1/exe') printf '%s\n' /root/.dapi/cosmovisor/current/bin/decentralized-api ;;
   *) echo "unexpected docker invocation: $args" >&2; exit 2 ;;
@@ -95,6 +96,7 @@ case "$url" in
 esac
 EOF
 chmod 0755 "$tmp/bin/ssh" "$tmp/bin/docker" "$tmp/bin/curl"
+[[ "$("$tmp/bin/docker" exec 0123456789ab /root/.inference/cosmovisor/current/bin/inferenced version)" == 0.2.15 ]]
 
 PATH="$tmp/bin:$PATH" GDC_TEST_DEPLOY="$deploy" \
   "$ROOT/scripts/verify-complete-join-state.sh" node-a "$tmp/profile.json" "$tmp/receipt.json" >"$tmp/pass.out"

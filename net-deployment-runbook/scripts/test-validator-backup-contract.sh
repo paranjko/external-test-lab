@@ -34,6 +34,7 @@ fixture_warm_pubkey='A7lHeLlwbcHee+m9zpuU0CbxxIqP0A4ODIB3VSXbMGmy'
 cat >"$tmp/identity-helper" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+[[ "$(wc -c <"$2" | tr -d ' ')" == 33 ]] || exit 1
 case "$3" in
   gdc-node1-cold-recovery)
     [[ "$(tr -d '\r\n' <"$1")" == "$GDC_COLD_MNEMONIC" && "$4" == "$GDC_VALID_PARTICIPANT" ]] || exit 1

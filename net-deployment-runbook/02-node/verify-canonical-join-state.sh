@@ -51,7 +51,13 @@ core_exe="$(docker exec "$node_container" readlink -f /proc/1/exe)" \
   || { echo 'canonical_core_unavailable: cannot inspect Core pid 1 executable' >&2; exit 1; }
 [[ "$core_exe" == /* ]] \
   || { echo 'canonical_core_unavailable: Core pid 1 executable is not absolute' >&2; exit 1; }
-core_version_output="$(docker exec "$node_container" "$core_exe" version --long 2>/dev/null)" \
+# Query Core metadata separately when Cosmovisor runs as PID 1
+core_binary="$core_exe"
+if [[ "${core_exe##*/}" == cosmovisor ]]; then
+  core_binary="$(docker exec "$node_container" sh -c 'command -v inferenced')" \
+    || { echo 'canonical_core_unavailable: cannot locate Core binary in running container' >&2; exit 1; }
+fi
+core_version_output="$(docker exec "$node_container" "$core_binary" version --long 2>/dev/null)" \
   || { echo 'canonical_core_unavailable: cannot inspect running Core build metadata' >&2; exit 1; }
 actual_core_commit="$(awk -F': ' '$1 == "commit" {print tolower($2); exit}' <<<"$core_version_output")"
 [[ "$actual_core_commit" =~ ^[0-9a-f]{40}$ ]] \

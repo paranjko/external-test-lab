@@ -17,6 +17,50 @@ printf 'INIT\n'
 EOF
 chmod 0755 "$temporary/bin/cosmovisor" "$temporary/work/init-docker.sh"
 
+# Exercise JOIN first start with a mock that enforces BusyBox mktemp templates
+cat >"$temporary/bin/mktemp" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  *XXXXXX) : ;;
+  *) echo "mktemp: ${1:-}: Invalid argument" >&2; exit 1 ;;
+esac
+path="${1%XXXXXX}mock"
+: >"$path"
+printf '%s\n' "$path"
+EOF
+cat >"$temporary/bin/curl" <<'EOF'
+#!/bin/sh
+last=''
+for arg in "$@"; do last="$arg"; done
+cat >"$last" <<'PAYLOAD'
+#!/bin/sh
+if [ "${1:-}" = version ]; then
+  printf 'version: 0.2.16\ncommit: 18506d42c510e0cafe6acd748bcd8d83036cba40\n'
+fi
+PAYLOAD
+EOF
+cat >"$temporary/bin/sha256sum" <<'EOF'
+#!/bin/sh
+printf '%s  %s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$1"
+EOF
+cat >"$temporary/bin/busybox" <<'EOF'
+#!/bin/sh
+shift
+shift
+cat "$1"
+EOF
+cat >"$temporary/bin/install" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod 0755 "$temporary/bin/mktemp" "$temporary/bin/curl" "$temporary/bin/sha256sum" "$temporary/bin/busybox" "$temporary/bin/install"
+
+join_home="$temporary/join"
+mkdir -p "$join_home"
+join_output="$(cd "$temporary/work" && PATH="$temporary/bin:$PATH" GDC_JOIN_DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release/v0.2.16/decentralized-api-amd64.zip GDC_JOIN_DAPI_UPGRADE_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GDC_JOIN_DAPI_EXPECTED_VERSION=0.2.16 GDC_JOIN_DAPI_EXPECTED_COMMIT=18506d42c510e0cafe6acd748bcd8d83036cba40 sh "$ENTRYPOINT" "$join_home")"
+[[ "$join_output" == INIT ]]
+grep -Fq 'if [ -f "${API_CONFIG_PATH:-$dapi_home/api-config.yaml}" ]; then' "$ENTRYPOINT"
+
 first_home="$temporary/first"
 mkdir -p "$first_home"
 first_output="$(cd "$temporary/work" && PATH="$temporary/bin:$PATH" sh "$ENTRYPOINT" "$first_home")"

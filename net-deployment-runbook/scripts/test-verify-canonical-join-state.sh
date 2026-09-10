@@ -22,8 +22,13 @@ case "$args" in
   *'inspect --format {{.Image}} abcdef012345') printf '%s\n' sha256:apiimage ;;
   *'image inspect '*api:0.2.15-post3*) printf '%s\n' sha256:apiimage ;;
   *'inspect --format {{.State.Running}} fedcba987654') [[ "${GDC_TEST_TMKMS_RUNNING:-false}" == true ]] && printf '%s\n' true || printf '%s\n' false ;;
-  *'exec 0123456789ab readlink -f /proc/1/exe') printf '%s\n' /root/.inference/cosmovisor/current/bin/inferenced ;;
-  *'exec 0123456789ab /root/.inference/cosmovisor/current/bin/inferenced version --long') printf '%s\n' 'version: 0.2.15' 'commit: 4d687ed6782bcea3931d2d9135bf322f84e190ab' ;;
+  *'exec 0123456789ab readlink -f /proc/1/exe') printf '%s\n' /usr/bin/cosmovisor ;;
+  *'exec 0123456789ab command '*) echo 'command: executable not found' >&2; exit 127 ;;
+  *'exec 0123456789ab sh -c command -v inferenced')
+    [[ $# -eq 5 && "$5" == 'command -v inferenced' ]] || exit 2
+    printf '%s\n' /usr/bin/inferenced ;;
+  *'exec 0123456789ab /usr/bin/inferenced version') printf '%s\n' '0.2.15' ;;
+  *'exec 0123456789ab /usr/bin/inferenced version --long') printf '%s\n' 'version: 0.2.15' 'commit: 4d687ed6782bcea3931d2d9135bf322f84e190ab' ;;
   *'exec abcdef012345 readlink -f /proc/1/exe') printf '%s\n' /root/.dapi/cosmovisor/current/bin/decentralized-api ;;
   *) echo "unexpected docker invocation: $args" >&2; exit 2 ;;
 esac
@@ -42,6 +47,11 @@ case "$url" in
 esac
 EOF
 chmod 0755 "$tmp/bin/docker" "$tmp/bin/curl"
+[[ "$("$tmp/bin/docker" exec 0123456789ab /usr/bin/inferenced version)" == 0.2.15 ]]
+if "$tmp/bin/docker" exec 0123456789ab command -v inferenced >"$tmp/builtin.out" 2>"$tmp/builtin.err"; then
+  echo 'Docker mock unexpectedly accepted a direct shell builtin' >&2; exit 1
+fi
+grep -Fq 'command: executable not found' "$tmp/builtin.err"
 PATH="$tmp/bin:$PATH" "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 4d687ed6782bcea3931d2d9135bf322f84e190ab 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/pass.out"
 grep -Fq 'PASS canonical runtime verified signer=stopped' "$tmp/pass.out"
 if PATH="$tmp/bin:$PATH" GDC_TEST_TMKMS_RUNNING=true "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 4d687ed6782bcea3931d2d9135bf322f84e190ab 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/tmkms.out" 2>"$tmp/tmkms.err"; then

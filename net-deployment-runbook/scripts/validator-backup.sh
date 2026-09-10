@@ -206,7 +206,8 @@ validate_mnemonic_bindings() {
     || die 'validator backup identity metadata is malformed'
   password_file="$(mktemp "$root/.recovery-keyring-password.XXXXXX")"
   chmod 0600 "$password_file"
-  if ! od -An -N32 -tu1 /dev/urandom | tr -d ' ' | tr -d '\n' >"$password_file"; then
+  # Encode 16 random bytes as 32 hex characters to stay below the keyring password limit
+  if ! od -An -N16 -tx1 /dev/urandom | tr -d ' \n' >"$password_file"; then
     rm -f -- "$password_file"
     die 'validator backup cannot prepare an isolated keyring password'
   fi
