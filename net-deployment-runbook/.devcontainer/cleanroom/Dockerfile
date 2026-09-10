@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM --platform=linux/amd64 ubuntu:24.04
 
 ARG USERNAME=operator
 
@@ -9,10 +9,12 @@ RUN apt-get update \
         binutils \
         ca-certificates \
         curl \
+        findutils \
         git \
         jq \
         openssh-client \
         openssl \
+        python3 \
         rsync \
         unzip \
         util-linux \
@@ -26,6 +28,9 @@ RUN apt-get update \
     && apt-get update \
     && apt-get install -y --no-install-recommends gh \
     && usermod --login "${USERNAME}" --home "/home/${USERNAME}" --move-home ubuntu \
+    # Docker Desktop for Mac forwards the host ssh-agent as a root:root 0660
+    # socket; group root lets the unprivileged operator use it.
+    && usermod --append --groups root "${USERNAME}" \
     && install -d -o "${USERNAME}" -g ubuntu -m 0700 "/home/${USERNAME}/.ssh" \
     && rm -rf /var/lib/apt/lists/*
 

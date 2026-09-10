@@ -1,14 +1,37 @@
 # Cleanroom
 
+A disposable Ubuntu environment for running `gdc` on macOS or from a clean
+workstation. Docker Desktop and an SSH key loaded in the host agent are
+required.
+
+Start the cleanroom:
+
 ```bash
-make cleanroom
+make cleanroom cmd=bash
 ```
 
-`GDC_HOME=/home/operator/.gdc-data` is mounted from
-`.devcontainer/data/`. Host SSH aliases work through read-only SSH config,
-known_hosts, and the forwarded SSH agent.
+This recreates the container. To open another shell without recreating it:
+
+```bash
+make cleanroom-shell
+```
+
+Your SSH configuration is mounted read-only and private keys remain in the
+host agent. Host aliases that use `IdentitiesOnly yes` are not supported.
+On macOS, SSH-agent forwarding is configured automatically; rebuild the
+container if `ssh-add -l` reports `Permission denied`.
+
+```bash
+ssh-add -l
+ssh -T <ssh-alias> true
+```
+
+Clone the repository inside the container and run the required role:
 
 ```bash
 git clone https://github.com/paranjko/external-test-lab.git
-./external-test-lab/net-deployment-runbook/gdc.sh host join --public-host node3.gonka-dev.net gdc-node3
+./external-test-lab/net-deployment-runbook/gdc.sh host join --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
+
+`GDC_HOME` data and validator backups persist in `.devcontainer/data/` on the
+host. Store completed backups elsewhere and keep them private.

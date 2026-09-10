@@ -2,13 +2,18 @@
   "name": "cleanroom",
   "build": {
     "dockerfile": "Dockerfile",
-    "context": "."
+    "context": ".",
+    "options": [
+      "--platform=linux/amd64"
+    ]
   },
   "remoteUser": "operator",
   "updateRemoteUserUID": false,
   "runArgs": [
+    "--platform=linux/amd64",
     "--hostname=cleanroom",
-    "--add-host=host.docker.internal:host-gateway"
+    "--add-host=host.docker.internal:host-gateway",
+    "--group-add=0"
   ],
   "mounts": [
     "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind",
