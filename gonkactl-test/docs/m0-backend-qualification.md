@@ -35,13 +35,18 @@ The machine-readable version of this decision is
 
 The upstream testenv documentation identifies the Docker services and the
 v5 gate. The preserved run log at the selected checkout reported routed v5
-health while chat admission remained `catalog_pending`. Source inspection
-shows why this is not yet a compatible baseline: the selected height-sync
-tests call `WaitGatewayChatReady` before their first named chat, but that
-waiter requires `height_seed=ok`; the pinned session starts the seed only on
-the first outbound inference, heartbeat or catch-up. A route-health success
-therefore cannot break the cycle. The M0 executable spike must create an
-owned fresh fixture and record:
+health while chat admission remained `catalog_pending`.
+
+The current IMP-010 source trace found `/devshard/v2/healthz` consistently in
+the pinned source and the effective route. It also found the seed loop is
+started, so a missing seed-loop start is ruled out. The root cause remains
+**INCONCLUSIVE** because the receipt does not yet bind a same-instance status
+and response body to the executable and container identity that served it.
+Resume IMP-010 by capturing those four facts from one owned request and one
+running instance: request target, status and body, executable identity, and
+container identity.
+
+The M0 executable spike must still create an owned fresh fixture and record:
 
 1. SG01–SG05 observations and actual child identity;
 2. one known-good compatible baseline, an invalid-digest control, a missing
@@ -52,13 +57,28 @@ owned fresh fixture and record:
 Until that receipt exists, candidate/testenv outcomes remain fixture or
 adapter evidence, not a product or release conclusion.
 
-## Pinned fixture correction required
+## Storage transport qualification
 
-The correction belongs to the pinned Gonka testenv source, not this External
-Test Lab adapter. Split runtime/catalog readiness from seed readiness. The
-height-sync case must execute an explicitly named first-request canary after
-catalog/runtime admission, tolerate only the documented bounded seed 503s,
-then require `height_seed=ok` before assertions that need a seeded floor.
-`env check` must remain request-free by default. This implements the
-FR-004 boundary instead of silently disabling `DEVSHARD_REQUIRE_HEIGHT_SEED`
-or treating `/v5/healthz` as chat proof.
+Storage 1.0.1 isolated API and prefix-route requests passed through both HTTP
+and HTTPS. The owned containers were then cleaned up successfully. These are
+**PASS** receipts for API transport, prefix routing, and container cleanup.
+They are not browser evidence.
+
+Full browser qualification is **BLOCKED**. Chrome reproduces a `SIGTRAP` at
+`about:blank`, before any bundle navigation, so no browser result can be
+attributed to the Storage bundle. Resume by running the browser probe in an
+environment where Chrome can remain alive past `about:blank`, then record the
+bundle navigation and assertions against the same isolated Storage fixture.
+
+## Receipt boundary
+
+| Receipt | Status | Boundary and resume action |
+|---|---|---|
+| Storage API over HTTP and HTTPS, including prefix routes | **PASS** | Isolated request evidence only; retain it as transport evidence. |
+| Owned Storage containers after the isolated run | **PASS** | Cleanup completed; provision a new owned fixture for any resumed browser run. |
+| Browser execution | **BLOCKED** | Chrome `SIGTRAP` occurs at `about:blank`; repair or replace that browser runtime before bundle navigation. |
+| Browser assertions and browser-generated Allure result | **BLOCKED** | No bundle navigation occurred; rerun the browser probe and generate Allure only from that completed run. |
+| Existing non-browser runtime receipts | **PASS** | They support only their recorded API, routing, and cleanup observations. |
+
+These receipts do not qualify M0-A09 or M0-A08, do not close IMP-002 or
+IMP-004, and do not establish M0 completion.
