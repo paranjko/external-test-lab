@@ -276,7 +276,17 @@ async function main() {
         await delay(100);
       }
       if (!reloadLoader) throw new Error("Page.reload did not produce a changed document loader");
-      const reloaded = await waitDOM(call, (html) => [wanted.caseName, wanted.stepText, wanted.attachmentLabel].every((x) => html.includes(x)));
+      let reloaded;
+      try {
+        reloaded = await waitDOM(call, (html) => [wanted.caseName, wanted.stepText, wanted.attachmentLabel].every((x) => html.includes(x)));
+      } catch (error) {
+        await writeFile(path.join(options["evidence-dir"], "case-reload.timeout.dom.html"), await dom(call));
+        await writeFile(path.join(options["evidence-dir"], "case-reload.timeout.json"), JSON.stringify({
+          hash: await evaluate(call, "location.hash"),
+          frameTree: await call("Page.getFrameTree"),
+        }, null, 2));
+        throw error;
+      }
       assertContains(reloaded, { case_name: wanted.caseName, step_text: wanted.stepText, attachment_label: wanted.attachmentLabel }, "reloaded case");
       await writeFile(path.join(options["evidence-dir"], "case-reload.dom.html"), reloaded);
       assertions.push(`reload_document_changed=${preReloadLoader}->${reloadLoader}`, "reload_reasserted");
