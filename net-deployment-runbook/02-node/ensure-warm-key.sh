@@ -36,9 +36,10 @@ cat >"$mnemonic"
 [[ -s "$mnemonic" ]] || { echo 'warm mnemonic input is empty' >&2; exit 2; }
 
 compose=(docker compose --env-file "$HERE/.env" -f "$HERE/compose.yaml")
+# Use the Core image: the inferenced in the API image dies with SIGILL without ADX/BMI2.
 show_address() {
-  "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
-    'printf "%s\\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file -a' \
+  "${compose[@]}" run --rm --no-deps -T -e KEYRING_PASSWORD --entrypoint /bin/sh node -c \
+    'printf "%s\\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file --keyring-dir /gdc-identity/warm -a' \
     2>/dev/null | tail -n1 | tr -d '\r'
 }
 
@@ -47,8 +48,8 @@ if [[ -z "$actual_address" ]]; then
   key_output="$(mktemp "$HERE/.warm-key-import.XXXXXX")"
   trap 'rm -f "$mnemonic" "$key_output"' EXIT
   if ! printf '%s\n%s\n%s\n' "$(<"$mnemonic")" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" \
-    | "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
-        'inferenced keys add "$KEY_NAME" --recover --keyring-backend file' \
+    | "${compose[@]}" run --rm --no-deps -T -e KEYRING_PASSWORD --entrypoint /bin/sh node -c \
+        'inferenced keys add "$KEY_NAME" --recover --keyring-backend file --keyring-dir /gdc-identity/warm' \
         >"$key_output" 2>&1; then
     if grep -qiE 'mnemonic|recovery phrase|bip39' "$key_output"; then
       echo 'cannot restore promoted warm key: mnemonic_rejected' >&2
