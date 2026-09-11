@@ -124,15 +124,19 @@ mock-chain, mock-DAPI and mock-OpenAI dependencies. The proposal must pin the
 Compose bytes, every image or executable identity, the chain/fixture seed and
 the gateway's effective catalog route before it may create resources.
 
-The D12 candidate receipt identifies the observed gateway executable as
-`/usr/local/bin/devshardctl` in service `devshardctl`, container
+The D12 candidate receipt identifies `/usr/local/bin/devshardctl` in service
+`devshardctl`, container
 `d0d9ff981691067727af6f9c42478973322dafa96c006dad6cb1e65caeeec092`, SHA-256
 `d6004a1c50cb09980790b0c127fa2b63339966f1732cacac66e195616e678d6f`, from
 image ID `sha256:a5522c603d59190aa6c88862fa0f488010da156586998153d6555256cd58306f`.
-This is the retained running gateway-process identity, not the versiond
-container's PID 1 wrapper `/sbin/tini`, and not the router's HAProxy binary.
-It identifies the D12 candidate only; it is not an identity claim for the
-historical original pin or for this proposed baseline.
+That historical field was captured from `/proc/1/exe`: it distinguishes the
+gateway container from the versiond PID 1 `/sbin/tini` wrapper and router
+HAProxy, but does not prove the `devshardd` child beneath versiond. The owned
+harness now has focused-test coverage for a separate `/proc` child capture of
+`/opt/devshard/devshardd` with PID, parent PID, executable path and SHA-256.
+Only a future changed-input fixture receipt can populate that new field. None
+of these identities is an identity claim for the historical original pin or
+for this proposed baseline.
 
 The unavailable input is a materialized, known-good compatible revision of
 that proposal with immutable rendered inputs and a declaration that it is a
