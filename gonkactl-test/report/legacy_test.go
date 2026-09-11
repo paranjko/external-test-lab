@@ -73,6 +73,34 @@ func TestImportLegacyAllure2DirectoryPreservesRawResultBoundary(t *testing.T) {
 	}
 }
 
+func TestWriteLegacyAllure2LaneCannotEnterAuthenticHistory(t *testing.T) {
+	archive := filepath.Join("testdata", "legacy-v2", "allure2-results")
+	d := t.TempDir()
+	output := filepath.Join(d, "legacy", "allure2-records.json")
+	path, err := WriteLegacyAllure2Lane(archive, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lane struct {
+		Lane    string                   `json:"lane"`
+		Archive string                   `json:"archive"`
+		Records []NormalizedLegacyRecord `json:"records"`
+	}
+	if err := json.Unmarshal(b, &lane); err != nil {
+		t.Fatal(err)
+	}
+	if lane.Lane != "legacy-unqualified" || lane.Archive != "allure2-results" || len(lane.Records) != 1 {
+		t.Fatalf("lane=%+v", lane)
+	}
+	if _, err := WriteLegacyAllure2Lane(archive, filepath.Join(d, "history", "legacy.json")); err == nil {
+		t.Fatal("Allure 2 lane accepted authentic history destination")
+	}
+}
+
 func TestImportLegacyArchiveValidatesImmutableProvenance(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "allure2-events.jsonl")

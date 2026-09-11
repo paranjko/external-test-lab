@@ -143,12 +143,6 @@ func ImportLegacyArchive(path string) ([]NormalizedLegacyRecord, error) {
 // evidence may be visible to operators, but it can never become a v3 history
 // point or an authentic execution result by this path.
 func WriteLegacyLane(archivePath, outputPath string) (string, error) {
-	clean := filepath.Clean(outputPath)
-	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
-		if part == "history" {
-			return "", fmt.Errorf("legacy lane must not write into authentic history")
-		}
-	}
 	records, err := ImportLegacyArchive(archivePath)
 	if err != nil {
 		return "", err
@@ -158,11 +152,21 @@ func WriteLegacyLane(archivePath, outputPath string) (string, error) {
 		// hash remains the stable provenance binding.
 		records[i].RawLogRef = filepath.Base(archivePath)
 	}
+	return writeLegacyLane(filepath.Base(archivePath), records, outputPath)
+}
+
+func writeLegacyLane(archive string, records []NormalizedLegacyRecord, outputPath string) (string, error) {
+	clean := filepath.Clean(outputPath)
+	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
+		if part == "history" {
+			return "", fmt.Errorf("legacy lane must not write into authentic history")
+		}
+	}
 	payload := struct {
 		Lane    string                   `json:"lane"`
 		Archive string                   `json:"archive"`
 		Records []NormalizedLegacyRecord `json:"records"`
-	}{Lane: "legacy-unqualified", Archive: filepath.Base(archivePath), Records: records}
+	}{Lane: "legacy-unqualified", Archive: archive, Records: records}
 	b, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return "", err
@@ -227,4 +231,14 @@ func ImportLegacyAllure2Directory(directory string) ([]NormalizedLegacyRecord, e
 		return nil, fmt.Errorf("Allure 2 raw archive contains no result files")
 	}
 	return records, nil
+}
+
+// WriteLegacyAllure2Lane publishes raw Allure 2 results only through the
+// non-authentic legacy lane; it shares the same history exclusion as JSONL.
+func WriteLegacyAllure2Lane(directory, outputPath string) (string, error) {
+	records, err := ImportLegacyAllure2Directory(directory)
+	if err != nil {
+		return "", err
+	}
+	return writeLegacyLane(filepath.Base(filepath.Clean(directory)), records, outputPath)
 }
