@@ -113,6 +113,56 @@ The M0 executable spike must still create an owned fresh fixture and record:
 Until that receipt exists, candidate/testenv outcomes remain fixture or
 adapter evidence, not a product or release conclusion.
 
+## Proposed compatible baseline composition – unqualified
+
+`proposed-compatible-devshard-baseline-v1` is one proposed, owned Compose
+composition for the next changed-input qualification. It is deliberately a
+new declared revision, not a rename of `lab-mock-devshard-testenv-v5` or any
+historical candidate receipt. Its required topology is a real DevShard gateway
+with its versiond and versiond-router dependencies, plus explicitly declared
+mock-chain, mock-DAPI and mock-OpenAI dependencies. The proposal must pin the
+Compose bytes, every image or executable identity, the chain/fixture seed and
+the gateway's effective catalog route before it may create resources.
+
+The D12 candidate receipt identifies the observed gateway executable as
+`/usr/local/bin/devshardctl` in service `devshardctl`, container
+`d0d9ff981691067727af6f9c42478973322dafa96c006dad6cb1e65caeeec092`, SHA-256
+`d6004a1c50cb09980790b0c127fa2b63339966f1732cacac66e195616e678d6f`, from
+image ID `sha256:a5522c603d59190aa6c88862fa0f488010da156586998153d6555256cd58306f`.
+This is the retained running gateway-process identity, not the versiond
+container's PID 1 wrapper `/sbin/tini`, and not the router's HAProxy binary.
+It identifies the D12 candidate only; it is not an identity claim for the
+historical original pin or for this proposed baseline.
+
+The unavailable input is a materialized, known-good compatible revision of
+that proposal with immutable rendered inputs and a declaration that it is a
+baseline. Its owner is the IMP-002/M0-A09 qualification owner in this owned
+worktree; no external owner or external-environment dependency has been
+established. The absence of this input keeps M0-A09 and M0 open, but is not
+`environment_unavailable` and does not authorize an unchanged-selector retry.
+
+FR-005 qualification of this proposal requires independent retained evidence
+for all of the following before it can become a baseline:
+
+1. exact rendered Compose and configuration bytes, their declared and computed
+   digest, source revision, image IDs and actual running child executable
+   paths, SHA-256 values and argv or process relationship;
+2. declared and effective catalog route construction, with bounded status,
+   cloned headers and body for each actual probe URL;
+3. fixture chain ID, genesis or seed identity, fresh capacity/process/port and
+   lease preflight, and a decision receipt before resource creation;
+4. SG01–SG05, v5 non-stream, SSE `[DONE]` and malformed-request observations,
+   plus invalid-digest rejection before creation, missing-route and
+   broken-mock non-success controls;
+5. reset, recreated fresh-instance and terminal owner-labelled resource
+   inventory showing cleanup; and
+6. an explicit supported adapter receipt for each v3/v4 claim, or an
+   evidence-backed `unqualified` gap without inferring compatibility.
+
+The next fixture, if needed, therefore changes its input to this materialized
+baseline revision and records the listed discriminating evidence. It must not
+repeat the D12 candidate selector unchanged.
+
 ## Invalid-digest preflight control
 
 `stand.PreflightComposition` now hashes the exact prepared `config.yaml` and
