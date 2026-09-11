@@ -5,7 +5,7 @@
   "backend": {
     "name": "devshard-testenv",
     "source_repository": "https://github.com/gonka-ai/gonka.git",
-    "source_revision": "b8a0a571ae8064bca333427c3190a57b85faafa6",
+    "source_revision": "2a6e59af16eb229792d726b004e62930b89c8eeb",
     "upstream_base_revision": "1eaa0413f58899f48f8ba19d16f9653b16dc4987",
     "source_path_argument": "--gonka-source",
     "transport": "owned Docker Compose plus loopback HTTP",

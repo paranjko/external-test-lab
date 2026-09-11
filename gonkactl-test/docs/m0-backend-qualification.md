@@ -60,13 +60,17 @@ The fixture itself failed because the first receipt helper asserted before
 persisting that transport error; its partial observations, runtime image
 identities and zero-container cleanup are retained.
 
-Candidate `b8a0a571ae8064bca333427c3190a57b85faafa6` retains
+Candidate `2a6e59af16eb229792d726b004e62930b89c8eeb` retains
 `ObserveGatewayChatHTTP`, allowing a future changed-input fixture to persist
 the transport error before asserting it and adds the two-phase prepared
-composition path. The fresh changed-input fixture passed: it records a
+composition path. The earlier changed-input fixture passed: it records a
 non-empty `broken_mock.transport_error`, successful recovery, runtime image
-identities and zero-container cleanup. It is still only a bounded v5 slice,
-not M0-A09 closure.
+identities and zero-container cleanup. The candidate now also tears down that
+instance, records an empty owned inventory, recreates the same preflighted
+composition, requires distinct gateway/router container IDs and records new
+health, canary and SSE observations. This next changed-input run has not been
+authorized or executed. It remains only a bounded v5 slice, not M0-A09
+closure.
 
 The M0 executable spike must still create an owned fresh fixture and record:
 
