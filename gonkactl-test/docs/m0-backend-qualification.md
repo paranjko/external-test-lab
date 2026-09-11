@@ -33,28 +33,39 @@ The machine-readable version of this decision is
 
 ## Evidence and remaining spike
 
-The upstream testenv documentation identifies the Docker services and the
-v5 gate. The preserved run log at the selected checkout reported routed v5
-health while chat admission remained `catalog_pending`.
+The historical original-pin run remains a failed diagnostic, not a proven
+Gonka failure. Its `/devshard/v2/healthz` observation cannot be reconciled
+from source alone because its running binary and effective configuration were
+not retained. The seed loop was already started, so a missing-start diagnosis
+is ruled out.
 
-The current IMP-010 source trace found that the harness
-`routerCatalogHealthzURL` and transport `HTTPClient.CatalogHealthzURL` both
-construct `/v2/healthz`, including when the transport route prefix is
-`/devshard/v2`. It also found the seed loop is started, so a missing seed-loop
-start is ruled out. The historical `/devshard/v2/healthz` observation therefore
-requires runtime binary/config provenance; it is not established by source
-equivalence. The root cause remains **INCONCLUSIVE** because the receipt does
-not yet bind same-instance status, bounded body and identity headers to the
-executable and container that served each route. The existing generic wait
-helpers discard successful response observations. The minimal proposed harness
-change is a read-only `GetHTTPObservation(client, url)` beside those helpers in
-`devshard/testenv/citest/harness/stack_boot.go`: return the supplied URL,
-status, a 4 KiB bounded body and cloned headers, defaulting a nil client to
-`HTTPClient()`. A focused unit test can reuse the existing round-tripper
-fixture. This is narrower than the chat-only unbounded response helper. After
-that separately authorized change, resume IMP-010 with one owned capture of
-the two request targets, their status/body/identity headers, executable
-identity and container identity.
+D11 added bounded `GetHTTPObservation`, explicit admin JSON encoding failure
+handling, runtime catalog URL diagnostics, same-instance identity capture and
+the compose-build propagation fix. The final D11 capture rebuilt and identified
+the running patched gateway, then recorded HTTP 200 observations for both the
+runtime catalog URL and harness URL at `/v5/healthz`, with explicit cleanup.
+This establishes route consistency for the patched candidate only. It does not
+identify the historical binary/configuration, therefore IMP-010 is
+**INCONCLUSIVE** for the original pin.
+
+The first frozen patched-candidate M0-A09 control slice used source
+`ae69d845ef54259736b55b19aeeee625474c8cfb`. It observed router catalog
+admission after expected initial 503s, gateway health, non-stream HTTP 200,
+SSE `[DONE]`, malformed HTTP 400, recovery HTTP 200 and a missing-route HTTP
+404. Its mock-openai HTTP 503 control ended in the gateway client's three-minute
+transport timeout. The existing upstream `TestA2_MLUpstream5xx` explicitly
+accepts either HTTP >=400 or this transport timeout for that control, so this
+is an accepted non-success observation rather than a new Gonka failure.
+The fixture itself failed because the first receipt helper asserted before
+persisting that transport error; its partial observations, runtime image
+identities and zero-container cleanup are retained.
+
+Candidate `c4662d3b1ed99ad9bae13378f49cc48b4b317c6c` adds
+`ObserveGatewayChatHTTP`, allowing a future changed-input fixture to persist
+the transport error before asserting it. Focused harness and selector tests
+pass. That future fixture must have fresh preflight and record a non-empty
+`broken_mock.transport_error` or HTTP non-success plus cleanup. It is still
+only a bounded v5 slice, not M0-A09 closure.
 
 The M0 executable spike must still create an owned fresh fixture and record:
 
