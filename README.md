@@ -52,7 +52,7 @@ Human catalog pointers: [`broker-compat/`](broker-compat/).
 |---|---|
 | Project Lead | [Sergii Paranko](https://www.linkedin.com/in/paranko/) ([@paranjko](https://github.com/paranjko)) |
 | Infrastructure Lead | [Mikhail Chudinov](https://www.linkedin.com/in/mikhail-chudinov/) (Mitch) |
-| QA Engineers | Hiring — see [jobs/](jobs/) |
+| QA Engineers | 2 hired (2nd started Sep 7) — posting kept in [jobs/](jobs/) |
 
 ## Repository roadmap
 
@@ -61,14 +61,15 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | Milestone | Artifact | Location | Status |
 |---|---|---|---|
 | M1 | DevNet architecture note | [`devnet/architecture.md`](devnet/architecture.md) | published |
-| M1 | QA hiring | [`jobs/`](jobs/) | **open** |
+| M1 | QA hiring | [`jobs/`](jobs/) | filled — 2 engineers |
 | M1 | Initial test strategy | [`testing/test-strategy.md`](testing/test-strategy.md) | published |
 | M1 | Node deployment runbook | [`net-deployment-runbook/`](net-deployment-runbook/) | published — `1.0.0-alpha.0` |
 | M1→M2 | Monthly public report #1 | [`reports/monthly/2026-08-month-1.md`](reports/monthly/2026-08-month-1.md) | published |
-| M2 | Join guide, regional layout | [`net-deployment-runbook/ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md), `devnet/regions.md` | join guide published — regional layout planned |
-| M2 | Smoke & regression checklists, live task board | [`testing/`](testing/), [task board](https://github.com/users/paranjko/projects/1) | task board **live** — checklists planned |
+| M2 | Monthly public report #2 | [`reports/monthly/2026-09-month-2.md`](reports/monthly/2026-09-month-2.md) | published |
+| M2 | Join guide, regional layout | [`net-deployment-runbook/ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md), [`devnet/regions.md`](devnet/regions.md) | published |
+| M2 | Smoke & regression checklists, live task board | [`testing/smoke-checklist.md`](testing/smoke-checklist.md), [`testing/regression-checklist.md`](testing/regression-checklist.md), [task board](https://github.com/users/paranjko/projects/1) | published — task board **live** |
 | M2 | Broker OpenAI host-compat + Responses adapter | [`broker-compat/`](broker-compat/) | published |
-| M2 | External join opening (genesis params, seeds) | `devnet/` | planned — gates on M2 stability |
+| M2 | External join opening (genesis params, seeds) | `devnet/` | in progress — public JOIN path exists; independent lifecycle not yet stable |
 | M3 | Test automation scripts (smoke-level) | `automation/` | planned |
 | M3 | Incident log, participant onboarding guide | `runbooks/incidents/`, `devnet/` | planned |
 | M4 | Final reports, lessons learned, handoff package | `reports/`, `docs/` | planned |
