@@ -8,7 +8,7 @@ QUALIFICATION_RERENDER_ROOT := $(DATA_ROOT)/report/render/$(QUALIFICATION_RUN_ID
 PERSISTENT_DIRS := $(DATA_ROOT)/go-cache $(DATA_ROOT)/go-mod-cache $(DATA_ROOT)/go-tmp $(DATA_ROOT)/tmp $(DATA_ROOT)/npm-cache $(DATA_ROOT)/xdg-cache $(DATA_ROOT)/xdg-config $(DATA_ROOT)/xdg-runtime $(DATA_ROOT)/browser-cache $(DATA_ROOT)/child-home
 PERSISTENT_ENV := GOCACHE=$(DATA_ROOT)/go-cache GOMODCACHE=$(DATA_ROOT)/go-mod-cache GOTMPDIR=$(DATA_ROOT)/go-tmp TMPDIR=$(DATA_ROOT)/tmp TMP=$(DATA_ROOT)/tmp TEMP=$(DATA_ROOT)/tmp NPM_CONFIG_CACHE=$(DATA_ROOT)/npm-cache XDG_CACHE_HOME=$(DATA_ROOT)/xdg-cache XDG_CONFIG_HOME=$(DATA_ROOT)/xdg-config PLAYWRIGHT_BROWSERS_PATH=$(DATA_ROOT)/browser-cache HOME=$(DATA_ROOT)/child-home JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=$(DATA_ROOT)/tmp
 BROWSER_RUNTIME_DIR := $(or $(XDG_RUNTIME_DIR),/run/user/$(shell id -u))
-BROWSER_ENV := HOME=$(DATA_ROOT)/child-home PATH=$(PATH) TMPDIR=$(DATA_ROOT)/tmp XDG_RUNTIME_DIR=$(BROWSER_RUNTIME_DIR)
+BROWSER_ENV := HOME=$(DATA_ROOT)/child-home PATH=$(PATH) TMPDIR=. XDG_RUNTIME_DIR=$(BROWSER_RUNTIME_DIR)
 
 test-contracts:
 	mkdir -p $(PERSISTENT_DIRS)
