@@ -44,25 +44,40 @@ func ProduceArchive(dir, runID, attemptID, feature string, events []JournalEvent
 	pb, _ := json.MarshalIndent(plan, "", "  ")
 	pb = append(pb, '\n')
 	ph := sha256.Sum256(pb)
-	manifest := map[string]any{"schema_version": "1.0.0", "run_id": runID, "parent_run_id": nil, "runner_build": "bindings", "plan_hash": hex.EncodeToString(ph[:]), "immutable_target": map[string]any{"kind": "owned-local"}, "environment_instance_id": "bindings-race", "lease_id": "local-only", "inventory_refs": map[string]any{"start": "inventory/start.json", "end": nil}, "execution_state": "complete", "gate_state": "passed", "report_state": "generated", "raw_exit": 0, "raw_signal": nil, "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "evidence_refs": []string{"events.jsonl"}}
-	if err := writeRecord(dir, "manifest.json", manifest); err != nil {
-		return err
-	}
 	attempts := []any{}
+	counts := map[string]int{"passed": 0, "failed": 0, "broken": 0, "skipped": 0, "unknown": 0}
+	confirmed := true
 	for i, id := range ids {
 		origins := []string{}
+		status, interrupted, failedStage, failureDomain := caseTerminal(events, id)
+		counts[status]++
+		if status != "passed" {
+			confirmed = false
+		}
 		for _, e := range events {
 			if e.CaseID != nil && *e.CaseID == id {
 				origins = append(origins, e.EventID)
 			}
 		}
 		x := sha256.Sum256([]byte(id + "\n" + attemptID))
-		attempts = append(attempts, map[string]any{"case_id": id, "attempt_id": attemptID + "-" + fmt.Sprint(i+1), "result_uuid": fmt.Sprintf("123e4567-e89b-12d3-a456-%012d", i+1), "history_id": hex.EncodeToString(x[:]), "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "status": "passed", "failed_stage": nil, "failure_domain": "product", "assertion_evidence": []string{"events.jsonl"}, "interrupted": false, "origin_event_ids": origins})
+		attempts = append(attempts, map[string]any{"case_id": id, "attempt_id": attemptID + "-" + fmt.Sprint(i+1), "result_uuid": fmt.Sprintf("123e4567-e89b-12d3-a456-%012d", i+1), "history_id": hex.EncodeToString(x[:]), "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "status": status, "failed_stage": failedStage, "failure_domain": failureDomain, "assertion_evidence": []string{"events.jsonl"}, "interrupted": interrupted, "origin_event_ids": origins})
 	}
 	if err := writeRecord(dir, "attempts.json", map[string]any{"schema_version": "1.0.0", "run_id": runID, "attempts": attempts}); err != nil {
 		return err
 	}
-	if err := writeRecord(dir, "coverage.json", map[string]any{"schema_version": "1.0.0", "campaign_id": "m0-authentic", "scope_hash": scope, "obligations": []any{map[string]any{"obligation_id": "selected-pilot-assertion", "rule_id": "pilot", "contract_revision": "v1", "required_variant": "selected", "evidence_requirement": "produced assertion event", "automated": true, "applicability": "applicable", "attempted": true, "asserted": true, "confirmed": true, "gap_reasons": []string{}, "blocked_by": []string{}}}, "native_counts": map[string]any{"passed": len(ids), "failed": 0, "broken": 0, "skipped": 0, "unknown": 0}}); err != nil {
+	gateState, rawExit, reportState := "passed", 0, "generated"
+	if !confirmed {
+		gateState, rawExit, reportState = "failed", 1, "failed"
+	}
+	manifest := map[string]any{"schema_version": "1.0.0", "run_id": runID, "parent_run_id": nil, "runner_build": "bindings", "plan_hash": hex.EncodeToString(ph[:]), "immutable_target": map[string]any{"kind": "owned-local"}, "environment_instance_id": "bindings-race", "lease_id": "local-only", "inventory_refs": map[string]any{"start": "inventory/start.json", "end": nil}, "execution_state": "complete", "gate_state": gateState, "report_state": reportState, "raw_exit": rawExit, "raw_signal": nil, "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "evidence_refs": []string{"events.jsonl"}}
+	if err := writeRecord(dir, "manifest.json", manifest); err != nil {
+		return err
+	}
+	gapReasons := []string{}
+	if !confirmed {
+		gapReasons = []string{"failed"}
+	}
+	if err := writeRecord(dir, "coverage.json", map[string]any{"schema_version": "1.0.0", "campaign_id": "m0-authentic", "scope_hash": scope, "obligations": []any{map[string]any{"obligation_id": "selected-pilot-assertion", "rule_id": "pilot", "contract_revision": "v1", "required_variant": "selected", "evidence_requirement": "produced assertion event", "automated": true, "applicability": "applicable", "attempted": true, "asserted": confirmed, "confirmed": confirmed, "gap_reasons": gapReasons, "blocked_by": []string{}}}, "native_counts": counts}); err != nil {
 		return err
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
@@ -74,6 +89,30 @@ func ProduceArchive(dir, runID, attemptID, feature string, events []JournalEvent
 		return err
 	}
 	return ValidateArchive(dir)
+}
+
+func caseTerminal(events []JournalEvent, caseID string) (status string, interrupted bool, failedStage any, failureDomain string) {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.CaseID == nil || *e.CaseID != caseID || (e.Kind != "case_finished" && e.Kind != "interrupted") {
+			continue
+		}
+		if e.Kind == "interrupted" {
+			return "unknown", true, "runner", "runner"
+		}
+		if e.Outcome == nil || *e.Outcome == "" {
+			return "unknown", false, "terminal", "unknown"
+		}
+		switch *e.Outcome {
+		case "passed":
+			return "passed", false, nil, "product"
+		case "failed", "broken", "skipped":
+			return *e.Outcome, false, "assertion", "product"
+		default:
+			return "unknown", false, "terminal", "unknown"
+		}
+	}
+	return "unknown", false, "terminal", "unknown"
 }
 func caseMaps(ids []string) []any {
 	out := make([]any, len(ids))
@@ -158,6 +197,8 @@ func ValidateArchive(dir string) error {
 			AttemptID      string   `json:"attempt_id"`
 			ResultUUID     string   `json:"result_uuid"`
 			HistoryID      string   `json:"history_id"`
+			Status         string   `json:"status"`
+			Interrupted    bool     `json:"interrupted"`
 			OriginEventIDs []string `json:"origin_event_ids"`
 		} `json:"attempts"`
 	}
@@ -165,6 +206,7 @@ func ValidateArchive(dir string) error {
 		return err
 	}
 	seenA, seenR, seenH := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	nonPassing := false
 	for _, a := range attempts.Attempts {
 		if a.AttemptID == "" || seenA[a.AttemptID] {
 			return fmt.Errorf("duplicate/unknown attempt id %q", a.AttemptID)
@@ -186,6 +228,17 @@ func ValidateArchive(dir string) error {
 				return fmt.Errorf("unknown origin event %q", id)
 			}
 		}
+		if a.Status != "passed" || a.Interrupted {
+			nonPassing = true
+		}
+	}
+	gateState, _ := manifestRaw["gate_state"].(string)
+	rawExit, _ := manifestRaw["raw_exit"].(float64)
+	if nonPassing && (gateState == "passed" || rawExit == 0) {
+		return fmt.Errorf("manifest claims success despite non-passing attempts")
+	}
+	if !nonPassing && (gateState != "passed" || rawExit != 0) {
+		return fmt.Errorf("manifest does not claim success for all-passing attempts")
 	}
 	var evidence struct {
 		Entries []struct {

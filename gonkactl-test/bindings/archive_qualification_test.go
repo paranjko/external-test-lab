@@ -66,6 +66,74 @@ func TestActualRunnerEmitsCompleteValidatedArchive(t *testing.T) {
 	}
 }
 
+func TestProduceArchiveDoesNotConvertFailedOrInterruptedCasesToPass(t *testing.T) {
+	dir := t.TempDir()
+	failed, interrupted := "failed-case", "interrupted-case"
+	failedOutcome := "failed"
+	events := []JournalEvent{
+		{EventID: "e1", Sequence: 1, Timestamp: "2026-01-01T00:00:00Z", Kind: "case_started", CaseID: &failed},
+		{EventID: "e2", Sequence: 2, Timestamp: "2026-01-01T00:00:01Z", ElapsedMS: 1, Kind: "case_finished", CaseID: &failed, Outcome: &failedOutcome},
+		{EventID: "e3", Sequence: 3, Timestamp: "2026-01-01T00:00:02Z", ElapsedMS: 2, Kind: "case_started", CaseID: &interrupted},
+		{EventID: "e4", Sequence: 4, Timestamp: "2026-01-01T00:00:03Z", ElapsedMS: 3, Kind: "interrupted", CaseID: &interrupted},
+	}
+	for i := range events {
+		events[i].SchemaVersion = "1.0.0"
+		events[i].RunID = "failure-run"
+		events[i].AttemptID = ptr("failure-attempt")
+		events[i].AttachmentRefs = []string{}
+	}
+	// ProduceArchive validates and reads the persisted journal, so write the
+	// exact test events as JSONL before exercising the production path.
+	var lines []string
+	for _, event := range events {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, string(encoded))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ProduceArchive(dir, "failure-run", "failure-attempt", "feature", events); err != nil {
+		t.Fatal(err)
+	}
+	var archive struct {
+		Attempts []struct {
+			CaseID, Status string
+			Interrupted    bool
+		} `json:"attempts"`
+	}
+	if err := readJSON(filepath.Join(dir, "attempts.json"), &archive); err != nil {
+		t.Fatal(err)
+	}
+	if len(archive.Attempts) != 2 || archive.Attempts[0].Status != "failed" || archive.Attempts[1].Status != "unknown" || !archive.Attempts[1].Interrupted {
+		t.Fatalf("false-pass archive: %+v", archive.Attempts)
+	}
+	var manifest map[string]any
+	if err := readJSON(filepath.Join(dir, "manifest.json"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest["gate_state"] != "failed" || manifest["raw_exit"] != float64(1) || manifest["report_state"] != "failed" {
+		t.Fatalf("false-pass manifest: %+v", manifest)
+	}
+	manifest["gate_state"], manifest["raw_exit"] = "passed", 0
+	if err := writeArchiveJSONForTest(filepath.Join(dir, "manifest.json"), manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateArchive(dir); err == nil {
+		t.Fatal("accepted manifest success for failed/interrupted attempts")
+	}
+}
+
+func writeArchiveJSONForTest(path string, value any) error {
+	b, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o600)
+}
+
 func TestArchiveSchemaRejectsMutation(t *testing.T) {
 	valid := map[string]any{"schema_version": "1.0.0", "run_id": "run", "attempts": []any{}}
 	if err := validateArchiveSchema("attempts", valid); err != nil {

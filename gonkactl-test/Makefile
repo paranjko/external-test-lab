@@ -11,8 +11,8 @@ BROWSER_RUNTIME_DIR := $(or $(XDG_RUNTIME_DIR),/run/user/$(shell id -u))
 BROWSER_ENV := HOME=$(DATA_ROOT)/child-home PATH=$(PATH) TMPDIR=. XDG_RUNTIME_DIR=$(BROWSER_RUNTIME_DIR)
 
 test-contracts:
-	mkdir -p $(PERSISTENT_DIRS)
-	env $(PERSISTENT_ENV) go test ./contracts
+	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
+	@set +e; command='env $(PERSISTENT_ENV) go test ./contracts'; log='$(DATA_ROOT)/terminal-receipts/test-contracts.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-contracts.receipt'; env $(PERSISTENT_ENV) go test ./contracts >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-contracts\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-contracts receipt: %s\n' "$$receipt"; exit "$$status"
 
 test-bindings:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
