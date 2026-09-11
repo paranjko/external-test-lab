@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,5 +27,32 @@ func TestPreflightCompositionBindsExactPreparedInputsAndRejectsMismatch(t *testi
 	rejected, err := PreflightComposition(dir, "bad", filepath.Join(dir, "rejected.json"))
 	if !errors.Is(err, ErrCompositionDigestMismatch) || rejected.Outcome != "rejected_digest_mismatch" || rejected.LaunchAttempted || rejected.ResourcesCreated {
 		t.Fatalf("rejected=%+v err=%v", rejected, err)
+	}
+}
+
+func TestValidateFixtureReceiptRequiresCompleteEvidence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fixture.json")
+	valid := `{"outcomes":{"SG01":{"outcome":"passed"},"SG02":{"outcome":"passed"},"SG03":{"outcome":"passed"},"SG04":{"outcome":"passed"},"SG05":{"outcome":"passed"}},"identity":{"chain_id":null,"genesis_hash":null,"source":"simulated","fixture_seed_hash":"seed"},"controls":{"known_good_baseline":{"outcome":"passed"},"invalid_digest":{"outcome":"rejected"},"missing_route":{"outcome":"rejected"},"broken_mock":{"outcome":"rejected"}},"terminal_cleanup":{"completed":true,"remaining_containers":0,"remaining_processes":0,"remaining_ports":0}}`
+	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateFixtureReceipt(path); err != nil {
+		t.Fatal(err)
+	}
+	nonSimulated := strings.Replace(valid, `"source":"simulated"`, `"source":"real"`, 1)
+	if err := os.WriteFile(path, []byte(nonSimulated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateFixtureReceipt(path); !errors.Is(err, ErrFixtureReceiptInvalid) {
+		t.Fatalf("accepted non-simulated null identity: %v", err)
+	}
+	for _, incomplete := range []string{`{}`, `{"outcomes":{"SG01":{"outcome":"passed"}}}`, `{"outcomes":{},"identity":{},"controls":{},"terminal_cleanup":{"completed":false}}`} {
+		if err := os.WriteFile(path, []byte(incomplete), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateFixtureReceipt(path); !errors.Is(err, ErrFixtureReceiptInvalid) {
+			t.Fatalf("receipt=%s err=%v", incomplete, err)
+		}
 	}
 }
