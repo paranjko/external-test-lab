@@ -5,7 +5,7 @@
   "backend": {
     "name": "devshard-testenv",
     "source_repository": "https://github.com/gonka-ai/gonka.git",
-    "source_revision": "2a6e59af16eb229792d726b004e62930b89c8eeb",
+    "source_revision": "7c827b2bba99ffcfb6faf542f71eaef6d3ac0f2c",
     "upstream_base_revision": "1eaa0413f58899f48f8ba19d16f9653b16dc4987",
     "source_path_argument": "--gonka-source",
     "transport": "owned Docker Compose plus loopback HTTP",
@@ -14,8 +14,8 @@
   "lease_authority": "gonkactl-test instance lease; no shared Compose project, ports, volumes, or testenv images",
   "baseline": {
     "status": "unqualified",
-    "reason": "The original pinned observation cannot identify its running binary/configuration; D11 establishes route consistency only for a locally patched candidate. The retained M0-A09 control slice is incomplete.",
-    "required_control": "A fresh changed-input fixture must persist the broken-mock transport result before evaluating the remaining baseline and control requirements."
+    "reason": "The original pinned observation cannot identify its running binary/configuration; D12 establishes route consistency and a recreated-instance slice only for a locally patched candidate. A known-good compatible baseline remains unqualified.",
+    "required_control": "A fresh changed-input fixture must persist SG01-SG05 observations, all controls and terminal cleanup without converting the original-pin gap into a baseline pass."
   },
   "adapters": [
     {"protocol": "v3", "status": "unqualified", "reason": "No exact v3 route and request contract was established by the inspected v5 fixture."},

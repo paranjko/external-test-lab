@@ -56,3 +56,20 @@ func TestValidateFixtureReceiptRequiresCompleteEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkCompositionLeasePreservesLifecycleWithoutToken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "receipt.json")
+	decision := CompositionDecision{Outcome: "accepted"}
+	lease := Lease{EnvironmentID: "lab-mock", InstanceID: "m0-a09", Token: "secret", Path: filepath.Join(dir, "lease.json")}
+	if _, err := MarkCompositionLease(path, decision, lease, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(contents), lease.Token) || !strings.Contains(string(contents), `"released": true`) {
+		t.Fatalf("receipt does not safely preserve lease lifecycle: %s", contents)
+	}
+}

@@ -14,14 +14,40 @@ var ErrCompositionDigestMismatch = errors.New("composition digest mismatch")
 var ErrFixtureReceiptInvalid = errors.New("fixture receipt invalid")
 
 type CompositionDecision struct {
-	ExpectedDigest   string   `json:"expected_digest"`
-	ActualDigest     string   `json:"actual_digest"`
-	Inputs           []string `json:"inputs"`
-	Outcome          string   `json:"outcome"`
-	LaunchAttempted  bool     `json:"launch_attempted"`
-	ResourcesCreated bool     `json:"resources_created"`
-	LaunchResult     string   `json:"launch_result,omitempty"`
-	FixtureReceipt   string   `json:"fixture_receipt,omitempty"`
+	ExpectedDigest   string         `json:"expected_digest"`
+	ActualDigest     string         `json:"actual_digest"`
+	Inputs           []string       `json:"inputs"`
+	Outcome          string         `json:"outcome"`
+	LaunchAttempted  bool           `json:"launch_attempted"`
+	ResourcesCreated bool           `json:"resources_created"`
+	LaunchResult     string         `json:"launch_result,omitempty"`
+	FixtureReceipt   string         `json:"fixture_receipt,omitempty"`
+	Lease            *LeaseDecision `json:"lease,omitempty"`
+}
+
+// LeaseDecision records lifecycle evidence without exposing the owner token.
+// A launch can be complete only after the launcher has released its own lease.
+type LeaseDecision struct {
+	EnvironmentID string `json:"environment_id"`
+	InstanceID    string `json:"instance_id"`
+	Path          string `json:"path"`
+	Acquired      bool   `json:"acquired"`
+	Released      bool   `json:"released"`
+	ReleaseError  string `json:"release_error,omitempty"`
+}
+
+func MarkCompositionLease(receiptPath string, decision CompositionDecision, lease Lease, released bool, releaseErr error) (CompositionDecision, error) {
+	decision.Lease = &LeaseDecision{
+		EnvironmentID: lease.EnvironmentID,
+		InstanceID:    lease.InstanceID,
+		Path:          lease.Path,
+		Acquired:      true,
+		Released:      released,
+	}
+	if releaseErr != nil {
+		decision.Lease.ReleaseError = releaseErr.Error()
+	}
+	return decision, writeDecision(receiptPath, decision)
 }
 
 // ValidateFixtureReceipt enforces the minimum evidence boundary for a
