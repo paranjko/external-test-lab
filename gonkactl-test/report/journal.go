@@ -14,7 +14,21 @@ import (
 	"github.com/paranjko/external-test-lab/gonkactl-test/bindings"
 )
 
-type Identity struct{ UUID, HistoryID, Feature, Scenario, FailureDomain string }
+type Identity struct{ UUID, HistoryID, CaseID, Feature, Scenario, FailureDomain string }
+
+// SelectedCase is the declared execution obligation. It deliberately lives
+// outside the journal so a missing runner event cannot silently remove a case
+// from report conversion.
+type SelectedCase struct {
+	CaseID        string `json:"case_id"`
+	Scenario      string `json:"scenario"`
+	FailureDomain string `json:"failure_domain,omitempty"`
+}
+
+type JournalConversion struct {
+	Results []string `json:"results"`
+	Gaps    []string `json:"gaps"`
+}
 type allureResult struct {
 	UUID          string             `json:"uuid"`
 	HistoryID     string             `json:"historyId"`
@@ -67,23 +81,104 @@ func ConvertJournal(journalPath, outputDir, runID, feature string) ([]string, er
 	if len(cases) == 0 {
 		return nil, fmt.Errorf("journal has no selected cases")
 	}
-	ids := make([]string, 0, len(cases))
+	selected := make([]SelectedCase, 0, len(cases))
 	for id := range cases {
+		selected = append(selected, SelectedCase{CaseID: id, Scenario: id})
+	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].CaseID < selected[j].CaseID })
+	conversion, err := ConvertSelectedJournal(journalPath, outputDir, runID, feature, selected)
+	if err != nil {
+		return nil, err
+	}
+	return conversion.Results, nil
+}
+
+// ConvertSelectedJournal reconciles declared selected obligations with actual
+// journal evidence. Observed-but-undeclared case IDs fail closed; selected
+// cases without a terminal event receive a visible durable gap rather than an
+// invented result.
+func ConvertSelectedJournal(journalPath, outputDir, runID, feature string, selected []SelectedCase) (JournalConversion, error) {
+	events, err := readJournal(journalPath)
+	if err != nil {
+		return JournalConversion{}, err
+	}
+	if len(selected) == 0 {
+		return JournalConversion{}, fmt.Errorf("declared selected cases are required")
+	}
+	declared := make(map[string]SelectedCase, len(selected))
+	for _, item := range selected {
+		if item.CaseID == "" {
+			return JournalConversion{}, fmt.Errorf("selected case has empty case id")
+		}
+		if _, exists := declared[item.CaseID]; exists {
+			return JournalConversion{}, fmt.Errorf("duplicate declared case id %q", item.CaseID)
+		}
+		if item.Scenario == "" {
+			item.Scenario = item.CaseID
+		}
+		declared[item.CaseID] = item
+	}
+	observed := map[string]bool{}
+	terminal := map[string]bool{}
+	for _, event := range events {
+		if event.CaseID == nil {
+			continue
+		}
+		id := *event.CaseID
+		if _, ok := declared[id]; !ok {
+			return JournalConversion{}, fmt.Errorf("observed undeclared case id %q", id)
+		}
+		observed[id] = true
+		if event.Kind == "case_finished" || event.Kind == "interrupted" {
+			terminal[id] = true
+		}
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return JournalConversion{}, err
+	}
+	ids := make([]string, 0, len(declared))
+	for id := range declared {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return nil, err
-	}
-	outputs := make([]string, 0, len(ids))
+	conversion := JournalConversion{Results: []string{}, Gaps: []string{}}
 	for _, id := range ids {
-		out := filepath.Join(outputDir, id+"-result.json")
-		if err := convertEvents(events, journalPath, out, Identity{UUID: runID + "-" + id, HistoryID: id, Feature: feature, Scenario: id}); err != nil {
-			return nil, err
+		item := declared[id]
+		if !observed[id] || !terminal[id] {
+			gap := filepath.Join(outputDir, id+"-gap.json")
+			if err := writeSelectedCaseGap(gap, journalPath, item, !observed[id]); err != nil {
+				return JournalConversion{}, err
+			}
+			conversion.Gaps = append(conversion.Gaps, gap)
+			continue
 		}
-		outputs = append(outputs, out)
+		out := filepath.Join(outputDir, id+"-result.json")
+		if err := convertEvents(events, journalPath, out, Identity{UUID: runID + "-" + id, HistoryID: id, CaseID: id, Feature: feature, Scenario: item.Scenario, FailureDomain: item.FailureDomain}); err != nil {
+			return JournalConversion{}, err
+		}
+		conversion.Results = append(conversion.Results, out)
 	}
-	return outputs, nil
+	return conversion, nil
+}
+
+func writeSelectedCaseGap(path, journalPath string, item SelectedCase, unseen bool) error {
+	reason := "selected case has no terminal event evidence"
+	if unseen {
+		reason = "selected case has no journal event evidence"
+	}
+	payload := map[string]any{
+		"case_id":       item.CaseID,
+		"scenario":      item.Scenario,
+		"outcome":       "gap",
+		"reason":        reason,
+		"journal":       filepath.Base(journalPath),
+		"evidence_kind": "selected-case-reconciliation",
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(path, append(b, '\n'), 0o644)
 }
 func ConvertScenario(journalPath, outputPath string, identity Identity) error {
 	events, err := readJournal(journalPath)
@@ -115,8 +210,12 @@ func convertEvents(events []bindings.JournalEvent, journalPath, outputPath strin
 	r := allureResult{UUID: id.UUID, HistoryID: id.HistoryID, Name: id.Scenario, FullName: id.Feature + ":" + id.Scenario, Stage: "finished", Links: []any{}, Steps: []allureStep{}, Attachments: []allureAttachment{}, Labels: []allureLabel{{"epic", "M0"}, {"feature", id.Feature}, {"story", id.Scenario}, {"evidence_class", "authentic-runner-journal"}}}
 	indexes := map[string]int{}
 	started, terminal := false, false
+	caseID := id.CaseID
+	if caseID == "" {
+		caseID = id.Scenario
+	}
 	for _, e := range events {
-		if e.CaseID == nil || (*e.CaseID != id.UUID && *e.CaseID != id.Scenario) {
+		if e.CaseID == nil || (*e.CaseID != id.UUID && *e.CaseID != caseID) {
 			continue
 		}
 		switch e.Kind {

@@ -1,0 +1,5 @@
+[
+  {"case_id":"case-3a46bbb729fce636","scenario":"Проверки не выводятся из renderer [smoke/receipt]"},
+  {"case_id":"case-b8fc2289d5481254","scenario":"Проверки не выводятся из renderer [status/response]"},
+  {"case_id":"case-f1d2a4d1951e5577","scenario":"DocString и таблица передаются binding"}
+]

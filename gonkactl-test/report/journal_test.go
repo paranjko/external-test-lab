@@ -60,3 +60,50 @@ func TestConvertScenarioRejectsMissingTerminalOutcome(t *testing.T) {
 		t.Fatal("missing terminal event accepted")
 	}
 }
+
+func TestConvertSelectedJournalWritesVisibleGapForSelectedUnseenCase(t *testing.T) {
+	directory := filepath.Join("..", "build", "gonkactl-test", "report-test", "selection-gap")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(directory, "events.jsonl")
+	contents := "{\"kind\":\"case_started\",\"case_id\":\"observed\",\"timestamp\":\"2026-01-01T00:00:00.000100000Z\"}\n" +
+		"{\"kind\":\"step_started\",\"case_id\":\"observed\",\"step_id\":\"Given\",\"timestamp\":\"2026-01-01T00:00:00.000200000Z\"}\n" +
+		"{\"kind\":\"assertion\",\"case_id\":\"observed\",\"step_id\":\"Given\",\"outcome\":\"passed\",\"timestamp\":\"2026-01-01T00:00:00.000300000Z\"}\n" +
+		"{\"kind\":\"case_finished\",\"case_id\":\"observed\",\"outcome\":\"passed\",\"timestamp\":\"2026-01-01T00:00:00.000400000Z\"}\n"
+	if err := os.WriteFile(journal, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	conversion, err := ConvertSelectedJournal(journal, directory, "run", "M0", []SelectedCase{{CaseID: "observed", Scenario: "Observed"}, {CaseID: "unseen", Scenario: "Unseen"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conversion.Results) != 1 || len(conversion.Gaps) != 1 {
+		t.Fatalf("conversion=%+v", conversion)
+	}
+	gap, err := os.ReadFile(conversion.Gaps[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(gap, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["case_id"] != "unseen" || payload["outcome"] != "gap" {
+		t.Fatalf("gap=%v", payload)
+	}
+}
+
+func TestConvertSelectedJournalRejectsObservedUndeclaredCase(t *testing.T) {
+	directory := filepath.Join("..", "build", "gonkactl-test", "report-test", "selection-unknown")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(directory, "events.jsonl")
+	if err := os.WriteFile(journal, []byte("{\"kind\":\"case_started\",\"case_id\":\"undeclared\",\"timestamp\":\"2026-01-01T00:00:00Z\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ConvertSelectedJournal(journal, directory, "run", "M0", []SelectedCase{{CaseID: "declared", Scenario: "Declared"}}); err == nil {
+		t.Fatal("observed undeclared case accepted")
+	}
+}
