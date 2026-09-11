@@ -367,6 +367,11 @@ func browserEnvironment(t *testing.T, dataRoot string) []string {
 		t.Fatalf("restrict browser persistent home: %v", err)
 	}
 	environment = append(environment, "HOME="+home)
+	temp := filepath.Join(dataRoot, "tmp")
+	if err := os.MkdirAll(temp, 0o700); err != nil {
+		t.Fatalf("create browser persistent temp: %v", err)
+	}
+	environment = append(environment, "TMPDIR="+temp)
 	return environment
 }
 
