@@ -46,6 +46,15 @@ func NormalizeLegacy(record LegacyRecord) (NormalizedLegacyRecord, error) {
 	if record.SourceRunID == "" || record.CaseID == "" || record.RawLogRef == "" {
 		return NormalizedLegacyRecord{}, fmt.Errorf("legacy provenance is incomplete")
 	}
+	if record.ArchiveSHA256 == "" {
+		return NormalizedLegacyRecord{}, fmt.Errorf("legacy archive hash is missing")
+	}
+	if len(record.ArchiveSHA256) != sha256.Size*2 {
+		return NormalizedLegacyRecord{}, fmt.Errorf("legacy archive hash is invalid")
+	}
+	if _, err := hex.DecodeString(record.ArchiveSHA256); err != nil {
+		return NormalizedLegacyRecord{}, fmt.Errorf("legacy archive hash is invalid: %w", err)
+	}
 	if !record.Started {
 		return NormalizedLegacyRecord{}, fmt.Errorf("legacy case %q has no start event", record.CaseID)
 	}
@@ -54,15 +63,17 @@ func NormalizeLegacy(record LegacyRecord) (NormalizedLegacyRecord, error) {
 	default:
 		return NormalizedLegacyRecord{}, fmt.Errorf("legacy case %q has no supported terminal outcome", record.CaseID)
 	}
-	if record.StartedAt != "" {
-		if _, err := time.Parse(time.RFC3339Nano, record.StartedAt); err != nil {
-			return NormalizedLegacyRecord{}, fmt.Errorf("invalid legacy start timestamp: %w", err)
-		}
+	if record.StartedAt == "" {
+		return NormalizedLegacyRecord{}, fmt.Errorf("legacy case %q has no start timestamp", record.CaseID)
 	}
-	if record.FinishedAt != "" {
-		if _, err := time.Parse(time.RFC3339Nano, record.FinishedAt); err != nil {
-			return NormalizedLegacyRecord{}, fmt.Errorf("invalid legacy terminal timestamp: %w", err)
-		}
+	if _, err := time.Parse(time.RFC3339Nano, record.StartedAt); err != nil {
+		return NormalizedLegacyRecord{}, fmt.Errorf("invalid legacy start timestamp: %w", err)
+	}
+	if record.FinishedAt == "" {
+		return NormalizedLegacyRecord{}, fmt.Errorf("legacy case %q has no terminal timestamp", record.CaseID)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, record.FinishedAt); err != nil {
+		return NormalizedLegacyRecord{}, fmt.Errorf("invalid legacy terminal timestamp: %w", err)
 	}
 	return NormalizedLegacyRecord{SourceRunID: record.SourceRunID, CaseID: record.CaseID, Outcome: record.Terminal, RawLogRef: record.RawLogRef, NormalizationRevision: "legacy-v2-to-v3-v1", StepEvidence: "unavailable", DurationEvidence: "unavailable", StartedAt: record.StartedAt, FinishedAt: record.FinishedAt, ArchiveSHA256: record.ArchiveSHA256, IdentityMapping: "legacy-case:" + record.CaseID}, nil
 }

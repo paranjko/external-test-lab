@@ -1,0 +1,13 @@
+{
+  "source_run_id": "legacy-v2-run-001",
+  "case_id": "minority-validator-recovery",
+  "outcome": "failed",
+  "raw_log_ref": "allure2-events.jsonl",
+  "normalization_revision": "legacy-v2-to-v3-v1",
+  "step_evidence": "unavailable",
+  "duration_evidence": "unavailable",
+  "started_at": "2026-01-01T00:00:00Z",
+  "finished_at": "2026-01-01T00:00:03Z",
+  "archive_sha256": "19b1200b10f19dbf5e72feeaf1d314d6cb8120e68746de2ccfe5cb35051058bd",
+  "identity_mapping": "legacy-case:minority-validator-recovery"
+}

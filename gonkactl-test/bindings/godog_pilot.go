@@ -42,6 +42,7 @@ type PilotOptions struct {
 	FeaturePath, JournalPath, EvidenceDir string
 	AllureRuntime                         allureruntime.Runtime
 	FailJournalAfter                      int64
+	EnableAmbiguousDefinitions             bool
 }
 
 type journal struct {
@@ -273,10 +274,14 @@ func RunGodogPilotWithOptions(opts PilotOptions) int {
 			return ctx, nil
 		})
 		sc.Step(`^ожидает реализации$`, func() error { return godog.ErrPending })
-		// Deliberately register two identical definitions. Godog must reject this
-		// during preparation, rather than running a fabricated step body.
-		sc.Step(`^неоднозначный шаг$`, func() error { return nil })
-		sc.Step(`^неоднозначный шаг$`, func() error { return nil })
+		if opts.EnableAmbiguousDefinitions {
+			// Deliberately register two identical definitions only for the
+			// dedicated control. Ordinary pilot runs must remain executable.
+			sc.Step(`^неоднозначный шаг$`, func() error { return nil })
+			sc.Step(`^неоднозначный шаг$`, func() error { return nil })
+		} else {
+			sc.Step(`^неоднозначный шаг$`, func() error { return errors.New("ambiguous control disabled") })
+		}
 		sc.Step(`^паника шага$`, func() error { panic("controlled panic") })
 		sc.Step(`^отмена шага$`, func() error { return context.Canceled })
 	}, Options: &godog.Options{Format: "progress", Paths: []string{opts.FeaturePath}, Output: os.Stdout, Strict: true, Concurrency: 2}}

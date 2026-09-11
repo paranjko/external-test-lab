@@ -3,11 +3,12 @@ package report
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestNormalizeLegacyPreservesEvidenceLosses(t *testing.T) {
-	record, err := NormalizeLegacy(LegacyRecord{SourceRunID: "v2-run-1", CaseID: "case-1", Started: true, Terminal: "failed", RawLogRef: "immutable/log.jsonl"})
+	record, err := NormalizeLegacy(LegacyRecord{SourceRunID: "v2-run-1", CaseID: "case-1", Started: true, Terminal: "failed", RawLogRef: "immutable/log.jsonl", StartedAt: "2026-01-01T00:00:00Z", FinishedAt: "2026-01-01T00:00:01Z", ArchiveSHA256: strings.Repeat("a", 64)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,10 +37,30 @@ func TestImportLegacyArchiveValidatesImmutableProvenance(t *testing.T) {
 }
 
 func TestNormalizeLegacyRejectsHtmlOnlyOrOutcomeLessRecord(t *testing.T) {
-	if _, err := NormalizeLegacy(LegacyRecord{SourceRunID: "v2-html", CaseID: "case-1", Started: false, Terminal: "passed", RawLogRef: "legacy/index.html"}); err == nil {
+	if _, err := NormalizeLegacy(LegacyRecord{SourceRunID: "v2-html", CaseID: "case-1", Started: false, Terminal: "passed", RawLogRef: "legacy/index.html", ArchiveSHA256: strings.Repeat("a", 64), StartedAt: "2026-01-01T00:00:00Z", FinishedAt: "2026-01-01T00:00:01Z"}); err == nil {
 		t.Fatal("HTML-only legacy record accepted")
 	}
-	if _, err := NormalizeLegacy(LegacyRecord{SourceRunID: "v2-partial", CaseID: "case-2", Started: true, RawLogRef: "immutable/log.jsonl"}); err == nil {
+	if _, err := NormalizeLegacy(LegacyRecord{SourceRunID: "v2-partial", CaseID: "case-2", Started: true, RawLogRef: "immutable/log.jsonl", ArchiveSHA256: strings.Repeat("a", 64), StartedAt: "2026-01-01T00:00:00Z"}); err == nil {
 		t.Fatal("outcome-less legacy record accepted")
+	}
+}
+
+func TestNormalizeLegacyRequiresCompleteIndependentEvidence(t *testing.T) {
+	base := LegacyRecord{SourceRunID: "run", CaseID: "case", Started: true, Terminal: "passed", RawLogRef: "archive"}
+	for name, mutate := range map[string]func(*LegacyRecord){
+		"hash": func(r *LegacyRecord) { r.StartedAt = "2026-01-01T00:00:00Z"; r.FinishedAt = "2026-01-01T00:00:01Z" },
+		"start": func(r *LegacyRecord) {
+			r.FinishedAt = "2026-01-01T00:00:01Z"
+			r.ArchiveSHA256 = strings.Repeat("a", 64)
+		},
+		"finish": func(r *LegacyRecord) { r.StartedAt = "2026-01-01T00:00:00Z"; r.ArchiveSHA256 = strings.Repeat("a", 64) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := base
+			mutate(&r)
+			if _, err := NormalizeLegacy(r); err == nil {
+				t.Fatal("incomplete evidence accepted")
+			}
+		})
 	}
 }

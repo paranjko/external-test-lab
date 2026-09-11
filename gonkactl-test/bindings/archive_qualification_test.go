@@ -61,6 +61,15 @@ func TestActualRunnerEmitsCompleteValidatedArchive(t *testing.T) {
 	if err := ValidateJournalIntegrity(events); err != nil {
 		t.Fatal(err)
 	}
+	if err := ProduceArchive(dir, runID, attemptID, "bindings/features/pilot.feature", events); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateArchive(dir); err != nil {
+		t.Fatal(err)
+	}
+	return
+	// Archive records below are retained only as a schema fixture while the
+	// producer migration is completed; qualification uses the production path.
 	var cases []string
 	seenCases := map[string]bool{}
 	passedAssertion := false

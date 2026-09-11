@@ -151,7 +151,7 @@ func TestUndefinedAmbiguousPendingHookPanicAndCancellationStopExecution(t *testi
 				t.Fatal(err)
 			}
 			journal := ownedPath(t, "events.jsonl")
-			status := RunGodogPilotWithOptions(PilotOptions{RunID: "run-" + name, AttemptID: "attempt-" + name, FeaturePath: feature, JournalPath: journal, EvidenceDir: ownedPath(t, "evidence")})
+			status := RunGodogPilotWithOptions(PilotOptions{RunID: "run-" + name, AttemptID: "attempt-" + name, FeaturePath: feature, JournalPath: journal, EvidenceDir: ownedPath(t, "evidence"), EnableAmbiguousDefinitions: name == "ambiguous"})
 			if status == 0 {
 				t.Fatalf("%s control executed successfully", name)
 			}

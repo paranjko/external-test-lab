@@ -2,8 +2,9 @@
 set -euo pipefail
 
 data_root=${1:?persistent data root is required}
-report_root="$data_root/report/render/rerender-run-2"
-results_root="$data_root/report/results/m0-timed-run-2"
+run_id=${2:?qualification run id is required}
+report_root=${3:-"$data_root/report/render/$run_id"}
+results_root="$data_root/report/results/$run_id"
 endpoint_file="$data_root/report/browser-endpoint.txt"
 server_log="$data_root/report/browser-server.log"
 browser_root="$data_root/report/browser-smoke"
