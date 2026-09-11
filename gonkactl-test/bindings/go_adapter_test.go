@@ -45,7 +45,7 @@ func TestRunGoTestAuthenticPassFailAndInterruption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fail.ExitCode == 0 || terminalCount(fail.Events) != 1 || fail.Events[len(fail.Events)-1].Outcome != "fail" {
+	if fail.ExitCode == 0 || len(fail.Events) != 1 || fail.Events[0].Kind != "process_failed" || fail.Events[0].Outcome != "failed" {
 		t.Fatalf("fail receipt=%+v", fail)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

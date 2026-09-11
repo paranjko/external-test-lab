@@ -108,11 +108,16 @@ func RunGoTest(ctx context.Context, directory, dataRoot string, selector GoTestS
 			receipt.Signal = "context-canceled"
 		}
 		if len(receipt.Events) == 0 {
-			receipt.Events = []ExecutionEvent{{Kind: "test_started", Test: selector.Test, StepEvidence: "unavailable"}, {Kind: "test_finished", Test: selector.Test, Outcome: "interrupted", StepEvidence: "unavailable"}}
+			// There is no upstream test lifecycle event to report. Record only
+			// the process-level interruption; never fabricate test start/finish.
+			receipt.Events = []ExecutionEvent{{Kind: "process_interrupted", Outcome: "interrupted", StepEvidence: "unavailable"}}
 		}
 	}
 	if len(receipt.Events) == 0 && receipt.ExitCode != 0 && !receipt.Interrupted {
-		receipt.Events = []ExecutionEvent{{Kind: "test_started", Test: selector.Test, StepEvidence: "unavailable"}, {Kind: "test_finished", Test: selector.Test, Outcome: "fail", StepEvidence: "unavailable"}}
+		// A process can fail before Go emits a selected test lifecycle event
+		// (for example, an immediate test timeout). Preserve that boundary
+		// honestly instead of manufacturing a selected-test terminal record.
+		receipt.Events = []ExecutionEvent{{Kind: "process_failed", Outcome: "failed", StepEvidence: "unavailable"}}
 	}
 	if parseErr != nil {
 		return receipt, parseErr
@@ -136,9 +141,9 @@ func verifyModule(ctx context.Context, directory string, env []string, s GoTestS
 	cmd := exec.CommandContext(ctx, "go", "mod", "download", "-json", s.Module+"@"+s.ModuleVersion)
 	cmd.Dir = directory
 	cmd.Env = append(os.Environ(), env...)
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("verify pinned module: %w", err)
+		return fmt.Errorf("verify pinned module: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	var got struct {
 		Path, Version, Sum string

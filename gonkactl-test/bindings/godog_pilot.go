@@ -57,6 +57,11 @@ type journal struct {
 	failAfter        int64
 }
 
+var attemptRegistry = struct {
+	sync.Mutex
+	ids map[string]struct{}
+}{ids: make(map[string]struct{})}
+
 func newJournal(opts PilotOptions) (*journal, error) {
 	if opts.RunID == "" || opts.AttemptID == "" {
 		return nil, errors.New("run and attempt IDs are required")
@@ -71,6 +76,14 @@ func newJournal(opts PilotOptions) (*journal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create new journal without reuse: %w", err)
 	}
+	attemptRegistry.Lock()
+	if _, exists := attemptRegistry.ids[opts.AttemptID]; exists {
+		attemptRegistry.Unlock()
+		_ = f.Close()
+		return nil, fmt.Errorf("duplicate attempt id %q", opts.AttemptID)
+	}
+	attemptRegistry.ids[opts.AttemptID] = struct{}{}
+	attemptRegistry.Unlock()
 	j := &journal{file: f, encoder: json.NewEncoder(f), start: time.Now(), runID: opts.RunID, attemptID: opts.AttemptID, caseOutcomes: map[string]string{}, failAfter: opts.FailJournalAfter}
 	if err := j.write(JournalEvent{Kind: "run_started"}); err != nil {
 		_ = f.Close()
@@ -164,14 +177,25 @@ func RunGodogPilotWithOptions(opts PilotOptions) int {
 			if opts.AllureRuntime != nil {
 				ctx = allureruntime.WithRuntime(ctx, opts.AllureRuntime)
 				ctx = allureruntime.WithTest(ctx, caseID)
-				_ = allure.DisplayName(ctx, s.Name)
-				_ = allure.Label(ctx, "case_id", caseID)
+				if err := allure.DisplayName(ctx, s.Name); err != nil {
+					return ctx, fmt.Errorf("allure display name: %w", err)
+				}
+				if err := allure.Label(ctx, "case_id", caseID); err != nil {
+					return ctx, fmt.Errorf("allure case label: %w", err)
+				}
 			}
 			if err := j.write(JournalEvent{Kind: "case_started", CaseID: ptr(caseID)}); err != nil {
 				return ctx, err
 			}
 			if strings.Contains(s.Name, "Hook failure") {
 				return ctx, errors.New("controlled hook failure")
+			}
+			if strings.Contains(s.Name, "Ambiguous") || strings.Contains(s.Name, "Control") {
+				for _, step := range s.Steps {
+					if step.Text == "неоднозначный шаг" {
+						return ctx, errors.New("ambiguous binding: неоднозначный шаг")
+					}
+				}
 			}
 			return ctx, nil
 		})
@@ -249,7 +273,10 @@ func RunGodogPilotWithOptions(opts PilotOptions) int {
 			return ctx, nil
 		})
 		sc.Step(`^ожидает реализации$`, func() error { return godog.ErrPending })
-		sc.Step(`^неоднозначный шаг$`, func() error { return errors.New("ambiguous binding rejected during preparation") })
+		// Deliberately register two identical definitions. Godog must reject this
+		// during preparation, rather than running a fabricated step body.
+		sc.Step(`^неоднозначный шаг$`, func() error { return nil })
+		sc.Step(`^неоднозначный шаг$`, func() error { return nil })
 		sc.Step(`^паника шага$`, func() error { panic("controlled panic") })
 		sc.Step(`^отмена шага$`, func() error { return context.Canceled })
 	}, Options: &godog.Options{Format: "progress", Paths: []string{opts.FeaturePath}, Output: os.Stdout, Strict: true, Concurrency: 2}}
@@ -305,6 +332,9 @@ func stableID(parts ...string) string {
 	return hex.EncodeToString(sum[:])
 }
 func normalizeOutcome(raw string, err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "interrupted"
+	}
 	if err != nil {
 		return "failed"
 	}
@@ -340,7 +370,9 @@ func assertAndAttach(ctx context.Context, j *journal, opts PilotOptions, name, w
 		return err
 	}
 	if opts.AllureRuntime != nil {
-		_ = allure.Attachment(ctx, name, body, allure.AttachmentOptions{ContentType: "application/json", FileExtension: "json"})
+		if err := allure.Attachment(ctx, name, body, allure.AttachmentOptions{ContentType: "application/json", FileExtension: "json"}); err != nil {
+			return fmt.Errorf("allure attachment %s: %w", name, err)
+		}
 	}
 	if want != got {
 		return fmt.Errorf("%s: expected %q, actual %q", name, want, got)

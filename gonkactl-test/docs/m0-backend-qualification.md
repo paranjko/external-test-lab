@@ -64,11 +64,13 @@ and HTTPS. The owned containers were then cleaned up successfully. These are
 **PASS** receipts for API transport, prefix routing, and container cleanup.
 They are not browser evidence.
 
-Full browser qualification is **BLOCKED**. Chrome reproduces a `SIGTRAP` at
-`about:blank`, before any bundle navigation, so no browser result can be
-attributed to the Storage bundle. Resume by running the browser probe in an
-environment where Chrome can remain alive past `about:blank`, then record the
-bundle navigation and assertions against the same isolated Storage fixture.
+The earlier `SIGTRAP` and hanging `--dump-dom` receipts are retained, but do
+not describe Chrome globally. A fresh isolated persistent-profile CDP probe
+passed. The shared CDP check now proves a real generated case, BDD steps,
+attachment content, two rendered History items, direct hash navigation and a
+real browser reload over local HTTP and Storage HTTP/fixture-HTTPS. Each run
+records its owned Chrome-child cleanup; fixture HTTPS records its certificate
+exception explicitly.
 
 ## Receipt boundary
 
@@ -76,8 +78,8 @@ bundle navigation and assertions against the same isolated Storage fixture.
 |---|---|---|
 | Storage API over HTTP and HTTPS, including prefix routes | **PASS** | Isolated request evidence only; retain it as transport evidence. |
 | Owned Storage containers after the isolated run | **PASS** | Cleanup completed; provision a new owned fixture for any resumed browser run. |
-| Browser execution | **BLOCKED** | Chrome `SIGTRAP` occurs at `about:blank`; repair or replace that browser runtime before bundle navigation. |
-| Browser assertions and browser-generated Allure result | **BLOCKED** | No bundle navigation occurred; rerun the browser probe and generate Allure only from that completed run. |
+| Browser execution | **PASS** | Isolated-profile CDP probe reaches `about:blank` and terminates its owned Chrome child. Earlier failures remain historical receipts. |
+| Browser assertions and browser-generated Allure result | **PASS** | Current generated bundle assertions cover steps, attachment content, History, direct navigation and reload through local HTTP and Storage HTTP/fixture-HTTPS. |
 | Existing non-browser runtime receipts | **PASS** | They support only their recorded API, routing, and cleanup observations. |
 
 These receipts do not qualify M0-A09 or M0-A08, do not close IMP-002 or
