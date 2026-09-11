@@ -88,3 +88,7 @@ done
 ! grep -q 'GDC_TELEGRAM_BOT_HOST' "$ROOT/scripts/prepare-join-role-config.sh"
 ! grep -q 'GDC_TELEGRAM_BOT_HOST' "$ROOT/scripts/write-genesis-role-config.sh"
 printf 'PASS role documentation and OPS observation boundary\n'
+
+# Node startup must pull only absent images.
+grep -Fq 'pull --policy missing' "$ROOT/02-node/start-node.sh"
+echo 'PASS node startup pulls only absent images'

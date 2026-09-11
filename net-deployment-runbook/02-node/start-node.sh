@@ -49,7 +49,8 @@ profiles=()
 signerless_env=()
 [[ "$enable_signer" == false ]] && signerless_env=(env CONFIG_PRIV_VALIDATOR_LADDR=)
 "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" config --quiet
-run_long 'pull node images' "$HERE/start.log" "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull
+# Images are pinned by digest, and a portable runtime exists only on the Host.
+run_long 'pull node images' "$HERE/start.log" "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull --policy missing
 printf 'WAIT  start node services\n'
 services=()
 [[ "$canary" == true ]] && services=(node)
