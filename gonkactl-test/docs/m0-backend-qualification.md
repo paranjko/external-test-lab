@@ -45,10 +45,16 @@ start is ruled out. The historical `/devshard/v2/healthz` observation therefore
 requires runtime binary/config provenance; it is not established by source
 equivalence. The root cause remains **INCONCLUSIVE** because the receipt does
 not yet bind same-instance status, bounded body and identity headers to the
-executable and container that served each route. The existing wait helpers
-discard successful response observations. Resume IMP-010 with a read-only
-harness observation helper and one owned capture of the two request targets,
-their status/body/identity headers, executable identity and container identity.
+executable and container that served each route. The existing generic wait
+helpers discard successful response observations. The minimal proposed harness
+change is a read-only `GetHTTPObservation(client, url)` beside those helpers in
+`devshard/testenv/citest/harness/stack_boot.go`: return the supplied URL,
+status, a 4 KiB bounded body and cloned headers, defaulting a nil client to
+`HTTPClient()`. A focused unit test can reuse the existing round-tripper
+fixture. This is narrower than the chat-only unbounded response helper. After
+that separately authorized change, resume IMP-010 with one owned capture of
+the two request targets, their status/body/identity headers, executable
+identity and container identity.
 
 The M0 executable spike must still create an owned fresh fixture and record:
 
