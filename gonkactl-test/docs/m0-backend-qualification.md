@@ -60,12 +60,13 @@ The fixture itself failed because the first receipt helper asserted before
 persisting that transport error; its partial observations, runtime image
 identities and zero-container cleanup are retained.
 
-Candidate `c4662d3b1ed99ad9bae13378f49cc48b4b317c6c` adds
+Candidate `b8a0a571ae8064bca333427c3190a57b85faafa6` retains
 `ObserveGatewayChatHTTP`, allowing a future changed-input fixture to persist
-the transport error before asserting it. Focused harness and selector tests
-pass. That future fixture must have fresh preflight and record a non-empty
-`broken_mock.transport_error` or HTTP non-success plus cleanup. It is still
-only a bounded v5 slice, not M0-A09 closure.
+the transport error before asserting it and adds the two-phase prepared
+composition path. The fresh changed-input fixture passed: it records a
+non-empty `broken_mock.transport_error`, successful recovery, runtime image
+identities and zero-container cleanup. It is still only a bounded v5 slice,
+not M0-A09 closure.
 
 The M0 executable spike must still create an owned fresh fixture and record:
 
@@ -78,22 +79,19 @@ The M0 executable spike must still create an owned fresh fixture and record:
 Until that receipt exists, candidate/testenv outcomes remain fixture or
 adapter evidence, not a product or release conclusion.
 
-## Invalid-digest capability gap
+## Invalid-digest preflight control
 
-The current `stand` adapter has no composition-rendering or instance-start API:
-it validates a profile, acquires a local lease and probes a declared health
-route. `composition_digest` is currently only a contract/archive field, so no
-runtime boundary can compare declared and rendered bytes before Docker
-allocation. An invalid-digest result cannot therefore be claimed from the
-present implementation.
-
-The minimal required adapter extension is a composition-preflight operation
-that accepts rendered Compose bytes and a declared SHA-256, rejects a mismatch
-with a typed result before project, port, volume or container creation, and
-writes the decision into the fixture receipt. Its focused unit test must prove
-matching admission and mismatch rejection; a later owned fixture must prove
-that a mismatch creates no resources. This is a proposed missing capability,
-not an implemented control.
+`stand.PreflightComposition` now hashes the exact prepared `config.yaml` and
+`docker-compose.yml` bytes using named length-delimited SHA-256 records.
+`m0stand` writes that decision before invoking the real fixture command.
+The matching/mismatch focused test passes. A real wrapped mismatch invocation
+recorded `rejected_digest_mismatch`, `launch_attempted:false` and
+`resources_created:false`; the Docker inventory was empty. The matching
+changed-input launch used digest
+`8a168364d6dc30a91abee43c3d71306930cd0e1c39d1d2a2f80102ff6172c092` and
+completed the real focused fixture. This proves the bounded pre-launch
+rejection boundary, not full lease, fresh-instance, SG01–SG05 or M0-A09
+acceptance.
 
 ## Storage transport qualification
 
