@@ -38,6 +38,17 @@ type Adapter struct {
 		Path           string `json:"path"`
 		ExpectedStatus int    `json:"expected_status"`
 	} `json:"health"`
+	Chat struct {
+		Path                    string `json:"path"`
+		NonStreamExpectedStatus int    `json:"non_stream_expected_status"`
+		SSETermination          string `json:"sse_termination"`
+		MalformedExpectedStatus int    `json:"malformed_expected_status"`
+	} `json:"chat"`
+	Negative struct {
+		MissingRoutePath           string   `json:"missing_route_path"`
+		MissingRouteExpectedStatus int      `json:"missing_route_expected_status"`
+		BrokenMockAcceptedOutcomes []string `json:"broken_mock_accepted_outcomes"`
+	} `json:"negative"`
 }
 
 func LoadProfile(path string) (Profile, error) {
@@ -83,11 +94,23 @@ func (p Profile) Validate() error {
 		if adapter.Protocol != "v3" && adapter.Protocol != "v4" && adapter.Protocol != "v5" {
 			return fmt.Errorf("unexpected protocol %q", adapter.Protocol)
 		}
+		if adapter.Status != "unqualified" && adapter.Status != "candidate" && adapter.Status != "qualified" {
+			return fmt.Errorf("unknown adapter status %q for %s", adapter.Status, adapter.Protocol)
+		}
+		if adapter.Status == "unqualified" && adapter.Reason == "" {
+			return fmt.Errorf("unqualified %s requires an explicit gap reason", adapter.Protocol)
+		}
 		if adapter.Status == "qualified" && p.Baseline.Status != "qualified" {
 			return fmt.Errorf("%s cannot be qualified while baseline is unqualified", adapter.Protocol)
 		}
 		if adapter.Status == "candidate" && (adapter.Health.Path == "" || adapter.Health.ExpectedStatus < 100) {
 			return fmt.Errorf("candidate %s lacks an executable health contract", adapter.Protocol)
+		}
+		if adapter.Status == "candidate" && (adapter.Chat.Path == "" || adapter.Chat.NonStreamExpectedStatus < 100 || adapter.Chat.SSETermination == "" || adapter.Chat.MalformedExpectedStatus < 100) {
+			return fmt.Errorf("candidate %s lacks a complete chat contract", adapter.Protocol)
+		}
+		if adapter.Status == "candidate" && (adapter.Negative.MissingRoutePath == "" || adapter.Negative.MissingRouteExpectedStatus < 100 || len(adapter.Negative.BrokenMockAcceptedOutcomes) == 0) {
+			return fmt.Errorf("candidate %s lacks a complete negative contract", adapter.Protocol)
 		}
 	}
 	if !seen["v3"] || !seen["v4"] || !seen["v5"] {

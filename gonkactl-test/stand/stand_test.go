@@ -21,6 +21,27 @@ func TestProfilePinsCandidateAndRefusesUnsupportedQualification(t *testing.T) {
 	if profile.Adapters[0].Status == "qualified" || profile.Adapters[1].Status == "qualified" {
 		t.Fatal("v3/v4 must not be inferred from v5 fixture")
 	}
+	if profile.Adapters[0].Reason == "" || profile.Adapters[1].Reason == "" {
+		t.Fatal("v3/v4 must retain explicit unsupported gaps")
+	}
+	v5 := profile.Adapters[2]
+	if v5.Chat.Path != "/v1/chat/completions" || v5.Chat.NonStreamExpectedStatus != http.StatusOK || v5.Chat.SSETermination != "[DONE]" || v5.Chat.MalformedExpectedStatus != http.StatusBadRequest {
+		t.Fatalf("v5 chat contract=%+v", v5.Chat)
+	}
+	if v5.Negative.MissingRouteExpectedStatus != http.StatusNotFound || len(v5.Negative.BrokenMockAcceptedOutcomes) == 0 {
+		t.Fatalf("v5 negative contract=%+v", v5.Negative)
+	}
+}
+
+func TestProfileRejectsUnexplainedUnsupportedAdapter(t *testing.T) {
+	profile, err := LoadProfile(filepath.Join("..", "environments", "lab-mock-devshard-testenv-v5.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.Adapters[0].Reason = ""
+	if err := profile.Validate(); err == nil {
+		t.Fatal("accepted v3 without an explicit unsupported gap")
+	}
 }
 
 func TestLeaseIsExclusiveAndCannotUseSystemTemp(t *testing.T) {
