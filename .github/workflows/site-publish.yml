@@ -12,6 +12,8 @@ on:
       - 'net-deployment-runbook/scripts/test-gateway-site-state.js'
       - 'net-deployment-runbook/scripts/verify-devnet-hardware-profile.mjs'
       - 'net-deployment-runbook/scripts/verify-public-homepage.sh'
+      - 'net-deployment-runbook/scripts/verify-site-release.sh'
+      - 'net-deployment-runbook/scripts/site-static-digest.sh'
       - 'net-deployment-runbook/Makefile'
       - '.github/workflows/site-publish.yml'
 
@@ -39,7 +41,7 @@ jobs:
           node-version: 22
 
       - name: Build and validate browser assets
-        run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths test-site-publisher
+        run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths test-site-release-verifier test-site-publisher
 
       - name: Prepare the exact static site release
         run: >-

@@ -298,7 +298,9 @@ grep -Fq 'GPU inventory has not reported this Host yet' "$ROOT/04-ops/site/src/a
 grep -Fq 'json("/status/software")' "$ROOT/04-ops/site/src/app.js"
 ! grep -Fq '/v1/versions' "$ROOT/04-ops/site/src/app.js"
 grep -Eq 'external-test-lab/tree/main/net-deployment-runbook/04-ops/site"[^>]*>vsource' "$ROOT/04-ops/site/index.html"
-grep -Fq 'https://dub.sh/etl-job-1' "$ROOT/04-ops/site/index.html"
+grep -Fxc '    <a href="https://github.com/paranjko/external-test-lab/tree/main/reports/monthly" target="_blank" rel="noopener">Monthly reports ↗</a>' "$ROOT/04-ops/site/index.html" | grep -Fxq '1'
+! grep -Fq 'https://dub.sh/etl-job-1' "$ROOT/04-ops/site/index.html"
+! grep -Fq '>Careers ↗</a>' "$ROOT/04-ops/site/index.html"
 grep -Fq 'aria-label="External Test Lab repository"' "$ROOT/04-ops/site/index.html"
 ! grep -Fq 'site-build-revision' "$ROOT/04-ops/site/index.html"
 join_section_line="$(grep -n 'id="join-node"' "$ROOT/04-ops/site/index.html" | cut -d: -f1)"
