@@ -74,9 +74,23 @@ render_env() {
   printf "export SEED_API_URL=%q\nexport SEED_NODE_RPC_URL=%q\nexport SEED_NODE_P2P_URL=%q\nexport RPC_SERVER_URL_1=%q\nexport RPC_SERVER_URL_2=%q\n" "$first_api" "$rpc0" "$p2p" "$rpc0" "$rpc1"
 }
 
+# JOIN installs the CLI off PATH, in $GDC_HOME/bin/<profile_id>. Prefer it; $INFERENCED wins.
+resolve_inferenced_cli() {
+  local id candidate
+  if [[ -n "${INFERENCED:-}" ]]; then printf '%s' "$INFERENCED"; return; fi
+  if [[ -n "${GDC_JOIN_PROFILE:-}" && -n "${GDC_HOME:-}" && -r "${GDC_JOIN_PROFILE}" ]]; then
+    id="$(jq -r '.profile_id // empty' "$GDC_JOIN_PROFILE" 2>/dev/null || true)"
+    if [[ "$id" =~ ^[a-f0-9]{64}$ ]]; then
+      candidate="$GDC_HOME/bin/$id/inferenced"
+      if [[ -x "$candidate" && ! -L "$candidate" ]]; then printf '%s' "$candidate"; return; fi
+    fi
+  fi
+  printf 'inferenced'
+}
+
 download_genesis() {
   local file=$1 rpc=$2 output=$3 cli expected_sha expected_chain actual_sha actual_chain
-  cli="${INFERENCED:-inferenced}"
+  cli="$(resolve_inferenced_cli)"
   command -v "$cli" >/dev/null 2>&1 || die dependency inferenced 'a compatible inferenced CLI is required to download the exact Genesis'
   expected_sha=$(jq -r '.genesis.sha256' "$file"); expected_chain=$(jq -r '.chain_id' "$file")
   "$cli" download-genesis "$rpc" "$output" >/dev/null 2>&1 || return 1
