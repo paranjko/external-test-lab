@@ -1,6 +1,7 @@
 package report
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,44 @@ func TestNormalizeLegacyPreservesEvidenceLosses(t *testing.T) {
 	}
 	if record.StepEvidence != "unavailable" || record.DurationEvidence != "unavailable" {
 		t.Fatalf("legacy result inferred execution details: %+v", record)
+	}
+}
+
+func TestWriteLegacyLaneUsesRetainedFixtureAndCannotEnterHistory(t *testing.T) {
+	archive := filepath.Join("testdata", "legacy-v2", "allure2-events.jsonl")
+	d := t.TempDir()
+	output := filepath.Join(d, "legacy", "records.json")
+	path, err := WriteLegacyLane(archive, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lane struct {
+		Lane    string                   `json:"lane"`
+		Records []NormalizedLegacyRecord `json:"records"`
+	}
+	if err := json.Unmarshal(b, &lane); err != nil {
+		t.Fatal(err)
+	}
+	if lane.Lane != "legacy-unqualified" || len(lane.Records) != 1 {
+		t.Fatalf("lane=%+v", lane)
+	}
+	expected, err := os.ReadFile(filepath.Join("testdata", "legacy-v2", "expected-visible-gap.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want NormalizedLegacyRecord
+	if err := json.Unmarshal(expected, &want); err != nil {
+		t.Fatal(err)
+	}
+	if lane.Records[0] != want {
+		t.Fatalf("record=%+v want=%+v", lane.Records[0], want)
+	}
+	if _, err := WriteLegacyLane(archive, filepath.Join(d, "history", "legacy.json")); err == nil {
+		t.Fatal("legacy lane accepted authentic history destination")
 	}
 }
 

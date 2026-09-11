@@ -137,3 +137,38 @@ func ImportLegacyArchive(path string) ([]NormalizedLegacyRecord, error) {
 	}
 	return out, nil
 }
+
+// WriteLegacyLane retains normalized legacy records in a distinct,
+// non-authentic lane. It deliberately refuses a history destination: legacy
+// evidence may be visible to operators, but it can never become a v3 history
+// point or an authentic execution result by this path.
+func WriteLegacyLane(archivePath, outputPath string) (string, error) {
+	clean := filepath.Clean(outputPath)
+	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
+		if part == "history" {
+			return "", fmt.Errorf("legacy lane must not write into authentic history")
+		}
+	}
+	records, err := ImportLegacyArchive(archivePath)
+	if err != nil {
+		return "", err
+	}
+	for i := range records {
+		// The lane is relocatable; keep the immutable archive filename while the
+		// hash remains the stable provenance binding.
+		records[i].RawLogRef = filepath.Base(archivePath)
+	}
+	payload := struct {
+		Lane    string                   `json:"lane"`
+		Archive string                   `json:"archive"`
+		Records []NormalizedLegacyRecord `json:"records"`
+	}{Lane: "legacy-unqualified", Archive: filepath.Base(archivePath), Records: records}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := atomicWrite(outputPath, append(b, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	return outputPath, nil
+}
