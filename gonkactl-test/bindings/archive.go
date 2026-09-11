@@ -57,12 +57,12 @@ func ProduceArchive(dir, runID, attemptID, feature string, events []JournalEvent
 			}
 		}
 		x := sha256.Sum256([]byte(id + "\n" + attemptID))
-		attempts = append(attempts, map[string]any{"case_id": id, "attempt_id": attemptID + "-" + fmt.Sprint(i+1), "result_uuid": fmt.Sprintf("123e4567-e89b-12d3-a456-%012d", i+1), "history_id": hex.EncodeToString(x[:]), "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "status": "passed", "failure_domain": "product", "assertion_evidence": []string{"events.jsonl"}, "interrupted": false, "origin_event_ids": origins})
+		attempts = append(attempts, map[string]any{"case_id": id, "attempt_id": attemptID + "-" + fmt.Sprint(i+1), "result_uuid": fmt.Sprintf("123e4567-e89b-12d3-a456-%012d", i+1), "history_id": hex.EncodeToString(x[:]), "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "status": "passed", "failed_stage": nil, "failure_domain": "product", "assertion_evidence": []string{"events.jsonl"}, "interrupted": false, "origin_event_ids": origins})
 	}
 	if err := writeRecord(dir, "attempts.json", map[string]any{"schema_version": "1.0.0", "run_id": runID, "attempts": attempts}); err != nil {
 		return err
 	}
-	if err := writeRecord(dir, "coverage.json", map[string]any{"schema_version": "1.0.0", "campaign_id": "m0-authentic", "scope_hash": scope, "obligations": []any{map[string]any{"obligation_id": "selected-pilot-assertion", "rule_id": "pilot", "contract_revision": "v1", "required_variant": "selected", "evidence_requirement": "produced assertion event", "automated": true, "applicability": "applicable", "attempted": true, "asserted": true, "confirmed": true, "gap_reasons": []string{}, "blocked_by": []string{}}}, "native_counts": map[string]any{"passed": len(ids)}}); err != nil {
+	if err := writeRecord(dir, "coverage.json", map[string]any{"schema_version": "1.0.0", "campaign_id": "m0-authentic", "scope_hash": scope, "obligations": []any{map[string]any{"obligation_id": "selected-pilot-assertion", "rule_id": "pilot", "contract_revision": "v1", "required_variant": "selected", "evidence_requirement": "produced assertion event", "automated": true, "applicability": "applicable", "attempted": true, "asserted": true, "confirmed": true, "gap_reasons": []string{}, "blocked_by": []string{}}}, "native_counts": map[string]any{"passed": len(ids), "failed": 0, "broken": 0, "skipped": 0, "unknown": 0}}); err != nil {
 		return err
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
@@ -70,7 +70,7 @@ func ProduceArchive(dir, runID, attemptID, feature string, events []JournalEvent
 		return err
 	}
 	eh := sha256.Sum256(b)
-	if err = writeRecord(dir, "evidence-manifest.json", map[string]any{"schema_version": "1.0.0", "run_id": runID, "entries": []any{map[string]any{"path": "events.jsonl", "sha256": hex.EncodeToString(eh[:]), "bytes": len(b), "mime": "application/x-ndjson", "sensitivity": "internal", "source_event_id": events[len(events)-1].EventID, "availability": "available"}}}); err != nil {
+	if err = writeRecord(dir, "evidence-manifest.json", map[string]any{"schema_version": "1.0.0", "run_id": runID, "entries": []any{map[string]any{"path": "events.jsonl", "sha256": hex.EncodeToString(eh[:]), "bytes": len(b), "mime": "application/x-ndjson", "sensitivity": "internal", "source_event_id": events[len(events)-1].EventID, "availability": "available", "reason": nil}}}); err != nil {
 		return err
 	}
 	return ValidateArchive(dir)
