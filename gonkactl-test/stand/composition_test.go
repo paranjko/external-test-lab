@@ -30,6 +30,25 @@ func TestPreflightCompositionBindsExactPreparedInputsAndRejectsMismatch(t *testi
 	}
 }
 
+func TestMarkCompositionLaunchSeparatesAcceptedLaunchFromRejectedPreflight(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "launch.json")
+	started, err := MarkCompositionLaunch(path, CompositionDecision{Outcome: "accepted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !started.LaunchAttempted || !started.ResourcesCreated || started.Outcome != "launch_started" {
+		t.Fatalf("launch decision=%+v", started)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), `"resources_created": true`) {
+		t.Fatalf("launch receipt omitted resource boundary: %s", contents)
+	}
+}
+
 func TestValidateFixtureReceiptRequiresCompleteEvidence(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fixture.json")

@@ -44,7 +44,8 @@ func main() {
 		_ = lease.Release()
 		fatal(err)
 	}
-	if err := stand.MarkCompositionLaunch(receipt, decision); err != nil {
+	decision, err = stand.MarkCompositionLaunch(receipt, decision)
+	if err != nil {
 		_ = lease.Release()
 		fatal(err)
 	}

@@ -136,10 +136,14 @@ func PreflightComposition(workDir, expectedDigest, receiptPath string) (Composit
 	return decision, nil
 }
 
-func MarkCompositionLaunch(receiptPath string, decision CompositionDecision) error {
+// MarkCompositionLaunch records that the wrapper has crossed the pre-launch
+// boundary and is about to invoke the command. From this point resource
+// creation is possible, so never retain the rejection-only false value.
+func MarkCompositionLaunch(receiptPath string, decision CompositionDecision) (CompositionDecision, error) {
 	decision.LaunchAttempted = true
+	decision.ResourcesCreated = true
 	decision.Outcome = "launch_started"
-	return writeDecision(receiptPath, decision)
+	return decision, writeDecision(receiptPath, decision)
 }
 
 // MarkCompositionLaunchResult closes the adapter's decision record. Fixture
