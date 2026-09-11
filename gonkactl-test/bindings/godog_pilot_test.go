@@ -123,6 +123,64 @@ func TestGodogPilotRecordsSchemaIdentityAndAllure(t *testing.T) {
 	}
 }
 
+func TestConcurrentPilotAttemptsKeepIndependentJournals(t *testing.T) {
+	t.Parallel()
+	type result struct {
+		status int
+		journalPath string
+		runID       string
+		attemptID    string
+	}
+	results := make(chan result, 2)
+	for i := 1; i <= 2; i++ {
+		i := i
+		go func() {
+			runID := fmt.Sprintf("concurrent-run-%d", i)
+			attemptID := fmt.Sprintf("concurrent-attempt-%d", i)
+			journalPath := ownedPath(t, "events.jsonl")
+			status := RunGodogPilotWithOptions(PilotOptions{
+				RunID: runID, AttemptID: attemptID,
+				FeaturePath: filepath.Join("features", "pilot.feature"),
+				JournalPath: journalPath, EvidenceDir: ownedPath(t, "evidence"),
+			})
+			results <- result{status: status, journalPath: journalPath, runID: runID, attemptID: attemptID}
+		}()
+	}
+	for i := 1; i <= 2; i++ {
+		r := <-results
+		if r.status != 0 {
+			t.Fatalf("concurrent pilot status=%d", r.status)
+		}
+		events := readEvents(t, r.journalPath)
+		if err := ValidateJournalIntegrity(events); err != nil {
+			t.Fatalf("concurrent journal integrity: %v", err)
+		}
+		if len(events) == 0 {
+			t.Fatal("concurrent pilot produced empty journal")
+		}
+		// Every journal is an isolated attempt: no event may be attributed to
+		// the other run, and all case events carry this attempt's identity.
+		var runID, attemptID string
+		for _, e := range events {
+			if runID == "" { runID = e.RunID }
+			if e.RunID != r.runID { t.Fatalf("event attributed to %q, want %q", e.RunID, r.runID) }
+			if e.RunID != runID {
+				t.Fatalf("journal mixed run IDs: %q and %q", runID, e.RunID)
+			}
+			if e.AttemptID != nil {
+				if attemptID == "" { attemptID = *e.AttemptID }
+				if *e.AttemptID != r.attemptID { t.Fatalf("event attributed to attempt %q, want %q", *e.AttemptID, r.attemptID) }
+				if *e.AttemptID != attemptID {
+					t.Fatalf("journal mixed attempt IDs: %q and %q", attemptID, *e.AttemptID)
+				}
+			}
+		}
+		if attemptID == "" {
+			t.Fatal("concurrent journal omitted attempt identity")
+		}
+	}
+}
+
 func TestJournalIntegrityFailsClosedOnUnknownAndDuplicateIDs(t *testing.T) {
 	caseID := "case-1"
 	base := JournalEvent{EventID: "e1", Sequence: 1, ElapsedMS: 1, Kind: "case_started", CaseID: &caseID}

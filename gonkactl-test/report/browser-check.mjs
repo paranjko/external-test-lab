@@ -56,6 +56,7 @@ async function launch(options) {
   const chrome = process.env.CHROME || "google-chrome";
   const debugPort = await port();
   const flags = ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+    `--disk-cache-dir=${path.join(options["evidence-dir"], "cache")}`,
     "--remote-debugging-address=127.0.0.1", `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${options.profile}`];
   if (options["ignore-certificate-errors"]) flags.push("--ignore-certificate-errors");
@@ -197,6 +198,13 @@ function assertContains(html, values, stage) {
 
 async function main() {
   const options = args();
+  const forbiddenRoots = ["/tmp", "/var/tmp"].map((root) => path.resolve(root));
+  for (const [label, value] of [["evidence-dir", options["evidence-dir"]], ["profile", options.profile]]) {
+    const resolved = path.resolve(value);
+    if (forbiddenRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`))) {
+      throw new Error(`${label} must be persistent and cannot use system temporary storage: ${resolved}`);
+    }
+  }
   await mkdir(options["evidence-dir"], { recursive: true });
   await mkdir(options.profile, { recursive: true });
   let browser; let socket; let cleanup = "not-started"; let status = "FAIL";
@@ -280,6 +288,7 @@ async function main() {
     await writeFile(path.join(options["evidence-dir"], "receipt.txt"), [
       `status=${status}`, `chrome=${browser?.chrome || process.env.CHROME || "google-chrome"}`, `version=${version}`,
       `flags=${browser?.flags.join(" ") || "launch-failed"}`, `fixture_tls_exception=${Boolean(options["ignore-certificate-errors"])}`,
+      `evidence_dir=${path.resolve(options["evidence-dir"])}`, `profile=${path.resolve(options.profile)}`, `cache_dir=${path.resolve(options["evidence-dir"], "cache")}`,
       `request_deadline_ms=${REQUEST_MS}`, `socket_deadline_ms=${SOCKET_MS}`, `dom_deadline_ms=${DOM_MS}`,
       `assertions=${assertions.join(",")}`, `owned_process_cleanup=${cleanup}`, "",
     ].join("\n"));

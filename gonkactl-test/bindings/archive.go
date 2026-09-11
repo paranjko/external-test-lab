@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // ProduceArchive emits the six M0 records from the runner's journal. Keeping
@@ -41,7 +44,7 @@ func ProduceArchive(dir, runID, attemptID, feature string, events []JournalEvent
 	pb, _ := json.MarshalIndent(plan, "", "  ")
 	pb = append(pb, '\n')
 	ph := sha256.Sum256(pb)
-	manifest := map[string]any{"schema_version": "1.0.0", "run_id": runID, "runner_build": "bindings", "plan_hash": hex.EncodeToString(ph[:]), "immutable_target": map[string]any{"kind": "owned-local"}, "environment_instance_id": "bindings-race", "lease_id": "local-only", "inventory_refs": map[string]any{"start": "inventory/start.json"}, "execution_state": "complete", "gate_state": "passed", "report_state": "generated", "raw_exit": 0, "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "evidence_refs": []string{"events.jsonl"}}
+	manifest := map[string]any{"schema_version": "1.0.0", "run_id": runID, "parent_run_id": nil, "runner_build": "bindings", "plan_hash": hex.EncodeToString(ph[:]), "immutable_target": map[string]any{"kind": "owned-local"}, "environment_instance_id": "bindings-race", "lease_id": "local-only", "inventory_refs": map[string]any{"start": "inventory/start.json", "end": nil}, "execution_state": "complete", "gate_state": "passed", "report_state": "generated", "raw_exit": 0, "raw_signal": nil, "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "evidence_refs": []string{"events.jsonl"}}
 	if err := writeRecord(dir, "manifest.json", manifest); err != nil {
 		return err
 	}
@@ -103,16 +106,59 @@ func ValidateArchive(dir string) error {
 	if err := ValidateJournalIntegrity(ev); err != nil {
 		return err
 	}
+	for _, n := range []string{"plan", "manifest", "attempts", "coverage", "evidence-manifest"} {
+		var value any
+		if err := readJSON(filepath.Join(dir, n+".json"), &value); err != nil {
+			return err
+		}
+		if err := validateArchiveSchema(n, value); err != nil {
+			return err
+		}
+	}
+	var planRaw, manifestRaw, attemptsRaw map[string]any
+	if err := readJSON(filepath.Join(dir, "plan.json"), &planRaw); err != nil {
+		return err
+	}
+	if err := readJSON(filepath.Join(dir, "manifest.json"), &manifestRaw); err != nil {
+		return err
+	}
+	if err := readJSON(filepath.Join(dir, "attempts.json"), &attemptsRaw); err != nil {
+		return err
+	}
+	if got, _ := manifestRaw["run_id"].(string); got == "" {
+		return fmt.Errorf("manifest missing run_id")
+	} else if ar, _ := attemptsRaw["run_id"].(string); ar != got {
+		return fmt.Errorf("run_id mismatch: manifest=%q attempts=%q", got, ar)
+	}
+	pb, err := os.ReadFile(filepath.Join(dir, "plan.json"))
+	if err != nil {
+		return err
+	}
+	ph := sha256.Sum256(pb)
+	if got, _ := manifestRaw["plan_hash"].(string); got != hex.EncodeToString(ph[:]) {
+		return fmt.Errorf("plan hash mismatch")
+	}
+	_ = planRaw
+	for _, x := range ev {
+		var value any
+		b, _ := json.Marshal(x)
+		if err := json.Unmarshal(b, &value); err != nil {
+			return err
+		}
+		if err := validateArchiveSchema("event", value); err != nil {
+			return err
+		}
+	}
 	known := map[string]bool{}
 	for _, x := range ev {
 		known[x.EventID] = true
 	}
 	var attempts struct {
 		Attempts []struct {
-		AttemptID      string   `json:"attempt_id"`
-		ResultUUID     string   `json:"result_uuid"`
-		HistoryID      string   `json:"history_id"`
-		OriginEventIDs []string `json:"origin_event_ids"`
+			AttemptID      string   `json:"attempt_id"`
+			ResultUUID     string   `json:"result_uuid"`
+			HistoryID      string   `json:"history_id"`
+			OriginEventIDs []string `json:"origin_event_ids"`
 		} `json:"attempts"`
 	}
 	if err := readJSON(filepath.Join(dir, "attempts.json"), &attempts); err != nil {
@@ -159,6 +205,23 @@ func ValidateArchive(dir string) error {
 		if hex.EncodeToString(h[:]) != x.SHA256 || len(b) != x.Bytes {
 			return fmt.Errorf("evidence hash/size mismatch for %s", x.Path)
 		}
+	}
+	return nil
+}
+
+func validateArchiveSchema(name string, value any) error {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		return fmt.Errorf("locate archive schemas")
+	}
+	c := jsonschema.NewCompiler()
+	c.AssertFormat()
+	s, err := c.Compile(filepath.Join(filepath.Dir(source), "..", "contracts", "schemas", name+".schema.json"))
+	if err != nil {
+		return fmt.Errorf("compile %s schema: %w", name, err)
+	}
+	if err := s.Validate(value); err != nil {
+		return fmt.Errorf("%s schema: %w", name, err)
 	}
 	return nil
 }

@@ -337,7 +337,7 @@ func assertStorageBrowser(t *testing.T, endpoint, bundleRoot, dataRoot, scheme s
 		args = append(args, "--ignore-certificate-errors")
 	}
 	cmd := exec.Command("node", args...)
-	cmd.Env = browserEnvironment()
+	cmd.Env = browserEnvironment(t, dataRoot)
 	out, err := cmd.CombinedOutput()
 	if writeErr := os.WriteFile(filepath.Join(dataRoot, "browser-"+scheme+"-driver.log"), out, 0o600); writeErr != nil {
 		t.Fatalf("persist Storage browser driver output: %v", writeErr)
@@ -347,7 +347,7 @@ func assertStorageBrowser(t *testing.T, endpoint, bundleRoot, dataRoot, scheme s
 	}
 }
 
-func browserEnvironment() []string {
+func browserEnvironment(t *testing.T, dataRoot string) []string {
 	allowed := map[string]bool{
 		"HOME": true, "PATH": true, "XDG_RUNTIME_DIR": true,
 		"LANG": true, "LC_ALL": true, "TZ": true,
@@ -357,6 +357,16 @@ func browserEnvironment() []string {
 		name, _, found := strings.Cut(entry, "=")
 		if found && allowed[name] {
 			environment = append(environment, entry)
+		}
+	}
+	for name, value := range map[string]string{
+		"HOME":   filepath.Join(dataRoot, "browser-home"),
+		"TMPDIR": filepath.Join(dataRoot, "tmp"), "TMP": filepath.Join(dataRoot, "tmp"), "TEMP": filepath.Join(dataRoot, "tmp"),
+		"XDG_CACHE_HOME": filepath.Join(dataRoot, "xdg-cache"), "XDG_CONFIG_HOME": filepath.Join(dataRoot, "xdg-config"),
+	} {
+		environment = append(environment, name+"="+value)
+		if err := os.MkdirAll(value, 0o700); err != nil {
+			t.Fatalf("create browser persistent path %s: %v", value, err)
 		}
 	}
 	return environment

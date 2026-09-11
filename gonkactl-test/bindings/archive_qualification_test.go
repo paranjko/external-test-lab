@@ -1,14 +1,11 @@
 package bindings
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -67,66 +64,17 @@ func TestActualRunnerEmitsCompleteValidatedArchive(t *testing.T) {
 	if err := ValidateArchive(dir); err != nil {
 		t.Fatal(err)
 	}
-	return
-	// Archive records below are retained only as a schema fixture while the
-	// producer migration is completed; qualification uses the production path.
-	var cases []string
-	seenCases := map[string]bool{}
-	passedAssertion := false
-	for _, event := range events {
-		b, _ := json.Marshal(event)
-		validateArchiveRecord(t, "event", b)
-		if event.CaseID != nil && !seenCases[*event.CaseID] {
-			seenCases[*event.CaseID] = true
-			cases = append(cases, *event.CaseID)
-		}
-		if event.Kind == "assertion" && event.Outcome != nil && *event.Outcome == "passed" {
-			passedAssertion = true
-		}
-	}
-	if !passedAssertion {
-		t.Fatal("selected obligation has no produced passing assertion")
-	}
-	sort.Strings(cases)
-	h := sha256.Sum256([]byte(strings.Join(cases, "\n")))
-	scopeHash := hex.EncodeToString(h[:])
-	caseRecords := make([]map[string]any, 0, len(cases))
-	for _, id := range cases {
-		caseRecords = append(caseRecords, map[string]any{"case_id": id, "applicability": "applicable"})
-	}
-	plan := map[string]any{"schema_version": "1.0.0", "campaign_id": "m0-authentic", "scope_hash": scopeHash, "resolved_sources": []map[string]any{{"path": "bindings/features/pilot.feature", "sha256": scopeHash}}, "catalog_revision": "v1", "bindings_revision": "v1", "cases": caseRecords, "environment_intent": map[string]any{"environment_id": "owned-local", "environment_instance_id": "bindings-race"}, "composition_digest": scopeHash, "prerequisites": []map[string]any{{"id": "local", "depends_on": []string{}}}, "deadlines": map[string]any{"runner": "1m"}, "concurrency": map[string]any{"max_parallel": 1}, "retry_policy": map[string]any{"max_attempts": 1, "stateful_replay": false}}
-	planBytes := writeArchiveJSON(t, dir, "plan.json", plan)
-	validateArchiveRecord(t, "plan", planBytes)
-	planHash := sha256.Sum256(planBytes)
-	manifest := map[string]any{"schema_version": "1.0.0", "run_id": runID, "parent_run_id": nil, "runner_build": "bindings-race", "plan_hash": hex.EncodeToString(planHash[:]), "immutable_target": map[string]any{"kind": "owned-local"}, "environment_instance_id": "bindings-race", "lease_id": "local-only", "inventory_refs": map[string]any{"start": "inventory/start.json", "end": nil}, "execution_state": "complete", "gate_state": "passed", "report_state": "generated", "raw_exit": 0, "raw_signal": nil, "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "evidence_refs": []string{"events.jsonl"}}
-	validateArchiveRecord(t, "manifest", writeArchiveJSON(t, dir, "manifest.json", manifest))
-	attemptRecords := make([]map[string]any, 0, len(cases))
-	for i, caseID := range cases {
-		var origins []string
-		for _, event := range events {
-			if event.CaseID != nil && *event.CaseID == caseID {
-				origins = append(origins, event.EventID)
-			}
-		}
-		if len(origins) == 0 {
-			t.Fatalf("case %s has no origin events", caseID)
-		}
-		history := sha256.Sum256([]byte(caseID + "\n" + attemptID))
-		attemptRecords = append(attemptRecords, map[string]any{"case_id": caseID, "attempt_id": attemptID, "result_uuid": fmt.Sprintf("123e4567-e89b-12d3-a456-%012d", i+1), "history_id": hex.EncodeToString(history[:]), "started_at": events[0].Timestamp, "finished_at": events[len(events)-1].Timestamp, "status": "passed", "failed_stage": nil, "failure_domain": "product", "assertion_evidence": []string{"events.jsonl"}, "interrupted": false, "origin_event_ids": origins})
-	}
-	attempts := map[string]any{"schema_version": "1.0.0", "run_id": runID, "attempts": attemptRecords}
-	validateArchiveRecord(t, "attempts", writeArchiveJSON(t, dir, "attempts.json", attempts))
-	coverage := map[string]any{"schema_version": "1.0.0", "campaign_id": "m0-authentic", "scope_hash": scopeHash, "obligations": []map[string]any{{"obligation_id": "selected-pilot-assertion", "rule_id": "pilot", "contract_revision": "v1", "required_variant": "selected", "evidence_requirement": "produced assertion event", "automated": true, "applicability": "applicable", "attempted": true, "asserted": true, "confirmed": true, "gap_reasons": []string{}, "blocked_by": []string{}}}, "native_counts": map[string]any{"passed": len(cases), "failed": 0, "broken": 0, "skipped": 0, "unknown": 0}}
-	validateArchiveRecord(t, "coverage", writeArchiveJSON(t, dir, "coverage.json", coverage))
-	eventsBytes, err := os.ReadFile(journal)
-	if err != nil {
+}
+
+func TestArchiveSchemaRejectsMutation(t *testing.T) {
+	valid := map[string]any{"schema_version": "1.0.0", "run_id": "run", "attempts": []any{}}
+	if err := validateArchiveSchema("attempts", valid); err != nil {
 		t.Fatal(err)
 	}
-	eventsHash := sha256.Sum256(eventsBytes)
-	evidence := map[string]any{"schema_version": "1.0.0", "run_id": runID, "entries": []map[string]any{{"path": "events.jsonl", "sha256": hex.EncodeToString(eventsHash[:]), "bytes": len(eventsBytes), "mime": "application/x-ndjson", "sensitivity": "internal", "source_event_id": events[len(events)-1].EventID, "availability": "available", "reason": nil}}}
-	validateArchiveRecord(t, "evidence-manifest", writeArchiveJSON(t, dir, "evidence-manifest.json", evidence))
-	receipt := map[string]any{"status": "PASS", "schemas": []string{"plan", "manifest", "event", "attempts", "coverage", "evidence-manifest"}, "cross_record_integrity": "PASS", "run_id": runID, "attempt_id": attemptID, "selected_obligation": "selected-pilot-assertion", "selected_obligation_result": "confirmed", "archive": dir}
-	writeArchiveJSON(t, dir, "validation-receipt.json", receipt)
+	valid["unexpected"] = true
+	if err := validateArchiveSchema("attempts", valid); err == nil {
+		t.Fatal("schema accepted unknown field")
+	}
 }
 
 type runtimeProbeReceipt struct {
