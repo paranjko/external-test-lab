@@ -144,6 +144,13 @@ async function navigate(call, url) {
   return result.loaderId;
 }
 
+async function currentLoader(call) {
+  const tree = await call("Page.getFrameTree");
+  const loader = tree.frameTree?.frame?.loaderId;
+  if (!loader) throw new Error("top-level document lacks a CDP loader ID");
+  return loader;
+}
+
 async function dom(call) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const document = await call("DOM.getDocument", { depth: -1, pierce: true });
@@ -207,7 +214,7 @@ async function main() {
   }
   await mkdir(options["evidence-dir"], { recursive: true });
   await mkdir(options.profile, { recursive: true });
-  let browser; let socket; let cleanup = "not-started"; let status = "FAIL";
+  let browser; let socket; let cleanup = "not-started"; let status = "FAIL"; let failure = "";
   const events = []; const assertions = [];
   try {
     browser = await launch(options);
@@ -221,7 +228,7 @@ async function main() {
       const wanted = await expected(options.bundle);
       const base = options.url;
       const caseURL = `${base}#/${wanted.resultId}`;
-      const initialLoader = await navigate(call, caseURL);
+      await navigate(call, caseURL);
       const first = await waitDOM(call, (html) => [wanted.caseName, wanted.stepText, wanted.attachmentLabel, "History"].every((x) => html.includes(x)));
       assertContains(first, { case_name: wanted.caseName, step_text: wanted.stepText, attachment_label: wanted.attachmentLabel, history_surface: "History" }, "case");
       const renderedHistory = first.match(/data-testid="test-result-tab-history"[\s\S]{0,500}?data-testid="counter"[^>]*>(\d+)</);
@@ -245,19 +252,24 @@ async function main() {
       const attachmentFrames = await call("Page.getFrameTree");
       await writeFile(path.join(options["evidence-dir"], "attachment-ui.frames.json"), JSON.stringify(attachmentFrames, null, 2));
       const contentJSON = JSON.stringify(wanted.attachmentNeedle);
-      const renderedAttachment = await waitEvaluate(call, `(() => { const wanted = ${contentJSON}; return Array.from(document.querySelectorAll('[data-testid="test-result-attachment-content"], [data-testid="test-result-attachment-text"], [data-testid="test-result-attachment-content-wrapper"]')).map((node) => node.innerText || node.textContent || '').find((text) => text.includes(wanted)) || ''; })()`, Boolean);
+      const renderedAttachment = await waitEvaluate(call, `(() => { const wanted = ${contentJSON}; return Array.from(document.querySelectorAll('[data-testid="test-result-attachment-content"], [data-testid="test-result-attachment-text"], [data-testid="test-result-attachment-content-wrapper"], [data-testid="code-attachment-content"]')).map((node) => node.innerText || node.textContent || '').find((text) => text.includes(wanted)) || ''; })()`, Boolean);
       assertions.push("attachment_control_activated", "attachment_content_rendered_in_ui");
 
       const currentHash = await evaluate(call, "location.hash");
-      if (currentHash !== `#/${wanted.resultId}`) throw new Error(`attachment UI changed current case hash to ${currentHash}`);
-      assertions.push("current_case_preserved_after_ui_assertions");
+      if (!new RegExp(`^#/?${wanted.resultId}(?:/attachments)?$`).test(currentHash)) throw new Error(`attachment UI did not retain the selected case route: ${currentHash}`);
+      assertions.push("case_specific_attachment_route");
+      await navigate(call, caseURL);
+      const preReload = await waitDOM(call, (html) => [wanted.caseName, wanted.stepText, wanted.attachmentLabel].every((x) => html.includes(x)));
+      assertContains(preReload, { case_name: wanted.caseName, step_text: wanted.stepText, attachment_label: wanted.attachmentLabel }, "pre-reload case");
+      const preReloadLoader = await currentLoader(call);
+      assertions.push("return_to_direct_case_route_before_reload");
       const reloadEventStart = events.length;
       const reload = await call("Page.reload", { ignoreCache: true });
       void reload;
       const reloadEventDeadline = Date.now() + DOM_MS;
       let reloadLoader = "";
       while (Date.now() < reloadEventDeadline) {
-        const event = events.slice(reloadEventStart).find((entry) => entry.method === "Page.frameNavigated" && entry.params?.frame?.loaderId && entry.params.frame.loaderId !== initialLoader);
+        const event = events.slice(reloadEventStart).find((entry) => entry.method === "Page.frameNavigated" && entry.params?.frame?.loaderId && entry.params.frame.loaderId !== preReloadLoader);
         if (event) { reloadLoader = event.params.frame.loaderId; break; }
         await delay(100);
       }
@@ -265,7 +277,7 @@ async function main() {
       const reloaded = await waitDOM(call, (html) => [wanted.caseName, wanted.stepText, wanted.attachmentLabel].every((x) => html.includes(x)));
       assertContains(reloaded, { case_name: wanted.caseName, step_text: wanted.stepText, attachment_label: wanted.attachmentLabel }, "reloaded case");
       await writeFile(path.join(options["evidence-dir"], "case-reload.dom.html"), reloaded);
-      assertions.push(`reload_document_changed=${initialLoader}->${reloadLoader}`, "reload_reasserted");
+      assertions.push(`reload_document_changed=${preReloadLoader}->${reloadLoader}`, "reload_reasserted");
       const attachmentURL = new URL(`data/attachments/${wanted.attachmentId}.json`, base).href;
       await navigate(call, attachmentURL);
       const attachmentDOM = await waitDOM(call, (html) => html.includes(wanted.attachmentContent.trim()));
@@ -274,6 +286,9 @@ async function main() {
       await writeFile(path.join(options["evidence-dir"], "expected.json"), JSON.stringify({ ...wanted, attachmentContent: wanted.attachmentContent.trim(), caseURL, attachmentURL }, null, 2));
     }
     status = "PASS";
+  } catch (error) {
+    failure = error.stack || error.message || String(error);
+    throw error;
   } finally {
     if (socket) socket.close();
     if (browser) {
@@ -290,7 +305,7 @@ async function main() {
       `flags=${browser?.flags.join(" ") || "launch-failed"}`, `fixture_tls_exception=${Boolean(options["ignore-certificate-errors"])}`,
       `evidence_dir=${path.resolve(options["evidence-dir"])}`, `profile=${path.resolve(options.profile)}`, `cache_dir=${path.resolve(options["evidence-dir"], "cache")}`,
       `request_deadline_ms=${REQUEST_MS}`, `socket_deadline_ms=${SOCKET_MS}`, `dom_deadline_ms=${DOM_MS}`,
-      `assertions=${assertions.join(",")}`, `owned_process_cleanup=${cleanup}`, "",
+      `assertions=${assertions.join(",")}`, `failure=${failure.replaceAll("\n", " | ")}`, `owned_process_cleanup=${cleanup}`, "",
     ].join("\n"));
   }
 }

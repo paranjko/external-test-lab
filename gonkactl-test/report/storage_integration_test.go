@@ -359,16 +359,14 @@ func browserEnvironment(t *testing.T, dataRoot string) []string {
 			environment = append(environment, entry)
 		}
 	}
-	for name, value := range map[string]string{
-		"HOME":   filepath.Join(dataRoot, "browser-home"),
-		"TMPDIR": filepath.Join(dataRoot, "tmp"), "TMP": filepath.Join(dataRoot, "tmp"), "TEMP": filepath.Join(dataRoot, "tmp"),
-		"XDG_CACHE_HOME": filepath.Join(dataRoot, "xdg-cache"), "XDG_CONFIG_HOME": filepath.Join(dataRoot, "xdg-config"),
-	} {
-		environment = append(environment, name+"="+value)
-		if err := os.MkdirAll(value, 0o700); err != nil {
-			t.Fatalf("create browser persistent path %s: %v", value, err)
-		}
+	home := filepath.Join(dataRoot, "browser-home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("create browser persistent home: %v", err)
 	}
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatalf("restrict browser persistent home: %v", err)
+	}
+	environment = append(environment, "HOME="+home)
 	return environment
 }
 
