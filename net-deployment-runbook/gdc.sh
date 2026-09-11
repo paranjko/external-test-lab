@@ -86,6 +86,16 @@ on_launcher_exit() {
   local rc="$?"
   trap - EXIT
   set +e
+  trap - ERR
+  # A JOIN run without a terminal result blocks every later run: write one on abort.
+  if (( rc != 0 )) && [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] \
+    && [[ ! -e "$GDC_JOIN_RESULT_OUTPUT" ]] && [[ -d "$(dirname "$GDC_JOIN_RESULT_OUTPUT")" ]] \
+    && [[ "$GDC_JOIN_RESULT_OUTPUT" == "${GDC_HOME:-/nonexistent}/runs/"* ]]; then
+    record_join_terminal_result failed signer internal join_launcher_aborted "$rc" \
+      signer_may_be_on unknown manual_recovery \
+      || printf 'ERROR JOIN aborted and its terminal result receipt could not be persisted at %s\n' \
+        "$GDC_JOIN_RESULT_OUTPUT" >&2
+  fi
   record_launcher_failure "$rc"
   exit "$rc"
 }
@@ -202,7 +212,9 @@ run_phase() {
   # Host. `record_phase_profile` enriches it once role input is loaded.
   ensure_run_manifest "$phase"
 
+  # set -E would fire the ERR trap inside the pipeline and skip the result below.
   set +e
+  trap - ERR
   {
     [[ -z "${GDC_INVOCATION_COMMAND:-}" ]] || printf 'INVOCATION command=%s\n' "$GDC_INVOCATION_COMMAND"
     printf 'LAUNCHER runbook_revision=%s gdc_launcher_sha256=%s\n' "$(runbook_revision)" "$(gdc_launcher_sha256)"
@@ -249,6 +261,7 @@ run_phase() {
     fi
   fi
   set -e
+  trap 'on_launcher_error "$LINENO"' ERR
   return "$rc"
 }
 

@@ -68,3 +68,52 @@ if "$TOOL" verify "$tmp/duplicate.json" >/dev/null 2>&1; then
   exit 1
 fi
 printf 'PASS operator bootstrap shell path has no Python dependency\n'
+
+# JOIN installs the CLI off PATH; network-bootstrap.sh must still find it.
+staging_root="$(mktemp -d)"
+trap 'rm -rf -- "$staging_root"' EXIT
+profile_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+mkdir -p "$staging_root/home/bin/$profile_id"
+: >"$staging_root/home/bin/$profile_id/inferenced"
+chmod 0755 "$staging_root/home/bin/$profile_id/inferenced"
+printf '{"profile_id":"%s"}\n' "$profile_id" >"$staging_root/profile.json"
+
+# Extract the real function: sourcing the tool would run its dispatcher.
+awk '/^resolve_inferenced_cli\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' "$TOOL" >"$staging_root/resolver.sh"
+[[ -s "$staging_root/resolver.sh" ]] || { echo 'resolve_inferenced_cli not found in network-bootstrap.sh' >&2; exit 1; }
+
+resolve_with() {
+  env -u INFERENCED "$@" bash -c '
+    set -Eeuo pipefail
+    . "$0"
+    resolve_inferenced_cli
+  ' "$staging_root/resolver.sh"
+}
+
+observed="$(GDC_JOIN_PROFILE="$staging_root/profile.json" GDC_HOME="$staging_root/home" resolve_with env)"
+[[ "$observed" == "$staging_root/home/bin/$profile_id/inferenced" ]] || {
+  echo "network-bootstrap must resolve the profile-bound CLI, got: $observed" >&2; exit 1; }
+
+# Outside a JOIN the plain PATH lookup must be unchanged.
+observed="$(resolve_with env)"
+[[ "$observed" == inferenced ]] || {
+  echo "network-bootstrap must fall back to PATH outside a JOIN, got: $observed" >&2; exit 1; }
+
+# An explicit override still wins.
+observed="$(GDC_JOIN_PROFILE="$staging_root/profile.json" GDC_HOME="$staging_root/home" \
+  env INFERENCED=/usr/bin/true bash -c '. "$0"; resolve_inferenced_cli' "$staging_root/resolver.sh")"
+[[ "$observed" == /usr/bin/true ]] || {
+  echo "explicit INFERENCED must win, got: $observed" >&2; exit 1; }
+
+# A symlink does not count: the profile is the authority for JOIN tools.
+ln -sf "$staging_root/home/bin/$profile_id/inferenced" "$staging_root/home/bin/$profile_id/linked"
+mkdir -p "$staging_root/home2/bin/$profile_id"
+ln -sf /bin/sh "$staging_root/home2/bin/$profile_id/inferenced"
+observed="$(GDC_JOIN_PROFILE="$staging_root/profile.json" GDC_HOME="$staging_root/home2" resolve_with env)"
+[[ "$observed" == inferenced ]] || {
+  echo "a symlinked profile CLI must be refused, got: $observed" >&2; exit 1; }
+
+# The Genesis download must actually use the resolver, not the bare lookup.
+grep -Fq 'cli="$(resolve_inferenced_cli)"' "$TOOL"
+
+echo 'PASS bootstrap Genesis download resolves the profile-bound inferenced CLI'
