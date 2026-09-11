@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -54,13 +55,38 @@ func TestStoragePrefixIntegration(t *testing.T) {
 
 	containerName := fmt.Sprintf("gonkactl-test-m0-storage-%d", os.Getpid())
 	containerLog := filepath.Join(absRoot, "storage-container.log")
+	cleanupReceipt := filepath.Join(absRoot, "cleanup-receipt.json")
+	started := false
 	defer func() {
+		if !started {
+			return
+		}
 		logs := exec.Command("docker", "logs", "--timestamps", containerName)
 		output, _ := logs.CombinedOutput()
 		if err := os.WriteFile(containerLog, output, 0o600); err != nil {
 			t.Errorf("persist Storage logs: %v", err)
 		}
-		_ = exec.Command("docker", "rm", "--force", containerName).Run()
+		removeOutput, removeErr := exec.Command("docker", "rm", "--force", containerName).CombinedOutput()
+		inspectOutput, inspectErr := exec.Command("docker", "container", "inspect", containerName).CombinedOutput()
+		receipt := map[string]any{
+			"container_name":                containerName,
+			"owner_label":                   "gonkactl-test.owner=m0-storage-prefix",
+			"container_log":                 containerLog,
+			"remove_exit_code":              commandExitCode(removeErr),
+			"remove_output":                 strings.TrimSpace(string(removeOutput)),
+			"post_remove_inspect_exit_code": commandExitCode(inspectErr),
+			"post_remove_absent":            inspectErr != nil,
+			"post_remove_inspect_output":    strings.TrimSpace(string(inspectOutput)),
+		}
+		if err := writeStorageJSON(cleanupReceipt, receipt); err != nil {
+			t.Errorf("persist Storage cleanup receipt: %v", err)
+		}
+		if removeErr != nil {
+			t.Errorf("remove owned Storage container: %v: %s", removeErr, removeOutput)
+		}
+		if inspectErr == nil {
+			t.Errorf("owned Storage container remains after cleanup: %s", inspectOutput)
+		}
 	}()
 
 	bootstrapToken := "m0-storage-bootstrap-only"
@@ -80,6 +106,7 @@ func TestStoragePrefixIntegration(t *testing.T) {
 	).CombinedOutput(); err != nil {
 		t.Fatalf("start owned Storage fixture: %v: %s", err, output)
 	}
+	started = true
 	portOutput, err := exec.Command("docker", "port", containerName, "3000/tcp").Output()
 	if err != nil {
 		t.Fatalf("discover owned Storage port: %v", err)
@@ -399,14 +426,29 @@ func storageRequest(t *testing.T, client *http.Client, method, endpoint, token, 
 }
 
 func writeStorageReceipt(path, reportID, storageURL, httpURL, httpsURL string) error {
-	payload, err := json.MarshalIndent(map[string]string{
+	return writeStorageJSON(path, map[string]string{
 		"report_id":   reportID,
 		"storage_url": storageURL,
 		"http_url":    httpURL + "/report/",
 		"https_url":   httpsURL + "/report/",
-	}, "", "  ")
+	})
+}
+
+func writeStorageJSON(path string, value any) error {
+	payload, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, append(payload, '\n'), 0o600)
+}
+
+func commandExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return exitError.ExitCode()
+	}
+	return -1
 }
