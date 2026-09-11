@@ -65,3 +65,37 @@ func TestRenderTransactionInterruptionRetryAndConcurrency(t *testing.T) {
 		t.Fatalf("history duplicated: %q", b)
 	}
 }
+
+func TestRenderFailurePreservesResultArchiveAndAvoidsHistoryPromotion(t *testing.T) {
+	d := t.TempDir()
+	run := "run-render-failure"
+	results := filepath.Join(d, "report", "results", run)
+	if err := os.MkdirAll(results, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(results, "u1-result.json")
+	original := []byte(`{"uuid":"u1","historyId":"h1","name":"case","fullName":"feature:case","status":"passed","stage":"finished","start":1000,"stop":2000,"steps":[],"labels":[]}`)
+	if err := os.WriteFile(archive, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "./render-transaction.sh", d, run)
+	cmd.Dir = "."
+	cmd.Env = append(os.Environ(), "GONKACTL_TEST_FORCE_RENDER_FAILURE=true")
+	if err := cmd.Run(); err == nil {
+		t.Fatal("forced renderer failure unexpectedly succeeded")
+	}
+	if got, err := os.ReadFile(archive); err != nil || string(got) != string(original) {
+		t.Fatalf("renderer failure altered result archive: got=%q err=%v", got, err)
+	}
+	scope := filepath.Join(d, "history", "m0-v4")
+	if _, err := os.Stat(filepath.Join(scope, "history.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("renderer failure promoted history: %v", err)
+	}
+	transaction, err := os.ReadFile(filepath.Join(scope, "transactions", run))
+	if err != nil || string(transaction) != "renderer_failed:97\n" {
+		t.Fatalf("failure transaction=%q err=%v", transaction, err)
+	}
+	if _, err := os.Stat(filepath.Join(scope, "receipts", run)); !os.IsNotExist(err) {
+		t.Fatalf("renderer failure wrote a success receipt: %v", err)
+	}
+}

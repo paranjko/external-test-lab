@@ -26,8 +26,14 @@ printf 'prepared\n' >"$transaction.tmp"
 mv "$transaction.tmp" "$transaction"
 if test -f "$history"; then cp "$history" "$staging"; else : >"$staging"; fi
 set +e
-GONKACTL_TEST_REPORT_OUTPUT="$output" GONKACTL_TEST_HISTORY_PATH="$staging" GONKACTL_TEST_APPEND_HISTORY=false ./node_modules/.bin/allure generate --config allurerc.mjs "$results"
-status=$?
+if test "${GONKACTL_TEST_FORCE_RENDER_FAILURE:-false}" = true; then
+  # Deterministic test-only control: exercise the evidence-preservation path
+  # without modifying an authentic result archive or its renderer inputs.
+  status=97
+else
+  GONKACTL_TEST_REPORT_OUTPUT="$output" GONKACTL_TEST_HISTORY_PATH="$staging" GONKACTL_TEST_APPEND_HISTORY=false ./node_modules/.bin/allure generate --config allurerc.mjs "$results"
+  status=$?
+fi
 set -e
 if test "$status" -ne 0; then
   printf 'renderer_failed:%s\n' "$status" >"$transaction.tmp"
