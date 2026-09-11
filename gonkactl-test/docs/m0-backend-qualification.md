@@ -72,6 +72,36 @@ health, canary and SSE observations. This next changed-input run has not been
 authorized or executed. It remains only a bounded v5 slice, not M0-A09
 closure.
 
+## D12 fixture authority and active resume condition
+
+The preceding no-authorization sentence is historical evidence of the earlier
+D11 boundary. D12 now authorizes the test executor to recreate this owned M0
+stand as needed without another project-permission request. Each attempt still
+requires its own frozen input, fresh lease/capacity/process/port preflight,
+bounded budget, evidence and verified task-owned cleanup. The next run is the
+changed-source restored-instance selector at
+`2a6e59af16eb229792d726b004e62930b89c8eeb`: it must retain the broken-mock
+non-success, empty between-instance inventory, distinct gateway/router IDs,
+restored health/canary/SSE and terminal cleanup. It remains unexecuted and
+does not alter the original-pin IMP-010 `INCONCLUSIVE` classification.
+
+### D12 actual attempts
+
+The preceding “next run” language is historical. Attempt 4 preserved the
+matching-digest, lease-acquired failure caused by root-owned `aggregate-spool`
+data below the Gonka Docker build context; its lease was released and its
+temporary data was removed. Attempt 5 changed the prepared workdir to this
+owned ETL worktree, outside that build context. It passed in 383.849 seconds
+with Gonka `7c827b2bba99ffcfb6faf542f71eaef6d3ac0f2c`, ETL
+`fdd28c84bcbffb9db132ccb9fb4952d2acdf21d3`, and digest
+`595b41429af42cbb3f85c7334be863e74dfa6c6cad63116e065568c3f6f98edd`.
+Its receipt records a released exclusive lease, SG01–SG05, runtime identities,
+positive and negative route observations, restored fresh-instance behavior and
+zero terminal owned resources. The rendered inputs, logs and receipts remain;
+root-owned transient data was removed. This is a v5 candidate slice only:
+baseline is unqualified, invalid digest is `not_run` in the matching launch,
+v3/v4 remain explicit gaps, and IMP-010 remains inconclusive.
+
 The M0 executable spike must still create an owned fresh fixture and record:
 
 1. SG01–SG05 observations and actual child identity;
