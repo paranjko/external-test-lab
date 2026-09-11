@@ -78,6 +78,23 @@ The M0 executable spike must still create an owned fresh fixture and record:
 Until that receipt exists, candidate/testenv outcomes remain fixture or
 adapter evidence, not a product or release conclusion.
 
+## Invalid-digest capability gap
+
+The current `stand` adapter has no composition-rendering or instance-start API:
+it validates a profile, acquires a local lease and probes a declared health
+route. `composition_digest` is currently only a contract/archive field, so no
+runtime boundary can compare declared and rendered bytes before Docker
+allocation. An invalid-digest result cannot therefore be claimed from the
+present implementation.
+
+The minimal required adapter extension is a composition-preflight operation
+that accepts rendered Compose bytes and a declared SHA-256, rejects a mismatch
+with a typed result before project, port, volume or container creation, and
+writes the decision into the fixture receipt. Its focused unit test must prove
+matching admission and mismatch rejection; a later owned fixture must prove
+that a mismatch creates no resources. This is a proposed missing capability,
+not an implemented control.
+
 ## Storage transport qualification
 
 Storage 1.0.1 isolated API and prefix-route requests passed through both HTTP
