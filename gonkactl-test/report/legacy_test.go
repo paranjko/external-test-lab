@@ -56,6 +56,23 @@ func TestWriteLegacyLaneUsesRetainedFixtureAndCannotEnterHistory(t *testing.T) {
 	}
 }
 
+func TestImportLegacyAllure2DirectoryPreservesRawResultBoundary(t *testing.T) {
+	records, err := ImportLegacyAllure2Directory(filepath.Join("testdata", "legacy-v2", "allure2-results"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records=%+v", records)
+	}
+	record := records[0]
+	if record.SourceRunID != "legacy-v2-allure-run-001" || record.CaseID != "3fbd07f2" || record.Outcome != "failed" {
+		t.Fatalf("record=%+v", record)
+	}
+	if record.StepEvidence != "unavailable" || record.DurationEvidence != "unavailable" || record.RawLogRef != "3fbd07f2-result.json" {
+		t.Fatalf("record inferred Allure 2 evidence: %+v", record)
+	}
+}
+
 func TestImportLegacyArchiveValidatesImmutableProvenance(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "allure2-events.jsonl")

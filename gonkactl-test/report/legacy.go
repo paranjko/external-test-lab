@@ -172,3 +172,59 @@ func WriteLegacyLane(archivePath, outputPath string) (string, error) {
 	}
 	return outputPath, nil
 }
+
+// ImportLegacyAllure2Directory accepts immutable raw Allure 2 result files
+// only as legacy evidence. It requires an executor build name for source-run
+// provenance and refuses incomplete result timing or terminal status.
+func ImportLegacyAllure2Directory(directory string) ([]NormalizedLegacyRecord, error) {
+	executorBytes, err := os.ReadFile(filepath.Join(directory, "executor.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read Allure 2 executor provenance: %w", err)
+	}
+	var executor struct {
+		BuildName string `json:"buildName"`
+	}
+	if err := json.Unmarshal(executorBytes, &executor); err != nil || executor.BuildName == "" {
+		return nil, fmt.Errorf("Allure 2 executor buildName is required")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	var records []NormalizedLegacyRecord
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "-result.json") {
+			continue
+		}
+		path := filepath.Join(directory, entry.Name())
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var raw struct {
+			UUID   string `json:"uuid"`
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			Start  int64  `json:"start"`
+			Stop   int64  `json:"stop"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return nil, fmt.Errorf("decode Allure 2 raw result %s: %w", entry.Name(), err)
+		}
+		if raw.UUID == "" || raw.Name == "" || raw.Start <= 0 || raw.Stop <= raw.Start {
+			return nil, fmt.Errorf("Allure 2 raw result %s lacks identity/timing evidence", entry.Name())
+		}
+		sum := sha256.Sum256(b)
+		started := time.UnixMilli(raw.Start).UTC().Format(time.RFC3339Nano)
+		finished := time.UnixMilli(raw.Stop).UTC().Format(time.RFC3339Nano)
+		normalized, err := NormalizeLegacy(LegacyRecord{SourceRunID: executor.BuildName, CaseID: raw.UUID, Started: true, Terminal: raw.Status, RawLogRef: entry.Name(), StartedAt: started, FinishedAt: finished, ArchiveSHA256: hex.EncodeToString(sum[:])})
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, normalized)
+	}
+	if len(records) == 0 {
+		return nil, fmt.Errorf("Allure 2 raw archive contains no result files")
+	}
+	return records, nil
+}
