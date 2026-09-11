@@ -37,14 +37,18 @@ The upstream testenv documentation identifies the Docker services and the
 v5 gate. The preserved run log at the selected checkout reported routed v5
 health while chat admission remained `catalog_pending`.
 
-The current IMP-010 source trace found `/devshard/v2/healthz` consistently in
-the pinned source and the effective route. It also found the seed loop is
-started, so a missing seed-loop start is ruled out. The root cause remains
-**INCONCLUSIVE** because the receipt does not yet bind a same-instance status
-and response body to the executable and container identity that served it.
-Resume IMP-010 by capturing those four facts from one owned request and one
-running instance: request target, status and body, executable identity, and
-container identity.
+The current IMP-010 source trace found that the harness
+`routerCatalogHealthzURL` and transport `HTTPClient.CatalogHealthzURL` both
+construct `/v2/healthz`, including when the transport route prefix is
+`/devshard/v2`. It also found the seed loop is started, so a missing seed-loop
+start is ruled out. The historical `/devshard/v2/healthz` observation therefore
+requires runtime binary/config provenance; it is not established by source
+equivalence. The root cause remains **INCONCLUSIVE** because the receipt does
+not yet bind same-instance status, bounded body and identity headers to the
+executable and container that served each route. The existing wait helpers
+discard successful response observations. Resume IMP-010 with a read-only
+harness observation helper and one owned capture of the two request targets,
+their status/body/identity headers, executable identity and container identity.
 
 The M0 executable spike must still create an owned fresh fixture and record:
 
@@ -82,5 +86,6 @@ exception explicitly.
 | Browser assertions and browser-generated Allure result | **PASS** | Current generated bundle assertions cover steps, attachment content, History, direct navigation and reload through local HTTP and Storage HTTP/fixture-HTTPS. |
 | Existing non-browser runtime receipts | **PASS** | They support only their recorded API, routing, and cleanup observations. |
 
-These receipts do not qualify M0-A09 or M0-A08, do not close IMP-002 or
-IMP-004, and do not establish M0 completion.
+These receipts do not qualify M0-A09, do not close IMP-002, and do not
+establish M0 completion. The independently accepted browser receipts satisfy
+M0-A08 only; they do not substitute for the required runtime baseline evidence.
