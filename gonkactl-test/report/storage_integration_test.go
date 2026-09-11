@@ -112,8 +112,8 @@ func TestStoragePrefixIntegration(t *testing.T) {
 
 	assertStoragePrefixSurface(t, httpProxy.Client(), httpProxy.URL, reportID, uploaded)
 	assertStoragePrefixSurface(t, tlsProxy.Client(), tlsProxy.URL, reportID, uploaded)
-	assertStorageBrowser(t, httpProxy.URL+"/report/"+reportID+"/index.html")
-	assertStorageBrowser(t, tlsProxy.URL+"/report/"+reportID+"/index.html")
+	assertStorageBrowser(t, httpProxy.URL+"/report/"+reportID+"/index.html", bundleRoot, absRoot, "http")
+	assertStorageBrowser(t, tlsProxy.URL+"/report/"+reportID+"/index.html", bundleRoot, absRoot, "https")
 	issueStorageToken(t, tlsProxy.Client(), tlsProxy.URL, bootstrapToken)
 	if err := writeStorageReceipt(filepath.Join(absRoot, "receipt.json"), reportID, storageURL, httpProxy.URL, tlsProxy.URL); err != nil {
 		t.Fatal(err)
@@ -325,24 +325,41 @@ func assertStoragePrefixSurface(t *testing.T, client *http.Client, proxyURL, rep
 	}
 }
 
-func assertStorageBrowser(t *testing.T, endpoint string) {
+func assertStorageBrowser(t *testing.T, endpoint, bundleRoot, dataRoot, scheme string) {
 	t.Helper()
-	chrome, err := exec.LookPath("google-chrome")
-	if err != nil {
-		t.Fatalf("BLOCKED: google-chrome unavailable for Storage browser qualification: %v", err)
+	profile := filepath.Join(dataRoot, fmt.Sprintf("browser-%s-profiles/%d", scheme, time.Now().UnixNano()))
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	cmd := exec.Command(chrome, "--headless", "--no-sandbox", "--disable-gpu", "--ignore-certificate-errors", "--dump-dom", endpoint+"#/test-result/case-unknown")
+	evidence := filepath.Join(dataRoot, "browser-"+scheme)
+	args := []string{"browser-check.mjs", "--url", endpoint, "--bundle", bundleRoot, "--evidence-dir", evidence, "--profile", profile}
+	if scheme == "https" {
+		args = append(args, "--ignore-certificate-errors")
+	}
+	cmd := exec.Command("node", args...)
+	cmd.Env = browserEnvironment()
 	out, err := cmd.CombinedOutput()
+	if writeErr := os.WriteFile(filepath.Join(dataRoot, "browser-"+scheme+"-driver.log"), out, 0o600); writeErr != nil {
+		t.Fatalf("persist Storage browser driver output: %v", writeErr)
+	}
 	if err != nil {
-		t.Fatalf("Storage browser navigation %s: %v: %s", endpoint, err, out)
+		t.Fatalf("Storage browser CDP qualification failed for %s: %v: %s", endpoint, err, out)
 	}
-	if !bytes.Contains(out, []byte("gonkactl-test M0 authentic event qualification")) {
-		t.Fatalf("Storage browser DOM lacks report identity at %s", endpoint)
+}
+
+func browserEnvironment() []string {
+	allowed := map[string]bool{
+		"HOME": true, "PATH": true, "XDG_RUNTIME_DIR": true,
+		"LANG": true, "LC_ALL": true, "TZ": true,
 	}
-	cmd = exec.Command(chrome, "--headless", "--no-sandbox", "--disable-gpu", "--ignore-certificate-errors", "--dump-dom", endpoint+"#/test-result/case-unknown")
-	if out, err = cmd.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("gonkactl-test M0 authentic event qualification")) {
-		t.Fatalf("Storage browser deep reload failed at %s: %v", endpoint, err)
+	var environment []string
+	for _, entry := range os.Environ() {
+		name, _, found := strings.Cut(entry, "=")
+		if found && allowed[name] {
+			environment = append(environment, entry)
+		}
 	}
+	return environment
 }
 
 func assertStorageHistory(t *testing.T, client *http.Client, proxyURL, token string) {
