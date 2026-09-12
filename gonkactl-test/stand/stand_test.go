@@ -11,7 +11,7 @@ import (
 )
 
 func TestProfilePinsCandidateAndRefusesUnsupportedQualification(t *testing.T) {
-	profile, err := LoadProfile(filepath.Join("..", "environments", "proposed-compatible-devshard-baseline-v6.json"))
+	profile, err := LoadProfile(filepath.Join("..", "environments", "proposed-compatible-devshard-baseline-v7.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestProfileRejectsUnexplainedUnsupportedAdapter(t *testing.T) {
 	if err := profile.Validate(); err == nil {
 		t.Fatal("accepted v3 without an explicit unsupported gap")
 	}
-	profile, err = LoadProfile(filepath.Join("..", "environments", "proposed-compatible-devshard-baseline-v6.json"))
+	profile, err = LoadProfile(filepath.Join("..", "environments", "proposed-compatible-devshard-baseline-v7.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
