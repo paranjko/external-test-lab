@@ -20,6 +20,7 @@ func main() {
 
 func run(args []string) error {
 	var workDir, digest, receipt, fixtureReceipt, leaseRoot, environmentID, instanceID, profilePath string
+	var preflightOnly bool
 	flags := flag.NewFlagSet("m0stand", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&workDir, "prepared-workdir", "", "prepared fixture directory")
@@ -30,17 +31,18 @@ func run(args []string) error {
 	flags.StringVar(&environmentID, "environment-id", "", "lease environment identifier")
 	flags.StringVar(&instanceID, "instance-id", "", "lease instance identifier")
 	flags.StringVar(&profilePath, "profile", "", "validated M0 environment profile")
+	flags.BoolVar(&preflightOnly, "preflight-only", false, "validate the profile and frozen composition without a lease or fixture launch")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	command := flags.Args()
-	if len(command) == 0 {
+	if len(command) == 0 && !preflightOnly {
 		return errors.New("fixture launch command is required")
 	}
-	if fixtureReceipt == "" {
+	if fixtureReceipt == "" && !preflightOnly {
 		return errors.New("fixture receipt path is required")
 	}
-	if leaseRoot == "" || environmentID == "" || instanceID == "" {
+	if environmentID == "" || (!preflightOnly && (leaseRoot == "" || instanceID == "")) {
 		return errors.New("lease-root, environment-id and instance-id are required")
 	}
 	if profilePath == "" {
@@ -56,6 +58,9 @@ func run(args []string) error {
 	decision, err := stand.PreflightCompositionWithProfile(workDir, digest, receipt, profile)
 	if err != nil {
 		return err
+	}
+	if preflightOnly {
+		return nil
 	}
 	lease, err := stand.AcquireLease(leaseRoot, environmentID, instanceID)
 	if err != nil {

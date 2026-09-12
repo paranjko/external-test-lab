@@ -76,3 +76,48 @@ func TestRunRejectsMismatchedProfileEnvironmentBeforePreflight(t *testing.T) {
 		t.Fatalf("preflight receipt written before environment rejection: %v", err)
 	}
 }
+
+func TestRunPreflightOnlyAcceptsFrozenProposedBaselineWithoutLeaseOrLaunch(t *testing.T) {
+	dir := t.TempDir()
+	prepared := filepath.Join(dir, "prepared")
+	if err := os.MkdirAll(prepared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prepared, "config.yaml"), []byte("config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prepared, "docker-compose.yml"), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := stand.PreflightComposition(prepared, "", filepath.Join(dir, "discard.json"))
+	if err == nil || digest.ActualDigest == "" {
+		t.Fatalf("digest precondition=%+v err=%v", digest, err)
+	}
+	receipt := filepath.Join(dir, "receipt", "decision.json")
+	leaseRoot := filepath.Join(dir, "leases")
+	err = run([]string{
+		"--preflight-only",
+		"--prepared-workdir", prepared,
+		"--composition-digest", digest.ActualDigest,
+		"--receipt", receipt,
+		"--environment-id", "proposed-compatible-devshard-baseline-v1",
+		"--profile", filepath.Join("..", "..", "environments", "proposed-compatible-devshard-baseline-v1.json"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision stand.CompositionDecision
+	if err := json.Unmarshal(contents, &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Outcome != "accepted" || decision.Profile == nil || decision.Profile.EnvironmentID != "proposed-compatible-devshard-baseline-v1" || decision.LaunchAttempted || decision.ResourcesCreated {
+		t.Fatalf("decision=%+v", decision)
+	}
+	if _, err := os.Stat(leaseRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lease root created by preflight-only: %v", err)
+	}
+}

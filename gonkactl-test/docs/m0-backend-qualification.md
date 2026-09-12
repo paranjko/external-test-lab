@@ -139,11 +139,14 @@ This is real candidate runtime evidence, not PID 1, a mounted path or a
 baseline identity. Its restored-instance assertion still used the obsolete
 absolute selector; Gonka `ea44ab00ac777a98c705e033819b50ac690a82b2` corrects
 only that lookup to a basename capture. Candidate attempt 10 used that changed
-input and fresh digest but ended without terminal composition completion. Its
-incomplete receipt and a separate operator cleanup receipt are retained; the
-operator receipt proves both exact owned Compose generations had zero matching
-containers, volumes and networks after cleanup. Neither receipt changes the
-historical original pin or qualifies this proposed baseline.
+input and fresh digest. Its authoritative terminal records report `PASS`,
+`launch_completed`, a released lease, completed terminal cleanup and restored
+runtime-child identity. The earlier incomplete observation and a separate
+operator cleanup receipt are retained as history; the operator receipt proves
+both exact owned Compose generations had zero matching containers, volumes and
+networks after cleanup. The completed receipt is candidate-slice evidence only:
+it neither changes the historical original pin nor qualifies this proposed
+baseline.
 
 The unavailable input is a materialized, known-good compatible revision of
 that proposal with immutable rendered inputs and a declaration that it is a
@@ -173,6 +176,23 @@ for all of the following before it can become a baseline:
 The next fixture, if needed, therefore changes its input to this materialized
 baseline revision and records the listed discriminating evidence. It must not
 repeat the D12 candidate selector unchanged.
+
+## Proposed baseline v1 materialization
+
+`environments/proposed-compatible-devshard-baseline-v1.json` is the initially
+unqualified declaration for Gonka `ea44ab00ac777a98c705e033819b50ac690a82b2`.
+The existing testenv prepare path rendered its frozen inputs with digest
+`9ec5138fb932176cb006a1d327ddc1d4fe32195461959d71dfaa1895e803244b`; the
+independent `m0stand --preflight-only` decision binds that digest to the profile
+SHA-256 `9e54bbc146a38845d2d780e48c9ec2ba7d6c9c4ecb133322dbe685901d8d1250`
+without a lease, launch attempt or created resource. The focused adapter test
+also proves this no-launch boundary.
+
+This is an admission check, not compatibility qualification. The next
+changed-input fixture must use this profile and these exact prepared inputs to
+record configured and effective catalog routes, image and child identities,
+all FR-005 controls, fresh-instance recovery and cleanup before this profile
+can be promoted from `unqualified`.
 
 `m0stand` now requires `--profile` and validates it before composition
 preflight, lease acquisition or fixture launch. Its decision receipt persists

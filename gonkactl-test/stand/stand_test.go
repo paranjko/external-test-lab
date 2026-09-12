@@ -33,6 +33,21 @@ func TestProfilePinsCandidateAndRefusesUnsupportedQualification(t *testing.T) {
 	}
 }
 
+func TestProposedBaselineProfileIsInitiallyUnqualifiedAndPinsV5Contract(t *testing.T) {
+
+	profile, err := LoadProfile(filepath.Join("..", "environments", "proposed-compatible-devshard-baseline-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.EnvironmentID != "proposed-compatible-devshard-baseline-v1" || profile.Backend.SourceRevision != "ea44ab00ac777a98c705e033819b50ac690a82b2" || profile.Baseline.Status != "unqualified" {
+		t.Fatalf("profile does not preserve the proposed baseline boundary: %+v", profile)
+	}
+	v5 := profile.Adapters[2]
+	if v5.Health.Path != "/v5/healthz" || v5.Chat.Path != "/v1/chat/completions" || v5.Negative.MissingRoutePath != "/v5/m0-a09-missing-route" {
+		t.Fatalf("v5 compatibility contract=%+v", v5)
+	}
+}
+
 func TestProfileRejectsUnexplainedUnsupportedAdapter(t *testing.T) {
 	profile, err := LoadProfile(filepath.Join("..", "environments", "lab-mock-devshard-testenv-v5.json"))
 	if err != nil {
