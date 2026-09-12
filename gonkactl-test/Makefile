@@ -20,7 +20,7 @@ test-bindings:
 
 test-stand:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
-	@set +e; command='env $(PERSISTENT_ENV) go test ./stand'; log='$(DATA_ROOT)/terminal-receipts/test-stand.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-stand.receipt'; env $(PERSISTENT_ENV) go test ./stand >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-stand\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-stand receipt: %s\n' "$$receipt"; exit "$$status"
+	@set +e; command='env $(PERSISTENT_ENV) go test ./stand ./cmd/m0stand'; log='$(DATA_ROOT)/terminal-receipts/test-stand.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-stand.receipt'; env $(PERSISTENT_ENV) go test ./stand ./cmd/m0stand >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-stand\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-stand receipt: %s\n' "$$receipt"; exit "$$status"
 
 test-browser-probe:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/report/browser-probe
