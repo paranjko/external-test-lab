@@ -124,19 +124,26 @@ mock-chain, mock-DAPI and mock-OpenAI dependencies. The proposal must pin the
 Compose bytes, every image or executable identity, the chain/fixture seed and
 the gateway's effective catalog route before it may create resources.
 
-The D12 candidate receipt identifies `/usr/local/bin/devshardctl` in service
+The historical D12 candidate receipt identifies `/usr/local/bin/devshardctl` in service
 `devshardctl`, container
 `d0d9ff981691067727af6f9c42478973322dafa96c006dad6cb1e65caeeec092`, SHA-256
 `d6004a1c50cb09980790b0c127fa2b63339966f1732cacac66e195616e678d6f`, from
 image ID `sha256:a5522c603d59190aa6c88862fa0f488010da156586998153d6555256cd58306f`.
 That historical field was captured from `/proc/1/exe`: it distinguishes the
 gateway container from the versiond PID 1 `/sbin/tini` wrapper and router
-HAProxy, but does not prove the `devshardd` child beneath versiond. The owned
-harness now has focused-test coverage for a separate `/proc` child capture of
-`/opt/devshard/devshardd` with PID, parent PID, executable path and SHA-256.
-Only a future changed-input fixture receipt can populate that new field. None
-of these identities is an identity claim for the historical original pin or
-for this proposed baseline.
+HAProxy, but does not prove the `devshardd` child beneath versiond. Candidate
+attempt 9 did populate the separate child observation: versiond-0 PID 64 and
+versiond-1 PID 67 executed `/opt/versiond/bin/v5/devshardd`, both with
+SHA-256 `3c1b8ddef0d3b8f17a37b4a9eaf2e1862c7a7b8407cb5e8920e5d606488a3f76`.
+This is real candidate runtime evidence, not PID 1, a mounted path or a
+baseline identity. Its restored-instance assertion still used the obsolete
+absolute selector; Gonka `ea44ab00ac777a98c705e033819b50ac690a82b2` corrects
+only that lookup to a basename capture. Candidate attempt 10 used that changed
+input and fresh digest but ended without terminal composition completion. Its
+incomplete receipt and a separate operator cleanup receipt are retained; the
+operator receipt proves both exact owned Compose generations had zero matching
+containers, volumes and networks after cleanup. Neither receipt changes the
+historical original pin or qualifies this proposed baseline.
 
 The unavailable input is a materialized, known-good compatible revision of
 that proposal with immutable rendered inputs and a declaration that it is a
