@@ -2,9 +2,13 @@
 
 ## Gonka External Test Lab & Community DevNet
 
+**Status: Closed – positions filled.** This vacancy is no longer accepting
+applications. The original role description is retained below for reference.
+
 **Remote · Contract**
 
-We are looking for a **QA / Infrastructure Testing Engineer** to join Gonka's External Test Lab and Community DevNet.
+This role sought a **QA / Infrastructure Testing Engineer** to join Gonka's
+External Test Lab and Community DevNet.
 
 You will work with distributed nodes and services in production-like environments, helping validate network upgrades, inference and Proof-of-Compute flows, host and broker interactions, and other critical changes before they reach mainnet.
 
@@ -59,7 +63,9 @@ Final compensation will depend on relevant experience and interview results.
 2. **Technical interview — 60–75 minutes**  
    Discussion of previous infrastructure and testing work, followed by practical testing and troubleshooting scenarios.
 
-## How to apply
+## Original application instructions
+
+Applications for this vacancy are closed.
 
 Send your CV or LinkedIn/GitHub profile, together with a short description of your most relevant project involving distributed systems, infrastructure, blockchain, or QA, to **Sergii Paranko, Project Lead**, at [paranko@dahl.global](mailto:paranko@dahl.global) or on Telegram: [@paranko](https://t.me/paranko).
 

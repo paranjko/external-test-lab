@@ -23,7 +23,7 @@ This repository hosts the public artifacts of the 4-month pilot approved by Gonk
 |---|---|
 | **Community DevNet** | Small always-on geographically distributed network for protocol, node, DevShard, and operational testing. Hosts connecting their own nodes are welcome. |
 | **Burst GPU testing** | Temporary rental of large GPU capacity for release-candidate, model-compatibility, and load tests. Usage itemized in monthly reports. |
-| **External Testing Team** | Two QA / infrastructure testing engineers validating pre-release builds, DevShards, and deliverables from external teams. See [open positions](jobs/). |
+| **External Testing Team** | Two QA / infrastructure testing engineers validating pre-release builds, DevShards, and deliverables from external teams. See the [role archive](jobs/). |
 
 ## Broker OpenAI compatibility
 

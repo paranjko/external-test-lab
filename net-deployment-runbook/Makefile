@@ -28,7 +28,7 @@ preview_number ?=
 preview_revision ?=
 site_origin ?= https://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
+.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -107,6 +107,9 @@ remove-site-release:
 test-site-release-paths:
 	@./scripts/test-site-release-paths.sh
 
+test-site-release-verifier:
+	@./scripts/test-site-release-verifier.sh
+
 test-site-publisher: test-site-preview-context test-site-preview-live
 	@./scripts/test-site-publisher.sh
 
@@ -121,7 +124,7 @@ test-edge-install-ownership:
 
 verify-site-release:
 	@test -d "$(site_release_dir)" || { echo 'run prepare-static-site first' >&2; exit 2; }
-	@GDC_SITE_RENDERED_ASSETS="$(site_release_dir)" ./scripts/verify-public-homepage.sh
+	@./scripts/verify-site-release.sh "$(site_release_dir)" "$(site_origin)"
 
 verify-site-preview-artifact:
 	@./scripts/verify-site-preview-artifact.sh "$(site_release_dir)" "$(preview_revision)"
@@ -200,7 +203,7 @@ test: site-js-check site-host-requirements-check
 	@./scripts/test-recovery-readiness-predicate.sh
 	@./scripts/test-capture-poc-snapshot.sh
 	@$(MAKE) test-gateway-site-state
-	@$(MAKE) test-site-release-paths test-site-publisher
+	@$(MAKE) test-site-release-paths test-site-release-verifier test-site-publisher
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
 	@./scripts/test-public-traffic-readiness.sh
