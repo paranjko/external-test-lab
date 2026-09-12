@@ -30,12 +30,13 @@ type CompositionDecision struct {
 // it records whether immutable fixture evidence is eligible for independent
 // acceptance, without promoting an initially unqualified baseline itself.
 type CompatibilityDecision struct {
-	Profile            ProfileDecision `json:"profile"`
-	CompositionReceipt string          `json:"composition_receipt"`
-	FixtureReceipt     string          `json:"fixture_receipt"`
-	InvalidDigest      string          `json:"invalid_digest_receipt"`
-	Outcome            string          `json:"outcome"`
-	Reason             string          `json:"reason,omitempty"`
+	Profile            ProfileDecision   `json:"profile"`
+	CompositionReceipt string            `json:"composition_receipt"`
+	FixtureReceipt     string            `json:"fixture_receipt"`
+	InvalidDigest      string            `json:"invalid_digest_receipt"`
+	EvidenceSHA256     map[string]string `json:"evidence_sha256"`
+	Outcome            string            `json:"outcome"`
+	Reason             string            `json:"reason,omitempty"`
 }
 
 // ProfileDecision binds the validated environment declaration to the fixture
@@ -145,6 +146,15 @@ func EvaluateCompatibilityEligibility(profile ProfileDecision, compositionPath, 
 	}
 	if profile.EnvironmentID == "" || profile.SHA256 == "" || profile.BaselineStatus != "unqualified" {
 		return fail(fmt.Errorf("initially unqualified profile identity is required"))
+	}
+	decision.EvidenceSHA256 = map[string]string{}
+	for label, path := range map[string]string{"composition": compositionPath, "fixture": fixturePath, "invalid_digest": invalidDigestPath} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return fail(fmt.Errorf("read %s evidence: %w", label, err))
+		}
+		sum := sha256.Sum256(contents)
+		decision.EvidenceSHA256[label] = hex.EncodeToString(sum[:])
 	}
 	var composition CompositionDecision
 	if b, err := os.ReadFile(compositionPath); err != nil {
