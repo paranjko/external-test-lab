@@ -1,6 +1,7 @@
 .PHONY: test-contracts test-bindings test-stand test-browser-probe test-report test-storage check
 
 DATA_ROOT := $(abspath ../build/gonkactl-test)
+BROWSER_TEMP_ROOT := $(abspath ../build/gonkactl-test-browser-tmp)
 QUALIFICATION_RUN_ID := m0-qualification-$(shell date -u +%Y%m%dT%H%M%SZ)-$(shell printf '%s' "$(MAKELEVEL)-$(PPID)" | sha256sum | cut -c1-8)
 QUALIFICATION_RUN_ID_2 := $(QUALIFICATION_RUN_ID)-rerun
 QUALIFICATION_HISTORY_SCOPE := $(DATA_ROOT)/history/$(QUALIFICATION_RUN_ID)
@@ -8,7 +9,7 @@ QUALIFICATION_RERENDER_ROOT := $(DATA_ROOT)/report/render/$(QUALIFICATION_RUN_ID
 PERSISTENT_DIRS := $(DATA_ROOT)/go-cache $(DATA_ROOT)/go-mod-cache $(DATA_ROOT)/go-tmp $(DATA_ROOT)/tmp $(DATA_ROOT)/npm-cache $(DATA_ROOT)/xdg-cache $(DATA_ROOT)/xdg-config $(DATA_ROOT)/xdg-runtime $(DATA_ROOT)/browser-cache $(DATA_ROOT)/child-home
 PERSISTENT_ENV := GOCACHE=$(DATA_ROOT)/go-cache GOMODCACHE=$(DATA_ROOT)/go-mod-cache GOTMPDIR=$(DATA_ROOT)/go-tmp TMPDIR=$(DATA_ROOT)/tmp TMP=$(DATA_ROOT)/tmp TEMP=$(DATA_ROOT)/tmp NPM_CONFIG_CACHE=$(DATA_ROOT)/npm-cache XDG_CACHE_HOME=$(DATA_ROOT)/xdg-cache XDG_CONFIG_HOME=$(DATA_ROOT)/xdg-config PLAYWRIGHT_BROWSERS_PATH=$(DATA_ROOT)/browser-cache HOME=$(DATA_ROOT)/child-home JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=$(DATA_ROOT)/tmp
 BROWSER_RUNTIME_DIR := $(or $(XDG_RUNTIME_DIR),/run/user/$(shell id -u))
-BROWSER_ENV := HOME=$(DATA_ROOT)/child-home PATH=$(PATH) TMPDIR=. XDG_RUNTIME_DIR=$(BROWSER_RUNTIME_DIR)
+BROWSER_ENV := HOME=$(DATA_ROOT)/child-home PATH=$(PATH) GONKACTL_TEST_BROWSER_TEMP_ROOT=$(BROWSER_TEMP_ROOT) TMPDIR=. TMP=. TEMP=. XDG_RUNTIME_DIR=$(BROWSER_RUNTIME_DIR)
 
 test-contracts:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
@@ -23,12 +24,12 @@ test-stand:
 	@set +e; command='env $(PERSISTENT_ENV) go test ./stand ./cmd/m0stand'; log='$(DATA_ROOT)/terminal-receipts/test-stand.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-stand.receipt'; env $(PERSISTENT_ENV) go test ./stand ./cmd/m0stand >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-stand\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-stand receipt: %s\n' "$$receipt"; exit "$$status"
 
 test-browser-probe:
-	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/report/browser-probe
+	mkdir -p $(PERSISTENT_DIRS) $(BROWSER_TEMP_ROOT) $(DATA_ROOT)/report/browser-probe
 	chmod 700 $(DATA_ROOT)/child-home
 	@set +e; env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u TMP -u TEMP $(BROWSER_ENV) bash report/browser-probe.sh $(DATA_ROOT); status=$$?; cat $(DATA_ROOT)/report/browser-probe/receipt.txt; exit "$$status"
 
 test-report:
-	mkdir -p $(PERSISTENT_DIRS) $(QUALIFICATION_HISTORY_SCOPE)/receipts $(DATA_ROOT)/terminal-receipts
+	mkdir -p $(PERSISTENT_DIRS) $(BROWSER_TEMP_ROOT) $(QUALIFICATION_HISTORY_SCOPE)/receipts $(DATA_ROOT)/terminal-receipts
 	chmod 700 $(DATA_ROOT)/child-home
 	@set +e; command='env $(PERSISTENT_ENV) go test ./report'; env $(PERSISTENT_ENV) go test ./report; status=$$?; printf 'target=test-report\nstage=go-test\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" >$(DATA_ROOT)/terminal-receipts/test-report-go.receipt; test $$status -eq 0
 	@set +e; cd report && env $(PERSISTENT_ENV) npm ci --ignore-scripts --offline; status=$$?; cd ..; printf 'target=test-report\nstage=npm-ci-offline\nexit_code=%s\nlog_dir=%s\n' "$$status" '$(DATA_ROOT)/npm-cache/_logs' >$(DATA_ROOT)/terminal-receipts/test-report-npm.receipt; exit "$$status"
@@ -41,7 +42,7 @@ test-report:
 	@{ printf 'target=test-report\ncommand=make test-report\nexit_code=0\nhead=%s\ntree=%s\nevidence=%s\nbundle=%s\nbrowser_receipt=%s\n' "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$(QUALIFICATION_HISTORY_SCOPE)/receipts/$(QUALIFICATION_RUN_ID)" "$(QUALIFICATION_RERENDER_ROOT)/awesomeBDD" "$(DATA_ROOT)/report/browser-smoke/receipt.txt"; } >$(DATA_ROOT)/terminal-receipts/test-report.receipt
 
 test-storage: test-report
-	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/storage-prefix $(DATA_ROOT)/terminal-receipts
-	@set +e; log='$(DATA_ROOT)/storage-prefix/test-storage.log'; receipt='$(DATA_ROOT)/storage-prefix/test-storage.receipt'; terminal='$(DATA_ROOT)/terminal-receipts/test-storage.receipt'; bundle=$$(sed -n 's/^bundle=//p' $(DATA_ROOT)/terminal-receipts/test-report.receipt); command='env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u TMP -u TEMP $(BROWSER_ENV) $(PERSISTENT_ENV) GONKACTL_TEST_STORAGE_INTEGRATION=1 GONKACTL_TEST_STORAGE_DATA_ROOT=$(DATA_ROOT)/storage-prefix GONKACTL_TEST_ALLURE_BUNDLE=<generated-bundle> go test ./report -run ^TestStoragePrefixIntegration$$ -count=1 -v'; if test -z "$$bundle" || test ! -d "$$bundle"; then status=64; printf 'test-storage preflight failed: generated bundle is missing: %s\n' "$$bundle" >"$$log"; else env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u TMP -u TEMP $(BROWSER_ENV) $(PERSISTENT_ENV) GONKACTL_TEST_STORAGE_INTEGRATION=1 GONKACTL_TEST_STORAGE_DATA_ROOT=$(DATA_ROOT)/storage-prefix GONKACTL_TEST_ALLURE_BUNDLE="$$bundle" go test ./report -run '^TestStoragePrefixIntegration$$' -count=1 -v >"$$log" 2>&1; status=$$?; fi; cat "$$log"; { printf 'target=test-storage\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\nbundle=%s\nbrowser_http_receipt=%s\nbrowser_https_receipt=%s\ncleanup_receipt=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log" "$$bundle" '$(DATA_ROOT)/storage-prefix/browser-http/receipt.txt' '$(DATA_ROOT)/storage-prefix/browser-https/receipt.txt' '$(DATA_ROOT)/storage-prefix/cleanup-receipt.json'; } >"$$receipt"; cp "$$receipt" "$$terminal"; printf 'test-storage receipt: %s\n' "$$terminal"; exit "$$status"
+	mkdir -p $(PERSISTENT_DIRS) $(BROWSER_TEMP_ROOT) $(DATA_ROOT)/storage-data $(DATA_ROOT)/storage-evidence $(DATA_ROOT)/terminal-receipts
+	@set +e; log='$(DATA_ROOT)/storage-evidence/test-storage.log'; receipt='$(DATA_ROOT)/storage-evidence/test-storage.receipt'; terminal='$(DATA_ROOT)/terminal-receipts/test-storage.receipt'; bundle=$$(sed -n 's/^bundle=//p' $(DATA_ROOT)/terminal-receipts/test-report.receipt); command='env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u TMP -u TEMP $(BROWSER_ENV) $(PERSISTENT_ENV) GONKACTL_TEST_STORAGE_INTEGRATION=1 GONKACTL_TEST_STORAGE_DATA_ROOT=$(DATA_ROOT)/storage-data GONKACTL_TEST_STORAGE_EVIDENCE_ROOT=$(DATA_ROOT)/storage-evidence GONKACTL_TEST_BROWSER_TEMP_ROOT=$(BROWSER_TEMP_ROOT) GONKACTL_TEST_ALLURE_BUNDLE=<generated-bundle> go test ./report -run ^TestStoragePrefixIntegration$$ -count=1 -v'; if test -z "$$bundle" || test ! -d "$$bundle"; then status=64; printf 'test-storage preflight failed: generated bundle is missing: %s\n' "$$bundle" >"$$log"; else env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u TMP -u TEMP $(BROWSER_ENV) $(PERSISTENT_ENV) GONKACTL_TEST_STORAGE_INTEGRATION=1 GONKACTL_TEST_STORAGE_DATA_ROOT=$(DATA_ROOT)/storage-data GONKACTL_TEST_STORAGE_EVIDENCE_ROOT=$(DATA_ROOT)/storage-evidence GONKACTL_TEST_BROWSER_TEMP_ROOT=$(BROWSER_TEMP_ROOT) GONKACTL_TEST_ALLURE_BUNDLE="$$bundle" go test ./report -run '^TestStoragePrefixIntegration$$' -count=1 -v >"$$log" 2>&1; status=$$?; fi; cat "$$log"; { printf 'target=test-storage\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\nbundle=%s\nbrowser_temp_root=%s\nbrowser_http_receipt=%s\nbrowser_https_receipt=%s\ncleanup_receipt=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log" "$$bundle" '$(BROWSER_TEMP_ROOT)' '$(DATA_ROOT)/storage-evidence/browser-http/receipt.txt' '$(DATA_ROOT)/storage-evidence/browser-https/receipt.txt' '$(DATA_ROOT)/storage-evidence/cleanup-receipt.json'; } >"$$receipt"; cp "$$receipt" "$$terminal"; printf 'test-storage receipt: %s\n' "$$terminal"; exit "$$status"
 
 check: test-contracts test-bindings test-stand test-report

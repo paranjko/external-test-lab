@@ -20,6 +20,8 @@ import (
 )
 
 const storageIntegrationEnv = "GONKACTL_TEST_STORAGE_INTEGRATION"
+const storageEvidenceEnv = "GONKACTL_TEST_STORAGE_EVIDENCE_ROOT"
+const browserTempEnv = "GONKACTL_TEST_BROWSER_TEMP_ROOT"
 
 // TestStoragePrefixIntegration qualifies the pinned Storage image behind the
 // production /report/ prefix. It is opt-in because it owns a Docker container
@@ -32,16 +34,48 @@ func TestStoragePrefixIntegration(t *testing.T) {
 	if dataRoot == "" {
 		t.Fatal("GONKACTL_TEST_STORAGE_DATA_ROOT is required")
 	}
-	absRoot, err := filepath.Abs(dataRoot)
+	storageRoot, err := filepath.Abs(dataRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceRoot := os.Getenv(storageEvidenceEnv)
+	if evidenceRoot == "" {
+		t.Fatalf("%s is required", storageEvidenceEnv)
+	}
+	absEvidenceRoot, err := filepath.Abs(evidenceRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, forbidden := range []string{"/tmp", "/var/tmp"} {
-		if absRoot == forbidden || strings.HasPrefix(absRoot, forbidden+string(filepath.Separator)) {
-			t.Fatalf("Storage data root must not use system temporary storage: %s", absRoot)
+		for _, root := range []string{storageRoot, absEvidenceRoot} {
+			if root == forbidden || strings.HasPrefix(root, forbidden+string(filepath.Separator)) {
+				t.Fatalf("Storage roots must not use system temporary storage: %s", root)
+			}
 		}
 	}
-	if err := os.MkdirAll(absRoot, 0o755); err != nil {
+	if storageRoot == absEvidenceRoot {
+		t.Fatal("Storage data and evidence roots must be distinct")
+	}
+	browserTempRoot := os.Getenv(browserTempEnv)
+	if browserTempRoot == "" {
+		t.Fatalf("%s is required", browserTempEnv)
+	}
+	absBrowserTempRoot, err := filepath.Abs(browserTempRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"/tmp", "/var/tmp"} {
+		if absBrowserTempRoot == forbidden || strings.HasPrefix(absBrowserTempRoot, forbidden+string(filepath.Separator)) {
+			t.Fatalf("browser temporary root must not use system temporary storage: %s", absBrowserTempRoot)
+		}
+	}
+	if absBrowserTempRoot == storageRoot || strings.HasPrefix(absBrowserTempRoot, storageRoot+string(filepath.Separator)) {
+		t.Fatalf("browser temporary root must be outside Storage data root: %s", absBrowserTempRoot)
+	}
+	if err := os.MkdirAll(storageRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(absEvidenceRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	bundleRoot := os.Getenv("GONKACTL_TEST_ALLURE_BUNDLE")
@@ -54,8 +88,8 @@ func TestStoragePrefixIntegration(t *testing.T) {
 	}
 
 	containerName := fmt.Sprintf("gonkactl-test-m0-storage-%d", os.Getpid())
-	containerLog := filepath.Join(absRoot, "storage-container.log")
-	cleanupReceipt := filepath.Join(absRoot, "cleanup-receipt.json")
+	containerLog := filepath.Join(absEvidenceRoot, "storage-container.log")
+	cleanupReceipt := filepath.Join(absEvidenceRoot, "cleanup-receipt.json")
 	started := false
 	defer func() {
 		if !started {
@@ -100,7 +134,7 @@ func TestStoragePrefixIntegration(t *testing.T) {
 		"--env", "DATA_DIR=/data",
 		"--env", "HOST=0.0.0.0",
 		"--env", "PORT=3000",
-		"--volume", absRoot+":/data",
+		"--volume", storageRoot+":/data",
 		"--publish", "127.0.0.1::3000",
 		"allure/allure-report-storage:v1.0.1",
 	).CombinedOutput(); err != nil {
@@ -139,11 +173,14 @@ func TestStoragePrefixIntegration(t *testing.T) {
 
 	assertStoragePrefixSurface(t, httpProxy.Client(), httpProxy.URL, reportID, uploaded)
 	assertStoragePrefixSurface(t, tlsProxy.Client(), tlsProxy.URL, reportID, uploaded)
-	assertStorageBrowser(t, httpProxy.URL+"/report/"+reportID+"/index.html", bundleRoot, absRoot, "http")
-	assertStorageBrowser(t, tlsProxy.URL+"/report/"+reportID+"/index.html", bundleRoot, absRoot, "https")
+	assertStorageBrowser(t, httpProxy.URL+"/report/"+reportID+"/index.html", bundleRoot, absEvidenceRoot, absBrowserTempRoot, "http")
+	assertStorageBrowser(t, tlsProxy.URL+"/report/"+reportID+"/index.html", bundleRoot, absEvidenceRoot, absBrowserTempRoot, "https")
 	issueStorageToken(t, tlsProxy.Client(), tlsProxy.URL, bootstrapToken)
-	if err := writeStorageReceipt(filepath.Join(absRoot, "receipt.json"), reportID, storageURL, httpProxy.URL, tlsProxy.URL); err != nil {
+	if err := writeStorageReceipt(filepath.Join(absEvidenceRoot, "receipt.json"), reportID, storageURL, httpProxy.URL, tlsProxy.URL); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(absEvidenceRoot, "receipt.json")); err != nil {
+		t.Fatalf("persistent Storage evidence was removed by the fixture: %v", err)
 	}
 }
 
@@ -352,7 +389,7 @@ func assertStoragePrefixSurface(t *testing.T, client *http.Client, proxyURL, rep
 	}
 }
 
-func assertStorageBrowser(t *testing.T, endpoint, bundleRoot, dataRoot, scheme string) {
+func assertStorageBrowser(t *testing.T, endpoint, bundleRoot, dataRoot, browserTempRoot, scheme string) {
 	t.Helper()
 	profile := filepath.Join(dataRoot, fmt.Sprintf("browser-%s-profiles/%d", scheme, time.Now().UnixNano()))
 	if err := os.MkdirAll(profile, 0o700); err != nil {
@@ -364,7 +401,7 @@ func assertStorageBrowser(t *testing.T, endpoint, bundleRoot, dataRoot, scheme s
 		args = append(args, "--ignore-certificate-errors")
 	}
 	cmd := exec.Command("node", args...)
-	cmd.Env = browserEnvironment(t, dataRoot)
+	cmd.Env = browserEnvironment(t, dataRoot, browserTempRoot)
 	out, err := cmd.CombinedOutput()
 	if writeErr := os.WriteFile(filepath.Join(dataRoot, "browser-"+scheme+"-driver.log"), out, 0o600); writeErr != nil {
 		t.Fatalf("persist Storage browser driver output: %v", writeErr)
@@ -374,7 +411,7 @@ func assertStorageBrowser(t *testing.T, endpoint, bundleRoot, dataRoot, scheme s
 	}
 }
 
-func browserEnvironment(t *testing.T, dataRoot string) []string {
+func browserEnvironment(t *testing.T, dataRoot, browserTempRoot string) []string {
 	allowed := map[string]bool{
 		"HOME": true, "PATH": true, "XDG_RUNTIME_DIR": true,
 		"LANG": true, "LC_ALL": true, "TZ": true,
@@ -394,7 +431,10 @@ func browserEnvironment(t *testing.T, dataRoot string) []string {
 		t.Fatalf("restrict browser persistent home: %v", err)
 	}
 	environment = append(environment, "HOME="+home)
-	environment = append(environment, "TMPDIR=.")
+	if err := os.MkdirAll(browserTempRoot, 0o700); err != nil {
+		t.Fatalf("create browser temporary root: %v", err)
+	}
+	environment = append(environment, browserTempEnv+"="+browserTempRoot, "TMPDIR=.", "TMP=.", "TEMP=.")
 	return environment
 }
 

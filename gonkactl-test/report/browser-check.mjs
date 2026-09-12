@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -53,16 +53,40 @@ async function closeChild(child) {
   return "sigkill";
 }
 
+async function tempEntries(root) {
+  try { return new Set(await readdir(root)); } catch { return new Set(); }
+}
+
+async function cleanupOwnedTempEntries(root, before) {
+  const current = await tempEntries(root);
+  const failures = [];
+  for (const name of current) {
+    if (before.has(name)) continue;
+    try { await rm(path.join(root, name), { recursive: true, force: true }); }
+    catch (error) { failures.push(`${name}: ${error.message}`); }
+  }
+  return failures.length ? `failed:${failures.join(" | ")}` : "removed";
+}
+
 async function launch(options) {
   const chrome = process.env.CHROME || "google-chrome";
+  const browserTempRoot = path.resolve(process.env.GONKACTL_TEST_BROWSER_TEMP_ROOT || tmpdir());
+  const evidenceDir = path.resolve(options["evidence-dir"]);
+  const profile = path.resolve(options.profile);
+  const startedAt = Date.now();
+  const tempBefore = await tempEntries(browserTempRoot);
   const debugPort = await port();
   const flags = ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
-    `--disk-cache-dir=${path.join(options["evidence-dir"], "cache")}`,
+    `--disk-cache-dir=${path.join(evidenceDir, "cache")}`,
     "--remote-debugging-address=127.0.0.1", `--remote-debugging-port=${debugPort}`,
-    `--user-data-dir=${options.profile}`];
+    `--user-data-dir=${profile}`];
   if (options["ignore-certificate-errors"]) flags.push("--ignore-certificate-errors");
   flags.push("about:blank");
-  const child = spawn(chrome, flags, { stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn(chrome, flags, {
+    cwd: browserTempRoot,
+    env: { ...process.env, TMPDIR: ".", TMP: ".", TEMP: "." },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
   let stderr = "";
   let launchError = "";
   child.stderr.setEncoding("utf8");
@@ -77,8 +101,11 @@ async function launch(options) {
     } catch {}
     await delay(100);
   }
-  if (!version?.webSocketDebuggerUrl) throw new Error(`CDP readiness failed: ${launchError || stderr || "deadline exceeded"}`);
-  return { chrome, child, debugPort, flags, version, stderr: () => stderr };
+  return {
+    chrome, child, debugPort, flags, version, stderr: () => stderr,
+    browserTempRoot, tempBefore, readinessElapsedMs: Date.now() - startedAt,
+    readinessError: version?.webSocketDebuggerUrl ? "" : `CDP readiness failed: ${launchError || stderr || "deadline exceeded"}`,
+  };
 }
 
 async function pageSocket(debugPort) {
@@ -207,7 +234,7 @@ function assertContains(html, values, stage) {
 async function main() {
   const options = args();
   const forbiddenRoots = ["/tmp", "/var/tmp"].map((root) => path.resolve(root));
-  const browserTemp = tmpdir();
+  const browserTemp = process.env.GONKACTL_TEST_BROWSER_TEMP_ROOT || tmpdir();
   for (const [label, value] of [["evidence-dir", options["evidence-dir"]], ["profile", options.profile], ["browser-temp", browserTemp]]) {
     const resolved = path.resolve(value);
     if (forbiddenRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`))) {
@@ -216,10 +243,11 @@ async function main() {
   }
   await mkdir(options["evidence-dir"], { recursive: true });
   await mkdir(options.profile, { recursive: true });
-  let browser; let socket; let cleanup = "not-started"; let status = "FAIL"; let failure = "";
+  let browser; let socket; let cleanup = "not-started"; let tempCleanup = "not-started"; let status = "FAIL"; let failure = "";
   const events = []; const assertions = [];
   try {
     browser = await launch(options);
+    if (browser.readinessError) throw new Error(browser.readinessError);
     socket = await pageSocket(browser.debugPort);
     const call = client(socket, events);
     await call("Page.enable"); await call("DOM.enable"); await call("Network.enable");
@@ -305,6 +333,7 @@ async function main() {
     if (socket) socket.close();
     if (browser) {
       cleanup = await closeChild(browser.child);
+      tempCleanup = await cleanupOwnedTempEntries(browser.browserTempRoot, browser.tempBefore);
       await writeFile(path.join(options["evidence-dir"], "browser.stderr.log"), browser.stderr());
     }
     await writeFile(path.join(options["evidence-dir"], "network.jsonl"), events.filter((event) => event.method.startsWith("Network.")).map((event) => JSON.stringify(event)).join("\n") + "\n");
@@ -315,9 +344,11 @@ async function main() {
     await writeFile(path.join(options["evidence-dir"], "receipt.txt"), [
       `status=${status}`, `chrome=${browser?.chrome || process.env.CHROME || "google-chrome"}`, `version=${version}`,
       `flags=${browser?.flags.join(" ") || "launch-failed"}`, `fixture_tls_exception=${Boolean(options["ignore-certificate-errors"])}`,
-      `evidence_dir=${path.resolve(options["evidence-dir"])}`, `profile=${path.resolve(options.profile)}`, `cache_dir=${path.resolve(options["evidence-dir"], "cache")}`, `browser_temp_dir=${path.resolve(browserTemp)}`,
+      `evidence_dir=${path.resolve(options["evidence-dir"])}`, `profile=${path.resolve(options.profile)}`, `cache_dir=${path.resolve(options["evidence-dir"], "cache")}`, `browser_temp_dir=${path.resolve(browser?.browserTempRoot || browserTemp)}`,
+      `chrome_cwd=${browser?.browserTempRoot || "unavailable"}`, `chrome_tmpdir=.`, `readiness_elapsed_ms=${browser?.readinessElapsedMs ?? "unavailable"}`,
       `request_deadline_ms=${REQUEST_MS}`, `socket_deadline_ms=${SOCKET_MS}`, `dom_deadline_ms=${DOM_MS}`,
-      `assertions=${assertions.join(",")}`, `failure=${failure.replaceAll("\n", " | ")}`, `owned_process_cleanup=${cleanup}`, "",
+      `assertions=${assertions.join(",")}`, `failure=${failure.replaceAll("\n", " | ")}`, `owned_process_cleanup=${cleanup}`, `owned_temp_cleanup=${tempCleanup}`,
+      `child_exit_code=${browser?.child.exitCode ?? "unavailable"}`, `child_signal=${browser?.child.signalCode ?? "unavailable"}`, "",
     ].join("\n"));
   }
 }
