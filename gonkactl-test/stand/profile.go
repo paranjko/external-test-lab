@@ -71,7 +71,7 @@ func LoadProfile(path string) (Profile, error) {
 }
 
 func (p Profile) Validate() error {
-	if p.SchemaVersion != "1.0.0" {
+	if p.SchemaVersion != "1.0.0" && p.SchemaVersion != "1.1.0" {
 		return fmt.Errorf("unsupported schema version %q", p.SchemaVersion)
 	}
 	if p.EnvironmentID == "" || p.EnvironmentKind != "lab-mock" {
@@ -105,11 +105,13 @@ func (p Profile) Validate() error {
 			if adapter.Reason == "" {
 				return fmt.Errorf("unqualified %s requires an explicit gap reason", adapter.Protocol)
 			}
-			if adapter.UnqualifiedContract.Basis != "v5_only_fixture" {
-				return fmt.Errorf("unqualified %s requires v5_only_fixture evidence basis", adapter.Protocol)
-			}
-			if err := validateUnknownContract(adapter.Protocol, adapter.UnqualifiedContract.Unknown); err != nil {
-				return err
+			if p.SchemaVersion == "1.1.0" {
+				if adapter.UnqualifiedContract.Basis != "v5_only_fixture" {
+					return fmt.Errorf("unqualified %s requires v5_only_fixture evidence basis", adapter.Protocol)
+				}
+				if err := validateUnknownContract(adapter.Protocol, adapter.UnqualifiedContract.Unknown); err != nil {
+					return err
+				}
 			}
 		}
 		if adapter.Status == "qualified" && p.Baseline.Status != "qualified" {
