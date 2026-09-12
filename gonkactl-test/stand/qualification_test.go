@@ -59,6 +59,23 @@ func TestVerifyQualificationDecisionBindsFrozenEligibilityAndFailsClosed(t *test
 	if _, err := VerifyQualificationDecision(profile, decisionPath, eligibilityPath, decisionPath); err == nil || !strings.Contains(err.Error(), "must not alias") {
 		t.Fatalf("accepted output alias: %v", err)
 	}
+	symlinkAlias := filepath.Join(dir, "decision-alias.json")
+	if err := os.Symlink(decisionPath, symlinkAlias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyQualificationDecision(profile, decisionPath, eligibilityPath, symlinkAlias); err == nil || !strings.Contains(err.Error(), "must not alias") {
+		t.Fatalf("accepted symlink output alias: %v", err)
+	}
+	hardLinkAlias := filepath.Join(dir, "eligibility-alias.json")
+	if err := os.Link(eligibilityPath, hardLinkAlias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyQualificationDecision(profile, decisionPath, eligibilityPath, hardLinkAlias); err == nil || !strings.Contains(err.Error(), "must not alias") {
+		t.Fatalf("accepted hard-link output alias: %v", err)
+	}
+	if _, err := VerifyQualificationDecision(profile, decisionPath, eligibilityPath, profile.Path); err == nil || !strings.Contains(err.Error(), "must not alias") {
+		t.Fatalf("accepted profile output alias: %v", err)
+	}
 	decision.SupportedAdapters = []string{"v3", "v5"}
 	if err := writeDecision(decisionPath, decision); err != nil {
 		t.Fatal(err)

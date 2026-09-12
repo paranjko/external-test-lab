@@ -131,5 +131,27 @@ func exactAdapterScope(got, want []string) bool {
 func samePath(left, right string) bool {
 	leftAbs, leftErr := filepath.Abs(left)
 	rightAbs, rightErr := filepath.Abs(right)
-	return leftErr == nil && rightErr == nil && filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	leftAbs, rightAbs = filepath.Clean(leftAbs), filepath.Clean(rightAbs)
+	if leftAbs == rightAbs {
+		return true
+	}
+	// A receipt path can be a hard link or a symlink. Stat follows either one
+	// and SameFile catches the hard-link case before writeDecision truncates it.
+	leftInfo, leftStatErr := os.Stat(leftAbs)
+	rightInfo, rightStatErr := os.Stat(rightAbs)
+	if leftStatErr == nil && rightStatErr == nil && os.SameFile(leftInfo, rightInfo) {
+		return true
+	}
+	// When the output itself does not yet exist, a symlinked parent can still
+	// resolve it onto an input. Resolve that parent before accepting a new path.
+	resolvedParent, parentErr := filepath.EvalSymlinks(filepath.Dir(rightAbs))
+	if parentErr != nil {
+		return false
+	}
+	resolvedRight := filepath.Join(resolvedParent, filepath.Base(rightAbs))
+	resolvedLeft, leftResolveErr := filepath.EvalSymlinks(leftAbs)
+	return leftResolveErr == nil && filepath.Clean(resolvedLeft) == filepath.Clean(resolvedRight)
 }
