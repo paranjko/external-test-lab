@@ -14,15 +14,26 @@ var ErrCompositionDigestMismatch = errors.New("composition digest mismatch")
 var ErrFixtureReceiptInvalid = errors.New("fixture receipt invalid")
 
 type CompositionDecision struct {
-	ExpectedDigest   string         `json:"expected_digest"`
-	ActualDigest     string         `json:"actual_digest"`
-	Inputs           []string       `json:"inputs"`
-	Outcome          string         `json:"outcome"`
-	LaunchAttempted  bool           `json:"launch_attempted"`
-	ResourcesCreated bool           `json:"resources_created"`
-	LaunchResult     string         `json:"launch_result,omitempty"`
-	FixtureReceipt   string         `json:"fixture_receipt,omitempty"`
-	Lease            *LeaseDecision `json:"lease,omitempty"`
+	ExpectedDigest   string           `json:"expected_digest"`
+	ActualDigest     string           `json:"actual_digest"`
+	Inputs           []string         `json:"inputs"`
+	Profile          *ProfileDecision `json:"profile,omitempty"`
+	Outcome          string           `json:"outcome"`
+	LaunchAttempted  bool             `json:"launch_attempted"`
+	ResourcesCreated bool             `json:"resources_created"`
+	LaunchResult     string           `json:"launch_result,omitempty"`
+	FixtureReceipt   string           `json:"fixture_receipt,omitempty"`
+	Lease            *LeaseDecision   `json:"lease,omitempty"`
+}
+
+// ProfileDecision binds the validated environment declaration to the fixture
+// preflight receipt. It deliberately records the declaration identity, rather
+// than treating an arbitrary launcher command as proof of a baseline decision.
+type ProfileDecision struct {
+	Path           string `json:"path"`
+	SHA256         string `json:"sha256"`
+	EnvironmentID  string `json:"environment_id"`
+	BaselineStatus string `json:"baseline_status"`
 }
 
 // LeaseDecision records lifecycle evidence without exposing the owner token.
@@ -111,10 +122,20 @@ func ValidateFixtureReceipt(path string) error {
 // that the fixture launch consumes. A mismatch is a terminal pre-launch
 // decision: no command, Docker project, port, volume or container is created.
 func PreflightComposition(workDir, expectedDigest, receiptPath string) (CompositionDecision, error) {
+	return preflightComposition(workDir, expectedDigest, receiptPath, nil)
+}
+
+// PreflightCompositionWithProfile binds a validated profile even when the
+// declared composition digest is rejected before resource creation.
+func PreflightCompositionWithProfile(workDir, expectedDigest, receiptPath string, profile ProfileDecision) (CompositionDecision, error) {
+	return preflightComposition(workDir, expectedDigest, receiptPath, &profile)
+}
+
+func preflightComposition(workDir, expectedDigest, receiptPath string, profile *ProfileDecision) (CompositionDecision, error) {
 	configPath := filepath.Join(workDir, "config.yaml")
 	composePath := filepath.Join(workDir, "docker-compose.yml")
 	actual, err := compositionDigest(configPath, composePath)
-	decision := CompositionDecision{ExpectedDigest: expectedDigest, ActualDigest: actual, Inputs: []string{configPath, composePath}}
+	decision := CompositionDecision{ExpectedDigest: expectedDigest, ActualDigest: actual, Inputs: []string{configPath, composePath}, Profile: profile}
 	if err != nil {
 		decision.Outcome = "preflight_error"
 		if receiptErr := writeDecision(receiptPath, decision); receiptErr != nil {
@@ -134,6 +155,27 @@ func PreflightComposition(workDir, expectedDigest, receiptPath string) (Composit
 		return decision, err
 	}
 	return decision, nil
+}
+
+// BindProfile validates an M0 environment declaration and returns immutable
+// identity fields for the fixture decision. Callers must persist this before
+// acquiring a lease or invoking a fixture command.
+func BindProfile(path string) (ProfileDecision, error) {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return ProfileDecision{}, fmt.Errorf("read profile: %w", err)
+	}
+	profile, err := LoadProfile(path)
+	if err != nil {
+		return ProfileDecision{}, err
+	}
+	digest := sha256.Sum256(contents)
+	return ProfileDecision{
+		Path:           path,
+		SHA256:         hex.EncodeToString(digest[:]),
+		EnvironmentID:  profile.EnvironmentID,
+		BaselineStatus: profile.Baseline.Status,
+	}, nil
 }
 
 // MarkCompositionLaunch records that the wrapper has crossed the pre-launch

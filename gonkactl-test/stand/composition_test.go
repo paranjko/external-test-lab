@@ -1,6 +1,8 @@
 package stand
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -27,6 +29,34 @@ func TestPreflightCompositionBindsExactPreparedInputsAndRejectsMismatch(t *testi
 	rejected, err := PreflightComposition(dir, "bad", filepath.Join(dir, "rejected.json"))
 	if !errors.Is(err, ErrCompositionDigestMismatch) || rejected.Outcome != "rejected_digest_mismatch" || rejected.LaunchAttempted || rejected.ResourcesCreated {
 		t.Fatalf("rejected=%+v err=%v", rejected, err)
+	}
+}
+
+func TestBindProfileAndPreflightPersistProfileOnDigestMismatch(t *testing.T) {
+	profilePath := filepath.Join("..", "environments", "lab-mock-devshard-testenv-v5.json")
+	contents, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := BindProfile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256(contents)
+	if profile.SHA256 != hex.EncodeToString(want[:]) || profile.EnvironmentID != "lab-mock-devshard-testenv-v5" || profile.BaselineStatus != "unqualified" {
+		t.Fatalf("profile=%+v", profile)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receipt := filepath.Join(dir, "decision.json")
+	decision, err := PreflightCompositionWithProfile(dir, "wrong", receipt, profile)
+	if !errors.Is(err, ErrCompositionDigestMismatch) || decision.Profile == nil || decision.Profile.SHA256 != profile.SHA256 || decision.LaunchAttempted || decision.ResourcesCreated {
+		t.Fatalf("decision=%+v err=%v", decision, err)
 	}
 }
 
