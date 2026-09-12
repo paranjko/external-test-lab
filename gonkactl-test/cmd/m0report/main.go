@@ -23,9 +23,17 @@ func main() {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		panic(err)
 	}
+	allureJournal, err := bindings.NewAllureEventJournal(filepath.Join(root, "pilot-allure-sdk-events.jsonl"))
+	if err != nil {
+		panic(err)
+	}
 	positiveJournal := filepath.Join(root, "pilot-events.jsonl")
-	if status := bindings.RunGodogPilotWithOptions(bindings.PilotOptions{RunID: runID + "-positive", AttemptID: runID + "-positive-attempt", FeaturePath: filepath.Join("bindings", "features", "pilot.feature"), JournalPath: positiveJournal, EvidenceDir: filepath.Join(root, "positive-evidence")}); status != 0 {
+	if status := bindings.RunGodogPilotWithOptions(bindings.PilotOptions{RunID: runID + "-positive", AttemptID: runID + "-positive-attempt", FeaturePath: filepath.Join("bindings", "features", "pilot.feature"), JournalPath: positiveJournal, EvidenceDir: filepath.Join(root, "positive-evidence"), AllureRuntime: allureJournal}); status != 0 {
+		_ = allureJournal.Close()
 		panic(fmt.Sprintf("positive pilot exited %d", status))
+	}
+	if err := allureJournal.Close(); err != nil {
+		panic(err)
 	}
 	if err := convertSelected(positiveJournal, root, runID, "M0 Godog pilot", filepath.Join("bindings", "features", "pilot.selection.json")); err != nil {
 		panic(err)

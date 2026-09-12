@@ -123,13 +123,56 @@ func TestGodogPilotRecordsSchemaIdentityAndAllure(t *testing.T) {
 	}
 }
 
+func TestGodogPilotPersistsOfficialAllureSDKMessages(t *testing.T) {
+	journal := ownedPath(t, "events.jsonl")
+	sdkPath := ownedPath(t, "allure-sdk-events.jsonl")
+	runtime, err := NewAllureEventJournal(sdkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := RunGodogPilotWithOptions(PilotOptions{
+		RunID: "sdk-run", AttemptID: "sdk-attempt", FeaturePath: filepath.Join("features", "pilot.feature"),
+		JournalPath: journal, EvidenceDir: ownedPath(t, "evidence"), AllureRuntime: runtime,
+	}); status != 0 {
+		t.Fatalf("status=%d", status)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(sdkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var metadata, attachment int
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var message allureruntime.Message
+		if err := json.Unmarshal(scanner.Bytes(), &message); err != nil {
+			t.Fatal(err)
+		}
+		switch message.Type {
+		case allureruntime.MessageMetadata:
+			metadata++
+		case allureruntime.MessageAttachmentContent:
+			attachment++
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if metadata == 0 || attachment == 0 {
+		t.Fatalf("official Allure SDK journal metadata=%d attachments=%d", metadata, attachment)
+	}
+}
+
 func TestConcurrentPilotAttemptsKeepIndependentJournals(t *testing.T) {
 	t.Parallel()
 	type result struct {
-		status int
+		status      int
 		journalPath string
 		runID       string
-		attemptID    string
+		attemptID   string
 	}
 	results := make(chan result, 2)
 	for i := 1; i <= 2; i++ {
@@ -162,14 +205,22 @@ func TestConcurrentPilotAttemptsKeepIndependentJournals(t *testing.T) {
 		// the other run, and all case events carry this attempt's identity.
 		var runID, attemptID string
 		for _, e := range events {
-			if runID == "" { runID = e.RunID }
-			if e.RunID != r.runID { t.Fatalf("event attributed to %q, want %q", e.RunID, r.runID) }
+			if runID == "" {
+				runID = e.RunID
+			}
+			if e.RunID != r.runID {
+				t.Fatalf("event attributed to %q, want %q", e.RunID, r.runID)
+			}
 			if e.RunID != runID {
 				t.Fatalf("journal mixed run IDs: %q and %q", runID, e.RunID)
 			}
 			if e.AttemptID != nil {
-				if attemptID == "" { attemptID = *e.AttemptID }
-				if *e.AttemptID != r.attemptID { t.Fatalf("event attributed to attempt %q, want %q", *e.AttemptID, r.attemptID) }
+				if attemptID == "" {
+					attemptID = *e.AttemptID
+				}
+				if *e.AttemptID != r.attemptID {
+					t.Fatalf("event attributed to attempt %q, want %q", *e.AttemptID, r.attemptID)
+				}
 				if *e.AttemptID != attemptID {
 					t.Fatalf("journal mixed attempt IDs: %q and %q", attemptID, *e.AttemptID)
 				}
