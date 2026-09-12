@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/paranjko/external-test-lab/gonkactl-test/stand"
@@ -51,5 +52,27 @@ func TestRunPersistsProfileBeforeRejectingDigest(t *testing.T) {
 	}
 	if _, err := os.Stat(leaseRoot); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("lease root created before digest rejection: %v", err)
+	}
+}
+
+func TestRunRejectsMismatchedProfileEnvironmentBeforePreflight(t *testing.T) {
+	dir := t.TempDir()
+	receipt := filepath.Join(dir, "receipt", "decision.json")
+	err := run([]string{
+		"--prepared-workdir", filepath.Join(dir, "prepared"),
+		"--composition-digest", "wrong",
+		"--receipt", receipt,
+		"--fixture-receipt", filepath.Join(dir, "fixture.json"),
+		"--lease-root", filepath.Join(dir, "leases"),
+		"--environment-id", "wrong-environment",
+		"--instance-id", "profile-environment-mismatch",
+		"--profile", filepath.Join("..", "..", "environments", "lab-mock-devshard-testenv-v5.json"),
+		"false",
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match profile environment") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := os.Stat(receipt); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("preflight receipt written before environment rejection: %v", err)
 	}
 }

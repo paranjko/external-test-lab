@@ -50,6 +50,9 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("bind fixture profile: %w", err)
 	}
+	if environmentID != profile.EnvironmentID {
+		return fmt.Errorf("environment-id %q does not match profile environment %q", environmentID, profile.EnvironmentID)
+	}
 	decision, err := stand.PreflightCompositionWithProfile(workDir, digest, receipt, profile)
 	if err != nil {
 		return err
