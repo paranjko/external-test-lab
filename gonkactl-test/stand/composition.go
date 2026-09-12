@@ -131,6 +131,70 @@ func ValidateFixtureReceipt(path string) error {
 	return nil
 }
 
+// ValidateEligibilityFixtureReceipt applies the stricter FR-005 boundary used
+// only by the independent compatibility decision. A launch receipt may be
+// structurally complete while still being unsuitable for compatibility review;
+// that distinction prevents the launcher from silently promoting a candidate.
+func ValidateEligibilityFixtureReceipt(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("%w: read: %v", ErrFixtureReceiptInvalid, err)
+	}
+	var r struct {
+		Outcomes map[string]struct {
+			Outcome string `json:"outcome"`
+		} `json:"outcomes"`
+		Controls map[string]struct {
+			Outcome string `json:"outcome"`
+		} `json:"controls"`
+		ConfiguredRoutes map[string]string `json:"configured_routes"`
+		EffectiveRoutes  map[string]string `json:"effective_routes"`
+		SourceHead       string            `json:"source_head"`
+		VersiondChild    struct {
+			ExecutablePath   string `json:"executable_path"`
+			ExecutableSHA256 string `json:"executable_sha256"`
+			PID              string `json:"pid"`
+			PPID             string `json:"ppid"`
+			Service          string `json:"service"`
+		} `json:"versiond_child_identity"`
+	}
+	if err := json.Unmarshal(b, &r); err != nil {
+		return fmt.Errorf("%w: decode: %v", ErrFixtureReceiptInvalid, err)
+	}
+	if err := ValidateFixtureReceipt(path); err != nil {
+		return err
+	}
+	for _, gate := range []string{"SG01", "SG02", "SG03", "SG04", "SG05"} {
+		if r.Outcomes[gate].Outcome != "passed" {
+			return fmt.Errorf("%w: %s must be passed", ErrFixtureReceiptInvalid, gate)
+		}
+	}
+	for control, want := range map[string]string{
+		"known_good_baseline": "unqualified",
+		"invalid_digest":      "not_run",
+		"missing_route":       "observed_non_success",
+		"broken_mock":         "observed_non_success",
+	} {
+		if got := r.Controls[control].Outcome; got != want {
+			return fmt.Errorf("%w: controls.%s=%q, want %q", ErrFixtureReceiptInvalid, control, got, want)
+		}
+	}
+	if r.ConfiguredRoutes["gateway_chat"] == "" || r.ConfiguredRoutes["router_missing"] == "" {
+		return fmt.Errorf("%w: configured gateway routes are required", ErrFixtureReceiptInvalid)
+	}
+	if len(r.EffectiveRoutes) == 0 {
+		return fmt.Errorf("%w: effective runtime routes are required", ErrFixtureReceiptInvalid)
+	}
+	child := r.VersiondChild
+	if child.ExecutablePath == "" || child.ExecutableSHA256 == "" || child.PID == "" || child.PPID == "" || child.Service == "" {
+		return fmt.Errorf("%w: running versiond child identity is required", ErrFixtureReceiptInvalid)
+	}
+	if r.SourceHead == "" {
+		return fmt.Errorf("%w: source head is required", ErrFixtureReceiptInvalid)
+	}
+	return nil
+}
+
 // EvaluateCompatibilityEligibility checks independently retained evidence for
 // the proposed baseline. It never changes Profile.Baseline.Status; promotion
 // remains an independent M0 acceptance decision.
@@ -165,7 +229,7 @@ func EvaluateCompatibilityEligibility(profile ProfileDecision, compositionPath, 
 	if composition.Outcome != "launch_completed" || composition.Profile == nil || composition.Profile.SHA256 != profile.SHA256 || composition.Lease == nil || !composition.Lease.Released {
 		return fail(fmt.Errorf("composition receipt lacks completed profile-bound released launch"))
 	}
-	if err := ValidateFixtureReceipt(fixturePath); err != nil {
+	if err := ValidateEligibilityFixtureReceipt(fixturePath); err != nil {
 		return fail(err)
 	}
 	var invalid CompositionDecision
