@@ -31,10 +31,14 @@ type Profile struct {
 }
 
 type Adapter struct {
-	Protocol string `json:"protocol"`
-	Status   string `json:"status"`
-	Reason   string `json:"reason"`
-	Health   struct {
+	Protocol            string `json:"protocol"`
+	Status              string `json:"status"`
+	Reason              string `json:"reason"`
+	UnqualifiedContract struct {
+		Basis   string   `json:"basis"`
+		Unknown []string `json:"unknown"`
+	} `json:"unqualified_contract"`
+	Health struct {
 		Path           string `json:"path"`
 		ExpectedStatus int    `json:"expected_status"`
 	} `json:"health"`
@@ -97,8 +101,16 @@ func (p Profile) Validate() error {
 		if adapter.Status != "unqualified" && adapter.Status != "candidate" && adapter.Status != "qualified" {
 			return fmt.Errorf("unknown adapter status %q for %s", adapter.Status, adapter.Protocol)
 		}
-		if adapter.Status == "unqualified" && adapter.Reason == "" {
-			return fmt.Errorf("unqualified %s requires an explicit gap reason", adapter.Protocol)
+		if adapter.Status == "unqualified" {
+			if adapter.Reason == "" {
+				return fmt.Errorf("unqualified %s requires an explicit gap reason", adapter.Protocol)
+			}
+			if adapter.UnqualifiedContract.Basis != "v5_only_fixture" {
+				return fmt.Errorf("unqualified %s requires v5_only_fixture evidence basis", adapter.Protocol)
+			}
+			if err := validateUnknownContract(adapter.Protocol, adapter.UnqualifiedContract.Unknown); err != nil {
+				return err
+			}
 		}
 		if adapter.Status == "qualified" && p.Baseline.Status != "qualified" {
 			return fmt.Errorf("%s cannot be qualified while baseline is unqualified", adapter.Protocol)
@@ -115,6 +127,30 @@ func (p Profile) Validate() error {
 	}
 	if !seen["v3"] || !seen["v4"] || !seen["v5"] {
 		return fmt.Errorf("v3/v4/v5 matrix is incomplete")
+	}
+	return nil
+}
+
+func validateUnknownContract(protocol string, unknown []string) error {
+	required := map[string]bool{
+		"health_route": false, "chat_route": false, "non_stream_status": false,
+		"sse_termination": false, "malformed_status": false,
+		"missing_route_status": false, "broken_mock_behavior": false,
+	}
+	for _, field := range unknown {
+		seen, ok := required[field]
+		if !ok {
+			return fmt.Errorf("unqualified %s has unknown gap field %q", protocol, field)
+		}
+		if seen {
+			return fmt.Errorf("unqualified %s repeats gap field %q", protocol, field)
+		}
+		required[field] = true
+	}
+	for field, seen := range required {
+		if !seen {
+			return fmt.Errorf("unqualified %s lacks explicit %s gap", protocol, field)
+		}
 	}
 	return nil
 }

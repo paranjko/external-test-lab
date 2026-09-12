@@ -24,6 +24,11 @@ func TestProfilePinsCandidateAndRefusesUnsupportedQualification(t *testing.T) {
 	if profile.Adapters[0].Reason == "" || profile.Adapters[1].Reason == "" {
 		t.Fatal("v3/v4 must retain explicit unsupported gaps")
 	}
+	for _, adapter := range profile.Adapters[:2] {
+		if adapter.UnqualifiedContract.Basis != "v5_only_fixture" || len(adapter.UnqualifiedContract.Unknown) != 7 {
+			t.Fatalf("%s non-support contract=%+v", adapter.Protocol, adapter.UnqualifiedContract)
+		}
+	}
 	v5 := profile.Adapters[2]
 	if v5.Chat.Path != "/v1/chat/completions" || v5.Chat.NonStreamExpectedStatus != http.StatusOK || v5.Chat.SSETermination != "[DONE]" || v5.Chat.MalformedExpectedStatus != http.StatusBadRequest {
 		t.Fatalf("v5 chat contract=%+v", v5.Chat)
@@ -56,6 +61,14 @@ func TestProfileRejectsUnexplainedUnsupportedAdapter(t *testing.T) {
 	profile.Adapters[0].Reason = ""
 	if err := profile.Validate(); err == nil {
 		t.Fatal("accepted v3 without an explicit unsupported gap")
+	}
+	profile, err = LoadProfile(filepath.Join("..", "environments", "lab-mock-devshard-testenv-v5.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.Adapters[0].UnqualifiedContract.Unknown = profile.Adapters[0].UnqualifiedContract.Unknown[:6]
+	if err := profile.Validate(); err == nil {
+		t.Fatal("accepted v3 without complete route/error/SSE gap contract")
 	}
 }
 

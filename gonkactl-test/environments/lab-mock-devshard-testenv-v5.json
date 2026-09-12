@@ -18,8 +18,8 @@
     "required_control": "A fresh changed-input fixture must persist SG01-SG05 observations, all controls and terminal cleanup without converting the original-pin gap into a baseline pass."
   },
   "adapters": [
-    {"protocol": "v3", "status": "unqualified", "reason": "No exact v3 route and request contract was established by the inspected v5 fixture."},
-    {"protocol": "v4", "status": "unqualified", "reason": "No exact v4 route and request contract was established by the inspected v5 fixture."},
+    {"protocol": "v3", "status": "unqualified", "reason": "No exact v3 route and request contract was established by the inspected v5 fixture.", "unqualified_contract": {"basis": "v5_only_fixture", "unknown": ["health_route", "chat_route", "non_stream_status", "sse_termination", "malformed_status", "missing_route_status", "broken_mock_behavior"]}},
+    {"protocol": "v4", "status": "unqualified", "reason": "No exact v4 route and request contract was established by the inspected v5 fixture.", "unqualified_contract": {"basis": "v5_only_fixture", "unknown": ["health_route", "chat_route", "non_stream_status", "sse_termination", "malformed_status", "missing_route_status", "broken_mock_behavior"]}},
     {"protocol": "v5", "status": "candidate", "health": {"path": "/v5/healthz", "expected_status": 200}, "chat": {"path": "/v1/chat/completions", "non_stream_expected_status": 200, "sse_termination": "[DONE]", "malformed_expected_status": 400}, "negative": {"missing_route_path": "/v5/m0-a09-missing-route", "missing_route_expected_status": 404, "broken_mock_accepted_outcomes": ["http_non_success", "transport_timeout"]}}
   ],
   "gates": ["SG01", "SG02", "SG03", "SG04", "SG05"],
