@@ -167,6 +167,15 @@ The next fixture, if needed, therefore changes its input to this materialized
 baseline revision and records the listed discriminating evidence. It must not
 repeat the D12 candidate selector unchanged.
 
+`m0stand` now requires `--profile` and validates it before composition
+preflight, lease acquisition or fixture launch. Its decision receipt persists
+the profile path, content SHA-256, environment ID and baseline status; the
+lease `--environment-id` must match the validated profile. A focused wrapper
+test proves that a profile-bound digest mismatch writes those fields while
+leaving the lease root absent, and that an environment mismatch stops before
+preflight. Thus a future materialized baseline revision must be supplied both
+as the profile and as the exact rendered inputs consumed by the launch path.
+
 ## Invalid-digest preflight control
 
 `stand.PreflightComposition` now hashes the exact prepared `config.yaml` and
