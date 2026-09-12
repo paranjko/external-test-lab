@@ -106,6 +106,32 @@ func TestValidateFixtureReceiptRequiresCompleteEvidence(t *testing.T) {
 	}
 }
 
+func TestEvaluateCompatibilityEligibilityIsSeparateAndFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	profile := ProfileDecision{Path: "profile.json", SHA256: "profile-sha", EnvironmentID: "proposed", BaselineStatus: "unqualified"}
+	composition := CompositionDecision{Outcome: "launch_completed", Profile: &profile, Lease: &LeaseDecision{EnvironmentID: "proposed", Acquired: true, Released: true}}
+	compositionPath := filepath.Join(dir, "launch.json")
+	fixturePath := filepath.Join(dir, "fixture.json")
+	invalidPath := filepath.Join(dir, "invalid.json")
+	if err := writeDecision(compositionPath, composition); err != nil {
+		t.Fatal(err)
+	}
+	fixture := `{"outcomes":{"SG01":{"outcome":"passed"},"SG02":{"outcome":"passed"},"SG03":{"outcome":"passed"},"SG04":{"outcome":"passed"},"SG05":{"outcome":"passed"}},"identity":{"chain_id":null,"genesis_hash":null,"source":"simulated","fixture_seed_hash":"seed"},"controls":{"known_good_baseline":{"outcome":"unqualified"},"invalid_digest":{"outcome":"not_run"},"missing_route":{"outcome":"rejected"},"broken_mock":{"outcome":"rejected"}},"terminal_cleanup":{"completed":true,"remaining_containers":0,"remaining_processes":0,"remaining_ports":0}}`
+	if err := os.WriteFile(fixturePath, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDecision(invalidPath, CompositionDecision{Outcome: "rejected_digest_mismatch"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := EvaluateCompatibilityEligibility(profile, compositionPath, fixturePath, invalidPath, filepath.Join(dir, "eligibility.json"))
+	if err != nil || result.Outcome != "eligible_for_independent_acceptance" || result.Profile.BaselineStatus != "unqualified" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if _, err := EvaluateCompatibilityEligibility(profile, compositionPath, fixturePath, compositionPath, filepath.Join(dir, "ineligible.json")); err == nil {
+		t.Fatal("accepted a launch receipt as invalid-digest evidence")
+	}
+}
+
 func TestMarkCompositionLeasePreservesLifecycleWithoutToken(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "receipt.json")

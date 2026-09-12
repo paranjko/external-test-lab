@@ -26,6 +26,18 @@ type CompositionDecision struct {
 	Lease            *LeaseDecision   `json:"lease,omitempty"`
 }
 
+// CompatibilityDecision is deliberately separate from a profile declaration:
+// it records whether immutable fixture evidence is eligible for independent
+// acceptance, without promoting an initially unqualified baseline itself.
+type CompatibilityDecision struct {
+	Profile            ProfileDecision `json:"profile"`
+	CompositionReceipt string          `json:"composition_receipt"`
+	FixtureReceipt     string          `json:"fixture_receipt"`
+	InvalidDigest      string          `json:"invalid_digest_receipt"`
+	Outcome            string          `json:"outcome"`
+	Reason             string          `json:"reason,omitempty"`
+}
+
 // ProfileDecision binds the validated environment declaration to the fixture
 // preflight receipt. It deliberately records the declaration identity, rather
 // than treating an arbitrary launcher command as proof of a baseline decision.
@@ -116,6 +128,50 @@ func ValidateFixtureReceipt(path string) error {
 		return fmt.Errorf("%w: terminal cleanup incomplete", ErrFixtureReceiptInvalid)
 	}
 	return nil
+}
+
+// EvaluateCompatibilityEligibility checks independently retained evidence for
+// the proposed baseline. It never changes Profile.Baseline.Status; promotion
+// remains an independent M0 acceptance decision.
+func EvaluateCompatibilityEligibility(profile ProfileDecision, compositionPath, fixturePath, invalidDigestPath, receiptPath string) (CompatibilityDecision, error) {
+	decision := CompatibilityDecision{Profile: profile, CompositionReceipt: compositionPath, FixtureReceipt: fixturePath, InvalidDigest: invalidDigestPath}
+	fail := func(err error) (CompatibilityDecision, error) {
+		decision.Outcome = "ineligible"
+		decision.Reason = err.Error()
+		if writeErr := writeDecision(receiptPath, decision); writeErr != nil {
+			return decision, fmt.Errorf("record compatibility decision: %w", writeErr)
+		}
+		return decision, err
+	}
+	if profile.EnvironmentID == "" || profile.SHA256 == "" || profile.BaselineStatus != "unqualified" {
+		return fail(fmt.Errorf("initially unqualified profile identity is required"))
+	}
+	var composition CompositionDecision
+	if b, err := os.ReadFile(compositionPath); err != nil {
+		return fail(fmt.Errorf("read composition receipt: %w", err))
+	} else if err := json.Unmarshal(b, &composition); err != nil {
+		return fail(fmt.Errorf("decode composition receipt: %w", err))
+	}
+	if composition.Outcome != "launch_completed" || composition.Profile == nil || composition.Profile.SHA256 != profile.SHA256 || composition.Lease == nil || !composition.Lease.Released {
+		return fail(fmt.Errorf("composition receipt lacks completed profile-bound released launch"))
+	}
+	if err := ValidateFixtureReceipt(fixturePath); err != nil {
+		return fail(err)
+	}
+	var invalid CompositionDecision
+	if b, err := os.ReadFile(invalidDigestPath); err != nil {
+		return fail(fmt.Errorf("read invalid-digest receipt: %w", err))
+	} else if err := json.Unmarshal(b, &invalid); err != nil {
+		return fail(fmt.Errorf("decode invalid-digest receipt: %w", err))
+	}
+	if invalid.Outcome != "rejected_digest_mismatch" || invalid.LaunchAttempted || invalid.ResourcesCreated || invalid.Lease != nil {
+		return fail(fmt.Errorf("invalid-digest receipt did not reject before resource creation"))
+	}
+	decision.Outcome = "eligible_for_independent_acceptance"
+	if err := writeDecision(receiptPath, decision); err != nil {
+		return decision, err
+	}
+	return decision, nil
 }
 
 // PreflightComposition hashes exactly the prepared config and Compose files
@@ -244,7 +300,7 @@ func compositionDigest(configPath, composePath string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func writeDecision(path string, decision CompositionDecision) error {
+func writeDecision(path string, decision any) error {
 	if path == "" {
 		return errors.New("composition receipt path is required")
 	}
