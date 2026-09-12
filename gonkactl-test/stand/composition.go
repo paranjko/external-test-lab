@@ -157,6 +157,15 @@ func ValidateEligibilityFixtureReceipt(path string) error {
 			PPID             string `json:"ppid"`
 			Service          string `json:"service"`
 		} `json:"versiond_child_identity"`
+		RestoredFreshInstance struct {
+			Canary struct {
+				Status int `json:"status"`
+			} `json:"canary"`
+			Stream struct {
+				Status  int  `json:"status"`
+				SawDone bool `json:"saw_done"`
+			} `json:"stream"`
+		} `json:"restored_fresh_instance"`
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
 		return fmt.Errorf("%w: decode: %v", ErrFixtureReceiptInvalid, err)
@@ -191,6 +200,9 @@ func ValidateEligibilityFixtureReceipt(path string) error {
 	}
 	if r.SourceHead == "" {
 		return fmt.Errorf("%w: source head is required", ErrFixtureReceiptInvalid)
+	}
+	if r.RestoredFreshInstance.Canary.Status != 200 || r.RestoredFreshInstance.Stream.Status != 200 || !r.RestoredFreshInstance.Stream.SawDone {
+		return fmt.Errorf("%w: restored fresh-instance canary and SSE completion are required", ErrFixtureReceiptInvalid)
 	}
 	return nil
 }

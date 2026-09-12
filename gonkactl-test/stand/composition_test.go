@@ -137,10 +137,17 @@ func TestEvaluateCompatibilityEligibilityIsSeparateAndFailsClosed(t *testing.T) 
 	if err == nil || result.Outcome != "ineligible" || !strings.Contains(result.Reason, "effective runtime routes") {
 		t.Fatalf("accepted missing effective-route evidence: result=%+v err=%v", result, err)
 	}
+	if err := os.WriteFile(fixturePath, []byte(strings.Replace(fixture, `"status":200,"saw_done":true`, `"status":503,"saw_done":false`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err = EvaluateCompatibilityEligibility(profile, compositionPath, fixturePath, invalidPath, filepath.Join(dir, "failed-recovery.json"))
+	if err == nil || result.Outcome != "ineligible" || !strings.Contains(result.Reason, "restored fresh-instance") {
+		t.Fatalf("accepted failed restored instance: result=%+v err=%v", result, err)
+	}
 }
 
 func eligibilityFixture() string {
-	return `{"outcomes":{"SG01":{"outcome":"passed"},"SG02":{"outcome":"passed"},"SG03":{"outcome":"passed"},"SG04":{"outcome":"passed"},"SG05":{"outcome":"passed"}},"identity":{"chain_id":null,"genesis_hash":null,"source":"simulated","fixture_seed_hash":"seed"},"controls":{"known_good_baseline":{"outcome":"unqualified"},"invalid_digest":{"outcome":"not_run"},"missing_route":{"outcome":"observed_non_success"},"broken_mock":{"outcome":"observed_non_success"}},"configured_routes":{"gateway_chat":"http://127.0.0.1/v1/chat/completions","router_missing":"http://127.0.0.1/v5/missing"},"effective_routes":{"gateway_health":"http://127.0.0.1/v5/healthz"},"source_head":"fixture-source-head","versiond_child_identity":{"executable_path":"/opt/versiond/bin/v5/devshardd","executable_sha256":"child-sha","pid":"7","ppid":"1","service":"versiond-0"},"terminal_cleanup":{"completed":true,"remaining_containers":0,"remaining_processes":0,"remaining_ports":0}}`
+	return `{"outcomes":{"SG01":{"outcome":"passed"},"SG02":{"outcome":"passed"},"SG03":{"outcome":"passed"},"SG04":{"outcome":"passed"},"SG05":{"outcome":"passed"}},"identity":{"chain_id":null,"genesis_hash":null,"source":"simulated","fixture_seed_hash":"seed"},"controls":{"known_good_baseline":{"outcome":"unqualified"},"invalid_digest":{"outcome":"not_run"},"missing_route":{"outcome":"observed_non_success"},"broken_mock":{"outcome":"observed_non_success"}},"configured_routes":{"gateway_chat":"http://127.0.0.1/v1/chat/completions","router_missing":"http://127.0.0.1/v5/missing"},"effective_routes":{"gateway_health":"http://127.0.0.1/v5/healthz"},"source_head":"fixture-source-head","versiond_child_identity":{"executable_path":"/opt/versiond/bin/v5/devshardd","executable_sha256":"child-sha","pid":"7","ppid":"1","service":"versiond-0"},"restored_fresh_instance":{"canary":{"status":200},"stream":{"status":200,"saw_done":true}},"terminal_cleanup":{"completed":true,"remaining_containers":0,"remaining_processes":0,"remaining_ports":0}}`
 }
 
 func TestMarkCompositionLeasePreservesLifecycleWithoutToken(t *testing.T) {
