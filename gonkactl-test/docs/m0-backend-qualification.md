@@ -177,6 +177,24 @@ The next fixture, if needed, therefore changes its input to this materialized
 baseline revision and records the listed discriminating evidence. It must not
 repeat the D12 candidate selector unchanged.
 
+## Independent qualification attestation boundary
+
+`m0stand --qualification-verify-only` verifies, but never creates, a separate
+qualification decision over a frozen eligibility receipt. The decision binds
+its own ID, issuer and review reference, the initially-unqualified profile
+hash/environment, the eligibility receipt hash, the three retained evidence
+hashes, `qualified` baseline acceptance, supported `v5`, and explicit
+unqualified `v3`/`v4` scope. The derived binding receipt is no-launch: it does
+not acquire a lease, create a resource, alter the profile, or replace the
+historical candidate/eligibility receipts.
+
+An issuer name is provenance, not proof of independence. M0-A09 remains open
+until an independent authority supplies and accepts a decision over the frozen
+evidence; the binding verifier rejects a missing/rejected decision, tampered
+evidence, mismatched profile/eligibility, scope expansion, and output aliases
+that could overwrite an input. The binding receipt alone is not M0-A10
+acceptance.
+
 ## Proposed baseline v1 materialization
 
 `environments/proposed-compatible-devshard-baseline-v1.json` is the initially
