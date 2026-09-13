@@ -277,16 +277,23 @@ location ^~ /api/v1/accounting/epochs {
 ### Caddy
 
 ```caddyfile
-handle_path /api/v1/accounting/epochs* {
-    @get method GET
-    handle @get {
+handle_path /api/v1/accounting/* {
+    @epochs {
+        method GET
+        path /epochs /epochs/*
+    }
+    handle @epochs {
         encode gzip
-        rewrite * /api/v1/epochs{uri}
+        rewrite * /api/v1{uri}
         reverse_proxy 127.0.0.1:9091
     }
     respond 405
 }
 ```
+
+`handle_path` strips `/api/v1/accounting`, leaving `/epochs…`; the rewrite
+puts `/api/v1` back so the root query reaches `/api/v1/epochs` without a
+trailing slash.
 
 ### Verify
 
