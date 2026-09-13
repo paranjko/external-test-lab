@@ -171,7 +171,7 @@ Wait ~30 s, then check:
 
 ```bash
 curl -fsS $A/v1/status -H "$H" | jq '{models: .capacity.models,
-  escrows: [.devshards[] | {id, model, active, session_version, nonce}]}'
+  escrows: [.devshards[]? | {id, model, active, session_version, nonce}]}'
 ```
 
 Every offered model should show `routable: true`, escrows `session_version: "v4.1"`.
@@ -209,10 +209,18 @@ for that model (§3).
 
 ## 5. Switch client traffic
 
-Repoint your front (proxy `GATEWAY_URL`, nginx `upstream`, …) at
-`devshardctl-v411:8080`. Recreate only the front. Keep the old gateway
-**running** — in-flight streams finish there, and its escrows are still yours
-to handle. Do not touch its volume.
+Repoint your front (proxy `GATEWAY_URL`, nginx `upstream`, …) at the new
+gateway. Which address depends on where the front runs — use the same rule
+for the accounting upstream in §6:
+
+| Front runs… | Gateway API upstream | Accounting upstream |
+|---|---|---|
+| in the same Docker Compose network | `http://devshardctl-v411:8080` | `http://devshardctl-v411:9091` |
+| on the host (or another network) | `http://127.0.0.1:18085` | `http://127.0.0.1:9091` |
+
+Recreate only the front. Keep the old gateway **running** — in-flight streams
+finish there, and its escrows are still yours to handle. Do not touch its
+volume.
 
 Watch for a few minutes: request rate on the new port, `409`/`502` in its
 logs, `curl $A/v1/status` nonces climbing.
@@ -245,7 +253,9 @@ https://<your-domain>/api/v1/accounting/epochs…  →  http://127.0.0.1:9091/ap
 ```
 
 The prefix is a convention; the dashboard takes any base URL with `/epochs…`
-under it.
+under it. The snippets below use `127.0.0.1:9091` (proxy on the host); if
+your nginx / Caddy runs inside the Compose network, use `devshardctl-v411:9091`
+instead (see the table in §5).
 
 ### nginx
 
@@ -257,6 +267,7 @@ location ^~ /api/v1/accounting/epochs {
     proxy_set_header Host $host;
     proxy_read_timeout 60s;
     gzip on;
+    gzip_proxied any;
     gzip_types application/json;
     gzip_min_length 1024;
     add_header Cache-Control "public, max-age=30";
@@ -282,9 +293,11 @@ handle_path /api/v1/accounting/epochs* {
 ```bash
 D=https://<your-domain>
 curl -fsS "$D/api/v1/accounting/epochs" | jq '.epochs[] | {epoch_index, assigned_nonces}'
-E=$(curl -fsS "$D/api/v1/accounting/epochs" | jq '.epochs[-1].epoch_index')
-curl -sS -o /dev/null -w 'participants: %{http_code} %{size_download}B\n' \
-  -H 'Accept-Encoding: gzip' "$D/api/v1/accounting/epochs/$E/participants"
+# participants exist only once the ledger has recorded an epoch (a few minutes of traffic)
+E=$(curl -fsS "$D/api/v1/accounting/epochs" | jq -r '.epochs[-1].epoch_index // empty')
+[ -n "$E" ] && curl -sS -o /dev/null -w 'participants: %{http_code} %{size_download}B\n' \
+  -H 'Accept-Encoding: gzip' "$D/api/v1/accounting/epochs/$E/participants" \
+  || echo 'ledger still empty — retry after some traffic'
 curl -sS -o /dev/null -w 'POST must be 405/403: %{http_code}\n' -X POST "$D/api/v1/accounting/epochs"
 curl -sS -o /dev/null -w 'admin must NOT be reachable: %{http_code}\n' "$D/v1/admin/settings"
 ```
