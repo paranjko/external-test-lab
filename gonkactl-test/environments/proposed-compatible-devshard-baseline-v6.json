@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.1.0",
+  "environment_id": "proposed-compatible-devshard-baseline-v6",
+  "environment_kind": "lab-mock",
+  "backend": {"name": "devshard-testenv", "source_repository": "https://github.com/gonka-ai/gonka.git", "source_revision": "963348bf0da9114ec7ce252473ac9577ff440df0", "upstream_base_revision": "1eaa0413f58899f48f8ba19d16f9653b16dc4987", "source_path_argument": "--gonka-source", "transport": "owned Docker Compose plus loopback HTTP", "fixture_identity": {"chain_id": null, "genesis_hash": null, "source": "simulated", "fixture_seed_hash": "frozen-at-prepare-time"}},
+  "lease_authority": "gonkactl-test instance lease; no shared Compose project, ports, volumes, or testenv images",
+  "baseline": {"status": "unqualified", "reason": "This separately materialized v6 proposal binds the executable out-of-source prepared-workdir guard. It remains unqualified until FR-005 retains matching rendered bytes, runtime identity, controls, recovery and cleanup evidence.", "required_control": "The prepared workdir must be outside the DevShard source/build context; the profile-bound preflight must accept the frozen digest and reject a declared mismatch before resource creation; the changed-input fixture must retain launch_requested before boot and record SG01-SG05, controls, effective routes, source head, child identity, restored capacity readiness and terminal cleanup."},
+  "adapters": [
+    {"protocol": "v3", "status": "unqualified", "reason": "The v5-only fixture does not establish a v3 contract.", "unqualified_contract": {"basis": "v5_only_fixture", "unknown": ["health_route", "chat_route", "non_stream_status", "sse_termination", "malformed_status", "missing_route_status", "broken_mock_behavior"]}},
+    {"protocol": "v4", "status": "unqualified", "reason": "The v5-only fixture does not establish a v4 contract.", "unqualified_contract": {"basis": "v5_only_fixture", "unknown": ["health_route", "chat_route", "non_stream_status", "sse_termination", "malformed_status", "missing_route_status", "broken_mock_behavior"]}},
+    {"protocol": "v5", "status": "candidate", "health": {"path": "/v5/healthz", "expected_status": 200}, "chat": {"path": "/v1/chat/completions", "non_stream_expected_status": 200, "sse_termination": "[DONE]", "malformed_expected_status": 400}, "negative": {"missing_route_path": "/v5/m0-a09-missing-route", "missing_route_expected_status": 404, "broken_mock_accepted_outcomes": ["http_non_success", "transport_timeout"]}}
+  ],
+  "gates": ["SG01", "SG02", "SG03", "SG04", "SG05"], "persistent_data_root": "build/gonkactl-test"
+}
