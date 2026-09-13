@@ -13,7 +13,7 @@ BROWSER_ENV := HOME=$(DATA_ROOT)/child-home PATH=$(PATH) GONKACTL_TEST_BROWSER_T
 
 test-contracts:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
-	@set +e; command='env $(PERSISTENT_ENV) go test ./contracts'; log='$(DATA_ROOT)/terminal-receipts/test-contracts.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-contracts.receipt'; env $(PERSISTENT_ENV) go test ./contracts >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-contracts\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-contracts receipt: %s\n' "$$receipt"; exit "$$status"
+	@set +e; command='env $(PERSISTENT_ENV) go test -count=1 ./contracts'; log='$(DATA_ROOT)/terminal-receipts/test-contracts.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-contracts.receipt'; env $(PERSISTENT_ENV) go test -count=1 ./contracts >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-contracts\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-contracts receipt: %s\n' "$$receipt"; exit "$$status"
 
 test-bindings:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
@@ -21,7 +21,7 @@ test-bindings:
 
 test-stand:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
-	@set +e; command='env $(PERSISTENT_ENV) go test ./stand ./cmd/m0stand'; log='$(DATA_ROOT)/terminal-receipts/test-stand.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-stand.receipt'; env $(PERSISTENT_ENV) go test ./stand ./cmd/m0stand >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-stand\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-stand receipt: %s\n' "$$receipt"; exit "$$status"
+	@set +e; command='env $(PERSISTENT_ENV) go test -count=1 ./stand ./cmd/m0stand'; log='$(DATA_ROOT)/terminal-receipts/test-stand.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-stand.receipt'; env $(PERSISTENT_ENV) go test -count=1 ./stand ./cmd/m0stand >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-stand\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-stand receipt: %s\n' "$$receipt"; exit "$$status"
 
 test-browser-probe:
 	mkdir -p $(PERSISTENT_DIRS) $(BROWSER_TEMP_ROOT) $(DATA_ROOT)/report/browser-probe
@@ -31,7 +31,7 @@ test-browser-probe:
 test-report:
 	mkdir -p $(PERSISTENT_DIRS) $(BROWSER_TEMP_ROOT) $(QUALIFICATION_HISTORY_SCOPE)/receipts $(DATA_ROOT)/terminal-receipts
 	chmod 700 $(DATA_ROOT)/child-home
-	@set +e; command='env $(PERSISTENT_ENV) go test ./report'; env $(PERSISTENT_ENV) go test ./report; status=$$?; printf 'target=test-report\nstage=go-test\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" >$(DATA_ROOT)/terminal-receipts/test-report-go.receipt; test $$status -eq 0
+	@set +e; command='env $(PERSISTENT_ENV) go test -count=1 ./report'; env $(PERSISTENT_ENV) go test -count=1 ./report; status=$$?; printf 'target=test-report\nstage=go-test\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" >$(DATA_ROOT)/terminal-receipts/test-report-go.receipt; test $$status -eq 0
 	@set +e; cd report && env $(PERSISTENT_ENV) npm ci --ignore-scripts --offline; status=$$?; cd ..; printf 'target=test-report\nstage=npm-ci-offline\nexit_code=%s\nlog_dir=%s\n' "$$status" '$(DATA_ROOT)/npm-cache/_logs' >$(DATA_ROOT)/terminal-receipts/test-report-npm.receipt; exit "$$status"
 	cd report && env $(PERSISTENT_ENV) node --test history-append.test.mjs
 	if test ! -f $(QUALIFICATION_HISTORY_SCOPE)/receipts/$(QUALIFICATION_RUN_ID); then env $(PERSISTENT_ENV) GONKACTL_TEST_RUN_ID=$(QUALIFICATION_RUN_ID) go run ./cmd/m0report; cd report && env $(PERSISTENT_ENV) GONKACTL_TEST_HISTORY_SCOPE=$(QUALIFICATION_HISTORY_SCOPE) GONKACTL_TEST_PROTOCOL_HISTORY_ID=$(QUALIFICATION_RUN_ID)-protocol GONKACTL_TEST_EVIDENCE_HISTORY_ID=$(QUALIFICATION_RUN_ID)-evidence bash render-transaction.sh $(DATA_ROOT) $(QUALIFICATION_RUN_ID); fi
