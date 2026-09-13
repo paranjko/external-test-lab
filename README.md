@@ -46,6 +46,12 @@ npx skills add paranjko/external-test-lab --skill openai-responses-adapter
 
 Human catalog pointers: [`broker-compat/`](broker-compat/).
 
+## Broker gateway operations
+
+| | |
+|---|---|
+| DevShard gateway 4.1.1 — standalone setup guide (fresh slot, settings, mint, smoke, cutover, public accounting link) | [`broker-ops/v411-gateway-setup-guide.md`](broker-ops/v411-gateway-setup-guide.md) |
+
 ## Team
 
 | Role | Owner |
@@ -69,6 +75,7 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | M2 | Join guide, regional layout | [`net-deployment-runbook/ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md), [`devnet/regions.md`](devnet/regions.md) | published |
 | M2 | Smoke & regression checklists, live task board | [`testing/smoke-checklist.md`](testing/smoke-checklist.md), [`testing/regression-checklist.md`](testing/regression-checklist.md), [task board](https://github.com/users/paranjko/projects/1) | published — task board **live** |
 | M2 | Broker OpenAI host-compat + Responses adapter | [`broker-compat/`](broker-compat/) | published |
+| M2 | DevShard gateway 4.1.1 broker setup guide | [`broker-ops/`](broker-ops/) | published |
 | M2 | External join opening (genesis params, seeds) | `devnet/` | in progress — public JOIN path exists; independent lifecycle not yet stable |
 | M3 | Test automation scripts (smoke-level) | `automation/` | planned |
 | M3 | Incident log, participant onboarding guide | `runbooks/incidents/`, `devnet/` | planned |
