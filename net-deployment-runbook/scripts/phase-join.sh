@@ -427,12 +427,16 @@ if [[ "$already_registered" == true ]]; then
   printf 'READY %s participant already registered with status=%s; skip duplicate registration\n' "$NODE" "$participant_status"
 else
   step "Register $NODE before funding"
+  # Register the TMKMS key: the signerless node would report a throwaway one.
+  registration_consensus_pubkey="$(jq -er .consensus_pubkey "$IDENTITY")"
+  [[ "$registration_consensus_pubkey" =~ ^[A-Za-z0-9+/]{43}=$ ]] \
+    || die 'identity does not carry a usable consensus public key for registration'
   registration_timeout="${GDC_JOIN_REGISTRATION_TIMEOUT_SECONDS:-300}"
   [[ "$registration_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_JOIN_REGISTRATION_TIMEOUT_SECONDS must be positive'
   registration_deadline=$((SECONDS + registration_timeout))
   registration_succeeded=false
   while (( SECONDS < registration_deadline )); do
-    if ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./register-participant.sh .env >register-participant.log 2>&1"; then
+    if ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./register-participant.sh .env '$registration_consensus_pubkey' >register-participant.log 2>&1"; then
       registration_succeeded=true
       break
     fi

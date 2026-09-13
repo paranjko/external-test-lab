@@ -88,3 +88,9 @@ done
 ! grep -q 'GDC_TELEGRAM_BOT_HOST' "$ROOT/scripts/prepare-join-role-config.sh"
 ! grep -q 'GDC_TELEGRAM_BOT_HOST' "$ROOT/scripts/write-genesis-role-config.sh"
 printf 'PASS role documentation and OPS observation boundary\n'
+
+# Registration must pass the identity key: the signerless node reports a throwaway one.
+grep -Fq -- '--consensus-key' "$ROOT/03-join/register-participant.sh"
+grep -Fq "register-participant.sh .env '\$registration_consensus_pubkey'" "$ROOT/scripts/phase-join.sh"
+grep -Fq 'registration_consensus_pubkey="$(jq -er .consensus_pubkey "$IDENTITY")"' "$ROOT/scripts/phase-join.sh"
+echo 'PASS participant registration binds the identity consensus key'
