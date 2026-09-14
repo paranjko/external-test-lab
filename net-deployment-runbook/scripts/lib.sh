@@ -76,7 +76,9 @@ ensure_run_manifest() {
   run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
   export GDC_RUN_ID="$run_id"
   manifest="$(run_manifest_path)"
-  if [[ "${GDC_RUN_CONTEXT:-}" == host-recovery ]]; then
+  if [[ "${GDC_RUN_CONTEXT:-}" == network-recovery ]]; then
+    profile_kind=network_recovery
+  elif [[ "${GDC_RUN_CONTEXT:-}" == host-recovery ]]; then
     profile_kind=host_recovery
   elif [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
     join_profile_manifest_fields
@@ -110,7 +112,9 @@ ensure_run_manifest() {
       existing="$(awk -F= -v key="$key" '$1 == key {print $2; exit}' "$manifest")"
       [[ "$existing" == "$expected" ]] || die "run_resume_mismatch: retained run does not match the lineage preflight $key"
     done
-    if [[ "$profile_kind" == host_recovery ]]; then
+    if [[ "$profile_kind" == network_recovery ]]; then
+      grep -qx 'profile_kind=network_recovery' "$manifest" || die 'run manifest belongs to another profile kind'
+    elif [[ "$profile_kind" == host_recovery ]]; then
       return 0
     elif [[ "$profile_kind" == generated_join ]]; then
       grep -qx 'profile_kind=generated_join' "$manifest" || die 'run manifest belongs to another profile kind'
@@ -144,6 +148,9 @@ ensure_run_manifest() {
     elif [[ "$profile_kind" == release ]]; then
       printf 'release_profile=%s\n' "$release_profile"
       printf 'release_profile_sha256=%s\n' "$release_hash"
+    fi
+    if [[ "$profile_kind" == network_recovery && -n "${RECOVERY_INCIDENT:-}" ]]; then
+      printf 'recovery_incident=%s\n' "$RECOVERY_INCIDENT"
     fi
     [[ -z "${GDC_NETWORK_FINGERPRINT:-}" ]] || printf 'network_fingerprint=%s\n' "$GDC_NETWORK_FINGERPRINT"
     [[ -z "${GDC_NETWORK_CHAIN_ID:-}" ]] || printf 'network_chain_id=%s\n' "$GDC_NETWORK_CHAIN_ID"

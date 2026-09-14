@@ -170,7 +170,11 @@ run_phase() {
   local state run_id_file run_id run_dir log rc diagnostic_envelope
   state="$STATE"
   acquire_operator_lock
-  run_id_file="$state/active-run-id"
+  if [[ "${GDC_RUN_CONTEXT:-}" == network-recovery ]]; then
+    run_id_file="$state/active-recovery-run-id"
+  else
+    run_id_file="$state/active-run-id"
+  fi
   mkdir -p "$state"
   # An assurance adapter owns one evidence namespace per scenario execution.
   # Do not silently append it to the last operator's lifecycle run.
@@ -371,6 +375,14 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 network gate-b verify
   ./gdc.sh --release v2026.07.23 network confirmation-poc verify
   ./gdc.sh --release v2026.08.06 network upgrade verify <proposal-id>
+  ./gdc.sh network recover inspect --incident <INCIDENT_ID> --host <SSH_ALIAS> --run-id <RUN_ID> --output <ABSOLUTE_PATH>
+  ./gdc.sh network recover prepare|freeze|stage|activate|retire|abort --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --approval <ABSOLUTE_PATH>
+  ./gdc.sh network recover status --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH>
+  ./gdc.sh network recover checkpoint --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --output <ABSOLUTE_PATH>
+  ./gdc.sh network recover rejoin --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --checkpoint <ABSOLUTE_PATH> --approval <ABSOLUTE_PATH>
+  ./gdc.sh network recover resume --step signers|poc|handoff --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --approval <ABSOLUTE_PATH>
+  ./gdc.sh network recover verify --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --scope consensus|epochs
+  ./gdc.sh network recover verify --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --scope service --approval <ABSOLUTE_PATH>
   ./gdc.sh network reset --yes [--hosts <SSH_ALIAS[,SSH_ALIAS...]>]
   ./gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>
@@ -432,12 +444,15 @@ export GDC_INVOCATION_COMMAND GDC_INVOCATION_CWD
 RELEASE=''
 MODEL=''
 COMPOSITION=''
+RELEASE_OPTION_SEEN=false
+MODEL_OPTION_SEEN=false
+COMPOSITION_OPTION_SEEN=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --release) RELEASE="${2:-}"; shift 2 ;;
-    --release=*) RELEASE="${1#--release=}"; shift ;;
-    --composition) COMPOSITION="${2:-}"; shift 2 ;;
-    --model) MODEL="${2:-}"; shift 2 ;;
+    --release) RELEASE_OPTION_SEEN=true; RELEASE="${2:-}"; shift 2 ;;
+    --release=*) RELEASE_OPTION_SEEN=true; RELEASE="${1#--release=}"; shift ;;
+    --composition) COMPOSITION_OPTION_SEEN=true; COMPOSITION="${2:-}"; shift 2 ;;
+    --model) MODEL_OPTION_SEEN=true; MODEL="${2:-}"; shift 2 ;;
     *) break ;;
   esac
 done
@@ -495,6 +510,148 @@ configure_devshard_governance_protocols() {
   export GDC_GOVERNANCE_DEVSHARD_PROTOCOLS="$normalized"
 }
 
+network_recover_cli_error() {
+  printf 'network recover: %s\n' "$*" >&2
+  return 2
+}
+
+network_recover_input_path_valid() {
+  local path="$1" canonical mode
+  [[ "$path" == /* && "$path" != / && -f "$path" && ! -L "$path" ]] || return 1
+  canonical="$(realpath -e -- "$path" 2>/dev/null)" || return 1
+  [[ "$canonical" == "$path" ]] || return 1
+  mode="$(stat -c '%a' "$path" 2>/dev/null || stat -f '%Lp' "$path" 2>/dev/null)" || return 1
+  [[ "$mode" == 400 || "$mode" == 600 ]]
+}
+
+network_recover_output_path_valid() {
+  local path="$1" parent base canonical_parent
+  [[ "$path" == /* && "$path" != / && "$path" != */../* && "$path" != */./* ]] || return 1
+  parent="$(dirname "$path")"; base="$(basename "$path")"
+  [[ -d "$parent" && ! -L "$parent" && "$base" != . && "$base" != .. ]] || return 1
+  canonical_parent="$(realpath -e -- "$parent" 2>/dev/null)" || return 1
+  [[ "$canonical_parent/$base" == "$path" && ! -e "$path" && ! -L "$path" ]] || return 1
+  case "$path" in /tmp/*|/private/tmp/*|/var/tmp/*) return 1 ;; esac
+}
+
+parse_network_recover_args() {
+  local phase="${1:-}" allowed required seen_options='' key value required_key required_value path_value
+  shift || true
+
+  RECOVERY_PHASE="$phase"
+  RECOVERY_INCIDENT=''
+  RECOVERY_HOST=''
+  RECOVERY_RUN_ID=''
+  RECOVERY_MANIFEST=''
+  RECOVERY_APPROVAL=''
+  RECOVERY_CHECKPOINT=''
+  RECOVERY_OUTPUT=''
+  RECOVERY_SCOPE=''
+  RECOVERY_STEP=''
+
+  case "$phase" in
+    inspect)
+      allowed='incident host run-id output'
+      required="$allowed"
+      ;;
+    prepare|freeze|stage|activate|retire|abort)
+      allowed='host run-id manifest approval'
+      required="$allowed"
+      ;;
+    status)
+      allowed='host run-id manifest'
+      required="$allowed"
+      ;;
+    checkpoint)
+      allowed='host run-id manifest output'
+      required="$allowed"
+      ;;
+    rejoin)
+      allowed='host run-id manifest checkpoint approval'
+      required="$allowed"
+      ;;
+    resume)
+      allowed='step host run-id manifest approval'
+      required="$allowed"
+      ;;
+    verify)
+      allowed='host run-id manifest scope approval'
+      required='host run-id manifest scope'
+      ;;
+    '') network_recover_cli_error 'a phase is required' || return 2 ;;
+    *) network_recover_cli_error "unknown phase: $phase" || return 2 ;;
+  esac
+
+  while (( $# > 0 )); do
+    [[ "$1" == --* ]] || network_recover_cli_error "unexpected positional argument: $1" || return 2
+    key="${1#--}"
+    [[ " $allowed " == *" $key "* ]] \
+      || network_recover_cli_error "option --$key is not allowed for phase $phase" || return 2
+    [[ " $seen_options " != *" $key "* ]] \
+      || network_recover_cli_error "option --$key was provided more than once" || return 2
+    (( $# >= 2 )) && [[ "$2" != --* ]] \
+      || network_recover_cli_error "option --$key requires a value" || return 2
+    value="$2"
+    [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]] \
+      || network_recover_cli_error "option --$key has an invalid value" || return 2
+    seen_options="${seen_options:+$seen_options }$key"
+    case "$key" in
+      incident) RECOVERY_INCIDENT="$value" ;;
+      host) RECOVERY_HOST="$value" ;;
+      run-id) RECOVERY_RUN_ID="$value" ;;
+      manifest) RECOVERY_MANIFEST="$value" ;;
+      approval) RECOVERY_APPROVAL="$value" ;;
+      checkpoint) RECOVERY_CHECKPOINT="$value" ;;
+      output) RECOVERY_OUTPUT="$value" ;;
+      scope) RECOVERY_SCOPE="$value" ;;
+      step) RECOVERY_STEP="$value" ;;
+    esac
+    shift 2
+  done
+
+  for required_key in $required; do
+    case "$required_key" in
+      incident) required_value="$RECOVERY_INCIDENT" ;;
+      host) required_value="$RECOVERY_HOST" ;;
+      run-id) required_value="$RECOVERY_RUN_ID" ;;
+      manifest) required_value="$RECOVERY_MANIFEST" ;;
+      approval) required_value="$RECOVERY_APPROVAL" ;;
+      checkpoint) required_value="$RECOVERY_CHECKPOINT" ;;
+      output) required_value="$RECOVERY_OUTPUT" ;;
+      scope) required_value="$RECOVERY_SCOPE" ;;
+      step) required_value="$RECOVERY_STEP" ;;
+    esac
+    [[ -n "$required_value" ]] \
+      || network_recover_cli_error "phase $phase requires --$required_key" || return 2
+  done
+
+  [[ "$RECOVERY_HOST" =~ ^[a-z0-9][a-z0-9.-]{0,62}$ ]] \
+    || network_recover_cli_error 'host must be a lowercase safe SSH alias of at most 63 characters' || return 2
+  [[ "$RECOVERY_RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+    || network_recover_cli_error 'run-id must contain only letters, digits, dot, underscore, or dash' || return 2
+  if [[ -n "$RECOVERY_INCIDENT" && ! "$RECOVERY_INCIDENT" =~ ^GNK-LAB-[0-9]{4}-[0-9]{4}$ ]]; then
+    network_recover_cli_error 'incident must use the GNK-LAB-YYYY-NNNN form' || return 2
+  fi
+  if [[ -n "$RECOVERY_STEP" && ! "$RECOVERY_STEP" =~ ^(signers|handoff|poc)$ ]]; then
+    network_recover_cli_error 'resume step must be signers, poc, or handoff' || return 2
+  fi
+  if [[ -n "$RECOVERY_SCOPE" && ! "$RECOVERY_SCOPE" =~ ^(consensus|epochs|service)$ ]]; then
+    network_recover_cli_error 'verify scope must be consensus, epochs, or service' || return 2
+  fi
+  if [[ "$phase" == verify && "$RECOVERY_SCOPE" == service && -z "$RECOVERY_APPROVAL" ]]; then
+    network_recover_cli_error 'verify --scope service requires --approval' || return 2
+  fi
+  if [[ "$phase" == verify && "$RECOVERY_SCOPE" != service && -n "$RECOVERY_APPROVAL" ]]; then
+    network_recover_cli_error 'verify --approval is allowed only with --scope service' || return 2
+  fi
+  for path_value in "$RECOVERY_MANIFEST" "$RECOVERY_APPROVAL" "$RECOVERY_CHECKPOINT"; do
+    [[ -z "$path_value" ]] || network_recover_input_path_valid "$path_value" \
+      || network_recover_cli_error 'manifest, approval, and checkpoint must be existing canonical non-symlink files' || return 2
+  done
+  [[ -z "$RECOVERY_OUTPUT" ]] || network_recover_output_path_valid "$RECOVERY_OUTPUT" \
+    || network_recover_cli_error 'output must be a new canonical path outside temporary storage' || return 2
+}
+
 COMMAND="${1:-help}"
 shift || true
 
@@ -511,6 +668,9 @@ case "$COMMAND" in
         fi
         COMMAND='network-bootstrap-verify'
         if [[ "${2:-}" == --online ]]; then set -- --online "$3"; else set -- "$2"; fi
+        ;;
+      recover)
+        COMMAND='network-recover'
         ;;
       genesis|verify|reset) COMMAND="$subcommand" ;;
       gate-b) [[ "${1:-}" == verify && $# -eq 1 ]] || { usage; exit 2; }; shift; COMMAND=public-network-verify ;;
@@ -536,6 +696,28 @@ case "$COMMAND" in
     ;;
 esac
 case "$COMMAND" in
+  network-recover)
+    [[ "$RELEASE_OPTION_SEEN" == false && "$COMPOSITION_OPTION_SEEN" == false && "$MODEL_OPTION_SEEN" == false ]] \
+      || { echo 'network recover does not accept --release, --composition, or --model; runtime inputs come from the recovery manifest' >&2; exit 2; }
+    recovery_phase="${1:-}"
+    shift || true
+    recovery_cli_args=("$@")
+    if ! parse_network_recover_args "$recovery_phase" "${recovery_cli_args[@]}"; then
+      exit 2
+    fi
+    # Recovery evidence is controller/run-wide. Preserve the original root
+    # before selecting the Host-specific runtime home so cross-host gates and
+    # approval replay protection never look beneath the current Host.
+    GDC_RECOVERY_ROOT="$GDC_DATA_ROOT"
+    export GDC_RECOVERY_ROOT
+    use_node_data_home "$RECOVERY_HOST"
+    export GDC_RUN_ID="$RECOVERY_RUN_ID" GDC_RUN_CONTEXT=network-recovery
+    recovery_run_phase="network-recover-$RECOVERY_PHASE"
+    [[ -z "$RECOVERY_STEP" ]] || recovery_run_phase+="-$RECOVERY_STEP"
+    recovery_run_phase+="-$RECOVERY_HOST"
+    run_phase "$recovery_run_phase" "$ROOT/scripts/phase-network-recover.sh" \
+      "$RECOVERY_PHASE" "${recovery_cli_args[@]}"
+    ;;
   network-bootstrap-verify)
     if [[ "${1:-}" == --online ]]; then
       [[ $# -eq 2 && -f "$2" && -r "$2" ]] || { echo 'network bootstrap verify --online requires one readable file' >&2; exit 2; }
