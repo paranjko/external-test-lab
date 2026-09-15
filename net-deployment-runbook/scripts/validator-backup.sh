@@ -2,7 +2,7 @@
 set +x
 set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES=$((66 * 1024 * 1024))
 MAX_VALIDATOR_BACKUP_TRAILING_BYTES=$((1024 * 1024))
@@ -331,6 +331,9 @@ validate_tmkms_state() {
     and (.round | type == "string" and test("^[0-9]+$"))
     and (.step | type == "number" and . == floor and . >= -128 and . <= 127)
     and (.block_id == null or (
+      .height == "0" and .round == "0" and .step == 0
+      and .block_id == {hash:"",part_set_header:{total:0,hash:""}}
+    ) or (
       (.block_id | type == "object")
       and (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$"))
       and ((.block_id.parts // .block_id.part_set_header) as $parts
@@ -629,6 +632,13 @@ restore_backup() (
     printf 'READY validator recovery material restored for %s from %s\n' "$node" "$archive"
   fi
 )
+
+# Recovery uses the same archive and identity validators as ordinary restore.
+# Sourcing exposes those functions without loading a role file or dispatching
+# an operation. It does not authorize restoring or starting a signer.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
 
 if [[ "${GDC_VALIDATOR_BACKUP_TEST_MODE:-false}" == true ]]; then
   case "${1:-}" in

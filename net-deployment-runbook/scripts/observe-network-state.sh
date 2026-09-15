@@ -8,6 +8,7 @@ usage() { echo "Usage: $0 --bootstrap-file FILE --bootstrap-url URL --chain-id I
 die() { printf 'network_observation_%s: %s\n' "$1" "$2" >&2; exit 1; }
 
 BOOTSTRAP=''; BOOTSTRAP_URL=''; CHAIN_ID=''; RUN_ID=''; OUTPUT=''
+SOURCE_RPC=''
 SELECTION_POLICY_ID='net-info-software-majority/v1'
 while (($#)); do
   case "$1" in
@@ -16,6 +17,7 @@ while (($#)); do
     --chain-id) CHAIN_ID="${2:-}"; shift 2 ;;
     --run-id) RUN_ID="${2:-}"; shift 2 ;;
     --output) OUTPUT="${2:-}"; shift 2 ;;
+    --source-rpc) SOURCE_RPC="${2%/}"; shift 2 ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -48,6 +50,13 @@ quorum_min="$(jq -r --arg chain "$CHAIN_ID" '.networks[$chain].minimum_valid_obs
 root_min="$(jq -r --arg chain "$CHAIN_ID" '.networks[$chain].minimum_independent_discovery_roots // .default.minimum_independent_discovery_roots' "$QUORUM_POLICY_FILE")"
 quorum_policy_id="$(jq -r .policy_id "$QUORUM_POLICY_FILE")"
 quorum_policy_sha256="$(sha256sum "$QUORUM_POLICY_FILE" | awk '{print $1}')"
+if [[ -n "$SOURCE_RPC" ]]; then
+  jq -e --arg rpc "$SOURCE_RPC" '[.seeds[] | select((.rpc | rtrimstr("/")) == $rpc)] | length == 1' "$BOOTSTRAP" >/dev/null \
+    || die source_invalid 'operator source must identify exactly one Bootstrap seed'
+  SELECTION_POLICY_ID=operator-source/v1
+  quorum_scope=operator_source
+  quorum_min=1; root_min=1
+fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
@@ -92,6 +101,7 @@ declare -a discovered_peers=()
 for ((index=0; index<seed_count; index++)); do
   node_id="$(jq -r ".seeds[$index].node_id" "$BOOTSTRAP")"
   rpc="$(jq -r ".seeds[$index].rpc" "$BOOTSTRAP")"
+  [[ -z "$SOURCE_RPC" || "${rpc%/}" == "$SOURCE_RPC" ]] || continue
   explicit_api="$(jq -r ".seeds[$index].api // empty" "$BOOTSTRAP")"
   api="${explicit_api:-$(derived_api "$rpc" || true)}"
   status_file="$tmp/status-$index.json"
@@ -127,7 +137,9 @@ for ((index=0; index<seed_count; index++)); do
   # must not depend on that seed's DAPI availability.
   root_status=usable
   root_reason=none
-  if ! net_info_remote_ip="$(fetch_json_with_remote_ipv4 "${rpc%/}/net_info" "$net_info_file")"; then
+  if [[ -n "$SOURCE_RPC" ]]; then
+    : # Explicit authority never acquires extra runtime votes from gossip.
+  elif ! net_info_remote_ip="$(fetch_json_with_remote_ipv4 "${rpc%/}/net_info" "$net_info_file")"; then
     root_status=unavailable
     root_reason=net_info_endpoint
   elif ! is_public_ipv4 "$net_info_remote_ip" || [[ "$net_info_remote_ip" != "$seed_remote_ip" ]]; then
@@ -288,7 +300,12 @@ fi
 excluded_observations="$(jq -cn --argjson seeds "$seed_excluded" --argjson seed_votes "$seed_votes_excluded" --argjson peers "$peer_excluded" '$seeds + $seed_votes + $peers | unique_by([.node_id,.remote_ip,.status,.reason]) | sort_by([.node_id,.remote_ip,.reason])')"
 printf '%s\n' "${runtime_observations[@]}" | jq -cs . >"$tmp/runtime-observations.json"
 authority_file="$tmp/runtime-authority.json"
-if ! "$ROOT/scripts/select-runtime-majority.sh" --observations "$tmp/runtime-observations.json" --output "$authority_file" --minimum-quorum "$quorum_min" --minimum-independent-discovery-roots "$root_min" >/dev/null; then
+if [[ -n "$SOURCE_RPC" ]]; then
+  jq -e 'length == 1' "$tmp/runtime-observations.json" >/dev/null || die source_unavailable 'operator source did not establish a healthy exact runtime'
+  jq --arg rpc "$SOURCE_RPC" '.[0] | {state:"operator_selected",minimum_quorum:1,source_rpc:$rpc,
+    selected:{remote_ips:[.remote_ip],tuple:{core:.core,dapi:.dapi}},
+    excluded_observations:[],conflicting_node_ids:[],conflicting_remote_ips:[]}' "$tmp/runtime-observations.json" >"$authority_file"
+elif ! "$ROOT/scripts/select-runtime-majority.sh" --observations "$tmp/runtime-observations.json" --output "$authority_file" --minimum-quorum "$quorum_min" --minimum-independent-discovery-roots "$root_min" >/dev/null; then
   authority="$(jq -c --argjson excluded "$excluded_observations" --argjson nodes "$peer_conflicting_node_ids" --argjson ips "$peer_conflicting_remote_ips" '
     .excluded_observations = $excluded |
     .conflicting_node_ids = ((.conflicting_node_ids + $nodes) | unique | sort) |
@@ -333,6 +350,10 @@ quorum_policy="$(jq -cn --arg id "$quorum_policy_id" --arg scope "$quorum_scope"
   --argjson roots "$root_min" '{policy_id:$id,source:"runbook_local",scope:$scope,minimum_valid_observations:$minimum,minimum_independent_discovery_roots:$roots,definition_sha256:$sha}')"
 policy="$(jq -cn --arg id "$SELECTION_POLICY_ID" --argjson quorum_policy "$quorum_policy" --argjson authority "$authority" --argjson peers "$peers_json" --argjson excluded "$excluded_observations" '{policy_id:$id,mode:"strict_majority",minimum_valid_observations:$authority.minimum_quorum,maximum_age_seconds:600,quorum_policy:$quorum_policy,authority:$authority,discovered_peers:$peers,excluded_observations:$excluded}')"
 policy_sha256="$(jq -cS . <<<"$policy" | sha256sum | awk '{print $1}')"
+if [[ -n "$SOURCE_RPC" ]]; then
+  policy="$(jq -c --arg rpc "$SOURCE_RPC" '.mode="operator_source" | .source_rpc=$rpc | .quorum_policy.source="operator_cli"' <<<"$policy")"
+  policy_sha256="$(jq -cS . <<<"$policy" | sha256sum | awk '{print $1}')"
+fi
 policy="$(jq -c --arg sha "$policy_sha256" '. + {policy_sha256:$sha}' <<<"$policy")"
 # network_state_id identifies executable network semantics. Availability,
 # discovery inventory, quorum counts, timestamps, and representative origin
@@ -340,6 +361,7 @@ policy="$(jq -c --arg sha "$policy_sha256" '. + {policy_sha256:$sha}' <<<"$polic
 # CometBFT is bundled by the exact Core commit; its observed version is kept
 # on the representative origin while its executable identity is transitive.
 state_basis="$(jq -cn --arg policy "$SELECTION_POLICY_ID" --arg quorum_policy "$quorum_policy_id" --arg quorum_scope "$quorum_scope" --argjson quorum_min "$quorum_min" --argjson root_min "$root_min" --arg bootstrap_url "$BOOTSTRAP_URL" --arg chain "$CHAIN_ID" --arg genesis "$genesis_sha256" --argjson core "$(jq -c .core <<<"$runtime")" --argjson dapi "$(jq -c .dapi <<<"$runtime")" '{selection_policy_id:$policy,quorum_policy:{policy_id:$quorum_policy,scope:$quorum_scope,minimum_valid_observations:$quorum_min,minimum_independent_discovery_roots:$root_min},network:{bootstrap_url:$bootstrap_url,chain_id:$chain,genesis_sha256:$genesis},runtime:{core:({application_name:"inference-chain"} + $core),dapi:({application_name:"decentralized-api"} + $dapi),cometbft:{binding:"transitive-to-exact-core-commit"}}}' | jq -cS .)"
+[[ -z "$SOURCE_RPC" ]] || state_basis="$(jq -cS --arg rpc "$SOURCE_RPC" '. + {operator_source_rpc:$rpc}' <<<"$state_basis")"
 network_state_id="$(printf '%s\n' "$state_basis" | sha256sum | awk '{print $1}')"
 document="$(jq -cn --arg run_id "$RUN_ID" --arg observed_at "$observed_at" --arg expires_at "$expires_at" --arg state_id "$network_state_id" \
   --argjson bootstrap "$bootstrap" --argjson policy "$policy" --argjson seeds "$seeds_json" --argjson selected "$selected" --argjson runtime "$runtime" \

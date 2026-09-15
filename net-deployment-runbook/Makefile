@@ -144,7 +144,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy
+test: site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-network-bootstrap.py
 	@./scripts/test-network-bootstrap-shell.sh
@@ -301,13 +301,31 @@ test-join-cleanroom:
 
 test-join-dind: bats-dind
 
-test-recovery-contract:
+test-recovery-contract: test-recover-incident
 	@python3 ./scripts/test-network-recovery-schemas.py
 	@./scripts/test-network-recovery-contract.sh
+
+.PHONY: test-recover-incident
+.PHONY: test-command-results
+test-command-results:
+	@bash ./scripts/test-command-results.sh
 
 .PHONY: test-participants-proxy
 test-participants-proxy:
 	@node ./scripts/test-participants-proxy.mjs
+
+test-recover-incident:
+	@bash ./scripts/test-recover-incident.sh
+	@bash ./scripts/test-host-peers.sh
+	@bash ./scripts/test-same-host-restore.sh
+
+.PHONY: test-recover-incident-runtime
+test-recover-incident-runtime:
+	@bash ./scripts/test-recover-incident-runtime.sh
+
+.PHONY: test-recover-incident-services-runtime
+test-recover-incident-services-runtime:
+	@bash ./scripts/test-recover-incident-services-runtime.sh
 
 test-recovery-rehearsal:
 	@./scripts/test-network-recovery-rehearsal.sh --manifest "$(manifest)" --lab-approval "$(lab_approval)" --evidence-dir "$(evidence_dir)" --timeout-seconds "$(timeout_seconds)"

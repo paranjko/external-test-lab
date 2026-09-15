@@ -11,6 +11,8 @@ else
 fi
 
 GDC_LAUNCHER_EXIT_RECORDED=false
+GDC_END_COMMAND=''
+GDC_END_PID="$BASHPID"
 
 record_join_terminal_result() {
   local outcome="$1" phase="$2" category="$3" reason="$4" exit_code="$5" mutation="$6" signer_state="$7" resume="$8" profile_sha='null' input
@@ -32,7 +34,7 @@ record_join_terminal_result() {
     --argjson exit_code "$exit_code" --arg mutation "$mutation" --arg signer_state "$signer_state" --arg resume "$resume" \
     --argjson profile_sha "$profile_sha" \
     '{schema_version:1,kind:"gdc-host-join-result",outcome:$outcome,phase:$phase,category:$category,reason:$reason,exit_code:$exit_code,mutation:$mutation,signer_state:$signer_state,resume:$resume,join_profile_sha256:$profile_sha,evidence:[]}' >"$input"
-  "$ROOT/scripts/record-join-result.sh" --output "$GDC_JOIN_RESULT_OUTPUT" --input "$input" >/dev/null
+  "$ROOT/scripts/record-join-result.sh" --output "$GDC_JOIN_RESULT_OUTPUT" --input "$input" >/dev/null || return $?
   rm -f "$input"
 }
 
@@ -87,6 +89,17 @@ on_launcher_exit() {
   trap - EXIT
   set +e
   record_launcher_failure "$rc"
+  # A phase pipeline runs in a subshell; only the outer command owns END.
+  if [[ -n "$GDC_END_COMMAND" && "$BASHPID" == "$GDC_END_PID" ]]; then
+    if [[ "$GDC_END_COMMAND" == 'host join' && "${plan_only:-false}" == true ]]; then
+      GDC_END_COMMAND+=' PLAN'
+    fi
+    if (( rc == 0 )); then
+      printf 'END %s SUCCESS\n' "$GDC_END_COMMAND"
+    else
+      printf 'END %s FAILED exit=%s\n' "$GDC_END_COMMAND" "$rc" >&2
+    fi
+  fi
   exit "$rc"
 }
 
@@ -213,7 +226,6 @@ run_phase() {
     printf 'BEGIN phase=%s timestamp=%s run_id=%s\n' "$phase" "$(date -u +%FT%TZ)" "$run_id"
     "$@"
     rc=$?
-    printf 'END phase=%s status=%s timestamp=%s\n' "$phase" "$rc" "$(date -u +%FT%TZ)"
     exit "$rc"
   } 2>&1 | tee -a "$log"
   rc=${PIPESTATUS[0]}
@@ -252,6 +264,7 @@ run_phase() {
       fi
     fi
   fi
+  printf 'END phase=%s status=%s timestamp=%s\n' "$phase" "$rc" "$(date -u +%FT%TZ)" | tee -a "$log"
   set -e
   return "$rc"
 }
@@ -375,6 +388,10 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 network gate-b verify
   ./gdc.sh --release v2026.07.23 network confirmation-poc verify
   ./gdc.sh --release v2026.08.06 network upgrade verify <proposal-id>
+  ./gdc.sh network recover bootstrap <SSH_ALIAS>  # GNK-LAB-2026-0001; interactive confirmation
+  ./gdc.sh network recover handoff|check <SSH_ALIAS> --hosts <RETURNING_ALIAS,...>
+  ./gdc.sh host join --source-rpc <RPC_URL> --pex false --restore <ARCHIVE> --public-host <HOST> <SSH_ALIAS>
+  ./gdc.sh host peers --pex true <SSH_ALIAS>
   ./gdc.sh network recover inspect --incident <INCIDENT_ID> --host <SSH_ALIAS> --run-id <RUN_ID> --output <ABSOLUTE_PATH>
   ./gdc.sh network recover prepare|freeze|stage|activate|retire|abort --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --approval <ABSOLUTE_PATH>
   ./gdc.sh network recover status --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH>
@@ -684,6 +701,7 @@ case "$COMMAND" in
     case "$subcommand" in
       join) COMMAND='join' ;;
       backup) COMMAND='host-backup' ;;
+      peers) COMMAND='host-peers' ;;
       upgrade)
         upgrade_action="${1:-}"; shift || true
         [[ "$upgrade_action" =~ ^(prepare|watch)$ ]] || { usage; exit 2; }
@@ -696,9 +714,25 @@ case "$COMMAND" in
     ;;
 esac
 case "$COMMAND" in
+  join) GDC_END_COMMAND='host join' ;;
+  node) [[ "${1:-}" != reset ]] || GDC_END_COMMAND='host reset' ;;
+  host-peers) GDC_END_COMMAND='host peers' ;;
+  network-recover)
+    case "${1:-}" in bootstrap|check) GDC_END_COMMAND="$1" ;; esac
+    ;;
+esac
+case "$COMMAND" in
+  host-peers)
+    bash "$ROOT/scripts/host-peers.sh" "$@"
+    ;;
   network-recover)
     [[ "$RELEASE_OPTION_SEEN" == false && "$COMPOSITION_OPTION_SEEN" == false && "$MODEL_OPTION_SEEN" == false ]] \
       || { echo 'network recover does not accept --release, --composition, or --model; runtime inputs come from the recovery manifest' >&2; exit 2; }
+    if [[ "${1:-}" =~ ^(bootstrap|handoff|check)$ ]]; then
+      if [[ "$1" == handoff ]]; then exec bash "$ROOT/scripts/recover-incident.sh" "$@"; fi
+      bash "$ROOT/scripts/recover-incident.sh" "$@"
+      exit 0
+    fi
     recovery_phase="${1:-}"
     shift || true
     recovery_cli_args=("$@")
@@ -1138,6 +1172,8 @@ case "$COMMAND" in
     esac
     ;;
   join)
+    join_source_rpc='' join_pex=''
+    join_source_args=()
     join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_chain_id=gonka-devnet-community skip_qualification=false verification=false plan_only=false
     # JOIN derives its exact compatible runtime from the first healthy
     # Bootstrap seed. An operator-selected release or composition could
@@ -1153,6 +1189,12 @@ case "$COMMAND" in
         --skip-qualification) skip_qualification=true ;;
         --verification) verification=true ;;
         --plan) plan_only=true ;;
+        --pex)
+          [[ -z "$join_pex" && "${2:-}" =~ ^(true|false)$ ]] || { echo 'host join --pex expects true or false once' >&2; exit 2; }
+          join_pex="$2"; shift ;;
+        --source-rpc)
+          [[ -z "$join_source_rpc" && "${2:-}" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?(/[A-Za-z0-9/_-]*)?$ ]] || { echo 'host join --source-rpc expects one RPC URL' >&2; exit 2; }
+          join_source_rpc="${2%/}"; join_source_args=(--source-rpc "$join_source_rpc"); shift ;;
         --resume) join_resume_run="${2:-}"; shift ;;
         --old-signer-fence)
           join_old_signer_fence="${2:-}"
@@ -1239,6 +1281,10 @@ case "$COMMAND" in
       join_run="$GDC_HOME/runs/$join_resume_run/join-$join_alias"
       join_resume_verification="$("$ROOT/scripts/verify-join-resume-inputs.sh" --run-dir "$join_run" \
         --run-id "$join_resume_run" --node-name "$join_alias" --public-host "$join_public_host")"
+      jq -e --arg source "$join_source_rpc" --arg pex "$join_pex" '
+        ($source == "" or .spec.state_acquisition.trust_authority.rpc_url == $source) and
+        ($pex == "" or .spec.state_acquisition.pex == ($pex == "true"))
+      ' "$join_run/join-profile.v1.json" >/dev/null || { echo 'JOIN resume options differ from the retained profile' >&2; exit 2; }
       printf '%s\n' "$join_resume_verification"
       if [[ "$plan_only" == true ]]; then
         [[ -z "$join_old_signer_fence" ]] || {
@@ -1310,7 +1356,7 @@ case "$COMMAND" in
     join_observation="$STATE/network-observation.v1.json"
     run_join_preflight software-observation unavailable network seed-observer \
       'No Bootstrap seed established a complete healthy runtime identity.' \
-      "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID" --output "$join_observation"
+      "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID" --output "$join_observation" "${join_source_args[@]}"
     GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$join_observation")"
     GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$join_observation")"
     GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$join_observation")"
@@ -1328,6 +1374,7 @@ case "$COMMAND" in
     [[ -z "$join_restore_archive" ]] || join_operation=restore
     join_profile_args=(--observation "$join_observation" --components "$join_components" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_profile")
     [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
+    [[ -z "$join_pex" ]] || join_profile_args+=(--pex "$join_pex")
     [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
     run_join_preflight join-profile unavailable profile join-profile \
       'The observed network could not be compiled into an executable Join Profile.' \
@@ -1403,7 +1450,7 @@ case "$COMMAND" in
     run_join_preflight lineage-preflight refused lineage lineage-preflight \
       'Independent RPC lineage and trust were not established for native P2P state sync.' \
       "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$join_bootstrap_file" --observation "$join_observation" \
-        --receipt "$join_lineage_receipt" --env "$join_lineage_env"
+        --receipt "$join_lineage_receipt" --env "$join_lineage_env" "${join_source_args[@]}"
     # The preflight writes fixed-name, shell-quoted values only after it has
     # bound them to the observed runtime fingerprint and two fault domains.
     # shellcheck disable=SC1090
@@ -1451,6 +1498,7 @@ case "$COMMAND" in
         # A bootstrap can rotate between attempts. Generated JOIN role inputs
         # therefore never bypass preparation on a new invocation.
         [[ "${GDC_JOIN_ROLE_INPUT:-false}" != true ]] || exit 1
+        [[ -z "$join_source_rpc" ]] || exit 1
         [[ " ${GDC_NODE_ALIASES:-} " == *" $join_alias "* ]] || exit 1
         [[ -z "$join_public_host" ]] || [[ "$(topology_value "${GDC_NODE_PUBLIC_HOSTS:-}" "$join_alias" || true)" == "$join_public_host" ]] || exit 1
         [[ -z "$join_gpu_alias" ]] && exit 0
@@ -1466,6 +1514,7 @@ case "$COMMAND" in
       join_input="$STATE/role-inputs/join-$join_alias"
       join_config_args=(--output "$join_input" --ssh-alias "$join_alias")
       join_config_args+=(--bootstrap-file "$join_bootstrap_file")
+      join_config_args+=("${join_source_args[@]}")
       [[ -n "$join_public_host" ]] && join_config_args+=(--public-host "$join_public_host")
       [[ -n "$join_gpu_alias" ]] && join_config_args+=(--gpu-ssh-alias "$join_gpu_alias")
       [[ -n "$join_p2p_port" ]] && join_config_args+=(--p2p-port "$join_p2p_port")

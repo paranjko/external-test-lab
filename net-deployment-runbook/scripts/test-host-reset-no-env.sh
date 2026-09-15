@@ -16,6 +16,7 @@ printf '%s\n' \
   'if [[ "${1:-}" == -G && -n "${GDC_TEST_SSH_HOST:-}" ]]; then printf "hostname %s\\n" "$GDC_TEST_SSH_HOST"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_EXTERNAL_ML_ENDPOINT:-}" && "$*" == *node-config.json* ]]; then printf "%s\\n" "$GDC_TEST_EXTERNAL_ML_ENDPOINT"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_LINK_RECORD:-}" && "$*" == *gdc-ml-link.json* ]]; then printf "%s\\n" "$GDC_TEST_LINK_RECORD"; exit 0; fi' \
+  'if [[ "$*" == *"--remote capture"* ]]; then cat >/dev/null; exit 0; fi' \
   'if [[ "${GDC_TEST_EXEC_REMOTE:-false}" == true && "$*" == *"bash -s" ]]; then command="${!#}"; PATH="${GDC_TEST_REMOTE_BIN}:$PATH" bash -c "$command"; exit $?; fi' \
   'exit 0' >"$fake_bin/ssh"
 chmod +x "$fake_bin/ssh"
@@ -49,6 +50,17 @@ grep -Fq 'END phase=node-reset-gdc-node0 status=0' "$tmp/output"
 [[ ! -e "$home/.env" ]]
 [[ ! -e "$home/gdc-node0/state/active-role-config" ]]
 [[ ! -e "$home/gdc-node0/state/role-inputs" ]]
+
+# A completed incident is history, not a permanent reset dispatcher.
+historical_home="$tmp/historical-recovery"
+mkdir -p "$historical_home/recovery-GNK-LAB-2026-0001/hosts"
+touch "$historical_home/recovery-GNK-LAB-2026-0001/confirmed" \
+  "$historical_home/recovery-GNK-LAB-2026-0001/complete"
+printf '{}\n' >"$historical_home/recovery-GNK-LAB-2026-0001/hosts/fixture-restored.json"
+env -u GDC_ENV -u GDC_NODE_ALIASES GDC_HOME="$historical_home" PATH="$fake_bin:$PATH" \
+  "$ROOT/gdc.sh" host reset fixture-restored >"$tmp/historical-reset-output"
+grep -Fq 'END phase=node-reset-fixture-restored status=0' "$tmp/historical-reset-output"
+[[ -f "$historical_home/recovery-GNK-LAB-2026-0001/hosts/fixture-restored.json" ]]
 
 # A second reset against an already-empty Compose project is normal. Docker
 # emits a warning for that state, but the operator command must remain quiet

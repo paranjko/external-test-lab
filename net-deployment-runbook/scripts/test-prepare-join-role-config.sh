@@ -62,3 +62,10 @@ grep -Fxq 'TELEGRAM_BOT_PUBLIC_HOST=one.example' "$temporary/edge-no-roles.env"
 grep -Fxq 'PUBLIC_GRAFANA_PROMETHEUS_URL=https://one.example/ops-prometheus' "$temporary/edge-no-roles.env"
 ! grep -Rq 'JOIN_BOOTSTRAP_FORMAT\|join-bootstrap\|topology.env\|profile/genesis.env' "$ROOT/scripts/prepare-join-role-config.sh"
 printf 'PASS one-file JOIN role preparation accepts arbitrary local aliases without topology import\n'
+INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/source.env" \
+  --ssh-alias mitch-demo --public-host host.example.net --bootstrap-file "$temporary/bootstrap.json" --source-rpc http://two.example:8000/chain-rpc
+(
+  source "$temporary/source.env"
+  [[ "$GDC_JOIN_NETWORK_HOST" == two.example && "$SEED_NODE_RPC_URL" == http://two.example:8000/chain-rpc && "$SEED_API_URL" == http://two.example:8000 ]]
+)
+printf 'PASS explicit JOIN source also selects the membership/API role, not the first seed\n'

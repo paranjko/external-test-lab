@@ -42,6 +42,10 @@ validate() {
     ) and
     (.spec.state_acquisition.mode | IN("pending","native_p2p_state_sync")) and
     (.spec.state_acquisition.providers | type == "array") and
+    (.spec.state_acquisition | (has("pex") | not) or (.pex | type == "boolean")) and
+    (.spec.state_acquisition | (has("trust_authority") | not) or
+      (.trust_authority | type == "object" and (keys | sort) == ["kind","rpc_url"] and .kind == "operator_source" and
+        (.rpc_url | test("^https?://[A-Za-z0-9.-]+(:[0-9]+)?/chain-rpc$")))) and
     ((.spec.state_acquisition.mode == "pending" and (.spec.state_acquisition.providers | length == 0) and .spec.state_acquisition.minimum_providers == 0) or
      (.spec.state_acquisition.mode == "native_p2p_state_sync" and (.spec.state_acquisition.providers | length >= 2) and .spec.state_acquisition.minimum_providers >= 2)) and
     .spec.activation_policy.application_required_for_complete == true and .spec.activation_policy.signer_allowed_in_profile == false and
@@ -89,6 +93,9 @@ case "${1:-}" in
       type == "object" and
       .network.chain_id and .network.genesis_sha256 and .network.bootstrap_sha256 and .network.bootstrap_url and
       .components.core.observed == $observation[0].runtime.core and .components.dapi.observed == $observation[0].runtime.dapi and
+      (if $observation[0].policy.mode == "operator_source" then
+        .state_acquisition.trust_authority == {kind:"operator_source",rpc_url:$observation[0].policy.source_rpc}
+       else (.state_acquisition | has("trust_authority") | not) end) and
       (.seeds.usable | type == "array" and length >= 1) and (.seeds.unavailable | type == "array") and
       .identity.mode == (if $op == "new" then "generate" else "restore" end)
     ' "$spec" >/dev/null || die 'spec is not bound exactly to the observation and operation'

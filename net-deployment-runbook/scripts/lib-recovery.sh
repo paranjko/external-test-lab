@@ -1488,7 +1488,7 @@ recovery_host_inspect_attempt() {
   jq -e '.result.signed_header.header.height == ($h|tostring)' --argjson h "$height1" "$commit_file" >/dev/null 2>&1 || return 1
   app_hash="$(jq -er '.result.signed_header.header.app_hash | ascii_downcase' "$commit_file")" || return 1
   signers_file="$work/signers-h.json"
-  jq -c '[.result.signed_header.commit.signatures[]? | select(.block_id_flag == 2 and .signature != null) | .validator_address]' \
+  jq -c '[.result.signed_header.commit.signatures[]? | select(.block_id_flag == 2 and .signature != null) | .validator_address | ascii_downcase]' \
     "$commit_file" >"$signers_file" || return 1
   commit_verified="$(jq -r 'length > 0' "$signers_file")" || return 1
   recovery_inspect_append_observed "$list_file" commit_h "$commit_file" "$(date -u +%FT%TZ)" "ssh:$host:commit" "$height1" || return 1
@@ -1511,7 +1511,7 @@ recovery_host_inspect_attempt() {
 
   total_power="$(jq -r '.[].voting_power' "$validators_h1_file" | recovery_sum_power)" || return 1
   available_power="$(jq -r --slurpfile signers "$signers_file" '
-      ($signers[0] // []) as $s | .[] | select(.address as $a | $s | index($a)) | .voting_power
+      ($signers[0] // []) as $s | .[] | select((.address | ascii_downcase) as $a | $s | index($a)) | .voting_power
     ' "$validators_h1_file" | recovery_sum_power)" || return 1
   required_power="$(recovery_strict_required_power "$total_power")" || return 1
   [[ "$available_power" -ge "$required_power" ]] && quorum_recoverable=true
@@ -1658,26 +1658,47 @@ recovery_local_inspect() {
 recovery_singleton_budget() {
   local manifest="$1" host="$2" first_counted max_blocks deadline now
   local current_height consumed remaining_blocks remaining_seconds expired
-  local item phase qualifier receipt height_candidate
+  local item phase qualifier receipt height_candidate evidence_host hosts phase_root manifest_sha
+  manifest_sha="$(recovery_sha256 "$manifest")" || return 1
+  hosts="$(jq -er --arg host "$host" '[.transition.host, .hosts.bindings[].host, $host] | unique | .[]' "$manifest")" || return 1
   first_counted="$(jq -er '.singleton.first_counted_height' "$manifest")" || return 1
   max_blocks="$(jq -er '.singleton.singleton_max_blocks' "$manifest")" || return 1
   deadline="$(jq -er '.singleton.singleton_deadline_utc' "$manifest")" || return 1
   deadline="$(recovery_epoch "$deadline")" || return 1
   now="$(date -u +%s)"
-  current_height="$first_counted"
-  for item in activate rejoin resume:signers resume:poc resume:handoff verify:consensus verify:epochs verify:service; do
-    phase="${item%%:*}"; if [[ "$item" == *:* ]]; then qualifier="${item#*:}"; else qualifier=''; fi
-    receipt="$(recovery_latest_receipt "$host" "$phase" "$qualifier" 2>/dev/null || true)"
-    [[ -n "$receipt" ]] || continue
-    recovery_validate_json_schema "$(recovery_receipt_schema)" "$receipt" >/dev/null 2>&1 || continue
-    height_candidate="$(jq -r '
-      [(.details.activation.subsequent_commits // [])[-1].height, .details.activation.first_commit.height,
-       .details.state_sync.common_height] | map(select(. != null)) | if length > 0 then max else empty end
-    ' "$receipt" 2>/dev/null)"
-    [[ -n "$height_candidate" ]] || continue
-    (( height_candidate > current_height )) && current_height="$height_candidate"
-  done
-  consumed=$(( current_height > first_counted ? current_height - first_counted : 0 ))
+  current_height=0
+  # The singleton belongs to the run, not the Host asking to rejoin. Keep
+  # all prior observations: a later refused/incomplete attempt cannot erase
+  # the height already proved by an earlier successful attempt.
+  while IFS= read -r evidence_host; do
+    [[ "$evidence_host" =~ ^[a-z0-9][a-z0-9.-]{0,62}$ ]] || return 1
+    for item in activate checkpoint retire rejoin resume:signers resume:poc resume:handoff verify:consensus verify:epochs verify:service; do
+      phase="${item%%:*}"; if [[ "$item" == *:* ]]; then qualifier="${item#*:}"; else qualifier=''; fi
+      phase_root="$(recovery_evidence_root)/runs/$RECOVERY_RUN_ID/recovery/$evidence_host/$(recovery_phase_storage_path "$phase" "$qualifier")"
+      [[ -e "$phase_root" || -L "$phase_root" ]] || continue
+      recovery_safe_directory "$phase_root" read || return 1
+      for receipt in "$phase_root"/attempt-*/receipt.json "$phase_root"/attempt-*/checkpoint.json; do
+        [[ -e "$receipt" || -L "$receipt" ]] || continue
+        recovery_safe_directory "$(dirname "$receipt")" read || return 1
+        recovery_validate_json_schema "$(recovery_receipt_schema)" "$receipt" >/dev/null 2>&1 || return 1
+        jq -e --arg run "$RECOVERY_RUN_ID" --arg host "$evidence_host" --arg phase "$phase" --arg manifest "$manifest_sha" '
+          .run_id == $run and .host == $host and .phase == $phase and .manifest_sha256 == $manifest
+        ' "$receipt" >/dev/null || continue
+        height_candidate="$(jq -r '
+          [.details.activation.subsequent_commits[]?.height, .details.activation.first_commit.height,
+           .details.activation.native_signer_state.height, .details.state_sync.common_height,
+           .checkpoint.snapshot_height, .checkpoint.supporting_light_blocks[]?.height,
+           .details.retirement.execution_height, .observed_hashes[]?.height]
+          | map(select(. != null)) | if length > 0 then max else empty end
+        ' "$receipt" 2>/dev/null)" || return 1
+        [[ -n "$height_candidate" ]] || continue
+        (( height_candidate > current_height )) && current_height="$height_candidate"
+      done
+    done
+  done <<<"$hosts"
+  # H+1 itself consumes the first block, not zero blocks.
+  consumed=$(( current_height >= first_counted ? current_height - first_counted + 1 : 0 ))
+  (( current_height >= first_counted )) || current_height="$first_counted"
   remaining_blocks=$(( max_blocks > consumed ? max_blocks - consumed : 0 ))
   remaining_seconds=$(( deadline > now ? deadline - now : 0 ))
   expired=false
@@ -1771,11 +1792,13 @@ recovery_local_status() {
   details="$(jq -cn --argjson latest "$latest" --argjson budget "$budget" '
     ($budget != null and $budget.expired) as $expired
     | {status:{
-      operator_state:(if $expired then "EXPIRED" elif $latest == null then "NEW" else $latest.state end),
+      operator_state:(if $budget == null then "INCONCLUSIVE" elif $expired then "EXPIRED"
+        elif $latest == null then "NEW" else $latest.state end),
       runtime_state:"unknown",database_state:"unknown",
       remaining_seconds:(if $budget == null then null else $budget.remaining_seconds end),
       remaining_blocks:(if $budget == null then null else $budget.remaining_blocks end),
-      missing_gate:(if $expired then "singleton window expired: abort or expiry-stop only"
+      missing_gate:(if $budget == null then "singleton budget evidence is invalid: inspect retained receipts before any mutation"
+        elif $expired then "singleton window expired: abort or expiry-stop only"
         elif $latest == null then "inspect" else ("review " + $latest.selector + " receipt before the next mutation") end)
     }} + (if $budget == null then {} else {singleton_budget:$budget} end)
   ')"

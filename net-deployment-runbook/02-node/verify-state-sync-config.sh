@@ -17,7 +17,8 @@ trust_hash="$(jq -er '.bootstrap.trust.block_id' "$receipt")"
 # Receipts intentionally retain network URLs without that presentation detail,
 # so normalize both receipt records to the value written into config.toml.
 rpc_1="$(jq -er '.fault_domains[0].rpc_url | rtrimstr("/") + "/"' "$receipt")"
-rpc_2="$(jq -er '.fault_domains[1].rpc_url | rtrimstr("/") + "/"' "$receipt")"
+rpc_2="$(jq -er 'if .trust_authority.kind == "operator_source" and (.fault_domains | length) == 1 and .trust_authority.rpc_url == .fault_domains[0].rpc_url
+  then .fault_domains[0].rpc_url else .fault_domains[1].rpc_url end | rtrimstr("/") + "/"' "$receipt")"
 peers="$(jq -er '[.bootstrap.snapshot.providers[] | sub("@tcp://"; "@")] | join(",")' "$receipt")"
 config_matches_receipt() {
   grep -Eq '^enable = true$' <<<"$config" &&

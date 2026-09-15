@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR/..
 set -Eeuo pipefail
 
 # Offline contract tests: no real ssh/docker/curl/inferenced/signer access;
@@ -989,13 +990,22 @@ assert_rc 'full fresh host inspect is schema-valid and evidence_complete' 0 bash
 ' _ "$HERE/scripts/lib-recovery.sh" "$fresh_inspect_home" "$ssh_fixture" "$TMP/fresh-status-count" "$fresh_inspect_out"
 
 # A stale evidence window refuses to unlock prepare even though every probe
-# succeeded; RECOVERY_INSPECT_MAX_EVIDENCE_AGE_SECONDS=0 makes any elapsed
-# time (even the probe sequence itself) count as stale, deterministically.
+# succeeded. Pin observation timestamps and advance the age-check clock by
+# one second: a fast runner can otherwise finish all probes in the same second.
 stale_inspect_home="$TMP/stale-inspect-home"; mkdir -m 700 "$stale_inspect_home"
 stale_inspect_out="$TMP/out/stale-inspect.json"
 assert_rc 'stale evidence cannot unlock prepare' 0 bash -c '
   source "$1"
   export GDC_HOME="$2" RECOVERY_TEST_SSH_FIXTURE="$3" RECOVERY_INSPECT_MAX_EVIDENCE_AGE_SECONDS=0
+  fixture_observed_at="$(command date -u +%FT%TZ)"
+  fixture_observed_epoch="$(recovery_epoch "$fixture_observed_at")"
+  date() {
+    case "$*" in
+      "-u +%FT%TZ") printf "%s\n" "$fixture_observed_at" ;;
+      "-u +%s") printf "%s\n" "$((fixture_observed_epoch + 1))" ;;
+      *) command date "$@" ;;
+    esac
+  }
   export RECOVERY_FIXTURE_HEIGHT1=100 RECOVERY_FIXTURE_HEIGHT2=100 RECOVERY_FIXTURE_ARCHIVE_OK=1
   export RECOVERY_FIXTURE_VALIDATORS_H1="aaaa1:34,aaaa2:34,aaaa3:34,aaaa4:33" RECOVERY_FIXTURE_SIGNER_ADDRS=aaaa1
   export RECOVERY_FIXTURE_STATE_FILE="$4"
@@ -1080,6 +1090,26 @@ assert_rc 'a recoverable original quorum refuses to unlock prepare' 0 bash -c '
   RECOVERY_RUN_ID=quorum-run RECOVERY_HOST=x
   ! recovery_require_predecessor inspect x "" >/dev/null
 ' _ "$HERE/scripts/lib-recovery.sh" "$quorum_home" "$ssh_fixture" "$TMP/quorum-status-count" "$quorum_out"
+
+# Hex casing from independent RPC endpoints must not change quorum weight.
+for address_case in upper_commit upper_validators mixed; do
+  case_home="$TMP/quorum-$address_case"; mkdir -m 700 "$case_home"
+  assert_rc "quorum detection normalizes addresses ($address_case)" 0 bash -c '
+    source "$1"
+    export GDC_HOME="$2" RECOVERY_TEST_SSH_FIXTURE="$3"
+    export RECOVERY_FIXTURE_HEIGHT1=100 RECOVERY_FIXTURE_HEIGHT2=100 RECOVERY_FIXTURE_ARCHIVE_OK=1
+    case "$6" in
+      upper_commit) export RECOVERY_FIXTURE_VALIDATORS_H1="aaaa1:34,aaaa2:34,aaaa3:34,aaaa4:33" RECOVERY_FIXTURE_SIGNER_ADDRS="AAAA1,AAAA2,AAAA3" ;;
+      upper_validators) export RECOVERY_FIXTURE_VALIDATORS_H1="AAAA1:34,AAAA2:34,AAAA3:34,AAAA4:33" RECOVERY_FIXTURE_SIGNER_ADDRS="aaaa1,aaaa2,aaaa3" ;;
+      mixed) export RECOVERY_FIXTURE_VALIDATORS_H1="AaAa1:34,aAaA2:34,AAaa3:34,aaaa4:33" RECOVERY_FIXTURE_SIGNER_ADDRS="aAaA1,AaAa2,aaAA3" ;;
+    esac
+    export RECOVERY_FIXTURE_STATE_FILE="$4"
+    recovery_main inspect --incident GNK-LAB-2026-0001 --host x --run-id quorum-case --output "$5"
+    jq -e ".details.inspection.quorum_recoverable == true and .details.inspection.quorum_power.available_power == \"102\"
+      and .details.inspection.evidence_complete == false" "$5" >/dev/null
+    ! recovery_require_predecessor inspect x ""
+  ' _ "$HERE/scripts/lib-recovery.sh" "$case_home" "$ssh_fixture" "$case_home/count" "$TMP/out/$address_case.json" "$address_case"
+done
 
 # A host that would leak key material through an unexpected channel never
 # gets asked: the fixed catalog never sends a command matching that leak
@@ -1306,7 +1336,9 @@ assert_rc 'status shows EXPIRED with a zero remaining deadline once it is spent'
 # An exceeded block budget refuses independently of the (still open) deadline.
 block_budget_manifest="$TMP/block-budget-manifest.json"
 jq '.singleton.singleton_deadline_utc = "2099-01-01T00:00:00Z"
-    | .singleton.singleton_max_blocks = 5 | .singleton.first_counted_height = 100' \
+    | .singleton.singleton_max_blocks = 5 | .singleton.first_counted_height = 100
+    | .hosts.bindings += [(.hosts.bindings[0] | .host = "y" | .roles = ["returning"]
+      | .return_position = 1 | .participant = null | .approved_services = [])]' \
   "$status_manifest" >"$block_budget_manifest"
 chmod 600 "$block_budget_manifest"
 block_budget_manifest_sha="$(recovery_sha256 "$block_budget_manifest")"
@@ -1346,6 +1378,96 @@ assert_rc 'status shows EXPIRED with a zero remaining block budget once it is sp
   jq -e ".details.status.operator_state == \"EXPIRED\" and .details.status.remaining_blocks == 0
     and .details.state == \"EXPIRED\"" "$receipt" >/dev/null
 ' _ "$HERE/scripts/lib-recovery.sh" "$block_budget_home" "$block_budget_manifest"
+
+# The same run-wide budget must gate a returning host and its status.
+assert_rc 'returning host cannot bypass transition block budget' 0 bash -c '
+  source "$1"
+  export GDC_HOME="$2" RECOVERY_RUN_ID=block-budget-run
+  budget="$(recovery_singleton_budget "$3" y)"
+  jq -e ".expired == true and .remaining_blocks == 0 and .current_height == 200" <<<"$budget" >/dev/null
+  ! recovery_validate_singleton_budget "$3" y
+  recovery_main status --host y --run-id block-budget-run --manifest "$3"
+  jq -e ".details.status.operator_state == \"EXPIRED\"" "$GDC_HOME/runs/block-budget-run/recovery/y/status/attempt-1/receipt.json" >/dev/null
+' _ "$HERE/scripts/lib-recovery.sh" "$block_budget_home" "$block_budget_manifest"
+
+# An incomplete later attempt must not erase historical activation height.
+mkdir -p "$block_budget_home/runs/block-budget-run/recovery/x/activate/attempt-2"
+assert_rc 'incomplete activation retry cannot reset observed block budget' 0 bash -c '
+  source "$1"; export GDC_HOME="$2" RECOVERY_RUN_ID=block-budget-run
+  recovery_singleton_budget "$3" y | jq -e ".expired == true and .current_height == 200" >/dev/null
+' _ "$HERE/scripts/lib-recovery.sh" "$block_budget_home" "$block_budget_manifest"
+
+# Checkpoint artifacts contain the snapshot and supporting-header heights.
+checkpoint_budget_home="$TMP/checkpoint-budget-home"
+mkdir -p "$checkpoint_budget_home/runs/checkpoint-budget/recovery/x/checkpoint/attempt-1"
+jq --arg manifest "$block_budget_manifest_sha" '
+  .run_id = "checkpoint-budget" | .host = "x" | .manifest_sha256 = $manifest
+  | .checkpoint.manifest_sha256 = $manifest | .checkpoint.snapshot_height = 110 | .checkpoint.trust_height = 110
+  | .checkpoint.supporting_light_blocks |= map(.height += 100)
+' "$checkpoint_fixture" >"$checkpoint_budget_home/runs/checkpoint-budget/recovery/x/checkpoint/attempt-1/checkpoint.json"
+chmod 400 "$checkpoint_budget_home/runs/checkpoint-budget/recovery/x/checkpoint/attempt-1/checkpoint.json"
+assert_rc 'checkpoint artifact advances budget for returning hosts' 0 bash -c '
+  source "$1"; export GDC_HOME="$2" RECOVERY_RUN_ID=checkpoint-budget
+  recovery_singleton_budget "$3" y | jq -e ".expired == true and .current_height == 112" >/dev/null
+' _ "$HERE/scripts/lib-recovery.sh" "$checkpoint_budget_home" "$block_budget_manifest"
+
+# Governance execution also consumes blocks, even without activation evidence.
+retire_budget_home="$TMP/retire-budget-home"
+mkdir -p "$retire_budget_home/runs/retire-budget/recovery/x/retire/attempt-1"
+jq --arg manifest "$block_budget_manifest_sha" '
+  .run_id = "retire-budget" | .manifest_sha256 = $manifest
+  | .details.retirement.execution_height = 105
+' "$retire_good_receipt" >"$retire_budget_home/runs/retire-budget/recovery/x/retire/attempt-1/receipt.json"
+chmod 400 "$retire_budget_home/runs/retire-budget/recovery/x/retire/attempt-1/receipt.json"
+assert_rc 'retirement execution advances budget for returning hosts' 0 bash -c '
+  source "$1"; export GDC_HOME="$2" RECOVERY_RUN_ID=retire-budget
+  recovery_singleton_budget "$3" y | jq -e ".expired == true and .current_height == 105" >/dev/null
+' _ "$HERE/scripts/lib-recovery.sh" "$retire_budget_home" "$block_budget_manifest"
+
+# Count the first block itself and expire exactly on the final allowed block.
+for boundary in 99:5:false 100:4:false 103:1:false 104:0:true; do
+  IFS=: read -r observed_height expected_remaining expected_expired <<<"$boundary"
+  boundary_home="$TMP/boundary-$observed_height"
+  mkdir -p "$boundary_home/runs/boundary/recovery/x/retire/attempt-1"
+  jq --arg manifest "$block_budget_manifest_sha" --argjson height "$observed_height" '
+    .run_id = "boundary" | .manifest_sha256 = $manifest | .details.retirement.execution_height = $height
+  ' "$retire_good_receipt" >"$boundary_home/runs/boundary/recovery/x/retire/attempt-1/receipt.json"
+  chmod 400 "$boundary_home/runs/boundary/recovery/x/retire/attempt-1/receipt.json"
+  assert_rc "singleton first-counted boundary at $observed_height" 0 bash -c '
+    source "$1"; export GDC_HOME="$2" RECOVERY_RUN_ID=boundary
+    recovery_singleton_budget "$3" y | jq -e --argjson remaining "$4" --argjson expired "$5" \
+      ".remaining_blocks == \$remaining and .expired == \$expired" >/dev/null
+  ' _ "$HERE/scripts/lib-recovery.sh" "$boundary_home" "$block_budget_manifest" "$expected_remaining" "$expected_expired"
+done
+
+# A file at the expected path is not evidence for a different manifest/run/host.
+for foreign in run_id host manifest_sha256; do
+  foreign_home="$TMP/foreign-budget-$foreign"
+  mkdir -p "$foreign_home/runs/foreign-budget/recovery/x/retire/attempt-1"
+  jq --arg manifest "$block_budget_manifest_sha" --arg field "$foreign" '
+    .run_id = "foreign-budget" | .manifest_sha256 = $manifest | .details.retirement.execution_height = 105
+    | .[$field] = (if $field == "manifest_sha256" then ("f" * 64) else "foreign" end)
+  ' "$retire_good_receipt" >"$foreign_home/runs/foreign-budget/recovery/x/retire/attempt-1/receipt.json"
+  chmod 400 "$foreign_home/runs/foreign-budget/recovery/x/retire/attempt-1/receipt.json"
+  assert_rc "foreign $foreign cannot change the singleton budget" 0 bash -c '
+    source "$1"; export GDC_HOME="$2" RECOVERY_RUN_ID=foreign-budget
+    recovery_singleton_budget "$3" y | jq -e ".expired == false and .remaining_blocks == 5" >/dev/null
+  ' _ "$HERE/scripts/lib-recovery.sh" "$foreign_home" "$block_budget_manifest"
+done
+
+# Corrupt evidence cannot silently restore the full allowance or a ready state.
+invalid_budget_home="$TMP/invalid-budget-home"
+mkdir -p "$invalid_budget_home/runs/invalid-budget/recovery/x/retire/attempt-1"
+seed_controller "$invalid_budget_home"
+printf '{}\n' >"$invalid_budget_home/runs/invalid-budget/recovery/x/retire/attempt-1/receipt.json"
+chmod 400 "$invalid_budget_home/runs/invalid-budget/recovery/x/retire/attempt-1/receipt.json"
+assert_rc 'invalid budget evidence blocks mutation and makes status inconclusive' 0 bash -c '
+  source "$1"; export GDC_HOME="$2" RECOVERY_RUN_ID=invalid-budget
+  ! recovery_validate_singleton_budget "$3" y
+  recovery_main status --host y --run-id invalid-budget --manifest "$3"
+  jq -e ".details.status.operator_state == \"INCONCLUSIVE\" and .details.status.remaining_blocks == null" \
+    "$GDC_HOME/runs/invalid-budget/recovery/y/status/attempt-1/receipt.json" >/dev/null
+' _ "$HERE/scripts/lib-recovery.sh" "$invalid_budget_home" "$block_budget_manifest"
 
 # D: activate refuses before the window opens unless a pre-rendered
 # expiry-stop artifact is armed and matches this exact manifest deadline.

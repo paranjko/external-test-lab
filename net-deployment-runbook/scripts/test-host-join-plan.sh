@@ -81,6 +81,11 @@ done
 chmod 0755 "$tmp/bin"/*
 
 printf 'retained validator archive\n' >"$tmp/validator-backup.tar"
+# An unfinished incident for another Host must not intercept normal restore.
+incident="$tmp/operator/recovery-GNK-LAB-2026-0001"
+mkdir -p "$incident/hosts"
+touch "$incident/confirmed"
+printf '{}\n' >"$incident/hosts/fixture-unrelated.json"
 : >"$tmp/remote-effects.log"
 PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
   "$ROOT/gdc.sh" host join --plan --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
@@ -103,6 +108,10 @@ grep -Fq "result=$result" "$tmp/out"
 
 run_dir="$(dirname "$profile")"
 run_id="$(basename "$(dirname "$run_dir")")"
+# Historical recovery evidence for this same Host must also leave normal
+# restore and resume usable once the incident is complete.
+printf '{}\n' >"$incident/hosts/validator-a.json"
+touch "$incident/complete"
 profile_sha256="$(sha256sum "$profile" | awk '{print $1}')"
 observation_sha256="$(sha256sum "$observation" | awk '{print $1}')"
 

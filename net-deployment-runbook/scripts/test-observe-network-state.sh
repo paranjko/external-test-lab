@@ -18,6 +18,7 @@ cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 url="${!#}"
+[[ -z "${CURL_SPY:-}" ]] || printf '%s\n' "$url" >>"$CURL_SPY"
 write_remote=false
 for arg in "$@"; do
   [[ "$arg" == --write-out ]] && write_remote=true
@@ -31,6 +32,9 @@ case "$url" in
       all_roots_down:*:*status) exit 7 ;;
     esac
     case "$url" in
+      */abci_info)
+        [[ "${MODE:-}" == operator ]] || exit 22
+        printf '{"result":{"response":{"version":"0.2.15"}}}\n' ;;
       */status)
         catching=false
         [[ "${MODE:-good}:$node" == catching_root:0 ]] && catching=true
@@ -47,6 +51,11 @@ case "$url" in
       *) exit 2 ;;
     esac
     remote_ip="8.8.4.$((node + 1))"
+    ;;
+  https://node0.example.test/v1/versions)
+    [[ "${MODE:-}" == operator ]] || exit 22
+    remote_ip=8.8.4.1
+    printf '{"node_version":{"application_name":"inference-chain","version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"},"api_version":{"application_name":"decentralized-api","version":"0.2.15-post3","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}}\n'
     ;;
   http://8.8.4.[1-5]:8000/chain-rpc/*)
     exit 22
@@ -132,3 +141,11 @@ fi
 grep -Fq 'network_observation_chain_id_mismatch:' "$tmp/mismatch.err"
 
 printf 'PASS network observation: Community quorum, peer majority, catching-root rejection, unavailable peers, and fail-closed discovery\n'
+MODE=operator CURL_SPY="$tmp/source-requests" IDS_FILE="$tmp/ids" PATH="$tmp/bin:$PATH" "$OBSERVE" \
+  --bootstrap-file "$tmp/bootstrap.json" --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+  --chain-id gonka-devnet-community --run-id fixture-source --output "$tmp/source.json" --source-rpc https://node0.example.test/chain-rpc
+jq -e '.policy.mode=="operator_source" and .policy.source_rpc=="https://node0.example.test/chain-rpc" and .policy.authority.state=="operator_selected"
+  and (.seeds|length)==1 and .policy.discovered_peers==[]' "$tmp/source.json" >/dev/null
+! grep -Ev '^https://node0.example.test/' "$tmp/source-requests"
+! grep -q '/net_info' "$tmp/source-requests"
+printf 'PASS explicit source selection is recorded as one authority without gossip or invented quorum\n'

@@ -11,6 +11,7 @@ BOOTSTRAP_FILE=''
 PUBLIC_HOST=''
 P2P_PORT=5000
 GPU_SSH_ALIAS=''
+SOURCE_RPC=''
 while (($#)); do
   case "$1" in
     --output) OUTPUT="${2:-}"; shift 2 ;;
@@ -19,6 +20,7 @@ while (($#)); do
     --public-host) PUBLIC_HOST="${2:-}"; shift 2 ;;
     --p2p-port) P2P_PORT="${2:-}"; shift 2 ;;
     --gpu-ssh-alias) GPU_SSH_ALIAS="${2:-}"; shift 2 ;;
+    --source-rpc) SOURCE_RPC="${2%/}"; shift 2 ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -43,6 +45,13 @@ bootstrap_schema='https://gonka-dev.net/v1.bootstrap.schema.json'
 # This file is generated locally from validated JSON, never downloaded or
 # evaluated from a remote source.
 source "$stage/bootstrap.env"
+if [[ -n "$SOURCE_RPC" ]]; then
+  selected_seed="$(jq -ce --arg rpc "$SOURCE_RPC" '[.seeds[] | select((.rpc|rtrimstr("/"))==$rpc)]
+    | if length==1 then .[0] else error("source must identify one Bootstrap seed") end' "$BOOTSTRAP_FILE")"
+  SEED_NODE_RPC_URL="$SOURCE_RPC"
+  SEED_NODE_P2P_URL="$(jq -er .p2p <<<"$selected_seed")"
+  SEED_API_URL="$(jq -er '.api // (.rpc | rtrimstr("/") | sub("/chain-rpc$";""))' <<<"$selected_seed")"
+fi
 [[ -n "${SEED_NODE_RPC_URL:-}" ]] || { echo 'validated bootstrap did not yield a usable seed RPC' >&2; exit 1; }
 network_host="${SEED_NODE_RPC_URL#*://}"
 network_host="${network_host%%[:/]*}"
