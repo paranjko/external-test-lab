@@ -9,11 +9,14 @@ install_evidence_exit_trap 'DevShard governance'
 record_phase_profile governance-devshard
 creator="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
 mutable_protocol=none
-if [[ -n "${GDC_COMPOSITION:-}" && "${LAB_CANDIDATE:-false}" == true ]]; then
+if [[ -n "${GDC_COMPOSITION:-}" && ( "${LAB_CANDIDATE:-false}" == true || "${OFFICIAL_DEVSHARD_RELEASE:-false}" == true ) ]]; then
   [[ "${GDC_COMPOSITION_HASH:-}" =~ ^[0-9a-f]{64}$ \
-    && "${CANDIDATE_DEVSHARD_PROTOCOL_VERSION:-}" == v5 \
     && "${DEVSHARD_PROTOCOL_VERSION:-}" == v5 ]] \
-    || die 'DevShard tuple replacement requires a verified v5 candidate composition'
+    || die 'DevShard tuple replacement requires a verified v5 composition'
+  if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
+    [[ "${CANDIDATE_DEVSHARD_PROTOCOL_VERSION:-}" == v5 ]] \
+      || die 'DevShard candidate composition does not declare protocol v5'
+  fi
   mutable_protocol=v5
 fi
 poc_exchange_duration="${GDC_POC_EXCHANGE_DURATION:-8}"

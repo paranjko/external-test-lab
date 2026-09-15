@@ -191,7 +191,7 @@ grep -Fq 'would rebind or omit a protected DevShard protocol tuple' "$tmp/err"
 
 grep -Fq 'mutable_protocol=v5' \
   "$ROOT/scripts/phase-governance-devshard.sh"
-grep -Fq 'DevShard tuple replacement requires a verified v5 candidate composition' \
+grep -Fq 'DevShard tuple replacement requires a verified v5 composition' \
   "$ROOT/scripts/phase-governance-devshard.sh"
 grep -Fq 'live inference parameters changed after proposal rendering' \
   "$ROOT/scripts/phase-governance-devshard.sh"

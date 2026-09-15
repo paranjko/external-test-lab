@@ -32,6 +32,8 @@ if GDC_HOME="$tmp/governance-home" "$ROOT/gdc.sh" \
   exit 1
 fi
 grep -Fq 'Duplicate DevShard protocol: v3' "$tmp/governance.err"
+grep -Fq '"${OFFICIAL_DEVSHARD_RELEASE:-false}" == true' "$ROOT/scripts/phase-governance-devshard.sh"
+grep -Fq "mutable_protocol=v5" "$ROOT/scripts/phase-governance-devshard.sh"
 
 python3 - "$comp" "$url" "$digest" <<'PY'
 import json
