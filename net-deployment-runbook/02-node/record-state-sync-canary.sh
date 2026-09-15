@@ -13,7 +13,9 @@ jq -e '
   .kind == "gdc-host-join-lineage-preflight"
   and .bootstrap.mode == "state_sync"
   and .bootstrap.snapshot.discovery == "p2p_canary_pending"
-  and (.bootstrap.snapshot.providers | type == "array" and length >= 2)
+  and ((.bootstrap.snapshot.providers | type == "array" and length >= 2) or
+    (.trust_authority.kind == "operator_source" and (.fault_domains|length)==1
+      and .trust_authority.rpc_url==.fault_domains[0].rpc_url and (.bootstrap.snapshot.providers|length)==1))
 ' "$receipt" >/dev/null || { echo 'lineage_verification_failed: receipt lacks the minimum two-provider P2P canary contract' >&2; exit 1; }
 status="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:26657/status)" \
   || { echo 'lineage_verification_failed: cannot read signerless canary status' >&2; exit 1; }

@@ -32,7 +32,11 @@ mapfile -t trusted_origins < <(jq -r '.fault_domains[] | [.rpc_url,.host,(.port|
 trusted_rpcs=()
 for origin in "${trusted_origins[@]}"; do IFS=$'\t' read -r origin_rpc origin_host origin_port origin_ip <<<"$origin"; trusted_rpcs+=("$origin_rpc")
 done
-(( ${#trusted_rpcs[@]} >= 2 )) || { echo 'lineage_verification_failed: receipt lacks two trusted RPC origins' >&2; exit 1; }
+required_origins=2
+if jq -e '.trust_authority.kind == "operator_source" and (.fault_domains | length) == 1 and .trust_authority.rpc_url == .fault_domains[0].rpc_url' "$receipt" >/dev/null; then
+  required_origins=1
+fi
+(( ${#trusted_rpcs[@]} >= required_origins )) || { echo 'lineage_verification_failed: receipt lacks the required trusted RPC origins' >&2; exit 1; }
 join_height="$(status_height "$rpc")" || { echo 'lineage_verification_failed: cannot read restored JOIN height' >&2; exit 1; }
 heights=("$join_height")
 for origin in "${trusted_origins[@]}"; do
@@ -54,4 +58,4 @@ mapfile -t unique < <(printf '%s\n' "${origin_records[@]}" | LC_ALL=C sort -u)
 (( ${#unique[@]} == 1 )) || { echo 'lineage_verification_failed: trusted RPC origins disagree at fresh checkpoint' >&2; exit 1; }
 actual="$(block_record "$rpc" "$fresh_height")" || { echo 'lineage_verification_failed: cannot read fresh checkpoint from restored JOIN' >&2; exit 1; }
 [[ "$actual" == "${unique[0]}" ]] || { echo 'apphash_divergence: restored JOIN disagrees with trusted origins at fresh checkpoint' >&2; exit 1; }
-printf 'PASS JOIN fresh post-sync checkpoint matches independent trust origins height=%s\n' "$fresh_height"
+printf 'PASS JOIN fresh post-sync checkpoint matches recorded trust origins=%s height=%s\n' "${#trusted_rpcs[@]}" "$fresh_height"

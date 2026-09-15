@@ -25,6 +25,9 @@ validate_state() {
     (.round | type == "string" and test("^[0-9]+$")) and
     (.step | type == "number" and floor == . and . >= -128 and . <= 127) and
     (.block_id == null or (
+      .height == "0" and .round == "0" and .step == 0 and
+      .block_id == {hash:"",part_set_header:{total:0,hash:""}}
+    ) or (
       (.block_id | type == "object") and
       (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$")) and
       ((.block_id.parts // .block_id.part_set_header) as $parts |

@@ -200,6 +200,7 @@ REMOTE
   }
 
   step "Reset $NODE deployment state and remove deployed containers"
+  bash "$ROOT/scripts/same-host-restore.sh" capture "$NODE"
   # The public edge is an OPS-owned service. Resetting its validator must not
   # also remove the Caddy instance that owns the public site, API and Grafana.
   reset_remote_host "$NODE" false

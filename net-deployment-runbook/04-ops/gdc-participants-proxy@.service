@@ -1,0 +1,14 @@
+[Unit]
+Description=Read the filtered Gonka participant registry
+
+[Service]
+ExecStart=/usr/bin/bash /usr/local/lib/gonka-devnet/participants-proxy.sh
+StandardInput=socket
+StandardOutput=inherit
+StandardError=journal
+DynamicUser=yes
+RuntimeMaxSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

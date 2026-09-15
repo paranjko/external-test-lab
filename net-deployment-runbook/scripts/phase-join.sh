@@ -40,6 +40,9 @@ record_join_transition() {
   if [[ "$state" == SIGNER_FENCE_VERIFIED ]]; then
     [[ -r "$RUN/signer-fence-receipt.v1.json" ]] || die 'JOIN signer fence transition lacks its verified receipt'
     evidence="$(jq -c --arg sha "$(sha256sum "$RUN/signer-fence-receipt.v1.json" | awk '{print $1}')" '. + [{kind:"signer_fence",sha256:$sha}]' <<<"$evidence")"
+    if [[ "$join_operation" == restore ]]; then
+      evidence="$(jq -c --arg sha "$(sha256sum "$RUN/same-host-reset-before-enable.json" | awk '{print $1}')" '. + [{kind:"same_host_reset",sha256:$sha}]' <<<"$evidence")"
+    fi
   fi
   jq -cn \
     --arg run_id "${GDC_RUN_ID:-manual}" --arg operation "$join_operation" --arg node "$NODE" --arg state "$state" \
@@ -150,6 +153,15 @@ if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
     : >"$RUN/preserve-prior-run"
     exit 0
   fi
+  # A reset receipt is acquired from the very machine being restored, before
+  # any state-sync or signer activation. A backup alone cannot authorize moving
+  # its key to another Host. Keep the latest pre-reset HRS even with an older archive.
+  if ! bash "$ROOT/scripts/same-host-restore.sh" bind "$NODE" "$GDC_RESTORE_IDENTITY_FILE" "$GENESIS_CHAIN_ID" "$RUN/same-host-reset.json"; then
+    record_restore_fence_refusal
+    die 'old_signer_fence_unprovable: same-Host reset evidence is missing or does not match'
+  fi
+  ssh -T "$NODE" "sudo -n cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$GDC_RESTORE_TMKMS_STATE_FILE"
+  install -m 0600 "$GDC_RESTORE_TMKMS_STATE_FILE" "$RUN/restore-tmkms-signing-state.json"
 fi
 
 # An independent operator may be the first person to use this Host.  In a
@@ -352,7 +364,7 @@ step "Wait until signerless P2P canary for $NODE is synchronized"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./wait-state-sync-canary.sh /srv/dai/deploy/$NODE '${GDC_JOIN_RPC_SERVER_1%/}'"
 record_join_state "$NODE" CAUGHT_UP "$ADDRESS"
 record_join_transition CANARY_CAUGHT_UP
-step "Verify $NODE acquired the quorum-attested lineage before enabling its signer"
+step "Verify $NODE acquired the selected source lineage before enabling its signer"
 ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json'"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./record-state-sync-canary.sh /srv/dai/deploy/$NODE '$REMOTE/lineage-receipt.json'"
 scp -q "$NODE:$REMOTE/lineage-receipt.json" "$RUN/lineage-state-sync-receipt.json"
@@ -517,15 +529,10 @@ if [[ -n "$ML_HOST" ]]; then
   "$ROOT/scripts/phase-ml-attach.sh" "$NODE"
 fi
 
-# The local target's TMKMS is not an old-validator fence.  A restore can
-# synchronize safely without signing, but it must never activate the restored
-# consensus key until a separate, fresh and externally evidenced fence of the
-# previous Host is available.  This runbook deliberately has no automatic
-# replacement-signer dispatcher until it can acquire that evidence itself.
+# A controlled reset authorizes rejoin only on that same physical Host.
+# Cross-Host replacement still has no automatic signer dispatcher.
 if [[ "$join_operation" == restore ]]; then
-  record_restore_fence_refusal
-  echo 'old_signer_fence_unprovable: restored Host remains signerless until owner-authorized recovery can acquire conclusive previous-Host evidence' >&2
-  exit 1
+  bash "$ROOT/scripts/same-host-restore.sh" bind "$NODE" "$IDENTITY" "$GENESIS_CHAIN_ID" "$RUN/same-host-reset-before-enable.json"
 fi
 
 step "Fence existing $NODE signer after membership reconciliation"
@@ -552,10 +559,16 @@ step "Capture $NODE TMKMS signing minimum before enablement"
 ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$RUN/tmkms-signing-state-before-enable.json"
 chmod 600 "$RUN/tmkms-signing-state-before-enable.json"
 [[ -s "$RUN/tmkms-signing-state-before-enable.json" ]] || die 'TMKMS signing minimum is unavailable before enablement'
+ssh -T "$NODE" 'curl -fsS --max-time 10 http://127.0.0.1:26657/status' >"$RUN/status-before-enable.json"
+jq -e --slurpfile state "$RUN/tmkms-signing-state-before-enable.json" '.result.sync_info.catching_up==false
+  and (.result.sync_info.latest_block_height|tonumber)>($state[0].height|tonumber)' "$RUN/status-before-enable.json" >/dev/null \
+  || die 'restored chain has not passed the last height signed before reset'
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --enable-signer"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-active-signer-state.sh '/srv/dai/deploy/$NODE' '$expected_chain_id' '$expected_core_version'"
 advanced=false
-for ((attempt = 1; attempt <= 30; attempt++)); do
+signing_deadline=$((SECONDS+60))
+[[ "$join_operation" != restore ]] || signing_deadline=$((SECONDS+2400))
+while (( SECONDS<signing_deadline )); do
   ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$RUN/tmkms-signing-state-after-enable.json"
   chmod 600 "$RUN/tmkms-signing-state-after-enable.json"
   if "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$RUN/tmkms-signing-state-before-enable.json" --observed "$RUN/tmkms-signing-state-after-enable.json" --require-advance >/dev/null; then

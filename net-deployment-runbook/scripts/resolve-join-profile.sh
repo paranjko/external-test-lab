@@ -8,6 +8,7 @@ sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 
 observation=''; components=''; node_name=''; public_host=''; p2p_port=5000
 operation=''; restore_archive=''; run_id=''; output=''
+pex=''
 while (($#)); do
   case "$1" in
     --observation) observation="${2:-}"; shift 2 ;;
@@ -19,6 +20,7 @@ while (($#)); do
     --restore-archive) restore_archive="${2:-}"; shift 2 ;;
     --run-id) run_id="${2:-}"; shift 2 ;;
     --output) output="${2:-}"; shift 2 ;;
+    --pex) pex="${2:-}"; [[ "$pex" =~ ^(true|false)$ ]] || exit 2; shift 2 ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -39,6 +41,11 @@ if [[ "$operation" == restore ]]; then
   identity="$(jq -cn --arg sha "$(sha256_file "$restore_archive")" '{mode:"restore",stable_identity_layout:"gdc-identity-layout/v2",restore_archive_sha256:$sha}')"
 fi
 spec_tmp="$(mktemp "$(dirname "$output")/.join-profile-spec.XXXXXX")"
+acquisition='{"mode":"pending","providers":[],"minimum_providers":0}'
+if [[ "$(jq -r .policy.mode "$observation")" == operator_source ]]; then
+  acquisition="$(jq -c --arg rpc "$(jq -er .policy.source_rpc "$observation")" '. + {trust_authority:{kind:"operator_source",rpc_url:$rpc}}' <<<"$acquisition")"
+fi
+[[ -z "$pex" ]] || acquisition="$(jq -c --argjson pex "$pex" '. + {pex:$pex}' <<<"$acquisition")"
 trap 'rm -f -- "$spec_tmp"' EXIT
 # Seed reachability, catching_up and endpoint errors are observations, not
 # executable profile semantics. Keep only a stable policy marker here; the
@@ -54,6 +61,7 @@ jq -cn \
   --argjson host_envelope "$(jq -c .host_envelope "$components")" \
   --argjson usable '[{"selection_policy":"net-info-software-majority/v1"}]' \
   --argjson unavailable '[]' \
+  --argjson acquisition "$acquisition" \
   --argjson identity "$identity" --argjson fence "$([[ "$operation" == restore ]] && echo true || echo false)" \
-  '{network:{chain_id:$chain,genesis_sha256:$genesis,bootstrap_sha256:$bootstrap,bootstrap_url:$bootstrap_url},seeds:{usable:$usable,unavailable:$unavailable},target:{node_name:$node,public_host:$host,public_p2p_address:("tcp://" + $host + ":" + ($port|tostring)),platform:"linux-amd64"},deployment:{gdc_source_commit:$commit,data_layout:"gdc-data-layout/v2",host_envelope:$host_envelope},components:{core:$core,dapi:$dapi},state_acquisition:{mode:"pending",providers:[],minimum_providers:0},identity:$identity,activation_policy:{application_required_for_complete:true,signer_allowed_in_profile:false,old_signer_fence_required:$fence}}' | jq -cS . >"$spec_tmp"
+  '{network:{chain_id:$chain,genesis_sha256:$genesis,bootstrap_sha256:$bootstrap,bootstrap_url:$bootstrap_url},seeds:{usable:$usable,unavailable:$unavailable},target:{node_name:$node,public_host:$host,public_p2p_address:("tcp://" + $host + ":" + ($port|tostring)),platform:"linux-amd64"},deployment:{gdc_source_commit:$commit,data_layout:"gdc-data-layout/v2",host_envelope:$host_envelope},components:{core:$core,dapi:$dapi},state_acquisition:$acquisition,identity:$identity,activation_policy:{application_required_for_complete:true,signer_allowed_in_profile:false,old_signer_fence_required:$fence}}' | jq -cS . >"$spec_tmp"
 "$ROOT/scripts/join-profile.sh" create --observation "$observation" --spec "$spec_tmp" --operation "$operation" --run-id "$run_id" --output "$output"

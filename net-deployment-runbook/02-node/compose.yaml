@@ -53,6 +53,8 @@ services:
       CONFIG_statesync__trust_height: ${GDC_JOIN_TRUST_HEIGHT:-0}
       CONFIG_statesync__trust_hash: ${GDC_JOIN_TRUST_HASH:-}
       CONFIG_p2p__persistent_peers: ${GDC_JOIN_PERSISTENT_PEERS:-}
+      CONFIG_p2p__pex: ${GDC_JOIN_PEX:-true}
+      CONFIG_p2p__seeds: ${GDC_JOIN_SEEDS-${GENESIS_SEEDS}}
       # A cold state-sync canary must use its generated, unregistered local
       # validator key.  The promotion run restores this listener and starts
       # TMKMS only after the canary's lineage evidence has been recorded.

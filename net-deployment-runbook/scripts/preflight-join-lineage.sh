@@ -13,12 +13,14 @@ die() {
   printf 'lineage_%s: %s\n' "$1" "$2" >&2; exit 1
 }
 BOOTSTRAP=''; OBSERVATION=''; COMPOSITION=''; RECEIPT=''; ENV_FILE=''
+SOURCE_RPC=''; required_origins=2
 while (($#)); do case "$1" in
   --bootstrap-file) BOOTSTRAP="${2:-}"; shift 2 ;;
   --observation) OBSERVATION="${2:-}"; shift 2 ;;
   --composition-env) COMPOSITION="${2:-}"; shift 2 ;;
   --receipt) RECEIPT="${2:-}"; shift 2 ;;
   --env) ENV_FILE="${2:-}"; shift 2 ;;
+  --source-rpc) SOURCE_RPC="${2%/}"; shift 2 ;;
   *) usage; exit 2 ;;
 esac; done
 [[ -r "$BOOTSTRAP" && -n "$RECEIPT" && -n "$ENV_FILE" ]] || { usage; exit 2; }
@@ -79,6 +81,17 @@ else
 fi
 
 period="${GDC_JOIN_TRUSTED_BLOCK_PERIOD:-2000}"
+if [[ -n "$SOURCE_RPC" ]]; then
+  [[ -n "$OBSERVATION" ]] || die configuration 'operator source requires a bound observation'
+  jq -e --arg rpc "$SOURCE_RPC" '.policy.mode == "operator_source" and .policy.source_rpc == $rpc' "$OBSERVATION" >/dev/null \
+    || die configuration 'operator source differs from observed authority'
+  jq -e --arg rpc "$SOURCE_RPC" '[.seeds[] | select((.rpc | rtrimstr("/")) == $rpc)] | length == 1' "$BOOTSTRAP" >/dev/null \
+    || die configuration 'operator source is not a unique Bootstrap seed'
+  required_origins=1
+  period=2
+elif [[ -n "$OBSERVATION" ]] && jq -e '.policy.mode == "operator_source"' "$OBSERVATION" >/dev/null; then
+  die configuration 'operator-selected observation requires explicit --source-rpc'
+fi
 early_height="${GDC_JOIN_EARLY_CHECKPOINT_HEIGHT:-5}"
 ttl="${GDC_JOIN_PREFLIGHT_TTL_SECONDS:-600}"
 [[ "$period" =~ ^[1-9][0-9]*$ && "$early_height" =~ ^[1-9][0-9]*$ && "$ttl" =~ ^[1-9][0-9]*$ ]] || die configuration 'trust period, early checkpoint and receipt TTL must be positive'
@@ -144,7 +157,8 @@ p2p_for_rpc() {
 }
 
 mapfile -t rpcs < <(jq -r '.seeds[].rpc | rtrimstr("/")' "$BOOTSTRAP")
-(( ${#rpcs[@]} >= 2 )) || die rpc_quorum_conflict 'Bootstrap has fewer than two RPC seeds'
+[[ -z "$SOURCE_RPC" ]] || rpcs=("$SOURCE_RPC")
+(( ${#rpcs[@]} >= required_origins )) || die rpc_quorum_conflict 'Bootstrap lacks the required RPC origins'
 declare -a good_rpcs=() domains=() heights=() good_hosts=() good_ports=() good_ips=()
 for rpc in "${rpcs[@]}"; do
   read -r host port < <(rpc_connection "$rpc") || die rpc_quorum_conflict "cannot parse RPC connection for $rpc"
@@ -163,8 +177,8 @@ for rpc in "${rpcs[@]}"; do
   jq -e --arg chain "$GDC_NETWORK_CHAIN_ID" --arg node_id "$expected_node_id" '.result.node_info.network == $chain and .result.node_info.id == $node_id and (.result.sync_info.latest_block_height|tonumber) > 0' "$status" >/dev/null || continue
   good_rpcs+=("$rpc"); domains+=("$domain"); heights+=("$(jq -r '.result.sync_info.latest_block_height' "$status")"); good_hosts+=("$host"); good_ports+=("$port"); good_ips+=("$ip")
 done
-[[ "$(printf '%s\n' "${domains[@]}" | LC_ALL=C sort -u | wc -l)" -ge 2 ]] || die rpc_fault_domain_alias 'two RPC URLs resolve to one fault domain'
-(( ${#good_rpcs[@]} >= 2 )) || die rpc_quorum_conflict 'fewer than two readable RPC observations attest the selected chain'
+[[ "$(printf '%s\n' "${domains[@]}" | LC_ALL=C sort -u | wc -l)" -ge "$required_origins" ]] || die rpc_fault_domain_alias 'RPC fault-domain requirement is not met'
+(( ${#good_rpcs[@]} >= required_origins )) || die rpc_quorum_conflict 'not enough readable RPC observations attest the selected chain'
 
 # Choose the highest attested tip. A status height is only a proposal: two
 # independent domains must serve the same header/AppHash there. A failed block
@@ -189,20 +203,20 @@ select_tip_quorum() {
       record="$(record_from_block <"$file")" || die rpc_quorum_conflict "malformed tip checkpoint from ${good_rpcs[$i]}"
       records+=("$record"); indices+=("$i"); candidate_domains+=("${domains[$i]}")
     done
-    (( ${#records[@]} >= 2 )) || continue
+    (( ${#records[@]} >= required_origins )) || continue
     mapfile -t groups < <(printf '%s\n' "${records[@]}" | LC_ALL=C sort | uniq -c)
     best=''; best_count=0; group_count=0
     for group in "${groups[@]}"; do
       count="$(awk '{print $1}' <<<"$group")"
       # shellcheck disable=SC2001 # preserve the JSON record after uniq's count
       record="$(sed 's/^[[:space:]]*[0-9][0-9]*[[:space:]]*//' <<<"$group")"
-      if (( count >= 2 )); then
+      if (( count >= required_origins )); then
         group_count=$((group_count + 1))
         if (( count > best_count )); then best="$record"; best_count="$count"; fi
       fi
     done
     responding="${#records[@]}"
-    (( group_count == 1 && best_count >= 2 && responding - best_count <= 1 )) || continue
+    (( group_count == 1 && best_count >= required_origins && responding - best_count <= 1 )) || continue
     # A tip quorum is useful only when its independent members can all serve
     # the historical checkpoints that the receipt will bind.  A reachable
     # seed may have pruned one of those heights; treat that seed as
@@ -223,7 +237,7 @@ select_tip_quorum() {
     done
     best_count="${#eligible_records[@]}"
     responding="$best_count"
-    (( best_count >= 2 && responding - best_count <= 1 )) || continue
+    (( best_count >= required_origins && responding - best_count <= 1 )) || continue
     quorum_rpcs=(); quorum_domains=(); quorum_hosts=(); quorum_ports=(); quorum_ips=()
     for i in "${!eligible_indices[@]}"; do
       quorum_rpcs+=("${good_rpcs[${eligible_indices[$i]}]}")
@@ -342,7 +356,7 @@ for i in "${!quorum_rpcs[@]}"; do
   approval_sets+=("$approval_set")
   approval_sources+=("$chain_api")
 done
-(( ${#approval_sets[@]} >= 2 )) || die devshard_approval_quorum 'fewer than two independent chain APIs exposed a valid DevShard compatibility set'
+(( ${#approval_sets[@]} >= required_origins )) || die devshard_approval_quorum 'not enough selected chain APIs exposed a valid DevShard compatibility set'
 mapfile -t unique_approval_sets < <(printf '%s\n' "${approval_sets[@]}" | LC_ALL=C sort -u)
 (( ${#unique_approval_sets[@]} == 1 )) || die devshard_approval_conflict 'independent chain APIs disagree about DevShard compatibility records'
 devshard_approvals="${unique_approval_sets[0]}"
@@ -367,13 +381,18 @@ jq -n \
   --argjson domains "$(for i in "${!quorum_rpcs[@]}"; do jq -cn --arg id "${quorum_domains[$i]}" --arg rpc "${quorum_rpcs[$i]}" --arg host "${quorum_hosts[$i]}" --argjson port "${quorum_ports[$i]}" --arg ip "${quorum_ips[$i]}" --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" '{id:$id,rpc_url:$rpc,host:$host,port:$port,ip:$ip,chain_id:$chain,genesis_sha256:$genesis}'; done | jq -s .)" \
   --arg empty "$empty_digest" \
   '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:(if $observation_sha256 == "" then null else $observation_sha256 end),source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,trust:($trust+{expires_at:$expires}),snapshot:$snapshot},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},devshard_compatibility:{approvals:$devshard_approvals,sources:$devshard_sources},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
+if [[ -n "$SOURCE_RPC" ]]; then
+  jq --arg rpc "$SOURCE_RPC" '. + {trust_authority:{kind:"operator_source",rpc_url:$rpc}}' "$receipt_tmp" >"$receipt_tmp.source"
+  mv "$receipt_tmp.source" "$receipt_tmp"
+fi
 {
   printf 'GDC_JOIN_BOOTSTRAP_MODE=%q\n' state_sync
   printf 'GDC_JOIN_TRUST_HEIGHT=%q\n' "$(jq -r .height <<<"$trust")"
   printf 'GDC_JOIN_TRUST_HASH=%q\n' "$(jq -r .block_id <<<"$trust")"
   printf 'GDC_JOIN_SNAPSHOT_PEERS=%q\n' "$(IFS=,; echo "${snapshot_providers[*]}")"
   printf 'GDC_JOIN_RPC_SERVER_1=%q\n' "${quorum_rpcs[0]}/"
-  printf 'GDC_JOIN_RPC_SERVER_2=%q\n' "${quorum_rpcs[1]}/"
+  printf 'GDC_JOIN_RPC_SERVER_2=%q\n' "${quorum_rpcs[1]:-${quorum_rpcs[0]}}/"
+  printf 'GDC_JOIN_SOURCE_RPC=%q\n' "$SOURCE_RPC"
   printf 'GDC_JOIN_TRUSTED_BLOCK_PERIOD=%q\n' "$period"
   printf 'GDC_JOIN_LINEAGE_RECEIPT=%q\n' "$RECEIPT"
   printf 'GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON=%q\n' "$gateway_admission_protocols"

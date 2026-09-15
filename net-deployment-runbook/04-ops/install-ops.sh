@@ -57,6 +57,9 @@ install -m 0644 "$HERE/gdc-gateway-health-probe.timer" /etc/systemd/system/gdc-g
 # The reconciler is executed by systemd, so install its executable under
 # root-owned ancestors rather than below /srv/dai/ops.
 install -d -o root -g root -m 0755 /usr/local/lib/gonka-devnet
+install -o root -g root -m 0755 "$HERE/participants-proxy.sh" /usr/local/lib/gonka-devnet/participants-proxy.sh
+install -m 0644 "$HERE/gdc-participants-proxy.socket" /etc/systemd/system/gdc-participants-proxy.socket
+install -m 0644 "$HERE/gdc-participants-proxy@.service" /etc/systemd/system/gdc-participants-proxy@.service
 install -o root -g root -m 0755 "$HERE/gateway-reserve-controller.sh" /usr/local/lib/gonka-devnet/gateway-reserve-controller.sh
 install -o root -g root -m 0755 "$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
 install -m 0755 "$HERE/gateway-status-routable.sh" "$DEST/gateway-status-routable.sh"
@@ -79,6 +82,7 @@ if [[ "$COMPONENT" == gateway ]]; then
   install -m 0644 "$HERE/gdc-gateway-escrow-reconciler.timer" /etc/systemd/system/gdc-gateway-escrow-reconciler.timer
 fi
 systemctl daemon-reload
+systemctl enable --now gdc-participants-proxy.socket >/dev/null
 systemctl enable --now gdc-gateway-health-probe.timer >/dev/null
 systemctl enable --now gdc-gateway-reserve-controller.timer >/dev/null
 systemctl start gdc-gateway-reserve-controller.service || true

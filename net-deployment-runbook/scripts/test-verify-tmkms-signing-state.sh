@@ -17,6 +17,13 @@ state() {
 
 state "$tmp/minimum.json" 00042 000 0
 state "$tmp/advanced.json" 43 0 -1
+jq -cn '{height:"0",round:"0",step:0,block_id:{hash:"",part_set_header:{total:0,hash:""}}}' >"$tmp/initial.json"
+"$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$tmp/initial.json" --observed "$tmp/advanced.json" >"$tmp/initial.out"
+jq '.height = "42"' "$tmp/initial.json" >"$tmp/invalid-empty-block.json"
+if "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$tmp/invalid-empty-block.json" --observed "$tmp/advanced.json" >"$tmp/empty.out" 2>"$tmp/empty.err"; then
+  echo 'empty block identity was accepted at a nonzero height' >&2; exit 1
+fi
+grep -Fq 'invalid minimum' "$tmp/empty.err"
 "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$tmp/minimum.json" --observed "$tmp/advanced.json" --fence-height 42 >"$tmp/advanced.out"
 jq -e '.state == "non_regressing"' "$tmp/advanced.out" >/dev/null
 if "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$tmp/minimum.json" --observed "$tmp/minimum.json" --require-advance >"$tmp/no-advance.out" 2>"$tmp/no-advance.err"; then

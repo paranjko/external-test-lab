@@ -5,9 +5,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PUBLISH="$ROOT/scripts/publish-running-host-recovery.sh"
 CHECK="$ROOT/scripts/evaluate-running-host-recovery.sh"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+cleanup() {
+  local rc=$? error_file
+  if (( rc != 0 )); then
+    for error_file in "$tmp"/*.err; do
+      [[ ! -f "$error_file" ]] || { printf '%s\n' "${error_file##*/}:" >&2; cat "$error_file" >&2; }
+    done
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
 
-node=gdc-node1
+node=fixture-recovered-host
 address=gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
 runtime_id="qwen3-0.6b:$address"
 run_id=test-recovery
@@ -23,13 +32,19 @@ verdict_target="$tmp/run/verdict.md"
 
 install -d -m 0700 "$evidence_source"
 printf 'decision-boundary\n' >"$evidence_source/decision-boundary.marker"
-touch -d '1 second ago' "$evidence_source/decision-boundary.marker"
 printf '{"ready":true}\n' >"$evidence_source/status.json"
 printf '{"active":true}\n' >"$evidence_source/participant.json"
 printf '{"voting_power":1}\n' >"$evidence_source/validator-set.json"
 printf '{"signed":true}\n' >"$evidence_source/commit.json"
 printf '{"matched":true}\n' >"$evidence_source/runtime.json"
 printf '{"matched":true}\n' >"$evidence_source/synchronization.json"
+# Keep the fixture strictly after its boundary, but in the same Unix second.
+# Wall-clock rollover during setup must not invalidate the one-second race case.
+fixture_time="$(date +%s)"
+touch -d "@$fixture_time" "$evidence_source/decision-boundary.marker"
+for snapshot in status participant validator-set commit runtime synchronization; do
+  touch -d "@$fixture_time.1" "$evidence_source/$snapshot.json"
+done
 "$CHECK" freshness 30 "$evidence_source/decision-boundary.marker" \
   "$evidence_source/status.json" "$evidence_source/participant.json" \
   "$evidence_source/validator-set.json" "$evidence_source/commit.json" \
@@ -59,6 +74,8 @@ expired_args=("$node" "$address" "$runtime_id" "$run_id" \
   "$receipt_source" "$verdict_source" "$expired_root/run/receipt.json" \
   "$expired_root/run/verdict.md")
 evaluated_at="$(jq -er .evaluated_at_unix "$evidence_source/freshness.json")"
+export GDC_RECOVERY_PUBLICATION_TEST_MODE=true
+export GDC_RECOVERY_PUBLICATION_NOW_UNIX="$evaluated_at"
 max_age="$(jq -er .max_age_seconds "$evidence_source/freshness.json")"
 expired_now=$((evaluated_at + max_age + 1))
 if env GDC_RECOVERY_PUBLICATION_TEST_MODE=true \
@@ -88,7 +105,7 @@ race_receipt_source="$tmp/race-receipt.pass.json"
 race_verdict_source="$tmp/race-verdict.pass.md"
 cp -a -- "$evidence_source" "$race_evidence_source"
 race_freshness_tmp="$tmp/race-freshness.json"
-jq '.max_age_seconds = 1' "$race_evidence_source/freshness.json" \
+jq '.max_age_seconds = 1 | .evaluated_at_unix = .not_before_unix' "$race_evidence_source/freshness.json" \
   >"$race_freshness_tmp"
 mv -f -- "$race_freshness_tmp" "$race_evidence_source/freshness.json"
 jq -n --arg node "$node" --arg address "$address" --arg runtime_id "$runtime_id" \

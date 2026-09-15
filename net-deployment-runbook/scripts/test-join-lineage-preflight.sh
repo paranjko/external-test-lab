@@ -55,7 +55,7 @@ block() {
   case "$height" in
     5) block=1111111111111111111111111111111111111111111111111111111111111111; app=2222222222222222222222222222222222222222222222222222222222222222 ;;
     5000) block=7777777777777777777777777777777777777777777777777777777777777777; app=8888888888888888888888888888888888888888888888888888888888888888 ;;
-    3000) block=3333333333333333333333333333333333333333333333333333333333333333; app=4444444444444444444444444444444444444444444444444444444444444444 ;;
+    3000|4998) block=3333333333333333333333333333333333333333333333333333333333333333; app=4444444444444444444444444444444444444444444444444444444444444444 ;;
     101) block=5555555555555555555555555555555555555555555555555555555555555555; app=6666666666666666666666666666666666666666666666666666666666666666 ;;
     *) exit 22 ;;
   esac
@@ -160,3 +160,27 @@ if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,
 fi
 grep -Fq 'lineage_observation_expired:' "$tmp/expired.err"
 printf 'PASS JOIN lineage preflight requires independent RPCs and defers snapshot discovery to P2P\n'
+jq '.policy={mode:"operator_source",source_rpc:"https://rpc-a.example.test/chain-rpc"}' "$tmp/observation.json" >"$tmp/source-observation.json"
+if "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/source-observation.json" --receipt "$tmp/refused.json" --env "$tmp/refused.env" >"$tmp/refused.log" 2>&1; then
+  echo 'single-source observation accepted without explicit operator source' >&2; exit 1
+fi
+grep -q 'requires explicit --source-rpc' "$tmp/refused.log"
+PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/source-spy" GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10' \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/source-observation.json" \
+  --receipt "$tmp/source-receipt.json" --env "$tmp/source.env" --source-rpc https://rpc-a.example.test/chain-rpc
+jq -e '.trust_authority=={kind:"operator_source",rpc_url:"https://rpc-a.example.test/chain-rpc"} and (.fault_domains|length)==1
+  and (.bootstrap.snapshot.providers|length)==1 and .bootstrap.trust.height==4998' "$tmp/source-receipt.json" >/dev/null
+! grep -Ev '^https://rpc-a.example.test/' "$tmp/source-spy"
+# shellcheck source=/dev/null
+source "$tmp/source.env"
+[[ "$GDC_JOIN_RPC_SERVER_1" == "$GDC_JOIN_RPC_SERVER_2" && "$GDC_JOIN_SOURCE_RPC" == https://rpc-a.example.test/chain-rpc ]]
+python3 - "$ROOT/lineage/join-lineage-preflight.v1.schema.json" "$tmp/source-receipt.json" <<'PY'
+import json, sys
+from jsonschema import Draft202012Validator
+schema, receipt = [json.load(open(path)) for path in sys.argv[1:]]
+validator = Draft202012Validator(schema)
+validator.validate(receipt)
+del receipt['trust_authority']
+assert not validator.is_valid(receipt), 'implicit single-source receipt accepted'
+PY
+printf 'PASS explicit source preflight, bound checkpoint and strict default schema\n'
