@@ -103,6 +103,7 @@ selected_gateway_protocol_contract() {
 
 load_profiles() {
   local root release deployment model operator comp_target comp_env retired_marker
+  local requested_v5_url="${DEVSHARD_V5_URL:-}" requested_v5_sha256="${DEVSHARD_V5_SHA256:-}"
   root="$(profile_root)"
   release="${GDC_RELEASE_PROFILE:-v2026.07.23}"
   deployment="${GDC_DEPLOYMENT_PROFILE:-community-lab}"
@@ -145,7 +146,7 @@ load_profiles() {
   [[ -r "$root/profiles/operator-services/$operator.lock" ]] || { echo "unknown operator-services profile: $operator" >&2; return 2; }
   unset GONKA_HOST_STACK_COMMIT GONKA_HOST_STACK_DOC_SHA256 GONKA_HOST_STACK_COMPOSE_SHA256
   unset DAPI_SOURCE_REF DAPI_COMMIT
-  unset LAB_CANDIDATE UPGRADE_FROM_PROFILE GONKA_UPGRADE_METADATA_URL
+  unset LAB_CANDIDATE OFFICIAL_DEVSHARD_RELEASE UPGRADE_FROM_PROFILE GONKA_UPGRADE_METADATA_URL
   unset CANDIDATE_DEFINITION_SHA256 CANDIDATE_BUILD_MANIFEST_SHA256
   unset CANDIDATE_DEVSHARD_SOURCE_REF CANDIDATE_DEVSHARD_COMMIT
   unset CANDIDATE_DEVSHARD_PROTOCOL_VERSION CANDIDATE_DEVSHARD_SUPPORTED_PROTOCOLS
@@ -192,6 +193,17 @@ load_profiles() {
   if [[ -n "${comp_env:-}" ]]; then
     eval "$comp_env"
     export GDC_COMPOSITION="$comp_target"
+  fi
+  if [[ "${OFFICIAL_DEVSHARD_RELEASE:-false}" == true ]]; then
+    [[ ( -z "$requested_v5_url" || "$requested_v5_url" == https://github.com/gonka-ai/gonka/releases/download/devshard/v5.0.0/devshardd.zip ) \
+      && ( -z "$requested_v5_sha256" || "$requested_v5_sha256" == ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564 ) \
+      && "${DEVSHARD_SOURCE_REF:-}" == devshard/v5.0.0 \
+      && "${DEVSHARD_COMMIT:-}" == fae45d8c53180303b8345b56b2a9cc9dadcc0ffb \
+      && "${DEVSHARD_V5_URL:-}" == https://github.com/gonka-ai/gonka/releases/download/devshard/v5.0.0/devshardd.zip \
+      && "${DEVSHARD_V5_SHA256:-}" == ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564 ]] || {
+      echo 'official DevShard v5.0.0 identity differs from the pinned Coreteam release' >&2
+      return 2
+    }
   fi
   if [[ -n "${GDC_RESOLVED_IMAGE_LOCK:-}" ]]; then
     load_resolved_image_lock "$GDC_RESOLVED_IMAGE_LOCK" || return $?

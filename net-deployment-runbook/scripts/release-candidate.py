@@ -1300,6 +1300,25 @@ def load_profile_lock(profile: str) -> tuple[dict[str, str], str]:
     if not path.is_file():
         raise CandidateError(f"release profile lock is missing: {path}")
     lock = parse_lock(path)
+    if lock.get("OFFICIAL_DEVSHARD_RELEASE") == "true":
+        expected = {
+            "DEVSHARD_SOURCE_REF": "devshard/v5.0.0",
+            "DEVSHARD_COMMIT": "fae45d8c53180303b8345b56b2a9cc9dadcc0ffb",
+            "DEVSHARD_V5_URL": "https://github.com/gonka-ai/gonka/releases/download/devshard/v5.0.0/devshardd.zip",
+            "DEVSHARD_V5_SHA256": "ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564",
+        }
+        if profile != "devshard-v5.0.0" or any(lock.get(key) != value for key, value in expected.items()):
+            raise CandidateError("official DevShard v5.0.0 profile identity differs from the pinned Coreteam release")
+        packaging_profile = lock.get("DEVSHARD_RUNTIME_PACKAGING_PROFILE")
+        if packaging_profile != "v2026.09.08-rc.0":
+            raise CandidateError("official DevShard runtime packaging profile is not pinned")
+        packaging = parse_lock(RELEASES / f"{packaging_profile}.lock")
+        for key in (
+            "DEVSHARD_GATEWAY_IMAGE", "DEVSHARD_HOST_IMAGE",
+            "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL", "DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256",
+        ):
+            if not lock.get(key) or lock[key] != packaging.get(key):
+                raise CandidateError(f"official DevShard runtime packaging differs from {packaging_profile}: {key}")
     return lock, sha256(path)
 
 
@@ -1361,8 +1380,10 @@ def build_canonical_composition(
     core_baseline = core_lock.get("UPGRADE_FROM_PROFILE", core_profile)
     devshard_baseline = devshard_lock.get("UPGRADE_FROM_PROFILE", devshard_profile)
     is_cand_core = core_lock.get("LAB_CANDIDATE") == "true"
-    is_candidate_devshard = devshard_lock.get("LAB_CANDIDATE") == "true" and (
+    is_official_devshard = devshard_lock.get("OFFICIAL_DEVSHARD_RELEASE") == "true"
+    is_candidate_devshard = (is_official_devshard or devshard_lock.get("LAB_CANDIDATE") == "true") and (
         "CANDIDATE_DEVSHARD_COMMIT" in devshard_lock or "DEVSHARDD_IMAGE" in devshard_lock
+        or is_official_devshard
     )
 
     required_devshard_profile = core_lock.get("REQUIRED_DEVSHARD_PROFILE")
@@ -1407,10 +1428,10 @@ def build_canonical_composition(
                 )
 
     if is_candidate_devshard:
-        devshard_protocol = devshard_lock.get("CANDIDATE_DEVSHARD_PROTOCOL_VERSION", "v5")
-        devshard_source_ref = devshard_lock.get("CANDIDATE_DEVSHARD_SOURCE_REF", "refs/heads/main")
-        devshard_source_commit = devshard_lock.get("CANDIDATE_DEVSHARD_COMMIT", "")
-        devshard_classification = "lab-candidate"
+        devshard_protocol = devshard_lock.get("DEVSHARD_PROTOCOL_VERSION" if is_official_devshard else "CANDIDATE_DEVSHARD_PROTOCOL_VERSION", "v5")
+        devshard_source_ref = devshard_lock.get("DEVSHARD_SOURCE_REF" if is_official_devshard else "CANDIDATE_DEVSHARD_SOURCE_REF", "refs/heads/main")
+        devshard_source_commit = devshard_lock.get("DEVSHARD_COMMIT" if is_official_devshard else "CANDIDATE_DEVSHARD_COMMIT", "")
+        devshard_classification = "official-coreteam" if is_official_devshard else "lab-candidate"
         devshard_images = {
             "devshardd": devshard_lock.get("DEVSHARDD_IMAGE", ""),
             "devshard-gateway": devshard_lock.get("DEVSHARD_GATEWAY_IMAGE", ""),
@@ -1442,6 +1463,8 @@ def build_canonical_composition(
             "images": {k: v for k, v in devshard_images.items() if v},
             "binaries": {k: v for k, v in devshard_binaries.items() if v.get("url") and v.get("sha256")},
         }
+        if is_official_devshard:
+            devshard_info["runtime_packaging_profile"] = devshard_lock["DEVSHARD_RUNTIME_PACKAGING_PROFILE"]
         gw_arch_url = devshard_lock.get("CANDIDATE_LOCAL_GATEWAY_ARCHIVE_URL") or devshard_lock.get("DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL", "")
         gw_arch_sha = devshard_lock.get("CANDIDATE_LOCAL_GATEWAY_ARCHIVE_SHA256") or devshard_lock.get("DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256", "")
         if gw_arch_url and gw_arch_sha:
@@ -1691,6 +1714,9 @@ def materialize_composition_lock(manifest: dict[str, Any]) -> str:
     if "devshard-gateway" in images:
         values["LOCAL_GATEWAY_IMAGE"] = local_gateway_image
         values["DEVSHARD_GATEWAY_IMAGE"] = gateway_image
+    if devshard_info.get("classification") == "official-coreteam":
+        values["OFFICIAL_DEVSHARD_RELEASE"] = "true"
+        values["DEVSHARD_RUNTIME_PACKAGING_PROFILE"] = devshard_info["runtime_packaging_profile"]
     if "gateway_archive_url" in devshard_info:
         values["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL"] = devshard_info["gateway_archive_url"]
         values["DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256"] = devshard_info["gateway_archive_sha256"]
@@ -1786,6 +1812,9 @@ def composition_env(manifest: dict[str, Any]) -> str:
         "DEVSHARD_GATEWAY_IMAGE": gateway_image,
         "DEVSHARD_HOST_IMAGE": images.get("devshard-host", ""),
     }
+    if devshard_info.get("classification") == "official-coreteam":
+        env["OFFICIAL_DEVSHARD_RELEASE"] = "true"
+        env["DEVSHARD_RUNTIME_PACKAGING_PROFILE"] = devshard_info["runtime_packaging_profile"]
     if "postgres" in images:
         env["POSTGRES_IMAGE"] = images["postgres"]
     if "gateway_archive_url" in devshard_info:
