@@ -54,8 +54,7 @@ http://:8081 {
   # read-only REST query on the status origin lets the page discover joins
   # without requiring an `ops site` redeploy after every new operator joins.
   handle /status/participants {
-    rewrite * /productscience/inference/inference/participant
-    reverse_proxy 127.0.0.1:1317
+    reverse_proxy 127.0.0.1:18089
   }
   handle_path /status/gateway/* {
     reverse_proxy 127.0.0.1:18080

@@ -151,8 +151,7 @@ http://:8082 {
 http://:8081 {
   encode zstd gzip
   handle /status/participants {
-    rewrite * /productscience/inference/inference/participant
-    reverse_proxy 127.0.0.1:1317
+    reverse_proxy 127.0.0.1:18089
   }
 CADDY
   for node in "${GDC_NODES[@]}"; do

@@ -1,0 +1,10 @@
+[Unit]
+Description=Gonka public participant registry adapter
+
+[Socket]
+ListenStream=127.0.0.1:18089
+Accept=yes
+MaxConnections=16
+
+[Install]
+WantedBy=sockets.target

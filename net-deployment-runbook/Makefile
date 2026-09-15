@@ -144,7 +144,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: site-js-check site-host-requirements-check test-recovery-contract
+test: site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-network-bootstrap.py
 	@./scripts/test-network-bootstrap-shell.sh
@@ -304,6 +304,10 @@ test-join-dind: bats-dind
 test-recovery-contract:
 	@python3 ./scripts/test-network-recovery-schemas.py
 	@./scripts/test-network-recovery-contract.sh
+
+.PHONY: test-participants-proxy
+test-participants-proxy:
+	@node ./scripts/test-participants-proxy.mjs
 
 test-recovery-rehearsal:
 	@./scripts/test-network-recovery-rehearsal.sh --manifest "$(manifest)" --lab-approval "$(lab_approval)" --evidence-dir "$(evidence_dir)" --timeout-seconds "$(timeout_seconds)"
