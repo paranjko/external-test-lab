@@ -5,7 +5,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 source "$ROOT/scripts/profile.sh"
 
-profile=devshard-v5.0.0
+profile=v2026.09.13
 url=https://github.com/gonka-ai/gonka/releases/download/devshard/v5.0.0/devshardd.zip
 digest=ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564
 GDC_RELEASE_PROFILE="$profile" load_profiles
@@ -20,6 +20,19 @@ comp="$tmp/official.json"
   --core v2026.08.06 --devshard "$profile" \
   --name official --output "$comp" >/dev/null
 "$ROOT/gdc.sh" release composition verify "$comp" >/dev/null
+
+# The deployment-facing selector must load the checked-in manifest by its
+# filename-derived identifier before it rejects this deliberately invalid
+# protocol list. This prevents a passing detached-manifest test from masking
+# a composition-name mismatch in the real CLI path.
+if GDC_HOME="$tmp/governance-home" "$ROOT/gdc.sh" \
+  --composition core-v2026.08.06+devshard-v2026.09.13 \
+  governance devshard submit --protocols v3,v3 >"$tmp/governance.out" 2>"$tmp/governance.err"; then
+  echo 'official composition accepted duplicate DevShard protocols' >&2
+  exit 1
+fi
+grep -Fq 'Duplicate DevShard protocol: v3' "$tmp/governance.err"
+
 python3 - "$comp" "$url" "$digest" <<'PY'
 import json
 import sys
@@ -45,18 +58,18 @@ spec.loader.exec_module(module)
 release_dir = Path(sys.argv[2])
 test_dir = Path(sys.argv[3]) / "releases"
 test_dir.mkdir()
-for name in ("devshard-v5.0.0.lock", "v2026.09.08-rc.0.lock"):
+for name in ("v2026.09.13.lock", "v2026.09.08-rc.0.lock"):
     shutil.copyfile(release_dir / name, test_dir / name)
 module.RELEASES = test_dir
-original = (test_dir / "devshard-v5.0.0.lock").read_text()
+original = (test_dir / "v2026.09.13.lock").read_text()
 for old, new in (
     ("devshardd.zip", "other.zip"),
     ("ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564", "0" * 64),
     ("58049b91e5955f8159f490a14bbccb9a3a2632b3bf1a018a78f9fe188e0c4d98", "0" * 64),
 ):
-    (test_dir / "devshard-v5.0.0.lock").write_text(original.replace(old, new))
+    (test_dir / "v2026.09.13.lock").write_text(original.replace(old, new))
     try:
-        module.load_profile_lock("devshard-v5.0.0")
+        module.load_profile_lock("v2026.09.13")
     except module.CandidateError:
         pass
     else:

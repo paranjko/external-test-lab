@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "external-test-lab-composition-manifest",
-  "composition": "official-coreteam-v5",
+  "composition": "core-v2026.08.06+devshard-v2026.09.13",
   "network": {
     "chain_id": "gonka-devnet-community",
     "genesis_sha256": "93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6",
@@ -41,12 +41,12 @@
     }
   },
   "devshard": {
-    "profile": "devshard-v5.0.0",
+    "profile": "v2026.09.13",
     "classification": "official-coreteam",
     "protocol_version": "v5",
     "source_commit": "fae45d8c53180303b8345b56b2a9cc9dadcc0ffb",
     "source_ref": "devshard/v5.0.0",
-    "lock_hash": "c91ea0f66bd5c06a3a5e9f43713792f209ee59204b62d9896e8cd1c6a0543d59",
+    "lock_hash": "b14b341ad761f8d45ebf1a2fe08938538b06400ca2cd94cb85aac3c3879b1546",
     "upgrade_from_profile": "v2026.08.06",
     "features": {
       "heightsync": true,

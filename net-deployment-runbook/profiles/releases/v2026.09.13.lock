@@ -1,4 +1,5 @@
-# Immutable official Coreteam DevShard v5.0.0 binary identity.
+# Immutable release snapshot dated 2026-09-13 (UTC) for the official Coreteam
+# DevShard v5.0.0 binary identity.
 # The Coreteam release publishes only devshardd.zip and its checksum.
 # Runtime host/gateway images below are separately pinned External Test Lab
 # packaging, reused from v2026.09.08-rc.0; they are not Coreteam release assets.

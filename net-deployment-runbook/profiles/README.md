@@ -39,6 +39,7 @@ complete lock are not accepted by `gdc.sh`.
 | --- | --- | --- |
 | v2026.07.23 | release/v0.2.14 | 2bfd85c958732992c7a9c5be1d796affe29f3ab4 | v0.2.14 executed on mainnet |
 | v2026.08.06 | release/v0.2.15 | 4d687ed6782bcea3931d2d9135bf322f84e190ab | current Mainnet-compatible reference |
+| v2026.09.13 | devshard/v5.0.0 | fae45d8c53180303b8345b56b2a9cc9dadcc0ffb | official DevShard v5.0.0 with separately pinned Lab runtime packaging |
 
 `v2026.08.06` additionally pins
 [host-stack snapshot `ce33c851`](https://github.com/gonka-ai/gonka/blob/ce33c851282b8f4c0f63d78d46ddd4d8bb248207/docs/host-stack-latest.md): DAPI

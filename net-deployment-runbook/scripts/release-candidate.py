@@ -1307,7 +1307,7 @@ def load_profile_lock(profile: str) -> tuple[dict[str, str], str]:
             "DEVSHARD_V5_URL": "https://github.com/gonka-ai/gonka/releases/download/devshard/v5.0.0/devshardd.zip",
             "DEVSHARD_V5_SHA256": "ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564",
         }
-        if profile != "devshard-v5.0.0" or any(lock.get(key) != value for key, value in expected.items()):
+        if profile != "v2026.09.13" or any(lock.get(key) != value for key, value in expected.items()):
             raise CandidateError("official DevShard v5.0.0 profile identity differs from the pinned Coreteam release")
         packaging_profile = lock.get("DEVSHARD_RUNTIME_PACKAGING_PROFILE")
         if packaging_profile != "v2026.09.08-rc.0":
