@@ -22,7 +22,7 @@ set -Eeuo pipefail
 printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
 case "$*" in
   *'keys show'*) exit 1 ;;
-  *'find /root/.inference/keyring-file -mindepth 1 -maxdepth 1'*) printf cleared ;;
+  *'find /gdc-identity/warm/keyring-file -mindepth 1 -maxdepth 1'*) printf cleared ;;
   *'keys add'*'--recover'*) printf 'keyring password rejected\n' >&2; exit 1 ;;
   *) exit 0 ;;
 esac
@@ -38,7 +38,10 @@ if PATH="$tmp/bin:$PATH" FAKE_DOCKER_LOG="$tmp/docker.log" "$INIT_IDENTITY" \
 fi
 grep -Fq 'READY cleared stale Host keyring before restoring validator backup identity' "$tmp/out"
 grep -Fq 'Cannot restore warm key: reason=keyring_authentication_failed' "$tmp/err"
-grep -Fq 'find /root/.inference/keyring-file -mindepth 1 -maxdepth 1' "$tmp/docker.log"
+grep -Fq 'find /gdc-identity/warm/keyring-file -mindepth 1 -maxdepth 1' "$tmp/docker.log"
+# The warm key goes through the Core image with an explicit keyring directory.
+grep -Fq -- '--entrypoint /bin/sh node -c inferenced keys add "$KEY_NAME" --recover --keyring-backend file --keyring-dir /gdc-identity/warm' "$tmp/docker.log"
+! grep -E 'entrypoint /bin/sh api -c .*inferenced keys' "$tmp/docker.log"
 ! grep -Fq "$canary" "$tmp/out" "$tmp/err" "$tmp/docker.log"
 ! grep -Fq 'KEYRING_PASSWORD_SECRET_CANARY' "$tmp/out" "$tmp/err" "$tmp/docker.log"
 

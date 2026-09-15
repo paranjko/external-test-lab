@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-ROLE=""; MIN_DRIVER=580
+ROLE=""; MIN_DRIVER=580; PORTABLE_RUNTIME=false
 while (($#)); do
   case "$1" in
     --role) ROLE="$2"; shift 2;;
-    *) echo "Usage: $0 --role network-gpu|network-only|ml-only" >&2; exit 2;;
+    # Declared portable runtime: report, do not fail. See PORTABLE-RUNTIME.md.
+    --portable-runtime) PORTABLE_RUNTIME=true; shift;;
+    *) echo "Usage: $0 --role network-gpu|network-only|ml-only [--portable-runtime]" >&2; exit 2;;
   esac
 done
 [[ "$ROLE" =~ ^(network-gpu|network-only|ml-only)$ ]] || exit 2
@@ -17,6 +19,21 @@ docker compose version >/dev/null 2>&1 && pass 'docker compose plugin' || fail '
 systemctl is-active --quiet chrony && pass chrony || fail chrony
 fail2ban-client status sshd >/dev/null 2>&1 && pass 'fail2ban sshd jail' || fail 'fail2ban sshd jail'
 chronyc tracking 2>/dev/null | grep -q 'Leap status.*Normal' && pass 'NTP synchronized' || fail 'NTP not synchronized'
+# Published amd64 chain binaries need ADX/BMI2 and die with SIGILL without them.
+# Refuse before any change on the Host, unless a portable runtime is declared.
+if [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]]; then
+  missing_isa=()
+  for isa in adx bmi1 bmi2; do
+    grep -qw "$isa" /proc/cpuinfo || missing_isa+=("$isa")
+  done
+  if ((${#missing_isa[@]} == 0)); then
+    pass 'CPU supports the ADX and BMI2 instructions the chain binaries require'
+  elif [[ "$PORTABLE_RUNTIME" == true ]]; then
+    pass "CPU lacks ${missing_isa[*]}; running a declared portable runtime built for it"
+  else
+    fail "CPU lacks ${missing_isa[*]}; the published chain binaries abort with SIGILL in blst_cgo_init here, build a portable runtime instead, see PORTABLE-RUNTIME.md"
+  fi
+fi
 min_kb=$((40*1024*1024)); [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]] && min_kb=$((50*1024*1024))
 if [[ -d /srv && -d /srv/dai && -w /srv/dai ]]; then
   pass '/srv and /srv/dai writable'
