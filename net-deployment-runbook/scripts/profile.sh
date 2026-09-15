@@ -255,6 +255,14 @@ load_join_profile() {
   DAPI_EXPECTED_VERSION="$(jq -r .spec.components.dapi.expected_runtime.version "$profile")"
   DAPI_EXPECTED_COMMIT="$(jq -r .spec.components.dapi.expected_runtime.commit "$profile")"
   # Operator-built images for a Host without ADX/BMI2, see PORTABLE-RUNTIME.md.
+  # Both chain images or neither: verify-host.sh waives its ISA check for a
+  # declared portable runtime, and a Core or DAPI left on the published image
+  # would abort with SIGILL after the Host was prepared.
+  if [[ -n "${GDC_PORTABLE_CORE_IMAGE:-}${GDC_PORTABLE_DAPI_IMAGE:-}" ]] \
+    && [[ -z "${GDC_PORTABLE_CORE_IMAGE:-}" || -z "${GDC_PORTABLE_DAPI_IMAGE:-}" ]]; then
+    echo 'GDC_PORTABLE_CORE_IMAGE and GDC_PORTABLE_DAPI_IMAGE must be declared together' >&2
+    return 1
+  fi
   # Upgrade inputs are cleared: the pinned DAPI payload is the binary that crashes.
   # Readback still checks version and commit against the Join Profile.
   if [[ -n "${GDC_PORTABLE_CORE_IMAGE:-}" ]]; then

@@ -55,12 +55,19 @@ and no `blst_cgo_init` line.
 
 ## Declare
 
-Both values must be digest-qualified:
+Both images or neither, digest-qualified. Inspect on the Host, export where
+`gdc` runs:
 
 ```bash
-export GDC_PORTABLE_CORE_IMAGE="$(docker image inspect local/gonka-inferenced:0.2.15-portable --format '{{index .RepoDigests 0}}')"
-export GDC_PORTABLE_DAPI_IMAGE="$(docker image inspect local/gonka-api:0.2.15-post3-portable --format '{{index .RepoDigests 0}}')"
+export GDC_PORTABLE_CORE_IMAGE="$(ssh gdc-node5 "docker image inspect local/gonka-inferenced:0.2.15-portable --format '{{index .RepoDigests 0}}'")"
+export GDC_PORTABLE_DAPI_IMAGE="$(ssh gdc-node5 "docker image inspect local/gonka-api:0.2.15-post3-portable --format '{{index .RepoDigests 0}}'")"
 ```
+
+A locally built image has a RepoDigest only under the containerd image store,
+the default of a fresh Docker Engine 29 (`docker info -f '{{.DriverStatus}}'`
+shows `io.containerd.snapshotter.v1`). On the overlay2 store push the images to
+a registry on the Host first and declare the `localhost:5000/...@sha256:...`
+reference.
 
 ## Limits
 

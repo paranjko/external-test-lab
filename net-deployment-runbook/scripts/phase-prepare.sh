@@ -71,10 +71,13 @@ for host in "${hosts[@]}"; do
     failed_hosts+=("$host")
     continue
   fi
-# A declared portable runtime satisfies the ADX/BMI2 check.
-verify_host_args="--role '$role'"
-[[ -z "${GDC_PORTABLE_DAPI_IMAGE:-}" ]] || verify_host_args="$verify_host_args --portable-runtime"
-
+  # A declared portable runtime satisfies the ADX/BMI2 check. The chain images
+  # are replaced only under a generated JOIN profile, and profile.sh refuses a
+  # declaration of one image without the other.
+  verify_host_args="--role '$role'"
+  if [[ -n "${GDC_JOIN_PROFILE:-}" && -n "${GDC_PORTABLE_CORE_IMAGE:-}" && -n "${GDC_PORTABLE_DAPI_IMAGE:-}" ]]; then
+    verify_host_args="$verify_host_args --portable-runtime"
+  fi
   if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh $verify_host_args" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
