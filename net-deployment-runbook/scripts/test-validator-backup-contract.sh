@@ -502,7 +502,7 @@ grep -Fq 'keys add "$KEY_NAME" --recover --keyring-backend file' "$ROOT/02-node/
 grep -Fq 'warm_key_restore_failure_reason' "$ROOT/02-node/init-identity.sh"
 grep -Fq 'reason=%s' "$ROOT/02-node/init-identity.sh"
 grep -Fq 'cleared stale Host keyring' "$ROOT/02-node/init-identity.sh"
-grep -Fq 'find /root/.inference/keyring-file -mindepth 1 -maxdepth 1' "$ROOT/02-node/init-identity.sh"
+grep -Fq 'find /gdc-identity/warm/keyring-file -mindepth 1 -maxdepth 1' "$ROOT/02-node/init-identity.sh"
 grep -Fq -- '--warm-mnemonic' "$ROOT/01-identities-genesis/collect-identities.sh"
 grep -Fq 'verify_checksum_manifest "$extracted"' "$BACKUP"
 grep -Fq 'MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES=$((66 * 1024 * 1024))' "$BACKUP"

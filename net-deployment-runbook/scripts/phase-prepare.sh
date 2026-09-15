@@ -71,7 +71,11 @@ for host in "${hosts[@]}"; do
     failed_hosts+=("$host")
     continue
   fi
-  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
+# A declared portable runtime satisfies the ADX/BMI2 check.
+verify_host_args="--role '$role'"
+[[ -z "${GDC_PORTABLE_DAPI_IMAGE:-}" ]] || verify_host_args="$verify_host_args --portable-runtime"
+
+  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh $verify_host_args" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
     continue
@@ -104,7 +108,7 @@ for host in "${hosts[@]}"; do
     failed_hosts+=("$host")
     continue
   fi
-  if ! verify_output=$(ssh -o ConnectTimeout=10 "$host" "sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" 2>&1); then
+  if ! verify_output=$(ssh -o ConnectTimeout=10 "$host" "sudo /tmp/gdc-host-prep/verify-host.sh $verify_host_args" 2>&1); then
     printf 'FAILED  %s verification:\n%s\n' "$host" "$verify_output"
     failed_hosts+=("$host")
     continue

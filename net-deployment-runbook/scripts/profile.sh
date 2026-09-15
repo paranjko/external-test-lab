@@ -254,6 +254,27 @@ load_join_profile() {
   DAPI_UPGRADE_SHA256="$(jq -r .spec.components.dapi.installation.binary.sha256 "$profile")"
   DAPI_EXPECTED_VERSION="$(jq -r .spec.components.dapi.expected_runtime.version "$profile")"
   DAPI_EXPECTED_COMMIT="$(jq -r .spec.components.dapi.expected_runtime.commit "$profile")"
+  # Operator-built images for a Host without ADX/BMI2, see PORTABLE-RUNTIME.md.
+  # Upgrade inputs are cleared: the pinned DAPI payload is the binary that crashes.
+  # Readback still checks version and commit against the Join Profile.
+  if [[ -n "${GDC_PORTABLE_CORE_IMAGE:-}" ]]; then
+    [[ "$GDC_PORTABLE_CORE_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || {
+      echo 'GDC_PORTABLE_CORE_IMAGE must be digest-qualified' >&2; return 1; }
+    INFERENCED_IMAGE="$GDC_PORTABLE_CORE_IMAGE"
+    printf 'NOTE operator-built portable Core runtime image=%s; Core is not artifact-verified in this deployment, runtime identity is still enforced by the canonical readback\n' \
+      "$GDC_PORTABLE_CORE_IMAGE" >&2
+  fi
+  if [[ -n "${GDC_PORTABLE_DAPI_IMAGE:-}" ]]; then
+    [[ "$GDC_PORTABLE_DAPI_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || {
+      echo 'GDC_PORTABLE_DAPI_IMAGE must be digest-qualified' >&2; return 1; }
+    DAPI_IMAGE="$GDC_PORTABLE_DAPI_IMAGE"
+    DAPI_UPGRADE_URL=''
+    DAPI_UPGRADE_SHA256=''
+    DAPI_EXPECTED_VERSION=''
+    DAPI_EXPECTED_COMMIT=''
+    printf 'NOTE operator-built portable DAPI runtime image=%s; DAPI is not artifact-verified in this deployment, runtime identity is still enforced by the canonical readback\n' \
+      "$GDC_PORTABLE_DAPI_IMAGE" >&2
+  fi
   TMKMS_IMAGE="$(jq -r .spec.deployment.host_envelope.tmkms_image "$profile")"
   POSTGRES_IMAGE="$(jq -r .spec.deployment.host_envelope.postgres_image "$profile")"
   EDGE_API_IMAGE="$(jq -r .spec.deployment.host_envelope.edge_api_image "$profile")"
