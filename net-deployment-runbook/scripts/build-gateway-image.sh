@@ -34,13 +34,14 @@ canonical_runtime_identity() {
         Config,RootFS,Created,Author:(.Author // ""),Comment:(.Comment // "")}'
 }
 if [[ "$VERSION" == v5 ]]; then
-  immutable_image="${DEVSHARD_GATEWAY_IMAGE:?candidate v5 immutable gateway image is required}"
+  immutable_image="${DEVSHARD_GATEWAY_IMAGE:?immutable v5 gateway image is required}"
   [[ "$immutable_image" =~ @sha256:[0-9a-f]{64}$ ]] \
-    || { echo 'candidate v5 immutable gateway image must include a SHA-256 digest' >&2; exit 2; }
-  archive_url="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL:?candidate v5 gateway image archive URL is required}"
-  archive_sha256="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256:?candidate v5 gateway image archive SHA-256 is required}"
-  [[ "${LAB_CANDIDATE:-false}" == true && "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
-    || { echo 'DevShard v5 requires an immutable laboratory candidate image archive' >&2; exit 2; }
+    || { echo 'immutable v5 gateway image must include a SHA-256 digest' >&2; exit 2; }
+  archive_url="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL:?immutable v5 gateway image archive URL is required}"
+  archive_sha256="${DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256:?immutable v5 gateway image archive SHA-256 is required}"
+  [[ ( "${LAB_CANDIDATE:-false}" == true || "${OFFICIAL_DEVSHARD_RELEASE:-false}" == true ) \
+    && "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo 'DevShard v5 requires an immutable verified runtime image archive' >&2; exit 2; }
   archive="$(mktemp /tmp/gdc-devshard-gateway.XXXXXX.oci.tar.gz)"
   trap 'rm -f -- "$archive"' EXIT
   curl -fsSL "$archive_url" -o "$archive"
@@ -59,10 +60,10 @@ if [[ "$VERSION" == v5 ]]; then
       | canonical_runtime_identity
   )"
   [[ -n "$loaded_runtime_identity" && "$loaded_runtime_identity" == "$immutable_runtime_identity" ]] || {
-    echo 'candidate v5 gateway archive runtime payload does not match the immutable composition image' >&2
+    echo 'v5 gateway archive runtime payload does not match the immutable composition image' >&2
     exit 1
   }
-  echo "READY $IMAGE loaded from its verified candidate archive on $GATEWAY_NODE"
+  echo "READY $IMAGE loaded from its verified runtime archive on $GATEWAY_NODE"
   exit 0
 fi
 case "$VERSION" in

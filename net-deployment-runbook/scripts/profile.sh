@@ -58,7 +58,13 @@ local_gateway_image_for_protocol() {
     echo 'gateway protocol must be v3, v4 or v5' >&2
     return 2
   }
-  if [[ "${LAB_CANDIDATE:-false}" == true && "$version" == "${DEVSHARD_PROTOCOL_VERSION:-}" ]]; then
+  # v5 has two immutable packaging paths: a laboratory candidate and an
+  # official Coreteam binary release with separately pinned lab runtime
+  # packaging.  In both cases LOCAL_GATEWAY_IMAGE is the checksum-bound tag
+  # that the archive must materialize; deriving a synthetic -v5 tag loses
+  # that identity.
+  if [[ ( "${LAB_CANDIDATE:-false}" == true || "${OFFICIAL_DEVSHARD_RELEASE:-false}" == true ) \
+    && "$version" == "${DEVSHARD_PROTOCOL_VERSION:-}" ]]; then
     printf '%s\n' "$image"
     return 0
   fi
