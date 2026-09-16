@@ -406,9 +406,16 @@ case "$COMPONENT" in
       if [[ -z "${GDC_ESCROW_ID:-}" && -s "$GATEWAY_ENV" ]]; then
         resumed_escrow="$(awk -F= '$1 == "DEVSHARD_ESCROW_ID" {print $2; exit}' "$GATEWAY_ENV")"
         resumed_route="$(awk -F= '$1 == "DEVSHARD_ROUTE_PREFIX" {print $2; exit}' "$GATEWAY_ENV")"
+        resumed_state=''
         if [[ "$resumed_escrow" =~ ^[1-9][0-9]*$ && "$resumed_route" == "/devshard/$GDC_GATEWAY_VERSION" ]]; then
+          resumed_state="$("$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$resumed_escrow" \
+            --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json 2>/dev/null || true)"
+        fi
+        if jq -e '.found == true and (.escrow.settled // false) == false' <<<"$resumed_state" >/dev/null 2>&1; then
           export GDC_ESCROW_ID="$resumed_escrow"
           printf 'READY resume locally rendered gateway escrow %s\n' "$GDC_ESCROW_ID"
+        elif [[ "$resumed_escrow" =~ ^[1-9][0-9]*$ && "$resumed_route" == "/devshard/$GDC_GATEWAY_VERSION" ]]; then
+          printf 'READY discard locally rendered gateway escrow %s absent from committed chain state\n' "$resumed_escrow"
         fi
       fi
     fi

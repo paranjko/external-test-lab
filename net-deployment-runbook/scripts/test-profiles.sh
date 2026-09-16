@@ -218,6 +218,7 @@ grep -Fq 'if [[ "$gateway_rotation_enabled" == true ]]; then' "$ROOT/scripts/pha
 grep -Fq 'Fund the initial gateway escrow account to the live minimum' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '"$ACCOUNTS/gdc-gateway-cold.json" "$INVENTORY"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'resume locally rendered gateway escrow' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'absent from committed chain state' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'no additional funding is needed' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'stopped stale public admission without a deployed gateway environment' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway_funding_source_minimum="$((gateway_funding_source_target - gateway_max_refill))"' "$ROOT/scripts/phase-ops.sh"
