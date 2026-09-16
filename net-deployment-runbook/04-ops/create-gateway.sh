@@ -48,10 +48,21 @@ fi
 # when a positive weighted escrow exists. Keep the Community test-lab
 # defaults explicitly positive and bounded; they are an operator policy, not
 # a claim that the chain has admitted an unbounded runtime.
-MAX_CONCURRENT_REQUESTS="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-4}"
-MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-4096}"
-[[ "$MAX_CONCURRENT_REQUESTS" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a positive integer' >&2; exit 2; }
-[[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a positive integer' >&2; exit 2; }
+requested_max_concurrent_requests="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-4}"
+requested_max_input_tokens_in_flight="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-4096}"
+# The operator contract uses zero for unlimited. The pinned v5 Gateway instead
+# treats a literal zero as no usable capacity, so render its documented
+# unlimited setting as a bounded positive runtime value.
+case "$requested_max_concurrent_requests" in
+  0) MAX_CONCURRENT_REQUESTS=4 ;;
+  *) MAX_CONCURRENT_REQUESTS="$requested_max_concurrent_requests" ;;
+esac
+case "$requested_max_input_tokens_in_flight" in
+  0) MAX_INPUT_TOKENS_IN_FLIGHT=4096 ;;
+  *) MAX_INPUT_TOKENS_IN_FLIGHT="$requested_max_input_tokens_in_flight" ;;
+esac
+[[ "$MAX_CONCURRENT_REQUESTS" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a non-negative integer' >&2; exit 2; }
+[[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a non-negative integer' >&2; exit 2; }
 CREATOR="$(jq -er .address "$GDC_HOME/accounts/gdc-gateway-cold.json")"
 # The public edge owns public chain RPC after the distributed topology is available;
 # bootstrap-access overrides this with the sole live Genesis participant.
