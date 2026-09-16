@@ -207,6 +207,8 @@ grep -Fq 'proposal $proposal_id is stale or malformed and will not be accepted' 
   "$ROOT/scripts/phase-vote-proposal.sh"
 grep -Fq '"${OFFICIAL_DEVSHARD_RELEASE:-false}" == true' \
   "$ROOT/scripts/phase-vote-proposal.sh"
+grep -Fq 'restored Genesis signer are available to vote' \
+  "$ROOT/scripts/phase-vote-proposal.sh"
 
 cat >"$tmp/snapshot-before.json" <<'EOF'
 {"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v5","binary":"https://example/old-v5.zip","sha256":"5555555555555555555555555555555555555555555555555555555555555555"}]},"fee_params":{"base_denom":"ngonka"}}}
