@@ -202,4 +202,32 @@ if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GD
 fi
 grep -Fq 'profile_id does not bind' "$tmp/tampered-resume.err"
 
+# A prior run that refused at classification recorded mutation=none. The
+# normal command continues to a fresh preflight instead of demanding manual
+# recovery, and the re-entry decision itself reaches no deployment tool.
+refused_id=refused-join
+refused_run="$tmp/operator/validator-a/runs/$refused_id/join-validator-a"
+mkdir -p "$refused_run/receipts"
+install -m 0600 "$completed_run/join-profile.v1.json" "$refused_run/join-profile.v1.json"
+[[ "$(sha256sum "$refused_run/join-profile.v1.json" | awk '{print $1}')" == "$completed_profile_sha256" ]]
+jq -c --arg run_id "$refused_id" '.run_id = $run_id | .generation_id = $run_id | .state = "JOIN_PROFILE_READY" | .signer_ever_started = false' \
+  "$tmp/completed-receipt.json" >"$tmp/refused-ready.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$refused_run/receipts" --input "$tmp/refused-ready.json" >/dev/null
+jq -c '.state = "REFUSED" | .outcome = "refused" | .resume_policy = "new_profile"' "$tmp/refused-ready.json" >"$tmp/refused-stop.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$refused_run/receipts" --input "$tmp/refused-stop.json" >/dev/null
+jq -cn --arg profile "$completed_profile_sha256" '
+  {schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"identity",category:"identity",reason:"partial_identity",exit_code:1,mutation:"none",signer_state:"absent",resume:"manual_recovery",join_profile_sha256:$profile,evidence:[]}
+' >"$tmp/refused-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$refused_run/join-result.v1.json" --input "$tmp/refused-result.json" >/dev/null
+printf '%s\n' "$refused_id" >"$tmp/operator/validator-a/state/active-run-id"
+: >"$tmp/remote-effects.log"
+PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
+  "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
+    --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/refused-reentry.out" 2>"$tmp/refused-reentry.err" || true
+grep -Fq "READY prior JOIN run $refused_id stopped before any Host change; classifying the Host afresh" "$tmp/refused-reentry.out"
+if grep -Fq 'no safe automatic resume dispatcher' "$tmp/refused-reentry.err"; then
+  echo 'a refusal before mutation still demanded manual recovery on re-entry' >&2; exit 1
+fi
+! grep -Eq 'start-node|install-node|rsync|scp' "$tmp/remote-effects.log"
+
 printf 'PASS Host JOIN --plan creates a restore-bound local profile without remote effects\n'

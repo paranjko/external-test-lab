@@ -74,6 +74,8 @@ current_profile_id="$(jq -r .profile_id "$current")"
 last_state="$(jq -r .last_state <<<"$chain")"
 signer_started="$(jq -r .signer_ever_started <<<"$chain")"
 terminal_profile_sha256="$(jq -r '.join_profile_sha256 // empty' "$result")"
+terminal_mutation="$(jq -r '.mutation // empty' "$result")"
+terminal_reason="$(jq -r '.reason // empty' "$result")"
 
 if [[ "$last_state" == COMPLETE && "$signer_started" == true && "$terminal_outcome" == succeeded && "$terminal_profile_sha256" == "$previous_profile_sha256" ]]; then
   if [[ "$current_profile_id" == "$previous_profile_id" ]]; then
@@ -81,6 +83,15 @@ if [[ "$last_state" == COMPLETE && "$signer_started" == true && "$terminal_outco
   else
     emit profile_changed complete_profile_differs "$previous_profile_id"
   fi
+  exit 0
+fi
+# A run that stopped at classification wrote its own refusal: a REFUSED
+# receipt closes the chain, the terminal result asserts mutation=none and no
+# signer ever started. It holds no deployment, identity or signer state to
+# resume, so the next normal invocation classifies the Host afresh.
+if [[ "$last_state" == REFUSED && "$signer_started" == false && "$terminal_outcome" == refused \
+  && "$terminal_mutation" == none && "$terminal_profile_sha256" == "$previous_profile_sha256" ]]; then
+  emit refused_before_mutation "refused_${terminal_reason}" "$previous_profile_id"
   exit 0
 fi
 # Only post-signer acceptance has a bounded non-mutating dispatcher.  Earlier

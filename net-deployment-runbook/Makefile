@@ -179,6 +179,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-classify-join-state.sh
 	@./scripts/test-classify-join-reentry.sh
 	@./scripts/test-join-identity-diagnostics.sh
+	@./scripts/test-join-refusal-diagnostics.sh
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
