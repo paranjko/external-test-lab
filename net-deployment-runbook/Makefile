@@ -199,6 +199,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
+	@./scripts/test-host-identity-layout-probe.sh
 	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh
 	@./scripts/test-official-devshard-profile.sh

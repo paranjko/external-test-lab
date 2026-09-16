@@ -1602,6 +1602,11 @@ case "$COMMAND" in
     run_join_preflight bootstrap-chain-id invalid-bootstrap configuration bootstrap \
       'The Bootstrap descriptor chain ID does not match the requested Host JOIN network.' \
       jq -e --arg chain "$join_chain_id" '.chain_id == $chain' "$join_bootstrap_file" >/dev/null
+    # Host reset asks the chain about this participant through the seeds of
+    # the document the JOIN used. The simple form already writes it here; keep
+    # a supplied one here too, or reset can never clear an unregistered key.
+    [[ "$join_bootstrap_file" == "$STATE/network-bootstrap.json" ]] \
+      || install -m 0600 -- "$join_bootstrap_file" "$STATE/network-bootstrap.json"
     # A first stable observation identifies the candidate runtime.  Local
     # downloads can take minutes, so a second stable observation is required
     # before the Host is touched.  Both gates share one operator-visible
