@@ -44,11 +44,15 @@ if [[ "$devshard_update" == true ]]; then
   mutable_protocol=none
   expected_v5_url=-
   expected_v5_sha256=-
-  if [[ -n "${GDC_COMPOSITION:-}" && "${LAB_CANDIDATE:-false}" == true ]]; then
+  if [[ -n "${GDC_COMPOSITION:-}" \
+        && ( "${LAB_CANDIDATE:-false}" == true || "${OFFICIAL_DEVSHARD_RELEASE:-false}" == true ) ]]; then
     [[ "${GDC_COMPOSITION_HASH:-}" =~ ^[0-9a-f]{64}$ \
-      && "${CANDIDATE_DEVSHARD_PROTOCOL_VERSION:-}" == v5 \
       && "${DEVSHARD_PROTOCOL_VERSION:-}" == v5 ]] \
-      || die 'DevShard tuple replacement vote requires a verified v5 candidate composition'
+      || die 'DevShard tuple replacement vote requires a verified v5 composition'
+    if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
+      [[ "${CANDIDATE_DEVSHARD_PROTOCOL_VERSION:-}" == v5 ]] \
+        || die 'DevShard candidate composition does not declare protocol v5'
+    fi
     mutable_protocol=v5
     expected_v5_url="$DEVSHARD_V5_URL"
     expected_v5_sha256="$DEVSHARD_V5_SHA256"
