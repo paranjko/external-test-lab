@@ -626,9 +626,14 @@ load_project() {
     return 0
   fi
   load_topology
-  mapfile -t genesis_addresses < <(getent ahostsv4 "$GENESIS_PUBLIC_HOST" | awk '{print $1}' | sort -u)
-  (( ${#genesis_addresses[@]} == 1 )) || die "$GENESIS_PUBLIC_HOST must resolve to exactly one IPv4 address"
-  MONITORING_CIDR="${genesis_addresses[0]}/32"
+  # A host-recovery profile deliberately has no gateway role. Its local
+  # validation never deploys the central collector, so retain the Genesis
+  # source only for that isolated mode.
+  monitoring_host="$GENESIS_PUBLIC_HOST"
+  [[ -z "$GATEWAY_NODE" ]] || monitoring_host="$(node_public_host "$GATEWAY_NODE")"
+  mapfile -t monitoring_addresses < <(getent ahostsv4 "$monitoring_host" | awk '{print $1}' | sort -u)
+  (( ${#monitoring_addresses[@]} == 1 )) || die "$monitoring_host must resolve to exactly one IPv4 address"
+  MONITORING_CIDR="${monitoring_addresses[0]}/32"
   mapfile -t edge_addresses < <(getent ahostsv4 "$PUBLIC_EDGE_HOST" | awk '{print $1}' | sort -u)
   (( ${#edge_addresses[@]} == 1 )) || die "$PUBLIC_EDGE_HOST must resolve to exactly one IPv4 address"
   PUBLIC_EDGE_CIDR="${edge_addresses[0]}/32"

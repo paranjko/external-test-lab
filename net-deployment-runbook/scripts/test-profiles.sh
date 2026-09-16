@@ -110,6 +110,8 @@ grep -Fq 'GDC_PUBLIC_GRAFANA_BROWSER_READY_WAIT_SECONDS:-600' "$ROOT/scripts/ver
 grep -Fq 'local ML start request node=%s' "$ROOT/03-join/start-local-ml.sh"
 grep -Fq 'local ML model endpoint node=%s' "$ROOT/03-join/start-local-ml.sh"
 grep -Fq '[[ ! -d "$DEST/prometheus/prometheus.yml" ]] || rm -rf' "$ROOT/04-ops/install-ops.sh"
+grep -Fq 'mkdir -p "$DEST/status" "$DEST/prometheus"' "$ROOT/04-ops/install-ops.sh"
+! grep -Fq '/dev/stdin' "$ROOT/04-ops/install-ops.sh"
 grep -Fq 'GDC_SITE_PUBLIC_VERIFY_WAIT_SECONDS' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'complete public homepage contract after site restart' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'empty participant set' "$ROOT/scripts/verify-public-homepage.sh"
