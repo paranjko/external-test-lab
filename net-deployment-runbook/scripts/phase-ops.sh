@@ -147,7 +147,7 @@ suspend_gateway_admission() {
 }
 
 reconcile_gateway_observer_route() {
-  local node="$GATEWAY_NODE" edge_env edge_remote observer_active existing_admission
+  local node="$GATEWAY_NODE" edge_env edge_remote observer_active existing_admission gateway_environment
   edge_env="$GENERATED/edge/$node.env"
   edge_remote="${REMOTE}-gateway-edge"
   mkdir -p "$(dirname "$edge_env")"
@@ -177,8 +177,16 @@ reconcile_gateway_observer_route() {
       docker compose ps -aq gateway-admission')"; then
       die 'could not determine public admission state before runtime replacement'
     fi
-    [[ -z "$existing_admission" ]] \
-      || die 'existing public admission cannot be suspended before its observer TLS route is proven'
+    if [[ -n "$existing_admission" ]]; then
+      gateway_environment="$(ssh -T "$GATEWAY_NODE" 'sudo test -s /srv/dai/ops/gateway.env && printf present || printf absent')" \
+        || die 'could not determine gateway environment before replacing public admission'
+      [[ "$gateway_environment" == absent ]] \
+        || die 'existing public admission cannot be suspended before its observer TLS route is proven'
+      ssh -T "$PUBLIC_EDGE_NODE" 'set -Eeuo pipefail
+        cd /srv/dai/edge
+        docker compose stop gateway-admission >/srv/dai/edge/stop-stale-gateway-admission.log 2>&1 || true'
+      printf 'READY stopped stale public admission without a deployed gateway environment\n'
+    fi
     printf 'READY gateway observer TLS route installed; live probe deferred until first observer start\n'
     return
   fi
@@ -395,6 +403,14 @@ case "$COMPONENT" in
     else
       step 'Discard only gateway state whose every escrow is absent from committed chain state'
       "$ROOT/scripts/reset-stale-gateway-state.sh" "$GATEWAY_NODE" "${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
+      if [[ -z "${GDC_ESCROW_ID:-}" && -s "$GATEWAY_ENV" ]]; then
+        resumed_escrow="$(awk -F= '$1 == "DEVSHARD_ESCROW_ID" {print $2; exit}' "$GATEWAY_ENV")"
+        resumed_route="$(awk -F= '$1 == "DEVSHARD_ROUTE_PREFIX" {print $2; exit}' "$GATEWAY_ENV")"
+        if [[ "$resumed_escrow" =~ ^[1-9][0-9]*$ && "$resumed_route" == "/devshard/$GDC_GATEWAY_VERSION" ]]; then
+          export GDC_ESCROW_ID="$resumed_escrow"
+          printf 'READY resume locally rendered gateway escrow %s\n' "$GDC_ESCROW_ID"
+        fi
+      fi
     fi
     step "Provide the pinned $GDC_GATEWAY_VERSION gateway image on $GATEWAY_NODE"
     "$ROOT/scripts/build-gateway-image.sh" >"$STATE/gateway-image-$GDC_GATEWAY_VERSION.txt"
@@ -457,10 +473,14 @@ case "$COMPONENT" in
         0 0 "$gateway_max_refill"
     else
       printf 'READY Gateway auto rotation is disabled; private reserve signer and token distribution are deferred\n'
-      step 'Fund the initial gateway escrow account to the live minimum'
-      "$ROOT/scripts/ensure-account-balance.sh" \
-        "$ACCOUNTS/gdc-gateway-cold.json" "$INVENTORY" \
-        "$gateway_live_min_amount" "$gateway_live_min_amount"
+      if [[ -n "${GDC_ESCROW_ID:-}" ]]; then
+        printf 'READY initial gateway escrow is already rendered; no additional funding is needed\n'
+      else
+        step 'Fund the initial gateway escrow account to the live minimum'
+        "$ROOT/scripts/ensure-account-balance.sh" \
+          "$ACCOUNTS/gdc-gateway-cold.json" "$INVENTORY" \
+          "$gateway_live_min_amount" "$gateway_live_min_amount"
+      fi
     fi
     # Re-running `ops gateway` may reuse an escrow only for the same bound
     # protocol. A Host persists the protocol binding per escrow and rejects a
