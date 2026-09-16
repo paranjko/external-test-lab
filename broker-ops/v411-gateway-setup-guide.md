@@ -4,11 +4,18 @@ From any current setup (v3, v4, v4.1) to a running 4.1.1 gateway with a public
 accounting link. One pass, top to bottom. Your existing gateway is not
 touched; at the end you only repoint the front at the new one.
 
-Image:
+Release: [`release/gateway/v4.1.1`](https://github.com/gonka-ai/gonka/releases/tag/release/gateway/v4.1.1)
+(gonka-ai/gonka, 2026-09-15). It publishes two tags of the same image:
 
 ```
 ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.15-v4.1.1
+ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.15-v4.1.1-latest
 ```
+
+Both resolve to index digest `sha256:80f79d2226838eb21c951fe79c2e2c76308f0a5930eb83c37098ee95c8dc0fdc`
+(checked 2026-09-16) — pin the digest, not the tag. As of 2026-09-16 there is
+**no gateway v5 image**: `devshard/v5.0.0` on the releases page is the
+host-side binary (pre-release), not a gateway. 4.1.1 is the current gateway.
 
 What you get: protocol `v4.1` (route prefix `/devshard/v4.1`), a working
 **accounting ledger** (per-epoch stats for external dashboards such as
@@ -334,9 +341,10 @@ first (§3), switch last (§5).
 into `gateway.db` and probes a dead endpoint forever. Set `none` on public RPC.
 
 **Public RPC returning HTML.** `invalid character '<'` on account/escrow
-queries = the RPC answered an nginx error page or a `301` (missing trailing
-slash turns the POST into a GET). Use `https://rpc.gonka.gg/chain-rpc/` or
-your own node.
+queries = the RPC answered an nginx error page or a redirect (a missing
+trailing slash used to `301` and turn the POST into a GET; keep the slash
+even if the endpoint accepts both today). Use `https://rpc.gonka.gg/chain-rpc/`
+or your own node.
 
 **Minting in PoC / right before `next_poc`.** Validator set is moving; wait
 for Inference.
@@ -344,7 +352,10 @@ for Inference.
 **Rotation.** When enabled it replaces a shard on low balance or high nonce
 and leaves the old deposit locked, and it does not bootstrap from zero. Leave
 both flags off until you have watched nonce vs GNK burn for a few epochs;
-first escrows are always a manual mint.
+first escrows are always a manual mint. This also holds when you **add a
+model** to a gateway that already rotates: a new `model_id` in settings gets
+no escrow from the rotator mid-epoch — mint it by hand (§3), the rotator
+picks it up from the next epoch boundary.
 
 **`GET /v1/status` with a single escrow** may render as a legacy card without
 `.devshards[]`. Check `/v1/admin/devshards` or list the ids you minted.
