@@ -282,6 +282,9 @@ class TelegramConsumerTest(unittest.TestCase):
             "telegram:sendMessage",
         ])
 
+    def test_admission_probe_default_is_short(self):
+        self.assertEqual(BOT.GATEWAY_ADMISSION_TIMEOUT_SECONDS, 3)
+
     def test_handle_gateway_unavailable_replies_without_internal_api_work(self):
         update = {
             "message": {
