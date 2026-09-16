@@ -398,15 +398,16 @@ case "$COMPONENT" in
     fi
     step "Provide the pinned $GDC_GATEWAY_VERSION gateway image on $GATEWAY_NODE"
     "$ROOT/scripts/build-gateway-image.sh" >"$STATE/gateway-image-$GDC_GATEWAY_VERSION.txt"
+    gateway_live_min_amount="$("$ROOT/scripts/inferenced.sh" query inference params \
+      --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json \
+      | jq -er '(.params // .).devshard_escrow_params.min_amount')"
+    [[ "$gateway_live_min_amount" =~ ^[1-9][0-9]*$ ]] || die 'live gateway escrow minimum is invalid'
     if [[ "$gateway_rotation_enabled" == true ]]; then
       step 'Reconcile the gateway creator reserve before escrow reuse or replacement'
       gateway_reserve_temp_count="${GDC_GATEWAY_ROTATION_TEMP_COUNT:-2}"
       gateway_reserve_target_count="${GDC_GATEWAY_ROTATION_TARGET_COUNT:-2}"
       [[ "$gateway_reserve_temp_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TEMP_COUNT must be positive'
       [[ "$gateway_reserve_target_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TARGET_COUNT must be positive'
-      gateway_live_min_amount="$("$ROOT/scripts/inferenced.sh" query inference params \
-        --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json \
-        | jq -er '(.params // .).devshard_escrow_params.min_amount')"
       gateway_rotation_amount="${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-$gateway_live_min_amount}"
       [[ "$gateway_rotation_amount" =~ ^[1-9][0-9]*$ ]] || die 'gateway rotation escrow amount must be positive'
       gateway_funding_horizon="${GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS:-1}"
@@ -456,6 +457,10 @@ case "$COMPONENT" in
         0 0 "$gateway_max_refill"
     else
       printf 'READY Gateway auto rotation is disabled; private reserve signer and token distribution are deferred\n'
+      step 'Fund the initial gateway escrow account to the live minimum'
+      "$ROOT/scripts/ensure-account-balance.sh" \
+        "$ACCOUNTS/gdc-gateway-cold.json" "$INVENTORY" \
+        "$gateway_live_min_amount" "$gateway_live_min_amount"
     fi
     # Re-running `ops gateway` may reuse an escrow only for the same bound
     # protocol. A Host persists the protocol binding per escrow and rejects a
