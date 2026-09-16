@@ -17,11 +17,45 @@ import (
 )
 
 func toolDir() (string, error) {
+	if configured := os.Getenv("GONKACTL_TEST_REPORT_DIR"); configured != "" {
+		info, err := os.Stat(configured)
+		if err != nil {
+			return "", fmt.Errorf("read GONKACTL_TEST_REPORT_DIR: %w", err)
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("GONKACTL_TEST_REPORT_DIR is not a directory: %s", configured)
+		}
+		return configured, nil
+	}
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", errors.New("locate report tools")
 	}
 	return filepath.Dir(source), nil
+}
+
+// RenderAllure renders an existing Allure results directory without changing
+// qualification history. It is used for release evidence, whose results are
+// already durable and must not be mixed into a qualification history stream.
+func RenderAllure(ctx context.Context, results, output string) error {
+	dir, err := toolDir()
+	if err != nil {
+		return err
+	}
+	if results == "" || output == "" {
+		return errors.New("Allure results and output paths are required")
+	}
+	cmd := exec.CommandContext(ctx, filepath.Join(dir, "node_modules", ".bin", "allure"), "generate", "--config", "allurerc.mjs", results)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GONKACTL_TEST_REPORT_OUTPUT="+output, "GONKACTL_TEST_APPEND_HISTORY=false")
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("render Allure report: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "awesomeBDD", "index.html")); err != nil {
+		return fmt.Errorf("rendered Allure awesomeBDD report: %w", err)
+	}
+	return nil
 }
 
 func runTool(ctx context.Context, dir string, args ...string) error {

@@ -145,8 +145,8 @@ func newReleaseCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			directory, err := executeRelease(cmd.Context(), o)
 			if directory != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Report: %s\n", filepath.Join(directory, "index.html"))
-				fmt.Fprintf(cmd.OutOrStdout(), "Results: %s\n", filepath.Join(directory, "report.json"))
+				fmt.Fprintf(cmd.OutOrStdout(), "Allure Report: %s\n", filepath.Join(directory, "allure-report", "awesomeBDD", "index.html"))
+				fmt.Fprintf(cmd.OutOrStdout(), "Evidence: %s\n", filepath.Join(directory, "report.json"))
 			}
 			return err
 		},

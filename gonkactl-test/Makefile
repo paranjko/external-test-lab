@@ -1,4 +1,4 @@
-.PHONY: test-contracts test-bindings test-stand test-browser-probe test-report test-storage check-deadcode generate-cli-docs check qa install clean
+.PHONY: test-contracts test-bindings test-stand test-browser-probe test-report test-storage check-deadcode generate-cli-docs check qa install docker-image clean
 
 DATA_ROOT := $(abspath ../build/gonkactl-test)
 BROWSER_TEMP_ROOT := $(abspath ../build/gonkactl-test-browser-tmp)
@@ -14,6 +14,10 @@ BIN_DIR ?= $(HOME)/.local/bin
 CLEAN_DATA_ROOT := $(abspath $(DATA_ROOT))
 CLEAN_BROWSER_TEMP_ROOT := $(abspath $(BROWSER_TEMP_ROOT))
 CLEAN_CONTAINER_IMAGE ?= alpine:3.20
+DOCKER_IMAGE ?= gonkactl-test:local
+
+docker-image:
+	docker build --file Dockerfile --tag $(DOCKER_IMAGE) .
 
 test-contracts:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts

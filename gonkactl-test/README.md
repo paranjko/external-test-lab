@@ -1,54 +1,57 @@
 # Run the DevShard v5 release tests
 
-1. Open a terminal in the External Test Lab checkout root – the directory
-   that contains `feature/` and `gonkactl-test/`. Check that you are there:
+## Docker workflow
 
-   ```sh
-   ls feature/*.feature
-   ```
+From the repository root (containing `feature/` and `gonkactl-test/`):
 
-2. Install the runner. Ensure `~/.local/bin` is on your `PATH`:
+```sh
+make -C gonkactl-test docker-image
+mkdir -p build
+export RELEASE_TAG=devshard/v5.0.0
+export RELEASE_SHA256=ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564
+docker run --rm --privileged \
+  --mount "type=bind,src=$PWD/feature,dst=/workspace/feature,readonly" \
+  --mount "type=bind,src=$PWD/build,dst=/workspace/build" \
+  --env RELEASE_TAG --env RELEASE_SHA256 \
+  gonkactl-test:local
+```
 
-   ```sh
-   make -C gonkactl-test install
-   export PATH="$HOME/.local/bin:$PATH"
-   gonkactl-test --help
-   ```
+`--privileged` is required for the image's internal Docker daemon. The default
+command is `gonkactl-test release`, reading `./feature` and writing
+`./build/report`. Each unique `release-v5-*` directory contains
+`allure-results/`, the generated Allure Report v3 at
+`allure-report/awesomeBDD/index.html`, `report.json`, and retained logs. The
+`Allure Report:` path printed by the command is inside the container: replace
+`/workspace/` with the checkout directory on the host. For example, open the
+newest report:
 
-3. Pin the official release archive:
+```sh
+xdg-open "$(find build/report -path '*/allure-report/awesomeBDD/index.html' -print | sort | tail -n 1)"
+```
 
-   ```sh
-   export RELEASE_TAG=devshard/v5.0.0
-   export RELEASE_SHA256=ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564
-   ```
+The feature mount is read-only; only `build/` is changed. The command verifies
+the release archive, checks out the matching source, runs the supported
+scenarios in owned Docker fixtures, and cleans up those fixtures. A nonzero
+exit means the report contains incomplete coverage or a failed scenario; it
+still leaves its evidence and Allure report on the host. `upstream_pass` is
+scoped selector evidence, not Gherkin-step or full acceptance evidence. Six
+scenarios currently have executable bindings and fourteen are visibly
+`not_run`, so the complete command returns nonzero even when all six supported
+selectors pass.
 
-4. Start Docker, then run the scenarios:
+To pass CLI options, put the complete command after the image name. For
+example, use a different feature directory or output directory:
 
-   ```sh
-   docker info >/dev/null
-   gonkactl-test release
-   ```
+```sh
+docker run --rm --privileged \
+  --mount "type=bind,src=$PWD/feature,dst=/workspace/feature,readonly" \
+  --mount "type=bind,src=$PWD/build,dst=/workspace/build" \
+  --env RELEASE_TAG --env RELEASE_SHA256 \
+  gonkactl-test:local gonkactl-test release \
+  --features /workspace/feature --data-root /workspace/build/report
+```
 
-   The command reads `./feature` and writes a unique run under
-   `./build/report` by default. It downloads and verifies the release archive,
-   checks out the matching release source, runs the supported scenarios with
-   the pinned executable in owned local Docker fixtures, and cleans up those
-   fixtures. It prints the exact `Report:` and `Results:` paths even when a
-   run is incomplete.
-
-5. Open the exact `index.html` path printed after `Report:`. The adjacent
-   `report.json` contains the archive and executable hashes, each scenario's
-   status, retained test logs, and the cleanup receipt. A nonzero command exit
-   means the run did not establish complete scenario coverage – inspect the
-   report. `upstream_pass` is scoped test evidence, not a Gherkin-step or full
-   acceptance verdict. In this revision, six scenarios have executable
-   bindings and fourteen remain `not_run`, so the overall command exits
-   nonzero even when all six supported checks pass.
-
-To use a different input directory or result root, set `FEATURES` and
-`DATA_ROOT`, or pass `--features` and `--data-root`. Both are optional. For an
-offline run with already downloaded inputs, add `--archive PATH` and
-`--source PATH` to the `gonkactl-test release` command; the archive hash and
-source commit are still verified.
+For offline use, append `--archive PATH --source PATH`; both inputs remain
+verified. The image does not publish images or reports.
 
 For development and implementation checks, see [DEVELOP.md](DEVELOP.md).

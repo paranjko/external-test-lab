@@ -66,6 +66,9 @@ func TestReleaseRejectsChangedFeatureBeforeFixture(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "source")); !os.IsNotExist(err) {
 		t.Fatalf("source fixture was created on digest mismatch: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(dir, "allure-report", "awesomeBDD", "index.html")); err != nil {
+		t.Fatalf("digest rejection did not render an Allure v3 report: %v", err)
+	}
 }
 
 func TestReleaseOverlayRequiresReviewedHooks(t *testing.T) {
@@ -129,5 +132,39 @@ func TestReleaseReportRendersStepsLogsAndIdentity(t *testing.T) {
 		if !strings.Contains(string(b), fragment) {
 			t.Fatalf("rendered report is missing %q", fragment)
 		}
+	}
+}
+
+func TestReleaseAllureResultsPreserveScopedEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "selector.log"), []byte("upstream PASS\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := releaseReport{
+		RunID: "release-test", StartedAt: "2026-09-16T12:00:00Z", FinishedAt: "2026-09-16T12:00:01Z",
+		Cases: []releaseScenario{
+			{Feature: "feature/example.feature", Name: "Mapped scenario", Status: "upstream_pass", Selector: "TestMapped", Log: "selector.log", Reason: "upstream test passed; no Gherkin step-level evidence"},
+			{Feature: "feature/example.feature", Name: "Unbound scenario", Status: "not_run", Reason: "no release-safe executable binding"},
+		},
+	}
+	if err := writeReleaseAllureResults(root, report); err != nil {
+		t.Fatal(err)
+	}
+	passed, err := os.ReadFile(filepath.Join(root, "allure-results", "001-result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	skipped, err := os.ReadFile(filepath.Join(root, "allure-results", "002-result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(passed), `"status": "passed"`) || !strings.Contains(string(passed), "Mapped upstream selector") || !strings.Contains(string(passed), `"source": "001-selector.log"`) {
+		t.Fatalf("mapped result does not preserve scoped selector evidence: %s", passed)
+	}
+	if !strings.Contains(string(skipped), `"status": "skipped"`) || strings.Contains(string(skipped), "Mapped upstream selector") {
+		t.Fatalf("unbound result must remain skipped: %s", skipped)
+	}
+	if _, err := os.Stat(filepath.Join(root, "allure-results", "001-selector.log")); err != nil {
+		t.Fatalf("retained log was not copied into Allure results: %v", err)
 	}
 }

@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	reportpkg "github.com/paranjko/external-test-lab/gonkactl-test/report"
 )
 
 const releaseV5ArchiveSHA = "ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564"
@@ -146,6 +148,12 @@ func executeRelease(ctx context.Context, o releaseOptions) (string, error) {
 		}
 		if err := writeReleaseReport(runDir, report); err != nil {
 			return runDir, fmt.Errorf("write release report: %w", err)
+		}
+		if err := writeReleaseAllureResults(runDir, report); err != nil {
+			return runDir, fmt.Errorf("write release Allure results: %w", err)
+		}
+		if err := reportpkg.RenderAllure(ctx, filepath.Join(runDir, "allure-results"), filepath.Join(runDir, "allure-report")); err != nil {
+			return runDir, err
 		}
 		return runDir, cause
 	}
@@ -603,4 +611,61 @@ func writeReleaseReport(runDir string, r releaseReport) error {
 		return err
 	}
 	return closeErr
+}
+
+// writeReleaseAllureResults records only what the release run proves. A
+// selector PASS is one upstream-test step, not a fabricated Gherkin trace;
+// unbound scenarios remain skipped and visible in the generated Allure v3 UI.
+func writeReleaseAllureResults(runDir string, r releaseReport) error {
+	results := filepath.Join(runDir, "allure-results")
+	if err := os.MkdirAll(results, 0o700); err != nil {
+		return err
+	}
+	start, err := time.Parse(time.RFC3339Nano, r.StartedAt)
+	if err != nil {
+		return fmt.Errorf("parse report start: %w", err)
+	}
+	stop := time.Now().UTC()
+	if r.FinishedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, r.FinishedAt); err == nil {
+			stop = parsed
+		}
+	}
+	if !stop.After(start) {
+		stop = start.Add(time.Millisecond)
+	}
+	for index, item := range r.Cases {
+		status := "skipped"
+		message := item.Reason
+		steps := []map[string]any{}
+		switch item.Status {
+		case "upstream_pass":
+			status = "passed"
+			steps = append(steps, map[string]any{"name": "Mapped upstream selector: " + item.Selector, "status": "passed", "stage": "finished", "start": start.UnixMilli(), "stop": stop.UnixMilli()})
+		case "failed":
+			status = "failed"
+		}
+		labels := []map[string]string{{"name": "epic", "value": "Release qualification"}, {"name": "feature", "value": filepath.Base(item.Feature)}, {"name": "story", "value": item.Name}, {"name": "evidence_class", "value": "release-selector"}}
+		attachments := []map[string]string{}
+		if item.Log != "" {
+			logBody, err := os.ReadFile(filepath.Join(runDir, item.Log))
+			if err != nil {
+				return fmt.Errorf("read retained upstream log %q: %w", item.Log, err)
+			}
+			attachmentName := fmt.Sprintf("%03d-%s", index+1, filepath.Base(item.Log))
+			if err := os.WriteFile(filepath.Join(results, attachmentName), logBody, 0o600); err != nil {
+				return fmt.Errorf("copy retained upstream log %q: %w", item.Log, err)
+			}
+			attachments = append(attachments, map[string]string{"name": "upstream test log", "source": attachmentName, "type": "text/plain"})
+		}
+		payload := map[string]any{"uuid": fmt.Sprintf("%s-%03d", r.RunID, index+1), "historyId": fmt.Sprintf("release-%s-%03d", r.RunID, index+1), "name": item.Name, "fullName": filepath.Base(item.Feature) + ":" + item.Name, "status": status, "stage": "finished", "statusDetails": map[string]string{"message": message}, "labels": labels, "links": []any{}, "steps": steps, "attachments": attachments, "start": start.UnixMilli(), "stop": stop.UnixMilli()}
+		body, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(results, fmt.Sprintf("%03d-result.json", index+1)), append(body, '\n'), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
