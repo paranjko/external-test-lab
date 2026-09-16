@@ -94,8 +94,21 @@ for dashboard in gdc-network gdc-inference; do
   curl -fsS "https://$GRAFANA_HOST/api/dashboards/uid/$dashboard" >"$RUN/$dashboard.json"
   jq -e --arg dashboard "$dashboard" '.dashboard.uid == $dashboard and ([.dashboard.panels[]? | select(.targets? != null)] | length >= 20) and ([.dashboard.panels[]?.targets[]?.expr | select(type == "string" and length > 0)] | length >= 20)' "$RUN/$dashboard.json" >/dev/null || die "public Grafana dashboard $dashboard is incomplete"
 done
-jq -r '.dashboard.panels[]?.targets[]?.expr | select(type == "string" and length > 0)' "$RUN/gdc-network.json" "$RUN/gdc-inference.json" | sort -u >"$RUN/panel-expressions.txt"
-while IFS= read -r expression; do printf '%s' "$expression" | base64 -w0; printf '\n'; done <"$RUN/panel-expressions.txt" >"$RUN/panel-expressions.b64"
+# A deployed dashboard must prove its collector, chain, Host, gateway and
+# readiness sources. Request, executor and escrow series are intentionally
+# optional: before the first routed completion they are absent rather than
+# zero, and treating that absence as a Grafana deployment failure hides the
+# operational distinction the board is intended to show.
+cat >"$RUN/required-panel-expressions.txt" <<'EOF'
+max(cometbft_consensus_height)
+sum(up{job="gonka-node"} == 1)
+100 - avg by(host)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100
+max(up{job="gateway"})
+max(gdc_gateway_readiness_state{state="TRAFFIC_READY"}) or vector(0)
+max(devshard_gateway_capacity_scale) * 100 or vector(0)
+max(gdc_telegram_bot_up) or vector(0)
+EOF
+while IFS= read -r expression; do printf '%s' "$expression" | base64 -w0; printf '\n'; done <"$RUN/required-panel-expressions.txt" >"$RUN/panel-expressions.b64"
 panel_deadline=$((SECONDS + 180))
 panel_data_ready=false
 missing_expression=''

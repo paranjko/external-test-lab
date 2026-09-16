@@ -77,7 +77,7 @@ render() {
         stat(51;"Gateway scrape";"max(up{job=\"gateway\"})";"none";0;1;4),
         stat(52;"Requests served";"sum(devshard_gateway_requests_total) or vector(0)";"none";4;1;4),
         stat(53;"Requests in flight";"sum(devshard_gateway_inflight_requests) or vector(0)";"none";8;1;4),
-        stat(54;"Input tokens in flight";"sum(devshard_gateway_inflight_input_tokens) or vector(0)";"none";12;1;4),
+        stat(54;"Traffic ready";"max(gdc_gateway_readiness_state{state=\"TRAFFIC_READY\"}) or vector(0)";"none";12;1;4),
         stat(55;"Capacity available";"max(devshard_gateway_capacity_scale) * 100 or vector(0)";"percent";16;1;4),
         stat(56;"Rate-limited requests since restart";"sum(devshard_gateway_limit_rejections_total) or vector(0)";"none";20;1;4),
 
@@ -99,12 +99,12 @@ render() {
         row(230;"Capacity and escrow routing";38),
         ts(81;"Effective and baseline weight";"devshard_gateway_capacity_total_weight or devshard_gateway_capacity_baseline_weight";"weight";"none";0;39;8;7),
         ts(82;"Escrow effective weight";"devshard_gateway_escrow_weight";"escrow {{devshard_id}}";"none";8;39;8;7),
-        ts(83;"Blocked participants";"devshard_gateway_escrow_blocked_participants";"escrow {{devshard_id}}";"none";16;39;8;7),
+        ts(83;"Blocked participants (active escrow)";"devshard_gateway_escrow_blocked_participants or vector(0)";"escrow {{devshard_id}}";"none";16;39;8;7),
         ts(84;"Gateway and participant rejections";"sum by (reason) (rate(devshard_gateway_limit_rejections_total[5m])) or sum by (scope) (rate(devshard_gateway_participant_limit_rejections_total[5m])) or vector(0)";"{{reason}}{{scope}}";"reqps";0;46;12;8),
         ts(85;"Hidden participant failures";"sum by (model) (devshard_gateway_user_requests_with_hidden_failure_total) or vector(0)";"{{model}}";"none";12;46;12;8),
 
         row(240;"Data passport";54),
-        stat(91;"Gateway sample age";"time() - max(timestamp(devshard_gateway_requests_total))";"s";0;55;6),
+        stat(91;"Gateway request sample age (0 when none)";"time() - max(timestamp(devshard_gateway_requests_total)) or vector(0)";"s";0;55;6),
         stat(92;"Current executors";"count(count by (participant_key) (devshard_gateway_participant_quarantine_state)) or vector(0)";"none";6;55;6),
         stat(93;"Models observed";"count(count by (model) (devshard_gateway_requests_total)) or vector(0)";"none";12;55;6),
         stat(94;"Transport errors";"sum(devshard_gateway_participant_transport_errors_total) or vector(0)";"none";18;55;6),
@@ -121,7 +121,7 @@ render() {
         stat(113;"Last successful bot inference (0 when unavailable)";"(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) or vector(0)";"s";0;72;8),
         stat(114;"Responses without token usage";"sum(gdc_telegram_bot_usage_missing_total) or vector(0)";"none";8;72;8),
         stat(115;"Consumer process";"max(gdc_telegram_bot_up) or vector(0)";"none";16;72;8),
-        textpanel(99;"Data contract";"This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content; a zero last-success age means the consumer has not reported a successful inference yet. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.";76)
+        textpanel(99;"Data contract";"This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. **Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even if the gateway metrics scrape succeeds. Request and active-escrow panels can be zero before the first routed request or while no escrow is active; they never claim traffic occurred. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content; a zero last-success age means the consumer has not reported a successful inference yet. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.";76)
       ])
     end
   ' >"$output"
