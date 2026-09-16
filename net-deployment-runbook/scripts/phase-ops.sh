@@ -735,8 +735,14 @@ case "$COMPONENT" in
     # served by another edge during a reset and is therefore not evidence that
     # this gateway node's Caddy is ready.  The runtime self-probe targets the
     # gateway participant host, so wait for that exact ingress instead.
-    gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"
-    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
+    gateway_ingress_url="https://$(node_public_host "$GATEWAY_NODE")/health"
+    # A colocated public edge owns the public TLS listener.  Its generic route
+    # is not a reliable proof of the local DAPI while the edge is being
+    # replaced, whereas the Gateway itself probes that local DAPI directly.
+    if [[ "$GATEWAY_NODE" == "$PUBLIC_EDGE_NODE" ]]; then
+      gateway_ingress_url='http://127.0.0.1:8000/health'
+    fi
+    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 '$gateway_ingress_url' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 '$gateway_ingress_url' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
     CADDY_START_COMMAND=true
     POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-admission-observer.service >/dev/null && sudo systemctl restart gdc-gateway-admission-observer.service && sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
     ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"

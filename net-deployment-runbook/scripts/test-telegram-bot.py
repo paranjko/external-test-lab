@@ -215,7 +215,9 @@ class TelegramConsumerTest(unittest.TestCase):
 
         replies = []
         typing = []
-        with BOT.connection() as db, patch.object(BOT, "internal_api_request", side_effect=fake_internal), patch.object(
+        with BOT.connection() as db, self.admission_ready(), patch.object(
+            BOT, "internal_api_request", side_effect=fake_internal
+        ), patch.object(
             BOT, "send_message", side_effect=lambda _chat_id, text: replies.append(text)
         ), patch.object(BOT, "send_typing", side_effect=lambda chat_id: typing.append(chat_id)):
             BOT.handle(db, update)
@@ -236,7 +238,7 @@ class TelegramConsumerTest(unittest.TestCase):
         }
         replies = []
         typing = []
-        with BOT.connection() as db, patch.object(
+        with BOT.connection() as db, self.admission_ready(), patch.object(
             BOT, "internal_api_request", side_effect=URLError("unavailable")
         ), patch.object(BOT, "send_message", side_effect=lambda _chat_id, text: replies.append(text)), patch.object(
             BOT, "send_typing", side_effect=lambda chat_id: typing.append(chat_id)
@@ -244,6 +246,68 @@ class TelegramConsumerTest(unittest.TestCase):
             BOT.handle(db, update)
             outcome = db.execute("SELECT outcome FROM interactions").fetchone()["outcome"]
         self.assertEqual(typing, [4004])
+        self.assertEqual(replies, ["Inference is temporarily unavailable, please try again later."])
+        self.assertEqual(outcome, "error")
+
+    def test_handle_types_then_checks_gateway_before_internal_api_work(self):
+        update = {
+            "message": {
+                "chat": {"id": 4006, "type": "private"},
+                "from": {"id": 4006},
+                "text": "hello",
+            }
+        }
+        calls = []
+
+        def fake_internal(path, _payload):
+            calls.append(f"internal:{path}")
+            if path == "/v1/conversations":
+                return {"id": "conv_order"}
+            return {"output_text": "ready"}
+
+        with BOT.connection() as db, patch.object(
+            BOT, "telegram_request", side_effect=lambda method, _payload: calls.append(f"telegram:{method}")
+        ), patch.object(
+            BOT, "require_gateway_admission", side_effect=lambda _db: calls.append("gateway-check")
+        ), patch.object(
+            BOT, "internal_api_request", side_effect=fake_internal
+        ):
+            BOT.handle(db, update)
+
+        self.assertEqual(calls, [
+            "telegram:sendChatAction",
+            "gateway-check",
+            "internal:/v1/conversations",
+            "internal:/v1/responses",
+            "telegram:sendMessage",
+        ])
+
+    def test_handle_gateway_unavailable_replies_without_internal_api_work(self):
+        update = {
+            "message": {
+                "chat": {"id": 4007, "type": "private"},
+                "from": {"id": 4007},
+                "text": "hello",
+            }
+        }
+        calls = []
+        replies = []
+
+        def reject_gateway(_db):
+            calls.append("gateway-check")
+            raise RuntimeError("unavailable")
+
+        with BOT.connection() as db, patch.object(
+            BOT, "telegram_request", side_effect=lambda method, _payload: calls.append(f"telegram:{method}")
+        ), patch.object(
+            BOT, "require_gateway_admission", side_effect=reject_gateway
+        ), patch.object(
+            BOT, "internal_api_request", side_effect=lambda *_args: calls.append("internal")
+        ), patch.object(BOT, "send_message", side_effect=lambda _chat_id, text: replies.append(text)):
+            BOT.handle(db, update)
+            outcome = db.execute("SELECT outcome FROM interactions").fetchone()["outcome"]
+
+        self.assertEqual(calls, ["telegram:sendChatAction", "gateway-check"])
         self.assertEqual(replies, ["Inference is temporarily unavailable, please try again later."])
         self.assertEqual(outcome, "error")
 

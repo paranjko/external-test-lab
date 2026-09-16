@@ -586,6 +586,10 @@ def handle(db: sqlite3.Connection, update) -> None:
         return
     try:
         with typing_indicator(chat_id):
+            # Give the user immediate feedback, then fail fast at the shared
+            # Gateway boundary before creating a conversation or contacting
+            # the internal response API.
+            require_gateway_admission(db)
             conversation_id = conversation_for_user(db, user_id)
             result = internal_api_request("/v1/responses", {"conversation": conversation_id, "input": text})
         reply = result["output_text"]

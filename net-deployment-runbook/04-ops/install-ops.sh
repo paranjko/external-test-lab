@@ -84,7 +84,16 @@ fi
 systemctl daemon-reload
 systemctl enable --now gdc-participants-proxy.socket >/dev/null
 systemctl enable --now gdc-gateway-health-probe.timer >/dev/null
-systemctl enable --now gdc-gateway-reserve-controller.timer >/dev/null
-systemctl start gdc-gateway-reserve-controller.service || true
+gateway_rotation_enabled="$(awk -F= '$1 == "DEVSHARD_ESCROW_ROTATION_ENABLED" { print $2; exit }' "$DEST/gateway.env" 2>/dev/null || true)"
+if [[ "$gateway_rotation_enabled" == false ]]; then
+  # Initial deployments may intentionally defer the separately funded reserve
+  # mechanism. Do not leave a periodic controller repeatedly failing against
+  # that explicit no-rotation configuration.
+  systemctl disable --now gdc-gateway-reserve-controller.timer >/dev/null 2>&1 || true
+  systemctl stop gdc-gateway-reserve-controller.service >/dev/null 2>&1 || true
+else
+  systemctl enable --now gdc-gateway-reserve-controller.timer >/dev/null
+  systemctl start gdc-gateway-reserve-controller.service || true
+fi
 systemctl start gdc-gateway-health-probe.service || true
 printf 'READY installed %s operations component in %s\n' "$COMPONENT" "$DEST"

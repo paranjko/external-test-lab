@@ -160,8 +160,8 @@ grep -Fq 'GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true' "$ROOT/04-ops/create
 grep -Fq 'gateway immediately probes every participant endpoint' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '.runtime.chain_phase // .chain_phase' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '.runtime.requests_blocked // .requests_blocked' "$ROOT/scripts/phase-ops.sh"
-grep -Fq 'gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"' "$ROOT/scripts/phase-ops.sh"
-grep -Fq "https://\$gateway_ingress_host/health" "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'gateway_ingress_url="https://$(node_public_host "$GATEWAY_NODE")/health"' "$ROOT/scripts/phase-ops.sh"
+grep -Fq "gateway_ingress_url='http://127.0.0.1:8000/health'" "$ROOT/scripts/phase-ops.sh"
 grep -Fq '/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
 reconciler_install_block="$(awk '
   /# Upgrade the reconciler executable, unit and environment as one gateway/ { capture=1 }
@@ -180,6 +180,7 @@ grep -Fq 'systemctl stop gdc-gateway-escrow-reconciler.timer gdc-gateway-escrow-
 grep -Fq 'up -d --force-recreate devshard-gateway' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'ps --status running -q devshard-gateway' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND && $POST_START_COMMAND' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'systemctl disable --now gdc-gateway-reserve-controller.timer' "$ROOT/04-ops/install-ops.sh"
 grep -Fq 'scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '"$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh' "$ROOT/04-ops/install-ops.sh"
 ! grep -Fq '$HERE/../' "$ROOT/04-ops/install-ops.sh"
