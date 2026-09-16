@@ -160,8 +160,8 @@ grep -Fq 'GDC_GATEWAY_EXTERNAL_RECONCILIATION_ENABLED=true' "$ROOT/04-ops/create
 grep -Fq 'gateway immediately probes every participant endpoint' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '.runtime.chain_phase // .chain_phase' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '.runtime.requests_blocked // .requests_blocked' "$ROOT/scripts/phase-ops.sh"
-grep -Fq 'gateway_ingress_url="https://$(node_public_host "$GATEWAY_NODE")/health"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq "gateway_ingress_url='http://127.0.0.1:8000/health'" "$ROOT/scripts/phase-ops.sh"
+! grep -Fq 'gateway_ingress_host=' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
 reconciler_install_block="$(awk '
   /# Upgrade the reconciler executable, unit and environment as one gateway/ { capture=1 }
