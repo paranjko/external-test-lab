@@ -127,6 +127,8 @@ grep -Fq 'GDC_GATEWAY_MAX_CONCURRENT_PER_10000_WEIGHT=1000000000' "$ROOT/.env.ex
 grep -Fq 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=0' "$ROOT/.env.example"
 grep -Fq '0) MAX_CONCURRENT_REQUESTS=4 ;;' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq '0) MAX_INPUT_TOKENS_IN_FLIGHT=4096 ;;' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'elif [[ -n "$EXISTING_ESCROW_ID" ]]; then' "$ROOT/04-ops/create-gateway.sh"
+grep -Fq 'existing escrow $EXISTING_ESCROW_ID is not the configured gateway escrow' "$ROOT/04-ops/create-gateway.sh"
 grep -Fq 'GDC_GATEWAY_ROTATION_TEMP_COUNT=2' "$ROOT/.env.example"
 grep -Fq 'GDC_GATEWAY_ROTATION_TARGET_COUNT=2' "$ROOT/.env.example"
 grep -Fq 'GDC_GATEWAY_MIN_SPENDABLE_NGONKA=100000000000' "$ROOT/.env.example"

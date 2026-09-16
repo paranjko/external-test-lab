@@ -84,12 +84,6 @@ MIN_AMOUNT="$(jq -er '(.params // .).devshard_escrow_params.min_amount' <<<"$PAR
 AMOUNT="${AMOUNT:-$MIN_AMOUNT}"
 [[ "$AMOUNT" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid escrow amount' >&2; exit 1; }
 (( AMOUNT >= MIN_AMOUNT )) || { echo "escrow amount $AMOUNT is below live governance minimum $MIN_AMOUNT" >&2; exit 1; }
-SPENDABLE_AMOUNT="$(jq -r '[.balances[]? | select(.denom == "ngonka") | .amount][0] // "0"' <<<"$BALANCE_BEFORE")"
-[[ "$SPENDABLE_AMOUNT" =~ ^[0-9]+$ ]] || { echo 'invalid spendable ngonka balance' >&2; exit 1; }
-(( AMOUNT <= SPENDABLE_AMOUNT )) || {
-  echo "escrow amount $AMOUNT exceeds spendable balance $SPENDABLE_AMOUNT; omit GDC_GATEWAY_ESCROW_AMOUNT_NGONKA to use the live minimum $MIN_AMOUNT" >&2
-  exit 1
-}
 jq -e --arg creator "$CREATOR" --arg version "$GATEWAY_VERSION" \
   --arg binary "$GATEWAY_ARCHIVE_URL" --arg sha256 "$GATEWAY_ARCHIVE_SHA256" '
   (.params // .).devshard_escrow_params as $p
@@ -141,6 +135,12 @@ elif [[ -n "$EXISTING_ESCROW_ID" ]]; then
   TX=''
   BALANCE_AFTER_FUNDING="$BALANCE_BEFORE"
 else
+SPENDABLE_AMOUNT="$(jq -r '[.balances[]? | select(.denom == "ngonka") | .amount][0] // "0"' <<<"$BALANCE_BEFORE")"
+[[ "$SPENDABLE_AMOUNT" =~ ^[0-9]+$ ]] || { echo 'invalid spendable ngonka balance' >&2; exit 1; }
+(( AMOUNT <= SPENDABLE_AMOUNT )) || {
+  echo "escrow amount $AMOUNT exceeds spendable balance $SPENDABLE_AMOUNT; omit GDC_GATEWAY_ESCROW_AMOUNT_NGONKA to use the live minimum $MIN_AMOUNT" >&2
+  exit 1
+}
 TX="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" tx inference create-devshard-escrow \
   "$AMOUNT" "$MODEL_ID" --from gdc-gateway-cold --keyring-backend file --chain-id "$CHAIN_ID" \
   --node "$RPC" --gas auto --gas-adjustment 1.5 \
