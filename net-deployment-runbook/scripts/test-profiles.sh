@@ -209,6 +209,8 @@ grep -Fq '.epoch_params.poc_slot_allocation = {value:"5", exponent:-1}' "$ROOT/s
 grep -Fq 'systemctl restart gonka-firewall.service' "$ROOT/00-host-prep/prepare-host.sh"
 grep -Fq 'ML callback ingress source is stale' "$ROOT/00-host-prep/verify-host.sh"
 grep -Fq 'ensure-gateway-reserve.sh' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'Gateway auto rotation is disabled; private reserve signer and token distribution are deferred' "$ROOT/scripts/phase-ops.sh"
+grep -Fq 'if [[ "$gateway_rotation_enabled" == true ]]; then' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway_funding_source_minimum="$((gateway_funding_source_target - gateway_max_refill))"' "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'gateway_faucet_claim_amount <= gateway_funding_source_minimum - gateway_max_refill' "$ROOT/scripts/phase-ops.sh"
 grep -Fq "s/^FAUCET_AMOUNT_NGONKA=//p' /srv/dai/ops/faucet.env" "$ROOT/scripts/phase-ops.sh"
