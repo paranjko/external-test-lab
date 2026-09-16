@@ -171,6 +171,15 @@ www.{$SITE_HOST} {
     root * /edge/bootstrap/current
     file_server
   }
+  # Chain state is read from the public edge participant, not from the
+  # Gateway runtime. This keeps governance, discovery, and client reads
+  # available before the Gateway is deployed.
+  @chain_readonly path /chain-rpc/* /chain-api/*
+  handle @chain_readonly {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
+  }
   # This proxy may wait only before it opens its one gateway connection.
   # Reconciler probes retain their explicit runtime path but share exactly the
   # same permit as public, health, Telegram, and acceptance requests.

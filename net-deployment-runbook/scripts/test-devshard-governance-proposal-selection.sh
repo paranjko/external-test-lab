@@ -191,7 +191,7 @@ grep -Fq 'would rebind or omit a protected DevShard protocol tuple' "$tmp/err"
 
 grep -Fq 'mutable_protocol=v5' \
   "$ROOT/scripts/phase-governance-devshard.sh"
-grep -Fq 'DevShard tuple replacement requires a verified v5 candidate composition' \
+grep -Fq 'DevShard tuple replacement requires a verified v5 composition' \
   "$ROOT/scripts/phase-governance-devshard.sh"
 grep -Fq 'live inference parameters changed after proposal rendering' \
   "$ROOT/scripts/phase-governance-devshard.sh"
@@ -204,6 +204,10 @@ grep -Fq 'proposal $proposal_id changes DevShard parameters without state-bindin
 grep -Fq '.["@type"] == "/inference.inference.MsgUpdateParams"' \
   "$ROOT/scripts/phase-vote-proposal.sh"
 grep -Fq 'proposal $proposal_id is stale or malformed and will not be accepted' \
+  "$ROOT/scripts/phase-vote-proposal.sh"
+grep -Fq '"${OFFICIAL_DEVSHARD_RELEASE:-false}" == true' \
+  "$ROOT/scripts/phase-vote-proposal.sh"
+grep -Fq 'restored Genesis signer are available to vote' \
   "$ROOT/scripts/phase-vote-proposal.sh"
 
 cat >"$tmp/snapshot-before.json" <<'EOF'

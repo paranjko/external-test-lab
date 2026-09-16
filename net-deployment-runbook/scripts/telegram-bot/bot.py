@@ -35,7 +35,10 @@ MAX_USER_MESSAGE_CHARS = int(os.environ.get("USER_MESSAGE_MAX_CHARS", "2000"))
 MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "512"))
 HEALTH_MAX_AGE_SECONDS = int(os.environ.get("HEALTH_MAX_AGE_SECONDS", "900"))
 GATEWAY_TIMEOUT_SECONDS = int(os.environ.get("GATEWAY_TIMEOUT_SECONDS", "30"))
-GATEWAY_ADMISSION_TIMEOUT_SECONDS = int(os.environ.get("GATEWAY_ADMISSION_TIMEOUT_SECONDS", "7"))
+# Admission is a pre-dispatch availability probe. Keep its failure budget
+# short so an unavailable Gateway is reported to the user rather than looking
+# like a stuck bot.
+GATEWAY_ADMISSION_TIMEOUT_SECONDS = int(os.environ.get("GATEWAY_ADMISSION_TIMEOUT_SECONDS", "3"))
 INTERNAL_API_TIMEOUT_SECONDS = int(os.environ.get("INTERNAL_API_TIMEOUT_SECONDS", "35"))
 TELEGRAM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "10"))
 TELEGRAM_POLL_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_POLL_TIMEOUT_SECONDS", "35"))
@@ -586,6 +589,10 @@ def handle(db: sqlite3.Connection, update) -> None:
         return
     try:
         with typing_indicator(chat_id):
+            # Give the user immediate feedback, then fail fast at the shared
+            # Gateway boundary before creating a conversation or contacting
+            # the internal response API.
+            require_gateway_admission(db)
             conversation_id = conversation_for_user(db, user_id)
             result = internal_api_request("/v1/responses", {"conversation": conversation_id, "input": text})
         reply = result["output_text"]

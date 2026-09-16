@@ -147,7 +147,7 @@ suspend_gateway_admission() {
 }
 
 reconcile_gateway_observer_route() {
-  local node="$GATEWAY_NODE" edge_env edge_remote observer_active existing_admission
+  local node="$GATEWAY_NODE" edge_env edge_remote observer_active existing_admission gateway_environment
   edge_env="$GENERATED/edge/$node.env"
   edge_remote="${REMOTE}-gateway-edge"
   mkdir -p "$(dirname "$edge_env")"
@@ -177,8 +177,16 @@ reconcile_gateway_observer_route() {
       docker compose ps -aq gateway-admission')"; then
       die 'could not determine public admission state before runtime replacement'
     fi
-    [[ -z "$existing_admission" ]] \
-      || die 'existing public admission cannot be suspended before its observer TLS route is proven'
+    if [[ -n "$existing_admission" ]]; then
+      gateway_environment="$(ssh -T "$GATEWAY_NODE" 'sudo test -s /srv/dai/ops/gateway.env && printf present || printf absent')" \
+        || die 'could not determine gateway environment before replacing public admission'
+      [[ "$gateway_environment" == absent ]] \
+        || die 'existing public admission cannot be suspended before its observer TLS route is proven'
+      ssh -T "$PUBLIC_EDGE_NODE" 'set -Eeuo pipefail
+        cd /srv/dai/edge
+        docker compose stop gateway-admission >/srv/dai/edge/stop-stale-gateway-admission.log 2>&1 || true'
+      printf 'READY stopped stale public admission without a deployed gateway environment\n'
+    fi
     printf 'READY gateway observer TLS route installed; live probe deferred until first observer start\n'
     return
   fi
@@ -335,8 +343,15 @@ case "$COMPONENT" in
     ;;
   gateway)
     gateway_migration_prepare="${GDC_GATEWAY_MIGRATION_PREPARE:-false}"
+    # The first Gateway deployment may deliberately defer token-distribution
+    # work.  Its initial escrow is funded and created directly; only automatic
+    # replacement rotation needs the separate reserve signer and its funding
+    # account.
+    gateway_rotation_enabled="${GDC_GATEWAY_ESCROW_ROTATION_ENABLED:-true}"
     [[ "$gateway_migration_prepare" =~ ^(true|false)$ ]] \
       || die 'GDC_GATEWAY_MIGRATION_PREPARE must be true or false'
+    [[ "$gateway_rotation_enabled" =~ ^(true|false)$ ]] \
+      || die 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED must be true or false'
     [[ "$gateway_canary_prepare" =~ ^(true|false)$ ]] \
       || die 'GDC_GATEWAY_CANARY_PREPARE must be true or false'
     [[ "$gateway_migration_prepare:$gateway_canary_prepare" != true:true ]] \
@@ -388,64 +403,92 @@ case "$COMPONENT" in
     else
       step 'Discard only gateway state whose every escrow is absent from committed chain state'
       "$ROOT/scripts/reset-stale-gateway-state.sh" "$GATEWAY_NODE" "${GDC_CHAIN_API_URL:-https://${PUBLIC_EDGE_HOST}/chain-api}"
+      if [[ -z "${GDC_ESCROW_ID:-}" && -s "$GATEWAY_ENV" ]]; then
+        resumed_escrow="$(awk -F= '$1 == "DEVSHARD_ESCROW_ID" {print $2; exit}' "$GATEWAY_ENV")"
+        resumed_route="$(awk -F= '$1 == "DEVSHARD_ROUTE_PREFIX" {print $2; exit}' "$GATEWAY_ENV")"
+        resumed_state=''
+        if [[ "$resumed_escrow" =~ ^[1-9][0-9]*$ && "$resumed_route" == "/devshard/$GDC_GATEWAY_VERSION" ]]; then
+          resumed_state="$("$ROOT/scripts/inferenced.sh" query inference show-devshard-escrow "$resumed_escrow" \
+            --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json 2>/dev/null || true)"
+        fi
+        if jq -e '.found == true and (.escrow.settled // false) == false' <<<"$resumed_state" >/dev/null 2>&1; then
+          export GDC_ESCROW_ID="$resumed_escrow"
+          printf 'READY resume locally rendered gateway escrow %s\n' "$GDC_ESCROW_ID"
+        elif [[ "$resumed_escrow" =~ ^[1-9][0-9]*$ && "$resumed_route" == "/devshard/$GDC_GATEWAY_VERSION" ]]; then
+          printf 'READY discard locally rendered gateway escrow %s absent from committed chain state\n' "$resumed_escrow"
+        fi
+      fi
     fi
     step "Provide the pinned $GDC_GATEWAY_VERSION gateway image on $GATEWAY_NODE"
     "$ROOT/scripts/build-gateway-image.sh" >"$STATE/gateway-image-$GDC_GATEWAY_VERSION.txt"
-    step 'Reconcile the gateway creator reserve before escrow reuse or replacement'
-    gateway_reserve_temp_count="${GDC_GATEWAY_ROTATION_TEMP_COUNT:-2}"
-    gateway_reserve_target_count="${GDC_GATEWAY_ROTATION_TARGET_COUNT:-2}"
-    [[ "$gateway_reserve_temp_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TEMP_COUNT must be positive'
-    [[ "$gateway_reserve_target_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TARGET_COUNT must be positive'
     gateway_live_min_amount="$("$ROOT/scripts/inferenced.sh" query inference params \
       --node "${GDC_CHAIN_RPC_URL:-https://${PUBLIC_EDGE_HOST}/chain-rpc/}" --chain-id "$CHAIN_ID" --output json \
       | jq -er '(.params // .).devshard_escrow_params.min_amount')"
-    gateway_rotation_amount="${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-$gateway_live_min_amount}"
-    [[ "$gateway_rotation_amount" =~ ^[1-9][0-9]*$ ]] || die 'gateway rotation escrow amount must be positive'
-    gateway_funding_horizon="${GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS:-1}"
-    gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
-    gateway_requested_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-}"
-    gateway_funding_source_target="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
-    [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
-    [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
-    if ! is_safe_integer "$gateway_funding_source_target" || [[ "$gateway_funding_source_target" == 0 ]]; then
-      die 'GDC_FAUCET_INITIAL_NGONKA must be a positive safe integer'
+    [[ "$gateway_live_min_amount" =~ ^[1-9][0-9]*$ ]] || die 'live gateway escrow minimum is invalid'
+    if [[ "$gateway_rotation_enabled" == true ]]; then
+      step 'Reconcile the gateway creator reserve before escrow reuse or replacement'
+      gateway_reserve_temp_count="${GDC_GATEWAY_ROTATION_TEMP_COUNT:-2}"
+      gateway_reserve_target_count="${GDC_GATEWAY_ROTATION_TARGET_COUNT:-2}"
+      [[ "$gateway_reserve_temp_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TEMP_COUNT must be positive'
+      [[ "$gateway_reserve_target_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TARGET_COUNT must be positive'
+      gateway_rotation_amount="${GDC_GATEWAY_ESCROW_AMOUNT_NGONKA:-$gateway_live_min_amount}"
+      [[ "$gateway_rotation_amount" =~ ^[1-9][0-9]*$ ]] || die 'gateway rotation escrow amount must be positive'
+      gateway_funding_horizon="${GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS:-1}"
+      gateway_fee_reserve="${GDC_GATEWAY_FEE_RESERVE_NGONKA:-1000000}"
+      gateway_requested_max_refill="${GDC_GATEWAY_MAX_REFILL_NGONKA:-}"
+      gateway_funding_source_target="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
+      [[ "$gateway_funding_horizon" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FUNDING_HORIZON_ROTATIONS must be a non-negative integer'
+      [[ "$gateway_fee_reserve" =~ ^[0-9]+$ ]] || die 'GDC_GATEWAY_FEE_RESERVE_NGONKA must be a non-negative integer'
+      if ! is_safe_integer "$gateway_funding_source_target" || [[ "$gateway_funding_source_target" == 0 ]]; then
+        die 'GDC_FAUCET_INITIAL_NGONKA must be a positive safe integer'
+      fi
+      gateway_max_refill="$(
+        ssh "$GATEWAY_NODE" \
+          "sudo sed -n 's/^FAUCET_GATEWAY_RESERVE_MAX_NGONKA=//p' /srv/dai/ops/gateway-reserve-signer.env"
+      )" || die 'deployed gateway reserve signer maximum is unavailable on the gateway node'
+      if ! is_safe_integer "$gateway_max_refill" || [[ "$gateway_max_refill" == 0 ]]; then
+        die 'deployed gateway reserve signer maximum must be exactly one positive safe integer'
+      fi
+      if [[ -n "$gateway_requested_max_refill" && "$gateway_requested_max_refill" != "$gateway_max_refill" ]]; then
+        die 'GDC_GATEWAY_MAX_REFILL_NGONKA does not match the deployed gateway reserve signer maximum'
+      fi
+      export GDC_GATEWAY_MAX_REFILL_NGONKA="$gateway_max_refill"
+      gateway_faucet_claim_amount="$(
+        ssh "$GATEWAY_NODE" \
+          "sudo sed -n 's/^FAUCET_AMOUNT_NGONKA=//p' /srv/dai/ops/faucet.env"
+      )" || die 'deployed faucet claim amount is unavailable on the gateway node'
+      if ! is_safe_integer "$gateway_faucet_claim_amount" || [[ "$gateway_faucet_claim_amount" == 0 ]]; then
+        die 'deployed faucet claim amount must be exactly one positive safe integer'
+      fi
+      (( gateway_max_refill < gateway_funding_source_target )) \
+        || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be below GDC_FAUCET_INITIAL_NGONKA'
+      # The funding source is also the active public faucet. Permit one bounded
+      # max-refill window of normal drift from its configured target, but retain
+      # enough for a later maximum reserve refill plus one concurrent full claim.
+      gateway_funding_source_minimum="$((gateway_funding_source_target - gateway_max_refill))"
+      (( gateway_funding_source_minimum >= gateway_max_refill )) \
+        || die 'gateway funding source must retain two maximum reserve refills'
+      (( gateway_faucet_claim_amount <= gateway_funding_source_minimum - gateway_max_refill )) \
+        || die 'gateway funding source must retain one faucet claim above the maximum reserve refill'
+      step 'Reconcile the gateway reserve funding source'
+      "$ROOT/scripts/ensure-account-balance.sh" \
+        "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" \
+        "$gateway_funding_source_target" "$gateway_funding_source_minimum"
+      "$ROOT/04-ops/ensure-gateway-reserve.sh" \
+        "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
+        "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \
+        0 0 "$gateway_max_refill"
+    else
+      printf 'READY Gateway auto rotation is disabled; private reserve signer and token distribution are deferred\n'
+      if [[ -n "${GDC_ESCROW_ID:-}" ]]; then
+        printf 'READY initial gateway escrow is already rendered; no additional funding is needed\n'
+      else
+        step 'Fund the initial gateway escrow account to the live minimum'
+        "$ROOT/scripts/ensure-account-balance.sh" \
+          "$ACCOUNTS/gdc-gateway-cold.json" "$INVENTORY" \
+          "$gateway_live_min_amount" "$gateway_live_min_amount"
+      fi
     fi
-    gateway_max_refill="$(
-      ssh "$GATEWAY_NODE" \
-        "sudo sed -n 's/^FAUCET_GATEWAY_RESERVE_MAX_NGONKA=//p' /srv/dai/ops/gateway-reserve-signer.env"
-    )" || die 'deployed gateway reserve signer maximum is unavailable on the gateway node'
-    if ! is_safe_integer "$gateway_max_refill" || [[ "$gateway_max_refill" == 0 ]]; then
-      die 'deployed gateway reserve signer maximum must be exactly one positive safe integer'
-    fi
-    if [[ -n "$gateway_requested_max_refill" && "$gateway_requested_max_refill" != "$gateway_max_refill" ]]; then
-      die 'GDC_GATEWAY_MAX_REFILL_NGONKA does not match the deployed gateway reserve signer maximum'
-    fi
-    export GDC_GATEWAY_MAX_REFILL_NGONKA="$gateway_max_refill"
-    gateway_faucet_claim_amount="$(
-      ssh "$GATEWAY_NODE" \
-        "sudo sed -n 's/^FAUCET_AMOUNT_NGONKA=//p' /srv/dai/ops/faucet.env"
-    )" || die 'deployed faucet claim amount is unavailable on the gateway node'
-    if ! is_safe_integer "$gateway_faucet_claim_amount" || [[ "$gateway_faucet_claim_amount" == 0 ]]; then
-      die 'deployed faucet claim amount must be exactly one positive safe integer'
-    fi
-    (( gateway_max_refill < gateway_funding_source_target )) \
-      || die 'GDC_GATEWAY_MAX_REFILL_NGONKA must be below GDC_FAUCET_INITIAL_NGONKA'
-    # The funding source is also the active public faucet. Permit one bounded
-    # max-refill window of normal drift from its configured target, but retain
-    # enough for a later maximum reserve refill plus one concurrent full claim.
-    gateway_funding_source_minimum="$((gateway_funding_source_target - gateway_max_refill))"
-    (( gateway_funding_source_minimum >= gateway_max_refill )) \
-      || die 'gateway funding source must retain two maximum reserve refills'
-    (( gateway_faucet_claim_amount <= gateway_funding_source_minimum - gateway_max_refill )) \
-      || die 'gateway funding source must retain one faucet claim above the maximum reserve refill'
-    step 'Reconcile the gateway reserve funding source'
-    "$ROOT/scripts/ensure-account-balance.sh" \
-      "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" \
-      "$gateway_funding_source_target" "$gateway_funding_source_minimum"
-    "$ROOT/04-ops/ensure-gateway-reserve.sh" \
-      "$INVENTORY" "$ACCOUNTS/gdc-gateway-cold.json" "$gateway_live_min_amount" "$gateway_rotation_amount" \
-      "$gateway_reserve_temp_count" "$gateway_reserve_target_count" "$gateway_funding_horizon" "$gateway_fee_reserve" \
-      0 0 "$gateway_max_refill"
     # Re-running `ops gateway` may reuse an escrow only for the same bound
     # protocol. A Host persists the protocol binding per escrow and rejects a
     # later request that presents the same escrow through another route. The
@@ -561,7 +604,6 @@ case "$COMPONENT" in
     gateway_pre_poc_blocks="${GDC_GATEWAY_PRE_POC_BLOCKS:-5}"
     gateway_rotation_temp_count="${GDC_GATEWAY_ROTATION_TEMP_COUNT:-2}"
     gateway_rotation_target_count="${GDC_GATEWAY_ROTATION_TARGET_COUNT:-2}"
-    gateway_rotation_enabled="${GDC_GATEWAY_ESCROW_ROTATION_ENABLED:-true}"
     gateway_rotation_settlement_enabled="${GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED:-true}"
     gateway_ingress_timeout="${GDC_GATEWAY_INGRESS_TIMEOUT_SECONDS:-300}"
     [[ "$gateway_max_concurrent_requests" =~ ^[0-9]+$ ]] || die 'gateway max concurrent requests is missing or invalid'
@@ -572,7 +614,6 @@ case "$COMPONENT" in
     [[ "$gateway_pre_poc_blocks" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_PRE_POC_BLOCKS must be positive'
     [[ "$gateway_rotation_temp_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TEMP_COUNT must be positive'
     [[ "$gateway_rotation_target_count" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_ROTATION_TARGET_COUNT must be positive'
-    [[ "$gateway_rotation_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_ENABLED must be true or false'
     [[ "$gateway_rotation_settlement_enabled" =~ ^(true|false)$ ]] || die 'GDC_GATEWAY_ESCROW_ROTATION_SETTLEMENT_ENABLED must be true or false'
     [[ "$gateway_ingress_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_GATEWAY_INGRESS_TIMEOUT_SECONDS must be positive'
     if [[ "$gateway_migration_prepare" == true || "$gateway_canary_prepare" == true ]]; then
@@ -690,12 +731,12 @@ case "$COMPONENT" in
     # the participant health route; otherwise that first probe can race Caddy
     # startup, fail with connection refused, and leave the gateway limiter
     # occupied until its long execution timeout.
-    # `API_HOST` is the separately published gateway API domain.  It can be
-    # served by another edge during a reset and is therefore not evidence that
-    # this gateway node's Caddy is ready.  The runtime self-probe targets the
-    # gateway participant host, so wait for that exact ingress instead.
-    gateway_ingress_host="$(node_public_host "$GATEWAY_NODE")"
-    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 'https://$gateway_ingress_host/health' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
+    # `API_HOST` is a separately published edge and cannot prove the local
+    # DAPI is ready. The Gateway self-probe uses the local DAPI too, so make
+    # that dependency explicit for every topology rather than branching on
+    # public-edge placement.
+    gateway_ingress_url='http://127.0.0.1:8000/health'
+    START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 '$gateway_ingress_url' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 '$gateway_ingress_url' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
     CADDY_START_COMMAND=true
     POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-admission-observer.service >/dev/null && sudo systemctl restart gdc-gateway-admission-observer.service && sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
     ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"

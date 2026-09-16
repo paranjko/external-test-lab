@@ -44,11 +44,15 @@ if [[ "$devshard_update" == true ]]; then
   mutable_protocol=none
   expected_v5_url=-
   expected_v5_sha256=-
-  if [[ -n "${GDC_COMPOSITION:-}" && "${LAB_CANDIDATE:-false}" == true ]]; then
+  if [[ -n "${GDC_COMPOSITION:-}" \
+        && ( "${LAB_CANDIDATE:-false}" == true || "${OFFICIAL_DEVSHARD_RELEASE:-false}" == true ) ]]; then
     [[ "${GDC_COMPOSITION_HASH:-}" =~ ^[0-9a-f]{64}$ \
-      && "${CANDIDATE_DEVSHARD_PROTOCOL_VERSION:-}" == v5 \
       && "${DEVSHARD_PROTOCOL_VERSION:-}" == v5 ]] \
-      || die 'DevShard tuple replacement vote requires a verified v5 candidate composition'
+      || die 'DevShard tuple replacement vote requires a verified v5 composition'
+    if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
+      [[ "${CANDIDATE_DEVSHARD_PROTOCOL_VERSION:-}" == v5 ]] \
+        || die 'DevShard candidate composition does not declare protocol v5'
+    fi
     mutable_protocol=v5
     expected_v5_url="$DEVSHARD_V5_URL"
     expected_v5_sha256="$DEVSHARD_V5_SHA256"
@@ -119,11 +123,31 @@ EOF
 fi
 
 mapfile -t nodes < <(configured_nodes)
-(( ${#nodes[@]} > 0 )) || die 'no joined participants are available to vote'
+# Recovery preserves the Genesis operator's cold governance account under the
+# operator home, but intentionally does not recreate ordinary JOIN markers.
+# It remains a valid local voter when its account, password and keyring can be
+# read back exactly; no remote identity is inferred from this fallback.
+if (( ${#nodes[@]} == 0 )) \
+    && [[ -s "$ACCOUNTS/$GENESIS_NODE-cold.json" \
+          && -s "$SECRETS/operator.keyring" \
+          && -d "$STATE/operator-home/keyring-file" ]]; then
+  nodes=("$GENESIS_NODE")
+fi
+(( ${#nodes[@]} > 0 )) || die 'no joined participants or restored Genesis signer are available to vote'
+voting_node_home() {
+  local node="$1"
+  if [[ -s "$ACCOUNTS/$node-cold.json" \
+        && -s "$SECRETS/operator.keyring" \
+        && -d "$STATE/operator-home/keyring-file" ]]; then
+    printf '%s\n' "$GDC_HOME"
+  else
+    printf '%s/%s\n' "$GDC_DATA_ROOT" "$node"
+  fi
+}
 voting_nodes=()
 printf '[]' >"$RUN/expected-voters.json"
 for node in "${nodes[@]}"; do
-  node_home="$GDC_DATA_ROOT/$node"
+  node_home="$(voting_node_home "$node")"
   account_file="$node_home/accounts/$node-cold.json"
   password_file="$node_home/state/secrets/operator.keyring"
   operator_home="$node_home/state/operator-home"
@@ -153,7 +177,7 @@ pending_hashes=()
 pending_addresses=()
 for node in "${voting_nodes[@]}"; do
   name="$node-cold"
-  node_home="$GDC_DATA_ROOT/$node"
+  node_home="$(voting_node_home "$node")"
   account_file="$node_home/accounts/$name.json"
   password_file="$node_home/state/secrets/operator.keyring"
   operator_home="$node_home/state/operator-home"

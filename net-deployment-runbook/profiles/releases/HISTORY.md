@@ -43,6 +43,10 @@ every compatible image digest and host-stack input required by this runbook.
 - 2026-08-17: the official `main` and `upgrade-v0.2.16` Compose defaults moved
   MLNode to `3.0.16`; public version responses do not prove that OCI image is
   deployed across Mainnet
+- 2026-09-13: Coreteam published DevShard `v5.0.0` at
+  `devshard/v5.0.0`. `v2026.09.13.lock` pins its published `devshardd.zip`
+  and checksum, while retaining separately identified Lab host/gateway
+  packaging required to run the compatible Community DevNet stack.
 
 The 2026-08-13 post5 publication is retained as identity only. Its restored
 `v2026.08.13.lock` has `fresh_selectable: false`, `mainnet_target: false`, and

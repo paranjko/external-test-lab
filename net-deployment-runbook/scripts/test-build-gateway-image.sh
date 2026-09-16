@@ -13,7 +13,7 @@ printf '%s\n' \
   'load_profiles() { :; }' \
   'local_gateway_image_for_protocol() {' \
   '  local version="$1" image="${LOCAL_GATEWAY_IMAGE:?}"' \
-  '  if [[ "${LAB_CANDIDATE:-false}" == true && "$version" == "${DEVSHARD_PROTOCOL_VERSION:-}" ]]; then' \
+  '  if [[ ( "${LAB_CANDIDATE:-false}" == true || "${OFFICIAL_DEVSHARD_RELEASE:-false}" == true ) && "$version" == "${DEVSHARD_PROTOCOL_VERSION:-}" ]]; then' \
   '    printf "%s\\n" "$image"' \
   '  else' \
   '    printf "%s-%s\\n" "${image%-v[345]}" "$version"' \
@@ -25,6 +25,15 @@ printf '%s\n' '#!/usr/bin/env bash' \
   >"$temporary/runbook/scripts/fetch-upstream.sh"
 printf '%s\n' 'immutable candidate gateway payload' | gzip -n >"$temporary/candidate.oci.tar.gz"
 archive_sha256="$(sha256sum "$temporary/candidate.oci.tar.gz" | awk '{print $1}')"
+
+(
+  source "$ROOT/scripts/profile.sh"
+  export LOCAL_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:official-v5
+  export DEVSHARD_PROTOCOL_VERSION=v5
+  export LAB_CANDIDATE=false
+  export OFFICIAL_DEVSHARD_RELEASE=true
+  [[ "$(local_gateway_image_for_protocol v5)" == "$LOCAL_GATEWAY_IMAGE" ]]
+)
 
 printf '%s\n' '#!/usr/bin/env bash' \
   'set -Eeuo pipefail' \

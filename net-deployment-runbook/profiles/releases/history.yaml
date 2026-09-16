@@ -124,6 +124,17 @@ component_updates:
     official_upgrade_branch: true
     live_mainnet_deployment: unverified
     executable_lock: false
+  - date: "2026-09-13"
+    component: devshard
+    version: v5.0.0
+    upstream_ref: devshard/v5.0.0
+    upstream_commit: fae45d8c53180303b8345b56b2a9cc9dadcc0ffb
+    artifact_url: https://github.com/gonka-ai/gonka/releases/download/devshard/v5.0.0/devshardd.zip
+    artifact_sha256: ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564
+    kind: official_devshard_release
+    profile_class: dated_compatible_snapshot
+    executable_lock: true
+    lock: v2026.09.13.lock
 
 release_candidates:
   - core_release: v0.2.16

@@ -48,10 +48,21 @@ fi
 # when a positive weighted escrow exists. Keep the Community test-lab
 # defaults explicitly positive and bounded; they are an operator policy, not
 # a claim that the chain has admitted an unbounded runtime.
-MAX_CONCURRENT_REQUESTS="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-4}"
-MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-4096}"
-[[ "$MAX_CONCURRENT_REQUESTS" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a positive integer' >&2; exit 2; }
-[[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a positive integer' >&2; exit 2; }
+requested_max_concurrent_requests="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-4}"
+requested_max_input_tokens_in_flight="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-4096}"
+# The operator contract uses zero for unlimited. The pinned v5 Gateway instead
+# treats a literal zero as no usable capacity, so render its documented
+# unlimited setting as a bounded positive runtime value.
+case "$requested_max_concurrent_requests" in
+  0) MAX_CONCURRENT_REQUESTS=4 ;;
+  *) MAX_CONCURRENT_REQUESTS="$requested_max_concurrent_requests" ;;
+esac
+case "$requested_max_input_tokens_in_flight" in
+  0) MAX_INPUT_TOKENS_IN_FLIGHT=4096 ;;
+  *) MAX_INPUT_TOKENS_IN_FLIGHT="$requested_max_input_tokens_in_flight" ;;
+esac
+[[ "$MAX_CONCURRENT_REQUESTS" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_CONCURRENT_REQUESTS must be a non-negative integer' >&2; exit 2; }
+[[ "$MAX_INPUT_TOKENS_IN_FLIGHT" =~ ^[1-9][0-9]*$ ]] || { echo 'GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT must be a non-negative integer' >&2; exit 2; }
 CREATOR="$(jq -er .address "$GDC_HOME/accounts/gdc-gateway-cold.json")"
 # The public edge owns public chain RPC after the distributed topology is available;
 # bootstrap-access overrides this with the sole live Genesis participant.
@@ -73,12 +84,6 @@ MIN_AMOUNT="$(jq -er '(.params // .).devshard_escrow_params.min_amount' <<<"$PAR
 AMOUNT="${AMOUNT:-$MIN_AMOUNT}"
 [[ "$AMOUNT" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid escrow amount' >&2; exit 1; }
 (( AMOUNT >= MIN_AMOUNT )) || { echo "escrow amount $AMOUNT is below live governance minimum $MIN_AMOUNT" >&2; exit 1; }
-SPENDABLE_AMOUNT="$(jq -r '[.balances[]? | select(.denom == "ngonka") | .amount][0] // "0"' <<<"$BALANCE_BEFORE")"
-[[ "$SPENDABLE_AMOUNT" =~ ^[0-9]+$ ]] || { echo 'invalid spendable ngonka balance' >&2; exit 1; }
-(( AMOUNT <= SPENDABLE_AMOUNT )) || {
-  echo "escrow amount $AMOUNT exceeds spendable balance $SPENDABLE_AMOUNT; omit GDC_GATEWAY_ESCROW_AMOUNT_NGONKA to use the live minimum $MIN_AMOUNT" >&2
-  exit 1
-}
 jq -e --arg creator "$CREATOR" --arg version "$GATEWAY_VERSION" \
   --arg binary "$GATEWAY_ARCHIVE_URL" --arg sha256 "$GATEWAY_ARCHIVE_SHA256" '
   (.params // .).devshard_escrow_params as $p
@@ -130,6 +135,12 @@ elif [[ -n "$EXISTING_ESCROW_ID" ]]; then
   TX=''
   BALANCE_AFTER_FUNDING="$BALANCE_BEFORE"
 else
+SPENDABLE_AMOUNT="$(jq -r '[.balances[]? | select(.denom == "ngonka") | .amount][0] // "0"' <<<"$BALANCE_BEFORE")"
+[[ "$SPENDABLE_AMOUNT" =~ ^[0-9]+$ ]] || { echo 'invalid spendable ngonka balance' >&2; exit 1; }
+(( AMOUNT <= SPENDABLE_AMOUNT )) || {
+  echo "escrow amount $AMOUNT exceeds spendable balance $SPENDABLE_AMOUNT; omit GDC_GATEWAY_ESCROW_AMOUNT_NGONKA to use the live minimum $MIN_AMOUNT" >&2
+  exit 1
+}
 TX="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" tx inference create-devshard-escrow \
   "$AMOUNT" "$MODEL_ID" --from gdc-gateway-cold --keyring-backend file --chain-id "$CHAIN_ID" \
   --node "$RPC" --gas auto --gas-adjustment 1.5 \

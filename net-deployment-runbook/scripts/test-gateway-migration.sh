@@ -531,8 +531,7 @@ grep -Fq 'gateway canary state is unavailable' "$ROOT/scripts/phase-gateway-cana
 grep -Fq 'if [[ "$gateway_migration_prepare" == true || "$gateway_canary_prepare" == true ]]; then' \
   "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'migration_upload="/tmp/gdc-gateway-canary-target-$$.env"' "$ROOT/scripts/phase-ops.sh"
-sed -n '635,665p' "$ROOT/scripts/phase-ops.sh" \
-  | grep -Fq 'trap cleanup_uploads EXIT'
+grep -Fq 'trap cleanup_uploads EXIT' "$ROOT/scripts/phase-ops.sh"
 
 orchestrator="$ROOT/scripts/phase-gateway-migration.sh"
 suspend_route_line="$(grep -nF '  suspend_and_verify_admission' "$orchestrator" | head -1 | cut -d: -f1)"

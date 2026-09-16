@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST=/srv/dai/ops
 service_user="${SUDO_USER:-root}"
 service_group="$(id -gn "$service_user")"
 mkdir -p "$DEST"; cp -a "$HERE"/. "$DEST"/
-mkdir -p "$DEST/status"
+mkdir -p "$DEST/status" "$DEST/prometheus"
 install -m 0600 "$RENDER/.env" "$DEST/.env"
 if [[ "$COMPONENT" == gateway ]]; then
   # Close the old lifecycle controller before replacing its environment. It
@@ -49,9 +49,9 @@ install -d -m 0755 "$DEST/bootstrap"
 [[ -s "$RENDER/config.js" ]] && install -m 0644 "$RENDER/config.js" "$DEST/site/config.js"
 chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$DEST"
 install -m 0755 "$HERE/gateway-health-probe.sh" "$DEST/gateway-health-probe.sh"
-sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
-  "$HERE/gdc-gateway-health-probe.service" \
-  | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-health-probe.service
+install -m 0644 "$HERE/gdc-gateway-health-probe.service" /etc/systemd/system/gdc-gateway-health-probe.service
+sed -i -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
+  /etc/systemd/system/gdc-gateway-health-probe.service
 install -m 0644 "$HERE/gdc-gateway-health-probe.timer" /etc/systemd/system/gdc-gateway-health-probe.timer
 # OPS deployment files are intentionally writable by the deployment operator.
 # The reconciler is executed by systemd, so install its executable under
@@ -63,28 +63,37 @@ install -m 0644 "$HERE/gdc-participants-proxy@.service" /etc/systemd/system/gdc-
 install -o root -g root -m 0755 "$HERE/gateway-reserve-controller.sh" /usr/local/lib/gonka-devnet/gateway-reserve-controller.sh
 install -o root -g root -m 0755 "$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
 install -m 0755 "$HERE/gateway-status-routable.sh" "$DEST/gateway-status-routable.sh"
-sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
-  "$HERE/gdc-gateway-reserve-controller.service" \
-  | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-reserve-controller.service
+install -m 0644 "$HERE/gdc-gateway-reserve-controller.service" /etc/systemd/system/gdc-gateway-reserve-controller.service
+sed -i -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
+  /etc/systemd/system/gdc-gateway-reserve-controller.service
 install -m 0644 "$HERE/gdc-gateway-reserve-controller.timer" /etc/systemd/system/gdc-gateway-reserve-controller.timer
 # Upgrade the reconciler executable, unit and environment as one gateway
 # operation. An unrelated OPS deployment must not start new lifecycle code
 # against a retained gateway.env with an older contract.
 if [[ "$COMPONENT" == gateway ]]; then
   install -o root -g root -m 0755 "$HERE/gateway-admission-observer.py" /usr/local/lib/gonka-devnet/gateway-admission-observer.py
-  sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
-    "$HERE/gdc-gateway-admission-observer.service" \
-    | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-admission-observer.service
+  install -m 0644 "$HERE/gdc-gateway-admission-observer.service" /etc/systemd/system/gdc-gateway-admission-observer.service
+  sed -i -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
+    /etc/systemd/system/gdc-gateway-admission-observer.service
   install -o root -g root -m 0755 "$HERE/gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh
-  sed -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
-    "$HERE/gdc-gateway-escrow-reconciler.service" \
-    | install -m 0644 /dev/stdin /etc/systemd/system/gdc-gateway-escrow-reconciler.service
+  install -m 0644 "$HERE/gdc-gateway-escrow-reconciler.service" /etc/systemd/system/gdc-gateway-escrow-reconciler.service
+  sed -i -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
+    /etc/systemd/system/gdc-gateway-escrow-reconciler.service
   install -m 0644 "$HERE/gdc-gateway-escrow-reconciler.timer" /etc/systemd/system/gdc-gateway-escrow-reconciler.timer
 fi
 systemctl daemon-reload
 systemctl enable --now gdc-participants-proxy.socket >/dev/null
 systemctl enable --now gdc-gateway-health-probe.timer >/dev/null
-systemctl enable --now gdc-gateway-reserve-controller.timer >/dev/null
-systemctl start gdc-gateway-reserve-controller.service || true
+gateway_rotation_enabled="$(awk -F= '$1 == "DEVSHARD_ESCROW_ROTATION_ENABLED" { print $2; exit }' "$DEST/gateway.env" 2>/dev/null || true)"
+if [[ "$gateway_rotation_enabled" == false ]]; then
+  # Initial deployments may intentionally defer the separately funded reserve
+  # mechanism. Do not leave a periodic controller repeatedly failing against
+  # that explicit no-rotation configuration.
+  systemctl disable --now gdc-gateway-reserve-controller.timer >/dev/null 2>&1 || true
+  systemctl stop gdc-gateway-reserve-controller.service >/dev/null 2>&1 || true
+else
+  systemctl enable --now gdc-gateway-reserve-controller.timer >/dev/null
+  systemctl start gdc-gateway-reserve-controller.service || true
+fi
 systemctl start gdc-gateway-health-probe.service || true
 printf 'READY installed %s operations component in %s\n' "$COMPONENT" "$DEST"

@@ -207,7 +207,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Input tokens in flight",
+      "title": "Traffic ready",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -249,7 +249,7 @@
       },
       "targets": [
         {
-          "expr": "sum(devshard_gateway_inflight_input_tokens) or vector(0)",
+          "expr": "max(gdc_gateway_readiness_state{state=\"TRAFFIC_READY\"}) or vector(0)",
           "refId": "A",
           "instant": true
         }
@@ -1242,7 +1242,7 @@
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Blocked participants",
+      "title": "Blocked participants (active escrow)",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1312,7 +1312,7 @@
       },
       "targets": [
         {
-          "expr": "devshard_gateway_escrow_blocked_participants",
+          "expr": "devshard_gateway_escrow_blocked_participants or vector(0)",
           "refId": "A",
           "legendFormat": "escrow {{devshard_id}}"
         }
@@ -1504,7 +1504,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Gateway sample age",
+      "title": "Gateway request sample age (0 when none)",
       "gridPos": {
         "h": 4,
         "w": 6,
@@ -1546,7 +1546,7 @@
       },
       "targets": [
         {
-          "expr": "time() - max(timestamp(devshard_gateway_requests_total))",
+          "expr": "time() - max(timestamp(devshard_gateway_requests_total)) or vector(0)",
           "refId": "A",
           "instant": true
         }
@@ -2402,7 +2402,7 @@
         "y": 76
       },
       "options": {
-        "content": "This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content; a zero last-success age means the consumer has not reported a successful inference yet. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.",
+        "content": "This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. **Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even if the gateway metrics scrape succeeds. Request and active-escrow panels can be zero before the first routed request or while no escrow is active; they never claim traffic occurred. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content; a zero last-success age means the consumer has not reported a successful inference yet. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.",
         "mode": "markdown"
       }
     }

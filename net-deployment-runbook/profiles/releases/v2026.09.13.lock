@@ -1,0 +1,24 @@
+# Immutable release snapshot dated 2026-09-13 (UTC) for the official Coreteam
+# DevShard v5.0.0 binary identity.
+# The Coreteam release publishes only devshardd.zip and its checksum.
+# Runtime host/gateway images below are separately pinned External Test Lab
+# packaging, reused from v2026.09.08-rc.0; they are not Coreteam release assets.
+OFFICIAL_DEVSHARD_RELEASE=true
+CANDIDATE_LAYER=devshard
+UPGRADE_FROM_PROFILE=v2026.08.06
+DEVSHARD_SOURCE_REF=devshard/v5.0.0
+DEVSHARD_COMMIT=fae45d8c53180303b8345b56b2a9cc9dadcc0ffb
+DEVSHARD_PROTOCOL_VERSION=v5
+DEVSHARD_SUPPORTED_PROTOCOLS='v3 v5'
+DEVSHARD_V5_URL=https://github.com/gonka-ai/gonka/releases/download/devshard/v5.0.0/devshardd.zip
+DEVSHARD_V5_SHA256=ae2d1f90374b54efd4290b4df8b8c0ae339deb0d3b6e5b10936ea9f73155f564
+DEVSHARD_RUNTIME_PACKAGING_PROFILE=v2026.09.08-rc.0
+DEVSHARD_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:v2026.09.08-rc.0-5c75659d3ec4-34320725239@sha256:a6417ca62ef195a8e00c5a70429e1a0f787ac7f9a5bbcf7ee2fee1cc47ca369f
+DEVSHARD_HOST_IMAGE=ghcr.io/paranjko/gdc-devshard-host:v2026.09.08-rc.0-5c75659d3ec4-34320725239@sha256:f16cd26f5cdcdc422d68b8d3b38b89effcb8bb9982a87d0e4c996afaec20ed2a
+LOCAL_GATEWAY_IMAGE=ghcr.io/paranjko/gdc-devshard-gateway:v2026.09.08-rc.0-5c75659d3ec4-34320725239
+DEVSHARD_GATEWAY_IMAGE_ARCHIVE_URL=https://github.com/paranjko/external-test-lab/releases/download/v2026.09.08-rc.0/devshard-gateway-linux-amd64.oci.tar.gz
+DEVSHARD_GATEWAY_IMAGE_ARCHIVE_SHA256=58049b91e5955f8159f490a14bbccb9a3a2632b3bf1a018a78f9fe188e0c4d98
+DEVSHARD_HEIGHTSYNC=true
+DEVSHARD_HEIGHTSYNC_K=10
+DEVSHARD_HEIGHTSYNC_SLOTS=1
+DEVSHARD_STORAGE_MODE=memory
