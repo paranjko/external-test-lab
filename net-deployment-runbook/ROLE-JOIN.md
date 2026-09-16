@@ -156,8 +156,8 @@ the Host afresh instead of demanding manual recovery.
 
 | Stop | Meaning | Way back |
 |---|---|---|
-| `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | restore with `--restore` from the validator archive; without an archive, follow the recovery guidance for this network before repeating the command |
-| `identity_conflict` | the Host holds a validator identity that the operator state does not know | restore with `--restore` from the archive of that identity; never adopt or delete it |
+| `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | restore with `--restore` from the validator archive; without an archive, `gdc host reset` clears an unregistered identity so the next JOIN starts as `new`, and keeps a registered one until the archive exists |
+| `identity_conflict` | the Host holds a validator identity that the operator state does not know | restore with `--restore` from the archive of that identity; `gdc host reset` removes it only when the chain does not know its participant, never adopt it |
 | `unreachable` | no SSH session to the Host | repeat the same command once the Host is reachable |
 
 `gdc host backup` creates the archive only while the deployment is present on

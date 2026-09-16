@@ -35,6 +35,24 @@ gdc host reset <ssh-alias-1> <ssh-alias-2> [<ssh-alias-3> ...]
 Each Host is reset by the same phase as a separate command. If one reset
 fails, later aliases are not touched.
 
+Reset removes the deployment on the Host and the local joined marker. What it
+does with the validator identity depends on the chain: before anything is
+stopped or deleted it reads the participant of the local cold account through
+the public API of the Bootstrap seeds retained by the last JOIN.
+
+- Registered: identity and signer stay on the Host and locally; recover with
+  `gdc host join --restore`. A Host that still keeps its signer below the
+  deployment root is not reset at all until the archive exists.
+- Not registered: the identity record and the cold account move to
+  `state/recovery-partial-<timestamp>/`, the Host identity is archived under
+  `/srv/dai/rejoin/<ssh-alias>/` and removed, and the next JOIN starts as
+  `new`. Mnemonics stay.
+- Unknown (no answer from the seeds, no retained Bootstrap, no cold account):
+  everything is retained; rerun the reset when the public API answers.
+
+`gdc host backup` needs the running deployment: create the archive before a
+reset, not after it.
+
 The Host's local accounts, imported public Genesis data, mnemonics, runs and
 state are stored below `$GDC_HOME/<ssh-alias>/`; they are never shared with
 another Host's directory.
