@@ -131,6 +131,15 @@ if [[ "$last_state" == TARGET_CLASSIFIED && "$signer_started" == false && "$prev
     exit 0
   fi
 fi
+# A run that stopped at classification wrote its own refusal: a REFUSED
+# receipt closes the chain, the terminal result asserts mutation=none and no
+# signer ever started. It holds no deployment, identity or signer state to
+# resume, so the next normal invocation classifies the Host afresh.
+if [[ "$last_state" == REFUSED && "$signer_started" == false && "$terminal_outcome" == refused \
+  && "$terminal_mutation" == none && "$terminal_profile_sha256" == "$previous_profile_sha256" ]]; then
+  emit refused_before_mutation "refused_${terminal_reason}" "$previous_profile_id"
+  exit 0
+fi
 # Only post-signer acceptance has a bounded non-mutating dispatcher.  Earlier
 # state changes may have touched identity, deployment or a signer and require
 # an explicitly designed recovery protocol rather than a generic retry.

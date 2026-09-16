@@ -235,8 +235,12 @@ PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/attach.args" FAKE_GH_BODY="$tmp/attach.
 .
 y
 EOF
-grep -Eq 'issue create.*--attach' "$tmp/attach.args"
-grep -Eq 'issue create.*--attach.*report\.[^ ]+\.tar\.gz' "$tmp/attach.args"
+# The GitHub CLI uploads images and videos only. A sanitized .tar.gz makes the
+# write fail and publish nothing, so the archive is never offered as one even
+# when the installed CLI advertises --attach.
+! grep -Fq -- '--attach' "$tmp/attach.args" || { echo 'publication passed --attach to the GitHub CLI' >&2; exit 1; }
+! grep -Fq '.tar.gz' "$tmp/attach.args" || { echo 'publication attempted to upload the sanitized archive' >&2; exit 1; }
+grep -Fq 'uploads images and videos only' "$tmp/attach.out"
 ! grep -Fq 'run.log' "$tmp/attach.args" || { echo 'attachment attempted to upload a raw log' >&2; exit 1; }
 
 if run_gdc another-invalid-command >"$tmp/second.out" 2>"$tmp/second.err"; then
@@ -304,6 +308,9 @@ then
   exit 1
 fi
 grep -Fq 'publication state UNKNOWN' "$tmp/create-fail.err"
+# A failed write is the one moment the operator needs the CLI's own words.
+grep -Fq 'GitHub CLI reported:' "$tmp/create-fail.err"
+grep -Fq 'attachments must be an image or a video' "$tmp/create-fail.err"
 if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/ambiguous.args" FAKE_GH_BODY="$tmp/ambiguous.md" FAKE_GH_CREATE=ambiguous GDC_REPORT_TEST_INTERACTIVE=true \
   GDC_HOME="$publication_root" "$ROOT/gdc.sh" report github >"$tmp/ambiguous.out" 2>"$tmp/ambiguous.err" <<'EOF'
 1

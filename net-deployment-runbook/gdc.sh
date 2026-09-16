@@ -1716,6 +1716,9 @@ case "$COMMAND" in
         preparation_retry_allowed)
           printf 'PASS Host JOIN previous run stopped after Host preparation for reboot; preserving its evidence and retrying fresh preflight\n'
           ;;
+        refused_before_mutation)
+          printf 'READY prior JOIN run %s stopped before any Host change; classifying the Host afresh\n' "$join_previous_run_id"
+          ;;
         completed_matched)
           head_name="$(find "$previous_join_run/receipts" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json' -printf '%f\n' | LC_ALL=C sort | tail -n1)"
           # Semantic equality was established against the fresh profile above.

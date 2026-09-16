@@ -159,6 +159,20 @@ queries registration before submission and must not create a second
 participant, funding claim, or validator identity. A partial, conflicting,
 different-lineage, or unreachable state stops before deployment changes.
 
+A stop before the first Host change is recorded as a refusal with
+`mutation: none`: the terminal result and the diagnostic that `gdc report
+github` renders state what was found, and the next `gdc host join` classifies
+the Host afresh instead of demanding manual recovery.
+
+| Stop | Meaning | Way back |
+|---|---|---|
+| `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | restore with `--restore` from the validator archive; without an archive, follow the recovery guidance for this network before repeating the command |
+| `identity_conflict` | the Host holds a validator identity that the operator state does not know | restore with `--restore` from the archive of that identity; never adopt or delete it |
+| `unreachable` | no SSH session to the Host | repeat the same command once the Host is reachable |
+
+`gdc host backup` creates the archive only while the deployment is present on
+the Host; create it before any `gdc host reset`.
+
 For a validated private archive, use the same supported interface:
 
 ```bash
