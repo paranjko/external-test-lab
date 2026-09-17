@@ -8,6 +8,16 @@
 # TLS terminate here.
 {$PUBLIC_HOST} {
   encode zstd gzip
+  # These are participant identity and liveness endpoints. They must never
+  # fall through to the shared gateway: a gateway outage must not make one
+  # Host impersonate every other Host, and a healthy gateway must not mask a
+  # failed participant.
+  @participant_api_status path /health /status /v1/versions /v2/participants /v2/participants/*
+  handle @participant_api_status {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
+  }
   # The public edge can proxy normal user traffic to the gateway. Monitoring
   # must not use that route as proof that this Host's own Network Node is up:
   # after a Host reset it would otherwise report the gateway's chain status as
@@ -58,6 +68,11 @@
   # compatibility bundle and expose no credentials or topology.
   route {
     handle /v1.bootstrap.schema.json {
+      root * /edge/bootstrap/current
+      file_server
+    }
+    handle /gonka-devnet-community/bootstrap {
+      rewrite * /gonka-devnet-community/bootstrap.json
       root * /edge/bootstrap/current
       file_server
     }
@@ -114,6 +129,11 @@ www.{$SITE_HOST} {
     root * /edge/bootstrap/current
     file_server
   }
+  handle /gonka-devnet-community/bootstrap {
+    rewrite * /gonka-devnet-community/bootstrap.json
+    root * /edge/bootstrap/current
+    file_server
+  }
   @network_bootstrap path_regexp network_bootstrap ^/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/bootstrap\.(json|env)$
   handle @network_bootstrap {
     root * /edge/bootstrap/current
@@ -162,7 +182,21 @@ www.{$SITE_HOST} {
 
 {$API_HOST} {
   encode zstd gzip
+  # The canonical API origin is the gateway's Network Node proxy for chain
+  # and participant DAPI endpoints. Do not forward these paths into the
+  # DevShard gateway HTTP API – it has no CometBFT or chain REST routes.
+  @gateway_dapi path /health /status /v2/participants /v2/participants/* /chain-rpc /chain-rpc/* /chain-api /chain-api/*
+  handle @gateway_dapi {
+    reverse_proxy {$GATEWAY_DAPI_UPSTREAM} {
+      header_up Host {$GATEWAY_PUBLIC_HOST}
+    }
+  }
   handle /v1.bootstrap.schema.json {
+    root * /edge/bootstrap/current
+    file_server
+  }
+  handle /gonka-devnet-community/bootstrap {
+    rewrite * /gonka-devnet-community/bootstrap.json
     root * /edge/bootstrap/current
     file_server
   }

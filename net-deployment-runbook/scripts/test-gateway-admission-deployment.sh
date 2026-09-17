@@ -20,6 +20,7 @@ GDC_RELEASE_PROFILE=v2026.08.06 \
 stable_contract="$(sed -n 's/^GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=//p' "$tmp/stable.env")"
 jq -e 'keys == ["v3"]' <<<"$stable_contract" >/dev/null
 grep -Fxq 'GDC_GATEWAY_ADMISSION_STATUS_URL=https://validator-a.example.net/ops-gateway-admission-state' "$tmp/stable.env"
+grep -Fxq 'GDC_GATEWAY_ADMISSION_UPSTREAM=http://validator-a.example.net:18080' "$tmp/stable.env"
 if grep -Fq 'GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN=' "$tmp/stable.env"; then
   echo 'rendered public edge environment contains an observer credential' >&2
   exit 1
@@ -52,6 +53,7 @@ GDC_RELEASE_PROFILE=v2026.08.06 \
     --inventory "$tmp/colocated-inventory.env" --node-name validator-a --output "$tmp/colocated.env"
 grep -Fxq 'PUBLIC_EDGE=true' "$tmp/colocated.env"
 grep -Fxq 'GDC_GATEWAY_ADMISSION_STATUS_URL=http://127.0.0.1:18084/v1/status' "$tmp/colocated.env"
+grep -Fxq 'GDC_GATEWAY_ADMISSION_UPSTREAM=http://127.0.0.1:18080' "$tmp/colocated.env"
 
 grep -Fq 'env_file: [./gateway-admission.env]' "$ROOT/04-ops/edge-node/compose.yaml"
 grep -Fq 'install-gateway-admission.sh' "$ROOT/scripts/phase-ops.sh"

@@ -20,8 +20,12 @@ grep -Fq './site:/srv/dai/edge/site:ro' "$ROOT/04-ops/edge-node/compose.yaml"
 ! grep -Fq 'bootstrap:' "$ROOT/04-ops/edge-node/compose.yaml"
 ! grep -Fq 'join-bootstrap' "$ROOT/04-ops/edge-node/compose.yaml"
 grep -Fq 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/Caddyfile"
+grep -Fq 'handle /gonka-devnet-community/bootstrap' "$ROOT/04-ops/edge-node/Caddyfile"
+grep -Fq 'rewrite * /gonka-devnet-community/bootstrap.json' "$ROOT/04-ops/edge-node/Caddyfile"
 grep -Fq 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/Caddyfile"
 grep -Fq 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+[[ "$(grep -Fc 'handle /gonka-devnet-community/bootstrap' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
+[[ "$(grep -Fc 'rewrite * /gonka-devnet-community/bootstrap.json' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
 grep -Fq 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'root * /edge/bootstrap/current' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 [[ "$(grep -Fc 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
@@ -41,4 +45,4 @@ grep -Fq 'chown -R "$OPS_USER:$OPS_USER" "$SITE_ROOT"' "$user_ops"
 ! grep -Fq 'docker compose up -d --force-recreate bootstrap' "$phase"
 ! grep -Fq 'cd /srv/dai/edge && docker compose down' "$phase"
 
-printf 'PASS public edge has one TLS listener, a Grafana route, and v1 bootstrap routes\n'
+printf 'PASS public edge has one TLS listener, a Grafana route, and v1 bootstrap routes including the Community alias\n'

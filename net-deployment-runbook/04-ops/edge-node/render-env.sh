@@ -59,6 +59,10 @@ topology_contains_node "$NODE" || { echo "node is not configured in inventory: $
 # the joining Host is admitted. Never call node_public_host with an empty role.
 gateway_public_host="$PUBLIC_EDGE_HOST"
 [[ -z "${GATEWAY_NODE:-}" ]] || gateway_public_host="$(node_public_host "$GATEWAY_NODE")"
+gateway_dapi_upstream="http://${gateway_public_host}:8000"
+if [[ -n "${GATEWAY_NODE:-}" && "$NODE" == "$GATEWAY_NODE" ]]; then
+  gateway_dapi_upstream='http://127.0.0.1:8000'
+fi
 telegram_bot_public_host="$PUBLIC_EDGE_HOST"
 [[ -z "${TELEGRAM_BOT_HOST:-}" ]] || telegram_bot_public_host="$(node_public_host "$TELEGRAM_BOT_HOST")"
 
@@ -118,6 +122,15 @@ fi
 gateway_upstream_port="${GDC_GATEWAY_ADMISSION_UPSTREAM_PORT:-18080}"
 [[ "$gateway_upstream_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( gateway_upstream_port <= 65535 )) \
   || { echo 'GDC_GATEWAY_ADMISSION_UPSTREAM_PORT must be a valid TCP port' >&2; exit 2; }
+gateway_admission_upstream="http://${gateway_public_host}:$gateway_upstream_port"
+# The admission proxy shares the gateway Host network namespace.  Reaching the
+# public hostname here is both unnecessary and fragile: the gateway runtime is
+# intentionally bound to loopback, while the public firewall need not admit a
+# host's own external address.  Non-gateway participant edges keep the public
+# origin because they do not host that runtime.
+if [[ -n "${GATEWAY_NODE:-}" && "$NODE" == "$GATEWAY_NODE" ]]; then
+  gateway_admission_upstream="http://127.0.0.1:$gateway_upstream_port"
+fi
 
 values=(
   "PUBLIC_HOST=$(node_public_host "$NODE")"
@@ -127,7 +140,8 @@ values=(
   "GRAFANA_IMAGE=$GRAFANA_IMAGE"
   "PYTHON_IMAGE=${PYTHON_IMAGE:-python:3.13-alpine}"
   "GATEWAY_PUBLIC_HOST=$gateway_public_host"
-  "GDC_GATEWAY_ADMISSION_UPSTREAM=http://${gateway_public_host}:$gateway_upstream_port"
+  "GATEWAY_DAPI_UPSTREAM=$gateway_dapi_upstream"
+  "GDC_GATEWAY_ADMISSION_UPSTREAM=$gateway_admission_upstream"
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
   # identity and positive capacity instead of deployment intent. The gateway

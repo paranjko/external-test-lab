@@ -49,6 +49,7 @@ FAUCET_ENV="$OPS_RENDER/faucet.env"
 GATEWAY_RESERVE_ENV="$OPS_RENDER/gateway-reserve-signer.env"
 REMOTE="/tmp/gdc-ops-$$"
 SITE_INDEX_RENDER=''
+SITE_ASSETS_RENDER=''
 FAUCET_OPTION=''
 FAUCET_SIGNER_HOME=''
 
@@ -303,7 +304,36 @@ if [[ "$COMPONENT" == edge-node ]]; then
   rsync -a "$ROOT/04-ops/edge-node/" "$EDGE_NODE:$edge_remote/edge/"
   scp -q "$edge_env" "$EDGE_NODE:$edge_remote/edge.env"
   ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate caddy"
-  printf 'PASS participant edge installed on %s\n' "$EDGE_NODE"
+  # A selected gateway can move after recovery. Reconcile only the retained
+  # proxy listener with the current role; never regenerate the node role,
+  # reset chain data, or replace a signer here.
+  proxy_bind_address=127.0.0.1
+  if [[ "$EDGE_NODE" == "$GENESIS_NODE" || "$EDGE_NODE" == "$GATEWAY_NODE" ]]; then
+    proxy_bind_address=0.0.0.0
+  fi
+  ssh -T "$EDGE_NODE" "set -Eeuo pipefail
+    deploy='/srv/dai/deploy/$EDGE_NODE'
+    [[ -f \"\$deploy/.env\" && -f \"\$deploy/compose.yaml\" ]] || { echo 'managed Network Node deployment is absent' >&2; exit 1; }
+    previous=\"\$(mktemp \"\$deploy/.env.before-proxy-ingress.XXXXXX\")\"
+    cp -p \"\$deploy/.env\" \"\$previous\"
+    cleanup() { rc=\$?; if (( rc != 0 )); then cp -p \"\$previous\" \"\$deploy/.env\"; docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" up -d --no-deps --force-recreate proxy >/dev/null 2>&1 || true; fi; rm -f \"\$previous\"; exit \"\$rc\"; }
+    trap cleanup EXIT
+    if grep -q '^PROXY_BIND_ADDRESS=' \"\$deploy/.env\"; then
+      sed -i -E 's/^PROXY_BIND_ADDRESS=.*/PROXY_BIND_ADDRESS=$proxy_bind_address/' \"\$deploy/.env\"
+    else
+      printf 'PROXY_BIND_ADDRESS=$proxy_bind_address\\n' >>\"\$deploy/.env\"
+    fi
+    docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" config --quiet
+    docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" up -d --no-deps --force-recreate proxy
+    proxy_ready=false
+    for attempt in \$(seq 1 30); do
+      if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8000/health >/dev/null; then proxy_ready=true; break; fi
+      sleep 1
+    done
+    [[ \"\$proxy_ready\" == true ]] || { echo 'proxy did not become locally healthy after ingress reconciliation' >&2; exit 1; }
+    trap - EXIT
+    rm -f \"\$previous\""
+  printf 'PASS participant edge and proxy ingress reconciled on %s; node data and signer retained\n' "$EDGE_NODE"
   exit 0
 fi
 case "$COMPONENT" in
@@ -334,7 +364,7 @@ case "$COMPONENT" in
       "FAUCET_CHAIN_ID=$CHAIN_ID" "FAUCET_GENESIS_SHA256=$faucet_genesis_sha256" \
       'FAUCET_RPC_URL=http://127.0.0.1:26657' 'FAUCET_CHAIN_REST_URL=http://127.0.0.1:1317' \
       'FAUCET_KEY_NAME=gdc-faucet-cold' "FAUCET_KEYRING_PASSWORD=$(<"$SECRETS/operator.keyring")" \
-      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18083' \
+      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18085' \
       "FAUCET_GATEWAY_RESERVE_RECIPIENT=$gateway_recipient" "FAUCET_GATEWAY_RESERVE_TOKEN=$(<"$reserve_signer_token")" \
       "FAUCET_GATEWAY_RESERVE_MAX_NGONKA=${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
     FAUCET_OPTION="--faucet-env '$REMOTE/rendered/faucet.env' --gateway-reserve-env '$REMOTE/rendered/gateway-reserve-signer.env'"
@@ -507,7 +537,7 @@ case "$COMPONENT" in
       active_gateway_state="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
         [[ -r /srv/dai/ops/gateway.env ]] || exit 0
         set -a; . /srv/dai/ops/gateway.env; set +a
-        curl -fsS http://127.0.0.1:18080/v1/admin/devshards \
+        curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:18080/v1/admin/devshards \
           -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY"' 2>/dev/null || true)"
       active_gateway_escrows="$(printf '%s\n' "$active_gateway_state" \
         | "$ROOT/scripts/select-compatible-gateway-escrows.sh" "$GDC_GATEWAY_VERSION" 2>/dev/null || true)"
@@ -856,7 +886,7 @@ if [[ "$COMPONENT" == gateway ]]; then
   while (( SECONDS < gateway_active_deadline )); do
     candidate="$(ssh -T "$GATEWAY_NODE" 'set -Eeuo pipefail
       set -a; . /srv/dai/ops/gateway.env; set +a
-      curl -fsS http://127.0.0.1:18080/v1/admin/devshards \
+      curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:18080/v1/admin/devshards \
         -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
         | jq -er "[.devshards[] | select(.active == true and (.runtime.phase // \"\") == \"active\" and (.runtime.requests_blocked // false) == false) | .id | tostring] | first // empty"' 2>/dev/null || true)"
     if [[ "$candidate" =~ ^[1-9][0-9]*$ ]]; then
@@ -890,9 +920,9 @@ if [[ "$COMPONENT" == gateway ]]; then
   while (( SECONDS < deadline )); do
     if ssh "$GATEWAY_NODE" 'set -Eeuo pipefail
       set -a; . /srv/dai/ops/gateway.env; set +a
-      curl -fsS http://127.0.0.1:18080/v1/status \
+      curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:18080/v1/status \
         | jq -e "(.devshards // [.]) | any((.active // true) == true and (.runtime.phase // .phase // \"\") == \"active\" and (.runtime.requests_blocked // .requests_blocked // false) == false and (.runtime.chain_phase // .chain_phase // \"\") == \"Inference\")" >/dev/null
-      curl -fsS http://127.0.0.1:18080/v1/admin/devshards -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
+      curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:18080/v1/admin/devshards -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
         | jq -e --arg model "$DEVSHARD_MODEL" ".limiter.models[\$model] as \$limits | ((.settings.max_concurrent_requests == 0 and .settings.max_concurrent_requests_per_10000_weight <= 0) or \$limits.effective_max_concurrent_requests > 0)" >/dev/null
       height="$(curl -fsS http://127.0.0.1:26657/status | jq -er ".result.sync_info.latest_block_height | tonumber")"
       read -r epoch_length poc_duration poc_exchange_duration validation_delay validation_duration validators_delay < <(

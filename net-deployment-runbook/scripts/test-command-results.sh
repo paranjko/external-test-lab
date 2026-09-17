@@ -77,8 +77,10 @@ printf '{"receipt_chain":{"last_state":"COMPLETE"}}\n'
 SH
 for mode in resume plan; do
   home_dir="$scratch/join-$mode"
-  mkdir -p "$home_dir/fixture-peer/runs/fixture-run/join-fixture-peer"
+  mkdir -p "$home_dir/fixture-peer/runs/fixture-run/join-fixture-peer" "$home_dir/fixture-peer/state/role-inputs"
   printf '{}\n' >"$home_dir/fixture-peer/runs/fixture-run/join-fixture-peer/join-profile.v1.json"
+  printf 'GDC_JOIN_ROLE_INPUT=true\n' >"$home_dir/fixture-peer/state/role-inputs/join-fixture-peer"
+  printf '%s\n' "$home_dir/fixture-peer/state/role-inputs/join-fixture-peer" >"$home_dir/fixture-peer/state/active-role-config"
   args=(host join --resume fixture-run --public-host peer.example.test fixture-peer)
   expected='END host join SUCCESS'
   if [[ "$mode" == plan ]]; then args+=(--plan); expected='END host join PLAN SUCCESS'; fi

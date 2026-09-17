@@ -24,21 +24,21 @@ required names.
 ```bash
 alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
 export GDC_HOME="${GDC_HOME:?Set GDC_HOME to the existing controller data directory}"
-SOURCE_RPC=https://node0.gonka-dev.net/chain-rpc
 RETURNING=gdc-node1,gdc-node2,gdc-node4
 
 # 1. Bootstrap the source with a temporary signer. Confirm RECOVER.
 gdc network recover bootstrap gdc-node0
-curl -fsS "$SOURCE_RPC/status" | jq '.result.sync_info | {latest_block_height, catching_up}'
+curl -fsS https://node0.gonka-dev.net/chain-rpc/status | jq '.result.sync_info | {latest_block_height, catching_up}'
 # Height must exceed 306552 and keep increasing; catching_up must be false.
 
-# 2. Restore each returning Host once, with an explicit synchronization source.
+# 2. Restore each returning Host once. JOIN discovers an archival source and
+# an independent current witness from the published Bootstrap descriptor.
 gdc host reset gdc-node1
-gdc host join --source-rpc "$SOURCE_RPC" --pex false --restore "$GDC_HOME/gdc-node1-validator-backup.tar" --public-host node1.gonka-dev.net gdc-node1
+gdc host join --pex false --restore "$GDC_HOME/gdc-node1-validator-backup.tar" --public-host node1.gonka-dev.net gdc-node1
 gdc host reset gdc-node2
-gdc host join --source-rpc "$SOURCE_RPC" --pex false --restore "$GDC_HOME/gdc-node2-validator-backup.tar" --public-host node2.gonka-dev.net gdc-node2
+gdc host join --pex false --restore "$GDC_HOME/gdc-node2-validator-backup.tar" --public-host node2.gonka-dev.net gdc-node2
 gdc host reset gdc-node4
-gdc host join --source-rpc "$SOURCE_RPC" --pex false --restore "$GDC_HOME/gdc-node4-validator-backup.tar" --public-host node4.gonka-dev.net gdc-node4
+gdc host join --pex false --restore "$GDC_HOME/gdc-node4-validator-backup.tar" --public-host node4.gonka-dev.net gdc-node4
 
 # 3. Explicitly hand consensus back to the original signers.
 gdc network recover handoff gdc-node0 --hosts "$RETURNING"
@@ -62,11 +62,10 @@ remain on the Hosts; no database archive is downloaded to the controller.
 
 `host reset` and `host join --restore` remain ordinary Host lifecycle commands.
 The restore archive contains the existing validator identity, not a chain
-database. For this incident, `--source-rpc` selects the recovered source;
-`--pex false` only disables peer discovery. State sync uses native P2P,
-then verifies common-height state before activating the original signer.
-The two CometBFT RPC entries name the same explicitly trusted source, not
-independent witnesses. Only the source retains full pre-fork block history.
+database. JOIN reads the published Bootstrap descriptor, selects a seed that
+still serves the historical checkpoints, and pairs it with a distinct current
+witness. `--pex false` only disables peer discovery. State sync uses native
+P2P, then verifies common-height state before activating the original signer.
 
 `handoff` is a separate operation; ordinary join does not trigger it. It
 checks the returning Hosts against their retained identity archives and waits

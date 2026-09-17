@@ -1429,8 +1429,8 @@ prepare_rejoin() {
     || fail 'source state-sync preparation is incomplete'
   mv "$RUN/state-sync.json.next" "$RUN/state-sync.json"
   touch "$RUN/ready"
-  printf '%s is ready. Use ordinary host reset and host join --source-rpc %s --pex false --restore ARCHIVE --public-host HOST ALIAS.\n' \
-    "$SOURCE_ALIAS" "$(jq -er .rpc_url "$RUN/state-sync.json")"
+  printf '%s is ready. Use ordinary host reset and host join --pex false --restore ARCHIVE --public-host HOST ALIAS. JOIN selects the archival Bootstrap source and an independent current witness.\n' \
+    "$SOURCE_ALIAS"
 }
 
 wait_rejoin_sync() {

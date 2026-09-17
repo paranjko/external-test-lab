@@ -4,6 +4,16 @@
 }
 {$PUBLIC_HOST} {
   encode zstd gzip
+  # These are participant identity and liveness endpoints. They must never
+  # fall through to the shared gateway: a gateway outage must not make one
+  # Host impersonate every other Host, and a healthy gateway must not mask a
+  # failed participant.
+  @participant_api_status path /health /status /v1/versions /v2/participants /v2/participants/*
+  handle @participant_api_status {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host {$PUBLIC_HOST}
+    }
+  }
   @root path /
   redir @root /dashboard/gonka/gov 308
   # PoC validators fetch proofs from the participant recorded on chain.  That
@@ -39,6 +49,11 @@
   # serves no compatibility bundle and never exposes credentials or topology.
   route {
     handle /v1.bootstrap.schema.json {
+      root * /edge/bootstrap/current
+      file_server
+    }
+    handle /gonka-devnet-community/bootstrap {
+      rewrite * /gonka-devnet-community/bootstrap.json
       root * /edge/bootstrap/current
       file_server
     }
