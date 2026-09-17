@@ -182,6 +182,9 @@ grep -Fq "PASS Host JOIN resume plan verified run_id=$run_id; no Host action was
 # Incomplete receipts are not generic retries.  The only former mutating
 # signer-resume dispatcher accepted an operator-authored fence, so the CLI
 # must now fail closed without connecting to the Host.
+mkdir -p "$tmp/operator/validator-a/state/role-inputs"
+printf 'GDC_JOIN_ROLE_INPUT=true\n' >"$tmp/operator/validator-a/state/role-inputs/join-validator-a"
+printf '%s\n' "$tmp/operator/validator-a/state/role-inputs/join-validator-a" >"$tmp/operator/validator-a/state/active-role-config"
 : >"$tmp/remote-effects.log"
 if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
   "$ROOT/gdc.sh" host join --resume "$run_id" --public-host validator-a.example.test validator-a >"$tmp/unsupported-resume.out" 2>"$tmp/unsupported-resume.err"; then

@@ -329,7 +329,18 @@ scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
 scp -q "$ROOT/scripts/verify-join-lineage-state.sh" "$NODE:$REMOTE/verify-join-lineage-state.sh"
 local_ml=(); gpu=()
 [[ -z "$ML_HOST" ]] && local_ml=(--local-ml) && gpu=(--gpu)
-ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"
+if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
+  # The public edge owns /srv/dai/edge on this Host.  A participant JOIN must
+  # never replace that shared TLS configuration with the node-local edge.
+  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"
+  printf 'READY retained shared public edge on %s during participant JOIN\n' "$NODE"
+else
+  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"
+fi
+if [[ "${GDC_JOIN_BOOTSTRAP_MODE:-}" == historical_replay ]]; then
+  step "Install the checked historical runtime schedule for $NODE"
+  ssh "$NODE" "sudo /srv/dai/deploy/$NODE/prepare-full-history-runtime.sh '$generation_dir' '$REMOTE/lineage-receipt.json'"
+fi
 
 # Persist the explicit external-GPU association as soon as the validator
 # deployment exists.  A join can fail later (for example, while claiming the
@@ -350,11 +361,11 @@ if [[ -n "$ML_HOST" ]]; then
   printf 'READY recorded network GPU %s for %s before activation\n' "$ML_HOST" "$NODE"
 fi
 
-step "Start signerless P2P state-sync canary for $NODE"
+step "Start signerless native P2P synchronization canary for $NODE"
 # A state-sync trust checkpoint is deliberately short-lived. Do not launch a
 # canary that would already consume an expired decision; a new preflight is
 # required instead.
-"$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
+[[ "${GDC_JOIN_BOOTSTRAP_MODE:-}" == historical_replay ]] || "$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
 record_join_state "$NODE" SYNCING "$ADDRESS"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --canary"
 record_join_transition CANARY_RUNNING
@@ -395,21 +406,25 @@ printf '%s\n' "$(<"$GDC_HOME/mnemonics/$NODE-warm.mnemonic")" \
 step "Start signerless canonical application stack for $NODE"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
 record_join_transition CANONICAL_RUNNING
-step "Read back canonical signerless Core identity, runtime and state for $NODE"
 expected_p2p_node_id="$(jq -er '.node_id' "$IDENTITY")"
 expected_core_version="$(jq -er '.spec.components.core.expected_runtime.version' "$GDC_JOIN_PROFILE")"
 expected_core_commit="$(jq -er '.spec.components.core.expected_runtime.commit' "$GDC_JOIN_PROFILE")"
 expected_dapi_version="$(jq -er '.spec.components.dapi.expected_runtime.version' "$GDC_JOIN_PROFILE")"
 expected_dapi_commit="$(jq -er '.spec.components.dapi.expected_runtime.commit' "$GDC_JOIN_PROFILE")"
 expected_chain_id="$(jq -er '.spec.network.chain_id' "$GDC_JOIN_PROFILE")"
-ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-canonical-join-state.sh '/srv/dai/deploy/$NODE' '$expected_chain_id' '$expected_p2p_node_id' '$expected_core_version' '$expected_core_commit' '$expected_dapi_version' '$expected_dapi_commit'"
-ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json'"
-record_join_transition CANONICAL_VERIFIED
-start_stack "$NODE" /srv/dai/edge
-start_stack "$NODE" /srv/dai/monitoring-agent
 step "Restart $NODE API and colocated MLNode only after synchronization"
 "$ROOT/03-join/restart-api-after-sync.sh" "$NODE"
 record_join_transition APPLICATION_ACTIVE
+step "Read back canonical signerless Core identity, runtime and state for $NODE"
+ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-canonical-join-state.sh '/srv/dai/deploy/$NODE' '$expected_chain_id' '$expected_p2p_node_id' '$expected_core_version' '$expected_core_commit' '$expected_dapi_version' '$expected_dapi_commit'"
+ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json'"
+record_join_transition CANONICAL_VERIFIED
+if [[ "$NODE" != "$PUBLIC_EDGE_NODE" ]]; then
+  start_stack "$NODE" /srv/dai/edge
+else
+  printf 'READY retained shared public edge on %s during participant JOIN\n' "$NODE"
+fi
+start_stack "$NODE" /srv/dai/monitoring-agent
 participant_body="$(curl --connect-timeout 5 --max-time 10 -fsS "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"
 participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null || true)"
 participant_state="$(participant_onboarding_state "$participant_status")"

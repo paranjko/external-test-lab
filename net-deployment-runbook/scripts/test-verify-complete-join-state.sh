@@ -45,7 +45,7 @@ chmod 600 "$tmp/profile.json"
 profile_sha256="$(sha256sum "$tmp/profile.json" | awk '{print $1}')"
 
 mkdir -p "$deploy"
-printf 'GDC_PROFILE_KIND=generated_join\nDAPI_IMAGE=%s\nINFERENCED_IMAGE=%s\n' "$dapi_image" "$core_image" >"$deploy/.env"
+printf 'GDC_PROFILE_KIND=generated_join\nDAPI_IMAGE=%s\nDAPI_UPGRADE_SHA256=%s\nINFERENCED_IMAGE=%s\n' "$dapi_image" "$(printf 'e%.0s' {1..64})" "$core_image" >"$deploy/.env"
 printf 'services: {}\n' >"$deploy/compose.yaml"
 printf '%s\n' "$profile_sha256" >"$deploy/.gdc-join-profile"
 cp "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy/verify-canonical-join-state.sh"
@@ -79,6 +79,9 @@ case "$args" in
   *'exec 0123456789ab /root/.inference/cosmovisor/current/bin/inferenced version') printf '%s\n' '0.2.15' ;;
   *'exec 0123456789ab /root/.inference/cosmovisor/current/bin/inferenced version --long') printf '%s\n' "version: 0.2.15" "commit: 4d687ed6782bcea3931d2d9135bf322f84e190ab" ;;
   *'exec abcdef012345 readlink -f /proc/1/exe') printf '%s\n' /root/.dapi/cosmovisor/current/bin/decentralized-api ;;
+  *'exec abcdef012345 cat /root/.dapi/gdc-join-dapi-runtime.env')
+    printf '%s\n' "DAPI_VERSION=${GDC_TEST_DAPI_VERSION:-0.2.15-post3}" "DAPI_COMMIT=${GDC_TEST_DAPI_COMMIT:-5dbb53ddf3ddc42655fc04dc39d96003169bdbb0}" 'DAPI_ARCHIVE_SHA256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' 'DAPI_BINARY_SHA256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' ;;
+  *'exec abcdef012345 sha256sum /root/.dapi/cosmovisor/current/bin/decentralized-api') printf '%s\n' 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff  /root/.dapi/cosmovisor/current/bin/decentralized-api' ;;
   *) echo "unexpected docker invocation: $args" >&2; exit 2 ;;
 esac
 EOF
@@ -86,12 +89,10 @@ cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 url="${!#}"
-version="${GDC_TEST_DAPI_VERSION:-0.2.15-post3}"
-commit="${GDC_TEST_DAPI_COMMIT:-5dbb53ddf3ddc42655fc04dc39d96003169bdbb0}"
 case "$url" in
   */status) printf '%s\n' '{"result":{"node_info":{"network":"gonka-fixture","id":"0123456789abcdef0123456789abcdef01234567"},"sync_info":{"catching_up":false,"latest_block_height":"5000"}}}' ;;
   */abci_info) printf '%s\n' '{"result":{"response":{"version":"0.2.15"}}}' ;;
-  */v1/versions) printf '{"api_version":{"version":"%s","commit":"%s"}}\n' "$version" "$commit" ;;
+  */v1/versions) echo '{"api_version":{"version":"","commit":""},"node_version":{"version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"}}' ;;
   *) exit 22 ;;
 esac
 EOF
@@ -133,12 +134,12 @@ if PATH="$tmp/bin:$PATH" GDC_TEST_DEPLOY="$deploy" GDC_TEST_DAPI_VERSION=0.2.15-
   "$ROOT/scripts/verify-complete-join-state.sh" node-a "$tmp/profile.json" "$tmp/receipt.json" >"$tmp/version.out" 2>"$tmp/version.err"; then
   echo 'mismatched DAPI runtime version unexpectedly accepted' >&2; exit 1
 fi
-grep -Fq 'canonical_dapi_version_mismatch:' "$tmp/version.err"
+grep -Fq 'canonical_dapi_receipt_mismatch:' "$tmp/version.err"
 
 if PATH="$tmp/bin:$PATH" GDC_TEST_DEPLOY="$deploy" GDC_TEST_DAPI_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   "$ROOT/scripts/verify-complete-join-state.sh" node-a "$tmp/profile.json" "$tmp/receipt.json" >"$tmp/commit.out" 2>"$tmp/commit.err"; then
   echo 'mismatched DAPI runtime commit unexpectedly accepted' >&2; exit 1
 fi
-grep -Fq 'canonical_dapi_commit_mismatch:' "$tmp/commit.err"
+grep -Fq 'canonical_dapi_receipt_mismatch:' "$tmp/commit.err"
 
 printf 'PASS repeated JOIN no-op binds generated profile, exact DAPI image and canonical runtime readback\n'

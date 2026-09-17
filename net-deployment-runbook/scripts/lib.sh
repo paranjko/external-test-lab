@@ -626,6 +626,17 @@ load_project() {
     return 0
   fi
   load_topology
+  # A receipt-bound JOIN resume has already completed Host preparation.  It
+  # must not repeat the primary deployment's public-DNS-to-firewall binding:
+  # that binding is relevant only before preparation, while the resume may
+  # safely operate from retained one-host role input during a DNS outage.
+  if [[ "${GDC_JOIN_ROLE_INPUT:-false}" == true && "${GDC_JOIN_RESUME:-false}" == true ]]; then
+    MONITORING_CIDR=''
+    PUBLIC_EDGE_CIDR=''
+    initialize_project_state_paths
+    write_inventory
+    return 0
+  fi
   # A host-recovery profile deliberately has no gateway role. Its local
   # validation never deploys the central collector, so retain the Genesis
   # source only for that isolated mode.

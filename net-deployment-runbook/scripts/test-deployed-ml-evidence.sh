@@ -15,6 +15,10 @@ shift
 command="$*"
 case "$command" in
   *'docker exec'*)
+    [[ "$command" != *"docker exec 'inference'"* ]] || {
+      echo 'probe used a fabricated inference container name' >&2
+      exit 1
+    }
     [[ "${MOCK_HANG_MODE:-false}" != true ]] || sleep 3
     case "$command" in
       *'/api/v1/inference/up/status'*)

@@ -53,7 +53,7 @@ fi
 block() {
   local height="$1" block app
   case "$height" in
-    5) block=1111111111111111111111111111111111111111111111111111111111111111; app=2222222222222222222222222222222222222222222222222222222222222222 ;;
+    1|5) block=1111111111111111111111111111111111111111111111111111111111111111; app=2222222222222222222222222222222222222222222222222222222222222222 ;;
     5000) block=7777777777777777777777777777777777777777777777777777777777777777; app=8888888888888888888888888888888888888888888888888888888888888888 ;;
     3000|4998) block=3333333333333333333333333333333333333333333333333333333333333333; app=4444444444444444444444444444444444444444444444444444444444444444 ;;
     101) block=5555555555555555555555555555555555555555555555555555555555555555; app=6666666666666666666666666666666666666666666666666666666666666666 ;;
@@ -79,7 +79,7 @@ case "$url" in
     # This seed is reachable and agrees at the tip, but has pruned the
     # historical checkpoints required by the JOIN receipt. It must be
     # excluded while the two independent complete providers remain usable.
-    if [[ "$url" == *rpc-c.example.test* && "${url##*=}" != 5000 ]]; then
+    if [[ ( "$url" == *rpc-c.example.test* || ( "${GDC_TEST_PRUNE_A:-false}" == true && "$url" == *rpc-a.example.test* && "${url##*=}" != 3000 ) ) && "${url##*=}" != 5000 ]]; then
       case "${GDC_TEST_PRUNED_PAYLOAD:-error}" in
         error) printf '%s\n' '{"jsonrpc":"2.0","error":{"code":-32603,"message":"height is not available"}}' ;;
         null) printf '%s\n' '{"result":{"block":null}}' ;;
@@ -102,6 +102,17 @@ run_preflight() {
     "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/receipt.json" --env "$tmp/lineage.env"
 }
 run_preflight >"$tmp/out"
+cat >"$tmp/runtime-history.json" <<'EOF'
+{"schema_version":1,"kind":"gdc-full-history-runtime-schedule","genesis":{"url":"https://releases.example.test/inferenced-genesis","runtime_sha256":"1111111111111111111111111111111111111111111111111111111111111111"},"upgrades":[{"name":"v0.2.15","height":101,"url":"https://releases.example.test/inferenced-v0.2.15","runtime_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}]}
+EOF
+PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/full.json" --env "$tmp/full.env" --mode full-history --upgrade-schedule "$tmp/runtime-history.json"
+jq -e '.bootstrap.mode == "historical_replay" and .bootstrap.history.source_peer == "0123456789abcdef0123456789abcdef01234567@tcp://rpc-a.example.test:5000" and (.bootstrap.history.schedule_sha256 | test("^[a-f0-9]{64}$"))' "$tmp/full.json" >/dev/null
+grep -qx 'GDC_JOIN_BOOTSTRAP_MODE=historical_replay' "$tmp/full.env"
+if "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/missing.json" --env "$tmp/missing.env" --mode full-history >"$tmp/missing.out" 2>"$tmp/missing.err"; then
+  echo 'full-history mode unexpectedly accepted no runtime schedule' >&2; exit 1
+fi
+grep -Fq 'full-history mode requires a readable upgrade schedule' "$tmp/missing.err"
 GDC_TEST_PRUNED_PAYLOAD=null run_preflight >"$tmp/null-pruned.out"
 grep -Fqx 'https://rpc-a.example.test/chain-api/productscience/inference/inference/last_upgrade_height' "$tmp/curl-spy"
 grep -Fqx 'https://rpc-a.example.test/chain-api/productscience/inference/inference/params' "$tmp/curl-spy"
@@ -115,6 +126,7 @@ jq -e '
   .bootstrap.snapshot.discovery == "p2p_canary_pending" and
   (.bootstrap.snapshot.providers | length == 2) and
   (.fault_domains | length == 2) and .signer.state == "PREPARED" and
+  .trust_authority == {kind:"bootstrap_archival_source",rpc_url:"https://rpc-a.example.test/chain-rpc"} and
   ([.fault_domains[].rpc_url] | index("https://rpc-b.example.test/chain-rpc")) and
   (.devshard_compatibility.approvals | map(.name) == ["v3","v4","v5"]) and
   (.devshard_compatibility.sources | length == 2) and
@@ -143,6 +155,14 @@ source "$tmp/lineage.env"
 jq -e 'keys == ["v3","v4","v5"] and .v4.binary == "https://example.test/devshard-v4.zip"' \
   <<<"$GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON" >/dev/null
 
+# The source is chosen from Bootstrap evidence, not a topology name or a
+# caller-provided alias. When the first seed is pruned, the next independent
+# seed that serves the historical checkpoints becomes the source.
+PATH="$tmp/bin:$PATH" GDC_TEST_PRUNE_A=true GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/autodetect.json" --env "$tmp/autodetect.env" >"$tmp/autodetect.out"
+jq -e '.trust_authority == {kind:"bootstrap_archival_source",rpc_url:"https://rpc-b.example.test/chain-rpc"}' "$tmp/autodetect.json" >/dev/null
+grep -qx 'GDC_JOIN_SOURCE_RPC=https://rpc-b.example.test/chain-rpc' "$tmp/autodetect.env"
+
 if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=one,rpc-b.example.test=one' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/alias.json" --env "$tmp/alias.env" >"$tmp/alias.out" 2>"$tmp/alias.err"; then
   echo 'two aliases for one RPC fault domain unexpectedly passed' >&2; exit 1
@@ -165,22 +185,23 @@ if "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.js
   echo 'single-source observation accepted without explicit operator source' >&2; exit 1
 fi
 grep -q 'requires explicit --source-rpc' "$tmp/refused.log"
-PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/source-spy" GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10' \
+PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/source-spy" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
   "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/source-observation.json" \
   --receipt "$tmp/source-receipt.json" --env "$tmp/source.env" --source-rpc https://rpc-a.example.test/chain-rpc
-jq -e '.trust_authority=={kind:"operator_source",rpc_url:"https://rpc-a.example.test/chain-rpc"} and (.fault_domains|length)==1
-  and (.bootstrap.snapshot.providers|length)==1 and .bootstrap.trust.height==4998' "$tmp/source-receipt.json" >/dev/null
-! grep -Ev '^https://rpc-a.example.test/' "$tmp/source-spy"
+jq -e '.trust_authority=={kind:"operator_source",rpc_url:"https://rpc-a.example.test/chain-rpc"} and (.fault_domains|length)>=2
+  and (.bootstrap.snapshot.providers|length)>=2 and .bootstrap.trust.height==4998' "$tmp/source-receipt.json" >/dev/null
+grep -Fq 'https://rpc-a.example.test/chain-rpc/status' "$tmp/source-spy"
+grep -Fq 'https://rpc-b.example.test/chain-rpc/status' "$tmp/source-spy"
 # shellcheck source=/dev/null
 source "$tmp/source.env"
-[[ "$GDC_JOIN_RPC_SERVER_1" == "$GDC_JOIN_RPC_SERVER_2" && "$GDC_JOIN_SOURCE_RPC" == https://rpc-a.example.test/chain-rpc ]]
+[[ "$GDC_JOIN_RPC_SERVER_1" == https://rpc-a.example.test/chain-rpc/ && "$GDC_JOIN_RPC_SERVER_2" == https://rpc-b.example.test/chain-rpc/ && "$GDC_JOIN_SOURCE_RPC" == https://rpc-a.example.test/chain-rpc ]]
 python3 - "$ROOT/lineage/join-lineage-preflight.v1.schema.json" "$tmp/source-receipt.json" <<'PY'
 import json, sys
 from jsonschema import Draft202012Validator
 schema, receipt = [json.load(open(path)) for path in sys.argv[1:]]
 validator = Draft202012Validator(schema)
 validator.validate(receipt)
-del receipt['trust_authority']
-assert not validator.is_valid(receipt), 'implicit single-source receipt accepted'
+assert len(receipt['fault_domains']) >= 2
+assert len(receipt['bootstrap']['snapshot']['providers']) >= 2
 PY
 printf 'PASS explicit source preflight, bound checkpoint and strict default schema\n'

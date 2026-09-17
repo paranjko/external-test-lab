@@ -48,8 +48,20 @@ trap on_error ERR
 exec >>"$LOG" 2>&1
 status "PREPARE  $HOST_NAME"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y --no-install-recommends \
+ensure_packages() {
+  local package missing=()
+  for package in "$@"; do
+    dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed \
+      || missing+=("$package")
+  done
+  if (( ${#missing[@]} == 0 )); then
+    status 'KEEP  required packages already installed'
+    return 0
+  fi
+  apt-get update
+  apt-get install -y --no-install-recommends "${missing[@]}"
+}
+ensure_packages \
   ca-certificates curl gnupg jq git rsync unzip zip zstd openssl age locales binutils \
   python3 python3-yaml python3-requests python3-venv chrony fail2ban unattended-upgrades \
   smartmontools nvme-cli pciutils lsof net-tools iptables conntrack socat \
@@ -86,8 +98,7 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o
 chmod a+r /etc/apt/keyrings/docker.gpg
 printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu %s stable\n' \
   "$(dpkg --print-architecture)" "$VERSION_CODENAME" > /etc/apt/sources.list.d/docker.list
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+ensure_packages docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 install -d -m 0755 /etc/docker
 DAEMON_JSON=/etc/docker/daemon.json
 DAEMON_TMP="$(mktemp)"
@@ -112,6 +123,9 @@ if [[ "$GPU_ROLE" == true ]]; then
   if command -v nvidia-smi >/dev/null 2>&1; then
     driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 || true)
   fi
+  if [[ -z "$driver_version" && -r /proc/driver/nvidia/version ]]; then
+    driver_version=$(sed -n 's/^NVRM version:.*  \([0-9][0-9.]*\)  .*$/\1/p' /proc/driver/nvidia/version | head -n1)
+  fi
   driver_major=${driver_version%%.*}
   if [[ "$driver_major" =~ ^[0-9]+$ ]] && (( driver_major >= MIN_DRIVER )); then
     status "KEEP  NVIDIA driver $driver_version"
@@ -132,6 +146,13 @@ if [[ "$GPU_ROLE" == true ]]; then
     depmod -a
     update-initramfs -u
     DRIVER_CHANGED=true
+  fi
+  # Ubuntu's headless server-driver metapackage can omit the userspace utility
+  # even though the kernel driver is loaded.  The subsequent verifier needs
+  # nvidia-smi, so install the matching utility once the active driver version
+  # is known.  A first installation still exits for reboot above.
+  if [[ "$driver_major" =~ ^[0-9]+$ ]]; then
+    ensure_packages "nvidia-utils-${driver_major}-server"
   fi
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
     | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg

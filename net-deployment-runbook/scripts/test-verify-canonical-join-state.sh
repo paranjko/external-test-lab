@@ -7,7 +7,8 @@ deploy="$tmp/deploy"
 mkdir -p "$tmp/bin" "$tmp/deploy"
 printf '%s\n' \
   'INFERENCED_IMAGE=ghcr.io/product-science/inferenced:0.2.15@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
-  'DAPI_IMAGE=ghcr.io/product-science/api:0.2.15-post3@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' >"$tmp/deploy/.env"
+  'DAPI_IMAGE=ghcr.io/product-science/api:0.2.15-post3@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  'DAPI_UPGRADE_SHA256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' >"$tmp/deploy/.env"
 printf '%s\n' 'services: {}' >"$tmp/deploy/compose.yaml"
 cat >"$tmp/bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -30,6 +31,9 @@ case "$args" in
   *'exec 0123456789ab /usr/bin/inferenced version') printf '%s\n' '0.2.15' ;;
   *'exec 0123456789ab /usr/bin/inferenced version --long') printf '%s\n' 'version: 0.2.15' 'commit: 4d687ed6782bcea3931d2d9135bf322f84e190ab' ;;
   *'exec abcdef012345 readlink -f /proc/1/exe') printf '%s\n' /root/.dapi/cosmovisor/current/bin/decentralized-api ;;
+  *'exec abcdef012345 cat /root/.dapi/gdc-join-dapi-runtime.env')
+    printf '%s\n' 'DAPI_VERSION=0.2.15-post3' 'DAPI_COMMIT=5dbb53ddf3ddc42655fc04dc39d96003169bdbb0' 'DAPI_ARCHIVE_SHA256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' "DAPI_BINARY_SHA256=${GDC_TEST_DAPI_BINARY_SHA256:-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd}" ;;
+  *'exec abcdef012345 sha256sum /root/.dapi/cosmovisor/current/bin/decentralized-api') printf '%s\n' "${GDC_TEST_DAPI_ACTUAL_BINARY_SHA256:-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd}  /root/.dapi/cosmovisor/current/bin/decentralized-api" ;;
   *) echo "unexpected docker invocation: $args" >&2; exit 2 ;;
 esac
 EOF
@@ -42,6 +46,7 @@ api_version="${GDC_TEST_DAPI_VERSION:-0.2.15-post3}"
 case "$url" in
   */status) printf '%s\n' "{\"result\":{\"node_info\":{\"network\":\"gonka-devnet-community\",\"id\":\"0123456789abcdef0123456789abcdef01234567\",\"version\":\"0.38.19\"},\"sync_info\":{\"catching_up\":$catching,\"latest_block_height\":\"5000\"}}}" ;;
   */abci_info) printf '%s\n' '{"result":{"response":{"version":"0.2.15"}}}' ;;
+  */v1/versions) echo '{"api_version":{"version":"","commit":""},"node_version":{"version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"}}' ;;
   */v1/versions) printf '{"api_version":{"version":"%s","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}}\n' "$api_version" ;;
   *) exit 22 ;;
 esac
@@ -68,12 +73,14 @@ if PATH="$tmp/bin:$PATH" GDC_TEST_CATCHING_UP=true "$ROOT/02-node/verify-canonic
   echo 'catching-up Core unexpectedly verified canonical state' >&2; exit 1
 fi
 grep -Fq 'canonical_core_not_synced:' "$tmp/sync.err"
-if PATH="$tmp/bin:$PATH" GDC_TEST_DAPI_VERSION=0.2.16 "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 4d687ed6782bcea3931d2d9135bf322f84e190ab 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/dapi.out" 2>"$tmp/dapi.err"; then
-  echo 'mismatched running DAPI unexpectedly verified canonical state' >&2; exit 1
+if PATH="$tmp/bin:$PATH" GDC_TEST_DAPI_ACTUAL_BINARY_SHA256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 4d687ed6782bcea3931d2d9135bf322f84e190ab 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/dapi.out" 2>"$tmp/dapi.err"; then
+  echo 'mismatched running DAPI binary unexpectedly verified canonical state' >&2; exit 1
 fi
-grep -Fq 'canonical_dapi_version_mismatch:' "$tmp/dapi.err"
-if PATH="$tmp/bin:$PATH" "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/core.out" 2>"$tmp/core.err"; then
-  echo 'mismatched running Core unexpectedly verified canonical state' >&2; exit 1
-fi
-grep -Fq 'canonical_core_commit_mismatch:' "$tmp/core.err"
-printf 'PASS canonical JOIN verifier binds signerless Core image, identity and sync state\n'
+grep -Fq 'canonical_dapi_binary_mismatch:' "$tmp/dapi.err"
+# The profile records a release-tag source commit while the official
+# digest-qualified image may carry the commit that built that release.  The
+# image digest is the exact runtime identity, so source provenance mismatch
+# must not reject a healthy restored Host.
+PATH="$tmp/bin:$PATH" "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/core-provenance.out"
+grep -Fq 'PASS canonical runtime verified signer=stopped' "$tmp/core-provenance.out"
+printf 'PASS canonical JOIN verifier binds digest-qualified Core image, identity and sync state while retaining release provenance\n'

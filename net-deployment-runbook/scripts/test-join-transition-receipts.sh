@@ -22,6 +22,17 @@ first="$($ROOT/scripts/record-join-receipt.sh --receipt-dir "$receipts" --input 
 [[ "$first" == "$receipts/0001-run_created.json" && "$(stat -c %a "$first")" == 600 ]]
 jq -e '.sequence == 1 and (has("previous_receipt_sha256") | not) and .signer_ever_started == false' "$first" >/dev/null
 
+# A normal join starts Core, makes DAPI available, and only then verifies the
+# complete canonical runtime.  This must be a monotonic receipt chain.
+ordered_receipts="$tmp/ordered-receipts"
+input RUN_CREATED false >"$tmp/ordered-run.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$ordered_receipts" --input "$tmp/ordered-run.json" >/dev/null
+input APPLICATION_ACTIVE false >"$tmp/application-active.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$ordered_receipts" --input "$tmp/application-active.json" >/dev/null
+input CANONICAL_VERIFIED false >"$tmp/canonical-verified.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$ordered_receipts" --input "$tmp/canonical-verified.json" >/dev/null
+"$ROOT/scripts/verify-join-receipt-chain.sh" --receipt-dir "$ordered_receipts" >/dev/null
+
 input SIGNER_ACTIVATING true >"$tmp/second.json"
 second="$($ROOT/scripts/record-join-receipt.sh --receipt-dir "$receipts" --input "$tmp/second.json")"
 first_sha="$(sha256sum "$first" | awk '{print $1}')"

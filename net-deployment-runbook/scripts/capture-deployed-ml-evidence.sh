@@ -133,7 +133,7 @@ while (( remaining > 0 && SECONDS < deadline )); do
 
     if [[ "${stages[$host]}" == runtime ]]; then
       container="${containers[$host]}"
-      if ! capture_http "$host" inference GET \
+      if ! capture_http "$host" "$container" GET \
         http://127.0.0.1:8080/api/v1/inference/up/status "$report/status.json.tmp"; then
         reasons[$host]=runtime_status_transport
         printf 'WAIT  deployed ML evidence host=%s stage=runtime reason=%s\n' "$host" "${reasons[$host]}"
@@ -152,7 +152,7 @@ while (( remaining > 0 && SECONDS < deadline )); do
       fi
       mv "$report/status.json.tmp" "$report/status.json"
 
-      if ! capture_http "$host" inference GET \
+      if ! capture_http "$host" "$container" GET \
         http://127.0.0.1:5000/v1/models "$report/models.json.tmp"; then
         reasons[$host]=models_transport
         printf 'WAIT  deployed ML evidence host=%s stage=models reason=%s\n' "$host" "${reasons[$host]}"
@@ -190,7 +190,7 @@ while (( remaining > 0 && SECONDS < deadline )); do
 
     if [[ "${stages[$host]}" == completion ]]; then
       container="${containers[$host]}"
-      if ! capture_http "$host" inference POST \
+      if ! capture_http "$host" "$container" POST \
         http://127.0.0.1:5000/v1/chat/completions "$report/completion.json.tmp" "$completion_payload"; then
         reasons[$host]=completion_transport
         printf 'WAIT  deployed ML completion host=%s reason=%s\n' "$host" "${reasons[$host]}"

@@ -3,15 +3,17 @@
 # not retain early historical blocks, so receipt checkpoints are evidence for
 # the remote trust quorum only and must never be queried from the new node.
 set -Eeuo pipefail
-[[ $# -eq 2 ]] || { echo "Usage: $0 JOIN_RPC_URL LINEAGE_RECEIPT" >&2; exit 2; }
-rpc="${1%/}"; receipt="$2"
+[[ $# -eq 2 || ( $# -eq 3 && "$3" == --resume-current ) ]] || { echo "Usage: $0 JOIN_RPC_URL LINEAGE_RECEIPT [--resume-current]" >&2; exit 2; }
+rpc="${1%/}"; receipt="$2"; resume_current="${3:-}"
 [[ ( "$rpc" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc$ || "$rpc" == http://127.0.0.1:26657 ) && -r "$receipt" ]] || { echo 'invalid lineage verification input' >&2; exit 2; }
-expires_at="$(jq -er '.bootstrap.trust.expires_at // empty' "$receipt" 2>/dev/null || true)"
-expires_epoch="$(date -u -d "$expires_at" +%s 2>/dev/null || true)"
-[[ "$expires_epoch" =~ ^[0-9]+$ && "$expires_epoch" -gt "$(date -u +%s)" ]] || {
-  echo 'lineage_trust_expired: state-sync trust receipt has expired; run a fresh JOIN lineage preflight before accepting the canary' >&2
-  exit 1
-}
+if [[ "$resume_current" != --resume-current ]]; then
+  expires_at="$(jq -er '.bootstrap.trust.expires_at // empty' "$receipt" 2>/dev/null || true)"
+  expires_epoch="$(date -u -d "$expires_at" +%s 2>/dev/null || true)"
+  [[ "$expires_epoch" =~ ^[0-9]+$ && "$expires_epoch" -gt "$(date -u +%s)" ]] || {
+    echo 'lineage_trust_expired: state-sync trust receipt has expired; run a fresh JOIN lineage preflight before accepting the canary' >&2
+    exit 1
+  }
+fi
 
 status_height() {
   local endpoint="$1" host="${2:-}" port="${3:-}" ip="${4:-}"; shift 4 || true

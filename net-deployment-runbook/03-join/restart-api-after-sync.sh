@@ -32,13 +32,14 @@ while (( SECONDS < deadline )); do
   for service in "${services[@]}"; do
     grep -Fxq "$service running" <<<"$service_states" || services_ready=false
   done
-  if [[ "$services_ready" == true && "$catching_up" == false ]]; then
+  dapi_ready="$(curl -fsS --connect-timeout 3 --max-time 5 http://127.0.0.1:9000/v1/versions 2>/dev/null | jq -e '.node_version.version | strings | select(length > 0)' >/dev/null 2>&1 && printf true || printf false)"
+  if [[ "$services_ready" == true && "$catching_up" == false && "$dapi_ready" == true ]]; then
     printf 'READY post-sync services restarted: %s\n' "${services[*]}"
     exit 0
   fi
   sleep 2
 done
 
-printf 'FAILED post-sync services did not become ready without losing node synchronization\n' >&2
+printf 'FAILED post-sync services or DAPI runtime did not become ready without losing node synchronization\n' >&2
 exit 1
 REMOTE

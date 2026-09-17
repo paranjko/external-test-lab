@@ -11,7 +11,7 @@
     "runtime": {"$ref": "#/$defs/runtime"},
     "bootstrap": {"$ref": "#/$defs/bootstrap"},
     "fault_domains": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/fault_domain"}},
-    "trust_authority": {"type": "object", "additionalProperties": false, "required": ["kind", "rpc_url"], "properties": {"kind": {"const": "operator_source"}, "rpc_url": {"$ref": "#/$defs/url"}}},
+    "trust_authority": {"type": "object", "additionalProperties": false, "required": ["kind", "rpc_url"], "properties": {"kind": {"enum": ["operator_source", "bootstrap_archival_source"]}, "rpc_url": {"$ref": "#/$defs/url"}}},
     "checkpoints": {"$ref": "#/$defs/checkpoints"},
     "devshard_compatibility": {"$ref": "#/$defs/devshard_compatibility"},
     "staging": {"$ref": "#/$defs/staging"},
@@ -20,7 +20,7 @@
   },
   "allOf": [{
     "if": {"required": ["trust_authority"]},
-    "then": {"properties": {"fault_domains": {"maxItems": 1}, "bootstrap": {"properties": {"snapshot": {"properties": {"providers": {"maxItems": 1}}}}}, "devshard_compatibility": {"properties": {"sources": {"maxItems": 1}}}}},
+    "then": {"properties": {"fault_domains": {"minItems": 2}, "bootstrap": {"properties": {"snapshot": {"properties": {"providers": {"minItems": 2}}}}}, "devshard_compatibility": {"properties": {"sources": {"minItems": 2}}}}},
     "else": {"properties": {"fault_domains": {"minItems": 2}, "bootstrap": {"properties": {"snapshot": {"properties": {"providers": {"minItems": 2}}}}}, "devshard_compatibility": {"properties": {"sources": {"minItems": 2}}}}}
   }],
   "$defs": {
@@ -97,13 +97,31 @@
     },
     "history": {
       "type": "object", "additionalProperties": false,
-      "required": ["initial_runtime_digest", "upgrades"],
-      "properties": {"initial_runtime_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}, "upgrades": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/upgrade"}}}
+      "properties": {
+        "initial_runtime_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "schema_version": {"const": 1},
+        "kind": {"const": "gdc-full-history-runtime-schedule"},
+        "genesis": {"$ref": "#/$defs/runtime_download"},
+        "upgrades": {"type": "array", "items": {"$ref": "#/$defs/upgrade"}},
+        "schedule_sha256": {"$ref": "#/$defs/sha256"},
+        "source_peer": {"type": "string", "pattern": "^[a-f0-9]{40}@tcp://[A-Za-z0-9.-]+:[0-9]{2,5}$"},
+        "replay_height": {"$ref": "#/$defs/height"},
+        "replay_node_id": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "observed_at": {"type": "string", "format": "date-time"}
+      },
+      "anyOf": [
+        {"required": ["initial_runtime_digest", "upgrades"]},
+        {"required": ["schema_version", "kind", "genesis", "upgrades", "schedule_sha256", "source_peer"]}
+      ]
+    },
+    "runtime_download": {
+      "type": "object", "additionalProperties": false, "required": ["url", "runtime_sha256"],
+      "properties": {"url": {"type": "string", "pattern": "^https://[^\\s]+$"}, "runtime_sha256": {"$ref": "#/$defs/sha256"}}
     },
     "upgrade": {
       "type": "object", "additionalProperties": false,
-      "required": ["name", "height", "runtime_digest"],
-      "properties": {"name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}, "height": {"$ref": "#/$defs/height"}, "runtime_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}}
+      "properties": {"name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}, "height": {"$ref": "#/$defs/height"}, "url": {"type": "string", "pattern": "^https://[^\\s]+$"}, "runtime_sha256": {"$ref": "#/$defs/sha256"}, "runtime_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}},
+      "anyOf": [{"required": ["name", "height", "runtime_digest"]}, {"required": ["name", "height", "url", "runtime_sha256"]}]
     },
     "staging": {
       "type": "object", "additionalProperties": false,

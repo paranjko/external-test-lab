@@ -64,4 +64,16 @@ rm -f "$run/receipts/0001-complete.json"
 "$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$run/receipts" --input "$tmp/partial.json" >/dev/null
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$run" --current-profile "$profile")"
 jq -e '.classification == "manual_recovery_required"' <<<"$result" >/dev/null
+
+# A terminal preflight refusal with no lifecycle receipts is retryable: no
+# remote identity, deployment or signer has been changed.
+retry="$tmp/preflight-retry"
+mkdir -p "$retry"
+install -m 0600 "$profile" "$retry/join-profile.v1.json"
+jq -cn --arg sha "$(sha256sum "$retry/join-profile.v1.json" | awk '{print $1}')" \
+  '{schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"profile",category:"lineage",reason:"join_preflight_failed",exit_code:1,mutation:"none",signer_state:"absent",resume:"new_profile",join_profile_sha256:$sha,evidence:[]}' \
+  >"$tmp/retry-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$retry/join-result.v1.json" --input "$tmp/retry-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$retry" --current-profile "$profile")"
+jq -e '.classification == "preflight_retry_allowed"' <<<"$result" >/dev/null
 printf 'PASS completed JOIN re-entry is no-op-only and partial runs require receipt-bound resume\n'

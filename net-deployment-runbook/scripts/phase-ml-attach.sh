@@ -44,6 +44,12 @@ step "Restart $NODE API after network GPU readiness"
 step "Wait until $NODE has a chain-recorded INFERENCE hardware node"
 "$ROOT/scripts/wait-hardware-node.sh" "$NODE"
 
+# A running ML container and a registered hardware node are necessary but do
+# not prove that the deployed runtime can serve the selected model.  Capture
+# one bounded completion before the caller is allowed to enable its signer.
+ml_evidence="$GDC_HOME/runs/${GDC_RUN_ID:-manual}/ml-attach-$NODE/ml-runtime"
+"$ROOT/scripts/capture-deployed-ml-evidence.sh" "$ml_evidence" "$MODEL_ID" "$ML_HOST"
+
 step "Record the explicit Network Node to external GPU association"
 link_record="$(jq -cn \
   --arg validator_alias "$NODE" \

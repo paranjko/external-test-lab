@@ -59,7 +59,8 @@ join_home="$temporary/join"
 mkdir -p "$join_home"
 join_output="$(cd "$temporary/work" && PATH="$temporary/bin:$PATH" GDC_JOIN_DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release/v0.2.16/decentralized-api-amd64.zip GDC_JOIN_DAPI_UPGRADE_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GDC_JOIN_DAPI_EXPECTED_VERSION=0.2.16 GDC_JOIN_DAPI_EXPECTED_COMMIT=18506d42c510e0cafe6acd748bcd8d83036cba40 sh "$ENTRYPOINT" "$join_home")"
 [[ "$join_output" == INIT ]]
-grep -Fq 'if [ -f "${API_CONFIG_PATH:-$dapi_home/api-config.yaml}" ]; then' "$ENTRYPOINT"
+grep -Fq 'gdc-join-dapi-runtime.env' "$ENTRYPOINT"
+grep -Fq 'DAPI_BINARY_SHA256=' "$ENTRYPOINT"
 
 first_home="$temporary/first"
 mkdir -p "$first_home"
@@ -78,13 +79,19 @@ exit 0
 EOF
 chmod 0755 "$current_home/cosmovisor/upgrades/v0.2.16/bin/decentralized-api"
 ln -s upgrades/v0.2.16 "$current_home/cosmovisor/current"
+printf '%s\n' \
+  'DAPI_VERSION=0.2.16' \
+  'DAPI_COMMIT=18506d42c510e0cafe6acd748bcd8d83036cba40' \
+  'DAPI_ARCHIVE_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'DAPI_BINARY_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  >"$current_home/gdc-join-dapi-runtime.env"
 current_output="$(cd "$temporary/work" && PATH="$temporary/bin:$PATH" GDC_JOIN_DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release/v0.2.16/decentralized-api-amd64.zip GDC_JOIN_DAPI_UPGRADE_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GDC_JOIN_DAPI_EXPECTED_VERSION=0.2.16 GDC_JOIN_DAPI_EXPECTED_COMMIT=18506d42c510e0cafe6acd748bcd8d83036cba40 sh "$ENTRYPOINT" "$current_home")"
 [[ "$current_output" == 'COSMOVISOR run' ]]
 if (cd "$temporary/work" && PATH="$temporary/bin:$PATH" GDC_JOIN_DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release/v0.2.16/decentralized-api-amd64.zip GDC_JOIN_DAPI_UPGRADE_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa GDC_JOIN_DAPI_EXPECTED_VERSION=0.2.17 GDC_JOIN_DAPI_EXPECTED_COMMIT=18506d42c510e0cafe6acd748bcd8d83036cba40 sh "$ENTRYPOINT" "$current_home") >"$temporary/dapi-mismatch.out" 2>"$temporary/dapi-mismatch.err"; then
   echo 'stale Cosmovisor DAPI payload was accepted for a generated JOIN' >&2
   exit 1
 fi
-grep -Fq 'ERROR generated JOIN DAPI binary version does not match profile' "$temporary/dapi-mismatch.err"
+grep -Fq 'ERROR generated JOIN DAPI runtime receipt does not match profile' "$temporary/dapi-mismatch.err"
 
 broken_home="$temporary/broken"
 mkdir -p "$broken_home/cosmovisor"

@@ -6,6 +6,20 @@ set -Eeuo pipefail
 deploy="$1"; receipt="$2"
 [[ -d "$deploy" && -r "$receipt" ]] || { echo 'invalid state-sync config verification input' >&2; exit 2; }
 expires_at="$(jq -er '.bootstrap.trust.expires_at // empty' "$receipt" 2>/dev/null || true)"
+mode="$(jq -r '.bootstrap.mode // "state_sync"' "$receipt")"
+if [[ "$mode" == historical_replay ]]; then
+  peers="$(jq -er '[.bootstrap.history.source_peer | sub("@tcp://"; "@")] | join(",")' "$receipt")"
+  config=''; deadline=$((SECONDS + 30))
+  while (( SECONDS < deadline )); do
+    config="$(docker compose --env-file "$deploy/.env" -f "$deploy/compose.yaml" exec -T node sh -c 'cat /root/.inference/config/config.toml' 2>/dev/null || true)"
+    grep -Eq '^enable = false$' <<<"$config" && grep -Fq "persistent_peers = \"$peers\"" <<<"$config" && break
+    sleep 2
+  done
+  grep -Eq '^enable = false$' <<<"$config" || { echo 'lineage_verification_failed: statesync is enabled during full-history replay' >&2; exit 1; }
+  grep -Fq "persistent_peers = \"$peers\"" <<<"$config" || { echo 'lineage_verification_failed: full-history source peer differs from receipt' >&2; exit 1; }
+  printf 'PASS signerless full-history config starts at Genesis from the receipt-bound P2P source\n'
+  exit 0
+fi
 expires_epoch="$(date -u -d "$expires_at" +%s 2>/dev/null || true)"
 [[ "$expires_epoch" =~ ^[0-9]+$ && "$expires_epoch" -gt "$(date -u +%s)" ]] || {
   echo 'lineage_trust_expired: state-sync trust receipt has expired; run a fresh JOIN lineage preflight before accepting the canary' >&2

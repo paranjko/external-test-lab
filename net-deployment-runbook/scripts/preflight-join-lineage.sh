@@ -4,7 +4,7 @@
 # snapshot data, so this receipt records only observations made for this run.
 set -Eeuo pipefail
 
-usage() { echo "Usage: $0 --bootstrap-file FILE (--observation FILE | --composition-env FILE) --receipt FILE --env FILE" >&2; }
+usage() { echo "Usage: $0 --bootstrap-file FILE (--observation FILE | --composition-env FILE) --receipt FILE --env FILE [--mode state-sync|full-history] [--upgrade-schedule FILE]" >&2; }
 die() {
   if [[ -n "${GDC_JOIN_LINEAGE_FAILURE_FILE:-}" ]]; then
     umask 077
@@ -13,7 +13,7 @@ die() {
   printf 'lineage_%s: %s\n' "$1" "$2" >&2; exit 1
 }
 BOOTSTRAP=''; OBSERVATION=''; COMPOSITION=''; RECEIPT=''; ENV_FILE=''
-SOURCE_RPC=''; required_origins=2
+SOURCE_RPC=''; JOIN_MODE=state-sync; UPGRADE_SCHEDULE=''; required_origins=2
 while (($#)); do case "$1" in
   --bootstrap-file) BOOTSTRAP="${2:-}"; shift 2 ;;
   --observation) OBSERVATION="${2:-}"; shift 2 ;;
@@ -21,11 +21,29 @@ while (($#)); do case "$1" in
   --receipt) RECEIPT="${2:-}"; shift 2 ;;
   --env) ENV_FILE="${2:-}"; shift 2 ;;
   --source-rpc) SOURCE_RPC="${2%/}"; shift 2 ;;
+  --mode) JOIN_MODE="${2:-}"; shift 2 ;;
+  --upgrade-schedule) UPGRADE_SCHEDULE="${2:-}"; shift 2 ;;
   *) usage; exit 2 ;;
 esac; done
 [[ -r "$BOOTSTRAP" && -n "$RECEIPT" && -n "$ENV_FILE" ]] || { usage; exit 2; }
 [[ -z "$OBSERVATION" || -z "$COMPOSITION" ]] || { usage; exit 2; }
 [[ -n "$OBSERVATION" || -n "$COMPOSITION" ]] || { usage; exit 2; }
+[[ "$JOIN_MODE" =~ ^(state-sync|full-history)$ ]] || { usage; exit 2; }
+if [[ "$JOIN_MODE" == full-history ]]; then
+  [[ -r "$UPGRADE_SCHEDULE" ]] || die configuration 'full-history mode requires a readable upgrade schedule'
+  jq -e '
+    .schema_version == 1 and .kind == "gdc-full-history-runtime-schedule" and
+    (.genesis | keys | sort) == ["runtime_sha256","url"] and
+    (.genesis.url | test("^https://")) and (.genesis.runtime_sha256 | test("^[a-f0-9]{64}$")) and
+    (.upgrades | type == "array") and
+    (all(.upgrades[]; (keys | sort) == ["height","name","runtime_sha256","url"] and
+      (.name | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) and (.height | type == "number" and . > 1) and
+      (.url | test("^https://")) and (.runtime_sha256 | test("^[a-f0-9]{64}$")))) and
+    ([.upgrades[].height] == ([.upgrades[].height] | sort | unique))
+  ' "$UPGRADE_SCHEDULE" >/dev/null || die configuration 'full-history upgrade schedule is invalid or not strictly ordered'
+elif [[ -n "$UPGRADE_SCHEDULE" ]]; then
+  die configuration 'upgrade schedule is valid only in full-history mode'
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v curl >/dev/null || die dependency 'curl is required'
 command -v jq >/dev/null || die dependency 'jq is required'
@@ -87,7 +105,10 @@ if [[ -n "$SOURCE_RPC" ]]; then
     || die configuration 'operator source differs from observed authority'
   jq -e --arg rpc "$SOURCE_RPC" '[.seeds[] | select((.rpc | rtrimstr("/")) == $rpc)] | length == 1' "$BOOTSTRAP" >/dev/null \
     || die configuration 'operator source is not a unique Bootstrap seed'
-  required_origins=1
+  # An operator-selected source supplies the recovery authority, but CometBFT
+  # still requires an independent witness to verify light blocks.  Never put
+  # the same RPC endpoint into both roles.
+  required_origins=2
   period=2
 elif [[ -n "$OBSERVATION" ]] && jq -e '.policy.mode == "operator_source"' "$OBSERVATION" >/dev/null; then
   die configuration 'operator-selected observation requires explicit --source-rpc'
@@ -157,7 +178,6 @@ p2p_for_rpc() {
 }
 
 mapfile -t rpcs < <(jq -r '.seeds[].rpc | rtrimstr("/")' "$BOOTSTRAP")
-[[ -z "$SOURCE_RPC" ]] || rpcs=("$SOURCE_RPC")
 (( ${#rpcs[@]} >= required_origins )) || die rpc_quorum_conflict 'Bootstrap lacks the required RPC origins'
 declare -a good_rpcs=() domains=() heights=() good_hosts=() good_ports=() good_ips=()
 for rpc in "${rpcs[@]}"; do
@@ -185,8 +205,36 @@ done
 # read is a non-vote, while a malformed successful response is unsafe. One
 # outlier is tolerated; A,A,B,C is not.
 declare -a quorum_rpcs=() quorum_domains=() quorum_hosts=() quorum_ports=() quorum_ips=()
+selected_source_rpc=''
+# The Bootstrap descriptor is the discovery authority.  A source is selected
+# from its seeds only after it has proved it still serves the beginning and
+# post-upgrade checkpoints.  Other seeds need only witness the current trust
+# block; requiring every witness to retain full history makes ordinary rejoin
+# impossible after expected pruning.
+provider_serves_history() {
+  local index="$1" checkpoint height file
+  local -a required_checkpoints=("early:$early_height" "post:${post_height:-$early_height}")
+  if [[ "$JOIN_MODE" == full-history ]]; then
+    required_checkpoints=("genesis:1")
+    while read -r height; do required_checkpoints+=("upgrade:$height"); done < <(jq -r '.upgrades[].height' "$UPGRADE_SCHEDULE")
+  fi
+  for checkpoint in "${required_checkpoints[@]}"; do
+    IFS=: read -r _ height <<<"$checkpoint"
+    file="$tmp/history-${index}-${height}.json"
+    pinned_get "${good_rpcs[$index]}" "${good_hosts[$index]}" "${good_ports[$index]}" "${good_ips[$index]}" "/block?height=$height" "$file" || return 1
+    jq -e '(.error? != null) or (.result.block? == null)' "$file" >/dev/null && return 1
+    record_from_block <"$file" >/dev/null || return 2
+  done
+}
+provider_serves_trust() {
+  local index="$1" file
+  file="$tmp/trust-eligibility-${index}-${trust_height}.json"
+  pinned_get "${good_rpcs[$index]}" "${good_hosts[$index]}" "${good_ports[$index]}" "${good_ips[$index]}" "/block?height=$trust_height" "$file" || return 1
+  jq -e '(.error? != null) or (.result.block? == null)' "$file" >/dev/null && return 1
+  record_from_block <"$file" >/dev/null || return 2
+}
 select_tip_quorum() {
-  local candidate candidate_trust_height i file record best='' best_count=0 group_count=0 responding count probe_rc
+  local candidate candidate_trust_height i file record best='' best_count=0 group_count=0 responding count probe_rc source_index='' witness_index=''
   local -a records=() indices=() groups=() candidates=() candidate_domains=()
   local -a eligible_records=() eligible_indices=() eligible_domains=()
   mapfile -t candidates < <(printf '%s\n' "${heights[@]}" | LC_ALL=C sort -nr -u)
@@ -217,35 +265,52 @@ select_tip_quorum() {
     done
     responding="${#records[@]}"
     (( group_count == 1 && best_count >= required_origins && responding - best_count <= 1 )) || continue
-    # A tip quorum is useful only when its independent members can all serve
-    # the historical checkpoints that the receipt will bind.  A reachable
-    # seed may have pruned one of those heights; treat that seed as
-    # unavailable for this candidate rather than letting it abort the whole
-    # preflight.  Successful but malformed checkpoint responses remain a
-    # fail-closed safety error.
+    # Select one archival source from Bootstrap and one independent current
+    # witness.  The witness is deliberately not required to retain Genesis:
+    # it verifies the current trust tuple while P2P state sync supplies data.
+    # A malformed successful history response remains fail-closed.
+    for i in "${!records[@]}"; do
+      [[ "${records[$i]}" == "$best" ]] || continue
+      if [[ -n "$SOURCE_RPC" && "${good_rpcs[${indices[$i]}]}" != "$SOURCE_RPC" ]]; then
+        continue
+      fi
+      if provider_serves_history "${indices[$i]}"; then
+        source_index="${indices[$i]}"
+        break
+      else
+        probe_rc=$?
+        (( probe_rc == 1 )) || die rpc_quorum_conflict "malformed archival checkpoint from ${good_rpcs[${indices[$i]}]}"
+      fi
+    done
+    [[ -n "$source_index" ]] || continue
     eligible_records=(); eligible_indices=(); eligible_domains=()
     for i in "${!records[@]}"; do
       [[ "${records[$i]}" == "$best" ]] || continue
-      if provider_serves_checkpoints "${indices[$i]}"; then
+      if provider_serves_trust "${indices[$i]}"; then
         eligible_records+=("${records[$i]}")
         eligible_indices+=("${indices[$i]}")
         eligible_domains+=("${candidate_domains[$i]}")
       else
         probe_rc=$?
-        (( probe_rc == 1 )) || die rpc_quorum_conflict "malformed historical checkpoint from ${good_rpcs[${indices[$i]}]}"
+        (( probe_rc == 1 )) || die rpc_quorum_conflict "malformed trust checkpoint from ${good_rpcs[${indices[$i]}]}"
       fi
     done
-    best_count="${#eligible_records[@]}"
-    responding="$best_count"
-    (( best_count >= required_origins && responding - best_count <= 1 )) || continue
-    quorum_rpcs=(); quorum_domains=(); quorum_hosts=(); quorum_ports=(); quorum_ips=()
     for i in "${!eligible_indices[@]}"; do
-      quorum_rpcs+=("${good_rpcs[${eligible_indices[$i]}]}")
-      quorum_domains+=("${eligible_domains[$i]}")
-      quorum_hosts+=("${good_hosts[${eligible_indices[$i]}]}")
-      quorum_ports+=("${good_ports[${eligible_indices[$i]}]}")
-      quorum_ips+=("${good_ips[${eligible_indices[$i]}]}")
+      [[ "${eligible_indices[$i]}" == "$source_index" ]] && continue
+      [[ "${eligible_domains[$i]}" == "${domains[$source_index]}" ]] && continue
+      witness_index="${eligible_indices[$i]}"
+      break
     done
+    [[ -n "$witness_index" ]] || continue
+    quorum_rpcs=(); quorum_domains=(); quorum_hosts=(); quorum_ports=(); quorum_ips=()
+    for i in "$source_index" "$witness_index"; do
+      quorum_rpcs+=("${good_rpcs[$i]}")
+      quorum_domains+=("${domains[$i]}")
+      quorum_hosts+=("${good_hosts[$i]}")
+      quorum_ports+=("${good_ports[$i]}")
+      quorum_ips+=("${good_ips[$i]}")
+    done
+    selected_source_rpc="${good_rpcs[$source_index]}"
     return 0
   done
   return 1
@@ -271,27 +336,14 @@ else
   post_height=''
 fi
 
-provider_serves_checkpoints() {
-  local index="$1" checkpoint height file record
-  for checkpoint in "early:$early_height" "trust:$trust_height" "post:${post_height:-$trust_height}"; do
-    IFS=: read -r _ height <<<"$checkpoint"
-    file="$tmp/eligibility-${index}-${height}.json"
-    pinned_get "${good_rpcs[$index]}" "${good_hosts[$index]}" "${good_ports[$index]}" "${good_ips[$index]}" "/block?height=$height" "$file" || return 1
-    # CometBFT can acknowledge a request for a pruned height with a JSON-RPC
-    # error or a null block. Neither response is a checkpoint observation, so
-    # exclude this provider just as for an HTTP failure. A present but invalid
-    # block structure remains fail-closed below.
-    jq -e '(.error? != null) or (.result.block? == null)' "$file" >/dev/null && return 1
-    record="$(record_from_block <"$file")" || return 2
-  done
-}
-
 select_tip_quorum || die rpc_quorum_conflict 'no unique 2-of-3 RPC header/AppHash quorum exists at a common tip with all required checkpoints'
 
 declare -a early_records=() trust_records=()
 for i in "${!quorum_rpcs[@]}"; do
   rpc="${quorum_rpcs[$i]}"
-  for checkpoint in "early:$early_height" "trust:$trust_height"; do
+  checkpoints=("trust:$trust_height")
+  [[ "$rpc" != "$selected_source_rpc" ]] || checkpoints=("early:$early_height" "trust:$trust_height")
+  for checkpoint in "${checkpoints[@]}"; do
     IFS=: read -r label height <<<"$checkpoint"
     file="$tmp/$label-${#early_records[@]}-$height.json"
     pinned_get "$rpc" "${quorum_hosts[$i]}" "${quorum_ports[$i]}" "${quorum_ips[$i]}" "/block?height=$height" "$file" || die rpc_quorum_conflict "cannot read $label checkpoint from $rpc"
@@ -312,9 +364,11 @@ fi
 declare -a post_records=() snapshot_providers=()
 for i in "${!quorum_rpcs[@]}"; do
   rpc="${quorum_rpcs[$i]}"
-  post_file="$tmp/post-${#post_records[@]}.json"
-  pinned_get "$rpc" "${quorum_hosts[$i]}" "${quorum_ports[$i]}" "${quorum_ips[$i]}" "/block?height=$post_height" "$post_file" || die rpc_quorum_conflict "cannot read post-upgrade checkpoint from $rpc"
-  post_records+=("$(record_from_block <"$post_file")")
+  if [[ "$rpc" == "$selected_source_rpc" ]]; then
+    post_file="$tmp/post-${#post_records[@]}.json"
+    pinned_get "$rpc" "${quorum_hosts[$i]}" "${quorum_ports[$i]}" "${quorum_ips[$i]}" "/block?height=$post_height" "$post_file" || die rpc_quorum_conflict "cannot read post-upgrade checkpoint from $rpc"
+    post_records+=("$(record_from_block <"$post_file")")
+  fi
   provider="$(p2p_for_rpc "$rpc")" || die configuration "Bootstrap has no valid P2P provider for quorum RPC $rpc"
   snapshot_providers+=("$provider")
 done
@@ -370,6 +424,8 @@ empty_digest="$(printf '' | sha256sum | awk '{print $1}')"
 mkdir -p "$(dirname "$RECEIPT")" "$(dirname "$ENV_FILE")"
 receipt_tmp="$(mktemp "$(dirname "$RECEIPT")/.join-lineage-receipt.XXXXXX")"
 env_tmp="$(mktemp "$(dirname "$ENV_FILE")/.join-lineage-env.XXXXXX")"
+schedule_sha256=''
+[[ "$JOIN_MODE" != full-history ]] || schedule_sha256="$(sha256sum "$UPGRADE_SCHEDULE" | awk '{print $1}')"
 jq -n \
   --arg fingerprint "$GDC_NETWORK_FINGERPRINT" --arg observation_sha256 "$OBSERVATION_SHA256" --arg runtime_source_kind "$RUNTIME_SOURCE_KIND" --arg runtime_source_id "$RUNTIME_SOURCE_ID" \
   --arg core_version "$GDC_NETWORK_CORE_VERSION" --arg core_commit "$GDC_NETWORK_CORE_COMMIT" \
@@ -380,19 +436,21 @@ jq -n \
   --argjson devshard_sources "$(for source in "${approval_sources[@]}"; do jq -cn --arg url "$source" '{chain_api_url:$url}'; done | jq -s .)" \
   --argjson domains "$(for i in "${!quorum_rpcs[@]}"; do jq -cn --arg id "${quorum_domains[$i]}" --arg rpc "${quorum_rpcs[$i]}" --arg host "${quorum_hosts[$i]}" --argjson port "${quorum_ports[$i]}" --arg ip "${quorum_ips[$i]}" --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" '{id:$id,rpc_url:$rpc,host:$host,port:$port,ip:$ip,chain_id:$chain,genesis_sha256:$genesis}'; done | jq -s .)" \
   --arg empty "$empty_digest" \
-  '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:(if $observation_sha256 == "" then null else $observation_sha256 end),source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,trust:($trust+{expires_at:$expires}),snapshot:$snapshot},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},devshard_compatibility:{approvals:$devshard_approvals,sources:$devshard_sources},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
-if [[ -n "$SOURCE_RPC" ]]; then
-  jq --arg rpc "$SOURCE_RPC" '. + {trust_authority:{kind:"operator_source",rpc_url:$rpc}}' "$receipt_tmp" >"$receipt_tmp.source"
-  mv "$receipt_tmp.source" "$receipt_tmp"
-fi
+  --arg mode "$JOIN_MODE" --arg schedule_sha256 "$schedule_sha256" --argjson history "$([[ "$JOIN_MODE" == full-history ]] && jq -c . "$UPGRADE_SCHEDULE" || printf null)" \
+  '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:(if $observation_sha256 == "" then null else $observation_sha256 end),source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:({mode:(if $mode == "full-history" then "historical_replay" else "state_sync" end),chain_id:$chain,genesis_sha256:$genesis} + (if $mode == "full-history" then {history:($history + {schedule_sha256:$schedule_sha256,source_peer:($snapshot.providers[0])})} else {trust:($trust+{expires_at:$expires}),snapshot:$snapshot} end)),fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},devshard_compatibility:{approvals:$devshard_approvals,sources:$devshard_sources},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
+jq --arg rpc "$selected_source_rpc" --arg kind "$([[ -n "$SOURCE_RPC" ]] && printf operator_source || printf bootstrap_archival_source)" \
+  '. + {trust_authority:{kind:$kind,rpc_url:$rpc}}' "$receipt_tmp" >"$receipt_tmp.source"
+mv "$receipt_tmp.source" "$receipt_tmp"
 {
-  printf 'GDC_JOIN_BOOTSTRAP_MODE=%q\n' state_sync
+  printf 'GDC_JOIN_BOOTSTRAP_MODE=%q\n' "$([[ "$JOIN_MODE" == full-history ]] && echo historical_replay || echo state_sync)"
   printf 'GDC_JOIN_TRUST_HEIGHT=%q\n' "$(jq -r .height <<<"$trust")"
   printf 'GDC_JOIN_TRUST_HASH=%q\n' "$(jq -r .block_id <<<"$trust")"
   printf 'GDC_JOIN_SNAPSHOT_PEERS=%q\n' "$(IFS=,; echo "${snapshot_providers[*]}")"
   printf 'GDC_JOIN_RPC_SERVER_1=%q\n' "${quorum_rpcs[0]}/"
   printf 'GDC_JOIN_RPC_SERVER_2=%q\n' "${quorum_rpcs[1]:-${quorum_rpcs[0]}}/"
-  printf 'GDC_JOIN_SOURCE_RPC=%q\n' "$SOURCE_RPC"
+  printf 'GDC_JOIN_SOURCE_RPC=%q\n' "$selected_source_rpc"
+  printf 'GDC_JOIN_UPGRADE_SCHEDULE=%q\n' "$UPGRADE_SCHEDULE"
+  printf 'GDC_JOIN_UPGRADE_SCHEDULE_SHA256=%q\n' "$schedule_sha256"
   printf 'GDC_JOIN_TRUSTED_BLOCK_PERIOD=%q\n' "$period"
   printf 'GDC_JOIN_LINEAGE_RECEIPT=%q\n' "$RECEIPT"
   printf 'GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON=%q\n' "$gateway_admission_protocols"
@@ -400,4 +458,4 @@ fi
 chmod 0600 "$receipt_tmp" "$env_tmp"
 mv -f "$receipt_tmp" "$RECEIPT"
 mv -f "$env_tmp" "$ENV_FILE"
-printf 'PASS JOIN lineage preflight mode=state_sync trust_height=%s p2p_snapshot_providers=%s fault_domains=%s receipt=%s\n' "$(jq -r .height <<<"$trust")" "${#snapshot_providers[@]}" "${#quorum_rpcs[@]}" "$RECEIPT"
+printf 'PASS JOIN lineage preflight mode=%s source=%s trust_height=%s p2p_providers=%s fault_domains=%s receipt=%s\n' "$JOIN_MODE" "$selected_source_rpc" "$(jq -r .height <<<"$trust")" "${#snapshot_providers[@]}" "${#quorum_rpcs[@]}" "$RECEIPT"

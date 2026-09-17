@@ -250,6 +250,9 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-verify-state-sync-config.sh
 	@./scripts/test-migrate-v1-validator-identity.sh
 	@./scripts/test-verify-canonical-join-state.sh
+	@./scripts/test-host-join-resume-canonical.sh
+	@./scripts/test-host-join-resume-signer-readback.sh
+	@./scripts/test-phase-ml-attach-completion.sh
 	@./scripts/test-verify-complete-join-state.sh
 	@./scripts/test-wait-state-sync-canary.sh
 	@./scripts/test-promote-state-sync-generation.sh

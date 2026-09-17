@@ -19,18 +19,27 @@ join_sha256="${GDC_JOIN_DAPI_UPGRADE_SHA256:-}"
 join_version="${GDC_JOIN_DAPI_EXPECTED_VERSION:-}"
 join_commit="${GDC_JOIN_DAPI_EXPECTED_COMMIT:-}"
 
-verify_join_binary() {
-  candidate="$1"
-  version_output="$($candidate version --long 2>&1)" || {
-    printf 'ERROR generated JOIN DAPI binary cannot report its version\n' >&2
+runtime_receipt="$dapi_home/gdc-join-dapi-runtime.env"
+
+verify_join_receipt() {
+  [ -r "$runtime_receipt" ] || {
+    printf 'ERROR generated JOIN DAPI runtime receipt is missing\n' >&2
     exit 1
   }
-  printf '%s\n' "$version_output" | grep -Eq "^version:[[:space:]]*\"?$join_version\"?$" || {
-    printf 'ERROR generated JOIN DAPI binary version does not match profile\n' >&2
-    exit 1
-  }
-  printf '%s\n' "$version_output" | grep -Eq "^commit:[[:space:]]*\"?$join_commit\"?$" || {
-    printf 'ERROR generated JOIN DAPI binary commit does not match profile\n' >&2
+  receipt_version="$(sed -n 's/^DAPI_VERSION=//p' "$runtime_receipt")"
+  receipt_commit="$(sed -n 's/^DAPI_COMMIT=//p' "$runtime_receipt")"
+  receipt_archive_sha256="$(sed -n 's/^DAPI_ARCHIVE_SHA256=//p' "$runtime_receipt")"
+  receipt_binary_sha256="$(sed -n 's/^DAPI_BINARY_SHA256=//p' "$runtime_receipt")"
+  [ "$receipt_version" = "$join_version" ] \
+    && [ "$receipt_commit" = "$join_commit" ] \
+    && [ "$receipt_archive_sha256" = "$join_sha256" ] \
+    && printf '%s' "$receipt_binary_sha256" | grep -Eq '^[0-9a-f]{64}$' || {
+      printf 'ERROR generated JOIN DAPI runtime receipt does not match profile\n' >&2
+      exit 1
+    }
+  actual_binary_sha256="$(sha256sum "$binary" | awk '{print $1}')"
+  [ "$actual_binary_sha256" = "$receipt_binary_sha256" ] || {
+    printf 'ERROR generated JOIN DAPI binary does not match runtime receipt\n' >&2
     exit 1
   }
 }
@@ -55,10 +64,16 @@ install_join_binary() {
   }
   [ -s "$candidate" ] || { printf 'ERROR generated JOIN DAPI archive is empty\n' >&2; exit 1; }
   chmod 0755 "$candidate"
-  # The profile digest verifies the archive before DAPI config permits version checks
-  if [ -f "${API_CONFIG_PATH:-$dapi_home/api-config.yaml}" ]; then
-    verify_join_binary "$candidate"
-  fi
+  binary_sha256="$(sha256sum "$candidate" | awk '{print $1}')"
+  receipt_tmp="${runtime_receipt}.tmp"
+  umask 077
+  {
+    printf 'DAPI_VERSION=%s\n' "$join_version"
+    printf 'DAPI_COMMIT=%s\n' "$join_commit"
+    printf 'DAPI_ARCHIVE_SHA256=%s\n' "$actual_sha256"
+    printf 'DAPI_BINARY_SHA256=%s\n' "$binary_sha256"
+  } >"$receipt_tmp"
+  mv "$receipt_tmp" "$runtime_receipt"
   install -m 0755 "$candidate" /usr/bin/decentralized-api
 }
 
@@ -85,7 +100,7 @@ fi
 
 if [ -L "$current" ] && [ -f "$binary" ] && [ -x "$binary" ]; then
   if [ -n "$join_url" ]; then
-    verify_join_binary "$binary"
+    verify_join_receipt
   fi
   exec cosmovisor run
 fi

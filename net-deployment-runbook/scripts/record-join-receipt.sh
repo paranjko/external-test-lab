@@ -21,7 +21,11 @@ state_rank() {
     IDENTITY_READY) echo 70 ;; CANDIDATE_RENDERED) echo 80 ;; CANARY_RUNNING) echo 90 ;;
     CANARY_CAUGHT_UP) echo 100 ;; CANARY_VERIFIED) echo 110 ;; CANARY_STOPPED) echo 120 ;;
     PROMOTION_PREPARED) echo 130 ;; PROMOTING) echo 140 ;; PROMOTED) echo 150 ;;
-    CANONICAL_RUNNING) echo 160 ;; CANONICAL_VERIFIED) echo 170 ;; APPLICATION_ACTIVE) echo 180 ;;
+    # The canonical stack starts before DAPI.  DAPI is restarted and checked
+    # first, then the whole canonical runtime is verified.  Keep the receipt
+    # order aligned with that operational order so a valid join cannot stop
+    # after APPLICATION_ACTIVE by trying to append CANONICAL_VERIFIED.
+    CANONICAL_RUNNING) echo 160 ;; APPLICATION_ACTIVE) echo 170 ;; CANONICAL_VERIFIED) echo 180 ;;
     MEMBERSHIP_RECONCILED) echo 190 ;; PERMISSIONS_RECONCILED) echo 200 ;; SIGNER_FENCE_VERIFIED) echo 210 ;;
     SIGNER_ACTIVATING) echo 220 ;; SIGNER_ACTIVE_VERIFIED) echo 230 ;; ACTIVE_CONFIRMED) echo 240 ;;
     RECOVERY_ARCHIVE_VERIFIED) echo 250 ;; COMPLETE) echo 260 ;; REFUSED|FAILED) echo 270 ;;

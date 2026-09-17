@@ -11,11 +11,19 @@ deploy="$1"; receipt="$2"
 [[ -d "$deploy" && -r "$receipt" ]] || { echo 'invalid canary receipt input' >&2; exit 2; }
 jq -e '
   .kind == "gdc-host-join-lineage-preflight"
-  and .bootstrap.mode == "state_sync"
-  and .bootstrap.snapshot.discovery == "p2p_canary_pending"
-  and ((.bootstrap.snapshot.providers | type == "array" and length >= 2) or
-    (.trust_authority.kind == "operator_source" and (.fault_domains|length)==1
-      and .trust_authority.rpc_url==.fault_domains[0].rpc_url and (.bootstrap.snapshot.providers|length)==1))
+  and (
+    (.bootstrap.mode == "historical_replay" and .bootstrap.history.source_peer != null)
+    or (
+      .bootstrap.mode == "state_sync"
+      and .bootstrap.snapshot.discovery == "p2p_canary_pending"
+      and (
+        ((.bootstrap.snapshot.providers | type) == "array" and (.bootstrap.snapshot.providers | length) >= 2)
+        or (.trust_authority.kind == "operator_source" and (.fault_domains | length) == 1
+          and .trust_authority.rpc_url == .fault_domains[0].rpc_url
+          and (.bootstrap.snapshot.providers | length) == 1)
+      )
+    )
+  )
 ' "$receipt" >/dev/null || { echo 'lineage_verification_failed: receipt lacks the minimum two-provider P2P canary contract' >&2; exit 1; }
 status="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:26657/status)" \
   || { echo 'lineage_verification_failed: cannot read signerless canary status' >&2; exit 1; }
@@ -28,13 +36,13 @@ node_id="$(jq -er '.result.node_info.id // empty' <<<"$status")"
 [[ "$node_id" =~ ^[0-9a-f]{40}$ ]] || { echo 'lineage_verification_failed: canary returned invalid node id' >&2; exit 1; }
 tmp="${receipt}.tmp.$$"
 jq --arg observed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg node_id "$node_id" --argjson height "$height" '
-  .bootstrap.snapshot = {
+  if .bootstrap.mode == "state_sync" then .bootstrap.snapshot = {
     discovery: "p2p_canary_caught_up",
     providers: .bootstrap.snapshot.providers,
     observed_at: $observed_at,
     canary_node_id: $node_id,
     canary_height: $height
-  }
+  } else .bootstrap.history += {replay_height:$height,replay_node_id:$node_id,observed_at:$observed_at} end
   | .signer.state = "LINEAGE_VERIFIED"
   | .result.terminal_state = "canary_verified"
 ' "$receipt" >"$tmp"

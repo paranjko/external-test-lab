@@ -36,13 +36,8 @@ for file in "$profile" "$result"; do
   [[ -f "$file" && ! -L "$file" && "$(stat -c %a "$file")" == 600 ]] \
     || { emit blocked retained_input_missing_or_unsafe; exit 0; }
 done
-[[ -d "$receipts" && ! -L "$receipts" ]] || { emit blocked retained_receipts_missing_or_unsafe; exit 0; }
 if ! "$ROOT/scripts/join-profile.sh" validate --allow-expired "$profile" >/dev/null 2>&1; then
   emit blocked retained_profile_invalid
-  exit 0
-fi
-if ! chain="$("$ROOT/scripts/verify-join-receipt-chain.sh" --receipt-dir "$receipts" 2>/dev/null)"; then
-  emit blocked retained_receipt_chain_invalid
   exit 0
 fi
 if ! jq -e '
@@ -54,12 +49,30 @@ if ! jq -e '
   exit 0
 fi
 previous_profile_id="$(jq -r .profile_id "$profile")"
+terminal_outcome="$(jq -r .outcome "$result")"
+terminal_phase="$(jq -r .phase "$result")"
+terminal_mutation="$(jq -r .mutation "$result")"
+terminal_signer_state="$(jq -r .signer_state "$result")"
+
+# The first JOIN mutation occurs only after lineage preflight, where the phase
+# creates the lifecycle receipt directory.  A terminal preflight refusal with
+# no receipt directory therefore has not touched a remote Host. Keep it for
+# diagnosis and allow a fresh observation/retry.
+if [[ ! -e "$receipts" && "$terminal_outcome" == refused && "$terminal_phase" == profile \
+  && "$terminal_mutation" == none && "$terminal_signer_state" == absent ]]; then
+  emit preflight_retry_allowed failed_before_host_mutation "$previous_profile_id"
+  exit 0
+fi
+[[ -d "$receipts" && ! -L "$receipts" ]] || { emit blocked retained_receipts_missing_or_unsafe; exit 0; }
+if ! chain="$("$ROOT/scripts/verify-join-receipt-chain.sh" --receipt-dir "$receipts" 2>/dev/null)"; then
+  emit blocked retained_receipt_chain_invalid
+  exit 0
+fi
 previous_operation="$(jq -r .operation "$profile")"
 previous_profile_sha256="$(sha256sum "$profile" | awk '{print $1}')"
 current_profile_id="$(jq -r .profile_id "$current")"
 last_state="$(jq -r .last_state <<<"$chain")"
 signer_started="$(jq -r .signer_ever_started <<<"$chain")"
-terminal_outcome="$(jq -r .outcome "$result")"
 terminal_profile_sha256="$(jq -r '.join_profile_sha256 // empty' "$result")"
 
 if [[ "$last_state" == COMPLETE && "$signer_started" == true && "$terminal_outcome" == succeeded && "$terminal_profile_sha256" == "$previous_profile_sha256" ]]; then

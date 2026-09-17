@@ -41,6 +41,8 @@ if PATH="$tmp/bin:$PATH" "$ROOT/scripts/verify-join-lineage-state.sh" https://jo
   echo 'expired lineage trust unexpectedly verified' >&2; exit 1
 fi
 grep -Fq 'lineage_trust_expired:' "$tmp/expired.err"
+PATH="$tmp/bin:$PATH" "$ROOT/scripts/verify-join-lineage-state.sh" https://join.example.test/chain-rpc "$expired" --resume-current >"$tmp/resume-current.out"
+grep -Fq 'PASS JOIN fresh post-sync checkpoint matches' "$tmp/resume-current.out"
 grep -Fq 'CONFIG_statesync__trust_height' "$ROOT/02-node/compose.yaml"
 grep -Fq 'CONFIG_statesync__trust_hash' "$ROOT/02-node/compose.yaml"
 grep -Fq 'CONFIG_statesync__rpc_servers' "$ROOT/02-node/compose.yaml"
@@ -113,4 +115,12 @@ grep -Fq 'GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE="$restore_archive"' "$ROOT/script
 grep -Fq 'Bind $NODE warm account to the promoted signerless generation' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'Read back canonical signerless Core identity, runtime and state for $NODE' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'record_join_transition CANONICAL_VERIFIED' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'retained shared public edge' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'restart-api-after-sync.sh" "$NODE"' "$ROOT/scripts/phase-join.sh"
+grep -Fq '/v1/versions' "$ROOT/03-join/restart-api-after-sync.sh"
+grep -Fq '.node_version.version' "$ROOT/03-join/restart-api-after-sync.sh"
+restart_line="$(grep -n 'restart-api-after-sync.sh" "$NODE"' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
+canonical_line="$(grep -n 'record_join_transition CANONICAL_VERIFIED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
+(( restart_line < canonical_line ))
 printf 'PASS JOIN pins receipt trust and verifies a fresh post-sync checkpoint\n'

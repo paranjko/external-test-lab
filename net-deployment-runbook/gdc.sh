@@ -355,6 +355,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
   ./gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join --sync-mode full-history --upgrade-schedule <FILE> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
@@ -390,7 +391,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.08.06 network upgrade verify <proposal-id>
   ./gdc.sh network recover bootstrap <SSH_ALIAS>  # GNK-LAB-2026-0001; interactive confirmation
   ./gdc.sh network recover handoff|check <SSH_ALIAS> --hosts <RETURNING_ALIAS,...>
-  ./gdc.sh host join --source-rpc <RPC_URL> --pex false --restore <ARCHIVE> --public-host <HOST> <SSH_ALIAS>
+  ./gdc.sh host join --pex false --restore <ARCHIVE> --public-host <HOST> <SSH_ALIAS>
   ./gdc.sh host peers --pex true <SSH_ALIAS>
   ./gdc.sh network recover inspect --incident <INCIDENT_ID> --host <SSH_ALIAS> --run-id <RUN_ID> --output <ABSOLUTE_PATH>
   ./gdc.sh network recover prepare|freeze|stage|activate|retire|abort --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --approval <ABSOLUTE_PATH>
@@ -1174,7 +1175,7 @@ case "$COMMAND" in
   join)
     join_source_rpc='' join_pex=''
     join_source_args=()
-    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_chain_id=gonka-devnet-community skip_qualification=false verification=false plan_only=false
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_chain_id=gonka-devnet-community join_sync_mode=state-sync join_upgrade_schedule='' skip_qualification=false verification=false plan_only=false
     # JOIN derives its exact compatible runtime from the first healthy
     # Bootstrap seed. An operator-selected release or composition could
     # otherwise turn retained evidence into a software authority.
@@ -1189,6 +1190,13 @@ case "$COMMAND" in
         --skip-qualification) skip_qualification=true ;;
         --verification) verification=true ;;
         --plan) plan_only=true ;;
+        --sync-mode)
+          [[ "$join_sync_mode" == state-sync && "${2:-}" =~ ^(state-sync|full-history)$ ]] || { echo 'host join --sync-mode expects state-sync or full-history once' >&2; exit 2; }
+          join_sync_mode="$2"; shift ;;
+        --upgrade-schedule)
+          join_upgrade_schedule="${2:-}"
+          [[ -n "$join_upgrade_schedule" && -f "$join_upgrade_schedule" && -r "$join_upgrade_schedule" ]] || { echo 'host join --upgrade-schedule requires a readable file' >&2; exit 2; }
+          join_upgrade_schedule="$(realpath -e -- "$join_upgrade_schedule")"; shift ;;
         --pex)
           [[ -z "$join_pex" && "${2:-}" =~ ^(true|false)$ ]] || { echo 'host join --pex expects true or false once' >&2; exit 2; }
           join_pex="$2"; shift ;;
@@ -1252,6 +1260,11 @@ case "$COMMAND" in
       shift
     done
     [[ -n "$join_alias" ]] || { echo 'host join requires an SSH alias' >&2; usage; exit 2; }
+    if [[ "$join_sync_mode" == full-history ]]; then
+      [[ -n "$join_upgrade_schedule" ]] || { echo 'host join full-history mode requires --upgrade-schedule; runtime history is never guessed' >&2; exit 2; }
+    else
+      [[ -z "$join_upgrade_schedule" ]] || { echo 'host join --upgrade-schedule is valid only with --sync-mode full-history' >&2; exit 2; }
+    fi
     [[ -z "$join_resume_run" || "$join_resume_run" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { echo 'host join --resume requires a valid run ID' >&2; exit 2; }
     [[ -z "$join_old_signer_fence" || -n "$join_resume_run" ]] || { echo 'host join --old-signer-fence requires --resume <run-id>' >&2; exit 2; }
     [[ -z "$join_old_signer_fence" ]] || {
@@ -1297,10 +1310,25 @@ case "$COMMAND" in
       GDC_JOIN_PROFILE="$join_run/join-profile.v1.json"
       GDC_JOIN_OBSERVATION="$join_run/network-observation.v1.json"
       GDC_JOIN_RESULT_OUTPUT="$join_run/join-result.v1.json"
-      export GDC_RUN_ID GDC_JOIN_PROFILE GDC_JOIN_OBSERVATION GDC_JOIN_RESULT_OUTPUT
+      GDC_JOIN_RESUME=true
+      export GDC_RUN_ID GDC_JOIN_PROFILE GDC_JOIN_OBSERVATION GDC_JOIN_RESULT_OUTPUT GDC_JOIN_RESUME
       printf '%s\n' "$GDC_RUN_ID" >"$STATE/active-run-id"
+      join_role_config="$(<"$STATE/active-role-config")"
+      [[ "$join_role_config" == "$STATE/role-inputs/"* && -r "$join_role_config" ]] || {
+        echo 'host join --resume lacks its retained one-host role configuration' >&2; exit 2;
+      }
+      # shellcheck disable=SC1090 # retained role input was created by the original JOIN.
+      source "$join_role_config"
       join_resume_state="$(jq -er .receipt_chain.last_state <<<"$join_resume_verification")"
       case "$join_resume_state" in
+        CANONICAL_RUNNING|APPLICATION_ACTIVE)
+          run_phase "join-resume-canonical-$join_alias" "$ROOT/scripts/phase-join-resume-canonical.sh" \
+            "$join_alias" "$join_run"
+          ;;
+        SIGNER_ACTIVATING)
+          run_phase "join-resume-signer-readback-$join_alias" "$ROOT/scripts/phase-join-resume-signer-readback.sh" \
+            "$join_alias" "$join_run"
+          ;;
         SIGNER_ACTIVE_VERIFIED)
           [[ "$verification" == true ]] || { echo 'host join signer acceptance resume requires --verification' >&2; exit 2; }
           run_phase "join-resume-acceptance-$join_alias" "$ROOT/scripts/phase-join-resume-acceptance.sh" \
@@ -1319,6 +1347,11 @@ case "$COMMAND" in
       esac
       exit 0
     fi
+    # Ordinary fresh JOIN restores normal peer discovery unless the operator
+    # explicitly asks for the temporary recovery isolation mode. A retained
+    # resume keeps its profile's recorded setting unless the user supplied an
+    # explicit matching --pex option above.
+    [[ -n "$join_pex" ]] || join_pex=true
     if [[ -z "${GDC_RUN_ID:-}" ]]; then
       GDC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
       export GDC_RUN_ID
@@ -1374,7 +1407,7 @@ case "$COMMAND" in
     [[ -z "$join_restore_archive" ]] || join_operation=restore
     join_profile_args=(--observation "$join_observation" --components "$join_components" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_profile")
     [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
-    [[ -z "$join_pex" ]] || join_profile_args+=(--pex "$join_pex")
+    join_profile_args+=(--pex "$join_pex")
     [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
     run_join_preflight join-profile unavailable profile join-profile \
       'The observed network could not be compiled into an executable Join Profile.' \
@@ -1400,6 +1433,9 @@ case "$COMMAND" in
       join_reentry_class="$(jq -er '.classification' <<<"$join_reentry")"
       case "$join_reentry_class" in
         no_prior_run)
+          ;;
+        preflight_retry_allowed)
+          printf 'PASS Host JOIN previous run stopped before Host mutation; preserving its evidence and retrying fresh preflight\n'
           ;;
         completed_matched)
           head_name="$(find "$previous_join_run/receipts" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json' -printf '%f\n' | LC_ALL=C sort | tail -n1)"
@@ -1447,10 +1483,12 @@ case "$COMMAND" in
     GDC_JOIN_LINEAGE_FAILURE_FILE="$STATE/lineage-preflight.failure"
     export GDC_JOIN_LINEAGE_FAILURE_FILE
     rm -f "$GDC_JOIN_LINEAGE_FAILURE_FILE"
+    join_lineage_args=(--bootstrap-file "$join_bootstrap_file" --observation "$join_observation" --receipt "$join_lineage_receipt" --env "$join_lineage_env" --mode "$join_sync_mode")
+    [[ -z "$join_upgrade_schedule" ]] || join_lineage_args+=(--upgrade-schedule "$join_upgrade_schedule")
+    join_lineage_args+=("${join_source_args[@]}")
     run_join_preflight lineage-preflight refused lineage lineage-preflight \
       'Independent RPC lineage and trust were not established for native P2P state sync.' \
-      "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$join_bootstrap_file" --observation "$join_observation" \
-        --receipt "$join_lineage_receipt" --env "$join_lineage_env" "${join_source_args[@]}"
+      "$ROOT/scripts/preflight-join-lineage.sh" "${join_lineage_args[@]}"
     # The preflight writes fixed-name, shell-quoted values only after it has
     # bound them to the observed runtime fingerprint and two fault domains.
     # shellcheck disable=SC1090
@@ -1458,6 +1496,7 @@ case "$COMMAND" in
     export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
     export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
     export GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON
+    export GDC_JOIN_UPGRADE_SCHEDULE GDC_JOIN_UPGRADE_SCHEDULE_SHA256
     GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
     export GDC_JOIN_LINEAGE_RECEIPT_SHA256
     write_join_preflight_receipt lineage-preflight passed unavailable lineage-preflight
