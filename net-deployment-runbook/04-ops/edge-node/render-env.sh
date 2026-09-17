@@ -173,13 +173,18 @@ values=(
 # attempting to obtain the same ACME certificates.
 if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
   values+=(
+    'COMPOSE_PROJECT_NAME=gdc-edge'
     "PUBLIC_EDGE=true"
     "SITE_HOST=$SITE_HOST"
     "API_HOST=$API_HOST"
     "GRAFANA_HOST=$GRAFANA_HOST"
   )
 else
-  values+=("PUBLIC_EDGE=false" "PUBLIC_EDGE_HOST=$PUBLIC_EDGE_HOST")
+  values+=(
+    "COMPOSE_PROJECT_NAME=gdc-edge-$NODE"
+    "PUBLIC_EDGE=false"
+    "PUBLIC_EDGE_HOST=$PUBLIC_EDGE_HOST"
+  )
 fi
 
 write_env "$OUTPUT" "${values[@]}"

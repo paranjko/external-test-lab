@@ -35,8 +35,8 @@ rsync -a "$ROOT/02-node/" "$ML_HOST:$REMOTE/02-node/"
 rsync -a "$ROOT/04-ops/agent/" "$ML_HOST:$REMOTE/agent/"
 scp -q "$ML_ENV" "$ML_HOST:$REMOTE/ml.env"
 scp -q "$AGENT_ENV" "$ML_HOST:$REMOTE/agent.env"
-ssh -T "$ML_HOST" "sudo '$REMOTE/02-node/ml-only/install-ml.sh' --node-name '$ML_HOST' --env '$REMOTE/ml.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' --gpu; rm -rf '$REMOTE'; cd '/srv/dai/deploy/$ML_HOST' && ./start-ml.sh .env '$MODEL_ID' '$MLNODE_DTYPE' '$MODEL_REVISION' '$MLNODE_TENSOR_PARALLEL_SIZE' '$MLNODE_MAX_NUM_SEQS' '$MLNODE_GPU_MEMORY_UTILIZATION' '$MLNODE_CONTEXT_LENGTH'"
-start_stack "$ML_HOST" /srv/dai/monitoring-agent
+ssh -T "$ML_HOST" "sudo '$REMOTE/02-node/ml-only/install-ml.sh' --node-name '$ML_HOST' --env '$REMOTE/ml.env'; sudo '$REMOTE/agent/install-agent.sh' '$ML_HOST' '$REMOTE/agent.env' --gpu; rm -rf '$REMOTE'; cd '/srv/dai/deploy/$ML_HOST' && ./start-ml.sh .env '$MODEL_ID' '$MLNODE_DTYPE' '$MODEL_REVISION' '$MLNODE_TENSOR_PARALLEL_SIZE' '$MLNODE_MAX_NUM_SEQS' '$MLNODE_GPU_MEMORY_UTILIZATION' '$MLNODE_CONTEXT_LENGTH'"
+start_stack "$ML_HOST" "/srv/dai/deploy/$ML_HOST/monitoring-agent"
 
 step "Restart $NODE API after network GPU readiness"
 "$ROOT/03-join/restart-api-after-sync.sh" "$NODE"

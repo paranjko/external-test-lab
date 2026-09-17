@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ $# -eq 1 && $EUID -eq 0 ]] || { echo "Usage: sudo $0 rendered-node.env" >&2; exit 2; }
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST=/srv/dai/edge
+[[ $# -eq 1 || ( $# -eq 3 && "${2:-}" == --node-name ) ]] && [[ $EUID -eq 0 ]] || { echo "Usage: sudo $0 rendered-node.env [--node-name SSH_ALIAS]" >&2; exit 2; }
+ENV_FILE="$1"
+DEST=/srv/dai/edge
+if [[ $# -eq 3 ]]; then
+  NODE="$3"
+  [[ "$NODE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'invalid edge SSH alias' >&2; exit 2; }
+  DEST="/srv/dai/deploy/$NODE/edge"
+fi
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -a
 # shellcheck disable=SC1090
-source "$1"
+source "$ENV_FILE"
 set +a
 expected_remote_prometheus="https://${GATEWAY_PUBLIC_HOST:-}/ops-prometheus"
 [[ "${PUBLIC_GRAFANA_PROMETHEUS_URL:-}" == http://127.0.0.1:9099 || "${PUBLIC_GRAFANA_PROMETHEUS_URL:-}" == "$expected_remote_prometheus" ]] || {

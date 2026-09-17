@@ -56,4 +56,8 @@ done
   echo "host is not configured in inventory: $HOST" >&2
   exit 2
 }
-write_env "$OUTPUT" "GDC_MONITOR_HOST=$HOST" "NODE_EXPORTER_IMAGE=$NODE_EXPORTER_IMAGE" "CADVISOR_IMAGE=$CADVISOR_IMAGE"
+write_env "$OUTPUT" \
+  "COMPOSE_PROJECT_NAME=gdc-monitoring-agent-$HOST" \
+  "GDC_MONITOR_HOST=$HOST" \
+  "NODE_EXPORTER_IMAGE=$NODE_EXPORTER_IMAGE" \
+  "CADVISOR_IMAGE=$CADVISOR_IMAGE"

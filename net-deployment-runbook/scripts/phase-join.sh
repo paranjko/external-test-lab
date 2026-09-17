@@ -332,16 +332,11 @@ local_ml=(); gpu=()
 if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
   # The public edge owns /srv/dai/edge on this Host.  A participant JOIN must
   # never replace that shared TLS configuration with the node-local edge.
-  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"
+  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
   printf 'READY retained shared public edge on %s during participant JOIN\n' "$NODE"
 else
-  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' ${gpu[*]}"
+  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env' --node-name '$NODE'; sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
 fi
-if [[ "${GDC_JOIN_BOOTSTRAP_MODE:-}" == historical_replay ]]; then
-  step "Install the checked historical runtime schedule for $NODE"
-  ssh "$NODE" "sudo /srv/dai/deploy/$NODE/prepare-full-history-runtime.sh '$generation_dir' '$REMOTE/lineage-receipt.json'"
-fi
-
 # Persist the explicit external-GPU association as soon as the validator
 # deployment exists.  A join can fail later (for example, while claiming the
 # faucet); reset must still know exactly which GPU host may be cleaned up and
@@ -365,7 +360,7 @@ step "Start signerless native P2P synchronization canary for $NODE"
 # A state-sync trust checkpoint is deliberately short-lived. Do not launch a
 # canary that would already consume an expired decision; a new preflight is
 # required instead.
-[[ "${GDC_JOIN_BOOTSTRAP_MODE:-}" == historical_replay ]] || "$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
+"$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
 record_join_state "$NODE" SYNCING "$ADDRESS"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --canary"
 record_join_transition CANARY_RUNNING
@@ -420,11 +415,11 @@ ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-canonical-join-state.sh '/srv/
 ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json'"
 record_join_transition CANONICAL_VERIFIED
 if [[ "$NODE" != "$PUBLIC_EDGE_NODE" ]]; then
-  start_stack "$NODE" /srv/dai/edge
+  start_stack "$NODE" "/srv/dai/deploy/$NODE/edge"
 else
   printf 'READY retained shared public edge on %s during participant JOIN\n' "$NODE"
 fi
-start_stack "$NODE" /srv/dai/monitoring-agent
+start_stack "$NODE" "/srv/dai/deploy/$NODE/monitoring-agent"
 participant_body="$(curl --connect-timeout 5 --max-time 10 -fsS "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"
 participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null || true)"
 participant_state="$(participant_onboarding_state "$participant_status")"

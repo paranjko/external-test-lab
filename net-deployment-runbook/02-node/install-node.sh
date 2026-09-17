@@ -80,7 +80,6 @@ install -m 0755 "$(dirname "$0")/wait-state-sync-canary.sh" "$STAGE/wait-state-s
 install -m 0755 "$(dirname "$0")/stop-state-sync-canary.sh" "$STAGE/stop-state-sync-canary.sh"
 install -m 0755 "$(dirname "$0")/record-state-sync-canary.sh" "$STAGE/record-state-sync-canary.sh"
 install -m 0755 "$(dirname "$0")/verify-state-sync-config.sh" "$STAGE/verify-state-sync-config.sh"
-install -m 0755 "$(dirname "$0")/prepare-full-history-runtime.sh" "$STAGE/prepare-full-history-runtime.sh"
 install -m 0755 "$(dirname "$0")/fence-existing-signer.sh" "$STAGE/fence-existing-signer.sh"
 install -m 0755 "$(dirname "$0")/promote-state-sync-generation.sh" "$STAGE/promote-state-sync-generation.sh"
 install -m 0755 "$(dirname "$0")/sync-node-config.sh" "$STAGE/sync-node-config.sh"

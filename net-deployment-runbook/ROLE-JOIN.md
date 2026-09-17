@@ -109,21 +109,6 @@ guesses an older binary or upgrade schedule. Wait for a supported snapshot or
 ask the network operator for an approved recovery procedure; do not bypass
 the preflight, enable the signer, or retry against a different profile.
 
-An operator may request ordinary full-history replay explicitly:
-
-```bash
-gdc host join --sync-mode full-history --upgrade-schedule runtime-history.json \
-  --public-host <IP_or_DOMAIN> <ssh-alias>
-```
-
-This is never an automatic fallback and does not copy an archive or database.
-JOIN discovers a Bootstrap peer that serves Genesis and every declared upgrade
-height, checks the explicit HTTPS runtime schedule and its SHA-256 bindings,
-then synchronizes from Genesis over native P2P. The target remains signerless
-until catch-up and lineage verification complete. An absent, malformed,
-unordered, or incomplete schedule is refused; JOIN never derives historical
-runtimes from the current version.
-
 Use a lowercase SSH alias beginning with a letter or digit and containing only
 lowercase letters, digits, `_`, or `-`. The alias is also the Docker Compose
 project name on the Host.

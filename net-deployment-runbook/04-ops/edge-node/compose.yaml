@@ -1,4 +1,7 @@
-name: gdc-edge
+# The public edge uses gdc-edge.  A participant edge is rendered with its
+# alias-specific project name so a host lifecycle cannot select the shared
+# public listener by Docker project label.
+name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}
 services:
   public-grafana:
     profiles: ["public-edge"]

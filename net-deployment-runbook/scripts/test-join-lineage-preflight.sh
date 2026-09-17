@@ -6,11 +6,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 
 # Checked-in lineage examples are contract fixtures, not templates that tests
-# may silently normalize. Validate and consume both the supported state-sync
-# receipt and the explicit historical-replay refusal directly.
+# may silently normalize. Validate the supported state-sync receipt directly.
 python3 - "$ROOT/lineage/join-lineage-preflight.v1.schema.json" \
-  "$ROOT/test/fixtures/join-lineage-preflight-state-sync.json" \
-  "$ROOT/test/fixtures/join-lineage-preflight-unsupported-replay.json" <<'PY'
+  "$ROOT/test/fixtures/join-lineage-preflight-state-sync.json" <<'PY'
 import json
 import sys
 from jsonschema import Draft202012Validator
@@ -27,8 +25,6 @@ for fixture_name in sys.argv[2:]:
 PY
 jq -e '.bootstrap.mode == "state_sync" and .result.terminal_state == "prepared"' \
   "$ROOT/test/fixtures/join-lineage-preflight-state-sync.json" >/dev/null
-jq -e '.bootstrap.mode == "historical_replay" and .result.category == "historical_replay_unsupported" and .result.terminal_state == "refused"' \
-  "$ROOT/test/fixtures/join-lineage-preflight-unsupported-replay.json" >/dev/null
 
 cat >"$tmp/bootstrap.json" <<'EOF'
 {"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-fixture","genesis":{"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://rpc-a.example.test/chain-rpc","p2p":"tcp://rpc-a.example.test:5000","api":"https://rpc-a.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://rpc-b.example.test/chain-rpc/","p2p":"tcp://rpc-b.example.test:5000","api":"https://rpc-b.example.test"},{"node_id":"fedcba9876543210fedcba9876543210fedcba98","rpc":"https://rpc-c.example.test/chain-rpc","p2p":"tcp://rpc-c.example.test:5000"}],"brokers":[]}
@@ -102,17 +98,6 @@ run_preflight() {
     "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/receipt.json" --env "$tmp/lineage.env"
 }
 run_preflight >"$tmp/out"
-cat >"$tmp/runtime-history.json" <<'EOF'
-{"schema_version":1,"kind":"gdc-full-history-runtime-schedule","genesis":{"url":"https://releases.example.test/inferenced-genesis","runtime_sha256":"1111111111111111111111111111111111111111111111111111111111111111"},"upgrades":[{"name":"v0.2.15","height":101,"url":"https://releases.example.test/inferenced-v0.2.15","runtime_sha256":"2222222222222222222222222222222222222222222222222222222222222222"}]}
-EOF
-PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=domain-a,rpc-b.example.test=domain-b,rpc-c.example.test=domain-c' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11,rpc-c.example.test=192.0.2.12' \
-  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/full.json" --env "$tmp/full.env" --mode full-history --upgrade-schedule "$tmp/runtime-history.json"
-jq -e '.bootstrap.mode == "historical_replay" and .bootstrap.history.source_peer == "0123456789abcdef0123456789abcdef01234567@tcp://rpc-a.example.test:5000" and (.bootstrap.history.schedule_sha256 | test("^[a-f0-9]{64}$"))' "$tmp/full.json" >/dev/null
-grep -qx 'GDC_JOIN_BOOTSTRAP_MODE=historical_replay' "$tmp/full.env"
-if "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" --receipt "$tmp/missing.json" --env "$tmp/missing.env" --mode full-history >"$tmp/missing.out" 2>"$tmp/missing.err"; then
-  echo 'full-history mode unexpectedly accepted no runtime schedule' >&2; exit 1
-fi
-grep -Fq 'full-history mode requires a readable upgrade schedule' "$tmp/missing.err"
 GDC_TEST_PRUNED_PAYLOAD=null run_preflight >"$tmp/null-pruned.out"
 grep -Fqx 'https://rpc-a.example.test/chain-api/productscience/inference/inference/last_upgrade_height' "$tmp/curl-spy"
 grep -Fqx 'https://rpc-a.example.test/chain-api/productscience/inference/inference/params' "$tmp/curl-spy"

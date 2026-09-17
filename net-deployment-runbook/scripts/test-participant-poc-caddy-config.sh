@@ -28,6 +28,12 @@ grep -Fq '@participant_chain path /chain-rpc/* /chain-api/*' "$public_caddyfile"
 grep -Fq '@participant_api_status path /health /status /v1/versions /v2/participants /v2/participants/*' "$public_caddyfile"
 grep -Fq 'handle @participant_api_status {' "$public_caddyfile"
 grep -Fq '@gateway_dapi path /health /status /v2/participants /v2/participants/* /chain-rpc /chain-rpc/* /chain-api /chain-api/*' "$public_caddyfile"
+chain_route_line="$(grep -nF '@chain_readonly path /chain-rpc/* /chain-api/*' "$public_caddyfile" | cut -d: -f1)"
+gateway_route_line="$(grep -nF '@gateway_dapi path /health /status /v2/participants /v2/participants/* /chain-rpc /chain-rpc/* /chain-api /chain-api/*' "$public_caddyfile" | cut -d: -f1)"
+[[ "$chain_route_line" =~ ^[0-9]+$ && "$gateway_route_line" =~ ^[0-9]+$ && "$chain_route_line" -lt "$gateway_route_line" ]] || {
+  echo 'public chain routes must precede the gateway route' >&2
+  exit 1
+}
 grep -Fq 'reverse_proxy {$GATEWAY_DAPI_UPSTREAM} {' "$public_caddyfile"
 grep -Fq 'Host-qualified chain routes' "$public_caddyfile"
 grep -Fq 'reverse_proxy 127.0.0.1:8000 {' "$public_caddyfile"

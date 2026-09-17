@@ -3,7 +3,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf -- "$tmp"' EXIT
 cat >"$tmp/receipt.json" <<'EOF'
-{"bootstrap":{"trust":{"height":3000,"expires_at":"2999-01-01T00:00:00Z"}},"fault_domains":[{"rpc_url":"https://rpc-a.example.test/chain-rpc","host":"rpc-a.example.test","port":443,"ip":"192.0.2.10"},{"rpc_url":"https://rpc-b.example.test/chain-rpc","host":"rpc-b.example.test","port":443,"ip":"192.0.2.11"}]}
+{"bootstrap":{"mode":"state_sync","trust":{"height":3000,"expires_at":"2999-01-01T00:00:00Z"}},"checkpoints":{"trust":{"height":3000}},"fault_domains":[{"rpc_url":"https://rpc-a.example.test/chain-rpc","host":"rpc-a.example.test","port":443,"ip":"192.0.2.10"},{"rpc_url":"https://rpc-b.example.test/chain-rpc","host":"rpc-b.example.test","port":443,"ip":"192.0.2.11"}]}
 EOF
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'

@@ -2,7 +2,14 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-grep -Fq 'if [[ "$CLEAR_EDGE" == true ]]; then' "$ROOT/scripts/phase-node.sh"
+if grep -En '(/srv/dai/edge|/srv/dai/ops|/srv/dai/monitoring-agent)' "$ROOT/scripts/phase-node.sh"; then
+  echo 'Host reset must not touch shared edge, OPS, or monitoring paths' >&2
+  exit 1
+fi
+grep -Fq 'compose_down_dir "/srv/dai/deploy/$NODE/monitoring-agent"' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'compose_down_dir "/srv/dai/deploy/$NODE/edge"' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'remove_compose_project "gdc-monitoring-agent-$NODE"' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'remove_compose_project "gdc-edge-$NODE"' "$ROOT/scripts/phase-node.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 fake_bin="$tmp/bin"

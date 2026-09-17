@@ -49,6 +49,7 @@ EOF
 grep -Fxq 'DATA_DIR=/srv/dai/data/mitch-demo.generations/test-run' "$temporary/node-state-sync.env"
 grep -Fxq 'GDC_JOIN_SNAPSHOT_PEERS=0123456789abcdef0123456789abcdef01234567@tcp://one.example:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://two.example:5000' "$temporary/node-state-sync.env"
 grep -Fxq 'GDC_JOIN_PERSISTENT_PEERS=0123456789abcdef0123456789abcdef01234567@one.example:5000,89abcdef0123456789abcdef0123456789abcdef@two.example:5000' "$temporary/node-state-sync.env"
+grep -Fxq 'GDC_JOIN_SEEDS=first@one.example:5000,second@two.example:5000' "$temporary/node-state-sync.env"
 # A normal deployment may place the gateway on a non-Genesis Host. Only that
 # Host binds its proxy beyond loopback so the public edge can reach it.
 grep -v '^GDC_JOIN_ROLE_INPUT=' "$temporary/inventory.env" >"$temporary/normal-inventory.env"
@@ -62,6 +63,8 @@ GDC_PUBLIC_EDGE_NODE=seed
 GDC_GATEWAY_NODE=mitch-demo
 GDC_TELEGRAM_BOT_HOST=mitch-demo
 GDC_RELEASE_PROFILE=v2026.08.06
+SITE_HOST=status.example.net
+GRAFANA_HOST=grafana.example.net
 EOF
 "$ROOT/02-node/render-node-env.sh" --inventory "$temporary/normal-inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --output "$temporary/gateway-node.env" >/dev/null
 grep -Fxq 'PROXY_BIND_ADDRESS=0.0.0.0' "$temporary/gateway-node.env"
@@ -71,10 +74,14 @@ grep -Fxq 'GATEWAY_DAPI_UPSTREAM=http://127.0.0.1:8000' "$temporary/gateway-edge
 # must still render, with auxiliary routes directed to the validated seed.
 "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --output "$temporary/edge.env" >/dev/null
 grep -Fxq 'PUBLIC_EDGE=false' "$temporary/edge.env"
+grep -Fxq 'COMPOSE_PROJECT_NAME=gdc-edge-mitch-demo' "$temporary/edge.env"
 grep -Fxq 'GATEWAY_PUBLIC_HOST=one.example' "$temporary/edge.env"
 grep -Fxq 'GATEWAY_DAPI_UPSTREAM=http://one.example:8000' "$temporary/edge.env"
 grep -Fxq 'TELEGRAM_BOT_PUBLIC_HOST=one.example' "$temporary/edge.env"
 grep -Fxq 'PUBLIC_GRAFANA_PROMETHEUS_URL=https://one.example/ops-prometheus' "$temporary/edge.env"
+"$ROOT/04-ops/edge-node/render-env.sh" --inventory "$temporary/normal-inventory.env" --node-name seed --output "$temporary/public-edge.env" >/dev/null
+grep -Fxq 'PUBLIC_EDGE=true' "$temporary/public-edge.env"
+grep -Fxq 'COMPOSE_PROJECT_NAME=gdc-edge' "$temporary/public-edge.env"
 sed -i 's/^GDC_GATEWAY_NODE=.*/GDC_GATEWAY_NODE=/; s/^GDC_PUBLIC_EDGE_NODE=.*/GDC_PUBLIC_EDGE_NODE=/; s/^TELEGRAM_BOT_HOST=.*/TELEGRAM_BOT_HOST=/' "$temporary/inventory.env"
 "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --output "$temporary/edge-no-roles.env" >/dev/null
 grep -Fxq 'GATEWAY_PUBLIC_HOST=one.example' "$temporary/edge-no-roles.env"

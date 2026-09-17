@@ -122,11 +122,17 @@ reset_node() {
   fi
 
   reset_remote_host() {
-    local host="$1" clear_edge="$2"
-    ssh -T "$host" "NODE='$host' CLEAR_EDGE='$clear_edge' bash -s" <<'REMOTE'
+    local host="$1"
+    ssh -T "$host" "NODE='$host' bash -s" <<'REMOTE'
 set -Eeuo pipefail
 
 systemctl disable --now "gdc-poc-winddown-watch@$NODE.service" >/dev/null 2>&1 || true
+# The version collector is installed per managed Host.  Remove only this
+# instance; a collector for another deployment or any unrelated system unit is
+# outside the reset boundary.
+systemctl disable --now "gdc-version-collector@$NODE.timer" >/dev/null 2>&1 || true
+rm -f -- "/etc/systemd/system/gdc-version-collector@$NODE.service" "/etc/systemd/system/gdc-version-collector@$NODE.timer"
+systemctl daemon-reload
 
 compose_down_dir() {
   local dir="$1" output rc
@@ -182,14 +188,15 @@ remove_compose_project() {
   (( ${#networks[@]} == 0 )) || docker network rm "${networks[@]}" >/dev/null
 }
 
-compose_down_dir "/srv/dai/monitoring-agent"
-# Public Caddy is OPS-owned and must survive an individual Host reset,
-# including reset of the Host that also provides the public edge.
-if [[ "$CLEAR_EDGE" == true ]]; then
-  compose_down_dir "/srv/dai/edge"
-fi
+# Public Caddy and OPS services are outside this Host's lifecycle boundary.
+# The Host-owned monitoring agent is deliberately nested below its deployment,
+# so it is safe to remove without touching another workload on the same Host.
+compose_down_dir "/srv/dai/deploy/$NODE/monitoring-agent"
+compose_down_dir "/srv/dai/deploy/$NODE/edge"
 compose_down_dir "/srv/dai/deploy/$NODE"
 remove_compose_project "$NODE"
+remove_compose_project "gdc-monitoring-agent-$NODE"
+remove_compose_project "gdc-edge-$NODE"
 
 rm -rf -- \
   "/srv/dai/deploy/$NODE" \
@@ -203,7 +210,7 @@ REMOTE
   bash "$ROOT/scripts/same-host-restore.sh" capture "$NODE"
   # The public edge is an OPS-owned service. Resetting its validator must not
   # also remove the Caddy instance that owns the public site, API and Grafana.
-  reset_remote_host "$NODE" false
+  reset_remote_host "$NODE"
   if [[ -e "$STATE/joined/$NODE" ]]; then
     rm -f "$STATE/joined/$NODE"
   fi
@@ -215,7 +222,7 @@ REMOTE
   fi
   if [[ -n "$linked_ml_host" ]]; then
     step "Reset linked GPU host $linked_ml_host for $NODE"
-    reset_remote_host "$linked_ml_host" false
+    reset_remote_host "$linked_ml_host"
     rm -f "$STATE/ml-attached/$NODE"
     printf 'PASS %s linked GPU reset\n' "$linked_ml_host"
   fi

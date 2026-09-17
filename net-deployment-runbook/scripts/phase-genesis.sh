@@ -171,11 +171,17 @@ scp -q "$NODE_DIR/node-config.json" "$NODE:$REMOTE/node-config.json"
 scp -q "$GENERATED/edge/$NODE.env" "$NODE:$REMOTE/edge.env"
 scp -q "$GENERATED/agents/$NODE.env" "$NODE:$REMOTE/agent.env"
 scp -q "$GENESIS/genesis.json" "$NODE:$REMOTE/genesis.json"
-ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --local-ml; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env'; sudo '$REMOTE/agent/install-agent.sh' '$REMOTE/agent.env' --gpu; rm -rf '$REMOTE'"
+edge_install_args="--node-name '$NODE'"
+edge_start_path="/srv/dai/deploy/$NODE/edge"
+if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
+  edge_install_args=''
+  edge_start_path=/srv/dai/edge
+fi
+ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --local-ml; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env' $edge_install_args; sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' --gpu; rm -rf '$REMOTE'"
 
 step 'Start the Genesis participant'
-start_stack "$NODE" /srv/dai/edge
-start_stack "$NODE" /srv/dai/monitoring-agent
+start_stack "$NODE" "$edge_start_path"
+start_stack "$NODE" "/srv/dai/deploy/$NODE/monitoring-agent"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
 
 step 'Activate Genesis ML operations'

@@ -66,6 +66,8 @@ grep -Fq 'GDC_PUBLIC_EDGE_VERIFY=false' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'for project in gdc-edge gdc-ops' "$ROOT/scripts/reset-remote-host.sh"
 grep -Fq 'GDC_RESET_PRESERVE_PUBLIC_EDGE' "$ROOT/scripts/reset-remote-host.sh"
 grep -Fq '[[ "$preserve_public_edge" == true ]] || rm -rf -- /srv/dai/edge' "$ROOT/scripts/reset-remote-host.sh"
+grep -Fq 'gdc-monitoring-agent-$alias' "$ROOT/scripts/reset-remote-host.sh"
+grep -Fq 'gdc-edge-$alias' "$ROOT/scripts/reset-remote-host.sh"
 grep -Fq 'runs/$GDC_RUN_ID-homepage/*' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'GDC_GOVERNANCE_AUTO_VOTE=true' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'ensure-genesis-validation-weight.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
@@ -697,6 +699,12 @@ grep -Fq 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/Caddyfile"
 grep -Fq 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq '@chain_readonly path /chain-rpc/* /chain-api/*' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'Chain state is read from the public edge participant' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+chain_route_line="$(grep -nF '@chain_readonly path /chain-rpc/* /chain-api/*' "$ROOT/04-ops/edge-node/PublicCaddyfile" | cut -d: -f1)"
+gateway_route_line="$(grep -nF '@gateway_dapi path /health /status /v2/participants /v2/participants/* /chain-rpc /chain-rpc/* /chain-api /chain-api/*' "$ROOT/04-ops/edge-node/PublicCaddyfile" | cut -d: -f1)"
+[[ "$chain_route_line" =~ ^[0-9]+$ && "$gateway_route_line" =~ ^[0-9]+$ && "$chain_route_line" -lt "$gateway_route_line" ]] || {
+  echo 'public edge must handle chain API paths before the gateway route' >&2
+  exit 1
+}
 ! grep -Fq '/join-bootstrap/' "$ROOT/04-ops/edge-node/Caddyfile"
 ! grep -Fq '/join-bootstrap/' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'Grant ML operational permissions for $NODE' "$ROOT/scripts/phase-join.sh"

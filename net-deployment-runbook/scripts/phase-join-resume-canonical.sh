@@ -70,11 +70,11 @@ if [[ "$resume_state" == CANONICAL_RUNNING ]]; then
   append_transition APPLICATION_ACTIVE
 fi
 if [[ "$NODE" != "$PUBLIC_EDGE_NODE" ]]; then
-  start_stack "$NODE" /srv/dai/edge
+  start_stack "$NODE" "/srv/dai/deploy/$NODE/edge"
 else
   printf 'READY retained shared public edge on %s during participant JOIN resume\n' "$NODE"
 fi
-start_stack "$NODE" /srv/dai/monitoring-agent
+start_stack "$NODE" "/srv/dai/deploy/$NODE/monitoring-agent"
 ssh "$NODE" "cd '$deploy' && bash '$remote/verify-canonical-join-state.sh' '$deploy' '$expected_chain_id' '$expected_p2p_node_id' '$expected_core_version' '$expected_core_commit' '$expected_dapi_version' '$expected_dapi_commit'"
 # State was already imported and verified before this receipt-bound resume.
 # The original short-lived trust decision must not block a current common-head

@@ -24,7 +24,7 @@
     "local_computed_app_hash_for_block_5": "B13FDF81EA4973117D3FA2AE3CC47B9F6E1CD81FBB4ECB8AFD5AB52A5FF2A524",
     "public_block_5_header_app_hash": "DDCEF59C52DD7CBEBA0B8F11298E191FC1FBAD6769A74533F732A6020019CE46",
     "app_hash_match": false,
-    "classification": "historical_replay_apphash_divergence"
+    "classification": "current_runtime_apphash_divergence"
   },
   "state_sync_inventory": {
     "public_rpc_snapshot_inventory": "unavailable",

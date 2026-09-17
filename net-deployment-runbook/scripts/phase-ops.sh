@@ -282,7 +282,11 @@ if [[ "$COMPONENT" == edge ]]; then
   step 'Verify the status site is served through the public edge TLS'
   site_ready=false
   for _ in $(seq 1 30); do
-    if curl -fsS "https://$SITE_HOST/" | grep -q 'EXTERNAL TEST LAB'; then
+    # Do not pipe curl to a short-circuiting grep under pipefail: once grep
+    # finds the marker it closes the pipe and curl reports exit 23, turning a
+    # successful public-edge deployment into a false failure.
+    homepage="$(curl -fsS "https://$SITE_HOST/" 2>/dev/null || true)"
+    if grep -q 'EXTERNAL TEST LAB' <<<"$homepage"; then
       site_ready=true
       break
     fi
@@ -303,7 +307,13 @@ if [[ "$COMPONENT" == edge-node ]]; then
   ssh "$EDGE_NODE" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
   rsync -a "$ROOT/04-ops/edge-node/" "$EDGE_NODE:$edge_remote/edge/"
   scp -q "$edge_env" "$EDGE_NODE:$edge_remote/edge.env"
-  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose up -d --force-recreate caddy"
+  edge_destination="/srv/dai/deploy/$EDGE_NODE/edge"
+  edge_install_args="--node-name '$EDGE_NODE'"
+  if [[ "$EDGE_NODE" == "$PUBLIC_EDGE_NODE" ]]; then
+    edge_destination=/srv/dai/edge
+    edge_install_args=''
+  fi
+  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; rm -rf '$edge_remote'; cd '$edge_destination' && docker compose up -d --force-recreate caddy"
   # A selected gateway can move after recovery. Reconcile only the retained
   # proxy listener with the current role; never regenerate the node role,
   # reset chain data, or replace a signer here.
@@ -1013,7 +1023,8 @@ if [[ "$COMPONENT" == site ]]; then
   site_deadline=$((SECONDS + ${GDC_SITE_PUBLIC_READY_WAIT_SECONDS:-120}))
   site_ready=false
   while (( SECONDS < site_deadline )); do
-    if curl -fsS --connect-timeout 5 --max-time 15 "https://$SITE_HOST/" | grep -q 'EXTERNAL TEST LAB'; then
+    homepage="$(curl -fsS --connect-timeout 5 --max-time 15 "https://$SITE_HOST/" 2>/dev/null || true)"
+    if grep -q 'EXTERNAL TEST LAB' <<<"$homepage"; then
       site_ready=true
       break
     fi

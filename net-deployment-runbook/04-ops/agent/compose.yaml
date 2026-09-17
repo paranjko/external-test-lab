@@ -1,4 +1,7 @@
-name: gdc-monitoring-agent
+# A monitoring agent is part of one managed Host deployment.  Its project name
+# must therefore be supplied by the rendered Host environment instead of being
+# shared by every validator on the machine.
+name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}
 services:
   node-exporter:
     image: ${NODE_EXPORTER_IMAGE:-quay.io/prometheus/node-exporter:v1.9.1}
