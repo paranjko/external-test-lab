@@ -42,7 +42,8 @@ def main() -> int:
     runbook = read(directory / "net-deployment-runbook.yml")
     candidate = read(directory / "candidate-build.yml")
     publish = read(directory / "candidate-publish.yml")
-    all_workflows = "\n".join((runbook, candidate, publish))
+    amd_publish = read(directory / "amd-mlnode-publish.yml")
+    all_workflows = "\n".join((runbook, candidate, publish, amd_publish))
 
     require("pull_request_target:" not in all_workflows, "pull_request_target is forbidden")
     require("pull_request:" in runbook, "runbook pull-request validation is missing")
@@ -70,6 +71,17 @@ def main() -> int:
             "publication authority inventory changed")
     check_actions(runbook, "net-deployment-runbook.yml")
     check_actions(candidate, "candidate-build.yml")
+    require("workflow_dispatch:" in amd_publish and "pull_request:" not in amd_publish and "push:" not in amd_publish,
+            "AMD publication must be manually dispatched only")
+    require("runs-on: ubuntu-latest" in amd_publish and "self-hosted" not in amd_publish,
+            "AMD publication must remain hosted")
+    require("driver: docker" in amd_publish,
+            "AMD publication must use the host Docker builder for its loaded intermediate image")
+    require("environment: amd-mlnode-publish" in amd_publish,
+            "AMD publication requires the protected publication environment")
+    require("packages: write" in amd_publish and "id-token: write" in amd_publish and "attestations: write" in amd_publish,
+            "AMD publication permission inventory changed")
+    check_actions(amd_publish, "amd-mlnode-publish.yml")
     print("workflow policy: PASS")
     return 0
 

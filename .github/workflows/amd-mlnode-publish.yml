@@ -1,0 +1,59 @@
+name: AMD MLNode publish
+run-name: AMD MLNode ${{ inputs.profile }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Tracked AMD MLNode build profile
+        required: true
+        default: net-deployment-runbook/profiles/amd-mlnode/gfx1201.json
+        type: choice
+        options:
+          - net-deployment-runbook/profiles/amd-mlnode/gfx1201.json
+
+concurrency:
+  group: amd-mlnode-publish-${{ inputs.profile }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    if: github.repository == 'paranjko/external-test-lab'
+    runs-on: ubuntu-latest
+    environment: amd-mlnode-publish
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout exact requested source
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate profile and build contract
+        run: make -C net-deployment-runbook test-amd-mlnode-build
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4.3.0
+        with:
+          # The two build stages exchange the intermediate vLLM image through
+          # the host Docker daemon with --load.
+          driver: docker
+      - name: Authenticate to GitHub Container Registry
+        uses: docker/login-action@v4.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish source-bound image
+        id: publish
+        run: make -C net-deployment-runbook amd-mlnode-ci-publish
+      - name: Attest published image provenance
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-name: ${{ steps.publish.outputs.subject_name }}
+          subject-digest: ${{ steps.publish.outputs.subject_digest }}
+          push-to-registry: true

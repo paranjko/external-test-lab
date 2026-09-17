@@ -48,7 +48,7 @@ case "$url" in
   *raw.githubusercontent.com/gonka-ai/gonka/ce33c851282b8f4c0f63d78d46ddd4d8bb248207/deploy/join/docker-compose.yml)
     emit $'services:\n  node:\n    image: ghcr.io/product-science/inferenced:0.2.15\n  api:\n    image: ghcr.io/product-science/api:0.2.15-post3'
     ;;
-  *'/releases/tags/release%2Fv0.2.15') emit '{"tag_name":"release/v0.2.15","assets":[{"name":"inferenced-linux-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-linux-amd64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]}' ;;
+  *'/releases/tags/release%2Fv0.2.15') emit "{\"tag_name\":\"release/v0.2.15\",\"assets\":[{\"name\":\"inferenced-linux-amd64.zip\",\"browser_download_url\":\"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-linux-amd64.zip\",\"digest\":\"sha256:${FIXTURE_INFERENCED_SHA256:?}\"}]}" ;;
   *'/releases/tags/release%2Fv0.2.16') emit '{"tag_name":"release/v0.2.16","assets":[{"name":"decentralized-api-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.16/decentralized-api-amd64.zip","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"}]}' ;;
   *'/git/matching-refs/tags/release/v0.2.15') emit '[{"ref":"refs/tags/release/v0.2.15","object":{"type":"commit","sha":"4d687ed6782bcea3931d2d9135bf322f84e190ab"}}]' ;;
   *'/git/matching-refs/tags/release/v0.2.16') emit '[{"ref":"refs/tags/release/v0.2.16","object":{"type":"commit","sha":"18506d42c510e0cafe6acd748bcd8d83036cba40"}}]' ;;
@@ -56,6 +56,10 @@ case "$url" in
   *'ghcr.io/v2/'*'/manifests/'*)
     [[ -n "$headers" ]] || exit 2
     printf 'HTTP/2 200\r\nDocker-Content-Digest: sha256:3333333333333333333333333333333333333333333333333333333333333333\r\n' >"$headers"
+    ;;
+  *'/inferenced-linux-amd64.zip')
+    [[ -n "$output" ]] || exit 2
+    cp "${FIXTURE_INFERENCED_ARCHIVE:?}" "$output"
     ;;
   *) exit 22 ;;
 esac
@@ -79,6 +83,16 @@ exit 97
 EOF
 done
 chmod 0755 "$tmp/bin"/*
+
+# Completed-JOIN re-entry verifies a profile-bound CLI. Keep this fixture
+# hermetic: no-op regression coverage must not fetch a public release asset.
+mkdir -p "$tmp/inferenced-fixture"
+printf '#!/usr/bin/env bash\nprintf "inferenced v0.2.15\\n"\n' >"$tmp/inferenced-fixture/inferenced"
+chmod 0755 "$tmp/inferenced-fixture/inferenced"
+(cd "$tmp/inferenced-fixture" && zip -q "$tmp/inferenced-linux-amd64.zip" inferenced)
+export FIXTURE_INFERENCED_ARCHIVE="$tmp/inferenced-linux-amd64.zip"
+FIXTURE_INFERENCED_SHA256="$(sha256sum "$FIXTURE_INFERENCED_ARCHIVE" | awk '{print $1}')"
+export FIXTURE_INFERENCED_SHA256
 
 printf 'retained validator archive\n' >"$tmp/validator-backup.tar"
 # An unfinished incident for another Host must not intercept normal restore.

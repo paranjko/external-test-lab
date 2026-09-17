@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.4
+ARG VLLM_BASE_IMAGE
+FROM ${VLLM_BASE_IMAGE} AS base
+
+RUN --mount=type=cache,target=/var/lib/apt/lists \
+    --mount=type=cache,target=/root/.cache/pip \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl python3-pip build-essential checkinstall zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --upgrade "setuptools<81" wheel pip \
+    && curl -fLO https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1u/openssl-1.1.1u.tar.gz \
+    && tar -xzf openssl-1.1.1u.tar.gz \
+    && cd openssl-1.1.1u \
+    && ./config --prefix=/usr/local/openssl-1.1 --openssldir=/usr/local/openssl-1.1/ssl \
+    && make -j"$(nproc)" && make install \
+    && cd .. && rm -rf openssl-1.1.1u.tar.gz openssl-1.1.1u
+
+ENV PATH="/usr/local/openssl-1.1/bin:${PATH}" \
+    LD_LIBRARY_PATH="/usr/local/openssl-1.1/lib:${LD_LIBRARY_PATH}"
+
+FROM base AS builder
+ENV POETRY_VERSION=2.0.1 PYTHONUNBUFFERED=1 POETRY_NO_INTERACTION=1 DEBIAN_FRONTEND=noninteractive
+RUN pip install --upgrade pip && pip install "poetry==$POETRY_VERSION"
+WORKDIR /app
+
+COPY packages/pow/pyproject.toml packages/pow/poetry.lock packages/pow/README.md /app/packages/pow/
+COPY packages/train/pyproject.toml packages/train/poetry.lock packages/train/README.md /app/packages/train/
+COPY packages/api/pyproject.toml packages/api/poetry.lock packages/api/README.md /app/packages/api/
+COPY packages/common/pyproject.toml packages/common/poetry.lock packages/common/README.md /app/packages/common/
+COPY packages/train/third_party /app/packages/train/third_party
+RUN mkdir -p /app/packages/api/src/api /app/packages/pow/src/pow /app/packages/train/src/zeroband /app/packages/common/src/common \
+    && touch /app/packages/api/src/api/__init__.py /app/packages/pow/src/pow/__init__.py /app/packages/train/src/zeroband/__init__.py /app/packages/common/src/common/__init__.py
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.cache/pypoetry \
+    python3 -m venv --system-site-packages /app/packages/api/.venv \
+    && . /app/packages/api/.venv/bin/activate \
+    && cd /app/packages/api && poetry install --no-interaction
+
+FROM base AS app
+ARG MLNODE_RELEASE_VERSION
+COPY --from=builder /app/packages/api/.venv /app/packages/api/.venv
+COPY packages/api/src /app/packages/api/src
+COPY packages/pow/src /app/packages/pow/src
+COPY packages/pow/resources /app/packages/pow/resources
+COPY packages/pow/scripts /app/packages/pow/scripts
+COPY packages/train/src /app/packages/train/src
+COPY packages/train/scripts /app/packages/train/scripts
+COPY packages/train/resources /app/packages/train/resources
+COPY packages/common/src /app/packages/common/src
+
+ENV PYTHONPATH="/app:/app/packages/api/src" \
+    MLNODE_RELEASE_VERSION="${MLNODE_RELEASE_VERSION}" \
+    VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
+    HSA_ENABLE_IPC_MODE_LEGACY=1 \
+    VLLM_RUNNER_TIMEOUT=3600
+LABEL org.opencontainers.image.version="${MLNODE_RELEASE_VERSION}"
+
+COPY packages/api/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+WORKDIR /app
+ENTRYPOINT ["/app/entrypoint.sh"]

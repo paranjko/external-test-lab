@@ -25,6 +25,22 @@ if python3 "$checker" "$temporary/publication" >"$temporary/publication.out" 2>&
 fi
 grep -Fq 'candidate publication must remain hosted' "$temporary/publication.out"
 
+cp -a "$workflows" "$temporary/amd-publication"
+sed -i 's/runs-on: ubuntu-latest/runs-on: [self-hosted, linux, x64, gdc-node4]/' "$temporary/amd-publication/amd-mlnode-publish.yml"
+if python3 "$checker" "$temporary/amd-publication" >"$temporary/amd-publication.out" 2>&1; then
+  echo 'AMD publication on a self-hosted runner unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'AMD publication must remain hosted' "$temporary/amd-publication.out"
+
+cp -a "$workflows" "$temporary/amd-builder"
+sed -i '/^[[:space:]]*driver: docker$/d' "$temporary/amd-builder/amd-mlnode-publish.yml"
+if python3 "$checker" "$temporary/amd-builder" >"$temporary/amd-builder.out" 2>&1; then
+  echo 'AMD publication without the host Docker builder unexpectedly passed' >&2
+  exit 1
+fi
+grep -Fq 'AMD publication must use the host Docker builder' "$temporary/amd-builder.out"
+
 cp -a "$workflows" "$temporary/pr-route"
 sed -i "s/github.event_name != 'pull_request'/true/" "$temporary/pr-route/net-deployment-runbook.yml"
 if python3 "$checker" "$temporary/pr-route" >"$temporary/pr-route.out" 2>&1; then

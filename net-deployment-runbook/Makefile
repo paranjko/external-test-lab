@@ -28,7 +28,7 @@ preview_number ?=
 preview_revision ?=
 site_origin ?= https://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks
+.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -63,6 +63,18 @@ shellcheck:
 		--external-sources \
 		--severity=warning \
 		$(SHELL_SCRIPTS)
+
+test-amd-mlnode-build:
+	@./scripts/test-build-amd-mlnode.sh
+
+test-amd-mlnode-trial:
+	@./scripts/test-run-amd-mlnode-trial.sh
+
+test-amd-mlnode-ci-publish:
+	@./scripts/test-publish-amd-mlnode-ci.sh
+
+amd-mlnode-ci-publish:
+	@./scripts/publish-amd-mlnode-ci.sh profiles/amd-mlnode/gfx1201.json
 
 site-vendor:
 	@./scripts/install-site-vendor.sh
@@ -169,6 +181,9 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-verify-approved-devshard-version.sh
 	@./scripts/test-candidate-gateway-compose.sh
 	@./scripts/test-build-gateway-image.sh
+	@./scripts/test-build-amd-mlnode.sh
+	@./scripts/test-run-amd-mlnode-trial.sh
+	@./scripts/test-publish-amd-mlnode-ci.sh
 	@./scripts/test-gdc-home.sh
 	@./scripts/test-ensure-inferenced-cli-output.sh
 	@./scripts/test-ensure-warm-key.sh
