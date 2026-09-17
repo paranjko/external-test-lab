@@ -91,6 +91,16 @@ on_launcher_exit() {
   local rc="$?"
   trap - EXIT
   set +e
+  trap - ERR
+  # A JOIN run without a terminal result blocks every later run: write one on abort.
+  if (( rc != 0 )) && [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] \
+    && [[ ! -e "$GDC_JOIN_RESULT_OUTPUT" ]] && [[ -d "$(dirname "$GDC_JOIN_RESULT_OUTPUT")" ]] \
+    && [[ "$GDC_JOIN_RESULT_OUTPUT" == "${GDC_HOME:-/nonexistent}/runs/"* ]]; then
+    record_join_terminal_result failed signer internal join_launcher_aborted "$rc" \
+      signer_may_be_on unknown manual_recovery \
+      || printf 'ERROR JOIN aborted and its terminal result receipt could not be persisted at %s\n' \
+        "$GDC_JOIN_RESULT_OUTPUT" >&2
+  fi
   record_launcher_failure "$rc"
   # A phase pipeline runs in a subshell; only the outer command owns END.
   if [[ -n "$GDC_END_COMMAND" && "$BASHPID" == "$GDC_END_PID" ]]; then
