@@ -24,6 +24,15 @@ verify_linked_gpu_freshness_result() {
   '
 }
 
+# A served dashboard must be the committed definition. Grafana owns only the
+# database id and the save counter; every other field is the provisioned file.
+verify_dashboard_matches_source() {
+  local source="$1"
+  diff -q \
+    <(jq -S 'del(.id, .version)' "$source") \
+    <(jq -S '.dashboard | del(.id, .version)') >/dev/null
+}
+
 # The target predicates are intentionally importable for deterministic negative
 # tests. The normal verifier always continues into the live public checks.
 if [[ "${GDC_GRAFANA_VERIFIER_LIBRARY:-false}" == true ]]; then
@@ -90,8 +99,16 @@ while IFS=$'\t' read -r host validator; do
     || die "linked GPU inventory is stale: $host"
 done <"$expected_targets"
 
-for dashboard in gdc-network gdc-inference; do
+# The public runtime serves provisioned files through a bind mount. A stale
+# mount or a skipped reconcile keeps an older definition online while the
+# repository already carries the new one; compare the served definition with
+# the committed file before judging its panels.
+for dashboard in gdc-network gdc-inference gdc-overview; do
   curl -fsS "https://$GRAFANA_HOST/api/dashboards/uid/$dashboard" >"$RUN/$dashboard.json"
+  verify_dashboard_matches_source "$ROOT/04-ops/edge-node/public-grafana/dashboards/$dashboard.json" <"$RUN/$dashboard.json" \
+    || die "public Grafana dashboard $dashboard differs from the committed definition"
+done
+for dashboard in gdc-network gdc-inference; do
   jq -e --arg dashboard "$dashboard" '.dashboard.uid == $dashboard and ([.dashboard.panels[]? | select(.targets? != null)] | length >= 20) and ([.dashboard.panels[]?.targets[]?.expr | select(type == "string" and length > 0)] | length >= 20)' "$RUN/$dashboard.json" >/dev/null || die "public Grafana dashboard $dashboard is incomplete"
 done
 # A deployed dashboard must prove its collector, chain, Host, gateway and
@@ -190,7 +207,7 @@ cat >"$RUN/finalize.md" <<EOF
 
 - Network: $NETWORK_URL
 - Inference: $INFERENCE_URL
-- Dashboards: gdc-network, gdc-inference
+- Dashboards: gdc-network, gdc-inference, gdc-overview match the committed definitions
 - Expected Prometheus targets: $(wc -l <"$expected_targets") are up; linked GPU inventory is fresh.
 - Prometheus panel expressions: $(wc -l <"$RUN/panel-expressions.txt") returned live data.
 - Browser DOM contains both rendered dashboards and no No data, plugin, or authentication failure.

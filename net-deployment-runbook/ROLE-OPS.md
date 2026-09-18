@@ -34,6 +34,26 @@ The site and Grafana remain separate from validator lifecycle. A chain reset
 must leave them online and showing the current state, including an unavailable
 network or gateway.
 
+## After a merge
+
+Nothing on a Host follows `main` on its own except the static site, which
+`site-publish` deploys from CI. Every other OPS change reaches the network only
+when the operator runs the phase again. Run the phase that owns the changed
+paths:
+
+| Changed under `net-deployment-runbook/` | Run |
+|---|---|
+| `04-ops/grafana/**`, `04-ops/edge-node/public-grafana/**`, `04-ops/prometheus/**`, `04-ops/render-ops.sh`, `04-ops/compose.yaml` (monitoring services) | `gdc ops monitoring` |
+| `04-ops/site/**` | nothing: `site-publish` runs on push to `main` |
+| `04-ops/edge-node/Caddyfile`, `04-ops/edge-node/PublicCaddyfile`, `04-ops/edge-node/compose.yaml`, `04-ops/edge-node/install-edge.sh` | `gdc ops edge` |
+| `04-ops/edge-node/gateway-admission*`, `04-ops/gateway*`, `04-ops/create-gateway.sh` | `gdc gateway apply <version>` |
+| `04-ops/faucet/**` | `gdc ops faucet` |
+| `scripts/telegram-bot/**`, `scripts/deploy-telegram-bot.sh` | `gdc ops consumer telegram apply` |
+
+`gdc ops monitoring` ends with `scripts/verify-public-grafana.sh`, which fails
+when a served dashboard differs from the committed definition. The same script
+can run on its own at any time to check for drift.
+
 ## Verify
 
 ```bash
