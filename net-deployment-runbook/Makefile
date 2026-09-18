@@ -194,6 +194,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-classify-join-state.sh
 	@./scripts/test-classify-join-reentry.sh
 	@./scripts/test-join-identity-diagnostics.sh
+	@./scripts/test-join-refusal-diagnostics.sh
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
@@ -226,6 +227,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-gateway-admission-deployment.sh
 	@./scripts/test-suspend-gateway-admission.sh
 	@./scripts/test-firewall-policy.sh
+	@./scripts/test-prepare-nvidia-kernel-modules.sh
 	@./scripts/test-public-grafana-targets.sh
 	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-observer.py
@@ -238,6 +240,8 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-inference-until-ready.sh
 	@./scripts/test-gateway-escrow-reconciler.sh
 	@./scripts/test-faucet-caddy-config.sh
+	@./scripts/test-claim-devnet-faucet.sh
+	@./scripts/test-participant-edge-start.sh
 	@./scripts/test-public-edge-single-listener.sh
 	@./scripts/test-public-homepage-rendered-asset.sh
 	@./scripts/test-participant-poc-caddy-config.sh

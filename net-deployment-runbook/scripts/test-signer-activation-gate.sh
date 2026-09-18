@@ -81,6 +81,19 @@ grep -Fq 'record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"' "$ROOT/scripts/ph
 grep -Fq 'record_signer_activation_guard' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify-active-signer-state.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify-tmkms-signing-state.sh' "$ROOT/scripts/phase-join.sh"
+# --enable-signer recreates Core, so its RPC is away for some seconds: the
+# readback right after it has to be repeated, not taken once.
+for script in phase-join.sh phase-join-resume-canonical.sh; do
+  grep -Eq '^until ssh "\$NODE" "cd .*verify-active-signer-state\.sh' "$ROOT/scripts/$script" \
+    || { echo "$script takes the active signer readback once" >&2; exit 1; }
+done
+# ACTIVE precedes validator-set membership by an epoch or more, so the first
+# signature of a new key cannot be demanded inside one minute.
+grep -Fq 'signing_deadline=$((SECONDS+2400))' "$ROOT/scripts/phase-join.sh"
+if grep -Eq 'signing_deadline=\$\(\(SECONDS\+60\)\)' "$ROOT/scripts/phase-join.sh"; then
+  echo 'a new validator gets one minute to enter the validator set' >&2
+  exit 1
+fi
 prepared_line="$(grep -n 'record_join_state "$NODE" PREPARED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 syncing_line="$(grep -n 'record_join_state "$NODE" SYNCING' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 lineage_line="$(grep -n 'record_join_state "$NODE" LINEAGE_VERIFIED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"

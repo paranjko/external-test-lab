@@ -6,6 +6,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 deploy="$tmp/deploy"
 mkdir -p "$tmp/bin" "$deploy"
+# PORTABLE-RUNTIME.md tells the operator to export these; the fixture decides
+# per case whether a portable runtime is declared.
+unset GDC_PORTABLE_CORE_IMAGE GDC_PORTABLE_DAPI_IMAGE
 
 core_commit=4d687ed6782bcea3931d2d9135bf322f84e190ab
 dapi_commit=5dbb53ddf3ddc42655fc04dc39d96003169bdbb0
@@ -75,11 +78,13 @@ case "$args" in
   *'inspect --format {{.Image}} abcdef012345') printf '%s\n' sha256:dapiimage ;;
   *'image inspect --format {{.Id}} example/core:0.2.15@sha256:'*) printf '%s\n' sha256:coreimage ;;
   *'image inspect --format {{.Id}} example/dapi:0.2.15-post3@sha256:'*) printf '%s\n' sha256:dapiimage ;;
+  *'image inspect --format {{.Id}} local/portable-dapi@sha256:'*) printf '%s\n' sha256:dapiimage ;;
   *'exec 0123456789ab readlink -f /proc/1/exe') printf '%s\n' /root/.inference/cosmovisor/current/bin/inferenced ;;
   *'exec 0123456789ab /root/.inference/cosmovisor/current/bin/inferenced version') printf '%s\n' '0.2.15' ;;
   *'exec 0123456789ab /root/.inference/cosmovisor/current/bin/inferenced version --long') printf '%s\n' "version: 0.2.15" "commit: 4d687ed6782bcea3931d2d9135bf322f84e190ab" ;;
   *'exec abcdef012345 readlink -f /proc/1/exe') printf '%s\n' /root/.dapi/cosmovisor/current/bin/decentralized-api ;;
   *'exec abcdef012345 cat /root/.dapi/gdc-join-dapi-runtime.env')
+    [[ "${GDC_TEST_DAPI_RECEIPT:-present}" == present ]] || { echo 'cat: no such file' >&2; exit 1; }
     printf '%s\n' "DAPI_VERSION=${GDC_TEST_DAPI_VERSION:-0.2.15-post3}" "DAPI_COMMIT=${GDC_TEST_DAPI_COMMIT:-5dbb53ddf3ddc42655fc04dc39d96003169bdbb0}" 'DAPI_ARCHIVE_SHA256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' 'DAPI_BINARY_SHA256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' ;;
   *'exec abcdef012345 sha256sum /root/.dapi/cosmovisor/current/bin/decentralized-api') printf '%s\n' 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff  /root/.dapi/cosmovisor/current/bin/decentralized-api' ;;
   *) echo "unexpected docker invocation: $args" >&2; exit 2 ;;
@@ -92,7 +97,7 @@ url="${!#}"
 case "$url" in
   */status) printf '%s\n' '{"result":{"node_info":{"network":"gonka-fixture","id":"0123456789abcdef0123456789abcdef01234567"},"sync_info":{"catching_up":false,"latest_block_height":"5000"}}}' ;;
   */abci_info) printf '%s\n' '{"result":{"response":{"version":"0.2.15"}}}' ;;
-  */v1/versions) echo '{"api_version":{"version":"","commit":""},"node_version":{"version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"}}' ;;
+  */v1/versions) printf '{"api_version":{"version":"%s","commit":"%s"},"node_version":{"version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"}}\n' "${GDC_TEST_API_BUILD_VERSION:-}" "${GDC_TEST_API_BUILD_COMMIT:-}" ;;
   *) exit 22 ;;
 esac
 EOF
@@ -142,4 +147,40 @@ if PATH="$tmp/bin:$PATH" GDC_TEST_DEPLOY="$deploy" GDC_TEST_DAPI_COMMIT=aaaaaaaa
 fi
 grep -Fq 'canonical_dapi_receipt_mismatch:' "$tmp/commit.err"
 
-printf 'PASS repeated JOIN no-op binds generated profile, exact DAPI image and canonical runtime readback\n'
+# A completed portable Host: the rendered deployment names the operator-built
+# DAPI and no archive. The readback accepts it only under the same declaration
+# that rendered it, and still takes version and commit from the running DAPI.
+portable_image="local/portable-dapi@sha256:$(printf '9%.0s' {1..64})"
+printf 'GDC_PROFILE_KIND=generated_join\nDAPI_IMAGE=%s\nDAPI_UPGRADE_URL=\nDAPI_UPGRADE_SHA256=\nINFERENCED_IMAGE=%s\n' "$portable_image" "$core_image" >"$deploy/.env"
+portable_readback() {
+  PATH="$tmp/bin:$PATH" GDC_TEST_DEPLOY="$deploy" GDC_TEST_DAPI_RECEIPT=absent \
+    GDC_TEST_API_BUILD_VERSION=0.2.15-post3 GDC_TEST_API_BUILD_COMMIT="$dapi_commit" \
+    "$ROOT/scripts/verify-complete-join-state.sh" node-a "$tmp/profile.json" "$tmp/receipt.json"
+}
+GDC_PORTABLE_DAPI_IMAGE="$portable_image" portable_readback >"$tmp/portable.out"
+grep -Fq "bound to generated profile=$profile_sha256 dapi_image=$portable_image" "$tmp/portable.out"
+grep -Fq 'dapi_source=image' "$tmp/portable.out"
+if portable_readback >"$tmp/undeclared.out" 2>"$tmp/undeclared.err"; then
+  echo 'portable deployment unexpectedly accepted without its declaration' >&2; exit 1
+fi
+grep -Fq 'completed_dapi_image_mismatch:' "$tmp/undeclared.err"
+# The declaration decides the mode in both directions: a portable declaration
+# does not cover a deployment that names an archive, and without a declaration
+# an emptied archive digest cannot select the image path of the verifier.
+sed -i "s#^DAPI_UPGRADE_SHA256=.*#DAPI_UPGRADE_SHA256=$(printf 'e%.0s' {1..64})#" "$deploy/.env"
+if GDC_PORTABLE_DAPI_IMAGE="$portable_image" portable_readback >"$tmp/declared-archive.out" 2>"$tmp/declared-archive.err"; then
+  echo 'portable declaration unexpectedly covered a deployment that names an archive' >&2; exit 1
+fi
+grep -Fq 'completed_dapi_archive_mismatch:' "$tmp/declared-archive.err"
+printf 'GDC_PROFILE_KIND=generated_join\nDAPI_IMAGE=%s\nDAPI_UPGRADE_URL=\nDAPI_UPGRADE_SHA256=\nINFERENCED_IMAGE=%s\n' "$dapi_image" "$core_image" >"$deploy/.env"
+if portable_readback >"$tmp/emptied.out" 2>"$tmp/emptied.err"; then
+  echo 'undeclared deployment with an emptied archive digest unexpectedly verified' >&2; exit 1
+fi
+grep -Fq 'completed_dapi_archive_mismatch:' "$tmp/emptied.err"
+printf 'GDC_PROFILE_KIND=generated_join\nDAPI_IMAGE=%s\nDAPI_UPGRADE_URL=\nDAPI_UPGRADE_SHA256=\nINFERENCED_IMAGE=%s\n' "$portable_image" "$core_image" >"$deploy/.env"
+if GDC_PORTABLE_DAPI_IMAGE='local/portable-dapi:latest' portable_readback >"$tmp/tagged.out" 2>"$tmp/tagged.err"; then
+  echo 'a tag-only portable declaration unexpectedly bound the readback' >&2; exit 1
+fi
+grep -Fq 'completed JOIN readback has invalid retained identity or profile' "$tmp/tagged.err"
+
+printf 'PASS repeated JOIN no-op binds generated profile, exact or declared portable DAPI image and canonical runtime readback\n'

@@ -78,3 +78,31 @@ if "$RESOLVE" --observation "$tmp/mismatch.json" --components "$tmp/components.j
 fi
 grep -Fq 'join_profile_resolution_component:' "$tmp/rejected.err"
 printf 'PASS Join Profile binds selected seed tuple and target before lineage preflight\n'
+
+# A portable runtime replaces both chain images or neither.
+load_join_profile_with() {
+  env -u GDC_PORTABLE_CORE_IMAGE -u GDC_PORTABLE_DAPI_IMAGE "$@" bash -c '
+    set -Eeuo pipefail
+    . "$0"
+    load_join_profile "$1"
+    printf "%s %s\n" "$INFERENCED_IMAGE" "$DAPI_IMAGE"
+  ' "$ROOT/scripts/profile.sh" "$tmp/new.json"
+}
+portable_core="local/gonka-inferenced@sha256:$(printf '%064d' 0 | tr 0 a)"
+portable_dapi="local/gonka-api@sha256:$(printf '%064d' 0 | tr 0 b)"
+if load_join_profile_with GDC_PORTABLE_DAPI_IMAGE="$portable_dapi" >"$tmp/half.out" 2>"$tmp/half.err"; then
+  echo 'a portable DAPI image was accepted without a portable Core image' >&2
+  exit 1
+fi
+grep -Fq 'must be declared together' "$tmp/half.err"
+if load_join_profile_with GDC_PORTABLE_CORE_IMAGE="$portable_core" >"$tmp/half.out" 2>"$tmp/half.err"; then
+  echo 'a portable Core image was accepted without a portable DAPI image' >&2
+  exit 1
+fi
+grep -Fq 'must be declared together' "$tmp/half.err"
+observed="$(load_join_profile_with GDC_PORTABLE_CORE_IMAGE="$portable_core" GDC_PORTABLE_DAPI_IMAGE="$portable_dapi" 2>/dev/null)"
+[[ "$observed" == "$portable_core $portable_dapi" ]] || {
+  echo "both portable images must replace the profile images, got: $observed" >&2
+  exit 1
+}
+printf 'PASS portable runtime is declared for both chain images or neither\n'

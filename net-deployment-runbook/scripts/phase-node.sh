@@ -77,8 +77,78 @@ wait_for_node_sync() {
   die "$NODE did not catch up within ${GDC_NODE_START_WAIT_SECONDS:-300}s"
 }
 
+# Registration of the local cold account on the chain, read through the
+# public API of the Bootstrap seeds retained by the last JOIN attempt.
+# Prints registered, absent, or unknown:<reason>. Reads only; a seed that
+# cannot answer is skipped, a 5xx is retried once.
+participant_registration() {
+  local node="$1" account bootstrap address api body status attempt curl_exit
+  # Reset loads no role input, so the project path variables are not set:
+  # derive the two files from the data home directly.
+  account="$GDC_HOME/accounts/$node-cold.json"
+  bootstrap="$STATE/network-bootstrap.json"
+  [[ -s "$account" && ! -L "$account" ]] || { printf 'unknown:no_cold_account\n'; return 0; }
+  address="$(jq -r '.address // empty' "$account" 2>/dev/null || true)"
+  [[ "$address" =~ ^gonka1[0-9a-z]{38}$ ]] || { printf 'unknown:invalid_cold_account\n'; return 0; }
+  [[ -s "$bootstrap" && ! -L "$bootstrap" ]] || { printf 'unknown:no_bootstrap\n'; return 0; }
+  body="$(mktemp)"
+  while read -r api; do
+    [[ "$api" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || continue
+    for attempt in 1 2; do
+      curl_exit=0
+      status="$(curl -sS --connect-timeout 10 --max-time 30 -o "$body" -w '%{http_code}' "$api/v2/participants/$address" 2>/dev/null)" || curl_exit=$?
+      if (( curl_exit == 0 )); then
+        case "$status" in
+          200)
+            if jq -e --arg address "$address" '.participant.address == $address' "$body" >/dev/null 2>&1; then
+              rm -f "$body"; printf 'registered\n'; return 0
+            fi
+            break ;;
+          404) rm -f "$body"; printf 'absent\n'; return 0 ;;
+        esac
+        [[ "$status" =~ ^5 ]] || break
+      fi
+      (( attempt < 2 )) && sleep 1
+    done
+  done < <(jq -r '.seeds[] | .api // empty' "$bootstrap" 2>/dev/null || true)
+  rm -f "$body"
+  printf 'unknown:endpoint_unavailable\n'
+}
+
+# Which validator identity roots the Host holds: v2 (stable roots outside the
+# deployment), v1 (signer below the deployment root that reset removes), or
+# none. Read-only.
+host_identity_layout() {
+  local node="$1" layout
+  layout="$(ssh -T "$node" "bash -s gdc-identity-layout '$node'" <<'REMOTE'
+node="$2"
+if [ -d "/srv/dai/signer/$node/tmkms" ] || [ -s "/srv/dai/identity/$node/p2p/node_key.json" ]; then echo v2
+elif [ -d "/srv/dai/$node/tmkms" ]; then echo v1
+else echo none
+fi
+REMOTE
+)"
+  [[ "$layout" =~ ^(v2|v1|none)$ ]] || layout=unknown
+  printf '%s\n' "$layout"
+}
+
+# Move the local identity record and cold account aside so the next JOIN
+# classifies as new. Mnemonics stay: they are the recovery secret.
+discard_local_identity() {
+  local node="$1" stamp="$2" dir file moved=0
+  dir="$STATE/recovery-partial-$stamp"
+  for file in "$STATE/identities/$node.json" "$GDC_HOME/accounts/$node-cold.json"; do
+    [[ -e "$file" && ! -L "$file" ]] || continue
+    install -d -m 0700 "$dir"
+    mv -- "$file" "$dir/"
+    moved=$((moved + 1))
+  done
+  printf '%s\n' "$moved"
+}
+
 reset_node() {
   local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias backup_archive
+  local registration layout stamp discarded
   linked_ml_host=''
   source=''
   backup_archive="$GDC_DATA_ROOT/$NODE-validator-backup.tar"
@@ -206,14 +276,71 @@ rm -rf -- \
 REMOTE
   }
 
+  # Reset is symmetric only for a validator key the chain does not know.
+  # Decide before anything is stopped or deleted: a registered key is never
+  # deleted, on the Host or locally; an unregistered one is archived and
+  # cleared below so the next JOIN starts as new; an unanswered lookup keeps
+  # everything. Without a local cold account there is nothing to look up.
+  registration="$(participant_registration "$NODE")"
+  layout=none
+  stamp=''
+  if [[ "$registration" != unknown:no_cold_account ]]; then
+    layout="$(host_identity_layout "$NODE")"
+    if [[ "$registration" != absent ]]; then
+      case "$layout" in
+        v1) die "$NODE keeps its signer below the deployment root that reset removes, and its participant registration is $registration; create the validator archive with gdc host backup and rerun reset when the public API confirms the key is unregistered; no reset was performed" ;;
+        unknown) die "$NODE identity layout could not be read while its participant registration is $registration; no reset was performed" ;;
+      esac
+    fi
+  fi
   step "Reset $NODE deployment state and remove deployed containers"
   bash "$ROOT/scripts/same-host-restore.sh" capture "$NODE"
+  if [[ "$registration" == absent && "$layout" != none ]]; then
+    # Archive before the deployment root goes: a v1 signer lives inside it.
+    # The stable v2 roots survive an ordinary reset, so remove them here.
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    ssh -T "$NODE" "bash -s gdc-identity-discard '$NODE' '$stamp'" <<'REMOTE'
+set -Eeuo pipefail
+node="$2"; stamp="$3"
+umask 077
+members=()
+[ ! -d "/srv/dai/identity/$node" ] || members+=("identity/$node")
+[ ! -d "/srv/dai/signer/$node" ] || members+=("signer/$node")
+[ ! -d "/srv/dai/$node/tmkms" ] || members+=("$node/tmkms")
+[ "${#members[@]}" -gt 0 ] || exit 0
+install -d -m 0700 "/srv/dai/rejoin/$node"
+tar -C /srv/dai -cf "/srv/dai/rejoin/$node/discarded-$stamp.tar" "${members[@]}"
+chmod 0600 "/srv/dai/rejoin/$node/discarded-$stamp.tar"
+rm -rf "/srv/dai/identity/$node" "/srv/dai/signer/$node"
+REMOTE
+  fi
   # The public edge is an OPS-owned service. Resetting its validator must not
   # also remove the Caddy instance that owns the public site, API and Grafana.
   reset_remote_host "$NODE"
   if [[ -e "$STATE/joined/$NODE" ]]; then
     rm -f "$STATE/joined/$NODE"
   fi
+  case "$registration" in
+    absent)
+      [[ -n "$stamp" ]] || stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+      discarded="$(discard_local_identity "$NODE" "$stamp")"
+      if [[ "$layout" != none ]]; then
+        printf 'PASS %s identity discarded: the participant is not registered on chain; %s local file(s) moved to state/recovery-partial-%s, Host identity archived under rejoin/%s/discarded-%s.tar and removed; the next JOIN starts as new\n' \
+          "$NODE" "$discarded" "$stamp" "$NODE" "$stamp"
+      else
+        printf 'PASS %s identity discarded: the participant is not registered on chain; %s local file(s) moved to state/recovery-partial-%s, the Host held no validator identity; the next JOIN starts as new\n' \
+          "$NODE" "$discarded" "$stamp"
+      fi
+      ;;
+    registered)
+      printf 'READY %s participant is registered on chain; identity and signer are retained on the Host and locally; recover with gdc host join --restore\n' "$NODE"
+      ;;
+    unknown:no_cold_account)
+      ;;
+    unknown:*)
+      printf 'READY %s participant registration is unknown (%s); identity and signer are retained; rerun reset when the public API answers to discard an unregistered identity\n' "$NODE" "${registration#unknown:}"
+      ;;
+  esac
   # The operator recovery archive deliberately lives at the data root rather
   # than inside the reset node directory. Confirm that a reset retained it,
   # without logging the archive's potentially private local path.

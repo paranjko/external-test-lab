@@ -76,4 +76,34 @@ jq -cn --arg sha "$(sha256sum "$retry/join-profile.v1.json" | awk '{print $1}')"
 "$ROOT/scripts/record-join-result.sh" --output "$retry/join-result.v1.json" --input "$tmp/retry-result.json" >/dev/null
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$retry" --current-profile "$profile")"
 jq -e '.classification == "preflight_retry_allowed"' <<<"$result" >/dev/null
-printf 'PASS completed JOIN re-entry is no-op-only and partial runs require receipt-bound resume\n'
+
+# A run that refused at classification recorded a REFUSED receipt and a
+# terminal result with mutation=none: the next normal invocation classifies
+# the Host afresh instead of demanding manual recovery.
+refused="$tmp/refused"
+mkdir -p "$refused/receipts"
+install -m 0600 "$profile" "$refused/join-profile.v1.json"
+refused_sha="$(sha256sum "$refused/join-profile.v1.json" | awk '{print $1}')"
+[[ "$refused_sha" == "$sha" ]]
+jq -c '.run_id = "refused" | .generation_id = "refused" | .state = "JOIN_PROFILE_READY" | .signer_ever_started = false' "$receipt" >"$tmp/refused-ready.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$refused/receipts" --input "$tmp/refused-ready.json" >/dev/null
+jq -c '.state = "REFUSED" | .outcome = "refused" | .resume_policy = "new_profile"' "$tmp/refused-ready.json" >"$tmp/refused-stop.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$refused/receipts" --input "$tmp/refused-stop.json" >/dev/null
+jq -cn --arg sha "$refused_sha" '{schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"identity",category:"identity",reason:"partial_identity",exit_code:1,mutation:"none",signer_state:"absent",resume:"manual_recovery",join_profile_sha256:$sha,evidence:[]}' >"$tmp/refused-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$refused/join-result.v1.json" --input "$tmp/refused-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$refused" --current-profile "$profile")"
+jq -e '.classification == "refused_before_mutation" and .reason == "refused_partial_identity"' <<<"$result" >/dev/null
+# The launcher fallback for a phase that died without its own result claims
+# signer_may_be_on: such a run keeps requiring manual recovery.
+jq -cn --arg sha "$refused_sha" '{schema_version:1,kind:"gdc-host-join-result",outcome:"failed",phase:"signer",category:"internal",reason:"join_phase_failed",exit_code:1,mutation:"signer_may_be_on",signer_state:"unknown",resume:"automatic_retry_forbidden",join_profile_sha256:$sha,evidence:[]}' >"$tmp/fallback-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$refused/join-result.v1.json" --input "$tmp/fallback-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$refused" --current-profile "$profile")"
+jq -e '.classification == "manual_recovery_required"' <<<"$result" >/dev/null
+# A refusal recorded after Host changes began is not a fresh start either:
+# the receipt chain must end in REFUSED.
+"$ROOT/scripts/record-join-result.sh" --output "$run/join-result.v1.json" --input "$tmp/refused-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$run" --current-profile "$profile")"
+jq -e '.classification == "manual_recovery_required"' <<<"$result" >/dev/null
+grep -Fq 'refused_before_mutation)' "$ROOT/gdc.sh"
+grep -Fq 'stopped before any Host change; classifying the Host afresh' "$ROOT/gdc.sh"
+printf 'PASS completed JOIN re-entry is no-op-only, preflight and classification refusals restart, partial runs require receipt-bound resume\n'

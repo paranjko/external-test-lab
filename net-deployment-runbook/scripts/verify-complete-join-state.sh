@@ -18,6 +18,16 @@ core_commit="$(jq -er '.spec.components.core.expected_runtime.commit' "$profile"
 dapi_version="$(jq -er '.spec.components.dapi.expected_runtime.version' "$profile")"
 dapi_commit="$(jq -er '.spec.components.dapi.expected_runtime.commit' "$profile")"
 dapi_image="$(jq -er '.spec.components.dapi.installation.image | .repository + "@" + .digest' "$profile")"
+dapi_archive_sha256="$(jq -er '.spec.components.dapi.installation.binary.sha256' "$profile")"
+# An operator-built portable DAPI replaces the profile image in the rendered
+# deployment and names no archive, see PORTABLE-RUNTIME.md. The declaration
+# that rendered it decides that here as well: without it the profile image and
+# archive digest are required, so an emptied .env cannot select the image path
+# of the canonical verifier. The closed grammar below applies to both values.
+if [[ -n "${GDC_PORTABLE_DAPI_IMAGE:-}" ]]; then
+  dapi_image="$GDC_PORTABLE_DAPI_IMAGE"
+  dapi_archive_sha256=''
+fi
 profile_sha256="$(sha256sum "$profile" | awk '{print $1}')"
 p2p_node_id="$(jq -er '.identity_fingerprints.p2p_node_id | select(test("^[a-f0-9]{40}$"))' "$receipt")"
 [[ "$chain_id" =~ ^[a-z0-9][a-z0-9-]{0,127}$ \
@@ -26,6 +36,7 @@ p2p_node_id="$(jq -er '.identity_fingerprints.p2p_node_id | select(test("^[a-f0-
   && "$dapi_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ \
   && "$dapi_commit" =~ ^[0-9a-f]{40}$ \
   && "$dapi_image" =~ ^[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}$ \
+  && "$dapi_archive_sha256" =~ ^([0-9a-f]{64})?$ \
   && "$profile_sha256" =~ ^[0-9a-f]{64}$ ]] || {
   echo 'completed JOIN readback has invalid retained identity or profile' >&2; exit 1;
 }
@@ -41,7 +52,10 @@ test \"\$(cat \"\$deploy/.gdc-join-profile\")\" = '$profile_sha256' \\
   || { echo 'completed_join_profile_mismatch: remote generated JOIN marker differs from the retained profile' >&2; exit 1; }
 rendered_dapi_image=\"\$(awk -F= '\$1 == \"DAPI_IMAGE\" {print substr(\$0, index(\$0, \"=\") + 1); exit}' \"\$deploy/.env\")\"
 test \"\$rendered_dapi_image\" = '$dapi_image' \\
-  || { echo 'completed_dapi_image_mismatch: remote DAPI image differs from the retained generated profile' >&2; exit 1; }
+  || { echo 'completed_dapi_image_mismatch: remote DAPI image differs from the retained generated profile or the declared portable runtime' >&2; exit 1; }
+rendered_dapi_archive=\"\$(awk -F= '\$1 == \"DAPI_UPGRADE_SHA256\" {print substr(\$0, index(\$0, \"=\") + 1); exit}' \"\$deploy/.env\")\"
+test \"\$rendered_dapi_archive\" = '$dapi_archive_sha256' \\
+  || { echo 'completed_dapi_archive_mismatch: remote DAPI archive digest differs from the retained profile or the declared portable runtime' >&2; exit 1; }
 test -x \"\$deploy/verify-canonical-join-state.sh\" \\
   || { echo 'completed_join_verifier_unavailable: canonical JOIN verifier is not installed' >&2; exit 1; }
 cd \"\$deploy\"
