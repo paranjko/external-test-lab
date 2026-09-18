@@ -138,10 +138,9 @@ Edit these fields in `settings.json`, leave everything else as it came:
 ```
 
 - `access_mode`: `open` / `api_key` / `admin_only`. One entry per model you serve.
-- `max_concurrent_requests_per_10000_weight` is how hard you push each host.
-  Stock is 5. Raising it (10–20) gives more throughput but more host-side
-  misses; start stock and tune with your accounting numbers.
+- `max_concurrent_requests_per_10000_weight` is how hard you push each host. Use 5 (stock).
 - Keep both `escrow_rotation` flags `false`.
+- Do not set `escrow_rotation.settlement_enabled` to `true`.
 
 ```bash
 curl -fsS -X POST $A/v1/admin/settings -H "$H" -H 'Content-Type: application/json' --data-binary @settings.json
