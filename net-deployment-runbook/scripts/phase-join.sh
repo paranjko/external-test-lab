@@ -553,7 +553,9 @@ ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-canonical-join-state.sh '/srv/
 ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json'"
 record_join_transition CANONICAL_VERIFIED
 if [[ "$NODE" != "$PUBLIC_EDGE_NODE" ]]; then
-  start_stack "$NODE" "/srv/dai/deploy/$NODE/edge"
+  # A participant edge is Caddy only: gateway-admission belongs to the shared
+  # gateway, and its script is installed only by `gateway apply`.
+  start_stack "$NODE" "/srv/dai/deploy/$NODE/edge" caddy
 else
   printf 'READY retained shared public edge on %s during participant JOIN\n' "$NODE"
 fi

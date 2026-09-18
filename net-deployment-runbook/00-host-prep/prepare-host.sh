@@ -122,7 +122,7 @@ rm -f "$DAEMON_TMP"
 # and asks for another reboot. Install the modules of the selected driver
 # branch for every installed kernel that the archive serves.
 ensure_nvidia_modules_for_installed_kernels() {
-  local meta branch kernel package running
+  local meta branch kernel package running refreshed=false
   meta="$(dpkg-query -W -f='${Package} ${db:Status-Abbrev}\n' 'linux-modules-nvidia-*' 2>/dev/null \
     | awk '$2 ~ /^ii/ && $1 ~ /^linux-modules-nvidia-[0-9]+(-server)?(-open)?-generic$/ {print $1; exit}' || true)"
   [[ -n "$meta" ]] || return 0
@@ -134,12 +134,27 @@ ensure_nvidia_modules_for_installed_kernels() {
     if dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null | grep -q '^ii'; then
       continue
     fi
+    # This can be the first apt action of a run on an already prepared Host.
+    if [[ "$refreshed" == false ]]; then
+      apt-get update || status "WARN  package lists were not refreshed"
+      refreshed=true
+    fi
     if ! apt-cache show "$package" >/dev/null 2>&1; then
       status "SKIP  no NVIDIA $branch modules packaged for kernel $kernel"
       continue
     fi
+    # The archive can pin the modules of an older kernel to a driver build
+    # other than the installed one. Only that resolver refusal is skipped, and
+    # only for a kernel the Host will not boot next; every other failure, and
+    # any failure for the running or a newer kernel, still ends prepare.
+    if [[ "$kernel" != "$running" ]] && dpkg --compare-versions "$kernel" lt "$running" \
+      && ! apt-get install -s -o Debug::NoLocking=true "$package" >/dev/null 2>&1; then
+      status "SKIP  NVIDIA $branch modules for older kernel $kernel do not resolve next to the installed driver"
+      continue
+    fi
     status "INSTALL  NVIDIA $branch modules for kernel $kernel"
-    apt-get install -y "$package"
+    # Explicit, so the failure ends prepare in every calling context.
+    apt-get install -y "$package" || return 1
     [[ "$kernel" != "$running" ]] || DRIVER_CHANGED=true
   done < <(dpkg-query -W -f='${Package} ${db:Status-Abbrev}\n' 'linux-image-[0-9]*-generic' 2>/dev/null \
     | awk '$2 ~ /^ii/ {sub(/^linux-image-/, "", $1); print $1}' || true)
