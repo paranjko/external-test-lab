@@ -28,7 +28,7 @@ ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/gov/v1/proposals/$pr
 proposal_status="$(jq -er '.proposal.status' "$RUN/proposal-before.json")"
 proposal_metadata="$(jq -er '.proposal.metadata // ""' "$RUN/proposal-before.json")"
 devshard_update=false
-if jq -e '
+if [[ "$proposal_metadata" == gdc-devshard-v1:* ]] && jq -e '
   any(.proposal.messages[]?;
     .["@type"] == "/inference.inference.MsgUpdateParams")
 ' "$RUN/proposal-before.json" >/dev/null; then

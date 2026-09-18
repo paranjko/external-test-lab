@@ -79,9 +79,34 @@ wait_for_node_sync() {
 
 reset_node() {
   local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias backup_archive
+  local local_identity local_account local_joined join_classification join_class active_run_id active_join_result
   linked_ml_host=''
   source=''
   backup_archive="$GDC_DATA_ROOT/$NODE-validator-backup.tar"
+  local_identity="$(node_identity_file "$NODE")"
+  local_account="$(node_account_file "$NODE")"
+  local_joined="$(node_joined_marker "$NODE")"
+  join_classification="$("$ROOT/scripts/classify-join-state.sh" \
+    "$local_identity" "$local_account" "$local_joined" '')"
+  join_class="$(jq -er .classification <<<"$join_classification")"
+  # The joined marker is written before final signer readback.  A failed JOIN
+  # can therefore look locally complete even though its terminal receipt says
+  # otherwise.  Reset must not preserve that unusable identity and then turn a
+  # subsequent fresh JOIN into a partial-identity refusal.
+  # The launcher writes this reset invocation's ID to active-run-id before it
+  # dispatches the phase. It preserves the prior JOIN ID separately so an
+  # incomplete JOIN can be recognized and cleared for a genuinely fresh JOIN.
+  active_run_id="${GDC_RESET_PREVIOUS_RUN_ID:-$(cat "$STATE/active-run-id" 2>/dev/null || true)}"
+  active_join_result=''
+  if [[ "$active_run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+    active_join_result="$GDC_HOME/runs/$active_run_id/join-$NODE/join-result.v1.json"
+  fi
+  if [[ "$join_class" == running_matched && -n "$active_join_result" \
+    && -f "$active_join_result" && ! -L "$active_join_result" \
+    && "$(jq -r '.outcome // empty' "$active_join_result" 2>/dev/null)" != succeeded ]]; then
+    join_class=partial_identity
+    printf 'READY %s retained identity belongs to an incomplete JOIN run; resetting it for fresh JOIN\n' "$NODE"
+  fi
   endpoint="$(ssh -T "$NODE" "jq -r '.[]?.host // empty' /srv/dai/deploy/$NODE/node-config.json 2>/dev/null" 2>/dev/null | head -n 1 || true)"
 
   # `phase-ml-attach.sh` records this relationship in the operator state. It
@@ -123,7 +148,7 @@ reset_node() {
 
   reset_remote_host() {
     local host="$1"
-    ssh -T "$host" "NODE='$host' bash -s" <<'REMOTE'
+    ssh -T "$host" "NODE='$host' GDC_RESET_PARTIAL_IDENTITY='${GDC_RESET_PARTIAL_IDENTITY:-false}' bash -s" <<'REMOTE'
 set -Eeuo pipefail
 
 systemctl disable --now "gdc-poc-winddown-watch@$NODE.service" >/dev/null 2>&1 || true
@@ -198,11 +223,20 @@ remove_compose_project "$NODE"
 remove_compose_project "gdc-monitoring-agent-$NODE"
 remove_compose_project "gdc-edge-$NODE"
 
+# Stable identity removal is intentionally ordered after every managed
+# deployment has been torn down. A signer container must not retain a bind
+# mount or keep signing while incomplete identity material is discarded.
+[[ -z "$(docker ps -q --filter "label=com.docker.compose.project=$NODE" --filter label=com.docker.compose.service=tmkms)" ]] \
+  || { printf 'ERROR managed signer is still running for %s\n' "$NODE" >&2; exit 1; }
 rm -rf -- \
   "/srv/dai/deploy/$NODE" \
   "/srv/dai/$NODE" \
   "/tmp/gdc-deploy-"*-"$NODE" \
   "/tmp/gdc-reset-"*-"$NODE"
+if [[ "${GDC_RESET_PARTIAL_IDENTITY:-false}" == true ]]; then
+  rm -rf -- "/srv/dai/identity/$NODE" "/srv/dai/signer/$NODE"
+  rm -f -- "/srv/dai/identity-bootstrap/$NODE.json"
+fi
 REMOTE
   }
 
@@ -210,9 +244,13 @@ REMOTE
   bash "$ROOT/scripts/same-host-restore.sh" capture "$NODE"
   # The public edge is an OPS-owned service. Resetting its validator must not
   # also remove the Caddy instance that owns the public site, API and Grafana.
-  reset_remote_host "$NODE"
-  if [[ -e "$STATE/joined/$NODE" ]]; then
-    rm -f "$STATE/joined/$NODE"
+  GDC_RESET_PARTIAL_IDENTITY="$([[ "$join_class" == partial_identity ]] && printf true || printf false)" \
+    reset_remote_host "$NODE"
+  if [[ "$join_class" == partial_identity ]]; then
+    rm -f -- "$local_identity" "$local_account" "$local_joined"
+    printf 'READY removed incomplete local and remote identity state for %s\n' "$NODE"
+  elif [[ -e "$local_joined" ]]; then
+    rm -f -- "$local_joined"
   fi
   # The operator recovery archive deliberately lives at the data root rather
   # than inside the reset node directory. Confirm that a reset retained it,

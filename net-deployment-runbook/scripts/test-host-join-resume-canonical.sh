@@ -17,7 +17,7 @@ grep -Fq 'if [[ "$NODE" != "$PUBLIC_EDGE_NODE" ]]; then' "$resume"
 grep -Fq 'jq -er .identity_fingerprints.participant_address "$head"' "$resume"
 grep -Fq 'signer is already running' "$resume"
 grep -Fq 'without reset or re-sync' "$resume"
-if rg -n '(host reset|start-node\.sh --canary|promote-state-sync-generation)' "$resume"; then
+if grep -En '(host reset|start-node\.sh --canary|promote-state-sync-generation)' "$resume"; then
   echo 'canonical resume must not reset, re-sync, or promote state again' >&2
   exit 1
 fi

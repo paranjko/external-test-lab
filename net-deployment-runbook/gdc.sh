@@ -501,7 +501,7 @@ See the role guides for required input, then run:
   ./gdc.sh report github
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
-  ./gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
@@ -1224,6 +1224,15 @@ case "$COMMAND" in
     # and processing stops at the first failed host.
     for node_alias in "$@"; do
       use_node_data_home "$node_alias"
+      if [[ "$node_action" == reset ]]; then
+        reset_previous_run_id="$(cat "$STATE/active-run-id" 2>/dev/null || true)"
+        [[ -z "$reset_previous_run_id" || "$reset_previous_run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+          echo "host reset found an unsafe retained active run identifier for $node_alias" >&2; exit 2;
+        }
+        export GDC_RESET_PREVIOUS_RUN_ID="$reset_previous_run_id"
+      else
+        unset GDC_RESET_PREVIOUS_RUN_ID
+      fi
       run_phase "node-$node_action-$node_alias" "$ROOT/scripts/phase-node.sh" "$node_action" "$node_alias"
     done
     ;;
@@ -1319,9 +1328,13 @@ case "$COMMAND" in
     esac
     ;;
   join)
+    # A caller's inherited environment must never turn an ordinary JOIN into
+    # a participant-key replacement. Only the explicit CLI option below may
+    # grant that capability for this invocation.
+    unset GDC_JOIN_REBIND_EXISTING_PARTICIPANT
     join_source_rpc='' join_pex=''
     join_source_args=()
-    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_chain_id=gonka-devnet-community join_preflight_deadline="${GDC_JOIN_PREFLIGHT_DEADLINE:-30m}" skip_qualification=false verification=false plan_only=false
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_mnemonic_file='' join_mnemonic_prompt=false join_chain_id=gonka-devnet-community join_preflight_deadline="${GDC_JOIN_PREFLIGHT_DEADLINE:-30m}" skip_qualification=false verification=false plan_only=false
     # JOIN derives its exact compatible runtime from the first healthy
     # Bootstrap seed. An operator-selected release or composition could
     # otherwise turn retained evidence into a software authority.
@@ -1336,6 +1349,16 @@ case "$COMMAND" in
         --skip-qualification) skip_qualification=true ;;
         --verification) verification=true ;;
         --plan) plan_only=true ;;
+        --mnemonic-prompt) join_mnemonic_prompt=true ;;
+        --mnemonic-file)
+          [[ -z "$join_mnemonic_file" && -n "${2:-}" ]] || { echo 'host join --mnemonic-file expects one non-empty path' >&2; exit 2; }
+          join_mnemonic_file="$2"
+          shift
+          ;;
+        --mnemonic-file=*)
+          [[ -z "$join_mnemonic_file" && -n "${1#--mnemonic-file=}" ]] || { echo 'host join --mnemonic-file expects one non-empty path' >&2; exit 2; }
+          join_mnemonic_file="${1#--mnemonic-file=}"
+          ;;
         --preflight-deadline)
           [[ -n "${2:-}" ]] || { echo 'host join --preflight-deadline requires a positive duration such as 30m' >&2; exit 2; }
           join_preflight_deadline="$2"; shift ;;
@@ -1418,12 +1441,48 @@ case "$COMMAND" in
       echo 'host join does not accept an externally authored signer-fence receipt: independent prior-Host evidence is not implemented' >&2
       exit 2
     }
+    if [[ "$join_mnemonic_prompt" == true && -n "$join_mnemonic_file" ]]; then
+      echo 'Error: --mnemonic-prompt and --mnemonic-file are mutually exclusive' >&2
+      exit 1
+    fi
+    [[ "$join_mnemonic_prompt" != true && -z "$join_mnemonic_file" || -z "$join_restore_archive" ]] || {
+      echo 'host join mnemonic recovery cannot be combined with --restore; a validator archive already restores its original cold account and signer' >&2
+      exit 2
+    }
     [[ "$join_alias" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "invalid Host SSH alias: $join_alias (use lowercase letters, digits, _ or -)" >&2; exit 2; }
     if [[ -n "$join_gpu_alias" ]]; then
       [[ "$join_gpu_alias" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "invalid GPU SSH alias: $join_gpu_alias (use lowercase letters, digits, _ or -)" >&2; exit 2; }
       [[ "$join_gpu_alias" != "$join_alias" ]] || { echo 'Host and GPU SSH aliases must be different' >&2; exit 2; }
     fi
     use_node_data_home "$join_alias"
+    if [[ ( "$join_mnemonic_prompt" == true || -n "$join_mnemonic_file" ) && "$plan_only" != true ]]; then
+      # The mnemonic is read only on the operator machine, then retained as a
+      # local mode-0600 recovery file. A new account follows ordinary
+      # registration; an existing participant is explicitly rebound to the
+      # newly generated TMKMS signer.
+      join_mnemonic_input_args=()
+      if [[ "$join_mnemonic_prompt" == true ]]; then
+        join_mnemonic_input_args+=(--mnemonic-prompt)
+      else
+        join_mnemonic_input_args+=(--mnemonic-file "$join_mnemonic_file")
+      fi
+      join_cold_mnemonic="$("$ROOT/scripts/read-join-mnemonic.sh" "${join_mnemonic_input_args[@]}")"
+      unset join_mnemonic_input_args
+      join_mnemonic_dir="$GDC_HOME/mnemonics"
+      install -d -m 0700 "$join_mnemonic_dir"
+      join_mnemonic_file="$join_mnemonic_dir/$join_alias-cold.mnemonic"
+      if [[ -e "$join_mnemonic_file" ]]; then
+        [[ -f "$join_mnemonic_file" && ! -L "$join_mnemonic_file" ]] || { echo 'host join refuses an unsafe existing cold mnemonic path' >&2; exit 2; }
+        [[ "$(<"$join_mnemonic_file")" == "$join_cold_mnemonic" ]] || { echo 'host join --mnemonic disagrees with the retained cold mnemonic for this Host' >&2; exit 2; }
+      else
+        umask 077
+        printf '%s\n' "$join_cold_mnemonic" >"$join_mnemonic_file"
+        chmod 0600 "$join_mnemonic_file"
+      fi
+      unset join_cold_mnemonic
+      GDC_JOIN_REBIND_EXISTING_PARTICIPANT=true
+      export GDC_JOIN_REBIND_EXISTING_PARTICIPANT
+    fi
     acquire_operator_lock
     # Preserve the prior controller run before allocating this invocation's
     # evidence directory.  A normal JOIN may only be a no-op after a retained
