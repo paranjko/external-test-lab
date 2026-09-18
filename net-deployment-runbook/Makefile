@@ -229,6 +229,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-gateway-admission-deployment.sh
 	@./scripts/test-suspend-gateway-admission.sh
 	@./scripts/test-firewall-policy.sh
+	@./scripts/test-prepare-nvidia-kernel-modules.sh
 	@./scripts/test-public-grafana-targets.sh
 	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-observer.py
