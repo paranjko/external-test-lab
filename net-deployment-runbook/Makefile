@@ -194,6 +194,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-classify-join-state.sh
 	@./scripts/test-classify-join-reentry.sh
 	@./scripts/test-join-identity-diagnostics.sh
+	@./scripts/test-join-existing-participant-rebind.sh
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
@@ -255,6 +256,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-probe-public-peer.sh
 	@./scripts/test-join-profile.sh
 	@./scripts/test-join-transition-receipts.sh
+	@./scripts/test-read-join-mnemonic.sh
 	@./scripts/test-resolve-join-components.sh
 	@./scripts/test-resolve-join-profile.sh
 	@./scripts/test-host-join-plan.sh
