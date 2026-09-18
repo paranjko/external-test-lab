@@ -247,6 +247,9 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
+	@./scripts/test-inspect-accelerator.sh
+	@./scripts/test-amd-preflight-order.sh
+	@./scripts/test-select-nvidia-driver.sh
 	@./scripts/test-validator-backup-contract.sh
 	@./scripts/test-observe-network-composition.sh
 	@./scripts/test-observe-network-state.sh

@@ -25,6 +25,7 @@ done
 [[ -n "$MONITORING_CIDR" && -n "$OPERATOR_USER" ]] || { usage; exit 2; }
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || { echo "Invalid SSH port" >&2; exit 2; }
 [[ "$GATEWAY_SERVICES" == true || "$GATEWAY_SERVICES" == false ]] || { echo "--gateway-services must be true or false" >&2; exit 2; }
+# shellcheck source=/etc/os-release
 source /etc/os-release
 [[ "$ID" == ubuntu ]] || { echo "Ubuntu required" >&2; exit 1; }
 case "$VERSION_ID" in 22.04|24.04|26.04) ;; *) echo "Supported: Ubuntu 22.04, 24.04, 26.04; got $VERSION_ID" >&2; exit 1;; esac
@@ -37,6 +38,29 @@ case "$VERSION_ID" in 22.04|24.04|26.04) ;; *) echo "Supported: Ubuntu 22.04, 24
   || { echo 'ML client IPv4 CIDR was not derived' >&2; exit 2; }
 [[ -z "$ML_CALLBACK_CIDR" || "$ML_CALLBACK_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] \
   || { echo 'ML callback IPv4 CIDR must be a /32' >&2; exit 2; }
+
+GPU_ROLE=false
+[[ "$ROLE" == network-gpu || "$ROLE" == ml-only ]] && GPU_ROLE=true
+NVIDIA_DRIVER_VERSION=""; NVIDIA_DRIVER_MAJOR=""; NVIDIA_DRIVER_CANDIDATE=""; NVIDIA_UTILS_CANDIDATE=""
+if [[ "$GPU_ROLE" == true ]]; then
+  accelerator_info="$("$(dirname "$0")/inspect-accelerator.sh")" || exit 1
+  accelerator_vendor="$(awk -F= '$1 == "vendor" { print $2 }' <<<"$accelerator_info")"
+  if [[ "$accelerator_vendor" == amd ]]; then
+    printf 'AMD ROCm accelerator is ready for image qualification; the current release profile has no qualified AMD MLNode image\n' >&2
+    exit 1
+  fi
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    NVIDIA_DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 || true)
+  fi
+  NVIDIA_DRIVER_MAJOR="${NVIDIA_DRIVER_VERSION%%.*}"
+  if ! [[ "$NVIDIA_DRIVER_MAJOR" =~ ^[0-9]+$ ]] || (( NVIDIA_DRIVER_MAJOR < MIN_DRIVER )); then
+    NVIDIA_DRIVER_CANDIDATE="$("$(dirname "$0")/select-nvidia-driver.sh" "$MIN_DRIVER")"
+    [[ -n "$NVIDIA_DRIVER_CANDIDATE" ]] || exit 1
+    candidate_major="${NVIDIA_DRIVER_CANDIDATE#nvidia-driver-}"
+    candidate_major="${candidate_major%%-*}"
+    NVIDIA_UTILS_CANDIDATE="nvidia-utils-${candidate_major}"
+  fi
+fi
 
 LOG=/var/log/gdc-prepare.log
 HOST_NAME="$(hostname)"
@@ -116,24 +140,14 @@ jq '
 install -m 0644 "$DAEMON_TMP" "$DAEMON_JSON"
 rm -f "$DAEMON_TMP"
 
-GPU_ROLE=false
-[[ "$ROLE" == network-gpu || "$ROLE" == ml-only ]] && GPU_ROLE=true
 if [[ "$GPU_ROLE" == true ]]; then
-  driver_version=""
-  if command -v nvidia-smi >/dev/null 2>&1; then
-    driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 || true)
-  fi
-  if [[ -z "$driver_version" && -r /proc/driver/nvidia/version ]]; then
-    driver_version=$(sed -n 's/^NVRM version:.*  \([0-9][0-9.]*\)  .*$/\1/p' /proc/driver/nvidia/version | head -n1)
-  fi
-  driver_major=${driver_version%%.*}
-  if [[ "$driver_major" =~ ^[0-9]+$ ]] && (( driver_major >= MIN_DRIVER )); then
-    status "KEEP  NVIDIA driver $driver_version"
+  if [[ -z "$NVIDIA_DRIVER_CANDIDATE" ]]; then
+    status "KEEP  NVIDIA driver $NVIDIA_DRIVER_VERSION"
   else
-    if [[ "$driver_version" =~ ^[0-9]+([.][0-9]+)+$ ]]; then
-      status "INSTALL  NVIDIA driver: $driver_version -> recommended R580+"
+    if [[ "$NVIDIA_DRIVER_VERSION" =~ ^[0-9]+([.][0-9]+)+$ ]]; then
+      status "INSTALL  NVIDIA driver: $NVIDIA_DRIVER_VERSION -> $NVIDIA_DRIVER_CANDIDATE"
     else
-      status "INSTALL  recommended NVIDIA R580+ driver; current driver is unavailable"
+      status "INSTALL  NVIDIA driver $NVIDIA_DRIVER_CANDIDATE; current driver is unavailable"
     fi
     while IFS= read -r dkms_version; do
       dkms_major=${dkms_version%%.*}
@@ -141,8 +155,8 @@ if [[ "$GPU_ROLE" == true ]]; then
         status "REMOVE  stale NVIDIA DKMS $dkms_version"
         dkms remove -m nvidia -v "$dkms_version" --all
       fi
-    done < <(dkms status -m nvidia 2>/dev/null | sed -n 's#^nvidia/\([^,]*\),.*#\1#p' | sort -u)
-    ubuntu-drivers install --gpgpu
+    done < <((dkms status -m nvidia 2>/dev/null || true) | sed -n 's#^nvidia/\([^,]*\),.*#\1#p' | sort -u)
+    ensure_packages "$NVIDIA_DRIVER_CANDIDATE" "$NVIDIA_UTILS_CANDIDATE"
     depmod -a
     update-initramfs -u
     DRIVER_CHANGED=true
@@ -151,8 +165,8 @@ if [[ "$GPU_ROLE" == true ]]; then
   # even though the kernel driver is loaded.  The subsequent verifier needs
   # nvidia-smi, so install the matching utility once the active driver version
   # is known.  A first installation still exits for reboot above.
-  if [[ "$driver_major" =~ ^[0-9]+$ ]]; then
-    ensure_packages "nvidia-utils-${driver_major}-server"
+  if [[ "$NVIDIA_DRIVER_MAJOR" =~ ^[0-9]+$ ]]; then
+    ensure_packages "nvidia-utils-${NVIDIA_DRIVER_MAJOR}-server"
   fi
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
     | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg

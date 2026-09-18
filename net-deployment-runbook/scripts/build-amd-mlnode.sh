@@ -15,7 +15,9 @@ jq -e '
   .sources.gonka.submodules.gorilla.path == "mlnode/packages/train/third_party/gorilla" and
   (.sources.gonka.submodules.gorilla.commit | test("^[0-9a-f]{40}$")) and
   (.sources.vllm.repository | startswith("https://github.com/")) and (.sources.vllm.commit | test("^[0-9a-f]{40}$")) and
-  (.base_image | test("@sha256:[0-9a-f]{64}$")) and (.output_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+$"))
+  (.base_image | test("@sha256:[0-9a-f]{64}$")) and
+  (.output_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+$")) and
+  (.published_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$"))
 ' "$PROFILE" >/dev/null || { echo 'AMD MLNode profile is invalid' >&2; exit 2; }
 
 gonka_repository="$(jq -r .sources.gonka.repository "$PROFILE")"
@@ -27,13 +29,14 @@ vllm_commit="$(jq -r .sources.vllm.commit "$PROFILE")"
 artifact_repository="https://github.com/paranjko/external-test-lab"
 base_image="$(jq -r .base_image "$PROFILE")"
 output_image="$(jq -r .output_image "$PROFILE")"
+published_image="$(jq -r .published_image "$PROFILE")"
 vllm_image="gdc-amd-vllm:${vllm_commit:0:12}-gfx1201"
 
 if [[ "$MODE" == --plan ]]; then
   printf 'PLAN source.gonka=%s@%s\n' "$gonka_repository" "$gonka_commit"
   printf 'PLAN source.gonka.submodule=%s@%s\n' "$gonka_gorilla_path" "$gonka_gorilla_commit"
   printf 'PLAN source.vllm=%s@%s\n' "$vllm_repository" "$vllm_commit"
-  printf 'PLAN base=%s\nPLAN output=%s\n' "$base_image" "$output_image"
+  printf 'PLAN base=%s\nPLAN output=%s\nPLAN published=%s\n' "$base_image" "$output_image" "$published_image"
   exit 0
 fi
 
