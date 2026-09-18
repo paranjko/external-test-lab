@@ -24,5 +24,6 @@
     }
   },
   "base_image": "docker.io/rocm/vllm-dev:base@sha256:3cead535c32c11c59b222bbaa502076b9c737fb969b70b7bc9bb8ce77da5698e",
-  "output_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-4d687ed-052648b"
+  "output_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-4d687ed-052648b",
+  "published_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-4d687ed-052648b@sha256:280792cadc335eed35c0958a2f82e5e756ad437201ce5f2d1ffc379b30648e08"
 }
