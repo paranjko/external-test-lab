@@ -13,10 +13,20 @@ cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 url="${!#}"
+mode="${MODE:-observation_failure}"
 write_remote=false
 for arg in "$@"; do
   [[ "$arg" == --write-out ]] && write_remote=true
 done
+attempt=0
+if [[ "$mode" == wait_recovery && "$url" == *node0.example.test*/status ]]; then
+  : "${OBSERVATION_ATTEMPT_FILE:?OBSERVATION_ATTEMPT_FILE is required for wait_recovery}"
+  [[ -r "$OBSERVATION_ATTEMPT_FILE" ]] && attempt="$(<"$OBSERVATION_ATTEMPT_FILE")"
+  attempt=$((attempt + 1))
+  printf '%s\n' "$attempt" >"$OBSERVATION_ATTEMPT_FILE"
+elif [[ "$mode" == wait_recovery && -r "${OBSERVATION_ATTEMPT_FILE:-}" ]]; then
+  attempt="$(<"$OBSERVATION_ATTEMPT_FILE")"
+fi
 case "$url" in
   *'/releases/tags/release%2Fv0.2.15')
     printf '%s\n' '{"tag_name":"release/v0.2.15","assets":[{"name":"inferenced-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-amd64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]}'
@@ -27,7 +37,7 @@ case "$url" in
     exit 0
     ;;
   *'/releases/tags/release%2Fv0.2.16')
-    [[ "${MODE:-observation_failure}" == component_failure ]] && exit 22
+    [[ "$mode" == component_failure || "$mode" == wait_recovery ]] && exit 22
     exit 2
     ;;
   *node0.example.test*) id=0123456789abcdef0123456789abcdef01234567; remote_ip=8.8.4.1 ;;
@@ -37,19 +47,19 @@ esac
 case "$url" in
   */status)
     version=0.2.14
-    [[ "${MODE:-observation_failure}" != component_failure ]] || version=0.2.15
+    [[ "$mode" == component_failure || ( "$mode" == wait_recovery && "$attempt" -ge 2 ) ]] && version=0.2.15
     printf '{"result":{"node_info":{"id":"%s","network":"gonka-devnet-community","version":"%s"},"sync_info":{"catching_up":false}}}\n' "$id" "$version"
     ;;
   */abci_info)
     version=0.2.14
-    [[ "${MODE:-observation_failure}" != component_failure ]] || version=0.2.15
+    [[ "$mode" == component_failure || ( "$mode" == wait_recovery && "$attempt" -ge 2 ) ]] && version=0.2.15
     printf '{"result":{"response":{"version":"%s"}}}\n' "$version"
     ;;
   */net_info)
     printf '%s\n' '{"result":{"peers":[]}}'
     ;;
   */v1/versions)
-    if [[ "${MODE:-observation_failure}" == component_failure ]]; then
+    if [[ "$mode" == component_failure || ( "$mode" == wait_recovery && "$attempt" -ge 2 ) ]]; then
       printf '%s\n' '{"node_version":{"application_name":"inference-chain","version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"},"api_version":{"application_name":"decentralized-api","version":"0.2.16","commit":"18506d42c510e0cafe6acd748bcd8d83036cba40"}}'
     else
       printf '%s\n' '{"node_version":{"application_name":"inference-chain","version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"},"api_version":{"application_name":"decentralized-api","version":"0.2.14-post3","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}}'
@@ -63,12 +73,13 @@ fi
 EOF
 chmod 0755 "$tmp/bin/curl"
 
-if PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc.sh" host join \
+if GDC_JOIN_PREFLIGHT_DEADLINE=1 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc.sh" host join \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/out" 2>"$tmp/err"; then
   echo 'unsafe mixed seed observation unexpectedly entered JOIN' >&2
   exit 1
 fi
 grep -Fq 'network_observation_insufficient_quorum:' "$tmp/err"
+grep -Fq 'network_observation_timeout:' "$tmp/err"
 grep -Fq "preflight_receipt=$tmp/operator/gdc-node2/preflight-receipt.env" "$tmp/err" || \
   grep -Fq 'preflight_receipt=' "$tmp/err"
 pointer="$tmp/operator/reporting/failures/latest-failure"
@@ -86,7 +97,7 @@ grep -qx 'result=failed' "$receipt"
 jq -e '
   .command_family == "join" and .phase == "join-preflight" and
   .checkpoint == "software-observation" and .state == "unavailable" and
-  .category == "network" and .tool == "seed-observer" and
+  .category == "network" and .tool == "seed-observer-timeout" and
   .resume.decision == "safe" and .resume.token == "join-repeat"
 ' "$diagnostic" >/dev/null
 result="$(find "$tmp/operator" -type f -path '*/join-validator-a/join-result.v1.json' -print -quit)"
@@ -99,7 +110,26 @@ jq -e '
   .join_profile_sha256 == null
 ' "$result" >/dev/null
 
-if MODE=component_failure PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/component-operator" "$ROOT/gdc.sh" host join \
+attempt_counter="$tmp/observation-attempt-counter"
+if MODE=wait_recovery OBSERVATION_ATTEMPT_FILE="$attempt_counter" \
+  GDC_JOIN_PREFLIGHT_DEADLINE=5 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
+  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/recovered-operator" "$ROOT/gdc.sh" host join \
+  --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-b.example.test validator-b >"$tmp/recovered.out" 2>"$tmp/recovered.err"; then
+  echo 'recovered observation unexpectedly resolved unavailable component metadata' >&2
+  exit 1
+fi
+grep -Fq 'WAIT JOIN software observation stage=candidate-1 attempt=1 unavailable' "$tmp/recovered.err"
+grep -Fq 'PASS JOIN software observation stable stage=candidate-1 attempts=3' "$tmp/recovered.out"
+[[ "$(<"$attempt_counter")" == 3 ]]
+recovered_receipt="$(find "$tmp/recovered-operator" -name preflight-receipt.env -type f -print -quit)"
+[[ -n "$recovered_receipt" ]]
+grep -qx 'checkpoint=component-resolution' "$recovered_receipt"
+grep -qx 'software_observation_attempt_count=3' "$recovered_receipt"
+recovered_attempts="$(awk -F= '$1 == "software_observation_attempts_dir" { print $2; exit }' "$recovered_receipt")"
+[[ -f "$recovered_attempts/attempt-1.stderr" && -f "$recovered_attempts/attempt-2.json" && -f "$recovered_attempts/attempt-3.json" ]]
+
+if MODE=component_failure GDC_JOIN_PREFLIGHT_DEADLINE=5 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
+  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/component-operator" "$ROOT/gdc.sh" host join \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/component.out" 2>"$tmp/component.err"; then
   echo 'missing official artifact unexpectedly entered JOIN' >&2
   exit 1

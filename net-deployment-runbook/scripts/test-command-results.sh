@@ -119,3 +119,21 @@ for expected_rc in 0 70; do
   awk '/fixture terminal receipt write attempted/ {written=1} /^END phase=/ {if (!written) exit 1}' "$scratch/receipt-$expected_rc.log"
 done
 printf 'PASS phase and command success follow the terminal receipt; write failure returns 70\n'
+
+# A reboot-required phase must reach run_phase post-processing. It retains its
+# non-zero continuation code but is not rendered as a command failure.
+rc=0
+GDC_HOME="$scratch/phase-failure" GDC_RESULT_FIXTURE_RC=0 bash -c '
+  source "$1/gdc.sh" help >/dev/null
+  GDC_END_COMMAND="host join"
+  GDC_JOIN_REBOOT_REQUIRED=true
+  ensure_run_manifest() { :; }
+  GDC_JOIN_RESULT_OUTPUT="$GDC_HOME/result.json"
+  run_phase join-fixture-peer bash -c "exit 194"
+' bash "$fixture" >"$scratch/phase-failure.log" 2>&1 || rc=$?
+[[ "$rc" == 194 ]]
+grep -Fq 'fixture terminal receipt write attempted' "$scratch/phase-failure.log"
+grep -Fq 'END phase=join-fixture-peer status=194' "$scratch/phase-failure.log"
+! grep -Fq 'ERROR gdc command failed' "$scratch/phase-failure.log"
+[[ "$(tail -n 1 "$scratch/phase-failure.log")" == 'END host join REBOOT_REQUIRED exit=194' ]]
+printf 'PASS reboot-required JOIN phase records one typed terminal result before launcher exit\n'

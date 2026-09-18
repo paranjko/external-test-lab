@@ -95,6 +95,9 @@ else
   bin_dir="${GDC_INFERENCED_BIN_DIR:-$HOME/.local/bin}"
 fi
 target="$bin_dir/inferenced"
+download_timeout_seconds="${GDC_INFERENCED_CLI_TIMEOUT_SECONDS:-600}"
+[[ "$download_timeout_seconds" =~ ^[1-9][0-9]*$ && "$download_timeout_seconds" -le 600 ]] \
+  || die 'GDC_INFERENCED_CLI_TIMEOUT_SECONDS must be a positive integer up to 600'
 current="$(command -v inferenced 2>/dev/null || true)"
 if [[ -z "$JOIN_PROFILE" && -n "$current" ]] && version_matches "$current"; then
   note "PASS operator inferenced CLI: $current ($GONKA_RELEASE)"
@@ -112,13 +115,35 @@ else
 fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-printf 'WAIT download pinned inferenced CLI url=%s timeout_seconds=600\n' "$url" >&2
-if ! curl -fL --retry 3 --connect-timeout 15 --max-time 600 "$url" -o "$tmp/inferenced.zip"; then
-  die "failed to download pinned inferenced CLI from $url within timeout_seconds=600"
+archive="$tmp/inferenced.zip"
+if [[ -n "$JOIN_PROFILE" ]]; then
+  cache_dir="$GDC_HOME/artifacts/inferenced/$expected_sha"
+  cache_archive="$cache_dir/inferenced.zip"
+  if [[ -f "$cache_archive" && ! -L "$cache_archive" ]] \
+    && [[ "$(sha256_file "$cache_archive")" == "$expected_sha" ]]; then
+    archive="$cache_archive"
+    note "PASS cached pinned inferenced CLI sha256=$expected_sha"
+  else
+    rm -f "$cache_archive"
+    install -d -m 0700 "$cache_dir"
+    printf 'WAIT download pinned inferenced CLI url=%s timeout_seconds=%s\n' "$url" "$download_timeout_seconds" >&2
+    if ! curl -fL --retry 3 --connect-timeout 15 --max-time "$download_timeout_seconds" "$url" -o "$archive"; then
+      die "failed to download pinned inferenced CLI from $url within timeout_seconds=$download_timeout_seconds"
+    fi
+    actual_sha="$(sha256_file "$archive")"
+    [[ "$actual_sha" == "$expected_sha" ]] || die "inferenced CLI checksum mismatch: expected $expected_sha, got $actual_sha"
+    install -m 0600 "$archive" "$cache_archive"
+    archive="$cache_archive"
+  fi
+else
+  printf 'WAIT download pinned inferenced CLI url=%s timeout_seconds=%s\n' "$url" "$download_timeout_seconds" >&2
+  if ! curl -fL --retry 3 --connect-timeout 15 --max-time "$download_timeout_seconds" "$url" -o "$archive"; then
+    die "failed to download pinned inferenced CLI from $url within timeout_seconds=$download_timeout_seconds"
+  fi
+  actual_sha="$(sha256_file "$archive")"
+  [[ "$actual_sha" == "$expected_sha" ]] || die "inferenced CLI checksum mismatch: expected $expected_sha, got $actual_sha"
 fi
-actual_sha="$(sha256_file "$tmp/inferenced.zip")"
-[[ "$actual_sha" == "$expected_sha" ]] || die "inferenced CLI checksum mismatch: expected $expected_sha, got $actual_sha"
-unzip -q "$tmp/inferenced.zip" -d "$tmp/unpacked"
+unzip -q "$archive" -d "$tmp/unpacked"
 binary="$(find "$tmp/unpacked" -type f -name inferenced -perm -u+x -print -quit)"
 [[ -n "$binary" ]] || die 'pinned inferenced archive does not contain an executable inferenced binary'
 install -d -m 0755 "$bin_dir"

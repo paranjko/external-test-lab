@@ -22,6 +22,34 @@ join_profile_sha256="$(sha256sum "$GDC_JOIN_PROFILE" | awk '{print $1}')"
 join_observation_sha256="$(sha256sum "$JOIN_OBSERVATION" | awk '{print $1}')"
 join_operation=new
 [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]] && join_operation=restore
+
+# The initial lineage decision is intentionally made before any Host mutation,
+# but host preparation, model qualification and image installation can take
+# longer than its short trust TTL. Refresh only the state-sync decision after
+# that work completes and immediately before the signerless canary consumes
+# it. The immutable Join Profile and network observation stay unchanged.
+refresh_lineage_for_canary() {
+  local receipt="$STATE/lineage-preflight.json" env="$STATE/lineage-preflight.env"
+  local -a args=(--bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE" --observation "$JOIN_OBSERVATION" --receipt "$receipt" --env "$env")
+  [[ -z "${GDC_JOIN_OPERATOR_SOURCE_RPC:-}" ]] || args+=(--source-rpc "$GDC_JOIN_OPERATOR_SOURCE_RPC")
+  step "Refresh lineage trust immediately before signerless canary for $NODE"
+  GDC_JOIN_LINEAGE_FAILURE_FILE="$RUN/lineage-preflight-canary.failure"
+  export GDC_JOIN_LINEAGE_FAILURE_FILE
+  rm -f "$GDC_JOIN_LINEAGE_FAILURE_FILE"
+  "$ROOT/scripts/preflight-join-lineage.sh" "${args[@]}"
+  # The preflight writes this environment atomically after binding both RPC
+  # observations, P2P providers and the new trust tuple.
+  # shellcheck disable=SC1090
+  source "$env"
+  export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
+  export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
+  export GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON
+  GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
+  export GDC_JOIN_LINEAGE_RECEIPT_SHA256
+  install -m 0600 "$receipt" "$RUN/lineage-preflight-canary.v1.json"
+  install -m 0600 "$env" "$RUN/lineage-preflight-canary.env"
+}
+
 record_join_transition() {
   local state="$1" signer_ever_started="${2:-false}" input participant consensus p2p warm evidence
   [[ "$signer_ever_started" == true || "$signer_ever_started" == false ]] \
@@ -170,7 +198,27 @@ fi
 # later PoC retry.  Prepare only this joining topology (and its declared ML
 # Host, which phase-prepare derives) so unrelated Hosts are never touched.
 step "Prepare $NODE for independent join"
-GDC_PREPARE_HOSTS="$NODE" "$ROOT/scripts/phase-prepare.sh"
+if GDC_PREPARE_HOSTS="$NODE" "$ROOT/scripts/phase-prepare.sh"; then
+  :
+else
+  prepare_rc=$?
+  # The phase has reached TARGET_CLASSIFIED but has not created an identity,
+  # rendered a deployment, or started a signer. Host preparation is
+  # idempotent, so any failure here may be retried through a new JOIN run.
+  # Leave a typed marker for the launcher instead of classifying it as an
+  # unknown post-signer failure.
+  : >"$RUN/prepare-failed-before-identity"
+  chmod 0600 "$RUN/prepare-failed-before-identity"
+  if (( prepare_rc == 194 )); then
+    # No identity, deployment, or signer has been created at this point.
+    # Record the typed, recoverable stop for the launcher and for a later
+    # ordinary JOIN retry after the operator reboots this Host.
+    : >"$RUN/prepare-reboot-required"
+    chmod 0600 "$RUN/prepare-reboot-required"
+    printf 'REBOOT REQUIRED %s preparation installed a driver. Reboot this Host, then rerun the same gdc host join command. No reset is required.\n' "$NODE" >&2
+  fi
+  exit "$prepare_rc"
+fi
 record_join_transition HOST_BASE_PREPARED
 
 if [[ "${GDC_JOIN_SKIP_QUALIFICATION:-false}" == true ]]; then
@@ -250,7 +298,17 @@ if [[ -s "$IDENTITY" && "$remote_identity_state" == present ]]; then
   remote_identity_ready=true
 fi
 [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true ]] && remote_identity_ready=false
-if [[ "$participant_state" != new && "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true && "$remote_identity_ready" != true ]]; then
+rebind_existing_participant=false
+if [[ "${GDC_JOIN_REBIND_EXISTING_PARTICIPANT:-false}" == true ]]; then
+  [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true ]] || die "$NODE cannot rebind an existing participant while restoring a validator archive"
+  if [[ "$participant_state" == new ]]; then
+    printf 'READY %s --mnemonic recovered a new cold account; continuing with ordinary participant registration\n' "$NODE"
+  else
+    rebind_existing_participant=true
+    printf 'READY %s cold account owns an existing participant; a newly generated TMKMS signer will replace its registered validator key\n' "$NODE"
+  fi
+fi
+if [[ "$participant_state" != new && "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true && "$remote_identity_ready" != true && "$rebind_existing_participant" != true ]]; then
   die "$NODE participant already exists on this chain, but its validator identity is absent on the Host; cold and warm mnemonics alone cannot restore it. Preserve the evidence and use a separately validated recovery procedure."
 fi
 if [[ "$remote_identity_ready" != true ]]; then
@@ -269,6 +327,25 @@ if [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true ]]; then
   ' "$IDENTITY" >/dev/null || die "$NODE restored identity does not match validator backup"
   printf 'READY %s restored validator identity matches the operator backup\n' "$NODE"
 fi
+# The temporary identity bootstrap reports a public key, but the durable
+# authority for a JOIN signer is the softsign key that will be mounted into
+# canonical TMKMS. Derive that exact public value before rendering any
+# configuration, registration request or recovery archive. A restore archive
+# remains strict: its recorded identity must already match the restored key.
+canonical_tmkms_key="$(ssh -T "$NODE" "sudo -n bash -s -- '/srv/dai/signer/$NODE/tmkms/secrets/priv_validator_key.softsign'" <"$ROOT/scripts/tmkms-softsign-public-key.sh")" \
+  || die "$NODE cannot derive the durable TMKMS public key"
+[[ "$(base64 -d <<<"$canonical_tmkms_key" 2>/dev/null | wc -c | tr -d ' ')" == 32 ]] \
+  || die "$NODE durable TMKMS public key is malformed"
+bootstrap_tmkms_key="$(jq -er .consensus_pubkey "$IDENTITY")"
+if [[ "$bootstrap_tmkms_key" != "$canonical_tmkms_key" ]]; then
+  [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true ]] \
+    || die "$NODE restored validator identity does not match its durable TMKMS signer"
+  identity_next="$(mktemp "${IDENTITY}.tmkms.XXXXXX")"
+  jq --arg consensus "$canonical_tmkms_key" '.consensus_pubkey = $consensus' "$IDENTITY" >"$identity_next"
+  chmod 0600 "$identity_next"
+  mv "$identity_next" "$IDENTITY"
+  printf 'READY %s identity consensus key reconciled to its durable TMKMS signer\n' "$NODE"
+fi
 record_join_state "$NODE" IDENTITY_CREATED "$ADDRESS"
 record_join_transition IDENTITY_READY
 
@@ -276,6 +353,7 @@ step "Render $NODE"
 NODE_DIR="$GENERATED/nodes/$NODE"
 mkdir -p "$NODE_DIR" "$GENERATED/edge" "$GENERATED/agents"
 env_args=(--inventory "$INVENTORY" --node-name "$NODE" --account-public "$ACCOUNT" --seeds-file "$GENESIS/genesis-seeds.txt" --secrets-dir "$SECRETS")
+env_args+=(--consensus-pubkey "$(jq -er .consensus_pubkey "$IDENTITY")")
 [[ -z "${GDC_JOIN_PROFILE:-}" ]] || env_args+=(--join-profile "$GDC_JOIN_PROFILE")
 [[ -r "${GDC_JOIN_LINEAGE_RECEIPT:-}" ]] || die 'JOIN lacks a completed lineage preflight receipt'
 generation_dir="/srv/dai/data/${NODE}.generations/${GDC_RUN_ID}"
@@ -357,9 +435,16 @@ if [[ -n "$ML_HOST" ]]; then
 fi
 
 step "Start signerless native P2P synchronization canary for $NODE"
-# A state-sync trust checkpoint is deliberately short-lived. Do not launch a
-# canary that would already consume an expired decision; a new preflight is
-# required instead.
+# The immutable profile was created before preparation. Recreate only its
+# short-lived lineage decision at the canary boundary, then render and stage
+# the matching state-sync environment without touching identity or signer
+# state. This avoids failing a completed preparation merely because its old
+# trust checkpoint expired while images or a model were loading.
+refresh_lineage_for_canary
+"$ROOT/02-node/render-node-env.sh" "${env_args[@]}" --output "$NODE_DIR/.env" >/dev/null
+scp -q "$NODE_DIR/.env" "$NODE:$REMOTE/node.env"
+scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
+ssh "$NODE" "owner=\$(id -u); group=\$(id -g); sudo install -o \$owner -g \$group -m 0600 '$REMOTE/node.env' '/srv/dai/deploy/$NODE/.env'; cd '/srv/dai/deploy/$NODE' && docker compose --env-file .env -f compose.yaml config --quiet"
 "$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
 record_join_state "$NODE" SYNCING "$ADDRESS"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --canary"
@@ -386,6 +471,9 @@ record_join_transition PROMOTION_PREPARED
 record_join_transition PROMOTING
 ssh "$NODE" "sudo /srv/dai/deploy/$NODE/promote-state-sync-generation.sh '$NODE' '$generation_dir' '/srv/dai/data/$NODE'"
 record_join_transition PROMOTED
+# Canonical Core remains signerless until membership is reconciled. Upstream
+# initialization intentionally creates a disposable local validator key in
+# that mode; it must not be treated as the future TMKMS identity.
 # The bootstrap keyring is intentionally outside the candidate generation.
 # Import the same already verified warm mnemonic into the promoted generation
 # before DAPI starts, then prove its public address. This is local keyring
@@ -420,6 +508,12 @@ else
   printf 'READY retained shared public edge on %s during participant JOIN\n' "$NODE"
 fi
 start_stack "$NODE" "/srv/dai/deploy/$NODE/monitoring-agent"
+# Registration permanently binds the cold account to this consensus key.  A
+# verified archive must exist before that first chain mutation; the archive
+# refreshed after signer activation only advances its signing-state evidence.
+step "Create $NODE validator recovery archive before registration"
+"$ROOT/scripts/validator-backup.sh" create "$NODE"
+record_join_transition RECOVERY_ARCHIVE_READY
 participant_body="$(curl --connect-timeout 5 --max-time 10 -fsS "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"
 participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null || true)"
 participant_state="$(participant_onboarding_state "$participant_status")"
@@ -441,12 +535,50 @@ case "$participant_state" in
     ;;
 esac
 
+expected_registration_key="$(jq -er .consensus_pubkey "$IDENTITY")"
+[[ "$expected_registration_key" == "$canonical_tmkms_key" ]] \
+  || die "$NODE registered validator key does not match the durable TMKMS signer; refuse registration"
+
 if [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true && "$already_registered" != true ]]; then
   die "$NODE validator backup belongs to a participant that is not registered on this chain; refusing to create a duplicate participant"
 fi
 
-if [[ "$already_registered" == true ]]; then
+if [[ "$already_registered" == true && "$rebind_existing_participant" != true ]]; then
   printf 'READY %s participant already registered with status=%s; skip duplicate registration\n' "$NODE" "$participant_status"
+elif [[ "$rebind_existing_participant" == true ]]; then
+  # The public DAPI registration endpoint accepts only
+  # MsgSubmitNewUnfundedParticipant. It cannot update an account which already
+  # exists, even when the HTTP request succeeds. The native participant message
+  # is the supported update path: the restored cold account signs it directly.
+  step "Rebind $NODE participant validator key with its restored cold account"
+  rebind_rpc="${GDC_CHAIN_RPC_URL:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}"
+  rebind_password="$(<"$SECRETS/operator.keyring")"
+  rebind_tx="$(printf '%s\n' "$rebind_password" | GDC_OPERATOR_HOME="$STATE/operator-home" \
+    "$ROOT/scripts/inferenced.sh" tx inference submit-new-participant "$URL" \
+      --validator-key "$expected_registration_key" \
+      --from "$NODE-cold" --keyring-backend file --chain-id "$CHAIN_ID" --node "$rebind_rpc" \
+      --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --broadcast-mode sync --output json --yes)"
+  jq -e '(.code // .tx_response.code // -1) == 0 and ((.txhash // .tx_response.txhash // "") | test("^[A-Fa-f0-9]{64}$"))' \
+    <<<"$rebind_tx" >/dev/null || die "$NODE participant-key rebind transaction was not accepted"
+  rebind_txhash="$(jq -er '.txhash // .tx_response.txhash' <<<"$rebind_tx")"
+  rebind_receipt=''
+  for _ in $(seq 1 60); do
+    rebind_receipt="$("$ROOT/scripts/inferenced.sh" query tx "$rebind_txhash" --node "$rebind_rpc" --output json 2>/dev/null || true)"
+    if jq -e '(.code // .tx_response.code // -1) == 0 and ((.height // .tx_response.height // "0") | tonumber) > 0' \
+      <<<"$rebind_receipt" >/dev/null 2>&1; then
+      break
+    fi
+    printf 'WAIT  participant-key rebind transaction %s to enter a block\n' "$rebind_txhash"
+    sleep 2
+  done
+  jq -e '(.code // .tx_response.code // -1) == 0 and ((.height // .tx_response.height // "0") | tonumber) > 0' \
+    <<<"$rebind_receipt" >/dev/null || die "$NODE participant-key rebind transaction did not commit"
+  printf '%s\n' "$rebind_receipt" >"$RUN/participant-key-rebind-receipt.json"
+  rebound_body="$(curl -fsS --connect-timeout 5 --max-time 15 "https://${GENESIS_PUBLIC_HOST}/chain-api/productscience/inference/inference/participant/$ADDRESS")" \
+    || die "$NODE participant-key rebind committed but its chain readback is unavailable"
+  jq -e --arg expected "$expected_registration_key" '.participant.validator_key == $expected' <<<"$rebound_body" >/dev/null \
+    || die "$NODE participant-key rebind committed but did not publish the durable TMKMS validator key"
+  printf 'PASS %s participant validator key now matches the durable TMKMS signer\n' "$NODE"
 else
   step "Register $NODE before funding"
   registration_timeout="${GDC_JOIN_REGISTRATION_TIMEOUT_SECONDS:-300}"
@@ -575,6 +707,10 @@ jq -e --slurpfile state "$RUN/tmkms-signing-state-before-enable.json" '.result.s
   || die 'restored chain has not passed the last height signed before reset'
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --enable-signer"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-active-signer-state.sh '/srv/dai/deploy/$NODE' '$expected_chain_id' '$expected_core_version'"
+active_signer_key="$(ssh -T "$NODE" 'curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:26657/status' | jq -r '.result.validator_info.pub_key.value // empty')"
+[[ "$active_signer_key" == "$signer_consensus_pubkey" ]] \
+  || die "$NODE enabled signer does not expose the registered TMKMS validator key"
+printf 'PASS %s enabled signer exposes its registered TMKMS validator key\n' "$NODE"
 advanced=false
 signing_deadline=$((SECONDS+60))
 [[ "$join_operation" != restore ]] || signing_deadline=$((SECONDS+2400))
@@ -587,10 +723,21 @@ while (( SECONDS<signing_deadline )); do
   fi
   sleep 2
 done
-[[ "$advanced" == true ]] || die 'TMKMS signing state did not advance after signer enablement'
+if [[ "$advanced" != true && "$join_operation" == restore ]]; then
+  die 'TMKMS signing state did not advance after signer enablement'
+fi
 ssh "$NODE" "rm -rf '$REMOTE'"
 record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"
-record_join_transition SIGNER_ACTIVE_VERIFIED true
+if [[ "$advanced" == true ]]; then
+  record_join_transition SIGNER_ACTIVE_VERIFIED true
+else
+  # A new participant is ACTIVE before an accepted PoC distribution assigns it
+  # positive consensus weight.  Its correctly connected signer has no block to
+  # sign in that interval, so a missing signature is not a local JOIN failure.
+  # `host join --verification` remains the strict end-to-end eligibility gate.
+  record_join_transition SIGNER_ARMED_PENDING_ELIGIBILITY true
+  printf 'READY %s signer is armed; positive consensus eligibility remains pending accepted PoC evidence\n' "$NODE"
+fi
 
 step "Create $NODE validator recovery archive"
 "$ROOT/scripts/validator-backup.sh" create "$NODE"

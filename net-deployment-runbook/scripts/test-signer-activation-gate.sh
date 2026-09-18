@@ -63,6 +63,17 @@ grep -Fq 'record_join_state "$NODE" PREPARED' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'record_join_state "$NODE" CAUGHT_UP "$ADDRESS"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'record_join_state "$NODE" LINEAGE_VERIFIED "$ADDRESS"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'record_join_state "$NODE" MEMBERSHIP_RECONCILED "$ADDRESS"' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'record_join_transition RECOVERY_ARCHIVE_READY' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'tmkms-softsign-public-key.sh' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'identity consensus key reconciled to its durable TMKMS signer' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'registered validator key does not match the durable TMKMS signer' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'enabled signer exposes its registered TMKMS validator key' "$ROOT/scripts/phase-join.sh"
+if grep -Fq 'canonical validator key does not match the fenced TMKMS identity' "$ROOT/scripts/phase-join.sh"; then
+  echo 'JOIN still compares signerless Core temporary validator key to TMKMS before signer enablement' >&2
+  exit 1
+fi
+grep -Fq -- '--consensus-key "$CONSENSUS_PUBKEY"' "$ROOT/03-join/register-participant.sh"
+grep -Fq 'refuse registration with an inferred validator key' "$ROOT/03-join/register-participant.sh"
 grep -Fq 'record_join_state "$NODE" PERMISSIONS_RECONCILED "$ADDRESS"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'record_join_state "$NODE" SIGNER_FENCE_VERIFIED "$ADDRESS"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'fence-existing-signer.sh' "$ROOT/scripts/phase-join.sh"
@@ -81,18 +92,22 @@ grep -Fq 'record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"' "$ROOT/scripts/ph
 grep -Fq 'record_signer_activation_guard' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify-active-signer-state.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify-tmkms-signing-state.sh' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'TMKMS signing state did not advance after signer enablement' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'SIGNER_ARMED_PENDING_ELIGIBILITY' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'positive consensus eligibility remains pending accepted PoC evidence' "$ROOT/scripts/phase-join.sh"
 prepared_line="$(grep -n 'record_join_state "$NODE" PREPARED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 syncing_line="$(grep -n 'record_join_state "$NODE" SYNCING' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 lineage_line="$(grep -n 'record_join_state "$NODE" LINEAGE_VERIFIED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 canonical_line="$(grep -n 'start-node.sh"$' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 canonical_verified_line="$(grep -n 'record_join_transition CANONICAL_VERIFIED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
+archive_ready_line="$(grep -n 'record_join_transition RECOVERY_ARCHIVE_READY' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 membership_line="$(grep -n 'record_join_state "$NODE" MEMBERSHIP_RECONCILED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 permissions_line="$(grep -n 'record_join_state "$NODE" PERMISSIONS_RECONCILED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 fenced_line="$(grep -n 'record_join_state "$NODE" SIGNER_FENCE_VERIFIED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 enable_line="$(grep -n './start-node.sh --enable-signer' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 (( prepared_line < syncing_line && syncing_line < lineage_line )) || { echo 'JOIN state machine is not monotonic before signer enablement' >&2; exit 1; }
-(( lineage_line < canonical_line && canonical_line < canonical_verified_line && canonical_verified_line < membership_line && membership_line < permissions_line && permissions_line < fenced_line && fenced_line < enable_line )) \
-  || { echo 'signer can start before canonical verification, membership, permissions or technical fence verification' >&2; exit 1; }
+(( lineage_line < canonical_line && canonical_line < canonical_verified_line && canonical_verified_line < archive_ready_line && archive_ready_line < membership_line && membership_line < permissions_line && permissions_line < fenced_line && fenced_line < enable_line )) \
+  || { echo 'signer can start before canonical verification, archived recovery identity, membership, permissions or technical fence verification' >&2; exit 1; }
 restore_refusal_line="$(grep -n 'old_signer_fence_unprovable:' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 (( restore_refusal_line < fenced_line && restore_refusal_line < enable_line )) \
   || { echo 'restore can reach local fence or signer enablement without an external previous-Host fence' >&2; exit 1; }

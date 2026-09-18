@@ -473,14 +473,20 @@ create_backup() (
     set -Eeuo pipefail
     identity='/srv/dai/identity/$node'
     deploy='/srv/dai/deploy/$node'
-    container=\$(sudo docker compose --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" ps -q tmkms)
-    test -n \"\$container\"
-    signer_source=\$(sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination \"/root/.tmkms\"}}{{.Source}}{{end}}{{end}}' \"\$container\")
-    case \"\$signer_source\" in
-      "/srv/dai/signer/$node/tmkms") signer='/srv/dai/signer/$node' ;;
-      "/srv/dai/$node/tmkms") signer='/srv/dai/$node' ;;
-      *) exit 1 ;;
-    esac
+    # A new JOIN must archive its signer before it registers on-chain.  TMKMS
+    # is intentionally stopped then, so prefer the stable identity layout.
+    # The container-mount probe remains only for legacy deployments.
+    signer='/srv/dai/signer/$node'
+    if ! sudo test -d \"\$signer/tmkms\"; then
+      container=\$(sudo docker compose --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" ps -aq tmkms | head -n 1)
+      test -n \"\$container\"
+      signer_source=\$(sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination \"/root/.tmkms\"}}{{.Source}}{{end}}{{end}}' \"\$container\")
+      case \"\$signer_source\" in
+        "/srv/dai/signer/$node/tmkms") signer='/srv/dai/signer/$node' ;;
+        "/srv/dai/$node/tmkms") signer='/srv/dai/$node' ;;
+        *) exit 1 ;;
+      esac
+    fi
     sudo test -d \"\$signer/tmkms\"
     sudo test -s \"\$identity/p2p/node_key.json\"
     stage=\$(mktemp -d)

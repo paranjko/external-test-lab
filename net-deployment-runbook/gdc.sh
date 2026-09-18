@@ -41,6 +41,9 @@ record_join_terminal_result() {
 record_launcher_failure() {
   local rc="$1" tmp failure_dir run_manifest
   [[ "$rc" -ne 0 && -n "${GDC_LAUNCHER_ENVELOPE_DIR:-}" ]] || return 0
+  # A driver reboot is an operator-directed continuation point, not a failed
+  # command. Its JOIN terminal receipt is already persisted by run_phase.
+  [[ "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]] && return 0
   # A report-publication failure retains its own local draft; making it the
   # latest incident would recursively hide the selected operational failure.
   [[ "${GDC_REPORT_MODE:-false}" != true ]] || return 0
@@ -96,6 +99,8 @@ on_launcher_exit() {
     fi
     if (( rc == 0 )); then
       printf 'END %s SUCCESS\n' "$GDC_END_COMMAND"
+    elif [[ "$GDC_END_COMMAND" == 'host join' && "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]]; then
+      printf 'END host join REBOOT_REQUIRED exit=194\n' >&2
     else
       printf 'END %s FAILED exit=%s\n' "$GDC_END_COMMAND" "$rc" >&2
     fi
@@ -106,6 +111,11 @@ on_launcher_exit() {
 on_launcher_error() {
   local rc="$?"
   trap - ERR
+  # Do not turn the explicit reboot continuation into an ERROR. The EXIT
+  # handler emits its single terminal REBOOT_REQUIRED result instead.
+  if [[ "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]]; then
+    exit "$rc"
+  fi
   printf 'ERROR gdc command failed phase=%s exit=%s run_log=%s command=%s\n' \
     "${GDC_ACTIVE_PHASE:-unavailable}" "$rc" "${GDC_RUN_LOG:-unavailable}" \
     "${GDC_INVOCATION_COMMAND:-$ROOT/gdc.sh}" >&2
@@ -219,16 +229,22 @@ run_phase() {
   # Host. `record_phase_profile` enriches it once role input is loaded.
   ensure_run_manifest "$phase"
 
-  set +e
-  {
+  # Keep the phase pipeline in a conditional. A JOIN phase can return a
+  # typed non-zero result such as 194 (Host preparation completed but needs a
+  # reboot). The global ERR trap must not preempt the code below, which writes
+  # its terminal receipt before returning that result to the caller.
+  if {
     [[ -z "${GDC_INVOCATION_COMMAND:-}" ]] || printf 'INVOCATION command=%s\n' "$GDC_INVOCATION_COMMAND"
     printf 'LAUNCHER runbook_revision=%s gdc_launcher_sha256=%s\n' "$(runbook_revision)" "$(gdc_launcher_sha256)"
     printf 'BEGIN phase=%s timestamp=%s run_id=%s\n' "$phase" "$(date -u +%FT%TZ)" "$run_id"
     "$@"
     rc=$?
     exit "$rc"
-  } 2>&1 | tee -a "$log"
-  rc=${PIPESTATUS[0]}
+  } 2>&1 | tee -a "$log"; then
+    rc=0
+  else
+    rc=${PIPESTATUS[0]}
+  fi
   if (( rc != 0 )); then
     diagnostic_envelope="$(find "$run_dir" -maxdepth 2 -type f -name diagnostic-envelope.v1.json -print 2>/dev/null | LC_ALL=C sort | tail -n1 || true)"
     if [[ -z "$diagnostic_envelope" ]]; then
@@ -255,6 +271,36 @@ run_phase() {
       # (for example a signerless restore refusal or activation guard).  Do
       # not overwrite it with the launcher-wide conservative fallback.
       :
+    elif find "$run_dir" -maxdepth 2 -type f -name prepare-failed-before-identity -print -quit | grep -q .; then
+      # phase-join records this marker only around phase-prepare, after the
+      # target has been classified but before it can create identity,
+      # deployment, or signer state. Re-running preparation is safe; the
+      # next JOIN still performs fresh network observation and remote identity
+      # preflight.
+      if (( rc == 194 )); then
+        prepare_reason=host_prepare_reboot_required
+      else
+        prepare_reason=host_prepare_failed_before_identity
+      fi
+      if ! record_join_terminal_result failed staging host "$prepare_reason" "$rc" staging_only disabled new_profile; then
+        printf 'ERROR JOIN pre-identity preparation result could not be persisted\n' >&2
+        rc=70
+      elif (( rc == 194 )); then
+        GDC_JOIN_REBOOT_REQUIRED=true
+        export GDC_JOIN_REBOOT_REQUIRED
+      fi
+    elif (( rc == 194 )) && find "$run_dir" -maxdepth 2 -type f -name prepare-reboot-required -print -quit | grep -q .; then
+      # Host preparation intentionally uses 194 after installing an NVIDIA
+      # driver that cannot become active until reboot. It precedes identity
+      # creation and deployment, so a fresh JOIN after reboot is safe and
+      # deliberately observes the live runtime again.
+      if ! record_join_terminal_result failed staging host host_prepare_reboot_required "$rc" staging_only disabled new_profile; then
+        printf 'ERROR JOIN reboot-required result could not be persisted\n' >&2
+        rc=70
+      else
+        GDC_JOIN_REBOOT_REQUIRED=true
+        export GDC_JOIN_REBOOT_REQUIRED
+      fi
     else
       # A phase may fail after an interrupted signer start. Be conservative:
       # a retained operator must read it back, never infer a retry point.
@@ -265,7 +311,6 @@ run_phase() {
     fi
   fi
   printf 'END phase=%s status=%s timestamp=%s\n' "$phase" "$rc" "$(date -u +%FT%TZ)" | tee -a "$log"
-  set -e
   return "$rc"
 }
 
@@ -282,6 +327,9 @@ run_join_preflight() {
     if [[ "$typed" =~ ^(rpc_quorum_conflict|rpc_fault_domain_alias|snapshot_unavailable|snapshot_incompatible|trust_expired|apphash_divergence|lineage_verification_failed|signer_activation_unsafe)$ ]]; then
       tool="${typed//_/-}"
     fi
+  fi
+  if [[ "$checkpoint" == software-observation && "${GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT:-false}" == true ]]; then
+    tool=seed-observer-timeout
   fi
   # JOIN has not selected a local profile or touched a Host at this point.
   # Retain a bounded, structured diagnostic in the launcher envelope rather
@@ -325,9 +373,108 @@ write_join_preflight_receipt() {
     [[ -z "${GDC_NETWORK_DAPI_VERSION:-}" ]] || printf 'dapi_version=%s\ndapi_commit=%s\n' "$GDC_NETWORK_DAPI_VERSION" "$GDC_NETWORK_DAPI_COMMIT"
     [[ -z "${GDC_NETWORK_DEVSHARD_APPROVALS:-}" ]] || printf 'devshard_approvals=%q\n' "$GDC_NETWORK_DEVSHARD_APPROVALS"
     [[ -z "${GDC_RELEASE_PROFILE:-}" ]] || printf 'release_profile=%s\n' "$GDC_RELEASE_PROFILE"
+    [[ -z "${GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPTS_DIR:-}" ]] || printf 'software_observation_attempts_dir=%s\n' "$GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPTS_DIR"
+    [[ -z "${GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPT_COUNT:-}" ]] || printf 'software_observation_attempt_count=%s\n' "$GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPT_COUNT"
   } >"$tmp"
   chmod 0600 "$tmp"
   mv -f "$tmp" "$GDC_JOIN_PREFLIGHT_RECEIPT"
+}
+
+parse_join_preflight_wait_seconds() {
+  local value="$1" amount unit multiplier=1
+  if [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+    amount="$value"
+  elif [[ "$value" =~ ^([1-9][0-9]*)([smh])$ ]]; then
+    amount="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[2]}"
+    case "$unit" in
+      s) multiplier=1 ;;
+      m) multiplier=60 ;;
+      h) multiplier=3600 ;;
+    esac
+  else
+    return 1
+  fi
+  (( amount <= 86400 / multiplier )) || return 1
+  printf '%s\n' "$((amount * multiplier))"
+}
+
+join_observation_identity() {
+  jq -cS '{bootstrap:{chain_id:.bootstrap.chain_id,genesis_sha256:.bootstrap.genesis_sha256,document_sha256:.bootstrap.document_sha256},runtime:{core:.runtime.core,dapi:.runtime.dapi}}' "$1"
+}
+
+wait_for_join_software_observation() {
+  local stage="$1" output="$2" deadline="$3" retry_seconds="$4" attempt=0 consecutive=0 previous_identity='' identity=''
+  local attempt_dir attempt_observation attempt_stdout attempt_stderr rc remaining
+  unset GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT
+  attempt_dir="$STATE/network-observation-attempts/$GDC_RUN_ID/$stage"
+  install -d -m 0700 "$attempt_dir"
+  GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPTS_DIR="$attempt_dir"
+  export GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPTS_DIR
+
+  while :; do
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT=true
+      export GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT
+      printf 'network_observation_timeout: no stable quorum-backed runtime observation before the preflight deadline; attempts=%s receipt=%s\n' \
+        "$attempt" "$attempt_dir" >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    attempt_observation="$attempt_dir/attempt-$attempt.json"
+    attempt_stdout="$attempt_dir/attempt-$attempt.stdout"
+    attempt_stderr="$attempt_dir/attempt-$attempt.stderr"
+    if "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" \
+      --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID-$attempt" --output "$attempt_observation" \
+      "${join_source_args[@]}" >"$attempt_stdout" 2>"$attempt_stderr"; then
+      cat "$attempt_stdout"
+      identity="$(join_observation_identity "$attempt_observation")"
+      if [[ "$identity" == "$previous_identity" ]]; then
+        consecutive=$((consecutive + 1))
+      else
+        previous_identity="$identity"
+        consecutive=1
+      fi
+      GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPT_COUNT="$attempt"
+      export GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPT_COUNT
+      printf 'WAIT JOIN software observation stage=%s attempt=%s stable=%s/2 remaining_seconds=%s\n' \
+        "$stage" "$attempt" "$consecutive" "$remaining"
+      if (( consecutive >= 2 )); then
+        cp "$attempt_observation" "$output" || {
+          printf 'network_observation_receipt_write_failed: %s\n' "$output" >&2
+          return 1
+        }
+        chmod 0600 "$output" || {
+          printf 'network_observation_receipt_permission_failed: %s\n' "$output" >&2
+          return 1
+        }
+        printf 'PASS JOIN software observation stable stage=%s attempts=%s receipt=%s\n' "$stage" "$attempt" "$attempt_dir"
+        return 0
+      fi
+    else
+      rc=$?
+      cat "$attempt_stdout"
+      cat "$attempt_stderr" >&2
+      previous_identity=''
+      consecutive=0
+      GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPT_COUNT="$attempt"
+      export GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPT_COUNT
+      printf 'WAIT JOIN software observation stage=%s attempt=%s unavailable exit=%s remaining_seconds=%s\n' \
+        "$stage" "$attempt" "$rc" "$remaining" >&2
+    fi
+
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT=true
+      export GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT
+      printf 'network_observation_timeout: no stable quorum-backed runtime observation before the preflight deadline; attempts=%s receipt=%s\n' \
+        "$attempt" "$attempt_dir" >&2
+      return 1
+    fi
+    (( retry_seconds < remaining )) && remaining="$retry_seconds"
+    sleep "$remaining"
+  done
 }
 
 use_node_data_home() {
@@ -354,7 +501,7 @@ See the role guides for required input, then run:
   ./gdc.sh report github
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
-  ./gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
@@ -1077,6 +1224,15 @@ case "$COMMAND" in
     # and processing stops at the first failed host.
     for node_alias in "$@"; do
       use_node_data_home "$node_alias"
+      if [[ "$node_action" == reset ]]; then
+        reset_previous_run_id="$(cat "$STATE/active-run-id" 2>/dev/null || true)"
+        [[ -z "$reset_previous_run_id" || "$reset_previous_run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+          echo "host reset found an unsafe retained active run identifier for $node_alias" >&2; exit 2;
+        }
+        export GDC_RESET_PREVIOUS_RUN_ID="$reset_previous_run_id"
+      else
+        unset GDC_RESET_PREVIOUS_RUN_ID
+      fi
       run_phase "node-$node_action-$node_alias" "$ROOT/scripts/phase-node.sh" "$node_action" "$node_alias"
     done
     ;;
@@ -1172,9 +1328,13 @@ case "$COMMAND" in
     esac
     ;;
   join)
+    # A caller's inherited environment must never turn an ordinary JOIN into
+    # a participant-key replacement. Only the explicit CLI option below may
+    # grant that capability for this invocation.
+    unset GDC_JOIN_REBIND_EXISTING_PARTICIPANT
     join_source_rpc='' join_pex=''
     join_source_args=()
-    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_chain_id=gonka-devnet-community skip_qualification=false verification=false plan_only=false
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_mnemonic_file='' join_mnemonic_prompt=false join_chain_id=gonka-devnet-community join_preflight_deadline="${GDC_JOIN_PREFLIGHT_DEADLINE:-30m}" skip_qualification=false verification=false plan_only=false
     # JOIN derives its exact compatible runtime from the first healthy
     # Bootstrap seed. An operator-selected release or composition could
     # otherwise turn retained evidence into a software authority.
@@ -1189,6 +1349,21 @@ case "$COMMAND" in
         --skip-qualification) skip_qualification=true ;;
         --verification) verification=true ;;
         --plan) plan_only=true ;;
+        --mnemonic-prompt) join_mnemonic_prompt=true ;;
+        --mnemonic-file)
+          [[ -z "$join_mnemonic_file" && -n "${2:-}" ]] || { echo 'host join --mnemonic-file expects one non-empty path' >&2; exit 2; }
+          join_mnemonic_file="$2"
+          shift
+          ;;
+        --mnemonic-file=*)
+          [[ -z "$join_mnemonic_file" && -n "${1#--mnemonic-file=}" ]] || { echo 'host join --mnemonic-file expects one non-empty path' >&2; exit 2; }
+          join_mnemonic_file="${1#--mnemonic-file=}"
+          ;;
+        --preflight-deadline)
+          [[ -n "${2:-}" ]] || { echo 'host join --preflight-deadline requires a positive duration such as 30m' >&2; exit 2; }
+          join_preflight_deadline="$2"; shift ;;
+        --preflight-deadline=*)
+          join_preflight_deadline="${1#--preflight-deadline=}" ;;
         --pex)
           [[ -z "$join_pex" && "${2:-}" =~ ^(true|false)$ ]] || { echo 'host join --pex expects true or false once' >&2; exit 2; }
           join_pex="$2"; shift ;;
@@ -1252,10 +1427,26 @@ case "$COMMAND" in
       shift
     done
     [[ -n "$join_alias" ]] || { echo 'host join requires an SSH alias' >&2; usage; exit 2; }
+    join_preflight_deadline_seconds="$(parse_join_preflight_wait_seconds "$join_preflight_deadline")" || {
+      echo 'host join --preflight-deadline requires a positive duration up to 24h, for example 30m or 1800' >&2; exit 2;
+    }
+    join_preflight_deadline_at=$((SECONDS + join_preflight_deadline_seconds))
+    join_preflight_retry_seconds="${GDC_JOIN_PREFLIGHT_RETRY_SECONDS:-15}"
+    [[ "$join_preflight_retry_seconds" =~ ^[1-9][0-9]*$ && "$join_preflight_retry_seconds" -le 300 ]] || {
+      echo 'GDC_JOIN_PREFLIGHT_RETRY_SECONDS must be a positive integer up to 300' >&2; exit 2;
+    }
     [[ -z "$join_resume_run" || "$join_resume_run" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { echo 'host join --resume requires a valid run ID' >&2; exit 2; }
     [[ -z "$join_old_signer_fence" || -n "$join_resume_run" ]] || { echo 'host join --old-signer-fence requires --resume <run-id>' >&2; exit 2; }
     [[ -z "$join_old_signer_fence" ]] || {
       echo 'host join does not accept an externally authored signer-fence receipt: independent prior-Host evidence is not implemented' >&2
+      exit 2
+    }
+    if [[ "$join_mnemonic_prompt" == true && -n "$join_mnemonic_file" ]]; then
+      echo 'Error: --mnemonic-prompt and --mnemonic-file are mutually exclusive' >&2
+      exit 1
+    fi
+    [[ "$join_mnemonic_prompt" != true && -z "$join_mnemonic_file" || -z "$join_restore_archive" ]] || {
+      echo 'host join mnemonic recovery cannot be combined with --restore; a validator archive already restores its original cold account and signer' >&2
       exit 2
     }
     [[ "$join_alias" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "invalid Host SSH alias: $join_alias (use lowercase letters, digits, _ or -)" >&2; exit 2; }
@@ -1264,6 +1455,34 @@ case "$COMMAND" in
       [[ "$join_gpu_alias" != "$join_alias" ]] || { echo 'Host and GPU SSH aliases must be different' >&2; exit 2; }
     fi
     use_node_data_home "$join_alias"
+    if [[ ( "$join_mnemonic_prompt" == true || -n "$join_mnemonic_file" ) && "$plan_only" != true ]]; then
+      # The mnemonic is read only on the operator machine, then retained as a
+      # local mode-0600 recovery file. A new account follows ordinary
+      # registration; an existing participant is explicitly rebound to the
+      # newly generated TMKMS signer.
+      join_mnemonic_input_args=()
+      if [[ "$join_mnemonic_prompt" == true ]]; then
+        join_mnemonic_input_args+=(--mnemonic-prompt)
+      else
+        join_mnemonic_input_args+=(--mnemonic-file "$join_mnemonic_file")
+      fi
+      join_cold_mnemonic="$("$ROOT/scripts/read-join-mnemonic.sh" "${join_mnemonic_input_args[@]}")"
+      unset join_mnemonic_input_args
+      join_mnemonic_dir="$GDC_HOME/mnemonics"
+      install -d -m 0700 "$join_mnemonic_dir"
+      join_mnemonic_file="$join_mnemonic_dir/$join_alias-cold.mnemonic"
+      if [[ -e "$join_mnemonic_file" ]]; then
+        [[ -f "$join_mnemonic_file" && ! -L "$join_mnemonic_file" ]] || { echo 'host join refuses an unsafe existing cold mnemonic path' >&2; exit 2; }
+        [[ "$(<"$join_mnemonic_file")" == "$join_cold_mnemonic" ]] || { echo 'host join --mnemonic disagrees with the retained cold mnemonic for this Host' >&2; exit 2; }
+      else
+        umask 077
+        printf '%s\n' "$join_cold_mnemonic" >"$join_mnemonic_file"
+        chmod 0600 "$join_mnemonic_file"
+      fi
+      unset join_cold_mnemonic
+      GDC_JOIN_REBIND_EXISTING_PARTICIPANT=true
+      export GDC_JOIN_REBIND_EXISTING_PARTICIPANT
+    fi
     acquire_operator_lock
     # Preserve the prior controller run before allocating this invocation's
     # evidence directory.  A normal JOIN may only be a no-op after a retained
@@ -1373,32 +1592,92 @@ case "$COMMAND" in
     run_join_preflight bootstrap-chain-id invalid-bootstrap configuration bootstrap \
       'The Bootstrap descriptor chain ID does not match the requested Host JOIN network.' \
       jq -e --arg chain "$join_chain_id" '.chain_id == $chain' "$join_bootstrap_file" >/dev/null
-    join_observation="$STATE/network-observation.v1.json"
-    run_join_preflight software-observation unavailable network seed-observer \
-      'No Bootstrap seed established a complete healthy runtime identity.' \
-      "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID" --output "$join_observation" "${join_source_args[@]}"
+    # A first stable observation identifies the candidate runtime.  Local
+    # downloads can take minutes, so a second stable observation is required
+    # before the Host is touched.  Both gates share one operator-visible
+    # deadline; a changed runtime starts another no-mutation candidate cycle.
+    join_candidate_observation="$STATE/network-observation.candidate.v1.json"
+    join_final_observation="$STATE/network-observation.v1.json"
+    join_candidate_components="$STATE/join-components.candidate.v1.json"
+    join_candidate_profile="$STATE/join-profile.candidate.v1.json"
+    join_observation="$join_final_observation"
+    join_profile="$STATE/join-profile.v1.json"
+    join_operation=new
+    [[ -z "$join_restore_archive" ]] || join_operation=restore
+    join_preflight_cycle=0
+    while :; do
+      join_preflight_cycle=$((join_preflight_cycle + 1))
+      run_join_preflight software-observation unavailable network seed-observer \
+        'No Bootstrap seed established a complete healthy runtime identity.' \
+        wait_for_join_software_observation "candidate-$join_preflight_cycle" "$join_candidate_observation" "$join_preflight_deadline_at" "$join_preflight_retry_seconds"
+      GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$join_candidate_observation")"
+      GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$join_candidate_observation")"
+      GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$join_candidate_observation")"
+      export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
+      run_join_preflight component-resolution unavailable dependency official-artifact-resolver \
+        'Official immutable artifacts could not be resolved for the selected Core and DAPI runtime bytes.' \
+        "$ROOT/scripts/resolve-join-components.sh" --observation "$join_candidate_observation" --output "$join_candidate_components"
+      join_profile_args=(--observation "$join_candidate_observation" --components "$join_candidate_components" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_candidate_profile")
+      [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
+      join_profile_args+=(--pex "$join_pex")
+      [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
+      run_join_preflight join-profile unavailable profile join-profile \
+        'The observed network could not be compiled into an executable Join Profile.' \
+        "$ROOT/scripts/resolve-join-profile.sh" "${join_profile_args[@]}"
+      # A plan produces only profile and observation evidence. It must not
+      # download a release archive or contact a Host.
+      if [[ "$plan_only" != true ]]; then
+        join_preflight_remaining=$((join_preflight_deadline_at - SECONDS))
+        (( join_preflight_remaining > 0 )) || {
+          GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT=true
+          export GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT
+          run_join_preflight software-observation unavailable network seed-observer \
+            'The JOIN preflight deadline elapsed before its immutable CLI was available.' false
+        }
+        GDC_INFERENCED_CLI_TIMEOUT_SECONDS="$(( join_preflight_remaining < 600 ? join_preflight_remaining : 600 ))"
+        export GDC_INFERENCED_CLI_TIMEOUT_SECONDS
+        run_join_preflight inferenced-cli unavailable dependency inferenced \
+          'The pinned operator CLI was not available before the JOIN preflight deadline.' \
+          "$ROOT/scripts/ensure-inferenced-cli.sh" --join-profile "$join_candidate_profile"
+      fi
+      run_join_preflight software-observation unavailable network seed-observer \
+        'The runtime changed or could not be confirmed immediately before Host preparation.' \
+        wait_for_join_software_observation "confirm-$join_preflight_cycle" "$join_final_observation" "$join_preflight_deadline_at" "$join_preflight_retry_seconds"
+      if [[ "$(join_observation_identity "$join_candidate_observation")" == "$(join_observation_identity "$join_final_observation")" ]]; then
+        break
+      fi
+      printf 'WAIT JOIN runtime changed during preflight cycle=%s; retrying without Host mutation\n' "$join_preflight_cycle"
+    done
     GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$join_observation")"
     GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$join_observation")"
     GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$join_observation")"
     export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
     write_join_preflight_receipt software-observation passed unavailable seed-observer
-    # Discovery produces the local immutable execution profile before any
-    # state-sync, snapshot or signer gate. Those later gates receive this
-    # profile; they cannot change the selected seed tuple.
-    join_components="$STATE/join-components.v1.json"
-    run_join_preflight component-resolution unavailable dependency official-artifact-resolver \
-      'Official immutable artifacts could not be resolved for the selected Core and DAPI runtime bytes.' \
-      "$ROOT/scripts/resolve-join-components.sh" --observation "$join_observation" --output "$join_components"
-    join_profile="$STATE/join-profile.v1.json"
-    join_operation=new
-    [[ -z "$join_restore_archive" ]] || join_operation=restore
+    join_components="$join_candidate_components"
     join_profile_args=(--observation "$join_observation" --components "$join_components" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_profile")
     [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
     join_profile_args+=(--pex "$join_pex")
     [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
     run_join_preflight join-profile unavailable profile join-profile \
-      'The observed network could not be compiled into an executable Join Profile.' \
+      'The confirmed network could not be compiled into an executable Join Profile.' \
       "$ROOT/scripts/resolve-join-profile.sh" "${join_profile_args[@]}"
+    if [[ "$plan_only" != true ]]; then
+      # Candidate and confirmed profiles can differ in observation metadata.
+      # Bind downstream commands to the confirmed profile; a matching archive
+      # is reused from the verified cache rather than downloaded again.
+      join_preflight_remaining=$((join_preflight_deadline_at - SECONDS))
+      (( join_preflight_remaining > 0 )) || {
+        GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT=true
+        export GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT
+        run_join_preflight inferenced-cli unavailable dependency inferenced \
+          'The JOIN preflight deadline elapsed before its immutable CLI was available.' false
+      }
+      GDC_INFERENCED_CLI_TIMEOUT_SECONDS="$(( join_preflight_remaining < 600 ? join_preflight_remaining : 600 ))"
+      export GDC_INFERENCED_CLI_TIMEOUT_SECONDS
+      run_join_preflight inferenced-cli unavailable dependency inferenced \
+        'The pinned operator CLI was not available before the JOIN preflight deadline.' \
+        "$ROOT/scripts/ensure-inferenced-cli.sh" --join-profile "$join_profile"
+    fi
     # The state directory is mutable across invocations. Keep the exact
     # inputs for this run under its private evidence directory.
     install -m 0600 "$join_observation" "$join_run/network-observation.v1.json"
@@ -1423,6 +1702,9 @@ case "$COMMAND" in
           ;;
         preflight_retry_allowed)
           printf 'PASS Host JOIN previous run stopped before Host mutation; preserving its evidence and retrying fresh preflight\n'
+          ;;
+        preparation_retry_allowed)
+          printf 'PASS Host JOIN previous run stopped after Host preparation for reboot; preserving its evidence and retrying fresh preflight\n'
           ;;
         completed_matched)
           head_name="$(find "$previous_join_run/receipts" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json' -printf '%f\n' | LC_ALL=C sort | tail -n1)"
@@ -1487,9 +1769,6 @@ case "$COMMAND" in
     write_join_preflight_receipt lineage-preflight passed unavailable lineage-preflight
     install -m 0600 "$join_lineage_receipt" "$join_run/lineage-preflight.v1.json"
     install -m 0600 "$join_lineage_env" "$join_run/lineage-preflight.env"
-    run_join_preflight inferenced-cli unavailable dependency inferenced \
-      'The pinned operator CLI was not available after safe installation checks.' \
-      "$ROOT/scripts/ensure-inferenced-cli.sh" --join-profile "$GDC_JOIN_PROFILE"
     run_join_preflight bootstrap-stage unavailable chain bootstrap \
        'The validated Bootstrap descriptor could not be staged locally.' \
        "$ROOT/scripts/stage-network-bootstrap.sh" --bootstrap-file "$join_bootstrap_file" --genesis-dir "$join_genesis" --state-dir "$STATE" --secrets-dir "$join_secrets"
@@ -1554,6 +1833,12 @@ case "$COMMAND" in
     # profile is still fresh immediately before the first mutating phase.
     "$ROOT/scripts/join-profile.sh" validate "$GDC_JOIN_PROFILE" >/dev/null
     printf '%s\n' "$GDC_RUN_ID" >"$STATE/active-run-id"
+    # Preserve whether the operator explicitly selected the archival source.
+    # GDC_JOIN_SOURCE_RPC is the preflight's selected source even in automatic
+    # mode, so phase-join must not turn that selection into operator authority
+    # when it refreshes short-lived lineage trust before its canary.
+    GDC_JOIN_OPERATOR_SOURCE_RPC="$join_source_rpc"
+    export GDC_JOIN_OPERATOR_SOURCE_RPC
     run_phase "join-$join_alias" "$ROOT/scripts/phase-join.sh" "$join_alias"
     ;;
   ml)

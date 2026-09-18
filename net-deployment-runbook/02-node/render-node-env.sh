@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-usage() { echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS --account-public FILE [--join-profile FILE] [--seeds-file FILE|--bootstrap] --secrets-dir DIR [--state-sync-env FILE --data-dir DIR] [--poc-callback-url URL --ml-callback-bind IP] --output FILE" >&2; }
-INVENTORY=''; NODE=''; ACCOUNT=''; SEEDS_FILE=''; SECRETS=''; OUTPUT=''; STATE_SYNC_ENV=''; DATA_DIR_OVERRIDE=''; JOIN_PROFILE=''; BOOTSTRAP=false; POC_CALLBACK_URL='http://api:9100'; ML_CALLBACK_BIND='127.0.0.1'
+usage() { echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS --account-public FILE [--consensus-pubkey BASE64] [--join-profile FILE] [--seeds-file FILE|--bootstrap] --secrets-dir DIR [--state-sync-env FILE --data-dir DIR] [--poc-callback-url URL --ml-callback-bind IP] --output FILE" >&2; }
+INVENTORY=''; NODE=''; ACCOUNT=''; CONSENSUS_PUBKEY=''; SEEDS_FILE=''; SECRETS=''; OUTPUT=''; STATE_SYNC_ENV=''; DATA_DIR_OVERRIDE=''; JOIN_PROFILE=''; BOOTSTRAP=false; POC_CALLBACK_URL='http://api:9100'; ML_CALLBACK_BIND='127.0.0.1'
 while (($#)); do case "$1" in
   --inventory) INVENTORY="$2"; shift 2 ;;
   --node-name) NODE="$2"; shift 2 ;;
   --account-public) ACCOUNT="$2"; shift 2 ;;
+  --consensus-pubkey) CONSENSUS_PUBKEY="$2"; shift 2 ;;
   --seeds-file) SEEDS_FILE="$2"; shift 2 ;;
   --bootstrap) BOOTSTRAP=true; shift ;;
   --secrets-dir) SECRETS="$2"; shift 2 ;;
@@ -40,6 +41,10 @@ P2P_PORT="$(node_p2p_port "$NODE")"
 ADDRESS="$(jq -r .address "$ACCOUNT")"
 PUBKEY="$(jq -r .account_pubkey_b64 "$ACCOUNT")"
 [[ "$ADDRESS" =~ ^gonka1[0-9a-z]{20,90}$ ]] || { echo "Invalid account: $ACCOUNT" >&2; exit 1; }
+if [[ -n "$CONSENSUS_PUBKEY" ]]; then
+  [[ "$(base64 -d <<<"$CONSENSUS_PUBKEY" 2>/dev/null | wc -c | tr -d ' ')" == 32 ]] \
+    || { echo 'consensus public key must be a base64 Ed25519 key' >&2; exit 1; }
+fi
 if [[ "$BOOTSTRAP" == true ]]; then
   SEEDS='identity-bootstrap-only'
 else
@@ -107,7 +112,7 @@ write_env "$OUTPUT" \
   "P2P_EXTERNAL_ADDRESS=tcp://$PUBLIC_HOST:$P2P_PORT" "LOCAL_PROXY_PORT=8000" \
   "DATA_DIR=${DATA_DIR_OVERRIDE:-${DATA_ROOT%/}/$NODE}" "IDENTITY_DIR=/srv/dai/identity/$NODE" "SIGNER_DIR=/srv/dai/signer/$NODE" "HF_HOME=$HF_CACHE_ROOT" "GENESIS_FILE=$GENESIS_INSTALL_PATH" \
   "PROXY_BIND_ADDRESS=$proxy_bind_address" \
-  "NODE_CONFIG_FILE=./node-config.json" "ACCOUNT_ADDRESS=$ADDRESS" "ACCOUNT_PUBKEY=$PUBKEY" \
+  "NODE_CONFIG_FILE=./node-config.json" "ACCOUNT_ADDRESS=$ADDRESS" "ACCOUNT_PUBKEY=$PUBKEY" "CONSENSUS_PUBKEY=$CONSENSUS_PUBKEY" \
   "KEY_NAME=$NODE-warm" "KEYRING_PASSWORD=$KEYRING_PASSWORD" "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
   "DAPI_API__POC_CALLBACK_URL=$POC_CALLBACK_URL" "ML_CALLBACK_BIND=$ML_CALLBACK_BIND" \
   "IS_GENESIS=$IS_GENESIS" "INIT_ONLY=false" "GENESIS_SEEDS=$SEEDS" "SYNC_WITH_SNAPSHOTS=true" \

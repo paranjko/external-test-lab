@@ -58,6 +58,18 @@ grep -Fq 'rtrimstr("/") + "/"' "$ROOT/02-node/verify-state-sync-config.sh"
 grep -Fq 'config_matches_receipt' "$ROOT/02-node/verify-state-sync-config.sh"
 grep -Fq 'lineage_trust_expired:' "$ROOT/02-node/verify-state-sync-config.sh"
 grep -Fq 'verify-lineage-trust-fresh.sh' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'refresh_lineage_for_canary()' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'Refresh lineage trust immediately before signerless canary' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'GDC_JOIN_OPERATOR_SOURCE_RPC' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'GDC_JOIN_OPERATOR_SOURCE_RPC="$join_source_rpc"' "$ROOT/gdc.sh"
+grep -Fq 'lineage-preflight-canary.v1.json' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'owner=\$(id -u); group=\$(id -g); sudo install -o \$owner -g \$group -m 0600' "$ROOT/scripts/phase-join.sh"
+refresh_line="$(grep -n -m1 'refresh_lineage_for_canary$' "$ROOT/scripts/phase-join.sh" | cut -d: -f1)"
+canary_line="$(grep -n -m1 'start-node.sh --canary' "$ROOT/scripts/phase-join.sh" | cut -d: -f1)"
+[[ "$refresh_line" =~ ^[0-9]+$ && "$canary_line" =~ ^[0-9]+$ && "$refresh_line" -lt "$canary_line" ]] || {
+  echo 'late lineage refresh must precede the signerless canary start' >&2
+  exit 1
+}
 grep -Fq 'verify-join-lineage-state.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'record-state-sync-canary.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'lineage-state-sync-receipt.json' "$ROOT/scripts/phase-join.sh"

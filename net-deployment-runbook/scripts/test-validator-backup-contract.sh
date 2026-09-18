@@ -495,6 +495,13 @@ identity_bootstrap_line="$(grep -n 'collect-identities.sh' "$ROOT/scripts/phase-
 acceptance_line="$(grep -n 'phase-join-acceptance.sh' "$ROOT/scripts/phase-join.sh" | tail -n1 | cut -d: -f1)"
 backup_line="$(grep -n 'validator-backup.sh" create' "$ROOT/scripts/phase-join.sh" | tail -n1 | cut -d: -f1)"
 [[ "$backup_line" -lt "$acceptance_line" ]]
+pre_registration_backup_line="$(grep -n 'validator-backup.sh" create' "$ROOT/scripts/phase-join.sh" | head -n1 | cut -d: -f1)"
+registration_line="$(grep -n 'Register \$NODE before funding' "$ROOT/scripts/phase-join.sh" | head -n1 | cut -d: -f1)"
+[[ "$pre_registration_backup_line" -lt "$registration_line" ]] || {
+  echo 'new participant registration must not precede a verified validator recovery archive' >&2
+  exit 1
+}
+grep -Fq 'RECOVERY_ARCHIVE_READY' "$ROOT/scripts/phase-join.sh"
 genesis_acceptance_line="$(grep -n 'phase-join-acceptance.sh' "$ROOT/scripts/phase-genesis.sh" | tail -n1 | cut -d: -f1)"
 genesis_backup_line="$(grep -n 'validator-backup.sh" create' "$ROOT/scripts/phase-genesis.sh" | tail -n1 | cut -d: -f1)"
 [[ "$genesis_backup_line" -gt "$genesis_acceptance_line" ]]

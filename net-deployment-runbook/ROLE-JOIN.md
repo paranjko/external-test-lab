@@ -70,44 +70,54 @@ For Community DevNet, the simple form downloads the same network document:
 gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
+## Restore a cold account
+
+Never put a mnemonic in a command line. Use exactly one source:
+
+```bash
+# Read a 12- or 24-word phrase without echoing it
+gdc host join --mnemonic-prompt --public-host <IP_or_DOMAIN> <ssh-alias>
+
+# Read plaintext or JSON with {"mnemonic":"..."}
+gdc host join --mnemonic-file "$GDC_HOME/<ssh-alias>-cold-backup.json" \
+  --public-host <IP_or_DOMAIN> <ssh-alias>
+```
+
+`--mnemonic-prompt` requires a TTY. `--mnemonic-file` accepts only an
+operator-owned regular file with mode `0400` or `0600`; symlinks are refused.
+The cold mnemonic stays on the operator machine, where it restores the local
+cold account and signs any participant-key rebind. It is not sent to the Host.
+
+Do not combine either option with `--restore`:
+
+```bash
+gdc host join --restore <validator-backup.tar> \
+  --public-host <IP_or_DOMAIN> <ssh-alias>
+```
+
+Without a second SSH alias, JOIN prepares `<ssh-alias>` as a `network-gpu`
+Host and requires a visible NVIDIA PCI device with an R580+ driver. To keep
+the network Host CPU-only, supply a separate ML Host alias; JOIN prepares the
+network Host as `network-only` and the ML Host as `ml-only`, where the NVIDIA
+GPU is required. Before changing packages, JOIN verifies both the NVIDIA PCI
+device and an Ubuntu-provided R580+ driver candidate.
+
 Use `--chain-id <id>` to select another Bootstrap document; the default is
 `gonka-devnet-community`. The value is accepted only as a safe URL path
 segment, and Bootstrap must declare the same chain ID.
 
-Before downloading `inferenced` or preparing a Host, JOIN validates Bootstrap
-seed chain identity and uses non-catching-up roots to discover connected
-public peers. Each seed and unique public peer can contribute one
-software observation. A peer vote is accepted only when the same public IP
-also proves the requested chain through its CometBFT identity or DAPI block
-header. JOIN first selects the strict-majority DAPI version and commit, then
-selects the strict-majority Core version and commit within that DAPI cohort.
-The resulting pair must have quorum support.
-The reviewed local quorum is two for Community DevNet and three for larger or
-unknown networks; one endpoint can never decide. Seed order, duplicate
-addresses, unavailable peers and governed DevShard approval order cannot
-select the runtime. JOIN records exclusions and quorum arithmetic in a bounded
-diagnostic receipt; it never combines components that were not observed
-together or chooses a semantic maximum. `--release` and `--composition` are
-intentionally not accepted by JOIN. It then creates a local immutable profile,
-imports Genesis, creates the Host's accounts, synchronizes the node,
-registers it, and waits for `ACTIVE`. With an optional GPU SSH alias, it
-qualifies and attaches that MLNode automatically. If no quorum-backed runtime
-majority can be established, JOIN stops before Host mutation and retains a
-diagnostic.
+Before Host mutation, JOIN requires two consecutive quorum-backed runtime
+observations and confirms them again immediately before preparation. The
+default deadline is 30 minutes; use `--preflight-deadline 60m` deliberately.
+`--release` and `--composition` are intentionally not accepted by JOIN. A
+runtime change restarts preflight without touching the Host.
 
-For an upgraded chain lineage, JOIN uses **state sync** before it creates or
-changes anything on the Host. The preflight requires matching observations
-from two independent RPC fault domains, a non-expired trust checkpoint, and a
-compatible post-upgrade snapshot from both domains. It writes a bounded local
-receipt under the selected Host state directory and prints its path for both a
-pass and a terminal refusal. Keep that receipt with the retained diagnostic;
-it contains the observed lineage evidence, not credentials or validator keys.
+If driver installation needs a reboot, JOIN stops before identity or deployment
+creation. Reboot and rerun the same command; no `host reset` is needed.
 
-If no compatible snapshot is available, the command stops with
-`snapshot_unavailable`. It never falls back to historical replay and it never
-guesses an older binary or upgrade schedule. Wait for a supported snapshot or
-ask the network operator for an approved recovery procedure; do not bypass
-the preflight, enable the signer, or retry against a different profile.
+JOIN uses state sync and requires matching lineage observations from two
+independent RPC domains. `snapshot_unavailable` is terminal: JOIN never
+guesses old binaries or falls back to historical replay.
 
 Use a lowercase SSH alias beginning with a letter or digit and containing only
 lowercase letters, digits, `_`, or `-`. The alias is also the Docker Compose
