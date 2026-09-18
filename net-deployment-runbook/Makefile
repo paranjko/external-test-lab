@@ -241,6 +241,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-inference-until-ready.sh
 	@./scripts/test-gateway-escrow-reconciler.sh
 	@./scripts/test-faucet-caddy-config.sh
+	@./scripts/test-claim-devnet-faucet.sh
 	@./scripts/test-public-edge-single-listener.sh
 	@./scripts/test-public-homepage-rendered-asset.sh
 	@./scripts/test-participant-poc-caddy-config.sh

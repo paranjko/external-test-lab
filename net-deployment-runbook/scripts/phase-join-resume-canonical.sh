@@ -124,11 +124,24 @@ jq -cn --arg profile "$(sha256sum "$GDC_JOIN_PROFILE" | awk '{print $1}')" \
 rm -f "$guard"
 append_transition SIGNER_ACTIVATING true
 ssh "$NODE" "cd '$deploy' && ./start-node.sh --enable-signer"
-ssh "$NODE" "cd '$deploy' && ./verify-active-signer-state.sh '$deploy' '$expected_chain_id' '$expected_core_version'"
+# Enabling the signer recreates Core. Its RPC answers and leaves block sync
+# some seconds later, so one immediate readback fails on a healthy Host.
+readback_deadline=$((SECONDS + 300))
+until ssh "$NODE" "cd '$deploy' && ./verify-active-signer-state.sh '$deploy' '$expected_chain_id' '$expected_core_version'" >"$RUN/active-signer-readback.log" 2>&1; do
+  if (( SECONDS >= readback_deadline )); then
+    cat "$RUN/active-signer-readback.log" >&2
+    die 'active signer readback did not pass after signer enablement'
+  fi
+  printf 'WAIT active signer readback for %s: %s\n' "$NODE" "$(tail -n 1 "$RUN/active-signer-readback.log")"
+  sleep 5
+done
+cat "$RUN/active-signer-readback.log"
 deadline=$((SECONDS + 2400)); advanced=false
 while (( SECONDS < deadline )); do
   after="$RUN/tmkms-signing-state-after-enable.json"
-  ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$after"
+  # The signer is already on; one failed read is not evidence about it.
+  ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$after" \
+    || { sleep 2; continue; }
   chmod 600 "$after"
   if "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$before" --observed "$after" --require-advance >/dev/null; then advanced=true; break; fi
   sleep 2
@@ -139,5 +152,7 @@ append_transition SIGNER_ACTIVE_VERIFIED true
 "$ROOT/scripts/validator-backup.sh" create "$NODE"
 append_transition RECOVERY_ARCHIVE_VERIFIED true
 append_transition COMPLETE true
-ssh "$NODE" "rm -rf '$remote'"
+# Staging cleanup says nothing about the validator and must not fail its JOIN.
+ssh "$NODE" "rm -rf '$remote'" \
+  || printf 'WARN staging directory %s was not removed on %s\n' "$remote" "$NODE"
 printf 'PASS Host JOIN resumed from signerless canonical state without reset or re-sync\n'

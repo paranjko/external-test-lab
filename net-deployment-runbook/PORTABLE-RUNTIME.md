@@ -45,13 +45,20 @@ docker build \
 
 ## Verify
 
+`decentralized-api` has no `version` subcommand; read its build stamps from the
+binary. `inferenced` reports its own:
+
 ```bash
 docker run --rm --entrypoint /bin/sh local/gonka-api:0.2.15-post3-portable -c \
-  'decentralized-api version --long; echo ---; inferenced version'
+  'grep -a -o -E "version\.(Version|Commit)=[A-Za-z0-9._-]+" /usr/bin/decentralized-api | sort -u; echo ---; inferenced version'
 ```
 
-Expect `version: 0.2.15-post3`, `commit: 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0`
-and no `blst_cgo_init` line.
+Expect `version.Version=0.2.15-post3`,
+`version.Commit=5dbb53ddf3ddc42655fc04dc39d96003169bdbb0` and no
+`blst_cgo_init` line. The canonical readback compares the same two values, as
+served by the running DAPI on `/v1/versions`, with the Join Profile: a portable
+deployment names no archive, so there is no archive digest or runtime receipt
+to check.
 
 ## Declare
 
@@ -68,6 +75,10 @@ the default of a fresh Docker Engine 29 (`docker info -f '{{.DriverStatus}}'`
 shows `io.containerd.snapshotter.v1`). On the overlay2 store push the images to
 a registry on the Host first and declare the `localhost:5000/...@sha256:...`
 reference.
+
+Keep both variables declared for every later `gdc host join` of this Host: a
+repeated JOIN reads the completed deployment back against the same declaration
+and refuses with `completed_dapi_image_mismatch` without it.
 
 ## Limits
 
