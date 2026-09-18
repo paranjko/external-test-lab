@@ -22,6 +22,34 @@ join_profile_sha256="$(sha256sum "$GDC_JOIN_PROFILE" | awk '{print $1}')"
 join_observation_sha256="$(sha256sum "$JOIN_OBSERVATION" | awk '{print $1}')"
 join_operation=new
 [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]] && join_operation=restore
+
+# The initial lineage decision is intentionally made before any Host mutation,
+# but host preparation, model qualification and image installation can take
+# longer than its short trust TTL. Refresh only the state-sync decision after
+# that work completes and immediately before the signerless canary consumes
+# it. The immutable Join Profile and network observation stay unchanged.
+refresh_lineage_for_canary() {
+  local receipt="$STATE/lineage-preflight.json" env="$STATE/lineage-preflight.env"
+  local -a args=(--bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE" --observation "$JOIN_OBSERVATION" --receipt "$receipt" --env "$env")
+  [[ -z "${GDC_JOIN_OPERATOR_SOURCE_RPC:-}" ]] || args+=(--source-rpc "$GDC_JOIN_OPERATOR_SOURCE_RPC")
+  step "Refresh lineage trust immediately before signerless canary for $NODE"
+  GDC_JOIN_LINEAGE_FAILURE_FILE="$RUN/lineage-preflight-canary.failure"
+  export GDC_JOIN_LINEAGE_FAILURE_FILE
+  rm -f "$GDC_JOIN_LINEAGE_FAILURE_FILE"
+  "$ROOT/scripts/preflight-join-lineage.sh" "${args[@]}"
+  # The preflight writes this environment atomically after binding both RPC
+  # observations, P2P providers and the new trust tuple.
+  # shellcheck disable=SC1090
+  source "$env"
+  export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
+  export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
+  export GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON
+  GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
+  export GDC_JOIN_LINEAGE_RECEIPT_SHA256
+  install -m 0600 "$receipt" "$RUN/lineage-preflight-canary.v1.json"
+  install -m 0600 "$env" "$RUN/lineage-preflight-canary.env"
+}
+
 record_join_transition() {
   local state="$1" signer_ever_started="${2:-false}" input participant consensus p2p warm evidence
   [[ "$signer_ever_started" == true || "$signer_ever_started" == false ]] \
@@ -170,7 +198,27 @@ fi
 # later PoC retry.  Prepare only this joining topology (and its declared ML
 # Host, which phase-prepare derives) so unrelated Hosts are never touched.
 step "Prepare $NODE for independent join"
-GDC_PREPARE_HOSTS="$NODE" "$ROOT/scripts/phase-prepare.sh"
+if GDC_PREPARE_HOSTS="$NODE" "$ROOT/scripts/phase-prepare.sh"; then
+  :
+else
+  prepare_rc=$?
+  # The phase has reached TARGET_CLASSIFIED but has not created an identity,
+  # rendered a deployment, or started a signer. Host preparation is
+  # idempotent, so any failure here may be retried through a new JOIN run.
+  # Leave a typed marker for the launcher instead of classifying it as an
+  # unknown post-signer failure.
+  : >"$RUN/prepare-failed-before-identity"
+  chmod 0600 "$RUN/prepare-failed-before-identity"
+  if (( prepare_rc == 194 )); then
+    # No identity, deployment, or signer has been created at this point.
+    # Record the typed, recoverable stop for the launcher and for a later
+    # ordinary JOIN retry after the operator reboots this Host.
+    : >"$RUN/prepare-reboot-required"
+    chmod 0600 "$RUN/prepare-reboot-required"
+    printf 'REBOOT REQUIRED %s preparation installed a driver. Reboot this Host, then rerun the same gdc host join command. No reset is required.\n' "$NODE" >&2
+  fi
+  exit "$prepare_rc"
+fi
 record_join_transition HOST_BASE_PREPARED
 
 if [[ "${GDC_JOIN_SKIP_QUALIFICATION:-false}" == true ]]; then
@@ -357,9 +405,16 @@ if [[ -n "$ML_HOST" ]]; then
 fi
 
 step "Start signerless native P2P synchronization canary for $NODE"
-# A state-sync trust checkpoint is deliberately short-lived. Do not launch a
-# canary that would already consume an expired decision; a new preflight is
-# required instead.
+# The immutable profile was created before preparation. Recreate only its
+# short-lived lineage decision at the canary boundary, then render and stage
+# the matching state-sync environment without touching identity or signer
+# state. This avoids failing a completed preparation merely because its old
+# trust checkpoint expired while images or a model were loading.
+refresh_lineage_for_canary
+"$ROOT/02-node/render-node-env.sh" "${env_args[@]}" --output "$NODE_DIR/.env" >/dev/null
+scp -q "$NODE_DIR/.env" "$NODE:$REMOTE/node.env"
+scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
+ssh "$NODE" "owner=\$(id -u); group=\$(id -g); sudo install -o \$owner -g \$group -m 0600 '$REMOTE/node.env' '/srv/dai/deploy/$NODE/.env'; cd '/srv/dai/deploy/$NODE' && docker compose --env-file .env -f compose.yaml config --quiet"
 "$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
 record_join_state "$NODE" SYNCING "$ADDRESS"
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --canary"

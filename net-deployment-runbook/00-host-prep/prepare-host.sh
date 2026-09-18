@@ -119,6 +119,16 @@ rm -f "$DAEMON_TMP"
 GPU_ROLE=false
 [[ "$ROLE" == network-gpu || "$ROLE" == ml-only ]] && GPU_ROLE=true
 if [[ "$GPU_ROLE" == true ]]; then
+  nvidia_pci_present=false
+  for pci_vendor in /sys/bus/pci/devices/*/vendor; do
+    [[ -r "$pci_vendor" && "$(<"$pci_vendor")" == 0x10de ]] || continue
+    nvidia_pci_present=true
+    break
+  done
+  if [[ "$nvidia_pci_present" != true ]]; then
+    echo "NVIDIA GPU is required for role $ROLE; no NVIDIA PCI device is visible. Attach a supported NVIDIA GPU or configure PCI passthrough before rerunning JOIN." >&2
+    exit 1
+  fi
   driver_version=""
   if command -v nvidia-smi >/dev/null 2>&1; then
     driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 || true)
@@ -130,10 +140,23 @@ if [[ "$GPU_ROLE" == true ]]; then
   if [[ "$driver_major" =~ ^[0-9]+$ ]] && (( driver_major >= MIN_DRIVER )); then
     status "KEEP  NVIDIA driver $driver_version"
   else
+    driver_candidate="$(ubuntu-drivers list --gpgpu 2>/dev/null \
+      | awk -v minimum="$MIN_DRIVER" '
+          $1 ~ /^nvidia-driver-[0-9]+(-server)?$/ {
+            version = $1
+            sub(/^nvidia-driver-/, "", version)
+            sub(/-server$/, "", version)
+            if (version + 0 >= minimum) print $1
+          }
+        ' | sort -V | tail -n1)"
+    if [[ -z "$driver_candidate" ]]; then
+      echo "NVIDIA GPU is visible but Ubuntu does not offer a recommended NVIDIA R${MIN_DRIVER}+ driver for this Host; no driver package was changed." >&2
+      exit 1
+    fi
     if [[ "$driver_version" =~ ^[0-9]+([.][0-9]+)+$ ]]; then
-      status "INSTALL  NVIDIA driver: $driver_version -> recommended R580+"
+      status "INSTALL  NVIDIA driver: $driver_version -> $driver_candidate"
     else
-      status "INSTALL  recommended NVIDIA R580+ driver; current driver is unavailable"
+      status "INSTALL  recommended NVIDIA driver $driver_candidate; current driver is unavailable"
     fi
     while IFS= read -r dkms_version; do
       dkms_major=${dkms_version%%.*}
@@ -141,8 +164,8 @@ if [[ "$GPU_ROLE" == true ]]; then
         status "REMOVE  stale NVIDIA DKMS $dkms_version"
         dkms remove -m nvidia -v "$dkms_version" --all
       fi
-    done < <(dkms status -m nvidia 2>/dev/null | sed -n 's#^nvidia/\([^,]*\),.*#\1#p' | sort -u)
-    ubuntu-drivers install --gpgpu
+    done < <((dkms status -m nvidia 2>/dev/null || true) | sed -n 's#^nvidia/\([^,]*\),.*#\1#p' | sort -u)
+    ensure_packages "$driver_candidate"
     depmod -a
     update-initramfs -u
     DRIVER_CHANGED=true
@@ -228,5 +251,7 @@ status "PREPARED  $HOST_NAME"
 
 if [[ "$DRIVER_CHANGED" == true ]]; then
   status "REBOOT  $HOST_NAME to activate the NVIDIA driver, then rerun prepare"
+  # 194 is an intentional operator action, not a failed preparation step.
+  trap - ERR
   exit 194
 fi

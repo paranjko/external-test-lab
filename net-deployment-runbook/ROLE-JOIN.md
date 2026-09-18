@@ -70,6 +70,13 @@ For Community DevNet, the simple form downloads the same network document:
 gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
+Without a second SSH alias, JOIN prepares `<ssh-alias>` as a `network-gpu`
+Host and requires a visible NVIDIA PCI device with an R580+ driver. To keep
+the network Host CPU-only, supply a separate ML Host alias; JOIN prepares the
+network Host as `network-only` and the ML Host as `ml-only`, where the NVIDIA
+GPU is required. Before changing packages, JOIN verifies both the NVIDIA PCI
+device and an Ubuntu-provided R580+ driver candidate.
+
 Use `--chain-id <id>` to select another Bootstrap document; the default is
 `gonka-devnet-community`. The value is accepted only as a safe URL path
 segment, and Bootstrap must declare the same chain ID.
@@ -88,12 +95,21 @@ addresses, unavailable peers and governed DevShard approval order cannot
 select the runtime. JOIN records exclusions and quorum arithmetic in a bounded
 diagnostic receipt; it never combines components that were not observed
 together or chooses a semantic maximum. `--release` and `--composition` are
-intentionally not accepted by JOIN. It then creates a local immutable profile,
-imports Genesis, creates the Host's accounts, synchronizes the node,
-registers it, and waits for `ACTIVE`. With an optional GPU SSH alias, it
-qualifies and attaches that MLNode automatically. If no quorum-backed runtime
-majority can be established, JOIN stops before Host mutation and retains a
-diagnostic.
+intentionally not accepted by JOIN. JOIN first selects a candidate from two
+consecutive matching quorum-backed runtime observations, then confirms the
+same pair again immediately before Host preparation. The whole no-mutation
+preflight has a 30-minute deadline and a 15-second poll interval. A changed
+runtime restarts that candidate cycle without touching the Host; a verified
+operator CLI archive is reused by SHA-256. Use `--preflight-deadline 60m` when
+an operator deliberately wants a longer bounded preparation. If the deadline
+expires, JOIN stops before Host mutation and retains every observation attempt
+plus the terminal diagnostic. If Host preparation
+installs an NVIDIA driver, JOIN prints `REBOOT REQUIRED` before creating an
+identity or deployment. Reboot the named Host and rerun the same command; no
+`host reset` is needed. It then creates a
+local immutable profile, imports Genesis, creates the Host's accounts,
+synchronizes the node, registers it, and waits for `ACTIVE`. With an optional
+GPU SSH alias, it qualifies and attaches that MLNode automatically.
 
 For an upgraded chain lineage, JOIN uses **state sync** before it creates or
 changes anything on the Host. The preflight requires matching observations

@@ -76,4 +76,63 @@ jq -cn --arg sha "$(sha256sum "$retry/join-profile.v1.json" | awk '{print $1}')"
 "$ROOT/scripts/record-join-result.sh" --output "$retry/join-result.v1.json" --input "$tmp/retry-result.json" >/dev/null
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$retry" --current-profile "$profile")"
 jq -e '.classification == "preflight_retry_allowed"' <<<"$result" >/dev/null
+
+# Driver installation deliberately stops before identity creation. Its typed
+# terminal result permits an ordinary fresh JOIN after reboot, rather than a
+# reset or an unsafe resume through a partial lifecycle run.
+reboot_retry="$tmp/reboot-retry"
+mkdir -p "$reboot_retry/receipts"
+install -m 0600 "$profile" "$reboot_retry/join-profile.v1.json"
+reboot_sha="$(sha256sum "$reboot_retry/join-profile.v1.json" | awk '{print $1}')"
+jq -cn --arg profile "$reboot_sha" --arg observation "$observation_sha" \
+  '{schema_version:2,kind:"gdc-host-join-receipt",run_id:"reboot",operation:"new",node_name:"node-a",state:"TARGET_CLASSIFIED",join_profile_sha256:$profile,network_observation_sha256:$observation,generation_id:"reboot",identity_fingerprints:{participant_address:"",consensus_pubkey:"",p2p_node_id:"",warm_address:""},signer_ever_started:false,tmkms_state:{height:0,round:0,step:0,block_id:""},evidence:[],outcome:"in_progress",resume_policy:"resume_same_run"}' \
+  >"$tmp/reboot-receipt.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$reboot_retry/receipts" --input "$tmp/reboot-receipt.json" >/dev/null
+jq -cn --arg sha "$reboot_sha" \
+  '{schema_version:1,kind:"gdc-host-join-result",outcome:"failed",phase:"staging",category:"host",reason:"host_prepare_reboot_required",exit_code:194,mutation:"staging_only",signer_state:"disabled",resume:"new_profile",join_profile_sha256:$sha,evidence:[]}' \
+  >"$tmp/reboot-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$reboot_retry/join-result.v1.json" --input "$tmp/reboot-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$reboot_retry" --current-profile "$profile")"
+jq -e '.classification == "preparation_retry_allowed" and .reason == "host_prepare_reboot_required"' <<<"$result" >/dev/null
+
+# A non-reboot preparation failure is also before identity/deployment/signer
+# mutation. Its typed result must permit a fresh JOIN, and the conservative
+# result written by older launchers must remain recoverable for operators.
+prepare_failure="$tmp/prepare-failure"
+mkdir -p "$prepare_failure/receipts"
+install -m 0600 "$profile" "$prepare_failure/join-profile.v1.json"
+prepare_failure_sha="$(sha256sum "$prepare_failure/join-profile.v1.json" | awk '{print $1}')"
+jq -cn --arg profile "$prepare_failure_sha" --arg observation "$observation_sha" \
+  '{schema_version:2,kind:"gdc-host-join-receipt",run_id:"prepare-failure",operation:"new",node_name:"node-a",state:"TARGET_CLASSIFIED",join_profile_sha256:$profile,network_observation_sha256:$observation,generation_id:"prepare-failure",identity_fingerprints:{participant_address:"",consensus_pubkey:"",p2p_node_id:"",warm_address:""},signer_ever_started:false,tmkms_state:{height:0,round:0,step:0,block_id:""},evidence:[],outcome:"in_progress",resume_policy:"resume_same_run"}' \
+  >"$tmp/prepare-failure-receipt.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$prepare_failure/receipts" --input "$tmp/prepare-failure-receipt.json" >/dev/null
+jq -cn --arg sha "$prepare_failure_sha" \
+  '{schema_version:1,kind:"gdc-host-join-result",outcome:"failed",phase:"staging",category:"host",reason:"host_prepare_failed_before_identity",exit_code:1,mutation:"staging_only",signer_state:"disabled",resume:"new_profile",join_profile_sha256:$sha,evidence:[]}' \
+  >"$tmp/prepare-failure-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$prepare_failure/join-result.v1.json" --input "$tmp/prepare-failure-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$prepare_failure" --current-profile "$profile")"
+jq -e '.classification == "preparation_retry_allowed" and .reason == "host_prepare_failed_before_identity"' <<<"$result" >/dev/null
+jq -cn --arg sha "$prepare_failure_sha" \
+  '{schema_version:1,kind:"gdc-host-join-result",outcome:"failed",phase:"signer",category:"internal",reason:"join_phase_failed",exit_code:1,mutation:"signer_may_be_on",signer_state:"unknown",resume:"automatic_retry_forbidden",join_profile_sha256:$sha,evidence:[]}' \
+  >"$tmp/prepare-failure-legacy-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$prepare_failure/join-result.v1.json" --input "$tmp/prepare-failure-legacy-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$prepare_failure" --current-profile "$profile")"
+jq -e '.classification == "preparation_retry_allowed" and .reason == "legacy_host_prepare_failed_before_identity"' <<<"$result" >/dev/null
+rm -f "$reboot_retry/join-result.v1.json"
+ln -s "$tmp/reboot-result.json" "$reboot_retry/join-result.v1.json"
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$reboot_retry" --current-profile "$profile")"
+jq -e '.classification == "blocked" and .reason == "retained_input_missing_or_unsafe"' <<<"$result" >/dev/null
+rm -f "$reboot_retry/join-result.v1.json"
+install -m 0644 "$tmp/reboot-result.json" "$reboot_retry/join-result.v1.json"
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$reboot_retry" --current-profile "$profile")"
+jq -e '.classification == "blocked" and .reason == "retained_input_missing_or_unsafe"' <<<"$result" >/dev/null
+rm -f "$reboot_retry/join-result.v1.json"
+cat >"$reboot_retry/verdict.md" <<'EOF'
+# Host JOIN: INCONCLUSIVE
+
+The phase stopped with exit code 194 before it could write its final verdict.
+Inspect the run log and evidence in this directory. No PASS is implied.
+EOF
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$reboot_retry" --current-profile "$profile")"
+jq -e '.classification == "preparation_retry_allowed" and .reason == "legacy_host_prepare_reboot_required"' <<<"$result" >/dev/null
 printf 'PASS completed JOIN re-entry is no-op-only and partial runs require receipt-bound resume\n'

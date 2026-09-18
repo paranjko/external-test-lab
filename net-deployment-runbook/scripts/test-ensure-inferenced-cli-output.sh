@@ -81,6 +81,18 @@ GDC_INFERENCED_CLI_QUIET=true \
 [[ -x "$tmp/gdc-home/bin/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/inferenced" ]]
 grep -Fq 'INSTALL pinned inferenced release=9.9.9 platform=LINUX_AMD64' "$tmp/profile.stderr"
 
+# A changed Join Profile for the same verified artifact must install a new
+# profile-bound executable without downloading the archive again.
+second_profile="$tmp/second-join-profile.json"
+jq '.profile_id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+  "$tmp/join-profile.json" >"$second_profile"
+GDC_HOME="$tmp/gdc-home" \
+GDC_INFERENCED_CLI_QUIET=true \
+  "$tmp/runbook/scripts/ensure-inferenced-cli.sh" --join-profile "$second_profile" >"$tmp/second.stdout" 2>"$tmp/second.stderr"
+[[ -x "$tmp/gdc-home/bin/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/inferenced" ]]
+! grep -Fq 'WAIT download pinned inferenced CLI' "$tmp/second.stderr"
+[[ "$(sha256sum "$tmp/gdc-home/artifacts/inferenced/$archive_sha/inferenced.zip" | awk '{print $1}')" == "$archive_sha" ]]
+
 # Post-mutation consumers keep the immutable profile/hash contract but may
 # continue using the retained profile after its short freshness window.
 expired_profile="$tmp/expired-profile.json"
@@ -104,6 +116,9 @@ PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/gdc-home" GDC_JOIN_PROFILE="$tmp/join-profi
   "$tmp/runbook/scripts/inferenced.sh" version >"$tmp/profile-wrapper.out"
 grep -Fxq 'inferenced v9.9.9' "$tmp/profile-wrapper.out"
 ! grep -Fq wrong-path-cli "$tmp/profile-wrapper.out"
+PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/gdc-home" GDC_JOIN_PROFILE="$second_profile" \
+  "$tmp/runbook/scripts/inferenced.sh" version >"$tmp/confirmed-profile-wrapper.out"
+grep -Fxq 'inferenced v9.9.9' "$tmp/confirmed-profile-wrapper.out"
 grep -Fq 'ensure-inferenced-cli.sh" --allow-expired --join-profile "$GDC_JOIN_PROFILE"' "$ROOT/01-identities-genesis/create-cold-accounts.sh"
 
 printf 'PASS inferenced installation binds downstream CLI calls to the exact Join Profile\n'

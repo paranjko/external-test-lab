@@ -15,7 +15,7 @@ grep -Fq '  ./gdc.sh --release v2026.07.23 genesis' "$tmp/direct-help"
 
 for contract in \
   './gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>]' \
-  './gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
+  './gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
   './gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
   './gdc.sh host backup <SSH_ALIAS>' \
   './gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>' \
