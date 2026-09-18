@@ -628,23 +628,50 @@ jq -e --slurpfile state "$RUN/tmkms-signing-state-before-enable.json" '.result.s
   and (.result.sync_info.latest_block_height|tonumber)>($state[0].height|tonumber)' "$RUN/status-before-enable.json" >/dev/null \
   || die 'restored chain has not passed the last height signed before reset'
 ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh --enable-signer"
-ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-active-signer-state.sh '/srv/dai/deploy/$NODE' '$expected_chain_id' '$expected_core_version'"
+# Enabling the signer recreates Core. Its RPC answers and leaves block sync
+# some seconds later, so one immediate readback fails on a healthy Host.
+signer_readback_deadline=$((SECONDS+300))
+until ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./verify-active-signer-state.sh '/srv/dai/deploy/$NODE' '$expected_chain_id' '$expected_core_version'" >"$RUN/active-signer-readback.log" 2>&1; do
+  if (( SECONDS>=signer_readback_deadline )); then
+    cat "$RUN/active-signer-readback.log" >&2
+    die 'active signer readback did not pass after signer enablement'
+  fi
+  printf 'WAIT active signer readback for %s: %s\n' "$NODE" "$(tail -n 1 "$RUN/active-signer-readback.log")"
+  sleep 5
+done
+cat "$RUN/active-signer-readback.log"
 advanced=false
-signing_deadline=$((SECONDS+60))
-[[ "$join_operation" != restore ]] || signing_deadline=$((SECONDS+2400))
+# The key signs only once it is in the validator set. ACTIVE does not mean
+# that: a new participant enters the set at an epoch boundary after its first
+# PoC, a restored one when its PoC becomes effective again. Both get the
+# window RECOVER-INCIDENT.md allows for set membership.
+signing_deadline=$((SECONDS+2400))
+signing_wait_started=$SECONDS
+signing_wait_reported=0
 while (( SECONDS<signing_deadline )); do
-  ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$RUN/tmkms-signing-state-after-enable.json"
+  # The signer is already on; one failed read is not evidence about it.
+  ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$RUN/tmkms-signing-state-after-enable.json" \
+    || { sleep 2; continue; }
   chmod 600 "$RUN/tmkms-signing-state-after-enable.json"
-  if "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$RUN/tmkms-signing-state-before-enable.json" --observed "$RUN/tmkms-signing-state-after-enable.json" --require-advance >/dev/null; then
+  if "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$RUN/tmkms-signing-state-before-enable.json" --observed "$RUN/tmkms-signing-state-after-enable.json" --require-advance >/dev/null 2>"$RUN/tmkms-signing-wait.err"; then
     advanced=true
     break
   fi
+  if (( SECONDS-signing_wait_started >= signing_wait_reported+60 )); then
+    signing_wait_reported=$((SECONDS-signing_wait_started))
+    printf 'WAIT first %s signature after signer enablement elapsed=%ss last=%s\n' "$NODE" "$signing_wait_reported" "$(tail -n 1 "$RUN/tmkms-signing-wait.err" 2>/dev/null)"
+  fi
   sleep 2
 done
-[[ "$advanced" == true ]] || die 'TMKMS signing state did not advance after signer enablement'
-ssh "$NODE" "rm -rf '$REMOTE'"
+if [[ "$advanced" != true ]]; then
+  cat "$RUN/tmkms-signing-wait.err" >&2 2>/dev/null || true
+  die 'TMKMS signing state did not advance after signer enablement'
+fi
 record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"
 record_join_transition SIGNER_ACTIVE_VERIFIED true
+# Staging cleanup says nothing about the validator and must not end its JOIN.
+ssh "$NODE" "rm -rf '$REMOTE'" \
+  || printf 'WARN staging directory %s was not removed on %s\n' "$REMOTE" "$NODE"
 
 step "Create $NODE validator recovery archive"
 "$ROOT/scripts/validator-backup.sh" create "$NODE"
