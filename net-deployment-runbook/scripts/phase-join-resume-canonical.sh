@@ -70,7 +70,9 @@ if [[ "$resume_state" == CANONICAL_RUNNING ]]; then
   append_transition APPLICATION_ACTIVE
 fi
 if [[ "$NODE" != "$PUBLIC_EDGE_NODE" ]]; then
-  start_stack "$NODE" "/srv/dai/deploy/$NODE/edge"
+  # A participant edge is Caddy only: gateway-admission belongs to the shared
+  # gateway, and its script is installed only by `gateway apply`.
+  start_stack "$NODE" "/srv/dai/deploy/$NODE/edge" caddy
 else
   printf 'READY retained shared public edge on %s during participant JOIN resume\n' "$NODE"
 fi

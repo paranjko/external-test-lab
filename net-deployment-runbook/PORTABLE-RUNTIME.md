@@ -6,8 +6,9 @@ dies with `Caught SIGILL in blst_cgo_init`. Upstream Dockerfiles accept
 `BLST_PORTABLE=1`, but no portable image is published.
 
 The published Core image `inferenced:0.2.15` is also stamped with commit
-`4fa6be02…` instead of the tag commit `4d687ed6…` that the network reports, so
-the canonical readback refuses it. Building from the tag fixes both.
+`4fa6be02…` instead of the tag commit `4d687ed6…` that the network reports. The
+canonical readback accepts that: it binds the digest-qualified image and only
+reports the Core commit. A build from the tag carries the tag commit.
 
 ## Build on the Host
 
