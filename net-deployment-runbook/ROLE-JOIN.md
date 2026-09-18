@@ -58,6 +58,10 @@ gdc network bootstrap verify --online gonka-devnet-community.bootstrap.json
 gdc host join --bootstrap-file gonka-devnet-community.bootstrap.json --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
+`--online` needs a compatible `inferenced` on `PATH` and an answer from every
+listed seed. JOIN installs its own pinned CLI and needs only a quorum of
+seeds, so the online check is optional before a first JOIN.
+
 `bootstrap.env` is a generated compatibility projection, not an independent
 input. Download it only alongside the matching JSON, verify its attestation,
 generate the projection locally from the verified JSON, compare the bytes, and
@@ -102,6 +106,9 @@ compatible post-upgrade snapshot from both domains. It writes a bounded local
 receipt under the selected Host state directory and prints its path for both a
 pass and a terminal refusal. Keep that receipt with the retained diagnostic;
 it contains the observed lineage evidence, not credentials or validator keys.
+The receipt is trusted for 600 seconds. On a fresh Host, preparation, ML
+qualification and identity creation can take longer; set
+`GDC_JOIN_PREFLIGHT_TTL_SECONDS` for that run.
 
 If no compatible snapshot is available, the command stops with
 `snapshot_unavailable`. It never falls back to historical replay and it never
@@ -112,6 +119,9 @@ the preflight, enable the signer, or retry against a different profile.
 Use a lowercase SSH alias beginning with a letter or digit and containing only
 lowercase letters, digits, `_`, or `-`. The alias is also the Docker Compose
 project name on the Host.
+
+A Host CPU without ADX/BMI2 needs operator-built images, see
+[PORTABLE-RUNTIME.md](PORTABLE-RUNTIME.md).
 
 `ACTIVE` is an onboarding state, not a successful validator join. Ordinary
 JOIN finishes after mandatory installation, synchronization, registration,
@@ -125,6 +135,13 @@ gdc host join --verification --public-host <IP_or_DOMAIN> <ssh-alias>
 Only `--verification` enters the bounded six-epoch acceptance window and
 returns `JOIN_PASS` after proving a chain-recorded runtime, positive PoC
 weight, positive consensus voting power, and authenticated gateway inference.
+The gateway check uses a client key that only the network operator's state
+holds. Without it acceptance ends `BLOCKED` after the whole wait and
+`COMPLETE` is not recorded, so an independent operator runs the ordinary JOIN.
+
+Voting power follows the first accepted PoC, normally one or two epochs after
+`ACTIVE`. JOIN enables the signer first and then waits up to 2400 seconds for
+the first signature.
 
 The mandatory completion result is not `JOIN_PASS`. `ACTIVE` alone does not
 prove a successful validator join; `JOIN_PASS` is available only from explicit
@@ -146,8 +163,11 @@ gdc host join --public-host node2.gonka-dev.net gdc-node2
 
 The same JOIN command may be repeated for a complete matching local state. It
 queries registration before submission and must not create a second
-participant, funding claim, or validator identity. A partial, conflicting,
-different-lineage, or unreachable state stops before deployment changes.
+participant, funding claim, or validator identity. The repeat must come from
+the same gdc revision, with the same `GDC_PORTABLE_*` declaration if one was
+used; another revision is refused with `join_reentry_profile_changed` before
+any change. A partial, conflicting, different-lineage, or unreachable state
+stops before deployment changes.
 
 A stop before the first Host change is recorded as a refusal with
 `mutation: none`: the terminal result and the diagnostic that `gdc report
@@ -159,9 +179,13 @@ the Host afresh instead of demanding manual recovery.
 | `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | restore with `--restore` from the validator archive; without an archive, `gdc host reset` clears an unregistered identity so the next JOIN starts as `new`, and keeps a registered one until the archive exists |
 | `identity_conflict` | the Host holds a validator identity that the operator state does not know | restore with `--restore` from the archive of that identity; `gdc host reset` removes it only when the chain does not know its participant, never adopt it |
 | `unreachable` | no SSH session to the Host | repeat the same command once the Host is reachable |
+| exit 194 | host preparation installed the NVIDIA driver and the Host needs a reboot | reboot the Host, run `gdc host reset <ssh-alias>`, repeat the same command |
 
 `gdc host backup` creates the archive only while the deployment is present on
 the Host; create it before any `gdc host reset`.
+
+`gdc host reset` stops the signer at once. If the Host holds a third or more
+of the voting power the chain halts, so check the validator set first.
 
 For a validated private archive, use the same supported interface:
 
