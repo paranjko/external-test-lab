@@ -1,0 +1,9 @@
+{
+  "app_hash": "",
+  "consensus_params": {
+    "a": 1,
+    "b": 2
+  },
+  "initial_height": "1",
+  "z": "ok"
+}
