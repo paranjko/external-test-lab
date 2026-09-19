@@ -52,6 +52,13 @@ Human catalog pointers: [`broker-compat/`](broker-compat/).
 |---|---|
 | DevShard gateway 4.1.1 — standalone setup guide (fresh slot, settings, mint, smoke, cutover, public accounting link) | [`broker-ops/v411-gateway-setup-guide.md`](broker-ops/v411-gateway-setup-guide.md) |
 
+## Experimental incident tooling
+
+[`tools/gonkactl-trace/`](tools/gonkactl-trace/) collects read-only evidence and
+builds offline HTML incident reports, with optional Perfetto and OTLP exports.
+The draft includes a synthetic example and states its interpretation limits;
+it is separate from the operator CLI and test qualification harness.
+
 ## Team
 
 | Role | Owner |
