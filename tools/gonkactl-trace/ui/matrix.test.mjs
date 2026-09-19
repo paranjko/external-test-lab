@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import {buildMatrix, changesAt, admissionEvidence, applicationEvidence} from './matrix.mjs';
+import {buildMatrix, changesAt, admissionEvidence, applicationEvidence, timelineHref} from './matrix.mjs';
+const session='a'.repeat(24);
+assert.equal(timelineHref(session,'ru',42),`/gonka/?session=${session}&view=timeline&lang=ru&height=42`);
+for(const hostile of ['javascript:alert(1)','//evil.example','<svg/onload=alert(1)>',session+'&view=other',null,{},[session]])assert.equal(timelineHref(hostile),'/gonka/');
+const safe=new URL(timelineHref(session,'en&session=other','42&view=other'),'http://localhost');
+assert.equal(safe.origin,'http://localhost');assert.equal(safe.pathname,'/gonka/');
+assert.equal(safe.searchParams.get('session'),session);assert.equal(safe.searchParams.get('lang'),'en');assert.equal(safe.searchParams.has('height'),false);
+console.log('PASS: local timeline links validate identity and height and encode query values');
 const actors=[{id:'a',participant:'node0',kind:'consensus_identity'},{id:'b',participant:'node2',kind:'consensus_identity'}];
 const set=(height,power,complete=true)=>({height,total:power,quorum:1,membership_complete:complete,validators:[{Address:'a',Power:power}]});
 const event=(event_id,extra={})=>({event_id,network_id:'n',kind:'vote.certificate',height:306552,round:0,phase:'PRECOMMIT',validator_id:'a',block_id:'block',temporality:'historical',source_refs:[event_id],...extra});
