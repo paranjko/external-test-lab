@@ -1,0 +1,990 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gonka-dev.net/gonkactl/contracts/v1/recovery.schema.json",
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "runtime.schema.json#/$defs/sha256"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ]
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "recovery_manifest"
+        },
+        "stage": {
+          "enum": [
+            "draft",
+            "final"
+          ]
+        },
+        "incident_id": {
+          "$ref": "runtime.schema.json#/$defs/identifier"
+        },
+        "run_id": {
+          "$ref": "runtime.schema.json#/$defs/run_id"
+        },
+        "chain_id": {
+          "$ref": "runtime.schema.json#/$defs/chain_id"
+        },
+        "genesis_sha256": {
+          "$ref": "runtime.schema.json#/$defs/sha256"
+        },
+        "semantic_genesis_sha256": {
+          "$ref": "runtime.schema.json#/$defs/sha256"
+        },
+        "source_height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_app_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transition_host": {
+          "$ref": "runtime.schema.json#/$defs/identifier"
+        },
+        "host_order": {
+          "type": "array",
+          "items": {
+            "$ref": "runtime.schema.json#/$defs/identifier"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "host": {
+                "$ref": "runtime.schema.json#/$defs/identifier"
+              },
+              "machine_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "enum": [
+                  "transition",
+                  "returning",
+                  "split_ml"
+                ]
+              },
+              "source_home": {
+                "type": "string",
+                "minLength": 1
+              },
+              "backup_root": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fork_home": {
+                "type": "string",
+                "minLength": 1
+              },
+              "compose_project": {
+                "type": "string",
+                "minLength": 1
+              },
+              "old_key_public": {
+                "type": "string",
+                "minLength": 1
+              },
+              "approved_key_public": {
+                "type": "string",
+                "minLength": 1
+              },
+              "valoper": {
+                "type": "string",
+                "minLength": 1
+              },
+              "services": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "host",
+              "machine_id",
+              "role",
+              "source_home",
+              "backup_root",
+              "fork_home",
+              "compose_project",
+              "services"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "source_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "runtime_qualification": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "initialization_allowlist": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "retirement_qualification": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "retirement_recipe": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "trust_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "poc_handoff_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "binary_sha256": {
+          "$ref": "runtime.schema.json#/$defs/sha256"
+        },
+        "image_digest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_commit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sdk_commit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "comet_commit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effective_is_test_net": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "parsed": {
+              "type": "boolean"
+            },
+            "height_branch": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "present",
+            "value",
+            "parsed",
+            "height_branch"
+          ]
+        },
+        "first_boundary_policy": {
+          "enum": [
+            "A",
+            "A+B"
+          ]
+        },
+        "singleton_deadline_utc": {
+          "$ref": "runtime.schema.json#/$defs/timestamp"
+        },
+        "singleton_max_blocks": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "singleton_monitor": {
+          "$ref": "runtime.schema.json#/$defs/identifier"
+        },
+        "phase_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "snapshot_retention_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "rehearsal_evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/artifact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "independent_review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/artifact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "environment_kind": {
+          "enum": [
+            "isolated_lab",
+            "working_network"
+          ]
+        },
+        "expiry_stop_policy": {
+          "$ref": "#/$defs/artifact"
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "stage",
+        "incident_id",
+        "run_id",
+        "chain_id",
+        "transition_host",
+        "host_order",
+        "roles",
+        "environment_kind"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "stage": {
+                "const": "final"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "schema_version",
+              "kind",
+              "stage",
+              "incident_id",
+              "run_id",
+              "chain_id",
+              "genesis_sha256",
+              "semantic_genesis_sha256",
+              "source_height",
+              "source_block_id",
+              "source_app_hash",
+              "transition_host",
+              "host_order",
+              "roles",
+              "source_state",
+              "runtime_qualification",
+              "initialization_allowlist",
+              "retirement_qualification",
+              "retirement_recipe",
+              "trust_policy",
+              "poc_handoff_policy",
+              "binary_sha256",
+              "image_digest",
+              "source_commit",
+              "sdk_commit",
+              "comet_commit",
+              "effective_is_test_net",
+              "first_boundary_policy",
+              "singleton_deadline_utc",
+              "singleton_max_blocks",
+              "singleton_monitor",
+              "expiry_stop_policy",
+              "phase_timeout_seconds",
+              "request_timeout_seconds",
+              "snapshot_retention_policy",
+              "rehearsal_evidence",
+              "independent_review",
+              "environment_kind"
+            ],
+            "properties": {
+              "roles": {
+                "items": {
+                  "required": [
+                    "old_key_public",
+                    "approved_key_public",
+                    "valoper"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stage": {
+                "const": "final"
+              },
+              "environment_kind": {
+                "const": "working_network"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "rehearsal_evidence": {
+                "$ref": "#/$defs/artifact"
+              },
+              "independent_review": {
+                "$ref": "#/$defs/artifact"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recovery_phase": {
+          "enum": [
+            "inspect",
+            "prepare",
+            "freeze",
+            "stage",
+            "status",
+            "activate",
+            "checkpoint",
+            "retire",
+            "rejoin",
+            "resume",
+            "verify",
+            "abort"
+          ]
+        },
+        "recovery_state": {
+          "enum": [
+            "INSPECTED",
+            "PREPARED",
+            "FROZEN",
+            "STAGED",
+            "SINGLETON_ACTIVE",
+            "CHECKPOINTED",
+            "RETIRED",
+            "REJOINED",
+            "SIGNERS_READY",
+            "POC_ACTIVE",
+            "HANDOFF_COMPLETE",
+            "VERIFIED",
+            "ABORTED",
+            "BLOCKED",
+            "FAILED"
+          ]
+        },
+        "manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "local_host": {
+          "$ref": "runtime.schema.json#/$defs/identifier"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "step": {
+          "enum": [
+            null,
+            "signers",
+            "poc",
+            "handoff"
+          ]
+        },
+        "scope": {
+          "enum": [
+            null,
+            "consensus",
+            "epochs",
+            "service"
+          ]
+        },
+        "phase_proof": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            }
+          },
+          "required": [
+            "path",
+            "sha256"
+          ]
+        },
+        "predecessor_receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "$ref": "runtime.schema.json#/$defs/sha256"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "$ref": "runtime.schema.json#/$defs/sha256"
+                }
+              },
+              "required": [
+                "path",
+                "sha256"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "$ref": "runtime.schema.json#/$defs/sha256"
+                }
+              },
+              "required": [
+                "path",
+                "sha256"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "singleton_blocks_remaining": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "singleton_deadline_utc": {
+          "anyOf": [
+            {
+              "$ref": "runtime.schema.json#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "qualification": {
+          "enum": [
+            "code_only",
+            "runtime_qualified",
+            "pending",
+            "blocked"
+          ]
+        },
+        "next_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "recovery_phase",
+        "recovery_state",
+        "manifest",
+        "local_host",
+        "attempt",
+        "step",
+        "scope",
+        "phase_proof",
+        "predecessor_receipts",
+        "approval",
+        "checkpoint",
+        "singleton_blocks_remaining",
+        "singleton_deadline_utc",
+        "qualification",
+        "next_action"
+      ]
+    },
+    "trust_store": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "recovery_trust_store"
+        },
+        "approvers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "public_key_hex": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "allowed_hosts": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "uniqueItems": true
+              },
+              "allowed_phases": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "prepare",
+                    "freeze",
+                    "stage",
+                    "activate",
+                    "checkpoint",
+                    "retire",
+                    "rejoin",
+                    "resume",
+                    "verify",
+                    "abort"
+                  ]
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "id",
+              "public_key_hex",
+              "allowed_hosts",
+              "allowed_phases"
+            ]
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "approvers"
+      ]
+    },
+    "approval_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "recovery_approval_payload"
+        },
+        "manifest_sha256": {
+          "$ref": "runtime.schema.json#/$defs/sha256"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "enum": [
+            "prepare",
+            "freeze",
+            "stage",
+            "activate",
+            "checkpoint",
+            "retire",
+            "rejoin",
+            "resume",
+            "verify",
+            "abort"
+          ]
+        },
+        "step": {
+          "enum": [
+            null,
+            "signers",
+            "poc",
+            "handoff"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "phase",
+            "service",
+            "singleton_expiry_stop",
+            "checkpoint"
+          ]
+        },
+        "resources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "issued_at": {
+          "$ref": "runtime.schema.json#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "runtime.schema.json#/$defs/timestamp"
+        },
+        "checkpoint_sha256": {
+          "anyOf": [
+            {
+              "$ref": "runtime.schema.json#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "manifest_sha256",
+        "run_id",
+        "host",
+        "phase",
+        "step",
+        "scope",
+        "resources",
+        "issued_at",
+        "expires_at",
+        "checkpoint_sha256"
+      ]
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "recovery_approval"
+        },
+        "approver_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "$ref": "#/$defs/artifact"
+        },
+        "signature_hex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{128}$"
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "approver_id",
+        "payload",
+        "signature_hex"
+      ]
+    },
+    "phase_proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "recovery_phase_proof"
+        },
+        "manifest_sha256": {
+          "$ref": "runtime.schema.json#/$defs/sha256"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_at": {
+          "$ref": "runtime.schema.json#/$defs/timestamp"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "blocked",
+            "inconclusive"
+          ]
+        },
+        "runtime_sha256": {
+          "$ref": "runtime.schema.json#/$defs/sha256"
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "blocked",
+                  "inconclusive"
+                ]
+              },
+              "observed": {
+                "type": "string",
+                "minLength": 1
+              },
+              "artifacts": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/artifact"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "observed",
+              "artifacts"
+            ]
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "manifest_sha256",
+        "run_id",
+        "host",
+        "phase",
+        "observed_at",
+        "status",
+        "runtime_sha256",
+        "checks",
+        "artifacts"
+      ]
+    }
+  }
+}

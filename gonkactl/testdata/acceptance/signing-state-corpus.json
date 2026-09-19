@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "newer": {"height":"9007199254740993","round":"0001","step":1,"block_id":{"hash":"a","parts_total":1,"parts_hash":"p"}},
+  "older": {"height":"9007199254740992","round":"1","step":1,"block_id":{"hash":"a","parts_total":1,"parts_hash":"p"}},
+  "conflict": {"height":"9007199254740993","round":"0001","step":1,"block_id":{"hash":"b","parts_total":1,"parts_hash":"p"}}
+}
