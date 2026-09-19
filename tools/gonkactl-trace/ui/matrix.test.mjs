@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import {buildMatrix, changesAt, admissionEvidence, applicationEvidence, timelineHref} from './matrix.mjs';
+const session='a'.repeat(24);
+assert.equal(timelineHref(session,'ru',42),`/gonka/?session=${session}&view=timeline&lang=ru&height=42`);
+for(const hostile of ['javascript:alert(1)','//evil.example','<svg/onload=alert(1)>',session+'&view=other',null,{},[session]])assert.equal(timelineHref(hostile),'/gonka/');
+const safe=new URL(timelineHref(session,'en&session=other','42&view=other'),'http://localhost');
+assert.equal(safe.origin,'http://localhost');assert.equal(safe.pathname,'/gonka/');
+assert.equal(safe.searchParams.get('session'),session);assert.equal(safe.searchParams.get('lang'),'en');assert.equal(safe.searchParams.has('height'),false);
+console.log('PASS: local timeline links validate identity and height and encode query values');
+const actors=[{id:'a',participant:'node0',kind:'consensus_identity'},{id:'b',participant:'node2',kind:'consensus_identity'}];
+const set=(height,power,complete=true)=>({height,total:power,quorum:1,membership_complete:complete,validators:[{Address:'a',Power:power}]});
+const event=(event_id,extra={})=>({event_id,network_id:'n',kind:'vote.certificate',height:306552,round:0,phase:'PRECOMMIT',validator_id:'a',block_id:'block',temporality:'historical',source_refs:[event_id],...extra});
+const data={actors,validator_sets:[set(306550,20),set(306551,20),set(306552,20),set(306553,10)],events:[event('one'),event('duplicate'),event('other-block',{block_id:'other'}),event('snapshot',{kind:'vote.snapshot',temporality:'snapshot'}),event('jail',{kind:'validator.jailed.liveness',height:306511}),event('jail-copy',{kind:'validator.jailed.liveness',height:306511})]};
+let cells=buildMatrix(data);const cell=(node,h=306552)=>cells.find(c=>c.node===node&&c.height===h);
+assert.equal(cells.length,28);
+assert.equal(cell('node0').certificates.length,2);
+assert.equal(cell('node0').certificates[0].length,2);
+assert.equal(cell('node0').snapshots.length,1);
+assert.equal(cell('node0').jails.length,2,'jail records must not be declared one episode');
+assert.equal(cell('node2').membership,'out');
+assert.equal(cell('node1').membership,'unknown','missing identity is not absent membership');
+assert.equal(changesAt(cells,306553).find(c=>c.node==='node0').after.power,10);
+cells=buildMatrix({...data,validator_sets:[set(306552,20,false)]});
+assert.equal(cell('node2').membership,'unknown','incomplete set must not prove absence');
+cells=buildMatrix({...data,validator_sets:[set(306552,20),set(306552,30)]});
+assert.equal(cell('node0').membership,'conflict');
+assert.equal(cell('node0').power,null,'conflicts must not silently choose power');
+cells=buildMatrix({...data,actors:[...actors,{id:'other',participant:'node0',kind:'consensus_identity'}]});
+assert.equal(cell('node0').membership,'conflict');
+assert.equal(cell('node0').certificates.length,0,'ambiguous participant binding must not select one key');
+assert.deepEqual(buildMatrix(data),buildMatrix(structuredClone(data)));
+console.log('PASS: 28 matrix cells; complete/incomplete/unknown/conflicting membership; signature grouping, targets, snapshots and separate jail records; power transition');
+const admissionData={actors:[...actors,{id:'new',participant:'node5-2',kind:'consensus_identity'}],validator_sets:[set(306551,405),set(306552,405),{...set(306553,81),total:135,quorum:91,validators:[{Address:'a',Power:81},{Address:'new',Power:54}]}],membership_changes:[{validator_id:'new',height:306553,new_power:54,emitted_height:306551,activation_distance:2,update_matches:true}],prior_identity_sets:[{height:306133,validators:[{Address:'new',Power:70}]}],certificates:[{height:306551,signers:['a'],power:405,quorum:1}],events:[]};
+const admission=admissionEvidence(admissionData);
+assert.equal(admission.remaining,81);assert.equal(admission.quorum,91);assert.equal(admission.prior.height,306133);assert.ok(admission.update);assert.equal(admission.sufficientOld.length,1);
+assert.equal(admissionEvidence({...admissionData,membership_changes:[]}).update,null);
+assert.equal(admissionEvidence({...admissionData,certificates:[]}).sufficientOld.length,0);
+assert.equal(admissionEvidence({...admissionData,validator_sets:[]}).remaining,null);
+assert.equal(admissionEvidence({...admissionData,prior_identity_sets:[]}).prior,undefined);
+console.log('PASS: admission explanation separates prior membership, update evidence, old-set certificate and conditional quorum arithmetic; missing evidence stays unknown');
+const prefix='/productscience/inference/inference/';
+const query=(height,path,body,node='node0')=>({height,path:prefix+path,node,status:'reported',pages:[body]});
+const appData={actors,application:{identities:[{address:'addr',validator:'a',height:306550}],queries:[
+query(306529,'current_epoch_group_data',{epoch_group_data:{validation_weights:[{member_address:'addr',weight:'94'}]}}),
+query(306549,'current_epoch_group_data',{epoch_group_data:{poc_start_block_height:'306530',epoch_index:'4379',validation_weights:[]}}),
+query(306550,'all_poc_v2_store_commits/306530',{commits:[{participant_address:'addr',count:640}]}),
+query(306550,'poc_v2_validations_for_stage/306530',{poc_validation:[{poc_validation:[{participant_address:'addr',validator_participant_address:'addr',validated_weight:'32'}]}]})]}};
+let app=applicationEvidence(appData);assert.equal(app.rows[0].label,'node0');assert.equal(app.rows[0].after,'not in group');assert.equal(app.rows[0].commits[0],640);assert.ok(app.rows[0].votes[0].self);
+const conflicting=structuredClone(appData);conflicting.application.queries.push(query(306549,'current_epoch_group_data',{epoch_group_data:{validation_weights:[{member_address:'addr',weight:'9'}]}},'node1'));
+assert.equal(applicationEvidence(conflicting).fresh.known,false);
+const invalid=structuredClone(appData);invalid.application.queries[1].pages=[{}];assert.equal(applicationEvidence(invalid).fresh.known,false);
+assert.equal(applicationEvidence({}),null);
+const reordered=structuredClone(appData);const copy=structuredClone(reordered.application.queries[0]);copy.node='node1';copy.pages[0].epoch_group_data.validation_weights.reverse();reordered.application.queries.push(copy);assert.equal(applicationEvidence(reordered).old.known,true);
+console.log('PASS: historical application comparison preserves commitments, self-votes, unknown schema and conflicting replies');
