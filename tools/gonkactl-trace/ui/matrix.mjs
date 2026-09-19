@@ -3,6 +3,14 @@ import {causalEvidence,ruleCommit} from './causal.mjs';
 export const participants = ['node0','node1','node2','node3','node4','node5-1','node5-2'];
 export const heights = [306550,306551,306552,306553];
 export const matrixHeights = data => Number.isSafeInteger(data.from)&&Number.isSafeInteger(data.to)&&data.from>0&&data.to>=data.from&&data.to-data.from<4?Array.from({length:data.to-data.from+1},(_,i)=>data.from+i):heights;
+// Dataset text and query parameters are not URL syntax. Keep navigation local,
+// validate identity/height, and encode every variable query value at the sink.
+export function timelineHref(session, language='en', height) {
+  if(typeof session!=='string'||!/^[a-f0-9]{24}$/.test(session))return '/gonka/';
+  const lang=language==='ru'?'ru':'en';
+  const base=`/gonka/?session=${encodeURIComponent(session)}&view=timeline&lang=${encodeURIComponent(lang)}`;
+  return Number.isSafeInteger(height)&&height>0?`${base}&height=${encodeURIComponent(String(height))}`:base;
+}
 const unique = xs => [...new Set(xs)];
 // These query projections contain unordered member/vote lists. Preserve raw
 // pages for evidence, but do not call a changed iteration order a conflict.
@@ -126,7 +134,7 @@ export async function mountMatrix(data,root,session,language='en') {
   const pre=value=>el('pre',typeof value==='string'?value:JSON.stringify(value,null,2));
   const state=c=>c.membership==='in'?`In set · power ${c.power??'?'}`:c.membership==='out'?'Not in complete set':c.membership==='conflict'?'≠ Conflicting evidence':'? Membership unknown';
   const offline=!!document.getElementById('gonka-report-data');
-  const timeline=height=>offline?'incident.pftrace':`/gonka/?session=${session}&view=timeline&height=${height}&lang=${language}`;
+  const timeline=height=>offline?'incident.pftrace':timelineHref(session,language,height);
   const selector=document.getElementById('language');
   if(selector)selector.onchange=()=>{
     language=selector.value==='ru'?'ru':'en';
@@ -338,7 +346,7 @@ function updateChrome(language,session) {
   document.documentElement.lang=language;
   document.title=translate('Gonka · state matrix prototype',language);
   document.getElementById('brand').textContent=translate('Gonka · incident investigation · prototype',language);
-  const link=document.getElementById('timeline');link.textContent=translate('Open detailed timeline in Perfetto',language);link.href=`/gonka/?session=${session}&view=timeline&lang=${language}`;
+  const link=document.getElementById('timeline');link.textContent=translate('Open detailed timeline in Perfetto',language);link.href=timelineHref(session,language);
   if(document.getElementById('gonka-report-data')){link.textContent=language==='ru'?'Скачать трейс для Perfetto':'Download trace for Perfetto';link.href='incident.pftrace';link.download='incident.pftrace';}
   document.getElementById('language').value=language;
 }
