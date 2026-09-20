@@ -77,10 +77,150 @@ wait_for_node_sync() {
   die "$NODE did not catch up within ${GDC_NODE_START_WAIT_SECONDS:-300}s"
 }
 
+# Registration of the local cold account on the chain, read through the
+# public API of the Bootstrap seeds retained by the last JOIN attempt.
+# Prints registered, absent, or unknown:<reason>. Reads only; a seed that
+# cannot answer is skipped, a 5xx is retried once.
+# The height a seed reports for itself, empty unless it answers as the seed the
+# Bootstrap names, on the requested chain, and is not catching up.
+seed_chain_height() {
+  local rpc="$1" node_id="$2" chain="$3" status
+  status="$(curl -sS --connect-timeout 10 --max-time 30 "${rpc%/}/status" 2>/dev/null)" || return 0
+  jq -r --arg id "$node_id" --arg chain "$chain" '
+    select((.result.node_info.id // "" | ascii_downcase) == ($id | ascii_downcase))
+    | select((.result.node_info.network // "") == $chain)
+    | select(.result.sync_info.catching_up == false)
+    | .result.sync_info.latest_block_height // empty' <<<"$status" 2>/dev/null || true
+}
+
+# Whether the chain still binds this participant. Destroying validator key
+# material depends on the answer, so one endpoint is never enough. The question
+# goes to the chain state each seed serves itself, not to the gateway API of
+# one of them, and `absent` needs at least two seeds that are in step with the
+# highest tip and agree. Any seed that cannot answer, or answers something
+# unrecognised, leaves the question open.
+participant_registration() {
+  local node="$1" account bootstrap address chain base rpc node_id body status attempt curl_exit
+  local max_lag min_seeds tip=0 height absent_seen=0 contradicted=0 unanswered=0 behind=0 tips=0
+  # Reset loads no role input, so the project path variables are not set:
+  # derive the two files from the data home directly.
+  account="$GDC_HOME/accounts/$node-cold.json"
+  bootstrap="$STATE/network-bootstrap.json"
+  [[ -s "$account" && ! -L "$account" ]] || { printf 'unknown:no_cold_account\n'; return 0; }
+  address="$(jq -r '.address // empty' "$account" 2>/dev/null || true)"
+  [[ "$address" =~ ^gonka1[0-9a-z]{38}$ ]] || { printf 'unknown:invalid_cold_account\n'; return 0; }
+  [[ -s "$bootstrap" && ! -L "$bootstrap" ]] || { printf 'unknown:no_bootstrap\n'; return 0; }
+  chain="$(jq -r '.chain_id // empty' "$bootstrap" 2>/dev/null || true)"
+  [[ -n "$chain" ]] || { printf 'unknown:no_bootstrap\n'; return 0; }
+  max_lag="${GDC_RESET_PARTICIPANT_MAX_LAG_BLOCKS:-20}"
+  min_seeds="${GDC_RESET_PARTICIPANT_MIN_SEEDS:-2}"
+  [[ "$max_lag" =~ ^(0|[1-9][0-9]{0,3})$ && "$min_seeds" =~ ^[2-9]$ ]] \
+    || { printf 'unknown:invalid_lookup_bounds\n'; return 0; }
+  while IFS=$'\t' read -r rpc node_id; do
+    height="$(seed_chain_height "$rpc" "$node_id" "$chain")"
+    [[ "$height" =~ ^[1-9][0-9]*$ ]] || continue
+    tips=$((tips + 1))
+    (( height > tip )) || continue
+    tip="$height"
+  done < <(jq -r '.seeds[] | [(.rpc // ""), (.node_id // "")] | @tsv' "$bootstrap" 2>/dev/null || true)
+  (( tips >= min_seeds )) || { printf 'unknown:network_height_unavailable\n'; return 0; }
+  body="$(mktemp)"
+  while IFS=$'\t' read -r rpc node_id; do
+    base="${rpc%/}"; base="${base%/chain-rpc}"
+    [[ "$base" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || continue
+    height="$(seed_chain_height "$rpc" "$node_id" "$chain")"
+    # A seed that trails the network has not seen a recent registration yet.
+    if [[ ! "$height" =~ ^[1-9][0-9]*$ ]] || (( height + max_lag < tip )); then
+      behind=$((behind + 1))
+      continue
+    fi
+    for attempt in 1 2; do
+      curl_exit=0
+      status="$(curl -sS --connect-timeout 10 --max-time 30 -o "$body" -w '%{http_code}' \
+        -H "x-cosmos-block-height: $height" \
+        "$base/chain-api/productscience/inference/inference/participant/$address" 2>/dev/null)" || curl_exit=$?
+      if (( curl_exit == 0 )); then
+        case "$status" in
+          200)
+            if jq -e --arg address "$address" '.participant.address == $address' "$body" >/dev/null 2>&1; then
+              rm -f "$body"; printf 'registered\n'; return 0
+            fi
+            contradicted=$((contradicted + 1)) ;;
+          404) absent_seen=$((absent_seen + 1)) ;;
+          *) [[ "$status" =~ ^5 ]] && (( attempt < 2 )) && { sleep 1; continue; }
+             unanswered=$((unanswered + 1)) ;;
+        esac
+      else
+        (( attempt < 2 )) && { sleep 1; continue; }
+        unanswered=$((unanswered + 1))
+      fi
+      break
+    done
+  done < <(jq -r '.seeds[] | [(.rpc // ""), (.node_id // "")] | @tsv' "$bootstrap" 2>/dev/null || true)
+  rm -f "$body"
+  # Anything short of an unopposed answer from enough seeds leaves the key in
+  # place, and the reason says which of the three it was.
+  (( contradicted == 0 )) || { printf 'unknown:seed_disagreement\n'; return 0; }
+  if (( absent_seen < min_seeds )); then
+    (( behind == 0 )) || { printf 'unknown:seed_behind_network\n'; return 0; }
+    printf 'unknown:endpoint_unavailable\n'; return 0
+  fi
+  (( unanswered == 0 )) || { printf 'unknown:endpoint_unavailable\n'; return 0; }
+  printf 'absent\n'
+}
+
+# Which validator identity roots the Host holds: v2 (stable roots outside the
+# deployment), v1 (signer below the deployment root that reset removes), or
+# none. Read-only.
+# Where this Host keeps the signing key, decided by the key file itself: a
+# directory or a p2p marker says nothing about which copy is the live one, and
+# an interrupted migration leaves both. The verdict is fenced so that anything
+# else the remote shell prints cannot be mistaken for it.
+host_identity_layout() {
+  local node="$1" layout output
+  output="$(ssh -T "$node" "sudo -n bash -s gdc-identity-layout '$node'" <<'REMOTE' 2>/dev/null || true
+set -u
+node="$2"
+legacy="/srv/dai/$node/tmkms/secrets/priv_validator_key.softsign"
+stable="/srv/dai/signer/$node/tmkms/secrets/priv_validator_key.softsign"
+if [ -s "$legacy" ] && { [ ! -s "$stable" ] || ! cmp -s "$legacy" "$stable"; }; then
+  echo "gdc-identity-layout=v1"
+elif [ -s "$stable" ] || [ -s "/srv/dai/identity/$node/p2p/node_key.json" ]; then
+  echo "gdc-identity-layout=v2"
+elif [ -d "/srv/dai/$node/tmkms" ] || [ -d "/srv/dai/signer/$node/tmkms" ] || [ -d "/srv/dai/identity/$node" ]; then
+  echo "gdc-identity-layout=unknown"
+else
+  echo "gdc-identity-layout=none"
+fi
+REMOTE
+)"
+  layout="$(grep -E '^gdc-identity-layout=(v1|v2|none|unknown)$' <<<"$output" | tail -n 1 | cut -d= -f2)"
+  [[ -n "$layout" ]] || layout=unknown
+  printf '%s\n' "$layout"
+}
+
+# Move the local identity record and cold account aside so the next JOIN
+# classifies as new. Mnemonics stay: they are the recovery secret.
+discard_local_identity() {
+  local node="$1" stamp="$2" dir file moved=0
+  dir="$STATE/recovery-partial-$stamp"
+  for file in "$STATE/identities/$node.json" "$GDC_HOME/accounts/$node-cold.json"; do
+    [[ -e "$file" && ! -L "$file" ]] || continue
+    install -d -m 0700 "$dir"
+    mv -- "$file" "$dir/"
+    moved=$((moved + 1))
+  done
+  printf '%s\n' "$moved"
+}
+
 reset_node() {
   local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias backup_archive
   local local_identity local_account local_joined join_classification join_class active_run_id active_join_result
+  local registration layout stamp discarded discard_identity
   linked_ml_host=''
+  # Key material is destroyed only when both verdicts agree. Nothing decides
+  # that yet, so the safe answer stands until the chain has been asked.
+  discard_identity=false
   source=''
   backup_archive="$GDC_DATA_ROOT/$NODE-validator-backup.tar"
   local_identity="$(node_identity_file "$NODE")"
@@ -147,8 +287,9 @@ reset_node() {
   fi
 
   reset_remote_host() {
-    local host="$1"
-    ssh -T "$host" "NODE='$host' GDC_RESET_PARTIAL_IDENTITY='${GDC_RESET_PARTIAL_IDENTITY:-false}' bash -s" <<'REMOTE'
+    local host="$1" partial="${2:-false}"
+    [[ "$partial" == true ]] || partial=false
+    ssh -T "$host" "NODE='$host' GDC_RESET_PARTIAL_IDENTITY='$partial' bash -s" <<'REMOTE'
 set -Eeuo pipefail
 
 systemctl disable --now "gdc-poc-winddown-watch@$NODE.service" >/dev/null 2>&1 || true
@@ -240,18 +381,81 @@ fi
 REMOTE
   }
 
+  # Reset is symmetric only for a validator key the chain does not know.
+  # Decide before anything is stopped or deleted: a registered key is never
+  # deleted, on the Host or locally; an unregistered one is archived and
+  # cleared below so the next JOIN starts as new; an unanswered lookup keeps
+  # everything. Without a local cold account there is nothing to look up.
+  registration="$(participant_registration "$NODE")"
+  layout=none
+  stamp=''
+  # The chain is the only authority on whether a consensus key is still bound
+  # to a participant, so it alone decides whether key material may be
+  # destroyed. A local classification of partial_identity says the bookkeeping
+  # of a JOIN was interrupted; it never authorises a delete on its own, and an
+  # unanswered lookup retains everything whatever the local state looks like.
+  [[ "$registration" != absent ]] || discard_identity=true
+  # Read the layout even when the chain cannot be asked: a first-generation
+  # Host keeps its signer below the deployment root that reset removes, and
+  # capture retains the signing state, never the key.
+  layout="$(host_identity_layout "$NODE")"
+  if [[ "$registration" != absent ]]; then
+    case "$layout" in
+      v1) die "$NODE keeps its signer below the deployment root that reset removes, and its participant registration is $registration; create the validator archive with gdc host backup and rerun reset when the public API confirms the key is unregistered; no reset was performed" ;;
+      unknown) die "$NODE identity layout could not be read while its participant registration is $registration; no reset was performed" ;;
+    esac
+  fi
   step "Reset $NODE deployment state and remove deployed containers"
   bash "$ROOT/scripts/same-host-restore.sh" capture "$NODE"
+  if [[ "$discard_identity" == true && "$layout" != none ]]; then
+    # Archive before the deployment root goes: a v1 signer lives inside it.
+    # The stable v2 roots survive an ordinary reset, so remove them here.
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    ssh -T "$NODE" "bash -s gdc-identity-discard '$NODE' '$stamp'" <<'REMOTE'
+set -Eeuo pipefail
+node="$2"; stamp="$3"
+umask 077
+members=()
+[ ! -d "/srv/dai/identity/$node" ] || members+=("identity/$node")
+[ ! -d "/srv/dai/signer/$node" ] || members+=("signer/$node")
+[ ! -d "/srv/dai/$node/tmkms" ] || members+=("$node/tmkms")
+[ "${#members[@]}" -gt 0 ] || exit 0
+install -d -m 0700 "/srv/dai/rejoin/$node"
+tar -C /srv/dai -cf "/srv/dai/rejoin/$node/discarded-$stamp.tar" "${members[@]}"
+chmod 0600 "/srv/dai/rejoin/$node/discarded-$stamp.tar"
+rm -rf "/srv/dai/identity/$node" "/srv/dai/signer/$node"
+REMOTE
+  fi
   # The public edge is an OPS-owned service. Resetting its validator must not
   # also remove the Caddy instance that owns the public site, API and Grafana.
-  GDC_RESET_PARTIAL_IDENTITY="$([[ "$join_class" == partial_identity ]] && printf true || printf false)" \
-    reset_remote_host "$NODE"
-  if [[ "$join_class" == partial_identity ]]; then
-    rm -f -- "$local_identity" "$local_account" "$local_joined"
+  reset_remote_host "$NODE" "$discard_identity"
+  # The identity record and the cold account are moved aside rather than
+  # deleted, by the discard below; only the joined marker goes here.
+  [[ ! -e "$local_joined" ]] || rm -f -- "$local_joined"
+  if [[ "$discard_identity" == true ]]; then
     printf 'READY removed incomplete local and remote identity state for %s\n' "$NODE"
-  elif [[ -e "$local_joined" ]]; then
-    rm -f -- "$local_joined"
   fi
+  case "$registration" in
+    absent)
+      [[ -n "$stamp" ]] || stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+      discarded="$(discard_local_identity "$NODE" "$stamp")"
+      if [[ "$layout" != none ]]; then
+        printf 'PASS %s identity discarded: the participant is not registered on chain; %s local file(s) moved to state/recovery-partial-%s, Host identity archived under rejoin/%s/discarded-%s.tar and removed; the next JOIN starts as new\n' \
+          "$NODE" "$discarded" "$stamp" "$NODE" "$stamp"
+      else
+        printf 'PASS %s identity discarded: the participant is not registered on chain; %s local file(s) moved to state/recovery-partial-%s, the Host held no validator identity; the next JOIN starts as new\n' \
+          "$NODE" "$discarded" "$stamp"
+      fi
+      ;;
+    registered)
+      printf 'READY %s participant is registered on chain; identity and signer are retained on the Host and locally; recover with gdc host join --restore\n' "$NODE"
+      ;;
+    unknown:no_cold_account)
+      ;;
+    unknown:*)
+      printf 'READY %s participant registration is unknown (%s); identity and signer are retained; rerun reset when the public API answers to discard an unregistered identity\n' "$NODE" "${registration#unknown:}"
+      ;;
+  esac
   # The operator recovery archive deliberately lives at the data root rather
   # than inside the reset node directory. Confirm that a reset retained it,
   # without logging the archive's potentially private local path.
@@ -260,7 +464,13 @@ REMOTE
   fi
   if [[ -n "$linked_ml_host" ]]; then
     step "Reset linked GPU host $linked_ml_host for $NODE"
-    reset_remote_host "$linked_ml_host"
+    # A GPU Host holds no validator identity. If this one does, the alias is
+    # not what the operator state says it is: stop instead of removing it.
+    case "$(host_identity_layout "$linked_ml_host")" in
+      none) ;;
+      *) die "$linked_ml_host holds validator identity material and is linked as the GPU Host of $NODE; no reset of the linked Host was performed" ;;
+    esac
+    reset_remote_host "$linked_ml_host" false
     rm -f "$STATE/ml-attached/$NODE"
     printf 'PASS %s linked GPU reset\n' "$linked_ml_host"
   fi

@@ -1329,10 +1329,16 @@ require_current_baseline_pass() {
   printf 'PASS current baseline evidence: %s (%s participants)\n' "$bundle" "${#indexes[@]}"
 }
 
+# Optional service names select what starts; none starts the whole project.
 start_stack() {
-  local host="$1" path="$2"
+  local host="$1" path="$2" service services=''
+  shift 2
+  for service in "$@"; do
+    [[ "$service" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "invalid Compose service name: $service"
+    services+=" $service"
+  done
   printf 'WAIT  start %s:%s\n' "$host" "$path"
-  if ssh "$host" "cd '$path' && docker compose up -d >start.log 2>&1"; then
+  if ssh "$host" "cd '$path' && docker compose up -d$services >start.log 2>&1"; then
     printf 'READY started %s:%s\n' "$host" "$path"
   else
     ssh "$host" "tail -100 '$path/start.log'" >&2 || true

@@ -91,6 +91,16 @@ on_launcher_exit() {
   local rc="$?"
   trap - EXIT
   set +e
+  trap - ERR
+  # A JOIN run without a terminal result blocks every later run: write one on abort.
+  if (( rc != 0 )) && [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] \
+    && [[ ! -e "$GDC_JOIN_RESULT_OUTPUT" ]] && [[ -d "$(dirname "$GDC_JOIN_RESULT_OUTPUT")" ]] \
+    && [[ "$GDC_JOIN_RESULT_OUTPUT" == "${GDC_HOME:-/nonexistent}/runs/"* ]]; then
+    record_join_terminal_result failed signer internal join_launcher_aborted "$rc" \
+      signer_may_be_on unknown manual_recovery \
+      || printf 'ERROR JOIN aborted and its terminal result receipt could not be persisted at %s\n' \
+        "$GDC_JOIN_RESULT_OUTPUT" >&2
+  fi
   record_launcher_failure "$rc"
   # A phase pipeline runs in a subshell; only the outer command owns END.
   if [[ -n "$GDC_END_COMMAND" && "$BASHPID" == "$GDC_END_PID" ]]; then
@@ -1592,6 +1602,11 @@ case "$COMMAND" in
     run_join_preflight bootstrap-chain-id invalid-bootstrap configuration bootstrap \
       'The Bootstrap descriptor chain ID does not match the requested Host JOIN network.' \
       jq -e --arg chain "$join_chain_id" '.chain_id == $chain' "$join_bootstrap_file" >/dev/null
+    # Host reset asks the chain about this participant through the seeds of
+    # the document the JOIN used. The simple form already writes it here; keep
+    # a supplied one here too, or reset can never clear an unregistered key.
+    [[ "$join_bootstrap_file" == "$STATE/network-bootstrap.json" ]] \
+      || install -m 0600 -- "$join_bootstrap_file" "$STATE/network-bootstrap.json"
     # A first stable observation identifies the candidate runtime.  Local
     # downloads can take minutes, so a second stable observation is required
     # before the Host is touched.  Both gates share one operator-visible
@@ -1705,6 +1720,9 @@ case "$COMMAND" in
           ;;
         preparation_retry_allowed)
           printf 'PASS Host JOIN previous run stopped after Host preparation for reboot; preserving its evidence and retrying fresh preflight\n'
+          ;;
+        refused_before_mutation)
+          printf 'READY prior JOIN run %s stopped before any Host change; classifying the Host afresh\n' "$join_previous_run_id"
           ;;
         completed_matched)
           head_name="$(find "$previous_join_run/receipts" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json' -printf '%f\n' | LC_ALL=C sort | tail -n1)"

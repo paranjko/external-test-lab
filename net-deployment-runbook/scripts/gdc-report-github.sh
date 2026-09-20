@@ -179,6 +179,19 @@ strip_controls() {
   LC_ALL=C tr -d '\000-\010\013\014\016-\037\177' | sed -E 's/[[:space:]]+$//'
 }
 
+# A failed GitHub write is the one moment the operator needs the CLI's own
+# words. The text is local diagnostic output, never part of a published body,
+# so it is only stripped of control characters and bounded.
+notice_gh_failure() {
+  local text="$1" line
+  [[ -n "$text" ]] || return 0
+  notice 'GitHub CLI reported:'
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    notice "  ${line:0:300}"
+  done < <(printf '%s\n' "$text" | strip_controls | tail -n 10)
+}
+
 is_public_single_line() {
   local value="$1"
   [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || return 1
@@ -358,12 +371,10 @@ gh_preflight() {
   ' "$REPORT_DIR/.open-issues.raw.json" >/dev/null || { notice "GitHub returned an invalid issue list; local report retained at $REPORT_DIR"; return 1; }
   jq -c '[.[] | {number, title, url, author: {login: .author.login}}]' "$REPORT_DIR/.open-issues.raw.json" >"$REPORT_DIR/open-issues.json"
   rm -f "$REPORT_DIR/.open-issues.raw.json"
-  ATTACHMENT_STATE='not supported by this GitHub CLI; inline Markdown is the complete report'
-  attachment_args=()
-  if gh issue create --help 2>/dev/null | grep -Fq -- '--attach' && gh issue comment --help 2>/dev/null | grep -Fq -- '--attach' && command -v file >/dev/null 2>&1 && [[ "$(file -b --mime-type "$ARCHIVE_PATH")" == application/gzip ]]; then
-    ATTACHMENT_STATE='supported and preflighted; the sanitized archive will also be attached'
-    attachment_args=(--attach "$ARCHIVE_PATH")
-  fi
+  # The GitHub CLI uploads images and videos only, so a sanitized archive can
+  # never travel with the report. Passing one makes the write fail and publish
+  # nothing. The Markdown body is self-contained; the archive stays local.
+  ATTACHMENT_STATE='not offered; the GitHub CLI uploads images and videos only, and the Markdown body is the complete report'
 }
 
 append_optional_context() {
@@ -483,7 +494,7 @@ publish() {
   read -r choice || choice=n
   [[ "$choice" == y || "$choice" == Y ]] || { notice "Publication cancelled. Local report retained at $REPORT_DIR"; return 0; }
   if [[ -z "$issue_number" ]]; then
-    result="$(gh issue create --repo "$REPORT_REPOSITORY" --title "$title" --body-file "$REPORT_DIR/report.md" "${attachment_args[@]}" 2>&1)" || { notice "GitHub issue creation failed; publication state UNKNOWN and local report retained at $REPORT_DIR"; return 1; }
+    result="$(gh issue create --repo "$REPORT_REPOSITORY" --title "$title" --body-file "$REPORT_DIR/report.md" 2>&1)" || { notice "GitHub issue creation failed; publication state UNKNOWN and local report retained at $REPORT_DIR"; notice_gh_failure "$result"; return 1; }
     url="$(printf '%s\n' "$result" | tail -n1)"
     [[ "$url" =~ ^https://github\.com/paranjko/external-test-lab/issues/[1-9][0-9]*$ ]] || { notice "GitHub response was ambiguous; publication state UNKNOWN and local report retained at $REPORT_DIR"; return 1; }
     verify_issue "$url" false || { notice "GitHub readback was incomplete; publication state UNKNOWN and local report retained at $REPORT_DIR"; return 1; }
@@ -491,7 +502,7 @@ publish() {
     jq -e --argjson number "$issue_number" --arg login "$GH_LOGIN" '.[] | select(.number == $number and .author.login == $login)' "$REPORT_DIR/open-issues.json" >/dev/null || { notice "Selected issue is no longer eligible; local report retained at $REPORT_DIR"; return 1; }
     gh issue view "$issue_number" --repo "$REPORT_REPOSITORY" --json number,state,author,url >"$REPORT_DIR/selected-issue.json" || { notice "Selected issue could not be revalidated; local report retained at $REPORT_DIR"; return 1; }
     jq -e --argjson number "$issue_number" --arg login "$GH_LOGIN" '.number == $number and .state == "OPEN" and .author.login == $login and (.url | type == "string" and test("^https://github\\.com/paranjko/external-test-lab/issues/[1-9][0-9]*$"))' "$REPORT_DIR/selected-issue.json" >/dev/null || { notice "Selected issue is no longer eligible; local report retained at $REPORT_DIR"; return 1; }
-    gh issue comment "$issue_number" --repo "$REPORT_REPOSITORY" --body-file "$REPORT_DIR/report.md" "${attachment_args[@]}" >/dev/null || { notice "GitHub comment creation failed; publication state UNKNOWN and local report retained at $REPORT_DIR"; return 1; }
+    result="$(gh issue comment "$issue_number" --repo "$REPORT_REPOSITORY" --body-file "$REPORT_DIR/report.md" 2>&1)" || { notice "GitHub comment creation failed; publication state UNKNOWN and local report retained at $REPORT_DIR"; notice_gh_failure "$result"; return 1; }
     url="$(jq -r '.url' "$REPORT_DIR/selected-issue.json")"
     verify_issue "$url" true || { notice "GitHub readback was incomplete; publication state UNKNOWN and local report retained at $REPORT_DIR"; return 1; }
   fi
