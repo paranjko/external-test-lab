@@ -1,6 +1,16 @@
-# Community DevNet — Architecture Note
+# Community DevNet – Architecture Note
 
-**Status: LIVE, first generation (`gonka-devnet-community`).** Milestone 1 is complete: the network is deployed, reproducible end-to-end from the [net-deployment-runbook](../net-deployment-runbook/README.md), with public observability online. This note tracks the running architecture; deployment mechanics, exact image pins and phase commands live in the runbook.
+This note describes the **first-generation architecture** of
+`gonka-devnet-community`. Its topology, release profile and milestone account
+below are historical context. They are not a fresh assertion that every listed
+validator or service is currently active. Deployment mechanics and image pins
+live in the [net-deployment-runbook](../net-deployment-runbook/README.md).
+
+The [2026-09-21 hardware inventory](hardware.md) covers ten machines, including
+`node5`–`node8`, and separates physical capacity from running containers and
+model qualification. [Regional capacity](regions.md) preserves the M2 provider
+and location snapshot. Consult [live observations](https://gonka-dev.net) for
+current network state; machine counts are not validator counts.
 
 ## Purpose
 
@@ -15,7 +25,7 @@ A small, always-on, geographically distributed Gonka network for protocol, node,
 - **Independent validators.** Every node join is treated as onboarding an independent validator. Additional nodes can be operated by delegated operators via an encrypted handoff flow that never shares coordinator secrets (see runbook `handoff create` / `handoff approve`).
 - **Reproducible deployments.** All images and DevShard binaries are pinned by digest in release profiles; a reset preserves only the public observability runtimes and the network is rebuilt from `prepare` up.
 
-## Current topology
+## First-generation topology (historical)
 
 ```
 ├── gonka-dev.net          static network/status site
@@ -40,7 +50,11 @@ A small, always-on, geographically distributed Gonka network for protocol, node,
 | node3 | join validator | gigagpu1 | RTX 3090 24 GB | — |
 | node4 | join validator | one-net | Blackwell 16 GB (dedicated ML host) | public TLS edge (Caddy), anonymous public Grafana, explorer entry, Telegram key-issuer bot |
 
-- **node4's MLNode runs on a separate machine** (`dbsmart-rtx-2000`, RTX PRO 2000 Blackwell). The network node and the ML host are deliberately different hosts; the ML endpoint is resolved from operator SSH inventory, never from public DNS. Blackwell (compute capability 12.0) requires a newer MLNode runtime image than the 0.2.14 generic one — a pinned hardware-runtime exception in the release profile.
+- **node4's MLNode runs on a separate machine** (`node4-ml`, formerly
+  `dbsmart-rtx-2000`, RTX PRO 2000 Blackwell). The network machine has no
+  compute GPU. The ML endpoint is resolved from operator SSH inventory;
+  runtime selection must use the applicable pinned profile and GPU
+  qualification, rather than this historical topology table.
 - **node0 keeps its own TLS name** because DAPI peers use the configured node URL for PoC proof exchange and chain RPC; all other public application origins terminate on the node4 edge.
 
 ## Public surfaces
