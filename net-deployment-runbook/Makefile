@@ -190,6 +190,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-launcher-root-contract.sh
 	@./scripts/test-gdc-github-report.sh
 	@./scripts/test-diagnostic-envelope.sh
+	@./scripts/test-diagnostic-summaries-publishable.sh
 	@./scripts/test-phase-diagnostic-adapter.sh
 	@./scripts/test-classify-join-state.sh
 	@./scripts/test-classify-join-reentry.sh

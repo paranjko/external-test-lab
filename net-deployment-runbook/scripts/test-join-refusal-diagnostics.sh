@@ -62,8 +62,8 @@ run_refusal() {
 local_state='identity record present, cold account present, joined marker present'
 summary_partial="Host JOIN stopped before any change: $local_state; the Host holds no validator identity. Resolve the incomplete operator state through the documented recovery path."
 summary_adopt="Host JOIN stopped before any change: $local_state; the Host holds a validator identity. Restore from the matching archive or follow the documented recovery path."
-summary_conflict='Host JOIN stopped before any change: the Host holds a validator identity that the operator state does not know. Restore from the matching archive or follow the documented recovery path.'
-summary_unreachable='Host JOIN stopped before any change: the remote identity preflight could not open an SSH session to the Host. Repeat the same command once the Host is reachable.'
+summary_conflict='Host JOIN stopped before any change: the Host holds a validator identity, and the operator state does not know it. Restore from the matching archive or follow the documented recovery path.'
+summary_unreachable='Host JOIN stopped before any change: the identity preflight could not reach the Host over SSH. Repeat the same command once the Host is reachable.'
 for summary in "$summary_partial" "$summary_adopt" "$summary_conflict" "$summary_unreachable"; do
   (( ${#summary} <= 240 ))
 done
@@ -151,7 +151,7 @@ verdict_case() { # directory suffix, registration, identity_discarded
 }
 
 verdict_case registered registered false
-[[ "$(retained_identity_reason)" == *'the chain still knows this participant'* ]]
+[[ "$(retained_identity_reason)" == *'The last reset kept it: the chain still knows this participant'* ]]
 [[ "$(retained_identity_exit)" == *'gdc host join --restore'* ]]
 
 verdict_case unknown 'unknown:endpoint_unavailable' false
@@ -187,6 +187,21 @@ for case_dir in registered unknown longest discarded absent; do
 done
 STATE="$tmp/state-longest"
 [[ "$(identity_retained_summary 'x')" == *'rerun reset once the chain answers.' ]]
+
+# Every composed summary must pass the reporter's own scanner.
+# shellcheck source=/dev/null
+source <(sed -n '/^scan_public_text()/,/^}/p' "$ROOT/scripts/gdc-report-github.sh")
+publishable() {
+  printf '%s\n' "$1" >"$tmp/summary.txt"
+  scan_public_text "$tmp/summary.txt" || { printf 'a refusal summary would be refused by the report scanner: %s\n' "$1" >&2; exit 1; }
+}
+for case_dir in registered unknown longest discarded absent; do
+  STATE="$tmp/state-$case_dir"
+  publishable "$(identity_retained_summary 'identity record present, cold account present, joined marker absent')"
+done
+for summary in "$summary_partial" "$summary_adopt" "$summary_conflict" "$summary_unreachable"; do
+  publishable "$summary"
+done
 STATE="$tmp/state-absent"
 [[ "$(identity_retained_summary 'identity record present')" == *'identity record present; the Host holds a validator identity.'* ]]
 

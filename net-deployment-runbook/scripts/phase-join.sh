@@ -110,9 +110,7 @@ record_signer_activation_guard() {
 # typed envelope states the prerequisite instead of the launcher's
 # conservative signer_may_be_on fallback. The verdict keeps the evidence exit
 # trap from replacing that envelope with the generic adapter.
-# What the last reset decided about this Host's key, so a refusal can say why
-# the identity is still there instead of leaving the operator to guess. Empty
-# when no reset ran under this operator state, or its verdict is unreadable.
+# What the last reset decided; keep clauses short, they reach a published report.
 retained_identity_verdict() {
   local file="$STATE/reset-verdict-$NODE.json" verdict
   [[ -s "$file" && ! -L "$file" ]] || return 0
@@ -124,8 +122,8 @@ retained_identity_verdict() {
 retained_identity_reason() {
   local verdict; verdict="$(retained_identity_verdict)"
   case "$verdict" in
-    registered) printf ' the last reset kept because the chain still knows this participant' ;;
-    unknown:*) printf ' the last reset kept because the chain could not be asked (%s)' "${verdict#unknown:}" ;;
+    registered) printf '. The last reset kept it: the chain still knows this participant' ;;
+    unknown:*) printf '. The last reset kept it: the chain could not be asked (%s)' "${verdict#unknown:}" ;;
   esac
 }
 retained_identity_exit() {
@@ -214,13 +212,13 @@ else
   remote_identity_rc=$?
   if (( remote_identity_rc == 255 )); then
     refuse_before_mutation host_unreachable \
-      'Host JOIN stopped before any change: the remote identity preflight could not open an SSH session to the Host. Repeat the same command once the Host is reachable.' \
+      'Host JOIN stopped before any change: the identity preflight could not reach the Host over SSH. Repeat the same command once the Host is reachable.' \
       'Host JOIN classification=unreachable; remote identity preflight could not establish an SSH session'
   fi
 fi
 if [[ "$remote_identity_state" == present && "$JOIN_CLASS" == new && -z "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
   refuse_before_mutation identity_conflict \
-    'Host JOIN stopped before any change: the Host holds a validator identity that the operator state does not know. Restore from the matching archive or follow the documented recovery path.' \
+    'Host JOIN stopped before any change: the Host holds a validator identity, and the operator state does not know it. Restore from the matching archive or follow the documented recovery path.' \
     'Host JOIN classification=identity_conflict; a remote validator identity exists without matching local operator state'
 fi
 if [[ "$JOIN_CLASS" == partial_identity ]]; then
