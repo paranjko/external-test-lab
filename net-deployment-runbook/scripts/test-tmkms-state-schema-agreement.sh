@@ -124,5 +124,29 @@ for site in "${LENIENT[@]}"; do
 done
 
 (( failures == 0 )) || { printf '%d disagreement(s) about the TMKMS signing state schema\n' "$failures" >&2; exit 1; }
+
+# The Host-side refusal names its subject and the failing clause.
+restore="$ROOT/scripts/build-validator-identity-restore-command.sh"
+# shellcheck source=/dev/null
+source <(sed -n '/^validate_tmkms_state()/,/^}/p;/^tmkms_state_defect()/,/^}/p' "$restore")
+# shellcheck source=/dev/null
+source <(sed -n '/^scan_public_text()/,/^}/p' "$ROOT/scripts/gdc-report-github.sh")
+die() { printf 'error: %s\n' "$*" >&2; exit 2; }
+refusal_of() { # fixture, subject
+  { ( validate_tmkms_state "$tmp/$1.json" "$2" ) >/dev/null; } 2>&1 || true
+}
+for subject in 'the staged archive copy' 'the stable signer on the Host' 'the running deployment on the Host'; do
+  grep -Fq "\"$subject\"" "$restore" || { echo "the restore program no longer names: $subject" >&2; exit 1; }
+done
+message="$(refusal_of round_is_number 'the staged archive copy')"
+[[ "$message" == 'error: validator identity contains malformed TMKMS signing state (the staged archive copy): round' ]] \
+  || { printf 'unexpected refusal text: %s\n' "$message" >&2; exit 1; }
+[[ "$(refusal_of step_out_of_range 'the stable signer on the Host')" == *'(the stable signer on the Host): step' ]]
+[[ "$(refusal_of extra_key x)" == *': unexpected key set' ]]
+[[ "$(refusal_of short_hash x)" == *': block_id' ]]
+[[ -z "$(refusal_of signed x)" ]]
+printf '%s\n' "$message" >"$tmp/refusal.txt"
+scan_public_text "$tmp/refusal.txt" \
+  || { echo 'the refusal text would be withheld from a published report' >&2; exit 1; }
 printf 'PASS one verdict on the TMKMS signing state across %d gating validators and %d lenient reader(s), %d states each\n' \
   "${#GATES[@]}" "${#LENIENT[@]}" "${#EXPECTED[@]}"
