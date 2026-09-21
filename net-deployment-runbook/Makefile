@@ -280,6 +280,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-promote-state-sync-generation.sh
 	@./scripts/test-record-state-sync-canary.sh
 	@./scripts/test-verify-tmkms-signing-state.sh
+	@./scripts/test-tmkms-state-schema-agreement.sh
 	@./scripts/test-signer-activation-gate.sh
 	@./scripts/test-init-identity-restore-diagnostics.sh
 	@./scripts/test-collect-identities-transport-resume.sh

@@ -4,6 +4,32 @@ set +x
 set -Eeuo pipefail
 umask 077
 die() { printf 'same-host restore: %s\n' "$*" >&2; exit 1; }
+# The shape every validator accepts; reset warns on it, never refuses.
+validate_tmkms_state() {
+  local state_file="$1"
+  jq -e '
+    type == "object"
+    and (keys | sort) == ["block_id","height","round","step"]
+    and (.height | type == "string" and test("^[0-9]+$"))
+    and (.round | type == "string" and test("^[0-9]+$"))
+    and (.step | type == "number" and . == floor and . >= -128 and . <= 127)
+    and (.block_id == null or (
+      .height == "0" and .round == "0" and .step == 0
+      and (.block_id | type == "object")
+      and ((.block_id | keys | sort) == ["hash","part_set_header"] or (.block_id | keys | sort) == ["hash","parts"])
+      and .block_id.hash == ""
+      and ((.block_id.parts // .block_id.part_set_header) as $parts
+        | ($parts | keys | sort) == ["hash","total"] and $parts.total == 0 and $parts.hash == "")
+    ) or (
+      (.block_id | type == "object")
+      and (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$"))
+      and ((.block_id.parts // .block_id.part_set_header) as $parts
+        | ($parts | type == "object")
+        and ($parts.total | type == "number" and . == floor and . >= 0 and . <= 4294967295)
+        and ($parts.hash | type == "string" and test("^[0-9A-Fa-f]{64}$")))
+    ))
+  ' "$state_file" >/dev/null 2>&1
+}
 validate_reset_binding() {
   jq -e --arg machine "$2" --arg key "$3" --arg chain "$4" '
     .kind=="gdc-same-host-reset" and .schema_version==1 and .machine_sha256==$machine
@@ -38,6 +64,8 @@ if [[ "${1:-}" == --remote ]]; then
       [[ ! -f "$receipt" ]] || cp -p "$receipt" "$next.previous"
       install -m 0600 "$next" "$receipt"
       printf 'PASS retained same-Host signer stop and signing minimum\n'
+      validate_tmkms_state "$signer/state/priv_validator_state.json" \
+        || printf 'NOTICE %s signing state does not match the shape a restore accepts; recovery through gdc host join --restore will refuse until it is resolved\n' "$node"
       ;;
     bind)
       expected_chain="${4:-}"

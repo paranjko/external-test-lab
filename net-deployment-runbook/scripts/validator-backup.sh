@@ -332,7 +332,11 @@ validate_tmkms_state() {
     and (.step | type == "number" and . == floor and . >= -128 and . <= 127)
     and (.block_id == null or (
       .height == "0" and .round == "0" and .step == 0
-      and .block_id == {hash:"",part_set_header:{total:0,hash:""}}
+      and (.block_id | type == "object")
+      and ((.block_id | keys | sort) == ["hash","part_set_header"] or (.block_id | keys | sort) == ["hash","parts"])
+      and .block_id.hash == ""
+      and ((.block_id.parts // .block_id.part_set_header) as $parts
+        | ($parts | keys | sort) == ["hash","total"] and $parts.total == 0 and $parts.hash == "")
     ) or (
       (.block_id | type == "object")
       and (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$"))
