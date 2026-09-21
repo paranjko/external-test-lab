@@ -228,6 +228,34 @@ fi
 grep -Fq 'optional context is unsafe' "$tmp/context.err"
 ! grep -Eq 'issue (create|comment).*--body-file' "$tmp/context.args" || { echo 'unsafe context attempted a write' >&2; exit 1; }
 
+# A safe optional context reaches the published body and the hash.
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/safe-context.args" FAKE_GH_BODY="$tmp/safe-context.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  run_gdc report github >"$tmp/safe-context.out" 2>"$tmp/safe-context.err" <<'EOF'
+1
+
+the previous reset retained this identity
+the archive was created on the same Host
+.
+y
+EOF
+grep -Fq 'Published and verified:' "$tmp/safe-context.out" || {
+  printf '%s\n' 'safe optional context fixture failed to publish' >&2
+  sed -n '1,80p' "$tmp/safe-context.err" >&2
+  exit 1
+}
+for line in '## Operator context' 'the previous reset retained this identity' 'the archive was created on the same Host'; do
+  grep -Fq "$line" "$tmp/safe-context.md" || {
+    printf 'optional context did not reach the published body: %s\n' "$line" >&2
+    exit 1
+  }
+done
+context_hash="$(grep -F 'gdc-report-sha256:' "$tmp/safe-context.md" | sed 's/.*gdc-report-sha256:\([0-9a-f]*\).*/\1/')"
+published_hash="$(sed '/^<!-- gdc-report-sha256:/d' "$tmp/safe-context.md" | sha256sum | awk '{print $1}')"
+[[ "$context_hash" == "$published_hash" ]] || {
+  echo 'the published hash does not cover the body that carries the operator context' >&2
+  exit 1
+}
+
 PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/attach.args" FAKE_GH_BODY="$tmp/attach.md" FAKE_GH_ATTACH=true GDC_REPORT_TEST_INTERACTIVE=true \
   run_gdc report github >"$tmp/attach.out" 2>"$tmp/attach.err" <<'EOF'
 1

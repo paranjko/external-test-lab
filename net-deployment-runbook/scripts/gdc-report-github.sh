@@ -299,7 +299,7 @@ write_report() {
     printf '| Field | Value |\n| --- | --- |\n'
     awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(report_id|created_at|failure_recorded_at|failure_stage|active_phase|exit_code|run_id|release_profile|release_profile_sha256|profile_sha256|chain_id|genesis_sha256|runbook_revision|launcher_sha256)$/ { print "| " $1, $2 " |" }' "$metadata"
     printf '\n## Typed diagnostic\n\n'
-    printf '%s\n' "$DIAGNOSTIC_SUMMARY" | escape_html
+    printf '%s\n' "$DIAGNOSTIC_SUMMARY" | strip_controls | escape_html
     printf '\n\nResume decision: `%s`.\n\n' "$DIAGNOSTIC_RESUME"
     render_resume_guidance
     printf '\n## Environment\n\n| Field | Value |\n| --- | --- |\n'
@@ -383,6 +383,8 @@ append_optional_context() {
   chmod 0600 "$context_file"
   printf 'Optional public context. Enter text lines; a single period finishes. Leave blank then period to omit.\n'
   while IFS= read -r line; do
+    # Drop a trailing carriage return: CRLF input otherwise breaks the closing period and the control-character check.
+    line="${line%$'\r'}"
     [[ "$line" == . ]] && break
     printf '%s\n' "$line" >>"$context_file"
   done
