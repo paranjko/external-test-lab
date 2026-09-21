@@ -299,6 +299,14 @@ run_phase() {
         GDC_JOIN_REBOOT_REQUIRED=true
         export GDC_JOIN_REBOOT_REQUIRED
       fi
+    elif find "$run_dir" -maxdepth 2 -type f -name qualification-failed-before-identity -print -quit | grep -q .; then
+      # Qualification follows HOST_BASE_PREPARED but precedes every identity,
+      # deployment and signer mutation. A fresh JOIN repeats qualification
+      # under a new observation/profile and is bounded by its receipt chain.
+      if ! record_join_terminal_result failed staging host ml_qualification_failed_before_identity "$rc" staging_only disabled new_profile; then
+        printf 'ERROR JOIN pre-identity qualification result could not be persisted\n' >&2
+        rc=70
+      fi
     elif (( rc == 194 )) && find "$run_dir" -maxdepth 2 -type f -name prepare-reboot-required -print -quit | grep -q .; then
       # Host preparation intentionally uses 194 after installing an NVIDIA
       # driver that cannot become active until reboot. It precedes identity
@@ -1024,6 +1032,9 @@ case "$COMMAND" in
     # Resolve topology after parsing flags so the same command works for any
     # valid SSH alias supplied by the operator inventory.
     source "$ROOT/scripts/lib.sh"
+    if [[ $# -eq 1 ]]; then
+      load_retained_join_profile_for_node "$1"
+    fi
     load_project
     qualification_node="${1:-$GENESIS_NODE}"
     topology_contains_node "$qualification_node" || { echo "qualify-ml expects an alias from GDC_NODE_ALIASES, got: $qualification_node" >&2; exit 2; }
@@ -1617,8 +1628,24 @@ case "$COMMAND" in
     join_candidate_profile="$STATE/join-profile.candidate.v1.json"
     join_observation="$join_final_observation"
     join_profile="$STATE/join-profile.v1.json"
+    join_accelerator_inspection="$join_run/accelerator-inspection.env"
+    join_accelerator_receipt="$join_run/accelerator-profile.v1.json"
+    join_accelerator_alias="${join_gpu_alias:-$join_alias}"
     join_operation=new
     [[ -z "$join_restore_archive" ]] || join_operation=restore
+    if [[ "$plan_only" == true ]]; then
+      # Planning is deliberately Host-independent and retains the historical
+      # NVIDIA execution contract. A mutating JOIN always replaces this with
+      # a direct read-only Host inspection before compiling its profile.
+      printf 'vendor=nvidia\n' >"$join_accelerator_inspection"
+    else
+      if ! ssh -T "$join_accelerator_alias" 'bash -s' <"$ROOT/00-host-prep/inspect-accelerator.sh" >"$join_accelerator_inspection"; then
+        record_join_terminal_result refused profile host accelerator_inspection_failed 1 none absent new_profile
+        printf 'host join could not establish a supported accelerator profile on effective ML Host %s before Host mutation\n' "$join_accelerator_alias" >&2
+        exit 1
+      fi
+    fi
+    "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$join_accelerator_inspection" --output "$join_accelerator_receipt"
     join_preflight_cycle=0
     while :; do
       join_preflight_cycle=$((join_preflight_cycle + 1))
@@ -1632,7 +1659,7 @@ case "$COMMAND" in
       run_join_preflight component-resolution unavailable dependency official-artifact-resolver \
         'Official immutable artifacts could not be resolved for the selected Core and DAPI runtime bytes.' \
         "$ROOT/scripts/resolve-join-components.sh" --observation "$join_candidate_observation" --output "$join_candidate_components"
-      join_profile_args=(--observation "$join_candidate_observation" --components "$join_candidate_components" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_candidate_profile")
+      join_profile_args=(--observation "$join_candidate_observation" --components "$join_candidate_components" --accelerator-receipt "$join_accelerator_receipt" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_candidate_profile")
       [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
       join_profile_args+=(--pex "$join_pex")
       [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
@@ -1669,7 +1696,7 @@ case "$COMMAND" in
     export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
     write_join_preflight_receipt software-observation passed unavailable seed-observer
     join_components="$join_candidate_components"
-    join_profile_args=(--observation "$join_observation" --components "$join_components" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_profile")
+    join_profile_args=(--observation "$join_observation" --components "$join_components" --accelerator-receipt "$join_accelerator_receipt" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_profile")
     [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
     join_profile_args+=(--pex "$join_pex")
     [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
@@ -1720,6 +1747,9 @@ case "$COMMAND" in
           ;;
         preparation_retry_allowed)
           printf 'PASS Host JOIN previous run stopped after Host preparation for reboot; preserving its evidence and retrying fresh preflight\n'
+          ;;
+        qualification_retry_allowed)
+          printf 'PASS Host JOIN previous run stopped during ML qualification before identity; preserving its evidence and retrying fresh preflight\n'
           ;;
         refused_before_mutation)
           printf 'READY prior JOIN run %s stopped before any Host change; classifying the Host afresh\n' "$join_previous_run_id"

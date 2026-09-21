@@ -30,8 +30,8 @@ gdc host join [--preflight-deadline <duration>] [--public-host <dns-name>] <ssh-
 `--preflight-deadline` bounds the complete no-mutation preparation, including
 runtime confirmation and a first download of a missing pinned CLI. It accepts
 positive seconds or `s`, `m`, and `h` durations up to 24 hours. The default is
-`30m`. Existing verified CLI archives are reused by SHA-256. If preparation requests a reboot after
-installing an NVIDIA driver, reboot the named Host and rerun the same JOIN
+`30m`. Existing verified CLI archives are reused by SHA-256. If preparation
+installs an accelerator runtime, reboot the named Host and rerun the same JOIN
 command; no reset is required.
 
 For JOIN, use a lowercase SSH alias beginning with a letter or digit and

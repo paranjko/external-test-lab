@@ -197,6 +197,8 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-join-existing-participant-rebind.sh
 	@./scripts/test-join-refusal-diagnostics.sh
 	@./scripts/test-join-ml-qualification.sh
+	@bash ./scripts/test-ml-qualification-evidence.sh
+	@bash ./scripts/test-ml-qualification-failure.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/test-host-identity-layout-probe.sh
@@ -230,6 +232,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-suspend-gateway-admission.sh
 	@./scripts/test-firewall-policy.sh
 	@./scripts/test-prepare-nvidia-kernel-modules.sh
+	@./scripts/test-prepare-amd-rocm.sh
 	@./scripts/test-public-grafana-targets.sh
 	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-observer.py
@@ -253,6 +256,10 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
+	@./scripts/test-inspect-accelerator.sh
+	@./scripts/test-accelerator-profile.sh
+	@./scripts/test-amd-preflight-order.sh
+	@./scripts/test-select-nvidia-driver.sh
 	@./scripts/test-validator-backup-contract.sh
 	@./scripts/test-observe-network-composition.sh
 	@./scripts/test-observe-network-state.sh
@@ -291,6 +298,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-running-host-recovery-orchestration.sh
 	@./scripts/test-genesis-role-config.sh
 	@./scripts/test-prepare-join-role-config.sh
+	@./scripts/test-prepare-accelerator-binding.sh
 	@./scripts/test-role-separation.sh
 	@./scripts/test-domain-cli.sh
 	@./scripts/test-explicit-public-host.sh

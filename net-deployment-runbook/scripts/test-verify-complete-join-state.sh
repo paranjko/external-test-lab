@@ -21,7 +21,7 @@ jq -n \
   --arg now "$(date -u +%FT%TZ)" '
   {
     network:{chain_id:"gonka-fixture",genesis_sha256:("d" * 64),bootstrap_sha256:("e" * 64),bootstrap_url:"https://example.test/bootstrap.json"},
-    target:{node_name:"node-a",public_host:"node-a.example.test",public_p2p_address:"tcp://node-a.example.test:5000",platform:"linux-amd64"},
+    target:{node_name:"node-a",public_host:"node-a.example.test",public_p2p_address:"tcp://node-a.example.test:5000",platform:"linux-amd64",accelerator:{schema_version:1,vendor:"nvidia",compose_variant:"nvidia",qualification_backend:"cuda"}},
     deployment:{gdc_source_commit:("f" * 40),data_layout:"gdc-data-layout/v2",host_envelope:{
       tmkms_image:("example/tmkms@sha256:" + ("a" * 64)),postgres_image:("example/postgres@sha256:" + ("b" * 64)),
       edge_api_image:("example/edge@sha256:" + ("c" * 64)),versiond_image:("example/versiond@sha256:" + ("d" * 64)),

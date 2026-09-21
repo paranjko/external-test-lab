@@ -154,6 +154,9 @@ cat >"$tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf '%s\n' "$*" >>"$GDC_PLAN_REMOTE_EFFECT_LOG"
+if [[ "$*" == *'bash -s'* ]]; then
+  printf 'vendor=nvidia\n'
+fi
 exit 0
 EOF
 chmod 0755 "$tmp/bin/ssh"

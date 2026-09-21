@@ -32,8 +32,41 @@ fi
 profile="$previous/join-profile.v1.json"
 receipts="$previous/receipts"
 result="$previous/join-result.v1.json"
+if [[ ! -e "$profile" ]]; then
+  # The lifecycle receipt directory is created before the first Host mutation.
+  # An interrupted bootstrap/runtime preflight can therefore leave a run
+  # directory with diagnostics but no profile, result or receipts. It has not
+  # created identity, deployment or signer state and must not require reset.
+  if [[ ! -e "$receipts" && ! -e "$result" ]]; then
+    emit preflight_retry_allowed preflight_aborted_before_profile
+  else
+    emit blocked retained_input_missing_or_unsafe
+  fi
+  exit 0
+fi
 [[ -f "$profile" && ! -L "$profile" && "$(stat -c %a "$profile")" == 600 ]] \
   || { emit blocked retained_input_missing_or_unsafe; exit 0; }
+# Older launchers can leave a valid receipt chain through TARGET_CLASSIFIED
+# without a terminal result. TARGET_CLASSIFIED is the last state before Host
+# preparation, so this proves identity, deployment and signer mutation did not
+# start. The old profile schema may no longer validate against this launcher;
+# establish that bounded retry before applying the current schema validator.
+if [[ ! -e "$result" ]]; then
+  if chain="$("$ROOT/scripts/verify-join-receipt-chain.sh" --receipt-dir "$receipts" 2>/dev/null)"; then
+    legacy_operation="$(jq -r '.operation // empty' "$profile" 2>/dev/null || true)"
+    legacy_last_state="$(jq -r .last_state <<<"$chain")"
+    legacy_signer_started="$(jq -r .signer_ever_started <<<"$chain")"
+    if [[ "$legacy_last_state" == TARGET_CLASSIFIED && "$legacy_signer_started" == false && "$legacy_operation" == new ]]; then
+      if [[ -f "$previous/verdict.md" && ! -L "$previous/verdict.md" ]] \
+        && grep -Fqx 'The phase stopped with exit code 194 before it could write its final verdict.' "$previous/verdict.md"; then
+        emit preparation_retry_allowed legacy_host_prepare_reboot_required "$(jq -r '.profile_id // empty' "$profile")"
+        exit 0
+      fi
+      emit preparation_retry_allowed legacy_target_classified_without_terminal_result "$(jq -r '.profile_id // empty' "$profile")"
+      exit 0
+    fi
+  fi
+fi
 if ! "$ROOT/scripts/join-profile.sh" validate --allow-expired "$profile" >/dev/null 2>&1; then
   emit blocked retained_profile_invalid
   exit 0
@@ -85,6 +118,26 @@ previous_profile_sha256="$(sha256sum "$profile" | awk '{print $1}')"
 current_profile_id="$(jq -r .profile_id "$current")"
 last_state="$(jq -r .last_state <<<"$chain")"
 signer_started="$(jq -r .signer_ever_started <<<"$chain")"
+
+# HOST_BASE_PREPARED is the receipt immediately before ML qualification. It
+# precedes identity, deployment and signer mutation. New launchers retain a
+# typed outcome for this case. Older launchers wrote the generic conservative
+# fallback; its receipt boundary still permits one fresh preflight.
+if [[ "$last_state" == HOST_BASE_PREPARED && "$signer_started" == false && "$previous_operation" == new ]]; then
+  if [[ "$terminal_outcome" == failed && "$terminal_phase" == staging && "$terminal_category" == host \
+    && "$terminal_reason" == ml_qualification_failed_before_identity && "$terminal_exit" =~ ^[1-9][0-9]*$ \
+    && "$terminal_mutation" == staging_only && "$terminal_signer_state" == disabled && "$terminal_resume" == new_profile ]]; then
+    emit qualification_retry_allowed ml_qualification_failed_before_identity "$previous_profile_id"
+    exit 0
+  fi
+  if [[ "$terminal_outcome" == failed && "$terminal_phase" == signer && "$terminal_category" == internal \
+    && "$terminal_reason" == join_phase_failed && "$terminal_exit" =~ ^[1-9][0-9]*$ \
+    && "$terminal_mutation" == signer_may_be_on && "$terminal_signer_state" == unknown \
+    && "$terminal_resume" == automatic_retry_forbidden ]]; then
+    emit qualification_retry_allowed legacy_qualification_failed_before_identity "$previous_profile_id"
+    exit 0
+  fi
+fi
 
 if [[ "$last_state" == COMPLETE && "$signer_started" == true && "$terminal_outcome" == succeeded && "$terminal_profile_sha256" == "$previous_profile_sha256" ]]; then
   if [[ "$current_profile_id" == "$previous_profile_id" ]]; then

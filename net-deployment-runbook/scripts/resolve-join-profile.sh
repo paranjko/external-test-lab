@@ -2,17 +2,19 @@
 # Compile the immutable local JOIN profile before lineage/state-sync preflight.
 set -Eeuo pipefail
 
-usage() { echo "Usage: $0 --observation FILE --components FILE --node-name NAME --public-host HOST [--p2p-port PORT] --operation new|restore [--restore-archive FILE] --run-id ID --output FILE" >&2; }
+usage() { echo "Usage: $0 --observation FILE --components FILE [--accelerator-receipt FILE] --node-name NAME --public-host HOST [--p2p-port PORT] --operation new|restore [--restore-archive FILE] --run-id ID --output FILE" >&2; }
 die() { printf 'join_profile_resolution_%s: %s\n' "$1" "$2" >&2; exit 1; }
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 
 observation=''; components=''; node_name=''; public_host=''; p2p_port=5000
 operation=''; restore_archive=''; run_id=''; output=''
+accelerator_receipt=''
 pex=''
 while (($#)); do
   case "$1" in
     --observation) observation="${2:-}"; shift 2 ;;
     --components) components="${2:-}"; shift 2 ;;
+    --accelerator-receipt) accelerator_receipt="${2:-}"; shift 2 ;;
     --node-name) node_name="${2:-}"; shift 2 ;;
     --public-host) public_host="${2:-}"; shift 2 ;;
     --p2p-port) p2p_port="${2:-}"; shift 2 ;;
@@ -35,6 +37,11 @@ command -v jq >/dev/null || die dependency 'jq is required'
 jq -e '.schema_version == 1 and .kind == "gdc-network-observation" and .result == {state:"ready",reason:"none"} and (.runtime_api_origins | type == "array" and length == 1)' "$observation" >/dev/null || die observation 'network observation is not ready'
 jq -e 'type == "object" and (keys | sort) == ["core","dapi","host_envelope"] and (.core.mapping_source.kind == "official_artifact") and (.dapi.mapping_source.kind == "official_artifact") and (.core.installation.binary.sha256 | test("^[a-f0-9]{64}$")) and (.dapi.installation.binary.url | test("^https://github.com/")) and (.dapi.installation.binary.sha256 | test("^[a-f0-9]{64}$"))' "$components" >/dev/null || die component 'exact component resolution is invalid'
 [[ "$(jq -cS .runtime.core "$observation")" == "$(jq -cS .core.observed "$components")" && "$(jq -cS .runtime.dapi "$observation")" == "$(jq -cS .dapi.observed "$components")" ]] || die component 'component resolution does not bind the selected runtime tuple'
+accelerator='{"schema_version":1,"vendor":"nvidia","compose_variant":"nvidia","qualification_backend":"cuda"}'
+if [[ -n "$accelerator_receipt" ]]; then
+  [[ -r "$accelerator_receipt" ]] || die accelerator 'accelerator receipt is unreadable'
+  accelerator="$(jq -cS . "$accelerator_receipt")"
+fi
 
 identity='{"mode":"generate","stable_identity_layout":"gdc-identity-layout/v2"}'
 if [[ "$operation" == restore ]]; then
@@ -59,9 +66,10 @@ jq -cn \
   --arg commit "$(git -C "$ROOT" rev-parse HEAD)" \
   --argjson core "$(jq -c .core "$components")" --argjson dapi "$(jq -c .dapi "$components")" \
   --argjson host_envelope "$(jq -c .host_envelope "$components")" \
+  --argjson accelerator "$accelerator" \
   --argjson usable '[{"selection_policy":"net-info-software-majority/v1"}]' \
   --argjson unavailable '[]' \
   --argjson acquisition "$acquisition" \
   --argjson identity "$identity" --argjson fence "$([[ "$operation" == restore ]] && echo true || echo false)" \
-  '{network:{chain_id:$chain,genesis_sha256:$genesis,bootstrap_sha256:$bootstrap,bootstrap_url:$bootstrap_url},seeds:{usable:$usable,unavailable:$unavailable},target:{node_name:$node,public_host:$host,public_p2p_address:("tcp://" + $host + ":" + ($port|tostring)),platform:"linux-amd64"},deployment:{gdc_source_commit:$commit,data_layout:"gdc-data-layout/v2",host_envelope:$host_envelope},components:{core:$core,dapi:$dapi},state_acquisition:$acquisition,identity:$identity,activation_policy:{application_required_for_complete:true,signer_allowed_in_profile:false,old_signer_fence_required:$fence}}' | jq -cS . >"$spec_tmp"
+  '{network:{chain_id:$chain,genesis_sha256:$genesis,bootstrap_sha256:$bootstrap,bootstrap_url:$bootstrap_url},seeds:{usable:$usable,unavailable:$unavailable},target:{node_name:$node,public_host:$host,public_p2p_address:("tcp://" + $host + ":" + ($port|tostring)),platform:"linux-amd64",accelerator:$accelerator},deployment:{gdc_source_commit:$commit,data_layout:"gdc-data-layout/v2",host_envelope:$host_envelope},components:{core:$core,dapi:$dapi},state_acquisition:$acquisition,identity:$identity,activation_policy:{application_required_for_complete:true,signer_allowed_in_profile:false,old_signer_fence_required:$fence}}' | jq -cS . >"$spec_tmp"
 "$ROOT/scripts/join-profile.sh" create --observation "$observation" --spec "$spec_tmp" --operation "$operation" --run-id "$run_id" --output "$output"

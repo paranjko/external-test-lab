@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+profile_test_home="$(mktemp -d)"
+export GDC_HOME="$profile_test_home"
+trap 'rm -rf -- "$profile_test_home" "${test_tmp:-}"; rm -f -- "${out:-}" "${genesis_out:-}"' EXIT
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/profile.sh"
 source "$ROOT/scripts/lib.sh"
@@ -209,8 +212,11 @@ grep -Fq 'curl_status=%s' "$ROOT/scripts/phase-join-acceptance.sh"
 grep -Fq 'GDC_POC_EXCHANGE_DURATION:-8' "$ROOT/scripts/phase-governance-devshard.sh"
 grep -Fq 'WAIT download pinned inferenced CLI url=' "$ROOT/scripts/ensure-inferenced-cli.sh"
 grep -Fq 'failed to download pinned inferenced CLI from' "$ROOT/scripts/ensure-inferenced-cli.sh"
-grep -Fq 'no NVIDIA PCI device is visible' "$ROOT/00-host-prep/prepare-host.sh"
-grep -Fq 'ubuntu-drivers list --gpgpu' "$ROOT/00-host-prep/prepare-host.sh"
+grep -Fq 'inspect-accelerator.sh' "$ROOT/00-host-prep/prepare-host.sh"
+grep -Fq 'install_amd_rocm()' "$ROOT/00-host-prep/prepare-host.sh"
+grep -Fq 'amdgpu-install -y --usecase=graphics,rocm' "$ROOT/00-host-prep/prepare-host.sh"
+grep -Fq 'MLNode qualification is still required' "$ROOT/00-host-prep/verify-host.sh"
+grep -Fq 'select-nvidia-driver.sh' "$ROOT/00-host-prep/prepare-host.sh"
 ! grep -Fq 'ubuntu-drivers install --gpgpu' "$ROOT/00-host-prep/prepare-host.sh"
 grep -Fq 'ML inference status unavailable url=http://127.0.0.1:8080/api/v1/inference/up/status http_status=000 curl_exit=%s curl_status=%s' "$ROOT/02-node/ml-only/start-ml.sh"
 grep -Fq 'ML inference start unavailable url=http://127.0.0.1:8080/api/v1/inference/up/async http_status=000 curl_exit=%s curl_status=%s' "$ROOT/02-node/ml-only/start-ml.sh"
@@ -344,7 +350,6 @@ grep -Fq 'qualification loads the model, checks <code>/v1/models</code>, complet
 grep -Fq 'is not a guaranteed supported configuration</p>' "$ROOT/04-ops/site/index.html"
 ! grep -Fq 'is not a guaranteed supported configuration.</p>' "$ROOT/04-ops/site/index.html"
 test_tmp="$(mktemp -d)"
-trap 'rm -rf "$test_tmp"' EXIT
 rendered_site_index="$test_tmp/site-index.html"
 "$ROOT/scripts/render-site-revision.sh" "$ROOT/04-ops/site/index.html" "$rendered_site_index"
 site_commit="$(git -C "$ROOT/.." log -n 1 --pretty=format:%H -- net-deployment-runbook/04-ops/site)"
@@ -551,7 +556,6 @@ grep -Fq 'GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab' "$ROOT/scripts/lib.sh"
 
 GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3-0.6b load_profiles
 out="$(mktemp)"
-trap 'rm -f "${out:-}"' EXIT
 "$ROOT/02-node/render-node-config.sh" --node-name validator-b --runtime-id qwen3-0.6b:gonka1validatorbvalidatorbvalidatorbvalidatorb --output "$out" >/dev/null
 jq -e --arg model "$MODEL_ID" --arg revision "$MODEL_REVISION" '
   .[0].max_concurrent == 64
@@ -563,7 +567,6 @@ jq -e '. [0].id == "qwen3-0.6b:gonka1validatorbvalidatorbvalidatorbvalidatorb"' 
 rm -f "$out"
 unset out
 genesis_out="$(mktemp)"
-trap 'rm -f "${genesis_out:-}"' EXIT
 GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3-0.6b GDC_GENESIS_GUARDIAN_ENABLED=true \
   "$ROOT/01-identities-genesis/render-genesis-overrides.sh" \
   --gateway-account gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq \

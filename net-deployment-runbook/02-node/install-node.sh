@@ -63,6 +63,8 @@ case "$profile_kind" in
 esac
 install -m 0644 "$(dirname "$0")/compose.yaml" "$STAGE/compose.yaml"
 install -m 0644 "$(dirname "$0")/compose.ml-local.yaml" "$STAGE/compose.ml-local.yaml"
+install -m 0644 "$(dirname "$0")/compose.ml-amd.yaml" "$STAGE/compose.ml-amd.yaml"
+install -m 0644 "$(dirname "$0")/compose.ml-amd-single-group.yaml" "$STAGE/compose.ml-amd-single-group.yaml"
 install -m 0644 "$(dirname "$0")/compose.devshard-ha.yaml" "$STAGE/compose.devshard-ha.yaml"
 install -m 0644 "$(dirname "$0")/compose.bridge-sepolia.yaml" "$STAGE/compose.bridge-sepolia.yaml"
 install -d -m 0755 "$STAGE/versiond-router"

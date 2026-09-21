@@ -108,11 +108,26 @@ gdc host join --restore <validator-backup.tar> \
 ```
 
 Without a second SSH alias, JOIN prepares `<ssh-alias>` as a `network-gpu`
-Host and requires a visible NVIDIA PCI device with an R580+ driver. To keep
-the network Host CPU-only, supply a separate ML Host alias; JOIN prepares the
-network Host as `network-only` and the ML Host as `ml-only`, where the NVIDIA
-GPU is required. Before installing a driver, JOIN verifies the NVIDIA PCI
-device and, when no R580+ driver is loaded, an Ubuntu-provided R580+ candidate.
+Host. It detects the local PCI accelerator before Host mutation and selects
+only a committed profile. NVIDIA requires an R580+ driver. AMD admission is
+limited to `gfx1201` with PCI device `0x7550`. The Ubuntu 24.04 route retains
+the pinned provisioning contract; GDC records the installed package inventory
+after reboot. The exact observed node8 Ubuntu 26.04 kernel and package tuple is
+an experimental preinstalled candidate, not a general vendor-support claim.
+Both routes check `rocminfo`, `/dev/kfd` and the selected DRM render node, then
+must pass real MLNode qualification. Unknown, unreadable, mixed or mismatched
+hardware/runtime state is refused before package, Docker, identity or
+deployment changes. To keep the network Host CPU-only, supply a separate ML Host alias;
+JOIN prepares the network Host as `network-only` and the ML Host as `ml-only`.
+
+The ROCm image supplies `--attention-backend ROCM_ATTN` inside MLNode's
+runner, including later model restarts. No operator GPU/backend flag is needed.
+Image publication checks the runner and vLLM parser in their respective Python
+environments; real model qualification still runs on the joining GPU.
+
+If qualification fails before identity creation, fix the reported ML error
+and repeat JOIN without reset. JOIN verifies the retained phase evidence and
+checks the Host identity again; an unexpected identity still stops the retry.
 
 Use `--chain-id <id>` to select another network's bootstrap document; the
 default is `gonka-devnet-community`. The value is accepted only as a safe URL

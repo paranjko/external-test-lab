@@ -5,7 +5,37 @@
   "platform": "linux/amd64",
   "accelerator": {
     "vendor": "amd",
-    "architecture": "gfx1201"
+    "architecture": "gfx1201",
+    "pci_device_ids": [
+      "0x7550"
+    ]
+  },
+  "host_provisioning": {
+    "ubuntu_version_id": "24.04",
+    "installer_url": "https://repo.radeon.com/amdgpu-install/7.2.1/ubuntu/noble/amdgpu-install_7.2.1.70201-1_all.deb",
+    "installer_sha256": "4c0338a241c15b12c14eb3aeb4012ea0d55dba681737ea8482248041a16c2afa",
+    "installer_package_version": "30.30.1.0.30300100-2303411.24.04",
+    "usecase": "graphics,rocm"
+  },
+  "experimental_preinstalled_runtime": {
+    "status": "candidate",
+    "ubuntu_version_id": "26.04",
+    "kernel_release": "7.0.0-31-generic",
+    "requires_mlnode_qualification": true,
+    "packages": {
+      "amdrocm": {
+        "status": "install ok installed",
+        "version": "7.14.0~pre3-29052710811"
+      },
+      "rocm-core": {
+        "status": "absent",
+        "version": "absent"
+      },
+      "amdgpu-install": {
+        "status": "install ok installed",
+        "version": "31.40.1.26130000-2383377.26.04"
+      }
+    }
   },
   "sources": {
     "gonka": {
@@ -20,11 +50,11 @@
     },
     "vllm": {
       "repository": "https://github.com/gonka-ai/vllm.git",
-      "commit": "5110f7fcf176100d1c29c9ea0c75efbf271ec4b3"
+      "commit": "052648bf42ab2e9db7c163b8f1909eb6ea41d86b"
     }
   },
   "base_image": "docker.io/rocm/vllm-dev:base@sha256:3cead535c32c11c59b222bbaa502076b9c737fb969b70b7bc9bb8ce77da5698e",
   "attention_backend": "ROCM_ATTN",
-  "output_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-vllm023-poc-4d687ed-5110f7f",
-  "published_image": ""
+  "output_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-rocm-cli-4d687ed-052648b",
+  "published_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-rocm-cli-4d687ed-052648b@sha256:07fcedc694ba67e2c7fe33e08eda0fce470bc43ae6399f8995ab6179b624486b"
 }

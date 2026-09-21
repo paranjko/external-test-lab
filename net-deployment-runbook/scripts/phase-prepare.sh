@@ -14,6 +14,54 @@ fi
 record_phase_profile prepare
 
 ready_hosts=(); reboot_hosts=(); skipped_hosts=(); failed_hosts=()
+append_accelerator_remote_env() {
+  local role="$1"
+  [[ -n "${GDC_JOIN_PROFILE:-}" && ( "$role" == network-gpu || "$role" == ml-only ) ]] || return 0
+  remote_env+=("GDC_ACCELERATOR_VENDOR='$ACCELERATOR_VENDOR'" "GDC_ACCELERATOR_ARCHITECTURE='$ACCELERATOR_ARCHITECTURE'" "GDC_ACCELERATOR_READINESS='$ACCELERATOR_READINESS'")
+}
+
+revalidate_join_accelerator() {
+  local host="$1" role="$2" expected_vendor evidence_dir inspection inspection_tmp receipt expected actual
+  [[ -n "${GDC_JOIN_PROFILE:-}" && ( "$role" == network-gpu || "$role" == ml-only ) ]] || return 0
+  if jq -e '.spec.target | has("accelerator")' "$GDC_JOIN_PROFILE" >/dev/null; then
+    expected_vendor="$(jq -er '.spec.target.accelerator.vendor' "$GDC_JOIN_PROFILE")" || return 1
+  else
+    # join-profile validation admits this shape only for historical v1
+    # recovery, and profile.sh maps that validated contract to NVIDIA.
+    [[ "${ACCELERATOR_VENDOR:-}" == nvidia ]] || return 1
+    return 0
+  fi
+  [[ "$expected_vendor" == amd ]] || return 0
+
+  evidence_dir="$RUN/accelerator-revalidation/$host"
+  mkdir -p "$evidence_dir"
+  chmod 0700 "$evidence_dir"
+  inspection="$evidence_dir/inspection.env"
+  receipt="$evidence_dir/receipt.json"
+  inspection_tmp="$(mktemp "$RUN/.accelerator-inspection.XXXXXX")"
+  if ! ssh -T "$host" 'bash -s' <"$ROOT/00-host-prep/inspect-accelerator.sh" >"$inspection_tmp"; then
+    rm -f "$inspection_tmp"
+    printf 'FAILED  %s: fresh accelerator inspection failed before Host preparation\n' "$host"
+    return 1
+  fi
+  if ! "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$inspection_tmp" --output "$receipt"; then
+    rm -f "$inspection_tmp" "$receipt"
+    printf 'FAILED  %s: fresh accelerator inspection no longer selects the generated profile\n' "$host"
+    return 1
+  fi
+  install -m 0600 "$inspection_tmp" "$inspection"
+  rm -f "$inspection_tmp"
+  chmod 0600 "$receipt"
+  expected="$(jq -Sc '.spec.target.accelerator' "$GDC_JOIN_PROFILE")" || return 1
+  actual="$(jq -Sc '.' "$receipt")" || return 1
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'FAILED  %s: accelerator receipt changed after JOIN profile generation; evidence: %s\n' \
+      "$host" "$evidence_dir"
+    return 1
+  fi
+  printf 'BOUND  %s accelerator receipt matches generated JOIN profile; evidence: %s\n' "$host" "$evidence_dir"
+}
+
 prepare_nodes=("${GDC_NODES[@]}")
 explicit_hosts=false
 if [[ -n "${GDC_PREPARE_HOSTS:-}" ]]; then
@@ -45,6 +93,10 @@ for host in "${hosts[@]}"; do
     role=ml-only
   elif [[ -n "$(node_ml_host "$host" || true)" ]]; then
     role=network-only
+  fi
+  if ! revalidate_join_accelerator "$host" "$role"; then
+    failed_hosts+=("$host")
+    continue
   fi
   callback_check='true'
   if [[ "$role" == network-only ]]; then
@@ -84,6 +136,7 @@ for host in "${hosts[@]}"; do
     continue
   fi
   remote_env=()
+  append_accelerator_remote_env "$role"
   if [[ "$role" == ml-only ]]; then
     # The ML host is contacted by the network Host, not by its public edge
     # hostname. Prefer the SSH endpoint and use public DNS only as a fallback.

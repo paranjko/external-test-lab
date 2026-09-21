@@ -16,11 +16,19 @@ cat >"$spec" <<'EOF'
 {"network":{"chain_id":"gonka-fixture","genesis_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","bootstrap_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","bootstrap_url":"https://example.test/bootstrap.json"},"seeds":{"usable":[{"status":"usable"}],"unavailable":[]},"target":{"node_name":"node-a","public_host":"node-a.example.test","public_p2p_address":"tcp://node-a.example.test:5000","platform":"linux-amd64"},"deployment":{"gdc_source_commit":"ffffffffffffffffffffffffffffffffffffffff","data_layout":"gdc-data-layout/v2","host_envelope":{"tmkms_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","postgres_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edge_api_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","versiond_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","proxy_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","explorer_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mlnode_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mlnode_proxy_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","caddy_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","grafana_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","node_exporter_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","cadvisor_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dashboard_port":3000,"edge_api_compose_profile":"disabled","edge_api_service_name":"edge-api","model_id":"fixture","model_revision":"0123456789abcdef0123456789abcdef01234567","mlnode_context_length":1,"mlnode_max_num_seqs":1,"mlnode_dtype":"float16","mlnode_tensor_parallel_size":1,"mlnode_gpu_memory_utilization":"1.0","join_effective_epochs":1,"join_effective_timeout_seconds":1,"host_stack":{"repository":"gonka-ai/gonka","commit":"0123456789abcdef0123456789abcdef01234567","compose_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","api_image":"x@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"mapping_source":{"kind":"official_artifact","id":"fixture","definition_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}},"components":{"core":{"observed":{"version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"},"expected_runtime":{"version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"},"installation":{"image":{"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"binary":{"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}},"dapi":{"observed":{"version":"0.2.15-post3","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"},"expected_runtime":{"version":"0.2.15-post3","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"},"installation":{"image":{"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}},"state_acquisition":{"mode":"pending","providers":[],"minimum_providers":0},"identity":{"mode":"generate","stable_identity_layout":"gdc-identity-layout/v2"},"activation_policy":{"application_required_for_complete":true,"signer_allowed_in_profile":false,"old_signer_fence_required":false}}
 EOF
 spec_fixed="$tmp/spec-fixed.json"
-jq '.components.dapi.installation.binary = {url:"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15-post3/decentralized-api-amd64.zip",sha256:"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}' "$spec" >"$spec_fixed"
+jq '.target.accelerator = {schema_version:1,vendor:"nvidia",compose_variant:"nvidia",qualification_backend:"cuda"} | .components.dapi.installation.binary = {url:"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15-post3/decentralized-api-amd64.zip",sha256:"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}' "$spec" >"$spec_fixed"
 mv "$spec_fixed" "$spec"
 "$ROOT/scripts/join-profile.sh" create --observation "$observation" --spec "$spec" --operation new --run-id current --output "$profile" >/dev/null
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$run" --current-profile "$profile")"
 jq -e '.classification == "no_prior_run"' <<<"$result" >/dev/null
+# A process can be interrupted during the bootstrap/runtime preflight before
+# a profile, lifecycle receipt directory or terminal result exists. It has
+# not touched the Host, so a normal JOIN must start fresh rather than demand a
+# reset or manual recovery.
+aborted_preflight="$tmp/aborted-preflight"
+mkdir -p "$aborted_preflight"
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$aborted_preflight" --current-profile "$profile")"
+jq -e '.classification == "preflight_retry_allowed" and .reason == "preflight_aborted_before_profile"' <<<"$result" >/dev/null
 mkdir -p "$run/receipts"
 install -m 0600 "$profile" "$run/join-profile.v1.json"
 sha="$(sha256sum "$run/join-profile.v1.json" | awk '{print $1}')"
@@ -77,6 +85,22 @@ jq -cn --arg sha "$(sha256sum "$retry/join-profile.v1.json" | awk '{print $1}')"
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$retry" --current-profile "$profile")"
 jq -e '.classification == "preflight_retry_allowed"' <<<"$result" >/dev/null
 
+# A legacy launcher could be interrupted immediately after TARGET_CLASSIFIED.
+# Its receipt chain proves no identity, deployment or signer was created, but
+# its old Join Profile need not validate under the current profile schema.
+# A fresh normal JOIN must therefore be allowed to restart at preflight.
+legacy_target="$tmp/legacy-target-classified"
+mkdir -p "$legacy_target/receipts"
+jq 'del(.decision)' "$profile" >"$legacy_target/join-profile.v1.json"
+chmod 0600 "$legacy_target/join-profile.v1.json"
+legacy_target_sha="$(sha256sum "$legacy_target/join-profile.v1.json" | awk '{print $1}')"
+jq -cn --arg profile "$legacy_target_sha" --arg observation "$observation_sha" '
+  {schema_version:2,kind:"gdc-host-join-receipt",run_id:"legacy-target",operation:"new",node_name:"node-a",state:"TARGET_CLASSIFIED",join_profile_sha256:$profile,network_observation_sha256:$observation,generation_id:"legacy-target",identity_fingerprints:{participant_address:"",consensus_pubkey:"",p2p_node_id:"",warm_address:""},signer_ever_started:false,tmkms_state:{height:0,round:0,step:0,block_id:""},evidence:[],outcome:"in_progress",resume_policy:"resume_same_run"}' \
+  >"$tmp/legacy-target-receipt.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$legacy_target/receipts" --input "$tmp/legacy-target-receipt.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$legacy_target" --current-profile "$profile")"
+jq -e '.classification == "preparation_retry_allowed" and .reason == "legacy_target_classified_without_terminal_result"' <<<"$result" >/dev/null
+
 # Driver installation deliberately stops before identity creation. Its typed
 # terminal result permits an ordinary fresh JOIN after reboot, rather than a
 # reset or an unsafe resume through a partial lifecycle run.
@@ -92,7 +116,10 @@ jq -cn --arg sha "$reboot_sha" \
   '{schema_version:1,kind:"gdc-host-join-result",outcome:"failed",phase:"staging",category:"host",reason:"host_prepare_reboot_required",exit_code:194,mutation:"staging_only",signer_state:"disabled",resume:"new_profile",join_profile_sha256:$sha,evidence:[]}' \
   >"$tmp/reboot-result.json"
 "$ROOT/scripts/record-join-result.sh" --output "$reboot_retry/join-result.v1.json" --input "$tmp/reboot-result.json" >/dev/null
-result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$reboot_retry" --current-profile "$profile")"
+# A reboot can change the accelerator receipt from provisioning to ready. The
+# retry is safe because the prior run stopped before identity/deployment/signer
+# mutation, so it must accept a fresh, different Join Profile.
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$reboot_retry" --current-profile "$tmp/different.json")"
 jq -e '.classification == "preparation_retry_allowed" and .reason == "host_prepare_reboot_required"' <<<"$result" >/dev/null
 
 # A non-reboot preparation failure is also before identity/deployment/signer
@@ -118,6 +145,30 @@ jq -cn --arg sha "$prepare_failure_sha" \
 "$ROOT/scripts/record-join-result.sh" --output "$prepare_failure/join-result.v1.json" --input "$tmp/prepare-failure-legacy-result.json" >/dev/null
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$prepare_failure" --current-profile "$profile")"
 jq -e '.classification == "preparation_retry_allowed" and .reason == "legacy_host_prepare_failed_before_identity"' <<<"$result" >/dev/null
+
+# Qualification is after HOST_BASE_PREPARED but before IDENTITY_READY. Both
+# the typed outcome and the older launcher fallback are retryable only at that
+# exact receipt boundary.
+qualification_failure="$tmp/qualification-failure"
+mkdir -p "$qualification_failure/receipts"
+install -m 0600 "$profile" "$qualification_failure/join-profile.v1.json"
+qualification_failure_sha="$(sha256sum "$qualification_failure/join-profile.v1.json" | awk '{print $1}')"
+jq -cn --arg profile "$qualification_failure_sha" --arg observation "$observation_sha" '
+  {schema_version:2,kind:"gdc-host-join-receipt",run_id:"qualification-failure",operation:"new",node_name:"node-a",state:"HOST_BASE_PREPARED",join_profile_sha256:$profile,network_observation_sha256:$observation,generation_id:"qualification-failure",identity_fingerprints:{participant_address:"",consensus_pubkey:"",p2p_node_id:"",warm_address:""},signer_ever_started:false,tmkms_state:{height:0,round:0,step:0,block_id:""},evidence:[],outcome:"in_progress",resume_policy:"resume_same_run"}' \
+  >"$tmp/qualification-failure-receipt.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$qualification_failure/receipts" --input "$tmp/qualification-failure-receipt.json" >/dev/null
+jq -cn --arg sha "$qualification_failure_sha" \
+  '{schema_version:1,kind:"gdc-host-join-result",outcome:"failed",phase:"staging",category:"host",reason:"ml_qualification_failed_before_identity",exit_code:1,mutation:"staging_only",signer_state:"disabled",resume:"new_profile",join_profile_sha256:$sha,evidence:[]}' \
+  >"$tmp/qualification-failure-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$qualification_failure/join-result.v1.json" --input "$tmp/qualification-failure-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$qualification_failure" --current-profile "$profile")"
+jq -e '.classification == "qualification_retry_allowed" and .reason == "ml_qualification_failed_before_identity"' <<<"$result" >/dev/null
+jq -cn --arg sha "$qualification_failure_sha" \
+  '{schema_version:1,kind:"gdc-host-join-result",outcome:"failed",phase:"signer",category:"internal",reason:"join_phase_failed",exit_code:1,mutation:"signer_may_be_on",signer_state:"unknown",resume:"automatic_retry_forbidden",join_profile_sha256:$sha,evidence:[]}' \
+  >"$tmp/qualification-failure-legacy-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$qualification_failure/join-result.v1.json" --input "$tmp/qualification-failure-legacy-result.json" >/dev/null
+result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$qualification_failure" --current-profile "$profile")"
+jq -e '.classification == "qualification_retry_allowed" and .reason == "legacy_qualification_failed_before_identity"' <<<"$result" >/dev/null
 rm -f "$reboot_retry/join-result.v1.json"
 ln -s "$tmp/reboot-result.json" "$reboot_retry/join-result.v1.json"
 result="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$reboot_retry" --current-profile "$profile")"

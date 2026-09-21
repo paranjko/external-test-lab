@@ -51,6 +51,17 @@ if grep -Fq -- '--profile signer' "$tmp/start/log"; then
   echo 'generated JOIN unexpectedly started its signer by default' >&2; exit 1
 fi
 grep -Fq 'signerless_listener=set' "$tmp/start/log"
+
+# A local AMD MLNode must select its receipt-derived Compose fragment.  This
+# executes the startup boundary so an unset environment-file path cannot hide
+# behind a source-only assertion.
+printf '%s\n' 'GDC_PROFILE_KIND=generated_join' 'MLNODE_COMPOSE_VARIANT=amd' >"$tmp/start/.env"
+printf '%s\n' true >"$tmp/start/.local-ml"
+printf '%s\n' 'services: {}' >"$tmp/start/compose.ml-amd.yaml"
+: >"$tmp/start/log"
+PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" >"$tmp/start/join-amd.out"
+grep -Fq -- "-f $tmp/start/compose.ml-amd.yaml" "$tmp/start/log"
+printf '%s\n' false >"$tmp/start/.local-ml"
 PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" --enable-signer >"$tmp/start/join-signer.out"
 grep -Fq -- '--profile signer' "$tmp/start/log"
 grep -Fq 'CONFIG_priv_validator_laddr: ${CONFIG_PRIV_VALIDATOR_LADDR-tcp://0.0.0.0:26658}' "$ROOT/02-node/compose.yaml"

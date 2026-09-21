@@ -72,6 +72,18 @@ if [[ "$write_remote" == true ]]; then
 fi
 EOF
 chmod 0755 "$tmp/bin/curl"
+cat >"$tmp/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${!#}" == 'bash -s' ]]; then
+  cat >/dev/null
+  printf 'vendor=nvidia\n'
+  exit 0
+fi
+echo "unexpected fixture SSH invocation: $*" >&2
+exit 1
+EOF
+chmod 0755 "$tmp/bin/ssh"
 
 if GDC_JOIN_PREFLIGHT_DEADLINE=1 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc.sh" host join \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/out" 2>"$tmp/err"; then

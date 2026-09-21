@@ -274,7 +274,21 @@ record_join_transition HOST_BASE_PREPARED
 if [[ "${GDC_JOIN_SKIP_QUALIFICATION:-false}" == true ]]; then
   printf 'SKIP  ML qualification explicitly disabled by the joining Host operator\n'
 else
-  ensure_ml_qualification "$ML_TARGET"
+  # ensure_ml_qualification uses die() for a missing/invalid final report.
+  # Run it in a subshell so that exit remains a qualification failure here,
+  # instead of terminating this phase before it can retain the pre-identity
+  # boundary for the launcher.
+  qualification_rc=0
+  ( ensure_ml_qualification "$ML_TARGET" ) || qualification_rc=$?
+  if (( qualification_rc != 0 )); then
+    # Qualification is the last gate before local account, identity,
+    # deployment and signer creation. Keep a typed marker so the launcher can
+    # retain a bounded, retryable outcome instead of claiming signer state is
+    # unknown.
+    : >"$RUN/qualification-failed-before-identity"
+    chmod 0600 "$RUN/qualification-failed-before-identity"
+    exit "$qualification_rc"
+  fi
 fi
 # Every joining Host creates and owns its local keyring passwords before it
 # creates any account. No Genesis operator key, funding approval, or
