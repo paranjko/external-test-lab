@@ -110,8 +110,46 @@ record_signer_activation_guard() {
 # typed envelope states the prerequisite instead of the launcher's
 # conservative signer_may_be_on fallback. The verdict keeps the evidence exit
 # trap from replacing that envelope with the generic adapter.
+# What the last reset decided about this Host's key, so a refusal can say why
+# the identity is still there instead of leaving the operator to guess. Empty
+# when no reset ran under this operator state, or its verdict is unreadable.
+retained_identity_verdict() {
+  local file="$STATE/reset-verdict-$NODE.json" verdict
+  [[ -s "$file" && ! -L "$file" ]] || return 0
+  verdict="$(jq -r --arg node "$NODE" '
+    select(.kind == "gdc-host-reset-verdict" and .node == $node and .identity_discarded == false)
+    | .registration | select(test("^(registered|unknown:[a-z_]+)$"))' "$file" 2>/dev/null)" || return 0
+  printf '%s' "$verdict"
+}
+retained_identity_reason() {
+  local verdict; verdict="$(retained_identity_verdict)"
+  case "$verdict" in
+    registered) printf ' the last reset kept because the chain still knows this participant' ;;
+    unknown:*) printf ' the last reset kept because the chain could not be asked (%s)' "${verdict#unknown:}" ;;
+  esac
+}
+retained_identity_exit() {
+  local verdict; verdict="$(retained_identity_verdict)"
+  case "$verdict" in
+    registered) printf 'Recover with gdc host join --restore and the archive of that key.' ;;
+    unknown:*) printf 'Recover with --restore, or rerun reset once the chain answers.' ;;
+    *) printf 'Restore from the matching archive or follow the documented recovery path.' ;;
+  esac
+}
+# The envelope holds 240 characters; a verdict takes the room of the file list.
+identity_retained_summary() {
+  local local_state="$1" reason exit_line
+  reason="$(retained_identity_reason)"
+  exit_line="$(retained_identity_exit)"
+  if [[ -n "$reason" ]]; then
+    printf 'Host JOIN stopped before any change: the Host holds a validator identity%s. %s' "$reason" "$exit_line"
+  else
+    printf 'Host JOIN stopped before any change: %s; the Host holds a validator identity. %s' "$local_state" "$exit_line"
+  fi
+}
 refuse_before_mutation() {
   local reason="$1" summary="$2" message="$3" result_category envelope_category resume decision token input
+  summary="${summary:0:240}"
   case "$reason" in
     partial_identity|identity_conflict)
       result_category=identity envelope_category=identity resume=manual_recovery decision=manual_action_required token=none ;;
@@ -182,13 +220,13 @@ else
 fi
 if [[ "$remote_identity_state" == present && "$JOIN_CLASS" == new && -z "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
   refuse_before_mutation identity_conflict \
-    'Host JOIN stopped before any change: the Host holds a validator identity that the operator state does not know. Restore it from the matching validator archive or follow the documented recovery path.' \
+    'Host JOIN stopped before any change: the Host holds a validator identity that the operator state does not know. Restore from the matching archive or follow the documented recovery path.' \
     'Host JOIN classification=identity_conflict; a remote validator identity exists without matching local operator state'
 fi
 if [[ "$JOIN_CLASS" == partial_identity ]]; then
   if [[ "$remote_identity_state" == present ]]; then
     refuse_before_mutation partial_identity \
-      "Host JOIN stopped before any change: $join_local_state; the Host holds a validator identity. Restore from the matching archive or follow the documented recovery path." \
+      "$(identity_retained_summary "$join_local_state")" \
       'Host JOIN classification=partial_identity; remote identity cannot be adopted from incomplete local state'
   else
     refuse_before_mutation partial_identity \

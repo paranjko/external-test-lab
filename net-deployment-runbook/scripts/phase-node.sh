@@ -199,6 +199,21 @@ REMOTE
   printf '%s\n' "$layout"
 }
 
+# Best effort: a reset that cannot write its verdict still resets.
+record_reset_verdict() {
+  local node="$1" registration="$2" layout="$3" discarded="$4" file next
+  file="$STATE/reset-verdict-$node.json"
+  [[ -d "$STATE" && ! -L "$STATE" ]] || return 0
+  next="$(mktemp "$file.XXXXXX" 2>/dev/null)" || return 0
+  if jq -cn --arg node "$node" --arg registration "$registration" --arg layout "$layout" \
+    --argjson discarded "$discarded" --arg time "$(date -u +%FT%TZ)" \
+    '{schema_version:1,kind:"gdc-host-reset-verdict",node:$node,registration:$registration,
+      identity_layout:$layout,identity_discarded:$discarded,observed_at:$time}' >"$next" 2>/dev/null; then
+    install -m 0600 -- "$next" "$file" 2>/dev/null || true
+  fi
+  rm -f -- "$next"
+}
+
 # Move the local identity record and cold account aside so the next JOIN
 # classifies as new. Mnemonics stay: they are the recovery secret.
 discard_local_identity() {
@@ -435,6 +450,11 @@ REMOTE
   if [[ "$discard_identity" == true ]]; then
     printf 'READY removed incomplete local and remote identity state for %s\n' "$NODE"
   fi
+  # Why an identity is still on the Host is decided here and needed by the
+  # next command, which runs as its own invocation and reports on its own.
+  # Without this the operator reads "the Host holds a validator identity" with
+  # no way to tell a key the chain still knows from a lookup nobody answered.
+  record_reset_verdict "$NODE" "$registration" "$layout" "$discard_identity"
   case "$registration" in
     absent)
       [[ -n "$stamp" ]] || stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -451,6 +471,7 @@ REMOTE
       printf 'READY %s participant is registered on chain; identity and signer are retained on the Host and locally; recover with gdc host join --restore\n' "$NODE"
       ;;
     unknown:no_cold_account)
+      printf 'READY %s has no local cold account, so the chain could not be asked about its participant; identity and signer are retained; recover with gdc host join --restore or restore the operator account first\n' "$NODE"
       ;;
     unknown:*)
       printf 'READY %s participant registration is unknown (%s); identity and signer are retained; rerun reset when the public API answers to discard an unregistered identity\n' "$NODE" "${registration#unknown:}"

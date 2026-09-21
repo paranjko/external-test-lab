@@ -101,6 +101,14 @@ grep -Fq 'END phase=node-reset-gdc-node0 status=0' "$tmp/output"
 [[ ! -e "$home/gdc-node0/state/active-role-config" ]]
 [[ ! -e "$home/gdc-node0/state/role-inputs" ]]
 
+# The verdict survives in the operator state for the next command.
+verdict="$home/gdc-node0/state/reset-verdict-gdc-node0.json"
+[[ -f "$verdict" && ! -L "$verdict" ]]
+[[ "$(stat -c %a "$verdict")" == 600 ]]
+jq -e '.schema_version == 1 and .kind == "gdc-host-reset-verdict" and .node == "gdc-node0"
+  and (.registration | type == "string") and (.identity_discarded | type == "boolean")
+  and (.observed_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$"))' "$verdict" >/dev/null
+
 # A completed incident is history, not a permanent reset dispatcher.
 historical_home="$tmp/historical-recovery"
 mkdir -p "$historical_home/recovery-GNK-LAB-2026-0001/hosts"
