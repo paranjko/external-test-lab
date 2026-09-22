@@ -39,7 +39,8 @@ jq -cn '{schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"i
   join_profile_sha256:null,evidence:[]}' >"$tmp/join-result.input.json"
 "$ROOT/scripts/record-join-result.sh" --output "$tmp/operator/runs/diagnostic-fixture/join-result.v1.json" \
   --input "$tmp/join-result.input.json" >/dev/null
-printf 'join_result=%s\n' "$tmp/operator/runs/diagnostic-fixture/join-result.v1.json" >>"$failure"
+cp "$tmp/operator/runs/diagnostic-fixture/join-result.v1.json" "$(dirname "$failure")/join-result.v1.json"
+printf 'join_result=%s\n' "$(dirname "$failure")/join-result.v1.json" >>"$failure"
 printf 'invocation_options=%s\n' '--restore --public-host --operator-made-this-up' >>"$failure"
 
 sort_root="$tmp/sort-operator"
@@ -463,6 +464,56 @@ grep -Fq 'Published and verified:' "$tmp/flags.out"
 grep -Fxq '| invocation_options | --restore --mnemonic-file --public-host |' "$tmp/flags.md"
 ! grep -Fq '/private/' "$tmp/flags.md" "$tmp/flags.args"
 ! grep -Fq 'node.example.test' "$tmp/flags.md"
+
+# A later successful resume must not rewrite the failure the report describes.
+resume_root="$tmp/resume-operator"
+mkdir -p "$resume_root/runs/resume-run/join-node"
+jq -cn '{schema_version:1,kind:"gdc-host-join-result",outcome:"manual_recovery_required",phase:"signer",category:"signer",
+  reason:"signer_activation_readback_required",exit_code:1,mutation:"signer_may_be_on",signer_state:"unknown",
+  resume:"automatic_retry_forbidden",join_profile_sha256:null,evidence:[]}' >"$tmp/resume-failed.json"
+"$ROOT/scripts/record-join-result.sh" --output "$resume_root/runs/resume-run/join-node/join-result.v1.json" \
+  --input "$tmp/resume-failed.json" >/dev/null
+if GDC_HOME="$resume_root" GDC_JOIN_RESULT_OUTPUT="$resume_root/runs/resume-run/join-node/join-result.v1.json" \
+  "$ROOT/gdc.sh" invalid-command >"$tmp/resume-pre.out" 2>"$tmp/resume-pre.err"; then
+  echo 'resume fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+resume_id="$(<"$resume_root/reporting/failures/latest-failure")"
+resume_failure="$resume_root/reporting/invocations/invocation.$resume_id/failure.env"
+grep -Fxq "join_result=$resume_root/reporting/invocations/invocation.$resume_id/join-result.v1.json" "$resume_failure"
+[[ "$(stat -c '%a' "$resume_root/reporting/invocations/invocation.$resume_id/join-result.v1.json")" == 600 ]]
+# The resume succeeds and rewrites the live result.
+jq -cn '{schema_version:1,kind:"gdc-host-join-result",outcome:"succeeded",phase:"acceptance",category:"signer",
+  reason:"join_complete",exit_code:0,mutation:"signer_may_be_on",signer_state:"enabled",
+  resume:"not_applicable",join_profile_sha256:null,evidence:[]}' >"$tmp/resume-succeeded.json"
+"$ROOT/scripts/record-join-result.sh" --output "$resume_root/runs/resume-run/join-node/join-result.v1.json" \
+  --input "$tmp/resume-succeeded.json" >/dev/null
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/resume.args" FAKE_GH_BODY="$tmp/resume.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$resume_root" "$ROOT/gdc.sh" report github >"$tmp/resume.out" 2>"$tmp/resume.err" <<'EOF'
+1
+
+.
+y
+EOF
+grep -Fq 'Published and verified:' "$tmp/resume.out"
+grep -Fxq '| outcome | manual_recovery_required |' "$tmp/resume.md"
+grep -Fxq '| reason | signer_activation_readback_required |' "$tmp/resume.md"
+! grep -Fq 'succeeded' "$tmp/resume.md"
+! grep -Fq 'join_complete' "$tmp/resume.args"
+grep -Fq 'signer_activation_readback_required' "$tmp/resume.args"
+
+# An invalid result is not frozen and not named.
+unfrozen_root="$tmp/unfrozen-operator"
+mkdir -p "$unfrozen_root/runs/bad-run/join-node"
+printf '{"outcome":"refused"}\n' >"$unfrozen_root/runs/bad-run/join-node/join-result.v1.json"
+if GDC_HOME="$unfrozen_root" GDC_JOIN_RESULT_OUTPUT="$unfrozen_root/runs/bad-run/join-node/join-result.v1.json" \
+  "$ROOT/gdc.sh" invalid-command >"$tmp/unfrozen-pre.out" 2>"$tmp/unfrozen-pre.err"; then
+  echo 'unfrozen fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+unfrozen_id="$(<"$unfrozen_root/reporting/failures/latest-failure")"
+! grep -q '^join_result=' "$unfrozen_root/reporting/invocations/invocation.$unfrozen_id/failure.env"
+[[ ! -e "$unfrozen_root/reporting/invocations/invocation.$unfrozen_id/join-result.v1.json" ]]
 
 "$ROOT/scripts/record-join-result.sh" --validate "$tmp/operator/runs/diagnostic-fixture/join-result.v1.json"
 if "$ROOT/scripts/record-join-result.sh" --validate "$tmp/join-result.input.json" --output "$tmp/should-not-exist.json" 2>/dev/null; then

@@ -292,6 +292,9 @@ scan_secret_markers() {
   return 0
 }
 
+# The typed rows are closed vocabulary validated at their source; a key and a
+# long snake_case value together can reach the length the opaque-token rule
+# looks for, so those rows are dropped before the scan, as the digest rows are.
 scan_public_text() {
   local file="$1"
   LC_ALL=C grep -Ein \
@@ -305,6 +308,7 @@ scan_public_text() {
       -e '/^(runbook_revision|launcher_sha256|body_sha256|release_profile_sha256|profile_sha256|genesis_sha256|join_profile_sha256|network_observation_sha256)=[0-9a-f]{40,64}$/d' \
       -e '/^<!-- gdc-report-sha256:[0-9a-f]{64} -->$/d' \
       -e '/(runbook_revision|launcher_sha256|body_sha256|release_profile_sha256|profile_sha256|genesis_sha256|join_profile_sha256|network_observation_sha256|gdc-report-sha256)/ s/[0-9a-f]{40,64}/SHA256/g' \
+      -e '/^(result_(outcome|phase|category|reason|mutation|signer_state|resume)|diagnostic_(category|checkpoint|state|tool))=[a-z][a-z0-9_-]{0,63}$/d' \
       "$file") >/dev/null && return 1
   return 0
 }

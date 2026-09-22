@@ -77,11 +77,12 @@ record_launcher_failure() {
     fi
     printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
     [[ -z "${GDC_DIAGNOSTIC_ENVELOPE:-}" ]] || printf 'diagnostic_envelope=%s\n' "$GDC_DIAGNOSTIC_ENVELOPE"
-    # The typed terminal result of a JOIN says what stopped, whether the Host
-    # was changed, and what state the signer is in. The reporter reads it
-    # through the writer's own schema; a run that wrote none names none.
-    if [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" && -f "$GDC_JOIN_RESULT_OUTPUT" && ! -L "$GDC_JOIN_RESULT_OUTPUT" ]]; then
-      printf 'join_result=%s\n' "$GDC_JOIN_RESULT_OUTPUT"
+    # Freeze the JOIN result as it stood at this failure; a later resume rewrites the live file.
+    if [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" && -f "$GDC_JOIN_RESULT_OUTPUT" && ! -L "$GDC_JOIN_RESULT_OUTPUT" ]] \
+      && "$ROOT/scripts/record-join-result.sh" --validate "$GDC_JOIN_RESULT_OUTPUT" >/dev/null 2>&1 \
+      && cp -p -- "$GDC_JOIN_RESULT_OUTPUT" "$GDC_LAUNCHER_ENVELOPE_DIR/join-result.v1.json" 2>/dev/null; then
+      chmod 0600 "$GDC_LAUNCHER_ENVELOPE_DIR/join-result.v1.json" 2>/dev/null || true
+      printf 'join_result=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/join-result.v1.json"
     fi
     [[ -z "${GDC_INVOCATION_OPTIONS:-}" ]] || printf 'invocation_options=%s\n' "$GDC_INVOCATION_OPTIONS"
     [[ -z "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || printf 'preflight_receipt=%s\n' "$GDC_JOIN_PREFLIGHT_RECEIPT"
