@@ -48,7 +48,7 @@ grep -Fq 'remote_ip {$MONITORING_CIDR} {$PUBLIC_EDGE_CIDR}' "$ROOT/04-ops/edge-n
 grep -Fq 'telegram_bot_public_host="$PUBLIC_EDGE_HOST"' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'telegram_bot_public_host="$(node_public_host "$TELEGRAM_BOT_HOST")"' "$ROOT/04-ops/edge-node/render-env.sh"
 grep -Fq 'job_name: telegram-consumer' "$ROOT/04-ops/render-ops.sh"
-grep -Fq 'json("/status/telegram-consumer")' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'json(statusUrl("/telegram-consumer"))' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'link.href = cfg.telegramBot' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'link.hidden = false' "$ROOT/04-ops/site/src/app.js"
 ! grep -Fq 'if (health.status !== "ok" || health.inference_ready !== true) return;' "$ROOT/04-ops/site/src/app.js"

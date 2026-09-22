@@ -187,17 +187,20 @@ CADDY
     header Content-Type "text/plain; version=0.0.4"
     file_server
   }
-  # Publish only the fixed GPU inventory query. Do not expose the general
-  # Prometheus query API through the public status origin. Exclude series whose
-  # latest exporter sample is older than the live-inventory freshness bound.
+  # Publish the latest inventory observed within the bounded retention window.
+  # Do not expose the general Prometheus query API through the public status
+  # origin. A temporarily failed scrape must not erase known hardware or
+  # software from the public operator view.
   handle /status/gpus {
-    rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes%20unless%20(time()%20-%20timestamp(gdc_nvidia_memory_total_bytes)%20%3E%20120)
+    rewrite * /api/v1/query?query=last_over_time(gdc_nvidia_memory_total_bytes%5B24h%5D)
     reverse_proxy 127.0.0.1:9099
   }
   # The site consumes software information only from the monitoring inventory,
-  # never from a participant's public inference endpoint.
+  # never from a participant's public inference endpoint. Return the timestamp
+  # of each latest bounded observation, not the query evaluation time: version
+  # is a label, so upgrades and rollbacks retain distinct series for 24 hours.
   handle /status/software {
-    rewrite * /api/v1/query?query=gdc_component_info
+    rewrite * /api/v1/query?query=max_over_time(timestamp(gdc_component_info)%5B24h%3A15s%5D)
     reverse_proxy 127.0.0.1:9099
   }
   root * /srv

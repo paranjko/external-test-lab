@@ -310,6 +310,7 @@ const participantKeys = [
   ...Array.from({ length: 11 }, (_, index) => `overflow${index + 1}`),
 ];
 let participantLimit = 11;
+let healthStatus = 200;
 const api = (port) => ({
   "/status/participants": {
     block_height: "424",
@@ -353,6 +354,18 @@ const api = (port) => ({
   },
   "/chain-rpc/validators": { result: { validators: [] } },
   "/chain-rpc/net_info": { result: { n_peers: "4" } },
+  "/chain-api/productscience/inference/inference/params": {
+    params: {
+      devshard_escrow_params: {
+        approved_versions: [
+          { name: "v3", sha256: "3".repeat(64) },
+          { name: "v4", sha256: "4".repeat(64) },
+          { name: "v5", sha256: "5".repeat(64) },
+        ],
+      },
+    },
+  },
+  "/health": { status: "ok" },
   "/v1/versions": {},
   "/status/gateway/v1/status": {
     escrow_id: "fixture",
@@ -394,6 +407,11 @@ const server = createServer(async (request, response) => {
     response.end(
       "devshard_gateway_inflight_requests 0\ndevshard_gateway_inflight_input_tokens 0\ndevshard_gateway_requests_total 7\ndevshard_gateway_limit_rejections_total 0\ndevshard_gateway_capacity_scale 1\n",
     );
+    return;
+  }
+  if (pathname === "/health") {
+    response.writeHead(healthStatus, { "content-type": "text/plain" });
+    response.end(healthStatus === 200 ? "healthy\n" : "unavailable\n");
     return;
   }
   const state = api(server.address().port)[pathname];
@@ -703,7 +721,7 @@ try {
     const mobile = innerWidth <= 700;
     let expectedExpandedCount = Math.min(innerWidth <= 900 ? 1 : innerWidth < 1200 ? 2 : 4, cards.length);
     while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 270) expectedExpandedCount -= 1;
-    const oneRow = cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5 && Math.abs(rect.bottom - cardRects[0].bottom) <= 0.5);
+    const oneRow = cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5);
     const cardsInside = cardRects.every(rect => rect.left >= deckRect.left - 1 && rect.right <= deckRect.right + 1);
     const initialDeckScrollLeft = deck.scrollLeft;
     deck.scrollLeft = 0;
@@ -729,13 +747,13 @@ try {
       const rect = candidate.getBoundingClientRect();
       return mobile
         ? Math.abs(rect.width - deck.clientWidth) <= 1
-        : Math.abs(rect.height - 424) <= 0.5 && rect.width >= 269;
+        : rect.height >= 350 && rect.width >= 269;
     });
     const collapsedGeometry = collapsedCards.every(candidate => {
       const rect = candidate.getBoundingClientRect();
       return mobile
         ? Math.abs(rect.height - 52) <= 0.5 && Math.abs(rect.width - deck.clientWidth) <= 1
-        : Math.abs(rect.height - 424) <= 0.5 && rect.width >= 31 && rect.width <= 33;
+        : rect.height >= 350 && rect.width >= 31 && rect.width <= 33;
     });
     const collapsedSemantics = collapsedCards.every(candidate => {
       const host = candidate.querySelector('[data-k="host"]');
@@ -757,6 +775,7 @@ try {
       peers: fieldInfo('[data-k="peers"]'),
       software: fieldInfo('[data-k="versions"]'),
       gpu: fieldInfo('[data-k="gpu"]'),
+      devshard: fieldInfo('[data-k="devshard"]'),
     };
     const hiddenProbe = card.querySelector('[data-k="status-reason"]');
     const hiddenBefore = hiddenProbe?.style.display;
@@ -802,6 +821,12 @@ try {
     const focusedKey = document.activeElement?.closest(".node")?.dataset.nodeKey;
     const keyboardValid = Boolean(activatedButton && focusedKey === expectedFocusedKey);
     const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
+    const devshardValue = card.querySelector('[data-k="devshard"]');
+    const devshardContract =
+      devshardValue?.textContent?.trim() === "v3 · v4 · v5" &&
+      devshardValue.title.includes("v3: " + "3".repeat(64)) &&
+      devshardValue.title.includes("v4: " + "4".repeat(64)) &&
+      devshardValue.title.includes("v5: " + "5".repeat(64));
     const negativeTracking = [...document.querySelectorAll("body *")]
       .filter(element => {
         const spacing = getComputedStyle(element).letterSpacing;
@@ -811,12 +836,13 @@ try {
     const desktopLayout = !mobile && deckStyle.flexDirection === "row" && oneRow;
     const mobileLayout = mobile && deckStyle.flexDirection === "column" && !oneRow;
     return {
-      pass: cards.length > 5 && expandedCards.length === expectedExpandedCount && collapsedCards.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && deck.getAttribute("role") === "list" && deck.getAttribute("aria-label")?.includes("Host accordion") && deckStyle.overflowX === (mobile ? "visible" : "auto") && deckOverflows === overflowExpected && cardsReachable && (deckOverflows || cardsInside) && expandedGeometry && collapsedGeometry && collapsedSemantics && (mobile ? mobileLayout : desktopLayout) && card.scrollHeight <= card.clientHeight && rowOverlaps.length === 0 && contentBottom <= cardRect.bottom + 0.5 && complete && negativeTracking.length === 0 && statusLayoutShifts.length === 0 && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && activationValid && keyboardValid && document.documentElement.scrollWidth <= innerWidth,
+      pass: cards.length > 5 && expandedCards.length === expectedExpandedCount && collapsedCards.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && deck.getAttribute("role") === "list" && deck.getAttribute("aria-label")?.includes("Host accordion") && deckStyle.overflowX === (mobile ? "visible" : "auto") && deckOverflows === overflowExpected && cardsReachable && (deckOverflows || cardsInside) && expandedGeometry && collapsedGeometry && collapsedSemantics && (mobile ? mobileLayout : desktopLayout) && card.scrollHeight <= card.clientHeight && rowOverlaps.length === 0 && contentBottom <= cardRect.bottom + 0.5 && complete && devshardContract && negativeTracking.length === 0 && statusLayoutShifts.length === 0 && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && activationValid && keyboardValid && document.documentElement.scrollWidth <= innerWidth,
       expectedExpandedCount,
       initialExpandedCount: expandedCards.length,
       collapsedCount: collapsedCards.length,
       layout: { mobile, flexDirection: deckStyle.flexDirection, oneRow, cardsInside, cardsReachable, firstCardAtStart, lastCardAtEnd, deckOverflows, overflowExpected, maximumDeckScrollLeft, appliedDeckScrollLeft, minimumDeckWidth, expandedGeometry, collapsedGeometry, clientWidth: deck.clientWidth, scrollWidth: deck.scrollWidth, cardWidths: cardRects.map(rect => rect.width), cardHeights: cardRects.map(rect => rect.height) },
       fields,
+      devshardContract,
       negativeTracking,
       statusLayoutShifts,
       rowOverlaps,
@@ -1038,6 +1064,38 @@ try {
       if (retry.requests !== 2 || retry.dynamicMarker)
         throw new Error(
           `GeoIP failure backoff contract failed: ${JSON.stringify(retry)}`,
+        );
+      healthStatus = 502;
+      await call("Runtime.evaluate", {
+        expression: "refresh()",
+        awaitPromise: true,
+      });
+      const { result: failedHealthResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify({status:document.querySelector("#nodes .node [data-k=\\"status\\"]")?.textContent?.trim(),endpoint:document.querySelector("#nodes .node [data-k=\\"endpoint\\"]")?.textContent?.trim()})',
+        returnByValue: true,
+      });
+      const failedHealth = JSON.parse(failedHealthResult.value);
+      if (
+        failedHealth.status !== "Inactive" ||
+        failedHealth.endpoint !== "Unavailable – HTTP 502"
+      )
+        throw new Error(
+          `text health HTTP failure contract failed: ${JSON.stringify(failedHealth)}`,
+        );
+      healthStatus = 200;
+      await call("Runtime.evaluate", {
+        expression: "refresh()",
+        awaitPromise: true,
+      });
+      const { result: recoveredHealthResult } = await call("Runtime.evaluate", {
+        expression:
+          'document.querySelector("#nodes .node [data-k=\\"endpoint\\"]")?.textContent?.trim()',
+        returnByValue: true,
+      });
+      if (recoveredHealthResult.value !== "Reachable")
+        throw new Error(
+          `text health recovery contract failed: ${JSON.stringify(recoveredHealthResult.value)}`,
         );
     }
     const expectedCoordinates = {
@@ -1564,9 +1622,9 @@ try {
     const semantics = JSON.parse(semanticsResult.value);
     for (const [city, stateLabel] of [
       ["Bratislava", "Validating"],
-      ["Vienna", "Active – not validating"],
+      ["Vienna", "Active"],
       ["New York", "Inactive"],
-      ["Rome", "Unknown – status unavailable"],
+      ["Rome", "Unknown"],
     ]) {
       if (
         !semantics.some(
@@ -1585,14 +1643,14 @@ try {
     const legendLabels = JSON.parse(legend.result.value);
     if (
       !legendLabels.includes("Validating") ||
-      !legendLabels.includes("Active – not validating") ||
+      !legendLabels.includes("Active") ||
       !legendLabels.includes("Inactive") ||
-      !legendLabels.includes("Unknown – status unavailable") ||
+      !legendLabels.includes("Unknown") ||
       !semantics.some(
         (label) =>
           label.startsWith("Prague,") &&
           label.includes(
-            "1 validating · 1 active – not validating · 1 inactive",
+            "1 validating · 1 active · 1 inactive",
           ),
       )
     )
@@ -1638,7 +1696,7 @@ try {
     if (
       !popup.open ||
       popup.all.length !== 1 ||
-      !popup.text.includes("Active – not validating") ||
+      !popup.text.includes("Active participant, currently not validating") ||
       !popup.text.includes("IP geolocation snapshot") ||
       !popup.text.includes("203.0.113.10") ||
       !popup.text.includes("observed 2026-08-31T12:00:00Z") ||

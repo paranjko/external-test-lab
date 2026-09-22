@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startChromeDevTools, stopChromeDevTools } from './chrome-devtools.mjs';
 
@@ -14,6 +13,15 @@ const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
 const expectGatewayReady = process.env.GDC_EXPECT_GATEWAY_READY === 'true';
 const expectedSiteRevision = process.env.GDC_EXPECT_SITE_REVISION || '';
 const expectedAppDigest = process.env.GDC_EXPECT_APP_DIGEST || '';
+const expectedStatusPrefix = process.env.GDC_EXPECT_STATUS_PREFIX || '';
+const expectedCardCount = Number(process.env.GDC_EXPECT_CARD_COUNT || '0');
+const expectedNodeStates = (process.env.GDC_EXPECT_NODE_STATES || '')
+  .split(',')
+  .filter(Boolean)
+  .map(item => {
+    const [name, state] = item.split('=', 2);
+    return { name, state };
+  });
 const hostRequirementsProfile = JSON.parse(await readFile(new URL('../profiles/devnet-hadware.json', import.meta.url), 'utf8'));
 const expectedJoinRequirements = hostRequirementsProfile.requirements.map(({ label, description }) => ({ label, value: description }));
 const expectedJoinSummary = 'Minimum Host requirements For more details, read Community DevNet runbook/JOIN: add a Host';
@@ -28,8 +36,16 @@ process.on('unhandledRejection', reportBrowserFailure);
 if (!url || !Number.isInteger(width) || !Number.isInteger(height) || !output || !Number.isInteger(visibleNodes) || visibleNodes < 0) {
   throw new Error('usage: capture-homepage-viewport.mjs URL WIDTH HEIGHT OUTPUT.png [MIN_VISIBLE_NODES]');
 }
+if (expectedStatusPrefix && !expectedStatusPrefix.startsWith('/')) {
+  throw new Error('GDC_EXPECT_STATUS_PREFIX must be an absolute path prefix');
+}
+if (!Number.isInteger(expectedCardCount) || expectedCardCount < 0) {
+  throw new Error('GDC_EXPECT_CARD_COUNT must be a non-negative integer');
+}
 
-const profile = await mkdtemp(join(tmpdir(), 'gdc-homepage-chrome-'));
+const browserTempRoot = process.env.GDC_BROWSER_TMPDIR || join(process.cwd(), '..', '.data', 'browser-tmp');
+await mkdir(browserTempRoot, { recursive: true });
+const profile = await mkdtemp(join(browserTempRoot, 'gdc-homepage-chrome-'));
 const chrome = process.env.CHROME_BIN || 'google-chrome';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -97,7 +113,7 @@ const homepageStateExpression = `JSON.stringify({
       appliedScrollLeft,
       firstAtStart,
       lastAtEnd,
-      oneRow: Boolean(first && cardRects.every(card => Math.abs(card.top - first.top) <= 0.5 && Math.abs(card.bottom - first.bottom) <= 0.5)),
+      oneRow: Boolean(first && cardRects.every(card => Math.abs(card.top - first.top) <= 0.5)),
       cardsInside: Boolean(rect && cardRects.every(card => card.left >= rect.left - 1 && card.right <= rect.right + 1)),
       expandedCount: cards.filter(card => card.classList.contains("is-expanded")).length,
       collapsedCount: cards.filter(card => card.classList.contains("is-collapsed")).length,
@@ -208,6 +224,7 @@ const homepageStateExpression = `JSON.stringify({
       versions: node.querySelector("[data-k=versions]")?.textContent,
       software: metric("software"),
       gpu: metric("gpu"),
+      devshard: metric("devshard"),
       valueFields: ["height", "vp", "sync", "endpoint"].map(valueField),
       top: rect.top,
       bottom: rect.bottom,
@@ -222,7 +239,9 @@ const homepageStateExpression = `JSON.stringify({
 let socket;
 let browser;
 let sequence = 0;
+let pageSessionId = '';
 const pending = new Map();
+const networkRequests = new Map();
 try {
   const chromeSession = await startChromeDevTools({
     chrome,
@@ -235,6 +254,21 @@ try {
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
+    if (message.sessionId === pageSessionId && message.method === 'Network.requestWillBeSent') {
+      networkRequests.set(message.params.requestId, {
+        url: message.params.request.url,
+        status: null,
+        error: '',
+      });
+    }
+    if (message.sessionId === pageSessionId && message.method === 'Network.responseReceived') {
+      const request = networkRequests.get(message.params.requestId);
+      if (request) request.status = message.params.response.status;
+    }
+    if (message.sessionId === pageSessionId && message.method === 'Network.loadingFailed') {
+      const request = networkRequests.get(message.params.requestId);
+      if (request) request.error = message.params.errorText || 'network request failed';
+    }
     const waiter = pending.get(message.id);
     if (!waiter) return;
     pending.delete(message.id);
@@ -247,6 +281,7 @@ try {
   });
   const { targetId } = await call('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await call('Target.attachToTarget', { targetId, flatten: true });
+  pageSessionId = sessionId;
   await call('Page.enable', {}, sessionId);
   await call('Network.enable', {}, sessionId);
   await call('Network.setCacheDisabled', { cacheDisabled: true }, sessionId);
@@ -293,6 +328,22 @@ try {
   }
   if (expectedSiteRevision && state.siteRevision !== expectedSiteRevision) throw new Error(`preview revision mismatch ${JSON.stringify(state)}`);
   if (expectedAppDigest && (state.loadedAppDigest !== expectedAppDigest || state.appDigest !== expectedAppDigest)) throw new Error(`preview app digest mismatch ${JSON.stringify(state)}`);
+  const statusRequests = [...networkRequests.values()].filter(request => {
+    try {
+      return new URL(request.url).pathname.startsWith(expectedStatusPrefix);
+    } catch {
+      return false;
+    }
+  });
+  if (expectedStatusPrefix && !statusRequests.length) {
+    throw new Error(`homepage did not request preview status endpoints ${expectedStatusPrefix}`);
+  }
+  if (expectedStatusPrefix && statusRequests.some(request => request.error || Number(request.status) >= 400)) {
+    throw new Error(`preview status request failed ${JSON.stringify(statusRequests)}`);
+  }
+  if (expectedCardCount && state.nodes.length !== expectedCardCount) {
+    throw new Error(`homepage rendered ${state.nodes.length}/${expectedCardCount} required Host cards`);
+  }
   if (state.mapMarkerGeometry.some(marker => marker.width < 5 || marker.height < 5 || marker.width > 21 || marker.height > 21 || marker.filter !== 'none')) throw new Error(`validator marker geometry or halo contract failed ${JSON.stringify(state.mapMarkerGeometry)}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
   if ((!expectResetState && state.nodes.length < 1) || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapWorld) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
@@ -326,16 +377,28 @@ try {
   const expandedNodes = mappedNodes.filter(node => node.expanded);
   const collapsedNodes = mappedNodes.filter(node => node.collapsed);
   if (mappedNodes.some(node => !node.key || !node.name || !node.hostVisible || !node.status || !node.statusVisible || !node.toggleControls || node.toggleControls !== node.detailsId || !node.toggleLabel?.includes(node.name) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card identity contract failed ${JSON.stringify(mappedNodes)}`);
-  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || !node.software.text || !node.software.visible || node.software.clipped || (node.gpu.text && (!node.gpu.visible || node.gpu.clipped)))) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
+  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || !node.software.text || !node.software.visible || node.software.clipped || !node.gpu.text || !node.gpu.visible || node.gpu.clipped || !node.devshard.text || !node.devshard.visible || node.devshard.clipped)) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
   if (collapsedNodes.some(node => node.toggleExpanded !== 'false' || !node.detailsHidden || node.statusClipped)) throw new Error(`Collapsed Host-tab contract failed ${JSON.stringify(collapsedNodes)}`);
   const deck = state.nodeDeck;
-  const desktopDeckValid = width > 700 && deck.flexDirection === 'row' && deck.oneRow && deck.cards.every(card => Math.abs(card.height - 424) <= 0.5) && deck.cards.filter(card => !card.expanded).every(card => card.width >= 31 && card.width <= 33);
+  const desktopDeckValid = width > 700 && deck.flexDirection === 'row' && deck.oneRow && deck.cards.every(card => card.height >= 350) && deck.cards.filter(card => !card.expanded).every(card => card.width >= 31 && card.width <= 33);
   const mobileDeckValid = width <= 700 && deck.flexDirection === 'column' && deck.cards.filter(card => !card.expanded).every(card => Math.abs(card.height - 52) <= 0.5 && Math.abs(card.width - deck.clientWidth) <= 1);
   const deckInternalOverflow = deck.scrollWidth > deck.clientWidth + 1;
   const deckOverflowValid = width <= 700 ? deck.overflowX === 'visible' : deck.overflowX === 'auto';
   const deckReachabilityValid = !deckInternalOverflow || (width > 700 && deck.firstAtStart && deck.lastAtEnd && deck.appliedScrollLeft > 1);
   const deckGeometryValid = mappedNodes.length === 0 || (width <= 700 ? mobileDeckValid : desktopDeckValid);
   if (!deck.exists || deck.role !== 'list' || !deck.label?.includes('Host accordion') || !deckOverflowValid || !deckReachabilityValid || (!deckInternalOverflow && !deck.cardsInside) || deck.expandedCount !== expectedExpandedCards || deck.declaredExpandedCount !== expectedExpandedCards || deck.collapsedCount !== mappedNodes.length - expectedExpandedCards || !deckGeometryValid) throw new Error(`Host accordion layout contract failed ${JSON.stringify(deck)}`);
+  if (expectedCardCount && deck.cards.length === expectedCardCount) {
+    const heights = deck.cards.map(card => card.height);
+    if (Math.max(...heights) - Math.min(...heights) > 1) {
+      throw new Error(`Host cards do not have equal heights ${JSON.stringify(heights)}`);
+    }
+  }
+  for (const expected of expectedNodeStates) {
+    const node = mappedNodes.find(item => item.name === expected.name);
+    if (!node || node.status !== expected.state) {
+      throw new Error(`Host state does not match expected ${expected.name}=${expected.state}: ${JSON.stringify(mappedNodes)}`);
+    }
+  }
   if (collapsedNodes.length) {
     const activatedKey = collapsedNodes[0].key;
     const evictedKey = expandedNodes[0].key;
@@ -432,6 +495,23 @@ try {
   const screenshotHeight = screenshotBytes.readUInt32BE(20);
   if (screenshotWidth !== width || screenshotHeight !== height) throw new Error(`homepage screenshot dimensions ${screenshotWidth}x${screenshotHeight} do not match ${width}x${height}`);
   await writeFile(output, screenshotBytes);
+  await writeFile(`${output}.json`, JSON.stringify({
+    schema_version: 1,
+    url,
+    screenshot: output,
+    revision: state.siteRevision,
+    app_digest: state.appDigest,
+    expected_status_prefix: expectedStatusPrefix || null,
+    status_requests: statusRequests,
+    nodes: state.nodes.map(node => ({
+      name: node.name,
+      status: node.status,
+      software: node.software.text,
+      gpu: node.gpu.text,
+      devshard: node.devshard.text,
+      height: node.height,
+    })),
+  }, null, 2) + '\n');
 } finally {
   socket?.close();
   await stopChromeDevTools(browser);

@@ -201,6 +201,21 @@ preview.{$SITE_HOST} {
       header_up Host {$GATEWAY_PUBLIC_HOST}
     }
   }
+  # Public API documentation is static and remains available when the gateway
+  # status origin is unavailable. Keep it ahead of the generic status proxy.
+  handle /status {
+    redir /status/ 308
+  }
+  handle /status/openapi.json {
+    root * /srv/dai/edge/site
+    header Content-Type application/json
+    file_server
+  }
+  handle /status/ {
+    root * /srv/dai/edge/site/status
+    rewrite * /index.html
+    file_server
+  }
   @status_data {
     path /status/*
     not path /status/telegram-consumer

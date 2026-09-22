@@ -238,8 +238,9 @@ footer > :last-child {
 .nodes.compact {
   --collapsed-host-width: 32px;
   display: flex;
+  align-items: flex-start;
   height: auto;
-  min-height: 424px;
+  min-height: 350px;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -265,9 +266,8 @@ footer > :last-child {
   flex: 1 1 0;
   width: auto;
   min-width: 0;
-  height: 424px;
-  min-height: 424px;
-  max-height: 424px;
+  min-height: 350px;
+  max-height: none;
   overflow: hidden;
   transition:
     flex-grow 320ms cubic-bezier(.2, .75, .25, 1),
@@ -285,6 +285,9 @@ footer > :last-child {
   flex: 0 0 var(--collapsed-host-width);
   width: var(--collapsed-host-width);
   min-width: var(--collapsed-host-width);
+  height: 350px;
+  min-height: 350px;
+  max-height: 350px;
   padding: 0;
   background: #14151f;
 }
@@ -299,8 +302,8 @@ footer > :last-child {
 }
 
 .nodes.compact .node.is-expanded h3 {
-  min-height: 64px;
-  max-height: 78px;
+  min-height: 52px;
+  max-height: 64px;
   margin-bottom: 2px;
   overflow: hidden;
 }
@@ -350,9 +353,9 @@ footer > :last-child {
 }
 
 .nodes.compact .node-details > [data-k="status-reason"] {
-  height: 28px;
-  min-height: 28px;
-  max-height: 28px;
+  height: 30px;
+  min-height: 30px;
+  max-height: 30px;
 }
 
 .nodes.compact .node.is-collapsed h3,
@@ -416,7 +419,8 @@ footer > :last-child {
 }
 
 .nodes.compact .metric.software,
-.nodes.compact .metric.gpu:not([hidden]) {
+.nodes.compact .metric.gpu:not([hidden]),
+.nodes.compact .metric.devshard {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
   align-items: start;
@@ -424,7 +428,8 @@ footer > :last-child {
 }
 
 .nodes.compact .metric.software b,
-.nodes.compact .metric.gpu b {
+.nodes.compact .metric.gpu b,
+.nodes.compact .metric.devshard b {
   font-size: 9px;
   line-height: 1.15;
   overflow: hidden;

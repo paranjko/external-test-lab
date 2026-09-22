@@ -179,6 +179,17 @@ test-site-preview-platform: site-vendor
 	@$(MAKE) test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher
 	@./scripts/test-public-edge-static-site.sh
 
+.PHONY: test-status-openapi test-site-preview-acceptance
+
+test-status-openapi:
+	@node ./scripts/test-status-openapi.js
+
+test-site-preview-acceptance: site-vendor
+	@$(MAKE) test-gateway-site-state test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher test-status-openapi
+	@node ./scripts/test-software-versions.js
+	@./scripts/test-public-gpu-freshness.sh
+	@./scripts/test-public-edge-static-site.sh
+
 test-preview-isolation:
 	@./scripts/test-preview-isolation.sh
 

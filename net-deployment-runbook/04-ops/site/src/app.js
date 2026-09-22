@@ -58,6 +58,7 @@ type SiteConfig = {
   grafana?: string,
   grafanaNetwork?: string,
   grafanaInference: string,
+  statusBase?: string,
   nodes: Array<SiteNode>,
   nodeCatalog?: Array<SiteNode>,
 };
@@ -127,8 +128,13 @@ type ParticipantDiscoveryCache = {
 
 type GpuInventory = Map<string, Array<string>>;
 type SoftwareInventory = Map<string, Array<any>>;
+type DevShardVersion = {
+  name: string,
+  sha256: string,
+};
 type SoftwareVersionsApi = {
   normalizeMlNodeVersion: (chain: string, reported: string) => string,
+  selectLatestInventory: (samples: Array<any>) => Map<string, any>,
 };
 
 declare var GDC_SOFTWARE_VERSIONS: SoftwareVersionsApi;
@@ -201,12 +207,24 @@ const siteBuild: any = (window: any).GDC_SITE_BUILD || {};
 const gatewayStatus: GatewayStateApi = (window: any).GDC_GATEWAY_STATE;
 const hostState: HostStateApi = (window: any).GDC_HOST_STATE;
 const $ = (id: string): any => document.getElementById(id);
+const previewMatch = String((window: any).location?.pathname || "").match(
+  /^\/preview\/([1-9][0-9]*)(?:\/|$)/,
+);
+const previewPrefix = previewMatch ? `/preview/${previewMatch[1]}` : "";
+const statusBase = String(
+  previewPrefix ? `${previewPrefix}/status` : cfg.statusBase || "/status",
+).replace(/\/$/, "");
 const chainRpcHost =
   cfg.chainRpcHost ||
   cfg.nodes.find((node) => node.name === cfg.gatewayNode)?.publicHost ||
   cfg.nodes[0]?.publicHost;
+const chainRpcNode =
+  cfg.gatewayNode || cfg.nodes.find((node) => node.publicHost === chainRpcHost)?.name;
 const chainRpcOrigin =
-  cfg.chainRpcOrigin || (chainRpcHost ? `https://${chainRpcHost}` : "");
+  previewPrefix && chainRpcNode
+    ? `${statusBase}/${chainRpcNode}`
+    : cfg.chainRpcOrigin || (chainRpcHost ? `https://${chainRpcHost}` : "");
+const statusUrl = (path: string): string => `${statusBase}${path}`;
 $("chain-id").textContent = cfg.chainId;
 $("model-id").textContent = cfg.model;
 async function refreshTelegramConsumer(): Promise<void> {
@@ -220,7 +238,7 @@ async function refreshTelegramConsumer(): Promise<void> {
   link.rel = "noopener";
   link.hidden = false;
   try {
-    const health = await json("/status/telegram-consumer");
+    const health = await json(statusUrl("/telegram-consumer"));
     if (health.status !== "ok" || health.inference_ready !== true) {
       link.title =
         "The Telegram client is available; inference is temporarily unavailable.";
@@ -232,9 +250,16 @@ async function refreshTelegramConsumer(): Promise<void> {
 $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana;
 $("grafana-inference").href = cfg.grafanaInference;
 const cards: Map<string, HTMLElement> = new Map();
-let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({ ...node }));
+let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({
+  ...node,
+  statusBase:
+    previewPrefix && node.name
+      ? `${statusBase}/${node.name}`
+      : node.statusBase,
+}));
 let cardGpuInventory: GpuInventory = new Map();
 let cardSoftwareInventory: SoftwareInventory = new Map();
+let cardDevShardVersions: Array<DevShardVersion> = [];
 let expandedCardKeys: Array<string> = [];
 let selectedCardKey = "";
 let cardSequence = 0;
@@ -391,6 +416,10 @@ function createCard(node: SiteNode): HTMLElement {
         <span>GPU</span>
         <b data-k="gpu"></b>
       </div>
+      <div class="metric devshard">
+        <span>DevShard</span>
+        <b data-k="devshard"></b>
+      </div>
     </div>
   `;
   set(el, "host", node.publicHost || node.name);
@@ -404,6 +433,7 @@ function createCard(node: SiteNode): HTMLElement {
   if (node.mode === "skip") set(el, "versions", "not running");
   else updateSoftware(cardSoftwareInventory, node, el);
   updateGpu(cardGpuInventory, node, el);
+  updateDevShardVersions(cardDevShardVersions, el);
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
   $("nodes").append(el);
@@ -416,6 +446,22 @@ function createCard(node: SiteNode): HTMLElement {
   );
   updateCardToggleLabel(el);
   return el;
+}
+
+function updateDevShardVersions(
+  versions: Array<DevShardVersion>,
+  card: HTMLElement,
+): void {
+  const target = card.querySelector('[data-k="devshard"]');
+  if (!versions.length) {
+    target.textContent = "Unavailable";
+    target.title = "Approved DevShard versions could not be read from chain state";
+    return;
+  }
+  target.textContent = versions.map((version) => version.name).join(" · ");
+  target.title = versions
+    .map((version) => `${version.name}: ${version.sha256}`)
+    .join("\n");
 }
 
 function updateGpu(
@@ -468,7 +514,8 @@ function updateGpu(
     return;
   }
   set(card, "gpu", `${inventoryLabel} – ${connection}`);
-  card.querySelector('[data-k="gpu"]').title = `GPU host: ${gpuHost}`;
+  card.querySelector('[data-k="gpu"]').title =
+    `GPU host: ${gpuHost}; most recent monitoring observation within 24 hours`;
 }
 
 function configuredGpuLabel(profile: ?string): ?string {
@@ -503,23 +550,7 @@ function updateSoftware(
     inventory.has(candidate || ""),
   );
   const samples = inventory.get(key || "") || [];
-  const components: Map<string, any> = new Map();
-  for (const sample of samples) {
-    const metric = sample?.metric || {};
-    const raw = String(metric.component || "");
-    const component =
-      raw === "inference-chain" || raw === "node"
-        ? "chain"
-        : raw === "decentralized-api" || raw === "api"
-          ? "DAPI"
-          : raw === "mlnode"
-            ? "MLNode"
-            : "";
-    if (!component || !metric.version) continue;
-    const existing = components.get(component);
-    if (!existing || metric.source === "runtime")
-      components.set(component, metric);
-  }
+  const components = GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples);
   const formatted: Array<string> = [];
   const chainVersion = String(components.get("chain")?.version || "unknown");
   for (const component of ["chain", "DAPI", "MLNode"]) {
@@ -541,11 +572,12 @@ function updateSoftware(
   }
   const target = card.querySelector('[data-k="versions"]');
   target.textContent = value;
-  target.title = "Software inventory collected by the monitoring agent";
+  target.title =
+    "Most recent software inventory observed by the monitoring agent within 24 hours";
 }
 
 async function refreshSoftwareInventory(): Promise<void> {
-  const state = await json("/status/software");
+  const state = await json(statusUrl("/software"));
   const next: SoftwareInventory = new Map();
   for (const sample of state?.data?.result || []) {
     const host = String(sample?.metric?.host || "");
@@ -562,7 +594,7 @@ async function refreshSoftwareInventory(): Promise<void> {
 }
 
 async function refreshGpuInventory(): Promise<void> {
-  const state = await json("/status/gpus");
+  const state = await json(statusUrl("/gpus"));
   const next: GpuInventory = new Map();
   for (const sample of state?.data?.result || []) {
     const host = String(sample?.metric?.host || "");
@@ -583,6 +615,30 @@ async function refreshGpuInventory(): Promise<void> {
   for (const node of observedNodes) {
     const card = cards.get(nodeKey(node));
     if (card) updateGpu(cardGpuInventory, node, card);
+  }
+}
+
+async function refreshDevShardVersions(): Promise<void> {
+  if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
+  const state = await json(
+    `${chainRpcOrigin}/chain-api/productscience/inference/inference/params`,
+  );
+  const seen: Set<string> = new Set();
+  const versions: Array<DevShardVersion> = [];
+  for (const version of state?.params?.devshard_escrow_params?.approved_versions || []) {
+    const name = String(version?.name || "").trim();
+    const sha256 = String(version?.sha256 || "").trim().toLowerCase();
+    if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name)) continue;
+    if (!/^[0-9a-f]{64}$/.test(sha256)) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    versions.push({ name, sha256 });
+  }
+  versions.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
+  cardDevShardVersions = versions;
+  for (const node of observedNodes) {
+    const card = cards.get(nodeKey(node));
+    if (card) updateDevShardVersions(cardDevShardVersions, card);
   }
 }
 for (const node of observedNodes) createCard(node);
@@ -697,9 +753,9 @@ function markerStateLabel(state: MarkerState): string {
     case "validating":
       return "Validating";
     case "active":
-      return "Active – not validating";
+      return "Active";
     case "unknown":
-      return "Unknown – status unavailable";
+      return "Unknown";
     default:
       return "Inactive";
   }
@@ -861,7 +917,10 @@ async function participantNode(
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
     publicHost: catalog?.publicHost || host,
-    statusBase: catalog?.statusBase || discovered.statusBase || "",
+    statusBase:
+      previewPrefix && (catalog?.name || host)
+        ? `${statusBase}/${catalog?.name || host}`
+        : catalog?.statusBase || discovered.statusBase || "",
     ip: catalog?.ip || discovered.ip || "",
     geo: catalog?.geo || discovered.geo || null,
     mode: catalog?.mode,
@@ -883,7 +942,7 @@ async function participantNode(
 async function reconcileParticipants(): Promise<number> {
   if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
   const [participantResult, validatorResult] = await Promise.allSettled([
-    json("/status/participants"),
+    json(statusUrl("/participants")),
     json(`${chainRpcOrigin}/chain-rpc/validators?per_page=100`),
   ]);
   if (participantResult.status !== "fulfilled") {
@@ -1777,6 +1836,7 @@ async function refresh(): Promise<void> {
   refreshTelegramConsumer();
   refreshGpuInventory().catch(() => {});
   refreshSoftwareInventory().catch(() => {});
+  refreshDevShardVersions().catch(() => {});
   try {
     best = await reconcileParticipants();
   } catch {}
@@ -1811,6 +1871,7 @@ async function refresh(): Promise<void> {
           const [s, net] = await Promise.all([
             json(`${statusBase}/chain-rpc/status`),
             json(`${statusBase}/chain-rpc/net_info`),
+            text(`${statusBase}/health`),
           ]);
           n.endpointState = "reachable";
           n.endpointDiagnostic = "";
@@ -1887,9 +1948,9 @@ async function refresh(): Promise<void> {
   let gatewayAdmission: any = null;
   try {
     [gatewayState, gatewayProbe, gatewayAdmission] = await Promise.all([
-      json("/status/gateway/v1/status"),
-      json("/status/gateway-health"),
-      json("/status/gateway/v1/admission-status"),
+      json(statusUrl("/gateway/v1/status")),
+      json(statusUrl("/gateway-health")),
+      json(statusUrl("/gateway/v1/admission-status")),
     ]);
   } catch {
     gatewayAdmission = {
@@ -1934,7 +1995,7 @@ async function refresh(): Promise<void> {
     );
     if (availability.available !== true || availability.state !== "TRAFFIC_READY")
       throw new Error(availability.message);
-    const metricText = await text("/status/gateway/metrics");
+    const metricText = await text(statusUrl("/gateway/metrics"));
     const metricValue = (name: string): number =>
       [
         ...metricText.matchAll(

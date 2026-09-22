@@ -134,6 +134,23 @@ type HostStateApi = {
           validatorEffective: false,
         };
       }
+      // A Host that cannot serve its public chain endpoint is inactive for
+      // operators, even if its last chain registry record still says ACTIVE.
+      // This keeps the card and map from presenting a dead endpoint as an
+      // available participant during the interval before chain cleanup.
+      if (endpointState === "unavailable") {
+        return {
+          state: "inactive",
+          stateLabel: "Inactive",
+          reason: "Public endpoint unavailable",
+          primaryLabel: "Inactive",
+          primaryClass: "status inactive",
+          votingPower: power === null ? "Unavailable" : String(power),
+          endpointLabel,
+          syncLabel,
+          validatorEffective: false,
+        };
+      }
       if (!validatorKnown) {
         return {
           state: "unknown",
