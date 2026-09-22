@@ -100,7 +100,7 @@ case "$action" in
       # copied from an untrusted preview artifact. Refuse before staging when
       # the public edge has not activated that route yet.
       ssh "${ssh_options[@]}" "$remote" \
-        "curl --fail --silent --show-error --connect-timeout 5 --max-time 15 '$site_origin/preview/$preview_number/status/participants' | test -s"
+        "body=\$(curl --fail --silent --show-error --connect-timeout 5 --max-time 15 '$site_origin/preview/$preview_number/status/participants'); test -n \"\$body\""
     fi
     # A repeated publish of the same immutable generation must not overwrite it.
     ssh "${ssh_options[@]}" "$remote" "install -d -m 0755 $remote_generation_root; test ! -e $remote_generation; rm -rf -- $remote_staging; install -d -m 0755 $remote_staging"
