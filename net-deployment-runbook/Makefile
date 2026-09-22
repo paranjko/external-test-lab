@@ -281,6 +281,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-record-state-sync-canary.sh
 	@./scripts/test-verify-tmkms-signing-state.sh
 	@./scripts/test-signer-activation-gate.sh
+	@./scripts/test-verify-participant-validator-key.sh
 	@./scripts/test-init-identity-restore-diagnostics.sh
 	@./scripts/test-collect-identities-transport-resume.sh
 	@./scripts/test-cleanroom-no-python-restore.sh
