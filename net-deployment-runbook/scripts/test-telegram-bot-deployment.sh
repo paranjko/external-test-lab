@@ -41,6 +41,7 @@ grep -Fq 'HEALTH_MAX_AGE_SECONDS=' "$deploy"
 
 grep -Fq '@telegram_consumer path /status/telegram-consumer' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'reverse_proxy https://{$TELEGRAM_BOT_PUBLIC_HOST}' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq '@telegram_consumer_health_from_observer' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq '@status_data {' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq '@telegram_consumer_health_from_observer' "$ROOT/04-ops/edge-node/Caddyfile"
 grep -Fq '@telegram_metrics_from_monitoring' "$ROOT/04-ops/edge-node/Caddyfile"

@@ -99,6 +99,20 @@
     handle /ops-gateway-admission-state {
       respond 403
     }
+    # The configured Telegram Host can be the public edge itself. In that
+    # case the site status proxy returns here, so route the safe readiness
+    # summary before the generic DAPI fallback.
+    @telegram_consumer_health_from_observer {
+      path /ops-telegram-consumer-health
+      remote_ip {$MONITORING_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @telegram_consumer_health_from_observer {
+      rewrite * /health
+      reverse_proxy 127.0.0.1:9464
+    }
+    handle /ops-telegram-consumer-health {
+      respond 403
+    }
     @root path /
     redir @root /dashboard/gonka/gov 308
     # The public edge owns public TLS but is not necessarily a chain participant.
