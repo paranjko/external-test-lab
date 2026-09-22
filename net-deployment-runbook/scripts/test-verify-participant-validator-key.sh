@@ -75,17 +75,42 @@ if "$CHECK" "$ADDRESS" "$SIGNER_KEY" >/dev/null 2>&1; then
   exit 1
 fi
 
-# The call site is the contract: the verdict has to stand between the decision
-# that the participant exists and the line that skips registration for it.
-call_line="$(grep -n 'verify-participant-validator-key.sh' "$JOIN" | head -n 1 | cut -d: -f1 || true)"
+# The call site is the contract. The mismatch has to be refused before the
+# Host is prepared: found later it leaves a prepared Host and a run that only
+# manual recovery can leave.
+early_line="$(grep -n 'registered_validator_key_mismatch' "$JOIN" | head -n 1 | cut -d: -f1 || true)"
+prepare_line="$(grep -n 'phase-prepare.sh' "$JOIN" | head -n 1 | cut -d: -f1 || true)"
 skip_line="$(grep -n 'skip duplicate registration' "$JOIN" | head -n 1 | cut -d: -f1 || true)"
-guard_line="$(grep -n 'already_registered" == true && "\$rebind_existing_participant" != true' "$JOIN" | head -n 1 | cut -d: -f1 || true)"
-[[ -n "$call_line" && -n "$skip_line" && -n "$guard_line" ]] \
+call_line="$(grep -n 'verify-participant-validator-key.sh' "$JOIN" | head -n 1 | cut -d: -f1 || true)"
+[[ -n "$early_line" && -n "$prepare_line" && -n "$skip_line" && -n "$call_line" ]] \
   || { echo 'phase-join.sh no longer verifies the registered validator key' >&2; exit 1; }
-(( guard_line < call_line && call_line < skip_line )) \
+(( call_line < prepare_line )) \
+  || { echo 'the registered validator key must be verified before the Host is prepared' >&2; exit 1; }
+(( early_line < prepare_line )) \
+  || { echo 'the mismatch must be refused before the Host is prepared' >&2; exit 1; }
+(( call_line < skip_line )) \
   || { echo 'the registered validator key must be verified before registration is skipped' >&2; exit 1; }
-grep -Fq 'GDC_JOIN_REBIND_EXISTING_PARTICIPANT=true' "$JOIN" \
-  || { echo 'the refusal must name the supported repair' >&2; exit 1; }
+
+# The refusal is typed, so the next JOIN classifies the Host afresh instead of
+# demanding manual recovery.
+grep -Fq 'refuse_before_mutation registered_validator_key_mismatch' "$JOIN" \
+  || { echo 'the mismatch must be a typed refusal before mutation' >&2; exit 1; }
+grep -Fq 'registered_validator_key_mismatch|registered_validator_key_unreadable)' "$JOIN" \
+  || { echo 'the refusal recorder does not know the new reasons' >&2; exit 1; }
+
+# The repair has to be a command the launcher accepts. `gdc.sh` unsets
+# GDC_JOIN_REBIND_EXISTING_PARTICIPANT for every join, so naming it in the
+# refusal would send the operator down a path that cannot work.
+grep -Fq 'unset GDC_JOIN_REBIND_EXISTING_PARTICIPANT' "$ROOT/gdc.sh" \
+  || { echo 'the launcher no longer scrubs the rebind capability; revisit the refusal text' >&2; exit 1; }
+if grep -n 'GDC_JOIN_REBIND_EXISTING_PARTICIPANT=true' "$JOIN" | grep -q .; then
+  echo 'phase-join.sh must not tell an operator to set the scrubbed rebind variable' >&2
+  exit 1
+fi
+for phrase in '--mnemonic-prompt' '--mnemonic-file'; do
+  [[ "$(grep -c -- "$phrase" "$JOIN")" -ge 2 ]] \
+    || { echo "the refusals must name $phrase as the repair" >&2; exit 1; }
+done
 
 # The replaced identity key is evidence, not noise: without it the refusal
 # cannot tell an operator that the registration carries the key this very run
@@ -95,13 +120,76 @@ grep -Fq 'identity-consensus-key-replaced.json' "$JOIN" \
 grep -Fq 'replaced_identity_consensus_key' "$JOIN" \
   || { echo 'the refusal must be able to name the replaced key' >&2; exit 1; }
 
-# The lookup that decides the skip must be the retrying one: a transient
-# failure answering `new` sends the run into a registration the DAPI accepts
-# with 200 and never commits.
-awk '/^step "Create \$NODE validator recovery archive before registration"/,/^expected_registration_key=/' "$JOIN" >"$tmp/decision.sh"
-grep -Fq 'lookup_participant "$participant_endpoint"' "$tmp/decision.sh" \
-  || { echo 'the registration decision must use the retrying participant lookup' >&2; exit 1; }
-grep -Fq '|| true' "$tmp/decision.sh" \
-  && { echo 'the registration decision must not fall through a failed lookup' >&2; exit 1; }
+# A 200 without a participant status is not an answer. Reading it as an absent
+# participant sends the run into a registration the chain never commits.
+# The one lenient read left is the post-timeout readback, where an absent
+# status means "not confirmed yet" and the loop retries. Every read that
+# decides whether to register must be strict.
+if grep -n "participant.status // empty" "$JOIN" | grep -v observed_body | grep -q .; then
+  echo 'a 200 without a status must not be read as a new participant' >&2
+  exit 1
+fi
+[[ "$(grep -c 'require_participant_status' "$JOIN")" -ge 3 ]] \
+  || { echo 'both participant lookups must require a status on 200' >&2; exit 1; }
+# shellcheck source=/dev/null
+source <(sed -n '/^require_participant_status()/,/^}/p' "$JOIN")
+NODE=node-a
+die() { printf 'FAILED %s\n' "$*" >&2; exit 1; }
+for body in '{}' '{"participant":{}}' '{"participant":{"status":null}}' '{"participant":{"status":{}}}' '{"participant":"ACTIVE"}'; do
+  if ( require_participant_status "$body" https://seed.test/v2 ) >/dev/null 2>&1; then
+    echo "a 200 body without a usable status was accepted: $body" >&2
+    exit 1
+  fi
+done
+[[ "$( ( require_participant_status '{"participant":{"status":"ACTIVE"}}' https://seed.test/v2 ) )" == ACTIVE ]] \
+  || { echo 'a valid string status must be returned' >&2; exit 1; }
+[[ "$( ( require_participant_status '{"participant":{"status":1}}' https://seed.test/v2 ) )" == 1 ]] \
+  || { echo 'a valid numeric status must be returned' >&2; exit 1; }
+
+# Every refusal summary reaches the diagnostic envelope, which caps text at
+# 240 characters and fails the write above it. A summary that overruns turns
+# the refusal into a plain death: no terminal result, no REFUSED receipt, and
+# the next JOIN demands manual recovery instead of classifying the Host afresh.
+mapfile -t new_summaries < <(grep -A1 -E "refuse_before_mutation registered_validator_key_(mismatch|unreadable)" "$JOIN" \
+  | sed -n "s/^[[:space:]]*'\(.*\)'[[:space:]]*\\\\$/\1/p")
+(( ${#new_summaries[@]} >= 3 )) \
+  || { echo 'the new refusal summaries could not be read from phase-join.sh' >&2; exit 1; }
+# shellcheck source=/dev/null
+source <(sed -n '/^refuse_before_mutation()/,/^}/p' "$JOIN")
+# The envelope writer reads file modes with GNU stat, so the behavioural half
+# of this check belongs to the Linux runs; the length rule still applies here.
+envelope_runs=true
+stat -c %a . >/dev/null 2>&1 || envelope_runs=false
+for summary in "${new_summaries[@]}"; do
+  (( ${#summary} <= 240 )) \
+    || { echo "a refusal summary of ${#summary} characters cannot reach the envelope: ${summary:0:70}" >&2; exit 1; }
+  [[ "$envelope_runs" == true ]] || continue
+  run_dir="$tmp/refusal"
+  rm -rf "$run_dir"; mkdir -p "$run_dir"
+  rc=0
+  (
+    # shellcheck disable=SC2034
+    NODE=node-a
+    # shellcheck disable=SC2034
+    RUN="$run_dir"
+    ROOT="$ROOT"
+    # shellcheck disable=SC2034
+    join_profile_sha256="$(printf '%064d' 7)"
+    # shellcheck disable=SC2034
+    GDC_JOIN_RESULT_OUTPUT="$run_dir/join-result.v1.json"
+    die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+    record_join_transition() { :; }
+    refuse_before_mutation registered_validator_key_mismatch "$summary" 'refusal message'
+  ) >"$tmp/refusal.out" 2>"$tmp/refusal.err" || rc=$?
+  [[ "$rc" == 1 ]] \
+    || { echo "a refusal must exit 1, got $rc" >&2; exit 1; }
+  grep -Fq 'error: refusal message' "$tmp/refusal.err" \
+    || { echo "the refusal died before its own message: $(cat "$tmp/refusal.err")" >&2; exit 1; }
+  jq -e '.outcome == "refused" and .mutation == "none" and .category == "identity"' \
+    "$run_dir/join-result.v1.json" >/dev/null \
+    || { echo 'the refusal did not retain a terminal result the next JOIN can classify' >&2; exit 1; }
+done
+[[ "$envelope_runs" == true ]] \
+  || printf 'SKIP refusal envelope write needs GNU stat; length rule checked\n'
 
 printf 'PASS registered validator key decides whether JOIN may skip registration\n'
