@@ -338,6 +338,12 @@ assert.match(siteApp, /cloudflare-dns\.com\/dns-query/);
 assert.match(siteApp, /ipwho\.is/);
 assert.match(siteApp, /DYNAMIC_STATUS_HOST/);
 assert.match(siteApp, /DYNAMIC_STATUS_HOST\.test\(host\)/);
+assert.match(
+  siteApp,
+  /DYNAMIC_STATUS_HOST\.test\(host\) \|\| !catalog \|\| !catalog\.ip \|\| !catalog\.geo/,
+);
+assert.match(siteApp, /ip: discovered\.ip \|\| catalog\?\.ip \|\| ""/);
+assert.match(siteApp, /geo: discovered\.geo \|\| catalog\?\.geo \|\| null/);
 assert.match(siteApp, /`\$\{statusBase\}\/\$\{host\}`/);
 assert.match(siteApp, /json\(statusUrl\("\/gpus"\)\)/);
 assert.match(siteApp, /json\(statusUrl\("\/software"\)\)/);
@@ -351,6 +357,8 @@ assert.match(siteApp, /const inventoryKey = \[gpuHost, node\.publicHost, node\.n
 assert.match(siteApp, /hardware_nodes\/\$\{encodeURIComponent\(address\)\}/);
 assert.match(siteApp, /function refreshHardwareInventory/);
 assert.match(siteApp, /Current on-chain runtime inventory/);
+assert.match(siteApp, /fullGpuValue\.length > 42/);
+assert.match(siteApp, /inventoryLabel\.slice\(0, 30\)\.trimEnd\(\)\}… – \$\{connection\}/);
 assert.match(siteApp, /Chain runtime inventory reports no GPU for this participant/);
 assert.match(siteApp, /Chain runtime inventory reports no MLNode for this participant/);
 assert.match(siteApp, /\$\{inventoryLabel\} – \$\{connection\}/);
@@ -443,7 +451,7 @@ assert.match(mapFixture, /name: "fixture-dynamic",\s*mode: "skip",\s*reason: "fi
 assert.match(mapFixture, /\.\.\.Array\.from\(\{ length: 11 \}, \(_, index\) => \(\{\s*name: `fixture-overflow-\$\{index \+ 1\}`/);
 assert.match(mapFixture, /\[1399, 720\][\s\S]*\[1321, 720\][\s\S]*\[1320, 720\][\s\S]*\[1101, 720\][\s\S]*\[1100, 720\][\s\S]*\[701, 720\][\s\S]*\[700, 720\][\s\S]*\[521, 720\][\s\S]*\[1400, 900\][\s\S]*\[1440, 900\][\s\S]*\[1920, 1080\][\s\S]*\[390, 844\]/);
 assert.match(mapFixture, /\[1920, 1440, 1400, 1399, 1321, 1320, 1280, 1101, 1100, 844, 701, 700, 521, 390, 375, 360, 320\]\.includes\(width\)/);
-assert.match(mapFixture, /skippedGpu\.hidden[\s\S]*skippedGpu\.text === ""[\s\S]*skippedGpu\.clientHeight === 0/);
+assert.match(mapFixture, /!skippedGpu\.hidden[\s\S]*skippedGpu\.text === "Unavailable"/);
 assert.match(mapFixture, /cards\.length > 5[\s\S]*cardsReachable[\s\S]*activationValid[\s\S]*keyboardValid/);
 assert.match(mapFixture, /cards\.length !== 22[\s\S]*desktopReachability[\s\S]*mobileReachability/);
 assert.match(mapFixture, /waitForSettledOverlappingMarker[\s\S]*stableSamples >= 3/);
@@ -458,7 +466,7 @@ assert.match(homepageCapture, /Host accordion activation contract failed/);
 assert.match(homepageCapture, /GDC_EXPECT_STATUS_PREFIX/);
 assert.match(homepageCapture, /GDC_EXPECT_CARD_COUNT/);
 assert.match(homepageCapture, /GDC_EXPECT_NODE_STATES/);
-assert.match(homepageCapture, /preview status request failed/);
+assert.match(homepageCapture, /preview shared status request failed/);
 assert.match(homepageCapture, /homepage rendered .* required Host cards/);
 assert.match(homepageCapture, /Host cards do not have equal heights/);
 assert.match(homepageCapture, /Host state does not match expected/);

@@ -559,11 +559,20 @@ function updateGpu(
       "Chain runtime inventory could not be read";
     return;
   }
-  set(card, "gpu", `${inventoryLabel} – ${connection}`);
+  const fullGpuValue = `${inventoryLabel} – ${connection}`;
+  // The card has one line for GPU. Keep ordinary inventory names intact, but
+  // compact pathological multi-device labels instead of letting them overflow
+  // or make one Host card taller than the rest. The title retains the exact
+  // on-chain or monitoring value.
+  const gpuValue =
+    fullGpuValue.length > 42
+      ? `${inventoryLabel.slice(0, 30).trimEnd()}… – ${connection}`
+      : fullGpuValue;
+  set(card, "gpu", gpuValue);
   card.querySelector('[data-k="gpu"]').title =
     reportedHardware.length
-      ? "Current on-chain runtime inventory"
-      : `GPU host: ${gpuHost}; most recent monitoring observation within 24 hours`;
+      ? `Current on-chain runtime inventory: ${fullGpuValue}`
+      : `GPU host: ${gpuHost}; most recent monitoring observation within 24 hours: ${fullGpuValue}`;
 }
 
 function reportedSoftwareVersion(node: SiteNode, component: string): string {
@@ -1056,8 +1065,12 @@ async function participantNode(
   const byAddress = catalogEntries.find((node) => node.address === participant.address);
   const byHost = catalogEntries.filter((node) => node.publicHost === host);
   const catalog = byAddress || (byHost.length === 1 ? byHost[0] : null);
+  // A public participant location is always a GeoIP observation of its
+  // advertised endpoint.  The catalog is only a fallback for an unavailable
+  // DNS or GeoIP lookup, so catalog and dynamically joined Hosts share one
+  // grouping rule on the map.
   const discovered =
-    !catalog || !catalog.ip || !catalog.geo
+    DYNAMIC_STATUS_HOST.test(host) || !catalog || !catalog.ip || !catalog.geo
       ? await discoverParticipant(host)
       : {};
   const participantStatus = participant.status || "UNKNOWN";
@@ -1079,8 +1092,8 @@ async function participantNode(
     address: participant.address,
     publicHost: catalog?.publicHost || host,
     statusBase: participantStatusBase,
-    ip: catalog?.ip || discovered.ip || "",
-    geo: catalog?.geo || discovered.geo || null,
+    ip: discovered.ip || catalog?.ip || "",
+    geo: discovered.geo || catalog?.geo || null,
     mode: catalog?.mode,
     reason: catalog?.reason,
     participantStatus: String(participantStatus),

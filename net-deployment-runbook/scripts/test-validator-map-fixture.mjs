@@ -4,7 +4,6 @@
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
 import {
   startChromeDevTools,
@@ -450,7 +449,10 @@ await new Promise((resolvePromise, reject) => {
   server.once("error", reject);
   server.listen(0, "127.0.0.1", resolvePromise);
 });
-const profile = await mkdtemp(join(tmpdir(), "gdc-map-fixture-"));
+const browserTempRoot =
+  process.env.TMPDIR || join(process.cwd(), "..", ".data", "browser-tmp");
+await mkdir(browserTempRoot, { recursive: true });
+const profile = await mkdtemp(join(browserTempRoot, "gdc-map-fixture-"));
 let browser;
 let socket;
 let sequence = 0;
@@ -686,10 +688,12 @@ try {
     setText('[data-k="sync"]', "Synced");
     setText('[data-k="endpoint"]', "Unavailable – Network error");
     setText('[data-k="peers"]', "123");
-    setText('[data-k="versions"]', "chain v2026.09.02-extremely-long-build-identifier · DAPI v0.2.16-post999999999999");
+    setText('[data-k="inferenced"]', "0.2.15");
+    setText('[data-k="dapi"]', "0.2.15-post3");
+    setText('[data-k="devshard"]', "v3 · v4 · v5");
     const gpuRow = card.querySelector('[data-k-row="gpu"]');
     if (gpuRow) gpuRow.hidden = false;
-    setText('[data-k="gpu"]', "RTX PRO 2000 Blackwell ×8 + GeForce RTX 4090 SUPER Extremely Long Vendor Edition ×8 + Accelerator Model With An UnbrokenIdentifier012345678901234567890123456789 – net");
+    setText('[data-k="gpu"]', "RTX PRO 2000 Blackwell ×8… – network");
     const mlnodeRow = card.querySelector('[data-k-row="mlnodes"]');
     if (mlnodeRow) mlnodeRow.hidden = false;
     setText('[data-k="mlnodes"]', "3.0.14-post2 ×8 · 3.0.15");
@@ -784,7 +788,9 @@ try {
       sync: fieldInfo('[data-k="sync"]'),
       endpoint: fieldInfo('[data-k="endpoint"]'),
       peers: fieldInfo('[data-k="peers"]'),
-      software: fieldInfo('[data-k="versions"]'),
+      inferenced: fieldInfo('[data-k="inferenced"]'),
+      dapi: fieldInfo('[data-k="dapi"]'),
+      devshard: fieldInfo('[data-k="devshard"]'),
       gpu: fieldInfo('[data-k="gpu"]'),
       mlnodes: fieldInfo('[data-k="mlnodes"]'),
     };
@@ -847,7 +853,7 @@ try {
     const desktopLayout = !mobile && deckStyle.flexDirection === "row" && oneRow;
     const mobileLayout = mobile && deckStyle.flexDirection === "column" && !oneRow;
     return {
-      pass: cards.length > 5 && expandedCards.length === expectedExpandedCount && collapsedCards.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && deck.getAttribute("role") === "list" && deck.getAttribute("aria-label")?.includes("Host accordion") && deckStyle.overflowX === (mobile ? "visible" : "auto") && deckOverflows === overflowExpected && cardsReachable && (deckOverflows || cardsInside) && expandedGeometry && collapsedGeometry && collapsedSemantics && (mobile ? mobileLayout : desktopLayout) && card.scrollHeight <= card.clientHeight && rowOverlaps.length === 0 && contentBottom <= cardRect.bottom + 0.5 && complete && devshardContract && negativeTracking.length === 0 && statusLayoutShifts.length === 0 && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && activationValid && keyboardValid && document.documentElement.scrollWidth <= innerWidth,
+      pass: cards.length > 5 && expandedCards.length === expectedExpandedCount && collapsedCards.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && deck.getAttribute("role") === "list" && deck.getAttribute("aria-label")?.includes("Host accordion") && deckStyle.overflowX === (mobile ? "visible" : "auto") && deckOverflows === overflowExpected && cardsReachable && (deckOverflows || cardsInside) && expandedGeometry && collapsedGeometry && collapsedSemantics && (mobile ? mobileLayout : desktopLayout) && card.scrollHeight <= card.clientHeight && rowOverlaps.length === 0 && contentBottom <= cardRect.bottom + 0.5 && complete && devshardContract && negativeTracking.length === 0 && statusLayoutShifts.length === 0 && hiddenRejected && skippedGpu.exists && !skippedGpu.hidden && skippedGpu.display !== "none" && skippedGpu.text === "Unavailable" && activationValid && keyboardValid && document.documentElement.scrollWidth <= innerWidth,
       expectedExpandedCount,
       initialExpandedCount: expandedCards.length,
       collapsedCount: collapsedCards.length,
@@ -1618,7 +1624,7 @@ try {
       throw new Error("unresolved GeoIP location was rendered as a precise marker");
     await call("Runtime.evaluate", {
       expression:
-        'validatorMapController.update([{address:"fixture-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:48.15,longitude:17.11,city:"Bratislava",country:"Slovakia",isp:"fixture"}},{address:"fixture-active",participantState:"ACTIVE",isOnline:false,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture",source:"ip-geolocation",resolvedIp:"203.0.113.10",observedAt:"2026-08-31T12:00:00Z",accuracy:"city"}},{address:"fixture-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:40.71,longitude:-74,city:"New York",country:"United States",isp:"fixture"}},{address:"fixture-unknown",participantKnown:false,isOnline:false,geo:{latitude:41.9,longitude:12.5,city:"Rome",country:"Italy",isp:"fixture"}},{address:"fixture-group-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}},{address:"fixture-group-active",participantState:"ACTIVE",isOnline:false,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}},{address:"fixture-group-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}}])',
+        'validatorMapController.update([{address:"fixture-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:48.15,longitude:17.11,city:"Bratislava",country:"Slovakia",isp:"fixture"}},{address:"fixture-active",participantState:"ACTIVE",isOnline:false,endpointState:"reachable",votingPower:"1",catchingUp:true,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture",source:"ip-geolocation",resolvedIp:"203.0.113.10",observedAt:"2026-08-31T12:00:00Z",accuracy:"city"}},{address:"fixture-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:40.71,longitude:-74,city:"New York",country:"United States",isp:"fixture"}},{address:"fixture-unknown",participantKnown:false,isOnline:false,geo:{latitude:41.9,longitude:12.5,city:"Rome",country:"Italy",isp:"fixture"}},{address:"fixture-group-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}},{address:"fixture-group-active",participantState:"ACTIVE",isOnline:false,endpointState:"reachable",votingPower:"1",catchingUp:true,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}},{address:"fixture-group-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}}])',
     });
     await delay(80);
     const { result: semanticsResult } = await call("Runtime.evaluate", {
@@ -1678,7 +1684,7 @@ try {
       throw new Error("distant dynamic locations with identical labels collided");
     await call("Runtime.evaluate", {
       expression:
-        'validatorMapController.update([{address:"fixture-active",participantState:"ACTIVE",isOnline:false,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture",source:"ip-geolocation",resolvedIp:"203.0.113.10",observedAt:"2026-08-31T12:00:00Z",accuracy:"city"}}])',
+        'validatorMapController.update([{address:"fixture-active",participantState:"ACTIVE",isOnline:false,endpointState:"reachable",votingPower:"1",catchingUp:true,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture",source:"ip-geolocation",resolvedIp:"203.0.113.10",observedAt:"2026-08-31T12:00:00Z",accuracy:"city"}}])',
     });
     await delay(80);
     const { result: focusResult } = await call("Runtime.evaluate", {
@@ -1715,7 +1721,7 @@ try {
       );
     await call("Runtime.evaluate", {
       expression:
-        'validatorMapController.update([{address:"fixture-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:48.15,longitude:17.11,city:"Bratislava",country:"Slovakia",isp:"fixture"}},{address:"fixture-active",participantState:"ACTIVE",isOnline:false,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture"}},{address:"fixture-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:40.71,longitude:-74,city:"New York",country:"United States",isp:"fixture"}}])',
+        'validatorMapController.update([{address:"fixture-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:48.15,longitude:17.11,city:"Bratislava",country:"Slovakia",isp:"fixture"}},{address:"fixture-active",participantState:"ACTIVE",isOnline:false,endpointState:"reachable",votingPower:"1",catchingUp:true,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture"}},{address:"fixture-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:40.71,longitude:-74,city:"New York",country:"United States",isp:"fixture"}}])',
     });
     await delay(80);
     const { result: retainedResult } = await call("Runtime.evaluate", {
