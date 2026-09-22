@@ -194,6 +194,13 @@ preview.{$SITE_HOST} {
       header_up Host {$TELEGRAM_BOT_PUBLIC_HOST}
     }
   }
+  # The preview carries its own static OpenAPI document. Serve it before the
+  # generic overlay so a browser can inspect exactly the candidate contract.
+  @preview_status_document path_regexp preview_status_document ^/preview/[1-9][0-9]*/status/(index\.html|openapi\.json)$
+  handle @preview_status_document {
+    root * /srv/dai/edge/site
+    file_server
+  }
   @preview_status path_regexp preview_status ^/preview/[1-9][0-9]*/status/(.+)$
   handle @preview_status {
     rewrite * /status/{re.preview_status.1}

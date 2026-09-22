@@ -14,12 +14,14 @@ trap 'docker rm -f "$name" "$upstream_name" "$admission_name" >/dev/null 2>&1 ||
 command -v docker >/dev/null || { echo 'docker is required for the public-edge integration test' >&2; exit 2; }
 docker info >/dev/null 2>&1 || { echo 'docker daemon is required for the public-edge integration test' >&2; exit 2; }
 
-mkdir -p "$tmp/site" "$tmp/bootstrap/gonka-devnet-community" "$tmp/upstream" "$tmp/admission"
+mkdir -p "$tmp/site/preview/172/status" "$tmp/bootstrap/gonka-devnet-community" "$tmp/upstream" "$tmp/admission"
 sed -e '/^[[:space:]]*email {\$ACME_EMAIL}[[:space:]]*$/d' \
   -e '/^www\.{$SITE_HOST} {/,/^}/d' \
   -e '/^preview\.{$SITE_HOST} {/,/^}/d' \
   "$ROOT/04-ops/edge-node/PublicCaddyfile" >"$tmp/Caddyfile"
 printf '%s\n' '<!doctype html><title>edge-resilient</title><main>EXTERNAL TEST LAB</main>' >"$tmp/site/index.html"
+printf '%s\n' '<main>candidate OpenAPI documentation</main>' >"$tmp/site/preview/172/status/index.html"
+printf '%s\n' '{"openapi":"3.2.0"}' >"$tmp/site/preview/172/status/openapi.json"
 printf '%s\n' '{"chain_id":"gonka-devnet-community","fixture":"byte-equivalent"}' >"$tmp/bootstrap/gonka-devnet-community/bootstrap.json"
 printf '%s\n' 'CHAIN_ID=gonka-devnet-community' >"$tmp/bootstrap/gonka-devnet-community/bootstrap.env"
 schema_id='$id'
@@ -102,6 +104,8 @@ curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/" | grep -q '
 }
 curl -fsS "http://127.0.0.1:$port/status/participants" | grep -Fxq '/status/participants'
 curl -fsS "http://127.0.0.1:$port/preview/172/status/participants" | grep -Fxq '/status/participants'
+curl -fsS "http://127.0.0.1:$port/preview/172/status/index.html" | grep -Fxq '<main>candidate OpenAPI documentation</main>'
+curl -fsS "http://127.0.0.1:$port/preview/172/status/openapi.json" | grep -Fxq '{"openapi":"3.2.0"}'
 curl -fsS "http://127.0.0.1:$port/preview/172/status/gdc-node3/health" | grep -Fxq '/status/gdc-node3/health'
 missing="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/preview/172/status/missing" 2>/dev/null || true)"
 [[ "$missing" == 404 ]] || { echo "expected preview upstream 404 to propagate, got $missing" >&2; exit 1; }
