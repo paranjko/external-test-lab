@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ $# -eq 9 ]] || { echo "Usage: $0 work-dir env-file model dtype revision tensor-parallel max-seqs gpu-util context" >&2; exit 2; }
-WORK="$1"; ENV_FILE="$2"; MODEL="$3"; DTYPE="$4"; REVISION="$5"; TENSOR="$6"; MAX_SEQS="$7"; GPU_UTIL="$8"; CONTEXT="$9"
+[[ $# -eq 11 ]] || { echo "Usage: $0 work-dir env-file source-model served-model dtype revision tensor-parallel max-seqs gpu-util context vllm-args" >&2; exit 2; }
+WORK="$1"; ENV_FILE="$2"; SOURCE_MODEL="$3"; MODEL="$4"; DTYPE="$5"; REVISION="$6"; TENSOR="$7"; MAX_SEQS="$8"; GPU_UTIL="$9"; CONTEXT="${10}"; VLLM_ARGS="${11}"
 NODE_DIR="$WORK/02-node"
 cd "$NODE_DIR"
 docker compose --env-file "$ENV_FILE" -f compose.ml-local.yaml up -d >"$WORK/start.log" 2>&1
@@ -11,7 +11,8 @@ cleanup() {
 }
 trap cleanup EXIT
 deadline=$((SECONDS + 1800))
-body="$(jq -nc --arg model "$MODEL" --arg dtype "$DTYPE" --arg revision "$REVISION" --arg tensor "$TENSOR" --arg max "$MAX_SEQS" --arg util "$GPU_UTIL" --arg context "$CONTEXT" '{model:$model,dtype:$dtype,additional_args:["--revision",$revision,"--tensor-parallel-size",$tensor,"--max-num-seqs",$max,"--gpu-memory-utilization",$util,"--max-model-len",$context]}')"
+case "$VLLM_ARGS" in ''|--enforce-eager) ;; *) echo 'unsupported MLNode vLLM arguments' >&2; exit 2 ;; esac
+body="$(jq -nc --arg source "$SOURCE_MODEL" --arg served "$MODEL" --arg dtype "$DTYPE" --arg revision "$REVISION" --arg tensor "$TENSOR" --arg max "$MAX_SEQS" --arg util "$GPU_UTIL" --arg context "$CONTEXT" --arg eager "$VLLM_ARGS" '{model:$source,dtype:$dtype,additional_args:(["--revision",$revision,"--tensor-parallel-size",$tensor,"--max-num-seqs",$max,"--gpu-memory-utilization",$util,"--max-model-len",$context,"--served-model-name",$served] + (if $eager == "" then [] else [$eager] end))}')"
 # The nginx inference proxy is intentionally for OpenAI traffic. Control-plane
 # calls go directly to the MLNode container so the /api/v1 prefix is preserved.
 ensure_inference_started() {

@@ -478,6 +478,25 @@ for release in v2026.07.23 v2026.08.06; do
   grep -qx "operator_services_profile_hash=$expected_operator_hash" <<<"$summary"
 done
 
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3.5-4b load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen3.5-4B ]]
+[[ "$MODEL_REVISION" == 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a ]]
+[[ "$MODEL_SOURCE_ID" == Qwen/Qwen3.5-4B ]]
+[[ "$MODEL_SOURCE_REVISION" == 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a ]]
+[[ "$MLNODE_VLLM_ARGS" == --enforce-eager ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
+grep -Fq 'MLNODE_VLLM_ARGS' "$ROOT/scripts/phase-qualify-ml.sh"
+grep -Fq -- '--enforce-eager' "$ROOT/scripts/qualify-ml-remote.sh"
+grep -Fq 'qualification-only' "$ROOT/gdc.sh"
+scope_tmp="$(mktemp -d)"
+if GDC_HOME="$scope_tmp" "$ROOT/gdc.sh" --model qwen3.5-4b host join >"$scope_tmp/stdout" 2>"$scope_tmp/stderr"; then
+  echo 'qualification-only model overlay unexpectedly allowed host join' >&2
+  rm -rf -- "$scope_tmp"
+  exit 1
+fi
+grep -Fq 'qualification-only' "$scope_tmp/stderr"
+rm -rf -- "$scope_tmp"
+
 [[ -r "$ROOT/profiles/releases/v2026.08.13.lock" ]]
 [[ -r "$ROOT/profiles/releases/v2026.08.13.retired" ]]
 grep -Fxq 'unset GDC_ALLOW_RETIRED_PROFILE_RECOVERY' "$ROOT/gdc.sh"

@@ -182,8 +182,17 @@ load_profiles() {
   fi
   # shellcheck disable=SC1090
   source "$root/profiles/deployments/$deployment.lock"
+  unset MODEL_SOURCE_ID MODEL_SOURCE_REVISION MLNODE_VLLM_ARGS GDC_MODEL_PROFILE_SCOPE
   # shellcheck disable=SC1090
   source "$root/profiles/models/$model.lock"
+  MODEL_SOURCE_ID="${MODEL_SOURCE_ID:-$MODEL_ID}"
+  MODEL_SOURCE_REVISION="${MODEL_SOURCE_REVISION:-$MODEL_REVISION}"
+  MLNODE_VLLM_ARGS="${MLNODE_VLLM_ARGS:-}"
+  GDC_MODEL_PROFILE_SCOPE="${GDC_MODEL_PROFILE_SCOPE:-network}"
+  [[ "$MODEL_SOURCE_ID" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo 'invalid model source id' >&2; return 2; }
+  [[ "$MODEL_SOURCE_REVISION" =~ ^[a-f0-9]{40}$ ]] || { echo 'invalid model source revision' >&2; return 2; }
+  [[ -z "$MLNODE_VLLM_ARGS" || "$MLNODE_VLLM_ARGS" == --enforce-eager ]] || { echo 'unsupported MLNode vLLM arguments' >&2; return 2; }
+  [[ "$GDC_MODEL_PROFILE_SCOPE" == network || "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]] || { echo 'invalid model profile scope' >&2; return 2; }
   # shellcheck disable=SC1090
   source "$root/profiles/operator-services/$operator.lock"
   if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
@@ -248,6 +257,8 @@ load_profiles() {
   export GDC_RELEASE_PROFILE="$release" GDC_DEPLOYMENT_PROFILE="$deployment"
   export GDC_MODEL_PROFILE="$model" GDC_OPERATOR_SERVICES_PROFILE="$operator"
   export GONKA_REPOSITORY GONKA_SOURCE_REF GONKA_COMMIT MODEL_ID MODEL_REVISION
+  export MODEL_SOURCE_ID MODEL_SOURCE_REVISION
+  export MLNODE_VLLM_ARGS GDC_MODEL_PROFILE_SCOPE
   export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
 }
 

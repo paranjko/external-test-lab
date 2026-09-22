@@ -651,7 +651,14 @@ if [[ -n "$RELEASE" ]]; then
     || { echo "Release profile $RELEASE conflicts with composition core profile $GDC_RELEASE_PROFILE" >&2; exit 2; }
   export GDC_RELEASE_PROFILE="$RELEASE"
 fi
-[[ -z "$MODEL" || "$MODEL" == qwen3-0.6b ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
+[[ -z "$MODEL" || "$MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "Invalid model overlay: $MODEL" >&2; exit 2; }
+[[ -z "$MODEL" || -r "$ROOT/profiles/models/$MODEL.lock" ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
+if [[ -n "$MODEL" && "$MODEL" != qwen3-0.6b ]]; then
+  [[ "${1:-}" == qualify-ml ]] || {
+    echo "Model overlay $MODEL is qualification-only; JOIN, Genesis, and migration are not implemented" >&2
+    exit 2
+  }
+fi
 [[ -z "$MODEL" ]] || export GDC_MODEL_PROFILE="$MODEL"
 
 is_upgrade_target_profile() {
