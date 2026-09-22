@@ -346,8 +346,46 @@ try {
   if (expectedStatusPrefix && !statusRequests.length) {
     throw new Error(`homepage did not request preview status endpoints ${expectedStatusPrefix}`);
   }
-  if (expectedStatusPrefix && statusRequests.some(request => request.error || Number(request.status) >= 400)) {
-    throw new Error(`preview status request failed ${JSON.stringify(statusRequests)}`);
+  if (expectedStatusPrefix) {
+    const pageOrigin = new URL(url).origin;
+    const escapedGeneration = [...networkRequests.values()].filter(request => {
+      try {
+        const requestUrl = new URL(request.url);
+        return requestUrl.origin === pageOrigin && requestUrl.pathname.startsWith("/status/");
+      } catch {
+        return false;
+      }
+    });
+    if (escapedGeneration.length) {
+      throw new Error(`preview request escaped generation status prefix ${JSON.stringify(escapedGeneration)}`);
+    }
+    // These are the shared contracts that make a preview useful. A Host-local
+    // DevShard 404, unavailable component inventory, or inactive Host is
+    // instead rendered as a bounded card diagnostic and must not invalidate
+    // the entire browser acceptance run.
+    const requiredPaths = [
+      "participants",
+      "gpus",
+      "software",
+      "gateway/v1/status",
+      "gateway-health",
+      "gateway/v1/admission-status",
+    ].map(path => `${expectedStatusPrefix}${path}`);
+    const requiredFailures = requiredPaths.flatMap(path => {
+      const requests = statusRequests.filter(request => {
+        try {
+          return new URL(request.url).pathname === path;
+        } catch {
+          return false;
+        }
+      });
+      return !requests.length || requests.some(request => request.error || Number(request.status) >= 400)
+        ? [{ path, requests }]
+        : [];
+    });
+    if (requiredFailures.length) {
+      throw new Error(`preview shared status request failed ${JSON.stringify(requiredFailures)}`);
+    }
   }
   if (expectedCardCount && state.nodes.length !== expectedCardCount) {
     throw new Error(`homepage rendered ${state.nodes.length}/${expectedCardCount} required Host cards`);
