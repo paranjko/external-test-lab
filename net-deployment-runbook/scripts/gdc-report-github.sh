@@ -78,14 +78,33 @@ collect_diagnostic_envelope() {
   DIAGNOSTIC_SUMMARY="$(jq -r .summary "$FAILURE_DIAGNOSTIC_ENVELOPE")"
   DIAGNOSTIC_RESUME="$(jq -r .resume.decision "$FAILURE_DIAGNOSTIC_ENVELOPE")"
   DIAGNOSTIC_RESUME_TOKEN="$(jq -r .resume.token "$FAILURE_DIAGNOSTIC_ENVELOPE")"
-  DIAGNOSTIC_CATEGORY="$(jq -r .category "$FAILURE_DIAGNOSTIC_ENVELOPE")"
-  DIAGNOSTIC_CHECKPOINT="$(jq -r .checkpoint "$FAILURE_DIAGNOSTIC_ENVELOPE")"
-  DIAGNOSTIC_STATE="$(jq -r .state "$FAILURE_DIAGNOSTIC_ENVELOPE")"
-  DIAGNOSTIC_TOOL="$(jq -r .tool "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_CATEGORY="$(typed_value "$FAILURE_DIAGNOSTIC_ENVELOPE" category)"
+  DIAGNOSTIC_CHECKPOINT="$(typed_value "$FAILURE_DIAGNOSTIC_ENVELOPE" checkpoint)"
+  DIAGNOSTIC_STATE="$(typed_value "$FAILURE_DIAGNOSTIC_ENVELOPE" state)"
+  DIAGNOSTIC_TOOL="$(typed_value "$FAILURE_DIAGNOSTIC_ENVELOPE" tool)"
   # Launcher placeholder: it classifies nothing.
   if [[ "$DIAGNOSTIC_CHECKPOINT" == terminal && "$DIAGNOSTIC_STATE" == interrupted && "$DIAGNOSTIC_TOOL" == shell ]]; then
     DIAGNOSTIC_GENERIC=true
   fi
+}
+
+# Bound typed values at entry; the public-text scan stays whole, no row is exempt.
+MAX_TYPED_VALUE=40
+typed_value() {
+  local file="$1" key="$2" value
+  value="$(jq -r --arg key "$key" '.[$key] // empty' "$file")"
+  [[ -n "$value" && "${#value}" -le "$MAX_TYPED_VALUE" ]] \
+    || die "typed field $key is missing or longer than $MAX_TYPED_VALUE characters; retained report was not published"
+  printf '%s\n' "$value"
+}
+
+# Table cells only: key=value in the metadata would trip the opaque-token rule.
+typed_rows() {
+  printf '| Field | Value |\n| --- | --- |\n'
+  while (($# >= 2)); do
+    printf '| %s | %s |\n' "$1" "$(printf '%s' "$2" | escape_html)"
+    shift 2
+  done
 }
 
 collect_join_result() {
@@ -95,13 +114,13 @@ collect_join_result() {
   require_regular_beneath "$GDC_DATA_ROOT" "$FAILURE_JOIN_RESULT" || die 'JOIN terminal result is unsafe; retained report was not published'
   "$ROOT/scripts/record-join-result.sh" --validate "$FAILURE_JOIN_RESULT" >/dev/null 2>&1 \
     || die 'JOIN terminal result is invalid; retained report was not published'
-  JOIN_RESULT_OUTCOME="$(jq -r .outcome "$FAILURE_JOIN_RESULT")"
-  JOIN_RESULT_PHASE="$(jq -r .phase "$FAILURE_JOIN_RESULT")"
-  JOIN_RESULT_CATEGORY="$(jq -r .category "$FAILURE_JOIN_RESULT")"
-  JOIN_RESULT_REASON="$(jq -r .reason "$FAILURE_JOIN_RESULT")"
-  JOIN_RESULT_MUTATION="$(jq -r .mutation "$FAILURE_JOIN_RESULT")"
-  JOIN_RESULT_SIGNER="$(jq -r .signer_state "$FAILURE_JOIN_RESULT")"
-  JOIN_RESULT_RESUME="$(jq -r .resume "$FAILURE_JOIN_RESULT")"
+  JOIN_RESULT_OUTCOME="$(typed_value "$FAILURE_JOIN_RESULT" outcome)"
+  JOIN_RESULT_PHASE="$(typed_value "$FAILURE_JOIN_RESULT" phase)"
+  JOIN_RESULT_CATEGORY="$(typed_value "$FAILURE_JOIN_RESULT" category)"
+  JOIN_RESULT_REASON="$(typed_value "$FAILURE_JOIN_RESULT" reason)"
+  JOIN_RESULT_MUTATION="$(typed_value "$FAILURE_JOIN_RESULT" mutation)"
+  JOIN_RESULT_SIGNER="$(typed_value "$FAILURE_JOIN_RESULT" signer_state)"
+  JOIN_RESULT_RESUME="$(typed_value "$FAILURE_JOIN_RESULT" resume)"
 }
 
 collect_invocation_options() {
@@ -292,9 +311,6 @@ scan_secret_markers() {
   return 0
 }
 
-# The typed rows are closed vocabulary validated at their source; a key and a
-# long snake_case value together can reach the length the opaque-token rule
-# looks for, so those rows are dropped before the scan, as the digest rows are.
 scan_public_text() {
   local file="$1"
   LC_ALL=C grep -Ein \
@@ -308,7 +324,6 @@ scan_public_text() {
       -e '/^(runbook_revision|launcher_sha256|body_sha256|release_profile_sha256|profile_sha256|genesis_sha256|join_profile_sha256|network_observation_sha256)=[0-9a-f]{40,64}$/d' \
       -e '/^<!-- gdc-report-sha256:[0-9a-f]{64} -->$/d' \
       -e '/(runbook_revision|launcher_sha256|body_sha256|release_profile_sha256|profile_sha256|genesis_sha256|join_profile_sha256|network_observation_sha256|gdc-report-sha256)/ s/[0-9a-f]{40,64}/SHA256/g' \
-      -e '/^(result_(outcome|phase|category|reason|mutation|signer_state|resume)|diagnostic_(category|checkpoint|state|tool))=[a-z][a-z0-9_-]{0,63}$/d' \
       "$file") >/dev/null && return 1
   return 0
 }
@@ -371,17 +386,6 @@ write_report() {
     printf 'join_profile_sha256=%s\n' "$MANIFEST_JOIN_PROFILE_SHA256"
     printf 'network_observation_sha256=%s\n' "$MANIFEST_OBSERVATION_SHA256"
     printf 'runbook_revision=%s\n' "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)"
-    printf 'result_outcome=%s\n' "$JOIN_RESULT_OUTCOME"
-    printf 'result_phase=%s\n' "$JOIN_RESULT_PHASE"
-    printf 'result_category=%s\n' "$JOIN_RESULT_CATEGORY"
-    printf 'result_reason=%s\n' "$JOIN_RESULT_REASON"
-    printf 'result_mutation=%s\n' "$JOIN_RESULT_MUTATION"
-    printf 'result_signer_state=%s\n' "$JOIN_RESULT_SIGNER"
-    printf 'result_resume=%s\n' "$JOIN_RESULT_RESUME"
-    printf 'diagnostic_category=%s\n' "$DIAGNOSTIC_CATEGORY"
-    printf 'diagnostic_checkpoint=%s\n' "$DIAGNOSTIC_CHECKPOINT"
-    printf 'diagnostic_state=%s\n' "$DIAGNOSTIC_STATE"
-    printf 'diagnostic_tool=%s\n' "$DIAGNOSTIC_TOOL"
     printf 'diagnostic_resume=%s\n' "$DIAGNOSTIC_RESUME"
     printf 'launcher_sha256=%s\n' "$(sha256sum "$ROOT/gdc.sh" | awk '{print $1}')"
     safe_probe 'os' uname -s
@@ -401,16 +405,16 @@ write_report() {
     if [[ "$JOIN_RESULT_OUTCOME" == unavailable ]]; then
       printf 'This command retained no typed terminal result. Only a Host JOIN writes one.\n'
     else
-      printf '| Field | Value |\n| --- | --- |\n'
-      awk -F= 'BEGIN { OFS=" | " } $1 ~ /^result_(outcome|phase|category|reason|mutation|signer_state|resume)$/ { sub(/^result_/, "", $1); print "| " $1, $2 " |" }' "$metadata"
+      typed_rows outcome "$JOIN_RESULT_OUTCOME" phase "$JOIN_RESULT_PHASE" category "$JOIN_RESULT_CATEGORY" \
+        reason "$JOIN_RESULT_REASON" mutation "$JOIN_RESULT_MUTATION" signer_state "$JOIN_RESULT_SIGNER" resume "$JOIN_RESULT_RESUME"
     fi
     printf '\n## Typed diagnostic\n\n'
     if [[ "$DIAGNOSTIC_GENERIC" == true ]]; then
       printf 'The phase stopped without recording a typed diagnostic of its own, so the launcher recorded this placeholder. It classifies nothing: the terminal result above and the excerpt below are the evidence.\n\n'
     fi
     printf '%s\n' "$DIAGNOSTIC_SUMMARY" | strip_controls | escape_html
-    printf '\n| Field | Value |\n| --- | --- |\n'
-    awk -F= 'BEGIN { OFS=" | " } $1 ~ /^diagnostic_(category|checkpoint|state|tool)$/ { sub(/^diagnostic_/, "", $1); print "| " $1, $2 " |" }' "$metadata"
+    printf '\n'
+    typed_rows category "$DIAGNOSTIC_CATEGORY" checkpoint "$DIAGNOSTIC_CHECKPOINT" state "$DIAGNOSTIC_STATE" tool "$DIAGNOSTIC_TOOL"
     printf '\nResume decision: `%s`.\n\n' "$DIAGNOSTIC_RESUME"
     render_resume_guidance
     printf '\n## Environment\n\n| Field | Value |\n| --- | --- |\n'

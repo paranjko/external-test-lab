@@ -515,6 +515,39 @@ unfrozen_id="$(<"$unfrozen_root/reporting/failures/latest-failure")"
 ! grep -q '^join_result=' "$unfrozen_root/reporting/invocations/invocation.$unfrozen_id/failure.env"
 [[ ! -e "$unfrozen_root/reporting/invocations/invocation.$unfrozen_id/join-result.v1.json" ]]
 
+# A 64-character typed value refuses the report; there is no scan exemption.
+long_root="$tmp/long-reason-operator"
+mkdir -p "$long_root/runs/long-run/join-node"
+long_reason="$(printf 'a%.0s' $(seq 1 64))"
+jq -cn --arg reason "$long_reason" '{schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"identity",
+  category:"identity",reason:$reason,exit_code:1,mutation:"none",signer_state:"absent",resume:"manual_recovery",
+  join_profile_sha256:null,evidence:[]}' >"$tmp/long-reason.json"
+"$ROOT/scripts/record-join-result.sh" --output "$long_root/runs/long-run/join-node/join-result.v1.json" \
+  --input "$tmp/long-reason.json" >/dev/null
+if GDC_HOME="$long_root" GDC_JOIN_RESULT_OUTPUT="$long_root/runs/long-run/join-node/join-result.v1.json" \
+  "$ROOT/gdc.sh" invalid-command >"$tmp/long-pre.out" 2>"$tmp/long-pre.err"; then
+  echo 'long-reason fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/long.args" FAKE_GH_BODY="$tmp/long.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$long_root" "$ROOT/gdc.sh" report github >"$tmp/long.out" 2>"$tmp/long.err" <<'EOF'
+EOF
+then
+  echo 'a 64-character typed value unexpectedly produced a report' >&2
+  exit 1
+fi
+grep -Fq 'longer than 40 characters' "$tmp/long.err"
+[[ ! -e "$tmp/long.args" ]] || { echo 'a 64-character typed value reached GitHub preflight' >&2; exit 1; }
+! grep -rFq "$long_reason" "$long_root/reporting/reports" 2>/dev/null || { echo 'the long value was written into a report' >&2; exit 1; }
+# And the scanner itself still refuses that shape behind a typed key.
+printf 'result_reason=%s\n' "$long_reason" >"$tmp/typed-token.txt"
+# shellcheck source=/dev/null
+source <(sed -n '/^scan_public_text()/,/^}/p' "$ROOT/scripts/gdc-report-github.sh")
+if scan_public_text "$tmp/typed-token.txt"; then
+  echo 'the public-text scan exempts a 64-character token behind a typed key' >&2
+  exit 1
+fi
+
 "$ROOT/scripts/record-join-result.sh" --validate "$tmp/operator/runs/diagnostic-fixture/join-result.v1.json"
 if "$ROOT/scripts/record-join-result.sh" --validate "$tmp/join-result.input.json" --output "$tmp/should-not-exist.json" 2>/dev/null; then
   echo 'validate mode accepted an output path' >&2
