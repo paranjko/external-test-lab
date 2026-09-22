@@ -68,9 +68,12 @@ const homepageStateExpression = `JSON.stringify({
   mapMarkers: Number(document.querySelector("#validator-map")?.dataset.markerCount || 0),
   mapValidators: Number(document.querySelector("#validator-map")?.dataset.validatorCount || 0),
   mapWorld: Boolean(document.querySelector("#validator-map .validator-map-world")?.complete && document.querySelector("#validator-map .validator-map-world")?.naturalWidth),
-  mapMarkerGeometry: [...document.querySelectorAll("#validator-map .validator-marker")].map(marker => {
+  mapMarkerDetails: [...document.querySelectorAll("#validator-map .validator-marker")].map(marker => {
     const rect = marker.getBoundingClientRect();
-    return { width: rect.width, height: rect.height, filter: getComputedStyle(marker).filter };
+    const label = marker.getAttribute("aria-label") || "";
+    const count = Number(/; (\\d+) validators?\\b/.exec(label)?.[1] || 0);
+    const radius = Number(/a([0-9.]+),/.exec(marker.getAttribute("d") || "")?.[1]);
+    return { label, count, radius, width: rect.width, height: rect.height, filter: getComputedStyle(marker).filter };
   }),
   siteRevision: document.querySelector("#site-revision")?.dataset.revision || "",
   appDigest: document.querySelector("#site-revision")?.dataset.appDigest || "",
@@ -225,8 +228,9 @@ const homepageStateExpression = `JSON.stringify({
       vp: node.querySelector("[data-k=vp]")?.textContent,
       sync: node.querySelector("[data-k=sync]")?.textContent,
       endpoint: node.querySelector("[data-k=endpoint]")?.textContent,
-      versions: node.querySelector("[data-k=versions]")?.textContent,
-      software: metric("software"),
+      inferenced: metric("inferenced"),
+      dapi: metric("dapi"),
+      devshard: metric("devshard"),
       gpu: metric("gpu"),
       mlnodes: metric("mlnodes"),
       valueFields: ["height", "vp", "sync", "endpoint"].map(valueField),
@@ -348,7 +352,7 @@ try {
   if (expectedCardCount && state.nodes.length !== expectedCardCount) {
     throw new Error(`homepage rendered ${state.nodes.length}/${expectedCardCount} required Host cards`);
   }
-  if (state.mapMarkerGeometry.some(marker => marker.width < 5 || marker.height < 5 || marker.width > 21 || marker.height > 21 || marker.filter !== 'none')) throw new Error(`validator marker geometry or halo contract failed ${JSON.stringify(state.mapMarkerGeometry)}`);
+  if (state.mapMarkerDetails.some(marker => marker.width < 5 || marker.height < 5 || marker.width > 21 || marker.height > 21 || marker.filter !== 'none')) throw new Error(`validator marker geometry or halo contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
   if ((!expectResetState && state.nodes.length < 1) || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapWorld) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
   if (!state.join.exists || state.join.title !== 'How to Join node' || state.join.code !== 'git clone https://github.com/paranjko/external-test-lab.git\nalias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"\ngdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' || state.join.link !== 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host' || state.join.summary !== expectedJoinSummary || state.join.requirementsOpen || JSON.stringify(state.join.requirements) !== JSON.stringify(expectedJoinRequirements) || state.join.requirementsNote !== expectedJoinRequirementsNote || state.join.modelLink !== 'https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all') throw new Error(`JOIN guide did not render ${JSON.stringify(state.join)}`);
@@ -368,8 +372,9 @@ try {
   const mappedNodes = state.nodes;
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
-  if (mappedNodes.some(node => node.software.visible && (!node.software.text || node.versions === 'checking' || node.software.clipped))) throw new Error(`visible participant software is incomplete ${JSON.stringify(state)}`);
-  if (mappedNodes.some(node => /\bunreported\b/i.test(`${node.versions || ''} ${node.gpu.text || ''}`))) {
+  if (!expectResetState && (state.mapMarkerDetails.reduce((total, marker) => total + marker.count, 0) !== state.mapValidators || state.mapMarkerDetails.some(marker => !Number.isFinite(marker.radius) || Math.abs(marker.radius - Math.round(Math.min(2.5 * marker.count, 9))) > 0.1))) throw new Error(`validator map grouping or radius contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
+  if (mappedNodes.filter(node => node.expanded).some(node => [node.inferenced, node.dapi, node.devshard, node.gpu, node.mlnodes].some(field => !field.visible || !field.text || field.text === 'Checking…' || field.clipped))) throw new Error(`participant runtime inventory is incomplete ${JSON.stringify(state)}`);
+  if (mappedNodes.some(node => /\bunreported\b/i.test(`${node.inferenced.text || ''} ${node.dapi.text || ''} ${node.gpu.text || ''} ${node.mlnodes.text || ''}`))) {
     throw new Error(`participant cards rendered a diagnostic placeholder as a value ${JSON.stringify(mappedNodes)}`);
   }
   if (state.devshardVersions.text !== 'v3 · v4 · v5' || !/v3: [a-f0-9]{64}/i.test(state.devshardVersions.title) || !/v4: [a-f0-9]{64}/i.test(state.devshardVersions.title) || !/v5: [a-f0-9]{64}/i.test(state.devshardVersions.title)) throw new Error(`approved DevShard versions did not render as chain-wide state ${JSON.stringify(state.devshardVersions)}`);
@@ -385,7 +390,7 @@ try {
   const expandedNodes = mappedNodes.filter(node => node.expanded);
   const collapsedNodes = mappedNodes.filter(node => node.collapsed);
   if (mappedNodes.some(node => !node.key || !node.name || !node.hostVisible || !node.status || !node.statusVisible || !node.toggleControls || node.toggleControls !== node.detailsId || !node.toggleLabel?.includes(node.name) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card identity contract failed ${JSON.stringify(mappedNodes)}`);
-  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || (node.software.visible && (!node.software.text || node.software.clipped)) || (node.gpu.visible && (!node.gpu.text || node.gpu.clipped)) || (node.mlnodes.visible && (!node.mlnodes.text || node.mlnodes.clipped)))) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
+  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || [node.inferenced, node.dapi, node.devshard, node.gpu, node.mlnodes].some(field => !field.visible || !field.text || field.clipped))) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
   if (collapsedNodes.some(node => node.toggleExpanded !== 'false' || !node.detailsHidden || node.statusClipped)) throw new Error(`Collapsed Host-tab contract failed ${JSON.stringify(collapsedNodes)}`);
   const deck = state.nodeDeck;
   const desktopDeckValid = width > 700 && deck.flexDirection === 'row' && deck.oneRow && deck.cards.every(card => card.height >= 350) && deck.cards.filter(card => !card.expanded).every(card => card.width >= 31 && card.width <= 33);
@@ -510,11 +515,18 @@ try {
     revision: state.siteRevision,
     app_digest: state.appDigest,
     expected_status_prefix: expectedStatusPrefix || null,
+    map: {
+      participants: state.mapValidators,
+      groups: state.mapMarkers,
+      markers: state.mapMarkerDetails,
+    },
     status_requests: statusRequests,
     nodes: state.nodes.map(node => ({
       name: node.name,
       status: node.status,
-      software: node.software.text,
+      inferenced: node.inferenced.text,
+      dapi: node.dapi.text,
+      devshard: node.devshard.text,
       gpu: node.gpu.text,
       mlnodes: node.mlnodes.text,
       height: node.height,

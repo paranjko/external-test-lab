@@ -45,7 +45,7 @@ type SiteNode = {
   isOnline?: boolean,
   serverStatus?: string,
   softwareVersions?: ?any,
-  gpuProfile?: ?string,
+  devShardHealth?: ?any,
   gpuHost?: ?string,
 };
 
@@ -132,6 +132,7 @@ type SoftwareInventory = Map<string, Array<any>>;
 type HardwareNode = {
   local_id?: string,
   version?: string,
+  host?: string,
   hardware?: Array<{ type?: string, count?: number }>,
 };
 type HardwareInventoryEntry = {
@@ -139,6 +140,10 @@ type HardwareInventoryEntry = {
   nodes: Array<HardwareNode>,
 };
 type HardwareInventory = Map<string, HardwareInventoryEntry>;
+type DevShardHealth = {
+  state: "checking" | "observed" | "not_exposed" | "unavailable",
+  runtimes: Array<any>,
+};
 type DevShardVersion = {
   name: string,
   sha256: string,
@@ -427,9 +432,17 @@ function createCard(node: SiteNode): HTMLElement {
         <span>peers</span>
         <b data-k="peers"></b>
       </div>
-      <div class="metric software" data-k-row="software">
-        <span>software</span>
-        <b data-k="versions"></b>
+      <div class="metric inferenced" data-k-row="inferenced">
+        <span>inferenced</span>
+        <b data-k="inferenced"></b>
+      </div>
+      <div class="metric dapi" data-k-row="dapi">
+        <span>DAPI</span>
+        <b data-k="dapi"></b>
+      </div>
+      <div class="metric devshard" data-k-row="devshard">
+        <span>DevShard</span>
+        <b data-k="devshard"></b>
       </div>
       <div class="metric gpu" data-k-row="gpu" hidden>
         <span>GPU</span>
@@ -449,10 +462,10 @@ function createCard(node: SiteNode): HTMLElement {
   set(el, "sync", node.mode === "skip" ? "Unknown" : "Unknown");
   set(el, "endpoint", node.mode === "skip" ? "Unknown" : "Unknown");
   set(el, "peers", node.mode === "skip" ? "–" : "…");
-  if (node.mode === "skip") set(el, "versions", "not running");
-  else updateSoftware(cardSoftwareInventory, node, el);
+  updateSoftware(cardSoftwareInventory, node, el);
   updateGpu(cardGpuInventory, cardHardwareInventory, node, el);
   updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, el);
+  updateDevShards(node, el);
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
   $("nodes").append(el);
@@ -499,8 +512,21 @@ function updateGpu(
   );
   const names = inventory.get(inventoryKey || "") || [];
   const hardware = node.address ? hardwareInventory.get(node.address) : null;
+  // A split MLNode reports its own public endpoint in the chain inventory.
+  // Treat a distinct literal address as network-attached even if a stale site
+  // catalog has not yet learned the operator's ML SSH alias.
+  const networkAttached = (hardware?.nodes || []).some((runtime) => {
+    const host = String(runtime?.host || "").trim();
+    return Boolean(
+      node.ip &&
+        /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) &&
+        host !== node.ip,
+    );
+  });
   const connection =
-    node.gpuHost && node.gpuHost !== node.name ? "net" : "local";
+    (node.gpuHost && node.gpuHost !== node.name) || networkAttached
+      ? "network"
+      : "local";
   const countedNames: Map<string, number> = new Map();
   const reportedHardware = (hardware?.nodes || []).flatMap((runtime) =>
     (runtime.hardware || []).flatMap((item) => {
@@ -540,23 +566,6 @@ function updateGpu(
       : `GPU host: ${gpuHost}; most recent monitoring observation within 24 hours`;
 }
 
-function configuredGpuLabel(profile: ?string): ?string {
-  switch (profile) {
-    case "a5000-24g":
-      return "RTX A5000";
-    case "4090-24g":
-      return "GeForce RTX 4090";
-    case "3090-24g":
-      return "GeForce RTX 3090";
-    case "t4-16g":
-      return "Tesla T4";
-    case "blackwell-16g":
-      return "RTX PRO 2000 Blackwell";
-    default:
-      return null;
-  }
-}
-
 function reportedSoftwareVersion(node: SiteNode, component: string): string {
   const state: any = node.softwareVersions;
   if (component === "chain") return String(state?.node_version?.version || "");
@@ -568,41 +577,85 @@ function softwareDisplayValue(version: string): string {
   return GDC_SOFTWARE_VERSIONS.displayVersion(String(version || ""));
 }
 
+function observedNetworkChainVersion(inventory: SoftwareInventory): string {
+  const versions: Set<string> = new Set();
+  for (const samples of inventory.values()) {
+    const reported = String(
+      GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples).get("chain")?.version || "",
+    );
+    const version = softwareDisplayValue(reported);
+    if (version && version !== "unreported") versions.add(version);
+  }
+  return versions.size === 1 ? String([...versions][0]) : "";
+}
+
 function updateSoftware(
   inventory: SoftwareInventory,
   node: SiteNode,
   card: HTMLElement,
 ): void {
-  const row = card.querySelector('[data-k-row="software"]');
   const key = [node.name, node.publicHost].find((candidate) =>
     inventory.has(candidate || ""),
   );
   const samples = inventory.get(key || "") || [];
   const components = GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples);
-  const formatted: Array<string> = [];
-  const titles: Array<string> = [];
-  for (const component of ["chain", "DAPI"]) {
+  for (const [component, field] of [["chain", "inferenced"], ["DAPI", "dapi"]]) {
     const metric = components.get(component);
     const reported = reportedSoftwareVersion(node, component);
     const rawVersion = reported || String(metric?.version || "");
-    if (!rawVersion || rawVersion === "unreported") continue;
-    const version = softwareDisplayValue(rawVersion);
-    if (!version || version === "unreported") continue;
-    formatted.push(`${component} ${version}`);
+    const version = rawVersion && rawVersion !== "unreported"
+      ? softwareDisplayValue(rawVersion)
+      : "";
+    const target = card.querySelector(`[data-k="${field}"]`);
+    target.textContent = version && version !== "unreported" ? version : "Unavailable";
     if (/^(?:sha256:)?[a-f0-9]{64}$/i.test(String(rawVersion))) {
-      titles.push(`${component}: container image digest ${rawVersion}`);
+      target.title = `${component}: container image digest ${rawVersion}`;
+    } else if (version && version !== "unreported") {
+      target.title = "Runtime version when available, otherwise the most recent software inventory observed within 24 hours";
+    } else {
+      target.title = "No current version was available from the Host or monitoring inventory";
     }
   }
-  const value = formatted.join(" · ");
-  row.hidden = false;
-  const target = card.querySelector('[data-k="versions"]');
-  target.textContent = value || "Unavailable";
-  target.title =
-    !value
-      ? "No current software version was available from the Host or monitoring inventory"
-      : titles.length
-      ? titles.join("\n")
-      : "Runtime version when available, otherwise the most recent software inventory observed within 24 hours";
+}
+
+function updateDevShards(node: SiteNode, card: HTMLElement): void {
+  const state: ?DevShardHealth = node.devShardHealth;
+  const target = card.querySelector('[data-k="devshard"]');
+  if (!state || state.state === "checking") {
+    target.textContent = "Checking…";
+    target.title = "Checking the Host DevShard health endpoint";
+    return;
+  }
+  if (state.state === "not_exposed") {
+    target.textContent = "Not exposed";
+    target.title = "This Host does not expose the DevShard health endpoint";
+    return;
+  }
+  if (state.state !== "observed") {
+    target.textContent = "Unavailable";
+    target.title = "The Host DevShard health endpoint could not be read";
+    return;
+  }
+  const runtimes = state.runtimes.filter((runtime) =>
+    String(runtime?.status || "").toLowerCase() === "running" &&
+    String(runtime?.name || "").trim(),
+  ).sort((left, right) =>
+    String(left.name).localeCompare(String(right.name), undefined, { numeric: true }),
+  );
+  if (!runtimes.length) {
+    target.textContent = "Not running";
+    target.title = "The Host exposes DevShard health but has no running runtime";
+    return;
+  }
+  target.textContent = runtimes.map((runtime) => String(runtime.name)).join(" · ");
+  target.title = runtimes.map((runtime) => {
+    const hash = String(runtime?.sha256 || "").trim();
+    const version = String(runtime?.binary_version || "").trim();
+    const port = String(runtime?.port || "").trim();
+    return [String(runtime.name), version, hash, port ? `port ${port}` : ""]
+      .filter(Boolean)
+      .join(" · ");
+  }).join("\n");
 }
 
 function updateMlNodes(
@@ -621,7 +674,7 @@ function updateMlNodes(
       .get("chain")?.version || "",
   );
   const chain = softwareDisplayValue(
-    reportedSoftwareVersion(node, "chain") || observedChain,
+    reportedSoftwareVersion(node, "chain") || observedChain || observedNetworkChainVersion(inventory),
   );
   const runtimes: Array<{ node_id?: string, version?: string }> = (hardware?.nodes || []).map((runtime) => ({
     node_id: String(runtime?.local_id || ""),
@@ -657,6 +710,7 @@ async function refreshSoftwareInventory(): Promise<void> {
     if (card) {
       updateSoftware(cardSoftwareInventory, node, card);
       updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
+      updateDevShards(node, card);
     }
   }
 }
@@ -712,6 +766,7 @@ async function refreshHardwareInventory(): Promise<void> {
     if (!card) continue;
     updateGpu(cardGpuInventory, cardHardwareInventory, node, card);
     updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
+    updateDevShards(node, card);
   }
 }
 
@@ -1030,7 +1085,6 @@ async function participantNode(
     endpointDiagnostic: "Check endpoint",
     isOnline: false,
     serverStatus: String(participantStatus),
-    gpuProfile: catalog?.gpuProfile,
     gpuHost: catalog?.gpuHost,
   };
 }
@@ -1211,11 +1265,11 @@ function groupValidators(validators: Array<Validator>): Array<ValidatorGroup> {
   const coincident: Map<string, ValidatorGroup> = new Map();
   for (const group of groups) {
     const coordinate = `${group.lat.toFixed(6)},${group.lon.toFixed(6)}`;
-    // A city-level label is the public accuracy boundary.  Keep colocated
-    // Hosts together and show their count rather than jittering one marker to
-    // a false location that looks like a separate physical machine.
-    const location = group.label && group.label !== "Multiple locations"
-      ? `location:${group.label}`
+    // A shared city label is not evidence of co-location: unrelated cloud
+    // addresses often resolve to the same metro area. Group only an explicit
+    // operator location ID or the exact display coordinate shown on this map.
+    const location = group.key.startsWith("location:")
+      ? group.key
       : `coordinate:${coordinate}`;
     const existing = coincident.get(location);
     if (!existing) {
@@ -1771,7 +1825,11 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       const popupHtml = `<strong>${escapeHtml(group.label)}</strong><p class="status validator-map-status--${markerState}">${escapeHtml(
         stateLabel,
       )}</p><p>${escapeHtml(stateSummary)}</p><p>${escapeHtml(stateReasons.join(" · "))}</p><p>${count} validator${count === 1 ? "" : "s"} at this location</p><p>Location source: ${escapeHtml(sources)}</p><p>Raw position: ${escapeHtml(rawPositions.join("; "))}</p><p>Accuracy: ${escapeHtml(accuracy || "unknown")}${observed ? `; observed ${escapeHtml(observed)}` : ""}</p>${correction}<ul>${rows}</ul>`;
-      const radius = count === 1 ? 2.5 : Math.min(2.5 * Math.sqrt(count), 9);
+      // A colocated marker is an aggregate, not a separate machine. Its radius
+      // grows linearly with the number of participants so a two-Host location
+      // is visibly twice the baseline size. Cap very large groups to preserve
+      // nearby markers and expose the exact count in the label and popup.
+      const radius = Math.min(2.5 * count, 9);
       const color =
         markerState === "validating"
           ? "#78b83d"
@@ -1968,6 +2026,7 @@ async function refresh(): Promise<void> {
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
           updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
+          updateDevShards(n, card);
           return;
         }
         const statusBase = n.statusBase;
@@ -1978,13 +2037,26 @@ async function refresh(): Promise<void> {
           .catch(() => {
             n.softwareVersions = null;
           });
+        const devShardRequest = json(`${statusBase}/devshard/healthz`)
+          .then((runtimes) => {
+            n.devShardHealth = {
+              state: "observed",
+              runtimes: Array.isArray(runtimes) ? runtimes : [],
+            };
+          })
+          .catch((error) => {
+            n.devShardHealth = {
+              state: String(error).includes("404") ? "not_exposed" : "unavailable",
+              runtimes: [],
+            };
+          });
         try {
           const [s, net] = await Promise.all([
             json(`${statusBase}/chain-rpc/status`),
             json(`${statusBase}/chain-rpc/net_info`),
             text(`${statusBase}/health`),
           ]);
-          await versionsRequest;
+          await Promise.all([versionsRequest, devShardRequest]);
           n.endpointState = "reachable";
           n.endpointDiagnostic = "";
           const h = Number(s.result.sync_info.latest_block_height);
@@ -2025,8 +2097,9 @@ async function refresh(): Promise<void> {
           if (validatorEffective) healthy++;
           updateSoftware(cardSoftwareInventory, n, card);
           updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
+          updateDevShards(n, card);
         } catch (e) {
-          await versionsRequest;
+          await Promise.all([versionsRequest, devShardRequest]);
           n.endpointState = "unavailable";
           n.endpointDiagnostic = hostState.endpointDiagnostic(e);
           n.isOnline = false;
@@ -2036,6 +2109,7 @@ async function refresh(): Promise<void> {
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
           updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
+          updateDevShards(n, card);
         }
       }),
   );

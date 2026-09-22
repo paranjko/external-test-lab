@@ -343,7 +343,9 @@ assert.match(siteApp, /json\(statusUrl\("\/gpus"\)\)/);
 assert.match(siteApp, /json\(statusUrl\("\/software"\)\)/);
 assert.match(siteApp, /previewPrefix \? `\$\{previewPrefix\}\/status`/);
 assert.match(siteApp, /sample\?\.metric\?\.gpu_name/);
-assert.match(siteApp, /node\.gpuHost && node\.gpuHost !== node\.name \? "net" : "local"/);
+assert.match(siteApp, /const networkAttached = \(hardware\?\.nodes \|\| \[\]\)\.some/);
+assert.match(siteApp, /host !== node\.ip/);
+assert.match(siteApp, /\? "network"\s*:\s*"local"/);
 assert.match(siteApp, /const gpuHost = node\.gpuHost \|\| node\.name/);
 assert.match(siteApp, /const inventoryKey = \[gpuHost, node\.publicHost, node\.name\]/);
 assert.match(siteApp, /hardware_nodes\/\$\{encodeURIComponent\(address\)\}/);
@@ -361,14 +363,17 @@ assert.match(siteApp, /hostState\.classify/);
 assert.match(siteApp, /GDC_SOFTWARE_VERSIONS\.formatMlNodes/);
 assert.match(siteApp, /data-k="vp"/);
 assert.match(siteApp, /<span>voting power<\/span>/);
-assert.match(siteApp, /class="metric software" data-k-row="software"/);
+assert.match(siteApp, /class="metric inferenced" data-k-row="inferenced"/);
+assert.match(siteApp, /class="metric dapi" data-k-row="dapi"/);
+assert.match(siteApp, /class="metric devshard" data-k-row="devshard"/);
+assert.match(siteApp, /json\(`\$\{statusBase\}\/devshard\/healthz`\)/);
+assert.match(siteApp, /function updateDevShards/);
 assert.match(siteApp, /class="metric gpu" data-k-row="gpu" hidden/);
 assert.match(siteApp, /class="metric mlnodes" data-k-row="mlnodes" hidden/);
 assert.match(siteApp, /<span>MLNodes<\/span>/);
 assert.match(siteApp, /function updateMlNodes/);
 assert.match(siteApp, /formatMlNodes/);
 assert.match(siteApp, /\$\("devshard-versions"\)/);
-assert.doesNotMatch(siteApp, /data-k="devshard"/);
 assert.match(siteApp, /refreshDevShardVersions/);
 assert.match(siteApp, /approved_versions/);
 assert.match(
@@ -419,7 +424,7 @@ assert.match(
 );
 assert.match(
   readability,
-  /\.nodes\.compact \.node \{[\s\S]*flex: 1 1 0;[\s\S]*min-height: 350px;[\s\S]*max-height: none;[\s\S]*transition:/,
+  /\.nodes\.compact \.node \{[\s\S]*flex: 1 1 0;[\s\S]*height: 400px;[\s\S]*min-height: 400px;[\s\S]*max-height: 400px;[\s\S]*transition:/,
 );
 assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \{[\s\S]*flex: 0 0 var\(--collapsed-host-width\);[\s\S]*width: var\(--collapsed-host-width\);/);
 assert.match(readability, /\.nodes\.compact \.node\.is-expanded \{[\s\S]*min-width: 270px;/);
@@ -427,9 +432,10 @@ assert.match(readability, /--collapsed-host-width: 32px;/);
 assert.match(readability, /\.nodes\.compact \.node-toggle:focus-visible \{[\s\S]*outline: 2px solid var\(--lime\);/);
 assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \.node-toggle \{[\s\S]*writing-mode: vertical-rl;[\s\S]*transform: rotate\(180deg\);/);
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;[\s\S]*max-height: none;[\s\S]*align-items: flex-start;/);
-assert.match(readability, /\.nodes\.compact \.metric\.software,[\s\S]*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\),[\s\S]*\.nodes\.compact \.metric\.mlnodes:not\(\[hidden\]\) \{/);
-assert.match(readability, /grid-template-columns: 64px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*\.nodes\.compact \.metric\.gpu b,[\s\S]*\.nodes\.compact \.metric\.mlnodes b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
+assert.match(readability, /\.nodes\.compact \.metric\.inferenced,[\s\S]*\.nodes\.compact \.metric\.dapi,[\s\S]*\.nodes\.compact \.metric\.devshard,[\s\S]*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\),[\s\S]*\.nodes\.compact \.metric\.mlnodes:not\(\[hidden\]\) \{/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{[\s\S]*grid-template-columns: 24px minmax\(0, 1fr\);[\s\S]*align-items: center;/);
+assert.match(readability, /\.nodes\.compact \.metric\.inferenced b,[\s\S]*\.nodes\.compact \.metric\.dapi b,[\s\S]*\.nodes\.compact \.metric\.devshard b,[\s\S]*\.nodes\.compact \.metric\.mlnodes b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu b \{[\s\S]*font-size: 8px;[\s\S]*min-width: 0;[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
 assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*flex-direction: column;[\s\S]*height: auto;[\s\S]*overflow: visible;[\s\S]*\.nodes\.compact \.node\.is-collapsed \{[\s\S]*height: 52px;/);
 assert.match(readability, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*transition: none;/);

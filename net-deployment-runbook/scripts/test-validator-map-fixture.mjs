@@ -1388,16 +1388,12 @@ try {
         bubble.label.startsWith(`Fixture bubble ${count}:`),
       )?.radius;
     const [r1, r2, r4, r9] = [1, 2, 4, 9].map(bubbleRadius);
-    const areaRatio = (left, right) => left ** 2 / right ** 2;
     if (
       ![r1, r2, r4, r9].every(Number.isFinite) ||
-      !(r1 < r2 && r2 < r4 && r4 < r9) ||
-      r1 > 4 ||
-      r9 > 9 ||
-      areaRatio(r2, r1) < 1.5 ||
-      areaRatio(r2, r1) > 2.5 ||
-      areaRatio(r4, r1) < 2.5 ||
-      areaRatio(r4, r1) > 5
+      Math.abs(r1 - 3) > 0.1 ||
+      Math.abs(r2 - 5) > 0.1 ||
+      Math.abs(r4 - 9) > 0.1 ||
+      Math.abs(r9 - 9) > 0.1
     )
       throw new Error(
         `bubble size contract failed: ${JSON.stringify(bubbles)}`,
