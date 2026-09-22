@@ -235,6 +235,23 @@ assert.equal(hostState.classify({
   endpointState: 'unavailable',
   endpointDiagnostic: 'HTTP 502',
 }).primaryLabel, 'Inactive');
+assert.deepEqual(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: true,
+  votingPower: '42',
+  endpointState: 'unknown',
+}), {
+  state: 'unknown',
+  stateLabel: 'Unknown',
+  reason: 'Endpoint status is being checked',
+  primaryLabel: 'Unknown',
+  primaryClass: 'status unknown',
+  votingPower: '42',
+  endpointLabel: 'Unknown',
+  syncLabel: 'Unknown',
+  validatorEffective: false,
+});
 const node2Inactive = hostState.classify({
   participantKnown: true,
   participantStatus: 'ACTIVE',
@@ -319,7 +336,9 @@ assert.match(siteApp, /document\.createElement\(["']time["']\)/);
 assert.match(siteApp, /started.*UTC/);
 assert.match(siteApp, /cloudflare-dns\.com\/dns-query/);
 assert.match(siteApp, /ipwho\.is/);
-assert.match(siteApp, /statusBase:\s*`https:\/\/\$\{host\}`/);
+assert.match(siteApp, /DYNAMIC_STATUS_HOST/);
+assert.match(siteApp, /DYNAMIC_STATUS_HOST\.test\(host\)/);
+assert.match(siteApp, /`\$\{statusBase\}\/\$\{host\}`/);
 assert.match(siteApp, /json\(statusUrl\("\/gpus"\)\)/);
 assert.match(siteApp, /json\(statusUrl\("\/software"\)\)/);
 assert.match(siteApp, /previewPrefix \? `\$\{previewPrefix\}\/status`/);
@@ -337,12 +356,17 @@ assert.match(
   /participantNode\(participant, validators, validatorKnown\)/,
 );
 assert.match(siteApp, /hostState\.classify/);
-assert.match(siteApp, /GDC_SOFTWARE_VERSIONS\.normalizeMlNodeVersion/);
+assert.match(siteApp, /GDC_SOFTWARE_VERSIONS\.formatMlNodes/);
 assert.match(siteApp, /data-k="vp"/);
 assert.match(siteApp, /<span>voting power<\/span>/);
 assert.match(siteApp, /class="metric software" data-k-row="software"/);
 assert.match(siteApp, /class="metric gpu" data-k-row="gpu" hidden/);
-assert.match(siteApp, /<span>DevShard<\/span>/);
+assert.match(siteApp, /class="metric mlnodes" data-k-row="mlnodes" hidden/);
+assert.match(siteApp, /<span>MLNodes<\/span>/);
+assert.match(siteApp, /function updateMlNodes/);
+assert.match(siteApp, /formatMlNodes/);
+assert.match(siteApp, /\$\("devshard-versions"\)/);
+assert.doesNotMatch(siteApp, /data-k="devshard"/);
 assert.match(siteApp, /refreshDevShardVersions/);
 assert.match(siteApp, /approved_versions/);
 assert.match(
@@ -401,9 +425,9 @@ assert.match(readability, /--collapsed-host-width: 32px;/);
 assert.match(readability, /\.nodes\.compact \.node-toggle:focus-visible \{[\s\S]*outline: 2px solid var\(--lime\);/);
 assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \.node-toggle \{[\s\S]*writing-mode: vertical-rl;[\s\S]*transform: rotate\(180deg\);/);
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;[\s\S]*max-height: none;[\s\S]*align-items: flex-start;/);
-assert.match(readability, /\.nodes\.compact \.metric\.software,[\s\S]*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\),[\s\S]*\.nodes\.compact \.metric\.devshard \{/);
+assert.match(readability, /\.nodes\.compact \.metric\.software,[\s\S]*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\),[\s\S]*\.nodes\.compact \.metric\.mlnodes:not\(\[hidden\]\) \{/);
 assert.match(readability, /grid-template-columns: 64px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*\.nodes\.compact \.metric\.gpu b,[\s\S]*\.nodes\.compact \.metric\.devshard b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
+assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*\.nodes\.compact \.metric\.gpu b,[\s\S]*\.nodes\.compact \.metric\.mlnodes b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*flex-direction: column;[\s\S]*height: auto;[\s\S]*overflow: visible;[\s\S]*\.nodes\.compact \.node\.is-collapsed \{[\s\S]*height: 52px;/);
 assert.match(readability, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*transition: none;/);

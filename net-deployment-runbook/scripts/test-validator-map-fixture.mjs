@@ -366,7 +366,15 @@ const api = (port) => ({
     },
   },
   "/health": { status: "ok" },
-  "/v1/versions": {},
+  "/v1/versions": {
+    node_version: { version: "v1.2.3" },
+    api_version: { version: "v2.3.4" },
+    mlnodes: [
+      { version: "3.4.5" },
+      { version: "3.4.5" },
+      { version: "3.4.6" },
+    ],
+  },
   "/status/gateway/v1/status": {
     escrow_id: "fixture",
     active: true,
@@ -678,10 +686,13 @@ try {
     setText('[data-k="sync"]', "Synced");
     setText('[data-k="endpoint"]', "Unavailable – Network error");
     setText('[data-k="peers"]', "123");
-    setText('[data-k="versions"]', "chain v2026.09.02-extremely-long-build-identifier · DAPI v0.2.16-post999999999999 · MLNode v3.0.14-post2-with-another-extremely-long-build-identifier");
+    setText('[data-k="versions"]', "chain v2026.09.02-extremely-long-build-identifier · DAPI v0.2.16-post999999999999");
     const gpuRow = card.querySelector('[data-k-row="gpu"]');
     if (gpuRow) gpuRow.hidden = false;
     setText('[data-k="gpu"]', "RTX PRO 2000 Blackwell ×8 + GeForce RTX 4090 SUPER Extremely Long Vendor Edition ×8 + Accelerator Model With An UnbrokenIdentifier012345678901234567890123456789 – net");
+    const mlnodeRow = card.querySelector('[data-k-row="mlnodes"]');
+    if (mlnodeRow) mlnodeRow.hidden = false;
+    setText('[data-k="mlnodes"]', "3.0.14-post2 ×8 · 3.0.15");
     const textBounds = element => {
       if (!element) return null;
       const range = document.createRange();
@@ -775,7 +786,7 @@ try {
       peers: fieldInfo('[data-k="peers"]'),
       software: fieldInfo('[data-k="versions"]'),
       gpu: fieldInfo('[data-k="gpu"]'),
-      devshard: fieldInfo('[data-k="devshard"]'),
+      mlnodes: fieldInfo('[data-k="mlnodes"]'),
     };
     const hiddenProbe = card.querySelector('[data-k="status-reason"]');
     const hiddenBefore = hiddenProbe?.style.display;
@@ -821,7 +832,7 @@ try {
     const focusedKey = document.activeElement?.closest(".node")?.dataset.nodeKey;
     const keyboardValid = Boolean(activatedButton && focusedKey === expectedFocusedKey);
     const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
-    const devshardValue = card.querySelector('[data-k="devshard"]');
+    const devshardValue = document.querySelector('#devshard-versions');
     const devshardContract =
       devshardValue?.textContent?.trim() === "v3 · v4 · v5" &&
       devshardValue.title.includes("v3: " + "3".repeat(64)) &&

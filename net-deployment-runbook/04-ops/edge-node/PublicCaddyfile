@@ -201,6 +201,20 @@ preview.{$SITE_HOST} {
     root * /srv/dai/edge/site
     file_server
   }
+  # Independent Community DevNet operators are discovered from the public
+  # participant registry. Permit only conventional nodeN hostnames and only
+  # the read-only observations used by the site. This preserves the
+  # same-origin preview contract without creating an arbitrary proxy.
+  @dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info))$
+  handle @dynamic_participant_status {
+    rewrite * /{re.dynamic_participant_status.2}
+    reverse_proxy {re.dynamic_participant_status.1}:443 {
+      transport http {
+        tls_server_name {re.dynamic_participant_status.1}
+      }
+      header_up Host {re.dynamic_participant_status.1}
+    }
+  }
   @preview_status path_regexp preview_status ^/preview/[1-9][0-9]*/status/(.+)$
   handle @preview_status {
     rewrite * /status/{re.preview_status.1}

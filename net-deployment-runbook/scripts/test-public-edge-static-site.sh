@@ -69,6 +69,8 @@ grep -Fq 'rewrite * /ops-telegram-consumer-health' "$tmp/Caddyfile"
 grep -Fq 'reverse_proxy https://{$TELEGRAM_BOT_PUBLIC_HOST}' "$tmp/Caddyfile"
 grep -Fq 'preview.{$SITE_HOST} {' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'reverse_proxy 127.0.0.1:18090' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq '@dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info))$' "$tmp/Caddyfile"
+grep -Fq 'reverse_proxy {re.dynamic_participant_status.1}:443' "$tmp/Caddyfile"
 
 docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 \
   -e PUBLIC_HOST=:18082 \

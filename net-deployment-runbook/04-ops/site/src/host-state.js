@@ -134,6 +134,23 @@ type HostStateApi = {
           validatorEffective: false,
         };
       }
+      // The participant registry says whether a Host belongs to the network,
+      // but it does not prove that the browser has completed the endpoint
+      // observation.  Do not briefly paint a new card as Active and then
+      // replace it with Inactive when that observation arrives.
+      if (endpointState !== "reachable" && endpointState !== "unavailable") {
+        return {
+          state: "unknown",
+          stateLabel: "Unknown",
+          reason: "Endpoint status is being checked",
+          primaryLabel: "Unknown",
+          primaryClass: "status unknown",
+          votingPower: power === null ? "Unavailable" : String(power),
+          endpointLabel,
+          syncLabel,
+          validatorEffective: false,
+        };
+      }
       // A Host that cannot serve its public chain endpoint is inactive for
       // operators, even if its last chain registry record still says ACTIVE.
       // This keeps the card and map from presenting a dead endpoint as an

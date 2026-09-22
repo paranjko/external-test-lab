@@ -44,6 +44,7 @@ type SiteNode = {
   referenceAgrees?: boolean,
   isOnline?: boolean,
   serverStatus?: string,
+  softwareVersions?: ?any,
   gpuProfile?: ?string,
   gpuHost?: ?string,
 };
@@ -133,7 +134,13 @@ type DevShardVersion = {
   sha256: string,
 };
 type SoftwareVersionsApi = {
+  displayVersion: (reported: string) => string,
   normalizeMlNodeVersion: (chain: string, reported: string) => string,
+  formatMlNodes: (chain: string, mlnodes: Array<{ version?: string, node_id?: string }>) => string,
+  describeMlNodes: (
+    chain: string,
+    mlnodes: Array<{ version?: string, node_id?: string }>,
+  ) => Array<string>,
   selectLatestInventory: (samples: Array<any>) => Map<string, any>,
 };
 
@@ -253,13 +260,14 @@ const cards: Map<string, HTMLElement> = new Map();
 let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({
   ...node,
   statusBase:
-    previewPrefix && node.name
-      ? `${statusBase}/${node.name}`
-      : node.statusBase,
+    previewPrefix && /^node[0-9]+\.gonka-dev\.net$/i.test(node.publicHost || "")
+      ? `${statusBase}/${node.publicHost || ""}`
+      : previewPrefix && node.name
+        ? `${statusBase}/${node.name}`
+        : node.statusBase,
 }));
 let cardGpuInventory: GpuInventory = new Map();
 let cardSoftwareInventory: SoftwareInventory = new Map();
-let cardDevShardVersions: Array<DevShardVersion> = [];
 let expandedCardKeys: Array<string> = [];
 let selectedCardKey = "";
 let cardSequence = 0;
@@ -416,9 +424,9 @@ function createCard(node: SiteNode): HTMLElement {
         <span>GPU</span>
         <b data-k="gpu"></b>
       </div>
-      <div class="metric devshard">
-        <span>DevShard</span>
-        <b data-k="devshard"></b>
+      <div class="metric mlnodes" data-k-row="mlnodes" hidden>
+        <span>MLNodes</span>
+        <b data-k="mlnodes"></b>
       </div>
     </div>
   `;
@@ -433,7 +441,7 @@ function createCard(node: SiteNode): HTMLElement {
   if (node.mode === "skip") set(el, "versions", "not running");
   else updateSoftware(cardSoftwareInventory, node, el);
   updateGpu(cardGpuInventory, node, el);
-  updateDevShardVersions(cardDevShardVersions, el);
+  updateMlNodes(cardSoftwareInventory, node, el);
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
   $("nodes").append(el);
@@ -450,9 +458,8 @@ function createCard(node: SiteNode): HTMLElement {
 
 function updateDevShardVersions(
   versions: Array<DevShardVersion>,
-  card: HTMLElement,
 ): void {
-  const target = card.querySelector('[data-k="devshard"]');
+  const target = $("devshard-versions");
   if (!versions.length) {
     target.textContent = "Unavailable";
     target.title = "Approved DevShard versions could not be read from chain state";
@@ -508,9 +515,9 @@ function updateGpu(
         `Configured GPU host: ${gpuHost}; live inventory has not reported it yet`;
       return;
     }
-    set(card, "gpu", "temporarily unavailable");
-    card.querySelector('[data-k="gpu"]').title =
-      "GPU inventory has not reported this Host yet";
+    // A missing public inventory is not a GPU model. Omit the row rather than
+    // presenting a diagnostic placeholder as hardware information.
+    row.hidden = true;
     return;
   }
   set(card, "gpu", `${inventoryLabel} – ${connection}`);
@@ -535,10 +542,15 @@ function configuredGpuLabel(profile: ?string): ?string {
   }
 }
 
-function markSoftwareInventoryUnavailable(card: HTMLElement): void {
-  const value = card.querySelector('[data-k="versions"]');
-  value.textContent = "temporarily unavailable";
-  value.title = "Software inventory has not reported this Host yet";
+function reportedSoftwareVersion(node: SiteNode, component: string): string {
+  const state: any = node.softwareVersions;
+  if (component === "chain") return String(state?.node_version?.version || "");
+  if (component === "DAPI") return String(state?.api_version?.version || "");
+  return "";
+}
+
+function softwareDisplayValue(version: string): string {
+  return GDC_SOFTWARE_VERSIONS.displayVersion(String(version || ""));
 }
 
 function updateSoftware(
@@ -546,34 +558,69 @@ function updateSoftware(
   node: SiteNode,
   card: HTMLElement,
 ): void {
+  const row = card.querySelector('[data-k-row="software"]');
   const key = [node.name, node.publicHost].find((candidate) =>
     inventory.has(candidate || ""),
   );
   const samples = inventory.get(key || "") || [];
   const components = GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples);
   const formatted: Array<string> = [];
-  const chainVersion = String(components.get("chain")?.version || "unknown");
-  for (const component of ["chain", "DAPI", "MLNode"]) {
+  const titles: Array<string> = [];
+  for (const component of ["chain", "DAPI"]) {
     const metric = components.get(component);
-    if (!metric) continue;
-    const version =
-      component === "MLNode"
-        ? GDC_SOFTWARE_VERSIONS.normalizeMlNodeVersion(
-            chainVersion,
-            String(metric.version),
-          )
-        : metric.version;
+    const reported = reportedSoftwareVersion(node, component);
+    const rawVersion = reported || String(metric?.version || "");
+    if (!rawVersion || rawVersion === "unreported") continue;
+    const version = softwareDisplayValue(rawVersion);
+    if (!version || version === "unreported") continue;
     formatted.push(`${component} ${version}`);
+    if (/^(?:sha256:)?[a-f0-9]{64}$/i.test(String(rawVersion))) {
+      titles.push(`${component}: container image digest ${rawVersion}`);
+    }
   }
   const value = formatted.join(" · ");
   if (!value) {
-    markSoftwareInventoryUnavailable(card);
+    row.hidden = true;
     return;
   }
+  row.hidden = false;
   const target = card.querySelector('[data-k="versions"]');
   target.textContent = value;
   target.title =
-    "Most recent software inventory observed by the monitoring agent within 24 hours";
+    titles.length
+      ? titles.join("\n")
+      : "Runtime version when available, otherwise the most recent software inventory observed within 24 hours";
+}
+
+function updateMlNodes(
+  inventory: SoftwareInventory,
+  node: SiteNode,
+  card: HTMLElement,
+): void {
+  const row = card.querySelector('[data-k-row="mlnodes"]');
+  const state: any = node.softwareVersions;
+  const key = [node.name, node.publicHost].find((candidate) =>
+    inventory.has(candidate || ""),
+  );
+  const observedChain = String(
+    GDC_SOFTWARE_VERSIONS.selectLatestInventory(inventory.get(key || "") || [])
+      .get("chain")?.version || "",
+  );
+  const chain = softwareDisplayValue(
+    reportedSoftwareVersion(node, "chain") || observedChain,
+  );
+  const value = GDC_SOFTWARE_VERSIONS.formatMlNodes(chain, state?.mlnodes || []);
+  if (!value || node.mode === "skip") {
+    row.hidden = true;
+    return;
+  }
+  row.hidden = false;
+  const target = card.querySelector('[data-k="mlnodes"]');
+  target.textContent = value;
+  target.title = GDC_SOFTWARE_VERSIONS.describeMlNodes(
+    chain,
+    state?.mlnodes || [],
+  ).join("\n");
 }
 
 async function refreshSoftwareInventory(): Promise<void> {
@@ -589,7 +636,10 @@ async function refreshSoftwareInventory(): Promise<void> {
   cardSoftwareInventory = next;
   for (const node of observedNodes) {
     const card = cards.get(nodeKey(node));
-    if (card) updateSoftware(cardSoftwareInventory, node, card);
+    if (card) {
+      updateSoftware(cardSoftwareInventory, node, card);
+      updateMlNodes(cardSoftwareInventory, node, card);
+    }
   }
 }
 
@@ -635,11 +685,7 @@ async function refreshDevShardVersions(): Promise<void> {
     versions.push({ name, sha256 });
   }
   versions.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
-  cardDevShardVersions = versions;
-  for (const node of observedNodes) {
-    const card = cards.get(nodeKey(node));
-    if (card) updateDevShardVersions(cardDevShardVersions, card);
-  }
+  updateDevShardVersions(versions);
 }
 for (const node of observedNodes) createCard(node);
 layoutHostCards();
@@ -822,6 +868,7 @@ function displayHostState(node: SiteNode): any {
 
 const MAX_DYNAMIC_GEOIP_ADDRESSES = 4;
 const GEOIP_FAILURE_RETRY_MS = 5 * 60 * 1000;
+const DYNAMIC_STATUS_HOST = /^node[0-9]+\.gonka-dev\.net$/i;
 const participantDiscovery: Map<string, ParticipantDiscoveryCache> = new Map();
 
 async function discoverParticipant(
@@ -913,14 +960,16 @@ async function participantNode(
       : {};
   const participantStatus = participant.status || "UNKNOWN";
   const validator = validators.get(String(participant.validator_key || ""));
+  // Public status only proxies the fixed local aliases and the Community
+  // DevNet nodeN hostnames.  A participant may advertise another hostname,
+  // but it must not turn this origin into an open proxy merely to monitor it.
+  const participantStatusBase = catalog?.statusBase ||
+    (DYNAMIC_STATUS_HOST.test(host) ? `${statusBase}/${host}` : "");
   return {
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
     publicHost: catalog?.publicHost || host,
-    statusBase:
-      previewPrefix && (catalog?.name || host)
-        ? `${statusBase}/${catalog?.name || host}`
-        : catalog?.statusBase || discovered.statusBase || "",
+    statusBase: participantStatusBase,
     ip: catalog?.ip || discovered.ip || "",
     geo: catalog?.geo || discovered.geo || null,
     mode: catalog?.mode,
@@ -1115,9 +1164,15 @@ function groupValidators(validators: Array<Validator>): Array<ValidatorGroup> {
   const coincident: Map<string, ValidatorGroup> = new Map();
   for (const group of groups) {
     const coordinate = `${group.lat.toFixed(6)},${group.lon.toFixed(6)}`;
-    const existing = coincident.get(coordinate);
+    // A city-level label is the public accuracy boundary.  Keep colocated
+    // Hosts together and show their count rather than jittering one marker to
+    // a false location that looks like a separate physical machine.
+    const location = group.label && group.label !== "Multiple locations"
+      ? `location:${group.label}`
+      : `coordinate:${coordinate}`;
+    const existing = coincident.get(location);
     if (!existing) {
-      coincident.set(coordinate, group);
+      coincident.set(location, group);
       continue;
     }
     existing.validators.push(...group.validators);
@@ -1864,15 +1919,24 @@ async function refresh(): Promise<void> {
           set(card, "peers", "–");
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, n, card);
           return;
         }
         const statusBase = n.statusBase;
+        const versionsRequest = json(`${statusBase}/v1/versions`)
+          .then((versions) => {
+            n.softwareVersions = versions;
+          })
+          .catch(() => {
+            n.softwareVersions = null;
+          });
         try {
           const [s, net] = await Promise.all([
             json(`${statusBase}/chain-rpc/status`),
             json(`${statusBase}/chain-rpc/net_info`),
             text(`${statusBase}/health`),
           ]);
+          await versionsRequest;
           n.endpointState = "reachable";
           n.endpointDiagnostic = "";
           const h = Number(s.result.sync_info.latest_block_height);
@@ -1912,7 +1976,9 @@ async function refresh(): Promise<void> {
           set(card, "peers", peers);
           if (validatorEffective) healthy++;
           updateSoftware(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, n, card);
         } catch (e) {
+          await versionsRequest;
           n.endpointState = "unavailable";
           n.endpointDiagnostic = hostState.endpointDiagnostic(e);
           n.isOnline = false;
@@ -1921,6 +1987,7 @@ async function refresh(): Promise<void> {
           set(card, "peers", "–");
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, n, card);
         }
       }),
   );

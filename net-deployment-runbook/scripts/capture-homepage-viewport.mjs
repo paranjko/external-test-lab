@@ -60,6 +60,10 @@ const homepageStateExpression = `JSON.stringify({
   updatedDateTime: document.querySelector("#updated")?.dateTime,
   updatedTag: document.querySelector("#updated")?.tagName,
   bestHeight: document.querySelector("#best-height")?.textContent,
+  devshardVersions: ((element) => ({
+    text: element?.textContent?.trim(),
+    title: element?.title || "",
+  }))(document.querySelector("#devshard-versions")),
   mapPoints: document.querySelectorAll("#validator-map .validator-marker").length,
   mapMarkers: Number(document.querySelector("#validator-map")?.dataset.markerCount || 0),
   mapValidators: Number(document.querySelector("#validator-map")?.dataset.validatorCount || 0),
@@ -224,7 +228,7 @@ const homepageStateExpression = `JSON.stringify({
       versions: node.querySelector("[data-k=versions]")?.textContent,
       software: metric("software"),
       gpu: metric("gpu"),
-      devshard: metric("devshard"),
+      mlnodes: metric("mlnodes"),
       valueFields: ["height", "vp", "sync", "endpoint"].map(valueField),
       top: rect.top,
       bottom: rect.bottom,
@@ -364,7 +368,11 @@ try {
   const mappedNodes = state.nodes;
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
-  if (mappedNodes.some(node => !node.versions || node.versions === 'checking')) throw new Error(`participant software versions did not resolve ${JSON.stringify(state)}`);
+  if (mappedNodes.some(node => node.software.visible && (!node.software.text || node.versions === 'checking' || node.software.clipped))) throw new Error(`visible participant software is incomplete ${JSON.stringify(state)}`);
+  if (mappedNodes.some(node => /\bunreported\b/i.test(`${node.versions || ''} ${node.gpu.text || ''}`))) {
+    throw new Error(`participant cards rendered a diagnostic placeholder as a value ${JSON.stringify(mappedNodes)}`);
+  }
+  if (state.devshardVersions.text !== 'v3 · v4 · v5' || !/v3: [a-f0-9]{64}/i.test(state.devshardVersions.title) || !/v4: [a-f0-9]{64}/i.test(state.devshardVersions.title) || !/v5: [a-f0-9]{64}/i.test(state.devshardVersions.title)) throw new Error(`approved DevShard versions did not render as chain-wide state ${JSON.stringify(state.devshardVersions)}`);
   const hasUnboundedHostDiagnostic = node => {
     const endpoint = node.endpoint || '';
     return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
@@ -377,7 +385,7 @@ try {
   const expandedNodes = mappedNodes.filter(node => node.expanded);
   const collapsedNodes = mappedNodes.filter(node => node.collapsed);
   if (mappedNodes.some(node => !node.key || !node.name || !node.hostVisible || !node.status || !node.statusVisible || !node.toggleControls || node.toggleControls !== node.detailsId || !node.toggleLabel?.includes(node.name) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card identity contract failed ${JSON.stringify(mappedNodes)}`);
-  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || !node.software.text || !node.software.visible || node.software.clipped || !node.gpu.text || !node.gpu.visible || node.gpu.clipped || !node.devshard.text || !node.devshard.visible || node.devshard.clipped)) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
+  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || (node.software.visible && (!node.software.text || node.software.clipped)) || (node.gpu.visible && (!node.gpu.text || node.gpu.clipped)) || (node.mlnodes.visible && (!node.mlnodes.text || node.mlnodes.clipped)))) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
   if (collapsedNodes.some(node => node.toggleExpanded !== 'false' || !node.detailsHidden || node.statusClipped)) throw new Error(`Collapsed Host-tab contract failed ${JSON.stringify(collapsedNodes)}`);
   const deck = state.nodeDeck;
   const desktopDeckValid = width > 700 && deck.flexDirection === 'row' && deck.oneRow && deck.cards.every(card => card.height >= 350) && deck.cards.filter(card => !card.expanded).every(card => card.width >= 31 && card.width <= 33);
@@ -508,7 +516,7 @@ try {
       status: node.status,
       software: node.software.text,
       gpu: node.gpu.text,
-      devshard: node.devshard.text,
+      mlnodes: node.mlnodes.text,
       height: node.height,
     })),
   }, null, 2) + '\n');
