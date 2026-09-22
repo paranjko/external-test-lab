@@ -1065,8 +1065,15 @@ async function participantNode(
   // Public status only proxies the fixed local aliases and the Community
   // DevNet nodeN hostnames.  A participant may advertise another hostname,
   // but it must not turn this origin into an open proxy merely to monitor it.
-  const participantStatusBase = catalog?.statusBase ||
-    (DYNAMIC_STATUS_HOST.test(host) ? `${statusBase}/${host}` : "");
+  // A preview must use its own status overlay even for a Host already known
+  // to the static catalog. Otherwise catalog.statusBase points at the preview
+  // origin root, loses the numeric generation prefix and turns a healthy Host
+  // into a false Inactive card through 404 responses.
+  const participantStatusBase =
+    previewPrefix && DYNAMIC_STATUS_HOST.test(host)
+      ? `${statusBase}/${host}`
+      : catalog?.statusBase ||
+        (DYNAMIC_STATUS_HOST.test(host) ? `${statusBase}/${host}` : "");
   return {
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
