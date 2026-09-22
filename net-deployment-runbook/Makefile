@@ -399,6 +399,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-tmkms-state-schema-agreement.sh
 	@./scripts/test-signer-activation-gate.sh
 	@./scripts/test-verify-participant-validator-key.sh
+	@./scripts/test-join-registered-key-refusal.sh
 	@./scripts/test-init-identity-restore-diagnostics.sh
 	@./scripts/test-collect-identities-transport-resume.sh
 	@./scripts/test-cleanroom-no-python-restore.sh
