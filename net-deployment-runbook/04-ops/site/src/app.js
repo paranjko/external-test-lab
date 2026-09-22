@@ -129,6 +129,16 @@ type ParticipantDiscoveryCache = {
 
 type GpuInventory = Map<string, Array<string>>;
 type SoftwareInventory = Map<string, Array<any>>;
+type HardwareNode = {
+  local_id?: string,
+  version?: string,
+  hardware?: Array<{ type?: string, count?: number }>,
+};
+type HardwareInventoryEntry = {
+  state: "observed" | "unavailable",
+  nodes: Array<HardwareNode>,
+};
+type HardwareInventory = Map<string, HardwareInventoryEntry>;
 type DevShardVersion = {
   name: string,
   sha256: string,
@@ -268,6 +278,7 @@ let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({
 }));
 let cardGpuInventory: GpuInventory = new Map();
 let cardSoftwareInventory: SoftwareInventory = new Map();
+let cardHardwareInventory: HardwareInventory = new Map();
 let expandedCardKeys: Array<string> = [];
 let selectedCardKey = "";
 let cardSequence = 0;
@@ -440,8 +451,8 @@ function createCard(node: SiteNode): HTMLElement {
   set(el, "peers", node.mode === "skip" ? "–" : "…");
   if (node.mode === "skip") set(el, "versions", "not running");
   else updateSoftware(cardSoftwareInventory, node, el);
-  updateGpu(cardGpuInventory, node, el);
-  updateMlNodes(cardSoftwareInventory, node, el);
+  updateGpu(cardGpuInventory, cardHardwareInventory, node, el);
+  updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, el);
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
   $("nodes").append(el);
@@ -473,6 +484,7 @@ function updateDevShardVersions(
 
 function updateGpu(
   inventory: GpuInventory,
+  hardwareInventory: HardwareInventory,
   node: SiteNode,
   card: HTMLElement,
 ): void {
@@ -486,10 +498,20 @@ function updateGpu(
     inventory.has(key || ""),
   );
   const names = inventory.get(inventoryKey || "") || [];
+  const hardware = node.address ? hardwareInventory.get(node.address) : null;
   const connection =
     node.gpuHost && node.gpuHost !== node.name ? "net" : "local";
   const countedNames: Map<string, number> = new Map();
-  for (const name of names) {
+  const reportedHardware = (hardware?.nodes || []).flatMap((runtime) =>
+    (runtime.hardware || []).flatMap((item) => {
+      const name = String(item?.type || "").trim();
+      const count = Number(item?.count || 0);
+      return name && Number.isFinite(count) && count > 0
+        ? Array(count).fill(name)
+        : [];
+    }),
+  );
+  for (const name of reportedHardware.length ? reportedHardware : names) {
     countedNames.set(name, (countedNames.get(name) || 0) + 1);
   }
   const inventoryLabel = [...countedNames.entries()]
@@ -498,31 +520,24 @@ function updateGpu(
       return count === 1 ? displayName : `${displayName} ×${count}`;
     })
     .join(" + ");
-  if (node.mode === "skip") {
-    row.hidden = true;
-    return;
-  }
   row.hidden = false;
   if (!inventoryLabel) {
-    const configuredProfile = configuredGpuLabel(node.gpuProfile);
-    if (configuredProfile) {
-      set(
-        card,
-        "gpu",
-        `${configuredProfile} – ${connection} (inventory unavailable)`,
-      );
+    if (hardware?.state === "observed") {
+      set(card, "gpu", "Not assigned");
       card.querySelector('[data-k="gpu"]').title =
-        `Configured GPU host: ${gpuHost}; live inventory has not reported it yet`;
+        "Chain runtime inventory reports no GPU for this participant";
       return;
     }
-    // A missing public inventory is not a GPU model. Omit the row rather than
-    // presenting a diagnostic placeholder as hardware information.
-    row.hidden = true;
+    set(card, "gpu", "Unavailable");
+    card.querySelector('[data-k="gpu"]').title =
+      "Chain runtime inventory could not be read";
     return;
   }
   set(card, "gpu", `${inventoryLabel} – ${connection}`);
   card.querySelector('[data-k="gpu"]').title =
-    `GPU host: ${gpuHost}; most recent monitoring observation within 24 hours`;
+    reportedHardware.length
+      ? "Current on-chain runtime inventory"
+      : `GPU host: ${gpuHost}; most recent monitoring observation within 24 hours`;
 }
 
 function configuredGpuLabel(profile: ?string): ?string {
@@ -579,26 +594,25 @@ function updateSoftware(
     }
   }
   const value = formatted.join(" · ");
-  if (!value) {
-    row.hidden = true;
-    return;
-  }
   row.hidden = false;
   const target = card.querySelector('[data-k="versions"]');
-  target.textContent = value;
+  target.textContent = value || "Unavailable";
   target.title =
-    titles.length
+    !value
+      ? "No current software version was available from the Host or monitoring inventory"
+      : titles.length
       ? titles.join("\n")
       : "Runtime version when available, otherwise the most recent software inventory observed within 24 hours";
 }
 
 function updateMlNodes(
   inventory: SoftwareInventory,
+  hardwareInventory: HardwareInventory,
   node: SiteNode,
   card: HTMLElement,
 ): void {
   const row = card.querySelector('[data-k-row="mlnodes"]');
-  const state: any = node.softwareVersions;
+  const hardware = node.address ? hardwareInventory.get(node.address) : null;
   const key = [node.name, node.publicHost].find((candidate) =>
     inventory.has(candidate || ""),
   );
@@ -609,18 +623,22 @@ function updateMlNodes(
   const chain = softwareDisplayValue(
     reportedSoftwareVersion(node, "chain") || observedChain,
   );
-  const value = GDC_SOFTWARE_VERSIONS.formatMlNodes(chain, state?.mlnodes || []);
-  if (!value || node.mode === "skip") {
-    row.hidden = true;
-    return;
-  }
+  const runtimes: Array<{ node_id?: string, version?: string }> = (hardware?.nodes || []).map((runtime) => ({
+    node_id: String(runtime?.local_id || ""),
+    version: String(runtime?.version || ""),
+  }));
+  const value = GDC_SOFTWARE_VERSIONS.formatMlNodes(chain, runtimes);
   row.hidden = false;
   const target = card.querySelector('[data-k="mlnodes"]');
+  if (!value) {
+    target.textContent = hardware?.state === "observed" ? "Not assigned" : "Unavailable";
+    target.title = hardware?.state === "observed"
+      ? "Chain runtime inventory reports no MLNode for this participant"
+      : "Chain runtime inventory could not be read";
+    return;
+  }
   target.textContent = value;
-  target.title = GDC_SOFTWARE_VERSIONS.describeMlNodes(
-    chain,
-    state?.mlnodes || [],
-  ).join("\n");
+  target.title = GDC_SOFTWARE_VERSIONS.describeMlNodes(chain, runtimes).join("\n");
 }
 
 async function refreshSoftwareInventory(): Promise<void> {
@@ -638,7 +656,7 @@ async function refreshSoftwareInventory(): Promise<void> {
     const card = cards.get(nodeKey(node));
     if (card) {
       updateSoftware(cardSoftwareInventory, node, card);
-      updateMlNodes(cardSoftwareInventory, node, card);
+      updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
     }
   }
 }
@@ -664,7 +682,36 @@ async function refreshGpuInventory(): Promise<void> {
   cardGpuInventory = next;
   for (const node of observedNodes) {
     const card = cards.get(nodeKey(node));
-    if (card) updateGpu(cardGpuInventory, node, card);
+    if (card) updateGpu(cardGpuInventory, cardHardwareInventory, node, card);
+  }
+}
+
+async function refreshHardwareInventory(): Promise<void> {
+  if (!chainRpcOrigin) return;
+  const next: HardwareInventory = new Map();
+  await Promise.all(observedNodes.map(async (node) => {
+    const address = node.address;
+    if (!address) return;
+    try {
+      const state = await json(
+        `${chainRpcOrigin}/chain-api/productscience/inference/inference/hardware_nodes/${encodeURIComponent(address)}`,
+      );
+      next.set(address, {
+        state: "observed",
+        nodes: Array.isArray(state?.nodes?.hardware_nodes)
+          ? state.nodes.hardware_nodes
+          : [],
+      });
+    } catch {
+      next.set(address, { state: "unavailable", nodes: [] });
+    }
+  }));
+  cardHardwareInventory = next;
+  for (const node of observedNodes) {
+    const card = cards.get(nodeKey(node));
+    if (!card) continue;
+    updateGpu(cardGpuInventory, cardHardwareInventory, node, card);
+    updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
   }
 }
 
@@ -1895,6 +1942,7 @@ async function refresh(): Promise<void> {
   try {
     best = await reconcileParticipants();
   } catch {}
+  await refreshHardwareInventory();
   try {
     if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
     const reference = await json(`${chainRpcOrigin}/chain-rpc/status`);
@@ -1919,7 +1967,7 @@ async function refresh(): Promise<void> {
           set(card, "peers", "–");
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
-          updateMlNodes(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
           return;
         }
         const statusBase = n.statusBase;
@@ -1976,7 +2024,7 @@ async function refresh(): Promise<void> {
           set(card, "peers", peers);
           if (validatorEffective) healthy++;
           updateSoftware(cardSoftwareInventory, n, card);
-          updateMlNodes(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
         } catch (e) {
           await versionsRequest;
           n.endpointState = "unavailable";
@@ -1987,7 +2035,7 @@ async function refresh(): Promise<void> {
           set(card, "peers", "–");
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
-          updateMlNodes(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
         }
       }),
   );

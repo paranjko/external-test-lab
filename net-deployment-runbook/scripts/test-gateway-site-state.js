@@ -346,9 +346,11 @@ assert.match(siteApp, /sample\?\.metric\?\.gpu_name/);
 assert.match(siteApp, /node\.gpuHost && node\.gpuHost !== node\.name \? "net" : "local"/);
 assert.match(siteApp, /const gpuHost = node\.gpuHost \|\| node\.name/);
 assert.match(siteApp, /const inventoryKey = \[gpuHost, node\.publicHost, node\.name\]/);
-assert.match(siteApp, /configuredGpuLabel\(node\.gpuProfile\)/);
-assert.match(siteApp, /RTX PRO 2000 Blackwell/);
-assert.match(siteApp, /inventory unavailable/);
+assert.match(siteApp, /hardware_nodes\/\$\{encodeURIComponent\(address\)\}/);
+assert.match(siteApp, /function refreshHardwareInventory/);
+assert.match(siteApp, /Current on-chain runtime inventory/);
+assert.match(siteApp, /Chain runtime inventory reports no GPU for this participant/);
+assert.match(siteApp, /Chain runtime inventory reports no MLNode for this participant/);
 assert.match(siteApp, /\$\{inventoryLabel\} – \$\{connection\}/);
 assert.match(siteApp, /replace\(\/\^NVIDIA\\s\+\/i, ""\)/);
 assert.match(
