@@ -14,6 +14,24 @@ The network profile hash covers release + deployment + model. Operator-service
 software has a separate hash, so updating Grafana cannot silently change the
 identity of the network release under test.
 
+## Qualification-only model overlays
+
+A model lock may set `GDC_MODEL_PROFILE_SCOPE=qualification-only`. Such an
+overlay is selectable only with `gdc.sh --model <profile> qualify-ml <host>`.
+GDC rejects it for Genesis, JOIN, migration, and any other network lifecycle
+phase, so committing a qualified model does not claim that it is activated by
+the Community DevNet.
+
+The lock records the immutable Hugging Face source identity and MLNode runtime
+settings used for the qualification. `MODEL_ID` is the served identity;
+`MODEL_SOURCE_ID` and `MODEL_SOURCE_REVISION` default to it and its revision
+for ordinary upstream models, but may select the tested weights for a distinct
+service contract. `MLNODE_VLLM_ARGS` is deliberately
+allowlisted; the only currently supported non-empty value is `--enforce-eager`.
+Qualification records model loading, `/v1/models`, one completion, and VRAM
+evidence. It is not a long-context capacity, network admission, or production
+SLA claim.
+
 ## Community DevNet Host requirements
 
 [`devnet-hadware.json`](devnet-hadware.json) is the machine-readable source

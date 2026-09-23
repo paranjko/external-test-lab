@@ -40,7 +40,7 @@ for host in "${hosts[@]}"; do
     "MLNODE_IMAGE=$MLNODE_GENERIC_IMAGE" "MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE" \
     "POC_BATCH_SIZE_DEFAULT=32"
   scp -q "$env_file" "$host:$remote/.env"
-  ssh -T "$host" "bash '$remote/qualify-ml-remote.sh' '$remote' '$remote/.env' '$MODEL_ID' '$MLNODE_DTYPE' '$MODEL_REVISION' '$MLNODE_TENSOR_PARALLEL_SIZE' '$MLNODE_MAX_NUM_SEQS' '$MLNODE_GPU_MEMORY_UTILIZATION' '$MLNODE_CONTEXT_LENGTH'"
+  ssh -T "$host" "bash '$remote/qualify-ml-remote.sh' '$remote' '$remote/.env' '$MODEL_SOURCE_ID' '$MODEL_ID' '$MLNODE_DTYPE' '$MODEL_SOURCE_REVISION' '$MLNODE_TENSOR_PARALLEL_SIZE' '$MLNODE_MAX_NUM_SEQS' '$MLNODE_GPU_MEMORY_UTILIZATION' '$MLNODE_CONTEXT_LENGTH' '$MLNODE_VLLM_ARGS'"
   scp -q "$host:$remote/status.json" "$report/status.json"
   scp -q "$host:$remote/models.json" "$report/models.json"
   scp -q "$host:$remote/completion.json" "$report/completion.json"
