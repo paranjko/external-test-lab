@@ -631,7 +631,7 @@ try {
   });
   const reports = [];
   const mapStateExpression =
-    'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),rect=map?.getBoundingClientRect(),world=map?.querySelector(".validator-map-world"),worldRect=world?.getBoundingClientRect(),markers=[...map.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",classes:[...marker.classList],fill:marker.getAttribute("fill"),left:r.left+r.width/2,top:r.top+r.height/2,width:r.width,height:r.height}});return{world:Boolean(world?.complete&&world?.naturalWidth),worldRatio:worldRect?worldRect.width/worldRect.height:0,validators:Number(map?.dataset.validatorCount),markerCount:Number(map?.dataset.markerCount),hitTargetCount:map?.querySelectorAll(".validator-marker-hit").length||0,centersInside:markers.every(marker=>marker.left>=rect.left-.1&&marker.left<=rect.right+.1&&marker.top>=rect.top-.1&&marker.top<=rect.bottom+.1),markerNodes:markers,mapRect:rect&&{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},worldRect:worldRect&&{left:worldRect.left,top:worldRect.top,width:worldRect.width,height:worldRect.height},scrollWidth:document.documentElement.scrollWidth,width:innerWidth}})())';
+    'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),rect=map?.getBoundingClientRect(),world=map?.querySelector(".validator-map-world"),worldRect=world?.getBoundingClientRect(),markers=[...map.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect(),face=marker.querySelector(".validator-marker-face"),number=marker.querySelector(".validator-marker-number");return{label:marker.getAttribute("aria-label")||"",classes:[...marker.classList],background:getComputedStyle(face).backgroundImage,left:r.left+r.width/2,top:r.top+r.height/2,width:r.width,height:r.height,count:number?.textContent||""}});return{world:Boolean(world?.complete&&world?.naturalWidth),worldRatio:worldRect?worldRect.width/worldRect.height:0,validators:Number(map?.dataset.validatorCount),markerCount:Number(map?.dataset.markerCount),hitTargetCount:map?.querySelectorAll(".validator-marker-hit").length||0,centersInside:markers.every(marker=>marker.left>=rect.left-.1&&marker.left<=rect.right+.1&&marker.top>=rect.top-.1&&marker.top<=rect.bottom+.1),markerNodes:markers,mapRect:rect&&{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},worldRect:worldRect&&{left:worldRect.left,top:worldRect.top,width:worldRect.width,height:worldRect.height},scrollWidth:document.documentElement.scrollWidth,width:innerWidth}})())';
   const hostGeometryExpression = `JSON.stringify((() => {
     const deck = document.querySelector("#nodes");
     const cards = [...document.querySelectorAll("#nodes .node")];
@@ -930,6 +930,148 @@ try {
       },
     })),
   );
+  const groupedStateNodes = [
+    {
+      address: "kansas-node0",
+      participantState: "ACTIVE",
+      isOnline: false,
+      endpointState: "reachable",
+      votingPower: "1",
+      catchingUp: true,
+      geo: {
+        latitude: 39.0997,
+        longitude: -94.5786,
+        city: "Kansas City",
+        country: "United States",
+        isp: "fixture",
+        locationId: "fixture-kansas-city",
+        locationLabel: "Kansas City, United States",
+      },
+    },
+    {
+      address: "kansas-node5",
+      participantState: "ACTIVE",
+      isOnline: false,
+      endpointState: "reachable",
+      votingPower: "1",
+      catchingUp: true,
+      geo: {
+        latitude: 39.0997,
+        longitude: -94.5786,
+        city: "Kansas City",
+        country: "United States",
+        isp: "fixture",
+        locationId: "fixture-kansas-city",
+        locationLabel: "Kansas City, United States",
+      },
+    },
+    {
+      address: "london-node3",
+      participantState: "INACTIVE",
+      isOnline: false,
+      geo: {
+        latitude: 51.5074,
+        longitude: -0.1278,
+        city: "London",
+        country: "United Kingdom",
+        isp: "fixture",
+        locationId: "fixture-london",
+        locationLabel: "London, United Kingdom",
+      },
+    },
+    {
+      address: "london-node8",
+      participantState: "ACTIVE",
+      isOnline: false,
+      endpointState: "reachable",
+      votingPower: "1",
+      catchingUp: true,
+      geo: {
+        latitude: 51.5074,
+        longitude: -0.1278,
+        city: "London",
+        country: "United Kingdom",
+        isp: "fixture",
+        locationId: "fixture-london",
+        locationLabel: "London, United Kingdom",
+      },
+    },
+  ];
+  const stateDistributionNodes = [
+    {
+      address: "milan-validating",
+      participantState: "ACTIVE",
+      isOnline: true,
+      geo: {
+        latitude: 45.4642,
+        longitude: 9.19,
+        city: "Milan",
+        country: "Italy",
+        isp: "fixture",
+        locationId: "fixture-milan",
+        locationLabel: "Milan, Italy",
+      },
+    },
+    {
+      address: "milan-inactive",
+      participantState: "INACTIVE",
+      isOnline: false,
+      geo: {
+        latitude: 45.4642,
+        longitude: 9.19,
+        city: "Milan",
+        country: "Italy",
+        isp: "fixture",
+        locationId: "fixture-milan",
+        locationLabel: "Milan, Italy",
+      },
+    },
+    ...["paris-active-1", "paris-active-2"].map((address) => ({
+      address,
+      participantState: "ACTIVE",
+      isOnline: false,
+      endpointState: "reachable",
+      votingPower: "1",
+      catchingUp: true,
+      geo: {
+        latitude: 48.8566,
+        longitude: 2.3522,
+        city: "Paris",
+        country: "France",
+        isp: "fixture",
+        locationId: "fixture-paris",
+        locationLabel: "Paris, France",
+      },
+    })),
+    {
+      address: "paris-inactive",
+      participantState: "INACTIVE",
+      isOnline: false,
+      geo: {
+        latitude: 48.8566,
+        longitude: 2.3522,
+        city: "Paris",
+        country: "France",
+        isp: "fixture",
+        locationId: "fixture-paris",
+        locationLabel: "Paris, France",
+      },
+    },
+    {
+      address: "paris-unknown",
+      participantKnown: false,
+      isOnline: false,
+      geo: {
+        latitude: 48.8566,
+        longitude: 2.3522,
+        city: "Paris",
+        country: "France",
+        isp: "fixture",
+        locationId: "fixture-paris",
+        locationLabel: "Paris, France",
+      },
+    },
+  ];
   const stableNodes = [
     ["a", 48.14, 17.14],
     ["b", 48.13, 17.13],
@@ -1000,7 +1142,7 @@ try {
     }
     throw new Error("fixture did not restore the initial boundary map");
   };
-  for (const [width, height] of [
+  const viewports = [
     [1280, 720],
     [1399, 720],
     [1321, 720],
@@ -1018,7 +1160,18 @@ try {
     [360, 640],
     [320, 568],
     [844, 390],
-  ]) {
+  ];
+  const requestedViewports = String(process.env.GDC_MAP_FIXTURE_VIEWPORTS || "")
+    .split(",")
+    .filter(Boolean);
+  const selectedViewports = requestedViewports.length
+    ? viewports.filter(([width, height]) =>
+        requestedViewports.includes(`${width}x${height}`),
+      )
+    : viewports;
+  if (requestedViewports.length && selectedViewports.length !== requestedViewports.length)
+    throw new Error(`unknown fixture viewport: ${requestedViewports.join(", ")}`);
+  for (const [width, height] of selectedViewports) {
     await call("Emulation.setDeviceMetricsOverride", {
       width,
       height,
@@ -1127,7 +1280,7 @@ try {
     };
     const geographyValid = (candidate) =>
       candidate.markerNodes.every((marker) => {
-        const city = marker.label.split(":")[0].split(",")[0];
+        const city = marker.label.split(/[,:;]/)[0];
         if (!/^(?:<Bratislava>|Greenwich|Kansas City)$/.test(city)) return true;
         const coordinate = expectedCoordinates[city];
         if (!coordinate || !candidate.worldRect) return false;
@@ -1151,7 +1304,7 @@ try {
         );
       });
     const hasCompactMarkers = state.markerNodes.every((marker) => {
-      const city = marker.label.split(":")[0].split(",")[0];
+      const city = marker.label.split(/[,:;]/)[0];
       const coordinate = expectedCoordinates[city];
       if (!coordinate) return false;
       const [latitude, longitude] = coordinate;
@@ -1167,17 +1320,17 @@ try {
       )
         return true;
       return (
-        marker.width >= 5 &&
-        marker.height >= 5 &&
-        marker.width <= 21 &&
-        marker.height <= 21
+        marker.width >= 12 &&
+        marker.height >= 12 &&
+        marker.width <= 36 &&
+        marker.height <= 36
       );
     });
-    const hasInactiveState = state.markerNodes.some(
-        (marker) =>
-          marker.classes.includes("validator-marker--inactive") &&
-          marker.fill === "#ef6c65",
-      );
+    const hasMixedSegments = state.markerNodes.some(
+      (marker) =>
+        marker.label.includes("1 active, 1 inactive") &&
+        marker.background.includes("conic-gradient"),
+    );
     const coreMarkersInside = state.markerNodes
       .filter((marker) => /^(?:<Bratislava>|Greenwich|Kansas City),/.test(marker.label))
       .every(
@@ -1196,7 +1349,7 @@ try {
       !coreMarkersInside ||
       !geographyValid(state) ||
       !hasCompactMarkers ||
-      !hasInactiveState ||
+      !hasMixedSegments ||
       state.scrollWidth > state.width
     )
       throw new Error(
@@ -1385,25 +1538,127 @@ try {
     await delay(80);
     const { result: bubbleResult } = await call("Runtime.evaluate", {
       expression:
-        'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",radius=Number(/a([0-9.]+),/.exec(marker.getAttribute("d")||"")?.[1]);return{label,radius}}))',
+        'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",rect=marker.getBoundingClientRect();return{label,radius:rect.width/2,count:marker.querySelector(".validator-marker-number")?.textContent||""}}))',
       returnByValue: true,
     });
     const bubbles = JSON.parse(bubbleResult.value);
     const bubbleRadius = (count) =>
       bubbles.find((bubble) =>
-        bubble.label.startsWith(`Fixture bubble ${count}:`),
+        bubble.label.startsWith(`Fixture bubble ${count};`),
       )?.radius;
     const [r1, r2, r4, r9] = [1, 2, 4, 9].map(bubbleRadius);
     if (
       ![r1, r2, r4, r9].every(Number.isFinite) ||
-      Math.abs(r1 - 3) > 0.1 ||
-      Math.abs(r2 - 5) > 0.1 ||
-      Math.abs(r4 - 9) > 0.1 ||
-      Math.abs(r9 - 9) > 0.1
+      Math.abs(r1 - 6) > 0.1 ||
+      Math.abs(r2 - 6 * Math.sqrt(2)) > 0.15 ||
+      Math.abs(r4 - 12) > 0.1 ||
+      Math.abs(r9 - 18) > 0.1 ||
+      bubbles.find((bubble) => bubble.label.startsWith("Fixture bubble 1;"))?.count !== "" ||
+      bubbles.find((bubble) => bubble.label.startsWith("Fixture bubble 2;"))?.count !== "2" ||
+      bubbles.find((bubble) => bubble.label.startsWith("Fixture bubble 4;"))?.count !== "4" ||
+      bubbles.find((bubble) => bubble.label.startsWith("Fixture bubble 9;"))?.count !== "9"
     )
       throw new Error(
         `bubble size contract failed: ${JSON.stringify(bubbles)}`,
       );
+    if (width === 1280) {
+      await call("Runtime.evaluate", {
+        expression: `validatorMapController.update(${JSON.stringify(groupedStateNodes)})`,
+      });
+      await delay(80);
+      const { result: groupedStateResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const face=marker.querySelector(".validator-marker-face"),rect=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",radius:rect.width/2,count:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(face).backgroundImage}}))',
+        returnByValue: true,
+      });
+      const groupedState = JSON.parse(groupedStateResult.value);
+      const markerFor = (name) =>
+        groupedState.find((marker) => marker.label.startsWith(`${name},`));
+      const kansas = markerFor("Kansas City");
+      const london = markerFor("London");
+      if (
+        !kansas ||
+        !london ||
+        Math.abs(kansas.radius - 6 * Math.sqrt(2)) > 0.15 ||
+        Math.abs(london.radius - kansas.radius) > 0.1 ||
+        kansas.count !== "2" ||
+        london.count !== "2" ||
+        !kansas.label.includes("2 nodes; 2 active") ||
+        !london.label.includes("2 nodes; 1 active, 1 inactive") ||
+        !kansas.background.includes("conic-gradient") ||
+        !london.background.includes("conic-gradient")
+      )
+        throw new Error(
+          `grouped marker encoding failed: ${JSON.stringify(groupedState)}`,
+        );
+      await call("Runtime.evaluate", {
+        expression:
+          '(()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("London,"));marker?.focus();marker?.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));})()',
+      });
+      await delay(80);
+      const { result: londonPopupResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify({text:document.querySelector(".leaflet-popup-content")?.textContent||"",focused:document.activeElement?.getAttribute("aria-label")||""})',
+        returnByValue: true,
+      });
+      const londonPopup = JSON.parse(londonPopupResult.value);
+      if (
+        !londonPopup.focused.startsWith("London,") ||
+        !londonPopup.text.includes("Mixed") ||
+        !londonPopup.text.includes("2 nodes at this location") ||
+        !londonPopup.text.includes("1 active · 1 inactive") ||
+        !londonPopup.text.includes("london-nod") ||
+        !londonPopup.text.includes("Inactive") ||
+        !londonPopup.text.includes("Active")
+      )
+        throw new Error(
+          `mixed marker popup failed: ${JSON.stringify(londonPopup)}`,
+        );
+      await call("Runtime.evaluate", {
+        expression: `validatorMapController.update(${JSON.stringify([groupedStateNodes[2]])})`,
+      });
+      await delay(80);
+      const { result: reducedResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>({label:marker.getAttribute("aria-label")||"",count:marker.querySelector(".validator-marker-number")?.textContent||""})),countLabels:document.querySelectorAll(".validator-marker-number").length})',
+        returnByValue: true,
+      });
+      const reduced = JSON.parse(reducedResult.value);
+      if (
+        reduced.markers.length !== 1 ||
+        !reduced.markers[0].label.includes("London, United Kingdom; 1 node; 1 inactive") ||
+        reduced.markers[0].count !== "" ||
+        reduced.countLabels !== 0
+      )
+        throw new Error(
+          `marker refresh left stale composition DOM: ${JSON.stringify(reduced)}`,
+        );
+      await call("Runtime.evaluate", {
+        expression: `validatorMapController.update(${JSON.stringify(stateDistributionNodes)})`,
+      });
+      await delay(80);
+      const { result: distributionResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>({label:marker.getAttribute("aria-label")||"",count:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(marker.querySelector(".validator-marker-face")).backgroundImage})))',
+        returnByValue: true,
+      });
+      const distributions = JSON.parse(distributionResult.value);
+      const milan = distributions.find((marker) => marker.label.startsWith("Milan,"));
+      const paris = distributions.find((marker) => marker.label.startsWith("Paris,"));
+      if (
+        !milan ||
+        !paris ||
+        milan.count !== "2" ||
+        paris.count !== "4" ||
+        !milan.label.includes("1 validating, 1 inactive") ||
+        !paris.label.includes("2 active, 1 inactive, 1 unknown") ||
+        !milan.background.includes("conic-gradient") ||
+        !paris.background.includes("conic-gradient")
+      )
+        throw new Error(
+          `state distribution encoding failed: ${JSON.stringify(distributions)}`,
+        );
+    }
     await call("Runtime.evaluate", {
       expression: `validatorMapController.update(${JSON.stringify(stableNodes)})`,
     });
@@ -1633,15 +1888,15 @@ try {
       returnByValue: true,
     });
     const semantics = JSON.parse(semanticsResult.value);
-    for (const [city, stateLabel] of [
-      ["Bratislava", "Validating"],
-      ["Vienna", "Active"],
-      ["New York", "Inactive"],
-      ["Rome", "Unknown"],
+    for (const [city, stateSummary] of [
+      ["Bratislava", "1 validating"],
+      ["Vienna", "1 active"],
+      ["New York", "1 inactive"],
+      ["Rome", "1 unknown"],
     ]) {
       if (
         !semantics.some(
-          (label) => label.startsWith(`${city},`) && label.includes(stateLabel),
+          (label) => label.startsWith(`${city},`) && label.includes(stateSummary),
         )
       )
         throw new Error(
@@ -1663,7 +1918,7 @@ try {
         (label) =>
           label.startsWith("Prague,") &&
           label.includes(
-            "1 validating · 1 active · 1 inactive",
+            "1 validating, 1 active, 1 inactive",
           ),
       )
     )

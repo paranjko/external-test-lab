@@ -196,6 +196,13 @@ type ValidatorGroup = {
   validators: Array<Validator>,
 };
 
+type MarkerStateCounts = {
+  validating: number,
+  active: number,
+  inactive: number,
+  unknown: number,
+};
+
 type HTMLElement = any;
 type KeyboardEvent = { key: string };
 type RequestOptions = {
@@ -918,18 +925,80 @@ function markerStateLabel(state: MarkerState): string {
   }
 }
 
-function markerStateSummary(validators: Array<Validator>): string {
-  const counts: { [MarkerState]: number } = {
+const MARKER_STATE_ORDER: Array<MarkerState> = [
+  "validating",
+  "active",
+  "inactive",
+  "unknown",
+];
+
+const MARKER_STATE_COLORS: { [MarkerState]: string } = {
+  validating: "#78b83d",
+  active: "#f5a623",
+  inactive: "#ef6c65",
+  unknown: "#9aa0ad",
+};
+
+function markerStateCounts(validators: Array<Validator>): MarkerStateCounts {
+  const counts: MarkerStateCounts = {
     validating: 0,
     active: 0,
     inactive: 0,
     unknown: 0,
   };
   for (const validator of validators) counts[validator.markerState] += 1;
-  return (["validating", "active", "inactive", "unknown"]: Array<MarkerState>)
+  return counts;
+}
+
+function markerStateSummary(counts: MarkerStateCounts): string {
+  return MARKER_STATE_ORDER
     .filter((state) => counts[state] > 0)
     .map((state) => `${counts[state]} ${markerStateLabel(state).toLowerCase()}`)
     .join(" · ");
+}
+
+function markerGroupState(counts: MarkerStateCounts): {
+  state: MarkerState,
+  label: string,
+  mixed: boolean,
+} {
+  const states = MARKER_STATE_ORDER.filter((state) => counts[state] > 0);
+  return {
+    state: states[0] || "unknown",
+    label: states.length > 1 ? "Mixed" : markerStateLabel(states[0] || "unknown"),
+    mixed: states.length > 1,
+  };
+}
+
+function markerRadius(count: number): number {
+  // Radius grows with sqrt(count), therefore visual area is proportional to
+  // the represented node count while a large group cannot dominate the map.
+  return Math.max(6, Math.min(6 * Math.sqrt(Math.max(1, count)), 18));
+}
+
+function markerFill(counts: MarkerStateCounts, count: number): string {
+  let start = 0;
+  const slices = MARKER_STATE_ORDER.filter((state) => counts[state] > 0).map(
+    (state) => {
+      const end = start + (counts[state] / count) * 360;
+      const slice = `${MARKER_STATE_COLORS[state]} ${start.toFixed(3)}deg ${end.toFixed(3)}deg`;
+      start = end;
+      return slice;
+    },
+  );
+  return `conic-gradient(${slices.join(", ")})`;
+}
+
+function markerIcon(count: number, counts: MarkerStateCounts): any {
+  const radius = markerRadius(count);
+  const diameter = radius * 2;
+  const countText = count > 1 ? `<span class="validator-marker-number">${count}</span>` : "";
+  return L.divIcon({
+    className: "validator-marker",
+    html: `<span class="validator-marker-face" style="--validator-marker-fill: ${markerFill(counts, count)}">${countText}</span>`,
+    iconSize: [diameter, diameter],
+    iconAnchor: [radius, radius],
+  });
 }
 
 function renderHostState(card: HTMLElement, node: SiteNode): boolean {
@@ -1519,6 +1588,21 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     tooltipMarker?.closeTooltip();
     tooltipMarker = null;
   };
+  const configureMarkerElement = (marker: any, key: string, ariaLabel: string): void => {
+    const element = marker.getElement();
+    if (!element) return;
+    element.setAttribute("tabindex", "0");
+    element.setAttribute("role", "button");
+    element.setAttribute("aria-label", ariaLabel);
+    element.style.pointerEvents = "none";
+    if (element.dataset.validatorMapKeyboard === "true") return;
+    element.dataset.validatorMapKeyboard = "true";
+    element.addEventListener("keydown", (event: any) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openMarkerPopup(key, marker);
+    });
+  };
   // The transparent hit circles overlap by design. Capture only their browser
   // events before Leaflet dispatches to an arbitrary topmost SVG path, then
   // choose the closest visible marker ourselves. Controls remain controls.
@@ -1780,39 +1864,25 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     for (const [key, marker] of markerRegistry) {
       if (groups.has(key)) continue;
       if (openMarkerKey === key) map.closePopup();
-      if (marker.__countLabel) markers.removeLayer(marker.__countLabel);
       if (marker.__hitTarget) markers.removeLayer(marker.__hitTarget);
       markers.removeLayer(marker);
       markerRegistry.delete(key);
     }
     for (const [key, group] of groups) {
       const validators = group.validators;
-      const first = validators
-        .slice()
-        .sort((left, right) =>
-          `${left.geo.city}\u0000${left.geo.country}\u0000${left.ownerAddress}`.localeCompare(
-            `${right.geo.city}\u0000${right.geo.country}\u0000${right.ownerAddress}`,
-          ),
-        )[0];
       const count = validators.length;
-      const markerState: MarkerState = validators.some(
-        (validator) => validator.markerState === "inactive",
-      )
-        ? "inactive"
-        : validators.some((validator) => validator.markerState === "active")
-          ? "active"
-          : validators.some((validator) => validator.markerState === "validating")
-            ? "validating"
-            : "unknown";
-      const stateLabel = markerStateLabel(markerState);
-      const stateSummary = markerStateSummary(validators);
+      const stateCounts = markerStateCounts(validators);
+      const groupState = markerGroupState(stateCounts);
+      const markerState = groupState.state;
+      const stateLabel = groupState.label;
+      const stateSummary = markerStateSummary(stateCounts);
       const stateReasons = [
         ...new Set(validators.map((validator) => validator.stateReason)),
       ];
       const rows = validators
         .map(
           (v) =>
-            `<li><span>${escapeHtml(v.geo.resolvedIp || v.ip || "IP unavailable")}</span><span>${escapeHtml(v.ownerAddress.slice(0, 10))}</span><span>${escapeHtml(v.licenseCount)}</span></li>`,
+            `<li><span>${escapeHtml(v.geo.resolvedIp || v.ip || "IP unavailable")}</span><span>${escapeHtml(v.ownerAddress.slice(0, 10))}</span><span>${escapeHtml(v.licenseCount)}</span><span class="validator-map-member-state validator-map-status--${v.markerState}">${markerStateLabel(v.markerState)}</span></li>`,
         )
         .join("");
       const sources = [...new Set(validators.map((v) => v.geo.source))]
@@ -1842,36 +1912,22 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
           ),
         ),
       ];
-      const popupHtml = `<strong>${escapeHtml(group.label)}</strong><p class="status validator-map-status--${markerState}">${escapeHtml(
+      const statusClass = groupState.mixed
+        ? "validator-map-status--mixed"
+        : `validator-map-status--${markerState}`;
+      const nodeLabel = `${count} node${count === 1 ? "" : "s"}`;
+      const popupHtml = `<strong>${escapeHtml(group.label)}</strong><p class="status ${statusClass}">${escapeHtml(
         stateLabel,
-      )}</p><p>${escapeHtml(stateSummary)}</p><p>${escapeHtml(stateReasons.join(" · "))}</p><p>${count} validator${count === 1 ? "" : "s"} at this location</p><p>Location source: ${escapeHtml(sources)}</p><p>Raw position: ${escapeHtml(rawPositions.join("; "))}</p><p>Accuracy: ${escapeHtml(accuracy || "unknown")}${observed ? `; observed ${escapeHtml(observed)}` : ""}</p>${correction}<ul>${rows}</ul>`;
-      // A colocated marker is an aggregate, not a separate machine. Its radius
-      // grows linearly with the number of participants so a two-Host location
-      // is visibly twice the baseline size. Cap very large groups to preserve
-      // nearby markers and expose the exact count in the label and popup.
-      const radius = Math.min(2.5 * count, 9);
-      const color =
-        markerState === "validating"
-          ? "#78b83d"
-          : markerState === "active"
-            ? "#f5a623"
-            : markerState === "inactive" ? "#ef6c65" : "#9aa0ad";
-      const tooltip = `${group.label}: ${stateLabel}`;
-      const ariaLabel = `${tooltip}; ${stateSummary}; ${count} validator${
-        count === 1 ? "" : "s"
-      }`;
+      )}</p><p>${escapeHtml(nodeLabel)} at this location</p><p>${escapeHtml(stateSummary)}</p><p>${escapeHtml(stateReasons.join(" · "))}</p><p>Location source: ${escapeHtml(sources)}</p><p>Raw position: ${escapeHtml(rawPositions.join("; "))}</p><p>Accuracy: ${escapeHtml(accuracy || "unknown")}${observed ? `; observed ${escapeHtml(observed)}` : ""}</p>${correction}<ul>${rows}</ul>`;
+      const radius = markerRadius(count);
+      const tooltip = `${group.label}: ${nodeLabel} · ${stateSummary}`;
+      const ariaLabel = `${group.label}; ${nodeLabel}; ${stateSummary.replaceAll(" · ", ", ")}`;
       let marker: any = markerRegistry.get(key);
       if (!marker) {
-        marker = L.circleMarker([group.lat, group.lon], {
+        marker = L.marker([group.lat, group.lon], {
           pane: "validatorMarkers",
           interactive: false,
-          radius,
-          weight: 1,
-          color,
-          fillColor: color,
-          fillOpacity: 0.9,
-          opacity: 1,
-          className: `validator-marker validator-marker--${markerState}`,
+          icon: markerIcon(count, stateCounts),
           autoPan: container.clientWidth >= 500,
           autoPanPadding: popupAutoPanPadding(),
         })
@@ -1883,20 +1939,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
           });
         marker.__tooltip = tooltip;
         marker.__popupHtml = popupHtml;
-        marker
-          .on("add", () => {
-          const element = marker.getElement();
-          if (!element) return;
-          element.setAttribute("tabindex", "0");
-          element.setAttribute("role", "button");
-          element.setAttribute("pointer-events", "none");
-          element.addEventListener("keydown", (event: any) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            openMarkerPopup(key, marker);
-          });
-        })
-        .addTo(markers);
+        marker.addTo(markers);
         const hitTarget = L.circleMarker([group.lat, group.lon], {
           pane: "validatorHits",
           radius: 14,
@@ -1915,8 +1958,10 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         markerRegistry.set(key, marker);
       } else {
         marker.setLatLng([group.lat, group.lon]);
-        marker.setStyle({ radius, color, fillColor: color });
+        marker.setIcon(markerIcon(count, stateCounts));
         marker.__hitTarget?.setLatLng([group.lat, group.lon]);
+        const boundTooltip = marker.getTooltip();
+        if (boundTooltip) boundTooltip.options.offset = [0, -radius];
         if (marker.__tooltip !== tooltip) {
           marker.setTooltipContent(tooltip);
           marker.__tooltip = tooltip;
@@ -1926,42 +1971,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
           marker.__popupHtml = popupHtml;
         }
       }
-      const element = marker.getElement();
-      if (element) {
-        element.setAttribute("tabindex", "0");
-        element.setAttribute("role", "button");
-        element.setAttribute("pointer-events", "none");
-        element.classList.remove(
-          "validator-marker--inactive",
-          "validator-marker--active",
-          "validator-marker--validating",
-        );
-        element.classList.add("validator-marker", `validator-marker--${markerState}`);
-        element.setAttribute("aria-label", ariaLabel);
-      }
-      let countLabel: any = marker.__countLabel;
-      if (count > 1) {
-        if (!countLabel) {
-          countLabel = L.marker([group.lat, group.lon], {
-            interactive: false,
-            keyboard: false,
-            icon: L.divIcon({
-              className: "validator-marker-count",
-              html: String(count),
-              iconSize: [18, 18],
-              iconAnchor: [9, 9],
-            }),
-          }).addTo(markers);
-          marker.__countLabel = countLabel;
-        } else {
-          countLabel.setLatLng([group.lat, group.lon]);
-          const labelElement = countLabel.getElement();
-          if (labelElement) labelElement.textContent = String(count);
-        }
-      } else if (countLabel) {
-        markers.removeLayer(countLabel);
-        marker.__countLabel = null;
-      }
+      configureMarkerElement(marker, key, ariaLabel);
     }
     container.dataset.validatorCount = String(validatorCount);
     container.dataset.markerCount = String(groups.size);
