@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=../04-ops/epoch-millis.sh
+source "$ROOT/04-ops/epoch-millis.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 port="$((20000 + RANDOM % 10000))"
@@ -13,7 +15,8 @@ node -e '
     calls+=1;
     const stale=calls===1;
     const oldCompletion=calls<=2;
-    const unordered=calls===3;
+    const futureCompletion=calls===3;
+    const unordered=calls===4;
     const checked=stale ? new Date(Date.now()-60000) : new Date();
     checked.setMilliseconds(0);
     const body={
@@ -22,13 +25,14 @@ node -e '
       safe_generation:"sha256:"+"a".repeat(64),arrival_height:100,
       permit_height:unordered?99:101,dispatch_height:101,response_height:102,
       // The second sample is fresh as a file, but its completion predates the
-      // verification. The third has unordered lifecycle heights; only the
-      // fourth sample proves a newly executed, causally ordered canary.
-      completion_finished_ms:oldCompletion ? Date.now()-60000 : Date.now()
+      // verification. The third has a nanosecond-scale future timestamp, the
+      // fourth has unordered lifecycle heights, and only the fifth sample
+      // proves a newly executed, causally ordered millisecond receipt.
+      completion_finished_ms:oldCompletion ? Date.now()-60000 : (futureCompletion ? Date.now()*1000000 : Date.now())
     };
     response.writeHead(200,{"content-type":"application/json"});
     response.end(JSON.stringify(body));
-    if(calls>=4) fs.writeFileSync(process.argv[2],String(calls));
+    if(calls>=5) fs.writeFileSync(process.argv[2],String(calls));
   }).listen(Number(process.argv[1]),"127.0.0.1");
 ' "$port" "$tmp/calls" &
 server_pid=$!
@@ -38,12 +42,12 @@ for _ in $(seq 1 30); do
   sleep 0.1
 done
 
-started_ms="$(date +%s%3N)"
+started_ms="$(epoch_millis)"
 "$ROOT/04-ops/wait-public-traffic-readiness.sh" \
   "http://127.0.0.1:$port" "$tmp/receipt.json" "$started_ms" 30 10 0.1
 jq -e '.readiness == "TRAFFIC_READY" and (.checked_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= (($started / 1000) | floor)' \
   --argjson started "$started_ms" "$tmp/receipt.json" >/dev/null
-[[ "$(cat "$tmp/calls")" -ge 4 ]]
+[[ "$(cat "$tmp/calls")" -ge 5 ]]
 
 kill "$server_pid" 2>/dev/null || true
 wait "$server_pid" 2>/dev/null || true
@@ -64,7 +68,7 @@ for _ in $(seq 1 30); do
   curl -sS --max-time 1 "http://127.0.0.1:$delayed_port/ready" >/dev/null 2>&1 && break
   sleep 0.1
 done
-delayed_started_ms="$(date +%s%3N)"
+delayed_started_ms="$(epoch_millis)"
 if "$ROOT/04-ops/wait-public-traffic-readiness.sh" \
   "http://127.0.0.1:$delayed_port" "$tmp/delayed.json" "$delayed_started_ms" 30 1 0.1; then
   echo 'delayed readiness response exceeded configured deadline' >&2

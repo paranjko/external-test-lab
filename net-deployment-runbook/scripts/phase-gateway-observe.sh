@@ -36,11 +36,11 @@ fi
 step 'Prove authenticated chain-accounted inference'
 verify_evidence="${GDC_GATEWAY_VERIFY_EVIDENCE_DIR:-$GDC_HOME/runs/${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}-gateway-verify}"
 mkdir -p "$verify_evidence"
-verification_started_ms="$(date +%s%3N)"
+verification_started_ms="$(epoch_millis)"
 verification_deadline_ms="$(( verification_started_ms + ${sla%s} * 1000 ))"
 remaining_verification_seconds() {
   local phase="$1" now_ms remaining_ms
-  now_ms="$(date +%s%3N)"
+  now_ms="$(epoch_millis)"
   remaining_ms=$(( verification_deadline_ms - now_ms ))
   # Use whole seconds rounded down so no child can run beyond the one
   # externally advertised verification SLA.

@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=epoch-millis.sh
+source "$ROOT/04-ops/epoch-millis.sh"
 
 usage() {
   printf 'Usage: %s API_URL CLIENT_KEY EVIDENCE_DIR OUTPUT_JSON [TIMEOUT_SECONDS]\n' "$0" >&2
@@ -76,7 +78,7 @@ record_attempt() {
 
 while (( SECONDS < deadline )); do
   attempt=$((attempt + 1))
-  started_ms="$(date +%s%3N)"
+  started_ms="$(epoch_millis)"
   status_file="$evidence_dir/status-${attempt}.json"
   completion_file="$evidence_dir/completion-${attempt}.json"
   status_http=0
@@ -101,7 +103,7 @@ while (( SECONDS < deadline )); do
   if [[ "$status_rc" == 0 && "$status_http" == 200 ]] \
     && ! "$ROOT/04-ops/gateway-status-routable.sh" <"$status_file" >/dev/null 2>&1; then
     last_reason='runtime_not_routable'
-    elapsed_ms=$(( $(date +%s%3N) - started_ms ))
+    elapsed_ms=$(( $(epoch_millis) - started_ms ))
     record_attempt "${status_http:-0}" 0 false false "$last_reason" "$elapsed_ms" "$status_rc" 0 'not_sent_runtime_not_routable' 'not_sent'
     rm -f "$status_stderr" "$completion_stderr" "$completion_headers"
     printf 'WAIT inference attempt=%s reason=%s status_ready=false\n' "$attempt" "$last_reason" >&2
@@ -118,7 +120,7 @@ while (( SECONDS < deadline )); do
   # which leaves an in-flight request in the gateway and makes following
   # probes report a misleading capacity failure.
   payload='{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Reply with exactly: GDC_OK"}],"max_tokens":8,"temperature":0}'
-  completion_deadline_ms="$(( $(date +%s%3N) + request_timeout_seconds * 1000 ))"
+  completion_deadline_ms="$(( $(epoch_millis) + request_timeout_seconds * 1000 ))"
   set +e
   completion_http="$(curl -sS --connect-timeout 10 --max-time "$request_timeout_seconds" -D "$completion_headers" -o "$completion_file" -w '%{http_code}' \
     "$api_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
@@ -138,7 +140,7 @@ while (( SECONDS < deadline )); do
   fi
 
   if [[ "$completion_rc" == 0 && "$completion_http" == 200 ]] && jq -e '.choices[0].message.content | type == "string"' "$completion_file" >/dev/null 2>&1; then
-    elapsed_ms=$(( $(date +%s%3N) - started_ms ))
+    elapsed_ms=$(( $(epoch_millis) - started_ms ))
     record_attempt "${status_http:-0}" "${completion_http:-0}" "$status_ready" true 'completion_succeeded' "$elapsed_ms" "$status_rc" "$completion_rc" "$admission" "$completion_error_code"
     jq . "$completion_file" >"$output_json"
     jq -n --argjson attempts "$attempt" --arg verdict PASS --argjson last_status "$status_http" \
@@ -157,7 +159,7 @@ while (( SECONDS < deadline )); do
   else
     last_reason='invalid_completion'
   fi
-  elapsed_ms=$(( $(date +%s%3N) - started_ms ))
+  elapsed_ms=$(( $(epoch_millis) - started_ms ))
   record_attempt "${status_http:-0}" "${completion_http:-0}" "$status_ready" false "$last_reason" "$elapsed_ms" "$status_rc" "$completion_rc" "$admission" "$completion_error_code"
   rm -f "$status_file" "$completion_file" "$status_stderr" "$completion_stderr" "$completion_headers"
   printf 'WAIT inference attempt=%s reason=%s status_ready=%s\n' "$attempt" "$last_reason" "$status_ready" >&2

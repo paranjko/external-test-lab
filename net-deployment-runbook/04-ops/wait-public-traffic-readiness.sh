@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# shellcheck source=epoch-millis.sh
+source "$(dirname "${BASH_SOURCE[0]}")/epoch-millis.sh"
+
 site_url="${1:?site URL is required}"
 output_file="${2:?output file is required}"
 verification_started_ms="${3:?verification start timestamp is required}"
@@ -30,12 +33,12 @@ curl_error="$(mktemp)"
 trap 'rm -f "$curl_error"' EXIT
 last_curl_exit=0
 last_curl_detail=''
-deadline_ms=$(( $(date +%s%3N) + timeout_seconds * 1000 ))
+deadline_ms=$(( $(epoch_millis) + timeout_seconds * 1000 ))
 while :; do
-  remaining_ms=$((deadline_ms - $(date +%s%3N)))
+  remaining_ms=$((deadline_ms - $(epoch_millis)))
   (( remaining_ms > 0 )) || break
   request_timeout_seconds="$(awk -v milliseconds="$remaining_ms" 'BEGIN { printf "%.3f", milliseconds / 1000 }')"
-  canary_url="${site_url%/}/status/gateway-health?gdc_canary=$(date +%s%3N)-$$-${RANDOM}"
+  canary_url="${site_url%/}/status/gateway-health?gdc_canary=$(epoch_millis)-$$-${RANDOM}"
   set +e
   curl -fsS --connect-timeout "$request_timeout_seconds" --max-time "$request_timeout_seconds" "$canary_url" >"$output_file" 2>"$curl_error"
   canary_rc=$?
@@ -57,6 +60,9 @@ while :; do
     and .permit_height <= .dispatch_height
     and .dispatch_height <= .response_height
     and (.completion_finished_ms | type == "number" and . >= $started_ms)
+    # A producer using nanoseconds must not make an old receipt look newer than
+    # this verification. Allow the current partial second, but no future unit.
+    and (.completion_finished_ms <= (((now + 1) * 1000) | floor))
     # checked_at is a second-resolution public timestamp. Accept the second
     # containing the millisecond-resolution verification start.
     and ((.checked_at | epoch) >= (($started_ms / 1000) | floor))
@@ -64,7 +70,7 @@ while :; do
   ' "$output_file" >/dev/null; then
     exit 0
   fi
-  remaining_ms=$((deadline_ms - $(date +%s%3N)))
+  remaining_ms=$((deadline_ms - $(epoch_millis)))
   (( remaining_ms > 0 )) || break
   sleep_seconds="$(awk -v poll="$poll_seconds" -v milliseconds="$remaining_ms" 'BEGIN { remaining = milliseconds / 1000; print (poll < remaining ? poll : remaining) }')"
   sleep "$sleep_seconds"

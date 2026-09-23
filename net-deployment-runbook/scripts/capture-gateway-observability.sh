@@ -92,7 +92,7 @@ jq --argjson routable "$gateway_status_routable" '
      chain_phase:(.runtime.chain_phase // .chain_phase // null), requests_blocked:(.runtime.requests_blocked // .requests_blocked // false)}])}
 ' <<<"$gateway_status" >"$out/gateway-status.json"
 
-public_health="$(curl_dns_retry curl -fsS --connect-timeout 5 --max-time 15 "https://$SITE_HOST/status/gateway-health?gdc_canary=$(date +%s%3N)")"
+public_health="$(curl_dns_retry curl -fsS --connect-timeout 5 --max-time 15 "https://$SITE_HOST/status/gateway-health?gdc_canary=$(epoch_millis)")"
 printf '%s\n' "$public_health" | jq . >"$out/public-health-raw.json"
 printf '%s\n' "$public_health" | jq -e '
     def iso_epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
@@ -102,8 +102,9 @@ printf '%s\n' "$public_health" | jq -e '
     and (.checked_at | iso_epoch > 0)
     and (.curl_exit | type == "number")
     and (.http_status | type == "number")
-    and (.latency_ms | type == "number")
+    and (.latency_ms | type == "number" and . >= 0 and . <= 30000)
     and (.completion_finished_ms | type == "number")
+    and (.completion_finished_ms == 0 or (.completion_finished_ms | tostring | test("^[0-9]{13}$")))
     and (.reason | type == "string")
     and (
       if .state == "RECOVERING" then

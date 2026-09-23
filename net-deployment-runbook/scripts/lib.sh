@@ -19,6 +19,9 @@ init_gdc_paths() {
 
 init_gdc_paths
 
+# shellcheck source=../04-ops/epoch-millis.sh
+source "$ROOT/04-ops/epoch-millis.sh"
+
 is_safe_integer() {
   local value="$1" maximum=9223372036854775807 index value_digit maximum_digit
   [[ "$value" =~ ^(0|[1-9][0-9]*)$ ]] || return 1

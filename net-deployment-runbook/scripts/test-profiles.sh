@@ -77,7 +77,7 @@ grep -Fq 'inventory_public_edge=' "$ROOT/gdc.sh"
 grep -Fq 'transient DNS, TLS or browser failure' "$ROOT/scripts/phase-reset.sh"
 grep -Fq '"admission","admission_id","arrival_height","checked_at","completion_finished_ms","curl_exit","dispatch_height","http_status","latency_ms","permit_height","readiness","reason","response_height","safe_generation","state"' "$ROOT/scripts/verify-public-homepage.sh"
 grep -Fq 'public gateway health response has an invalid schema' "$ROOT/scripts/verify-public-homepage.sh"
-grep -Fq 'gdc_canary=$(date +%s%3N)' "$ROOT/scripts/capture-gateway-observability.sh"
+grep -Fq 'gdc_canary=$(epoch_millis)' "$ROOT/scripts/capture-gateway-observability.sh"
 grep -Fq 'handle /status/gateway-health.prom {' "$ROOT/04-ops/Caddyfile"
 grep -Fq 'job_name: gateway-readiness' "$ROOT/04-ops/render-ops.sh"
 grep -Fq 'GdcGatewayTrafficUnavailable' "$ROOT/04-ops/prometheus/alerts.yml"
@@ -167,6 +167,7 @@ grep -Fq '.runtime.requests_blocked // .requests_blocked' "$ROOT/scripts/phase-o
 grep -Fq "gateway_ingress_url='http://127.0.0.1:8000/health'" "$ROOT/scripts/phase-ops.sh"
 ! grep -Fq 'gateway_ingress_host=' "$ROOT/scripts/phase-ops.sh"
 grep -Fq '/usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh"
+grep -Fq '"$HERE/epoch-millis.sh" "$DEST/epoch-millis.sh"' "$ROOT/04-ops/install-ops.sh"
 reconciler_install_block="$(awk '
   /# Upgrade the reconciler executable, unit and environment as one gateway/ { capture=1 }
   capture { print }
@@ -174,6 +175,7 @@ reconciler_install_block="$(awk '
 ' "$ROOT/04-ops/install-ops.sh")"
 grep -Fq 'if [[ "$COMPONENT" == gateway ]]; then' <<<"$reconciler_install_block"
 grep -Fq 'gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' <<<"$reconciler_install_block"
+grep -Fq 'epoch-millis.sh" /usr/local/lib/gonka-devnet/epoch-millis.sh' <<<"$reconciler_install_block"
 grep -Fq 'gdc-gateway-escrow-reconciler.timer" /etc/systemd/system/gdc-gateway-escrow-reconciler.timer' <<<"$reconciler_install_block"
 [[ "$(grep -Fc 'gateway-escrow-reconciler.sh" /usr/local/lib/gonka-devnet/gateway-escrow-reconciler.sh' "$ROOT/04-ops/install-ops.sh")" == 1 ]]
 [[ "$(grep -Fc 'systemctl enable --now gdc-gateway-escrow-reconciler.timer' "$ROOT/04-ops/install-ops.sh")" == 0 ]]

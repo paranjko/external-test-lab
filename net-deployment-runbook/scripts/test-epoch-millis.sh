@@ -24,6 +24,16 @@ legacy_started=1700000000123456789
 legacy_finished=1700000000139456789
 [[ "$((legacy_finished - legacy_started))" == 16000000 ]]
 
+# Production callers must all use the shared conversion instead of recreating
+# the non-portable width format that caused the live readiness failure.
+while IFS= read -r operational_script; do
+  if grep -Fq 'date +%s%3N' "$operational_script"; then
+    printf 'non-portable millisecond clock remains in %s\n' "$operational_script" >&2
+    exit 1
+  fi
+done < <(find "$ROOT/04-ops" "$ROOT/scripts" -type f -name '*.sh' \
+  ! -name 'test-epoch-millis.sh' -print)
+
 # shellcheck source=../04-ops/epoch-millis.sh
 source "$ROOT/04-ops/epoch-millis.sh"
 
