@@ -224,6 +224,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@$(MAKE) test-gateway-site-state
 	@$(MAKE) test-site-release-paths test-site-release-verifier test-site-publisher
 	@node ./scripts/test-software-versions.js
+	@./scripts/test-epoch-millis.sh
 	@./scripts/test-gateway-health-probe.sh
 	@./scripts/test-public-traffic-readiness.sh
 	@./scripts/test-gateway-admission-deployment.sh
