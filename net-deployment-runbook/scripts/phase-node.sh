@@ -396,35 +396,28 @@ fi
 REMOTE
   }
 
-  # Reset is symmetric only for a validator key the chain does not know.
-  # Decide before anything is stopped or deleted: a registered key is never
-  # deleted, on the Host or locally; an unregistered one is archived and
-  # cleared below so the next JOIN starts as new; an unanswered lookup keeps
-  # everything. Without a local cold account there is nothing to look up.
+  # The chain is asked only so the notice can name the way back; the answer decides nothing.
   registration="$(participant_registration "$NODE")"
   layout=none
   stamp=''
-  # The chain is the only authority on whether a consensus key is still bound
-  # to a participant, so it alone decides whether key material may be
-  # destroyed. A local classification of partial_identity says the bookkeeping
-  # of a JOIN was interrupted; it never authorises a delete on its own, and an
-  # unanswered lookup retains everything whatever the local state looks like.
-  [[ "$registration" != absent ]] || discard_identity=true
-  # Read the layout even when the chain cannot be asked: a first-generation
-  # Host keeps its signer below the deployment root that reset removes, and
-  # capture retains the signing state, never the key.
+  discard_identity=true
   layout="$(host_identity_layout "$NODE")"
-  if [[ "$registration" != absent ]]; then
-    case "$layout" in
-      v1) die "$NODE keeps its signer below the deployment root that reset removes, and its participant registration is $registration; create the validator archive with gdc host backup and rerun reset when the public API confirms the key is unregistered; no reset was performed" ;;
-      unknown) die "$NODE identity layout could not be read while its participant registration is $registration; no reset was performed" ;;
-    esac
-  fi
+  case "$layout" in
+    unknown) die "$NODE identity layout could not be read; no reset was performed" ;;
+  esac
+  case "$registration" in
+    registered)
+      printf 'NOTICE %s participant is registered on chain with the signer key this reset removes; the next JOIN with the cold mnemonic rebinds the participant to a new key, or --restore brings this key back from the validator archive\n' "$NODE" ;;
+    absent) ;;
+    unknown:no_cold_account)
+      printf 'NOTICE %s has no local cold account, so the chain was not asked about its participant; keep the validator archive until a JOIN completes\n' "$NODE" ;;
+    unknown:*)
+      printf 'NOTICE %s participant registration could not be read (%s); keep the validator archive until a JOIN completes\n' "$NODE" "${registration#unknown:}" ;;
+  esac
   step "Reset $NODE deployment state and remove deployed containers"
   bash "$ROOT/scripts/same-host-restore.sh" capture "$NODE"
-  if [[ "$discard_identity" == true && "$layout" != none ]]; then
-    # Archive before the deployment root goes: a v1 signer lives inside it.
-    # The stable v2 roots survive an ordinary reset, so remove them here.
+  if [[ "$layout" != none ]]; then
+    # Archive first; a reset that cannot archive the key does not remove it.
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     ssh -T "$NODE" "bash -s gdc-identity-discard '$NODE' '$stamp'" <<'REMOTE'
 set -Eeuo pipefail
@@ -438,45 +431,24 @@ members=()
 install -d -m 0700 "/srv/dai/rejoin/$node"
 tar -C /srv/dai -cf "/srv/dai/rejoin/$node/discarded-$stamp.tar" "${members[@]}"
 chmod 0600 "/srv/dai/rejoin/$node/discarded-$stamp.tar"
+tar -tf "/srv/dai/rejoin/$node/discarded-$stamp.tar" >/dev/null
 rm -rf "/srv/dai/identity/$node" "/srv/dai/signer/$node"
 REMOTE
   fi
   # The public edge is an OPS-owned service. Resetting its validator must not
   # also remove the Caddy instance that owns the public site, API and Grafana.
   reset_remote_host "$NODE" "$discard_identity"
-  # The identity record and the cold account are moved aside rather than
-  # deleted, by the discard below; only the joined marker goes here.
   [[ ! -e "$local_joined" ]] || rm -f -- "$local_joined"
-  if [[ "$discard_identity" == true ]]; then
-    printf 'READY removed incomplete local and remote identity state for %s\n' "$NODE"
-  fi
-  # Why an identity is still on the Host is decided here and needed by the
-  # next command, which runs as its own invocation and reports on its own.
-  # Without this the operator reads "the Host holds a validator identity" with
-  # no way to tell a key the chain still knows from a lookup nobody answered.
   record_reset_verdict "$NODE" "$registration" "$layout" "$discard_identity"
-  case "$registration" in
-    absent)
-      [[ -n "$stamp" ]] || stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-      discarded="$(discard_local_identity "$NODE" "$stamp")"
-      if [[ "$layout" != none ]]; then
-        printf 'PASS %s identity discarded: the participant is not registered on chain; %s local file(s) moved to state/recovery-partial-%s, Host identity archived under rejoin/%s/discarded-%s.tar and removed; the next JOIN starts as new\n' \
-          "$NODE" "$discarded" "$stamp" "$NODE" "$stamp"
-      else
-        printf 'PASS %s identity discarded: the participant is not registered on chain; %s local file(s) moved to state/recovery-partial-%s, the Host held no validator identity; the next JOIN starts as new\n' \
-          "$NODE" "$discarded" "$stamp"
-      fi
-      ;;
-    registered)
-      printf 'READY %s participant is registered on chain; identity and signer are retained on the Host and locally; recover with gdc host join --restore\n' "$NODE"
-      ;;
-    unknown:no_cold_account)
-      printf 'READY %s has no local cold account, so the chain could not be asked about its participant; identity and signer are retained; recover with gdc host join --restore or restore the operator account first\n' "$NODE"
-      ;;
-    unknown:*)
-      printf 'READY %s participant registration is unknown (%s); identity and signer are retained; rerun reset when the public API answers to discard an unregistered identity\n' "$NODE" "${registration#unknown:}"
-      ;;
-  esac
+  [[ -n "$stamp" ]] || stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  discarded="$(discard_local_identity "$NODE" "$stamp")"
+  if [[ "$layout" != none ]]; then
+    printf 'PASS %s identity cleared: %s local file(s) moved to state/recovery-partial-%s, Host identity archived under rejoin/%s/discarded-%s.tar and removed; the next JOIN starts as new\n' \
+      "$NODE" "$discarded" "$stamp" "$NODE" "$stamp"
+  else
+    printf 'PASS %s identity cleared: %s local file(s) moved to state/recovery-partial-%s, the Host held no validator identity; the next JOIN starts as new\n' \
+      "$NODE" "$discarded" "$stamp"
+  fi
   # The operator recovery archive deliberately lives at the data root rather
   # than inside the reset node directory. Confirm that a reset retained it,
   # without logging the archive's potentially private local path.
