@@ -7,7 +7,7 @@ MODE="${2:-}"
 [[ -f "$PROFILE" ]] || { echo "AMD MLNode profile is missing: $PROFILE" >&2; exit 2; }
 [[ -z "$MODE" || "$MODE" == --publish || "$MODE" == --ci-publish || "$MODE" == --plan ]] || { echo 'usage: build-amd-mlnode.sh [profile.json] [--publish|--ci-publish|--plan]' >&2; exit 2; }
 
-for tool in jq git docker; do command -v "$tool" >/dev/null || { echo "required tool is missing: $tool" >&2; exit 2; }; done
+for tool in jq git docker python3; do command -v "$tool" >/dev/null || { echo "required tool is missing: $tool" >&2; exit 2; }; done
 jq -e '
   .schema_version == 1 and .kind == "external-test-lab-amd-mlnode-build" and .status == "experimental" and
   .platform == "linux/amd64" and .accelerator.vendor == "amd" and .accelerator.architecture == "gfx1201" and
@@ -15,7 +15,11 @@ jq -e '
   .sources.gonka.submodules.gorilla.path == "mlnode/packages/train/third_party/gorilla" and
   (.sources.gonka.submodules.gorilla.commit | test("^[0-9a-f]{40}$")) and
   (.sources.vllm.repository | startswith("https://github.com/")) and (.sources.vllm.commit | test("^[0-9a-f]{40}$")) and
-  (.base_image | test("@sha256:[0-9a-f]{64}$")) and (.output_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+$"))
+  (.base_image | test("@sha256:[0-9a-f]{64}$")) and
+  .attention_backend == "ROCM_ATTN" and
+  (.output_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+$")) and
+  (.published_image == "" or
+    (.published_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$")))
 ' "$PROFILE" >/dev/null || { echo 'AMD MLNode profile is invalid' >&2; exit 2; }
 
 gonka_repository="$(jq -r .sources.gonka.repository "$PROFILE")"
@@ -27,17 +31,20 @@ vllm_commit="$(jq -r .sources.vllm.commit "$PROFILE")"
 artifact_repository="https://github.com/paranjko/external-test-lab"
 base_image="$(jq -r .base_image "$PROFILE")"
 output_image="$(jq -r .output_image "$PROFILE")"
+published_image="$(jq -r .published_image "$PROFILE")"
+attention_backend="$(jq -r .attention_backend "$PROFILE")"
 vllm_image="gdc-amd-vllm:${vllm_commit:0:12}-gfx1201"
 
 if [[ "$MODE" == --plan ]]; then
   printf 'PLAN source.gonka=%s@%s\n' "$gonka_repository" "$gonka_commit"
   printf 'PLAN source.gonka.submodule=%s@%s\n' "$gonka_gorilla_path" "$gonka_gorilla_commit"
   printf 'PLAN source.vllm=%s@%s\n' "$vllm_repository" "$vllm_commit"
-  printf 'PLAN base=%s\nPLAN output=%s\n' "$base_image" "$output_image"
+  printf 'PLAN attention_backend=%s\n' "$attention_backend"
+  printf 'PLAN base=%s\nPLAN output=%s\nPLAN published=%s\n' "$base_image" "$output_image" "$published_image"
   exit 0
 fi
 
-build_root="$(mktemp -d /tmp/gdc-amd-mlnode.XXXXXX)"
+build_root="$(mktemp -d "${TMPDIR:-/tmp}/gdc-amd-mlnode.XXXXXX")"
 cleanup() { rm -rf -- "$build_root"; }
 trap cleanup EXIT
 checkout_exact() {
@@ -59,6 +66,12 @@ git -C "$build_root/gonka" submodule update --init --recursive --depth 1 -- "$go
   echo "Gonka Gorilla submodule is incomplete: $gonka_gorilla_path" >&2
   exit 1
 }
+runner_path="$build_root/gonka/mlnode/packages/api/src/api/inference/vllm/runner.py"
+adapter_path="$build_root/gonka/mlnode/.gdc-build/adapt-mlnode-rocm-runner.py"
+mkdir -p "$(dirname "$adapter_path")"
+cp "$ROOT/images/adapt-mlnode-rocm-runner.py" "$adapter_path"
+cp "$ROOT/images/check-mlnode-rocm-runner.py" "$(dirname "$adapter_path")/check-mlnode-rocm-runner.py"
+python3 "$adapter_path" "$runner_path"
 
 docker buildx build --load --platform linux/amd64 --target final \
   --build-arg REMOTE_VLLM=0 \
@@ -80,6 +93,11 @@ docker buildx build --load --platform linux/amd64 \
   --tag "$output_image" \
   --file "$ROOT/images/Dockerfile.mlnode-rocm" "$build_root/gonka/mlnode"
 
+# These CPU-safe smokes execute the adapted pinned runner and the pinned vLLM
+# parser in the produced image. Hosted publication must not precede them.
+docker run --rm --entrypoint /app/packages/api/.venv/bin/python "$output_image" -c 'import api.app; import vllm; print("MLNode API import passed")'
+docker run --rm --entrypoint /app/packages/api/.venv/bin/python "$output_image" /usr/local/bin/check-mlnode-rocm-runner.py
+
 # Hosted CI publishes a source-bound image but cannot qualify an AMD device.
 # GDC will qualify the published digest on the actual AMD Host before it can
 # deploy an MLNode.
@@ -98,7 +116,6 @@ kfd_gid="$(stat -c '%g' /dev/kfd)"
 render_gid="$(stat -c '%g' "/dev/dri/$render_node")"
 docker run --rm --device /dev/kfd --device "/dev/dri/$render_node" --group-add "$kfd_gid" --group-add "$render_gid" \
   --entrypoint python3 "$output_image" -c 'import torch; assert torch.version.hip; assert torch.cuda.is_available(); import vllm; print(torch.version.hip)'
-docker run --rm --entrypoint /app/packages/api/.venv/bin/python "$output_image" -c 'import api.app; import vllm; print("MLNode API import passed")'
 docker image inspect "$output_image" >/dev/null
 printf 'PASS AMD MLNode artifact qualified locally: %s\n' "$output_image"
 
