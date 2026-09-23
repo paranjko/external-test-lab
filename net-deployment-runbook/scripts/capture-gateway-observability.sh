@@ -8,6 +8,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
+# shellcheck source=epoch-millis.sh
+source "$ROOT/scripts/epoch-millis.sh"
 source "$ROOT/scripts/host-sync-verdict.sh"
 load_project
 load_public_observability_hosts

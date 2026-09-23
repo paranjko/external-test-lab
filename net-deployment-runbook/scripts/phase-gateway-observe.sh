@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
+# shellcheck source=epoch-millis.sh
+source "$(dirname "$0")/epoch-millis.sh"
 load_project
 
 action="${1:-}"
