@@ -1524,7 +1524,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const markerRegistry: Map<string, any> = new Map();
   let latestMapNodes: Array<SiteNode> = observedNodes;
   let openMarkerKey: ?string;
-  let popupMode: ?("hover" | "pinned");
+  let popupMode: ?("hover" | "click" | "pinned");
   let hoverTooltip: ?HTMLElement;
   let resizeFrame: ?number;
   const removeHoverTooltip = (): void => {
@@ -1550,7 +1550,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     tooltip.style.left = `${left}px`;
     tooltip.style.top = `${top}px`;
   };
-  const showHoverTooltip = (key: string, marker: any): void => {
+  const showMarkerDetail = (key: string, marker: any, pinned: boolean = false): void => {
     const popup = marker.getPopup();
     const content = String(marker.__popupHtml || popup?.getContent?.() || "");
     if (!content) return;
@@ -1565,18 +1565,37 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     const tooltip = hoverTooltip;
     if (!tooltip) return;
     tooltip.dataset.markerKey = key;
+    tooltip.classList.toggle("is-pinned", pinned);
+    tooltip.setAttribute("role", pinned ? "dialog" : "tooltip");
     tooltip.innerHTML = content;
+    if (pinned) {
+      const closeButton = document.createElement("button");
+      closeButton.type = "button";
+      closeButton.className = "validator-map-tooltip-close";
+      closeButton.setAttribute("aria-label", "Close validator details");
+      closeButton.textContent = "×";
+      closeButton.addEventListener("click", () => {
+        if (popupMode !== "click" || openMarkerKey !== key) return;
+        removeHoverTooltip();
+        openMarkerKey = null;
+        popupMode = null;
+        restoreWorld();
+      });
+      tooltip.prepend(closeButton);
+    }
     positionHoverTooltip(marker);
   };
-  const refreshHoverTooltip = (): void => {
-    if (popupMode !== "hover" || !openMarkerKey) return;
-    const marker = markerRegistry.get(openMarkerKey);
-    if (marker) positionHoverTooltip(marker);
+  const refreshMarkerDetail = (): void => {
+    const key = openMarkerKey;
+    if (!popupMode || !key) return;
+    const marker = markerRegistry.get(key);
+    if (marker && (popupMode === "hover" || popupMode === "click"))
+      showMarkerDetail(key, marker, popupMode === "click");
   };
   const openMarkerPopup = (
     key: string,
     marker: any,
-    mode: "hover" | "pinned" = "pinned",
+    mode: "hover" | "click" | "pinned" = "pinned",
   ): void => {
     if (mode === "hover") {
       if (openMarkerKey !== key || popupMode !== "hover") {
@@ -1590,7 +1609,21 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       }
       openMarkerKey = key;
       popupMode = "hover";
-      showHoverTooltip(key, marker);
+      showMarkerDetail(key, marker);
+      return;
+    }
+    if (mode === "click") {
+      removeHoverTooltip();
+      for (const [otherKey, otherMarker] of markerRegistry) {
+        if (otherKey !== key && otherMarker.isPopupOpen()) otherMarker.closePopup();
+        const popup = otherMarker.getPopup();
+        if (popup) map.removeLayer(popup);
+      }
+      map.closePopup();
+      map.getPane("popupPane")?.replaceChildren();
+      openMarkerKey = key;
+      popupMode = "click";
+      showMarkerDetail(key, marker, true);
       return;
     }
     removeHoverTooltip();
@@ -1613,9 +1646,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       if (layer instanceof L.Popup) map.closePopup(layer);
     });
     map.closePopup();
-    // Leaflet can retain a detached bound-popup element while a marker layer
-    // is reconciled. This map owns its popup pane, so clear only that pane
-    // before attaching the one current popup.
     map.getPane("popupPane")?.replaceChildren();
     openMarkerKey = key;
     popupMode = mode;
@@ -1627,9 +1657,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       popup.options.autoPanPadding = popupAutoPanPadding();
     }
     marker.openPopup();
-    // Hover is a transient inspection state. Never pan the map merely because
-    // its details appeared under the pointer; pinning with click enables the
-    // existing boundary adjustment and auto-pan.
     if (popup && mode === "pinned") schedulePopupLayout(marker, popup);
   };
   const nearestMarkerAt = (event: any): ?any => {
@@ -1672,6 +1699,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     const nearest = nearestMarkerAt(event);
     if (!nearest) return;
     const pinnedMarker: any = openMarkerKey ? markerRegistry.get(openMarkerKey) : null;
+    if (popupMode === "click") return;
     if (popupMode === "pinned" && pinnedMarker?.isPopupOpen()) return;
     // A popup may have been closed through Leaflet's close control after a
     // refresh. Do not let that stale mode suppress the next hover popup.
@@ -1687,7 +1715,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     if (!isMarkerHitEvent(event)) return;
     const nearest = nearestMarkerAt(event);
     if (!nearest) return;
-    openMarkerPopup(nearest.key, nearest.marker, "pinned");
+    openMarkerPopup(nearest.key, nearest.marker, "click");
   };
   const configureMarkerElement = (marker: any, key: string, ariaLabel: string): void => {
     const element = marker.getElement();
@@ -1800,7 +1828,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     const popup = marker?.getPopup();
     if (marker?.isPopupOpen() && popup && popupMode === "pinned")
       schedulePopupLayout(marker, popup);
-    refreshHoverTooltip();
+    refreshMarkerDetail();
   };
   map.on("popupopen", (event: any) => {
     for (const [key, marker] of markerRegistry) {
@@ -1893,8 +1921,11 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       return;
     }
     const popupKey = openMarkerKey || popupMarkerKey();
-    if (popupMode === "hover") {
-      closeHoverPopup();
+    if (popupMode === "hover" || popupMode === "click") {
+      removeHoverTooltip();
+      openMarkerKey = null;
+      popupMode = null;
+      restoreWorld();
       markerRegistry.get(popupKey || "")?.getElement()?.focus();
       event.preventDefault();
       event.stopPropagation();
@@ -1984,8 +2015,11 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     for (const [key, marker] of markerRegistry) {
       if (groups.has(key)) continue;
       if (openMarkerKey === key) {
-        if (popupMode === "hover") closeHoverPopup();
-        else map.closePopup();
+        if (popupMode === "hover" || popupMode === "click") {
+          removeHoverTooltip();
+          openMarkerKey = null;
+          popupMode = null;
+        } else map.closePopup();
       }
       if (marker.__hitTarget) markers.removeLayer(marker.__hitTarget);
       markers.removeLayer(marker);

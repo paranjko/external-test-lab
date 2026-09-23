@@ -1789,11 +1789,11 @@ try {
       for (const expected of ["JN98", "JO70"]) {
         await call("Runtime.evaluate", {
           expression:
-            'document.querySelector(".leaflet-popup-close-button")?.click()',
+            'document.querySelector(".validator-map-tooltip-close")?.click()',
         });
         for (let attempt = 0; attempt < 20; attempt += 1) {
           const { result: closedResult } = await call("Runtime.evaluate", {
-            expression: '!document.querySelector(".leaflet-popup")',
+            expression: '!document.querySelector(".validator-map-tooltip")',
             returnByValue: true,
           });
           if (closedResult.value) break;
@@ -1848,13 +1848,19 @@ try {
           clickCount: 1,
         });
         await delay(80);
+        const pinnedMarker = await waitForSettledOverlappingMarker(expected);
+        if (Math.hypot(pinnedMarker.x - marker.x, pinnedMarker.y - marker.y) > 0.1)
+          throw new Error(
+            `pinned popup moved the map ${JSON.stringify({ expected, marker, pinnedMarker })}`,
+          );
         const { result: pointerResult } = await call("Runtime.evaluate", {
-          expression: `JSON.stringify({popup:document.querySelector(".leaflet-popup-content")?.textContent||"",tooltip:document.querySelector(".leaflet-tooltip")?.textContent||"",atPoint:document.elementFromPoint(${marker.x},${marker.y})?.getAttribute("class")||"",viewport:{width:innerWidth,height:innerHeight,scrollY}})`,
+          expression: `JSON.stringify({popup:document.querySelector(".validator-map-tooltip")?.textContent||"",pinned:document.querySelector(".validator-map-tooltip")?.classList.contains("is-pinned")||false,tooltip:document.querySelector(".leaflet-tooltip")?.textContent||"",atPoint:document.elementFromPoint(${marker.x},${marker.y})?.getAttribute("class")||"",viewport:{width:innerWidth,height:innerHeight,scrollY}})`,
           returnByValue: true,
         });
         const pointer = JSON.parse(pointerResult.value);
         if (
-          !pointer.popup.startsWith(expected) ||
+          !pointer.popup.includes(expected) ||
+          !pointer.pinned ||
           pointer.tooltip
         )
           throw new Error(
@@ -1868,10 +1874,10 @@ try {
         await delay(40);
         const { result: pinnedResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify(document.querySelector(".leaflet-popup-content")?.textContent||"")',
+            'JSON.stringify(document.querySelector(".validator-map-tooltip")?.textContent||"")',
           returnByValue: true,
         });
-        if (!JSON.parse(pinnedResult.value).startsWith(expected))
+        if (!JSON.parse(pinnedResult.value).includes(expected))
           throw new Error("clicked popup did not remain open after pointer leave");
       }
     };
