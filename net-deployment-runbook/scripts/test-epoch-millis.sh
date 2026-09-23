@@ -34,8 +34,13 @@ while IFS= read -r operational_script; do
 done < <(find "$ROOT/04-ops" "$ROOT/scripts" -type f -name '*.sh' \
   ! -name 'test-epoch-millis.sh' -print)
 
-# shellcheck source=../04-ops/epoch-millis.sh
-source "$ROOT/04-ops/epoch-millis.sh"
+# The shared launcher tree and the independently deployed OPS bundle each need
+# a self-contained copy. Keep the implementations identical so minimal
+# launcher fixtures do not acquire an OPS-tree dependency.
+cmp "$ROOT/scripts/epoch-millis.sh" "$ROOT/04-ops/epoch-millis.sh"
+
+# shellcheck source=epoch-millis.sh
+source "$ROOT/scripts/epoch-millis.sh"
 
 export PATH="$tmp:$PATH"
 export GDC_TEST_DATE_SECONDS=1700000000
