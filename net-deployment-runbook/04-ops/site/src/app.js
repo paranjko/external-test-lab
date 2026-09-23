@@ -163,6 +163,7 @@ declare var GDC_SOFTWARE_VERSIONS: SoftwareVersionsApi;
 declare var L: any;
 
 type Validator = {
+  name: string,
   ownerAddress: string,
   ip: string,
   licenseCount: number,
@@ -953,7 +954,7 @@ function markerStateCounts(validators: Array<Validator>): MarkerStateCounts {
 function markerStateSummary(counts: MarkerStateCounts): string {
   return MARKER_STATE_ORDER
     .filter((state) => counts[state] > 0)
-    .map((state) => `${counts[state]} ${markerStateLabel(state).toLowerCase()}`)
+    .map((state) => `${counts[state]} ${markerStateLabel(state)}`)
     .join(" · ");
 }
 
@@ -972,8 +973,23 @@ function markerGroupState(counts: MarkerStateCounts): {
 
 function markerRadius(count: number): number {
   // Radius grows with sqrt(count), therefore visual area is proportional to
-  // the represented node count while a large group cannot dominate the map.
-  return Math.max(6, Math.min(6 * Math.sqrt(Math.max(1, count)), 18));
+  // the represented node count while multi-node locations stay distinct.
+  if (count <= 1) return 6;
+  return Math.min(7.5 * Math.sqrt(count), 18);
+}
+
+function maidenheadLocator(latitude: number, longitude: number, precision: number = 4): string {
+  const lon = Math.max(0, Math.min(360 - Number.EPSILON, longitude + 180));
+  const lat = Math.max(0, Math.min(180 - Number.EPSILON, latitude + 90));
+  const fieldLon = Math.floor(lon / 20);
+  const fieldLat = Math.floor(lat / 10);
+  const squareLon = Math.floor((lon % 20) / 2);
+  const squareLat = Math.floor(lat % 10);
+  const locator = `${String.fromCharCode(65 + fieldLon)}${String.fromCharCode(65 + fieldLat)}${squareLon}${squareLat}`;
+  if (precision < 6) return locator;
+  const subLon = Math.floor(((lon % 2) / 2) * 24);
+  const subLat = Math.floor((lat % 1) * 24);
+  return `${locator}${String.fromCharCode(97 + subLon)}${String.fromCharCode(97 + subLat)}`;
 }
 
 function markerFill(counts: MarkerStateCounts, count: number): string {
@@ -992,10 +1008,9 @@ function markerFill(counts: MarkerStateCounts, count: number): string {
 function markerIcon(count: number, counts: MarkerStateCounts): any {
   const radius = markerRadius(count);
   const diameter = radius * 2;
-  const countText = count > 1 ? `<span class="validator-marker-number">${count}</span>` : "";
   return L.divIcon({
     className: "validator-marker",
-    html: `<span class="validator-marker-face" style="--validator-marker-fill: ${markerFill(counts, count)}">${countText}</span>`,
+    html: `<span class="validator-marker-face" style="--validator-marker-fill: ${markerFill(counts, count)}"></span>`,
     iconSize: [diameter, diameter],
     iconAnchor: [radius, radius],
   });
@@ -1330,18 +1345,11 @@ function groupValidators(validators: Array<Validator>): Array<ValidatorGroup> {
   }
   for (const group of dynamic.values()) {
     // Dynamic GeoIP is city-level evidence. A fixed tenth-degree display cell
-    // keeps the marker and its keyboard/popup identity stable while members
-    // enter or leave that observed location.
+    // keeps the QTH marker and its keyboard/popup identity stable while
+    // members enter or leave that observed location.
     group.lat = Math.round(group.lat * 10) / 10;
     group.lon = Math.round(group.lon * 10) / 10;
-    const locations = [
-      ...new Set(
-        group.validators.map(
-          (validator) => `${validator.geo.city}, ${validator.geo.country}`,
-        ),
-      ),
-    ];
-    group.label = locations.length === 1 ? locations[0] : "Multiple locations";
+    group.label = maidenheadLocator(group.lat, group.lon);
     const retainedCenter = dynamicLocationCenters.get(group.key);
     if (retainedCenter) {
       group.lat = retainedCenter.lat;
@@ -1369,6 +1377,8 @@ function groupValidators(validators: Array<Validator>): Array<ValidatorGroup> {
     existing.label = [...new Set([existing.label, group.label])].join(" · ");
     existing.key = `coincident:${[existing.key, group.key].sort().join("|")}`;
   }
+  for (const group of coincident.values())
+    group.label = maidenheadLocator(group.lat, group.lon);
   return [...coincident.values()];
 }
 
@@ -1554,7 +1564,10 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       popup.options.autoPanPadding = popupAutoPanPadding();
     }
     marker.openPopup();
-    if (popup) schedulePopupLayout(marker, popup);
+    // Hover is a transient inspection state. Never pan the map merely because
+    // its details appeared under the pointer; pinning with click enables the
+    // existing boundary adjustment and auto-pan.
+    if (popup && mode === "pinned") schedulePopupLayout(marker, popup);
   };
   const nearestMarkerAt = (event: any): ?any => {
     const pointerEvent = event.originalEvent || event;
@@ -1723,7 +1736,8 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     const popupKey = openMarkerKey || popupMarkerKey();
     const marker: any = popupKey ? markerRegistry.get(popupKey) : null;
     const popup = marker?.getPopup();
-    if (marker?.isPopupOpen() && popup) schedulePopupLayout(marker, popup);
+    if (marker?.isPopupOpen() && popup && popupMode === "pinned")
+      schedulePopupLayout(marker, popup);
   };
   map.on("popupopen", (event: any) => {
     for (const [key, marker] of markerRegistry) {
@@ -1865,6 +1879,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
       const display = displayHostState(node);
       const validator: Validator = {
+        name: node.name || "",
         ownerAddress: node.address || "",
         ip: node.ip || "",
         licenseCount: 0,
@@ -1916,7 +1931,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       const rows = validators
         .map(
           (v) =>
-            `<li><span>${escapeHtml(v.geo.resolvedIp || v.ip || "IP unavailable")}</span><span>${escapeHtml(v.ownerAddress.slice(0, 10))}</span><span>${escapeHtml(v.licenseCount)}</span><span class="validator-map-member-state validator-map-status--${v.markerState}">${markerStateLabel(v.markerState)}</span></li>`,
+            `<li><span>${escapeHtml(v.name || v.ownerAddress.slice(0, 10) || "Node unavailable")}</span><span>${escapeHtml(v.geo.resolvedIp || v.ip || "IP unavailable")}</span><span>${escapeHtml(v.licenseCount)}</span><span class="validator-map-member-state validator-map-status--${v.markerState}">${markerStateLabel(v.markerState)}</span></li>`,
         )
         .join("");
       const sources = [...new Set(validators.map((v) => v.geo.source))]

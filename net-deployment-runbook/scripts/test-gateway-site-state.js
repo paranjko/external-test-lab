@@ -412,12 +412,12 @@ assert.match(siteApp, /function markerStateCounts\(validators/);
 assert.match(siteApp, /function markerGroupState\(counts/);
 assert.match(siteApp, /label:\s*states\.length > 1 \? "Mixed"/);
 assert.match(siteApp, /function markerRadius\(count/);
-assert.match(siteApp, /6 \* Math\.sqrt\(Math\.max\(1, count\)\)/);
+assert.match(siteApp, /7\.5 \* Math\.sqrt\(count\)/);
+assert.match(siteApp, /function maidenheadLocator\(latitude/);
 assert.match(siteApp, /function markerFill\(counts/);
 assert.match(siteApp, /conic-gradient/);
 assert.match(siteApp, /L\.divIcon/);
-assert.match(siteApp, /validator-marker-number/);
-assert.match(siteApp, /nodeLabel = `\$\{count\} node/);
+assert.doesNotMatch(siteApp, /validator-marker-number/);
 assert.doesNotMatch(siteApp, /let popupOpen = false/);
 assert.doesNotMatch(siteApp, /waiting for validator set/);
 assert.doesNotMatch(siteApp, /effective validator – endpoint/);
@@ -442,7 +442,7 @@ assert.match(
 );
 assert.match(readability, /\.validator-map-encoding-note/);
 assert.match(readability, /\.validator-marker-face[\s\S]*background: var\(--validator-marker-fill\)/);
-assert.match(readability, /\.validator-marker-number[\s\S]*text-shadow:/);
+assert.doesNotMatch(readability, /validator-marker-number/);
 assert.match(
   readability,
   /\.nodes\.compact \.node \{[\s\S]*flex: 1 1 0;[\s\S]*height: 400px;[\s\S]*min-height: 400px;[\s\S]*max-height: 400px;[\s\S]*transition:/,

@@ -65,7 +65,6 @@ body * {
 .validator-map .leaflet-popup-content li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .validator-map .validator-marker { background: transparent; border: 0; cursor: pointer; }
 .validator-map .validator-marker-face { align-items: center; background: var(--validator-marker-fill); border: 1px solid rgba(17,19,27,.9); border-radius: 50%; box-sizing: border-box; display: flex; height: 100%; justify-content: center; width: 100%; }
-.validator-map .validator-marker-number { color: #fff; font: 800 11px/1 var(--mono); text-shadow: -1px -1px 1px rgba(17,19,27,.95), 1px 1px 1px rgba(17,19,27,.95); }
 .validator-map .validator-map-status--mixed { color: var(--ink); }
 .validator-map .validator-map-member-state { font-weight: 700; }
 .validator-map .validator-marker-hit { pointer-events: all; }

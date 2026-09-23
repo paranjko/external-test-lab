@@ -930,8 +930,17 @@ try {
       },
     })),
   );
+  const maidenheadCases = [
+    [39.0997282, -94.5785689, "EM29"],
+    [45.5234482, -122.6762071, "CN85"],
+    [51.5127864, -0.0918442, "IO91"],
+    [52.374028, 4.8896881, "JO22"],
+    [60.1695173, 24.9354499, "KP20"],
+    [55.7520384, 37.6178147, "KO85"],
+  ];
   const groupedStateNodes = [
     {
+      name: "node0",
       address: "kansas-node0",
       participantState: "ACTIVE",
       isOnline: false,
@@ -949,6 +958,7 @@ try {
       },
     },
     {
+      name: "node5",
       address: "kansas-node5",
       participantState: "ACTIVE",
       isOnline: false,
@@ -966,6 +976,7 @@ try {
       },
     },
     {
+      name: "node3",
       address: "london-node3",
       participantState: "INACTIVE",
       isOnline: false,
@@ -980,6 +991,7 @@ try {
       },
     },
     {
+      name: "node8",
       address: "london-node8",
       participantState: "ACTIVE",
       isOnline: false,
@@ -1269,19 +1281,14 @@ try {
         );
     }
     const expectedCoordinates = {
-      "<Bratislava>": [48.15, 17.11],
-      "North edge": [90, -180],
-      Greenwich: [0, 0],
-      "Kansas City": [39.0997285, -94.5785681],
-      "South east": [-45, 90],
-      Antimeridian: [45, 180],
-      "South pole": [-90, -180],
-      "Multiple locations": [90, -180],
+      JN88: [48.15, 17.11],
+      JJ00: [0, 0],
+      EM29: [39.0997285, -94.5785681],
     };
     const geographyValid = (candidate) =>
       candidate.markerNodes.every((marker) => {
         const city = marker.label.split(/[,:;]/)[0];
-        if (!/^(?:<Bratislava>|Greenwich|Kansas City)$/.test(city)) return true;
+        if (!/^(?:JN88|JJ00|EM29)$/.test(city)) return true;
         const coordinate = expectedCoordinates[city];
         if (!coordinate || !candidate.worldRect) return false;
         const [latitude, longitude] = coordinate;
@@ -1306,7 +1313,8 @@ try {
     const hasCompactMarkers = state.markerNodes.every((marker) => {
       const city = marker.label.split(/[,:;]/)[0];
       const coordinate = expectedCoordinates[city];
-      if (!coordinate) return false;
+      if (!coordinate)
+        return marker.width >= 12 && marker.height >= 12 && marker.width <= 36 && marker.height <= 36;
       const [latitude, longitude] = coordinate;
       const expectedLeft =
         state.worldRect.left + ((longitude + 180) / 360) * state.worldRect.width;
@@ -1328,11 +1336,11 @@ try {
     });
     const hasMixedSegments = state.markerNodes.some(
       (marker) =>
-        marker.label.includes("1 active, 1 inactive") &&
+        marker.label.includes("1 Active, 1 Inactive") &&
         marker.background.includes("conic-gradient"),
     );
     const coreMarkersInside = state.markerNodes
-      .filter((marker) => /^(?:<Bratislava>|Greenwich|Kansas City),/.test(marker.label))
+      .filter((marker) => /^(?:JN88|JJ00|EM29);/.test(marker.label))
       .every(
         (marker) =>
           marker.left >= state.mapRect.left &&
@@ -1379,7 +1387,7 @@ try {
       if (
         Math.abs(resized.worldRatio - 2) > 0.01 ||
         !resized.markerNodes
-          .filter((marker) => /^(?:<Bratislava>|Greenwich|Kansas City),/.test(marker.label))
+          .filter((marker) => /^(?:JN88|JJ00|EM29);/.test(marker.label))
           .every(
             (marker) =>
               marker.left >= resized.mapRect.left &&
@@ -1472,7 +1480,7 @@ try {
       await delay(80);
       const { result: controlResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const button=document.querySelector(".leaflet-control-zoom-in"),control=button?.getBoundingClientRect(),marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Control overlap,"))?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect();return{control:{disabled:button?.classList.contains("leaflet-disabled"),x:control?.left+control?.width/2,y:control?.top+control?.height/2},marker:{x:marker?.left+marker?.width/2,y:marker?.top+marker?.height/2},worldWidth:world?.width}})())',
+          'JSON.stringify((()=>{const button=document.querySelector(".leaflet-control-zoom-in"),control=button?.getBoundingClientRect(),marker=document.querySelector(".validator-marker")?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect();return{control:{disabled:button?.classList.contains("leaflet-disabled"),x:control?.left+control?.width/2,y:control?.top+control?.height/2},marker:{x:marker?.left+marker?.width/2,y:marker?.top+marker?.height/2},worldWidth:world?.width}})())',
         returnByValue: true,
       });
       const control = JSON.parse(controlResult.value);
@@ -1536,27 +1544,29 @@ try {
       expression: `validatorMapController.update(${JSON.stringify(bubbleNodes)})`,
     });
     await delay(80);
+    const { result: maidenheadResult } = await call("Runtime.evaluate", {
+      expression: `JSON.stringify(${JSON.stringify(maidenheadCases)}.map(([lat,lon])=>maidenheadLocator(lat,lon)))`,
+      returnByValue: true,
+    });
+    const locators = JSON.parse(maidenheadResult.value);
+    if (locators.some((locator, index) => locator !== maidenheadCases[index][2]))
+      throw new Error(`Maidenhead conversion failed: ${JSON.stringify(locators)}`);
     const { result: bubbleResult } = await call("Runtime.evaluate", {
       expression:
-        'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",rect=marker.getBoundingClientRect();return{label,radius:rect.width/2,count:marker.querySelector(".validator-marker-number")?.textContent||""}}))',
+        'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",rect=marker.getBoundingClientRect();return{label,radius:rect.width/2,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),countLabel:marker.querySelector(".validator-marker-number")?.textContent||""}}))',
       returnByValue: true,
     });
     const bubbles = JSON.parse(bubbleResult.value);
-    const bubbleRadius = (count) =>
-      bubbles.find((bubble) =>
-        bubble.label.startsWith(`Fixture bubble ${count};`),
-      )?.radius;
+    const bubbleRadius = (count) => bubbles.find((bubble) => bubble.count === count)?.radius;
     const [r1, r2, r4, r9] = [1, 2, 4, 9].map(bubbleRadius);
     if (
       ![r1, r2, r4, r9].every(Number.isFinite) ||
       Math.abs(r1 - 6) > 0.1 ||
-      Math.abs(r2 - 6 * Math.sqrt(2)) > 0.15 ||
-      Math.abs(r4 - 12) > 0.1 ||
+      Math.abs(r2 - 7.5 * Math.sqrt(2)) > 0.15 ||
+      Math.abs(r4 - 15) > 0.1 ||
       Math.abs(r9 - 18) > 0.1 ||
-      bubbles.find((bubble) => bubble.label.startsWith("Fixture bubble 1;"))?.count !== "" ||
-      bubbles.find((bubble) => bubble.label.startsWith("Fixture bubble 2;"))?.count !== "2" ||
-      bubbles.find((bubble) => bubble.label.startsWith("Fixture bubble 4;"))?.count !== "4" ||
-      bubbles.find((bubble) => bubble.label.startsWith("Fixture bubble 9;"))?.count !== "9"
+      !(r2 > r1 * 1.6) ||
+      bubbles.some((bubble) => bubble.countLabel)
     )
       throw new Error(
         `bubble size contract failed: ${JSON.stringify(bubbles)}`,
@@ -1568,23 +1578,25 @@ try {
       await delay(80);
       const { result: groupedStateResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const face=marker.querySelector(".validator-marker-face"),rect=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",radius:rect.width/2,count:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(face).backgroundImage}}))',
+          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const face=marker.querySelector(".validator-marker-face"),rect=marker.getBoundingClientRect(),label=marker.getAttribute("aria-label")||"";return{label,radius:rect.width/2,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),countLabel:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(face).backgroundImage}}))',
         returnByValue: true,
       });
       const groupedState = JSON.parse(groupedStateResult.value);
       const markerFor = (name) =>
-        groupedState.find((marker) => marker.label.startsWith(`${name},`));
-      const kansas = markerFor("Kansas City");
-      const london = markerFor("London");
+        groupedState.find((marker) => marker.label.startsWith(`${name};`));
+      const kansas = markerFor("EM29");
+      const london = markerFor("IO91");
       if (
         !kansas ||
         !london ||
-        Math.abs(kansas.radius - 6 * Math.sqrt(2)) > 0.15 ||
+        Math.abs(kansas.radius - 7.5 * Math.sqrt(2)) > 0.15 ||
         Math.abs(london.radius - kansas.radius) > 0.1 ||
-        kansas.count !== "2" ||
-        london.count !== "2" ||
-        !kansas.label.includes("2 nodes; 2 active") ||
-        !london.label.includes("2 nodes; 1 active, 1 inactive") ||
+        kansas.count !== 2 ||
+        london.count !== 2 ||
+        kansas.countLabel ||
+        london.countLabel ||
+        !kansas.label.includes("2 nodes; 2 Active") ||
+        !london.label.includes("2 nodes; 1 Active, 1 Inactive") ||
         !kansas.background.includes("conic-gradient") ||
         !london.background.includes("conic-gradient")
       )
@@ -1593,7 +1605,7 @@ try {
         );
       await call("Runtime.evaluate", {
         expression:
-          '(()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("London,"));marker?.focus();marker?.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));})()',
+          '(()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("IO91;"));marker?.focus();marker?.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));})()',
       });
       await delay(80);
       const { result: londonPopupResult } = await call("Runtime.evaluate", {
@@ -1603,11 +1615,12 @@ try {
       });
       const londonPopup = JSON.parse(londonPopupResult.value);
       if (
-        !londonPopup.focused.startsWith("London,") ||
+        !londonPopup.focused.startsWith("IO91;") ||
         !londonPopup.text.includes("Mixed") ||
         !londonPopup.text.includes("2 nodes at this location") ||
-        !londonPopup.text.includes("1 active · 1 inactive") ||
-        !londonPopup.text.includes("london-nod") ||
+        !londonPopup.text.includes("1 Active · 1 Inactive") ||
+        !londonPopup.text.includes("node3") ||
+        !londonPopup.text.includes("node8") ||
         !londonPopup.text.includes("Inactive") ||
         !londonPopup.text.includes("Active")
       )
@@ -1620,14 +1633,14 @@ try {
       await delay(80);
       const { result: reducedResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>({label:marker.getAttribute("aria-label")||"",count:marker.querySelector(".validator-marker-number")?.textContent||""})),countLabels:document.querySelectorAll(".validator-marker-number").length})',
+          'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>({label:marker.getAttribute("aria-label")||"",countLabel:marker.querySelector(".validator-marker-number")?.textContent||""})),countLabels:document.querySelectorAll(".validator-marker-number").length})',
         returnByValue: true,
       });
       const reduced = JSON.parse(reducedResult.value);
       if (
         reduced.markers.length !== 1 ||
-        !reduced.markers[0].label.includes("London, United Kingdom; 1 node; 1 inactive") ||
-        reduced.markers[0].count !== "" ||
+        !reduced.markers[0].label.includes("IO91; 1 node; 1 Inactive") ||
+        reduced.markers[0].countLabel ||
         reduced.countLabels !== 0
       )
         throw new Error(
@@ -1639,19 +1652,17 @@ try {
       await delay(80);
       const { result: distributionResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>({label:marker.getAttribute("aria-label")||"",count:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(marker.querySelector(".validator-marker-face")).backgroundImage})))',
+          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"";return{label,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),background:getComputedStyle(marker.querySelector(".validator-marker-face")).backgroundImage}}))',
         returnByValue: true,
       });
       const distributions = JSON.parse(distributionResult.value);
-      const milan = distributions.find((marker) => marker.label.startsWith("Milan,"));
-      const paris = distributions.find((marker) => marker.label.startsWith("Paris,"));
+      const milan = distributions.find((marker) => marker.count === 2);
+      const paris = distributions.find((marker) => marker.count === 4);
       if (
         !milan ||
         !paris ||
-        milan.count !== "2" ||
-        paris.count !== "4" ||
-        !milan.label.includes("1 validating, 1 inactive") ||
-        !paris.label.includes("2 active, 1 inactive, 1 unknown") ||
+        !milan.label.includes("1 Validating, 1 Inactive") ||
+        !paris.label.includes("2 Active, 1 Inactive, 1 Unknown") ||
         !milan.background.includes("conic-gradient") ||
         !paris.background.includes("conic-gradient")
       )
@@ -1666,7 +1677,7 @@ try {
     const stablePosition = async () => {
       const { result } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Stable,")),rect=marker?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect();return{left:(rect?.left+rect?.width/2-world?.left)/world?.width,top:(rect?.top+rect?.height/2-world?.top)/world?.height}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88;")),rect=marker?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect();return{left:(rect?.left+rect?.width/2-world?.left)/world?.width,top:(rect?.top+rect?.height/2-world?.top)/world?.height}})())',
         returnByValue: true,
       });
       return JSON.parse(result.value);
@@ -1718,10 +1729,10 @@ try {
     });
     const overlappingState = JSON.parse(overlappingResult.value);
     const singleton = overlappingState.markers.find((marker) =>
-      marker.label?.startsWith("Singleton,"),
+      marker.label?.startsWith("JN98; 1 node;"),
     );
     const prague = overlappingState.markers.find((marker) =>
-      marker.label?.startsWith("Prague,"),
+      marker.label?.startsWith("JO70; 4 nodes;"),
     );
     const hitFor = (marker) =>
       overlappingState.hits.find(
@@ -1775,7 +1786,7 @@ try {
       );
     };
     const assertOverlappingPointers = async () => {
-      for (const expected of ["Singleton,", "Prague,"]) {
+      for (const expected of ["JN98", "JO70"]) {
         await call("Runtime.evaluate", {
           expression:
             'document.querySelector(".leaflet-popup-close-button")?.click()',
@@ -1800,6 +1811,11 @@ try {
           y: marker.y,
         });
         await delay(40);
+        const hoverMarker = await waitForSettledOverlappingMarker(expected);
+        if (Math.hypot(hoverMarker.x - marker.x, hoverMarker.y - marker.y) > 0.1)
+          throw new Error(
+            `hover popup moved the map ${JSON.stringify({ expected, marker, hoverMarker })}`,
+          );
         const { result: hoverResult } = await call("Runtime.evaluate", {
           expression:
             'JSON.stringify({popup:document.querySelector(".leaflet-popup-content")?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip"))})',
@@ -1912,19 +1928,19 @@ try {
       returnByValue: true,
     });
     const semantics = JSON.parse(semanticsResult.value);
-    for (const [city, stateSummary] of [
-      ["Bratislava", "1 validating"],
-      ["Vienna", "1 active"],
-      ["New York", "1 inactive"],
-      ["Rome", "1 unknown"],
+    for (const [locator, stateSummary] of [
+      ["JN88", "1 Validating"],
+      ["JN88", "1 Active"],
+      ["FN30", "1 Inactive"],
+      ["JN61", "1 Unknown"],
     ]) {
       if (
         !semantics.some(
-          (label) => label.startsWith(`${city},`) && label.includes(stateSummary),
+          (label) => label.startsWith(`${locator};`) && label.includes(stateSummary),
         )
       )
         throw new Error(
-          `marker state text contract failed for ${city}: ${JSON.stringify(semantics)}`,
+          `marker state text contract failed for ${locator}: ${JSON.stringify(semantics)}`,
         );
     }
     const legend = await call("Runtime.evaluate", {
@@ -1940,9 +1956,9 @@ try {
       !legendLabels.includes("Unknown") ||
       !semantics.some(
         (label) =>
-          label.startsWith("Prague,") &&
+          label.startsWith("JO70;") &&
           label.includes(
-            "1 validating, 1 active, 1 inactive",
+            "1 Validating, 1 Active, 1 Inactive",
           ),
       )
     )
@@ -1956,7 +1972,7 @@ try {
     await delay(80);
     const { result: duplicateLocationsResult } = await call("Runtime.evaluate", {
       expression:
-        'String([...document.querySelectorAll(".validator-marker")].filter(marker=>marker.getAttribute("aria-label")?.startsWith("Springfield,")).length)',
+        'String([...document.querySelectorAll(".validator-marker")].filter(marker=>marker.getAttribute("aria-label")?.startsWith("JK62;")||marker.getAttribute("aria-label")?.startsWith("LO62;")).length)',
       returnByValue: true,
     });
     if (Number(duplicateLocationsResult.value) !== 2)
@@ -1968,11 +1984,11 @@ try {
     await delay(80);
     const { result: focusResult } = await call("Runtime.evaluate", {
       expression:
-        'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Vienna,"));marker?.focus();return{found:Boolean(marker),tabindex:marker?.getAttribute("tabindex"),focused:document.activeElement?.getAttribute("aria-label")||""}})())',
+        'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88;"));marker?.focus();return{found:Boolean(marker),tabindex:marker?.getAttribute("tabindex"),focused:document.activeElement?.getAttribute("aria-label")||""}})())',
       returnByValue: true,
     });
     const focus = JSON.parse(focusResult.value);
-    if (!focus.found || !focus.focused.startsWith("Vienna,"))
+    if (!focus.found || !focus.focused.startsWith("JN88;"))
       throw new Error(`marker focus contract failed: ${JSON.stringify(focus)}`);
     await delay(40);
     const { result: focusPopupResult } = await call("Runtime.evaluate", {
@@ -2001,7 +2017,7 @@ try {
       throw new Error("focus popup did not close after marker blur");
     await call("Runtime.evaluate", {
       expression:
-        '[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Vienna,"))?.focus()',
+        '[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88;"))?.focus()',
     });
     await call("Runtime.evaluate", {
       expression:
@@ -2022,7 +2038,7 @@ try {
       !popup.text.includes("203.0.113.10") ||
       !popup.text.includes("observed 2026-08-31T12:00:00Z") ||
       popup.unsafe ||
-      !popup.focused.startsWith("Vienna,")
+      !popup.focused.startsWith("JN88;")
     )
       throw new Error(
         `keyboard popup escaping contract failed: ${JSON.stringify(popup)}`,
@@ -2038,7 +2054,7 @@ try {
       returnByValue: true,
     });
     const retained = JSON.parse(retainedResult.value);
-    if (!retained.popup || !retained.focused.startsWith("Vienna,"))
+    if (!retained.popup || !retained.focused.startsWith("JN88;"))
       throw new Error(
         `popup/focus refresh contract failed: ${JSON.stringify(retained)}`,
       );
@@ -2072,7 +2088,7 @@ try {
     const escape = JSON.parse(escapeResult.value);
     if (
       escape.popup ||
-      !escape.focused.startsWith("Vienna,") ||
+      !escape.focused.startsWith("JN88;") ||
       escape.observed
     )
       throw new Error(`Escape contract failed: ${JSON.stringify(escape)}`);
@@ -2146,7 +2162,7 @@ try {
       if (width === 844 && height === 390) {
         const { result: groupedRequestResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Multiple locations"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88; 2 nodes;"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
           returnByValue: true,
         });
         const groupedRequest = JSON.parse(groupedRequestResult.value);
@@ -2162,7 +2178,7 @@ try {
         if (
           !groupedPopup.open ||
           !groupedPopup.visible ||
-          !groupedPopup.text.includes("Multiple locations")
+          !groupedPopup.text.includes("JN88")
         )
           throw new Error(
             `fullscreen grouped popup containment failed: ${JSON.stringify(groupedPopup)}`,
@@ -2184,7 +2200,7 @@ try {
         await delay(80);
         const { result: edgeRequestResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Multiple locations"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88; 2 nodes;"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
           returnByValue: true,
         });
         const edgeRequest = JSON.parse(edgeRequestResult.value);
@@ -2193,7 +2209,7 @@ try {
         await delay(180);
         const { result: replacementRequestResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("<Bratislava>,"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88; 2 nodes;"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
           returnByValue: true,
         });
         const replacementRequest = JSON.parse(replacementRequestResult.value);
@@ -2221,7 +2237,7 @@ try {
       }
       const { result: popupRequestResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>{const label=item.getAttribute("aria-label")||"";return label.startsWith("Bratislava,")||label.startsWith("<Bratislava>,")});if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88;"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
         returnByValue: true,
       });
       const popupRequest = JSON.parse(popupRequestResult.value);
@@ -2237,8 +2253,7 @@ try {
       if (
         !popupGeometry.open ||
         !popupGeometry.visible ||
-        (!popupGeometry.text.includes("Bratislava,") &&
-          !popupGeometry.text.includes("<Bratislava>,"))
+        !popupGeometry.text.includes("JN88")
       )
         throw new Error(
           `fullscreen popup containment failed: ${JSON.stringify(popupGeometry)}`,
@@ -2261,7 +2276,7 @@ try {
         if (
           !resizedPopup.open ||
           !resizedPopup.visible ||
-          !resizedPopup.text.includes("Bratislava,")
+          !resizedPopup.text.includes("JN88")
         )
           throw new Error(
             `open-popup resize containment failed: ${JSON.stringify(resizedPopup)}`,
@@ -2283,7 +2298,7 @@ try {
         if (
           !restoredPopup.open ||
           !restoredPopup.visible ||
-          !restoredPopup.text.includes("Bratislava,")
+          !restoredPopup.text.includes("JN88")
         )
           throw new Error(
             `open-popup restore containment failed: ${JSON.stringify(restoredPopup)}`,
