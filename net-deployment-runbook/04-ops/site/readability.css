@@ -58,6 +58,12 @@ body * {
 .validator-map .leaflet-control-zoom a:hover, .validator-map .leaflet-control-zoom a:focus { background: #2c303b !important; color: var(--ink); }
 .validator-map .leaflet-control-zoom a.leaflet-disabled { background: #2c303b !important; color: #7d8493 !important; }
 .validator-map .leaflet-popup-pane { z-index: 1200 !important; }
+.validator-map-tooltip { position: fixed; z-index: 20000; box-sizing: border-box; max-height: calc(100dvh - 20px); overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; background: var(--paper); color: var(--ink); box-shadow: 0 10px 30px rgba(0,0,0,.45); font-size: 12px; line-height: 1.45; pointer-events: none; }
+.validator-map-tooltip strong { display: block; color: var(--primary-color); }
+.validator-map-tooltip p { margin: 6px 0; color: var(--muted); }
+.validator-map-tooltip ul { display: grid; gap: 5px; margin: 10px 0 0; padding: 0; list-style: none; }
+.validator-map-tooltip li { display: grid; grid-template-columns: minmax(0,1fr) 72px 24px 72px; gap: 7px; }
+.validator-map-tooltip li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .validator-map .leaflet-popup-content { margin: 14px 16px; font-size: 12px; line-height: 1.45; }
 .validator-map .leaflet-popup-content strong { display: block; color: var(--primary-color); }
 .validator-map .leaflet-popup-content p { margin: 6px 0; color: var(--muted); }

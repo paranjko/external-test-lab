@@ -1525,12 +1525,75 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   let latestMapNodes: Array<SiteNode> = observedNodes;
   let openMarkerKey: ?string;
   let popupMode: ?("hover" | "pinned");
+  let hoverTooltip: ?HTMLElement;
   let resizeFrame: ?number;
+  const removeHoverTooltip = (): void => {
+    hoverTooltip?.remove();
+    hoverTooltip = null;
+  };
+  const positionHoverTooltip = (marker: any): void => {
+    const tooltip = hoverTooltip;
+    if (!tooltip) return;
+    const anchor = marker.getElement()?.getBoundingClientRect();
+    if (!anchor) return;
+    const margin = 10;
+    tooltip.style.maxWidth = `${Math.max(160, Math.min(340, window.innerWidth - margin * 2))}px`;
+    const width = tooltip.offsetWidth;
+    const height = tooltip.offsetHeight;
+    const left = Math.max(
+      margin,
+      Math.min(window.innerWidth - width - margin, anchor.left + anchor.width / 2 - width / 2),
+    );
+    let top = anchor.top - height - 12;
+    if (top < margin) top = anchor.bottom + 12;
+    top = Math.max(margin, Math.min(window.innerHeight - height - margin, top));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  };
+  const showHoverTooltip = (key: string, marker: any): void => {
+    const popup = marker.getPopup();
+    const content = String(marker.__popupHtml || popup?.getContent?.() || "");
+    if (!content) return;
+    if (!hoverTooltip) {
+      const tooltip = document.createElement("aside");
+      tooltip.className = "validator-map-tooltip";
+      tooltip.setAttribute("role", "tooltip");
+      tooltip.setAttribute("aria-live", "polite");
+      document.body.append(tooltip);
+      hoverTooltip = tooltip;
+    }
+    const tooltip = hoverTooltip;
+    if (!tooltip) return;
+    tooltip.dataset.markerKey = key;
+    tooltip.innerHTML = content;
+    positionHoverTooltip(marker);
+  };
+  const refreshHoverTooltip = (): void => {
+    if (popupMode !== "hover" || !openMarkerKey) return;
+    const marker = markerRegistry.get(openMarkerKey);
+    if (marker) positionHoverTooltip(marker);
+  };
   const openMarkerPopup = (
     key: string,
     marker: any,
     mode: "hover" | "pinned" = "pinned",
   ): void => {
+    if (mode === "hover") {
+      if (openMarkerKey !== key || popupMode !== "hover") {
+        for (const [otherKey, otherMarker] of markerRegistry) {
+          if (otherKey !== key && otherMarker.isPopupOpen()) otherMarker.closePopup();
+          const popup = otherMarker.getPopup();
+          if (popup) map.removeLayer(popup);
+        }
+        map.closePopup();
+        map.getPane("popupPane")?.replaceChildren();
+      }
+      openMarkerKey = key;
+      popupMode = "hover";
+      showHoverTooltip(key, marker);
+      return;
+    }
+    removeHoverTooltip();
     if (openMarkerKey === key && marker.isPopupOpen()) {
       popupMode = mode;
       const popup = marker.getPopup();
@@ -1596,11 +1659,10 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   };
   const closeHoverPopup = (): void => {
     if (popupMode !== "hover") return;
-    const marker: any = openMarkerKey ? markerRegistry.get(openMarkerKey) : null;
-    marker?.closePopup();
-    map.closePopup();
+    removeHoverTooltip();
+    openMarkerKey = null;
     popupMode = null;
-    window.requestAnimationFrame(finalizePopupClose);
+    restoreWorld();
   };
   const showNearestPopup = (event: any): void => {
     if (!isMarkerHitEvent(event)) {
@@ -1738,6 +1800,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     const popup = marker?.getPopup();
     if (marker?.isPopupOpen() && popup && popupMode === "pinned")
       schedulePopupLayout(marker, popup);
+    refreshHoverTooltip();
   };
   map.on("popupopen", (event: any) => {
     for (const [key, marker] of markerRegistry) {
@@ -1830,6 +1893,13 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       return;
     }
     const popupKey = openMarkerKey || popupMarkerKey();
+    if (popupMode === "hover") {
+      closeHoverPopup();
+      markerRegistry.get(popupKey || "")?.getElement()?.focus();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const popupOpen = popupKey || document.querySelector(".leaflet-popup");
     if (popupOpen) {
       let marker = popupKey ? markerRegistry.get(popupKey) : null;
@@ -1867,6 +1937,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const update = (nodes: Array<SiteNode>): void => {
     latestMapNodes = nodes;
     const retainedPopupKey = openMarkerKey || popupMarkerKey();
+    const retainedPopupMode = popupMode;
     const validators: Array<Validator> = [];
     let validatorCount = 0;
     for (const node of nodes) {
@@ -1912,7 +1983,10 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     );
     for (const [key, marker] of markerRegistry) {
       if (groups.has(key)) continue;
-      if (openMarkerKey === key) map.closePopup();
+      if (openMarkerKey === key) {
+        if (popupMode === "hover") closeHoverPopup();
+        else map.closePopup();
+      }
       if (marker.__hitTarget) markers.removeLayer(marker.__hitTarget);
       markers.removeLayer(marker);
       markerRegistry.delete(key);
@@ -2014,7 +2088,11 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     container.dataset.validatorCount = String(validatorCount);
     container.dataset.markerCount = String(groups.size);
     if (retainedPopupKey && markerRegistry.has(retainedPopupKey)) {
-      openMarkerPopup(retainedPopupKey, markerRegistry.get(retainedPopupKey));
+      openMarkerPopup(
+        retainedPopupKey,
+        markerRegistry.get(retainedPopupKey),
+        retainedPopupMode || "pinned",
+      );
     }
   };
   window.addEventListener(
@@ -2025,6 +2103,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       container.removeEventListener("mousemove", showNearestPopup, true);
       container.removeEventListener("mouseout", leaveNearestPopup, true);
       container.removeEventListener("mouseleave", closeHoverPopup, true);
+      removeHoverTooltip();
       document.body.classList.remove("validator-map-fullscreen-open");
       if (resizeFrame != null) window.cancelAnimationFrame(resizeFrame);
       observer.disconnect();

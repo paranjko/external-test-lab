@@ -1818,15 +1818,17 @@ try {
           );
         const { result: hoverResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const popup=document.querySelector(".leaflet-popup-content"),pane=document.querySelector(".leaflet-popup-pane"),control=document.querySelector(".leaflet-control-container"),fullscreen=document.querySelector("#validator-map-fullscreen");return{popup:popup?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip")),popupPaneZIndex:Number(getComputedStyle(pane).zIndex||0),controlZIndex:Number(getComputedStyle(control).zIndex||0),fullscreenZIndex:Number(getComputedStyle(fullscreen).zIndex||0)}})())',
+            'JSON.stringify((()=>{const popup=document.querySelector(".validator-map-tooltip"),control=document.querySelector(".leaflet-control-container"),fullscreen=document.querySelector("#validator-map-fullscreen");return{popup:popup?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip")),parentIsBody:popup?.parentElement===document.body,position:getComputedStyle(popup).position,tooltipZIndex:Number(getComputedStyle(popup).zIndex||0),controlZIndex:Number(getComputedStyle(control).zIndex||0),fullscreenZIndex:Number(getComputedStyle(fullscreen).zIndex||0)}})())',
           returnByValue: true,
         });
         const hover = JSON.parse(hoverResult.value);
         if (
           !hover.popup.startsWith(expected) ||
           hover.tooltip ||
-          hover.popupPaneZIndex <= hover.controlZIndex ||
-          hover.popupPaneZIndex <= hover.fullscreenZIndex
+          !hover.parentIsBody ||
+          hover.position !== "fixed" ||
+          hover.tooltipZIndex <= hover.controlZIndex ||
+          hover.tooltipZIndex <= hover.fullscreenZIndex
         )
           throw new Error(
             `hover popup layering contract failed ${JSON.stringify({ expected, marker, hover })}`,
@@ -1998,7 +2000,7 @@ try {
     await delay(40);
     const { result: focusPopupResult } = await call("Runtime.evaluate", {
       expression:
-        'JSON.stringify(Boolean(document.querySelector(".leaflet-popup-content")))',
+        'JSON.stringify(Boolean(document.querySelector(".validator-map-tooltip")))',
       returnByValue: true,
     });
     if (!JSON.parse(focusPopupResult.value))
@@ -2009,7 +2011,7 @@ try {
     let blurClosed = false;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const { result: blurResult } = await call("Runtime.evaluate", {
-        expression: 'JSON.stringify(Boolean(document.querySelector(".leaflet-popup")))',
+        expression: 'JSON.stringify(Boolean(document.querySelector(".leaflet-popup,.validator-map-tooltip")))',
         returnByValue: true,
       });
       if (!JSON.parse(blurResult.value)) {
