@@ -71,8 +71,8 @@ const homepageStateExpression = `JSON.stringify({
   mapMarkerDetails: [...document.querySelectorAll("#validator-map .validator-marker")].map(marker => {
     const rect = marker.getBoundingClientRect();
     const label = marker.getAttribute("aria-label") || "";
-    const count = Number(/; (\\d+) validators?\\b/.exec(label)?.[1] || 0);
-    const radius = Number(/a([0-9.]+),/.exec(marker.getAttribute("d") || "")?.[1]);
+    const count = Number(/; (\\d+) nodes?\\b/.exec(label)?.[1] || 0);
+    const radius = rect.width / 2;
     return { label, count, radius, width: rect.width, height: rect.height, filter: getComputedStyle(marker).filter };
   }),
   siteRevision: document.querySelector("#site-revision")?.dataset.revision || "",
@@ -410,7 +410,7 @@ try {
   const mappedNodes = state.nodes;
   if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
-  if (!expectResetState && (state.mapMarkerDetails.reduce((total, marker) => total + marker.count, 0) !== state.mapValidators || state.mapMarkerDetails.some(marker => !Number.isFinite(marker.radius) || Math.abs(marker.radius - Math.round(Math.min(2.5 * marker.count, 9))) > 0.1))) throw new Error(`validator map grouping or radius contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
+  if (!expectResetState && (state.mapMarkerDetails.reduce((total, marker) => total + marker.count, 0) !== state.mapValidators || state.mapMarkerDetails.some(marker => !Number.isFinite(marker.radius) || Math.abs(marker.radius - Math.max(6, Math.min(6 * Math.sqrt(Math.max(1, marker.count)), 18))) > 0.1))) throw new Error(`validator map grouping or radius contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
   if (mappedNodes.filter(node => node.expanded).some(node => [node.inferenced, node.dapi, node.devshard, node.gpu, node.mlnodes].some(field => !field.visible || !field.text || field.text === 'Checking…' || field.clipped))) throw new Error(`participant runtime inventory is incomplete ${JSON.stringify(state)}`);
   if (mappedNodes.some(node => /\bunreported\b/i.test(`${node.inferenced.text || ''} ${node.dapi.text || ''} ${node.gpu.text || ''} ${node.mlnodes.text || ''}`))) {
     throw new Error(`participant cards rendered a diagnostic placeholder as a value ${JSON.stringify(mappedNodes)}`);

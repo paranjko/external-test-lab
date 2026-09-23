@@ -1799,6 +1799,17 @@ try {
           x: marker.x,
           y: marker.y,
         });
+        await delay(40);
+        const { result: hoverResult } = await call("Runtime.evaluate", {
+          expression:
+            'JSON.stringify({popup:document.querySelector(".leaflet-popup-content")?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip"))})',
+          returnByValue: true,
+        });
+        const hover = JSON.parse(hoverResult.value);
+        if (!hover.popup.startsWith(expected) || hover.tooltip)
+          throw new Error(
+            `hover must open the detailed popup without a tooltip ${JSON.stringify({ expected, marker, hover })}`,
+          );
         await call("Input.dispatchMouseEvent", {
           type: "mousePressed",
           x: marker.x,
@@ -1821,11 +1832,24 @@ try {
         const pointer = JSON.parse(pointerResult.value);
         if (
           !pointer.popup.startsWith(expected) ||
-          !pointer.tooltip.startsWith(expected)
+          pointer.tooltip
         )
           throw new Error(
             `overlapping hit dispatch failed ${JSON.stringify({ expected, marker, pointer, overlappingState })}`,
           );
+        await call("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: marker.x + 60,
+          y: marker.y + 60,
+        });
+        await delay(40);
+        const { result: pinnedResult } = await call("Runtime.evaluate", {
+          expression:
+            'JSON.stringify(document.querySelector(".leaflet-popup-content")?.textContent||"")',
+          returnByValue: true,
+        });
+        if (!JSON.parse(pinnedResult.value).startsWith(expected))
+          throw new Error("clicked popup did not remain open after pointer leave");
       }
     };
     await assertOverlappingPointers();
@@ -1950,6 +1974,35 @@ try {
     const focus = JSON.parse(focusResult.value);
     if (!focus.found || !focus.focused.startsWith("Vienna,"))
       throw new Error(`marker focus contract failed: ${JSON.stringify(focus)}`);
+    await delay(40);
+    const { result: focusPopupResult } = await call("Runtime.evaluate", {
+      expression:
+        'JSON.stringify(Boolean(document.querySelector(".leaflet-popup-content")))',
+      returnByValue: true,
+    });
+    if (!JSON.parse(focusPopupResult.value))
+      throw new Error("marker focus did not open the detailed popup");
+    await call("Runtime.evaluate", {
+      expression: 'document.activeElement?.blur()',
+    });
+    let blurClosed = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const { result: blurResult } = await call("Runtime.evaluate", {
+        expression: 'JSON.stringify(Boolean(document.querySelector(".leaflet-popup")))',
+        returnByValue: true,
+      });
+      if (!JSON.parse(blurResult.value)) {
+        blurClosed = true;
+        break;
+      }
+      await delay(20);
+    }
+    if (!blurClosed)
+      throw new Error("focus popup did not close after marker blur");
+    await call("Runtime.evaluate", {
+      expression:
+        '[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Vienna,"))?.focus()',
+    });
     await call("Runtime.evaluate", {
       expression:
         'document.activeElement?.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}))',

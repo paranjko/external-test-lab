@@ -1514,9 +1514,23 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const markerRegistry: Map<string, any> = new Map();
   let latestMapNodes: Array<SiteNode> = observedNodes;
   let openMarkerKey: ?string;
-  let tooltipMarker: ?any;
+  let popupMode: ?("hover" | "pinned");
   let resizeFrame: ?number;
-  const openMarkerPopup = (key: string, marker: any): void => {
+  const openMarkerPopup = (
+    key: string,
+    marker: any,
+    mode: "hover" | "pinned" = "pinned",
+  ): void => {
+    if (openMarkerKey === key && marker.isPopupOpen()) {
+      popupMode = mode;
+      const popup = marker.getPopup();
+      if (popup) {
+        popup.options.autoPan = mode === "pinned" && container.clientWidth >= 500;
+        popup.update();
+        if (mode === "pinned") schedulePopupLayout(marker, popup);
+      }
+      return;
+    }
     for (const [otherKey, otherMarker] of markerRegistry) {
       if (otherKey !== key && otherMarker.isPopupOpen()) otherMarker.closePopup();
       const popup = otherMarker.getPopup();
@@ -1531,10 +1545,11 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     // before attaching the one current popup.
     map.getPane("popupPane")?.replaceChildren();
     openMarkerKey = key;
+    popupMode = mode;
     const popup = marker.getPopup();
     if (popup) {
       marker.options.autoPanPadding = popupAutoPanPadding();
-      popup.options.autoPan = container.clientWidth >= 500;
+      popup.options.autoPan = mode === "pinned" && container.clientWidth >= 500;
       popup.options.maxWidth = popupMaxWidth();
       popup.options.autoPanPadding = popupAutoPanPadding();
     }
@@ -1566,27 +1581,38 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     const target = (event.originalEvent || event).target;
     return Boolean(target?.closest?.(".validator-marker-hit"));
   };
-  const showNearestTooltip = (event: any): void => {
+  const closeHoverPopup = (): void => {
+    if (popupMode !== "hover") return;
+    const marker: any = openMarkerKey ? markerRegistry.get(openMarkerKey) : null;
+    marker?.closePopup();
+    map.closePopup();
+    popupMode = null;
+    window.requestAnimationFrame(finalizePopupClose);
+  };
+  const showNearestPopup = (event: any): void => {
     if (!isMarkerHitEvent(event)) {
-      closeNearestTooltip();
+      closeHoverPopup();
       return;
     }
     const nearest = nearestMarkerAt(event);
     if (!nearest) return;
-    if (tooltipMarker && tooltipMarker !== nearest.marker)
-      tooltipMarker.closeTooltip();
-    tooltipMarker = nearest.marker;
-    nearest.marker.openTooltip();
+    const pinnedMarker: any = openMarkerKey ? markerRegistry.get(openMarkerKey) : null;
+    if (popupMode === "pinned" && pinnedMarker?.isPopupOpen()) return;
+    // A popup may have been closed through Leaflet's close control after a
+    // refresh. Do not let that stale mode suppress the next hover popup.
+    if (popupMode === "pinned") popupMode = null;
+    openMarkerPopup(nearest.key, nearest.marker, "hover");
+  };
+  const leaveNearestPopup = (event: any): void => {
+    const target = event.target?.closest?.(".validator-marker-hit");
+    const related = event.relatedTarget?.closest?.(".validator-marker-hit");
+    if (target && !related) closeHoverPopup();
   };
   const activateNearest = (event: any): void => {
     if (!isMarkerHitEvent(event)) return;
     const nearest = nearestMarkerAt(event);
     if (!nearest) return;
-    openMarkerPopup(nearest.key, nearest.marker);
-  };
-  const closeNearestTooltip = (): void => {
-    tooltipMarker?.closeTooltip();
-    tooltipMarker = null;
+    openMarkerPopup(nearest.key, nearest.marker, "pinned");
   };
   const configureMarkerElement = (marker: any, key: string, ariaLabel: string): void => {
     const element = marker.getElement();
@@ -1597,18 +1623,25 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     element.style.pointerEvents = "none";
     if (element.dataset.validatorMapKeyboard === "true") return;
     element.dataset.validatorMapKeyboard = "true";
+    element.addEventListener("focus", () => openMarkerPopup(key, marker, "hover"));
+    element.addEventListener("blur", () => {
+      if (openMarkerKey !== key) return;
+      popupMode = "hover";
+      closeHoverPopup();
+    });
     element.addEventListener("keydown", (event: any) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      openMarkerPopup(key, marker);
+      openMarkerPopup(key, marker, "pinned");
     });
   };
   // The transparent hit circles overlap by design. Capture only their browser
   // events before Leaflet dispatches to an arbitrary topmost SVG path, then
   // choose the closest visible marker ourselves. Controls remain controls.
   container.addEventListener("click", activateNearest, true);
-  container.addEventListener("mousemove", showNearestTooltip, true);
-  container.addEventListener("mouseleave", closeNearestTooltip, true);
+  container.addEventListener("mousemove", showNearestPopup, true);
+  container.addEventListener("mouseout", leaveNearestPopup, true);
+  container.addEventListener("mouseleave", closeHoverPopup, true);
   const popupMaxWidth = (): number => {
     const width = container.clientWidth || container.getBoundingClientRect().width;
     return Math.max(120, Math.min(340, width - 52));
@@ -1667,7 +1700,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     window.requestAnimationFrame(() => {
       if (!marker.isPopupOpen()) return;
       marker.options.autoPanPadding = popupAutoPanPadding();
-      popup.options.autoPan = container.clientWidth >= 500;
+      popup.options.autoPan = popupMode === "pinned" && container.clientWidth >= 500;
       popup.options.maxWidth = popupMaxWidth();
       popup.options.autoPanPadding = popupAutoPanPadding();
       popup.update();
@@ -1683,6 +1716,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const finalizePopupClose = (): void => {
     if (popupMarkerKey() || container.querySelector(".leaflet-popup")) return;
     openMarkerKey = null;
+    popupMode = null;
     restoreWorld();
   };
   const refreshOpenPopupLayout = (): void => {
@@ -1919,8 +1953,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       const popupHtml = `<strong>${escapeHtml(group.label)}</strong><p class="status ${statusClass}">${escapeHtml(
         stateLabel,
       )}</p><p>${escapeHtml(nodeLabel)} at this location</p><p>${escapeHtml(stateSummary)}</p><p>${escapeHtml(stateReasons.join(" · "))}</p><p>Location source: ${escapeHtml(sources)}</p><p>Raw position: ${escapeHtml(rawPositions.join("; "))}</p><p>Accuracy: ${escapeHtml(accuracy || "unknown")}${observed ? `; observed ${escapeHtml(observed)}` : ""}</p>${correction}<ul>${rows}</ul>`;
-      const radius = markerRadius(count);
-      const tooltip = `${group.label}: ${nodeLabel} · ${stateSummary}`;
       const ariaLabel = `${group.label}; ${nodeLabel}; ${stateSummary.replaceAll(" · ", ", ")}`;
       let marker: any = markerRegistry.get(key);
       if (!marker) {
@@ -1930,14 +1962,11 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
           icon: markerIcon(count, stateCounts),
           autoPan: container.clientWidth >= 500,
           autoPanPadding: popupAutoPanPadding(),
-        })
-          .bindTooltip(tooltip, { direction: "top", offset: [0, -radius] })
-          .bindPopup(popupHtml, {
+        }).bindPopup(popupHtml, {
             closeButton: true,
             maxWidth: popupMaxWidth(),
             autoPanPadding: popupAutoPanPadding(),
           });
-        marker.__tooltip = tooltip;
         marker.__popupHtml = popupHtml;
         marker.addTo(markers);
         const hitTarget = L.circleMarker([group.lat, group.lon], {
@@ -1960,12 +1989,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         marker.setLatLng([group.lat, group.lon]);
         marker.setIcon(markerIcon(count, stateCounts));
         marker.__hitTarget?.setLatLng([group.lat, group.lon]);
-        const boundTooltip = marker.getTooltip();
-        if (boundTooltip) boundTooltip.options.offset = [0, -radius];
-        if (marker.__tooltip !== tooltip) {
-          marker.setTooltipContent(tooltip);
-          marker.__tooltip = tooltip;
-        }
         if (marker.__popupHtml !== popupHtml) {
           marker.setPopupContent(popupHtml);
           marker.__popupHtml = popupHtml;
@@ -1984,8 +2007,9 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     () => {
       document.removeEventListener("keydown", onKeydown, true);
       container.removeEventListener("click", activateNearest, true);
-      container.removeEventListener("mousemove", showNearestTooltip, true);
-      container.removeEventListener("mouseleave", closeNearestTooltip, true);
+      container.removeEventListener("mousemove", showNearestPopup, true);
+      container.removeEventListener("mouseout", leaveNearestPopup, true);
+      container.removeEventListener("mouseleave", closeHoverPopup, true);
       document.body.classList.remove("validator-map-fullscreen-open");
       if (resizeFrame != null) window.cancelAnimationFrame(resizeFrame);
       observer.disconnect();
