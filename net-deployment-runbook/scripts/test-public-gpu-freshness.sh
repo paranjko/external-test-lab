@@ -11,8 +11,8 @@ route="$(sed -n '/handle \/status\/gpus {/,/^  }/p' "$renderer")"
 grep -Fq 'last_over_time(gdc_nvidia_memory_total_bytes%5B24h%5D)' <<<"$route"
 software_route="$(sed -n '/handle \/status\/software {/,/^  }/p' "$renderer")"
 grep -Fq 'max_over_time(timestamp(gdc_component_info)%5B24h%3A15s%5D)' <<<"$software_route"
-grep -Fq 'inventory unavailable' "$site"
-grep -Fq 'GPU inventory has not reported this Host yet' "$site"
+grep -Fq 'Current on-chain runtime inventory' "$site"
+grep -Fq 'Chain runtime inventory could not be read' "$site"
 
 stale_response='{"status":"success","data":{"result":[]}}'
 fresh_response='{"status":"success","data":{"result":[{"metric":{"host":"node4-ml","gpu_name":"NVIDIA RTX PRO 2000 Blackwell"},"value":[0,"1"]}]}}'

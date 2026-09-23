@@ -32,6 +32,9 @@ preview_inventory ?= $(CURDIR)/../ops/preview/status-renderer-inventory.env
 preview_backend_dir ?= $(site_release_dir)-backend
 preview_base_revision ?=
 site_origin ?= https://gonka-dev.net
+preview_origin ?= https://preview.gonka-dev.net
+site_preview_expected_card_count ?= 9
+site_preview_expected_node_states ?= node3.gonka-dev.net=Inactive
 
 .PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-preview-platform test-preview-isolation test-preview-lifecycle test-preview-provision test-preview-status-renderer test-preview-frontend-builder test-isolated-preview-ci test-isolated-preview-ci-artifact test-record-site-preview-deployment test-verify-isolated-site-preview-live test-isolated-preview-runtime-config test-isolated-preview-publish test-prepare-isolated-preview-composition test-prepare-isolated-site-preview-artifact test-prepare-public-preview-inventory test-node-observation-guard test-edge-install-ownership prepare-static-site prepare-site-preview-artifact prepare-isolated-site-preview-artifact prepare-isolated-preview-ci prepare-isolated-preview-ci-artifact write-isolated-preview-deploy-env publish-site-release publish-site-preview publish-isolated-site-preview publish-isolated-preview-ci rollback-site-preview remove-site-release remove-isolated-site-preview verify-site-release verify-site-preview-artifact verify-isolated-preview-ci-artifact verify-isolated-site-preview-live verify-site-preview-live verify-site-preview-endpoints smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test test-command-dependency-contract edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
 
@@ -179,10 +182,16 @@ test-site-preview-platform: site-vendor
 	@$(MAKE) test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher
 	@./scripts/test-public-edge-static-site.sh
 
-.PHONY: test-status-openapi test-site-preview-acceptance
+.PHONY: test-status-openapi test-public-gpu-freshness test-public-edge-static-site test-site-preview-acceptance
 
 test-status-openapi:
 	@node ./scripts/test-status-openapi.js
+
+test-public-gpu-freshness:
+	@./scripts/test-public-gpu-freshness.sh
+
+test-public-edge-static-site:
+	@./scripts/test-public-edge-static-site.sh
 
 test-site-preview-acceptance: site-vendor
 	@$(MAKE) test-gateway-site-state test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher test-status-openapi
@@ -256,6 +265,11 @@ verify-site-preview-live:
 
 verify-site-preview-endpoints:
 	@./scripts/verify-site-preview-endpoints.sh "$(site_release_dir)" "$(site_publish_prefix)" "$(site_origin)"
+
+.PHONY: smoke-site-preview-acceptance
+
+smoke-site-preview-acceptance:
+	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" GDC_EXPECT_STATUS_PREFIX="/$(preview_number)/status/" GDC_EXPECT_CARD_COUNT="$(site_preview_expected_card_count)" GDC_EXPECT_NODE_STATES="$(site_preview_expected_node_states)" node ./scripts/capture-homepage-viewport.mjs "$(preview_origin)/$(preview_number)/" 1280 900 "$(site_release_dir).png" 0
 
 smoke-site-preview:
 	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" node ./scripts/capture-homepage-viewport.mjs "$(site_origin)/$(site_publish_prefix)/" 1280 900 "$(site_release_dir).png" 0

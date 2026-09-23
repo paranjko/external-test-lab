@@ -336,8 +336,8 @@ if grep -Eq 'node[0-9]\.gonka-dev\.net' "$ROOT/04-ops/edge-node/public-grafana/p
   echo 'public Grafana datasource must be rendered from the configured gateway role' >&2
   exit 1
 fi
-grep -Fq 'Software inventory has not reported this Host yet' "$ROOT/04-ops/site/src/app.js"
-grep -Fq 'GPU inventory has not reported this Host yet' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'No current version was available from the Host or monitoring inventory' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'Chain runtime inventory could not be read' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'json(statusUrl("/software"))' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'json(statusUrl("/gpus"))' "$ROOT/04-ops/site/src/app.js"
 ! grep -Fq '/v1/versions' "$ROOT/04-ops/site/src/app.js"
