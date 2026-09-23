@@ -57,6 +57,7 @@ body * {
 .validator-map .leaflet-control-zoom a { border-color: var(--line); }
 .validator-map .leaflet-control-zoom a:hover, .validator-map .leaflet-control-zoom a:focus { background: #2c303b !important; color: var(--ink); }
 .validator-map .leaflet-control-zoom a.leaflet-disabled { background: #2c303b !important; color: #7d8493 !important; }
+.validator-map .leaflet-popup-pane { z-index: 1200 !important; }
 .validator-map .leaflet-popup-content { margin: 14px 16px; font-size: 12px; line-height: 1.45; }
 .validator-map .leaflet-popup-content strong { display: block; color: var(--primary-color); }
 .validator-map .leaflet-popup-content p { margin: 6px 0; color: var(--muted); }

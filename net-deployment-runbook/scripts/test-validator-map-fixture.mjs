@@ -1818,13 +1818,18 @@ try {
           );
         const { result: hoverResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify({popup:document.querySelector(".leaflet-popup-content")?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip"))})',
+            'JSON.stringify((()=>{const popup=document.querySelector(".leaflet-popup-content"),pane=document.querySelector(".leaflet-popup-pane"),control=document.querySelector(".leaflet-control-container"),fullscreen=document.querySelector("#validator-map-fullscreen");return{popup:popup?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip")),popupPaneZIndex:Number(getComputedStyle(pane).zIndex||0),controlZIndex:Number(getComputedStyle(control).zIndex||0),fullscreenZIndex:Number(getComputedStyle(fullscreen).zIndex||0)}})())',
           returnByValue: true,
         });
         const hover = JSON.parse(hoverResult.value);
-        if (!hover.popup.startsWith(expected) || hover.tooltip)
+        if (
+          !hover.popup.startsWith(expected) ||
+          hover.tooltip ||
+          hover.popupPaneZIndex <= hover.controlZIndex ||
+          hover.popupPaneZIndex <= hover.fullscreenZIndex
+        )
           throw new Error(
-            `hover must open the detailed popup without a tooltip ${JSON.stringify({ expected, marker, hover })}`,
+            `hover popup layering contract failed ${JSON.stringify({ expected, marker, hover })}`,
           );
         await call("Input.dispatchMouseEvent", {
           type: "mousePressed",

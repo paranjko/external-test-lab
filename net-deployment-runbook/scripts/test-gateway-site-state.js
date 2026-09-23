@@ -442,6 +442,7 @@ assert.match(
 );
 assert.match(readability, /\.validator-map-encoding-note/);
 assert.match(readability, /\.validator-marker-face[\s\S]*background: var\(--validator-marker-fill\)/);
+assert.match(readability, /\.validator-map \.leaflet-popup-pane \{ z-index: 1200 !important; \}/);
 assert.doesNotMatch(readability, /validator-marker-number/);
 assert.match(
   readability,
