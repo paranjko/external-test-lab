@@ -206,7 +206,11 @@ grep -Fq 'PASS operator-gpu linked GPU reset' "$tmp/record-output"
 cleanroom_root="$tmp/workspace"
 cleanroom_home="$tmp/workspaces/.data"
 mkdir -p "$cleanroom_root"
-cp -a "$ROOT/." "$cleanroom_root/"
+# The cleanroom validates checked-in operator tooling, not untracked runtime
+# evidence. git archive also prevents unreadable retained test artifacts from
+# contaminating this copy.
+git -C "$ROOT" archive HEAD | tar -xf - -C "$cleanroom_root"
+[[ ! -e "$cleanroom_root/.data" ]]
 env -u GDC_ENV -u GDC_NODE_ALIASES GDC_HOME="$cleanroom_home" \
   PATH="$fake_bin:$PATH" \
   "$cleanroom_root/gdc.sh" host reset gdc-node2 >"$tmp/cleanroom-output"

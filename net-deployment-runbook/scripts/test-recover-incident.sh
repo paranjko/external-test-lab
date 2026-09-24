@@ -901,7 +901,13 @@ printf 'PASS single-target recovery, per-target reset/restore and quorum-based s
 
 # Exercise the actual launcher with a recording incident entry point in a
 # disposable copy. No SSH, Docker, production archive or credential is used.
-cp -a "$RUNBOOK" "$scratch/runbook"
+mkdir -p "$scratch/runbook"
+# Runtime receipts are untracked and may contain daemon-owned paths. The
+# disposable launcher fixture needs the runbook inputs, never `.data`.
+(
+  cd "$RUNBOOK"
+  tar --exclude=./.data -cf - .
+) | tar -xf - -C "$scratch/runbook"
 cat >"$scratch/runbook/scripts/recover-incident.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$INCIDENT_TEST_ARGS"

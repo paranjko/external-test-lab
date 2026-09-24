@@ -1,0 +1,74 @@
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	@allowed {
+		method GET HEAD
+		path /gonka-api /gonka-api/*
+	}
+	# Community DevNet Hosts have public node<N>.gonka-dev.net names. The
+	# preview backend can address only this narrow read-only route family; it
+	# cannot select an arbitrary hostname, port, scheme or request method.
+	@preview_node {
+		method GET HEAD
+		path_regexp preview_node ^/preview/[1-9][0-9]*/node/(node[0-9]+)(/.*)$
+	}
+	handle @preview_node {
+		rewrite * /node/{re.preview_node.1}{re.preview_node.2}
+		reverse_proxy gdc-preview-node-guard:8090
+	}
+	handle @allowed {
+		uri strip_prefix /gonka-api
+		reverse_proxy https://{$PREVIEW_OBSERVATION_HOST} {
+			header_up Host {$PREVIEW_OBSERVATION_HOST}
+		}
+	}
+	@prometheus_gpu {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		query query=gdc_nvidia_memory_total_bytes
+	}
+	handle @prometheus_gpu {
+		uri strip_prefix /prometheus
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	@prometheus_gpu_fresh {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		expression `query({'query':'gdc_nvidia_memory_total_bytes unless (time() - timestamp(gdc_nvidia_memory_total_bytes) > 120)'})`
+	}
+	handle @prometheus_gpu_fresh {
+		uri strip_prefix /prometheus
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	@prometheus_gpu_retained {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		query query=last_over_time(gdc_nvidia_memory_total_bytes[24h])
+	}
+	handle @prometheus_gpu_retained {
+		uri strip_prefix /prometheus
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	@prometheus_software {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		query query=gdc_component_info
+	}
+	handle @prometheus_software {
+		uri strip_prefix /prometheus
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	@prometheus_software_retained {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		query query=max_over_time(timestamp(gdc_component_info)[24h:15s])
+	}
+	handle @prometheus_software_retained {
+		uri strip_prefix /prometheus
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	respond "not found" 404
+}
