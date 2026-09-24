@@ -32,8 +32,14 @@ if [[ ! -e "$DEST/gateway-admission.env" ]]; then
   install -m 0600 /dev/null "$DEST/gateway-admission.env"
 fi
 install -m 0600 "$1" "$DEST/.env"
-rm -rf "$DEST/public-grafana"
-cp -a "$HERE/public-grafana" "$DEST/public-grafana"
+# A running public Grafana bind-mounts the dashboards and provisioning
+# directories. Replacing those directories would leave the container on the
+# deleted inodes, serving its last imported definitions while the files on
+# disk are already current. Refresh the files inside the existing
+# directories instead so the provisioner sees every change.
+install -d -m 0755 "$DEST/public-grafana"
+find "$DEST/public-grafana" -mindepth 1 ! -type d -delete
+cp -a "$HERE/public-grafana/." "$DEST/public-grafana/"
 sed "s|__PUBLIC_GRAFANA_PROMETHEUS_URL__|$PUBLIC_GRAFANA_PROMETHEUS_URL|g" \
   "$HERE/public-grafana/provisioning/datasources/prometheus.yml" \
   >"$DEST/public-grafana/provisioning/datasources/prometheus.yml"

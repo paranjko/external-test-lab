@@ -71,10 +71,16 @@ curl_dns_retry() {
   done
 }
 
+# ssh reads stdin; inside a while-read loop it would swallow the remaining lines.
 prom_query() {
   local expression="$1" encoded
   encoded="$(printf '%s' "$expression" | base64 -w0)"
-  ssh -T "$GATEWAY_NODE" "query=\$(printf %s '$encoded' | base64 -d); curl -fsSG --data-urlencode query=\"\$query\" http://127.0.0.1:9099/api/v1/query"
+  ssh -T "$GATEWAY_NODE" "query=\$(printf %s '$encoded' | base64 -d); curl -fsSG --data-urlencode query=\"\$query\" http://127.0.0.1:9099/api/v1/query" </dev/null
+}
+
+# An answer is data only when some value is not NaN, as in the deploy gate.
+expression_has_data() {
+  jq -e '.status == "success" and ([.data.result[]? | (if has("value") then .value[1] else (.values[]? | .[1]) end)] | any(. != "NaN"))' >/dev/null
 }
 
 jq -n --arg captured_at "$(date -u +%FT%TZ)" --arg label "$label" --argjson height "$height" \
@@ -229,12 +235,17 @@ site_code="$(curl_dns_retry curl -sS --connect-timeout 5 --max-time 15 -o /dev/n
 : >"$out/dashboard-results.jsonl"
 for dashboard in gdc-network gdc-inference; do
   curl_dns_retry curl -fsS "https://$GRAFANA_HOST/api/dashboards/uid/$dashboard" >"$out/$dashboard.json"
-  jq -r '.dashboard.panels[]?.targets[]?.expr | select(type == "string" and length > 0)' "$out/$dashboard.json" | sort -u \
-    | while IFS= read -r expression; do
+  # Every expression is recorded. A panel that declares an empty state is allowed
+  # to return nothing, exactly as the deploy gate allows; asserting otherwise
+  # would contradict it, and dropping those rows would shrink the evidence.
+  jq -r '.dashboard.panels[]? | ((.fieldConfig.defaults.noValue // "") != "") as $declared | .targets[]?.expr | select(type == "string" and length > 0) | [(if $declared then "declared" else "required" end), .] | @tsv' "$out/$dashboard.json" | sort -u \
+    | while IFS=$'\t' read -r declared expression; do
         result="$(prom_query "$expression")"
-        count="$(jq -er '.status == "success" and (.data.result|length > 0) | if . then 1 else 0 end' <<<"$result")"
-        [[ "$count" == 1 ]] || { echo "dashboard expression returned no data: $dashboard" >&2; exit 1; }
-        jq -n --arg dashboard "$dashboard" --arg expression "$expression" '{dashboard:$dashboard,expression:$expression,result_nonempty:true}' >>"$out/dashboard-results.jsonl"
+        count=0
+        if expression_has_data <<<"$result"; then count=1; fi
+        [[ "$count" == 1 || "$declared" == declared ]] || { echo "dashboard expression returned no data: $dashboard" >&2; exit 1; }
+        jq -n --arg dashboard "$dashboard" --arg expression "$expression" --arg declared "$declared" --argjson nonempty "$count" \
+          '{dashboard:$dashboard,expression:$expression,empty_state:$declared,result_nonempty:($nonempty == 1)}' >>"$out/dashboard-results.jsonl"
       done
 done
 

@@ -416,8 +416,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -499,8 +499,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -582,8 +582,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -665,8 +665,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -748,8 +748,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -844,8 +844,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -927,8 +927,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1010,8 +1010,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1106,8 +1106,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1189,8 +1189,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1272,8 +1272,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1355,8 +1355,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1374,7 +1374,8 @@
               }
             ]
           },
-          "unit": "percent"
+          "unit": "percent",
+          "noValue": "no accelerator host is reporting"
         },
         "overrides": []
       },
@@ -1398,7 +1399,8 @@
           "refId": "A",
           "legendFormat": "{{host}} · {{gpu_name}}"
         }
-      ]
+      ],
+      "description": "Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero."
     },
     {
       "id": 35,
@@ -1438,8 +1440,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1457,7 +1459,8 @@
               }
             ]
           },
-          "unit": "bytes"
+          "unit": "bytes",
+          "noValue": "no accelerator host is reporting"
         },
         "overrides": []
       },
@@ -1481,7 +1484,8 @@
           "refId": "A",
           "legendFormat": "{{host}} · {{gpu_name}}"
         }
-      ]
+      ],
+      "description": "Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero."
     },
     {
       "id": 36,
@@ -1521,8 +1525,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1540,7 +1544,8 @@
               }
             ]
           },
-          "unit": "celsius"
+          "unit": "celsius",
+          "noValue": "no accelerator host is reporting"
         },
         "overrides": []
       },
@@ -1564,7 +1569,8 @@
           "refId": "A",
           "legendFormat": "{{host}} · {{gpu_name}}"
         }
-      ]
+      ],
+      "description": "Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero."
     },
     {
       "id": 140,
@@ -1601,7 +1607,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "no target has a resolved location"
         },
         "overrides": []
       },
@@ -1624,7 +1631,8 @@
           "format": "table",
           "instant": true
         }
-      ]
+      ],
+      "description": "Rows appear only for scrape targets whose location was resolved. A Host that is absent from the monitoring inventory, or whose location lookup failed, is missing from this table rather than listed without a location."
     },
     {
       "id": 42,
@@ -1648,7 +1656,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "no Host has reported its software inventory"
         },
         "overrides": []
       },
@@ -1672,6 +1681,7 @@
           "instant": true
         }
       ],
+      "description": "Rows appear once the version collector has written its first inventory on a Host. An empty table means the collector has not reported yet, not that the Hosts run no software.",
       "transformations": [
         {
           "id": "organize",

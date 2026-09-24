@@ -10,30 +10,45 @@ render() {
     def ds: {type:"prometheus",uid:"prometheus"};
     def target($expr; $legend):
       {expr:$expr,refId:"A"} + (if $legend == "" then {} else {legendFormat:$legend} end);
-    def stat($id;$title;$expr;$unit;$x;$y;$w):
-      {id:$id,datasource:ds,type:"stat",title:$title,gridPos:{h:4,w:$w,x:$x,y:$y},
+    def tscustom:
+      {axisCenteredZero:false,axisColorMode:"text",axisLabel:"",axisPlacement:"auto",drawStyle:"line",fillOpacity:12,gradientMode:"opacity",hideFrom:{legend:false,tooltip:false,viz:false},lineInterpolation:"smooth",lineWidth:2,pointSize:4,scaleDistribution:{type:"linear"},showPoints:"auto",spanNulls:false,stacking:{group:"A",mode:"none"},thresholdsStyle:{mode:"off"}};
+    def tablecustom: {align:"auto",cellOptions:{type:"auto"},inspect:false};
+    # $desc documents what a value means and what its absence means; $fc overrides
+    # fieldConfig.defaults (noValue, mappings, thresholds, unit); $opts overrides the
+    # panel options. A $fc.custom object is merged into the shared custom block, never
+    # replaces it, so an override cannot silently drop the axis and line settings.
+    def stat($id;$title;$expr;$unit;$x;$y;$w;$desc;$fc;$opts):
+      ({id:$id,datasource:ds,type:"stat",title:$title,gridPos:{h:4,w:$w,x:$x,y:$y},
        fieldConfig:{defaults:({color:{mode:"thresholds"},thresholds:{mode:"absolute",steps:[{color:"green",value:null}]}} +
-         (if $unit == "" then {} else {unit:$unit} end)),overrides:[]},
-       options:{colorMode:"none",graphMode:"none",justifyMode:"auto",orientation:"auto",reduceOptions:{calcs:["lastNotNull"],fields:"",values:false},textMode:"auto",wideLayout:true},
-       targets:[target($expr;"") + {instant:true}]};
-    def ts($id;$title;$expr;$legend;$unit;$x;$y;$w;$h):
-      {id:$id,datasource:ds,type:"timeseries",title:$title,gridPos:{h:$h,w:$w,x:$x,y:$y},
-       fieldConfig:{defaults:({color:{mode:"palette-classic"},custom:{axisCenteredZero:false,axisColorMode:"text",axisLabel:"",axisPlacement:"auto",drawStyle:"line",fillOpacity:12,gradientMode:"opacity",hideFrom:{legend:false,tooltip:false,viz:false},lineInterpolation:"smooth",lineWidth:2,pointSize:4,scaleDistribution:{type:"linear"},showPoints:"never",spanNulls:true,stacking:{group:"A",mode:"none"},thresholdsStyle:{mode:"off"}},thresholds:{mode:"absolute",steps:[{color:"green",value:null}]}} +
-         (if $unit == "" then {} else {unit:$unit} end)),overrides:[]},
-       options:{legend:{calcs:["lastNotNull"],displayMode:"table",placement:"bottom",showLegend:true},tooltip:{mode:"multi",sort:"desc"}},
-       targets:[target($expr;$legend)]};
-    def table($id;$title;$expr;$x;$y;$w;$h):
-      {id:$id,datasource:ds,type:"table",title:$title,gridPos:{h:$h,w:$w,x:$x,y:$y},
-       fieldConfig:{defaults:{custom:{align:"auto",cellOptions:{type:"auto"},inspect:false}},overrides:[]},
+         (if $unit == "" then {} else {unit:$unit} end) + $fc),overrides:[]},
+       options:({colorMode:"none",graphMode:"none",justifyMode:"auto",orientation:"auto",reduceOptions:{calcs:["lastNotNull"],fields:"",values:false},textMode:"auto",wideLayout:true} + $opts),
+       targets:[target($expr;"") + {instant:true}]}
+       + (if $desc == "" then {} else {description:$desc} end));
+    def stat($id;$title;$expr;$unit;$x;$y;$w): stat($id;$title;$expr;$unit;$x;$y;$w;"";{};{});
+    def ts($id;$title;$expr;$legend;$unit;$x;$y;$w;$h;$desc;$fc;$legendcalcs):
+      ({id:$id,datasource:ds,type:"timeseries",title:$title,gridPos:{h:$h,w:$w,x:$x,y:$y},
+       fieldConfig:{defaults:({color:{mode:"palette-classic"},custom:tscustom,thresholds:{mode:"absolute",steps:[{color:"green",value:null}]}} +
+         (if $unit == "" then {} else {unit:$unit} end) + ($fc|del(.custom)) + {custom:(tscustom + ($fc.custom // {}))}),overrides:[]},
+       options:{legend:{calcs:$legendcalcs,displayMode:"table",placement:"bottom",showLegend:true},tooltip:{mode:"multi",sort:"desc"}},
+       targets:[target($expr;$legend)]}
+       + (if $desc == "" then {} else {description:$desc} end));
+    def ts($id;$title;$expr;$legend;$unit;$x;$y;$w;$h): ts($id;$title;$expr;$legend;$unit;$x;$y;$w;$h;"";{};["lastNotNull"]);
+    def table($id;$title;$expr;$x;$y;$w;$h;$desc;$fc):
+      ({id:$id,datasource:ds,type:"table",title:$title,gridPos:{h:$h,w:$w,x:$x,y:$y},
+       fieldConfig:{defaults:({custom:tablecustom} + ($fc|del(.custom)) + {custom:(tablecustom + ($fc.custom // {}))}),overrides:[]},
        options:{cellHeight:"sm",footer:{countRows:false,fields:"",reducer:["sum"],show:false},showHeader:true},
-       targets:[target($expr;"") + {format:"table",instant:true}]};
+       targets:[target($expr;"") + {format:"table",instant:true}]}
+       + (if $desc == "" then {} else {description:$desc} end));
+    def table($id;$title;$expr;$x;$y;$w;$h): table($id;$title;$expr;$x;$y;$w;$h;"";{});
     def row($id;$title;$y): {id:$id,type:"row",title:$title,collapsed:false,gridPos:{h:1,w:24,x:0,y:$y},panels:[]};
     def textpanel($id;$title;$markdown;$y):
       {id:$id,type:"text",title:$title,gridPos:{h:5,w:24,x:0,y:$y},options:{content:$markdown,mode:"markdown"}};
-    def base($uid;$title;$from;$panels):
+    # $extra shallow-replaces top-level board keys; it does not deep-merge.
+    def base($uid;$title;$from;$panels;$extra):
       {annotations:{list:[]},editable:false,fiscalYearStartMonth:0,graphTooltip:1,id:null,
        links:[{asDropdown:true,icon:"dashboard",includeVars:false,keepTime:true,tags:["gdc"],targetBlank:false,title:"Community DevNet dashboards",type:"dashboards"}],
-       liveNow:true,panels:$panels,refresh:"15s",schemaVersion:41,tags:["gonka","gdc"],templating:{list:[]},time:{from:$from,to:"now"},timepicker:{refresh_intervals:["5s","10s","15s","30s","1m","5m"]},timezone:"utc",title:$title,uid:$uid,version:1};
+       liveNow:true,panels:$panels,refresh:"15s",schemaVersion:41,tags:["gonka","gdc"],templating:{list:[]},time:{from:$from,to:"now"},timepicker:{refresh_intervals:["5s","10s","15s","30s","1m","5m"]},timezone:"utc",title:$title,uid:$uid,version:1} + $extra;
+    def base($uid;$title;$from;$panels): base($uid;$title;$from;$panels;{});
 
     if $kind == "network" then
       base("gdc-network";"Gonka DevNet Network";"now-24h";[
@@ -61,13 +76,13 @@ render() {
         ts(31;"CPU busy";"100 - avg by(host)(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100";"{{host}}";"percent";0;30;8;7),
         ts(32;"Memory used";"(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100";"{{host}}";"percent";8;30;8;7),
         ts(33;"Operational disk free";"max by (host) (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\",mountpoint=~\"/|/srv/dai|/sdb-disk\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay\",mountpoint=~\"/|/srv/dai|/sdb-disk\"} * 100)";"{{host}}";"percent";16;30;8;7),
-        ts(34;"GPU utilization";"gdc_nvidia_utilization_percent";"{{host}} · {{gpu_name}}";"percent";0;37;8;7),
-        ts(35;"GPU memory used";"gdc_nvidia_memory_used_bytes";"{{host}} · {{gpu_name}}";"bytes";8;37;8;7),
-        ts(36;"GPU temperature";"gdc_nvidia_temperature_celsius";"{{host}} · {{gpu_name}}";"celsius";16;37;8;7),
+        ts(34;"GPU utilization";"gdc_nvidia_utilization_percent";"{{host}} · {{gpu_name}}";"percent";0;37;8;7;"Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero.";{noValue:"no accelerator host is reporting"};["lastNotNull"]),
+        ts(35;"GPU memory used";"gdc_nvidia_memory_used_bytes";"{{host}} · {{gpu_name}}";"bytes";8;37;8;7;"Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero.";{noValue:"no accelerator host is reporting"};["lastNotNull"]),
+        ts(36;"GPU temperature";"gdc_nvidia_temperature_celsius";"{{host}} · {{gpu_name}}";"celsius";16;37;8;7;"Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero.";{noValue:"no accelerator host is reporting"};["lastNotNull"]),
 
         row(140;"Host inventory";44),
-        table(41;"Locations and scrape state";"up{job=\"host\",city!=\"\"}";0;45;12;8),
-        (table(42;"Software inventory";"gdc_component_info";12;45;12;8)
+        table(41;"Locations and scrape state";"up{job=\"host\",city!=\"\"}";0;45;12;8;"Rows appear only for scrape targets whose location was resolved. A Host that is absent from the monitoring inventory, or whose location lookup failed, is missing from this table rather than listed without a location.";{noValue:"no target has a resolved location"}),
+        (table(42;"Software inventory";"gdc_component_info";12;45;12;8;"Rows appear once the version collector has written its first inventory on a Host. An empty table means the collector has not reported yet, not that the Hosts run no software.";{noValue:"no Host has reported its software inventory"})
           | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",component:"Component",component_instance:"Instance",version:"Version",commit:"Commit",image:"Image",source:"Source"}}}]),
         textpanel(49;"Data contract";"This board adapts the structure of **Gonka Network Pulse v4** to the Community DevNet metrics that are actually collected. It uses live CometBFT, host, GPU and blackbox-exporter series. Archive-only epoch economics, rewards and historical transaction decoding are intentionally not fabricated.";53)
       ])
@@ -84,21 +99,21 @@ render() {
         row(210;"Live flow";5),
         ts(61;"Request rate by outcome";"sum by (outcome) (rate(devshard_gateway_requests_total[5m])) or vector(0)";"{{outcome}}";"reqps";0;6;12;8),
         ts(62;"Attempts started by role";"sum by (role) (rate(devshard_gateway_attempts_started_total[5m])) or vector(0)";"{{role}}";"reqps";12;6;12;8),
-        table(63;"Requests by outcome";"sum by (outcome,reason) (devshard_gateway_requests_total)";0;14;12;8),
-        (table(64;"Current model executors";"max by (participant_key,model) (devshard_gateway_participant_quarantine_state)";12;14;12;8)
+        table(63;"Requests by outcome";"sum by (outcome,reason) (devshard_gateway_requests_total)";0;14;12;8;"Empty until the gateway records a routed request. This build exports no devshard_gateway_requests_total series at all, so the table stays empty rather than showing a zero that would claim requests were counted and classified.";{noValue:"this gateway build exports no request counter"}),
+        (table(64;"Current model executors";"max by (participant_key,model) (devshard_gateway_participant_quarantine_state)";12;14;12;8;"Rows appear once a participant is registered with the gateway for a model. An empty table means no executor is tracked at all, not that every executor is idle.";{noValue:"the gateway tracks no executor"})
           | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true},renameByName:{participant_key:"Executor",model:"Model"}}}]),
 
         row(220;"Executor latency and quality";22),
         ts(71;"First content latency p50";"histogram_quantile(0.50, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[15m]))) or vector(0)";"p50";"s";0;23;8;7),
         ts(72;"First content latency p95";"histogram_quantile(0.95, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[15m]))) or vector(0)";"p95";"s";8;23;8;7),
         ts(73;"Attempt latency by executor";"sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_sum) / sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_count) or vector(0)";"{{participant_key}}";"s";16;23;8;7),
-        table(74;"Executor wins";"sum by (participant_key,model) (devshard_gateway_user_visible_wins_total)";0;30;8;8),
+        table(74;"Executor wins";"sum by (participant_key,model) (devshard_gateway_user_visible_wins_total)";0;30;8;8;"Empty until an executor wins a routed request. This build exports no devshard_gateway_user_visible_wins_total series at all, so the table stays empty rather than implying that every executor has zero wins.";{noValue:"this gateway build exports no executor win counter"}),
         table(75;"Executor failures";"sum by (participant_key,model,reason) (devshard_gateway_attempt_failures_total) or vector(0)";8;30;8;8),
-        table(76;"Quarantine state";"devshard_gateway_participant_quarantine_state";16;30;8;8),
+        table(76;"Quarantine state";"devshard_gateway_participant_quarantine_state";16;30;8;8;"Quarantine state exists per participant and model. An empty table means the gateway is tracking no participant, which is not the same as every participant being healthy.";{noValue:"the gateway tracks no participant"}),
 
         row(230;"Capacity and escrow routing";38),
-        ts(81;"Effective and baseline weight";"devshard_gateway_capacity_total_weight or devshard_gateway_capacity_baseline_weight";"weight";"none";0;39;8;7),
-        ts(82;"Escrow effective weight";"devshard_gateway_escrow_weight";"escrow {{devshard_id}}";"none";8;39;8;7),
+        ts(81;"Effective and baseline weight";"devshard_gateway_capacity_total_weight or devshard_gateway_capacity_baseline_weight";"weight";"none";0;39;8;7;"Empty until the gateway publishes a capacity weight. Before the first capacity computation neither weight exists, so the panel stays blank rather than drawing a zero that would read as no capacity.";{noValue:"the gateway has published no capacity weight"};["lastNotNull"]),
+        ts(82;"Escrow effective weight";"devshard_gateway_escrow_weight";"escrow {{devshard_id}}";"none";8;39;8;7;"An escrow weight exists only while the gateway routes through an escrow. Empty means no escrow is active, not that an active escrow carries no weight.";{noValue:"no escrow is active"};["lastNotNull"]),
         ts(83;"Blocked participants (active escrow)";"devshard_gateway_escrow_blocked_participants or vector(0)";"escrow {{devshard_id}}";"none";16;39;8;7),
         ts(84;"Gateway and participant rejections";"sum by (reason) (rate(devshard_gateway_limit_rejections_total[5m])) or sum by (scope) (rate(devshard_gateway_participant_limit_rejections_total[5m])) or vector(0)";"{{reason}}{{scope}}";"reqps";0;46;12;8),
         ts(85;"Hidden participant failures";"sum by (model) (devshard_gateway_user_requests_with_hidden_failure_total) or vector(0)";"{{model}}";"none";12;46;12;8),

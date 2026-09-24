@@ -416,8 +416,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -499,8 +499,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -566,7 +566,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "this gateway build exports no request counter"
         },
         "overrides": []
       },
@@ -589,7 +590,8 @@
           "format": "table",
           "instant": true
         }
-      ]
+      ],
+      "description": "Empty until the gateway records a routed request. This build exports no devshard_gateway_requests_total series at all, so the table stays empty rather than showing a zero that would claim requests were counted and classified."
     },
     {
       "id": 64,
@@ -613,7 +615,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "the gateway tracks no executor"
         },
         "overrides": []
       },
@@ -637,6 +640,7 @@
           "instant": true
         }
       ],
+      "description": "Rows appear once a participant is registered with the gateway for a model. An empty table means no executor is tracked at all, not that every executor is idle.",
       "transformations": [
         {
           "id": "organize",
@@ -704,8 +708,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -787,8 +791,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -870,8 +874,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -937,7 +941,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "this gateway build exports no executor win counter"
         },
         "overrides": []
       },
@@ -960,7 +965,8 @@
           "format": "table",
           "instant": true
         }
-      ]
+      ],
+      "description": "Empty until an executor wins a routed request. This build exports no devshard_gateway_user_visible_wins_total series at all, so the table stays empty rather than implying that every executor has zero wins."
     },
     {
       "id": 75,
@@ -1031,7 +1037,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "the gateway tracks no participant"
         },
         "overrides": []
       },
@@ -1054,7 +1061,8 @@
           "format": "table",
           "instant": true
         }
-      ]
+      ],
+      "description": "Quarantine state exists per participant and model. An empty table means the gateway is tracking no participant, which is not the same as every participant being healthy."
     },
     {
       "id": 230,
@@ -1107,8 +1115,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1126,7 +1134,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the gateway has published no capacity weight"
         },
         "overrides": []
       },
@@ -1150,7 +1159,8 @@
           "refId": "A",
           "legendFormat": "weight"
         }
-      ]
+      ],
+      "description": "Empty until the gateway publishes a capacity weight. Before the first capacity computation neither weight exists, so the panel stays blank rather than drawing a zero that would read as no capacity."
     },
     {
       "id": 82,
@@ -1190,8 +1200,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1209,7 +1219,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no escrow is active"
         },
         "overrides": []
       },
@@ -1233,7 +1244,8 @@
           "refId": "A",
           "legendFormat": "escrow {{devshard_id}}"
         }
-      ]
+      ],
+      "description": "An escrow weight exists only while the gateway routes through an escrow. Empty means no escrow is active, not that an active escrow carries no weight."
     },
     {
       "id": 83,
@@ -1273,8 +1285,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1356,8 +1368,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1439,8 +1451,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -2098,8 +2110,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -2181,8 +2193,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
