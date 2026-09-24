@@ -21,7 +21,7 @@ grep -Fq -- '-v "$source_dir:/input:ro" -v "$stage:/out"' "$builder"
 grep -Fq 'frontend build for this output is already running or retained for diagnosis' "$builder"
 grep -Fq 'failure_log="${output}.failed.log"' "$builder"
 grep -Fq 'terminal log retained at $failure_log' "$builder"
-if rg -n -- '-v [^[:space:]]*(GDC_HOME|docker\.sock|\.ssh)|/var/run/docker\.sock|/root/\.ssh' "$builder" "$dockerfile"; then
+if grep -En -- '-v [^[:space:]]*(GDC_HOME|docker\.sock|\.ssh)|/var/run/docker\.sock|/root/\.ssh' "$builder" "$dockerfile"; then
   echo 'frontend builder must not mount or read operator credentials or Docker control sockets' >&2
   exit 1
 fi

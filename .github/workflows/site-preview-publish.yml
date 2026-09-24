@@ -4,8 +4,8 @@ on:
   workflow_run:
     workflows: [Build status-site preview]
     types: [completed]
-  pull_request_target:
-    types: [closed, converted_to_draft, synchronize]
+  pull_request:
+    types: [closed, converted_to_draft]
 
 concurrency:
   group: gonka-dev-site-preview-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
@@ -16,6 +16,7 @@ permissions:
   actions: read
   contents: read
   deployments: write
+  issues: write
   pull-requests: read
 
 jobs:
@@ -30,17 +31,19 @@ jobs:
       publish: ${{ steps.pr.outputs.publish }}
       number: ${{ steps.pr.outputs.number }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
+      base_sha: ${{ steps.pr.outputs.base_sha }}
     steps:
       - name: Checkout the trusted publication revision
         uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+          path: trusted
 
       - id: pr
         env:
           GH_TOKEN: ${{ github.token }}
-        run: make -C net-deployment-runbook site-preview-publish-context
+        run: make -C trusted/net-deployment-runbook site-preview-publish-context
 
   publish:
     needs: publish-context
@@ -49,15 +52,16 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: gonka-dev-site-preview
-      url: https://gonka-dev.net/preview/${{ needs.publish-context.outputs.number }}/
+      url: https://preview.gonka-dev.net/${{ needs.publish-context.outputs.number }}/
     steps:
       - name: Checkout the trusted publication revision
         uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+          path: trusted
 
-      - name: Download the verified static artifact
+      - name: Download the untrusted source-bound artifact
         uses: actions/download-artifact@v8.0.1
         with:
           name: gonka-dev-site-preview
@@ -65,63 +69,71 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/gonka-dev-site-preview
 
-      - name: Verify the artifact identity before deployment
+      - name: Verify the selected artifact through trusted scripts
         env:
+          site_release_dir: ${{ runner.temp }}/gonka-dev-site-preview
+          preview_number: ${{ needs.publish-context.outputs.number }}
+          preview_base_revision: ${{ needs.publish-context.outputs.base_sha }}
+          preview_revision: ${{ needs.publish-context.outputs.head_sha }}
+          preview_backend_image: gdc-preview-backend-ci:${{ needs.publish-context.outputs.head_sha }}
+        run: make -C trusted/net-deployment-runbook verify-isolated-preview-ci-artifact
+
+      - name: Materialize the publisher configuration
+        env:
+          DEPLOY_HOST: ${{ secrets.GONKA_DEV_PREVIEW_DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.GONKA_DEV_PREVIEW_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PRIVATE_KEY: ${{ secrets.GONKA_DEV_PREVIEW_DEPLOY_PRIVATE_KEY }}
+          DEPLOY_USER: preview
+          PREVIEW_PROMETHEUS_ORIGIN: ${{ secrets.GONKA_DEV_PREVIEW_PROMETHEUS_ORIGIN }}
+          PREVIEW_DEPLOY_ENV_FILE: ${{ runner.temp }}/gonka-dev-site-preview-deploy/config.env
+        run: make -C trusted/net-deployment-runbook write-isolated-preview-deploy-env
+
+      - name: Publish the source-bound preview without executing PR host code
+        env:
+          GDC_SITE_PREVIEW_ENV_FILE: ${{ runner.temp }}/gonka-dev-site-preview-deploy/config.env
+          site_release_dir: ${{ runner.temp }}/gonka-dev-site-preview
+          preview_number: ${{ needs.publish-context.outputs.number }}
+          preview_revision: ${{ needs.publish-context.outputs.head_sha }}
+          preview_backend_image: gdc-preview-backend-ci:${{ needs.publish-context.outputs.head_sha }}
+        run: make -C trusted/net-deployment-runbook publish-isolated-preview-ci
+
+      - name: Verify the public source-bound preview before reporting it
+        env:
+          PREVIEW_ORIGIN: https://preview.gonka-dev.net
+          preview_number: ${{ needs.publish-context.outputs.number }}
           preview_revision: ${{ needs.publish-context.outputs.head_sha }}
           site_release_dir: ${{ runner.temp }}/gonka-dev-site-preview
-        run: make -C net-deployment-runbook verify-site-preview-artifact
-
-      - name: Publish the static preview without executing artifact code
-        env:
-          DEPLOY_HOST: ${{ secrets.GONKA_DEV_SITE_DEPLOY_HOST }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.GONKA_DEV_SITE_DEPLOY_KNOWN_HOSTS }}
-          DEPLOY_PRIVATE_KEY: ${{ secrets.GONKA_DEV_SITE_DEPLOY_PRIVATE_KEY }}
-          DEPLOY_USER: ${{ secrets.GONKA_DEV_SITE_DEPLOY_USER }}
-        run: >-
-          make -C net-deployment-runbook publish-site-release
-          site_release_dir="$RUNNER_TEMP/gonka-dev-site-preview"
-          site_publish_prefix="preview/${{ needs.publish-context.outputs.number }}"
-          deploy_host="$DEPLOY_HOST" deploy_user="$DEPLOY_USER"
-
-      - name: Verify the live preview revision and payload digest
-        env:
-          preview_revision: ${{ needs.publish-context.outputs.head_sha }}
-          site_publish_prefix: preview/${{ needs.publish-context.outputs.number }}
-          site_release_dir: ${{ runner.temp }}/gonka-dev-site-preview
-        run: make -C net-deployment-runbook verify-site-preview-live
-
-      - name: Smoke-test the live preview in a cache-disabled browser
-        env:
-          preview_revision: ${{ needs.publish-context.outputs.head_sha }}
-          site_publish_prefix: preview/${{ needs.publish-context.outputs.number }}
-          site_release_dir: ${{ runner.temp }}/gonka-dev-site-preview
-          site_origin: https://gonka-dev.net
-        run: make -C net-deployment-runbook smoke-site-preview
+        run: make -C trusted/net-deployment-runbook verify-isolated-site-preview-live
 
       - name: Record the verified preview for the PR revision
         env:
           GITHUB_TOKEN: ${{ github.token }}
           preview_number: ${{ needs.publish-context.outputs.number }}
           preview_revision: ${{ needs.publish-context.outputs.head_sha }}
-        run: make -C net-deployment-runbook record-site-preview-deployment
+          PREVIEW_ORIGIN: https://preview.gonka-dev.net
+        run: make -C trusted/net-deployment-runbook record-site-preview-deployment
 
   cleanup-context:
-    if: github.event_name == 'pull_request_target'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       remove: ${{ steps.pr.outputs.remove }}
       number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
     steps:
       - name: Checkout the trusted publication revision
         uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+          path: trusted
 
       - id: pr
         env:
           GH_TOKEN: ${{ github.token }}
-        run: make -C net-deployment-runbook site-preview-cleanup-context
+        run: make -C trusted/net-deployment-runbook site-preview-cleanup-context
 
   cleanup:
     needs: cleanup-context
@@ -135,14 +147,21 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+          path: trusted
 
-      - name: Remove only this preview directory
+      - name: Materialize the publisher configuration
         env:
-          DEPLOY_HOST: ${{ secrets.GONKA_DEV_SITE_DEPLOY_HOST }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.GONKA_DEV_SITE_DEPLOY_KNOWN_HOSTS }}
-          DEPLOY_PRIVATE_KEY: ${{ secrets.GONKA_DEV_SITE_DEPLOY_PRIVATE_KEY }}
-          DEPLOY_USER: ${{ secrets.GONKA_DEV_SITE_DEPLOY_USER }}
-        run: >-
-          make -C net-deployment-runbook remove-site-release
-          site_publish_prefix="preview/${{ needs.cleanup-context.outputs.number }}"
-          deploy_host="$DEPLOY_HOST" deploy_user="$DEPLOY_USER"
+          DEPLOY_HOST: ${{ secrets.GONKA_DEV_PREVIEW_DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.GONKA_DEV_PREVIEW_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PRIVATE_KEY: ${{ secrets.GONKA_DEV_PREVIEW_DEPLOY_PRIVATE_KEY }}
+          DEPLOY_USER: preview
+          PREVIEW_PROMETHEUS_ORIGIN: ${{ secrets.GONKA_DEV_PREVIEW_PROMETHEUS_ORIGIN }}
+          PREVIEW_DEPLOY_ENV_FILE: ${{ runner.temp }}/gonka-dev-site-preview-deploy/config.env
+        run: make -C trusted/net-deployment-runbook write-isolated-preview-deploy-env
+
+      - name: Remove only this isolated preview
+        env:
+          GDC_SITE_PREVIEW_ENV_FILE: ${{ runner.temp }}/gonka-dev-site-preview-deploy/config.env
+          preview_number: ${{ needs.cleanup-context.outputs.number }}
+          preview_revision: ${{ needs.cleanup-context.outputs.head_sha }}
+        run: make -C trusted/net-deployment-runbook remove-isolated-site-preview

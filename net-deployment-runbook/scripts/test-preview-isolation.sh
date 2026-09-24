@@ -27,7 +27,7 @@ grep -Fq "expression \`query({'query':'gdc_nvidia_memory_total_bytes unless (tim
 grep -Fq 'query query=gdc_component_info' "$egress_caddyfile"
 grep -Fq '127.0.0.1:${PREVIEW_CADDY_PORT:-18090}:8080' "$compose_file"
 
-if rg -n -- '--privileged|network_mode:[[:space:]]*host|/var/run/docker.sock|docker\.sock:' \
+if grep -r -En -- '--privileged|network_mode:[[:space:]]*host|/var/run/docker.sock|docker\.sock:' \
   "$compose_file" "$controller" "$caddyfile" "$egress_caddyfile"; then
   echo 'preview runtime must not expose privileged Docker or host networking' >&2
   exit 1

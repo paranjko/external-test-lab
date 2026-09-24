@@ -383,6 +383,7 @@ remove_preview() {
   docker network disconnect "$network" gdc-preview-egress >/dev/null 2>&1 || true
   docker network disconnect "$network" gdc-preview-node-guard >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  rm -rf -- "${RELEASES:?}/$pr" "${PREVIEW_ROOT:?}/staging/$pr"
   printf 'READY preview=%s removed\n' "$pr"
 }
 

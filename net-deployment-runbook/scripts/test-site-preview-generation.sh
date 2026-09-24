@@ -15,7 +15,7 @@ stage() {
   local revision="$1" directory expected
   directory="$root/.generations/$number/.staging-$revision"
   mkdir -p "$directory"
-  printf '<script src="/config.js"></script>\n' >"$directory/index.html"
+  printf '<script src="config.js"></script>\n' >"$directory/index.html"
   printf 'console.log("preview");\n' >"$directory/app.js"
   cat >"$directory/preview-composition.json" <<'JSON'
 {

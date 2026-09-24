@@ -26,6 +26,10 @@ export function validPath(url) {
 }
 
 function reject(response, code, reason) {
+  if (response.headersSent) {
+    response.destroy();
+    return;
+  }
   response.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
   response.end(JSON.stringify({ error: reason }));
 }

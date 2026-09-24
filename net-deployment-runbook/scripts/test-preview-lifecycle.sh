@@ -140,6 +140,11 @@ if curl --fail --silent --show-error "http://127.0.0.1:$port/172/" >/dev/null 2>
   echo 'removed preview route still responds successfully' >&2
   exit 1
 fi
+[[ ! -e "$test_root/runtime/releases/172" && ! -e "$test_root/runtime/staging/172" ]] \
+  || { echo 'removed preview retained release or staging state' >&2; exit 1; }
+run_controller deploy 172 "$revision_two" "$artifact_two"
+curl --fail --silent --show-error "http://127.0.0.1:$port/172/" | grep -Fq two
+run_controller remove 172
 run_controller remove 173
 run_controller remove 174
 for network in gdc-preview-pr-172 gdc-preview-pr-173 gdc-preview-pr-174; do

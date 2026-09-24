@@ -69,6 +69,14 @@ image_line="$(grep -n 'docker image save' "$tmp/commands" | head -1 | cut -d: -f
 [[ -n "$reserve_line" && -n "$image_line" && "$reserve_line" -lt "$image_line" ]] \
   || { echo 'publisher transferred backend image before reserving the remote artifact' >&2; exit 1; }
 
+: >"$tmp/commands"
+unpublished_revision=9999999999999999999999999999999999999999
+GDC_SITE_PREVIEW_ENV_FILE="$tmp/preview.env" "$ROOT/scripts/isolated-preview-publish.sh" remove /unused 174 "$unpublished_revision"
+controller_sync_line="$(grep -n "ops/preview/.*publisher/$unpublished_revision" "$tmp/commands" | head -1 | cut -d: -f1)"
+remove_line="$(grep -n "publisher/$unpublished_revision/previewctl.sh.*remove '174'" "$tmp/commands" | head -1 | cut -d: -f1)"
+[[ -n "$controller_sync_line" && -n "$remove_line" && "$controller_sync_line" -lt "$remove_line" ]] \
+  || { echo 'cleanup did not synchronize its trusted controller before removing an unpublished revision' >&2; exit 1; }
+
 printf '%s\n' 'DEPLOY_HOST=edge.example' 'DEPLOY_USER=preview' "DEPLOY_PRIVATE_KEY_FILE=$tmp/key" "DEPLOY_KNOWN_HOSTS_FILE=$tmp/known_hosts" 'PREVIEW_PROMETHEUS_ORIGIN=http://monitoring.example:9099' 'UNSAFE=$(touch should-not-run)' >"$tmp/unsafe.env"
 chmod 0600 "$tmp/unsafe.env"
 if GDC_SITE_PREVIEW_ENV_FILE="$tmp/unsafe.env" "$ROOT/scripts/isolated-preview-publish.sh" publish "$tmp/release" 172 "$revision"; then

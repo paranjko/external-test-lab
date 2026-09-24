@@ -48,6 +48,8 @@ def main() -> None:
     repository_root = args.repository_root.resolve()
     files = sorted({line.strip() for line in args.files.read_text().splitlines() if line.strip()})
     static_changed = any(changed(path, STATIC_PREFIXES) for path in files)
+    platform_changed = any(changed(path, PLATFORM_PREFIXES) for path in files)
+    static_changed = static_changed or platform_changed
     endpoint_changed = any(changed(path, ENDPOINT_PREFIXES) for path in files)
     if not static_changed and not endpoint_changed:
         mode = "none"

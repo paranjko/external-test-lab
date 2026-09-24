@@ -26,6 +26,8 @@ def plan(files: list[str]) -> dict:
 
 
 assert plan(["README.md"])["mode"] == "none"
+assert plan(["ops/preview/previewctl.sh"])["mode"] == "static"
+assert plan([".github/workflows/site-preview-build.yml"])["mode"] == "static"
 assert plan(["net-deployment-runbook/04-ops/site/src/app.js"])["mode"] == "static"
 assert plan(["net-deployment-runbook/04-ops/render-ops.sh"])["mode"] == "endpoint"
 both = plan(["net-deployment-runbook/04-ops/site/src/app.js", "net-deployment-runbook/04-ops/render-ops.sh"])

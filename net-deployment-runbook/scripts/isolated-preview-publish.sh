@@ -66,6 +66,11 @@ remote_source="$remote_root/publisher/$revision"
 remote_artifact="$remote_root/staging/$preview_number/$revision"
 remote_controller="$remote_source/previewctl.sh"
 
+sync_trusted_controller() {
+  ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; umask 077; install -d -m 0750 '$remote_source'"
+  rsync -a --delete -e "$ssh_transport" "$repository_root/ops/preview/" "$remote:$remote_source/"
+}
+
 load_backend_image() {
   local manifest="$1" requested_image="$2" image_id source_revision source_managed
   [[ "$requested_image" =~ ^[a-z0-9][a-z0-9._/-]*:[a-z0-9][a-z0-9._-]*$ || "$requested_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
@@ -108,14 +113,16 @@ case "$action" in
     else
       backend_image_id="$(load_backend_image "$release_dir/backend-build.json" "$backend_image")"
     fi
-    rsync -a --delete -e "$ssh_transport" "$repository_root/ops/preview/" "$remote:$remote_source/"
+    sync_trusted_controller
     rsync -a --delete -e "$ssh_transport" "$release_dir/" "$remote:$remote_artifact/"
     ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); '$remote_controller' install; '$remote_controller' configure-observer '$prometheus_origin'; '$remote_controller' deploy '$preview_number' '$revision' '$remote_artifact' '${backend_image_id}'"
     ;;
   remove)
+    sync_trusted_controller
     ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); '$remote_controller' remove '$preview_number'"
     ;;
   status)
+    sync_trusted_controller
     ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); '$remote_controller' status '$preview_number'"
     ;;
 esac

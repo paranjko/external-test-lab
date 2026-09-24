@@ -16,6 +16,7 @@ dirname
 docker
 env
 find
+flock
 git
 grep
 head
