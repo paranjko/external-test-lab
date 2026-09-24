@@ -104,6 +104,18 @@ for board in gdc-network gdc-inference gdc-overview; do
     || { echo "$board declares an empty state without documenting why it can happen" >&2; exit 1; }
 done
 
+# A text panel points the reader at other panels by name, in bold. A name that no
+# panel carries sends the reader looking for something that is not there.
+for board in gdc-network gdc-inference gdc-overview; do
+  file="$ROOT/04-ops/grafana/dashboards/$board.json"
+  missing="$(jq -r '[.panels[].title] as $titles
+    | [.panels[] | select(.type == "text") | .options.content | scan("\\*\\*([^*]+)\\*\\*")[]]
+    | map(select(. as $name | ($titles | index($name)) == null))
+    | join(", ")' "$file")"
+  [[ -z "$missing" ]] \
+    || { echo "$board has text naming a panel that does not exist: $missing" >&2; exit 1; }
+done
+
 # The dashed disk lines claim to be the alert levels. Read both from their sources.
 alert_percent() {
   awk -v rule="alert: $1" '$0 ~ rule {found=1} found && /expr:/ {print; exit}' "$ROOT/04-ops/prometheus/alerts.yml" \
@@ -139,8 +151,21 @@ for board in gdc-network gdc-inference gdc-overview; do
     || { echo "$board has a table whose column names do not match its grouping: $mismatched" >&2; exit 1; }
 done
 
+# A text that says how long Prometheus keeps samples must match the retention the
+# monitoring stack is started with.
+retention_days="$(grep -o 'retention.time=[0-9]*d' "$ROOT/04-ops/compose.yaml" | grep -o '[0-9]*')"
+[[ -n "$retention_days" ]] || { echo 'could not read the Prometheus retention from compose.yaml' >&2; exit 1; }
+for board in gdc-network gdc-inference gdc-overview; do
+  jq -e --arg want "keeps up to $retention_days days of samples" \
+    '[.panels[] | select(.type == "text") | .options.content | select(test("days of samples")) | select(contains($want) | not)] | length == 0' \
+    "$ROOT/04-ops/grafana/dashboards/$board.json" >/dev/null \
+    || { echo "$board states a retention other than the $retention_days days Prometheus keeps" >&2; exit 1; }
+done
+
 printf 'PASS dashboard generator regenerates both boards unchanged\n'
+printf 'PASS every stated retention is the one Prometheus is started with\n'
 printf 'PASS every grouped table names exactly the labels it groups by\n'
 printf 'PASS disk lines are the alert levels and the transaction rate is not summed over nodes\n'
 printf 'PASS every panel that declares an empty state also documents why it can happen\n'
+printf 'PASS every panel a text names in bold exists on the same board\n'
 printf 'PASS dashboard helpers carry descriptions, empty-state field config and options without dropping shared defaults\n'

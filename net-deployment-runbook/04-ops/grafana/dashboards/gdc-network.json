@@ -2178,10 +2178,10 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 65
       },
       "options": {
-        "content": "This board adapts the structure of **Gonka Network Pulse v4** to the Community DevNet metrics that are actually collected. It uses live CometBFT, host, GPU and blackbox-exporter series. Archive-only epoch economics, rewards and historical transaction decoding are intentionally not fabricated.",
+        "content": "Every panel here either shows a measured value or says in its body why it has none. Emptiness has four causes on this board: a metric this build never exports, a collector that stopped writing its file, a Host that is not in the monitoring inventory, and a scrape that is failing. The **Collection** row names the last three. The board measures only what is scraped: a validator that is not a scrape target appears in no host, CPU, memory, disk or GPU panel, and **Validators beyond the monitored set** counts how many are missing. Prometheus keeps up to 30 days of samples, so a window longer than the stored history shows only what is kept, not a fault. Archive-only epoch economics, rewards and historical transaction decoding are not collected and are not invented here.",
         "mode": "markdown"
       }
     }
