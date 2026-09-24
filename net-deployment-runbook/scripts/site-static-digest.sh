@@ -16,6 +16,8 @@ release_dir="${1:-}"
     ! -name preview-runtime-config.json \
     ! -name preview-changed-files.txt \
     ! -name frontend-build.json \
+    ! -name backend-image.tar \
+    ! -name backend-image.tar.sha256 \
     -print0 | LC_ALL=C sort -z |
     xargs -0 sha256sum
 ) | sha256sum | awk '{print $1}'

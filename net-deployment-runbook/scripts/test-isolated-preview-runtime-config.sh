@@ -9,7 +9,7 @@ trap 'rm -rf -- "$tmp"' EXIT
 revision=0123456789012345678901234567890123456789
 
 mkdir -p "$tmp/release"
-printf '<script src="/config.js"></script>\n' >"$tmp/release/index.html"
+printf '<script src="config.js"></script>\n' >"$tmp/release/index.html"
 cat >"$tmp/rendered.js" <<'JS'
 window.GDC_CONFIG = {"chainId":"gonka-devnet-community","model":"Qwen","gatewayNode":"node4","chainRpcHost":"node4.gonka-dev.net","nodes":[{"name":"node4","publicHost":"node4.gonka-dev.net"}],"nodeCatalog":[{"name":"node4","publicHost":"node4.gonka-dev.net","statusBase":"/status/node4"}]};
 JS

@@ -42,7 +42,7 @@ case "$action" in
     test -s "$staging/app.js"
     test -s "$staging/site-build.js"
     test -s "$staging/preview-composition.json"
-    grep -Fq 'src="/config.js"' "$staging/index.html"
+    grep -Fq 'src="config.js"' "$staging/index.html"
     grep -Fq '"config": "/config.js"' "$staging/preview-composition.json"
     mode="$(sed -n 's/.*"mode": "\(static\|endpoint\|combined\)".*/\1/p' "$staging/preview-composition.json")"
     [[ -n "$mode" ]] || { echo 'preview composition mode is invalid' >&2; exit 1; }
@@ -62,6 +62,8 @@ case "$action" in
         ! -name preview-runtime-config.json \
         ! -name preview-changed-files.txt \
         ! -name frontend-build.json \
+        ! -name backend-image.tar \
+        ! -name backend-image.tar.sha256 \
         -print0 | LC_ALL=C sort -z |
         xargs -0 sha256sum | sha256sum | awk '{print $1}'
     )"

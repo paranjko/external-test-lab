@@ -75,10 +75,8 @@ config_json="$(jq -ce --arg prefix "/$preview_number/status" --argjson inventory
 
 index="$release_dir/index.html"
 [[ -f "$index" && ! -L "$index" ]] || die 'preview index is unavailable or unsafe'
-count="$(grep -Fc 'src="/config.js"' "$index" || true)"
-[[ "$count" == 1 ]] || die 'preview index must contain exactly one root config script reference'
-sed 's#src="/config\.js"#src="config.js"#' "$index" >"$index.new"
-mv -f "$index.new" "$index"
+count="$(grep -Fc 'src="config.js"' "$index" || true)"
+[[ "$count" == 1 ]] || die 'preview index must contain exactly one relative config script reference'
 
 printf 'window.GDC_CONFIG = %s;\n' "$config_json" >"$release_dir/config.js"
 output_sha256="$(sha256sum "$release_dir/config.js" | awk '{print $1}')"

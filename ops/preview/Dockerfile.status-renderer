@@ -1,0 +1,15 @@
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
+
+# The exact PR renderer is allowed to derive a static observation contract,
+# not to contact an operator host.  render-ops.sh invokes `ssh -G` only while
+# producing Prometheus scrape metadata that the preview compiler never uses.
+# A trusted, non-networking stub keeps that unrelated branch deterministic.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends jq \
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -m 0755 /sandbox-bin \
+    && printf '%s\n' '#!/bin/sh' 'test "${1:-}" = -G || exit 1' 'printf "hostname 127.0.0.1\\n"' > /sandbox-bin/ssh \
+    && chmod 0755 /sandbox-bin/ssh
+
+USER node
+WORKDIR /workspace
