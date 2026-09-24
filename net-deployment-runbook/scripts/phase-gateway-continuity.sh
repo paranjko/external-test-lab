@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
-# shellcheck source=epoch-millis.sh
-source "$(dirname "$0")/epoch-millis.sh"
 load_project
 record_phase_profile gateway-continuity
 step 'Initialize bounded continuity transport'
@@ -194,7 +192,7 @@ request_observation() {
   request="$(jq -nc --arg prompt "continuity probe anchor $target_anchor sequence $sequence" \
     --arg model "$MODEL_ID" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:1}')"
   headers="$RUN/request-${coverage}.headers"
-  deadline_ms="$(( $(epoch_millis) + request_timeout * 1000 ))"
+  deadline_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 + request_timeout * 1000 ))"
   response="$(continuity_curl -sS --connect-timeout 10 --max-time "$request_timeout" -D "$headers" -w $'\n%{http_code}' \
     "$gateway_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
     -H "X-Request-Deadline-Ms: $deadline_ms" -H 'Content-Type: application/json' --data-binary "$request" || true)"

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
-# shellcheck source=epoch-millis.sh
-source "$(dirname "$0")/epoch-millis.sh"
 load_project
 
 action="${1:-}"
@@ -38,11 +36,11 @@ fi
 step 'Prove authenticated chain-accounted inference'
 verify_evidence="${GDC_GATEWAY_VERIFY_EVIDENCE_DIR:-$GDC_HOME/runs/${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}-gateway-verify}"
 mkdir -p "$verify_evidence"
-verification_started_ms="$(epoch_millis)"
+verification_started_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))"
 verification_deadline_ms="$(( verification_started_ms + ${sla%s} * 1000 ))"
 remaining_verification_seconds() {
   local phase="$1" now_ms remaining_ms
-  now_ms="$(epoch_millis)"
+  now_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))"
   remaining_ms=$(( verification_deadline_ms - now_ms ))
   # Use whole seconds rounded down so no child can run beyond the one
   # externally advertised verification SLA.

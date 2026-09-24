@@ -8,8 +8,6 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
-# shellcheck source=epoch-millis.sh
-source "$ROOT/scripts/epoch-millis.sh"
 source "$ROOT/scripts/host-sync-verdict.sh"
 load_project
 load_public_observability_hosts
@@ -94,7 +92,7 @@ jq --argjson routable "$gateway_status_routable" '
      chain_phase:(.runtime.chain_phase // .chain_phase // null), requests_blocked:(.runtime.requests_blocked // .requests_blocked // false)}])}
 ' <<<"$gateway_status" >"$out/gateway-status.json"
 
-public_health="$(curl_dns_retry curl -fsS --connect-timeout 5 --max-time 15 "https://$SITE_HOST/status/gateway-health?gdc_canary=$(epoch_millis)")"
+public_health="$(curl_dns_retry curl -fsS --connect-timeout 5 --max-time 15 "https://$SITE_HOST/status/gateway-health?gdc_canary=$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))")"
 printf '%s\n' "$public_health" | jq . >"$out/public-health-raw.json"
 printf '%s\n' "$public_health" | jq -e '
     def iso_epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;

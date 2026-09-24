@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# shellcheck source=epoch-millis.sh
-source "$(dirname "${BASH_SOURCE[0]}")/epoch-millis.sh"
-
 gateway_env="${GDC_GATEWAY_ENV:-/srv/dai/ops/gateway.env}"
 output="${GDC_GATEWAY_HEALTH_FILE:-/srv/dai/ops/status/gateway-health.json}"
 prom_output="${GDC_GATEWAY_HEALTH_PROM_FILE:-${output%.json}.prom}"
@@ -22,7 +19,10 @@ response_headers="$(mktemp)"
 curl_error="$(mktemp)"
 trap 'rm -f "$tmp" "$prom_tmp" "$response" "$response_headers" "$curl_error"' EXIT
 
-started_ms="$(epoch_millis)"
+# Millisecond clocks use the bash builtin rather than `date +%s%3N`: uutils
+# coreutils 0.7.0 and 0.8.0 ignore the %3N width and print unpadded
+# nanoseconds, which published multi-million latency_ms values.
+started_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))"
 state=UNAVAILABLE
 reason=credentials_unavailable
 http_code=0
@@ -101,7 +101,7 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
     canary_prompt="Reply with OK [readiness-canary:${canary_nonce}]"
     payload="$(jq -cn --arg model "$model" --arg prompt "$canary_prompt" --argjson max_tokens "$max_output_tokens" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:$max_tokens}')"
     set +e
-    request_deadline_ms="$(( $(epoch_millis) + 20000 ))"
+    request_deadline_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 + 20000 ))"
     http_code="$(curl -sS --connect-timeout 3 --max-time 20 -D "$response_headers" -o "$response" -w '%{http_code}' \
       "$gateway_url/v1/chat/completions?gdc_canary=$canary_nonce" \
       -H "Authorization: Bearer $client_key" \
@@ -139,7 +139,7 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
       # This timestamp belongs to the completed canary itself, before the
       # follow-up status read. Consumers can therefore distinguish an old
       # completion from one executed during their verification window.
-      completion_finished_ms="$(epoch_millis)"
+      completion_finished_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))"
       gateway_status="$(curl -fsS --connect-timeout 3 --max-time 10 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" 2>/dev/null || true)"
       if ! jq -e '
         def valid_flags:
@@ -220,7 +220,7 @@ case "$state" in
     ;;
 esac
 
-finished_ms="$(epoch_millis)"
+finished_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))"
 latency_ms=$((finished_ms - started_ms))
 checked_at="$(date -u +%FT%TZ)"
 if [[ "$http_code" =~ ^[0-9]{3}$ ]]; then

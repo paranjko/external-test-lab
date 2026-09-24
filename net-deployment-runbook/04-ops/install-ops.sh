@@ -48,7 +48,6 @@ install -d -m 0755 "$DEST/bootstrap"
 # public Grafana link as '#'.
 [[ -s "$RENDER/config.js" ]] && install -m 0644 "$RENDER/config.js" "$DEST/site/config.js"
 chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$DEST"
-install -m 0644 "$HERE/epoch-millis.sh" "$DEST/epoch-millis.sh"
 install -m 0755 "$HERE/gateway-health-probe.sh" "$DEST/gateway-health-probe.sh"
 install -m 0644 "$HERE/gdc-gateway-health-probe.service" /etc/systemd/system/gdc-gateway-health-probe.service
 sed -i -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
@@ -72,7 +71,6 @@ install -m 0644 "$HERE/gdc-gateway-reserve-controller.timer" /etc/systemd/system
 # operation. An unrelated OPS deployment must not start new lifecycle code
 # against a retained gateway.env with an older contract.
 if [[ "$COMPONENT" == gateway ]]; then
-  install -o root -g root -m 0644 "$HERE/epoch-millis.sh" /usr/local/lib/gonka-devnet/epoch-millis.sh
   install -o root -g root -m 0755 "$HERE/gateway-admission-observer.py" /usr/local/lib/gonka-devnet/gateway-admission-observer.py
   install -m 0644 "$HERE/gdc-gateway-admission-observer.service" /etc/systemd/system/gdc-gateway-admission-observer.service
   sed -i -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \

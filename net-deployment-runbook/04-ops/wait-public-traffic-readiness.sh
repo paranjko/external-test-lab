@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# shellcheck source=epoch-millis.sh
-source "$(dirname "${BASH_SOURCE[0]}")/epoch-millis.sh"
-
 site_url="${1:?site URL is required}"
 output_file="${2:?output file is required}"
 verification_started_ms="${3:?verification start timestamp is required}"
@@ -33,12 +30,12 @@ curl_error="$(mktemp)"
 trap 'rm -f "$curl_error"' EXIT
 last_curl_exit=0
 last_curl_detail=''
-deadline_ms=$(( $(epoch_millis) + timeout_seconds * 1000 ))
+deadline_ms=$(( ${EPOCHREALTIME//[!0-9]/} / 1000 + timeout_seconds * 1000 ))
 while :; do
-  remaining_ms=$((deadline_ms - $(epoch_millis)))
+  remaining_ms=$((deadline_ms - ${EPOCHREALTIME//[!0-9]/} / 1000))
   (( remaining_ms > 0 )) || break
   request_timeout_seconds="$(awk -v milliseconds="$remaining_ms" 'BEGIN { printf "%.3f", milliseconds / 1000 }')"
-  canary_url="${site_url%/}/status/gateway-health?gdc_canary=$(epoch_millis)-$$-${RANDOM}"
+  canary_url="${site_url%/}/status/gateway-health?gdc_canary=$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))-$$-${RANDOM}"
   set +e
   curl -fsS --connect-timeout "$request_timeout_seconds" --max-time "$request_timeout_seconds" "$canary_url" >"$output_file" 2>"$curl_error"
   canary_rc=$?
@@ -70,7 +67,7 @@ while :; do
   ' "$output_file" >/dev/null; then
     exit 0
   fi
-  remaining_ms=$((deadline_ms - $(epoch_millis)))
+  remaining_ms=$((deadline_ms - ${EPOCHREALTIME//[!0-9]/} / 1000))
   (( remaining_ms > 0 )) || break
   sleep_seconds="$(awk -v poll="$poll_seconds" -v milliseconds="$remaining_ms" 'BEGIN { remaining = milliseconds / 1000; print (poll < remaining ? poll : remaining) }')"
   sleep "$sleep_seconds"

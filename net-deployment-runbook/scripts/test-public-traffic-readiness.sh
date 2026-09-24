@@ -2,8 +2,6 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# shellcheck source=../04-ops/epoch-millis.sh
-source "$ROOT/04-ops/epoch-millis.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 port="$((20000 + RANDOM % 10000))"
@@ -42,7 +40,7 @@ for _ in $(seq 1 30); do
   sleep 0.1
 done
 
-started_ms="$(epoch_millis)"
+started_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))"
 "$ROOT/04-ops/wait-public-traffic-readiness.sh" \
   "http://127.0.0.1:$port" "$tmp/receipt.json" "$started_ms" 30 10 0.1
 jq -e '.readiness == "TRAFFIC_READY" and (.checked_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= (($started / 1000) | floor)' \
@@ -68,7 +66,7 @@ for _ in $(seq 1 30); do
   curl -sS --max-time 1 "http://127.0.0.1:$delayed_port/ready" >/dev/null 2>&1 && break
   sleep 0.1
 done
-delayed_started_ms="$(epoch_millis)"
+delayed_started_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))"
 if "$ROOT/04-ops/wait-public-traffic-readiness.sh" \
   "http://127.0.0.1:$delayed_port" "$tmp/delayed.json" "$delayed_started_ms" 30 1 0.1; then
   echo 'delayed readiness response exceeded configured deadline' >&2

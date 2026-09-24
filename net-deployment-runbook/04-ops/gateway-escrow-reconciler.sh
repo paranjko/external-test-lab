@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# shellcheck source=epoch-millis.sh
-source "$(dirname "${BASH_SOURCE[0]}")/epoch-millis.sh"
-
 # Reconcile the *external* lifecycle of persistent gateway runtimes.  The
 # gateway itself already rotates healthy escrows around a PoC boundary.  This
 # controller covers the other direction: an escrow which the chain has pruned
@@ -201,7 +198,7 @@ admin_delete() {
 }
 admission_post() {
   local path="$1" payload="$2" timeout_seconds="$3" deadline_ms stderr status rc failure_class
-  deadline_ms="$(( $(epoch_millis) + timeout_seconds * 1000 ))"
+  deadline_ms="$(( ${EPOCHREALTIME//[!0-9]/} / 1000 + timeout_seconds * 1000 ))"
   stderr="$(mktemp)"
   rc=0
   status="$(curl -sS --connect-timeout 3 --max-time "$timeout_seconds" -o "$4" -w '%{http_code}' \
