@@ -20,7 +20,7 @@ probe() { jq -ne "$helpers $1"; }
 mkdir -p "$tmp/tree/04-ops/edge-node/public-grafana/dashboards"
 cp -R "$ROOT/04-ops/grafana" "$tmp/tree/04-ops/grafana"
 bash "$tmp/tree/04-ops/grafana/generate-dashboards.sh" >/dev/null
-for board in gdc-network gdc-inference; do
+for board in gdc-network gdc-inference gdc-overview; do
   cmp -s "$ROOT/04-ops/grafana/dashboards/$board.json" "$tmp/tree/04-ops/grafana/dashboards/$board.json" \
     || { echo "the committed monitoring definition of $board is not what the generator produces" >&2; exit 1; }
   cmp -s "$ROOT/04-ops/edge-node/public-grafana/dashboards/$board.json" "$tmp/tree/04-ops/edge-node/public-grafana/dashboards/$board.json" \
@@ -86,7 +86,7 @@ probe 'base("u";"t";"now-1h";[];{editable:true}) | .editable == true' >/dev/null
 
 # A duplicate panel id makes Grafana drop a panel silently, and a panel wider than
 # the grid is clipped on the public board.
-for board in gdc-network gdc-inference; do
+for board in gdc-network gdc-inference gdc-overview; do
   file="$ROOT/04-ops/grafana/dashboards/$board.json"
   jq -e '[.panels[].id] | length == (unique | length)' "$file" >/dev/null \
     || { echo "$board has duplicate panel ids" >&2; exit 1; }
@@ -94,14 +94,39 @@ for board in gdc-network gdc-inference; do
     || { echo "$board has a panel that overflows the 24-column grid" >&2; exit 1; }
   jq -e '[.panels[] | select(.type != "row" and .type != "text") | select((.targets | length) == 0)] | length == 0' "$file" >/dev/null \
     || { echo "$board has a query panel with no target" >&2; exit 1; }
+  jq -e '.editable == false and .timezone == "utc"' "$file" >/dev/null \
+    || { echo "$board is editable or does not render in UTC" >&2; exit 1; }
 done
 
-for board in gdc-network gdc-inference; do
+for board in gdc-network gdc-inference gdc-overview; do
   file="$ROOT/04-ops/grafana/dashboards/$board.json"
-  jq -e '[.panels[] | select((.description // "") != "") | select((.fieldConfig.defaults.noValue // "") == "")] | length == 0' "$file" >/dev/null \
-    || { echo "$board has a panel that explains itself in a tooltip but renders nothing in its body" >&2; exit 1; }
+  jq -e '[.panels[] | select((.fieldConfig.defaults.noValue // "") != "") | select((.description // "") == "")] | length == 0' "$file" >/dev/null \
+    || { echo "$board declares an empty state without documenting why it can happen" >&2; exit 1; }
 done
+
+# The dashed disk lines claim to be the alert levels. Read both from their sources.
+alert_percent() {
+  awk -v rule="alert: $1" '$0 ~ rule {found=1} found && /expr:/ {print; exit}' "$ROOT/04-ops/prometheus/alerts.yml" \
+    | grep -Eo '< [0-9.]+' | awk '{print $2 * 100}'
+}
+disk_warning="$(alert_percent GdcDiskLow)"
+disk_critical="$(alert_percent GdcDiskCritical)"
+[[ -n "$disk_warning" && -n "$disk_critical" ]] || { echo 'could not read the disk alert levels from alerts.yml' >&2; exit 1; }
+for board in gdc-network gdc-overview; do
+  jq -e --argjson warning "$disk_warning" --argjson critical "$disk_critical" '
+    [.panels[] | select(.title == "Operational disk free")
+     | [.fieldConfig.defaults.thresholds.steps[].value | select(. != null)]]
+    | length > 0 and all(. == [$critical, $warning])' "$ROOT/04-ops/grafana/dashboards/$board.json" >/dev/null \
+    || { echo "$board draws disk lines that are not the alert levels $disk_critical/$disk_warning" >&2; exit 1; }
+done
+
+# Every node counts the same committed transactions, so a sum multiplies the rate
+# by the number of scraped nodes.
+jq -e '[.panels[].targets[]?.expr | select(test("cometbft_consensus_total_txs")) | select(test("^\\s*sum"))] | length == 0' \
+  "$ROOT/04-ops/grafana/dashboards/gdc-network.json" >/dev/null \
+  || { echo 'gdc-network sums the per-node transaction rate across nodes' >&2; exit 1; }
 
 printf 'PASS dashboard generator regenerates both boards unchanged\n'
-printf 'PASS every explained panel carries both a description and an empty-state text\n'
+printf 'PASS disk lines are the alert levels and the transaction rate is not summed over nodes\n'
+printf 'PASS every panel that declares an empty state also documents why it can happen\n'
 printf 'PASS dashboard helpers carry descriptions, empty-state field config and options without dropping shared defaults\n'

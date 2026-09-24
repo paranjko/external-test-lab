@@ -42,19 +42,20 @@ verify_required_expression_on_board() {
 }
 
 # An operator must be able to tell a measured zero from a panel that measured
-# nothing. A panel explains itself through a noValue field or a description;
-# anything else is unexplained and may not return an empty result.
+# nothing. A panel declares that it may legitimately be empty by carrying a
+# noValue text, which is what a reader sees in its body. A description is
+# documentation and does not excuse an empty result: otherwise the gate could be
+# switched off one comment at a time.
 dashboard_panel_inventory() {
   local dashboard="$1"
   jq -r --arg dashboard "$dashboard" '
     .dashboard.panels[]?
     | . as $panel
     | ($panel.fieldConfig.defaults.noValue // "") as $novalue
-    | ($panel.description // "") as $description
     | $panel.targets[]?
     | select((.expr // "") != "")
     | [$dashboard, ($panel.id | tostring), ($panel.title + " [" + (.refId // "A") + "]"),
-       (if $novalue != "" or $description != "" then "explained" else "unexplained" end),
+       (if $novalue != "" then "explained" else "unexplained" end),
        .expr,
        (.expr | @base64)]
     | @tsv'
@@ -173,7 +174,7 @@ done
 # judged panel by panel below.
 cat >"$RUN/required-panel-expressions.txt" <<'EOF'
 max(cometbft_consensus_height)
-sum(up{job="gonka-node"} == 1)
+sum(up{job="gonka-node"})
 100 - avg by(host)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100
 max(up{job="gateway"})
 max(gdc_gateway_readiness_state{state="TRAFFIC_READY"}) or vector(0)
@@ -185,7 +186,7 @@ EOF
 while IFS= read -r expression; do
   [[ -n "$expression" ]] || continue
   pinned_panel_found=false
-  for dashboard in gdc-network gdc-inference; do
+  for dashboard in gdc-network gdc-inference gdc-overview; do
     if verify_required_expression_on_board "$expression" <"$RUN/$dashboard.json" >/dev/null; then
       pinned_panel_found=true
       break
@@ -252,10 +253,10 @@ done
 
 # Criterion: an operator must be able to tell a measured zero from a panel that
 # measured nothing. A panel that returns no series is acceptable only when it
-# carries its own explanation, as a noValue field or a description; an
-# unexplained empty panel is a deployment failure, whatever the browser renders.
+# declares that state with a noValue text; an undeclared empty panel is a
+# deployment failure, whatever the browser renders.
 : >"$RUN/panel-inventory.tsv"
-for dashboard in gdc-network gdc-inference; do
+for dashboard in gdc-network gdc-inference gdc-overview; do
   dashboard_panel_inventory "$dashboard" <"$RUN/$dashboard.json" >>"$RUN/panel-inventory.tsv"
 done
 cut -f6 "$RUN/panel-inventory.tsv" >"$RUN/panel-inventory.b64"

@@ -115,11 +115,11 @@ inventory_state() {
 [[ "$(inventory_state '[{"id":7,"title":"With noValue","fieldConfig":{"defaults":{"noValue":"no series"}},"targets":[{"expr":"up"}]}]')" == explained ]] \
   || { echo 'a panel carrying noValue was not accepted as explained' >&2; exit 1; }
 
-[[ "$(inventory_state '[{"id":7,"title":"With description","description":"empty until traffic flows","targets":[{"expr":"up"}]}]')" == explained ]] \
-  || { echo 'a panel carrying a description was not accepted as explained' >&2; exit 1; }
+[[ "$(inventory_state '[{"id":7,"title":"With description only","description":"empty until traffic flows","targets":[{"expr":"up"}]}]')" == unexplained ]] \
+  || { echo 'a description alone excused an empty panel' >&2; exit 1; }
 
 [[ "$(inventory_state '[{"id":7,"title":"Empty strings","description":"","fieldConfig":{"defaults":{"noValue":""}},"targets":[{"expr":"up"}]}]')" == unexplained ]] \
-  || { echo 'empty description and noValue strings were accepted as an explanation' >&2; exit 1; }
+  || { echo 'an empty noValue string was accepted as an explanation' >&2; exit 1; }
 
 # Rows and text panels carry no query and must not enter the judgement at all.
 [[ -z "$(board_with '[{"id":100,"type":"row","title":"Network now"},{"id":99,"type":"text","title":"Data contract"}]' | dashboard_panel_inventory gdc-test)" ]] \
@@ -191,6 +191,6 @@ inventory="$(jq -n '{dashboard:{panels:[{id:7,title:"Two queries",fieldConfig:{d
 printf 'PASS public Grafana target predicates reject aggregate, mislabeled, missing, and stale data\n'
 printf 'PASS public Grafana gate judges every query of a panel\n'
 printf 'PASS public Grafana target checks read every expected host\n'
-printf 'PASS public Grafana gate rejects a drifted pin and an unexplained empty panel\n'
+printf 'PASS public Grafana gate rejects a drifted pin, a description-only excuse and an undeclared empty panel\n'
 printf 'PASS public Grafana panel classifier separates data, explained absence, unexplained absence and a failed query\n'
 printf 'PASS public Grafana source check accepts Grafana-owned fields and rejects changed, missing, or requeried panels\n'

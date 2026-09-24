@@ -54,37 +54,93 @@ render() {
       base("gdc-network";"Gonka DevNet Network";"now-24h";[
         row(100;"Network now";0),
         stat(1;"Chain height";"max(cometbft_consensus_height)";"none";0;1;4),
-        stat(2;"Nodes online";"sum(up{job=\"gonka-node\"} == 1)";"none";4;1;4),
-        stat(3;"Nodes down";"count(up{job=\"gonka-node\"} == 0) or vector(0)";"none";8;1;4),
-        stat(4;"Validators";"max(cometbft_consensus_validators)";"none";12;1;4),
-        stat(5;"P2P peers";"sum(cometbft_p2p_peers) or vector(0)";"none";16;1;4),
-        stat(6;"Sample age";"time() - max(timestamp(cometbft_consensus_height))";"s";20;1;4),
+        stat(2;"Nodes online";"sum(up{job=\"gonka-node\"})";"none";4;1;4;"Scraped chain targets currently answering. This counts the monitoring inventory, not the validator set: a validator that is not a scrape target is invisible here.";{noValue:"no chain target is configured"};{}),
+        stat(3;"Nodes down";"count(up{job=\"gonka-node\"}) - sum(up{job=\"gonka-node\"})";"none";8;1;4;"Configured chain targets minus the ones answering. Empty means no chain target is configured at all, which is not the same as nothing being down.";{noValue:"no chain target is configured",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"red",value:1}]}};{colorMode:"value"}),
+        (stat(4;"Validators";"max(cometbft_consensus_validators)";"none";12;1;4;"Size of the active validator set as the chain reports it. It changes every epoch, so read the sparkline rather than the number alone.";{};{graphMode:"area",colorMode:"value"})
+          | .targets[0].instant=false),
+        stat(5;"P2P peers";"sum(cometbft_p2p_peers)";"none";16;1;4;"Peer connections summed over scraped nodes. Empty means no node reported a peer count, which is not the same as an isolated network.";{noValue:"no node reported a peer count"};{}),
+        stat(6;"Stalest chain sample";"max(time() - timestamp(cometbft_consensus_height))";"s";20;1;4;"Age of the oldest chain sample across scraped nodes. A single node falling behind raises this; it stays low only while every scraped node is fresh.";{noValue:"no chain sample in the lookback window",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:45},{color:"red",value:120}]}};{colorMode:"value"}),
 
         row(110;"Chain vitals and consensus";5),
         ts(11;"Height by node";"cometbft_consensus_height";"{{host}}";"none";0;6;12;8),
-        ts(12;"Block interval p50";"histogram_quantile(0.50, sum by (le) (rate(cometbft_consensus_block_interval_seconds_bucket[10m]))) or vector(0)";"p50";"s";12;6;12;8),
-        ts(13;"Transactions per second";"sum(rate(cometbft_consensus_total_txs[5m])) or vector(0)";"transactions";"ops";0;14;8;7),
+        ts(12;"Block interval p50";"histogram_quantile(0.50, sum by (le) (rate(cometbft_consensus_block_interval_seconds_bucket[10m])))";"p50";"s";12;6;12;8;"Empty when no block-interval histogram was scraped in the window. A flat zero would read as instant blocks.";{noValue:"no block-interval histogram in the window"};["lastNotNull"]),
+        ts(13;"Transactions per second";"max(rate(cometbft_consensus_total_txs[5m]))";"transactions";"ops";0;14;8;7;"Every node counts the same committed transactions, so their rates agree; this shows the highest one rather than their sum. A zero is a measured idle chain; empty means the counter was not scraped.";{noValue:"no transaction counter scraped"};["lastNotNull"]),
         ts(14;"Consensus rounds";"max by (host) (cometbft_consensus_rounds)";"{{host}}";"none";8;14;8;7),
         ts(15;"Mempool transactions";"max by (host) (cometbft_mempool_size)";"{{host}}";"none";16;14;8;7),
 
         row(120;"Validators and signing";21),
-        ts(21;"Voting power signed";"min by (host) (cometbft_consensus_round_voting_power_percent)";"{{host}}";"percent";0;22;8;7),
+        ts(21;"Voting power signed";"max by (host) (max_over_time(cometbft_consensus_round_voting_power_percent{vote_type=\"precommit\"}[1m]))";"{{host}}";"percentunit";0;22;8;7;"Share of total voting power seen in precommit, taken as the peak of each minute because the gauge samples a round in flight, so it reads above one when a minute spans more than one round. The dashed line at two thirds is the floor below which a round cannot commit.";{noValue:"no consensus round sampled in the window",min:0,thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"orange",value:0.6667},{color:"green",value:0.7}]},custom:{thresholdsStyle:{mode:"dashed"}}};["lastNotNull"]),
         ts(22;"Missing validators";"max by (host) (cometbft_consensus_missing_validators)";"{{host}}";"none";8;22;8;7),
-        ts(23;"Missed blocks by validator";"max by (host) (cometbft_consensus_validator_missed_blocks) or vector(0)";"{{host}}";"none";16;22;8;7),
+        ts(23;"Missed blocks by validator";"max by (host) (cometbft_consensus_validator_missed_blocks)";"{{host}}";"none";16;22;8;7;"Only a node running its own validator exports this counter. A host missing from this panel is not proven to be a perfect signer.";{noValue:"no validator exports a missed-block counter"};["lastNotNull"]),
 
         row(130;"Hosts and accelerators";29),
         ts(31;"CPU busy";"100 - avg by(host)(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100";"{{host}}";"percent";0;30;8;7),
         ts(32;"Memory used";"(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100";"{{host}}";"percent";8;30;8;7),
-        ts(33;"Operational disk free";"max by (host) (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\",mountpoint=~\"/|/srv/dai|/sdb-disk\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay\",mountpoint=~\"/|/srv/dai|/sdb-disk\"} * 100)";"{{host}}";"percent";16;30;8;7),
+        ts(33;"Operational disk free";"min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} * 100)";"{{host}}";"percent";16;30;8;7;"Free space on the fullest real volume of each host. Every ext4, xfs, btrfs and zfs mount counts, so a volume absent from the inventory is still measured. The dashed lines are the 15% and 8% disk alert levels; the alerts also watch /boot volumes, which this panel leaves out.";{noValue:"no matching filesystem on any scraped host",min:0,max:100,thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"orange",value:8},{color:"green",value:15}]},custom:{thresholdsStyle:{mode:"dashed"}}};["lastNotNull"]),
         ts(34;"GPU utilization";"gdc_nvidia_utilization_percent";"{{host}} · {{gpu_name}}";"percent";0;37;8;7;"Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero.";{noValue:"no accelerator host is reporting"};["lastNotNull"]),
         ts(35;"GPU memory used";"gdc_nvidia_memory_used_bytes";"{{host}} · {{gpu_name}}";"bytes";8;37;8;7;"Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero.";{noValue:"no accelerator host is reporting"};["lastNotNull"]),
         ts(36;"GPU temperature";"gdc_nvidia_temperature_celsius";"{{host}} · {{gpu_name}}";"celsius";16;37;8;7;"Empty when no accelerator host reports to the collector. A validator with no attached GPU, or a GPU host that is not a scrape target, contributes no series here rather than a zero.";{noValue:"no accelerator host is reporting"};["lastNotNull"]),
 
         row(140;"Host inventory";44),
-        table(41;"Locations and scrape state";"up{job=\"host\",city!=\"\"}";0;45;12;8;"Rows appear only for scrape targets whose location was resolved. A Host that is absent from the monitoring inventory, or whose location lookup failed, is missing from this table rather than listed without a location.";{noValue:"no target has a resolved location"}),
+        (table(41;"Scrape targets and locations";"up{job=\"host\"}";0;45;12;8;"Every configured host target, with its location when one was resolved. A Host absent from the monitoring inventory does not appear here at all.";{noValue:"no host target is configured"})
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",validator:"Validator",city:"City",country:"Country",latitude:"Lat",longitude:"Lon",Value:"Scrape"}}}]),
         (table(42;"Software inventory";"gdc_component_info";12;45;12;8;"Rows appear once the version collector has written its first inventory on a Host. An empty table means the collector has not reported yet, not that the Hosts run no software.";{noValue:"no Host has reported its software inventory"})
           | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",component:"Component",component_instance:"Instance",version:"Version",commit:"Commit",image:"Image",source:"Source"}}}]),
+        row(150;"Collection";53),
+        stat(43;"Validators beyond the monitored set";"clamp_min(max_over_time(max(cometbft_consensus_validators)[24h:5m]) - count(up{job=\"gonka-node\"}), 0)";"none";0;54;8;"Largest validator set the chain reported in the last day, minus the chain targets this deployment scrapes. The public set includes validators the lab does not operate, so a positive number is a statement about coverage, not a fault.";{noValue:"no validator count sampled",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"red",value:1}]}};{colorMode:"value"}),
+        stat(44;"Targets down";"sum(up == bool 0)";"none";8;54;8;"Scrape targets that failed their last attempt, across every job.";{noValue:"no target is configured",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"red",value:1}]}};{colorMode:"value"}),
+        stat(45;"Stalest collector file";"max(time() - node_textfile_mtime_seconds)";"s";16;54;8;"Age of the oldest textfile a collector wrote. node-exporter republishes the contents of a file on every scrape, so a frozen file keeps looking fresh unless this is watched.";{noValue:"no collector file is exported",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:300},{color:"red",value:900}]}};{colorMode:"value"}),
+        (table(46;"Targets down by job";"sum by (job) (up == bool 0)";0;58;8;7;"Failing targets per scrape job. A job at zero is answering; a job missing from this table is not configured at all.";{noValue:"no target is configured"})
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true},renameByName:{job:"Job",Value:"Down"}}}]),
+        (table(47;"Collector freshness";"max by (file) (time() - node_textfile_mtime_seconds)";8;58;8;7;"Seconds since each textfile was last written. A value that keeps growing is a collector that stopped while its last values are still being served.";{noValue:"no collector file is exported",unit:"s"})
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true},renameByName:{file:"File",Value:"Age"}}}]),
+        (table(48;"Scraped hosts without GPU telemetry";"count by (host) (up{job=\"host\"} == 1) unless on(host) count by (host) (gdc_nvidia_available)";16;58;8;7;"Hosts that answer the host scrape but export no NVIDIA telemetry. Empty means either every scraped host reports it, or no host target is configured.";{noValue:"no row: every scraped host reports NVIDIA telemetry, or none is configured"})
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,job:true,instance:true},renameByName:{host:"Host"}}}]),
+
         textpanel(49;"Data contract";"This board adapts the structure of **Gonka Network Pulse v4** to the Community DevNet metrics that are actually collected. It uses live CometBFT, host, GPU and blackbox-exporter series. Archive-only epoch economics, rewards and historical transaction decoding are intentionally not fabricated.";53)
+      ])
+    elif $kind == "overview" then
+      base("gdc-overview";"Gonka DevNet Community Overview";"now-24h";[
+        stat(1;"Healthy targets";"sum(up)";"none";0;0;6;
+          "Scrape targets that answered their last attempt, across every job.";
+          {noValue:"no target is configured"};{}),
+        stat(2;"Failed targets";"sum(up == bool 0)";"none";6;0;6;
+          "Scrape targets that failed their last attempt. Counting the targets, not summing their values: a sum of zeros can only ever be zero.";
+          {noValue:"no target is configured",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"red",value:1}]}};{colorMode:"value"}),
+        stat(3;"Public endpoints up";"sum(probe_success{job=\"public-https\"})";"none";12;0;6;
+          "Public URLs answering the blackbox probe. This counts successes, so compare it with the number of probes configured.";
+          {noValue:"no public endpoint is probed"};{}),
+        stat(4;"GPUs available";"count(gdc_nvidia_utilization_percent)";"none";18;0;6;
+          "Accelerators reporting utilization. Counts cards, not hosts: a host answers once, each of its cards reports separately.";
+          {noValue:"no accelerator is reporting"};{}),
+        ts(5;"Consensus height";"cometbft_consensus_height";"{{host}}";"none";0;4;12;8;
+          "";{};["lastNotNull"]),
+        ts(6;"CPU busy";"100 - avg by(host)(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100";"{{host}}";"percent";12;4;12;8;
+          "";{};["lastNotNull"]),
+        ts(7;"Memory used";"(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100";"{{host}}";"percent";0;12;12;8;
+          "";{};["lastNotNull"]),
+        ts(8;"GPU utilization";"gdc_nvidia_utilization_percent";"{{host}} · {{gpu_name}}";"percent";12;12;12;8;
+          "Empty when no accelerator host reports to the collector.";
+          {noValue:"no accelerator host is reporting"};["lastNotNull"]),
+        ts(9;"GPU memory used";"gdc_nvidia_memory_used_bytes";"{{host}} · {{gpu_name}}";"bytes";0;20;12;8;
+          "Empty when no accelerator host reports to the collector.";
+          {noValue:"no accelerator host is reporting"};["lastNotNull"]),
+        ts(10;"Operational disk free";"min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} * 100)";"{{host}}";"percent";12;20;12;8;
+          "Free space on the fullest real volume of each host. The dashed lines are the 15% and 8% disk alert levels; the alerts also watch /boot volumes, which this panel leaves out.";
+          {noValue:"no matching filesystem on any scraped host",min:0,max:100,thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"orange",value:8},{color:"green",value:15}]},custom:{thresholdsStyle:{mode:"dashed"}}};["lastNotNull"]),
+        ts(11;"P2P peers";"cometbft_p2p_peers";"{{host}}";"none";0;28;12;8;
+          "";{};["lastNotNull"]),
+        ts(12;"Consensus height spread";"max(cometbft_consensus_height) - min(cometbft_consensus_height)";"spread";"none";12;28;12;8;
+          "Difference between the highest and lowest scraped node. It only compares nodes that are scraped.";
+          {noValue:"no chain sample in the window"};["lastNotNull"]),
+        (table(13;"Scrape targets and locations";"up{job=\"host\"}";0;36;12;8;
+          "Every configured host target, with its location when one was resolved. A Host absent from the monitoring inventory does not appear here at all.";
+          {noValue:"no host target is configured"})
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",validator:"Validator",city:"City",country:"Country",latitude:"Lat",longitude:"Lon",Value:"Scrape"}}}]),
+        (table(14;"Software inventory";"gdc_component_info";12;36;12;8;
+          "Rows appear once the version collector has written its first inventory on a Host.";
+          {noValue:"no Host has reported its software inventory"})
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",component:"Component",component_instance:"Instance",version:"Version",commit:"Commit",image:"Image",source:"Source"}}}])
       ])
     else
       base("gdc-inference";"Gonka DevNet Inference";"now-7d";[
@@ -145,8 +201,11 @@ render() {
 mkdir -p "$HERE/dashboards" "$PUBLIC"
 render network "$HERE/dashboards/gdc-network.json"
 render inference "$HERE/dashboards/gdc-inference.json"
-install -m 0644 "$HERE/dashboards/gdc-network.json" "$PUBLIC/gdc-network.json"
-install -m 0644 "$HERE/dashboards/gdc-inference.json" "$PUBLIC/gdc-inference.json"
+render overview "$HERE/dashboards/gdc-overview.json"
+for board in gdc-network gdc-inference gdc-overview; do
+  install -m 0644 "$HERE/dashboards/$board.json" "$PUBLIC/$board.json"
+done
 jq -e '.uid == "gdc-network" and (.panels | length >= 20)' "$HERE/dashboards/gdc-network.json" >/dev/null
 jq -e '.uid == "gdc-inference" and (.panels | length >= 20)' "$HERE/dashboards/gdc-inference.json" >/dev/null
-printf 'READY generated gdc-network and gdc-inference dashboards\n'
+jq -e '.uid == "gdc-overview" and (.panels | length >= 14)' "$HERE/dashboards/gdc-overview.json" >/dev/null
+printf 'READY generated gdc-network, gdc-inference and gdc-overview dashboards\n'

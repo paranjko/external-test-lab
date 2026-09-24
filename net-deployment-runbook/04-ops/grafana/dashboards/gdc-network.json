@@ -118,7 +118,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no chain target is configured"
         },
         "overrides": []
       },
@@ -139,11 +140,12 @@
       },
       "targets": [
         {
-          "expr": "sum(up{job=\"gonka-node\"} == 1)",
+          "expr": "sum(up{job=\"gonka-node\"})",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Scraped chain targets currently answering. This counts the monitoring inventory, not the validator set: a validator that is not a scrape target is invisible here."
     },
     {
       "id": 3,
@@ -170,15 +172,20 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no chain target is configured"
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -194,11 +201,12 @@
       },
       "targets": [
         {
-          "expr": "count(up{job=\"gonka-node\"} == 0) or vector(0)",
+          "expr": "count(up{job=\"gonka-node\"}) - sum(up{job=\"gonka-node\"})",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Configured chain targets minus the ones answering. Empty means no chain target is configured at all, which is not the same as nothing being down."
     },
     {
       "id": 4,
@@ -233,8 +241,8 @@
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
-        "graphMode": "none",
+        "colorMode": "value",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
@@ -251,9 +259,10 @@
         {
           "expr": "max(cometbft_consensus_validators)",
           "refId": "A",
-          "instant": true
+          "instant": false
         }
-      ]
+      ],
+      "description": "Size of the active validator set as the chain reports it. It changes every epoch, so read the sparkline rather than the number alone."
     },
     {
       "id": 5,
@@ -283,7 +292,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no node reported a peer count"
         },
         "overrides": []
       },
@@ -304,11 +314,12 @@
       },
       "targets": [
         {
-          "expr": "sum(cometbft_p2p_peers) or vector(0)",
+          "expr": "sum(cometbft_p2p_peers)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Peer connections summed over scraped nodes. Empty means no node reported a peer count, which is not the same as an isolated network."
     },
     {
       "id": 6,
@@ -317,7 +328,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Sample age",
+      "title": "Stalest chain sample",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -335,15 +346,24 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 45
+              },
+              {
+                "color": "red",
+                "value": 120
               }
             ]
           },
-          "unit": "s"
+          "unit": "s",
+          "noValue": "no chain sample in the lookback window"
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -359,11 +379,12 @@
       },
       "targets": [
         {
-          "expr": "time() - max(timestamp(cometbft_consensus_height))",
+          "expr": "max(time() - timestamp(cometbft_consensus_height))",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Age of the oldest chain sample across scraped nodes. A single node falling behind raises this; it stays low only while every scraped node is fresh."
     },
     {
       "id": 110,
@@ -518,7 +539,8 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "s",
+          "noValue": "no block-interval histogram in the window"
         },
         "overrides": []
       },
@@ -538,11 +560,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(cometbft_consensus_block_interval_seconds_bucket[10m]))) or vector(0)",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(cometbft_consensus_block_interval_seconds_bucket[10m])))",
           "refId": "A",
           "legendFormat": "p50"
         }
-      ]
+      ],
+      "description": "Empty when no block-interval histogram was scraped in the window. A flat zero would read as instant blocks."
     },
     {
       "id": 13,
@@ -601,7 +624,8 @@
               }
             ]
           },
-          "unit": "ops"
+          "unit": "ops",
+          "noValue": "no transaction counter scraped"
         },
         "overrides": []
       },
@@ -621,11 +645,12 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(cometbft_consensus_total_txs[5m])) or vector(0)",
+          "expr": "max(rate(cometbft_consensus_total_txs[5m]))",
           "refId": "A",
           "legendFormat": "transactions"
         }
-      ]
+      ],
+      "description": "Every node counts the same committed transactions, so their rates agree; this shows the highest one rather than their sum. A zero is a measured idle chain; empty means the counter was not scraped."
     },
     {
       "id": 14,
@@ -851,19 +876,29 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "off"
+              "mode": "dashed"
             }
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6667
+              },
+              {
+                "color": "green",
+                "value": 0.7
               }
             ]
           },
-          "unit": "percent"
+          "unit": "percentunit",
+          "noValue": "no consensus round sampled in the window",
+          "min": 0
         },
         "overrides": []
       },
@@ -883,11 +918,12 @@
       },
       "targets": [
         {
-          "expr": "min by (host) (cometbft_consensus_round_voting_power_percent)",
+          "expr": "max by (host) (max_over_time(cometbft_consensus_round_voting_power_percent{vote_type=\"precommit\"}[1m]))",
           "refId": "A",
           "legendFormat": "{{host}}"
         }
-      ]
+      ],
+      "description": "Share of total voting power seen in precommit, taken as the peak of each minute because the gauge samples a round in flight, so it reads above one when a minute spans more than one round. The dashed line at two thirds is the floor below which a round cannot commit."
     },
     {
       "id": 22,
@@ -1029,7 +1065,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no validator exports a missed-block counter"
         },
         "overrides": []
       },
@@ -1049,11 +1086,12 @@
       },
       "targets": [
         {
-          "expr": "max by (host) (cometbft_consensus_validator_missed_blocks) or vector(0)",
+          "expr": "max by (host) (cometbft_consensus_validator_missed_blocks)",
           "refId": "A",
           "legendFormat": "{{host}}"
         }
-      ]
+      ],
+      "description": "Only a node running its own validator exports this counter. A host missing from this panel is not proven to be a perfect signer."
     },
     {
       "id": 130,
@@ -1279,19 +1317,30 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "off"
+              "mode": "dashed"
             }
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 8
+              },
+              {
+                "color": "green",
+                "value": 15
               }
             ]
           },
-          "unit": "percent"
+          "unit": "percent",
+          "noValue": "no matching filesystem on any scraped host",
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
@@ -1311,11 +1360,12 @@
       },
       "targets": [
         {
-          "expr": "max by (host) (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\",mountpoint=~\"/|/srv/dai|/sdb-disk\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay\",mountpoint=~\"/|/srv/dai|/sdb-disk\"} * 100)",
+          "expr": "min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} * 100)",
           "refId": "A",
           "legendFormat": "{{host}}"
         }
-      ]
+      ],
+      "description": "Free space on the fullest real volume of each host. Every ext4, xfs, btrfs and zfs mount counts, so a volume absent from the inventory is still measured. The dashed lines are the 15% and 8% disk alert levels; the alerts also watch /boot volumes, which this panel leaves out."
     },
     {
       "id": 34,
@@ -1592,7 +1642,7 @@
         "uid": "prometheus"
       },
       "type": "table",
-      "title": "Locations and scrape state",
+      "title": "Scrape targets and locations",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1608,7 +1658,7 @@
             },
             "inspect": false
           },
-          "noValue": "no target has a resolved location"
+          "noValue": "no host target is configured"
         },
         "overrides": []
       },
@@ -1626,13 +1676,35 @@
       },
       "targets": [
         {
-          "expr": "up{job=\"host\",city!=\"\"}",
+          "expr": "up{job=\"host\"}",
           "refId": "A",
           "format": "table",
           "instant": true
         }
       ],
-      "description": "Rows appear only for scrape targets whose location was resolved. A Host that is absent from the monitoring inventory, or whose location lookup failed, is missing from this table rather than listed without a location."
+      "description": "Every configured host target, with its location when one was resolved. A Host absent from the monitoring inventory does not appear here at all.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true
+            },
+            "renameByName": {
+              "host": "Host",
+              "validator": "Validator",
+              "city": "City",
+              "country": "Country",
+              "latitude": "Lat",
+              "longitude": "Lon",
+              "Value": "Scrape"
+            }
+          }
+        }
+      ]
     },
     {
       "id": 42,
@@ -1701,6 +1773,398 @@
               "commit": "Commit",
               "image": "Image",
               "source": "Source"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 150,
+      "type": "row",
+      "title": "Collection",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "panels": []
+    },
+    {
+      "id": 43,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Validators beyond the monitored set",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 54
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no validator count sampled"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "clamp_min(max_over_time(max(cometbft_consensus_validators)[24h:5m]) - count(up{job=\"gonka-node\"}), 0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Largest validator set the chain reported in the last day, minus the chain targets this deployment scrapes. The public set includes validators the lab does not operate, so a positive number is a statement about coverage, not a fault."
+    },
+    {
+      "id": 44,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Targets down",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 54
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no target is configured"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum(up == bool 0)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Scrape targets that failed their last attempt, across every job."
+    },
+    {
+      "id": 45,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Stalest collector file",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 54
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "no collector file is exported"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "max(time() - node_textfile_mtime_seconds)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Age of the oldest textfile a collector wrote. node-exporter republishes the contents of a file on every scrape, so a frozen file keeps looking fresh unless this is watched."
+    },
+    {
+      "id": 46,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "table",
+      "title": "Targets down by job",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 58
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "noValue": "no target is configured"
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (job) (up == bool 0)",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "description": "Failing targets per scrape job. A job at zero is answering; a job missing from this table is not configured at all.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "job": "Job",
+              "Value": "Down"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 47,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "table",
+      "title": "Collector freshness",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 58
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "noValue": "no collector file is exported",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "max by (file) (time() - node_textfile_mtime_seconds)",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "description": "Seconds since each textfile was last written. A value that keeps growing is a collector that stopped while its last values are still being served.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "file": "File",
+              "Value": "Age"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 48,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "table",
+      "title": "Scraped hosts without GPU telemetry",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 58
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "noValue": "no row: every scraped host reports NVIDIA telemetry, or none is configured"
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "count by (host) (up{job=\"host\"} == 1) unless on(host) count by (host) (gdc_nvidia_available)",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "description": "Hosts that answer the host scrape but export no NVIDIA telemetry. Empty means either every scraped host reports it, or no host target is configured.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "job": true,
+              "instance": true
+            },
+            "renameByName": {
+              "host": "Host"
             }
           }
         }

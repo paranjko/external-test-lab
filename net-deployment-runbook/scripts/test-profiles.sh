@@ -253,7 +253,7 @@ if grep -Eq 'gdc-node[0-9]|gdc-node\$' "$ROOT/scripts/render-bootstrap-envs.sh";
 fi
 grep -Fq 'validation_weights' "$ROOT/scripts/ensure-genesis-validation-weight.sh"
 grep -Fq 'test-inference.sh' "$ROOT/scripts/phase-bootstrap-access.sh"
-grep -Fq 'sum(cometbft_p2p_peers) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
+grep -Fq 'sum(cometbft_p2p_peers)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq '(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq 'devshard_gateway_participant_total_attempt_seconds_count) or vector(0)' "$ROOT/04-ops/grafana/generate-dashboards.sh"
 grep -Fq 'Traffic ready' "$ROOT/04-ops/grafana/generate-dashboards.sh"
