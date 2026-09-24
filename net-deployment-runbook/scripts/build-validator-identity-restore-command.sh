@@ -15,9 +15,9 @@ validate_paths() {
       && "$deployment_env" == /* && "$deployment_env" != / ]] \
       || die 'validator identity restore requires absolute bounded paths'
   else
-    [[ "$state" =~ ^/srv/dai/[A-Za-z0-9][A-Za-z0-9._-]*$ \
+    [[ "$state" == /srv/dai \
       && "$candidate" =~ ^/tmp/gdc-[A-Za-z0-9][A-Za-z0-9._-]*-validator-restore-[A-Za-z0-9]+$ \
-      && "$deployment_env" == "/srv/dai/deploy/${state##*/}/.env" ]] \
+      && "$deployment_env" == /srv/dai/deploy/.env ]] \
       || die 'validator identity restore paths are outside the managed Host scope'
   fi
 }
@@ -125,6 +125,9 @@ validate_tmkms_state() {
     and (.round | type == "string" and test("^[0-9]+$"))
     and (.step | type == "number" and . == floor and . >= -128 and . <= 127)
     and (.block_id == null or (
+      .height == "0" and .round == "0" and .step == 0
+      and .block_id == {hash:"",part_set_header:{total:0,hash:""}}
+    ) or (
       (.block_id | type == "object")
       and (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$"))
       and ((.block_id.parts // .block_id.part_set_header) as $parts
@@ -224,19 +227,19 @@ validate_stable_material() {
 
 remote_restore() {
   local state="$1" candidate="$2" expected_consensus_key="$3" deployment_env="$4"
-  local expected_bundle_sha256="$5" lock marker transaction='' current_digest node stable_identity stable_signer
+  local expected_bundle_sha256="$5" lock marker transaction='' current_digest stable_identity stable_signer
   validate_paths "$state" "$candidate" "$deployment_env"
   validate_consensus_key "$expected_consensus_key"
   [[ "$expected_bundle_sha256" =~ ^[0-9a-f]{64}$ ]] \
     || die 'validator identity bundle digest is invalid'
   command -v flock >/dev/null 2>&1 \
     || die 'flock is required to protect validator identity restore'
-  if [[ ! -e "${state%/*}" ]]; then
-    install -d -m 0755 "${state%/*}"
+  if [[ ! -e "$state" ]]; then
+    install -d -m 0755 "$state"
   fi
-  [[ -d "${state%/*}" && ! -L "${state%/*}" ]] \
-    || die 'validator identity parent directory is invalid'
-  lock="${state%/*}/.gdc-validator-identity-$(basename "$state").lock"
+  [[ -d "$state" && ! -L "$state" ]] \
+    || die 'validator identity root is invalid'
+  lock="$state/.gdc-validator-identity.lock"
   exec 9>"$lock"
   flock -n 9 || die 'another validator identity operation is in progress'
   trap 'rm -rf -- "$candidate"; [[ -z "${transaction:-}" ]] || rm -rf -- "$transaction"' EXIT
@@ -253,9 +256,8 @@ remote_restore() {
   [[ "$current_digest" == "$expected_bundle_sha256" ]] \
     || die 'staged validator identity does not match the validated backup bundle'
 
-  node="$(basename "$state")"
-  stable_identity="${state%/*}/identity/$node"
-  stable_signer="${state%/*}/signer/$node"
+  stable_identity="$state/identity"
+  stable_signer="$state/signer"
   if [[ -e "$stable_identity" || -e "$stable_signer" ]]; then
     validate_stable_material "$stable_identity" "$stable_signer" "$expected_consensus_key"
     if ! cmp -s "$candidate/inference/config/node_key.json" "$stable_identity/p2p/node_key.json" \
@@ -273,56 +275,36 @@ remote_restore() {
 
   marker="$state/.gdc-validator-identity-restore.sha256"
   if [[ -s "$deployment_env" ]]; then
-    [[ -d "$state" && ! -L "$state" ]] \
-      || die 'running validator identity state is inaccessible'
-    validate_candidate_material "$state" "$expected_consensus_key"
-    if ! cmp -s "$candidate/tmkms/secrets/priv_validator_key.softsign" \
-      "$state/tmkms/secrets/priv_validator_key.softsign" \
-      || ! cmp -s "$candidate/tmkms/secrets/kms-identity.key" \
-        "$state/tmkms/secrets/kms-identity.key" \
-      || ! cmp -s "$candidate/inference/config/node_key.json" \
-        "$state/inference/config/node_key.json"; then
-      die 'running validator identity does not match the supplied backup'
-    fi
-    printf 'existing\n'
+    die 'running validator deployment lacks a valid flat identity; refuse restore'
+  fi
+
+  if [[ -e "$marker" ]]; then
+    [[ -f "$marker" && ! -L "$marker" && "$(<"$marker")" == "$expected_bundle_sha256" ]] \
+      || die 'interrupted validator identity restore is inconsistent'
+    validate_stable_material "$stable_identity" "$stable_signer" "$expected_consensus_key"
+    printf 'installed\n'
     return 0
   fi
+  [[ ! -e "$stable_identity" && ! -e "$stable_signer" ]] \
+    || die 'validator identity state is partial, mixed, or ambiguous'
 
-  if [[ -e "$state" ]]; then
-    if [[ -f "$marker" && ! -L "$marker" \
-      && "$(<"$marker")" == "$expected_bundle_sha256" ]]; then
-      validate_candidate_material "$state" "$expected_consensus_key"
-      if ! diff -qr "$candidate/tmkms" "$state/tmkms" >/dev/null 2>&1 \
-        || ! cmp -s "$candidate/inference/config/node_key.json" \
-          "$state/inference/config/node_key.json"; then
-        die 'interrupted validator identity restore is inconsistent'
-      fi
-      printf 'installed\n'
-      return 0
-    fi
-    if [[ -d "$state" && ! -L "$state" \
-      && -z "$(find "$state" -xdev -mindepth 1 -print -quit 2>/dev/null)" ]]; then
-      rmdir "$state"
-    else
-      die 'validator identity state is partial, mixed, or ambiguous'
-    fi
-  fi
-
-  transaction="$(mktemp -d "${state%/*}/.$(basename "$state").validator-restore.XXXXXX")"
-  install -d -m 0700 "$transaction/inference/config"
-  cp -a "$candidate/tmkms" "$transaction/tmkms"
+  transaction="$(mktemp -d "$state/.validator-restore.XXXXXX")"
+  install -d -m 0700 "$transaction/identity/p2p" "$transaction/identity/warm/keyring-file" "$transaction/signer"
+  cp -a "$candidate/tmkms" "$transaction/signer/tmkms"
   install -m 0600 "$candidate/inference/config/node_key.json" \
-    "$transaction/inference/config/node_key.json"
-  printf '%s\n' "$expected_bundle_sha256" \
-    >"$transaction/.gdc-validator-identity-restore.sha256"
+    "$transaction/identity/p2p/node_key.json"
   chown -R root:root "$transaction"
   find "$transaction" -type d -exec chmod 0700 {} +
   find "$transaction" -type f -exec chmod 0600 {} +
-  validate_candidate_material "$transaction" "$expected_consensus_key"
+  validate_stable_material "$transaction/identity" "$transaction/signer" "$expected_consensus_key"
   if [[ "${GDC_VALIDATOR_IDENTITY_TEST_INTERRUPT:-}" == before-activate ]]; then
     die 'simulated validator identity interruption before atomic activation'
   fi
-  mv "$transaction" "$state"
+  mv "$transaction/identity" "$stable_identity"
+  mv "$transaction/signer" "$stable_signer"
+  printf '%s\n' "$expected_bundle_sha256" >"$marker"
+  chmod 0600 "$marker"
+  rmdir "$transaction"
   transaction=''
   printf 'installed\n'
 }

@@ -18,7 +18,8 @@ jq -e '
   (.base_image | test("@sha256:[0-9a-f]{64}$")) and
   .attention_backend == "ROCM_ATTN" and
   (.output_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+$")) and
-  (.published_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$"))
+  (.published_image == "" or
+    (.published_image | test("^ghcr.io/paranjko/gdc-mlnode:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$")))
 ' "$PROFILE" >/dev/null || { echo 'AMD MLNode profile is invalid' >&2; exit 2; }
 
 gonka_repository="$(jq -r .sources.gonka.repository "$PROFILE")"
@@ -43,7 +44,7 @@ if [[ "$MODE" == --plan ]]; then
   exit 0
 fi
 
-build_root="$(mktemp -d /tmp/gdc-amd-mlnode.XXXXXX)"
+build_root="$(mktemp -d "${TMPDIR:-/tmp}/gdc-amd-mlnode.XXXXXX")"
 cleanup() { rm -rf -- "$build_root"; }
 trap cleanup EXIT
 checkout_exact() {

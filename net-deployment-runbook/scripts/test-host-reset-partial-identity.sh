@@ -13,6 +13,7 @@ set -Eeuo pipefail
 printf '%s\n' "$*" >>"$GDC_TEST_SSH_LOG"
 if [[ "$*" == *"--remote capture"* ]]; then
   cat >/dev/null
+  printf '%s\n' '{"schema_version":1,"kind":"gdc-reset-dai-backup","identity_present":true,"signer_stopped":true,"archive_path":"/srv/backup/reset-fixture-dai-backup.tar","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
   exit 0
 fi
 if [[ "$*" == *gdc-identity-layout* ]]; then
@@ -96,26 +97,15 @@ after="$("$ROOT/scripts/classify-join-state.sh" \
   "$partial_node_home/accounts/$alias-cold.json" \
   "$partial_node_home/state/joined/$alias" '')"
 jq -e '.classification == "new"' <<<"$after" >/dev/null
-grep -Fq 'READY removed incomplete local and remote identity state for partial-node' "$tmp/partial.out"
-grep -Fq "GDC_RESET_PARTIAL_IDENTITY='true' bash -s" "$tmp/ssh.log"
+grep -Eq '^READY removed [1-9][0-9]* local identity record\(s\) for partial-node; external reset archive is retained for explicit recovery$' "$tmp/partial.out"
 [[ -f "$partial_node_home/runs/retained/result.json" ]]
 [[ "$(<"$partial_home/mnemonics/$alias-cold.mnemonic")" == 'secret mnemonic canary' ]]
 # These are literal assertions against the captured remote program.
 # shellcheck disable=SC2016
 grep -Fq '[[ -z "$(docker ps -q --filter "label=com.docker.compose.project=$NODE" --filter label=com.docker.compose.service=tmkms)" ]]' "$tmp/partial-remote.sh"
 # shellcheck disable=SC2016
-grep -Fq 'rm -rf -- "/srv/dai/identity/$NODE" "/srv/dai/signer/$NODE"' "$tmp/partial-remote.sh"
-# shellcheck disable=SC2016
-grep -Fq 'rm -f -- "/srv/dai/identity-bootstrap/$NODE.json"' "$tmp/partial-remote.sh"
-# shellcheck disable=SC2016
-teardown_line="$(grep -n 'remove_compose_project "$NODE"' "$tmp/partial-remote.sh" | cut -d: -f1)"
-# shellcheck disable=SC2016
-identity_line="$(grep -n 'rm -rf -- "/srv/dai/identity/$NODE"' "$tmp/partial-remote.sh" | cut -d: -f1)"
-[[ "$identity_line" -gt "$teardown_line" ]]
-if grep -Eq '(/srv/dai/(genesis|edge)(/|"|$)|/srv/dai/identity-bootstrap/bootstrap\.env)' "$tmp/partial-remote.sh"; then
-  echo 'partial identity cleanup escaped its alias-scoped remote paths' >&2
-  exit 1
-fi
+grep -Fq 'rm -rf -- /srv/dai "/tmp/gdc-deploy-"*-"$NODE"' "$tmp/partial-remote.sh"
+grep -Fq 'for foreign in /srv/dai/edge /srv/dai/ops /srv/dai/gonka-devnet-bot' "$tmp/partial-remote.sh"
 
 alias=complete-node
 complete_home="$tmp/complete-home"
@@ -130,19 +120,18 @@ printf 'completed mnemonic canary\n' >"$complete_home/mnemonics/$alias-cold.mnem
 printf 'archive\n' >"$tmp/restore.tar"
 
 run_reset "$complete_home" "$alias" "$tmp/complete-remote.sh" registered >"$tmp/complete.out"
-[[ -s "$complete_node_home/state/identities/$alias.json" ]]
-[[ -s "$complete_node_home/accounts/$alias-cold.json" ]]
+# Reset deliberately discards every local identity record. A later restore
+# must be driven by the explicit external archive, never stale operator state.
+[[ ! -e "$complete_node_home/state/identities/$alias.json" ]]
+[[ ! -e "$complete_node_home/accounts/$alias-cold.json" ]]
+[[ ! -e "$complete_node_home/state/joined/$alias" ]]
 [[ "$(<"$complete_home/mnemonics/$alias-cold.mnemonic")" == 'completed mnemonic canary' ]]
 restore_classification="$("$ROOT/scripts/classify-join-state.sh" \
   "$complete_node_home/state/identities/$alias.json" \
   "$complete_node_home/accounts/$alias-cold.json" \
   "$complete_node_home/state/joined/$alias" "$tmp/restore.tar")"
-jq -e '.classification == "running_matched"' <<<"$restore_classification" >/dev/null
-if grep -Fq 'READY removed incomplete local and remote identity state' "$tmp/complete.out"; then
-  echo 'completed identity was treated as partial identity' >&2
-  exit 1
-fi
-grep -Fq "GDC_RESET_PARTIAL_IDENTITY='false' bash -s" "$tmp/ssh.log"
+jq -e '.classification == "restore_empty"' <<<"$restore_classification" >/dev/null
+grep -Eq '^READY removed [1-9][0-9]* local identity record\(s\) for complete-node; external reset archive is retained for explicit recovery$' "$tmp/complete.out"
 
 # A pre-signer failure has all three local identity files, because the joined
 # marker is deliberately written before the signer starts. Its terminal
@@ -166,6 +155,6 @@ failed_classification="$("$ROOT/scripts/classify-join-state.sh" \
   "$failed_node_home/state/joined/$alias" '')"
 jq -e '.classification == "new"' <<<"$failed_classification" >/dev/null
 grep -Fq 'retained identity belongs to an incomplete JOIN run' "$tmp/failed.out"
-grep -Fq "GDC_RESET_PARTIAL_IDENTITY='true' bash -s" "$tmp/ssh.log"
+grep -Fq "sudo -n env NODE='$alias' bash -s" "$tmp/ssh.log"
 
-printf 'PASS Host reset clears only partial JOIN identity state and preserves completed restore identity\n'
+printf 'PASS Host reset archives then removes the full validator root while preserving correct local recovery state\n'

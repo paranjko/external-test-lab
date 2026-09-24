@@ -47,4 +47,21 @@ if (ensure_run_manifest join-gdc-node2) >"$tmp/snapshot.out" 2>"$tmp/snapshot.er
 fi
 grep -Fq 'lineage preflight join_snapshot_peers' "$tmp/snapshot.err"
 
+# phase-join refreshes the short-lived state-sync tuple immediately before its
+# canary. Acceptance is bound to the immutable profile and run manifest, not
+# to that refreshed child-process context.
+GDC_JOIN_SNAPSHOT_PEERS='0123456789abcdef0123456789abcdef01234567@tcp://rpc-a.example.test:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://rpc-b.example.test:5000'
+GDC_JOIN_TRUST_HEIGHT=150
+GDC_JOIN_TRUST_HASH='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+GDC_JOIN_LINEAGE_RECEIPT_SHA256='ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+if (ensure_run_manifest join-acceptance-gdc-node2) >"$tmp/refreshed.out" 2>"$tmp/refreshed.err"; then
+  echo 'retained run accepted a refreshed lineage tuple before acceptance isolation' >&2
+  exit 1
+fi
+grep -Fq 'lineage preflight join_trust_height' "$tmp/refreshed.err"
+(
+  clear_join_lineage_context_for_acceptance
+  ensure_run_manifest join-acceptance-gdc-node2
+)
+
 printf 'PASS Host JOIN resume requires the exact observed network fingerprint\n'

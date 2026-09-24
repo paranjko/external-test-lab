@@ -5,7 +5,7 @@ Wants=docker.service network-online.target
 
 [Service]
 Type=simple
-ExecStart=/srv/dai/deploy/%i/poc-winddown-watch.sh /srv/dai/deploy/%i/.env
+ExecStart=/srv/dai/deploy/poc-winddown-watch.sh /srv/dai/deploy/.env
 Restart=always
 RestartSec=2
 

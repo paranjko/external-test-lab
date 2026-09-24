@@ -6,13 +6,12 @@ set -Eeuo pipefail
   && "$5" == *@sha256:* && "$6" =~ ^[1-9][0-9]*$ ]] \
   || { echo "Usage: sudo $0 NODE COMPOSE START_NODE API_ENTRYPOINT EXPLORER_IMAGE DASHBOARD_PORT" >&2; exit 2; }
 
-NODE="$1"
 COMPOSE="$2"
 START_NODE="$3"
 API_ENTRYPOINT="$4"
 EXPLORER_IMAGE="$5"
 DASHBOARD_PORT="$6"
-DEST="/srv/dai/deploy/$NODE"
+DEST=/srv/dai/deploy
 ENV="$DEST/.env"
 [[ -s "$ENV" ]] || { echo "missing deployed environment: $ENV" >&2; exit 1; }
 

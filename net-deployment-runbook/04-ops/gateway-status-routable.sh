@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Read one official gateway /v1/status JSON document from stdin. The official
-# single-runtime response exposes `routable`; pooled v3 omits it and instead
-# exposes capacity plus runtime lifecycle state.
+# Read one official gateway /v1/status JSON document from stdin. Legacy
+# gateways expose `routable`, pooled gateways expose capacity plus runtime
+# state, and a single-session DevShard v5 exposes its escrow lifecycle only.
 jq -e '
   def active_unblocked:
     [.devshards[]?
@@ -18,12 +18,28 @@ jq -e '
       // 0 | tonumber) > 0;
   # Runtimes remain visible during confirmation PoC, but user inference is
   # intentionally suspended. A positive snapshot is not safely routable then.
-  def normal_confirmation:
+  def confirmation_allows_inference:
     ([.confirmation_poc_phase?, (.devshards[]? | .confirmation_poc_phase?)]
-      | map(select(type == "string" and . != "" and . != "NORMAL_OPERATION"))
-      | length) == 0;
-  normal_confirmation and (
-    ((.routable == true) and (([.devshards[]?] | length) == 0 or active_unblocked))
+      | map(select(type == "string" and . != ""))
+      | all(. == "NORMAL_OPERATION"
+        or . == "CONFIRMATION_POC_INACTIVE"
+        or . == "CONFIRMATION_POC_COMPLETED"));
+  # DevShard v5 publishes the cold-start height seed gate separately from
+  # requests_blocked. When present, only `ok` is safe for a completion.
+  # Older status contracts omit height_seed and remain compatible.
+  def height_seed_allows_inference:
+    . == null
+    or ((type == "object") and (.state? == "ok"));
+  def single_session_routable:
+    ((.escrow_id? | type) == "string")
+    and ((.escrow_id | length) > 0)
+    and (.phase? == "active")
+    and (.requests_blocked? == false)
+    and (.chain_phase? == "Inference")
+    and ((.height_seed? // null) | height_seed_allows_inference);
+  confirmation_allows_inference and (
+    ((.routable? == true) and (([.devshards[]?] | length) == 0 or active_unblocked))
     or (positive_capacity and active_unblocked)
+    or single_session_routable
   )
 ' >/dev/null

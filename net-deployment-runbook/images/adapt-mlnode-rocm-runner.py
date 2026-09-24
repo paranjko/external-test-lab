@@ -18,32 +18,36 @@ ADAPTED_CONSTRUCTOR = """        self.additional_args = self._with_attention_bac
 
     @staticmethod
     def _with_attention_backend(additional_args: List[str], required: str) -> List[str]:
-        args = list(additional_args)
-        selected = []
+        source = list(additional_args)
+        args = []
+        option = "--attention-backend"
         index = 0
-        while index < len(args):
-            argument = args[index]
-            if argument == "--attention-backend":
-                if index + 1 >= len(args) or args[index + 1].startswith("--"):
-                    raise ValueError("--attention-backend requires a value")
-                selected.append(args[index + 1])
-                index += 2
+        while index < len(source):
+            argument = source[index]
+            option_name = argument.split("=", 1)[0]
+            is_attention_backend = (
+                option_name == option
+                or (
+                    option_name.startswith("--attention-")
+                    and option.startswith(option_name)
+                )
+            )
+            if is_attention_backend:
+                if (
+                    "=" not in argument
+                    and index + 1 < len(source)
+                    and not source[index + 1].startswith("--")
+                ):
+                    index += 2
+                    continue
+                index += 1
                 continue
-            if argument.startswith("--attention-backend="):
-                selected.append(argument.split("=", 1)[1])
+            args.append(argument)
             index += 1
 
-        if any(value != required for value in selected):
-            raise ValueError(
-                f"ROCm MLNode requires --attention-backend {required}; got {selected}"
-            )
-        if len(selected) > 1:
-            raise ValueError("duplicate --attention-backend options are not allowed")
-        if not selected:
-            args.extend(["--attention-backend", required])
+        args.extend([option, required])
         return args
 """
-
 
 def adapt(path: Path) -> None:
     source = path.read_text()

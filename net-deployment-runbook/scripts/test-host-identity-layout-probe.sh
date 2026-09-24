@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# The probe that decides whether `gdc host reset` may remove the deployment
-# root answers from the signing key itself. A directory or a p2p marker says
-# nothing about which copy is live, and an interrupted migration leaves both.
+# The linked-GPU-host probe never migrates identity. It recognizes only the
+# flat layout; any legacy or incomplete material is conservatively unknown.
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
@@ -22,17 +21,17 @@ layout_of() {
     | grep -E '^gdc-identity-layout=(v1|v2|none|unknown)$' | tail -n 1 | cut -d= -f2
 }
 reset_tree() { rm -rf "$tmp/srv"; mkdir -p "$tmp/srv/dai"; }
-legacy_key() {
-  mkdir -p "$tmp/srv/dai/$node/tmkms/secrets"
-  printf '%s\n' "${1:-legacy-key}" >"$tmp/srv/dai/$node/tmkms/secrets/priv_validator_key.softsign"
-}
-stable_key() {
+legacy_identity() {
   mkdir -p "$tmp/srv/dai/signer/$node/tmkms/secrets"
   printf '%s\n' "${1:-legacy-key}" >"$tmp/srv/dai/signer/$node/tmkms/secrets/priv_validator_key.softsign"
 }
+stable_key() {
+  mkdir -p "$tmp/srv/dai/signer/tmkms/secrets"
+  printf '%s\n' "${1:-legacy-key}" >"$tmp/srv/dai/signer/tmkms/secrets/priv_validator_key.softsign"
+}
 p2p_marker() {
-  mkdir -p "$tmp/srv/dai/identity/$node/p2p"
-  printf '{"priv_key":{}}\n' >"$tmp/srv/dai/identity/$node/p2p/node_key.json"
+  mkdir -p "$tmp/srv/dai/identity/p2p"
+  printf '{"priv_key":{}}\n' >"$tmp/srv/dai/identity/p2p/node_key.json"
 }
 expect() {
   local want="$1" got
@@ -44,36 +43,32 @@ expect() {
 reset_tree
 expect none
 
-# First generation: the only key lives below the deployment root reset removes.
-reset_tree; legacy_key
-expect v1
-
 # Stable roots: the deployment root holds no key.
 reset_tree; stable_key; p2p_marker
 expect v2
 
-# An interrupted migration leaves the p2p marker of the new layout while the
-# only signing key is still the legacy one. The old probe answered v2 here and
-# the reset removed that key.
-reset_tree; legacy_key; p2p_marker
-expect v1
+# Legacy identity is not a linked GPU Host. This probe has no ownership to
+# normalize it, so it refuses a linked reset through the unknown verdict.
+reset_tree; legacy_identity
+expect unknown
 
-# The same trap without any migration: an empty stable signer directory.
-reset_tree; legacy_key; mkdir -p "$tmp/srv/dai/signer/$node/tmkms/secrets"
-expect v1
-
-# A finished migration may keep a byte-identical legacy copy; that Host is
-# reset normally, because the live key is in the stable root.
-reset_tree; legacy_key same-key; stable_key same-key; p2p_marker
+# A direct flat marker is still nonempty. The caller refuses any result other
+# than `none`, so this cannot authorize a linked GPU reset.
+reset_tree; legacy_identity; p2p_marker
 expect v2
 
-# Two different keys is not a migration anyone can reason about: refuse.
-reset_tree; legacy_key one-key; stable_key other-key
-expect v1
+# A flat signer is authoritative even if another stale directory exists.
+reset_tree; legacy_identity same-key; stable_key same-key; p2p_marker
+expect v2
+
+# A flat signer remains a stable layout. The owning Host reset reader applies
+# the stronger mixed-layout refusal before it archives a validator.
+reset_tree; legacy_identity one-key; stable_key other-key
+expect v2
 
 # Identity material with no key at all is not recognised, and must not be
 # mistaken for an empty Host.
-reset_tree; mkdir -p "$tmp/srv/dai/identity/$node"
+reset_tree; mkdir -p "$tmp/srv/dai/identity"
 expect unknown
 
-printf 'PASS host identity layout is decided by the signing key, not by a directory\n'
+printf 'PASS linked GPU identity probe accepts only flat or empty layout\n'

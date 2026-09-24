@@ -41,7 +41,7 @@ while IFS= read -r target_node; do
   else
     target_runtime_active=false
   fi
-  target_marker="$(ssh -n "$target_node" "cat /srv/dai/deploy/$target_node/$target_marker_name 2>/dev/null || true")"
+  target_marker="$(ssh -n "$target_node" "cat /srv/dai/deploy/$target_marker_name 2>/dev/null || true")"
   classify_upgrade_runtime_marker \
     "$target_runtime_matches" "$target_marker" "$expected_target_marker" \
     "$expected_source_marker" >/dev/null
@@ -106,11 +106,11 @@ capture_compose_state() {
   local prefix="$1" node
   mkdir -p "$RUN/$prefix-services"
   for node in "${nodes[@]}"; do
-    ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env ps --format json" \
+    ssh "$node" "cd /srv/dai/deploy && docker compose --env-file .env ps --format json" \
       | jq -s '[.[] | {service:.Service,image:.Image,state:.State,health:.Health}] | sort_by(.service)' \
       >"$RUN/$prefix-services/$node.json"
-    ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release" >"$RUN/$prefix-services/$node.release"
-    ssh "$node" "cat /srv/dai/deploy/$node/.gdc-binary-upgrade 2>/dev/null || true" \
+    ssh "$node" "cat /srv/dai/deploy/.gdc-release" >"$RUN/$prefix-services/$node.release"
+    ssh "$node" "cat /srv/dai/deploy/.gdc-binary-upgrade 2>/dev/null || true" \
       >"$RUN/$prefix-services/$node.binary-upgrade"
   done
 }
@@ -147,12 +147,12 @@ capture_runtime_state() {
       and .node_version.commit == $commit
     ' "$runtime_file" >/dev/null || die "$node does not report the pinned v$GONKA_RELEASE chain runtime"
 
-    node_current="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T node readlink -f /root/.inference/cosmovisor/current")"
-    api_current="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T api readlink -f /root/.dapi/cosmovisor/current")"
+    node_current="$(ssh "$node" "cd /srv/dai/deploy && docker compose --env-file .env exec -T node readlink -f /root/.inference/cosmovisor/current")"
+    api_current="$(ssh "$node" "cd /srv/dai/deploy && docker compose --env-file .env exec -T api readlink -f /root/.dapi/cosmovisor/current")"
     node_expected="/root/.inference/cosmovisor/upgrades/v$GONKA_RELEASE/bin/inferenced"
     api_expected="/root/.dapi/cosmovisor/upgrades/v$GONKA_RELEASE/bin/decentralized-api"
-    node_process="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T node ps -eo args" | awk -v expected="$node_expected" '$1 == expected {print $1; exit}')"
-    api_process="$(ssh "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env exec -T api ps -eo args" | awk -v expected="$api_expected" '$1 == expected {print $1; exit}')"
+    node_process="$(ssh "$node" "cd /srv/dai/deploy && docker compose --env-file .env exec -T node ps -eo args" | awk -v expected="$node_expected" '$1 == expected {print $1; exit}')"
+    api_process="$(ssh "$node" "cd /srv/dai/deploy && docker compose --env-file .env exec -T api ps -eo args" | awk -v expected="$api_expected" '$1 == expected {print $1; exit}')"
     [[ "$node_current" == "/root/.inference/cosmovisor/upgrades/v$GONKA_RELEASE" ]] || die "$node chain cosmovisor link is not v$GONKA_RELEASE"
     [[ "$api_current" == "/root/.dapi/cosmovisor/upgrades/v$GONKA_RELEASE" ]] || die "$node DAPI cosmovisor link is not v$GONKA_RELEASE"
     [[ "$node_process" == "$node_expected" ]] || die "$node chain process is not the v$GONKA_RELEASE binary"

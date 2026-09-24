@@ -28,7 +28,7 @@ jq -e --arg run_id "$GDC_RUN_ID" --arg node "$NODE" '
 ADDRESS="$(jq -er .identity_fingerprints.participant_address "$head")"
 expected_chain_id="$(jq -er '.spec.network.chain_id' "$GDC_JOIN_PROFILE")"
 expected_core_version="$(jq -er '.spec.components.core.expected_runtime.version' "$GDC_JOIN_PROFILE")"
-deploy="/srv/dai/deploy/$NODE"
+deploy="/srv/dai/deploy"
 before="$RUN/tmkms-signing-state-before-enable.json"
 [[ -s "$before" ]] || { echo 'signer readback resume lacks the pre-enable TMKMS state' >&2; exit 1; }
 
@@ -38,7 +38,7 @@ tmkms="$(ssh "$NODE" "cd '$deploy' && docker compose --env-file .env -f compose.
 }
 ssh "$NODE" "cd '$deploy' && ./verify-active-signer-state.sh '$deploy' '$expected_chain_id' '$expected_core_version'"
 after="$RUN/tmkms-signing-state-after-enable.json"
-ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$after"
+ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$after"
 chmod 600 "$after"
 "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$before" --observed "$after" --require-advance >/dev/null || {
   echo 'signer readback resume refused: TMKMS has not advanced after the recorded enablement' >&2; exit 1;
@@ -60,7 +60,7 @@ append_transition() {
 
 record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"
 append_transition SIGNER_ACTIVE_VERIFIED
-"$ROOT/scripts/validator-backup.sh" create "$NODE"
+"$ROOT/scripts/validator-backup.sh" create "$NODE" resume-signer
 append_transition RECOVERY_ARCHIVE_VERIFIED
 append_transition COMPLETE
 result="$(mktemp "$RUN/.signer-readback-result.XXXXXX")"

@@ -1556,16 +1556,26 @@ case "$COMMAND" in
           run_phase "join-resume-signer-readback-$join_alias" "$ROOT/scripts/phase-join-resume-signer-readback.sh" \
             "$join_alias" "$join_run"
           ;;
-        SIGNER_ACTIVE_VERIFIED)
+        SIGNER_ACTIVE_VERIFIED|RECOVERY_ARCHIVE_VERIFIED)
           [[ "$verification" == true ]] || { echo 'host join signer acceptance resume requires --verification' >&2; exit 2; }
           run_phase "join-resume-acceptance-$join_alias" "$ROOT/scripts/phase-join-resume-acceptance.sh" \
             "$join_alias" "$join_run"
           ;;
         COMPLETE)
-          # Keep the successful completion receipt intact: node start uses it
-          # as the authority to restart the signer.  This invocation is
-          # recorded in its run log, not by downgrading the retained result.
-          printf 'PASS Host JOIN resume is already complete; no Host action was performed\n'
+          if [[ "$verification" == true ]]; then
+            # Completion remains the sole authority to restart a signer.  A
+            # later acceptance check must therefore retain that terminal
+            # result and append only separate PoC/gateway evidence.
+            GDC_JOIN_PRESERVE_PRIOR_RUN=true
+            export GDC_JOIN_PRESERVE_PRIOR_RUN
+            run_phase "join-complete-acceptance-$join_alias" "$ROOT/scripts/phase-join-acceptance.sh" \
+              "$join_alias"
+          else
+            # Keep the successful completion receipt intact: node start uses it
+            # as the authority to restart the signer.  This invocation is
+            # recorded in its run log, not by downgrading the retained result.
+            printf 'PASS Host JOIN resume is already complete; no Host action was performed\n'
+          fi
           ;;
         *)
           echo "host join --resume has no safe dispatcher for retained state=$join_resume_state" >&2
@@ -1875,6 +1885,15 @@ case "$COMMAND" in
       join_role_config="$join_input"
       # shellcheck disable=SC1090
       source "$join_role_config"
+    fi
+    # A mnemonic-authorized rebind must establish its local cold account
+    # before phase-join classifies retained Host identity. This is operator-
+    # local work only; no Host package, deployment or key is changed here.
+    if [[ "${GDC_JOIN_REBIND_EXISTING_PARTICIPANT:-false}" == true ]]; then
+      if [[ ! -s "$STATE/secrets/operator.keyring" || ! -s "$STATE/secrets/$join_alias.keyring" || ! -s "$STATE/secrets/$join_alias.postgres" ]]; then
+        "$ROOT/scripts/make-node-operator-secrets.sh" "$join_alias" "$STATE/secrets"
+      fi
+      "$ROOT/01-identities-genesis/create-cold-accounts.sh" "$STATE/secrets/operator.keyring" "$join_alias"
     fi
     # A plan is diagnostic output, not execution history.  Publish this run
     # as active only after all no-mutation preflight gates have passed and the

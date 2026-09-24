@@ -61,6 +61,7 @@ PATH="$tmp/bin:$PATH" "$COMPONENTS" --observation "$tmp/observation.json" --outp
 "$RESOLVE" --observation "$tmp/observation.json" --components "$tmp/components.json" --node-name gdc-node9 --public-host node9.example.test --operation new --run-id fixture-run --output "$tmp/new.json"
 "$ROOT/scripts/join-profile.sh" validate "$tmp/new.json"
 jq -e '.spec.network.bootstrap_url == "https://gonka-dev.net/gonka-devnet-community/bootstrap.json" and .spec.seeds == {usable:[{selection_policy:"net-info-software-majority/v1"}],unavailable:[]} and .spec.deployment.host_envelope.host_stack == {repository:"gonka-ai/gonka",commit:"ce33c851282b8f4c0f63d78d46ddd4d8bb248207",compose_sha256:"d4b17a18013160236b79aac880a9f5b17705312f45c85ea3d37cc978c8da3f94",api_image:"ghcr.io/product-science/api:0.2.15-post3@sha256:3333333333333333333333333333333333333333333333333333333333333333"} and .spec.state_acquisition == {mode:"pending",providers:[],minimum_providers:0} and .spec.identity.mode == "generate"' "$tmp/new.json" >/dev/null
+printf 'fixture archive\n' >"$tmp/archive.tar"
 cat >"$tmp/amd-inspection.env" <<'EOF'
 vendor=amd
 pci_device_id=0x7550
@@ -143,7 +144,6 @@ jq '.seeds[0].status = "unavailable" | .seeds[0].reason = "timeout" | .seeds[1].
   echo 'transient seed diagnostics changed semantic profile ID' >&2
   exit 1
 }
-printf 'fixture archive\n' >"$tmp/archive.tar"
 "$RESOLVE" --observation "$tmp/observation.json" --components "$tmp/components.json" --node-name gdc-node9 --public-host node9.example.test --operation restore --restore-archive "$tmp/archive.tar" --run-id fixture-run --output "$tmp/restore.json"
 "$ROOT/scripts/join-profile.sh" validate "$tmp/restore.json"
 jq -e '.spec.identity.mode == "restore" and (.spec.identity.restore_archive_sha256 | test("^[a-f0-9]{64}$")) and .spec.activation_policy.old_signer_fence_required == true' "$tmp/restore.json" >/dev/null

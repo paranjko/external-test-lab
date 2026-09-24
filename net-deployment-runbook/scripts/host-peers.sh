@@ -22,7 +22,7 @@ if [[ "${1:-}" == --remote ]]; then
   (( ${#node_ids[@]} == 1 )) || die 'expected one running managed node'
   container="${node_ids[0]}"
   deploy="$(docker inspect "$container" | jq -er '.[0].Config.Labels["com.docker.compose.project.working_dir"]')"
-  [[ "$deploy" =~ ^/srv/dai/deploy/[A-Za-z0-9][A-Za-z0-9_-]*$ && -f "$deploy/compose.yaml" && -f "$deploy/.env" ]] || die 'invalid managed deployment'
+  [[ "$deploy" == /srv/dai/deploy && -f "$deploy/compose.yaml" && -f "$deploy/.env" ]] || die 'invalid managed deployment'
   exec 8>"$deploy/.gdc-peers.lock"
   flock -n 8 || die 'another peer update is running'
   next="$(mktemp "$deploy/.peers.XXXXXX.json")"
@@ -31,7 +31,7 @@ if [[ "${1:-}" == --remote ]]; then
     | render_peers "$pex" >"$next"
   docker compose --project-directory "$deploy" --env-file "$deploy/.env" -f "$next" --profile '*' config --quiet
   data="$(docker inspect "$container" | jq -er '.[0].Mounts[] | select(.Destination=="/root/.inference" and .Type=="bind") | .Source')"
-  [[ "$data" =~ ^/srv/dai/([A-Za-z0-9._-]+/)+inference$ && -f "$data/config/config.toml" ]] || die 'unexpected chain config location'
+  [[ "$data" == /srv/dai/data/inference && -f "$data/config/config.toml" ]] || die 'unexpected chain config location'
   backup="$(mktemp "$deploy/compose.before-peers.XXXXXX")"
   cp -p "$deploy/compose.yaml" "$backup"
   cp -p "$data/config/config.toml" "$backup.config.toml"

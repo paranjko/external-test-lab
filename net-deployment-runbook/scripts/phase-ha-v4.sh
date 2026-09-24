@@ -50,7 +50,7 @@ grep -qx 'devshard_version=v4' "$settlement_context" \
 } >"$RUN/context.env"
 node="$GENESIS_NODE"
 expected_release="$GDC_RELEASE_PROFILE $(profile_hash)"
-ssh "$node" "grep -qx '$expected_release' /srv/dai/deploy/$node/.gdc-release" \
+ssh "$node" "grep -qx '$expected_release' /srv/dai/deploy/.gdc-release" \
   || die "$node release marker does not match $GDC_RELEASE_PROFILE"
 
 step 'Install two-replica v4 HA overlay on the already-settled participant'
@@ -58,9 +58,9 @@ remote="/tmp/gdc-ha-$$"
 ssh "$node" "rm -rf '$remote' && mkdir -p '$remote'"
 scp -q "$ROOT/02-node/compose.devshard-ha.yaml" "$node:$remote/compose.devshard-ha.yaml"
 scp -q "$ROOT/02-node/vendor-router/nginx.conf.template" "$node:$remote/nginx.conf.template"
-ssh "$node" "sha256sum /srv/dai/deploy/$node/.env /srv/dai/shared/genesis.json /srv/dai/deploy/$node/.gdc-release" >"$RUN/base-inputs-before.sha256"
+ssh "$node" "sha256sum /srv/dai/deploy/.env /srv/dai/shared/genesis.json /srv/dai/deploy/.gdc-release" >"$RUN/base-inputs-before.sha256"
 ssh -T "$node" "set -Eeuo pipefail
-  dest=/srv/dai/deploy/$node
+  dest=/srv/dai/deploy
   sudo install -m 0644 '$remote/compose.devshard-ha.yaml' \"\$dest/compose.devshard-ha.yaml\"
   sudo install -d -m 0755 \"\$dest/versiond-router\"
   sudo install -m 0644 '$remote/nginx.conf.template' \"\$dest/versiond-router/nginx.conf.template\"
@@ -69,28 +69,28 @@ ssh -T "$node" "set -Eeuo pipefail
   rm -rf '$remote'
   cd \"\$dest\"
   ./start-node.sh"
-ssh "$node" "sha256sum /srv/dai/deploy/$node/.env /srv/dai/shared/genesis.json /srv/dai/deploy/$node/.gdc-release" >"$RUN/base-inputs-after.sha256"
+ssh "$node" "sha256sum /srv/dai/deploy/.env /srv/dai/shared/genesis.json /srv/dai/deploy/.gdc-release" >"$RUN/base-inputs-after.sha256"
 cmp -s "$RUN/base-inputs-before.sha256" "$RUN/base-inputs-after.sha256" \
   || die 'HA overlay changed node env, Genesis, or release identity'
 
 step 'Verify shared-key/Postgres HA topology and sticky router'
-ssh "$node" "cd /srv/dai/deploy/$node && docker compose -f compose.yaml -f compose.devshard-ha.yaml ps --format json" >"$RUN/compose-ps.jsonl"
+ssh "$node" "cd /srv/dai/deploy && docker compose -f compose.yaml -f compose.devshard-ha.yaml ps --format json" >"$RUN/compose-ps.jsonl"
 jq -s -e '[.[] | select(.Service == "versiond" or .Service == "versiond-2" or .Service == "versiond-router") | select(.State == "running")] | length == 3' "$RUN/compose-ps.jsonl" >/dev/null || die 'HA services are not all running'
-ssh "$node" "cd /srv/dai/deploy/$node && docker compose -f compose.yaml -f compose.devshard-ha.yaml exec -T versiond printenv | grep -E '^(KEY_NAME|PGHOST|DEVSHARD_STORAGE_MODE)=' && docker compose -f compose.yaml -f compose.devshard-ha.yaml exec -T versiond-2 printenv | grep -E '^(KEY_NAME|PGHOST|DEVSHARD_STORAGE_MODE)='" >"$RUN/replica-env.txt"
+ssh "$node" "cd /srv/dai/deploy && docker compose -f compose.yaml -f compose.devshard-ha.yaml exec -T versiond printenv | grep -E '^(KEY_NAME|PGHOST|DEVSHARD_STORAGE_MODE)=' && docker compose -f compose.yaml -f compose.devshard-ha.yaml exec -T versiond-2 printenv | grep -E '^(KEY_NAME|PGHOST|DEVSHARD_STORAGE_MODE)='" >"$RUN/replica-env.txt"
 grep -qx 'PGHOST=payload-postgres' "$RUN/replica-env.txt"
 grep -qx 'DEVSHARD_STORAGE_MODE=postgres' "$RUN/replica-env.txt"
 
 key="$(cut -d, -f1 "$SECRETS/gateway.client-keys")"
 step 'Kill one replica and prove authenticated gateway traffic survives'
-ssh "$node" "cd /srv/dai/deploy/$node && docker compose -f compose.yaml -f compose.devshard-ha.yaml stop versiond-2"
+ssh "$node" "cd /srv/dai/deploy && docker compose -f compose.yaml -f compose.devshard-ha.yaml stop versiond-2"
 "$ROOT/04-ops/test-inference.sh" "https://$API_HOST" "$key" >"$RUN/chat-during-kill.json"
-ssh "$node" "cd /srv/dai/deploy/$node && docker compose -f compose.yaml -f compose.devshard-ha.yaml up -d versiond-2"
+ssh "$node" "cd /srv/dai/deploy && docker compose -f compose.yaml -f compose.devshard-ha.yaml up -d versiond-2"
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
-  if ssh "$node" "cd /srv/dai/deploy/$node && docker compose -f compose.yaml -f compose.devshard-ha.yaml ps --format json versiond-2" | jq -e '.State == "running"' >/dev/null; then break; fi
+  if ssh "$node" "cd /srv/dai/deploy && docker compose -f compose.yaml -f compose.devshard-ha.yaml ps --format json versiond-2" | jq -e '.State == "running"' >/dev/null; then break; fi
   printf 'WAIT  versiond-2 recovery\n'; sleep 3
 done
-ssh "$node" "cd /srv/dai/deploy/$node && docker compose -f compose.yaml -f compose.devshard-ha.yaml logs --no-color --tail=300 versiond versiond-2 versiond-router" >"$RUN/ha-logs.txt"
+ssh "$node" "cd /srv/dai/deploy && docker compose -f compose.yaml -f compose.devshard-ha.yaml logs --no-color --tail=300 versiond versiond-2 versiond-router" >"$RUN/ha-logs.txt"
 if grep -Ei 'duplicate.*(submission|validation)|already submitted' "$RUN/ha-logs.txt"; then die 'duplicate validation submission observed in HA logs'; fi
 cat >"$RUN/verdict.md" <<EOF
 # DevShard v4 HA: PASS

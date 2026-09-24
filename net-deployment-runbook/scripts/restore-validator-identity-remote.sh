@@ -15,9 +15,9 @@ if [[ "${GDC_VALIDATOR_IDENTITY_TEST_MODE:-false}" == true ]]; then
     && "$deployment_env" == /* && "$deployment_env" != / ]] \
     || die 'validator identity restore requires absolute bounded paths'
 else
-  [[ "$state" =~ ^/srv/dai/[A-Za-z0-9][A-Za-z0-9._-]*$ \
+  [[ "$state" == /srv/dai \
     && "$candidate" =~ ^/tmp/gdc-[A-Za-z0-9][A-Za-z0-9._-]*-validator-restore-[0-9]+$ \
-    && "$deployment_env" == "/srv/dai/deploy/${state##*/}/.env" ]] \
+    && "$deployment_env" == /srv/dai/deploy/.env ]] \
     || die 'validator identity restore paths are outside the managed Host scope'
 fi
 [[ "$expected_consensus_key" =~ ^[A-Za-z0-9+/]{43}=$ ]] \

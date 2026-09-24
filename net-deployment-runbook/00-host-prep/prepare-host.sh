@@ -269,13 +269,11 @@ elif [[ "$GPU_ROLE" == true && "$AMD_ACCELERATOR" == false ]]; then
     update-initramfs -u
     DRIVER_CHANGED=true
   fi
-  # Ubuntu's headless server-driver metapackage can omit the userspace utility
-  # even though the kernel driver is loaded.  The subsequent verifier needs
-  # nvidia-smi, so install the matching utility once the active driver version
-  # is known.  A first installation still exits for reboot above.
-  if [[ "$NVIDIA_DRIVER_MAJOR" =~ ^[0-9]+$ ]]; then
-    ensure_packages "nvidia-utils-${NVIDIA_DRIVER_MAJOR}-server"
-  fi
+  # A usable driver was established through `nvidia-smi`, which is provided by
+  # its installed matching nvidia-utils package. A new driver installation
+  # above installs its matching non-server utility explicitly. Do not infer a
+  # `-server` package from the running version: it is not available for every
+  # Ubuntu driver series.
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
     | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
@@ -293,7 +291,7 @@ systemctl restart docker.service
 id "$OPERATOR_USER" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$OPERATOR_USER"
 usermod -aG docker "$OPERATOR_USER"
 install -d -m 0750 -o "$OPERATOR_USER" -g "$OPERATOR_USER" \
-  /srv/dai /srv/dai/shared /srv/dai/hf-cache /srv/dai/backups
+  /srv/dai /srv/dai/shared /srv/dai/backups /srv/hf-cache
 install -m 0644 "$(dirname "$0")/sysctl-gonka.conf" /etc/sysctl.d/99-gonka.conf
 sysctl --system >/dev/null
 cat >/etc/security/limits.d/90-gonka.conf <<'EOF'

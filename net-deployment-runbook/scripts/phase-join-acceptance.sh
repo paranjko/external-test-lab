@@ -5,6 +5,7 @@ source "$(dirname "$0")/lib.sh"
 # shellcheck source=join-acceptance-state.sh
 source "$(dirname "$0")/join-acceptance-state.sh"
 load_project
+clear_join_lineage_context_for_acceptance
 
 # This evidence phase is shared by a completed Genesis bootstrap and an
 # independent Host join. `node_name` deliberately rejects the Genesis alias
@@ -48,6 +49,12 @@ poc_distribution_tx_hash=''
 poc_distribution_tx_code=-1
 poc_distribution_stage=0
 late_restored_evidence=false
+eligibility_verified=false
+acceptance_started_seconds=$SECONDS
+last_trace_epoch=0
+last_trace_seconds=-60
+last_progress_summary=''
+last_progress_log_seconds=-60
 [[ -s "$RUN/poc-acceptance-observations.json" ]] || printf '[]' >"$RUN/poc-acceptance-observations.json"
 
 LAST_PUBLIC_FETCH_FAILURE=''
@@ -118,9 +125,9 @@ capture_poc_stage_trace() {
   # node is the deployed DAPI/inferenced image. Retain only PoC lifecycle messages for
   # this canonical numeric stage; logs are diagnostic evidence, never a PASS
   # substitute.  The bounded tail avoids copying unrelated operator traffic.
-  ssh -T "$NODE" "set -o pipefail; cd /srv/dai/$NODE && docker compose logs --no-color --tail=800 node 2>&1 | grep -E '$stage|poc(StageStartBlockHeight|Height)|PoC|artifact|commit|distribution|validation' | tail -n 240" \
+  ssh -T "$NODE" "set -o pipefail; cd /srv/dai/deploy && docker compose logs --no-color --tail=800 node 2>&1 | grep -E '$stage|poc(StageStartBlockHeight|Height)|PoC|artifact|commit|distribution|validation' | tail -n 240" \
     >"$RUN/dapi-stage-$stage.log" 2>&1 || true
-  ssh -T "$NODE" "set -o pipefail; cd /srv/dai/$NODE && docker compose logs --no-color --tail=800 mlnode 2>&1 | grep -E '$stage|poc(StageStartBlockHeight|Height)|PoC|artifact|commit|distribution|validation' | tail -n 240" \
+  ssh -T "$NODE" "set -o pipefail; cd /srv/dai/deploy && docker compose logs --no-color --tail=800 mlnode 2>&1 | grep -E '$stage|poc(StageStartBlockHeight|Height)|PoC|artifact|commit|distribution|validation' | tail -n 240" \
     >"$RUN/mlnode-stage-$stage.log" 2>&1 || true
 
   commits="$RUN/poc-commits-$stage.json"
@@ -332,6 +339,25 @@ if distribution_evidence="$(join_acceptance_state_restore_distribution "$RUN" 2>
     poc_distribution_tx_code="$(jq -er '.tx_code | tonumber' <<<"$distribution_evidence")"
   fi
 fi
+profile_hash_for_acceptance="${GDC_JOIN_PROFILE_SHA256:-$(profile_hash)}"
+if ! eligibility_evidence="$(join_acceptance_state_restore_eligibility "$RUN" "$VALIDATOR_KEY" 2>/dev/null || true)" \
+  || [[ -z "$eligibility_evidence" ]]; then
+  if join_acceptance_state_adopt_gateway_blocked_receipt "$RUN" "$VALIDATOR_KEY" "$profile_hash_for_acceptance"; then
+    eligibility_evidence="$(join_acceptance_state_restore_eligibility "$RUN" "$VALIDATOR_KEY")"
+  fi
+fi
+if [[ -n "${eligibility_evidence:-}" ]]; then
+  eligibility_verified=true
+  poc_accepted_once=true
+  poc_accepted_epoch="$(jq -er '.epoch | tonumber' <<<"$eligibility_evidence")"
+  poc_participant_weight="$(jq -er '.participant_weight | tonumber' <<<"$eligibility_evidence")"
+  poc_accepted_weight_sum="$(jq -er '.accepted_weight_sum | tonumber' <<<"$eligibility_evidence")"
+  poc_committed_total="$(jq -er '.committed_total | tonumber' <<<"$eligibility_evidence")"
+  poc_distribution_stage="$(jq -er '.distribution_stage | tonumber' <<<"$eligibility_evidence")"
+  poc_distribution_tx_hash="$(jq -er .distribution_tx_hash <<<"$eligibility_evidence")"
+  poc_distribution_tx_code="$(jq -er '.distribution_tx_code | tonumber' <<<"$eligibility_evidence")"
+  late_restored_evidence=false
+fi
 
 write_receipt() {
   local verdict="$1" reason="$2"
@@ -341,7 +367,7 @@ write_receipt() {
     --arg participant_address "$ADDRESS" --arg validator_key "$VALIDATOR_KEY" \
     --arg runtime_id "$RUNTIME_ID" --arg public_host "$(node_public_host "$NODE")" \
     --arg runbook_commit "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf UNAVAILABLE)" \
-    --arg profile_hash "${GDC_JOIN_PROFILE_SHA256:-$(profile_hash)}" --arg operator_mode "independent-host" \
+    --arg profile_hash "$profile_hash_for_acceptance" --arg operator_mode "independent-host" \
     --argjson deadline_epoch "$deadline_epoch" \
     --argjson poc_accepted_once "$poc_accepted_once" --argjson poc_accepted_epoch "$poc_accepted_epoch" \
     --argjson poc_participant_weight "$poc_participant_weight" --argjson poc_accepted_weight_sum "$poc_accepted_weight_sum" --argjson poc_committed_total "$poc_committed_total" \
@@ -401,8 +427,12 @@ EOF
 [[ "$late_restored_evidence" == false ]] \
   || inconclusive "stored positive PoC evidence is later than immutable deadline_epoch=$deadline_epoch"
 
-step "Wait for $NODE PoC eligibility and effective validator membership through epoch $deadline_epoch"
-while (( SECONDS < deadline_seconds )); do
+if [[ "$eligibility_verified" == true ]]; then
+  printf 'PASS retained bounded eligibility evidence epoch=%s deadline_epoch=%s participant_weight=%s accepted_sum=%s committed_total=%s\n' \
+    "$poc_accepted_epoch" "$deadline_epoch" "$poc_participant_weight" "$poc_accepted_weight_sum" "$poc_committed_total"
+else
+  step "Wait for $NODE PoC eligibility and effective validator membership through epoch $deadline_epoch"
+  while (( SECONDS < deadline_seconds )); do
   participant=''
   group=''
   hardware=''
@@ -441,8 +471,15 @@ while (( SECONDS < deadline_seconds )); do
   printf '%s\n' "$group" >"$RUN/epoch-group.json"
   printf '%s\n' "$hardware" >"$RUN/hardware-nodes.json"
   printf '%s\n' "$validators" >"$RUN/validators.json"
-  capture_poc_stage_trace "$group" "$epoch" \
-    || fail 'cannot capture the canonical PoC-stage trace required for join diagnosis'
+  # The canonical data changes by epoch, not by five-second poll.  Refresh the
+  # diagnostic trace at most once a minute so a late public artifact can still
+  # be captured without repeatedly loading the public API and remote Host.
+  if (( epoch != last_trace_epoch || SECONDS - last_trace_seconds >= 60 )); then
+    capture_poc_stage_trace "$group" "$epoch" \
+      || fail 'cannot capture the canonical PoC-stage trace required for join diagnosis'
+    last_trace_epoch="$epoch"
+    last_trace_seconds=$SECONDS
+  fi
 
   participant_active=false
   if ! jq -e '.participant.status != null' "$RUN/participant.json" >/dev/null 2>&1; then
@@ -465,8 +502,13 @@ while (( SECONDS < deadline_seconds )); do
   accepted_weight_sum="$(jq -er '.accepted_weight_sum | tonumber' "$weight_evidence")"
   committed_total="$(jq -er '.committed_total | tonumber' "$weight_evidence")"
   observation_tmp="$(mktemp "$RUN/.poc-acceptance-observations.tmp.XXXXXX")"
-  jq --argjson epoch "$epoch" --argjson canonical_poc_start_block_height "$(jq -er '.epoch_group_data.poc_start_block_height | tonumber' "$RUN/epoch-group.json")" --slurpfile weight "$weight_evidence" \
-    '. + [{epoch:$epoch,canonical_poc_start_block_height:$canonical_poc_start_block_height,weight_evidence:$weight[0]}]' "$RUN/poc-acceptance-observations.json" \
+  jq --argjson epoch "$epoch" --argjson canonical_poc_start_block_height "$(jq -er '.epoch_group_data.poc_start_block_height | tonumber' "$RUN/epoch-group.json")" --slurpfile weight "$weight_evidence" '
+    {epoch:$epoch,canonical_poc_start_block_height:$canonical_poc_start_block_height,weight_evidence:$weight[0]} as $observation
+    | if any(.[]; .epoch == $epoch)
+      then map(if .epoch == $epoch then $observation else . end)
+      else . + [$observation]
+      end
+  ' "$RUN/poc-acceptance-observations.json" \
     >"$observation_tmp"
   mv "$observation_tmp" "$RUN/poc-acceptance-observations.json"
   if [[ "$distribution_integrity" != true && "$accepted_weight_sum" -gt 0 ]]; then
@@ -536,25 +578,36 @@ while (( SECONDS < deadline_seconds )); do
     fi
     inconclusive "eligibility deadline reached (runtime=$runtime_ready poc_accepted_once=$poc_accepted_once validator_effective=$validator_effective)${deadline_detail:+ $deadline_detail}"
   fi
-  if [[ "$poc_accepted_once" == true && "$runtime_ready" == true && "$validator_effective" == true ]]; then
-    printf 'WAIT  join evidence is positive at epoch=%s/%s; retaining it through the stability window (remaining_epochs=%s participant_weight=%s accepted_sum=%s committed_total=%s)\n' \
-      "$epoch" "$deadline_epoch" "$((deadline_epoch - epoch))" "$participant_weight" "$accepted_weight_sum" "$committed_total"
-  else
-    printf 'WAIT  join state epoch=%s/%s runtime=%s poc_accepted_once=%s validator_effective=%s participant_weight=%s accepted_sum=%s committed_total=%s\n' \
-      "$epoch" "$deadline_epoch" "$runtime_ready" "$poc_accepted_once" "$validator_effective" \
-      "$participant_weight" "$accepted_weight_sum" "$committed_total"
+  progress_summary="$epoch|$runtime_ready|$poc_accepted_once|$validator_effective|$participant_weight|$accepted_weight_sum|$committed_total"
+  if [[ "$progress_summary" != "$last_progress_summary" ]] || (( SECONDS - last_progress_log_seconds >= 60 )); then
+    if [[ "$poc_accepted_once" == true && "$runtime_ready" == true && "$validator_effective" == true ]]; then
+      printf 'WAIT  join evidence is positive at epoch=%s/%s; retaining it through the stability window (remaining_epochs=%s elapsed=%ss wall_clock_remaining=%ss participant_weight=%s accepted_sum=%s committed_total=%s)\n' \
+        "$epoch" "$deadline_epoch" "$((deadline_epoch - epoch))" "$((SECONDS - acceptance_started_seconds))" "$((deadline_seconds - SECONDS))" \
+        "$participant_weight" "$accepted_weight_sum" "$committed_total"
+    else
+      printf 'WAIT  join state epoch=%s/%s remaining_epochs=%s elapsed=%ss wall_clock_remaining=%ss runtime=%s poc_accepted_once=%s validator_effective=%s participant_weight=%s accepted_sum=%s committed_total=%s\n' \
+        "$epoch" "$deadline_epoch" "$((deadline_epoch - epoch))" "$((SECONDS - acceptance_started_seconds))" "$((deadline_seconds - SECONDS))" \
+        "$runtime_ready" "$poc_accepted_once" "$validator_effective" "$participant_weight" "$accepted_weight_sum" "$committed_total"
+    fi
+    last_progress_summary="$progress_summary"
+    last_progress_log_seconds=$SECONDS
   fi
-  sleep 5
-done
-(( SECONDS < deadline_seconds )) || inconclusive 'wall-clock deadline reached before eligibility evidence'
-[[ -n "$poc_distribution_tx_hash" && "$poc_distribution_tx_code" == 0 ]] \
-  || inconclusive 'positive accepted PoC weight was observed but no canonical code=0 distribution transaction became readable before the eligibility deadline'
+    sleep 5
+  done
+  (( SECONDS < deadline_seconds )) || inconclusive 'wall-clock deadline reached before eligibility evidence'
+  [[ -n "$poc_distribution_tx_hash" && "$poc_distribution_tx_code" == 0 ]] \
+    || inconclusive 'positive accepted PoC weight was observed but no canonical code=0 distribution transaction became readable before the eligibility deadline'
+  join_acceptance_state_record_eligibility "$RUN" "$deadline_epoch" "$VALIDATOR_KEY" \
+    || fail 'bounded eligibility evidence could not be checkpointed before the gateway regression'
+fi
 
-KEY_FILE="$SECRETS/gateway.join-client-key"
-[[ -f "$KEY_FILE" ]] \
-  || blocked 'the verified public bootstrap did not provide the scoped gateway client credential required for the final authenticated gateway regression'
+KEY_FILE="$GDC_DATA_ROOT/state/secrets/gateway.join-client-key"
+[[ -f "$KEY_FILE" && ! -L "$KEY_FILE" ]] \
+  || blocked 'the operator-scoped gateway client credential required for the final authenticated gateway regression is absent or is not a regular non-symlink file'
+[[ "$(stat -c %u "$KEY_FILE")" == "$(id -u)" ]] \
+  || blocked 'the operator-scoped gateway client credential must be owned by the current operator'
 [[ "$(stat -c %a "$KEY_FILE")" == 600 ]] \
-  || blocked 'the runbook-managed scoped gateway client credential must have mode 0600'
+  || blocked 'the operator-scoped gateway client credential must have mode 0600'
 case "${KEY_FILE##*/}" in
   gateway.admin-key|gateway.admission-observer-key|gateway.client-keys|gateway.telegram-client-key|operator.keyring|*.keyring)
     blocked 'the runbook-managed gateway credential must be a separately scoped join client credential, not an administrative or consumer credential'

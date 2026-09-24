@@ -41,7 +41,7 @@ download-genesis`, not a consensus-defined chain fingerprint.
 ## Join
 
 Run these commands on your operator machine; it needs `jq`, `curl`, `unzip`,
-`rsync`, and `openssl`.
+`rsync`, `openssl`, and `flock` (provided by util-linux on Linux).
 
 ```bash
 cat >> ~/.ssh/config <<'EOL'
@@ -69,6 +69,16 @@ broker does not pass. JOIN needs neither: it installs its own pinned CLI,
 and its preflight needs only a quorum of seeds. Registration, DevNet faucet
 funding and the `ACTIVE` wait use a single seed (node0 on Community DevNet);
 if it does not answer, JOIN stops after Host preparation.
+
+The operator CLI is shared at `$GDC_HOME/bin/<version>/inferenced`, not copied
+for each Host or Join Profile. Reuse checks the pinned artifact and executable
+checksums and platform; a conflicting artifact for the same version is refused.
+Existing verified archive caches can supply the installation without another
+download. Keyrings, identities and run evidence remain Host-scoped.
+
+Model files are shared at `/srv/hf-cache`, outside node state under `/srv/dai`.
+New and repeated JOINs use this path; GDC does not migrate or fall back to the
+former `/srv/dai/hf-cache` path. Reset preserves the shared cache.
 
 `bootstrap.env` is a generated compatibility projection, not an independent
 input. Download it only alongside the matching JSON, verify its attestation,
@@ -182,20 +192,32 @@ gdc host join --verification --public-host <IP_or_DOMAIN> <ssh-alias>
 Only `--verification` enters the bounded six-epoch acceptance window and
 returns `JOIN_PASS` after proving a chain-recorded runtime, positive PoC
 weight, positive consensus voting power, and authenticated gateway inference.
-The gateway check uses a client key that only the network operator's state
-holds, so without it acceptance cannot return `JOIN_PASS`. With
+The gateway check uses the operator-only
+`$GDC_HOME/state/secrets/gateway.join-client-key`; it is never published in
+the network bootstrap or copied to a Host. Without it acceptance cannot return `JOIN_PASS`. With
 `--verification`, unless acceptance returns `JOIN_PASS`, `COMPLETE` is not
 recorded, and `gdc host start` and a repeated JOIN are then refused; an
 independent operator therefore omits `--verification`. A repeat after
 `COMPLETE` does not run acceptance.
 
 Voting power follows the first accepted PoC, normally one or two epochs after
-`ACTIVE`. JOIN enables the signer first and then waits up to 2400 seconds for
-the first signature, printing a `WAIT` line about once a minute. If none comes,
-the ordinary JOIN still finishes with the signer on, but a `--restore` stops;
-after the first signature,
-`gdc host join --resume <run_id> --public-host <IP_or_DOMAIN> <ssh-alias>`
-finishes it, with `<run_id>` from the `BEGIN` line.
+`ACTIVE`. JOIN enables the signer and watches for its first signature, printing
+a `WAIT` line about once a minute for up to 300 seconds. A participant outside
+the effective validator set has no block to sign; this is recorded as signer
+armed with eligibility pending. `--verification` later proves accepted PoC,
+effective validator membership, and gateway acceptance. If that acceptance
+stops after the signer and recovery archive are verified,
+`gdc host join --verification --resume <run_id> --public-host <IP_or_DOMAIN> <ssh-alias>`
+continues acceptance only, with `<run_id>` from the original `BEGIN` line. It
+also runs a separate acceptance attempt after an ordinary completed JOIN; it
+does not rewrite the completed signer-authority receipt. A
+completed bounded eligibility window is checkpointed, so a gateway-only retry
+does not extend or repeat that window. The gateway probe retries only a proven
+pre-dispatch rejection. For DevShard v5 it waits for `height_seed.state=ok`
+before sending a completion; `pending`, `catalog_pending` and `missed` remain
+no-dispatch states with retained progress evidence. A transport failure without
+that receipt remains `INCONCLUSIVE` because automatic replay could duplicate
+accounted inference.
 
 An ordinary JOIN exits 0 after printing
 `PASS Host JOIN mandatory convergence complete; full lifecycle verification was not requested`
@@ -232,7 +254,7 @@ the Host afresh instead of demanding manual recovery.
 | Stop | Meaning | Way back |
 |---|---|---|
 | `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | restore with `--restore` from the validator archive; `gdc host reset` clears the identity only when the chain reports the participant as unregistered, and the next JOIN then starts as `new` |
-| `identity_conflict` | the Host holds a validator identity that the operator state does not know | restore with `--restore` from the archive of that identity; `gdc host reset` keeps it, because without a cold account it cannot ask the chain about the participant; without that archive there is no supported way back; never adopt it |
+| `identity_conflict` | the Host holds a validator identity that the operator state does not know | restore with `--restore`; after reset, `--mnemonic-file` may rotate a stopped key only when it is bound to that participant or absent from the canonical participant set; JOIN archives it first, and refuses a key owned by anyone else |
 | `unreachable` | no SSH session to the Host | repeat the same command once the Host is reachable |
 | `completed_join_readback_failed` | a repeat of a completed JOIN could not confirm that the Host still runs as that JOIN left it; the Host was not changed | repeat once the Host is reachable and running, with the same `GDC_PORTABLE_*` declaration if one was used |
 | exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
@@ -254,10 +276,14 @@ gdc host join --restore <validator-backup.tar> --public-host <IP_or_DOMAIN> <ssh
 ```
 
 The archive is an assertion, not permission to replace identity or software
-selection. `--restore` works only on the machine where `gdc host reset` stopped
-this validator's signer; another or reinstalled machine is refused. Do not
-bypass qualification or use this interface to reset, recreate Genesis, or
-adopt an unknown existing validator.
+selection. A same-Host reset archive is preferred: it proves that GDC stopped
+the prior local signer. An empty or reinstalled Host may use `--restore` only
+when the archive key is absent from the complete public validator set before
+restore and again before signer enablement; GDC also refuses a lower signing
+state than the archive. This cannot prove that an operator has not retained an
+unknown external copy of that private key. The operator must stop every such
+copy. Do not use this interface to recreate Genesis or adopt an unknown
+existing validator.
 
 If the GPU runs on another machine, pass its SSH alias after `<ssh-alias>` in
 `gdc host join`; `gdc host ml-attach` in [ROLE-HOST.md](ROLE-HOST.md) reapplies

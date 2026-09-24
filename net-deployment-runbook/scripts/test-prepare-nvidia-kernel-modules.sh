@@ -16,6 +16,7 @@ awk '/if \[\[ -z "\$NVIDIA_DRIVER_CANDIDATE" \]\]; then/ {retained=NR} /^    ens
 # every installed kernel, and only then is the module map rebuilt. Match the
 # candidate install literally: a later ensure_packages call installs utilities.
 awk 'index($0, "ensure_packages \"$NVIDIA_DRIVER_CANDIDATE\"") {u=NR} /^    ensure_nvidia_modules_for_installed_kernels$/ && u && !e {e=NR} /^    depmod -a$/ {d=NR} END {exit !(u && e && d && u < e && e < d)}' "$PREPARE"
+! grep -Fq 'nvidia-utils-${NVIDIA_DRIVER_MAJOR}-server' "$PREPARE"
 
 # shellcheck source=/dev/null
 source <(sed -n '/^ensure_nvidia_modules_for_installed_kernels()/,/^}/p' "$PREPARE")

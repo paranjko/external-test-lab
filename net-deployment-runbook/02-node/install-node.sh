@@ -11,10 +11,10 @@ while (($#)); do
 done
 [[ $EUID -eq 0 ]] || { echo 'Run with sudo' >&2; exit 1; }
 [[ "$NODE" =~ ^[a-z0-9][a-z0-9_-]*$ && -s "$ENV_FILE" && -s "$NODE_CONFIG" && -s "$GENESIS" ]] || { usage; exit 2; }
-DEST="/srv/dai/deploy/$NODE"
+DEST="/srv/dai/deploy"
 PARENT="$(dirname "$DEST")"
 mkdir -p "$PARENT"
-STAGE="$(mktemp -d "$PARENT/.${NODE}.gdc-stage.XXXXXX")"
+STAGE="$(mktemp -d "$PARENT/.gdc-stage.XXXXXX")"
 BACKUP="${DEST}.gdc-rollback.$$"
 activated=false
 backup_made=false

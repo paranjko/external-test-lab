@@ -2,12 +2,13 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if grep -En '(/srv/dai/edge|/srv/dai/ops|/srv/dai/monitoring-agent)' "$ROOT/scripts/phase-node.sh"; then
-  echo 'Host reset must not touch shared edge, OPS, or monitoring paths' >&2
-  exit 1
-fi
-grep -Fq 'compose_down_dir "/srv/dai/deploy/$NODE/monitoring-agent"' "$ROOT/scripts/phase-node.sh"
-grep -Fq 'compose_down_dir "/srv/dai/deploy/$NODE/edge"' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'for foreign in /srv/dai/edge /srv/dai/ops /srv/dai/gonka-devnet-bot' "$ROOT/scripts/phase-node.sh"
+grep -Fq '[[ ! -e /srv/dai || ( -d /srv/dai && ! -L /srv/dai ) ]]' "$ROOT/scripts/phase-node.sh"
+! grep -Fq 'validator root contains a symlink' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'for managed_path in /srv/dai/deploy /srv/dai/deploy/monitoring-agent /srv/dai/deploy/edge /srv/dai/identity /srv/dai/signer; do' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'compose_down_dir "/srv/dai/deploy/monitoring-agent"' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'compose_down_dir "/srv/dai/deploy/edge"' "$ROOT/scripts/phase-node.sh"
+grep -Fq 'rm -rf -- /srv/dai ' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'remove_compose_project "gdc-monitoring-agent-$NODE"' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'remove_compose_project "gdc-edge-$NODE"' "$ROOT/scripts/phase-node.sh"
 tmp="$(mktemp -d)"
@@ -23,7 +24,7 @@ printf '%s\n' \
   'if [[ "${1:-}" == -G && -n "${GDC_TEST_SSH_HOST:-}" ]]; then printf "hostname %s\\n" "$GDC_TEST_SSH_HOST"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_EXTERNAL_ML_ENDPOINT:-}" && "$*" == *node-config.json* ]]; then printf "%s\\n" "$GDC_TEST_EXTERNAL_ML_ENDPOINT"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_LINK_RECORD:-}" && "$*" == *gdc-ml-link.json* ]]; then printf "%s\\n" "$GDC_TEST_LINK_RECORD"; exit 0; fi' \
-  'if [[ "$*" == *"--remote capture"* ]]; then cat >/dev/null; exit 0; fi' \
+  'if [[ "$*" == *"--remote capture"* ]]; then cat >/dev/null; printf "%s\\n" "{\"schema_version\":1,\"kind\":\"gdc-reset-dai-backup\",\"identity_present\":true,\"signer_stopped\":true,\"archive_path\":\"/srv/backup/reset-fixture-dai-backup.tar\",\"archive_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"; exit 0; fi' \
   'if [[ "$*" == *"gdc-identity-layout"* ]]; then cat >/dev/null; layout="${GDC_TEST_IDENTITY_LAYOUT:-none}"; case "$*" in *-ml*) layout="${GDC_TEST_ML_IDENTITY_LAYOUT:-none}" ;; esac; printf "gdc-identity-layout=%s\\n" "$layout"; exit 0; fi' \
   'if [[ "$*" == *"gdc-identity-discard"* ]]; then cat >/dev/null; exit 0; fi' \
   'if [[ "${GDC_TEST_EXEC_REMOTE:-false}" == true && "$*" == *"bash -s" ]]; then command="${!#}"; PATH="${GDC_TEST_REMOTE_BIN}:$PATH" bash -c "$command"; exit $?; fi' \
@@ -85,16 +86,16 @@ refute_grep() {
   fi
 }
 
-printf 'fixture archive\n' >"$home/gdc-node0-validator-backup.tar"
-chmod 600 "$home/gdc-node0-validator-backup.tar"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$home" PATH="$fake_bin:$PATH" \
   "$ROOT/gdc.sh" host reset gdc-node0 >"$tmp/output"
 
 grep -Fq 'PASS gdc-node0 reset' "$tmp/output"
-grep -Fq 'READY preserved local validator recovery archive for gdc-node0' "$tmp/output"
+grep -Fq 'external reset archive is retained for explicit recovery' "$tmp/output"
 grep -Fq 'END phase=node-reset-gdc-node0 status=0' "$tmp/output"
-[[ -r "$home/gdc-node0-validator-backup.tar" ]]
+[[ -r "$home/gdc-node0/state/reset/gdc-node0/latest-identity.json" ]]
+reset_metadata="$(jq -r .metadata_path "$home/gdc-node0/state/reset/gdc-node0/latest-identity.json")"
+[[ -r "$reset_metadata" ]]
 [[ -f "$home/gdc-node0/state/.lifecycle.lock" ]]
 [[ -f "$home/gdc-node0/state/active-run-id" ]]
 [[ ! -e "$home/.env" ]]
@@ -117,7 +118,7 @@ grep -Fq 'END phase=node-reset-fixture-restored status=0' "$tmp/historical-reset
 # and successful while retaining real cleanup failures.
 idempotent_home="$tmp/gdc-idempotent-reset"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
-  GDC_HOME="$idempotent_home" GDC_TEST_EXEC_REMOTE=true GDC_TEST_REMOTE_BIN="$fake_bin" PATH="$fake_bin:$PATH" \
+  GDC_HOME="$idempotent_home" PATH="$fake_bin:$PATH" \
   "$ROOT/gdc.sh" host reset gdc-node1 >"$tmp/idempotent-output"
 grep -Fq 'PASS gdc-node1 reset' "$tmp/idempotent-output"
 ! grep -Fq 'No resource found to remove for project' "$tmp/idempotent-output"
@@ -263,9 +264,9 @@ grep -Fq 'No resource found to remove for project' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'ERROR failed to remove managed Compose deployment directory=%s exit=%s' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'removed managed Compose resources without reading invalid env' "$ROOT/scripts/phase-node.sh"
 
-# Reset is symmetric only for a validator key the chain does not know. The
-# lookup goes through the public API of the Bootstrap seeds retained by the
-# last JOIN; all of it is local here: fake ssh, docker and curl.
+# Reset is a local lifecycle operation. It does not decide which account or
+# validator key is live on-chain: the operator recovers that relationship with
+# an explicit cold or validator archive on the subsequent JOIN.
 address=gonka1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9
 seed_identity_home() {
   local home="$1" node="$2"
@@ -279,134 +280,30 @@ seed_identity_home() {
   touch "$home/$node/state/joined/$node"
 }
 run_identity_reset() {
-  local name="$1" mode="$2" layout="$3" rc=0
+  local name="$1" rc=0
   env -u GDC_ENV -u GDC_NODE_ALIASES \
     GDC_HOME="$tmp/$name" GDC_TEST_SSH_LOG="$tmp/$name-ssh.log" GDC_TEST_CURL_LOG="$tmp/$name-curl.log" \
-    GDC_TEST_PARTICIPANT_MODE="$mode" GDC_TEST_IDENTITY_LAYOUT="$layout" PATH="$fake_bin:$PATH" \
+    PATH="$fake_bin:$PATH" \
     "$ROOT/gdc.sh" host reset gdc-node0 >"$tmp/$name-output" 2>&1 || rc=$?
   return "$rc"
 }
 
-# Registered participant: identity and signer stay everywhere, only the
-# deployment and the joined marker go.
-seed_identity_home "$tmp/registered" gdc-node0
-run_identity_reset registered registered v2
-grep -Fq 'READY gdc-node0 participant is registered on chain; identity and signer are retained on the Host and locally; recover with gdc host join --restore' "$tmp/registered-output"
-grep -Fq 'PASS gdc-node0 reset' "$tmp/registered-output"
-grep -Fxq "https://node0.example.test/chain-api/productscience/inference/inference/participant/$address" "$tmp/registered-curl.log"
-grep -Fq 'gdc-identity-layout' "$tmp/registered-ssh.log"
-refute_grep gdc-identity-discard "$tmp/registered-ssh.log"
-[[ -f "$tmp/registered/gdc-node0/accounts/gdc-node0-cold.json" && -f "$tmp/registered/gdc-node0/state/identities/gdc-node0.json" ]]
-[[ ! -e "$tmp/registered/gdc-node0/state/joined/gdc-node0" ]]
-! find "$tmp/registered/gdc-node0/state" -maxdepth 1 -name 'recovery-partial-*' | grep -q .
-
-# Unregistered participant: local record and account move aside, the Host
-# identity is archived and removed, mnemonics stay, the next JOIN is new.
-seed_identity_home "$tmp/absent" gdc-node0
-run_identity_reset absent absent v2
-grep -Fq 'PASS gdc-node0 identity discarded: the participant is not registered on chain; 2 local file(s) moved to state/recovery-partial-' "$tmp/absent-output"
-grep -Fq 'PASS gdc-node0 reset' "$tmp/absent-output"
-grep -Fq 'gdc-identity-discard' "$tmp/absent-ssh.log"
-# The Host archive is taken after the signer stop and before the deployment
-# root is removed, so a first-generation signer is archived, never lost.
-awk '/--remote capture/ {c=NR} /gdc-identity-discard/ {d=NR} /NODE=.gdc-node0. .*bash -s$/ {r=NR} END {exit !(c && d && r && c < d && d < r)}' "$tmp/absent-ssh.log"
-[[ ! -e "$tmp/absent/gdc-node0/accounts/gdc-node0-cold.json" && ! -e "$tmp/absent/gdc-node0/state/identities/gdc-node0.json" ]]
-[[ -f "$tmp/absent/gdc-node0/mnemonics/gdc-node0-cold.mnemonic" ]]
-recovery="$(find "$tmp/absent/gdc-node0/state" -maxdepth 1 -type d -name 'recovery-partial-*' | head -n 1)"
+seed_identity_home "$tmp/full-reset" gdc-node0
+run_identity_reset full-reset
+grep -Fq 'READY removed 2 local identity record(s) for gdc-node0; external reset archive is retained for explicit recovery' "$tmp/full-reset-output"
+grep -Fq 'PASS gdc-node0 reset' "$tmp/full-reset-output"
+# Archive capture precedes deletion of the complete validator root. Reset never
+# queries participant registration, so a down or divergent chain cannot leave
+# an ambiguous local lifecycle state.
+awk '/--remote capture/ {c=NR} /NODE=.gdc-node0. .*bash -s$/ {r=NR} END {exit !(c && r && c < r)}' "$tmp/full-reset-ssh.log"
+[[ ! -e "$tmp/full-reset-curl.log" ]]
+[[ ! -e "$tmp/full-reset/gdc-node0/accounts/gdc-node0-cold.json" && ! -e "$tmp/full-reset/gdc-node0/state/identities/gdc-node0.json" ]]
+[[ -f "$tmp/full-reset/gdc-node0/mnemonics/gdc-node0-cold.mnemonic" ]]
+recovery="$(find "$tmp/full-reset/gdc-node0/state" -maxdepth 1 -type d -name 'recovery-partial-*' | head -n 1)"
 [[ -n "$recovery" && "$(stat -c %a "$recovery")" == 700 ]]
 [[ -f "$recovery/gdc-node0-cold.json" && -f "$recovery/gdc-node0.json" ]]
-"$ROOT/scripts/classify-join-state.sh" "$tmp/absent/gdc-node0/state/identities/gdc-node0.json" \
-  "$tmp/absent/gdc-node0/accounts/gdc-node0-cold.json" "$tmp/absent/gdc-node0/state/joined/gdc-node0" '' \
+"$ROOT/scripts/classify-join-state.sh" "$tmp/full-reset/gdc-node0/state/identities/gdc-node0.json" \
+  "$tmp/full-reset/gdc-node0/accounts/gdc-node0-cold.json" "$tmp/full-reset/gdc-node0/state/joined/gdc-node0" '' \
   | jq -e '.classification == "new"' >/dev/null
 
-# No answer from any seed: nothing is discarded, the reason is printed.
-seed_identity_home "$tmp/unavailable" gdc-node0
-run_identity_reset unavailable unavailable v2
-grep -Fq 'READY gdc-node0 participant registration is unknown (endpoint_unavailable); identity and signer are retained' "$tmp/unavailable-output"
-grep -Fq 'PASS gdc-node0 reset' "$tmp/unavailable-output"
-grep -Fq 'https://node0.example.test/chain-api/productscience/inference/inference/participant/' "$tmp/unavailable-curl.log"
-grep -Fq 'https://node1.example.test/chain-api/productscience/inference/inference/participant/' "$tmp/unavailable-curl.log"
-refute_grep gdc-identity-discard "$tmp/unavailable-ssh.log"
-[[ -f "$tmp/unavailable/gdc-node0/accounts/gdc-node0-cold.json" && -f "$tmp/unavailable/gdc-node0/state/identities/gdc-node0.json" ]]
-
-# A first-generation Host keeps its signer below the deployment root that
-# reset removes: with a registered key nothing is stopped or deleted.
-seed_identity_home "$tmp/legacy" gdc-node0
-if run_identity_reset legacy registered v1; then
-  echo 'reset deleted the deployment root of a registered first-generation Host' >&2
-  exit 1
-fi
-grep -Fq 'keeps its signer below the deployment root that reset removes, and its participant registration is registered' "$tmp/legacy-output"
-refute_grep "--remote capture" "$tmp/legacy-ssh.log"
-# The reset program carries the partial-identity decision as an environment
-# prefix, so match the node assignment alone rather than the whole command.
-refute_grep "NODE='gdc-node0'" "$tmp/legacy-ssh.log"
-[[ -f "$tmp/legacy/gdc-node0/state/joined/gdc-node0" ]]
-
-# An unregistered first-generation Host is archived first and then reset.
-seed_identity_home "$tmp/legacy-absent" gdc-node0
-run_identity_reset legacy-absent absent v1
-grep -Fq 'PASS gdc-node0 identity discarded' "$tmp/legacy-absent-output"
-grep -Fq 'PASS gdc-node0 reset' "$tmp/legacy-absent-output"
-awk '/gdc-identity-discard/ {d=NR} /NODE=.gdc-node0. .*bash -s$/ {r=NR} END {exit !(d && r && d < r)}' "$tmp/legacy-absent-ssh.log"
-
-# A Host whose identity layout cannot be read is not reset while its key is
-# registered: the deployment root may hold the signer.
-seed_identity_home "$tmp/unreadable" gdc-node0
-if run_identity_reset unreadable registered garbage; then
-  echo 'reset proceeded although the Host identity layout was unreadable' >&2
-  exit 1
-fi
-grep -Fq 'identity layout could not be read while its participant registration is registered' "$tmp/unreadable-output"
-refute_grep "--remote capture" "$tmp/unreadable-ssh.log"
-
-# Without a retained Bootstrap there is nothing to ask: everything stays.
-seed_identity_home "$tmp/nobootstrap" gdc-node0
-rm -f "$tmp/nobootstrap/gdc-node0/state/network-bootstrap.json"
-run_identity_reset nobootstrap registered v2
-grep -Fq 'READY gdc-node0 participant registration is unknown (no_bootstrap)' "$tmp/nobootstrap-output"
-grep -Fq 'PASS gdc-node0 reset' "$tmp/nobootstrap-output"
-[[ ! -e "$tmp/nobootstrap-curl.log" ]]
-refute_grep gdc-identity-discard "$tmp/nobootstrap-ssh.log"
-
-# Reset reads only the retained copy, so a JOIN with --bootstrap-file must
-# leave the verified document there as the simple form does, after the chain
-# ID check and before anything reaches the Host.
-awk '/bootstrap-chain-id invalid-bootstrap/ {c=NR}
-  /install -m 0600 -- "\$join_bootstrap_file" "\$STATE\/network-bootstrap.json"/ {i=NR}
-  /bootstrap-preflight-cli|ensure-inferenced-cli\.sh" --join-profile/ && !x {x=NR}
-  END {exit !(c && i && x && c < i && i < x)}' "$ROOT/gdc.sh" \
-  || { echo 'a supplied Bootstrap is not retained where host reset looks up the participant' >&2; exit 1; }
-
-# A first-generation Host without a local cold account cannot be asked about,
-# and reset would remove the deployment root its signer lives in: stop first.
-seed_identity_home "$tmp/nocold" gdc-node0
-rm -f "$tmp/nocold/gdc-node0/accounts/gdc-node0-cold.json"
-if run_identity_reset nocold absent v1; then
-  echo 'reset removed the deployment root of a first-generation Host it could not ask about' >&2
-  exit 1
-fi
-grep -Fq 'keeps its signer below the deployment root that reset removes, and its participant registration is unknown:no_cold_account' "$tmp/nocold-output"
-refute_grep "--remote capture" "$tmp/nocold-ssh.log"
-refute_grep "NODE='gdc-node0'" "$tmp/nocold-ssh.log"
-[[ -f "$tmp/nocold/gdc-node0/state/identities/gdc-node0.json" ]]
-
-# One seed that lags behind the network has not seen a recent registration:
-# its 404 alone must not discard the identity.
-seed_identity_home "$tmp/stale" gdc-node0
-GDC_TEST_HEIGHT_SEED0=900 GDC_TEST_HEIGHT_SEED1=1000 run_identity_reset stale absent v2
-grep -Fq 'READY gdc-node0 participant registration is unknown (seed_behind_network)' "$tmp/stale-output"
-grep -Fq 'PASS gdc-node0 reset' "$tmp/stale-output"
-refute_grep gdc-identity-discard "$tmp/stale-ssh.log"
-[[ -f "$tmp/stale/gdc-node0/accounts/gdc-node0-cold.json" && -f "$tmp/stale/gdc-node0/state/identities/gdc-node0.json" ]]
-
-# Seeds that disagree leave the question open, and one positive answer is
-# decisive: the key is still bound to a participant somewhere.
-seed_identity_home "$tmp/split" gdc-node0
-GDC_TEST_PARTICIPANT_MODE_SEED0=absent GDC_TEST_PARTICIPANT_MODE_SEED1=registered \
-  run_identity_reset split absent v2
-grep -Fq 'READY gdc-node0 participant is registered on chain' "$tmp/split-output"
-refute_grep gdc-identity-discard "$tmp/split-ssh.log"
-[[ -f "$tmp/split/gdc-node0/state/identities/gdc-node0.json" ]]
-
-printf 'PASS Host reset requires only an SSH alias and no role input; identity is discarded only for an unregistered key\n'
+printf 'PASS Host reset requires only an SSH alias and preserves explicit recovery material before a full validator-root deletion\n'

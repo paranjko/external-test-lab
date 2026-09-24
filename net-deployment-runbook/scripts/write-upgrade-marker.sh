@@ -17,5 +17,5 @@ case "$scope" in
 esac
 
 printf '%s %s\n' "$profile" "$profile_hash" \
-  | ssh "$node" "sudo tee /srv/dai/deploy/$node/$marker >/dev/null && sudo chmod 600 /srv/dai/deploy/$node/$marker"
+  | ssh "$node" "sudo tee /srv/dai/deploy/$marker >/dev/null && sudo chmod 600 /srv/dai/deploy/$marker"
 printf 'READY %s marker recorded for %s\n' "$scope" "$node"

@@ -8,7 +8,7 @@ MAX_VALIDATOR_BACKUP_ARCHIVE_BYTES=$((66 * 1024 * 1024))
 MAX_VALIDATOR_BACKUP_TRAILING_BYTES=$((1024 * 1024))
 
 usage() {
-  echo "Usage: $0 create SSH_ALIAS | verify SSH_ALIAS ARCHIVE | restore SSH_ALIAS ARCHIVE" >&2
+  echo "Usage: $0 create SSH_ALIAS [CHECKPOINT] | verify SSH_ALIAS ARCHIVE | restore SSH_ALIAS ARCHIVE" >&2
 }
 
 safe_extract() {
@@ -197,7 +197,7 @@ validate_mnemonic_file() {
 
 validate_mnemonic_bindings() {
   local root="$1" manifest="$2" identity="$3" node="$4"
-  local participant warm_address warm_pubkey password_file helper recovery_cli='' active_join_run retained_profile profile_id candidate cold_result warm_result
+  local participant warm_address warm_pubkey password_file helper recovery_cli='' active_join_run retained_profile cold_result warm_result
   participant="$(jq -er .participant_address "$manifest" 2>/dev/null)" \
     || die 'validator backup manifest metadata is malformed or inconsistent'
   warm_address="$(jq -er .warm_address "$identity" 2>/dev/null)" \
@@ -226,13 +226,11 @@ validate_mnemonic_bindings() {
         || die 'runbook-managed inferenced CLI is unavailable for cryptographic backup verification'
       "$ROOT/scripts/join-profile.sh" validate --allow-expired "$retained_profile" >/dev/null \
         || die 'retained generated JOIN profile is invalid for cryptographic backup verification'
-      profile_id="$(jq -r .profile_id "$retained_profile")"
-      [[ "$profile_id" =~ ^[0-9a-f]{64}$ ]] \
-        || die 'retained generated JOIN profile has an invalid tool identity'
-      candidate="$GDC_HOME/bin/$profile_id/inferenced"
-      recovery_cli="$(realpath -e -- "$candidate" 2>/dev/null || true)"
-      [[ "$recovery_cli" == "$GDC_HOME/bin/$profile_id/inferenced" && -x "$recovery_cli" ]] \
-        || die 'runbook-managed inferenced CLI is unavailable for cryptographic backup verification'
+      GDC_INFERENCED_CLI_QUIET=true "$ROOT/scripts/ensure-inferenced-cli.sh" \
+        --allow-expired --join-profile "$retained_profile" \
+        || die 'runbook-managed inferenced CLI migration failed for cryptographic backup verification'
+      recovery_cli="$("$ROOT/scripts/resolve-shared-inferenced-cli.sh" "$retained_profile" 2>/dev/null)" \
+        || die 'runbook-managed inferenced CLI is unavailable or conflicts with the retained JOIN profile'
     fi
   fi
   cold_result="$(GDC_INFERENCED_CLI_QUIET=true GDC_RECOVERY_INFERENCED_BIN="$recovery_cli" "$helper" \
@@ -442,8 +440,18 @@ verify_backup_archive() (
 )
 
 create_backup() (
-  local node="$1" archive archive_tmp stage configured_gpu chain_id
-  archive="$GDC_DATA_ROOT/$node-validator-backup.tar"
+  local node="$1" checkpoint="${2:-final}" archive archive_tmp stage configured_gpu chain_id run_id suffix
+  run_id="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-manual}"
+  [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'validator backup run ID is invalid'
+  [[ "$checkpoint" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || die 'validator backup checkpoint is invalid'
+  suffix=''
+  [[ "$checkpoint" == final ]] || suffix="-$checkpoint"
+  archive="$GDC_DATA_ROOT/$node-validator-backup-$run_id$suffix.tar"
+  if [[ -e "$archive" ]]; then
+    verify_backup_archive "$archive" "$node" "$(jq -er .chain_id "$GENESIS/genesis.json")" "$(genesis_sha256 "$GENESIS/genesis.json")"
+    printf 'BACKUP validator recovery archive already verified: %s\n' "$archive"
+    exit 0
+  fi
   local cold="$GDC_HOME/mnemonics/$node-cold.mnemonic"
   local warm="$GDC_HOME/mnemonics/$node-warm.mnemonic"
   local identity="$IDENTITIES/$node.json"
@@ -465,25 +473,25 @@ create_backup() (
   # them through the existing idempotent migration first, then read only the
   # current layout below. The migration retains the source tree and refuses
   # partial or conflicting destinations.
-  if ! ssh -T "$node" "sudo test -s '/srv/dai/identity/$node/p2p/node_key.json' && sudo test -d '/srv/dai/identity/$node/warm/keyring-file' && sudo test -d '/srv/dai/signer/$node/tmkms'"; then
+  if ! ssh -T "$node" "sudo test -s '/srv/dai/identity/p2p/node_key.json' && sudo test -d '/srv/dai/identity/warm/keyring-file' && sudo test -d '/srv/dai/signer/tmkms'"; then
     ssh -T "$node" "sudo bash -s -- '$node'" <"$ROOT/02-node/migrate-v1-validator-identity.sh" \
       || die "cannot create validator backup for $node: stable identity migration failed"
   fi
   if ! ssh -T "$node" "set +x
     set -Eeuo pipefail
-    identity='/srv/dai/identity/$node'
-    deploy='/srv/dai/deploy/$node'
+    identity='/srv/dai/identity'
+    deploy='/srv/dai/deploy'
     # A new JOIN must archive its signer before it registers on-chain.  TMKMS
     # is intentionally stopped then, so prefer the stable identity layout.
     # The container-mount probe remains only for legacy deployments.
-    signer='/srv/dai/signer/$node'
+    signer='/srv/dai/signer'
     if ! sudo test -d \"\$signer/tmkms\"; then
       container=\$(sudo docker compose --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" ps -aq tmkms | head -n 1)
       test -n \"\$container\"
       signer_source=\$(sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination \"/root/.tmkms\"}}{{.Source}}{{end}}{{end}}' \"\$container\")
       case \"\$signer_source\" in
-        "/srv/dai/signer/$node/tmkms") signer='/srv/dai/signer/$node' ;;
-        "/srv/dai/$node/tmkms") signer='/srv/dai/$node' ;;
+        /srv/dai/signer/tmkms) signer='/srv/dai/signer' ;;
+        /srv/dai/$node/tmkms) signer='/srv/dai/$node' ;;
         *) exit 1 ;;
       esac
     fi
@@ -585,7 +593,7 @@ restore_backup() (
   expected_consensus_key="$(jq -er .consensus_pubkey "$extracted/identity.json" 2>/dev/null)"
   bundle_sha256="$(identity_tree_digest "$extracted/remote-state")"
   remote_restore_command="$("$ROOT/scripts/build-validator-identity-restore-command.sh" \
-    "/srv/dai/$node" "$remote" "$expected_consensus_key" "/srv/dai/deploy/$node/.env" \
+    /srv/dai "$remote" "$expected_consensus_key" /srv/dai/deploy/.env \
     "$bundle_sha256")" \
     || die 'validator backup contains invalid protected identity metadata'
   if ! remote_state="$(ssh -T "$node" \
@@ -611,11 +619,6 @@ restore_backup() (
       die "cannot classify validator identity state on $node"
       ;;
   esac
-  if [[ "$remote_state" != stable_existing ]]; then
-    if ! ssh -T "$node" "sudo bash -s -- '$node'" <"$ROOT/02-node/migrate-v1-validator-identity.sh" >/dev/null; then
-      die "validator backup restore could not migrate stable identity layout on $node"
-    fi
-  fi
   mkdir -p "$GDC_HOME/mnemonics" "$STATE/restore/$node"
   for mnemonic in cold warm; do
     install -m 0600 "$extracted/mnemonics/$node-$mnemonic.mnemonic" \
@@ -683,9 +686,9 @@ load_project host-recovery
 [[ $# -ge 2 ]] || { usage; exit 2; }
 case "$1" in
   create)
-    [[ $# -eq 2 ]] || { usage; exit 2; }
+    [[ $# -eq 2 || $# -eq 3 ]] || { usage; exit 2; }
     topology_contains_node "$2" || die "unknown SSH alias: $2"
-    create_backup "$2"
+    create_backup "$2" "${3:-final}"
     ;;
   verify)
     [[ $# -eq 3 ]] || { usage; exit 2; }

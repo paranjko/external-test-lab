@@ -20,8 +20,6 @@ while (($#)); do case "$1" in
   *) usage; exit 2 ;;
 esac; done
 [[ "$NODE" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { usage; exit 2; }
-[[ -z "$DATA_DIR_OVERRIDE" || "$DATA_DIR_OVERRIDE" =~ ^/srv/dai/data/${NODE}\.generations/[A-Za-z0-9._-]+$ ]] \
-  || { echo 'state-sync data directory must be the named Host generation under /srv/dai/data' >&2; exit 2; }
 [[ "$POC_CALLBACK_URL" =~ ^http://([0-9]{1,3}\.){3}[0-9]{1,3}:9100$|^http://api:9100$ ]] || { echo 'PoC callback URL must be http://api:9100 or an IPv4 address on port 9100' >&2; exit 2; }
 [[ "$ML_CALLBACK_BIND" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo 'ML callback bind must be an IPv4 address' >&2; exit 2; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,6 +33,8 @@ if [[ -n "$JOIN_PROFILE" ]]; then
 else
   load_profiles
 fi
+[[ -z "$DATA_DIR_OVERRIDE" || "$DATA_DIR_OVERRIDE" =~ ^/srv/dai/data\.generations/[A-Za-z0-9._-]+$ ]] \
+  || { echo 'state-sync data directory must be a run generation under /srv/dai/data.generations' >&2; exit 2; }
 topology_contains_node "$NODE" || { echo "node is not configured in inventory: $NODE" >&2; exit 2; }
 PUBLIC_HOST="$(node_public_host "$NODE")"
 P2P_PORT="$(node_p2p_port "$NODE")"
@@ -110,7 +110,7 @@ write_env "$OUTPUT" \
   "PUBLIC_HOST=$PUBLIC_HOST" "PUBLIC_URL=https://$PUBLIC_HOST" "P2P_PORT=$P2P_PORT" \
   "GDC_STOP_POC_AT_WINDDOWN=${GDC_STOP_POC_AT_WINDDOWN:-true}" \
   "P2P_EXTERNAL_ADDRESS=tcp://$PUBLIC_HOST:$P2P_PORT" "LOCAL_PROXY_PORT=8000" \
-  "DATA_DIR=${DATA_DIR_OVERRIDE:-${DATA_ROOT%/}/$NODE}" "IDENTITY_DIR=/srv/dai/identity/$NODE" "SIGNER_DIR=/srv/dai/signer/$NODE" "HF_HOME=$HF_CACHE_ROOT" "GENESIS_FILE=$GENESIS_INSTALL_PATH" \
+  "DATA_DIR=${DATA_DIR_OVERRIDE:-${DATA_ROOT%/}}" "IDENTITY_DIR=/srv/dai/identity" "SIGNER_DIR=/srv/dai/signer" "HF_HOME=$HF_CACHE_ROOT" "GENESIS_FILE=$GENESIS_INSTALL_PATH" \
   "PROXY_BIND_ADDRESS=$proxy_bind_address" \
   "NODE_CONFIG_FILE=./node-config.json" "ACCOUNT_ADDRESS=$ADDRESS" "ACCOUNT_PUBKEY=$PUBKEY" "CONSENSUS_PUBKEY=$CONSENSUS_PUBKEY" \
   "KEY_NAME=$NODE-warm" "KEYRING_PASSWORD=$KEYRING_PASSWORD" "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \

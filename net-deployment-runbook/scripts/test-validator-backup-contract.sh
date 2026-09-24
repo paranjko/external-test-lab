@@ -480,8 +480,8 @@ grep -Fq 'create_backup "$2"' "$BACKUP"
 grep -Fq 'verify_backup_archive "$archive_tmp" "$node" "$chain_id"' "$BACKUP"
 grep -Fq 'verify_backup_archive "$3" "$2" "$chain_id"' "$BACKUP"
 grep -Fq 'configured_gpu="$(node_ml_host "$node" || true)"' "$BACKUP"
-grep -Fq "identity='/srv/dai/identity/\$node'" "$BACKUP"
-grep -Fq "signer='/srv/dai/signer/\$node'" "$BACKUP"
+grep -Fq "identity='/srv/dai/identity'" "$BACKUP"
+grep -Fq "signer='/srv/dai/signer'" "$BACKUP"
 grep -Fq 'identity/p2p/node_key.json' "$BACKUP"
 ! grep -Fq 'create_backup "$(node_name "$2")"' "$BACKUP"
 grep -Fq 'refusing to create a duplicate participant' "$ROOT/scripts/phase-join.sh"
@@ -531,12 +531,13 @@ grep -Fq 'sudo tar -C \"\$signer\" -cf - tmkms' "$BACKUP"
 grep -Fq '"$remote_restore_command"' "$BACKUP"
 grep -Fq '<"$ROOT/scripts/build-validator-identity-restore-command.sh"' "$BACKUP"
 grep -Fq '.gdc-validator-identity-restore.sha256' "$REMOTE_RESTORE_COMMAND"
-grep -Fq 'mv "$transaction" "$state"' "$REMOTE_RESTORE_COMMAND"
+grep -Fq 'mv "$transaction/identity" "$stable_identity"' "$REMOTE_RESTORE_COMMAND"
+grep -Fq 'mv "$transaction/signer" "$stable_signer"' "$REMOTE_RESTORE_COMMAND"
 ! grep -Fq 'present=$((present + 1))' "$BACKUP" || {
   echo 'validator identity classification must not run as the unprivileged SSH user' >&2
   exit 1
 }
-grep -Fq 'running validator identity does not match the supplied backup' "$REMOTE_RESTORE_COMMAND"
+grep -Fq 'running validator deployment lacks a valid flat identity; refuse restore' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'staged TMKMS key does not match the validator backup consensus identity' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'chown root:root "$candidate"' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'staged validator identity contains a link or special file' "$REMOTE_RESTORE_COMMAND"
@@ -547,8 +548,7 @@ grep -Fq 'stable validator identity roots are partial or ambiguous' "$REMOTE_RES
 grep -Fq 'printf '\''stable_existing\n'\''' "$REMOTE_RESTORE_COMMAND"
 grep -Fq 'stable_existing)' "$BACKUP"
 grep -Fq 'restore_mode=retained' "$BACKUP"
-grep -Fq 'if [[ "$remote_state" != stable_existing ]]; then' "$BACKUP"
-stable_preflight_line="$(grep -n 'validate_stable_material' "$REMOTE_RESTORE_COMMAND" | tail -n1 | cut -d: -f1)"
+stable_preflight_line="$(grep -n 'validate_stable_material' "$REMOTE_RESTORE_COMMAND" | head -n1 | cut -d: -f1)"
 legacy_validation_line="$(grep -nF 'if [[ -s "$deployment_env" ]]' "$REMOTE_RESTORE_COMMAND" | head -n1 | cut -d: -f1)"
 [[ -n "$stable_preflight_line" && -n "$legacy_validation_line" \
   && "$stable_preflight_line" -lt "$legacy_validation_line" ]] || {

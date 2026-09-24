@@ -195,12 +195,15 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-classify-join-reentry.sh
 	@./scripts/test-join-identity-diagnostics.sh
 	@./scripts/test-join-existing-participant-rebind.sh
+	@./scripts/test-replace-retained-validator-identity.sh
+	@./scripts/test-authorize-retained-validator-replacement.sh
 	@./scripts/test-join-refusal-diagnostics.sh
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-ml-qualification-evidence.sh
 	@bash ./scripts/test-ml-qualification-failure.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
+	@./scripts/test-single-validator-layout.sh
 	@./scripts/test-host-identity-layout-probe.sh
 	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh
@@ -282,6 +285,8 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-host-join-resume-canonical.sh
 	@./scripts/test-host-join-resume-signer-readback.sh
 	@./scripts/test-phase-ml-attach-completion.sh
+	@./scripts/test-resolve-reset-dai-backup.sh
+	@./scripts/test-verify-inactive-validator-key.sh
 	@./scripts/test-verify-complete-join-state.sh
 	@./scripts/test-wait-state-sync-canary.sh
 	@./scripts/test-promote-state-sync-generation.sh

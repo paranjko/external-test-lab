@@ -62,7 +62,7 @@ scp -q "$ROOT/02-node/verify-canonical-join-state.sh" "$NODE:$remote/verify-cano
 scp -q "$ROOT/scripts/verify-join-lineage-state.sh" "$NODE:$remote/verify-join-lineage-state.sh"
 scp -q "$lineage" "$NODE:$remote/lineage-receipt.json"
 
-deploy="/srv/dai/deploy/$NODE"
+deploy="/srv/dai/deploy"
 tmkms="$(ssh "$NODE" "cd '$deploy' && docker compose --env-file .env -f compose.yaml ps -q tmkms")"
 [[ -z "$(printf '%s\n' "$tmkms" | sed '/^$/d')" ]] || { echo 'canonical resume refused: signer is already running' >&2; exit 1; }
 if [[ "$resume_state" == CANONICAL_RUNNING ]]; then
@@ -72,11 +72,11 @@ fi
 if [[ "$NODE" != "$PUBLIC_EDGE_NODE" ]]; then
   # A participant edge is Caddy only: gateway-admission belongs to the shared
   # gateway, and its script is installed only by `gateway apply`.
-  start_stack "$NODE" "/srv/dai/deploy/$NODE/edge" caddy
+  start_stack "$NODE" "/srv/dai/deploy/edge" caddy
 else
   printf 'READY retained shared public edge on %s during participant JOIN resume\n' "$NODE"
 fi
-start_stack "$NODE" "/srv/dai/deploy/$NODE/monitoring-agent"
+start_stack "$NODE" "/srv/dai/deploy/monitoring-agent"
 ssh "$NODE" "cd '$deploy' && bash '$remote/verify-canonical-join-state.sh' '$deploy' '$expected_chain_id' '$expected_p2p_node_id' '$expected_core_version' '$expected_core_commit' '$expected_dapi_version' '$expected_dapi_commit'"
 # State was already imported and verified before this receipt-bound resume.
 # The original short-lived trust decision must not block a current common-head
@@ -99,7 +99,10 @@ touch "$STATE/joined/$NODE"
 ML_HOST="$(node_ml_host "$NODE" || true)"
 [[ -z "$ML_HOST" ]] || "$ROOT/scripts/phase-ml-attach.sh" "$NODE"
 
-bash "$ROOT/scripts/same-host-restore.sh" bind "$NODE" "$IDENTITY" "$expected_chain_id" "$RUN/same-host-reset-before-enable.json"
+reset_metadata="$(bash "$ROOT/scripts/resolve-reset-dai-backup.sh" "$STATE/reset/$NODE")" \
+  || { echo 'canonical resume refused: verified reset archive metadata is missing' >&2; exit 1; }
+bash "$ROOT/scripts/same-host-restore.sh" bind "$NODE" "$IDENTITY" "$expected_chain_id" \
+  "$reset_metadata" "$RUN/reset-dai-backup-before-enable.json"
 consensus_pubkey="$(jq -er .consensus_pubkey "$IDENTITY")"
 fence_remote="$deploy/.gdc/runs/$GDC_RUN_ID/signer-fence-receipt.v1.json"
 ssh "$NODE" "sudo '$deploy/fence-existing-signer.sh' '$deploy' '$GDC_RUN_ID' '$consensus_pubkey' '$NODE'"
@@ -110,7 +113,7 @@ record_join_state "$NODE" SIGNER_FENCE_VERIFIED "$ADDRESS"
 append_transition SIGNER_FENCE_VERIFIED
 
 before="$RUN/tmkms-signing-state-before-enable.json"
-ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$before"
+ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$before"
 chmod 600 "$before"
 status="$(ssh -T "$NODE" 'curl -fsS --max-time 10 http://127.0.0.1:26657/status')"
 jq -e --slurpfile state "$before" '.result.sync_info.catching_up == false and (.result.sync_info.latest_block_height | tonumber) > ($state[0].height | tonumber)' <<<"$status" >/dev/null || {
@@ -142,7 +145,7 @@ deadline=$((SECONDS + 2400)); advanced=false
 while (( SECONDS < deadline )); do
   after="$RUN/tmkms-signing-state-after-enable.json"
   # The signer is already on; one failed read is not evidence about it.
-  ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$after" \
+  ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$after" \
     || { sleep 2; continue; }
   chmod 600 "$after"
   if "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$before" --observed "$after" --require-advance >/dev/null; then advanced=true; break; fi
@@ -151,7 +154,7 @@ done
 [[ "$advanced" == true ]] || { echo 'canonical resume failed: TMKMS did not advance after enablement' >&2; exit 1; }
 record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"
 append_transition SIGNER_ACTIVE_VERIFIED true
-"$ROOT/scripts/validator-backup.sh" create "$NODE"
+"$ROOT/scripts/validator-backup.sh" create "$NODE" resume-canonical
 append_transition RECOVERY_ARCHIVE_VERIFIED true
 append_transition COMPLETE true
 # Staging cleanup says nothing about the validator and must not fail its JOIN.

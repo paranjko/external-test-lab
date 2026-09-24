@@ -50,11 +50,11 @@
     },
     "vllm": {
       "repository": "https://github.com/gonka-ai/vllm.git",
-      "commit": "052648bf42ab2e9db7c163b8f1909eb6ea41d86b"
+      "commit": "5110f7fcf176100d1c29c9ea0c75efbf271ec4b3"
     }
   },
   "base_image": "docker.io/rocm/vllm-dev:base@sha256:3cead535c32c11c59b222bbaa502076b9c737fb969b70b7bc9bb8ce77da5698e",
   "attention_backend": "ROCM_ATTN",
-  "output_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-rocm-cli-4d687ed-052648b",
-  "published_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-rocm-cli-4d687ed-052648b@sha256:07fcedc694ba67e2c7fe33e08eda0fce470bc43ae6399f8995ab6179b624486b"
+  "output_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-vllm023-poc-4d687ed-5110f7f",
+  "published_image": "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-vllm023-poc-4d687ed-5110f7f@sha256:2deace96068164de85add38f5e77b62a7e4985b518a317089f11e4b5fc801517"
 }

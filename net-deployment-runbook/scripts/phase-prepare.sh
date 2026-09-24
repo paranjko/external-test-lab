@@ -12,6 +12,11 @@ else
   load_profiles
 fi
 record_phase_profile prepare
+# run_phase exports GDC_RUN_ID for managed invocations. load_project assigns
+# the established timestamped manual run ID for direct phase execution.
+RUN="$GDC_HOME/runs/${GDC_RUN_ID:-manual}/prepare"
+mkdir -p "$RUN"
+chmod 0700 "$RUN"
 
 ready_hosts=(); reboot_hosts=(); skipped_hosts=(); failed_hosts=()
 append_accelerator_remote_env() {

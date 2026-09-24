@@ -62,7 +62,7 @@ set -Eeuo pipefail
 [[ "$1" == -T ]] && shift
 node="$1"; shift
 command="$1"
-command="${command//\/srv\/dai\/deploy\/$node/$GDC_TEST_DEPLOY}"
+command="${command//\/srv\/dai\/deploy/$GDC_TEST_DEPLOY}"
 bash -c "$command"
 EOF
 cat >"$tmp/bin/docker" <<'EOF'
