@@ -105,7 +105,7 @@ load_project
 
 RUN="${GDC_GRAFANA_EVIDENCE_DIR:-$GDC_HOME/runs/${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}-public-grafana}"
 NETWORK_URL="${GDC_PUBLIC_GRAFANA_URL:-https://$GRAFANA_HOST/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk}"
-INFERENCE_URL="https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-7d&to=now&timezone=utc&kiosk"
+INFERENCE_URL="https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-24h&to=now&timezone=utc&kiosk"
 mkdir -p "$RUN"
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
@@ -171,15 +171,15 @@ done
 # zero, and treating that absence as a Grafana deployment failure hides the
 # operational distinction the board is intended to show. That tolerance is not
 # unconditional: a panel may return nothing only if it says so itself, which is
-# judged panel by panel below.
+# judged panel by panel below. The Telegram consumer is deliberately not pinned:
+# its values are gated on an exporter that a network may not deploy at all.
 cat >"$RUN/required-panel-expressions.txt" <<'EOF'
 max(cometbft_consensus_height)
 sum(up{job="gonka-node"})
 100 - avg by(host)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100
 max(up{job="gateway"})
-max(gdc_gateway_readiness_state{state="TRAFFIC_READY"}) or vector(0)
-max(devshard_gateway_capacity_scale) * 100 or vector(0)
-max(gdc_telegram_bot_up) or vector(0)
+time() - max(gdc_gateway_readiness_observed_timestamp_seconds)
+max(devshard_gateway_capacity_scale) * 100
 EOF
 # A pinned expression that no longer appears on any board keeps this gate green
 # while measuring nothing. Prove the pin before trusting the value it returns.

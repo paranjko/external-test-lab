@@ -126,7 +126,21 @@ jq -e '[.panels[].targets[]?.expr | select(test("cometbft_consensus_total_txs"))
   "$ROOT/04-ops/grafana/dashboards/gdc-network.json" >/dev/null \
   || { echo 'gdc-network sums the per-node transaction rate across nodes' >&2; exit 1; }
 
+# A table renames the labels its query groups by. A key the query never returns
+# renames nothing, and a label left out keeps its raw name beside the renamed ones.
+for board in gdc-network gdc-inference gdc-overview; do
+  mismatched="$(jq -r '.panels[] | select(.type == "table")
+    | select(.targets[0].expr | test("^[a-z_]+ by \\("))
+    | (.targets[0].expr | capture("^[a-z_]+ by \\((?<labels>[^)]*)\\)").labels | split(",") | map(gsub(" "; ""))) as $grouped
+    | ([.transformations[]?.options.renameByName // {} | keys[]] - ["Value"]) as $renamed
+    | select(($renamed - $grouped | length) > 0 or ($grouped - $renamed | length) > 0)
+    | "\(.id) \(.title)"' "$ROOT/04-ops/grafana/dashboards/$board.json")"
+  [[ -z "$mismatched" ]] \
+    || { echo "$board has a table whose column names do not match its grouping: $mismatched" >&2; exit 1; }
+done
+
 printf 'PASS dashboard generator regenerates both boards unchanged\n'
+printf 'PASS every grouped table names exactly the labels it groups by\n'
 printf 'PASS disk lines are the alert levels and the transaction rate is not summed over nodes\n'
 printf 'PASS every panel that declares an empty state also documents why it can happen\n'
 printf 'PASS dashboard helpers carry descriptions, empty-state field config and options without dropping shared defaults\n'
