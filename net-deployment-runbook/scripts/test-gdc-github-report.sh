@@ -33,6 +33,15 @@ printf 'diagnostic_envelope=%s\n' "$tmp/operator/runs/diagnostic-fixture/diagnos
 # Current JOIN failures may also retain the private preflight receipt path.
 # It is intentionally not copied into the public report.
 printf 'preflight_receipt=%s\n' "$tmp/operator/runs/diagnostic-fixture/preflight-receipt.env" >>"$failure"
+# Typed terminal result and option names reach the report.
+jq -cn '{schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"identity",category:"identity",
+  reason:"partial_identity",exit_code:1,mutation:"none",signer_state:"absent",resume:"manual_recovery",
+  join_profile_sha256:null,evidence:[]}' >"$tmp/join-result.input.json"
+"$ROOT/scripts/record-join-result.sh" --output "$tmp/operator/runs/diagnostic-fixture/join-result.v1.json" \
+  --input "$tmp/join-result.input.json" >/dev/null
+cp "$tmp/operator/runs/diagnostic-fixture/join-result.v1.json" "$(dirname "$failure")/join-result.v1.json"
+printf 'join_result=%s\n' "$(dirname "$failure")/join-result.v1.json" >>"$failure"
+printf 'invocation_options=%s\n' '--restore --public-host --operator-made-this-up' >>"$failure"
 
 sort_root="$tmp/sort-operator"
 if GDC_HOME="$sort_root" "$ROOT/gdc.sh" invalid-command >"$tmp/sort-pre.out" 2>"$tmp/sort-pre.err"; then
@@ -104,6 +113,19 @@ grep -Fq 'gdc-report-sha256:' "$tmp/published.md"
 ! grep -Fq 'safe_invocation=' "$tmp/published.md"
 grep -Fq 'network readback timed out' "$tmp/published.md"
 grep -Fq 'Resume decision: `safe`.' "$tmp/published.md"
+grep -Fq 'Selected failure: ' "$tmp/new.out"
+grep -Fxq '## Terminal result' "$tmp/published.md"
+for row in '| outcome | refused |' '| reason | partial_identity |' '| mutation | none |' '| signer_state | absent |' '| resume | manual_recovery |'; do
+  grep -Fxq "$row" "$tmp/published.md" || { printf 'terminal result row is missing: %s\n' "$row" >&2; exit 1; }
+done
+for row in '| category | network |' '| checkpoint | failed |' '| state | interrupted |' '| tool | curl |'; do
+  grep -Fxq "$row" "$tmp/published.md" || { printf 'typed diagnostic row is missing: %s\n' "$row" >&2; exit 1; }
+done
+grep -Fxq '| invocation_options | --restore --public-host (+1 not listed) |' "$tmp/published.md"
+! grep -Fq 'operator-made-this-up' "$tmp/published.md" "$tmp/gh.args"
+# Every die in the runbook exits 1, so the default title names the typed reason.
+grep -Fq 'refused' "$tmp/gh.args"
+grep -Fq 'partial_identity' "$tmp/gh.args"
 grep -Fq 'permits repeating the supported `gdc host join` operation' "$tmp/published.md"
 ! grep -Eq '^\| (docker|gh|docker_compose|nvidia_gpu|filesystem_free_kib) \|' "$tmp/published.md"
 grep -Eq '^\| bash \| [0-9][0-9A-Za-z()._-]* \|$' "$tmp/published.md"
@@ -228,6 +250,34 @@ fi
 grep -Fq 'optional context is unsafe' "$tmp/context.err"
 ! grep -Eq 'issue (create|comment).*--body-file' "$tmp/context.args" || { echo 'unsafe context attempted a write' >&2; exit 1; }
 
+# A safe optional context reaches the published body and the hash.
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/safe-context.args" FAKE_GH_BODY="$tmp/safe-context.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  run_gdc report github >"$tmp/safe-context.out" 2>"$tmp/safe-context.err" <<'EOF'
+1
+
+the previous reset retained this identity
+the archive was created on the same Host
+.
+y
+EOF
+grep -Fq 'Published and verified:' "$tmp/safe-context.out" || {
+  printf '%s\n' 'safe optional context fixture failed to publish' >&2
+  sed -n '1,80p' "$tmp/safe-context.err" >&2
+  exit 1
+}
+for line in '## Operator context' 'the previous reset retained this identity' 'the archive was created on the same Host'; do
+  grep -Fq "$line" "$tmp/safe-context.md" || {
+    printf 'optional context did not reach the published body: %s\n' "$line" >&2
+    exit 1
+  }
+done
+context_hash="$(grep -F 'gdc-report-sha256:' "$tmp/safe-context.md" | sed 's/.*gdc-report-sha256:\([0-9a-f]*\).*/\1/')"
+published_hash="$(sed '/^<!-- gdc-report-sha256:/d' "$tmp/safe-context.md" | sha256sum | awk '{print $1}')"
+[[ "$context_hash" == "$published_hash" ]] || {
+  echo 'the published hash does not cover the body that carries the operator context' >&2
+  exit 1
+}
+
 PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/attach.args" FAKE_GH_BODY="$tmp/attach.md" FAKE_GH_ATTACH=true GDC_REPORT_TEST_INTERACTIVE=true \
   run_gdc report github >"$tmp/attach.out" 2>"$tmp/attach.err" <<'EOF'
 1
@@ -335,5 +385,187 @@ then
   exit 1
 fi
 grep -Fq 'readback was incomplete' "$tmp/mismatch.err"
+
+# A context that only trips a heuristic is withheld; the report still publishes.
+wordy_root="$tmp/wordy-operator"
+if GDC_HOME="$wordy_root" "$ROOT/gdc.sh" wordy-command >"$tmp/wordy-pre.out" 2>"$tmp/wordy-pre.err"; then
+  echo 'wordy-context fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/wordy-context.args" FAKE_GH_BODY="$tmp/wordy-context.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$wordy_root" "$ROOT/gdc.sh" report github >"$tmp/wordy-context.out" 2>"$tmp/wordy-context.err" <<'EOF'
+1
+
+this run followed a reset that kept the identity because the chain still knows it
+.
+y
+EOF
+grep -Fq 'Published and verified:' "$tmp/wordy-context.out"
+grep -Fq 'left out of the report' "$tmp/wordy-context.err"
+! grep -Fq '## Operator context' "$tmp/wordy-context.md"
+! grep -Fq 'this run followed a reset' "$tmp/wordy-context.md"
+
+# Excerpt: typed status lines nearest the stop, one heuristic hit withheld.
+excerpt_root="$tmp/excerpt-operator"
+if GDC_HOME="$excerpt_root" "$ROOT/gdc.sh" excerpt-command >"$tmp/excerpt-pre.out" 2>"$tmp/excerpt-pre.err"; then
+  echo 'excerpt fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+excerpt_id="$(<"$excerpt_root/reporting/failures/latest-failure")"
+excerpt_failure="$excerpt_root/reporting/invocations/invocation.$excerpt_id/failure.env"
+mkdir -p "$excerpt_root/runs/excerpt"
+{
+  for number in $(seq 1 60); do printf 'ERROR early line %s\n' "$number"; done
+  printf 'READY image digest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef pulled\n'
+  printf 'REBOOT REQUIRED gdc-node9 preparation installed a driver. Reboot this Host, then rerun the same command.\n'
+  printf 'unclassified chatter that no prefix admits\n'
+  printf 'ERROR the stop itself\n'
+} >"$excerpt_root/runs/excerpt/run.log"
+sed -i "s#^run_log=.*#run_log=$excerpt_root/runs/excerpt/run.log#" "$excerpt_failure"
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/excerpt.args" FAKE_GH_BODY="$tmp/excerpt.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$excerpt_root" "$ROOT/gdc.sh" report github >"$tmp/excerpt.out" 2>"$tmp/excerpt.err" <<'EOF'
+1
+
+.
+y
+EOF
+grep -Fq 'Published and verified:' "$tmp/excerpt.out"
+grep -Fq 'REBOOT REQUIRED gdc-node9 preparation installed a driver.' "$tmp/excerpt.md"
+grep -Fq 'ERROR the stop itself' "$tmp/excerpt.md"
+grep -Fq 'ERROR early line 60' "$tmp/excerpt.md"
+! grep -Fxq 'ERROR early line 1' "$tmp/excerpt.md"
+grep -Fq '[line withheld: it did not pass the public-text scan]' "$tmp/excerpt.md"
+! grep -Fq '0123456789abcdef0123456789abcdef' "$tmp/excerpt.md"
+! grep -Fq 'unclassified chatter' "$tmp/excerpt.md"
+# No JOIN: no typed result rows, the title falls back to the exit code.
+grep -Fq 'This command retained no typed terminal result.' "$tmp/excerpt.md"
+grep -Fq 'exit' "$tmp/excerpt.args"
+
+# Option names from the closed list; never a value.
+flags_root="$tmp/flags-operator"
+if GDC_HOME="$flags_root" "$ROOT/gdc.sh" invalid-command --restore /private/archive.tar \
+  --mnemonic-file=/private/cold.json --public-host node.example.test --restore again --made-up value \
+  >"$tmp/flags-pre.out" 2>"$tmp/flags-pre.err"; then
+  echo 'option-name fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+flags_id="$(<"$flags_root/reporting/failures/latest-failure")"
+flags_failure="$flags_root/reporting/invocations/invocation.$flags_id/failure.env"
+grep -Fxq 'invocation_options=--restore --mnemonic-file --public-host' "$flags_failure"
+! grep -Fq '/private/' "$flags_failure"
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/flags.args" FAKE_GH_BODY="$tmp/flags.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$flags_root" "$ROOT/gdc.sh" report github >"$tmp/flags.out" 2>"$tmp/flags.err" <<'EOF'
+1
+
+.
+y
+EOF
+grep -Fq 'Published and verified:' "$tmp/flags.out"
+grep -Fxq '| invocation_options | --restore --mnemonic-file --public-host |' "$tmp/flags.md"
+! grep -Fq '/private/' "$tmp/flags.md" "$tmp/flags.args"
+! grep -Fq 'node.example.test' "$tmp/flags.md"
+
+# A later successful resume must not rewrite the failure the report describes.
+resume_root="$tmp/resume-operator"
+mkdir -p "$resume_root/runs/resume-run/join-node"
+jq -cn '{schema_version:1,kind:"gdc-host-join-result",outcome:"manual_recovery_required",phase:"signer",category:"signer",
+  reason:"signer_activation_readback_required",exit_code:1,mutation:"signer_may_be_on",signer_state:"unknown",
+  resume:"automatic_retry_forbidden",join_profile_sha256:null,evidence:[]}' >"$tmp/resume-failed.json"
+"$ROOT/scripts/record-join-result.sh" --output "$resume_root/runs/resume-run/join-node/join-result.v1.json" \
+  --input "$tmp/resume-failed.json" >/dev/null
+if GDC_HOME="$resume_root" GDC_JOIN_RESULT_OUTPUT="$resume_root/runs/resume-run/join-node/join-result.v1.json" \
+  "$ROOT/gdc.sh" invalid-command >"$tmp/resume-pre.out" 2>"$tmp/resume-pre.err"; then
+  echo 'resume fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+resume_id="$(<"$resume_root/reporting/failures/latest-failure")"
+resume_failure="$resume_root/reporting/invocations/invocation.$resume_id/failure.env"
+grep -Fxq "join_result=$resume_root/reporting/invocations/invocation.$resume_id/join-result.v1.json" "$resume_failure"
+[[ "$(stat -c '%a' "$resume_root/reporting/invocations/invocation.$resume_id/join-result.v1.json")" == 600 ]]
+# The resume succeeds and rewrites the live result.
+jq -cn '{schema_version:1,kind:"gdc-host-join-result",outcome:"succeeded",phase:"acceptance",category:"signer",
+  reason:"join_complete",exit_code:0,mutation:"signer_may_be_on",signer_state:"enabled",
+  resume:"not_applicable",join_profile_sha256:null,evidence:[]}' >"$tmp/resume-succeeded.json"
+"$ROOT/scripts/record-join-result.sh" --output "$resume_root/runs/resume-run/join-node/join-result.v1.json" \
+  --input "$tmp/resume-succeeded.json" >/dev/null
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/resume.args" FAKE_GH_BODY="$tmp/resume.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$resume_root" "$ROOT/gdc.sh" report github >"$tmp/resume.out" 2>"$tmp/resume.err" <<'EOF'
+1
+
+.
+y
+EOF
+grep -Fq 'Published and verified:' "$tmp/resume.out"
+grep -Fxq '| outcome | manual_recovery_required |' "$tmp/resume.md"
+grep -Fxq '| reason | signer_activation_readback_required |' "$tmp/resume.md"
+! grep -Fq 'succeeded' "$tmp/resume.md"
+! grep -Fq 'join_complete' "$tmp/resume.args"
+grep -Fq 'signer_activation_readback_required' "$tmp/resume.args"
+
+# An invalid result is not frozen and not named.
+unfrozen_root="$tmp/unfrozen-operator"
+mkdir -p "$unfrozen_root/runs/bad-run/join-node"
+printf '{"outcome":"refused"}\n' >"$unfrozen_root/runs/bad-run/join-node/join-result.v1.json"
+if GDC_HOME="$unfrozen_root" GDC_JOIN_RESULT_OUTPUT="$unfrozen_root/runs/bad-run/join-node/join-result.v1.json" \
+  "$ROOT/gdc.sh" invalid-command >"$tmp/unfrozen-pre.out" 2>"$tmp/unfrozen-pre.err"; then
+  echo 'unfrozen fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+unfrozen_id="$(<"$unfrozen_root/reporting/failures/latest-failure")"
+! grep -q '^join_result=' "$unfrozen_root/reporting/invocations/invocation.$unfrozen_id/failure.env"
+[[ ! -e "$unfrozen_root/reporting/invocations/invocation.$unfrozen_id/join-result.v1.json" ]]
+
+# A 64-character typed value refuses the report; there is no scan exemption.
+long_root="$tmp/long-reason-operator"
+mkdir -p "$long_root/runs/long-run/join-node"
+long_reason="$(printf 'a%.0s' $(seq 1 64))"
+jq -cn --arg reason "$long_reason" '{schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"identity",
+  category:"identity",reason:$reason,exit_code:1,mutation:"none",signer_state:"absent",resume:"manual_recovery",
+  join_profile_sha256:null,evidence:[]}' >"$tmp/long-reason.json"
+"$ROOT/scripts/record-join-result.sh" --output "$long_root/runs/long-run/join-node/join-result.v1.json" \
+  --input "$tmp/long-reason.json" >/dev/null
+if GDC_HOME="$long_root" GDC_JOIN_RESULT_OUTPUT="$long_root/runs/long-run/join-node/join-result.v1.json" \
+  "$ROOT/gdc.sh" invalid-command >"$tmp/long-pre.out" 2>"$tmp/long-pre.err"; then
+  echo 'long-reason fixture failure unexpectedly succeeded' >&2
+  exit 1
+fi
+if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/long.args" FAKE_GH_BODY="$tmp/long.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$long_root" "$ROOT/gdc.sh" report github >"$tmp/long.out" 2>"$tmp/long.err" <<'EOF'
+EOF
+then
+  echo 'a 64-character typed value unexpectedly produced a report' >&2
+  exit 1
+fi
+grep -Fq 'longer than 40 characters' "$tmp/long.err"
+[[ ! -e "$tmp/long.args" ]] || { echo 'a 64-character typed value reached GitHub preflight' >&2; exit 1; }
+! grep -rFq "$long_reason" "$long_root/reporting/reports" 2>/dev/null || { echo 'the long value was written into a report' >&2; exit 1; }
+# And the scanner itself still refuses that shape behind a typed key.
+printf 'result_reason=%s\n' "$long_reason" >"$tmp/typed-token.txt"
+# shellcheck source=/dev/null
+source <(sed -n '/^scan_public_text()/,/^}/p' "$ROOT/scripts/gdc-report-github.sh")
+if scan_public_text "$tmp/typed-token.txt"; then
+  echo 'the public-text scan exempts a 64-character token behind a typed key' >&2
+  exit 1
+fi
+
+"$ROOT/scripts/record-join-result.sh" --validate "$tmp/operator/runs/diagnostic-fixture/join-result.v1.json"
+if "$ROOT/scripts/record-join-result.sh" --validate "$tmp/join-result.input.json" --output "$tmp/should-not-exist.json" 2>/dev/null; then
+  echo 'validate mode accepted an output path' >&2
+  exit 1
+fi
+[[ ! -e "$tmp/should-not-exist.json" ]]
+
+# A terminal result that does not match its writer's schema refuses the report.
+printf 'join_result=%s\n' "$excerpt_root/runs/excerpt/join-result.v1.json" >>"$excerpt_failure"
+printf '{"outcome":"refused","reason":"see http://example.test/x"}\n' >"$excerpt_root/runs/excerpt/join-result.v1.json"
+if PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/bad-result.args" FAKE_GH_BODY="$tmp/bad-result.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$excerpt_root" "$ROOT/gdc.sh" report github >"$tmp/bad-result.out" 2>"$tmp/bad-result.err" <<'EOF'
+EOF
+then
+  echo 'an invalid JOIN terminal result unexpectedly produced a report' >&2
+  exit 1
+fi
+grep -Fq 'JOIN terminal result is invalid' "$tmp/bad-result.err"
+[[ ! -e "$tmp/bad-result.args" ]] || { echo 'an invalid terminal result reached GitHub preflight' >&2; exit 1; }
 
 printf 'PASS gdc GitHub report failure, archive, publication, safety, and recovery contracts\n'

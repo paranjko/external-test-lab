@@ -117,7 +117,7 @@ validate_candidate_shape() {
 }
 
 validate_tmkms_state() {
-  local state_file="$1"
+  local state_file="$1" subject="${2:-the validator identity}"
   jq -e '
     type == "object"
     and (keys | sort) == ["block_id","height","round","step"]
@@ -125,6 +125,13 @@ validate_tmkms_state() {
     and (.round | type == "string" and test("^[0-9]+$"))
     and (.step | type == "number" and . == floor and . >= -128 and . <= 127)
     and (.block_id == null or (
+      .height == "0" and .round == "0" and .step == 0
+      and (.block_id | type == "object")
+      and ((.block_id | keys | sort) == ["hash","part_set_header"] or (.block_id | keys | sort) == ["hash","parts"])
+      and .block_id.hash == ""
+      and ((.block_id.parts // .block_id.part_set_header) as $parts
+        | ($parts | keys | sort) == ["hash","total"] and $parts.total == 0 and $parts.hash == "")
+    ) or (
       (.block_id | type == "object")
       and (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$"))
       and ((.block_id.parts // .block_id.part_set_header) as $parts
@@ -133,7 +140,19 @@ validate_tmkms_state() {
         and ($parts.hash | type == "string" and test("^[0-9A-Fa-f]{64}$")))
     ))
   ' "$state_file" >/dev/null 2>&1 \
-    || die 'validator identity contains malformed TMKMS signing state'
+    || die "validator identity contains malformed TMKMS signing state ($subject): $(tmkms_state_defect "$state_file")"
+}
+
+# Names the first failing clause; the verdict above decides.
+tmkms_state_defect() {
+  jq -r '
+    if type != "object" then "not an object"
+    elif (keys | sort) != ["block_id","height","round","step"] then "unexpected key set"
+    elif (.height | type != "string" or (test("^[0-9]+$") | not)) then "height"
+    elif (.round | type != "string" or (test("^[0-9]+$") | not)) then "round"
+    elif (.step | type != "number" or . != floor or . < -128 or . > 127) then "step"
+    else "block_id" end
+  ' "$1" 2>/dev/null || printf 'unreadable'
 }
 
 validate_node_key() (
@@ -159,7 +178,7 @@ validate_node_key() (
 )
 
 validate_candidate_material() {
-  local candidate="$1" expected_consensus_key="$2" work actual_consensus_key path
+  local candidate="$1" expected_consensus_key="$2" subject="${3:-the staged archive copy}" work actual_consensus_key path
   local softsign="$candidate/tmkms/secrets/priv_validator_key.softsign"
   local kms_identity="$candidate/tmkms/secrets/kms-identity.key"
   local signing_state="$candidate/tmkms/state/priv_validator_state.json"
@@ -175,7 +194,7 @@ validate_candidate_material() {
   work="$(mktemp -d)"
   trap 'rm -rf -- "$work"' RETURN
   decode_canonical_base64 "$kms_identity" "$work/kms-identity.raw" 32
-  validate_tmkms_state "$signing_state"
+  validate_tmkms_state "$signing_state" "$subject"
   validate_node_key "$node_key"
   if ! grep -Eq '^state_file[[:space:]]*=[[:space:]]*"/root/\.tmkms/state/priv_validator_state\.json"[[:space:]]*$' "$tmkms_config" \
     || ! grep -Eq '^path[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/priv_validator_key\.softsign"[[:space:]]*$' "$tmkms_config" \
@@ -211,7 +230,7 @@ validate_stable_material() {
   work="$(mktemp -d)"
   trap 'rm -rf -- "$work"' RETURN
   decode_canonical_base64 "$kms_identity" "$work/kms-identity.raw" 32
-  validate_tmkms_state "$signing_state"
+  validate_tmkms_state "$signing_state" "the stable signer on the Host"
   validate_node_key "$node_key"
   if ! grep -Eq '^state_file[[:space:]]*=[[:space:]]*"/root/\.tmkms/state/priv_validator_state\.json"[[:space:]]*$' "$tmkms_config" \
     || ! grep -Eq '^path[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/priv_validator_key\.softsign"[[:space:]]*$' "$tmkms_config" \
@@ -248,7 +267,7 @@ remote_restore() {
   chmod 0700 "$candidate"
   chown -R root:root "$candidate"
   validate_candidate_shape "$candidate"
-  validate_candidate_material "$candidate" "$expected_consensus_key"
+  validate_candidate_material "$candidate" "$expected_consensus_key" "the staged archive copy"
   current_digest="$(identity_tree_digest "$candidate")"
   [[ "$current_digest" == "$expected_bundle_sha256" ]] \
     || die 'staged validator identity does not match the validated backup bundle'
@@ -275,7 +294,7 @@ remote_restore() {
   if [[ -s "$deployment_env" ]]; then
     [[ -d "$state" && ! -L "$state" ]] \
       || die 'running validator identity state is inaccessible'
-    validate_candidate_material "$state" "$expected_consensus_key"
+    validate_candidate_material "$state" "$expected_consensus_key" "the running deployment on the Host"
     if ! cmp -s "$candidate/tmkms/secrets/priv_validator_key.softsign" \
       "$state/tmkms/secrets/priv_validator_key.softsign" \
       || ! cmp -s "$candidate/tmkms/secrets/kms-identity.key" \
@@ -291,7 +310,7 @@ remote_restore() {
   if [[ -e "$state" ]]; then
     if [[ -f "$marker" && ! -L "$marker" \
       && "$(<"$marker")" == "$expected_bundle_sha256" ]]; then
-      validate_candidate_material "$state" "$expected_consensus_key"
+      validate_candidate_material "$state" "$expected_consensus_key" "the interrupted restore on the Host"
       if ! diff -qr "$candidate/tmkms" "$state/tmkms" >/dev/null 2>&1 \
         || ! cmp -s "$candidate/inference/config/node_key.json" \
           "$state/inference/config/node_key.json"; then
@@ -318,7 +337,7 @@ remote_restore() {
   chown -R root:root "$transaction"
   find "$transaction" -type d -exec chmod 0700 {} +
   find "$transaction" -type f -exec chmod 0600 {} +
-  validate_candidate_material "$transaction" "$expected_consensus_key"
+  validate_candidate_material "$transaction" "$expected_consensus_key" "the restore transaction"
   if [[ "${GDC_VALIDATOR_IDENTITY_TEST_INTERRUPT:-}" == before-activate ]]; then
     die 'simulated validator identity interruption before atomic activation'
   fi

@@ -98,9 +98,39 @@ the local report.
 
 GitHub issues are public in this repository. The complete report is sent as
 inline Markdown, so it remains useful with the stable GitHub CLI. Raw logs are
-never uploaded. The local archive is attached only when the installed CLI
-explicitly supports a compatible attachment option; otherwise it remains
-local. When attachment is available, it is the sanitized archive rather than
-the raw run log. If `gh` is missing, not authenticated, lacks permission, or
-cannot reach GitHub, the command explains the next local recovery step and
-keeps the report and archive.
+never uploaded, and the sanitized archive stays local: the GitHub CLI uploads
+images and videos only. If `gh` is missing, not authenticated, lacks
+permission, or cannot reach GitHub, the command explains the next local
+recovery step and keeps the report and archive.
+
+### What a report carries
+
+Besides the stage, exit status and runbook identity:
+
+- **Terminal result**: for a Host JOIN, its typed outcome (`outcome`, `phase`,
+  `category`, `reason`, `mutation`, `signer_state`, `resume`); closed vocabulary.
+- **Typed diagnostic**: the check that stopped the run, with `category`,
+  `checkpoint`, `state` and `tool`.
+- **Invocation options**: option names from a closed list; never a value.
+- **Run identity**: for a JOIN, the digests of the Join Profile and of the
+  network observation.
+- **Sanitized excerpt**: the lines nearest the stop: `BEGIN`, `END`, `ERROR` and
+  the typed status lines (`REBOOT REQUIRED`, `REFUSED`, `NOTICE`, `READY`,
+  `SKIP`). A credential mark refuses the report; a heuristic hit withholds the
+  line.
+
+The optional context is scanned the same way; a sentence of twelve or more
+plain words is left out with a notice.
+
+### What a report cannot carry
+
+The state of the Host or of the chain at triage. Two read-only questions to
+the operator:
+
+- `malformed TMKMS signing state (...)`: the signing state it names. On the
+  Host: `sudo cat /srv/dai/signer/<alias>/tmkms/state/priv_validator_state.json`;
+  in the archive: `tar -xOf <archive> remote-state/tmkms/state/priv_validator_state.json`.
+  Height, round, step and block ID; no key material.
+- `partial_identity` or `identity_conflict`: what the chain says now:
+  `curl -s <seed>/chain-api/productscience/inference/inference/participant/<address>`,
+  `404` for a participant it does not know.

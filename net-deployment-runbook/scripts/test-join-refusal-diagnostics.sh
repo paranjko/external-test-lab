@@ -62,13 +62,13 @@ run_refusal() {
 local_state='identity record present, cold account present, joined marker present'
 summary_partial="Host JOIN stopped before any change: $local_state; the Host holds no validator identity. Resolve the incomplete operator state through the documented recovery path."
 summary_adopt="Host JOIN stopped before any change: $local_state; the Host holds a validator identity. Restore from the matching archive or follow the documented recovery path."
-summary_conflict='Host JOIN stopped before any change: the Host holds a validator identity that the operator state does not know. Restore it from the matching validator archive or follow the documented recovery path.'
-summary_unreachable='Host JOIN stopped before any change: the remote identity preflight could not open an SSH session to the Host. Repeat the same command once the Host is reachable.'
+summary_conflict='Host JOIN stopped before any change: the Host holds a validator identity, and the operator state does not know it. Restore from the matching archive or follow the documented recovery path.'
+summary_unreachable='Host JOIN stopped before any change: the identity preflight could not reach the Host over SSH. Repeat the same command once the Host is reachable.'
 for summary in "$summary_partial" "$summary_adopt" "$summary_conflict" "$summary_unreachable"; do
   (( ${#summary} <= 240 ))
 done
 grep -Fq 'the Host holds no validator identity. Resolve the incomplete operator state through the documented recovery path.' "$PHASE"
-grep -Fq 'the Host holds a validator identity. Restore from the matching archive or follow the documented recovery path.' "$PHASE"
+grep -Fq 'identity_retained_summary "$join_local_state"' "$PHASE"
 grep -Fq "$summary_conflict" "$PHASE"
 grep -Fq "$summary_unreachable" "$PHASE"
 
@@ -135,5 +135,94 @@ rc=0
 grep -Fq 'unsafe summary' "$tmp/hostile-summary.err"
 grep -Fq 'could not retain its diagnostic envelope' "$tmp/hostile-summary.err"
 [[ ! -e "$RUN/join-result.v1.json" && ! -e "$RUN/verdict.md" && ! -e "$RUN/diagnostic-envelope.v1.json" ]]
+
+# The refusal names what the last reset decided.
+# shellcheck source=/dev/null
+source <(sed -n '/^retained_identity_verdict()/,/^}/p;/^retained_identity_reason()/,/^}/p;/^retained_identity_exit()/,/^}/p' "$PHASE")
+NODE=node-a
+
+verdict_case() { # directory suffix, registration, identity_discarded
+  STATE="$tmp/state-$1"
+  mkdir -p "$STATE"
+  jq -cn --arg r "$2" --argjson d "$3" \
+    '{schema_version:1,kind:"gdc-host-reset-verdict",node:"node-a",registration:$r,
+      identity_layout:"v2",identity_discarded:$d,observed_at:"2026-09-20T14:42:43Z"}' \
+    >"$STATE/reset-verdict-node-a.json"
+}
+
+verdict_case registered registered false
+[[ "$(retained_identity_reason)" == *'The last reset kept it: the chain still knows this participant'* ]]
+[[ "$(retained_identity_exit)" == *'gdc host join --restore'* ]]
+
+verdict_case unknown 'unknown:endpoint_unavailable' false
+[[ "$(retained_identity_reason)" == *'could not be asked (endpoint_unavailable)'* ]]
+[[ "$(retained_identity_exit)" == *'rerun reset once the chain answers'* ]]
+
+# A reset that discarded the identity explains nothing.
+verdict_case discarded absent true
+[[ -z "$(retained_identity_reason)" ]]
+[[ "$(retained_identity_exit)" == 'Restore from the matching archive or follow the documented recovery path.' ]]
+
+# No, unreadable or hostile verdict: the wording names no cause.
+STATE="$tmp/state-absent"; mkdir -p "$STATE"
+[[ -z "$(retained_identity_reason)" ]]
+STATE="$tmp/state-garbage"; mkdir -p "$STATE"; printf 'not json\n' >"$STATE/reset-verdict-node-a.json"
+[[ -z "$(retained_identity_reason)" ]]
+STATE="$tmp/state-hostile"; mkdir -p "$STATE"
+printf '%s\n' '{"kind":"gdc-host-reset-verdict","node":"node-a","identity_discarded":false,"registration":"registered at http://example.test/x"}' \
+  >"$STATE/reset-verdict-node-a.json"
+[[ -z "$(retained_identity_reason)" ]]
+
+# The composed summary has to fit the envelope, whatever the reason is called.
+verdict_case longest 'unknown:network_height_unavailable' false
+# shellcheck source=/dev/null
+source <(sed -n '/^identity_retained_summary()/,/^}/p' "$PHASE")
+for case_dir in registered unknown longest discarded absent; do
+  STATE="$tmp/state-$case_dir"
+  [[ -d "$STATE" ]] || mkdir -p "$STATE"
+  composed="$(identity_retained_summary 'identity record present, cold account present, joined marker absent')"
+  [[ "${#composed}" -le 240 ]] \
+    || { printf 'composed refusal summary for %s is %d characters\n' "$case_dir" "${#composed}" >&2; exit 1; }
+  [[ "$composed" == *'Host JOIN stopped before any change:'* ]]
+done
+STATE="$tmp/state-longest"
+[[ "$(identity_retained_summary 'x')" == *'rerun reset once the chain answers.' ]]
+
+# Every composed summary must pass the reporter's own scanner.
+# shellcheck source=/dev/null
+source <(sed -n '/^scan_public_text()/,/^}/p' "$ROOT/scripts/gdc-report-github.sh")
+publishable() {
+  printf '%s\n' "$1" >"$tmp/summary.txt"
+  scan_public_text "$tmp/summary.txt" || { printf 'a refusal summary would be refused by the report scanner: %s\n' "$1" >&2; exit 1; }
+}
+for case_dir in registered unknown longest discarded absent; do
+  STATE="$tmp/state-$case_dir"
+  publishable "$(identity_retained_summary 'identity record present, cold account present, joined marker absent')"
+done
+for summary in "$summary_partial" "$summary_adopt" "$summary_conflict" "$summary_unreachable"; do
+  publishable "$summary"
+done
+STATE="$tmp/state-absent"
+[[ "$(identity_retained_summary 'identity record present')" == *'identity record present; the Host holds a validator identity.'* ]]
+
+# And a summary that still came out too long is trimmed, never dropped.
+rc=0
+RUN="$tmp/trim/join-node-a"; mkdir -p "$RUN"
+# shellcheck disable=SC2034
+(
+  NODE=node-a
+  join_profile_sha256="$(printf '%064d' 7)"
+  GDC_JOIN_RESULT_OUTPUT="$RUN/join-result.v1.json"
+  die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+  record_join_transition() { :; }
+  refuse_before_mutation partial_identity "$(printf 'x%.0s' {1..300})" 'y'
+) >/dev/null 2>"$tmp/trim.err" || rc=$?
+[[ "$rc" == 1 ]]
+grep -Fq 'could not retain its diagnostic envelope' "$tmp/trim.err" && {
+  echo 'an over-long summary lost its envelope instead of being trimmed' >&2
+  exit 1
+}
+"$ROOT/scripts/diagnostic-envelope.sh" validate "$RUN/diagnostic-envelope.v1.json" >/dev/null
+[[ "$(jq -r '.summary | length' "$RUN/diagnostic-envelope.v1.json")" == 240 ]]
 
 printf 'PASS JOIN refusal before mutation records a typed result, envelope and verdict\n'

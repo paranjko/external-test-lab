@@ -14,6 +14,8 @@ jq -e '.resume.decision == "safe" and .resume.token == "join-repeat"' "$safe" >/
 
 for mutation in \
   '.summary = ("x" * 241)' \
+  '.summary = "a\u0007bell"' \
+  '.summary = "a\u007fdelete"' \
   '.resume.token = "curl"' \
   '.unknown = "x"' \
   '.phase = "<script>"'; do

@@ -77,6 +77,14 @@ record_launcher_failure() {
     fi
     printf 'envelope=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/envelope.env"
     [[ -z "${GDC_DIAGNOSTIC_ENVELOPE:-}" ]] || printf 'diagnostic_envelope=%s\n' "$GDC_DIAGNOSTIC_ENVELOPE"
+    # Freeze the JOIN result as it stood at this failure; a later resume rewrites the live file.
+    if [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" && -f "$GDC_JOIN_RESULT_OUTPUT" && ! -L "$GDC_JOIN_RESULT_OUTPUT" ]] \
+      && "$ROOT/scripts/record-join-result.sh" --validate "$GDC_JOIN_RESULT_OUTPUT" >/dev/null 2>&1 \
+      && cp -p -- "$GDC_JOIN_RESULT_OUTPUT" "$GDC_LAUNCHER_ENVELOPE_DIR/join-result.v1.json" 2>/dev/null; then
+      chmod 0600 "$GDC_LAUNCHER_ENVELOPE_DIR/join-result.v1.json" 2>/dev/null || true
+      printf 'join_result=%s\n' "$GDC_LAUNCHER_ENVELOPE_DIR/join-result.v1.json"
+    fi
+    [[ -z "${GDC_INVOCATION_OPTIONS:-}" ]] || printf 'invocation_options=%s\n' "$GDC_INVOCATION_OPTIONS"
     [[ -z "${GDC_JOIN_PREFLIGHT_RECEIPT:-}" ]] || printf 'preflight_receipt=%s\n' "$GDC_JOIN_PREFLIGHT_RECEIPT"
     printf 'recorded_at=%s\n' "$(date -u +%FT%TZ)"
   } >"$GDC_LAUNCHER_ENVELOPE_DIR/failure.env"
@@ -609,7 +617,19 @@ EOF
 
 GDC_INVOCATION_COMMAND="$(format_safe_invocation "$@")"
 GDC_INVOCATION_CWD="$PWD"
-export GDC_INVOCATION_COMMAND GDC_INVOCATION_CWD
+# Option names only, from a closed list; the formatted string cannot redact --mnemonic-file.
+invocation_option_names() {
+  local arg names=''
+  for arg in "$@"; do
+    case "${arg%%=*}" in
+      --mnemonic-file|--mnemonic-prompt|--restore|--verification|--plan|--resume|--public-host|--bootstrap-file|--skip-qualification|--old-signer-fence|--chain-id|--source-rpc|--pex|--preflight-deadline)
+        [[ " $names " == *" ${arg%%=*} "* ]] || names+="${names:+ }${arg%%=*}" ;;
+    esac
+  done
+  printf '%s' "$names"
+}
+GDC_INVOCATION_OPTIONS="$(invocation_option_names "$@")"
+export GDC_INVOCATION_COMMAND GDC_INVOCATION_CWD GDC_INVOCATION_OPTIONS
 {
   printf 'safe_invocation=%q\n' "$GDC_INVOCATION_COMMAND"
   printf 'invocation_cwd=%q\n' "$GDC_INVOCATION_CWD"
@@ -1600,7 +1620,7 @@ case "$COMMAND" in
         "$ROOT/scripts/network-bootstrap.sh" verify "$join_bootstrap_file" >/dev/null
     fi
     run_join_preflight bootstrap-chain-id invalid-bootstrap configuration bootstrap \
-      'The Bootstrap descriptor chain ID does not match the requested Host JOIN network.' \
+      'Chain ID mismatch: the Bootstrap descriptor does not name the requested Host JOIN network.' \
       jq -e --arg chain "$join_chain_id" '.chain_id == $chain' "$join_bootstrap_file" >/dev/null
     # Host reset asks the chain about this participant through the seeds of
     # the document the JOIN used. The simple form already writes it here; keep
@@ -1630,14 +1650,14 @@ case "$COMMAND" in
       GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$join_candidate_observation")"
       export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
       run_join_preflight component-resolution unavailable dependency official-artifact-resolver \
-        'Official immutable artifacts could not be resolved for the selected Core and DAPI runtime bytes.' \
+        'Official immutable artifacts could not be resolved, for the selected Core and DAPI runtime bytes.' \
         "$ROOT/scripts/resolve-join-components.sh" --observation "$join_candidate_observation" --output "$join_candidate_components"
       join_profile_args=(--observation "$join_candidate_observation" --components "$join_candidate_components" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_candidate_profile")
       [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
       join_profile_args+=(--pex "$join_pex")
       [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
       run_join_preflight join-profile unavailable profile join-profile \
-        'The observed network could not be compiled into an executable Join Profile.' \
+        'The observed network could not be compiled, so no executable Join Profile exists.' \
         "$ROOT/scripts/resolve-join-profile.sh" "${join_profile_args[@]}"
       # A plan produces only profile and observation evidence. It must not
       # download a release archive or contact a Host.
@@ -1652,11 +1672,11 @@ case "$COMMAND" in
         GDC_INFERENCED_CLI_TIMEOUT_SECONDS="$(( join_preflight_remaining < 600 ? join_preflight_remaining : 600 ))"
         export GDC_INFERENCED_CLI_TIMEOUT_SECONDS
         run_join_preflight inferenced-cli unavailable dependency inferenced \
-          'The pinned operator CLI was not available before the JOIN preflight deadline.' \
+          'The pinned operator CLI was not available, and the JOIN preflight deadline passed.' \
           "$ROOT/scripts/ensure-inferenced-cli.sh" --join-profile "$join_candidate_profile"
       fi
       run_join_preflight software-observation unavailable network seed-observer \
-        'The runtime changed or could not be confirmed immediately before Host preparation.' \
+        'The runtime changed, or could not be confirmed, immediately before Host preparation.' \
         wait_for_join_software_observation "confirm-$join_preflight_cycle" "$join_final_observation" "$join_preflight_deadline_at" "$join_preflight_retry_seconds"
       if [[ "$(join_observation_identity "$join_candidate_observation")" == "$(join_observation_identity "$join_final_observation")" ]]; then
         break
@@ -1674,7 +1694,7 @@ case "$COMMAND" in
     join_profile_args+=(--pex "$join_pex")
     [[ -z "$join_restore_archive" ]] || join_profile_args+=(--restore-archive "$join_restore_archive")
     run_join_preflight join-profile unavailable profile join-profile \
-      'The confirmed network could not be compiled into an executable Join Profile.' \
+      'The confirmed network could not be compiled, so no executable Join Profile exists.' \
       "$ROOT/scripts/resolve-join-profile.sh" "${join_profile_args[@]}"
     if [[ "$plan_only" != true ]]; then
       # Candidate and confirmed profiles can differ in observation metadata.
@@ -1690,7 +1710,7 @@ case "$COMMAND" in
       GDC_INFERENCED_CLI_TIMEOUT_SECONDS="$(( join_preflight_remaining < 600 ? join_preflight_remaining : 600 ))"
       export GDC_INFERENCED_CLI_TIMEOUT_SECONDS
       run_join_preflight inferenced-cli unavailable dependency inferenced \
-        'The pinned operator CLI was not available before the JOIN preflight deadline.' \
+        'The pinned operator CLI was not available, and the JOIN preflight deadline passed.' \
         "$ROOT/scripts/ensure-inferenced-cli.sh" --join-profile "$join_profile"
     fi
     # The state directory is mutable across invocations. Keep the exact
@@ -1773,7 +1793,7 @@ case "$COMMAND" in
     join_lineage_args=(--bootstrap-file "$join_bootstrap_file" --observation "$join_observation" --receipt "$join_lineage_receipt" --env "$join_lineage_env")
     join_lineage_args+=("${join_source_args[@]}")
     run_join_preflight lineage-preflight refused lineage lineage-preflight \
-      'Independent RPC lineage and trust were not established for native P2P state sync.' \
+      'Independent RPC lineage and trust were not established; native P2P state sync needs both.' \
       "$ROOT/scripts/preflight-join-lineage.sh" "${join_lineage_args[@]}"
     # The preflight writes fixed-name, shell-quoted values only after it has
     # bound them to the observed runtime fingerprint and two fault domains.

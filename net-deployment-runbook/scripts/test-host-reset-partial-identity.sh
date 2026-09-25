@@ -96,7 +96,7 @@ after="$("$ROOT/scripts/classify-join-state.sh" \
   "$partial_node_home/accounts/$alias-cold.json" \
   "$partial_node_home/state/joined/$alias" '')"
 jq -e '.classification == "new"' <<<"$after" >/dev/null
-grep -Fq 'READY removed incomplete local and remote identity state for partial-node' "$tmp/partial.out"
+grep -Fq 'PASS partial-node identity cleared' "$tmp/partial.out"
 grep -Fq "GDC_RESET_PARTIAL_IDENTITY='true' bash -s" "$tmp/ssh.log"
 [[ -f "$partial_node_home/runs/retained/result.json" ]]
 [[ "$(<"$partial_home/mnemonics/$alias-cold.mnemonic")" == 'secret mnemonic canary' ]]
@@ -129,20 +129,19 @@ seed_chain_lookup "$complete_node_home/state"
 printf 'completed mnemonic canary\n' >"$complete_home/mnemonics/$alias-cold.mnemonic"
 printf 'archive\n' >"$tmp/restore.tar"
 
+# A registered, complete identity is cleared like any other.
 run_reset "$complete_home" "$alias" "$tmp/complete-remote.sh" registered >"$tmp/complete.out"
-[[ -s "$complete_node_home/state/identities/$alias.json" ]]
-[[ -s "$complete_node_home/accounts/$alias-cold.json" ]]
+[[ ! -e "$complete_node_home/state/identities/$alias.json" ]]
+[[ ! -e "$complete_node_home/accounts/$alias-cold.json" ]]
 [[ "$(<"$complete_home/mnemonics/$alias-cold.mnemonic")" == 'completed mnemonic canary' ]]
+grep -Fq 'NOTICE complete-node participant is registered on chain with the signer key this reset removes' "$tmp/complete.out"
+grep -Fq 'PASS complete-node identity cleared' "$tmp/complete.out"
 restore_classification="$("$ROOT/scripts/classify-join-state.sh" \
   "$complete_node_home/state/identities/$alias.json" \
   "$complete_node_home/accounts/$alias-cold.json" \
   "$complete_node_home/state/joined/$alias" "$tmp/restore.tar")"
-jq -e '.classification == "running_matched"' <<<"$restore_classification" >/dev/null
-if grep -Fq 'READY removed incomplete local and remote identity state' "$tmp/complete.out"; then
-  echo 'completed identity was treated as partial identity' >&2
-  exit 1
-fi
-grep -Fq "GDC_RESET_PARTIAL_IDENTITY='false' bash -s" "$tmp/ssh.log"
+jq -e '.classification == "restore_empty"' <<<"$restore_classification" >/dev/null
+grep -Fq "GDC_RESET_PARTIAL_IDENTITY='true' bash -s" "$tmp/ssh.log"
 
 # A pre-signer failure has all three local identity files, because the joined
 # marker is deliberately written before the signer starts. Its terminal

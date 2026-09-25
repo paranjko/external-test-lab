@@ -216,21 +216,25 @@ the Host afresh instead of demanding manual recovery.
 
 | Stop | Meaning | Way back |
 |---|---|---|
-| `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | restore with `--restore` from the validator archive; `gdc host reset` clears the identity only when the chain reports the participant as unregistered, and the next JOIN then starts as `new` |
-| `identity_conflict` | the Host holds a validator identity that the operator state does not know | restore with `--restore` from the archive of that identity; `gdc host reset` keeps it, because without a cold account it cannot ask the chain about the participant; without that archive there is no supported way back; never adopt it |
+| `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | `gdc host reset <ssh-alias>`, then JOIN again: with the cold mnemonic (new signer key) or with `--restore` (same key) |
+| `identity_conflict` | the Host holds a validator identity that the operator state does not know | `gdc host reset <ssh-alias>`, then JOIN with the cold mnemonic or `--restore`; never adopt it |
 | `unreachable` | no SSH session to the Host | repeat the same command once the Host is reachable |
 | `completed_join_readback_failed` | a repeat of a completed JOIN could not confirm that the Host still runs as that JOIN left it; the Host was not changed | repeat once the Host is reachable and running, with the same `GDC_PORTABLE_*` declaration if one was used |
 | exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
-| `join_reentry_manual_recovery_required` | an earlier JOIN stopped part-way, for example on `lineage_snapshot_unavailable` from the state-sync canary; repeating it changes nothing | `gdc host reset <ssh-alias>`, which keeps the run evidence; then the same command when reset reports the participant unregistered, or `--restore` when it reports a registered participant whose signer had started |
+| `join_reentry_manual_recovery_required` | an earlier JOIN stopped part-way, for example on `lineage_snapshot_unavailable` from the state-sync canary; repeating it changes nothing | `gdc host reset <ssh-alias>`, which keeps the run evidence; then the same command with the cold mnemonic |
 
-A participant registered before its signer ever started has no supported way
-back.
+`gdc host reset` archives the validator identity on the Host under
+`/srv/dai/rejoin/<ssh-alias>/` and removes it, every time. The local record and
+cold account move aside under `state/recovery-partial-<time>/`; mnemonics stay.
+The next JOIN rebinds the participant with the cold mnemonic, or brings the same
+key back with `--restore`.
 
 Recreate a missing archive with `gdc host backup <ssh-alias>` before any
 `gdc host reset`.
 
 `gdc host reset` stops the signer at once. If the Host holds a third or more
-of the voting power the chain halts, so check the validator set first.
+of the voting power the chain halts and a rebind cannot commit, so check the
+validator set first.
 
 For a validated private archive, use the same supported interface:
 
