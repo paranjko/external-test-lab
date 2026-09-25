@@ -25,20 +25,38 @@ pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")"
 files="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100")"
 head_repo="$(jq -r '.head.repo.full_name // empty' <<<"$pr")"
 head_sha="$(jq -r '.head.sha // empty' <<<"$pr")"
+base_sha="$(jq -r '.base.sha // empty' <<<"$pr")"
+[[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$base_sha" =~ ^[0-9a-f]{40}$ ]] || {
+  echo 'PR head or base revision is invalid' >&2
+  exit 2
+}
 same_repository=false
 [[ "$head_repo" == "$GITHUB_REPOSITORY" ]] && same_repository=true
-has_site_change=false
-jq -e 'any(.[][]; .filename | startswith("net-deployment-runbook/04-ops/site/"))' <<<"$files" >/dev/null && has_site_change=true
+tmp="$(mktemp -d)"
+trap 'rm -rf -- "$tmp"' EXIT
+jq -r '.[][] | .filename' <<<"$files" | LC_ALL=C sort -u >"$tmp/changed-files.txt"
+"$(dirname "$0")/plan-site-preview.py" \
+  --files "$tmp/changed-files.txt" \
+  --base "$base_sha" \
+  --head "$head_sha" \
+  --output "$tmp/preview-composition.json" \
+  --repository-root "$(cd "$(dirname "$0")/.." && pwd)" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/edge-node/PublicCaddyfile" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/render-ops.sh"
+preview_mode="$(jq -r '.mode // empty' "$tmp/preview-composition.json")"
+[[ "$preview_mode" =~ ^(none|static|endpoint|combined)$ ]] || { echo 'preview mode is invalid' >&2; exit 2; }
+has_preview=false
+[[ "$preview_mode" != none ]] && has_preview=true
 
 if [[ "$mode" == publish ]]; then
   state="$(jq -r '.state // empty' <<<"$pr")"
   draft="$(jq -r '.draft // false' <<<"$pr")"
   publish=false
-  [[ "$state" == open && "$draft" == false && "$same_repository" == true && "$has_site_change" == true && "$head_sha" == "$run_sha" ]] && publish=true
-  printf 'publish=%s\nnumber=%s\nhead_sha=%s\n' "$publish" "$number" "$head_sha" >>"$GITHUB_OUTPUT"
+  [[ "$state" == open && "$draft" == false && "$same_repository" == true && "$has_preview" == true && "$head_sha" == "$run_sha" ]] && publish=true
+  printf 'publish=%s\nnumber=%s\nhead_sha=%s\nbase_sha=%s\n' "$publish" "$number" "$head_sha" "$base_sha" >>"$GITHUB_OUTPUT"
 else
   draft="$(jq -r '.draft // false' <<<"$pr")"
   remove=false
-  [[ "$same_repository" == true && ( "$action" == closed || "$draft" == true || "$has_site_change" == false ) ]] && remove=true
-  printf 'remove=%s\nnumber=%s\n' "$remove" "$number" >>"$GITHUB_OUTPUT"
+  [[ "$same_repository" == true && ( "$action" == closed || "$draft" == true || "$has_preview" == false ) ]] && remove=true
+  printf 'remove=%s\nnumber=%s\nhead_sha=%s\n' "$remove" "$number" "$head_sha" >>"$GITHUB_OUTPUT"
 fi

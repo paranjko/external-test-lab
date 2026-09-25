@@ -14,6 +14,9 @@ operator diagnostic.
 `rg` is deliberately not a runbook dependency. Shell code must use `grep`
 when the portable baseline is sufficient.
 
+`flock` is required by the preview lifecycle controller and is declared in the
+CI command baseline.
+
 Before adding an external executable to runbook shell code:
 
 1. Check both manifests and the `runbook-contracts` workflow job.

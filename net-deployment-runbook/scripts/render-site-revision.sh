@@ -7,11 +7,12 @@ OUTPUT="${2:-}"
 [[ -n "$OUTPUT" ]] || { echo "usage: $0 [source-index.html] <output-index.html>" >&2; exit 2; }
 [[ -f "$SOURCE" ]] || { echo "site source does not exist: $SOURCE" >&2; exit 2; }
 
-REPOSITORY="$(git -C "$ROOT" rev-parse --show-toplevel)"
-SITE_PATH="$(realpath --relative-to="$REPOSITORY" "$ROOT/04-ops/site")"
 if [[ -n "${SITE_REVISION:-}" ]]; then
   COMMIT="$SITE_REVISION"
+  SITE_PATH="net-deployment-runbook/04-ops/site"
 else
+  REPOSITORY="$(git -C "$ROOT" rev-parse --show-toplevel)"
+  SITE_PATH="$(realpath --relative-to="$REPOSITORY" "$ROOT/04-ops/site")"
   COMMIT="$(git -C "$REPOSITORY" log -n 1 --pretty=format:%H -- "$SITE_PATH")"
 fi
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "cannot determine the site source revision" >&2; exit 1; }

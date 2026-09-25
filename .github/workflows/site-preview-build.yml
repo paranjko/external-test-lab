@@ -5,19 +5,14 @@ on:
     types: [opened, reopened, ready_for_review, synchronize]
     paths:
       - 'net-deployment-runbook/04-ops/site/**'
+      - 'net-deployment-runbook/04-ops/render-ops.sh'
+      - 'net-deployment-runbook/04-ops/edge-node/PublicCaddyfile'
       - 'net-deployment-runbook/profiles/devnet-hadware.json'
-      - 'net-deployment-runbook/scripts/verify-devnet-hardware-profile.mjs'
-      - 'net-deployment-runbook/scripts/render-site-build-info.sh'
-      - 'net-deployment-runbook/scripts/render-site-revision.sh'
-      - 'net-deployment-runbook/scripts/install-site-vendor.sh'
-      - 'net-deployment-runbook/scripts/chrome-devtools.mjs'
-      - 'net-deployment-runbook/scripts/capture-homepage-viewport.mjs'
-      - 'net-deployment-runbook/scripts/test-chrome-devtools.mjs'
-      - 'net-deployment-runbook/scripts/test-gateway-site-state.js'
-      - 'net-deployment-runbook/scripts/test-validator-map-fixture.mjs'
+      - 'net-deployment-runbook/scripts/**'
       - 'net-deployment-runbook/package.json'
       - 'net-deployment-runbook/package-lock.json'
       - 'net-deployment-runbook/Makefile'
+      - 'ops/preview/**'
       - '.github/workflows/site-preview-build.yml'
       - '.github/workflows/site-preview-publish.yml'
 
@@ -40,30 +35,43 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v5.0.0
         with:
           node-version: 22
 
-      - name: Build and validate browser assets
-        run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths
+      - name: Validate the untrusted preview source without deployment credentials
+        run: >-
+          make -C net-deployment-runbook
+          test-gateway-site-state
+          test-site-release-paths
+          test-site-preview-context
+          test-preview-status-renderer
+          test-preview-frontend-builder
 
       - name: Run validator-map CDP regression
         run: >-
           make -C net-deployment-runbook test-validator-map
           map_evidence_dir="$RUNNER_TEMP/validator-map-regressions"
 
-      - name: Prepare the static site artifact
-        run: >-
-          make -C net-deployment-runbook prepare-static-site
-          site_release_dir="$RUNNER_TEMP/gonka-dev-site-preview"
-          site_revision="${{ github.event.pull_request.head.sha }}"
+      - name: Build the source-bound preview artifact without deployment credentials
+        env:
+          PREVIEW_SOURCE_REPOSITORY: ${{ github.workspace }}
+          PREVIEW_RELEASE_DIR: ${{ runner.temp }}/gonka-dev-site-preview
+          PREVIEW_BACKEND_DIR: ${{ runner.temp }}/gonka-dev-site-preview-backend
+          PREVIEW_INVENTORY: ${{ runner.temp }}/gonka-dev-site-preview-inventory.env
+          PREVIEW_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
+          PREVIEW_REVISION: ${{ github.event.pull_request.head.sha }}
+          PREVIEW_BACKEND_IMAGE: gdc-preview-backend-ci:${{ github.event.pull_request.head.sha }}
+        run: make -C net-deployment-runbook prepare-isolated-preview-ci-artifact
 
-      - name: Upload the static site artifact
+      - name: Upload the source-bound preview artifact
         uses: actions/upload-artifact@v7.0.1
         with:
           name: gonka-dev-site-preview
           path: ${{ runner.temp }}/gonka-dev-site-preview
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 2

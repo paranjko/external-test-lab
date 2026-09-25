@@ -528,6 +528,9 @@ See the role guides for required input, then run:
   ./gdc.sh ops faucet
   ./gdc.sh ops monitoring
   ./gdc.sh ops site
+  ./gdc.sh ops preview bootstrap
+  ./gdc.sh ops preview provision <PREVIEW_SSH_PUBLIC_KEY_FILE>
+  ./gdc.sh ops preview verify
   ./gdc.sh ops explorer
   ./gdc.sh ops consumer telegram apply
   ./gdc.sh ops consumer telegram status
@@ -1140,6 +1143,14 @@ case "$COMMAND" in
       load_project
       topology_contains_node "$2" || { echo "ops edge-node expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
       run_phase "ops-edge-node-$2" "$ROOT/scripts/phase-ops.sh" "$1" "$2"
+    elif [[ "$1" == preview ]]; then
+      [[ $# -ge 2 && $# -le 3 && "$2" =~ ^(bootstrap|provision|verify)$ ]] || { usage; exit 2; }
+      if [[ "$2" == provision ]]; then
+        [[ $# -eq 3 && -r "$3" && ! -L "$3" ]] || { echo 'ops preview provision requires one readable non-symlink public-key file' >&2; exit 2; }
+      else
+        [[ $# -eq 2 ]] || { usage; exit 2; }
+      fi
+      run_phase "ops-preview-$2" "$ROOT/scripts/phase-preview.sh" "$2" "${3:-}"
     else
       [[ $# -eq 1 && "$1" =~ ^(gateway|faucet|monitoring|site|explorer|edge)$ ]] || { usage; exit 2; }
       run_phase "ops-$1" "$ROOT/scripts/phase-ops.sh" "$1"

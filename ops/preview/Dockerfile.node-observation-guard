@@ -1,0 +1,7 @@
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
+
+COPY node-observation-guard.mjs /opt/gdc-preview/node-observation-guard.mjs
+
+USER node
+EXPOSE 8090
+CMD ["node", "/opt/gdc-preview/node-observation-guard.mjs"]

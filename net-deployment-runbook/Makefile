@@ -1,6 +1,6 @@
 SHELLCHECK_VERSION ?= v0.11.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:$(SHELLCHECK_VERSION)
-SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './vendor/*' -print | LC_ALL=C sort)
+SHELL_SCRIPTS := $(shell find . -path './vendor' -prune -o -path './.data' -prune -o -type f -name '*.sh' -print | LC_ALL=C sort)
 DEVCONTAINER_CLI ?= npx --yes --loglevel=silent @devcontainers/cli
 # Docker Desktop for Mac cannot bind-mount the launchd ssh-agent socket that
 # $SSH_AUTH_SOCK points to; it exposes the host agent at a fixed path inside
@@ -26,9 +26,14 @@ map_evidence_dir ?= $(CURDIR)/.data/validator-map-regressions
 chrome_bin ?= google-chrome
 preview_number ?=
 preview_revision ?=
+preview_backend_image ?=
+preview_source_repository ?= $(CURDIR)/..
+preview_inventory ?= $(CURDIR)/../ops/preview/status-renderer-inventory.env
+preview_backend_dir ?= $(site_release_dir)-backend
+preview_base_revision ?=
 site_origin ?= https://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test test-command-dependency-contract edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
+.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-preview-platform test-preview-isolation test-preview-lifecycle test-preview-provision test-preview-status-renderer test-preview-frontend-builder test-isolated-preview-ci test-isolated-preview-ci-artifact test-record-site-preview-deployment test-verify-isolated-site-preview-live test-isolated-preview-runtime-config test-isolated-preview-publish test-prepare-isolated-preview-composition test-prepare-isolated-site-preview-artifact test-prepare-public-preview-inventory test-node-observation-guard test-edge-install-ownership prepare-static-site prepare-site-preview-artifact prepare-isolated-site-preview-artifact prepare-isolated-preview-ci prepare-isolated-preview-ci-artifact write-isolated-preview-deploy-env publish-site-release publish-site-preview publish-isolated-site-preview publish-isolated-preview-ci rollback-site-preview remove-site-release remove-isolated-site-preview verify-site-release verify-site-preview-artifact verify-isolated-preview-ci-artifact verify-isolated-site-preview-live verify-site-preview-live verify-site-preview-endpoints smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test test-command-dependency-contract edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -110,11 +115,41 @@ prepare-static-site: site-vendor site-host-requirements-check
 	@test -s "$(site_release_dir)/index.html"
 	@test ! -e "$(site_release_dir)/config.js"
 
+prepare-site-preview-artifact:
+	@./scripts/prepare-site-preview-artifact.sh
+
+prepare-isolated-site-preview-artifact:
+	@./scripts/prepare-isolated-site-preview-artifact.sh "$(preview_source_repository)" "$(site_release_dir)" "$(preview_base_revision)" "$(site_revision)" "$(preview_inventory)" "$(preview_number)" "$(preview_backend_dir)" "$(preview_backend_image)"
+
+prepare-isolated-preview-ci:
+	@./scripts/prepare-isolated-preview-ci.sh
+
+prepare-isolated-preview-ci-artifact:
+	@./scripts/prepare-isolated-preview-ci-artifact.sh
+
+write-isolated-preview-deploy-env:
+	@./scripts/write-isolated-preview-deploy-env.sh
+
+publish-isolated-preview-ci:
+	@./scripts/publish-isolated-preview-ci.sh
+
 publish-site-release:
 	@./scripts/site-release.sh publish "$(site_release_dir)" "$(site_publish_prefix)" "$(deploy_host)" "$(deploy_user)"
 
+publish-site-preview:
+	@GDC_SITE_PREVIEW_ENV_FILE="$${GDC_SITE_PREVIEW_ENV_FILE:-}" ./scripts/site-release.sh publish-preview "$(site_release_dir)" "$(site_publish_prefix)" "$(deploy_host)" "$(deploy_user)"
+
+publish-isolated-site-preview:
+	@GDC_SITE_PREVIEW_ENV_FILE="$${GDC_SITE_PREVIEW_ENV_FILE:-}" ./scripts/isolated-preview-publish.sh publish "$(site_release_dir)" "$(preview_number)" "$(preview_revision)" "$(preview_backend_image)"
+
+rollback-site-preview:
+	@GDC_SITE_PREVIEW_ENV_FILE="$${GDC_SITE_PREVIEW_ENV_FILE:-}" ./scripts/site-release.sh rollback-preview '' "$(site_publish_prefix)" "$(deploy_host)" "$(deploy_user)"
+
 remove-site-release:
 	@./scripts/site-release.sh remove '' "$(site_publish_prefix)" "$(deploy_host)" "$(deploy_user)"
+
+remove-isolated-site-preview:
+	@GDC_SITE_PREVIEW_ENV_FILE="$${GDC_SITE_PREVIEW_ENV_FILE:-}" ./scripts/isolated-preview-publish.sh remove '' "$(preview_number)" "$(preview_revision)"
 
 test-site-release-paths:
 	@./scripts/test-site-release-paths.sh
@@ -131,6 +166,64 @@ test-site-preview-context:
 test-site-preview-live:
 	@bash ./scripts/test-site-preview-live.sh
 
+test-site-preview-plan:
+	@python3 ./scripts/test-plan-site-preview.py
+
+test-site-preview-generation:
+	@./scripts/test-site-preview-generation.sh
+
+test-site-preview-endpoints:
+	@./scripts/test-site-preview-endpoints.sh
+
+test-site-preview-platform: site-vendor
+	@$(MAKE) test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher
+	@./scripts/test-public-edge-static-site.sh
+
+test-preview-isolation:
+	@./scripts/test-preview-isolation.sh
+
+test-preview-lifecycle:
+	@./scripts/test-preview-lifecycle.sh
+
+test-preview-provision:
+	@./scripts/test-preview-provision.sh
+
+test-preview-status-renderer:
+	@./scripts/test-preview-status-renderer.sh
+
+test-preview-frontend-builder:
+	@./scripts/test-preview-frontend-builder.sh
+
+test-isolated-preview-ci:
+	@./scripts/test-isolated-preview-ci.sh
+
+test-isolated-preview-ci-artifact:
+	@./scripts/test-isolated-preview-ci-artifact.sh
+
+test-record-site-preview-deployment:
+	@./scripts/test-record-site-preview-deployment.sh
+
+test-verify-isolated-site-preview-live:
+	@./scripts/test-verify-isolated-site-preview-live.sh
+
+test-prepare-public-preview-inventory:
+	@./scripts/test-prepare-public-preview-inventory.sh
+
+test-node-observation-guard:
+	@./scripts/test-node-observation-guard.sh
+
+test-isolated-preview-runtime-config:
+	@./scripts/test-isolated-preview-runtime-config.sh
+
+test-prepare-isolated-site-preview-artifact:
+	@./scripts/test-prepare-isolated-site-preview-artifact.sh
+
+test-isolated-preview-publish:
+	@./scripts/test-isolated-preview-publish.sh
+
+test-prepare-isolated-preview-composition:
+	@./scripts/test-prepare-isolated-preview-composition.sh
+
 test-edge-install-ownership:
 	@./scripts/test-edge-install-ownership.sh
 
@@ -141,8 +234,17 @@ verify-site-release:
 verify-site-preview-artifact:
 	@./scripts/verify-site-preview-artifact.sh "$(site_release_dir)" "$(preview_revision)"
 
+verify-isolated-preview-ci-artifact:
+	@./scripts/verify-isolated-preview-ci-artifact.sh
+
+verify-isolated-site-preview-live:
+	@./scripts/verify-isolated-site-preview-live.sh
+
 verify-site-preview-live:
 	@./scripts/verify-site-preview-live.sh "$(site_release_dir)" "$(site_publish_prefix)" "$(preview_revision)" "$(site_origin)"
+
+verify-site-preview-endpoints:
+	@./scripts/verify-site-preview-endpoints.sh "$(site_release_dir)" "$(site_publish_prefix)" "$(site_origin)"
 
 smoke-site-preview:
 	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" node ./scripts/capture-homepage-viewport.mjs "$(site_origin)/$(site_publish_prefix)/" 1280 900 "$(site_release_dir).png" 0
@@ -226,7 +328,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-recovery-readiness-predicate.sh
 	@./scripts/test-capture-poc-snapshot.sh
 	@$(MAKE) test-gateway-site-state
-	@$(MAKE) test-site-release-paths test-site-release-verifier test-site-publisher
+	@$(MAKE) test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-generation test-site-preview-platform
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
 	@./scripts/test-public-traffic-readiness.sh
@@ -316,7 +418,7 @@ test-command-dependency-contract:
 verify-candidate-workflow:
 	@./scripts/test-candidate-workflow.sh
 
-edge-integration:
+edge-integration: site-vendor
 	@./scripts/test-public-edge-static-site.sh
 
 # Bats remains test-only. These two targets exercise the JOIN contracts in a

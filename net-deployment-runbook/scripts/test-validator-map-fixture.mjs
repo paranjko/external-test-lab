@@ -520,6 +520,7 @@ try {
     chrome: process.env.CHROME_BIN || "google-chrome",
     profile,
     context: "validator-map fixture",
+    readyTimeoutMilliseconds: 60_000,
   });
   browser = chromeSession.browser;
   socket = new WebSocket(

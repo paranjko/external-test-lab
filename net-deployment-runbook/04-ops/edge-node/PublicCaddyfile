@@ -120,6 +120,18 @@ www.{$SITE_HOST} {
   redir https://{$SITE_HOST}{uri} permanent
 }
 
+# This is the only production-edge integration point for isolated previews.
+# The rootless preview Caddy owns per-PR routes and runs on the same Host's
+# loopback interface; PR containers cannot alter this public Caddy instance.
+preview.{$SITE_HOST} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:18090
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+  }
+}
+
 {$SITE_HOST} {
   encode zstd gzip
   # Bootstrap is a public consumer contract on the canonical site origin as
@@ -160,6 +172,34 @@ www.{$SITE_HOST} {
   handle /status/gateway/v1/admission-status {
     rewrite * /v1/admission-status
     reverse_proxy 127.0.0.1:18083
+  }
+  # A preview endpoint must exercise the same status route as production.
+  # Keep this shared route ahead of the static preview file handler. Admission
+  # is intentionally separate because production serves it from loopback.
+  @preview_admission path_regexp preview_admission ^/preview/[1-9][0-9]*/status/gateway/v1/admission-status$
+  handle @preview_admission {
+    rewrite * /v1/admission-status
+    reverse_proxy 127.0.0.1:18083
+  }
+  # Telegram consumer health is another non-gateway status exception. Preserve
+  # the production upstream and rewritten path instead of letting the generic
+  # preview proxy send it to the gateway.
+  @preview_telegram_consumer path_regexp preview_telegram_consumer ^/preview/[1-9][0-9]*/status/telegram-consumer$
+  handle @preview_telegram_consumer {
+    rewrite * /ops-telegram-consumer-health
+    reverse_proxy https://{$TELEGRAM_BOT_PUBLIC_HOST} {
+      transport http {
+        tls_server_name {$TELEGRAM_BOT_PUBLIC_HOST}
+      }
+      header_up Host {$TELEGRAM_BOT_PUBLIC_HOST}
+    }
+  }
+  @preview_status path_regexp preview_status ^/preview/[1-9][0-9]*/status/(.+)$
+  handle @preview_status {
+    rewrite * /status/{re.preview_status.1}
+    reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {
+      header_up Host {$GATEWAY_PUBLIC_HOST}
+    }
   }
   @status_data {
     path /status/*
