@@ -41,7 +41,7 @@ case "$VERSION_ID" in 22.04|24.04|26.04) ;; *) echo "Supported: Ubuntu 22.04, 24
 
 GPU_ROLE=false
 [[ "$ROLE" == network-gpu || "$ROLE" == ml-only ]] && GPU_ROLE=true
-NVIDIA_DRIVER_VERSION=""; NVIDIA_DRIVER_MAJOR=""; NVIDIA_DRIVER_CANDIDATE=""; NVIDIA_UTILS_CANDIDATE=""
+NVIDIA_DRIVER_VERSION=""; NVIDIA_DRIVER_MAJOR=""; NVIDIA_DRIVER_CANDIDATE=""
 AMD_ACCELERATOR=false; AMD_NEEDS_PROVISIONING=false
 if [[ "$GPU_ROLE" == true ]]; then
   accelerator_info="$("$(dirname "$0")/inspect-accelerator.sh")" || exit 1
@@ -87,9 +87,6 @@ if [[ "$GPU_ROLE" == true ]]; then
     if ! [[ "$NVIDIA_DRIVER_MAJOR" =~ ^[0-9]+$ ]] || (( NVIDIA_DRIVER_MAJOR < MIN_DRIVER )); then
       NVIDIA_DRIVER_CANDIDATE="$("$(dirname "$0")/select-nvidia-driver.sh" "$MIN_DRIVER")"
       [[ -n "$NVIDIA_DRIVER_CANDIDATE" ]] || exit 1
-      candidate_major="${NVIDIA_DRIVER_CANDIDATE#nvidia-driver-}"
-      candidate_major="${candidate_major%%-*}"
-      NVIDIA_UTILS_CANDIDATE="nvidia-utils-${candidate_major}"
     fi
   fi
 fi
@@ -263,17 +260,13 @@ elif [[ "$GPU_ROLE" == true && "$AMD_ACCELERATOR" == false ]]; then
         dkms remove -m nvidia -v "$dkms_version" --all
       fi
     done < <((dkms status -m nvidia 2>/dev/null || true) | sed -n 's#^nvidia/\([^,]*\),.*#\1#p' | sort -u)
-    ensure_packages "$NVIDIA_DRIVER_CANDIDATE" "$NVIDIA_UTILS_CANDIDATE"
+    ensure_packages "$NVIDIA_DRIVER_CANDIDATE"
     ensure_nvidia_modules_for_installed_kernels
     depmod -a
     update-initramfs -u
     DRIVER_CHANGED=true
   fi
-  # A usable driver was established through `nvidia-smi`, which is provided by
-  # its installed matching nvidia-utils package. A new driver installation
-  # above installs its matching non-server utility explicitly. Do not infer a
-  # `-server` package from the running version: it is not available for every
-  # Ubuntu driver series.
+  # The selected driver metapackage installs its matching utilities.
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
     | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
