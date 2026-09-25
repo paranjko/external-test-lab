@@ -812,7 +812,7 @@ unset GDC_HOME
 # path for hashing and never invokes the binary.
 guard_scan() {
   # $1=pattern, remaining args=files/text to scan (files, or "-" for stdin)
-  if command -v rg >/dev/null 2>&1; then rg -n "$1" "${@:2}"; else grep -En "$1" "${@:2}"; fi
+  grep -En "$1" "${@:2}"
 }
 catalog_outside="$TMP/guard-outside.sh"
 catalog_inside="$TMP/guard-inside.sh"

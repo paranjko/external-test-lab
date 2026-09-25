@@ -1,0 +1,21 @@
+# Optional commands are detected before use and are not prerequisites of
+# `make test`. A command may move here only when the implementation has a
+# complete supported fallback or a clear fail-closed operator diagnostic.
+amdgpu-install
+apt-get
+findmnt
+flow
+flow-remove-types
+gh
+go
+google-chrome
+gpg
+gtimeout
+nvidia-smi
+rsync
+scp
+shellcheck
+sqlite3
+ssh
+sudo
+ufw
