@@ -8,6 +8,30 @@ die() {
   exit 2
 }
 
+acquire_lock() {
+  local lock_dir="${1}.d" pid entries
+  while ! mkdir -m 0700 -- "$lock_dir" 2>/dev/null; do
+    [[ -d "$lock_dir" && ! -L "$lock_dir" && -f "$lock_dir/pid" && ! -L "$lock_dir/pid" ]] \
+      || die 'validator identity lock is unsafe'
+    pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null; then
+      die 'another validator identity operation is in progress'
+    fi
+    entries="$(find "$lock_dir" -mindepth 1 -maxdepth 1 -printf . 2>/dev/null || true)"
+    [[ "$entries" == . ]] || die 'validator identity lock is unsafe'
+    rm -f -- "$lock_dir/pid"; rmdir -- "$lock_dir" 2>/dev/null || continue
+  done
+  printf '%s\n' "$$" >"$lock_dir/pid" || die 'could not initialize validator identity lock'
+  GDC_VALIDATOR_LOCK_DIR="$lock_dir"
+}
+
+release_lock() {
+  local lock_dir="${GDC_VALIDATOR_LOCK_DIR:-}"
+  [[ -n "$lock_dir" && -f "$lock_dir/pid" && ! -L "$lock_dir/pid" ]] || return 0
+  [[ "$(cat "$lock_dir/pid" 2>/dev/null || true)" == "$$" ]] || return 0
+  rm -f -- "$lock_dir/pid"; rmdir -- "$lock_dir" 2>/dev/null || true
+}
+
 validate_paths() {
   local state="$1" candidate="$2" deployment_env="$3"
   if [[ "${GDC_VALIDATOR_IDENTITY_TEST_MODE:-false}" == true ]]; then
@@ -232,17 +256,14 @@ remote_restore() {
   validate_consensus_key "$expected_consensus_key"
   [[ "$expected_bundle_sha256" =~ ^[0-9a-f]{64}$ ]] \
     || die 'validator identity bundle digest is invalid'
-  command -v flock >/dev/null 2>&1 \
-    || die 'flock is required to protect validator identity restore'
   if [[ ! -e "$state" ]]; then
     install -d -m 0755 "$state"
   fi
   [[ -d "$state" && ! -L "$state" ]] \
     || die 'validator identity root is invalid'
   lock="$state/.gdc-validator-identity.lock"
-  exec 9>"$lock"
-  flock -n 9 || die 'another validator identity operation is in progress'
-  trap 'rm -rf -- "$candidate"; [[ -z "${transaction:-}" ]] || rm -rf -- "$transaction"' EXIT
+  acquire_lock "$lock"
+  trap 'rm -rf -- "$candidate"; [[ -z "${transaction:-}" ]] || rm -rf -- "$transaction"; release_lock' EXIT
 
   # Close the unprivileged upload race before inspecting any descendant.
   [[ -d "$candidate" && ! -L "$candidate" ]] \

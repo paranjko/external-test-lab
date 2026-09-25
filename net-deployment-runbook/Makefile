@@ -203,7 +203,6 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@bash ./scripts/test-ml-qualification-failure.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
-	@./scripts/test-single-validator-layout.sh
 	@./scripts/test-host-identity-layout-probe.sh
 	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh
@@ -283,6 +282,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-migrate-v1-validator-identity.sh
 	@./scripts/test-verify-canonical-join-state.sh
 	@./scripts/test-host-join-resume-canonical.sh
+	@./scripts/test-recover-incident-flat-layout.sh
 	@./scripts/test-host-join-resume-signer-readback.sh
 	@./scripts/test-phase-ml-attach-completion.sh
 	@./scripts/test-resolve-reset-dai-backup.sh

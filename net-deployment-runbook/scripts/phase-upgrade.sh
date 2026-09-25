@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/lib-lock.sh"
 load_project
 [[ "$GDC_RELEASE_PROFILE" == v2026.08.06 || -n "${UPGRADE_FROM_PROFILE:-}" ]] || die 'upgrade target must be an upgrade-capable release profile'
 upgrade_source_profile="${UPGRADE_FROM_PROFILE:-v2026.07.23}"
@@ -56,8 +57,8 @@ baseline_pass_bundle="$(latest_baseline_pass_bundle "$upgrade_source_profile")"
   || die 'accepted baseline PASS has no complete epoch-group evidence'
 record_phase_profile upgrade
 
-exec 9>"$STATE/upgrade.lock"
-flock -n 9 || die 'another upgrade invocation is already active; inspect its run log before resuming'
+gdc_lock_acquire "$STATE/upgrade.lock" 0 'another upgrade invocation is already active; inspect its run log before resuming' || die 'another upgrade invocation is already active; inspect its run log before resuming'
+upgrade_lock_dir="$GDC_LOCK_DIR"
 
 RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)-upgrade"
 mkdir -p "$RUN"
@@ -69,6 +70,7 @@ on_upgrade_exit() {
     write_upgrade_blocked_verdict "$RUN/verdict.md" "$upgrade_stage" none none "$rc"
     printf 'BLOCKED upgrade evidence: %s (stage=%s status=%s)\n' "$RUN" "$upgrade_stage" "$rc" >&2
   fi
+  gdc_lock_release "${upgrade_lock_dir:-}"
 }
 trap on_upgrade_exit EXIT
 

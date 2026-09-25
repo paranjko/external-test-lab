@@ -26,6 +26,7 @@ fi
 
 install -d "$tmp/controller" "$tmp/bin"
 install -m 0755 "$ROOT/04-ops/gateway-reserve-controller.sh" "$tmp/controller/gateway-reserve-controller.sh"
+install -m 0644 "$ROOT/scripts/lib-lock.sh" "$tmp/controller/lib-lock.sh"
 install -m 0755 "$POLICY" "$tmp/controller/gateway-reserve-policy.sh"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash

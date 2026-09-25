@@ -2,13 +2,19 @@
 # Keep the gateway reserve above a calculated horizon.  The signer is a
 # separate loopback service; this process never receives a keyring or mnemonic.
 set -Eeuo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCK_LIBRARY="$HERE/lib-lock.sh"
+[[ -r "$LOCK_LIBRARY" ]] || LOCK_LIBRARY="$HERE/../scripts/lib-lock.sh"
+# shellcheck disable=SC1090 # The installed and source layouts have different parents.
+source "$LOCK_LIBRARY"
 
 gateway_env="${GDC_GATEWAY_ENV:-/srv/dai/ops/gateway.env}"
 status_file="${GDC_GATEWAY_RESERVE_FILE:-/srv/dai/ops/status/gateway-reserve.json}"
 lock_file="${GDC_GATEWAY_RESERVE_LOCK:-$(dirname "$status_file")/gateway-reserve.lock}"
 mkdir -p "$(dirname "$status_file")"
-exec 9>"$lock_file"
-flock -n 9 || exit 0
+gdc_lock_acquire "$lock_file" 0 'gateway reserve control is already running' || exit 0
+lock_dir="$GDC_LOCK_DIR"
+trap 'gdc_lock_release "${lock_dir:-}"' EXIT
 
 value() { awk -v key="$1" 'index($0,key "=")==1 { if (++n > 1) exit 2; v=substr($0,length(key)+2) } END {if(n==1)print v;else exit 1}' "$gateway_env"; }
 write_state() {

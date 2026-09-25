@@ -5,7 +5,7 @@ source "$ROOT/scripts/lib.sh"
 
 ! grep -F 'rm -rf "$STATE" "$GDC_HOME/accounts" "$GDC_HOME/genesis" "$GDC_HOME/runs"' "$ROOT/scripts/phase-reset.sh"
 grep -Fq '"$GDC_HOME/mnemonics"' "$ROOT/scripts/phase-reset.sh"
-grep -Fq '! -name .lifecycle.lock -exec rm -rf -- {} +' "$ROOT/scripts/phase-reset.sh"
+grep -Fq '! -name .lifecycle.lock -a ! -name .lifecycle.lock.d -exec rm -rf -- {} +' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'Prior run evidence: preserved under $GDC_HOME/runs' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'GDC_RESET_MANAGED_ALIASES' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'reset --hosts requires a comma-separated SSH alias list' "$ROOT/scripts/phase-reset.sh"

@@ -259,6 +259,7 @@ grep -Fq '"workspaceMount": "type=tmpfs,target=/tmp/empty-workspace"' "$cleanroo
 grep -Fq 'target=/home/operator/.gdc-data,type=bind' "$cleanroom_config"
 grep -Fq 'exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)' "$ROOT/Makefile"
 grep -Fq 'lock_file="$STATE/.lifecycle.lock"' "$ROOT/gdc.sh"
+grep -Fq '.lifecycle.lock.d' "$ROOT/scripts/phase-reset.sh"
 ! grep -Fq '.gdc.lock' "$ROOT/gdc.sh"
 grep -Fq 'No resource found to remove for project' "$ROOT/scripts/phase-node.sh"
 grep -Fq 'ERROR failed to remove managed Compose deployment directory=%s exit=%s' "$ROOT/scripts/phase-node.sh"

@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091 # ROOT is resolved above.
 source "$ROOT/scripts/lib.sh"
+# shellcheck disable=SC1091 # ROOT is resolved above.
+source "$ROOT/scripts/lib-lock.sh"
 JOIN_PROFILE=''
 ALLOW_EXPIRED=false
 while (($#)); do
@@ -105,12 +107,13 @@ download_timeout_seconds="${GDC_INFERENCED_CLI_TIMEOUT_SECONDS:-600}"
 lock_root="${operator_root:-$bin_dir}/bin/.locks"
 [[ ! -L "$(dirname "$lock_root")" && ! -L "$lock_root" ]] || die 'shared inferenced CLI lock path must not be a symlink'
 install -d -m 0700 "$lock_root"
-command -v flock >/dev/null 2>&1 || die 'flock is required for the shared inferenced CLI cache'
-[[ ! -L "$lock_root/inferenced-$GONKA_RELEASE.lock" ]] || die 'shared inferenced CLI lock must not be a symlink'
-exec 9>"$lock_root/inferenced-$GONKA_RELEASE.lock"
+[[ ! -L "$lock_root/inferenced-$GONKA_RELEASE.lock.d" ]] || die 'shared inferenced CLI lock must not be a symlink'
 lock_timeout="${GDC_INFERENCED_CLI_LOCK_TIMEOUT_SECONDS:-$((download_timeout_seconds * 4 + 60))}"
 [[ "$lock_timeout" =~ ^[1-9][0-9]*$ && "$lock_timeout" -le 3600 ]] || die 'invalid inferenced CLI lock timeout'
-flock -w "$lock_timeout" 9 || die "timed out waiting for inferenced CLI install lock for $GONKA_RELEASE"
+gdc_lock_acquire "$lock_root/inferenced-$GONKA_RELEASE.lock" "$lock_timeout" \
+  "timed out waiting for inferenced CLI install lock for $GONKA_RELEASE" || die "timed out waiting for inferenced CLI install lock for $GONKA_RELEASE"
+lock_dir="$GDC_LOCK_DIR"
+trap 'gdc_lock_release "${lock_dir:-}"' EXIT
 
 cached_binary_valid() {
   local recorded_archive recorded_platform recorded_binary actual_binary
@@ -195,7 +198,7 @@ else
 fi
 tmp="$(mktemp -d)"
 publish_dir=''
-trap 'rm -rf "$tmp"; if [[ -n "$publish_dir" && -d "$publish_dir" ]]; then rm -rf "$publish_dir"; fi' EXIT
+trap 'rm -rf "$tmp"; if [[ -n "$publish_dir" && -d "$publish_dir" ]]; then rm -rf "$publish_dir"; fi; gdc_lock_release "${lock_dir:-}"' EXIT
 archive="$tmp/inferenced.zip"
 if [[ -n "$JOIN_PROFILE" ]]; then
   cache_dir="$operator_root/artifacts/inferenced/$expected_sha"

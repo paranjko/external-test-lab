@@ -9,6 +9,7 @@ cp "$ROOT/scripts/ensure-inferenced-cli.sh" "$tmp/runbook/scripts/ensure-inferen
 cp "$ROOT/scripts/inferenced.sh" "$tmp/runbook/scripts/inferenced.sh"
 
 cp "$ROOT/scripts/lib.sh" "$tmp/runbook/scripts/lib.sh"
+cp "$ROOT/scripts/lib-lock.sh" "$tmp/runbook/scripts/lib-lock.sh"
 (
   GDC_HOME="$tmp/actual-operator-root"
   # shellcheck source=/dev/null
@@ -158,15 +159,33 @@ cp "$tmp/artifact.env.backup" "$tmp/gdc-home/bin/9.9.9/artifact.env"
 
 # A held install lock respects a small configured bound; the production
 # default is derived from the full curl retry budget rather than this value.
-exec 9>"$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock"
-flock 9
+mkdir -m 0700 "$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock.d"
+printf '%s\n' "$$" >"$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock.d/pid"
 if GDC_HOME="$tmp/gdc-home" GDC_INFERENCED_CLI_LOCK_TIMEOUT_SECONDS=1 GDC_INFERENCED_CLI_QUIET=true \
   "$tmp/runbook/scripts/ensure-inferenced-cli.sh" --join-profile "$second_profile" >"$tmp/lock.out" 2>"$tmp/lock.err"; then
   echo 'bounded install lock unexpectedly succeeded while held' >&2; exit 1
 fi
 grep -Fq 'timed out waiting for inferenced CLI install lock' "$tmp/lock.err"
-flock -u 9
-exec 9>&-
+rm -f "$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock.d/pid"
+rmdir "$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock.d"
+
+# A parallel installer can observe the directory after mkdir(2), but before
+# its owner writes pid. This short interval is initialization, not corruption.
+mkdir -m 0700 "$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock.d"
+(
+  sleep 1
+  printf '%s\n' "$$" >"$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock.d/pid"
+  sleep 1
+  rm -f "$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock.d/pid"
+  rmdir "$tmp/gdc-home/bin/.locks/inferenced-9.9.9.lock.d"
+) &
+initializing_lock_pid=$!
+GDC_HOME="$tmp/gdc-home" GDC_INFERENCED_CLI_LOCK_TIMEOUT_SECONDS=4 GDC_INFERENCED_CLI_QUIET=true \
+  "$tmp/runbook/scripts/ensure-inferenced-cli.sh" --join-profile "$second_profile" \
+  >"$tmp/initializing-lock.out" 2>"$tmp/initializing-lock.err"
+wait "$initializing_lock_pid"
+[[ ! -s "$tmp/initializing-lock.out" ]]
+! grep -Fq 'lock directory is incomplete or unsafe' "$tmp/initializing-lock.err"
 
 # A symlinked final version directory is refused without modifying its target.
 symlink_root="$tmp/symlink-root"

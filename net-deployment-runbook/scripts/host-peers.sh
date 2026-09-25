@@ -23,10 +23,11 @@ if [[ "${1:-}" == --remote ]]; then
   container="${node_ids[0]}"
   deploy="$(docker inspect "$container" | jq -er '.[0].Config.Labels["com.docker.compose.project.working_dir"]')"
   [[ "$deploy" == /srv/dai/deploy && -f "$deploy/compose.yaml" && -f "$deploy/.env" ]] || die 'invalid managed deployment'
-  exec 8>"$deploy/.gdc-peers.lock"
-  flock -n 8 || die 'another peer update is running'
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-lock.sh"
+  gdc_lock_acquire "$deploy/.gdc-peers.lock" 0 'another peer update is running' || die 'another peer update is running'
+  peers_lock_dir="$GDC_LOCK_DIR"
   next="$(mktemp "$deploy/.peers.XXXXXX.json")"
-  trap 'rm -f -- "$next"' EXIT
+  trap 'rm -f -- "$next"; gdc_lock_release "${peers_lock_dir:-}"' EXIT
   docker compose --project-directory "$deploy" --env-file "$deploy/.env" -f "$deploy/compose.yaml" --profile '*' config --format json \
     | render_peers "$pex" >"$next"
   docker compose --project-directory "$deploy" --env-file "$deploy/.env" -f "$next" --profile '*' config --quiet

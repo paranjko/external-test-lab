@@ -19,7 +19,7 @@ resume_state="$(jq -er .state "$head")"
 jq -e --arg run_id "$GDC_RUN_ID" --arg node "$NODE" '
   .run_id == $run_id and (.operation == "new" or .operation == "restore") and
   .node_name == $node and
-  (.state == "SIGNER_ACTIVE_VERIFIED" or .state == "RECOVERY_ARCHIVE_VERIFIED") and
+  (.state == "SIGNER_ARMED_PENDING_ELIGIBILITY" or .state == "SIGNER_ACTIVE_VERIFIED" or .state == "RECOVERY_ARCHIVE_VERIFIED") and
   .signer_ever_started == true
 ' "$head" >/dev/null || { echo 'acceptance resume requires retained signer-active restore state' >&2; exit 1; }
 if ! jq -e '
@@ -60,7 +60,7 @@ append_transition() {
 
 step "Verify $NODE through independent chain eligibility and gateway acceptance"
 "$ROOT/scripts/phase-join-acceptance.sh" "$NODE"
-if [[ "$resume_state" == SIGNER_ACTIVE_VERIFIED ]]; then
+if [[ "$resume_state" == SIGNER_ARMED_PENDING_ELIGIBILITY || "$resume_state" == SIGNER_ACTIVE_VERIFIED ]]; then
   append_transition ACTIVE_CONFIRMED
   step "Create a new verified validator recovery archive for $NODE"
   "$ROOT/scripts/validator-backup.sh" create "$NODE"

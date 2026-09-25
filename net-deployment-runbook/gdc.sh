@@ -4,6 +4,8 @@ set -Eeuo pipefail
 LAUNCHER_SOURCE="${BASH_SOURCE[0]}"
 LAUNCHER_PATH="$(realpath -e -- "$LAUNCHER_SOURCE")"
 ROOT="$(cd "$(dirname "$LAUNCHER_PATH")" && pwd)"
+# shellcheck disable=SC1091 # ROOT is resolved above.
+source "$ROOT/scripts/lib-lock.sh"
 if [[ "${LAUNCHER_SOURCE##*/}" == gdc.sh ]]; then
   GDC_USAGE_COMMAND='./gdc.sh'
 else
@@ -102,6 +104,7 @@ on_launcher_exit() {
         "$GDC_JOIN_RESULT_OUTPUT" >&2
   fi
   record_launcher_failure "$rc"
+  gdc_lock_release "${GDC_OPERATOR_LOCK_DIR:-}"
   # A phase pipeline runs in a subshell; only the outer command owns END.
   if [[ -n "$GDC_END_COMMAND" && "$BASHPID" == "$GDC_END_PID" ]]; then
     if [[ "$GDC_END_COMMAND" == 'host join' && "${plan_only:-false}" == true ]]; then
@@ -165,11 +168,10 @@ acquire_operator_lock() {
   [[ "${GDC_OPERATOR_LOCK_STATE:-}" == "$STATE" ]] && return 0
   local lock_file="$STATE/.lifecycle.lock"
   mkdir -p "$STATE"
-  exec 9>"$lock_file"
-  if ! flock -n 9; then
-    echo 'another lifecycle phase is already running for this operator; wait for it to finish before starting another phase' >&2
-    exit 1
-  fi
+  : >"$lock_file"
+  gdc_lock_acquire "$lock_file" 0 \
+    'another lifecycle phase is already running for this operator; wait for it to finish before starting another phase' || exit $?
+  GDC_OPERATOR_LOCK_DIR="$GDC_LOCK_DIR"
   export GDC_OPERATOR_LOCK_STATE="$STATE"
 }
 
@@ -1556,7 +1558,7 @@ case "$COMMAND" in
           run_phase "join-resume-signer-readback-$join_alias" "$ROOT/scripts/phase-join-resume-signer-readback.sh" \
             "$join_alias" "$join_run"
           ;;
-        SIGNER_ACTIVE_VERIFIED|RECOVERY_ARCHIVE_VERIFIED)
+        SIGNER_ARMED_PENDING_ELIGIBILITY|SIGNER_ACTIVE_VERIFIED|RECOVERY_ARCHIVE_VERIFIED)
           [[ "$verification" == true ]] || { echo 'host join signer acceptance resume requires --verification' >&2; exit 2; }
           run_phase "join-resume-acceptance-$join_alias" "$ROOT/scripts/phase-join-resume-acceptance.sh" \
             "$join_alias" "$join_run"
@@ -1655,7 +1657,9 @@ case "$COMMAND" in
         exit 1
       fi
     fi
-    "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$join_accelerator_inspection" --output "$join_accelerator_receipt"
+    run_join_preflight accelerator-profile unavailable configuration accelerator-profile \
+      'The inspected accelerator does not match a supported immutable Host profile.' \
+      "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$join_accelerator_inspection" --output "$join_accelerator_receipt"
     join_preflight_cycle=0
     while :; do
       join_preflight_cycle=$((join_preflight_cycle + 1))

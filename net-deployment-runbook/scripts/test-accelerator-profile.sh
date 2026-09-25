@@ -113,8 +113,7 @@ docker compose --env-file "$tmp/single-group.env" -f "$ROOT/02-node/compose.ml-a
 jq -e '.services.mlnode.group_add == ["44"]' "$tmp/single-group.json" >/dev/null
 grep -Fq 'if [[ "$BACKEND" == cuda ]]' "$ROOT/scripts/qualify-ml-remote.sh"
 grep -Fq 'rocminfo >"$WORK/rocm-info.txt"' "$ROOT/scripts/qualify-ml-remote.sh"
-grep -Fq 'AMD admission is' "$ROOT/ROLE-JOIN.md"
-grep -Fq 'limited to `gfx1201` with PCI device `0x7550`' "$ROOT/ROLE-JOIN.md"
-grep -Fq 'an experimental preinstalled candidate, not a general vendor-support claim' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'AMD support is limited' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'PCI device `0x7550`' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'installs an accelerator runtime, reboot the named Host' "$ROOT/README.md"
 printf 'PASS accelerator profile selection, AMD Compose binding, and qualification backend dispatch\n'

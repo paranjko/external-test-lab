@@ -140,7 +140,7 @@ done
 # marker that prevents the next clean Genesis from starting.  Keep the
 # lifecycle lock until this process exits: deleting its pathname while held
 # would let a concurrent reset create a new lock and race this publication.
-find "$STATE" -mindepth 1 -maxdepth 1 ! -name .lifecycle.lock -exec rm -rf -- {} +
+find "$STATE" -mindepth 1 -maxdepth 1 ! -name .lifecycle.lock -a ! -name .lifecycle.lock.d -exec rm -rf -- {} +
 rm -rf "$GDC_HOME/accounts" "$GDC_HOME/genesis" "$GDC_HOME/mnemonics"
 step 'Refresh public site contract for reset state'
 # The chain REST process may retain its former participant list until it is

@@ -41,7 +41,7 @@ download-genesis`, not a consensus-defined chain fingerprint.
 ## Join
 
 Run these commands on your operator machine; it needs `jq`, `curl`, `unzip`,
-`rsync`, `openssl`, and `flock` (provided by util-linux on Linux).
+`rsync`, and `openssl`.
 
 ```bash
 cat >> ~/.ssh/config <<'EOL'
@@ -69,16 +69,6 @@ broker does not pass. JOIN needs neither: it installs its own pinned CLI,
 and its preflight needs only a quorum of seeds. Registration, DevNet faucet
 funding and the `ACTIVE` wait use a single seed (node0 on Community DevNet);
 if it does not answer, JOIN stops after Host preparation.
-
-The operator CLI is shared at `$GDC_HOME/bin/<version>/inferenced`, not copied
-for each Host or Join Profile. Reuse checks the pinned artifact and executable
-checksums and platform; a conflicting artifact for the same version is refused.
-Existing verified archive caches can supply the installation without another
-download. Keyrings, identities and run evidence remain Host-scoped.
-
-Model files are shared at `/srv/hf-cache`, outside node state under `/srv/dai`.
-New and repeated JOINs use this path; GDC does not migrate or fall back to the
-former `/srv/dai/hf-cache` path. Reset preserves the shared cache.
 
 `bootstrap.env` is a generated compatibility projection, not an independent
 input. Download it only alongside the matching JSON, verify its attestation,
@@ -118,26 +108,12 @@ gdc host join --restore <validator-backup.tar> \
 ```
 
 Without a second SSH alias, JOIN prepares `<ssh-alias>` as a `network-gpu`
-Host. It detects the local PCI accelerator before Host mutation and selects
-only a committed profile. NVIDIA requires an R580+ driver. AMD admission is
-limited to `gfx1201` with PCI device `0x7550`. The Ubuntu 24.04 route retains
-the pinned provisioning contract; GDC records the installed package inventory
-after reboot. The exact observed node8 Ubuntu 26.04 kernel and package tuple is
-an experimental preinstalled candidate, not a general vendor-support claim.
-Both routes check `rocminfo`, `/dev/kfd` and the selected DRM render node, then
-must pass real MLNode qualification. Unknown, unreadable, mixed or mismatched
-hardware/runtime state is refused before package, Docker, identity or
-deployment changes. To keep the network Host CPU-only, supply a separate ML Host alias;
-JOIN prepares the network Host as `network-only` and the ML Host as `ml-only`.
-
-The ROCm image supplies `--attention-backend ROCM_ATTN` inside MLNode's
-runner, including later model restarts. No operator GPU/backend flag is needed.
-Image publication checks the runner and vLLM parser in their respective Python
-environments; real model qualification still runs on the joining GPU.
-
-If qualification fails before identity creation, fix the reported ML error
-and repeat JOIN without reset. JOIN verifies the retained phase evidence and
-checks the Host identity again; an unexpected identity still stops the retry.
+Host. GDC detects the PCI accelerator before mutation and selects a committed
+profile. NVIDIA requires an R580+ driver. AMD support is limited to `gfx1201`
+with PCI device `0x7550`; it checks ROCm, `/dev/kfd` and the render node.
+Unknown or mismatched hardware is refused before package, Docker, identity or
+deployment changes. A separate ML Host remains `ml-only` while the network
+Host is `network-only`.
 
 Use `--chain-id <id>` to select another network's bootstrap document; the
 default is `gonka-devnet-community`. The value is accepted only as a safe URL
@@ -192,32 +168,22 @@ gdc host join --verification --public-host <IP_or_DOMAIN> <ssh-alias>
 Only `--verification` enters the bounded six-epoch acceptance window and
 returns `JOIN_PASS` after proving a chain-recorded runtime, positive PoC
 weight, positive consensus voting power, and authenticated gateway inference.
-The gateway check uses the operator-only
-`$GDC_HOME/state/secrets/gateway.join-client-key`; it is never published in
-the network bootstrap or copied to a Host. Without it acceptance cannot return `JOIN_PASS`. With
+Without the operator-only gateway client key, acceptance cannot return
+`JOIN_PASS`. With
 `--verification`, unless acceptance returns `JOIN_PASS`, `COMPLETE` is not
 recorded, and `gdc host start` and a repeated JOIN are then refused; an
 independent operator therefore omits `--verification`. A repeat after
 `COMPLETE` does not run acceptance.
 
 Voting power follows the first accepted PoC, normally one or two epochs after
-`ACTIVE`. JOIN enables the signer and watches for its first signature, printing
-a `WAIT` line about once a minute for up to 300 seconds. A participant outside
-the effective validator set has no block to sign; this is recorded as signer
-armed with eligibility pending. `--verification` later proves accepted PoC,
-effective validator membership, and gateway acceptance. If that acceptance
-stops after the signer and recovery archive are verified,
+`ACTIVE`. JOIN watches for the first signer record for up to 300 seconds. A
+participant outside the validator set is recorded as armed with eligibility
+pending. `--verification` later proves PoC, membership and gateway acceptance.
+If acceptance stops after signer and archive verification,
 `gdc host join --verification --resume <run_id> --public-host <IP_or_DOMAIN> <ssh-alias>`
-continues acceptance only, with `<run_id>` from the original `BEGIN` line. It
-also runs a separate acceptance attempt after an ordinary completed JOIN; it
-does not rewrite the completed signer-authority receipt. A
-completed bounded eligibility window is checkpointed, so a gateway-only retry
-does not extend or repeat that window. The gateway probe retries only a proven
-pre-dispatch rejection. For DevShard v5 it waits for `height_seed.state=ok`
-before sending a completion; `pending`, `catalog_pending` and `missed` remain
-no-dispatch states with retained progress evidence. A transport failure without
-that receipt remains `INCONCLUSIVE` because automatic replay could duplicate
-accounted inference.
+continues acceptance only. A completed eligibility window is retained; a
+gateway-only retry does not extend it. An uncertain inference result remains
+`INCONCLUSIVE` rather than being replayed.
 
 An ordinary JOIN exits 0 after printing
 `PASS Host JOIN mandatory convergence complete; full lifecycle verification was not requested`
@@ -254,7 +220,7 @@ the Host afresh instead of demanding manual recovery.
 | Stop | Meaning | Way back |
 |---|---|---|
 | `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | restore with `--restore` from the validator archive; `gdc host reset` clears the identity only when the chain reports the participant as unregistered, and the next JOIN then starts as `new` |
-| `identity_conflict` | the Host holds a validator identity that the operator state does not know | restore with `--restore`; after reset, `--mnemonic-file` may rotate a stopped key only when it is bound to that participant or absent from the canonical participant set; JOIN archives it first, and refuses a key owned by anyone else |
+| `identity_conflict` | the Host holds an unknown validator identity | restore with `--restore`; `--mnemonic-file` may replace only a stopped key bound to that participant or unregistered on chain |
 | `unreachable` | no SSH session to the Host | repeat the same command once the Host is reachable |
 | `completed_join_readback_failed` | a repeat of a completed JOIN could not confirm that the Host still runs as that JOIN left it; the Host was not changed | repeat once the Host is reachable and running, with the same `GDC_PORTABLE_*` declaration if one was used |
 | exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
@@ -276,14 +242,10 @@ gdc host join --restore <validator-backup.tar> --public-host <IP_or_DOMAIN> <ssh
 ```
 
 The archive is an assertion, not permission to replace identity or software
-selection. A same-Host reset archive is preferred: it proves that GDC stopped
-the prior local signer. An empty or reinstalled Host may use `--restore` only
-when the archive key is absent from the complete public validator set before
-restore and again before signer enablement; GDC also refuses a lower signing
-state than the archive. This cannot prove that an operator has not retained an
-unknown external copy of that private key. The operator must stop every such
-copy. Do not use this interface to recreate Genesis or adopt an unknown
-existing validator.
+selection. `--restore` accepts a same-Host reset archive, or an archive whose
+key is unregistered before restore and signer enablement. It also refuses a
+lower signing state. Stop every other copy of the archive key. Do not use it to
+recreate Genesis or adopt an unknown validator.
 
 If the GPU runs on another machine, pass its SSH alias after `<ssh-alias>` in
 `gdc host join`; `gdc host ml-attach` in [ROLE-HOST.md](ROLE-HOST.md) reapplies

@@ -60,6 +60,7 @@ install -d -o root -g root -m 0755 /usr/local/lib/gonka-devnet
 install -o root -g root -m 0755 "$HERE/participants-proxy.sh" /usr/local/lib/gonka-devnet/participants-proxy.sh
 install -m 0644 "$HERE/gdc-participants-proxy.socket" /etc/systemd/system/gdc-participants-proxy.socket
 install -m 0644 "$HERE/gdc-participants-proxy@.service" /etc/systemd/system/gdc-participants-proxy@.service
+install -m 0644 "$HERE/../scripts/lib-lock.sh" /usr/local/lib/gonka-devnet/lib-lock.sh
 install -o root -g root -m 0755 "$HERE/gateway-reserve-controller.sh" /usr/local/lib/gonka-devnet/gateway-reserve-controller.sh
 install -o root -g root -m 0755 "$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
 install -m 0755 "$HERE/gateway-status-routable.sh" "$DEST/gateway-status-routable.sh"
