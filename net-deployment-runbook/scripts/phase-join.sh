@@ -117,6 +117,8 @@ refuse_before_mutation() {
       result_category=identity envelope_category=identity resume=manual_recovery decision=manual_action_required token=none ;;
     host_unreachable)
       result_category=host envelope_category=network resume=new_profile decision=safe token=join-repeat ;;
+    registered_validator_key_mismatch|registered_validator_key_unreadable)
+      result_category=identity envelope_category=identity resume=manual_recovery decision=manual_action_required token=none ;;
     *) die "unsupported Host JOIN refusal reason: $reason" ;;
   esac
   record_join_transition REFUSED
@@ -136,6 +138,38 @@ refuse_before_mutation() {
   fi
   printf '# Host JOIN: REFUSED\n\n%s\n' "$summary" >"$RUN/verdict.md"
   die "$message"
+}
+
+# Retry transport errors and 5xx so a transient failure does not strand a new
+# cold account. No --fail: 404 is the answer for a new participant.
+lookup_participant() {
+  local endpoint="$1" body_file="$2" stderr_file="$3" attempts=6
+  participant_attempt=0
+  while :; do
+    participant_attempt=$((participant_attempt + 1))
+    participant_curl_exit=0
+    participant_http_status="$(curl -sS --connect-timeout 10 --max-time 30 -o "$body_file" -w '%{http_code}' "$endpoint" 2>"$stderr_file")" || participant_curl_exit=$?
+    if (( participant_curl_exit == 0 )) && [[ ! "$participant_http_status" =~ ^5[0-9][0-9]$ ]]; then
+      return 0
+    fi
+    (( participant_attempt < attempts )) || return 0
+    printf 'WAIT  participant lookup attempt %s failed (curl_exit=%s http_status=%s); retrying\n' "$participant_attempt" "$participant_curl_exit" "${participant_http_status:-000}"
+    sleep 10
+  done
+}
+
+# A 200 that carries no participant status is not an answer. Reading it as an
+# absent participant sends the run into a registration the chain will not
+# commit, so an unrecognised body stops the run where it stands.
+require_participant_status() {
+  local body="$1" endpoint="$2" status
+  jq -e '(.participant | type) == "object"
+    and ((.participant.status | type) == "string" or (.participant.status | type) == "number")' \
+    <<<"$body" >/dev/null 2>&1 \
+    || die "participant endpoint answered 200 without a participant status for $NODE (url=$endpoint)"
+  status="$(jq -r '.participant.status | tostring' <<<"$body")"
+  [[ -n "$status" ]] || die "participant endpoint answered 200 with an empty participant status for $NODE (url=$endpoint)"
+  printf '%s\n' "$status"
 }
 record_join_transition RUN_CREATED
 record_join_state "$NODE" BOOTSTRAP_IMPORTED
@@ -195,6 +229,51 @@ if [[ "$JOIN_CLASS" == partial_identity ]]; then
       "Host JOIN stopped before any change: $join_local_state; the Host holds no validator identity. Resolve the incomplete operator state through the documented recovery path." \
       'Host JOIN classification=partial_identity; refuse mutation until the incomplete local identity is resolved through the documented recovery path'
   fi
+fi
+# A Host that already holds its identity and its cold account can be asked,
+# before anything is prepared, whether the chain still publishes the key it
+# signs with. Both halves are reads. The same mismatch found later leaves a
+# prepared Host and a run that only manual recovery can leave, and the repair
+# needs a different command, so it has to be refused here.
+if [[ "$remote_identity_state" == present && -s "$ACCOUNT" && -s "$IDENTITY" \
+  && "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true \
+  && "${GDC_JOIN_REBIND_EXISTING_PARTICIPANT:-false}" != true ]]; then
+  registered_address="$(jq -er .address "$ACCOUNT")" \
+    || die "$NODE cold account record carries no address"
+  registered_endpoint="https://${GENESIS_PUBLIC_HOST}/chain-api/productscience/inference/inference/participant/$registered_address"
+  registered_body_file="$(mktemp)"
+  registered_stderr_file="$(mktemp)"
+  lookup_participant "$registered_endpoint" "$registered_body_file" "$registered_stderr_file"
+  rm -f "$registered_stderr_file"
+  registered_status="$participant_http_status"
+  registered_exit="$participant_curl_exit"
+  registered_body="$(<"$registered_body_file")"
+  if (( registered_exit != 0 )) || [[ "$registered_status" == 5[0-9][0-9] ]]; then
+    rm -f "$registered_body_file"
+    refuse_before_mutation registered_validator_key_unreadable \
+      'Host JOIN stopped before any change: the chain could not be asked which validator key this participant is registered with. Repeat the same command once a seed answers.' \
+      "Host JOIN classification=registered_validator_key_unreadable; participant lookup ended http_status=$registered_status curl_exit=$registered_exit"
+  fi
+  if [[ "$registered_status" == 200 ]] \
+    && jq -e '(.participant.validator_key | type) == "string"' <<<"$registered_body" >/dev/null 2>&1; then
+    host_signer_key="$(ssh -T "$NODE" "sudo -n bash -s -- '/srv/dai/signer/$NODE/tmkms/secrets/priv_validator_key.softsign'" <"$ROOT/scripts/tmkms-softsign-public-key.sh")" \
+      || host_signer_key=''
+    if [[ -z "$host_signer_key" ]]; then
+      rm -f "$registered_body_file"
+      refuse_before_mutation registered_validator_key_unreadable \
+        'Host JOIN stopped before any change: the durable signer key of this Host could not be read, so the registration it carries cannot be checked. Repeat the same command once the signer key is readable.' \
+        "Host JOIN classification=registered_validator_key_unreadable; the durable TMKMS public key of $NODE could not be derived"
+    fi
+    if ! registered_mismatch="$("$ROOT/scripts/verify-participant-validator-key.sh" \
+      "$registered_address" "$host_signer_key" "$registered_body_file" 2>&1 >/dev/null)"; then
+      rm -f "$registered_body_file"
+      refuse_before_mutation registered_validator_key_mismatch \
+        'Host JOIN stopped before any change: the chain publishes another validator key for this participant, so this Host cannot sign for it. Repeat with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of that participant.' \
+        "Host JOIN classification=registered_validator_key_mismatch; ${registered_mismatch#FAILED } Repeat with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of that participant, or continue on the Host whose signer owns the registered key."
+    fi
+    printf 'PASS %s registered validator key is the durable TMKMS signer of this Host\n' "$NODE"
+  fi
+  rm -f "$registered_body_file"
 fi
 record_join_transition TARGET_CLASSIFIED
 [[ -s "$GENESIS/genesis.json" && -s "$GENESIS/genesis-seeds.txt" ]] || die 'run genesis first'
@@ -297,23 +376,6 @@ record_runtime_identity "$NODE" "$ADDRESS" "$RUNTIME_ID"
 # its validator identity.  Check this before generating anything on the Host:
 # otherwise a reset Host could acquire a new TMKMS/P2P/warm identity and appear
 # to resume an existing participant.
-# Retry transport errors and 5xx so a transient failure does not strand a new
-# cold account. No --fail: 404 is the answer for a new participant.
-lookup_participant() {
-  local endpoint="$1" body_file="$2" stderr_file="$3" attempts=6
-  participant_attempt=0
-  while :; do
-    participant_attempt=$((participant_attempt + 1))
-    participant_curl_exit=0
-    participant_http_status="$(curl -sS --connect-timeout 10 --max-time 30 -o "$body_file" -w '%{http_code}' "$endpoint" 2>"$stderr_file")" || participant_curl_exit=$?
-    if (( participant_curl_exit == 0 )) && [[ ! "$participant_http_status" =~ ^5[0-9][0-9]$ ]]; then
-      return 0
-    fi
-    (( participant_attempt < attempts )) || return 0
-    printf 'WAIT  participant lookup attempt %s failed (curl_exit=%s http_status=%s); retrying\n' "$participant_attempt" "$participant_curl_exit" "${participant_http_status:-000}"
-    sleep 10
-  done
-}
 participant_endpoint="https://${GENESIS_PUBLIC_HOST}/v2/participants/$ADDRESS"
 participant_body_file="$(mktemp)"
 participant_stderr_file="$(mktemp)"
@@ -326,7 +388,7 @@ if (( participant_curl_exit != 0 )); then
 fi
 case "$participant_http_status" in
   200)
-    participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null)" || die "participant endpoint returned malformed JSON for $NODE (url=$participant_endpoint http_status=200)"
+    participant_status="$(require_participant_status "$participant_body" "$participant_endpoint")"
     participant_state="$(participant_onboarding_state "$participant_status")"
     ;;
   404)
@@ -387,14 +449,25 @@ canonical_tmkms_key="$(ssh -T "$NODE" "sudo -n bash -s -- '/srv/dai/signer/$NODE
 [[ "$(base64 -d <<<"$canonical_tmkms_key" 2>/dev/null | wc -c | tr -d ' ')" == 32 ]] \
   || die "$NODE durable TMKMS public key is malformed"
 bootstrap_tmkms_key="$(jq -er .consensus_pubkey "$IDENTITY")"
+replaced_identity_consensus_key=''
 if [[ "$bootstrap_tmkms_key" != "$canonical_tmkms_key" ]]; then
   [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true ]] \
     || die "$NODE restored validator identity does not match its durable TMKMS signer"
+  # The value this record carried is the only local evidence of what an earlier
+  # run may have registered. Replacing it without a trace is how a Host
+  # registered with a key it cannot sign with looks healthy ever after: keep the
+  # old value in the run and name both, so the chain readback below can say
+  # which key it is looking at.
+  replaced_identity_consensus_key="$bootstrap_tmkms_key"
+  jq -n --arg previous "$bootstrap_tmkms_key" --arg current "$canonical_tmkms_key" \
+    '{previous_consensus_pubkey: $previous, current_consensus_pubkey: $current}' \
+    >"$RUN/identity-consensus-key-replaced.json"
   identity_next="$(mktemp "${IDENTITY}.tmkms.XXXXXX")"
   jq --arg consensus "$canonical_tmkms_key" '.consensus_pubkey = $consensus' "$IDENTITY" >"$identity_next"
   chmod 0600 "$identity_next"
   mv "$identity_next" "$IDENTITY"
-  printf 'READY %s identity consensus key reconciled to its durable TMKMS signer\n' "$NODE"
+  printf 'READY %s identity consensus key reconciled to its durable TMKMS signer (was %s, now %s)\n' \
+    "$NODE" "$bootstrap_tmkms_key" "$canonical_tmkms_key"
 fi
 record_join_state "$NODE" IDENTITY_CREATED "$ADDRESS"
 record_join_transition IDENTITY_READY
@@ -566,8 +639,30 @@ start_stack "$NODE" "/srv/dai/deploy/$NODE/monitoring-agent"
 step "Create $NODE validator recovery archive before registration"
 "$ROOT/scripts/validator-backup.sh" create "$NODE"
 record_join_transition RECOVERY_ARCHIVE_READY
-participant_body="$(curl --connect-timeout 5 --max-time 10 -fsS "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"
-participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null || true)"
+# This lookup decides whether registration is skipped, so a transient failure
+# must not answer it. An unreachable endpoint used to read as `new`, and the
+# registration that followed reached the DAPI route, which accepts only a new
+# unfunded participant: the request returns 200 and changes nothing on chain.
+participant_body_file="$(mktemp)"
+participant_stderr_file="$(mktemp)"
+lookup_participant "$participant_endpoint" "$participant_body_file" "$participant_stderr_file"
+participant_error_detail="$(tr '\n' ' ' <"$participant_stderr_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+participant_body="$(<"$participant_body_file")"
+rm -f "$participant_body_file" "$participant_stderr_file"
+if (( participant_curl_exit != 0 )); then
+  die "cannot determine whether $NODE participant is already registered (url=$participant_endpoint http_status=${participant_http_status:-000} curl_exit=$participant_curl_exit curl_status=$(curl_exit_status "$participant_curl_exit")${participant_error_detail:+ detail=$participant_error_detail})"
+fi
+case "$participant_http_status" in
+  200)
+    participant_status="$(require_participant_status "$participant_body" "$participant_endpoint")"
+    ;;
+  404)
+    participant_status=''
+    ;;
+  *)
+    die "cannot determine whether $NODE participant is already registered (url=$participant_endpoint http_status=$participant_http_status attempts=$participant_attempt)"
+    ;;
+esac
 participant_state="$(participant_onboarding_state "$participant_status")"
 case "$participant_state" in
   active)
@@ -595,7 +690,34 @@ if [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true && "$already_registered" 
   die "$NODE validator backup belongs to a participant that is not registered on this chain; refusing to create a duplicate participant"
 fi
 
+# An existing participant was registered by an earlier run, and nothing on this
+# Host records which key that run sent. Skipping registration on the strength of
+# a status alone is what let a Host registered with the node's throwaway init
+# key repeat JOIN to COMPLETE and never sign a block. Ask the chain instead, and
+# refuse the skip when the published key is not the key this Host signs with.
 if [[ "$already_registered" == true && "$rebind_existing_participant" != true ]]; then
+  registered_endpoint="https://${GENESIS_PUBLIC_HOST}/chain-api/productscience/inference/inference/participant/$ADDRESS"
+  registered_body_file="$(mktemp)"
+  registered_stderr_file="$(mktemp)"
+  lookup_participant "$registered_endpoint" "$registered_body_file" "$registered_stderr_file"
+  registered_detail="$(tr '\n' ' ' <"$registered_stderr_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+  rm -f "$registered_stderr_file"
+  if (( participant_curl_exit != 0 )) || [[ "$participant_http_status" != 200 ]]; then
+    rm -f "$registered_body_file"
+    die "cannot read the registered validator key of $NODE (url=$registered_endpoint http_status=${participant_http_status:-000} curl_exit=$participant_curl_exit${registered_detail:+ detail=$registered_detail}); refusing to skip registration without it"
+  fi
+  install -m 0600 "$registered_body_file" "$RUN/registered-participant.json"
+  if ! registered_key_detail="$("$ROOT/scripts/verify-participant-validator-key.sh" \
+    "$ADDRESS" "$canonical_tmkms_key" "$registered_body_file" 2>&1 >/dev/null)"; then
+    registered_published_key="$(jq -r '.participant.validator_key // empty' "$registered_body_file" 2>/dev/null || true)"
+    rm -f "$registered_body_file"
+    if [[ -n "$replaced_identity_consensus_key" && "$registered_published_key" == "$replaced_identity_consensus_key" ]]; then
+      die "$NODE is registered with the consensus key its identity record carried before this run replaced it with the durable TMKMS signer; that key was never the signer's, so this participant cannot sign. Repeat the JOIN with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of this participant, which publishes the signer key. ${registered_key_detail#FAILED }"
+    fi
+    die "$NODE cannot sign for the participant it is registered as. ${registered_key_detail#FAILED } Repeat the JOIN with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of this participant, which publishes the durable TMKMS signer key, or continue on the Host whose signer owns the registered key."
+  fi
+  rm -f "$registered_body_file"
+  printf 'PASS %s registered validator key is the durable TMKMS signer of this Host\n' "$NODE"
   printf 'READY %s participant already registered with status=%s; skip duplicate registration\n' "$NODE" "$participant_status"
 elif [[ "$rebind_existing_participant" == true ]]; then
   # The public DAPI registration endpoint accepts only

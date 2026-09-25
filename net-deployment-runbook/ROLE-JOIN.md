@@ -199,7 +199,10 @@ the value resolves to an IPv4 address; for a DNS name, create its record first.
 
 The same JOIN command may be repeated for a complete matching local state. It
 queries registration before submission and must not create a second
-participant, funding claim, or validator identity. The repeat must come from
+participant, funding claim, or validator identity. For a participant that
+already exists it also reads the validator key the chain publishes: a
+registration that names another key stops the run, because this Host cannot
+sign for it. The repeat must come from
 the same gdc revision, with the same `GDC_PORTABLE_*` declaration if one was
 used; another revision is refused with `join_reentry_profile_changed` before
 any change. After `--restore` onto a reset Host, only a repeat that names an
@@ -222,6 +225,7 @@ the Host afresh instead of demanding manual recovery.
 | `completed_join_readback_failed` | a repeat of a completed JOIN could not confirm that the Host still runs as that JOIN left it; the Host was not changed | repeat once the Host is reachable and running, with the same `GDC_PORTABLE_*` declaration if one was used |
 | exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
 | `join_reentry_manual_recovery_required` | an earlier JOIN stopped part-way, for example on `lineage_snapshot_unavailable` from the state-sync canary; repeating it changes nothing | `gdc host reset <ssh-alias>`, which keeps the run evidence; then the same command when reset reports the participant unregistered, or `--restore` when it reports a registered participant whose signer had started |
+| registered with another validator key | the chain publishes a validator key for this participant that is not the key this Host signs with, so the Host cannot sign for its own registration; the Host was not changed | repeat with `GDC_JOIN_REBIND_EXISTING_PARTICIPANT=true` and the cold account of that participant, which publishes this signer's key; or continue on the Host whose signer owns the registered key |
 
 A participant registered before its signer ever started has no supported way
 back.
