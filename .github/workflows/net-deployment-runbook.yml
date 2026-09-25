@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'net-deployment-runbook/**'
+      - 'devnet/node_scripts/find_best_rpc.sh'
+      - 'devnet/node_scripts/test-find_best_rpc.sh'
       - '.github/workflows/net-deployment-runbook.yml'
   pull_request:
     types:
@@ -15,6 +17,8 @@ on:
       - synchronize
     paths:
       - 'net-deployment-runbook/**'
+      - 'devnet/node_scripts/find_best_rpc.sh'
+      - 'devnet/node_scripts/test-find_best_rpc.sh'
       - '.github/workflows/net-deployment-runbook.yml'
   workflow_dispatch:
 
@@ -86,6 +90,8 @@ jobs:
         run: >-
           GONKA_UPSTREAM_WORKTREE="$GITHUB_WORKSPACE/net-deployment-runbook/vendor/gonka"
           make -C net-deployment-runbook test
+      - name: Test DevNet RPC latency
+        run: bash devnet/node_scripts/test-find_best_rpc.sh
       - name: Test edge installation ownership in disposable root
         if: runner.name != 'external-test-lab-gdc-node4'
         run: sudo make -C net-deployment-runbook test-edge-install-ownership

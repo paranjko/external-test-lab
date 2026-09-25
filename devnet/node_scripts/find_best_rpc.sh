@@ -43,7 +43,7 @@ check_rpc(){
 
 RPC=$1
 
-START=$(date +%s%3N)
+START=$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))
 
 STATUS=$(curl -s --max-time 4 "$RPC/chain-rpc/status")
 
@@ -73,7 +73,7 @@ AGE=$((NOW - BLOCK_TS))
 
 [ "$AGE" -gt 25 ] && return
 
-END=$(date +%s%3N)
+END=$(( ${EPOCHREALTIME//[!0-9]/} / 1000 ))
 
 LATENCY=$((END-START))
 
