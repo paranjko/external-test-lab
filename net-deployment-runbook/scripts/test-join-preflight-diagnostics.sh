@@ -72,8 +72,41 @@ if [[ "$write_remote" == true ]]; then
 fi
 EOF
 chmod 0755 "$tmp/bin/curl"
+cat >"$tmp/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${!#}" == 'bash -s' ]]; then
+  cat >/dev/null
+  if [[ "${ACCELERATOR_PROFILE_UNSUPPORTED:-false}" == true ]]; then
+    cat <<'INSPECTION'
+vendor=amd
+pci_device_id=0x7550
+os_id=ubuntu
+os_version_id=26.04
+kernel_release=7.0.0-31-generic
+amdrocm_status=install ok installed
+amdrocm_version=7.14.0~pre3-29052710811
+rocm_core_status=absent
+rocm_core_version=absent
+amdgpu_install_status=install ok installed
+amdgpu_install_version=31.40.1.26130000-2383377.26.04
+readiness=ready
+architecture=gfx9999
+render_node=renderD129
+kfd_group_id=44
+render_group_id=109
+INSPECTION
+    exit 0
+  fi
+  printf 'vendor=nvidia\n'
+  exit 0
+fi
+echo "unexpected fixture SSH invocation: $*" >&2
+exit 1
+EOF
+chmod 0755 "$tmp/bin/ssh"
 
-if GDC_JOIN_PREFLIGHT_DEADLINE=1 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc.sh" host join \
+if GDC_JOIN_PREFLIGHT_DEADLINE=5 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc.sh" host join \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/out" 2>"$tmp/err"; then
   echo 'unsafe mixed seed observation unexpectedly entered JOIN' >&2
   exit 1
@@ -110,9 +143,24 @@ jq -e '
   .join_profile_sha256 == null
 ' "$result" >/dev/null
 
+if ACCELERATOR_PROFILE_UNSUPPORTED=true PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/unsupported-accelerator" "$ROOT/gdc.sh" host join \
+  --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/unsupported.out" 2>"$tmp/unsupported.err"; then
+  echo 'unsupported accelerator unexpectedly entered JOIN' >&2
+  exit 1
+fi
+grep -Fq 'accelerator_profile_unsupported:' "$tmp/unsupported.err"
+grep -Fq 'ERROR JOIN preflight failed checkpoint=accelerator-profile' "$tmp/unsupported.err"
+unsupported_result="$(find "$tmp/unsupported-accelerator" -type f -path '*/join-validator-a/join-result.v1.json' -print -quit)"
+[[ -n "$unsupported_result" && "$(stat -c %a "$unsupported_result")" == 600 ]]
+jq -e '
+  .outcome == "refused" and .phase == "profile" and .category == "profile" and
+  .reason == "join_preflight_failed" and .mutation == "none" and
+  .signer_state == "absent" and .resume == "new_profile"
+' "$unsupported_result" >/dev/null
+
 attempt_counter="$tmp/observation-attempt-counter"
 if MODE=wait_recovery OBSERVATION_ATTEMPT_FILE="$attempt_counter" \
-  GDC_JOIN_PREFLIGHT_DEADLINE=5 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
+  GDC_JOIN_PREFLIGHT_DEADLINE=30 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
   PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/recovered-operator" "$ROOT/gdc.sh" host join \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-b.example.test validator-b >"$tmp/recovered.out" 2>"$tmp/recovered.err"; then
   echo 'recovered observation unexpectedly resolved unavailable component metadata' >&2
@@ -128,7 +176,7 @@ grep -qx 'software_observation_attempt_count=3' "$recovered_receipt"
 recovered_attempts="$(awk -F= '$1 == "software_observation_attempts_dir" { print $2; exit }' "$recovered_receipt")"
 [[ -f "$recovered_attempts/attempt-1.stderr" && -f "$recovered_attempts/attempt-2.json" && -f "$recovered_attempts/attempt-3.json" ]]
 
-if MODE=component_failure GDC_JOIN_PREFLIGHT_DEADLINE=5 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
+if MODE=component_failure GDC_JOIN_PREFLIGHT_DEADLINE=30 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
   PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/component-operator" "$ROOT/gdc.sh" host join \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/component.out" 2>"$tmp/component.err"; then
   echo 'missing official artifact unexpectedly entered JOIN' >&2

@@ -9,17 +9,16 @@ if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
   # invocation consumes the same immutable run-bound profile later in the
   # supported state-sync/acceptance workflow.
   "$ROOT/scripts/join-profile.sh" validate --allow-expired "$GDC_JOIN_PROFILE" >/dev/null
-  profile_id="$(jq -r .profile_id "$GDC_JOIN_PROFILE")"
-  [[ "$profile_id" =~ ^[a-f0-9]{64}$ ]] || { echo 'generated JOIN profile has an invalid profile ID' >&2; exit 1; }
   # A JOIN's immutable profile, rather than the operator PATH or a release
   # lock, is the only authority for every CLI query and transaction.
-  BIN_DIR="$GDC_HOME/bin/$profile_id"
+  inferenced_version="$(jq -r .spec.components.core.expected_runtime.version "$GDC_JOIN_PROFILE")"
+  BIN_DIR="${GDC_INTERNAL_DATA_ROOT:-$GDC_HOME}/bin/$inferenced_version"
   GDC_INFERENCED_CLI_QUIET=true "$ROOT/scripts/ensure-inferenced-cli.sh" --allow-expired --join-profile "$GDC_JOIN_PROFILE"
 else
   # shellcheck disable=SC1091
   source "$ROOT/scripts/profile.sh"
   load_profiles
-  BIN_DIR="${GDC_INFERENCED_BIN_DIR:-$HOME/.local/bin}"
+  BIN_DIR="${GDC_INFERENCED_BIN_DIR:-${GDC_INTERNAL_DATA_ROOT:-${GDC_HOME:-$HOME/.local}}/bin/$GONKA_RELEASE}"
   GDC_INFERENCED_CLI_QUIET=true "$ROOT/scripts/ensure-inferenced-cli.sh"
 fi
 BIN="$BIN_DIR/inferenced"

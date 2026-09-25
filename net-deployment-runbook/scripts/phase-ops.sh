@@ -307,7 +307,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
   ssh "$EDGE_NODE" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
   rsync -a "$ROOT/04-ops/edge-node/" "$EDGE_NODE:$edge_remote/edge/"
   scp -q "$edge_env" "$EDGE_NODE:$edge_remote/edge.env"
-  edge_destination="/srv/dai/deploy/$EDGE_NODE/edge"
+  edge_destination=/srv/dai/deploy/edge
   edge_install_args="--node-name '$EDGE_NODE'"
   if [[ "$EDGE_NODE" == "$PUBLIC_EDGE_NODE" ]]; then
     edge_destination=/srv/dai/edge
@@ -322,7 +322,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
     proxy_bind_address=0.0.0.0
   fi
   ssh -T "$EDGE_NODE" "set -Eeuo pipefail
-    deploy='/srv/dai/deploy/$EDGE_NODE'
+    deploy='/srv/dai/deploy'
     [[ -f \"\$deploy/.env\" && -f \"\$deploy/compose.yaml\" ]] || { echo 'managed Network Node deployment is absent' >&2; exit 1; }
     previous=\"\$(mktemp \"\$deploy/.env.before-proxy-ingress.XXXXXX\")\"
     cp -p \"\$deploy/.env\" \"\$previous\"

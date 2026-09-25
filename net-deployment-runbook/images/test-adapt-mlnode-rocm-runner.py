@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import tempfile
 from pathlib import Path
@@ -46,26 +47,43 @@ with tempfile.TemporaryDirectory() as directory:
     assert module.VLLMRunner(
         ["--attention-backend", "ROCM_ATTN", "--max-model-len", "8"]
     ).additional_args == [
-        "--attention-backend", "ROCM_ATTN", "--max-model-len", "8"
+        "--max-model-len", "8", "--attention-backend", "ROCM_ATTN"
     ]
     assert module.VLLMRunner(
         ["--attention-backend=ROCM_ATTN"]
-    ).additional_args == ["--attention-backend=ROCM_ATTN"]
+    ).additional_args == ["--attention-backend", "ROCM_ATTN"]
 
-    rejected = [
+    overridden = [
         ["--attention-backend", "FLASHINFER"],
         ["--attention-backend=FLASHINFER"],
         ["--attention-backend="],
         ["--attention-backend"],
         ["--attention-backend", "ROCM_ATTN", "--attention-backend=ROCM_ATTN"],
+        ["--attention-backen", "FLASHINFER"],
+        ["--attention-backen=FLASHINFER"],
+        [
+            "--attention-backend", "ROCM_ATTN",
+            "--attention-backen", "FLASHINFER",
+        ],
     ]
-    for arguments in rejected:
-        try:
-            module.VLLMRunner(arguments)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"adapter accepted invalid arguments: {arguments}")
+    for arguments in overridden:
+        assert module.VLLMRunner(arguments).additional_args == [
+            "--attention-backend", "ROCM_ATTN"
+        ]
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--attention-backend")
+    bypass = module.VLLMRunner([
+        "--attention-backend", "ROCM_ATTN",
+        "--attention-backen", "FLASHINFER",
+    ]).additional_args
+    assert parser.parse_args(bypass).attention_backend == "ROCM_ATTN"
+
+    assert module.VLLMRunner(
+        ["--attention-dropout", "0.1"]
+    ).additional_args == [
+        "--attention-dropout", "0.1", "--attention-backend", "ROCM_ATTN"
+    ]
 
     guarded_path = Path(directory) / "changed-runner.py"
     guarded_path.write_text("class VLLMRunner:\n    pass\n")

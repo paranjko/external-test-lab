@@ -26,7 +26,7 @@ MONITORING_CIDR=127.0.0.1/32
 PUBLIC_EDGE_CIDR=127.0.0.1/32
 DATA_ROOT=/srv/dai
 GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
-HF_CACHE_ROOT=/srv/dai/hf-cache
+HF_CACHE_ROOT=/srv/hf-cache
 GENESIS_P2P_PORT=5000
 EOF
 # Render against the actual JOIN role input: the local role configuration, not
@@ -34,6 +34,7 @@ EOF
 "$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --bootstrap --secrets-dir "$temporary" --output "$temporary/node.env" >/dev/null
 grep -Fxq 'PUBLIC_HOST=host.example.net' "$temporary/node.env"
 grep -Fxq 'PROXY_BIND_ADDRESS=127.0.0.1' "$temporary/node.env"
+grep -Fxq 'HF_HOME=/srv/hf-cache' "$temporary/node.env"
 printf '%s\n%s\n' 'first@one.example:5000' 'second@two.example:5000' >"$temporary/genesis-seeds.txt"
 "$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --output "$temporary/node-with-seeds.env" >/dev/null
 grep -Fxq 'GENESIS_SEEDS=first@one.example:5000,second@two.example:5000' "$temporary/node-with-seeds.env"
@@ -45,8 +46,8 @@ GDC_JOIN_RPC_SERVER_1=https://one.example/chain-rpc/
 GDC_JOIN_RPC_SERVER_2=https://two.example/chain-rpc/
 GDC_JOIN_SNAPSHOT_PEERS=0123456789abcdef0123456789abcdef01234567@tcp://one.example:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://two.example:5000
 EOF
-"$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --state-sync-env "$temporary/lineage.env" --data-dir /srv/dai/data/mitch-demo.generations/test-run --output "$temporary/node-state-sync.env" >/dev/null
-grep -Fxq 'DATA_DIR=/srv/dai/data/mitch-demo.generations/test-run' "$temporary/node-state-sync.env"
+"$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --state-sync-env "$temporary/lineage.env" --data-dir /srv/dai/data.generations/test-run --output "$temporary/node-state-sync.env" >/dev/null
+grep -Fxq 'DATA_DIR=/srv/dai/data.generations/test-run' "$temporary/node-state-sync.env"
 grep -Fxq 'GDC_JOIN_SNAPSHOT_PEERS=0123456789abcdef0123456789abcdef01234567@tcp://one.example:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://two.example:5000' "$temporary/node-state-sync.env"
 grep -Fxq 'GDC_JOIN_PERSISTENT_PEERS=0123456789abcdef0123456789abcdef01234567@one.example:5000,89abcdef0123456789abcdef0123456789abcdef@two.example:5000' "$temporary/node-state-sync.env"
 grep -Fxq 'GDC_JOIN_SEEDS=first@one.example:5000,second@two.example:5000' "$temporary/node-state-sync.env"

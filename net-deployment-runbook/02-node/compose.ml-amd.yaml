@@ -1,0 +1,30 @@
+services:
+  mlnode:
+    image: ${MLNODE_IMAGE:?MLNODE_IMAGE is required}
+    restart: always
+    hostname: mlnode
+    environment:
+      HF_HOME: /root/.cache
+      POC_BATCH_SIZE_DEFAULT: ${POC_BATCH_SIZE_DEFAULT:-32}
+    volumes:
+      - ${HF_HOME:?HF_HOME is required}:/root/.cache
+    devices:
+      - ${AMD_KFD_DEVICE:?AMD_KFD_DEVICE is required}:${AMD_KFD_DEVICE}
+      - ${AMD_RENDER_DEVICE:?AMD_RENDER_DEVICE is required}:${AMD_RENDER_DEVICE}
+    group_add:
+      - ${AMD_KFD_GROUP_ID:?AMD_KFD_GROUP_ID is required}
+      - ${AMD_RENDER_GROUP_ID:?AMD_RENDER_GROUP_ID is required}
+    ipc: host
+    command: uvicorn api.app:app --host=0.0.0.0 --port=8080
+
+  inference:
+    image: ${MLNODE_PROXY_IMAGE:?MLNODE_PROXY_IMAGE is required}
+    restart: always
+    hostname: inference
+    volumes:
+      - ./nginx-mlnode.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:8080:8080/tcp"
+      - "127.0.0.1:5050:5000/tcp"
+    depends_on:
+      - mlnode

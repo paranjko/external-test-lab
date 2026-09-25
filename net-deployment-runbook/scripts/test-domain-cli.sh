@@ -47,6 +47,16 @@ grep -Fq 'invocation_command=%q' "$ROOT/scripts/lib.sh"
 grep -Fq 'prepare-join-role-config.sh' "$ROOT/gdc.sh"
 grep -Fq 'GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"' "$ROOT/gdc.sh"
 grep -Fq 'GDC_JOIN_VERIFICATION="$verification"' "$ROOT/gdc.sh"
+qualify_home="$tmp/qualify-independent"
+mkdir -p "$qualify_home/node8/state" "$qualify_home/node8/runs/retained/join-node8"
+printf 'retained\n' >"$qualify_home/node8/state/active-run-id"
+printf 'profile_kind=generated_join\njoin_profile_sha256=%064d\n' 0 >"$qualify_home/node8/runs/retained/manifest.env"
+printf '{}\n' >"$qualify_home/node8/runs/retained/join-node8/join-profile.v1.json"
+chmod 0600 "$qualify_home/node8/runs/retained/manifest.env" "$qualify_home/node8/runs/retained/join-node8/join-profile.v1.json"
+if GDC_HOME="$qualify_home" "$ROOT/gdc.sh" qualify-ml node8 >"$qualify_home/out" 2>"$qualify_home/err"; then
+  echo 'qualify-ml accepted a malformed retained JOIN profile' >&2; exit 1
+fi
+grep -Fq 'join_profile_invalid: document has an invalid closed v1 shape' "$qualify_home/err"
 grep -Fq "skip_qualification=false verification=false plan_only=false" "$ROOT/gdc.sh"
 grep -Fq 'host join does not accept an externally authored signer-fence receipt' "$ROOT/gdc.sh"
 grep -Fq 'verify-join-resume-inputs.sh' "$ROOT/gdc.sh"

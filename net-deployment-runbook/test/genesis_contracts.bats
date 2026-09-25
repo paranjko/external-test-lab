@@ -225,7 +225,7 @@ validator_identity_digest() {
   bootstrap="$RUNBOOK/scripts/stage-network-bootstrap.sh"
   renderer="$RUNBOOK/04-ops/render-ops.sh"
 
-  run grep -F 'KEY_FILE="$SECRETS/gateway.join-client-key"' "$acceptance"
+  run grep -F 'KEY_FILE="$GDC_DATA_ROOT/state/secrets/gateway.join-client-key"' "$acceptance"
   [ "$status" -eq 0 ]
   run grep -F 'gateway.join-client-key' "$bootstrap"
   [ "$status" -ne 0 ]

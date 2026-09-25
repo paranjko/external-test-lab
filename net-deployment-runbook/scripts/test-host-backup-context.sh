@@ -97,14 +97,69 @@ fi
 grep -Fq 'JOIN role input lacks a network seed host' "$temporary/network.err"
 [[ ! -e "$temporary/network-getent-called" ]]
 
+fallback_root="$temporary/fallback-runbook"
+fallback_home="$temporary/fallback-home"
+mkdir -p "$fallback_root/scripts" "$fallback_home/state" \
+  "$fallback_home/runs/retained-run/join-backup-node" "$fallback_home/mnemonics"
+sed -n '/^validate_mnemonic_bindings()/,/^}/p' \
+  "$ROOT/scripts/validator-backup.sh" >"$fallback_root/validate-mnemonic-bindings.sh"
+cat >"$fallback_root/scripts/join-profile.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == validate && "$2" == --allow-expired && -f "$3" ]]
+EOF
+cat >"$fallback_root/scripts/ensure-inferenced-cli.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'ensure %s\n' "$*" >>"$BACKUP_FALLBACK_LOG"
+touch "$BACKUP_MIGRATED_MARKER"
+EOF
+cat >"$fallback_root/scripts/resolve-shared-inferenced-cli.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ -f "$BACKUP_MIGRATED_MARKER" ]] || exit 1
+printf 'resolve %s\n' "$*" >>"$BACKUP_FALLBACK_LOG"
+printf '%s\n' "$BACKUP_FAKE_CLI"
+EOF
+cat >"$fallback_root/scripts/derive-mnemonic-identity.sh" <<'EOF'
+#!/usr/bin/env bash
+jq -cn --arg address "$4" --arg pubkey "${5:-}" '{address:$address,pubkey:$pubkey}'
+EOF
+chmod +x "$fallback_root/scripts/"*.sh
+printf 'retained-run\n' >"$fallback_home/state/active-run-id"
+printf '{}\n' >"$fallback_home/runs/retained-run/join-backup-node/join-profile.v1.json"
+printf 'cold words\n' >"$fallback_home/mnemonics/backup-node-cold.mnemonic"
+printf 'warm words\n' >"$fallback_home/mnemonics/backup-node-warm.mnemonic"
+cat >"$fallback_home/manifest.json" <<'EOF'
+{"participant_address":"gonka1participant"}
+EOF
+cat >"$fallback_home/identity.json" <<'EOF'
+{"warm_address":"gonka1warm","warm_pubkey_b64":"warm-public-key"}
+EOF
+cat >"$fallback_home/inferenced" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$fallback_home/inferenced"
+(
+  export ROOT="$fallback_root" STATE="$fallback_home/state" GDC_HOME="$fallback_home"
+  export HOME="$temporary/no-home" BACKUP_FALLBACK_LOG="$temporary/fallback.log"
+  export BACKUP_MIGRATED_MARKER="$temporary/migrated" BACKUP_FAKE_CLI="$fallback_home/inferenced"
+  die() { printf '%s\n' "$*" >&2; return 1; }
+  source "$fallback_root/validate-mnemonic-bindings.sh"
+  validate_mnemonic_bindings "$fallback_home" "$fallback_home/manifest.json" \
+    "$fallback_home/identity.json" backup-node
+)
+sed -n '1p' "$temporary/fallback.log" | grep -Fq \
+  'ensure --allow-expired --join-profile '
+sed -n '2p' "$temporary/fallback.log" | grep -Fq \
+  'resolve '
+
 grep -Fq 'load_project host-recovery' "$ROOT/gdc.sh"
 grep -Fq 'load_project host-recovery' "$ROOT/scripts/validator-backup.sh"
 grep -Fq "stable identity migration failed" "$ROOT/scripts/validator-backup.sh"
 grep -Fq 'tmkms inference 2>/dev/null' "$ROOT/scripts/validator-backup.sh"
 grep -Fq 'generated JOIN deliberately keeps its exact CLI outside PATH' "$ROOT/scripts/validator-backup.sh"
-grep -Fq 'GDC_HOME/bin/$profile_id/inferenced' "$ROOT/scripts/validator-backup.sh"
+grep -Fq 'resolve-shared-inferenced-cli.sh" "$retained_profile"' "$ROOT/scripts/validator-backup.sh"
 grep -Fq 'docker inspect -f' "$ROOT/scripts/validator-backup.sh"
-grep -Fq '"/srv/dai/$node/tmkms") signer=' "$ROOT/scripts/validator-backup.sh"
+grep -Fq '/srv/dai/$node/tmkms) signer=' "$ROOT/scripts/validator-backup.sh"
 grep -Fq 'load_retained_join_profile_for_node "$1"' "$ROOT/gdc.sh"
 grep -Fq 'retained generated JOIN profile does not match its run manifest' "$ROOT/scripts/lib.sh"
 ! grep -Fq 'mkdir -p "$stage/remote-state"' "$ROOT/scripts/validator-backup.sh"

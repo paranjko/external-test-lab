@@ -28,7 +28,7 @@ preview_number ?=
 preview_revision ?=
 site_origin ?= https://gonka-dev.net
 
-.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
+.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test test-command-dependency-contract edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -156,7 +156,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results
+test: test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-network-bootstrap.py
 	@./scripts/test-network-bootstrap-shell.sh
@@ -195,8 +195,12 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-classify-join-reentry.sh
 	@./scripts/test-join-identity-diagnostics.sh
 	@./scripts/test-join-existing-participant-rebind.sh
+	@./scripts/test-replace-retained-validator-identity.sh
+	@./scripts/test-authorize-retained-validator-replacement.sh
 	@./scripts/test-join-refusal-diagnostics.sh
 	@./scripts/test-join-ml-qualification.sh
+	@bash ./scripts/test-ml-qualification-evidence.sh
+	@bash ./scripts/test-ml-qualification-failure.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/test-host-identity-layout-probe.sh
@@ -230,6 +234,7 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-suspend-gateway-admission.sh
 	@./scripts/test-firewall-policy.sh
 	@./scripts/test-prepare-nvidia-kernel-modules.sh
+	@./scripts/test-prepare-amd-rocm.sh
 	@./scripts/test-public-grafana-targets.sh
 	@./scripts/test-dashboard-generator.sh
 	@./scripts/test-public-gpu-freshness.sh
@@ -254,6 +259,10 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
+	@./scripts/test-inspect-accelerator.sh
+	@./scripts/test-accelerator-profile.sh
+	@./scripts/test-amd-preflight-order.sh
+	@./scripts/test-select-nvidia-driver.sh
 	@./scripts/test-validator-backup-contract.sh
 	@./scripts/test-observe-network-composition.sh
 	@./scripts/test-observe-network-state.sh
@@ -274,8 +283,11 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-migrate-v1-validator-identity.sh
 	@./scripts/test-verify-canonical-join-state.sh
 	@./scripts/test-host-join-resume-canonical.sh
+	@./scripts/test-recover-incident-flat-layout.sh
 	@./scripts/test-host-join-resume-signer-readback.sh
 	@./scripts/test-phase-ml-attach-completion.sh
+	@./scripts/test-resolve-reset-dai-backup.sh
+	@./scripts/test-verify-inactive-validator-key.sh
 	@./scripts/test-verify-complete-join-state.sh
 	@./scripts/test-wait-state-sync-canary.sh
 	@./scripts/test-promote-state-sync-generation.sh
@@ -292,10 +304,14 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-running-host-recovery-orchestration.sh
 	@./scripts/test-genesis-role-config.sh
 	@./scripts/test-prepare-join-role-config.sh
+	@./scripts/test-prepare-accelerator-binding.sh
 	@./scripts/test-role-separation.sh
 	@./scripts/test-domain-cli.sh
 	@./scripts/test-explicit-public-host.sh
 	@./scripts/test-cleanroom-contract.sh
+
+test-command-dependency-contract:
+	@./scripts/test-command-dependency-contract.sh
 
 verify-candidate-workflow:
 	@./scripts/test-candidate-workflow.sh

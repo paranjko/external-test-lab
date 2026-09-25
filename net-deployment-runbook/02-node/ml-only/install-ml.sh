@@ -11,11 +11,12 @@ done
 [[ $EUID -eq 0 && "$NODE" =~ ^[A-Za-z0-9._-]+$ && -s "$ENV_FILE" ]] || {
   echo "Usage: sudo $0 --node-name ML_SSH_ALIAS --env rendered-ml.env" >&2; exit 2;
 }
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST="/srv/dai/deploy/$NODE"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST=/srv/dai/deploy
 mkdir -p "$DEST"; install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"; install -m 0644 "$HERE/../nginx-mlnode.conf" "$DEST/nginx-mlnode.conf"
 # Compose refers to ../nginx-mlnode.conf in source layout; normalize the installed copy.
 sed -i 's#../nginx-mlnode.conf#./nginx-mlnode.conf#' "$DEST/compose.yaml"
 install -m 0600 "$ENV_FILE" "$DEST/.env"; install -m 0755 "$HERE/start-ml.sh" "$DEST/start-ml.sh"
+install -m 0644 "$HERE/../../scripts/lib-lock.sh" "$DEST/lib-lock.sh"
 install -m 0755 "$HERE/../poc-winddown-watch.sh" "$DEST/poc-winddown-watch.sh"
 install -m 0644 "$HERE/../gdc-poc-winddown-watch@.service" /etc/systemd/system/gdc-poc-winddown-watch@.service
 systemctl daemon-reload

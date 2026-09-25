@@ -308,6 +308,30 @@ load_join_profile() {
   PROXY_IMAGE="$(jq -r .spec.deployment.host_envelope.proxy_image "$profile")"
   EXPLORER_IMAGE="$(jq -r .spec.deployment.host_envelope.explorer_image "$profile")"
   MLNODE_GENERIC_IMAGE="$(jq -r .spec.deployment.host_envelope.mlnode_image "$profile")"
+  if jq -e '.spec.target | has("accelerator")' "$profile" >/dev/null; then
+    ACCELERATOR_VENDOR="$(jq -r .spec.target.accelerator.vendor "$profile")"
+    ACCELERATOR_ARCHITECTURE="$(jq -r '.spec.target.accelerator.architecture // empty' "$profile")"
+    ACCELERATOR_READINESS="$(jq -r '.spec.target.accelerator.readiness // "ready"' "$profile")"
+    ACCELERATOR_QUALIFICATION_BACKEND="$(jq -r .spec.target.accelerator.qualification_backend "$profile")"
+    MLNODE_COMPOSE_VARIANT="$(jq -r .spec.target.accelerator.compose_variant "$profile")"
+  else
+    # Only join-profile validation with --allow-expired admits this historical
+    # v1 shape. It predates accelerator receipts and used the NVIDIA runtime.
+    ACCELERATOR_VENDOR=nvidia
+    ACCELERATOR_ARCHITECTURE=''
+    ACCELERATOR_READINESS=ready
+    ACCELERATOR_QUALIFICATION_BACKEND=cuda
+    MLNODE_COMPOSE_VARIANT=nvidia
+  fi
+  if [[ "$ACCELERATOR_VENDOR" == amd && "$ACCELERATOR_READINESS" == ready ]]; then
+    MLNODE_GENERIC_IMAGE="$(jq -r .spec.target.accelerator.mlnode_image "$profile")"
+    AMD_KFD_DEVICE="$(jq -r .spec.target.accelerator.devices.kfd "$profile")"
+    AMD_RENDER_DEVICE="$(jq -r .spec.target.accelerator.devices.render "$profile")"
+    AMD_KFD_GROUP_ID="$(jq -r .spec.target.accelerator.group_ids.kfd "$profile")"
+    AMD_RENDER_GROUP_ID="$(jq -r .spec.target.accelerator.group_ids.render "$profile")"
+  else
+    AMD_KFD_DEVICE=''; AMD_RENDER_DEVICE=''; AMD_KFD_GROUP_ID=''; AMD_RENDER_GROUP_ID=''
+  fi
   MLNODE_PROXY_IMAGE="$(jq -r .spec.deployment.host_envelope.mlnode_proxy_image "$profile")"
   CADDY_IMAGE="$(jq -r .spec.deployment.host_envelope.caddy_image "$profile")"
   GRAFANA_IMAGE="$(jq -r .spec.deployment.host_envelope.grafana_image "$profile")"
@@ -333,6 +357,8 @@ load_join_profile() {
   export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
   export MODEL_ID MODEL_REVISION MLNODE_CONTEXT_LENGTH MLNODE_MAX_NUM_SEQS MLNODE_GPU_MEMORY_UTILIZATION
   export MLNODE_DTYPE MLNODE_TENSOR_PARALLEL_SIZE GDC_JOIN_EFFECTIVE_EPOCHS GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS
+  export ACCELERATOR_VENDOR ACCELERATOR_ARCHITECTURE ACCELERATOR_READINESS ACCELERATOR_QUALIFICATION_BACKEND MLNODE_COMPOSE_VARIANT
+  export AMD_KFD_DEVICE AMD_RENDER_DEVICE AMD_KFD_GROUP_ID AMD_RENDER_GROUP_ID
 }
 
 profile_summary() {

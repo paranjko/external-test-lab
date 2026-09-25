@@ -53,6 +53,28 @@ report_curl_failure() {
     "$request" "$url" "$http_status" "$curl_exit" "$(curl_exit_status "$curl_exit")" "${detail:+ detail=$detail}" >&2
 }
 
+status_not_routable_reason() {
+  jq -r '
+    if ((.height_seed? | type) == "object")
+      and ((.height_seed.state? | type) == "string")
+      and (.height_seed.state != "ok")
+    then "height_seed_" + (.height_seed.state | ascii_downcase | gsub("[^a-z0-9_]+"; "_"))
+    else "runtime_not_routable"
+    end
+  ' "$1" 2>/dev/null || printf 'runtime_not_routable\n'
+}
+
+status_wait_detail() {
+  jq -r '
+    if ((.height_seed? | type) == "object")
+      and ((.height_seed.seeded? | type) == "number")
+      and ((.height_seed.slots? | type) == "number")
+    then " seeded=" + (.height_seed.seeded | tostring) + "/" + (.height_seed.slots | tostring)
+    else ""
+    end
+  ' "$1" 2>/dev/null || true
+}
+
 record_attempt() {
   local status_code="$1" completion_code="$2" status_ready="$3" valid="$4" reason="$5" elapsed_ms="$6" status_exit="$7" completion_exit="$8" admission="$9" completion_error_code="${10}"
   jq -cn \
@@ -95,16 +117,33 @@ while (( SECONDS < deadline )); do
   status_rc=$?
   set -e
   [[ "$status_rc" == 0 ]] || report_curl_failure status "$api_url/v1/status" "${status_http:-0}" "$status_rc" "$status_stderr"
+  # Never dispatch inference while the admission state is unknown.  Because
+  # no completion request is sent, a transient status transport failure is
+  # safe to retry without risking duplicate chain-accounted inference.
+  if [[ "$status_rc" != 0 || "$status_http" != 200 ]]; then
+    if [[ "$status_rc" != 0 ]]; then
+      last_reason="status_$(curl_exit_status "$status_rc")"
+    else
+      last_reason="status_http_${status_http}"
+    fi
+    elapsed_ms=$(( $(date +%s%3N) - started_ms ))
+    record_attempt "${status_http:-0}" 0 false false "$last_reason" "$elapsed_ms" "$status_rc" 0 'not_sent_status_unavailable' 'not_sent'
+    rm -f "$status_file" "$status_stderr" "$completion_stderr" "$completion_headers"
+    printf 'WAIT inference attempt=%s reason=%s status_ready=false completion=not_sent\n' "$attempt" "$last_reason" >&2
+    (( SECONDS < deadline )) && sleep 5
+    continue
+  fi
   # The public status endpoint can retain active runtimes during a lifecycle
   # transition. Use the same capacity and Inference-phase predicate as the
   # continuity observer before attempting a completion.
   if [[ "$status_rc" == 0 && "$status_http" == 200 ]] \
     && ! "$ROOT/04-ops/gateway-status-routable.sh" <"$status_file" >/dev/null 2>&1; then
-    last_reason='runtime_not_routable'
+    last_reason="$(status_not_routable_reason "$status_file")"
+    wait_detail="$(status_wait_detail "$status_file")"
     elapsed_ms=$(( $(date +%s%3N) - started_ms ))
     record_attempt "${status_http:-0}" 0 false false "$last_reason" "$elapsed_ms" "$status_rc" 0 'not_sent_runtime_not_routable' 'not_sent'
     rm -f "$status_stderr" "$completion_stderr" "$completion_headers"
-    printf 'WAIT inference attempt=%s reason=%s status_ready=false\n' "$attempt" "$last_reason" >&2
+    printf 'WAIT inference attempt=%s reason=%s status_ready=false completion=not_sent%s\n' "$attempt" "$last_reason" "$wait_detail" >&2
     (( SECONDS < deadline )) && sleep 5
     continue
   fi
@@ -118,7 +157,15 @@ while (( SECONDS < deadline )); do
   # which leaves an in-flight request in the gateway and makes following
   # probes report a misleading capacity failure.
   payload='{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Reply with exactly: GDC_OK"}],"max_tokens":8,"temperature":0}'
-  completion_deadline_ms="$(( $(date +%s%3N) + request_timeout_seconds * 1000 ))"
+  # The admission proxy may need the entire application deadline to prove a
+  # pre-dispatch refusal. Leave transport time for that receipt to cross the
+  # public edge before curl closes the connection. Very short test overrides
+  # keep their original budget because no positive slack can be represented.
+  admission_deadline_seconds="$request_timeout_seconds"
+  if (( request_timeout_seconds > 5 )); then
+    admission_deadline_seconds=$((request_timeout_seconds - 5))
+  fi
+  completion_deadline_ms="$(( $(date +%s%3N) + admission_deadline_seconds * 1000 ))"
   set +e
   completion_http="$(curl -sS --connect-timeout 10 --max-time "$request_timeout_seconds" -D "$completion_headers" -o "$completion_file" -w '%{http_code}' \
     "$api_url/v1/chat/completions" -H "Authorization: Bearer $client_key" \
@@ -159,7 +206,6 @@ while (( SECONDS < deadline )); do
   fi
   elapsed_ms=$(( $(date +%s%3N) - started_ms ))
   record_attempt "${status_http:-0}" "${completion_http:-0}" "$status_ready" false "$last_reason" "$elapsed_ms" "$status_rc" "$completion_rc" "$admission" "$completion_error_code"
-  rm -f "$status_file" "$completion_file" "$status_stderr" "$completion_stderr" "$completion_headers"
   printf 'WAIT inference attempt=%s reason=%s status_ready=%s\n' "$attempt" "$last_reason" "$status_ready" >&2
 
   # A retry is safe only when the admission proxy proves that no upstream
@@ -171,6 +217,7 @@ while (( SECONDS < deadline )); do
       '{verdict:$verdict,reason:$reason,admission:$admission,attempts:$attempts}' >"$evidence_dir/inference-verdict.json"
     exit 1
   fi
+  rm -f "$status_file" "$completion_file" "$status_stderr" "$completion_stderr" "$completion_headers"
   (( SECONDS < deadline )) && sleep 5
 done
 

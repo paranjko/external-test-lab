@@ -6,7 +6,7 @@ DEST=/srv/dai/edge
 if [[ $# -eq 3 ]]; then
   NODE="$3"
   [[ "$NODE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'invalid edge SSH alias' >&2; exit 2; }
-  DEST="/srv/dai/deploy/$NODE/edge"
+  DEST=/srv/dai/deploy/edge
 fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -a

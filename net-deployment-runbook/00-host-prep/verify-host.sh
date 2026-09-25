@@ -53,15 +53,30 @@ for storage_path in /srv/dai /var/lib/docker /var/lib/containerd; do
   fi
 done
 if [[ "$ROLE" == network-gpu || "$ROLE" == ml-only ]]; then
-  if nvidia-smi >/dev/null 2>&1; then
+  accelerator_info="$("$(dirname "$0")/inspect-accelerator.sh" 2>&1)" || {
+    fail "accelerator readiness: $accelerator_info"
+    accelerator_info=''
+  }
+  accelerator_vendor="$(awk -F= '$1 == "vendor" { print $2 }' <<<"$accelerator_info")"
+  if [[ "$accelerator_vendor" == amd ]]; then
+    accelerator_architecture="$(awk -F= '$1 == "architecture" { print $2 }' <<<"$accelerator_info")"
+    accelerator_readiness="$(awk -F= '$1 == "readiness" { print $2 }' <<<"$accelerator_info")"
+    if [[ "$accelerator_readiness" == ready && "$accelerator_architecture" == gfx1201 ]]; then
+      pass 'AMD ROCm gfx1201 hardware discovery is ready; MLNode qualification is still required'
+    else
+      fail 'AMD ROCm runtime is not ready for the supported gfx1201 profile'
+    fi
+  elif nvidia-smi >/dev/null 2>&1; then
     version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n1)
     major=${version%%.*}
     (( major >= MIN_DRIVER )) && pass "NVIDIA driver $version" || fail "NVIDIA driver $version < required $MIN_DRIVER"
   else
     fail 'nvidia-smi'
   fi
-  timeout 300 docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi >/dev/null 2>&1 \
-    && pass 'GPU visible in CUDA 12.8 container' || fail 'GPU unavailable in CUDA 12.8 container'
+  if [[ "$accelerator_vendor" == nvidia ]]; then
+    timeout 300 docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi >/dev/null 2>&1 \
+      && pass 'GPU visible in CUDA 12.8 container' || fail 'GPU unavailable in CUDA 12.8 container'
+  fi
 fi
 systemctl is-active --quiet gonka-firewall && pass 'pre-DNAT firewall service' || fail 'pre-DNAT firewall service'
 iptables -t mangle -S GONKA_INGRESS 2>/dev/null | grep -q -- '-j DROP' \

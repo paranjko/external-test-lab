@@ -73,13 +73,21 @@ printf 'PASS operator bootstrap shell path has no Python dependency\n'
 staging_root="$(mktemp -d)"
 trap 'rm -rf -- "$staging_root"' EXIT
 profile_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-mkdir -p "$staging_root/home/bin/$profile_id"
-: >"$staging_root/home/bin/$profile_id/inferenced"
-chmod 0755 "$staging_root/home/bin/$profile_id/inferenced"
-printf '{"profile_id":"%s"}\n' "$profile_id" >"$staging_root/profile.json"
+version=9.9.9
+mkdir -p "$staging_root/home/bin/$version"
+cat >"$staging_root/home/bin/$version/inferenced" <<'EOF'
+#!/usr/bin/env bash
+printf 'inferenced v9.9.9\n'
+EOF
+chmod 0755 "$staging_root/home/bin/$version/inferenced"
+archive_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+binary_sha="$(sha256sum "$staging_root/home/bin/$version/inferenced" | awk '{print $1}')"
+printf 'archive_sha256=%s\nplatform=LINUX_AMD64\nbinary_sha256=%s\n' "$archive_sha" "$binary_sha" >"$staging_root/home/bin/$version/artifact.env"
+printf '{"profile_id":"%s","spec":{"components":{"core":{"expected_runtime":{"version":"%s"},"installation":{"binary":{"sha256":"%s"}}}}}}\n' "$profile_id" "$version" "$archive_sha" >"$staging_root/profile.json"
 
 # Extract the real function: sourcing the tool would run its dispatcher.
 awk '/^resolve_inferenced_cli\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' "$TOOL" >"$staging_root/resolver.sh"
+cp "$ROOT/scripts/resolve-shared-inferenced-cli.sh" "$staging_root/resolve-shared-inferenced-cli.sh"
 [[ -s "$staging_root/resolver.sh" ]] || { echo 'resolve_inferenced_cli not found in network-bootstrap.sh' >&2; exit 1; }
 
 resolve_with() {
@@ -91,8 +99,16 @@ resolve_with() {
 }
 
 observed="$(GDC_JOIN_PROFILE="$staging_root/profile.json" GDC_HOME="$staging_root/home" resolve_with env)"
-[[ "$observed" == "$staging_root/home/bin/$profile_id/inferenced" ]] || {
+[[ "$observed" == "$staging_root/home/bin/$version/inferenced" ]] || {
   echo "network-bootstrap must resolve the profile-bound CLI, got: $observed" >&2; exit 1; }
+
+conflicting_profile="$staging_root/conflicting-profile.json"
+jq '.spec.components.core.installation.binary.sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+  "$staging_root/profile.json" >"$conflicting_profile"
+if GDC_JOIN_PROFILE="$conflicting_profile" GDC_HOME="$staging_root/home" resolve_with env \
+  >"$staging_root/conflict.out" 2>"$staging_root/conflict.err"; then
+  echo 'bootstrap resolver accepted a same-version alternate archive' >&2; exit 1
+fi
 
 # Outside a JOIN the plain PATH lookup must be unchanged.
 observed="$(resolve_with env)"
@@ -106,12 +122,13 @@ observed="$(GDC_JOIN_PROFILE="$staging_root/profile.json" GDC_HOME="$staging_roo
   echo "explicit INFERENCED must win, got: $observed" >&2; exit 1; }
 
 # A symlink does not count: the profile is the authority for JOIN tools.
-ln -sf "$staging_root/home/bin/$profile_id/inferenced" "$staging_root/home/bin/$profile_id/linked"
-mkdir -p "$staging_root/home2/bin/$profile_id"
-ln -sf /bin/sh "$staging_root/home2/bin/$profile_id/inferenced"
-observed="$(GDC_JOIN_PROFILE="$staging_root/profile.json" GDC_HOME="$staging_root/home2" resolve_with env)"
-[[ "$observed" == inferenced ]] || {
-  echo "a symlinked profile CLI must be refused, got: $observed" >&2; exit 1; }
+ln -sf "$staging_root/home/bin/$version/inferenced" "$staging_root/home/bin/$version/linked"
+mkdir -p "$staging_root/home2/bin/$version"
+ln -sf /bin/sh "$staging_root/home2/bin/$version/inferenced"
+if GDC_JOIN_PROFILE="$staging_root/profile.json" GDC_HOME="$staging_root/home2" resolve_with env \
+  >"$staging_root/symlink.out" 2>"$staging_root/symlink.err"; then
+  echo 'a symlinked profile CLI must fail closed' >&2; exit 1
+fi
 
 # The Genesis download must actually use the resolver, not the bare lookup.
 grep -Fq 'cli="$(resolve_inferenced_cli)"' "$TOOL"

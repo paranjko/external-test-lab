@@ -5,15 +5,17 @@ tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 PREPARE="$ROOT/00-host-prep/prepare-host.sh"
 
-# Both driver branches bind modules to every installed kernel: a fresh install
-# before the initramfs is rebuilt, and a kept driver so the next kernel boots
-# with a module too.
+# A NVIDIA driver installation binds modules to every installed kernel before
+# the initramfs is rebuilt. AMD provisioning is a distinct branch and must not
+# run this NVIDIA-only helper.
 grep -Fq 'ensure_nvidia_modules_for_installed_kernels()' "$PREPARE"
 [[ "$(grep -c '^    ensure_nvidia_modules_for_installed_kernels$' "$PREPARE")" == 2 ]]
-# The driver package is installed first, then its modules are resolved for
-# every installed kernel, and only then is the module map rebuilt. Match the
-# candidate install literally: a later ensure_packages call installs utilities.
-awk 'index($0, "ensure_packages \"$driver_candidate\"") {u=NR} /^    ensure_nvidia_modules_for_installed_kernels$/ && u && !e {e=NR} /^    depmod -a$/ {d=NR} END {exit !(u && e && d && u < e && e < d)}' "$PREPARE"
+# A retained adequate driver still repairs modules for newly installed kernels.
+awk '/if \[\[ -z "\$NVIDIA_DRIVER_CANDIDATE" \]\]; then/ {retained=NR} /^    ensure_nvidia_modules_for_installed_kernels$/ && retained && !repair {repair=NR} /^  else$/ && retained {branch=NR; exit} END {exit !(retained < repair && repair < branch)}' "$PREPARE"
+# The selected driver metapackage is installed first, then its modules are
+# resolved for every installed kernel, and only then is the module map rebuilt.
+awk 'index($0, "ensure_packages \"$NVIDIA_DRIVER_CANDIDATE\"") {u=NR} /^    ensure_nvidia_modules_for_installed_kernels$/ && u && !e {e=NR} /^    depmod -a$/ {d=NR} END {exit !(u && e && d && u < e && e < d)}' "$PREPARE"
+! grep -Fq 'NVIDIA_UTILS_CANDIDATE' "$PREPARE"
 
 # shellcheck source=/dev/null
 source <(sed -n '/^ensure_nvidia_modules_for_installed_kernels()/,/^}/p' "$PREPARE")

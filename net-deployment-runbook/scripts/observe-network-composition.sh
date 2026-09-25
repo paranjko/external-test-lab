@@ -113,6 +113,7 @@ for (( index=0; index<seed_count; index++ )); do
         then . else error("duplicate approved version name") end
       | map({name: .name, url: .binary, sha256: .sha256})
       | sort_by(.name, .url, .sha256)
+      | if length > 0 then . else error("no approved version") end
     ' "$params" 2>/dev/null)" \
       || die incomplete "seed chain API $chain_api returned malformed governed DevShard state"
     approval_sets+=("$approval_set")

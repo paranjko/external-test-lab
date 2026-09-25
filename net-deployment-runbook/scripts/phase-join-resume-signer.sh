@@ -82,14 +82,14 @@ append_transition() {
   head="$receipts/$head_name"
 }
 
-remote_deploy="/srv/dai/deploy/$NODE"
+remote_deploy="/srv/dai/deploy"
 ssh "$NODE" "cd '$remote_deploy' && test -r .env && test -r compose.yaml"
 remote_tmkms="$(ssh "$NODE" "cd '$remote_deploy' && docker compose --env-file .env -f compose.yaml ps -q tmkms")"
 [[ -z "$remote_tmkms" ]] || { echo 'restore resume refused: target TMKMS is already running' >&2; exit 1; }
 remote_node="$(ssh "$NODE" "cd '$remote_deploy' && docker compose --env-file .env -f compose.yaml ps -q node")"
 [[ -n "$remote_node" ]] || { echo 'restore resume refused: canonical node is not running signerless' >&2; exit 1; }
 before_tmkms_state="$RUN/tmkms-signing-state-before.json"
-ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$before_tmkms_state"
+ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$before_tmkms_state"
 chmod 600 "$before_tmkms_state"
 "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$minimum_tmkms_state" --observed "$before_tmkms_state" \
   --fence-height "$fence_height" >/dev/null
@@ -118,7 +118,7 @@ catching_up="$(jq -er '.result.sync_info.catching_up | type == "boolean" and . =
   echo 'restore resume failed: signer started without a current caught-up canonical node' >&2; exit 1;
 }
 after_tmkms_state="$RUN/tmkms-signing-state-after.json"
-ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$after_tmkms_state"
+ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$after_tmkms_state"
 chmod 600 "$after_tmkms_state"
 "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$before_tmkms_state" --observed "$after_tmkms_state" \
   --fence-height "$fence_height" >/dev/null

@@ -11,10 +11,10 @@ while (($#)); do
 done
 [[ $EUID -eq 0 ]] || { echo 'Run with sudo' >&2; exit 1; }
 [[ "$NODE" =~ ^[a-z0-9][a-z0-9_-]*$ && -s "$ENV_FILE" && -s "$NODE_CONFIG" && -s "$GENESIS" ]] || { usage; exit 2; }
-DEST="/srv/dai/deploy/$NODE"
+DEST="/srv/dai/deploy"
 PARENT="$(dirname "$DEST")"
 mkdir -p "$PARENT"
-STAGE="$(mktemp -d "$PARENT/.${NODE}.gdc-stage.XXXXXX")"
+STAGE="$(mktemp -d "$PARENT/.gdc-stage.XXXXXX")"
 BACKUP="${DEST}.gdc-rollback.$$"
 activated=false
 backup_made=false
@@ -63,6 +63,8 @@ case "$profile_kind" in
 esac
 install -m 0644 "$(dirname "$0")/compose.yaml" "$STAGE/compose.yaml"
 install -m 0644 "$(dirname "$0")/compose.ml-local.yaml" "$STAGE/compose.ml-local.yaml"
+install -m 0644 "$(dirname "$0")/compose.ml-amd.yaml" "$STAGE/compose.ml-amd.yaml"
+install -m 0644 "$(dirname "$0")/compose.ml-amd-single-group.yaml" "$STAGE/compose.ml-amd-single-group.yaml"
 install -m 0644 "$(dirname "$0")/compose.devshard-ha.yaml" "$STAGE/compose.devshard-ha.yaml"
 install -m 0644 "$(dirname "$0")/compose.bridge-sepolia.yaml" "$STAGE/compose.bridge-sepolia.yaml"
 install -d -m 0755 "$STAGE/versiond-router"

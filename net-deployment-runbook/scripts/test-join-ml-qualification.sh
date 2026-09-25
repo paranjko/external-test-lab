@@ -79,4 +79,46 @@ grep -Fq "SKIP  $alias unreachable; no ML qualification claim" <<<"$output" \
   || fail "JOIN role output lacks the SKIP record: $output"
 grep -Fq 'PASS ML qualification evidence' <<<"$output" \
   || fail "JOIN role output lacks the PASS record: $output"
+
+# Execute the production qualification guard itself, bounded by the next
+# identity-creation comment. This catches an exit from ensure_ml_qualification
+# only if phase-join retains the real pre-identity marker before continuing.
+guard="$tmp/phase-join-qualification-guard.sh"
+awk '
+  /^if \[\[ "\$\{GDC_JOIN_SKIP_QUALIFICATION:-false\}" == true \]\]; then$/ { in_guard=1 }
+  in_guard && /^# Every joining Host creates/ { exit }
+  in_guard { print }
+' "$ROOT/scripts/phase-join.sh" >"$tmp/qualification-guard.fragment"
+[[ -s "$tmp/qualification-guard.fragment" ]] || fail 'could not extract phase-join qualification guard'
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail' \
+    'mode="$1"' 'RUN="$2"' 'identity_reached="$3"' \
+    'GDC_JOIN_SKIP_QUALIFICATION=false' 'ML_TARGET=fixture' \
+    'ensure_ml_qualification() { [[ "$mode" == success ]] && return 0; exit 23; }'
+  sed -n '1,$p' "$tmp/qualification-guard.fragment"
+  printf '%s\n' ': >"$identity_reached"'
+} >"$guard"
+chmod 0755 "$guard"
+
+failure_run="$tmp/failure-run"
+mkdir -p "$failure_run"
+if "$guard" failure "$failure_run" "$tmp/failure-identity-reached"; then
+  fail 'production qualification guard accepted a failing qualification'
+else
+  qualification_rc=$?
+fi
+[[ "$qualification_rc" == 23 ]] || fail "qualification exit was not preserved: $qualification_rc"
+marker="$failure_run/qualification-failed-before-identity"
+[[ -f "$marker" && "$(stat -c %a "$marker")" == 600 ]] \
+  || fail 'production qualification guard did not retain its private pre-identity marker'
+[[ ! -e "$tmp/failure-identity-reached" ]] \
+  || fail 'production qualification guard continued into identity creation after failure'
+
+success_run="$tmp/success-run"
+mkdir -p "$success_run"
+"$guard" success "$success_run" "$tmp/success-identity-reached"
+[[ ! -e "$success_run/qualification-failed-before-identity" ]] \
+  || fail 'successful qualification retained a false failure marker'
+[[ -f "$tmp/success-identity-reached" ]] \
+  || fail 'successful qualification did not continue to identity creation'
 printf 'PASS JOIN qualifies its target under the resolved release profile\n'

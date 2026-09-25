@@ -56,13 +56,35 @@ append_transition() {
   head="$receipts/$head_name"
 }
 
+verify_inactive_restore_key() {
+  local validators observed
+  [[ -r "$RUN/restore-tmkms-signing-state.json" ]] || {
+    echo 'canonical resume lacks the immutable restored TMKMS signing minimum' >&2
+    exit 1
+  }
+  validators="$RUN/restore-validator-set-resume-before-enable.json"
+  curl -fsS --connect-timeout 10 --max-time 30 \
+    "https://${GENESIS_PUBLIC_HOST}/chain-rpc/validators?per_page=100" >"$validators" \
+    || { echo 'canonical resume cannot read the complete public validator set for validator-backup recovery' >&2; exit 1; }
+  chmod 600 "$validators"
+  "$ROOT/scripts/verify-inactive-validator-key.sh" \
+    --identity "$IDENTITY" --validators "$validators" \
+    --output "$RUN/inactive-validator-key-resume-before-enable.json"
+  observed="$RUN/restored-tmkms-signing-state-resume-before-enable.json"
+  ssh -T "$NODE" "sudo -n cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$observed"
+  chmod 600 "$observed"
+  "$ROOT/scripts/verify-tmkms-signing-state.sh" \
+    --minimum "$RUN/restore-tmkms-signing-state.json" --observed "$observed" \
+    || { echo 'canonical resume refused: restored signer state is lower than the immutable validator-backup minimum' >&2; exit 1; }
+}
+
 remote="/tmp/gdc-canonical-resume-${GDC_RUN_ID}-${NODE}"
 ssh "$NODE" "rm -rf '$remote' && mkdir -p '$remote'"
 scp -q "$ROOT/02-node/verify-canonical-join-state.sh" "$NODE:$remote/verify-canonical-join-state.sh"
 scp -q "$ROOT/scripts/verify-join-lineage-state.sh" "$NODE:$remote/verify-join-lineage-state.sh"
 scp -q "$lineage" "$NODE:$remote/lineage-receipt.json"
 
-deploy="/srv/dai/deploy/$NODE"
+deploy="/srv/dai/deploy"
 tmkms="$(ssh "$NODE" "cd '$deploy' && docker compose --env-file .env -f compose.yaml ps -q tmkms")"
 [[ -z "$(printf '%s\n' "$tmkms" | sed '/^$/d')" ]] || { echo 'canonical resume refused: signer is already running' >&2; exit 1; }
 if [[ "$resume_state" == CANONICAL_RUNNING ]]; then
@@ -72,11 +94,11 @@ fi
 if [[ "$NODE" != "$PUBLIC_EDGE_NODE" ]]; then
   # A participant edge is Caddy only: gateway-admission belongs to the shared
   # gateway, and its script is installed only by `gateway apply`.
-  start_stack "$NODE" "/srv/dai/deploy/$NODE/edge" caddy
+  start_stack "$NODE" "/srv/dai/deploy/edge" caddy
 else
   printf 'READY retained shared public edge on %s during participant JOIN resume\n' "$NODE"
 fi
-start_stack "$NODE" "/srv/dai/deploy/$NODE/monitoring-agent"
+start_stack "$NODE" "/srv/dai/deploy/monitoring-agent"
 ssh "$NODE" "cd '$deploy' && bash '$remote/verify-canonical-join-state.sh' '$deploy' '$expected_chain_id' '$expected_p2p_node_id' '$expected_core_version' '$expected_core_commit' '$expected_dapi_version' '$expected_dapi_commit'"
 # State was already imported and verified before this receipt-bound resume.
 # The original short-lived trust decision must not block a current common-head
@@ -99,7 +121,13 @@ touch "$STATE/joined/$NODE"
 ML_HOST="$(node_ml_host "$NODE" || true)"
 [[ -z "$ML_HOST" ]] || "$ROOT/scripts/phase-ml-attach.sh" "$NODE"
 
-bash "$ROOT/scripts/same-host-restore.sh" bind "$NODE" "$IDENTITY" "$expected_chain_id" "$RUN/same-host-reset-before-enable.json"
+if reset_metadata="$(bash "$ROOT/scripts/resolve-reset-dai-backup.sh" "$STATE/reset/$NODE" 2>/dev/null)"; then
+  bash "$ROOT/scripts/same-host-restore.sh" bind "$NODE" "$IDENTITY" "$expected_chain_id" \
+    "$reset_metadata" "$RUN/reset-dai-backup-before-enable.json"
+else
+  printf 'READY canonical resume uses the inactive restored validator-key fence\n'
+  verify_inactive_restore_key
+fi
 consensus_pubkey="$(jq -er .consensus_pubkey "$IDENTITY")"
 fence_remote="$deploy/.gdc/runs/$GDC_RUN_ID/signer-fence-receipt.v1.json"
 ssh "$NODE" "sudo '$deploy/fence-existing-signer.sh' '$deploy' '$GDC_RUN_ID' '$consensus_pubkey' '$NODE'"
@@ -110,7 +138,7 @@ record_join_state "$NODE" SIGNER_FENCE_VERIFIED "$ADDRESS"
 append_transition SIGNER_FENCE_VERIFIED
 
 before="$RUN/tmkms-signing-state-before-enable.json"
-ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$before"
+ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$before"
 chmod 600 "$before"
 status="$(ssh -T "$NODE" 'curl -fsS --max-time 10 http://127.0.0.1:26657/status')"
 jq -e --slurpfile state "$before" '.result.sync_info.catching_up == false and (.result.sync_info.latest_block_height | tonumber) > ($state[0].height | tonumber)' <<<"$status" >/dev/null || {
@@ -138,20 +166,28 @@ until ssh "$NODE" "cd '$deploy' && ./verify-active-signer-state.sh '$deploy' '$e
   sleep 5
 done
 cat "$RUN/active-signer-readback.log"
-deadline=$((SECONDS + 2400)); advanced=false
+signing_wait_seconds=300
+deadline=$((SECONDS + signing_wait_seconds)); advanced=false
 while (( SECONDS < deadline )); do
   after="$RUN/tmkms-signing-state-after-enable.json"
   # The signer is already on; one failed read is not evidence about it.
-  ssh "$NODE" "sudo cat '/srv/dai/signer/$NODE/tmkms/state/priv_validator_state.json'" >"$after" \
+  ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$after" \
     || { sleep 2; continue; }
   chmod 600 "$after"
   if "$ROOT/scripts/verify-tmkms-signing-state.sh" --minimum "$before" --observed "$after" --require-advance >/dev/null; then advanced=true; break; fi
   sleep 2
 done
-[[ "$advanced" == true ]] || { echo 'canonical resume failed: TMKMS did not advance after enablement' >&2; exit 1; }
 record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"
-append_transition SIGNER_ACTIVE_VERIFIED true
-"$ROOT/scripts/validator-backup.sh" create "$NODE"
+if [[ "$advanced" == true ]]; then
+  append_transition SIGNER_ACTIVE_VERIFIED true
+else
+  # An inactive restored validator is deliberately absent from the current
+  # validator set, so Comet has no signature request for its armed signer.
+  # Treat this as the same bounded pending-eligibility state as fresh JOIN.
+  append_transition SIGNER_ARMED_PENDING_ELIGIBILITY true
+  printf 'READY %s signer is armed; positive consensus eligibility remains pending accepted PoC evidence\n' "$NODE"
+fi
+"$ROOT/scripts/validator-backup.sh" create "$NODE" resume-canonical
 append_transition RECOVERY_ARCHIVE_VERIFIED true
 append_transition COMPLETE true
 # Staging cleanup says nothing about the validator and must not fail its JOIN.

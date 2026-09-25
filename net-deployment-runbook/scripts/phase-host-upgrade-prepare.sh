@@ -37,7 +37,7 @@ minimum_lead="${GDC_UPGRADE_MIN_LEAD_BLOCKS:-60}"
   || die "proposal $PROPOSAL_ID activation height $plan_height is unsafe; require at least $minimum_lead blocks after $current_height"
 
 STATE_FILE="$STATE/upgrade/$NODE-$PROPOSAL_ID.env"
-CACHE_DIR="/srv/dai/$NODE/gdc-upgrade-cache/$PROPOSAL_ID"
+CACHE_DIR="/srv/dai/data/gdc-upgrade-cache/$PROPOSAL_ID"
 mkdir -p "$(dirname "$STATE_FILE")"
 if [[ -s "$STATE_FILE" ]]; then
   require_host_upgrade_state_target "$STATE_FILE" "$NODE" "$PROPOSAL_ID" \

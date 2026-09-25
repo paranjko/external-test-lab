@@ -167,6 +167,18 @@ ensure_run_manifest() {
   } >"$manifest"
 }
 
+# JOIN acceptance is a post-signer evidence phase. It remains bound to the
+# immutable Join Profile and run manifest, but it does not consume the
+# short-lived state-sync tuple that phase-join refreshes before its canary.
+# Remove that transient child-process context so record_phase_profile does not
+# compare a valid refreshed tuple with the run's original pre-mutation tuple.
+clear_join_lineage_context_for_acceptance() {
+  unset GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH
+  unset GDC_JOIN_SNAPSHOT_PEERS GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2
+  unset GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
+  unset GDC_JOIN_LINEAGE_RECEIPT_SHA256 GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON
+}
+
 write_phase_lineage() {
   local bundle="$1" chain_id="$2" hash="$3" manifest lineage release_hash profile_hash commit profile_kind join_profile_sha
   [[ -d "$bundle" ]] || die "phase bundle directory is absent: $bundle"
@@ -620,7 +632,7 @@ load_project() {
   API_HOST=api.gonka-dev.net
   DATA_ROOT=/srv/dai
   GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
-  HF_CACHE_ROOT=/srv/dai/hf-cache
+  HF_CACHE_ROOT=/srv/hf-cache
   if [[ "$context" == host-recovery ]]; then
     initialize_project_state_paths
     return 0
@@ -792,9 +804,51 @@ ensure_ml_qualification() {
 # the newest complete evidence bundle instead of letting an incomplete later
 # attempt hide a prior successful qualification for the same pinned model.
 latest_ml_qualification_report() {
-  local host="$1" report node node_runs
+  local host="$1" report node node_runs backend expected_image=''
+  if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+    if jq -e '.spec.target | has("accelerator")' "$GDC_JOIN_PROFILE" >/dev/null 2>&1; then
+      backend="$(jq -er '.spec.target.accelerator.qualification_backend' "$GDC_JOIN_PROFILE" 2>/dev/null)" \
+        || die 'generated JOIN profile lacks an accelerator qualification backend'
+      if [[ "$backend" == rocm ]]; then
+        expected_image="$(jq -er '.spec.target.accelerator.mlnode_image' "$GDC_JOIN_PROFILE" 2>/dev/null)" \
+          || die 'generated ROCm JOIN profile lacks its MLNode image binding'
+      else
+        expected_image="$(jq -er '.spec.deployment.host_envelope.mlnode_image' "$GDC_JOIN_PROFILE" 2>/dev/null)" \
+          || die 'generated CUDA JOIN profile lacks its MLNode image binding'
+      fi
+    else
+      # Validated historical v1 profiles predate accelerator receipts. Their
+      # loader binds the only supported legacy qualification path to CUDA.
+      backend="${ACCELERATOR_QUALIFICATION_BACKEND:-}"
+      [[ "$backend" == cuda ]] || die 'legacy generated JOIN profile lacks its CUDA qualification binding'
+      expected_image="$(jq -er '.spec.deployment.host_envelope.mlnode_image' "$GDC_JOIN_PROFILE" 2>/dev/null || true)"
+      [[ -n "$expected_image" ]] || expected_image="${MLNODE_GENERIC_IMAGE:-}"
+      [[ -n "$expected_image" ]] || die 'legacy generated JOIN profile lacks its MLNode image binding'
+    fi
+  else
+    backend="${ACCELERATOR_QUALIFICATION_BACKEND:-cuda}"
+    expected_image="${MLNODE_GENERIC_IMAGE:-}"
+  fi
+  [[ "$backend" == cuda || "$backend" == rocm ]] || die "unsupported ML qualification backend: $backend"
   while IFS= read -r report; do
-    [[ -s "$report/models.json" && -s "$report/completion.json" && -s "$report/vram.csv" ]] || continue
+    [[ -s "$report/models.json" && -s "$report/completion.json" ]] || continue
+    if [[ "$backend" == cuda ]]; then
+      [[ -s "$report/vram.csv" && ! -e "$report/rocm-info.txt" && ! -e "$report/rocm-workload.txt" ]] || continue
+    else
+      [[ -s "$report/rocm-info.txt" && -s "$report/rocm-workload.txt" && ! -e "$report/vram.csv" ]] || continue
+    fi
+    [[ -s "$report/start.log" && -s "$report/runtime.log" && -s "$report/stop.log" && -s "$report/status.json" ]] || continue
+    jq -e '.is_running == true and (.error == null or .error == "")' "$report/status.json" >/dev/null 2>&1 || continue
+    # ROCm support was introduced with immutable image-bound receipts. A
+    # marker-free ROCm bundle cannot prove which image actually ran.
+    [[ "$backend" != rocm || -e "$report/evidence-contract.txt" ]] || continue
+    if [[ -e "$report/evidence-contract.txt" ]]; then
+      grep -qx "backend=$backend" "$report/evidence-contract.txt" || continue
+      grep -qx "backend=$backend" "$report/qualification-success.txt" 2>/dev/null || continue
+      [[ -n "$expected_image" ]] || continue
+      grep -qxF "image=$expected_image" "$report/evidence-contract.txt" || continue
+      grep -qxF "image=$expected_image" "$report/qualification-success.txt" 2>/dev/null || continue
+    fi
     printf '%s\n' "$report"
     return 0
   done < <(
@@ -1280,10 +1334,10 @@ require_current_baseline_pass() {
     grep -qx "$node" <(printf '%s\n' "${evidence_nodes[@]}") || die "$node is absent from the baseline PASS bundle; run verify again"
     address="$(jq -er .address "$(node_account_file "$node")")"
     expected_addresses+=("$address")
-    marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release 2>/dev/null || true")"
+    marker="$(ssh "$node" "cat /srv/dai/deploy/.gdc-release 2>/dev/null || true")"
     [[ "$marker" == "$profile $expected_profile_hash" ]] || die "$node does not have the verified $profile deployment marker"
 
-    binary_marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-binary-upgrade 2>/dev/null || true")"
+    binary_marker="$(ssh "$node" "cat /srv/dai/deploy/.gdc-binary-upgrade 2>/dev/null || true")"
     if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
       read -r expected_runtime_version expected_runtime_commit \
         < <(candidate_runtime_identity_for_marker "$binary_marker" "$profile")
@@ -1304,7 +1358,7 @@ require_current_baseline_pass() {
     jq -e --arg version "$expected_runtime_version" --arg commit "$expected_runtime_commit" '
       (.node_version.version | ltrimstr("v")) == $version and .node_version.commit == $commit
     ' <<<"$node_versions" >/dev/null 2>&1 || die "$runtime_error"
-    ssh -T "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env ps node api proxy explorer --format '{{.Service}} {{.State}}'" \
+    ssh -T "$node" "cd /srv/dai/deploy && docker compose --env-file .env ps node api proxy explorer --format '{{.Service}} {{.State}}'" \
       | awk '
           $1 == "node" || $1 == "api" || $1 == "proxy" || $1 == "explorer" { seen[$1]=1; if ($2 != "running") bad=1 }
           END { exit bad || !(seen["node"] && seen["api"] && seen["proxy"] && seen["explorer"]) }

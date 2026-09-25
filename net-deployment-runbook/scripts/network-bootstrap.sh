@@ -74,16 +74,14 @@ render_env() {
   printf "export SEED_API_URL=%q\nexport SEED_NODE_RPC_URL=%q\nexport SEED_NODE_P2P_URL=%q\nexport RPC_SERVER_URL_1=%q\nexport RPC_SERVER_URL_2=%q\n" "$first_api" "$rpc0" "$p2p" "$rpc0" "$rpc1"
 }
 
-# JOIN installs the CLI off PATH, in $GDC_HOME/bin/<profile_id>. Prefer it; $INFERENCED wins.
+# JOIN installs the CLI off PATH in the shared operator-root version cache.
 resolve_inferenced_cli() {
-  local id candidate
+  local resolver_root
   if [[ -n "${INFERENCED:-}" ]]; then printf '%s' "$INFERENCED"; return; fi
   if [[ -n "${GDC_JOIN_PROFILE:-}" && -n "${GDC_HOME:-}" && -r "${GDC_JOIN_PROFILE}" ]]; then
-    id="$(jq -r '.profile_id // empty' "$GDC_JOIN_PROFILE" 2>/dev/null || true)"
-    if [[ "$id" =~ ^[a-f0-9]{64}$ ]]; then
-      candidate="$GDC_HOME/bin/$id/inferenced"
-      if [[ -x "$candidate" && ! -L "$candidate" ]]; then printf '%s' "$candidate"; return; fi
-    fi
+    resolver_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    "$resolver_root/resolve-shared-inferenced-cli.sh" "$GDC_JOIN_PROFILE"
+    return
   fi
   printf 'inferenced'
 }

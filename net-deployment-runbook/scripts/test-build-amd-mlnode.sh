@@ -11,11 +11,16 @@ jq -e '
   .sources.gonka.commit == "4d687ed6782bcea3931d2d9135bf322f84e190ab" and
   .sources.gonka.submodules.gorilla == {path:"mlnode/packages/train/third_party/gorilla", commit:"d8fc7e364de491984466e2ce776a2e13b0ae2fe0"} and
   .sources.vllm.commit == "5110f7fcf176100d1c29c9ea0c75efbf271ec4b3" and
-  .accelerator == {vendor:"amd", architecture:"gfx1201"} and
+  .accelerator.vendor == "amd" and .accelerator.architecture == "gfx1201" and
+  .accelerator.pci_device_ids == ["0x7550"] and
+  .host_provisioning.ubuntu_version_id == "24.04" and
   .attention_backend == "ROCM_ATTN" and
+  (.host_provisioning.installer_sha256 | test("^[0-9a-f]{64}$")) and
+  (.host_provisioning.installer_package_version | test("^[0-9]")) and
   (.base_image | test("@sha256:[0-9a-f]{64}$")) and
+  (.output_image | startswith("ghcr.io/paranjko/gdc-mlnode:")) and
   .output_image == "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-vllm023-poc-4d687ed-5110f7f" and
-  .published_image == ""
+  .published_image == "ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-vllm023-poc-4d687ed-5110f7f@sha256:2deace96068164de85add38f5e77b62a7e4985b518a317089f11e4b5fc801517"
 ' "$profile" >/dev/null
 
 plan="$($script "$profile" --plan)"
@@ -26,7 +31,6 @@ grep -Fq 'PLAN source.vllm=https://github.com/gonka-ai/vllm.git@5110f7fcf176100d
 grep -Fq 'PLAN attention_backend=ROCM_ATTN' <<<"$plan"
 grep -Fq 'PLAN output=ghcr.io/paranjko/gdc-mlnode:3.0.14-rocm-gfx1201-vllm023-poc-4d687ed-5110f7f' <<<"$plan"
 grep -Fq 'ARG_PYTORCH_ROCM_ARCH=gfx1201' "$script"
-# shellcheck disable=SC2016
 grep -Fq '${TMPDIR:-/tmp}/gdc-amd-mlnode.XXXXXX' "$script"
 grep -Fq -- '--device /dev/kfd' "$script"
 grep -Fq 'torch.version.hip' "$script"

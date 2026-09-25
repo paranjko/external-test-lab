@@ -45,7 +45,7 @@ p2p_node_id="$(jq -er '.identity_fingerprints.p2p_node_id | select(test("^[a-f0-
 # command performs only Docker/curl/JQ readback and cannot start or stop a
 # service.  An unavailable or stale target is not a no-op.
 ssh -T "$node" "set -Eeuo pipefail
-deploy='/srv/dai/deploy/$node'
+deploy='/srv/dai/deploy'
 test -s \"\$deploy/.env\" && test -s \"\$deploy/compose.yaml\"
 test -s \"\$deploy/.gdc-join-profile\"
 test \"\$(cat \"\$deploy/.gdc-join-profile\")\" = '$profile_sha256' \\

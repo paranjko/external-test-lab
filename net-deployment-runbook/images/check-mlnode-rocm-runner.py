@@ -4,12 +4,24 @@
 import json
 import shlex
 import subprocess
+from pathlib import Path
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
 import vllm
 from api.inference.vllm.runner import VLLMRunner
+import vllm
+
+
+vllm_root = Path(vllm.__file__).resolve().parent
+required_poc_markers = (
+    ("poc/poc_model_runner.py", "_create_v1_attn_metadata"),
+    ("poc/poc_model_runner.py", "blocks_per_seq"),
+)
+for relative_path, marker in required_poc_markers:
+    source = (vllm_root / relative_path).read_text()
+    assert marker in source, f"missing v0.23 PoC marker {marker} in {relative_path}"
 
 
 vllm_root = Path(vllm.__file__).resolve().parent

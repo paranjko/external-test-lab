@@ -58,13 +58,14 @@ MONITORING_CIDR=198.51.100.1/32
 PUBLIC_EDGE_CIDR=198.51.100.2/32
 DATA_ROOT=/srv/dai
 GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
-HF_CACHE_ROOT=/srv/dai/hf-cache
+HF_CACHE_ROOT=/srv/hf-cache
 INVENTORY="$tmp/inventory.env"
 write_inventory
 unset GDC_NODE_ALIASES GDC_NODE_PUBLIC_HOSTS GDC_NODE_P2P_PORTS GDC_NODE_ML_HOSTS
 load_env "$INVENTORY"
 [[ "$GDC_NODE_ALIASES" == 'validator-a validator-b validator-c' ]]
 [[ "$GDC_NODE_ML_HOSTS" == 'validator-c=operator-c-gpu' ]]
+[[ "$HF_CACHE_ROOT" == /srv/hf-cache ]]
 [[ "$GDC_GENESIS_NODE" == validator-a ]]
 [[ "$GDC_PUBLIC_EDGE_NODE" == validator-c ]]
 [[ "$GDC_GATEWAY_NODE" == validator-a ]]
