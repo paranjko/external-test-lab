@@ -132,7 +132,7 @@ done
 jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$API_HOST/v1" \
   --arg direct "http://$gateway_public_host:8082/v1" --arg telegram "$telegram_bot_url" \
   --arg grafanaNetwork "https://$GRAFANA_HOST/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
-  --arg grafanaInference "https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-7d&to=now&timezone=utc&kiosk" \
+  --arg grafanaInference "https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
   --arg gatewayNode "$GATEWAY_NODE" --arg chainRpcHost "$(node_public_host "$GENESIS_NODE")" --argjson nodes "$nodes" --argjson validators "$validators" --argjson nodeCatalog "$node_catalog" \
   '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
   | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
