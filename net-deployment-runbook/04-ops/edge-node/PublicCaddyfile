@@ -99,6 +99,20 @@
     handle /ops-gateway-admission-state {
       respond 403
     }
+    # The configured Telegram Host can be the public edge itself. In that
+    # case the site status proxy returns here, so route the safe readiness
+    # summary before the generic DAPI fallback.
+    @telegram_consumer_health_from_observer {
+      path /ops-telegram-consumer-health
+      remote_ip {$MONITORING_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @telegram_consumer_health_from_observer {
+      rewrite * /health
+      reverse_proxy 127.0.0.1:9464
+    }
+    handle /ops-telegram-consumer-health {
+      respond 403
+    }
     @root path /
     redir @root /dashboard/gonka/gov 308
     # The public edge owns public TLS but is not necessarily a chain participant.
@@ -194,12 +208,48 @@ preview.{$SITE_HOST} {
       header_up Host {$TELEGRAM_BOT_PUBLIC_HOST}
     }
   }
+  # The preview carries its own static OpenAPI document. Serve it before the
+  # generic overlay so a browser can inspect exactly the candidate contract.
+  @preview_status_document path_regexp preview_status_document ^/preview/[1-9][0-9]*/status/(index\.html|openapi\.json)$
+  handle @preview_status_document {
+    root * /srv/dai/edge/site
+    file_server
+  }
+  # Independent Community DevNet operators are discovered from the public
+  # participant registry. Permit only conventional nodeN hostnames and only
+  # the read-only observations used by the site. This preserves the
+  # same-origin preview contract without creating an arbitrary proxy.
+  @dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info))$
+  handle @dynamic_participant_status {
+    rewrite * /{re.dynamic_participant_status.2}
+    reverse_proxy {re.dynamic_participant_status.1}:443 {
+      transport http {
+        tls_server_name {re.dynamic_participant_status.1}
+      }
+      header_up Host {re.dynamic_participant_status.1}
+    }
+  }
   @preview_status path_regexp preview_status ^/preview/[1-9][0-9]*/status/(.+)$
   handle @preview_status {
     rewrite * /status/{re.preview_status.1}
     reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {
       header_up Host {$GATEWAY_PUBLIC_HOST}
     }
+  }
+  # Public API documentation is static and remains available when the gateway
+  # status origin is unavailable. Keep it ahead of the generic status proxy.
+  handle /status {
+    redir /status/ 308
+  }
+  handle /status/openapi.json {
+    root * /srv/dai/edge/site
+    header Content-Type application/json
+    file_server
+  }
+  handle /status/ {
+    root * /srv/dai/edge/site/status
+    rewrite * /index.html
+    file_server
   }
   @status_data {
     path /status/*

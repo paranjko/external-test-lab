@@ -38,8 +38,8 @@ for (const [, asset] of css.matchAll(/url\("([^"]+)"\)/g)) {
 if (new URL('config.js', preview).pathname !== '/preview/83/config.js' || !index.includes('src="config.js"')) {
   throw new Error('preview must resolve configuration inside its own generation');
 }
-if (!app.includes('"/status/participants"') || new URL('/status/participants', preview).pathname !== '/status/participants') {
-  throw new Error('preview must retain root status endpoints');
+if (!app.includes('cfg.statusBase || "/status"')) {
+  throw new Error('root static site must retain the production status default');
 }
 if (!/"revision":"[0-9a-f]{40}"/.test(build) || !/"artifactDigest":"[0-9a-f]{64}"/.test(build) || !/"appDigest":"[0-9a-f]{64}"/.test(build)) {
   throw new Error('release must expose its exact revision, static payload digest and app.js digest');

@@ -2,13 +2,14 @@
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const siteBuild = fs.mkdtempSync(path.join(os.tmpdir(), 'gdc-site-test-'));
+const temporaryRoot = process.env.TMPDIR || path.join(__dirname, '..', '..', '.data', 'preview-tmp');
+fs.mkdirSync(temporaryRoot, { recursive: true });
+const siteBuild = fs.mkdtempSync(path.join(temporaryRoot, 'gdc-site-test-'));
 childProcess.execFileSync(
   path.join(__dirname, 'build-site-js.sh'),
   ['--output', siteBuild],
-  { cwd: os.tmpdir(), stdio: 'inherit' },
+  { cwd: temporaryRoot, stdio: 'inherit' },
 );
 const state = require(path.join(siteBuild, 'gateway-state.js'));
 const hostState = require(path.join(siteBuild, 'host-state.js'));
@@ -189,11 +190,11 @@ assert.deepEqual(hostState.classify({
   endpointState: 'unavailable',
   endpointDiagnostic: 'HTTP 502',
 }), {
-  state: 'unknown',
-  stateLabel: 'Unknown',
-  reason: 'Validator data unavailable',
-  primaryLabel: 'Unknown',
-  primaryClass: 'status unknown',
+  state: 'inactive',
+  stateLabel: 'Inactive',
+  reason: 'Public endpoint unavailable',
+  primaryLabel: 'Inactive',
+  primaryClass: 'status inactive',
   votingPower: 'Unavailable',
   endpointLabel: 'Unavailable – HTTP 502',
   syncLabel: 'Unavailable',
@@ -206,11 +207,11 @@ assert.deepEqual(hostState.classify({
   endpointState: 'unavailable',
   endpointDiagnostic: 'Network error',
 }), {
-  state: 'unknown',
-  stateLabel: 'Unknown',
-  reason: 'Validator data unavailable',
-  primaryLabel: 'Unknown',
-  primaryClass: 'status unknown',
+  state: 'inactive',
+  stateLabel: 'Inactive',
+  reason: 'Public endpoint unavailable',
+  primaryLabel: 'Inactive',
+  primaryClass: 'status inactive',
   votingPower: 'Unavailable',
   endpointLabel: 'Unavailable – Network error',
   syncLabel: 'Unavailable',
@@ -226,6 +227,31 @@ assert.equal(hostState.classify({
   validatorKnown: true,
   votingPower: '88',
 }).primaryLabel, 'Inactive');
+assert.equal(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: true,
+  votingPower: '0',
+  endpointState: 'unavailable',
+  endpointDiagnostic: 'HTTP 502',
+}).primaryLabel, 'Inactive');
+assert.deepEqual(hostState.classify({
+  participantKnown: true,
+  participantStatus: 'ACTIVE',
+  validatorKnown: true,
+  votingPower: '42',
+  endpointState: 'unknown',
+}), {
+  state: 'unknown',
+  stateLabel: 'Unknown',
+  reason: 'Endpoint status is being checked',
+  primaryLabel: 'Unknown',
+  primaryClass: 'status unknown',
+  votingPower: '42',
+  endpointLabel: 'Unknown',
+  syncLabel: 'Unknown',
+  validatorEffective: false,
+});
 const node2Inactive = hostState.classify({
   participantKnown: true,
   participantStatus: 'ACTIVE',
@@ -310,15 +336,31 @@ assert.match(siteApp, /document\.createElement\(["']time["']\)/);
 assert.match(siteApp, /started.*UTC/);
 assert.match(siteApp, /cloudflare-dns\.com\/dns-query/);
 assert.match(siteApp, /ipwho\.is/);
-assert.match(siteApp, /statusBase:\s*`https:\/\/\$\{host\}`/);
-assert.match(siteApp, /json\("\/status\/gpus"\)/);
+assert.match(siteApp, /DYNAMIC_STATUS_HOST/);
+assert.match(siteApp, /DYNAMIC_STATUS_HOST\.test\(host\)/);
+assert.match(
+  siteApp,
+  /DYNAMIC_STATUS_HOST\.test\(host\) \|\| !catalog \|\| !catalog\.ip \|\| !catalog\.geo/,
+);
+assert.match(siteApp, /ip: discovered\.ip \|\| catalog\?\.ip \|\| ""/);
+assert.match(siteApp, /geo: discovered\.geo \|\| catalog\?\.geo \|\| null/);
+assert.match(siteApp, /`\$\{statusBase\}\/\$\{host\}`/);
+assert.match(siteApp, /json\(statusUrl\("\/gpus"\)\)/);
+assert.match(siteApp, /json\(statusUrl\("\/software"\)\)/);
+assert.match(siteApp, /previewPrefix \? `\$\{previewPrefix\}\/status`/);
 assert.match(siteApp, /sample\?\.metric\?\.gpu_name/);
-assert.match(siteApp, /node\.gpuHost && node\.gpuHost !== node\.name \? "net" : "local"/);
+assert.match(siteApp, /const networkAttached = \(hardware\?\.nodes \|\| \[\]\)\.some/);
+assert.match(siteApp, /host !== node\.ip/);
+assert.match(siteApp, /\? "network"\s*:\s*"local"/);
 assert.match(siteApp, /const gpuHost = node\.gpuHost \|\| node\.name/);
 assert.match(siteApp, /const inventoryKey = \[gpuHost, node\.publicHost, node\.name\]/);
-assert.match(siteApp, /configuredGpuLabel\(node\.gpuProfile\)/);
-assert.match(siteApp, /RTX PRO 2000 Blackwell/);
-assert.match(siteApp, /inventory unavailable/);
+assert.match(siteApp, /hardware_nodes\/\$\{encodeURIComponent\(address\)\}/);
+assert.match(siteApp, /function refreshHardwareInventory/);
+assert.match(siteApp, /Current on-chain runtime inventory/);
+assert.match(siteApp, /fullGpuValue\.length > 42/);
+assert.match(siteApp, /inventoryLabel\.slice\(0, 30\)\.trimEnd\(\)\}… – \$\{connection\}/);
+assert.match(siteApp, /Chain runtime inventory reports no GPU for this participant/);
+assert.match(siteApp, /Chain runtime inventory reports no MLNode for this participant/);
 assert.match(siteApp, /\$\{inventoryLabel\} – \$\{connection\}/);
 assert.match(siteApp, /replace\(\/\^NVIDIA\\s\+\/i, ""\)/);
 assert.match(
@@ -326,11 +368,26 @@ assert.match(
   /participantNode\(participant, validators, validatorKnown\)/,
 );
 assert.match(siteApp, /hostState\.classify/);
-assert.match(siteApp, /GDC_SOFTWARE_VERSIONS\.normalizeMlNodeVersion/);
+assert.match(siteApp, /GDC_SOFTWARE_VERSIONS\.formatMlNodes/);
 assert.match(siteApp, /data-k="vp"/);
 assert.match(siteApp, /<span>voting power<\/span>/);
-assert.match(siteApp, /class="metric software" data-k-row="software"/);
+assert.match(siteApp, /class="metric inferenced" data-k-row="inferenced"/);
+assert.match(siteApp, /class="metric dapi" data-k-row="dapi"/);
+assert.match(siteApp, /class="metric devshard" data-k-row="devshard"/);
+assert.match(siteApp, /json\(`\$\{statusBase\}\/devshard\/healthz`\)/);
+assert.match(siteApp, /function updateDevShards/);
 assert.match(siteApp, /class="metric gpu" data-k-row="gpu" hidden/);
+assert.match(siteApp, /class="metric mlnodes" data-k-row="mlnodes" hidden/);
+assert.match(siteApp, /<span>MLNodes<\/span>/);
+assert.match(siteApp, /function updateMlNodes/);
+assert.match(siteApp, /formatMlNodes/);
+assert.match(siteApp, /\$\("devshard-versions"\)/);
+assert.match(siteApp, /refreshDevShardVersions/);
+assert.match(siteApp, /approved_versions/);
+assert.match(
+  fs.readFileSync(path.join(__dirname, '..', '04-ops/site/src/host-state.js'), 'utf8'),
+  /Public endpoint unavailable/,
+);
 assert.match(siteApp, /function hostCardCapacity\(totalCards\)/);
 assert.match(siteApp, /width < 1200 \? 2 : 4/);
 assert.match(siteApp, /minimumExpandedWidth = 270/);
@@ -350,6 +407,17 @@ assert.match(siteApp, /catchingUp/);
 assert.match(siteApp, /blockAgeSeconds/);
 assert.match(siteApp, /referenceKnown/);
 assert.match(siteApp, /chain-rpc\/status/);
+assert.match(siteApp, /\$\{statusBase\}\/health/);
+assert.match(siteApp, /function markerStateCounts\(validators/);
+assert.match(siteApp, /function markerGroupState\(counts/);
+assert.match(siteApp, /label:\s*states\.length > 1 \? "Mixed"/);
+assert.match(siteApp, /function markerRadius\(count/);
+assert.match(siteApp, /7\.5 \* Math\.sqrt\(count\)/);
+assert.match(siteApp, /function maidenheadLocator\(latitude/);
+assert.match(siteApp, /function markerFill\(counts/);
+assert.match(siteApp, /conic-gradient/);
+assert.match(siteApp, /L\.divIcon/);
+assert.doesNotMatch(siteApp, /validator-marker-number/);
 assert.doesNotMatch(siteApp, /let popupOpen = false/);
 assert.doesNotMatch(siteApp, /waiting for validator set/);
 assert.doesNotMatch(siteApp, /effective validator – endpoint/);
@@ -370,11 +438,16 @@ const homepageCapture = fs.readFileSync(
 );
 assert.match(
   readability,
-  /\.nodes\.compact \{[\s\S]*display: flex;[\s\S]*height: auto;[\s\S]*min-height: 424px;[\s\S]*overflow-x: auto;[\s\S]*overflow-y: hidden;[\s\S]*overscroll-behavior-x: contain;/,
+  /\.nodes\.compact \{[\s\S]*display: flex;[\s\S]*align-items: flex-start;[\s\S]*height: auto;[\s\S]*min-height: 350px;[\s\S]*overflow-x: auto;[\s\S]*overflow-y: hidden;[\s\S]*overscroll-behavior-x: contain;/,
 );
+assert.match(readability, /\.validator-map-encoding-note/);
+assert.match(readability, /\.validator-marker-face[\s\S]*background: var\(--validator-marker-fill\)/);
+assert.match(readability, /\.validator-map \.leaflet-popup-pane \{ z-index: 1200 !important; \}/);
+assert.match(readability, /\.validator-map-tooltip \{ position: fixed; z-index: 20000;/);
+assert.doesNotMatch(readability, /validator-marker-number/);
 assert.match(
   readability,
-  /\.nodes\.compact \.node \{[\s\S]*flex: 1 1 0;[\s\S]*height: 424px;[\s\S]*min-height: 424px;[\s\S]*max-height: 424px;[\s\S]*transition:/,
+  /\.nodes\.compact \.node \{[\s\S]*flex: 1 1 0;[\s\S]*height: 400px;[\s\S]*min-height: 400px;[\s\S]*max-height: 400px;[\s\S]*transition:/,
 );
 assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \{[\s\S]*flex: 0 0 var\(--collapsed-host-width\);[\s\S]*width: var\(--collapsed-host-width\);/);
 assert.match(readability, /\.nodes\.compact \.node\.is-expanded \{[\s\S]*min-width: 270px;/);
@@ -382,9 +455,10 @@ assert.match(readability, /--collapsed-host-width: 32px;/);
 assert.match(readability, /\.nodes\.compact \.node-toggle:focus-visible \{[\s\S]*outline: 2px solid var\(--lime\);/);
 assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \.node-toggle \{[\s\S]*writing-mode: vertical-rl;[\s\S]*transform: rotate\(180deg\);/);
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;[\s\S]*max-height: none;[\s\S]*align-items: flex-start;/);
-assert.match(readability, /\.nodes\.compact \.metric\.software,\s*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{/);
-assert.match(readability, /grid-template-columns: 64px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric\.software b,[\s\S]*\.nodes\.compact \.metric\.gpu b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
+assert.match(readability, /\.nodes\.compact \.metric\.inferenced,[\s\S]*\.nodes\.compact \.metric\.dapi,[\s\S]*\.nodes\.compact \.metric\.devshard,[\s\S]*\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\),[\s\S]*\.nodes\.compact \.metric\.mlnodes:not\(\[hidden\]\) \{/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu:not\(\[hidden\]\) \{[\s\S]*grid-template-columns: 24px minmax\(0, 1fr\);[\s\S]*align-items: center;/);
+assert.match(readability, /\.nodes\.compact \.metric\.inferenced b,[\s\S]*\.nodes\.compact \.metric\.dapi b,[\s\S]*\.nodes\.compact \.metric\.devshard b,[\s\S]*\.nodes\.compact \.metric\.mlnodes b \{[\s\S]*font-size: 9px;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
+assert.match(readability, /\.nodes\.compact \.metric\.gpu b \{[\s\S]*font-size: 8px;[\s\S]*min-width: 0;[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
 assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;[\s\S]*overflow-wrap: anywhere;[\s\S]*text-overflow: clip;[\s\S]*white-space: normal;/);
 assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*flex-direction: column;[\s\S]*height: auto;[\s\S]*overflow: visible;[\s\S]*\.nodes\.compact \.node\.is-collapsed \{[\s\S]*height: 52px;/);
 assert.match(readability, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*transition: none;/);
@@ -392,17 +466,25 @@ assert.match(mapFixture, /name: "fixture-dynamic",\s*mode: "skip",\s*reason: "fi
 assert.match(mapFixture, /\.\.\.Array\.from\(\{ length: 11 \}, \(_, index\) => \(\{\s*name: `fixture-overflow-\$\{index \+ 1\}`/);
 assert.match(mapFixture, /\[1399, 720\][\s\S]*\[1321, 720\][\s\S]*\[1320, 720\][\s\S]*\[1101, 720\][\s\S]*\[1100, 720\][\s\S]*\[701, 720\][\s\S]*\[700, 720\][\s\S]*\[521, 720\][\s\S]*\[1400, 900\][\s\S]*\[1440, 900\][\s\S]*\[1920, 1080\][\s\S]*\[390, 844\]/);
 assert.match(mapFixture, /\[1920, 1440, 1400, 1399, 1321, 1320, 1280, 1101, 1100, 844, 701, 700, 521, 390, 375, 360, 320\]\.includes\(width\)/);
-assert.match(mapFixture, /skippedGpu\.hidden[\s\S]*skippedGpu\.text === ""[\s\S]*skippedGpu\.clientHeight === 0/);
+assert.match(mapFixture, /!skippedGpu\.hidden[\s\S]*skippedGpu\.text === "Unavailable"/);
 assert.match(mapFixture, /cards\.length > 5[\s\S]*cardsReachable[\s\S]*activationValid[\s\S]*keyboardValid/);
 assert.match(mapFixture, /cards\.length !== 22[\s\S]*desktopReachability[\s\S]*mobileReachability/);
 assert.match(mapFixture, /waitForSettledOverlappingMarker[\s\S]*stableSamples >= 3/);
 assert.doesNotMatch(mapFixture, /startsWith\(\$\{JSON\.stringify\(expected\)\}\)/);
 assert.match(homepageCapture, /return value && \{[\s\S]*width: value\.width,[\s\S]*height: value\.height/);
 assert.match(homepageCapture, /state\.nodeDeck/);
+assert.match(homepageCapture, /deck\.cards\.every\(card => card\.height >= 350\)/);
 assert.match(homepageCapture, /const deckInternalOverflow = deck\.scrollWidth > deck\.clientWidth \+ 1;/);
 assert.match(homepageCapture, /deck\.firstAtStart && deck\.lastAtEnd && deck\.appliedScrollLeft > 1/);
 assert.match(homepageCapture, /Host accordion layout contract failed/);
 assert.match(homepageCapture, /Host accordion activation contract failed/);
+assert.match(homepageCapture, /GDC_EXPECT_STATUS_PREFIX/);
+assert.match(homepageCapture, /GDC_EXPECT_CARD_COUNT/);
+assert.match(homepageCapture, /GDC_EXPECT_NODE_STATES/);
+assert.match(homepageCapture, /preview shared status request failed/);
+assert.match(homepageCapture, /homepage rendered .* required Host cards/);
+assert.match(homepageCapture, /Host cards do not have equal heights/);
+assert.match(homepageCapture, /Host state does not match expected/);
 assert.match(homepageCapture, /visualWidth: visualViewport\?\.width \|\| innerWidth/);
 assert.match(homepageCapture, /Math\.abs\(state\.visualWidth - width\) > 0\.5/);
 assert.ok(

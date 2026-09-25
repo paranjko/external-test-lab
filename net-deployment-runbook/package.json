@@ -1,6 +1,7 @@
 {
   "private": true,
   "devDependencies": {
-    "leaflet": "1.9.4"
+    "leaflet": "1.9.4",
+    "swagger-ui-dist": "5.32.0"
   }
 }

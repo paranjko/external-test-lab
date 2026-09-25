@@ -44,7 +44,8 @@ type SiteNode = {
   referenceAgrees?: boolean,
   isOnline?: boolean,
   serverStatus?: string,
-  gpuProfile?: ?string,
+  softwareVersions?: ?any,
+  devShardHealth?: ?any,
   gpuHost?: ?string,
 };
 
@@ -58,6 +59,7 @@ type SiteConfig = {
   grafana?: string,
   grafanaNetwork?: string,
   grafanaInference: string,
+  statusBase?: string,
   nodes: Array<SiteNode>,
   nodeCatalog?: Array<SiteNode>,
 };
@@ -127,14 +129,41 @@ type ParticipantDiscoveryCache = {
 
 type GpuInventory = Map<string, Array<string>>;
 type SoftwareInventory = Map<string, Array<any>>;
+type HardwareNode = {
+  local_id?: string,
+  version?: string,
+  host?: string,
+  hardware?: Array<{ type?: string, count?: number }>,
+};
+type HardwareInventoryEntry = {
+  state: "observed" | "unavailable",
+  nodes: Array<HardwareNode>,
+};
+type HardwareInventory = Map<string, HardwareInventoryEntry>;
+type DevShardHealth = {
+  state: "checking" | "observed" | "not_exposed" | "unavailable",
+  runtimes: Array<any>,
+};
+type DevShardVersion = {
+  name: string,
+  sha256: string,
+};
 type SoftwareVersionsApi = {
+  displayVersion: (reported: string) => string,
   normalizeMlNodeVersion: (chain: string, reported: string) => string,
+  formatMlNodes: (chain: string, mlnodes: Array<{ version?: string, node_id?: string }>) => string,
+  describeMlNodes: (
+    chain: string,
+    mlnodes: Array<{ version?: string, node_id?: string }>,
+  ) => Array<string>,
+  selectLatestInventory: (samples: Array<any>) => Map<string, any>,
 };
 
 declare var GDC_SOFTWARE_VERSIONS: SoftwareVersionsApi;
 declare var L: any;
 
 type Validator = {
+  name: string,
   ownerAddress: string,
   ip: string,
   licenseCount: number,
@@ -166,6 +195,13 @@ type ValidatorGroup = {
   lon: number,
   label: string,
   validators: Array<Validator>,
+};
+
+type MarkerStateCounts = {
+  validating: number,
+  active: number,
+  inactive: number,
+  unknown: number,
 };
 
 type HTMLElement = any;
@@ -201,12 +237,24 @@ const siteBuild: any = (window: any).GDC_SITE_BUILD || {};
 const gatewayStatus: GatewayStateApi = (window: any).GDC_GATEWAY_STATE;
 const hostState: HostStateApi = (window: any).GDC_HOST_STATE;
 const $ = (id: string): any => document.getElementById(id);
+const previewMatch = String((window: any).location?.pathname || "").match(
+  /^\/preview\/([1-9][0-9]*)(?:\/|$)/,
+);
+const previewPrefix = previewMatch ? `/preview/${previewMatch[1]}` : "";
+const statusBase = String(
+  previewPrefix ? `${previewPrefix}/status` : cfg.statusBase || "/status",
+).replace(/\/$/, "");
 const chainRpcHost =
   cfg.chainRpcHost ||
   cfg.nodes.find((node) => node.name === cfg.gatewayNode)?.publicHost ||
   cfg.nodes[0]?.publicHost;
+const chainRpcNode =
+  cfg.gatewayNode || cfg.nodes.find((node) => node.publicHost === chainRpcHost)?.name;
 const chainRpcOrigin =
-  cfg.chainRpcOrigin || (chainRpcHost ? `https://${chainRpcHost}` : "");
+  previewPrefix && chainRpcNode
+    ? `${statusBase}/${chainRpcNode}`
+    : cfg.chainRpcOrigin || (chainRpcHost ? `https://${chainRpcHost}` : "");
+const statusUrl = (path: string): string => `${statusBase}${path}`;
 $("chain-id").textContent = cfg.chainId;
 $("model-id").textContent = cfg.model;
 async function refreshTelegramConsumer(): Promise<void> {
@@ -220,7 +268,7 @@ async function refreshTelegramConsumer(): Promise<void> {
   link.rel = "noopener";
   link.hidden = false;
   try {
-    const health = await json("/status/telegram-consumer");
+    const health = await json(statusUrl("/telegram-consumer"));
     if (health.status !== "ok" || health.inference_ready !== true) {
       link.title =
         "The Telegram client is available; inference is temporarily unavailable.";
@@ -232,9 +280,18 @@ async function refreshTelegramConsumer(): Promise<void> {
 $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana;
 $("grafana-inference").href = cfg.grafanaInference;
 const cards: Map<string, HTMLElement> = new Map();
-let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({ ...node }));
+let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({
+  ...node,
+  statusBase:
+    previewPrefix && /^node[0-9]+\.gonka-dev\.net$/i.test(node.publicHost || "")
+      ? `${statusBase}/${node.publicHost || ""}`
+      : previewPrefix && node.name
+        ? `${statusBase}/${node.name}`
+        : node.statusBase,
+}));
 let cardGpuInventory: GpuInventory = new Map();
 let cardSoftwareInventory: SoftwareInventory = new Map();
+let cardHardwareInventory: HardwareInventory = new Map();
 let expandedCardKeys: Array<string> = [];
 let selectedCardKey = "";
 let cardSequence = 0;
@@ -383,13 +440,25 @@ function createCard(node: SiteNode): HTMLElement {
         <span>peers</span>
         <b data-k="peers"></b>
       </div>
-      <div class="metric software" data-k-row="software">
-        <span>software</span>
-        <b data-k="versions"></b>
+      <div class="metric inferenced" data-k-row="inferenced">
+        <span>inferenced</span>
+        <b data-k="inferenced"></b>
+      </div>
+      <div class="metric dapi" data-k-row="dapi">
+        <span>DAPI</span>
+        <b data-k="dapi"></b>
+      </div>
+      <div class="metric devshard" data-k-row="devshard">
+        <span>DevShard</span>
+        <b data-k="devshard"></b>
       </div>
       <div class="metric gpu" data-k-row="gpu" hidden>
         <span>GPU</span>
         <b data-k="gpu"></b>
+      </div>
+      <div class="metric mlnodes" data-k-row="mlnodes" hidden>
+        <span>MLNodes</span>
+        <b data-k="mlnodes"></b>
       </div>
     </div>
   `;
@@ -401,9 +470,10 @@ function createCard(node: SiteNode): HTMLElement {
   set(el, "sync", node.mode === "skip" ? "Unknown" : "Unknown");
   set(el, "endpoint", node.mode === "skip" ? "Unknown" : "Unknown");
   set(el, "peers", node.mode === "skip" ? "–" : "…");
-  if (node.mode === "skip") set(el, "versions", "not running");
-  else updateSoftware(cardSoftwareInventory, node, el);
-  updateGpu(cardGpuInventory, node, el);
+  updateSoftware(cardSoftwareInventory, node, el);
+  updateGpu(cardGpuInventory, cardHardwareInventory, node, el);
+  updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, el);
+  updateDevShards(node, el);
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
   $("nodes").append(el);
@@ -418,8 +488,24 @@ function createCard(node: SiteNode): HTMLElement {
   return el;
 }
 
+function updateDevShardVersions(
+  versions: Array<DevShardVersion>,
+): void {
+  const target = $("devshard-versions");
+  if (!versions.length) {
+    target.textContent = "Unavailable";
+    target.title = "Approved DevShard versions could not be read from chain state";
+    return;
+  }
+  target.textContent = versions.map((version) => version.name).join(" · ");
+  target.title = versions
+    .map((version) => `${version.name}: ${version.sha256}`)
+    .join("\n");
+}
+
 function updateGpu(
   inventory: GpuInventory,
+  hardwareInventory: HardwareInventory,
   node: SiteNode,
   card: HTMLElement,
 ): void {
@@ -433,10 +519,33 @@ function updateGpu(
     inventory.has(key || ""),
   );
   const names = inventory.get(inventoryKey || "") || [];
+  const hardware = node.address ? hardwareInventory.get(node.address) : null;
+  // A split MLNode reports its own public endpoint in the chain inventory.
+  // Treat a distinct literal address as network-attached even if a stale site
+  // catalog has not yet learned the operator's ML SSH alias.
+  const networkAttached = (hardware?.nodes || []).some((runtime) => {
+    const host = String(runtime?.host || "").trim();
+    return Boolean(
+      node.ip &&
+        /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) &&
+        host !== node.ip,
+    );
+  });
   const connection =
-    node.gpuHost && node.gpuHost !== node.name ? "net" : "local";
+    (node.gpuHost && node.gpuHost !== node.name) || networkAttached
+      ? "network"
+      : "local";
   const countedNames: Map<string, number> = new Map();
-  for (const name of names) {
+  const reportedHardware = (hardware?.nodes || []).flatMap((runtime) =>
+    (runtime.hardware || []).flatMap((item) => {
+      const name = String(item?.type || "").trim();
+      const count = Number(item?.count || 0);
+      return name && Number.isFinite(count) && count > 0
+        ? Array(count).fill(name)
+        : [];
+    }),
+  );
+  for (const name of reportedHardware.length ? reportedHardware : names) {
     countedNames.set(name, (countedNames.get(name) || 0) + 1);
   }
   const inventoryLabel = [...countedNames.entries()]
@@ -445,53 +554,56 @@ function updateGpu(
       return count === 1 ? displayName : `${displayName} ×${count}`;
     })
     .join(" + ");
-  if (node.mode === "skip") {
-    row.hidden = true;
-    return;
-  }
   row.hidden = false;
   if (!inventoryLabel) {
-    const configuredProfile = configuredGpuLabel(node.gpuProfile);
-    if (configuredProfile) {
-      set(
-        card,
-        "gpu",
-        `${configuredProfile} – ${connection} (inventory unavailable)`,
-      );
+    if (hardware?.state === "observed") {
+      set(card, "gpu", "Not assigned");
       card.querySelector('[data-k="gpu"]').title =
-        `Configured GPU host: ${gpuHost}; live inventory has not reported it yet`;
+        "Chain runtime inventory reports no GPU for this participant";
       return;
     }
-    set(card, "gpu", "temporarily unavailable");
+    set(card, "gpu", "Unavailable");
     card.querySelector('[data-k="gpu"]').title =
-      "GPU inventory has not reported this Host yet";
+      "Chain runtime inventory could not be read";
     return;
   }
-  set(card, "gpu", `${inventoryLabel} – ${connection}`);
-  card.querySelector('[data-k="gpu"]').title = `GPU host: ${gpuHost}`;
+  const fullGpuValue = `${inventoryLabel} – ${connection}`;
+  // The card has one line for GPU. Keep ordinary inventory names intact, but
+  // compact pathological multi-device labels instead of letting them overflow
+  // or make one Host card taller than the rest. The title retains the exact
+  // on-chain or monitoring value.
+  const gpuValue =
+    fullGpuValue.length > 42
+      ? `${inventoryLabel.slice(0, 30).trimEnd()}… – ${connection}`
+      : fullGpuValue;
+  set(card, "gpu", gpuValue);
+  card.querySelector('[data-k="gpu"]').title =
+    reportedHardware.length
+      ? `Current on-chain runtime inventory: ${fullGpuValue}`
+      : `GPU host: ${gpuHost}; most recent monitoring observation within 24 hours: ${fullGpuValue}`;
 }
 
-function configuredGpuLabel(profile: ?string): ?string {
-  switch (profile) {
-    case "a5000-24g":
-      return "RTX A5000";
-    case "4090-24g":
-      return "GeForce RTX 4090";
-    case "3090-24g":
-      return "GeForce RTX 3090";
-    case "t4-16g":
-      return "Tesla T4";
-    case "blackwell-16g":
-      return "RTX PRO 2000 Blackwell";
-    default:
-      return null;
+function reportedSoftwareVersion(node: SiteNode, component: string): string {
+  const state: any = node.softwareVersions;
+  if (component === "chain") return String(state?.node_version?.version || "");
+  if (component === "DAPI") return String(state?.api_version?.version || "");
+  return "";
+}
+
+function softwareDisplayValue(version: string): string {
+  return GDC_SOFTWARE_VERSIONS.displayVersion(String(version || ""));
+}
+
+function observedNetworkChainVersion(inventory: SoftwareInventory): string {
+  const versions: Set<string> = new Set();
+  for (const samples of inventory.values()) {
+    const reported = String(
+      GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples).get("chain")?.version || "",
+    );
+    const version = softwareDisplayValue(reported);
+    if (version && version !== "unreported") versions.add(version);
   }
-}
-
-function markSoftwareInventoryUnavailable(card: HTMLElement): void {
-  const value = card.querySelector('[data-k="versions"]');
-  value.textContent = "temporarily unavailable";
-  value.title = "Software inventory has not reported this Host yet";
+  return versions.size === 1 ? String([...versions][0]) : "";
 }
 
 function updateSoftware(
@@ -503,49 +615,104 @@ function updateSoftware(
     inventory.has(candidate || ""),
   );
   const samples = inventory.get(key || "") || [];
-  const components: Map<string, any> = new Map();
-  for (const sample of samples) {
-    const metric = sample?.metric || {};
-    const raw = String(metric.component || "");
-    const component =
-      raw === "inference-chain" || raw === "node"
-        ? "chain"
-        : raw === "decentralized-api" || raw === "api"
-          ? "DAPI"
-          : raw === "mlnode"
-            ? "MLNode"
-            : "";
-    if (!component || !metric.version) continue;
-    const existing = components.get(component);
-    if (!existing || metric.source === "runtime")
-      components.set(component, metric);
-  }
-  const formatted: Array<string> = [];
-  const chainVersion = String(components.get("chain")?.version || "unknown");
-  for (const component of ["chain", "DAPI", "MLNode"]) {
+  const components = GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples);
+  for (const [component, field] of [["chain", "inferenced"], ["DAPI", "dapi"]]) {
     const metric = components.get(component);
-    if (!metric) continue;
-    const version =
-      component === "MLNode"
-        ? GDC_SOFTWARE_VERSIONS.normalizeMlNodeVersion(
-            chainVersion,
-            String(metric.version),
-          )
-        : metric.version;
-    formatted.push(`${component} ${version}`);
+    const reported = reportedSoftwareVersion(node, component);
+    const rawVersion = reported || String(metric?.version || "");
+    const version = rawVersion && rawVersion !== "unreported"
+      ? softwareDisplayValue(rawVersion)
+      : "";
+    const target = card.querySelector(`[data-k="${field}"]`);
+    target.textContent = version && version !== "unreported" ? version : "Unavailable";
+    if (/^(?:sha256:)?[a-f0-9]{64}$/i.test(String(rawVersion))) {
+      target.title = `${component}: container image digest ${rawVersion}`;
+    } else if (version && version !== "unreported") {
+      target.title = "Runtime version when available, otherwise the most recent software inventory observed within 24 hours";
+    } else {
+      target.title = "No current version was available from the Host or monitoring inventory";
+    }
   }
-  const value = formatted.join(" · ");
-  if (!value) {
-    markSoftwareInventoryUnavailable(card);
+}
+
+function updateDevShards(node: SiteNode, card: HTMLElement): void {
+  const state: ?DevShardHealth = node.devShardHealth;
+  const target = card.querySelector('[data-k="devshard"]');
+  if (!state || state.state === "checking") {
+    target.textContent = "Checking…";
+    target.title = "Checking the Host DevShard health endpoint";
     return;
   }
-  const target = card.querySelector('[data-k="versions"]');
+  if (state.state === "not_exposed") {
+    target.textContent = "Not exposed";
+    target.title = "This Host does not expose the DevShard health endpoint";
+    return;
+  }
+  if (state.state !== "observed") {
+    target.textContent = "Unavailable";
+    target.title = "The Host DevShard health endpoint could not be read";
+    return;
+  }
+  const runtimes = state.runtimes.filter((runtime) =>
+    String(runtime?.status || "").toLowerCase() === "running" &&
+    String(runtime?.name || "").trim(),
+  ).sort((left, right) =>
+    String(left.name).localeCompare(String(right.name), undefined, { numeric: true }),
+  );
+  if (!runtimes.length) {
+    target.textContent = "Not running";
+    target.title = "The Host exposes DevShard health but has no running runtime";
+    return;
+  }
+  target.textContent = runtimes.map((runtime) => String(runtime.name)).join(" · ");
+  target.title = runtimes.map((runtime) => {
+    const hash = String(runtime?.sha256 || "").trim();
+    const version = String(runtime?.binary_version || "").trim();
+    const port = String(runtime?.port || "").trim();
+    return [String(runtime.name), version, hash, port ? `port ${port}` : ""]
+      .filter(Boolean)
+      .join(" · ");
+  }).join("\n");
+}
+
+function updateMlNodes(
+  inventory: SoftwareInventory,
+  hardwareInventory: HardwareInventory,
+  node: SiteNode,
+  card: HTMLElement,
+): void {
+  const row = card.querySelector('[data-k-row="mlnodes"]');
+  const hardware = node.address ? hardwareInventory.get(node.address) : null;
+  const key = [node.name, node.publicHost].find((candidate) =>
+    inventory.has(candidate || ""),
+  );
+  const observedChain = String(
+    GDC_SOFTWARE_VERSIONS.selectLatestInventory(inventory.get(key || "") || [])
+      .get("chain")?.version || "",
+  );
+  const chain = softwareDisplayValue(
+    reportedSoftwareVersion(node, "chain") || observedChain || observedNetworkChainVersion(inventory),
+  );
+  const runtimes: Array<{ node_id?: string, version?: string }> = (hardware?.nodes || []).map((runtime) => ({
+    node_id: String(runtime?.local_id || ""),
+    version: String(runtime?.version || ""),
+  }));
+  const value = GDC_SOFTWARE_VERSIONS.formatMlNodes(chain, runtimes);
+  row.hidden = false;
+  const target = card.querySelector('[data-k="mlnodes"]');
+  if (!value) {
+    target.textContent = hardware?.state === "observed" ? "Not assigned" : "Unavailable";
+    target.title = hardware?.state === "observed"
+      ? "Chain runtime inventory reports no MLNode for this participant"
+      : "Chain runtime inventory could not be read";
+    return;
+  }
   target.textContent = value;
-  target.title = "Software inventory collected by the monitoring agent";
+  target.title = GDC_SOFTWARE_VERSIONS.describeMlNodes(chain, runtimes).join("\n");
 }
 
 async function refreshSoftwareInventory(): Promise<void> {
-  const state = await json("/status/software");
+  const state = await json(statusUrl("/software"));
   const next: SoftwareInventory = new Map();
   for (const sample of state?.data?.result || []) {
     const host = String(sample?.metric?.host || "");
@@ -557,12 +724,16 @@ async function refreshSoftwareInventory(): Promise<void> {
   cardSoftwareInventory = next;
   for (const node of observedNodes) {
     const card = cards.get(nodeKey(node));
-    if (card) updateSoftware(cardSoftwareInventory, node, card);
+    if (card) {
+      updateSoftware(cardSoftwareInventory, node, card);
+      updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
+      updateDevShards(node, card);
+    }
   }
 }
 
 async function refreshGpuInventory(): Promise<void> {
-  const state = await json("/status/gpus");
+  const state = await json(statusUrl("/gpus"));
   const next: GpuInventory = new Map();
   for (const sample of state?.data?.result || []) {
     const host = String(sample?.metric?.host || "");
@@ -582,8 +753,58 @@ async function refreshGpuInventory(): Promise<void> {
   cardGpuInventory = next;
   for (const node of observedNodes) {
     const card = cards.get(nodeKey(node));
-    if (card) updateGpu(cardGpuInventory, node, card);
+    if (card) updateGpu(cardGpuInventory, cardHardwareInventory, node, card);
   }
+}
+
+async function refreshHardwareInventory(): Promise<void> {
+  if (!chainRpcOrigin) return;
+  const next: HardwareInventory = new Map();
+  await Promise.all(observedNodes.map(async (node) => {
+    const address = node.address;
+    if (!address) return;
+    try {
+      const state = await json(
+        `${chainRpcOrigin}/chain-api/productscience/inference/inference/hardware_nodes/${encodeURIComponent(address)}`,
+      );
+      next.set(address, {
+        state: "observed",
+        nodes: Array.isArray(state?.nodes?.hardware_nodes)
+          ? state.nodes.hardware_nodes
+          : [],
+      });
+    } catch {
+      next.set(address, { state: "unavailable", nodes: [] });
+    }
+  }));
+  cardHardwareInventory = next;
+  for (const node of observedNodes) {
+    const card = cards.get(nodeKey(node));
+    if (!card) continue;
+    updateGpu(cardGpuInventory, cardHardwareInventory, node, card);
+    updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
+    updateDevShards(node, card);
+  }
+}
+
+async function refreshDevShardVersions(): Promise<void> {
+  if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
+  const state = await json(
+    `${chainRpcOrigin}/chain-api/productscience/inference/inference/params`,
+  );
+  const seen: Set<string> = new Set();
+  const versions: Array<DevShardVersion> = [];
+  for (const version of state?.params?.devshard_escrow_params?.approved_versions || []) {
+    const name = String(version?.name || "").trim();
+    const sha256 = String(version?.sha256 || "").trim().toLowerCase();
+    if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name)) continue;
+    if (!/^[0-9a-f]{64}$/.test(sha256)) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    versions.push({ name, sha256 });
+  }
+  versions.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
+  updateDevShardVersions(versions);
 }
 for (const node of observedNodes) createCard(node);
 layoutHostCards();
@@ -697,26 +918,102 @@ function markerStateLabel(state: MarkerState): string {
     case "validating":
       return "Validating";
     case "active":
-      return "Active – not validating";
+      return "Active";
     case "unknown":
-      return "Unknown – status unavailable";
+      return "Unknown";
     default:
       return "Inactive";
   }
 }
 
-function markerStateSummary(validators: Array<Validator>): string {
-  const counts: { [MarkerState]: number } = {
+const MARKER_STATE_ORDER: Array<MarkerState> = [
+  "validating",
+  "active",
+  "inactive",
+  "unknown",
+];
+
+const MARKER_STATE_COLORS: { [MarkerState]: string } = {
+  validating: "#78b83d",
+  active: "#f5a623",
+  inactive: "#ef6c65",
+  unknown: "#9aa0ad",
+};
+
+function markerStateCounts(validators: Array<Validator>): MarkerStateCounts {
+  const counts: MarkerStateCounts = {
     validating: 0,
     active: 0,
     inactive: 0,
     unknown: 0,
   };
   for (const validator of validators) counts[validator.markerState] += 1;
-  return (["validating", "active", "inactive", "unknown"]: Array<MarkerState>)
+  return counts;
+}
+
+function markerStateSummary(counts: MarkerStateCounts): string {
+  return MARKER_STATE_ORDER
     .filter((state) => counts[state] > 0)
-    .map((state) => `${counts[state]} ${markerStateLabel(state).toLowerCase()}`)
+    .map((state) => `${counts[state]} ${markerStateLabel(state)}`)
     .join(" · ");
+}
+
+function markerGroupState(counts: MarkerStateCounts): {
+  state: MarkerState,
+  label: string,
+  mixed: boolean,
+} {
+  const states = MARKER_STATE_ORDER.filter((state) => counts[state] > 0);
+  return {
+    state: states[0] || "unknown",
+    label: states.length > 1 ? "Mixed" : markerStateLabel(states[0] || "unknown"),
+    mixed: states.length > 1,
+  };
+}
+
+function markerRadius(count: number): number {
+  // Radius grows with sqrt(count), therefore visual area is proportional to
+  // the represented node count while multi-node locations stay distinct.
+  if (count <= 1) return 6;
+  return Math.min(7.5 * Math.sqrt(count), 18);
+}
+
+function maidenheadLocator(latitude: number, longitude: number, precision: number = 4): string {
+  const lon = Math.max(0, Math.min(360 - Number.EPSILON, longitude + 180));
+  const lat = Math.max(0, Math.min(180 - Number.EPSILON, latitude + 90));
+  const fieldLon = Math.floor(lon / 20);
+  const fieldLat = Math.floor(lat / 10);
+  const squareLon = Math.floor((lon % 20) / 2);
+  const squareLat = Math.floor(lat % 10);
+  const locator = `${String.fromCharCode(65 + fieldLon)}${String.fromCharCode(65 + fieldLat)}${squareLon}${squareLat}`;
+  if (precision < 6) return locator;
+  const subLon = Math.floor(((lon % 2) / 2) * 24);
+  const subLat = Math.floor((lat % 1) * 24);
+  return `${locator}${String.fromCharCode(97 + subLon)}${String.fromCharCode(97 + subLat)}`;
+}
+
+function markerFill(counts: MarkerStateCounts, count: number): string {
+  let start = 0;
+  const slices = MARKER_STATE_ORDER.filter((state) => counts[state] > 0).map(
+    (state) => {
+      const end = start + (counts[state] / count) * 360;
+      const slice = `${MARKER_STATE_COLORS[state]} ${start.toFixed(3)}deg ${end.toFixed(3)}deg`;
+      start = end;
+      return slice;
+    },
+  );
+  return `conic-gradient(${slices.join(", ")})`;
+}
+
+function markerIcon(count: number, counts: MarkerStateCounts): any {
+  const radius = markerRadius(count);
+  const diameter = radius * 2;
+  return L.divIcon({
+    className: "validator-marker",
+    html: `<span class="validator-marker-face" style="--validator-marker-fill: ${markerFill(counts, count)}"></span>`,
+    iconSize: [diameter, diameter],
+    iconAnchor: [radius, radius],
+  });
 }
 
 function renderHostState(card: HTMLElement, node: SiteNode): boolean {
@@ -766,6 +1063,7 @@ function displayHostState(node: SiteNode): any {
 
 const MAX_DYNAMIC_GEOIP_ADDRESSES = 4;
 const GEOIP_FAILURE_RETRY_MS = 5 * 60 * 1000;
+const DYNAMIC_STATUS_HOST = /^node[0-9]+\.gonka-dev\.net$/i;
 const participantDiscovery: Map<string, ParticipantDiscoveryCache> = new Map();
 
 async function discoverParticipant(
@@ -851,19 +1149,35 @@ async function participantNode(
   const byAddress = catalogEntries.find((node) => node.address === participant.address);
   const byHost = catalogEntries.filter((node) => node.publicHost === host);
   const catalog = byAddress || (byHost.length === 1 ? byHost[0] : null);
+  // A public participant location is always a GeoIP observation of its
+  // advertised endpoint.  The catalog is only a fallback for an unavailable
+  // DNS or GeoIP lookup, so catalog and dynamically joined Hosts share one
+  // grouping rule on the map.
   const discovered =
-    !catalog || !catalog.ip || !catalog.geo
+    DYNAMIC_STATUS_HOST.test(host) || !catalog || !catalog.ip || !catalog.geo
       ? await discoverParticipant(host)
       : {};
   const participantStatus = participant.status || "UNKNOWN";
   const validator = validators.get(String(participant.validator_key || ""));
+  // Public status only proxies the fixed local aliases and the Community
+  // DevNet nodeN hostnames.  A participant may advertise another hostname,
+  // but it must not turn this origin into an open proxy merely to monitor it.
+  // A preview must use its own status overlay even for a Host already known
+  // to the static catalog. Otherwise catalog.statusBase points at the preview
+  // origin root, loses the numeric generation prefix and turns a healthy Host
+  // into a false Inactive card through 404 responses.
+  const participantStatusBase =
+    previewPrefix && DYNAMIC_STATUS_HOST.test(host)
+      ? `${statusBase}/${host}`
+      : catalog?.statusBase ||
+        (DYNAMIC_STATUS_HOST.test(host) ? `${statusBase}/${host}` : "");
   return {
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
     publicHost: catalog?.publicHost || host,
-    statusBase: catalog?.statusBase || discovered.statusBase || "",
-    ip: catalog?.ip || discovered.ip || "",
-    geo: catalog?.geo || discovered.geo || null,
+    statusBase: participantStatusBase,
+    ip: discovered.ip || catalog?.ip || "",
+    geo: discovered.geo || catalog?.geo || null,
     mode: catalog?.mode,
     reason: catalog?.reason,
     participantStatus: String(participantStatus),
@@ -875,7 +1189,6 @@ async function participantNode(
     endpointDiagnostic: "Check endpoint",
     isOnline: false,
     serverStatus: String(participantStatus),
-    gpuProfile: catalog?.gpuProfile,
     gpuHost: catalog?.gpuHost,
   };
 }
@@ -883,7 +1196,7 @@ async function participantNode(
 async function reconcileParticipants(): Promise<number> {
   if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
   const [participantResult, validatorResult] = await Promise.allSettled([
-    json("/status/participants"),
+    json(statusUrl("/participants")),
     json(`${chainRpcOrigin}/chain-rpc/validators?per_page=100`),
   ]);
   if (participantResult.status !== "fulfilled") {
@@ -1032,18 +1345,11 @@ function groupValidators(validators: Array<Validator>): Array<ValidatorGroup> {
   }
   for (const group of dynamic.values()) {
     // Dynamic GeoIP is city-level evidence. A fixed tenth-degree display cell
-    // keeps the marker and its keyboard/popup identity stable while members
-    // enter or leave that observed location.
+    // keeps the QTH marker and its keyboard/popup identity stable while
+    // members enter or leave that observed location.
     group.lat = Math.round(group.lat * 10) / 10;
     group.lon = Math.round(group.lon * 10) / 10;
-    const locations = [
-      ...new Set(
-        group.validators.map(
-          (validator) => `${validator.geo.city}, ${validator.geo.country}`,
-        ),
-      ),
-    ];
-    group.label = locations.length === 1 ? locations[0] : "Multiple locations";
+    group.label = maidenheadLocator(group.lat, group.lon);
     const retainedCenter = dynamicLocationCenters.get(group.key);
     if (retainedCenter) {
       group.lat = retainedCenter.lat;
@@ -1056,15 +1362,23 @@ function groupValidators(validators: Array<Validator>): Array<ValidatorGroup> {
   const coincident: Map<string, ValidatorGroup> = new Map();
   for (const group of groups) {
     const coordinate = `${group.lat.toFixed(6)},${group.lon.toFixed(6)}`;
-    const existing = coincident.get(coordinate);
+    // A shared city label is not evidence of co-location: unrelated cloud
+    // addresses often resolve to the same metro area. Group only an explicit
+    // operator location ID or the exact display coordinate shown on this map.
+    const location = group.key.startsWith("location:")
+      ? group.key
+      : `coordinate:${coordinate}`;
+    const existing = coincident.get(location);
     if (!existing) {
-      coincident.set(coordinate, group);
+      coincident.set(location, group);
       continue;
     }
     existing.validators.push(...group.validators);
     existing.label = [...new Set([existing.label, group.label])].join(" · ");
     existing.key = `coincident:${[existing.key, group.key].sort().join("|")}`;
   }
+  for (const group of coincident.values())
+    group.label = maidenheadLocator(group.lat, group.lon);
   return [...coincident.values()];
 }
 
@@ -1210,9 +1524,119 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const markerRegistry: Map<string, any> = new Map();
   let latestMapNodes: Array<SiteNode> = observedNodes;
   let openMarkerKey: ?string;
-  let tooltipMarker: ?any;
+  let popupMode: ?("hover" | "click" | "pinned");
+  let hoverTooltip: ?HTMLElement;
   let resizeFrame: ?number;
-  const openMarkerPopup = (key: string, marker: any): void => {
+  const removeHoverTooltip = (): void => {
+    hoverTooltip?.remove();
+    hoverTooltip = null;
+  };
+  const positionHoverTooltip = (marker: any): void => {
+    const tooltip = hoverTooltip;
+    if (!tooltip) return;
+    const anchor = marker.getElement()?.getBoundingClientRect();
+    if (!anchor) return;
+    const margin = 10;
+    tooltip.style.maxWidth = `${Math.max(160, Math.min(340, window.innerWidth - margin * 2))}px`;
+    const width = tooltip.offsetWidth;
+    const height = tooltip.offsetHeight;
+    const left = Math.max(
+      margin,
+      Math.min(window.innerWidth - width - margin, anchor.left + anchor.width / 2 - width / 2),
+    );
+    let top = anchor.top - height - 12;
+    if (top < margin) top = anchor.bottom + 12;
+    top = Math.max(margin, Math.min(window.innerHeight - height - margin, top));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  };
+  const showMarkerDetail = (key: string, marker: any, pinned: boolean = false): void => {
+    const popup = marker.getPopup();
+    const content = String(marker.__popupHtml || popup?.getContent?.() || "");
+    if (!content) return;
+    if (!hoverTooltip) {
+      const tooltip = document.createElement("aside");
+      tooltip.className = "validator-map-tooltip";
+      tooltip.setAttribute("role", "tooltip");
+      tooltip.setAttribute("aria-live", "polite");
+      document.body.append(tooltip);
+      hoverTooltip = tooltip;
+    }
+    const tooltip = hoverTooltip;
+    if (!tooltip) return;
+    tooltip.dataset.markerKey = key;
+    tooltip.classList.toggle("is-pinned", pinned);
+    tooltip.setAttribute("role", pinned ? "dialog" : "tooltip");
+    tooltip.innerHTML = content;
+    if (pinned) {
+      const closeButton = document.createElement("button");
+      closeButton.type = "button";
+      closeButton.className = "validator-map-tooltip-close";
+      closeButton.setAttribute("aria-label", "Close validator details");
+      closeButton.textContent = "×";
+      closeButton.addEventListener("click", () => {
+        if (popupMode !== "click" || openMarkerKey !== key) return;
+        removeHoverTooltip();
+        openMarkerKey = null;
+        popupMode = null;
+        restoreWorld();
+      });
+      tooltip.prepend(closeButton);
+    }
+    positionHoverTooltip(marker);
+  };
+  const refreshMarkerDetail = (): void => {
+    const key = openMarkerKey;
+    if (!popupMode || !key) return;
+    const marker = markerRegistry.get(key);
+    if (marker && (popupMode === "hover" || popupMode === "click"))
+      showMarkerDetail(key, marker, popupMode === "click");
+  };
+  const openMarkerPopup = (
+    key: string,
+    marker: any,
+    mode: "hover" | "click" | "pinned" = "pinned",
+  ): void => {
+    if (mode === "hover") {
+      if (openMarkerKey !== key || popupMode !== "hover") {
+        for (const [otherKey, otherMarker] of markerRegistry) {
+          if (otherKey !== key && otherMarker.isPopupOpen()) otherMarker.closePopup();
+          const popup = otherMarker.getPopup();
+          if (popup) map.removeLayer(popup);
+        }
+        map.closePopup();
+        map.getPane("popupPane")?.replaceChildren();
+      }
+      openMarkerKey = key;
+      popupMode = "hover";
+      showMarkerDetail(key, marker);
+      return;
+    }
+    if (mode === "click") {
+      removeHoverTooltip();
+      for (const [otherKey, otherMarker] of markerRegistry) {
+        if (otherKey !== key && otherMarker.isPopupOpen()) otherMarker.closePopup();
+        const popup = otherMarker.getPopup();
+        if (popup) map.removeLayer(popup);
+      }
+      map.closePopup();
+      map.getPane("popupPane")?.replaceChildren();
+      openMarkerKey = key;
+      popupMode = "click";
+      showMarkerDetail(key, marker, true);
+      return;
+    }
+    removeHoverTooltip();
+    if (openMarkerKey === key && marker.isPopupOpen()) {
+      popupMode = mode;
+      const popup = marker.getPopup();
+      if (popup) {
+        popup.options.autoPan = mode === "pinned" && container.clientWidth >= 500;
+        popup.update();
+        if (mode === "pinned") schedulePopupLayout(marker, popup);
+      }
+      return;
+    }
     for (const [otherKey, otherMarker] of markerRegistry) {
       if (otherKey !== key && otherMarker.isPopupOpen()) otherMarker.closePopup();
       const popup = otherMarker.getPopup();
@@ -1222,20 +1646,18 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       if (layer instanceof L.Popup) map.closePopup(layer);
     });
     map.closePopup();
-    // Leaflet can retain a detached bound-popup element while a marker layer
-    // is reconciled. This map owns its popup pane, so clear only that pane
-    // before attaching the one current popup.
     map.getPane("popupPane")?.replaceChildren();
     openMarkerKey = key;
+    popupMode = mode;
     const popup = marker.getPopup();
     if (popup) {
       marker.options.autoPanPadding = popupAutoPanPadding();
-      popup.options.autoPan = container.clientWidth >= 500;
+      popup.options.autoPan = mode === "pinned" && container.clientWidth >= 500;
       popup.options.maxWidth = popupMaxWidth();
       popup.options.autoPanPadding = popupAutoPanPadding();
     }
     marker.openPopup();
-    if (popup) schedulePopupLayout(marker, popup);
+    if (popup && mode === "pinned") schedulePopupLayout(marker, popup);
   };
   const nearestMarkerAt = (event: any): ?any => {
     const pointerEvent = event.originalEvent || event;
@@ -1262,34 +1684,67 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     const target = (event.originalEvent || event).target;
     return Boolean(target?.closest?.(".validator-marker-hit"));
   };
-  const showNearestTooltip = (event: any): void => {
+  const closeHoverPopup = (): void => {
+    if (popupMode !== "hover") return;
+    removeHoverTooltip();
+    openMarkerKey = null;
+    popupMode = null;
+    restoreWorld();
+  };
+  const showNearestPopup = (event: any): void => {
     if (!isMarkerHitEvent(event)) {
-      closeNearestTooltip();
+      closeHoverPopup();
       return;
     }
     const nearest = nearestMarkerAt(event);
     if (!nearest) return;
-    if (tooltipMarker && tooltipMarker !== nearest.marker)
-      tooltipMarker.closeTooltip();
-    tooltipMarker = nearest.marker;
-    nearest.marker.openTooltip();
+    const pinnedMarker: any = openMarkerKey ? markerRegistry.get(openMarkerKey) : null;
+    if (popupMode === "click") return;
+    if (popupMode === "pinned" && pinnedMarker?.isPopupOpen()) return;
+    // A popup may have been closed through Leaflet's close control after a
+    // refresh. Do not let that stale mode suppress the next hover popup.
+    if (popupMode === "pinned") popupMode = null;
+    openMarkerPopup(nearest.key, nearest.marker, "hover");
+  };
+  const leaveNearestPopup = (event: any): void => {
+    const target = event.target?.closest?.(".validator-marker-hit");
+    const related = event.relatedTarget?.closest?.(".validator-marker-hit");
+    if (target && !related) closeHoverPopup();
   };
   const activateNearest = (event: any): void => {
     if (!isMarkerHitEvent(event)) return;
     const nearest = nearestMarkerAt(event);
     if (!nearest) return;
-    openMarkerPopup(nearest.key, nearest.marker);
+    openMarkerPopup(nearest.key, nearest.marker, "click");
   };
-  const closeNearestTooltip = (): void => {
-    tooltipMarker?.closeTooltip();
-    tooltipMarker = null;
+  const configureMarkerElement = (marker: any, key: string, ariaLabel: string): void => {
+    const element = marker.getElement();
+    if (!element) return;
+    element.setAttribute("tabindex", "0");
+    element.setAttribute("role", "button");
+    element.setAttribute("aria-label", ariaLabel);
+    element.style.pointerEvents = "none";
+    if (element.dataset.validatorMapKeyboard === "true") return;
+    element.dataset.validatorMapKeyboard = "true";
+    element.addEventListener("focus", () => openMarkerPopup(key, marker, "hover"));
+    element.addEventListener("blur", () => {
+      if (openMarkerKey !== key) return;
+      popupMode = "hover";
+      closeHoverPopup();
+    });
+    element.addEventListener("keydown", (event: any) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openMarkerPopup(key, marker, "pinned");
+    });
   };
   // The transparent hit circles overlap by design. Capture only their browser
   // events before Leaflet dispatches to an arbitrary topmost SVG path, then
   // choose the closest visible marker ourselves. Controls remain controls.
   container.addEventListener("click", activateNearest, true);
-  container.addEventListener("mousemove", showNearestTooltip, true);
-  container.addEventListener("mouseleave", closeNearestTooltip, true);
+  container.addEventListener("mousemove", showNearestPopup, true);
+  container.addEventListener("mouseout", leaveNearestPopup, true);
+  container.addEventListener("mouseleave", closeHoverPopup, true);
   const popupMaxWidth = (): number => {
     const width = container.clientWidth || container.getBoundingClientRect().width;
     return Math.max(120, Math.min(340, width - 52));
@@ -1348,7 +1803,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     window.requestAnimationFrame(() => {
       if (!marker.isPopupOpen()) return;
       marker.options.autoPanPadding = popupAutoPanPadding();
-      popup.options.autoPan = container.clientWidth >= 500;
+      popup.options.autoPan = popupMode === "pinned" && container.clientWidth >= 500;
       popup.options.maxWidth = popupMaxWidth();
       popup.options.autoPanPadding = popupAutoPanPadding();
       popup.update();
@@ -1364,13 +1819,16 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const finalizePopupClose = (): void => {
     if (popupMarkerKey() || container.querySelector(".leaflet-popup")) return;
     openMarkerKey = null;
+    popupMode = null;
     restoreWorld();
   };
   const refreshOpenPopupLayout = (): void => {
     const popupKey = openMarkerKey || popupMarkerKey();
     const marker: any = popupKey ? markerRegistry.get(popupKey) : null;
     const popup = marker?.getPopup();
-    if (marker?.isPopupOpen() && popup) schedulePopupLayout(marker, popup);
+    if (marker?.isPopupOpen() && popup && popupMode === "pinned")
+      schedulePopupLayout(marker, popup);
+    refreshMarkerDetail();
   };
   map.on("popupopen", (event: any) => {
     for (const [key, marker] of markerRegistry) {
@@ -1463,6 +1921,16 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       return;
     }
     const popupKey = openMarkerKey || popupMarkerKey();
+    if (popupMode === "hover" || popupMode === "click") {
+      removeHoverTooltip();
+      openMarkerKey = null;
+      popupMode = null;
+      restoreWorld();
+      markerRegistry.get(popupKey || "")?.getElement()?.focus();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const popupOpen = popupKey || document.querySelector(".leaflet-popup");
     if (popupOpen) {
       let marker = popupKey ? markerRegistry.get(popupKey) : null;
@@ -1500,6 +1968,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   const update = (nodes: Array<SiteNode>): void => {
     latestMapNodes = nodes;
     const retainedPopupKey = openMarkerKey || popupMarkerKey();
+    const retainedPopupMode = popupMode;
     const validators: Array<Validator> = [];
     let validatorCount = 0;
     for (const node of nodes) {
@@ -1512,6 +1981,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
       const display = displayHostState(node);
       const validator: Validator = {
+        name: node.name || "",
         ownerAddress: node.address || "",
         ip: node.ip || "",
         licenseCount: 0,
@@ -1544,40 +2014,32 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     );
     for (const [key, marker] of markerRegistry) {
       if (groups.has(key)) continue;
-      if (openMarkerKey === key) map.closePopup();
-      if (marker.__countLabel) markers.removeLayer(marker.__countLabel);
+      if (openMarkerKey === key) {
+        if (popupMode === "hover" || popupMode === "click") {
+          removeHoverTooltip();
+          openMarkerKey = null;
+          popupMode = null;
+        } else map.closePopup();
+      }
       if (marker.__hitTarget) markers.removeLayer(marker.__hitTarget);
       markers.removeLayer(marker);
       markerRegistry.delete(key);
     }
     for (const [key, group] of groups) {
       const validators = group.validators;
-      const first = validators
-        .slice()
-        .sort((left, right) =>
-          `${left.geo.city}\u0000${left.geo.country}\u0000${left.ownerAddress}`.localeCompare(
-            `${right.geo.city}\u0000${right.geo.country}\u0000${right.ownerAddress}`,
-          ),
-        )[0];
       const count = validators.length;
-      const markerState: MarkerState = validators.some(
-        (validator) => validator.markerState === "inactive",
-      )
-        ? "inactive"
-        : validators.some((validator) => validator.markerState === "active")
-          ? "active"
-          : validators.some((validator) => validator.markerState === "validating")
-            ? "validating"
-            : "unknown";
-      const stateLabel = markerStateLabel(markerState);
-      const stateSummary = markerStateSummary(validators);
+      const stateCounts = markerStateCounts(validators);
+      const groupState = markerGroupState(stateCounts);
+      const markerState = groupState.state;
+      const stateLabel = groupState.label;
+      const stateSummary = markerStateSummary(stateCounts);
       const stateReasons = [
         ...new Set(validators.map((validator) => validator.stateReason)),
       ];
       const rows = validators
         .map(
           (v) =>
-            `<li><span>${escapeHtml(v.geo.resolvedIp || v.ip || "IP unavailable")}</span><span>${escapeHtml(v.ownerAddress.slice(0, 10))}</span><span>${escapeHtml(v.licenseCount)}</span></li>`,
+            `<li><span>${escapeHtml(v.name || v.ownerAddress.slice(0, 10) || "Node unavailable")}</span><span>${escapeHtml(v.geo.resolvedIp || v.ip || "IP unavailable")}</span><span>${escapeHtml(v.licenseCount)}</span><span class="validator-map-member-state validator-map-status--${v.markerState}">${markerStateLabel(v.markerState)}</span></li>`,
         )
         .join("");
       const sources = [...new Set(validators.map((v) => v.geo.source))]
@@ -1607,57 +2069,29 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
           ),
         ),
       ];
-      const popupHtml = `<strong>${escapeHtml(group.label)}</strong><p class="status validator-map-status--${markerState}">${escapeHtml(
+      const statusClass = groupState.mixed
+        ? "validator-map-status--mixed"
+        : `validator-map-status--${markerState}`;
+      const nodeLabel = `${count} node${count === 1 ? "" : "s"}`;
+      const popupHtml = `<strong>${escapeHtml(group.label)}</strong><p class="status ${statusClass}">${escapeHtml(
         stateLabel,
-      )}</p><p>${escapeHtml(stateSummary)}</p><p>${escapeHtml(stateReasons.join(" · "))}</p><p>${count} validator${count === 1 ? "" : "s"} at this location</p><p>Location source: ${escapeHtml(sources)}</p><p>Raw position: ${escapeHtml(rawPositions.join("; "))}</p><p>Accuracy: ${escapeHtml(accuracy || "unknown")}${observed ? `; observed ${escapeHtml(observed)}` : ""}</p>${correction}<ul>${rows}</ul>`;
-      const radius = count === 1 ? 2.5 : Math.min(2.5 * Math.sqrt(count), 9);
-      const color =
-        markerState === "validating"
-          ? "#78b83d"
-          : markerState === "active"
-            ? "#f5a623"
-            : markerState === "inactive" ? "#ef6c65" : "#9aa0ad";
-      const tooltip = `${group.label}: ${stateLabel}`;
-      const ariaLabel = `${tooltip}; ${stateSummary}; ${count} validator${
-        count === 1 ? "" : "s"
-      }`;
+      )}</p><p>${escapeHtml(nodeLabel)} at this location</p><p>${escapeHtml(stateSummary)}</p><p>${escapeHtml(stateReasons.join(" · "))}</p><p>Location source: ${escapeHtml(sources)}</p><p>Raw position: ${escapeHtml(rawPositions.join("; "))}</p><p>Accuracy: ${escapeHtml(accuracy || "unknown")}${observed ? `; observed ${escapeHtml(observed)}` : ""}</p>${correction}<ul>${rows}</ul>`;
+      const ariaLabel = `${group.label}; ${nodeLabel}; ${stateSummary.replaceAll(" · ", ", ")}`;
       let marker: any = markerRegistry.get(key);
       if (!marker) {
-        marker = L.circleMarker([group.lat, group.lon], {
+        marker = L.marker([group.lat, group.lon], {
           pane: "validatorMarkers",
           interactive: false,
-          radius,
-          weight: 1,
-          color,
-          fillColor: color,
-          fillOpacity: 0.9,
-          opacity: 1,
-          className: `validator-marker validator-marker--${markerState}`,
+          icon: markerIcon(count, stateCounts),
           autoPan: container.clientWidth >= 500,
           autoPanPadding: popupAutoPanPadding(),
-        })
-          .bindTooltip(tooltip, { direction: "top", offset: [0, -radius] })
-          .bindPopup(popupHtml, {
+        }).bindPopup(popupHtml, {
             closeButton: true,
             maxWidth: popupMaxWidth(),
             autoPanPadding: popupAutoPanPadding(),
           });
-        marker.__tooltip = tooltip;
         marker.__popupHtml = popupHtml;
-        marker
-          .on("add", () => {
-          const element = marker.getElement();
-          if (!element) return;
-          element.setAttribute("tabindex", "0");
-          element.setAttribute("role", "button");
-          element.setAttribute("pointer-events", "none");
-          element.addEventListener("keydown", (event: any) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
-            event.preventDefault();
-            openMarkerPopup(key, marker);
-          });
-        })
-        .addTo(markers);
+        marker.addTo(markers);
         const hitTarget = L.circleMarker([group.lat, group.lon], {
           pane: "validatorHits",
           radius: 14,
@@ -1676,58 +2110,23 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         markerRegistry.set(key, marker);
       } else {
         marker.setLatLng([group.lat, group.lon]);
-        marker.setStyle({ radius, color, fillColor: color });
+        marker.setIcon(markerIcon(count, stateCounts));
         marker.__hitTarget?.setLatLng([group.lat, group.lon]);
-        if (marker.__tooltip !== tooltip) {
-          marker.setTooltipContent(tooltip);
-          marker.__tooltip = tooltip;
-        }
         if (marker.__popupHtml !== popupHtml) {
           marker.setPopupContent(popupHtml);
           marker.__popupHtml = popupHtml;
         }
       }
-      const element = marker.getElement();
-      if (element) {
-        element.setAttribute("tabindex", "0");
-        element.setAttribute("role", "button");
-        element.setAttribute("pointer-events", "none");
-        element.classList.remove(
-          "validator-marker--inactive",
-          "validator-marker--active",
-          "validator-marker--validating",
-        );
-        element.classList.add("validator-marker", `validator-marker--${markerState}`);
-        element.setAttribute("aria-label", ariaLabel);
-      }
-      let countLabel: any = marker.__countLabel;
-      if (count > 1) {
-        if (!countLabel) {
-          countLabel = L.marker([group.lat, group.lon], {
-            interactive: false,
-            keyboard: false,
-            icon: L.divIcon({
-              className: "validator-marker-count",
-              html: String(count),
-              iconSize: [18, 18],
-              iconAnchor: [9, 9],
-            }),
-          }).addTo(markers);
-          marker.__countLabel = countLabel;
-        } else {
-          countLabel.setLatLng([group.lat, group.lon]);
-          const labelElement = countLabel.getElement();
-          if (labelElement) labelElement.textContent = String(count);
-        }
-      } else if (countLabel) {
-        markers.removeLayer(countLabel);
-        marker.__countLabel = null;
-      }
+      configureMarkerElement(marker, key, ariaLabel);
     }
     container.dataset.validatorCount = String(validatorCount);
     container.dataset.markerCount = String(groups.size);
     if (retainedPopupKey && markerRegistry.has(retainedPopupKey)) {
-      openMarkerPopup(retainedPopupKey, markerRegistry.get(retainedPopupKey));
+      openMarkerPopup(
+        retainedPopupKey,
+        markerRegistry.get(retainedPopupKey),
+        retainedPopupMode || "pinned",
+      );
     }
   };
   window.addEventListener(
@@ -1735,8 +2134,10 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     () => {
       document.removeEventListener("keydown", onKeydown, true);
       container.removeEventListener("click", activateNearest, true);
-      container.removeEventListener("mousemove", showNearestTooltip, true);
-      container.removeEventListener("mouseleave", closeNearestTooltip, true);
+      container.removeEventListener("mousemove", showNearestPopup, true);
+      container.removeEventListener("mouseout", leaveNearestPopup, true);
+      container.removeEventListener("mouseleave", closeHoverPopup, true);
+      removeHoverTooltip();
       document.body.classList.remove("validator-map-fullscreen-open");
       if (resizeFrame != null) window.cancelAnimationFrame(resizeFrame);
       observer.disconnect();
@@ -1777,9 +2178,11 @@ async function refresh(): Promise<void> {
   refreshTelegramConsumer();
   refreshGpuInventory().catch(() => {});
   refreshSoftwareInventory().catch(() => {});
+  refreshDevShardVersions().catch(() => {});
   try {
     best = await reconcileParticipants();
   } catch {}
+  await refreshHardwareInventory();
   try {
     if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
     const reference = await json(`${chainRpcOrigin}/chain-rpc/status`);
@@ -1804,14 +2207,38 @@ async function refresh(): Promise<void> {
           set(card, "peers", "–");
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
+          updateDevShards(n, card);
           return;
         }
         const statusBase = n.statusBase;
+        const versionsRequest = json(`${statusBase}/v1/versions`)
+          .then((versions) => {
+            n.softwareVersions = versions;
+          })
+          .catch(() => {
+            n.softwareVersions = null;
+          });
+        const devShardRequest = json(`${statusBase}/devshard/healthz`)
+          .then((runtimes) => {
+            n.devShardHealth = {
+              state: "observed",
+              runtimes: Array.isArray(runtimes) ? runtimes : [],
+            };
+          })
+          .catch((error) => {
+            n.devShardHealth = {
+              state: String(error).includes("404") ? "not_exposed" : "unavailable",
+              runtimes: [],
+            };
+          });
         try {
           const [s, net] = await Promise.all([
             json(`${statusBase}/chain-rpc/status`),
             json(`${statusBase}/chain-rpc/net_info`),
+            text(`${statusBase}/health`),
           ]);
+          await Promise.all([versionsRequest, devShardRequest]);
           n.endpointState = "reachable";
           n.endpointDiagnostic = "";
           const h = Number(s.result.sync_info.latest_block_height);
@@ -1851,7 +2278,10 @@ async function refresh(): Promise<void> {
           set(card, "peers", peers);
           if (validatorEffective) healthy++;
           updateSoftware(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
+          updateDevShards(n, card);
         } catch (e) {
+          await Promise.all([versionsRequest, devShardRequest]);
           n.endpointState = "unavailable";
           n.endpointDiagnostic = hostState.endpointDiagnostic(e);
           n.isOnline = false;
@@ -1860,6 +2290,8 @@ async function refresh(): Promise<void> {
           set(card, "peers", "–");
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
+          updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
+          updateDevShards(n, card);
         }
       }),
   );
@@ -1887,9 +2319,9 @@ async function refresh(): Promise<void> {
   let gatewayAdmission: any = null;
   try {
     [gatewayState, gatewayProbe, gatewayAdmission] = await Promise.all([
-      json("/status/gateway/v1/status"),
-      json("/status/gateway-health"),
-      json("/status/gateway/v1/admission-status"),
+      json(statusUrl("/gateway/v1/status")),
+      json(statusUrl("/gateway-health")),
+      json(statusUrl("/gateway/v1/admission-status")),
     ]);
   } catch {
     gatewayAdmission = {
@@ -1934,7 +2366,7 @@ async function refresh(): Promise<void> {
     );
     if (availability.available !== true || availability.state !== "TRAFFIC_READY")
       throw new Error(availability.message);
-    const metricText = await text("/status/gateway/metrics");
+    const metricText = await text(statusUrl("/gateway/metrics"));
     const metricValue = (name: string): number =>
       [
         ...metricText.matchAll(

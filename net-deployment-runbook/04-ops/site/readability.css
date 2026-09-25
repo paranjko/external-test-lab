@@ -15,7 +15,7 @@ body * {
 }
 
 .summary {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .network-map-section {
@@ -36,6 +36,7 @@ body * {
 .validator-map-legend--inactive, .validator-map .validator-map-status--inactive, .status.inactive { color: var(--state-inactive); }
 .validator-map-legend--unknown, .validator-map .validator-map-status--unknown { color: #9aa0ad; }
 .status.unknown { color: var(--muted); }
+.validator-map-encoding-note { margin: -4px 0 12px; color: var(--muted); font-size: 12px; }
 
 .validator-map-shell {
   position: relative;
@@ -56,15 +57,27 @@ body * {
 .validator-map .leaflet-control-zoom a { border-color: var(--line); }
 .validator-map .leaflet-control-zoom a:hover, .validator-map .leaflet-control-zoom a:focus { background: #2c303b !important; color: var(--ink); }
 .validator-map .leaflet-control-zoom a.leaflet-disabled { background: #2c303b !important; color: #7d8493 !important; }
+.validator-map .leaflet-popup-pane { z-index: 1200 !important; }
+.validator-map-tooltip { position: fixed; z-index: 20000; box-sizing: border-box; max-height: calc(100dvh - 20px); overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; background: var(--paper); color: var(--ink); box-shadow: 0 10px 30px rgba(0,0,0,.45); font-size: 12px; line-height: 1.45; pointer-events: none; }
+.validator-map-tooltip.is-pinned { padding-top: 30px; pointer-events: auto; }
+.validator-map-tooltip-close { position: absolute; top: 5px; right: 6px; width: 22px; height: 22px; border: 0; border-radius: 3px; background: transparent; color: var(--ink); cursor: pointer; font: 20px/1 sans-serif; }
+.validator-map-tooltip-close:hover, .validator-map-tooltip-close:focus { background: var(--line); outline: 2px solid var(--primary-color); outline-offset: 1px; }
+.validator-map-tooltip strong { display: block; color: var(--primary-color); }
+.validator-map-tooltip p { margin: 6px 0; color: var(--muted); }
+.validator-map-tooltip ul { display: grid; gap: 5px; margin: 10px 0 0; padding: 0; list-style: none; }
+.validator-map-tooltip li { display: grid; grid-template-columns: minmax(0,1fr) 72px 24px 72px; gap: 7px; }
+.validator-map-tooltip li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .validator-map .leaflet-popup-content { margin: 14px 16px; font-size: 12px; line-height: 1.45; }
 .validator-map .leaflet-popup-content strong { display: block; color: var(--primary-color); }
 .validator-map .leaflet-popup-content p { margin: 6px 0; color: var(--muted); }
 .validator-map .leaflet-popup-content ul { display: grid; gap: 5px; margin: 10px 0 0; padding: 0; list-style: none; }
-.validator-map .leaflet-popup-content li { display: grid; grid-template-columns: minmax(0,1fr) 90px 24px; gap: 9px; }
+.validator-map .leaflet-popup-content li { display: grid; grid-template-columns: minmax(0,1fr) 72px 24px 72px; gap: 7px; }
 .validator-map .leaflet-popup-content li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.validator-map .validator-marker { cursor: pointer; }
+.validator-map .validator-marker { background: transparent; border: 0; cursor: pointer; }
+.validator-map .validator-marker-face { align-items: center; background: var(--validator-marker-fill); border: 1px solid rgba(17,19,27,.9); border-radius: 50%; box-sizing: border-box; display: flex; height: 100%; justify-content: center; width: 100%; }
+.validator-map .validator-map-status--mixed { color: var(--ink); }
+.validator-map .validator-map-member-state { font-weight: 700; }
 .validator-map .validator-marker-hit { pointer-events: all; }
-.validator-map .validator-marker-count { background: transparent; border: 0; color: #11131b; font: 700 10px/18px var(--mono); pointer-events: none; text-align: center; }
 
 @media (max-width: 520px) {
   .map-note { margin-top: 10px; }
@@ -238,8 +251,9 @@ footer > :last-child {
 .nodes.compact {
   --collapsed-host-width: 32px;
   display: flex;
+  align-items: flex-start;
   height: auto;
-  min-height: 424px;
+  min-height: 350px;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -265,9 +279,9 @@ footer > :last-child {
   flex: 1 1 0;
   width: auto;
   min-width: 0;
-  height: 424px;
-  min-height: 424px;
-  max-height: 424px;
+  height: 400px;
+  min-height: 400px;
+  max-height: 400px;
   overflow: hidden;
   transition:
     flex-grow 320ms cubic-bezier(.2, .75, .25, 1),
@@ -279,12 +293,18 @@ footer > :last-child {
   flex: 1 1 0;
   min-width: 270px;
   padding: 15px;
+  height: 400px;
+  min-height: 400px;
+  max-height: 400px;
 }
 
 .nodes.compact .node.is-collapsed {
   flex: 0 0 var(--collapsed-host-width);
   width: var(--collapsed-host-width);
   min-width: var(--collapsed-host-width);
+  height: 400px;
+  min-height: 400px;
+  max-height: 400px;
   padding: 0;
   background: #14151f;
 }
@@ -299,8 +319,8 @@ footer > :last-child {
 }
 
 .nodes.compact .node.is-expanded h3 {
-  min-height: 64px;
-  max-height: 78px;
+  min-height: 52px;
+  max-height: 64px;
   margin-bottom: 2px;
   overflow: hidden;
 }
@@ -350,9 +370,9 @@ footer > :last-child {
 }
 
 .nodes.compact .node-details > [data-k="status-reason"] {
-  height: 28px;
-  min-height: 28px;
-  max-height: 28px;
+  height: 30px;
+  min-height: 30px;
+  max-height: 30px;
 }
 
 .nodes.compact .node.is-collapsed h3,
@@ -393,7 +413,7 @@ footer > :last-child {
 .nodes.compact .metric {
   box-sizing: border-box;
   min-width: 0;
-  min-height: 24px;
+  min-height: 22px;
   max-height: none;
   align-items: flex-start;
   padding: 3px 0;
@@ -415,22 +435,51 @@ footer > :last-child {
   flex: 0 0 auto;
 }
 
-.nodes.compact .metric.software,
-.nodes.compact .metric.gpu:not([hidden]) {
+.nodes.compact .metric.inferenced,
+.nodes.compact .metric.dapi,
+.nodes.compact .metric.devshard,
+.nodes.compact .metric.mlnodes:not([hidden]) {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
   align-items: start;
   column-gap: 6px;
 }
 
-.nodes.compact .metric.software b,
-.nodes.compact .metric.gpu b {
+.nodes.compact .metric.gpu:not([hidden]) {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+}
+
+.nodes.compact .metric.inferenced b,
+.nodes.compact .metric.dapi b,
+.nodes.compact .metric.devshard b,
+.nodes.compact .metric.mlnodes b {
   font-size: 9px;
   line-height: 1.15;
   overflow: hidden;
   overflow-wrap: anywhere;
   text-overflow: clip;
   white-space: normal;
+}
+
+.nodes.compact .metric.gpu b {
+  font-size: 8px;
+  line-height: 1.15;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodes.compact .metric.inferenced,
+.nodes.compact .metric.dapi,
+.nodes.compact .metric.devshard,
+.nodes.compact .metric.gpu:not([hidden]),
+.nodes.compact .metric.mlnodes:not([hidden]) {
+  min-height: 28px;
+  max-height: 28px;
 }
 
 @media (max-width: 700px) {

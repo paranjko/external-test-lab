@@ -20,7 +20,7 @@ active="$preview_root/$preview_number"
 
 validate_target() {
   local target="$1"
-  [[ -z "$target" || "$target" =~ ^\.generations/$preview_number/[0-9a-f]{40}$ ]] || {
+  [[ -z "$target" || "$target" =~ ^\.generations/$preview_number/([0-9a-f]{40}|legacy)$ ]] || {
     echo 'preview pointer has an unsafe target' >&2
     exit 1
   }
@@ -77,12 +77,32 @@ case "$action" in
         exit 1
       }
     done
-    previous="$(readlink "$active" 2>/dev/null || true)"
-    validate_target "$previous"
-    printf '%s\n' "$previous" >"$staging/previous-generation"
     mv -T "$staging" "$release"
+    previous="$(readlink "$active" 2>/dev/null || true)"
+    if [[ -d "$active" && ! -L "$active" ]]; then
+      # Legacy publishers placed preview bytes directly at /preview/<PR>.
+      # Preserve that generation before converting the public path into the
+      # atomically switchable symlink used by the new publisher.
+      legacy="$generation_root/legacy"
+      [[ ! -e "$legacy" ]] || {
+        echo 'legacy preview generation is already retained; migrate it before publishing again' >&2
+        exit 1
+      }
+      migration_pending=true
+      restore_legacy() {
+        if [[ "${migration_pending:-false}" == true && ! -e "$active" && -d "$legacy" ]]; then
+          mv "$legacy" "$active"
+        fi
+      }
+      trap restore_legacy EXIT
+      mv "$active" "$legacy"
+      previous=".generations/$preview_number/legacy"
+    fi
+    validate_target "$previous"
+    printf '%s\n' "$previous" >"$release/previous-generation"
     ln -s ".generations/$preview_number/$generation" "$preview_root/.next-$preview_number"
     mv -Tf "$preview_root/.next-$preview_number" "$active"
+    migration_pending=false
     [[ "$(readlink "$active")" == ".generations/$preview_number/$generation" ]]
     ;;
   rollback)
