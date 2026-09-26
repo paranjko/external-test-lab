@@ -1,0 +1,11 @@
+/.gonkactl-trace/
+/gonkactl-trace
+/.cache/
+/.collect.*.log
+/provided/
+/.gonka-perfetto/
+/ui-dist/*
+!/ui-dist/NOTICE
+/node_modules/
+/gonkactl-trace.json
+/incident*.json

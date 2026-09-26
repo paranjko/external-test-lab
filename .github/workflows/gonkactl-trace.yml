@@ -1,0 +1,41 @@
+name: gonkactl-trace
+
+on:
+  pull_request:
+    paths:
+      - 'tools/gonkactl-trace/**'
+      - '.github/workflows/gonkactl-trace.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/gonkactl-trace/**'
+      - '.github/workflows/gonkactl-trace.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trace-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: tools/gonkactl-trace/go.mod
+          cache-dependency-path: tools/gonkactl-trace/go.sum
+      - uses: actions/setup-node@v5.0.0
+        with:
+          node-version: '22'
+      - name: Install pinned UI test dependency
+        run: make -C tools/gonkactl-trace ui-deps
+      - name: Test, vet, build and check UI logic
+        run: make -C tools/gonkactl-trace all
+      - name: Generate a synthetic offline report
+        run: make -C tools/gonkactl-trace demo
