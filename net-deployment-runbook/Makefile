@@ -292,6 +292,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-launcher-root-contract.sh
 	@./scripts/test-gdc-github-report.sh
 	@./scripts/test-diagnostic-envelope.sh
+	@./scripts/test-diagnostic-summaries-publishable.sh
 	@./scripts/test-phase-diagnostic-adapter.sh
 	@./scripts/test-classify-join-state.sh
 	@./scripts/test-classify-join-reentry.sh
@@ -395,6 +396,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-promote-state-sync-generation.sh
 	@./scripts/test-record-state-sync-canary.sh
 	@./scripts/test-verify-tmkms-signing-state.sh
+	@./scripts/test-tmkms-state-schema-agreement.sh
 	@./scripts/test-signer-activation-gate.sh
 	@./scripts/test-init-identity-restore-diagnostics.sh
 	@./scripts/test-collect-identities-transport-resume.sh

@@ -91,3 +91,30 @@ if tar -tf "$legacy_archive" | grep -Fq "$legacy_node"; then
 fi
 jq -e '.chain_id == "fixture-chain" and .identity_present == true' "$tmp/legacy-metadata.json" >/dev/null
 printf 'PASS reset archive fence preserves the highest signing minimum (SSH mocked)\n'
+
+# The current flat reset path must accept both never-signed forms, but refuse
+# malformed state before publishing recovery authority or permitting removal.
+mv "$legacy_root/identity/$legacy_node" "$tmp/flat-identity"
+mv "$legacy_root/signer/$legacy_node" "$tmp/flat-signer"
+rmdir "$legacy_root/identity" "$legacy_root/signer"
+mv "$tmp/flat-identity" "$legacy_root/identity"
+mv "$tmp/flat-signer" "$legacy_root/signer"
+mkdir -p "$legacy_root/deploy"
+printf 'CHAIN_ID=fixture-chain\n' >"$legacy_root/deploy/.env"
+for parts in parts part_set_header; do
+  printf '{"height":"0","round":"0","step":0,"block_id":{"hash":"","%s":{"total":0,"hash":""}}}\n' "$parts" \
+    >"$legacy_root/signer/tmkms/state/priv_validator_state.json"
+  PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote capture "$legacy_node" "flat-$parts" \
+    >"$tmp/flat-$parts.json"
+  jq -e '.identity_present == true and .signing_state.height == "0"' "$tmp/flat-$parts.json" >/dev/null
+done
+printf '{"height":"0","round":0,"step":0,"block_id":null}\n' \
+  >"$legacy_root/signer/tmkms/state/priv_validator_state.json"
+if PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote capture "$legacy_node" malformed \
+    >"$tmp/malformed.out" 2>"$tmp/malformed.err"; then
+  echo 'reset capture accepted malformed signing state' >&2; exit 1
+fi
+grep -Fq 'validator signing state is malformed' "$tmp/malformed.err"
+[[ ! -e "$tmp/legacy/srv/backup/reset-malformed-dai-backup.tar" ]]
+[[ -s "$legacy_root/signer/tmkms/secrets/priv_validator_key.softsign" ]]
+printf 'PASS flat reset validates signing state before publishing its external archive\n'

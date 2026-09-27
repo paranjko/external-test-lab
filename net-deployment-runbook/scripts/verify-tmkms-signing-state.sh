@@ -25,13 +25,17 @@ validate_state() {
     (.round | type == "string" and test("^[0-9]+$")) and
     (.step | type == "number" and floor == . and . >= -128 and . <= 127) and
     (.block_id == null or (
-      .height == "0" and .round == "0" and .step == 0 and
-      .block_id == {hash:"",part_set_header:{total:0,hash:""}}
+      .height == "0" and .round == "0" and .step == 0
+      and (.block_id | type == "object")
+      and ((.block_id | keys | sort) == ["hash","part_set_header"] or (.block_id | keys | sort) == ["hash","parts"])
+      and .block_id.hash == ""
+      and ((.block_id.parts // .block_id.part_set_header) as $parts
+        | ($parts | keys | sort) == ["hash","total"] and $parts.total == 0 and $parts.hash == "")
     ) or (
       (.block_id | type == "object") and
       (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$")) and
       ((.block_id.parts // .block_id.part_set_header) as $parts |
-        ($parts | type == "object") and ($parts.total | type == "number" and floor == . and . >= 0) and
+        ($parts | type == "object") and ($parts.total | type == "number" and floor == . and . >= 0 and . <= 4294967295) and
         ($parts.hash | type == "string" and test("^[0-9A-Fa-f]{64}$")))
     ))
   ' "$1" >/dev/null
