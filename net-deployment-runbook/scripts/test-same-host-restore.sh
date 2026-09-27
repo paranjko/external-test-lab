@@ -93,6 +93,25 @@ fi
 jq -e '.chain_id == "fixture-chain" and .identity_present == true' "$tmp/legacy-metadata.json" >/dev/null
 printf 'PASS reset archive fence preserves the highest signing minimum (SSH mocked)\n'
 
+# A partial JOIN can leave only TMKMS identity material. Its explicit
+# chain_id remains enough to bind the reset archive without deploy/.env or
+# genesis, so reset can preserve the signer before clearing /srv/dai.
+rm -f -- "$legacy_root/$legacy_node/inference/config/genesis.json"
+PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote capture "$legacy_node" tmkms-chain \
+  >"$tmp/tmkms-chain-metadata.json"
+jq -e '.chain_id == "fixture-chain" and .identity_present == true' "$tmp/tmkms-chain-metadata.json" >/dev/null
+printf 'PASS reset capture falls back to the retained TMKMS chain binding\n'
+
+# If every chain binding has disappeared, reset still preserves the signer
+# externally and clears the Host. The null binding deliberately cannot later
+# select the automatic same-Host restore path.
+rm -f -- "$legacy_root/signer/$legacy_node/tmkms/tmkms.toml"
+PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote capture "$legacy_node" unbound \
+  >"$tmp/unbound-metadata.json"
+jq -e '.chain_id == null and .identity_present == true' "$tmp/unbound-metadata.json" >/dev/null
+[[ -f "$(jq -r .archive_path "$tmp/unbound-metadata.json")" ]]
+printf 'PASS reset preserves an unbound signer without authorizing automatic restore\n'
+
 # The current flat reset path must accept both never-signed forms, but refuse
 # malformed state before publishing recovery authority or permitting removal.
 mv "$legacy_root/identity/$legacy_node" "$tmp/flat-identity"

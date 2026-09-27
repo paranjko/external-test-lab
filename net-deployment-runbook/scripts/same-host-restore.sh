@@ -151,13 +151,35 @@ if [[ "${1:-}" == --remote ]]; then
         if [[ -z "$chain" && -f "$genesis" && ! -L "$genesis" ]]; then
           chain="$(jq -r '.chain_id // empty' "$genesis")"
         fi
-        [[ "$chain" =~ ^[A-Za-z0-9_-]+$ ]] || die 'validator deployment chain binding is invalid'
+        # A failed JOIN can retain identity and signer material before it ever
+        # renders deploy/.env or downloads genesis.  TMKMS itself retains the
+        # selected chain, so use that final local source before deciding that
+        # the archive has no automatic same-Host restore binding.
+        tmkms_config="$signer/tmkms/tmkms.toml"
+        if [[ -z "$chain" && -f "$tmkms_config" && ! -L "$tmkms_config" ]]; then
+          chain="$(awk -F= '
+            $1 ~ /^[[:space:]]*chain_id[[:space:]]*$/ {
+              value=$2
+              sub(/^[[:space:]]*/, "", value)
+              sub(/[[:space:]]*$/, "", value)
+              if (value ~ /^"[A-Za-z0-9_-]+"$/) {
+                sub(/^"/, "", value)
+                sub(/"$/, "", value)
+                print value
+                exit
+              }
+            }
+          ' "$tmkms_config")"
+        fi
+        if [[ ! "$chain" =~ ^[A-Za-z0-9_-]+$ ]]; then
+          chain=''
+        fi
         key="$(sha256sum "$key_file" | awk '{print $1}')"
         validate_tmkms_state "$state_file" || die 'validator signing state is malformed'
         jq -cn --arg machine "$machine" --arg chain "$chain" --arg key "$key" --arg run_id "$run_id" \
           --arg identity_sha256 "$(tree_digest "$identity")" --arg signer_sha256 "$(tree_digest "$signer")" \
           --slurpfile state "$state_file" --arg time "$(date -u +%FT%TZ)" \
-          '{schema_version:1,kind:"gdc-reset-dai-backup",run_id:$run_id,machine_sha256:$machine,chain_id:$chain,key_sha256:$key,signer_stopped:true,identity_present:true,signing_state:$state[0],identity_sha256:$identity_sha256,signer_sha256:$signer_sha256,observed_at:$time}' \
+          '{schema_version:1,kind:"gdc-reset-dai-backup",run_id:$run_id,machine_sha256:$machine,chain_id:($chain | if . == "" then null else . end),key_sha256:$key,signer_stopped:true,identity_present:true,signing_state:$state[0],identity_sha256:$identity_sha256,signer_sha256:$signer_sha256,observed_at:$time}' \
           >"$stage/reset-manifest.json"
         install -d -m 0700 "$stage/payload"
         cp -a "$identity" "$stage/payload/identity"

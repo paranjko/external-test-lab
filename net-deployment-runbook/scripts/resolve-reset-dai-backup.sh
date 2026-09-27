@@ -16,6 +16,7 @@ validate_metadata() {
   jq -e '
     .schema_version == 1 and .kind == "gdc-reset-dai-backup"
     and .identity_present == true and .signer_stopped == true
+    and (.chain_id | type == "string" and test("^[A-Za-z0-9_-]+$"))
     and (.archive_path | type == "string" and test("^/srv/backup/reset-[A-Za-z0-9][A-Za-z0-9._-]{0,127}-dai-backup\\.tar$"))
     and (.archive_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
   ' "$metadata" >/dev/null || die 'reset archive metadata does not prove a stopped signer identity'
