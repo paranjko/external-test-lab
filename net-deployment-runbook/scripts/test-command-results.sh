@@ -137,3 +137,28 @@ grep -Fq 'END phase=join-fixture-peer status=194' "$scratch/phase-failure.log"
 ! grep -Fq 'ERROR gdc command failed' "$scratch/phase-failure.log"
 [[ "$(tail -n 1 "$scratch/phase-failure.log")" == 'END host join REBOOT_REQUIRED exit=194' ]]
 printf 'PASS reboot-required JOIN phase records one typed terminal result before launcher exit\n'
+
+# A validator backup for a different signer is invalid operator recovery input,
+# not an operational incident. It must retain the typed refusal, avoid the
+# generic failure/report wording, and preserve the data-error exit code.
+restore_refusal_home="$scratch/restore-input-refusal"
+mkdir -p "$restore_refusal_home"
+restore_refusal_result="$restore_refusal_home/join-result.v1.json"
+jq -cn '
+  {schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"identity",category:"identity",
+   reason:"restore_identity_mismatch",exit_code:65,mutation:"canonical_signer_off",signer_state:"disabled",
+   resume:"new_profile",join_profile_sha256:null,evidence:[]}
+' >"$restore_refusal_result"
+rc=0
+GDC_HOME="$restore_refusal_home" bash -c '
+  source "$1/gdc.sh" help >/dev/null
+  GDC_END_COMMAND="host join"
+  GDC_JOIN_RESULT_OUTPUT="$2"
+  bash -c "exit 65"
+' bash "$fixture" "$restore_refusal_result" >"$scratch/restore-input-refusal.log" 2>&1 || rc=$?
+[[ "$rc" == 65 ]]
+grep -Fq 'REFUSED restored validator backup does not match the signer captured by reset;' "$scratch/restore-input-refusal.log"
+! grep -Fq 'ERROR gdc command failed' "$scratch/restore-input-refusal.log"
+! grep -Fq 'gdc report github' "$scratch/restore-input-refusal.log"
+[[ "$(tail -n 1 "$scratch/restore-input-refusal.log")" == 'END host join REFUSED exit=65' ]]
+printf 'PASS mismatched restore input is a typed refusal, not a reportable operational failure\n'

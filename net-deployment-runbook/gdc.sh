@@ -16,6 +16,19 @@ GDC_LAUNCHER_EXIT_RECORDED=false
 GDC_END_COMMAND=''
 GDC_END_PID="$BASHPID"
 
+is_restore_identity_input_refusal() {
+  local rc="$1"
+  [[ "$rc" -eq 65 && -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] || return 1
+  [[ -f "$GDC_JOIN_RESULT_OUTPUT" && ! -L "$GDC_JOIN_RESULT_OUTPUT" ]] || return 1
+  "$ROOT/scripts/record-join-result.sh" --validate "$GDC_JOIN_RESULT_OUTPUT" >/dev/null 2>&1 \
+    && jq -e '
+      .outcome == "refused" and .phase == "identity" and .category == "identity" and
+      .reason == "restore_identity_mismatch" and .exit_code == 65 and
+      .mutation == "canonical_signer_off" and .signer_state == "disabled" and
+      .resume == "new_profile"
+    ' "$GDC_JOIN_RESULT_OUTPUT" >/dev/null 2>&1
+}
+
 record_join_terminal_result() {
   local outcome="$1" phase="$2" category="$3" reason="$4" exit_code="$5" mutation="$6" signer_state="$7" resume="$8" profile_sha='null' input
   [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] || return 0
@@ -49,6 +62,10 @@ record_launcher_failure() {
   # A report-publication failure retains its own local draft; making it the
   # latest incident would recursively hide the selected operational failure.
   [[ "${GDC_REPORT_MODE:-false}" != true ]] || return 0
+  # A recovery archive that names another validator is operator input, not an
+  # operational incident. Its typed JOIN result tells the operator what to
+  # replace, so it must not become the next GitHub-report candidate.
+  is_restore_identity_input_refusal "$rc" && return 0
   [[ "$GDC_LAUNCHER_EXIT_RECORDED" != true ]] || return 0
   GDC_LAUNCHER_EXIT_RECORDED=true
   failure_dir="${GDC_DATA_ROOT:?}/reporting/failures"
@@ -122,6 +139,8 @@ on_launcher_exit() {
       printf 'END %s SUCCESS\n' "$GDC_END_COMMAND"
     elif [[ "$GDC_END_COMMAND" == 'host join' && "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]]; then
       printf 'END host join REBOOT_REQUIRED exit=194\n' >&2
+    elif [[ "$GDC_END_COMMAND" == 'host join' ]] && is_restore_identity_input_refusal "$rc"; then
+      printf 'END host join REFUSED exit=65\n' >&2
     else
       printf 'END %s FAILED exit=%s\n' "$GDC_END_COMMAND" "$rc" >&2
     fi
@@ -135,6 +154,10 @@ on_launcher_error() {
   # Do not turn the explicit reboot continuation into an ERROR. The EXIT
   # handler emits its single terminal REBOOT_REQUIRED result instead.
   if [[ "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]]; then
+    exit "$rc"
+  fi
+  if is_restore_identity_input_refusal "$rc"; then
+    printf 'REFUSED restored validator backup does not match the signer captured by reset; use its matching backup or an authorized validator-key rotation.\n' >&2
     exit "$rc"
   fi
   printf 'ERROR gdc command failed phase=%s exit=%s run_log=%s command=%s\n' \

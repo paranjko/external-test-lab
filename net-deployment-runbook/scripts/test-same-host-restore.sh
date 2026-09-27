@@ -55,6 +55,7 @@ legacy_script="$tmp/same-host-restore-legacy.sh"
 sed \
   -e "s#root=/srv/dai#root=$tmp/legacy/srv/dai#" \
   -e "s#backup_root=/srv/backup#backup_root=$tmp/legacy/srv/backup#" \
+  -e "s#\^/srv/backup#\^$tmp/legacy/srv/backup#g" \
   -e 's/\[\[ \$EUID == 0 && "\$node" =~/[[ true \&\& "$node" =~/' \
   -e 's/ && "$(stat -c %u "\$backup_root")" == 0//' \
   -e 's/ && "$(stat -c %u "\$archive")" == 0//' \
@@ -118,3 +119,18 @@ grep -Fq 'validator signing state is malformed' "$tmp/malformed.err"
 [[ ! -e "$tmp/legacy/srv/backup/reset-malformed-dai-backup.tar" ]]
 [[ -s "$legacy_root/signer/tmkms/secrets/priv_validator_key.softsign" ]]
 printf 'PASS flat reset validates signing state before publishing its external archive\n'
+
+# A reset archive for another signer is invalid operator recovery input. It
+# has a distinct data-error exit so the JOIN launcher does not report it as a
+# Host incident; any transport or archive failure keeps its ordinary error.
+mismatch_archive="$tmp/legacy/srv/backup/reset-mismatch-dai-backup.tar"
+cat >"$mismatch_archive.json" <<'EOF'
+{"schema_version":1,"kind":"gdc-reset-dai-backup","machine_sha256":"different-machine","key_sha256":"different-key","chain_id":"fixture-chain","signer_stopped":true,"signing_state":{"height":"0","round":"0","step":0,"block_id":null},"archive_path":"PLACEHOLDER","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+EOF
+sed -i "s#PLACEHOLDER#$mismatch_archive#" "$mismatch_archive.json"
+rc=0
+PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote bind "$legacy_node" fixture-chain "$mismatch_archive" \
+  >"$tmp/mismatch.out" 2>"$tmp/mismatch.err" || rc=$?
+[[ "$rc" == 65 ]]
+grep -Fq 'reset archive does not match restored signer identity' "$tmp/mismatch.err"
+printf 'PASS reset archive identity mismatch returns the dedicated data-error exit\n'

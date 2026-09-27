@@ -211,7 +211,10 @@ if [[ "${1:-}" == --remote ]]; then
       signer="$root/signer/tmkms"; key_file="$signer/secrets/priv_validator_key.softsign"
       [[ -s "$key_file" ]] || die 'restored signer is incomplete'
       key="$(sha256sum "$key_file" | awk '{print $1}')"
-      validate_metadata "$metadata" "$key" "$expected_chain" || die 'reset archive does not match restored machine, chain and key'
+      if ! validate_metadata "$metadata" "$key" "$expected_chain"; then
+        printf 'same-host restore: reset archive does not match restored signer identity\n' >&2
+        exit 65
+      fi
       validate_archive "$archive" "$metadata"
       [[ -z "$(docker ps -q --filter "label=com.docker.compose.project=$node" --filter label=com.docker.compose.service=tmkms)" ]] || die 'signer must remain stopped'
       cat "$metadata"
