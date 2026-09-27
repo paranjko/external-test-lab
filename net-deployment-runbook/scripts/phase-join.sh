@@ -213,7 +213,7 @@ else
   remote_identity_rc=$?
   if (( remote_identity_rc == 255 )); then
     refuse_before_mutation host_unreachable \
-      'Host JOIN stopped before any change: the remote identity preflight could not open an SSH session to the Host. Repeat the same command once the Host is reachable.' \
+      'Host JOIN stopped before any change: the identity preflight could not reach the Host over SSH. Repeat the same command once the Host is reachable.' \
       'Host JOIN classification=unreachable; remote identity preflight could not establish an SSH session'
   fi
 fi
@@ -261,7 +261,7 @@ fi
 if [[ "$remote_identity_state" == present && "$JOIN_CLASS" == new && -z "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" \
     && "$replace_retained_remote_identity" != true ]]; then
   refuse_before_mutation identity_conflict \
-    'Host JOIN stopped before any change: the Host holds a validator identity that the operator state does not know. Restore it from the matching validator archive or follow the documented recovery path.' \
+    'Host JOIN stopped before any change: the Host holds a validator identity, and the operator state does not know it. Restore from the matching archive or follow the documented recovery path.' \
     'Host JOIN classification=identity_conflict; a remote validator identity exists without matching local operator state'
 fi
 if [[ "$JOIN_CLASS" == partial_identity && "$mnemonic_account_bootstrap" != true ]]; then
