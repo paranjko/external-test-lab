@@ -32,6 +32,8 @@ grep -Fq 'mnemonic_account_bootstrap=true' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'replace-retained-validator-identity.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'remote_identity_ready=false' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'retained identity archived and removed; generating a fresh validator identity' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'archived cold account owns an existing participant' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'requesting restore authorizes the required key rebind' "$ROOT/scripts/phase-join.sh"
 if grep -Eq 'network participant exclude|participant_exclusion|phase-participant-exclude' \
   "$ROOT/gdc.sh" "$ROOT/scripts/phase-vote-proposal.sh"; then
   echo 'obsolete participant-exclusion path remains reachable' >&2

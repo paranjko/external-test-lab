@@ -822,8 +822,10 @@ fi
 # An existing participant was registered by an earlier run, and nothing on this
 # Host records which key that run sent. Skipping registration on the strength of
 # a status alone is what let a Host registered with the node's throwaway init
-# key repeat JOIN to COMPLETE and never sign a block. Ask the chain instead, and
-# refuse the skip when the published key is not the key this Host signs with.
+# key repeat JOIN to COMPLETE and never sign a block. Ask the chain instead.
+# An ordinary JOIN cannot repair a mismatch. A verified validator archive is
+# different: its cold mnemonic is cryptographically bound to this participant,
+# so requesting restore authorizes the required key rebind.
 if [[ "$already_registered" == true && "$rebind_existing_participant" != true ]]; then
   registered_endpoint="https://${GENESIS_PUBLIC_HOST}/chain-api/productscience/inference/inference/participant/$ADDRESS"
   registered_body_file="$(mktemp)"
@@ -836,19 +838,30 @@ if [[ "$already_registered" == true && "$rebind_existing_participant" != true ]]
     die "cannot read the registered validator key of $NODE (url=$registered_endpoint http_status=${participant_http_status:-000} curl_exit=$participant_curl_exit${registered_detail:+ detail=$registered_detail}); refusing to skip registration without it"
   fi
   install -m 0600 "$registered_body_file" "$RUN/registered-participant.json"
-  if ! registered_key_detail="$("$ROOT/scripts/verify-participant-validator-key.sh" \
-    "$ADDRESS" "$canonical_tmkms_key" "$registered_body_file" 2>&1 >/dev/null)"; then
+  registered_key_rc=0
+  registered_key_detail="$("$ROOT/scripts/verify-participant-validator-key.sh" \
+    "$ADDRESS" "$canonical_tmkms_key" "$registered_body_file" 2>&1 >/dev/null)" || registered_key_rc=$?
+  if (( registered_key_rc != 0 )); then
     registered_published_key="$(jq -r '.participant.validator_key // empty' "$registered_body_file" 2>/dev/null || true)"
     rm -f "$registered_body_file"
-    if [[ -n "$replaced_identity_consensus_key" && "$registered_published_key" == "$replaced_identity_consensus_key" ]]; then
+    if [[ "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" == true && "$registered_key_rc" -eq 3 ]]; then
+      rebind_existing_participant=true
+      printf 'READY %s archived cold account owns an existing participant; restoring its TMKMS signer requires validator-key rebind\n' "$NODE"
+    elif [[ -n "$replaced_identity_consensus_key" && "$registered_published_key" == "$replaced_identity_consensus_key" ]]; then
       die "$NODE is registered with the consensus key its identity record carried before this run replaced it with the durable TMKMS signer; that key was never the signer's, so this participant cannot sign. Repeat the JOIN with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of this participant, which publishes the signer key. ${registered_key_detail#FAILED }"
+    elif [[ "$registered_key_rc" -eq 3 ]]; then
+      die "$NODE cannot sign for the participant it is registered as. ${registered_key_detail#FAILED } Repeat the JOIN with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of this participant, which publishes the durable TMKMS signer key, or continue on the Host whose signer owns the registered key."
+    else
+      die "$NODE cannot read the registered validator key. ${registered_key_detail#FAILED }"
     fi
-    die "$NODE cannot sign for the participant it is registered as. ${registered_key_detail#FAILED } Repeat the JOIN with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of this participant, which publishes the durable TMKMS signer key, or continue on the Host whose signer owns the registered key."
   fi
   rm -f "$registered_body_file"
-  printf 'PASS %s registered validator key is the durable TMKMS signer of this Host\n' "$NODE"
-  printf 'READY %s participant already registered with status=%s; skip duplicate registration\n' "$NODE" "$participant_status"
-elif [[ "$rebind_existing_participant" == true ]]; then
+  if [[ "$rebind_existing_participant" != true ]]; then
+    printf 'PASS %s registered validator key is the durable TMKMS signer of this Host\n' "$NODE"
+    printf 'READY %s participant already registered with status=%s; skip duplicate registration\n' "$NODE" "$participant_status"
+  fi
+fi
+if [[ "$rebind_existing_participant" == true ]]; then
   # The public DAPI registration endpoint accepts only
   # MsgSubmitNewUnfundedParticipant. It cannot update an account which already
   # exists, even when the HTTP request succeeds. The native participant message
@@ -882,7 +895,7 @@ elif [[ "$rebind_existing_participant" == true ]]; then
   jq -e --arg expected "$expected_registration_key" '.participant.validator_key == $expected' <<<"$rebound_body" >/dev/null \
     || die "$NODE participant-key rebind committed but did not publish the durable TMKMS validator key"
   printf 'PASS %s participant validator key now matches the durable TMKMS signer\n' "$NODE"
-else
+elif [[ "$already_registered" != true ]]; then
   step "Register $NODE before funding"
   registration_timeout="${GDC_JOIN_REGISTRATION_TIMEOUT_SECONDS:-300}"
   [[ "$registration_timeout" =~ ^[1-9][0-9]*$ ]] || die 'GDC_JOIN_REGISTRATION_TIMEOUT_SECONDS must be positive'

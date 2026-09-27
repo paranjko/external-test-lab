@@ -107,6 +107,10 @@ gdc host join --restore <validator-backup.tar> \
   --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
+The verified archive contains the participant cold mnemonic. If its TMKMS key
+is no longer published, JOIN rebinds that participant to the restored key,
+then reads it back before enabling the signer.
+
 Without a second SSH alias, JOIN prepares `<ssh-alias>` as a `network-gpu`
 Host. GDC detects the PCI accelerator before mutation and selects a committed
 profile. NVIDIA requires an R580+ driver. AMD support is limited to `gfx1201`
