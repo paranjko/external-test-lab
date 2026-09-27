@@ -33,7 +33,7 @@ require_regular_beneath() {
 read_failure_record() {
   local record="$1" key value seen_keys=' '
   require_regular_beneath "$REPORTING_ROOT" "$record" || die 'selected failure record is unsafe; inspect the local reporting directory'
-  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG='' FAILURE_DIAGNOSTIC_ENVELOPE=''
+  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG='' FAILURE_DIAGNOSTIC_ENVELOPE='' FAILURE_JOIN_RESULT='' FAILURE_INVOCATION_OPTIONS=''
   while IFS='=' read -r key value; do
     [[ "$seen_keys" != *" $key "* ]] || die 'failure record has a duplicate field'
     seen_keys+="$key "
@@ -52,6 +52,8 @@ read_failure_record() {
       run_log) FAILURE_RUN_LOG="$value" ;;
       envelope) : ;; # Private paths are deliberately not collected.
       diagnostic_envelope) FAILURE_DIAGNOSTIC_ENVELOPE="$value" ;;
+      join_result) FAILURE_JOIN_RESULT="$value" ;;
+      invocation_options) FAILURE_INVOCATION_OPTIONS="$value" ;;
       # JOIN preflight receipts are private, bounded evidence referenced by
       # the current launcher failure contract.  The public report is built
       # from the typed failure fields and diagnostic envelope only, so retain
@@ -68,12 +70,73 @@ collect_diagnostic_envelope() {
   DIAGNOSTIC_SUMMARY='Limited legacy context: no validated diagnostic envelope was retained.'
   DIAGNOSTIC_RESUME='not_applicable'
   DIAGNOSTIC_RESUME_TOKEN='none'
+  DIAGNOSTIC_CATEGORY='unavailable' DIAGNOSTIC_CHECKPOINT='unavailable' DIAGNOSTIC_STATE='unavailable' DIAGNOSTIC_TOOL='unavailable'
+  DIAGNOSTIC_GENERIC=false
   [[ -n "${FAILURE_DIAGNOSTIC_ENVELOPE:-}" ]] || return 0
   require_regular_beneath "$GDC_DATA_ROOT" "$FAILURE_DIAGNOSTIC_ENVELOPE" || die 'diagnostic envelope is unsafe; retained report was not published'
   "$ROOT/scripts/diagnostic-envelope.sh" validate "$FAILURE_DIAGNOSTIC_ENVELOPE" || die 'diagnostic envelope is invalid; retained report was not published'
   DIAGNOSTIC_SUMMARY="$(jq -r .summary "$FAILURE_DIAGNOSTIC_ENVELOPE")"
   DIAGNOSTIC_RESUME="$(jq -r .resume.decision "$FAILURE_DIAGNOSTIC_ENVELOPE")"
   DIAGNOSTIC_RESUME_TOKEN="$(jq -r .resume.token "$FAILURE_DIAGNOSTIC_ENVELOPE")"
+  DIAGNOSTIC_CATEGORY="$(typed_value "$FAILURE_DIAGNOSTIC_ENVELOPE" category)"
+  DIAGNOSTIC_CHECKPOINT="$(typed_value "$FAILURE_DIAGNOSTIC_ENVELOPE" checkpoint)"
+  DIAGNOSTIC_STATE="$(typed_value "$FAILURE_DIAGNOSTIC_ENVELOPE" state)"
+  DIAGNOSTIC_TOOL="$(typed_value "$FAILURE_DIAGNOSTIC_ENVELOPE" tool)"
+  # Launcher placeholder: it classifies nothing.
+  if [[ "$DIAGNOSTIC_CHECKPOINT" == terminal && "$DIAGNOSTIC_STATE" == interrupted && "$DIAGNOSTIC_TOOL" == shell ]]; then
+    DIAGNOSTIC_GENERIC=true
+  fi
+}
+
+# Bound typed values at entry; the public-text scan stays whole, no row is exempt.
+MAX_TYPED_VALUE=40
+typed_value() {
+  local file="$1" key="$2" value
+  value="$(jq -r --arg key "$key" '.[$key] // empty' "$file")"
+  [[ -n "$value" && "${#value}" -le "$MAX_TYPED_VALUE" ]] \
+    || die "typed field $key is missing or longer than $MAX_TYPED_VALUE characters; retained report was not published"
+  printf '%s\n' "$value"
+}
+
+# Table cells only: key=value in the metadata would trip the opaque-token rule.
+typed_rows() {
+  printf '| Field | Value |\n| --- | --- |\n'
+  while (($# >= 2)); do
+    printf '| %s | %s |\n' "$1" "$(printf '%s' "$2" | escape_html)"
+    shift 2
+  done
+}
+
+collect_join_result() {
+  JOIN_RESULT_OUTCOME='unavailable' JOIN_RESULT_PHASE='unavailable' JOIN_RESULT_CATEGORY='unavailable'
+  JOIN_RESULT_REASON='unavailable' JOIN_RESULT_MUTATION='unavailable' JOIN_RESULT_SIGNER='unavailable' JOIN_RESULT_RESUME='unavailable'
+  [[ -n "${FAILURE_JOIN_RESULT:-}" ]] || return 0
+  require_regular_beneath "$GDC_DATA_ROOT" "$FAILURE_JOIN_RESULT" || die 'JOIN terminal result is unsafe; retained report was not published'
+  "$ROOT/scripts/record-join-result.sh" --validate "$FAILURE_JOIN_RESULT" >/dev/null 2>&1 \
+    || die 'JOIN terminal result is invalid; retained report was not published'
+  JOIN_RESULT_OUTCOME="$(typed_value "$FAILURE_JOIN_RESULT" outcome)"
+  JOIN_RESULT_PHASE="$(typed_value "$FAILURE_JOIN_RESULT" phase)"
+  JOIN_RESULT_CATEGORY="$(typed_value "$FAILURE_JOIN_RESULT" category)"
+  JOIN_RESULT_REASON="$(typed_value "$FAILURE_JOIN_RESULT" reason)"
+  JOIN_RESULT_MUTATION="$(typed_value "$FAILURE_JOIN_RESULT" mutation)"
+  JOIN_RESULT_SIGNER="$(typed_value "$FAILURE_JOIN_RESULT" signer_state)"
+  JOIN_RESULT_RESUME="$(typed_value "$FAILURE_JOIN_RESULT" resume)"
+}
+
+collect_invocation_options() {
+  local name kept='' dropped=0
+  INVOCATION_OPTIONS='unavailable'
+  [[ -n "${FAILURE_INVOCATION_OPTIONS:-}" ]] || return 0
+  for name in $FAILURE_INVOCATION_OPTIONS; do
+    case "$name" in
+      --mnemonic-file|--mnemonic-prompt|--restore|--verification|--plan|--resume|--public-host|--bootstrap-file|--skip-qualification|--old-signer-fence|--chain-id|--source-rpc|--pex|--preflight-deadline)
+        kept+="${kept:+ }$name" ;;
+      *) dropped=$((dropped + 1)) ;;
+    esac
+  done
+  [[ -n "$kept" ]] || kept='none recognised'
+  (( dropped == 0 )) || kept+=" (+$dropped not listed)"
+  INVOCATION_OPTIONS="$kept"
 }
 
 render_resume_guidance() {
@@ -83,7 +146,13 @@ render_resume_guidance() {
       ;;
     none)
       case "${DIAGNOSTIC_RESUME:-not_applicable}" in
-        manual_action_required) printf 'No runnable command is included: an operator must first resolve the stated prerequisite.\n' ;;
+        manual_action_required)
+          if [[ "${DIAGNOSTIC_GENERIC:-false}" == true ]]; then
+            printf 'No runnable command is included: the stop is not classified, so nothing here establishes that a retry is safe.\n'
+          else
+            printf 'No runnable command is included: an operator must first resolve the stated prerequisite.\n'
+          fi
+          ;;
         unsafe) printf 'No runnable command is included because retry safety is not proven.\n' ;;
         *) printf 'No resume command applies to this diagnostic.\n' ;;
       esac
@@ -93,27 +162,39 @@ render_resume_guidance() {
 }
 
 collect_diagnostic_excerpt() {
-  local log="$FAILURE_RUN_LOG" excerpt
+  local log="$FAILURE_RUN_LOG" excerpt kept line
   DIAGNOSTIC_EXCERPT='No public-safe run-log excerpt was available. The report records the typed launcher failure envelope instead.'
   [[ -n "$log" && "$log" != unavailable ]] || return 0
   require_regular_beneath "$GDC_DATA_ROOT" "$log" || die 'run log is unsafe; retained report was not published'
   [[ "$(wc -c <"$log")" -le 16777216 ]] || die 'run log exceeds the 16 MiB collection bound; select a narrower failure record'
+  # Typed status lines of the runbook; the window is taken from its end, nearest the stop.
   excerpt="$(tail -c 65536 "$log" | awk '
     /^BEGIN phase=[A-Za-z0-9._-]+ timestamp=[0-9TZ:-]+ run_id=[A-Za-z0-9._-]+$/ { print; next }
     /^END phase=[A-Za-z0-9._-]+ status=[0-9]+ timestamp=[0-9TZ:-]+$/ { print; next }
     /^ERROR [^[:cntrl:]]+$/ { print; next }
     /^error: [^[:cntrl:]]+$/ { print; next }
-  ' | head -n 40 | strip_controls | sed -E 's#/(home|root|tmp)/[^[:space:]]+#<local-path>#g')"
+    /^(REBOOT REQUIRED|REFUSED|NOTICE|READY|SKIP) [^[:cntrl:]]+$/ { print; next }
+  ' | tail -n 40 | strip_controls | sed -E 's#/(home|root|tmp|srv|var|etc)/[^[:space:]]+#<local-path>#g')"
   [[ -n "$excerpt" ]] || return 0
-  printf '%s\n' "$excerpt" >"$REPORT_DIR/.diagnostic-excerpt"
-  scan_public_text "$REPORT_DIR/.diagnostic-excerpt" || die 'sanitized diagnostic excerpt is unsafe for public disclosure; retained report was not published'
-  DIAGNOSTIC_EXCERPT="$excerpt"
+  kept=''
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >"$REPORT_DIR/.diagnostic-excerpt"
+    scan_secret_markers "$REPORT_DIR/.diagnostic-excerpt" \
+      || die 'sanitized diagnostic excerpt is unsafe for public disclosure; retained report was not published'
+    if scan_public_text "$REPORT_DIR/.diagnostic-excerpt"; then
+      kept+="$line"$'\n'
+    else
+      kept+='[line withheld: it did not pass the public-text scan]'$'\n'
+    fi
+  done <<<"$excerpt"
   rm -f "$REPORT_DIR/.diagnostic-excerpt"
+  DIAGNOSTIC_EXCERPT="${kept%$'\n'}"
 }
 
 collect_manifest_identity() {
   local key value manifest="$FAILURE_RUN_MANIFEST"
   MANIFEST_RELEASE_PROFILE='unavailable' MANIFEST_RELEASE_SHA256='unavailable' MANIFEST_PROFILE_SHA256='unavailable' MANIFEST_GENESIS_SHA256='unavailable' MANIFEST_CHAIN_ID='unavailable'
+  MANIFEST_PROFILE_KIND='unavailable' MANIFEST_JOIN_PROFILE_SHA256='unavailable' MANIFEST_OBSERVATION_SHA256='unavailable'
   [[ -n "$manifest" && "$manifest" != unavailable ]] || return 0
   # JOIN preflight can fail before its optional lifecycle manifest exists.
   # A genuinely absent path is therefore unavailable, but symlinks (including
@@ -127,6 +208,9 @@ collect_manifest_identity() {
       profile_hash) [[ "$value" =~ ^[0-9a-f]{64}$ ]] && MANIFEST_PROFILE_SHA256="$value" ;;
       genesis_sha256) [[ "$value" =~ ^[0-9a-f]{64}$ ]] && MANIFEST_GENESIS_SHA256="$value" ;;
       chain_id) [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]] && MANIFEST_CHAIN_ID="$value" ;;
+      profile_kind) [[ "$value" =~ ^[a-z][a-z0-9_]{0,31}$ ]] && MANIFEST_PROFILE_KIND="$value" ;;
+      join_profile_sha256) [[ "$value" =~ ^[0-9a-f]{64}$ ]] && MANIFEST_JOIN_PROFILE_SHA256="$value" ;;
+      network_observation_sha256) [[ "$value" =~ ^[0-9a-f]{64}$ ]] && MANIFEST_OBSERVATION_SHA256="$value" ;;
     esac
   done <"$manifest"
 }
@@ -173,6 +257,7 @@ select_failure() {
     record="${records[0]}"
   fi
   read_failure_record "$record"
+  printf 'Selected failure: %s – phase=%s exit=%s\n' "$FAILURE_RECORDED_AT" "$FAILURE_STAGE" "$FAILURE_EXIT_CODE"
 }
 
 strip_controls() {
@@ -214,6 +299,18 @@ normalize_safe_invocation() {
   printf 'gdc%s\n' "${value#"$launcher"}"
 }
 
+# A credential mark refuses the report; a heuristic hit only withholds a line or the optional block.
+scan_secret_markers() {
+  local file="$1"
+  LC_ALL=C grep -Ein \
+    -e '-----BEGIN( [A-Z0-9 ]+)? PRIVATE KEY-----' \
+    -e '(authorization|cookie|x-api-key)[[:space:]]*[:=]' \
+    -e '(token|secret|password|mnemonic|private_key|gateway_key)[[:space:]]*[:=]' \
+    -e 'https?://[^[:space:]@/]+:[^[:space:]@/]+@' \
+    "$file" >/dev/null && return 1
+  return 0
+}
+
 scan_public_text() {
   local file="$1"
   LC_ALL=C grep -Ein \
@@ -224,9 +321,9 @@ scan_public_text() {
     -e '([[:alnum:]]+ ){11,23}[[:alnum:]]+' \
     -e '[A-Za-z0-9+/_=-]{48,}' \
     <(sed -E \
-      -e '/^(runbook_revision|launcher_sha256|body_sha256|release_profile_sha256|profile_sha256|genesis_sha256)=[0-9a-f]{40,64}$/d' \
+      -e '/^(runbook_revision|launcher_sha256|body_sha256|release_profile_sha256|profile_sha256|genesis_sha256|join_profile_sha256|network_observation_sha256)=[0-9a-f]{40,64}$/d' \
       -e '/^<!-- gdc-report-sha256:[0-9a-f]{64} -->$/d' \
-      -e '/(runbook_revision|launcher_sha256|body_sha256|release_profile_sha256|profile_sha256|genesis_sha256|gdc-report-sha256)/ s/[0-9a-f]{40,64}/SHA256/g' \
+      -e '/(runbook_revision|launcher_sha256|body_sha256|release_profile_sha256|profile_sha256|genesis_sha256|join_profile_sha256|network_observation_sha256|gdc-report-sha256)/ s/[0-9a-f]{40,64}/SHA256/g' \
       "$file") >/dev/null && return 1
   return 0
 }
@@ -267,6 +364,8 @@ write_report() {
   created_at="$(date -u +%FT%TZ)"
   collect_manifest_identity
   collect_diagnostic_envelope
+  collect_join_result
+  collect_invocation_options
   collect_diagnostic_excerpt
   {
     printf 'schema_version=%s\n' "$REPORT_SCHEMA_VERSION"
@@ -277,11 +376,15 @@ write_report() {
     printf 'active_phase=%s\n' "${FAILURE_PHASE:-unavailable}"
     printf 'exit_code=%s\n' "$FAILURE_EXIT_CODE"
     printf 'run_id=%s\n' "${FAILURE_RUN_ID:-unavailable}"
+    printf 'invocation_options=%s\n' "$INVOCATION_OPTIONS"
     printf 'release_profile=%s\n' "$MANIFEST_RELEASE_PROFILE"
     printf 'release_profile_sha256=%s\n' "$MANIFEST_RELEASE_SHA256"
     printf 'profile_sha256=%s\n' "$MANIFEST_PROFILE_SHA256"
     printf 'chain_id=%s\n' "$MANIFEST_CHAIN_ID"
     printf 'genesis_sha256=%s\n' "$MANIFEST_GENESIS_SHA256"
+    printf 'profile_kind=%s\n' "$MANIFEST_PROFILE_KIND"
+    printf 'join_profile_sha256=%s\n' "$MANIFEST_JOIN_PROFILE_SHA256"
+    printf 'network_observation_sha256=%s\n' "$MANIFEST_OBSERVATION_SHA256"
     printf 'runbook_revision=%s\n' "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unavailable)"
     printf 'diagnostic_resume=%s\n' "$DIAGNOSTIC_RESUME"
     printf 'launcher_sha256=%s\n' "$(sha256sum "$ROOT/gdc.sh" | awk '{print $1}')"
@@ -297,10 +400,22 @@ write_report() {
     printf 'This report records observations from a failed command. It does not classify the incident as a Gonka product defect.\n\n'
     printf '## Summary\n\n'
     printf '| Field | Value |\n| --- | --- |\n'
-    awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(report_id|created_at|failure_recorded_at|failure_stage|active_phase|exit_code|run_id|release_profile|release_profile_sha256|profile_sha256|chain_id|genesis_sha256|runbook_revision|launcher_sha256)$/ { print "| " $1, $2 " |" }' "$metadata"
+    awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(report_id|created_at|failure_recorded_at|failure_stage|active_phase|exit_code|run_id|invocation_options|release_profile|release_profile_sha256|profile_sha256|profile_kind|join_profile_sha256|network_observation_sha256|chain_id|genesis_sha256|runbook_revision|launcher_sha256)$/ { print "| " $1, $2 " |" }' "$metadata"
+    printf '\n## Terminal result\n\n'
+    if [[ "$JOIN_RESULT_OUTCOME" == unavailable ]]; then
+      printf 'This command retained no typed terminal result. Only a Host JOIN writes one.\n'
+    else
+      typed_rows outcome "$JOIN_RESULT_OUTCOME" phase "$JOIN_RESULT_PHASE" category "$JOIN_RESULT_CATEGORY" \
+        reason "$JOIN_RESULT_REASON" mutation "$JOIN_RESULT_MUTATION" signer_state "$JOIN_RESULT_SIGNER" resume "$JOIN_RESULT_RESUME"
+    fi
     printf '\n## Typed diagnostic\n\n'
-    printf '%s\n' "$DIAGNOSTIC_SUMMARY" | escape_html
-    printf '\n\nResume decision: `%s`.\n\n' "$DIAGNOSTIC_RESUME"
+    if [[ "$DIAGNOSTIC_GENERIC" == true ]]; then
+      printf 'The phase stopped without recording a typed diagnostic of its own, so the launcher recorded this placeholder. It classifies nothing: the terminal result above and the excerpt below are the evidence.\n\n'
+    fi
+    printf '%s\n' "$DIAGNOSTIC_SUMMARY" | strip_controls | escape_html
+    printf '\n'
+    typed_rows category "$DIAGNOSTIC_CATEGORY" checkpoint "$DIAGNOSTIC_CHECKPOINT" state "$DIAGNOSTIC_STATE" tool "$DIAGNOSTIC_TOOL"
+    printf '\nResume decision: `%s`.\n\n' "$DIAGNOSTIC_RESUME"
     render_resume_guidance
     printf '\n## Environment\n\n| Field | Value |\n| --- | --- |\n'
     awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(os|kernel|architecture|bash|utc_clock)$/ { gsub(/\|/, "\\|", $2); print "| " $1, $2 " |" }' "$metadata"
@@ -383,14 +498,26 @@ append_optional_context() {
   chmod 0600 "$context_file"
   printf 'Optional public context. Enter text lines; a single period finishes. Leave blank then period to omit.\n'
   while IFS= read -r line; do
+    # Drop a trailing carriage return: CRLF input otherwise breaks the closing period and the control-character check.
+    line="${line%$'\r'}"
     [[ "$line" == . ]] && break
     printf '%s\n' "$line" >>"$context_file"
   done
   bytes="$(wc -c <"$context_file")"
-  [[ "$bytes" -le 4000 ]] || die "optional context exceeds 4000 bytes; retained $REPORT_DIR"
   [[ "$bytes" -eq 0 ]] && return 0
-  LC_ALL=C grep -q '[[:cntrl:]]' "$context_file" && die "optional context has control characters; retained $REPORT_DIR"
-  scan_public_text "$context_file" || die "optional context is unsafe for public disclosure; retained $REPORT_DIR"
+  if [[ "$bytes" -gt 4000 ]]; then
+    notice 'optional context exceeds 4000 bytes; it was left out of the report'
+    return 0
+  fi
+  if LC_ALL=C grep -q '[[:cntrl:]]' "$context_file"; then
+    notice 'optional context has control characters; it was left out of the report'
+    return 0
+  fi
+  scan_secret_markers "$context_file" || die "optional context is unsafe for public disclosure; retained $REPORT_DIR"
+  if ! scan_public_text "$context_file"; then
+    notice 'optional context did not pass the public-text scan; it was left out of the report. A run of twelve or more plain words reads as a possible mnemonic: shorter, punctuated sentences pass.'
+    return 0
+  fi
   {
     printf '\n## Operator context\n\n<pre>\n'
     strip_controls <"$context_file" | escape_html
@@ -468,7 +595,12 @@ publish() {
   [[ -n "$choice" ]] || choice=0
   case "$choice" in
     1)
-      title="GDC failure report: $FAILURE_STAGE (exit $FAILURE_EXIT_CODE)"
+      # Every die exits 1; the typed reason tells stops on one phase apart.
+      if [[ "${JOIN_RESULT_REASON:-unavailable}" != unavailable ]]; then
+        title="GDC failure report: $FAILURE_STAGE $JOIN_RESULT_OUTCOME ($JOIN_RESULT_REASON)"
+      else
+        title="GDC failure report: $FAILURE_STAGE (exit $FAILURE_EXIT_CODE)"
+      fi
       read_issue_title
       issue_number=''
       ;;

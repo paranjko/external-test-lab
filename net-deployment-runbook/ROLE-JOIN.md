@@ -223,6 +223,7 @@ the Host afresh instead of demanding manual recovery.
 | `identity_conflict` | the Host holds an unknown validator identity | restore with `--restore`; `--mnemonic-file` may replace only a stopped key bound to that participant or unregistered on chain |
 | `unreachable` | no SSH session to the Host | repeat the same command once the Host is reachable |
 | `completed_join_readback_failed` | a repeat of a completed JOIN could not confirm that the Host still runs as that JOIN left it; the Host was not changed | repeat once the Host is reachable and running, with the same `GDC_PORTABLE_*` declaration if one was used |
+| exit 65, `restore_identity_mismatch` | `--restore` names a validator backup for a different signer than the one captured by `gdc host reset` | use the matching validator backup; otherwise use an authorized validator-key rotation |
 | exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
 | `join_reentry_manual_recovery_required` | an earlier JOIN stopped part-way, for example on `lineage_snapshot_unavailable` from the state-sync canary; repeating it changes nothing | `gdc host reset <ssh-alias>`, which keeps the run evidence; then the same command when reset reports the participant unregistered, or `--restore` when it reports a registered participant whose signer had started |
 

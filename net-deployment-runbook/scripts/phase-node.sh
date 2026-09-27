@@ -301,7 +301,7 @@ REMOTE
   [[ -d "$reset_dir" && ! -L "$reset_dir" ]] || die 'reset evidence directory is unsafe'
   reset_metadata="$reset_dir/reset-$GDC_RUN_ID-dai-backup.json"
   bash "$ROOT/scripts/same-host-restore.sh" capture "$NODE" "$reset_metadata"
-  if jq -e '.identity_present == true' "$reset_metadata" >/dev/null; then
+  if jq -e '.identity_present == true and (.chain_id | type == "string" and test("^[A-Za-z0-9_-]+$"))' "$reset_metadata" >/dev/null; then
     reset_pointer="$(mktemp "$reset_dir/.latest-identity.XXXXXX")"
     jq -cn --arg metadata_path "$reset_metadata" \
       --arg metadata_sha256 "$(sha256sum "$reset_metadata" | awk '{print $1}')" \
@@ -309,6 +309,8 @@ REMOTE
       >"$reset_pointer"
     chmod 600 "$reset_pointer"
     mv -f -- "$reset_pointer" "$reset_dir/latest-identity.json"
+  elif jq -e '.identity_present == true' "$reset_metadata" >/dev/null; then
+    printf 'READY retained validator recovery archive for %s without a chain binding; automatic same-Host restore is not authorized\n' "$NODE"
   fi
   reset_remote_host "$NODE"
   [[ ! -e "$local_joined" ]] || rm -f -- "$local_joined"

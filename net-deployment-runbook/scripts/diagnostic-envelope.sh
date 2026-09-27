@@ -29,7 +29,7 @@ validate() {
     (.attempts | type == "number" and . >= 1 and . <= 999) and
     (.deadline_seconds | type == "number" and . >= 0 and . <= 604800) and
     (.created_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$")) and
-    (.summary | type == "string" and length <= 240 and test("^[^\\n\\r\\t]*$")) and
+    (.summary | type == "string" and length <= 240 and test("^[[:print:]]*$")) and
     (.resume | type == "object" and (keys | sort) == ["decision","token"] and
       (.decision | test("^(safe|manual_action_required|unsafe|not_applicable)$")) and
       (.token | test("^(none|join-repeat)$")) and

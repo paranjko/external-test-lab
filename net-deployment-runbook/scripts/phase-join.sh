@@ -117,7 +117,7 @@ record_restore_fence_refusal() {
   input="$(mktemp "$RUN/.restore-fence-result.XXXXXX")"
   chmod 600 "$input"
   jq -cn --arg profile "$join_profile_sha256" \
-    '{schema_version:1,kind:"gdc-host-join-result",outcome:"manual_recovery_required",phase:"signer",category:"signer",reason:"old_signer_fence_unprovable",exit_code:1,mutation:"canonical_signer_off",signer_state:"disabled",resume:"automatic_retry_forbidden",join_profile_sha256:$profile,evidence:[]}' >"$input"
+    '{schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"identity",category:"identity",reason:"restore_identity_mismatch",exit_code:65,mutation:"canonical_signer_off",signer_state:"disabled",resume:"new_profile",join_profile_sha256:$profile,evidence:[]}' >"$input"
   "$ROOT/scripts/record-join-result.sh" --output "$GDC_JOIN_RESULT_OUTPUT" --input "$input" >/dev/null
   rm -f "$input"
 }
@@ -213,7 +213,7 @@ else
   remote_identity_rc=$?
   if (( remote_identity_rc == 255 )); then
     refuse_before_mutation host_unreachable \
-      'Host JOIN stopped before any change: the remote identity preflight could not open an SSH session to the Host. Repeat the same command once the Host is reachable.' \
+      'Host JOIN stopped before any change: the identity preflight could not reach the Host over SSH. Repeat the same command once the Host is reachable.' \
       'Host JOIN classification=unreachable; remote identity preflight could not establish an SSH session'
   fi
 fi
@@ -261,7 +261,7 @@ fi
 if [[ "$remote_identity_state" == present && "$JOIN_CLASS" == new && -z "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" \
     && "$replace_retained_remote_identity" != true ]]; then
   refuse_before_mutation identity_conflict \
-    'Host JOIN stopped before any change: the Host holds a validator identity that the operator state does not know. Restore it from the matching validator archive or follow the documented recovery path.' \
+    'Host JOIN stopped before any change: the Host holds a validator identity, and the operator state does not know it. Restore from the matching archive or follow the documented recovery path.' \
     'Host JOIN classification=identity_conflict; a remote validator identity exists without matching local operator state'
 fi
 if [[ "$JOIN_CLASS" == partial_identity && "$mnemonic_account_bootstrap" != true ]]; then
@@ -315,10 +315,14 @@ if [[ -n "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" ]]; then
   # the complete current validator set. This does not manufacture a signing
   # minimum: the immutable validator backup remains its only source.
   if reset_metadata="$(bash "$ROOT/scripts/resolve-reset-dai-backup.sh" "$STATE/reset/$NODE" 2>/dev/null)"; then
-    if ! bash "$ROOT/scripts/same-host-restore.sh" bind "$NODE" "$GDC_RESTORE_IDENTITY_FILE" "$GENESIS_CHAIN_ID" "$reset_metadata" "$RUN/reset-dai-backup-bound.json"; then
+    restore_bind_rc=0
+    bash "$ROOT/scripts/same-host-restore.sh" bind "$NODE" "$GDC_RESTORE_IDENTITY_FILE" "$GENESIS_CHAIN_ID" "$reset_metadata" "$RUN/reset-dai-backup-bound.json" \
+      || restore_bind_rc=$?
+    if [[ "$restore_bind_rc" -eq 65 ]]; then
       record_restore_fence_refusal
-      die 'old_signer_fence_unprovable: reset archive does not match the restored identity'
+      exit 65
     fi
+    [[ "$restore_bind_rc" -eq 0 ]] || die 'same-host restore binding failed before identity comparison'
     ssh -T "$NODE" "sudo -n cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$GDC_RESTORE_TMKMS_STATE_FILE"
     install -m 0600 "$GDC_RESTORE_TMKMS_STATE_FILE" "$RUN/restore-tmkms-signing-state.json"
     restore_fence_method=same_host_reset_archive

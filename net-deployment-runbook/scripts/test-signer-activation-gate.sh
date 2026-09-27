@@ -92,7 +92,7 @@ grep -Fq 'verify-signer-fence-receipt.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'signer-fence-receipt.v1.json' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'kind:"signer_fence"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'if [[ "$join_operation" == restore ]]; then' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'old_signer_fence_unprovable' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'restore_identity_mismatch' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify_restore_key_inactive before-restore' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify_restore_key_inactive before-enable' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'restore_fence_method=inactive_validator_key' "$ROOT/scripts/phase-join.sh"
@@ -142,7 +142,7 @@ enable_line="$(grep -n './start-node.sh --enable-signer' "$ROOT/scripts/phase-jo
 (( prepared_line < syncing_line && syncing_line < lineage_line )) || { echo 'JOIN state machine is not monotonic before signer enablement' >&2; exit 1; }
 (( lineage_line < canonical_line && canonical_line < canonical_verified_line && canonical_verified_line < archive_ready_line && archive_ready_line < membership_line && membership_line < permissions_line && permissions_line < fenced_line && fenced_line < enable_line )) \
   || { echo 'signer can start before canonical verification, archived recovery identity, membership, permissions or technical fence verification' >&2; exit 1; }
-restore_refusal_line="$(grep -n 'old_signer_fence_unprovable:' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
+restore_refusal_line="$(grep -n 'restore_identity_mismatch' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 (( restore_refusal_line < fenced_line && restore_refusal_line < enable_line )) \
   || { echo 'restore can reach local fence or signer enablement without an external previous-Host fence' >&2; exit 1; }
 observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -24,7 +24,7 @@ printf '%s\n' \
   'if [[ "${1:-}" == -G && -n "${GDC_TEST_SSH_HOST:-}" ]]; then printf "hostname %s\\n" "$GDC_TEST_SSH_HOST"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_EXTERNAL_ML_ENDPOINT:-}" && "$*" == *node-config.json* ]]; then printf "%s\\n" "$GDC_TEST_EXTERNAL_ML_ENDPOINT"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_LINK_RECORD:-}" && "$*" == *gdc-ml-link.json* ]]; then printf "%s\\n" "$GDC_TEST_LINK_RECORD"; exit 0; fi' \
-  'if [[ "$*" == *"--remote capture"* ]]; then cat >/dev/null; printf "%s\\n" "{\"schema_version\":1,\"kind\":\"gdc-reset-dai-backup\",\"identity_present\":true,\"signer_stopped\":true,\"archive_path\":\"/srv/backup/reset-fixture-dai-backup.tar\",\"archive_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"; exit 0; fi' \
+  'if [[ "$*" == *"--remote capture"* ]]; then cat >/dev/null; chain="${GDC_TEST_RESET_CHAIN-gonka-fixture}"; printf "%s\\n" "{\"schema_version\":1,\"kind\":\"gdc-reset-dai-backup\",\"identity_present\":true,\"signer_stopped\":true,\"chain_id\":\"$chain\",\"archive_path\":\"/srv/backup/reset-fixture-dai-backup.tar\",\"archive_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"; exit 0; fi' \
   'if [[ "$*" == *"gdc-identity-layout"* ]]; then cat >/dev/null; layout="${GDC_TEST_IDENTITY_LAYOUT:-none}"; case "$*" in *-ml*) layout="${GDC_TEST_ML_IDENTITY_LAYOUT:-none}" ;; esac; printf "gdc-identity-layout=%s\\n" "$layout"; exit 0; fi' \
   'if [[ "$*" == *"gdc-identity-discard"* ]]; then cat >/dev/null; exit 0; fi' \
   'if [[ "${GDC_TEST_EXEC_REMOTE:-false}" == true && "$*" == *"bash -s" ]]; then command="${!#}"; PATH="${GDC_TEST_REMOTE_BIN}:$PATH" bash -c "$command"; exit $?; fi' \
@@ -101,6 +101,15 @@ reset_metadata="$(jq -r .metadata_path "$home/gdc-node0/state/reset/gdc-node0/la
 [[ ! -e "$home/.env" ]]
 [[ ! -e "$home/gdc-node0/state/active-role-config" ]]
 [[ ! -e "$home/gdc-node0/state/role-inputs" ]]
+
+# Reset retains a signer archive even when a partial deployment cannot prove
+# its chain. It must complete cleanup but leave no automatic restore pointer.
+unbound_home="$tmp/gdc-unbound-reset"
+env -u GDC_ENV -u GDC_NODE_ALIASES \
+  GDC_HOME="$unbound_home" GDC_TEST_RESET_CHAIN= PATH="$fake_bin:$PATH" \
+  "$ROOT/gdc.sh" host reset gdc-node-unbound >"$tmp/unbound-output"
+grep -Fq 'without a chain binding; automatic same-Host restore is not authorized' "$tmp/unbound-output"
+[[ ! -e "$unbound_home/gdc-node-unbound/state/reset/gdc-node-unbound/latest-identity.json" ]]
 
 # A completed incident is history, not a permanent reset dispatcher.
 historical_home="$tmp/historical-recovery"

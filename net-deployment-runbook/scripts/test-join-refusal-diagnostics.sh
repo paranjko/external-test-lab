@@ -62,8 +62,8 @@ run_refusal() {
 local_state='identity record present, cold account present, joined marker present'
 summary_partial="Host JOIN stopped before any change: $local_state; the Host holds no validator identity. Resolve the incomplete operator state through the documented recovery path."
 summary_adopt="Host JOIN stopped before any change: $local_state; the Host holds a validator identity. Restore from the matching archive or follow the documented recovery path."
-summary_conflict='Host JOIN stopped before any change: the Host holds a validator identity that the operator state does not know. Restore it from the matching validator archive or follow the documented recovery path.'
-summary_unreachable='Host JOIN stopped before any change: the remote identity preflight could not open an SSH session to the Host. Repeat the same command once the Host is reachable.'
+summary_conflict='Host JOIN stopped before any change: the Host holds a validator identity, and the operator state does not know it. Restore from the matching archive or follow the documented recovery path.'
+summary_unreachable='Host JOIN stopped before any change: the identity preflight could not reach the Host over SSH. Repeat the same command once the Host is reachable.'
 for summary in "$summary_partial" "$summary_adopt" "$summary_conflict" "$summary_unreachable"; do
   (( ${#summary} <= 240 ))
 done

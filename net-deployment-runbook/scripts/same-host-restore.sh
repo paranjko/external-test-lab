@@ -6,6 +6,32 @@ umask 077
 
 die() { printf 'same-host restore: %s\n' "$*" >&2; exit 1; }
 
+validate_tmkms_state() {
+  local state_file="$1"
+  jq -e '
+    type == "object"
+    and (keys | sort) == ["block_id","height","round","step"]
+    and (.height | type == "string" and test("^[0-9]+$"))
+    and (.round | type == "string" and test("^[0-9]+$"))
+    and (.step | type == "number" and . == floor and . >= -128 and . <= 127)
+    and (.block_id == null or (
+      .height == "0" and .round == "0" and .step == 0
+      and (.block_id | type == "object")
+      and ((.block_id | keys | sort) == ["hash","part_set_header"] or (.block_id | keys | sort) == ["hash","parts"])
+      and .block_id.hash == ""
+      and ((.block_id.parts // .block_id.part_set_header) as $parts
+        | ($parts | keys | sort) == ["hash","total"] and $parts.total == 0 and $parts.hash == "")
+    ) or (
+      (.block_id | type == "object")
+      and (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$"))
+      and ((.block_id.parts // .block_id.part_set_header) as $parts
+        | ($parts | type == "object")
+        and ($parts.total | type == "number" and . == floor and . >= 0 and . <= 4294967295)
+        and ($parts.hash | type == "string" and test("^[0-9A-Fa-f]{64}$")))
+    ))
+  ' "$state_file" >/dev/null 2>&1
+}
+
 if [[ "${1:-}" == --remote ]]; then
   action="${2:-}"; node="${3:-}"
   [[ $EUID == 0 && "$node" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die 'invalid Host or sudo authority'
@@ -53,6 +79,11 @@ if [[ "${1:-}" == --remote ]]; then
     if [[ "$(jq -r '.identity_present' "$embedded")" == true ]]; then
       tar -C "$stage" -xf "$archive" identity signer || die 'reset archive identity material is unavailable'
       safe_tree "$identity" && safe_tree "$signer" || die 'reset archive contains unsafe identity material'
+      validate_tmkms_state "$signer/tmkms/state/priv_validator_state.json" \
+        || die 'reset archive contains malformed TMKMS signing state'
+      jq -e --slurpfile state "$signer/tmkms/state/priv_validator_state.json" \
+        '.signing_state == $state[0]' "$embedded" >/dev/null \
+        || die 'reset archive signing minimum differs from its manifest'
       jq -e --arg identity "$(tree_digest "$identity")" --arg signer "$(tree_digest "$signer")" '
         .kind == "gdc-reset-dai-backup" and .schema_version == 1 and .identity_present == true
         and .identity_sha256 == $identity and .signer_sha256 == $signer
@@ -120,13 +151,35 @@ if [[ "${1:-}" == --remote ]]; then
         if [[ -z "$chain" && -f "$genesis" && ! -L "$genesis" ]]; then
           chain="$(jq -r '.chain_id // empty' "$genesis")"
         fi
-        [[ "$chain" =~ ^[A-Za-z0-9_-]+$ ]] || die 'validator deployment chain binding is invalid'
+        # A failed JOIN can retain identity and signer material before it ever
+        # renders deploy/.env or downloads genesis.  TMKMS itself retains the
+        # selected chain, so use that final local source before deciding that
+        # the archive has no automatic same-Host restore binding.
+        tmkms_config="$signer/tmkms/tmkms.toml"
+        if [[ -z "$chain" && -f "$tmkms_config" && ! -L "$tmkms_config" ]]; then
+          chain="$(awk -F= '
+            $1 ~ /^[[:space:]]*chain_id[[:space:]]*$/ {
+              value=$2
+              sub(/^[[:space:]]*/, "", value)
+              sub(/[[:space:]]*$/, "", value)
+              if (value ~ /^"[A-Za-z0-9_-]+"$/) {
+                sub(/^"/, "", value)
+                sub(/"$/, "", value)
+                print value
+                exit
+              }
+            }
+          ' "$tmkms_config")"
+        fi
+        if [[ ! "$chain" =~ ^[A-Za-z0-9_-]+$ ]]; then
+          chain=''
+        fi
         key="$(sha256sum "$key_file" | awk '{print $1}')"
-        jq -e '.height | type == "string" and test("^[0-9]+$")' "$state_file" >/dev/null || die 'validator signing state is malformed'
+        validate_tmkms_state "$state_file" || die 'validator signing state is malformed'
         jq -cn --arg machine "$machine" --arg chain "$chain" --arg key "$key" --arg run_id "$run_id" \
           --arg identity_sha256 "$(tree_digest "$identity")" --arg signer_sha256 "$(tree_digest "$signer")" \
           --slurpfile state "$state_file" --arg time "$(date -u +%FT%TZ)" \
-          '{schema_version:1,kind:"gdc-reset-dai-backup",run_id:$run_id,machine_sha256:$machine,chain_id:$chain,key_sha256:$key,signer_stopped:true,identity_present:true,signing_state:$state[0],identity_sha256:$identity_sha256,signer_sha256:$signer_sha256,observed_at:$time}' \
+          '{schema_version:1,kind:"gdc-reset-dai-backup",run_id:$run_id,machine_sha256:$machine,chain_id:($chain | if . == "" then null else . end),key_sha256:$key,signer_stopped:true,identity_present:true,signing_state:$state[0],identity_sha256:$identity_sha256,signer_sha256:$signer_sha256,observed_at:$time}' \
           >"$stage/reset-manifest.json"
         install -d -m 0700 "$stage/payload"
         cp -a "$identity" "$stage/payload/identity"
@@ -180,7 +233,10 @@ if [[ "${1:-}" == --remote ]]; then
       signer="$root/signer/tmkms"; key_file="$signer/secrets/priv_validator_key.softsign"
       [[ -s "$key_file" ]] || die 'restored signer is incomplete'
       key="$(sha256sum "$key_file" | awk '{print $1}')"
-      validate_metadata "$metadata" "$key" "$expected_chain" || die 'reset archive does not match restored machine, chain and key'
+      if ! validate_metadata "$metadata" "$key" "$expected_chain"; then
+        printf 'same-host restore: reset archive does not match restored signer identity\n' >&2
+        exit 65
+      fi
       validate_archive "$archive" "$metadata"
       [[ -z "$(docker ps -q --filter "label=com.docker.compose.project=$node" --filter label=com.docker.compose.service=tmkms)" ]] || die 'signer must remain stopped'
       cat "$metadata"

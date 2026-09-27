@@ -55,6 +55,7 @@ legacy_script="$tmp/same-host-restore-legacy.sh"
 sed \
   -e "s#root=/srv/dai#root=$tmp/legacy/srv/dai#" \
   -e "s#backup_root=/srv/backup#backup_root=$tmp/legacy/srv/backup#" \
+  -e "s#\^/srv/backup#\^$tmp/legacy/srv/backup#g" \
   -e 's/\[\[ \$EUID == 0 && "\$node" =~/[[ true \&\& "$node" =~/' \
   -e 's/ && "$(stat -c %u "\$backup_root")" == 0//' \
   -e 's/ && "$(stat -c %u "\$archive")" == 0//' \
@@ -91,3 +92,64 @@ if tar -tf "$legacy_archive" | grep -Fq "$legacy_node"; then
 fi
 jq -e '.chain_id == "fixture-chain" and .identity_present == true' "$tmp/legacy-metadata.json" >/dev/null
 printf 'PASS reset archive fence preserves the highest signing minimum (SSH mocked)\n'
+
+# A partial JOIN can leave only TMKMS identity material. Its explicit
+# chain_id remains enough to bind the reset archive without deploy/.env or
+# genesis, so reset can preserve the signer before clearing /srv/dai.
+rm -f -- "$legacy_root/$legacy_node/inference/config/genesis.json"
+PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote capture "$legacy_node" tmkms-chain \
+  >"$tmp/tmkms-chain-metadata.json"
+jq -e '.chain_id == "fixture-chain" and .identity_present == true' "$tmp/tmkms-chain-metadata.json" >/dev/null
+printf 'PASS reset capture falls back to the retained TMKMS chain binding\n'
+
+# If every chain binding has disappeared, reset still preserves the signer
+# externally and clears the Host. The null binding deliberately cannot later
+# select the automatic same-Host restore path.
+rm -f -- "$legacy_root/signer/$legacy_node/tmkms/tmkms.toml"
+PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote capture "$legacy_node" unbound \
+  >"$tmp/unbound-metadata.json"
+jq -e '.chain_id == null and .identity_present == true' "$tmp/unbound-metadata.json" >/dev/null
+[[ -f "$(jq -r .archive_path "$tmp/unbound-metadata.json")" ]]
+printf 'PASS reset preserves an unbound signer without authorizing automatic restore\n'
+
+# The current flat reset path must accept both never-signed forms, but refuse
+# malformed state before publishing recovery authority or permitting removal.
+mv "$legacy_root/identity/$legacy_node" "$tmp/flat-identity"
+mv "$legacy_root/signer/$legacy_node" "$tmp/flat-signer"
+rmdir "$legacy_root/identity" "$legacy_root/signer"
+mv "$tmp/flat-identity" "$legacy_root/identity"
+mv "$tmp/flat-signer" "$legacy_root/signer"
+mkdir -p "$legacy_root/deploy"
+printf 'CHAIN_ID=fixture-chain\n' >"$legacy_root/deploy/.env"
+for parts in parts part_set_header; do
+  printf '{"height":"0","round":"0","step":0,"block_id":{"hash":"","%s":{"total":0,"hash":""}}}\n' "$parts" \
+    >"$legacy_root/signer/tmkms/state/priv_validator_state.json"
+  PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote capture "$legacy_node" "flat-$parts" \
+    >"$tmp/flat-$parts.json"
+  jq -e '.identity_present == true and .signing_state.height == "0"' "$tmp/flat-$parts.json" >/dev/null
+done
+printf '{"height":"0","round":0,"step":0,"block_id":null}\n' \
+  >"$legacy_root/signer/tmkms/state/priv_validator_state.json"
+if PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote capture "$legacy_node" malformed \
+    >"$tmp/malformed.out" 2>"$tmp/malformed.err"; then
+  echo 'reset capture accepted malformed signing state' >&2; exit 1
+fi
+grep -Fq 'validator signing state is malformed' "$tmp/malformed.err"
+[[ ! -e "$tmp/legacy/srv/backup/reset-malformed-dai-backup.tar" ]]
+[[ -s "$legacy_root/signer/tmkms/secrets/priv_validator_key.softsign" ]]
+printf 'PASS flat reset validates signing state before publishing its external archive\n'
+
+# A reset archive for another signer is invalid operator recovery input. It
+# has a distinct data-error exit so the JOIN launcher does not report it as a
+# Host incident; any transport or archive failure keeps its ordinary error.
+mismatch_archive="$tmp/legacy/srv/backup/reset-mismatch-dai-backup.tar"
+cat >"$mismatch_archive.json" <<'EOF'
+{"schema_version":1,"kind":"gdc-reset-dai-backup","machine_sha256":"different-machine","key_sha256":"different-key","chain_id":"fixture-chain","signer_stopped":true,"signing_state":{"height":"0","round":"0","step":0,"block_id":null},"archive_path":"PLACEHOLDER","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+EOF
+sed -i "s#PLACEHOLDER#$mismatch_archive#" "$mismatch_archive.json"
+rc=0
+PATH="$tmp/legacy/bin:$PATH" bash "$legacy_script" --remote bind "$legacy_node" fixture-chain "$mismatch_archive" \
+  >"$tmp/mismatch.out" 2>"$tmp/mismatch.err" || rc=$?
+[[ "$rc" == 65 ]]
+grep -Fq 'reset archive does not match restored signer identity' "$tmp/mismatch.err"
+printf 'PASS reset archive identity mismatch returns the dedicated data-error exit\n'
