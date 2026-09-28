@@ -126,9 +126,12 @@ it is not a sanitized public report merely because it opens without a server.
 
 ## What remains experimental
 
-- The participant layout still targets `node0` through `node4`, `node5-1`, and
-  `node5-2`: seven display lanes. Labels do not prove historical key ownership,
-  physical signer location, or deployment generation.
+- Generic reports derive their visible participant rows from retained validator
+  identities in the selected consensus sets. The seven incident labels,
+  including `node5-1` and `node5-2`, are reserved for a retained
+  `GNK-LAB-2026-0001` dataset and do not appear in a generic network report.
+  Labels do not prove historical key ownership, physical signer location, or
+  deployment generation.
 - The detailed application/PoC causal panel is specific to the original
   incident boundary. Generic ranges get the consensus matrix, not an invented
   application diagnosis. Multi-incident layout and rule selection need further work.

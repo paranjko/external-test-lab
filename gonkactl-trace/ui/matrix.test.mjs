@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {buildMatrix, changesAt, admissionEvidence, applicationEvidence, timelineHref} from './matrix.mjs';
+import {buildMatrix, changesAt, admissionEvidence, applicationEvidence, matrixRows, timelineHref} from './matrix.mjs';
 const session='a'.repeat(24);
 assert.equal(timelineHref(session,'ru',42),`/gonka/?session=${session}&view=timeline&lang=ru&height=42`);
 for(const hostile of ['javascript:alert(1)','//evil.example','<svg/onload=alert(1)>',session+'&view=other',null,{},[session]])assert.equal(timelineHref(hostile),'/gonka/');
@@ -30,6 +30,11 @@ assert.equal(cell('node0').membership,'conflict');
 assert.equal(cell('node0').certificates.length,0,'ambiguous participant binding must not select one key');
 assert.deepEqual(buildMatrix(data),buildMatrix(structuredClone(data)));
 console.log('PASS: 28 matrix cells; complete/incomplete/unknown/conflicting membership; signature grouping, targets, snapshots and separate jail records; power transition');
+const generic={...data,meta:{incident:'mainnet-trace'},from:700,to:703,validator_sets:[set(700,20),set(701,20),set(702,20),set(703,20)]};
+assert.deepEqual(matrixRows(generic).map(row=>row.node),['node0']);
+assert.equal(buildMatrix(generic).length,4);
+assert.ok(!JSON.stringify(buildMatrix(generic)).includes('node5-2'));
+console.log('PASS: generic reports derive rows from retained validator identities and do not add incident participants');
 const admissionData={actors:[...actors,{id:'new',participant:'node5-2',kind:'consensus_identity'}],validator_sets:[set(306551,405),set(306552,405),{...set(306553,81),total:135,quorum:91,validators:[{Address:'a',Power:81},{Address:'new',Power:54}]}],membership_changes:[{validator_id:'new',height:306553,new_power:54,emitted_height:306551,activation_distance:2,update_matches:true}],prior_identity_sets:[{height:306133,validators:[{Address:'new',Power:70}]}],certificates:[{height:306551,signers:['a'],power:405,quorum:1}],events:[]};
 const admission=admissionEvidence(admissionData);
 assert.equal(admission.remaining,81);assert.equal(admission.quorum,91);assert.equal(admission.prior.height,306133);assert.ok(admission.update);assert.equal(admission.sufficientOld.length,1);
