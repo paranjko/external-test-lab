@@ -47,8 +47,8 @@ func collectionArguments(args []string, path string) (c Config, from, to int64, 
 	if c.Concurrency > 16 {
 		c.Concurrency = 16
 	}
-	if len(c.Nodes) == 0 || c.PaddingSeconds < 0 {
-		err = fmt.Errorf("nodes required and padding must be nonnegative")
+	if len(c.Nodes) == 0 || c.PaddingSeconds < 0 || c.RequestDelayMillis < 0 || c.RequestDelayMillis > 10000 {
+		err = fmt.Errorf("nodes required; padding and request delay must be within bounds")
 		return
 	}
 	if len(args) == 1 {

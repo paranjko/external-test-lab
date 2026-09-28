@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -30,6 +31,7 @@ type collector struct {
 	dir    string
 	mu     sync.Mutex
 	client *http.Client
+	delay  time.Duration
 }
 
 func collect(c Config, from, to int64) error {
@@ -55,7 +57,7 @@ func collectWithResult(c Config, from, to int64, done func(string)) error {
 	if e != nil {
 		return e
 	}
-	x := collector{dir: dir, d: Dataset{Config: c, From: from, To: to, Collected: time.Now().UTC()}, client: &http.Client{Timeout: time.Duration(c.TimeoutSeconds) * time.Second}}
+	x := collector{dir: dir, d: Dataset{Config: c, From: from, To: to, Collected: time.Now().UTC()}, client: &http.Client{Timeout: time.Duration(c.TimeoutSeconds) * time.Second}, delay: time.Duration(c.RequestDelayMillis) * time.Millisecond}
 	jobs := make(chan func())
 	var wg sync.WaitGroup
 	for i := 0; i < c.Concurrency; i++ {
@@ -107,6 +109,11 @@ func collectWithResult(c Config, from, to int64, done func(string)) error {
 	}
 	close(jobs)
 	wg.Wait()
+	if c.RequireCompleteRPC {
+		if e := x.requireCompleteRPC(); e != nil {
+			return e
+		}
+	}
 	if c.DiscoverApplication {
 		if e := x.discoverApplication(); e != nil {
 			return e
@@ -208,19 +215,7 @@ func (x *collector) rpc(n Node, method string, h int64) {
 		if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 			err = fmt.Errorf("invalid RPC URL")
 		} else {
-			var resp *http.Response
-			resp, err = x.client.Get(endpoint)
-			if err == nil {
-				b, err = io.ReadAll(io.LimitReader(resp.Body, maxSourceBytes+1))
-				resp.Body.Close()
-				if len(b) > maxSourceBytes {
-					b = nil
-					err = fmt.Errorf("RPC response exceeds limit")
-				}
-				if resp.StatusCode != 200 {
-					err = fmt.Errorf("HTTP %d", resp.StatusCode)
-				}
-			}
+			b, endpoint, err = x.getRPC(n, endpoint)
 		}
 		var result rpcResult
 		var events []Event
@@ -287,6 +282,73 @@ func (x *collector) rpc(n Node, method string, h int64) {
 		x.d.Events = append(x.d.Events, ev)
 		x.mu.Unlock()
 	}
+}
+
+func (x *collector) getRPC(n Node, endpoint string) ([]byte, string, error) {
+	primary := strings.TrimRight(n.RPC, "/")
+	suffix, ok := strings.CutPrefix(endpoint, primary)
+	if !ok {
+		return nil, endpoint, fmt.Errorf("RPC endpoint does not match node")
+	}
+	candidates := append([]string{primary}, n.RPCAlternates...)
+	for attempt := 0; attempt < 5; attempt++ {
+		if x.delay > 0 {
+			time.Sleep(x.delay)
+		}
+		source := strings.TrimRight(candidates[attempt%len(candidates)], "/") + suffix
+		response, err := x.client.Get(source)
+		if err != nil {
+			if attempt == 4 {
+				return nil, source, err
+			}
+			time.Sleep(time.Duration(1<<attempt) * time.Second)
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, maxSourceBytes+1))
+		response.Body.Close()
+		if len(body) > maxSourceBytes {
+			return nil, source, fmt.Errorf("RPC response exceeds limit")
+		}
+		if readErr != nil {
+			return nil, source, readErr
+		}
+		if response.StatusCode == http.StatusOK {
+			return body, source, nil
+		}
+		if (response.StatusCode != http.StatusTooManyRequests && response.StatusCode != http.StatusServiceUnavailable) || attempt == 4 {
+			return body, source, fmt.Errorf("HTTP %d", response.StatusCode)
+		}
+		time.Sleep(time.Duration(1<<attempt) * time.Second)
+	}
+	return nil, endpoint, fmt.Errorf("RPC retry exhausted")
+}
+
+func (x *collector) requireCompleteRPC() error {
+	seen := map[string]bool{}
+	for _, receipt := range x.d.Receipts {
+		if receipt.Error != "" || receipt.Application != nil {
+			continue
+		}
+		u, err := url.Parse(receipt.Source)
+		if err != nil {
+			continue
+		}
+		method := path.Base(u.Path)
+		height := u.Query().Get("height")
+		if height != "" {
+			seen[receipt.Node+"/"+method+"/"+height] = true
+		}
+	}
+	for _, node := range x.d.Config.Nodes {
+		for height := x.d.From; height <= x.d.To; height++ {
+			for _, method := range []string{"block", "commit", "block_results", "validators"} {
+				if !seen[fmt.Sprintf("%s/%s/%d", node.ID, method, height)] {
+					return fmt.Errorf("incomplete required RPC coverage: %s %s height %d", node.ID, method, height)
+				}
+			}
+		}
+	}
+	return nil
 }
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 func safeLogPath(p string) bool {
