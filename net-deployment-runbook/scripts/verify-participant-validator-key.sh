@@ -4,7 +4,7 @@
 # registration fix sent the node's throwaway init key, and every later run that
 # read only `status` called that participant healthy while it could never sign.
 set -Eeuo pipefail
-die() { printf 'FAILED %s\n' "$1" >&2; exit 1; }
+die() { printf 'FAILED %s\n' "$1" >&2; exit "${2:-1}"; }
 
 [[ $# == 3 ]] \
   || die 'usage: verify-participant-validator-key.sh ADDRESS EXPECTED_VALIDATOR_KEY PARTICIPANT_EVIDENCE'
@@ -29,6 +29,6 @@ published_key="$(jq -r '.participant.validator_key' "$evidence")"
 [[ "$published_address" == "$address" ]] \
   || die "participant evidence belongs to $published_address, not to $address"
 [[ "$published_key" == "$expected_key" ]] \
-  || die "participant $address is registered with validator key $published_key, not with $expected_key"
+  || die "participant $address is registered with validator key $published_key, not with $expected_key" 3
 
 printf 'PASS participant %s is registered with the expected validator key\n' "$address"

@@ -36,6 +36,14 @@ expect_refusal() {
     || { echo "refusal did not name '$expected': $(cat "$tmp/err")" >&2; exit 1; }
 }
 
+expect_key_mismatch() {
+  local evidence_file="$1"
+  rc=0
+  "$CHECK" "$ADDRESS" "$SIGNER_KEY" "$evidence_file" >"$tmp/out" 2>"$tmp/err" || rc=$?
+  [[ "$rc" == 3 ]] \
+    || { echo "validator-key mismatch must exit 3, got $rc" >&2; exit 1; }
+}
+
 # The key the Host signs with is the one on chain: the only case that may skip
 # registration.
 expect_pass "$(evidence match.json "$ADDRESS" "$SIGNER_KEY")"
@@ -46,6 +54,7 @@ expect_pass "$(evidence match.json "$ADDRESS" "$SIGNER_KEY")"
 stale="$(evidence stale.json "$ADDRESS" "$STALE_KEY")"
 expect_refusal "$stale" "is registered with validator key $STALE_KEY"
 expect_refusal "$stale" "not with $SIGNER_KEY"
+expect_key_mismatch "$stale"
 
 # Evidence about somebody else proves nothing about this participant.
 expect_refusal "$(evidence foreign.json "$OTHER_ADDRESS" "$SIGNER_KEY")" \

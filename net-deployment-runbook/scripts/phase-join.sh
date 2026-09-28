@@ -330,28 +330,55 @@ if [[ "$remote_identity_state" == present && -s "$ACCOUNT" && -s "$IDENTITY" \
   if (( registered_exit != 0 )) || [[ "$registered_status" == 5[0-9][0-9] ]]; then
     rm -f "$registered_body_file"
     refuse_before_mutation registered_validator_key_unreadable \
-      'Host JOIN stopped before any change: the chain could not be asked which validator key this participant is registered with. Repeat the same command once a seed answers.' \
+      'Host JOIN stopped before mutation: participant-record lookup unavailable. Retry after a seed responds.' \
       "Host JOIN classification=registered_validator_key_unreadable; participant lookup ended http_status=$registered_status curl_exit=$registered_exit"
   fi
-  if [[ "$registered_status" == 200 ]] \
-    && jq -e '(.participant.validator_key | type) == "string"' <<<"$registered_body" >/dev/null 2>&1; then
+  case "$registered_status" in
+    404)
+      # A confirmed missing participant is the only absence result that can
+      # proceed to first registration.
+      ;;
+    200)
+      if ! jq -e '(.participant | type) == "object"
+        and ((.participant.status | type) == "string" or (.participant.status | type) == "number")
+        and (.participant.validator_key | type) == "string"' \
+        <<<"$registered_body" >/dev/null 2>&1; then
+        rm -f "$registered_body_file"
+        refuse_before_mutation registered_validator_key_unreadable \
+          'Host JOIN stopped before mutation: participant record is incomplete. Retry after a complete chain response.' \
+          'Host JOIN classification=registered_validator_key_unreadable; participant record lacks a usable status or validator key'
+      fi
     host_signer_key="$(ssh -T "$NODE" "sudo -n bash -s -- '/srv/dai/signer/$NODE/tmkms/secrets/priv_validator_key.softsign'" <"$ROOT/scripts/tmkms-softsign-public-key.sh")" \
       || host_signer_key=''
     if [[ -z "$host_signer_key" ]]; then
       rm -f "$registered_body_file"
       refuse_before_mutation registered_validator_key_unreadable \
-        'Host JOIN stopped before any change: the durable signer key of this Host could not be read, so the registration it carries cannot be checked. Repeat the same command once the signer key is readable.' \
+        'Host JOIN stopped before mutation: durable-signer key unavailable. Retry after readable key evidence.' \
         "Host JOIN classification=registered_validator_key_unreadable; the durable TMKMS public key of $NODE could not be derived"
     fi
-    if ! registered_mismatch="$("$ROOT/scripts/verify-participant-validator-key.sh" \
-      "$registered_address" "$host_signer_key" "$registered_body_file" 2>&1 >/dev/null)"; then
+    registered_key_rc=0
+    registered_mismatch="$("$ROOT/scripts/verify-participant-validator-key.sh" \
+      "$registered_address" "$host_signer_key" "$registered_body_file" 2>&1 >/dev/null)" || registered_key_rc=$?
+    if (( registered_key_rc != 0 )); then
       rm -f "$registered_body_file"
-      refuse_before_mutation registered_validator_key_mismatch \
-        'Host JOIN stopped before any change: the chain publishes another validator key for this participant, so this Host cannot sign for it. Repeat with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of that participant.' \
-        "Host JOIN classification=registered_validator_key_mismatch; ${registered_mismatch#FAILED } Repeat with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of that participant, or continue on the Host whose signer owns the registered key."
+      if (( registered_key_rc == 3 )); then
+        refuse_before_mutation registered_validator_key_mismatch \
+          'Host JOIN stopped before any change: the chain publishes another validator key for this participant, so this Host cannot sign for it. Repeat with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of that participant.' \
+          "Host JOIN classification=registered_validator_key_mismatch; ${registered_mismatch#FAILED } Repeat with --mnemonic-prompt or --mnemonic-file and the cold mnemonic of that participant, or continue on the Host whose signer owns the registered key."
+      fi
+      refuse_before_mutation registered_validator_key_unreadable \
+        'Host JOIN stopped before mutation: participant record cannot be verified. Retry after a complete chain response.' \
+        "Host JOIN classification=registered_validator_key_unreadable; ${registered_mismatch#FAILED }"
     fi
     printf 'PASS %s registered validator key is the durable TMKMS signer of this Host\n' "$NODE"
-  fi
+    ;;
+  *)
+    rm -f "$registered_body_file"
+    refuse_before_mutation registered_validator_key_unreadable \
+      'Host JOIN stopped before mutation: participant-record lookup returned an unusable response. Retry after a seed responds.' \
+      "Host JOIN classification=registered_validator_key_unreadable; participant lookup ended http_status=$registered_status curl_exit=$registered_exit"
+    ;;
+  esac
   rm -f "$registered_body_file"
 fi
 record_join_transition TARGET_CLASSIFIED

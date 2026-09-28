@@ -9,6 +9,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/bin"
+cp "$ROOT/test/fixtures/mock-gh" "$tmp/bin/gh"
+chmod 0755 "$tmp/bin/gh"
+
+# The unavailable-response case exercises retry classification, not wall-clock
+# delay. Keep this deterministic while the fixture is confined to this test.
+cat >"$tmp/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod 0755 "$tmp/bin/sleep"
 
 ALIAS=validator-a
 PUBLIC_HOST=8.8.4.10
@@ -66,7 +76,7 @@ cat >"$tmp/bin/curl" <<'EOF'
 set -Eeuo pipefail
 # The URL is not always the last argument, so collect it by shape instead of
 # by position, and answer --write-out from the format the caller asked for.
-output='' headers='' write_format='' url=''
+output='' headers='' write_format='' url='' response_status=200
 i=1
 while (( i <= $# )); do
   case "${!i}" in
@@ -98,8 +108,13 @@ block() {
 }
 case "$url" in
   */inference/participant/*)
-    emit "$(printf '{"participant":{"address":"%s","validator_key":"%s","status":"ACTIVE"}}' \
-      "${url##*/}" "${GDC_TEST_REGISTERED_VALIDATOR_KEY:?}")"
+    if [[ -n "${GDC_TEST_PARTICIPANT_BODY:-}" ]]; then
+      emit "$GDC_TEST_PARTICIPANT_BODY"
+    else
+      emit "$(printf '{"participant":{"address":"%s","validator_key":"%s","status":"ACTIVE"}}' \
+        "${url##*/}" "${GDC_TEST_REGISTERED_VALIDATOR_KEY:?}")"
+    fi
+    response_status="${GDC_TEST_PARTICIPANT_HTTP_STATUS:-200}"
     ;;
   *'/releases/tags/release%2Fv0.2.15')
     emit "{\"tag_name\":\"release/v0.2.15\",\"assets\":[{\"name\":\"inferenced-linux-amd64.zip\",\"browser_download_url\":\"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-linux-amd64.zip\",\"digest\":\"sha256:${FIXTURE_INFERENCED_SHA256:?}\"}]}" ;;
@@ -130,7 +145,7 @@ case "$url" in
     emit '{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"4444444444444444444444444444444444444444444444444444444444444444"}]}}}' ;;
   *) exit 22 ;;
 esac
-finish 200
+finish "$response_status"
 EOF
 
 cat >"$tmp/bin/ssh" <<'EOF'
@@ -144,6 +159,13 @@ case "$*" in
   *priv_validator_key.softsign*)
     cat >/dev/null
     printf '%s\n' "${GDC_TEST_HOST_SIGNER_KEY:?}"
+    exit 0
+    ;;
+  # GDC selects the immutable ML profile before JOIN. This is an inspection,
+  # not Host preparation; consume the script and identify a supported GPU.
+  *'bash -s'*)
+    cat >/dev/null
+    printf 'vendor=nvidia\n'
     exit 0
     ;;
 esac
@@ -196,7 +218,7 @@ seed_completed_host() {
 }
 
 run_join() {
-  local home="$1" registered_key="$2" log="$3" ssh_log="$4"
+  local home="$1" registered_key="$2" log="$3" ssh_log="$4" participant_body="${5:-}" participant_status="${6:-200}"
   : >"$ssh_log"
   seed_completed_host "$home"
   env -u GDC_ENV -u GDC_NODE_ALIASES \
@@ -204,6 +226,8 @@ run_join() {
     GDC_TEST_SSH_LOG="$ssh_log" \
     GDC_TEST_HOST_SIGNER_KEY="$HOST_SIGNER_KEY" \
     GDC_TEST_REGISTERED_VALIDATOR_KEY="$registered_key" \
+    GDC_TEST_PARTICIPANT_BODY="$participant_body" \
+    GDC_TEST_PARTICIPANT_HTTP_STATUS="$participant_status" \
     GDC_TEST_GENESIS_FIXTURE="$tmp/genesis.json" \
     FIXTURE_INFERENCED_ARCHIVE="$FIXTURE_INFERENCED_ARCHIVE" \
     FIXTURE_INFERENCED_SHA256="$FIXTURE_INFERENCED_SHA256" \
@@ -246,17 +270,62 @@ jq -e '.outcome == "refused" and .mutation == "none" and .reason == "registered_
   "$mismatch_result" >/dev/null \
   || { jq -c . "$mismatch_result" >&2; fail 'the terminal result does not record a refusal before mutation'; }
 
-# Two reads and nothing else: the Host was never prepared, rendered or started.
-[[ "$(wc -l <"$tmp/mismatch-ssh.log")" == 2 ]] \
-  || { cat "$tmp/mismatch-ssh.log" >&2; fail 'the refused run made more than the two read-only Host calls'; }
-grep -Fq 'p2p/node_key.json' <<<"$(sed -n 1p "$tmp/mismatch-ssh.log")" \
-  || fail 'the first Host call was not the read-only identity preflight'
-grep -Fq 'priv_validator_key.softsign' <<<"$(sed -n 2p "$tmp/mismatch-ssh.log")" \
-  || fail 'the second Host call was not the durable signer key derivation'
+# Profile inspection plus two identity/key reads and nothing else: the Host
+# was never prepared, rendered or started.
+[[ "$(wc -l <"$tmp/mismatch-ssh.log")" == 3 ]] \
+  || { cat "$tmp/mismatch-ssh.log" >&2; fail 'the refused run made an unexpected Host call'; }
+grep -Fq 'bash -s' <<<"$(sed -n 1p "$tmp/mismatch-ssh.log")" \
+  || fail 'the first Host call was not read-only accelerator inspection'
+grep -Fq 'p2p/node_key.json' <<<"$(sed -n 2p "$tmp/mismatch-ssh.log")" \
+  || fail 'the second Host call was not the read-only identity preflight'
+grep -Fq 'priv_validator_key.softsign' <<<"$(sed -n 3p "$tmp/mismatch-ssh.log")" \
+  || fail 'the third Host call was not the durable signer key derivation'
 if grep -Eq 'prepare-host|verify-host|install|render|start|systemctl|docker|rsync|scp|BatchMode' "$tmp/mismatch-ssh.log"; then
   cat "$tmp/mismatch-ssh.log" >&2
   fail 'the refused run reached a Host call that changes the Host'
 fi
+
+assert_unreadable_before_prepare() {
+  local name="$1" body="$2" status="${3:-200}" home
+  home="$tmp/unreadable-$name"
+  if run_join "$home" "$FOREIGN_VALIDATOR_KEY" "$tmp/$name.log" "$tmp/$name-ssh.log" "$body" "$status"; then
+    sed -n '1,200p' "$tmp/$name.log" >&2
+    fail "$name unexpectedly reached JOIN"
+  fi
+  grep -Fq 'registered_validator_key_unreadable' "$tmp/$name.log" \
+    || { sed -n '1,200p' "$tmp/$name.log" >&2; fail "$name was not a typed unreadable refusal"; }
+  result="$(join_result "$home")"
+  [[ -n "$result" ]] && jq -e '.outcome == "refused" and .mutation == "none" and .reason == "registered_validator_key_unreadable"' "$result" >/dev/null \
+    || fail "$name did not retain a no-mutation unreadable refusal"
+  [[ "$(wc -l <"$tmp/$name-ssh.log")" == 2 ]] \
+    || { cat "$tmp/$name-ssh.log" >&2; fail "$name made a Host call beyond profile and identity inspection"; }
+  grep -Fq 'bash -s' <<<"$(sed -n 1p "$tmp/$name-ssh.log")" \
+    || fail "$name did not use the read-only accelerator inspection"
+  grep -Fq 'p2p/node_key.json' <<<"$(sed -n 2p "$tmp/$name-ssh.log")" \
+    || fail "$name read a signer key after incomplete participant evidence"
+}
+
+assert_unreadable_before_prepare missing-key \
+  '{"participant":{"address":"gonka1fixturevalidatoraccount0000000000qq","status":"ACTIVE"}}'
+assert_unreadable_before_prepare null-key \
+  '{"participant":{"address":"gonka1fixturevalidatoraccount0000000000qq","validator_key":null,"status":"ACTIVE"}}'
+assert_unreadable_before_prepare numeric-key \
+  '{"participant":{"address":"gonka1fixturevalidatoraccount0000000000qq","validator_key":7,"status":"ACTIVE"}}'
+assert_unreadable_before_prepare unavailable '{}' 503
+
+# The typed 503 refusal becomes the selected failure report. It must traverse
+# the real reporter and its mnemonic scanner, not only the diagnostic envelope.
+PATH="$tmp/bin:$PATH" FAKE_GH_ARGS="$tmp/report.args" FAKE_GH_BODY="$tmp/report.md" GDC_REPORT_TEST_INTERACTIVE=true \
+  GDC_HOME="$tmp/unreadable-unavailable" "$ROOT/gdc.sh" report github >"$tmp/report.out" 2>"$tmp/report.err" <<'EOF'
+1
+
+.
+y
+EOF
+grep -Fq 'Published and verified:' "$tmp/report.out" \
+  || { sed -n '1,160p' "$tmp/report.out" >&2; sed -n '1,160p' "$tmp/report.err" >&2; fail 'unreadable refusal could not be reported'; }
+! grep -Fq 'unsafe generated report body' "$tmp/report.err" \
+  || fail 'unreadable refusal was rejected by the public report scanner'
 
 # This is the point of the whole change: the refusal is typed, so the next
 # ordinary JOIN classifies the Host afresh instead of demanding recovery.

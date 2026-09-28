@@ -233,7 +233,7 @@ the Host afresh instead of demanding manual recovery.
 | exit 65, `restore_identity_mismatch` | `--restore` names a validator backup for a different signer than the one captured by `gdc host reset` | use the matching validator backup; otherwise use an authorized validator-key rotation |
 | exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
 | `join_reentry_manual_recovery_required` | an earlier JOIN stopped part-way, for example on `lineage_snapshot_unavailable` from the state-sync canary; repeating it changes nothing | `gdc host reset <ssh-alias>`, which keeps the run evidence; then the same command when reset reports the participant unregistered, or `--restore` when it reports a registered participant whose signer had started |
-| registered with another validator key | the chain publishes a validator key for this participant that is not the key this Host signs with, so the Host cannot sign for its own registration; the Host was not changed | repeat with `GDC_JOIN_REBIND_EXISTING_PARTICIPANT=true` and the cold account of that participant, which publishes this signer's key; or continue on the Host whose signer owns the registered key |
+| registered with another validator key | the chain publishes a validator key for this participant that is not the key this Host signs with, so the Host cannot sign for its own registration; the Host was not changed | repeat with `--mnemonic-prompt` or `--mnemonic-file` and that participant's cold mnemonic; or continue on the Host whose signer owns the registered key |
 
 A participant registered before its signer ever started has no supported way
 back.
