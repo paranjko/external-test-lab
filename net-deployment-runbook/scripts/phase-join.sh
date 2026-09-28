@@ -315,6 +315,7 @@ fi
 # prepared Host and a run that only manual recovery can leave, and the repair
 # needs a different command, so it has to be refused here.
 if [[ "$remote_identity_state" == present && -s "$ACCOUNT" && -s "$IDENTITY" \
+  && -z "${GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE:-}" \
   && "${GDC_RESTORE_VALIDATOR_BACKUP:-false}" != true \
   && "${GDC_JOIN_REBIND_EXISTING_PARTICIPANT:-false}" != true ]]; then
   registered_address="$(jq -er .address "$ACCOUNT")" \
@@ -348,7 +349,7 @@ if [[ "$remote_identity_state" == present && -s "$ACCOUNT" && -s "$IDENTITY" \
           'Host JOIN stopped before mutation: participant record is incomplete. Retry after a complete chain response.' \
           'Host JOIN classification=registered_validator_key_unreadable; participant record lacks a usable status or validator key'
       fi
-    host_signer_key="$(ssh -T "$NODE" "sudo -n bash -s -- '/srv/dai/signer/$NODE/tmkms/secrets/priv_validator_key.softsign'" <"$ROOT/scripts/tmkms-softsign-public-key.sh")" \
+    host_signer_key="$(ssh -T "$NODE" "sudo -n bash -s -- '/srv/dai/signer/tmkms/secrets/priv_validator_key.softsign'" <"$ROOT/scripts/tmkms-softsign-public-key.sh")" \
       || host_signer_key=''
     if [[ -z "$host_signer_key" ]]; then
       rm -f "$registered_body_file"

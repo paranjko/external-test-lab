@@ -10,6 +10,9 @@ grep -Fq 'GDC_JOIN_REBIND_EXISTING_PARTICIPANT=true' "$ROOT/gdc.sh"
 grep -Fq 'create-cold-accounts.sh" "$STATE/secrets/operator.keyring" "$join_alias"' "$ROOT/gdc.sh"
 grep -Fq -- 'mnemonic recovery cannot be combined with --restore' "$ROOT/gdc.sh"
 grep -Fq 'read-join-mnemonic.sh' "$ROOT/gdc.sh"
+registered_key_preflight="$(sed -n '/if \[\[ "\$remote_identity_state" == present && -s "\$ACCOUNT" && -s "\$IDENTITY"/,/; then/p' "$ROOT/scripts/phase-join.sh")"
+grep -Fq 'GDC_RESTORE_VALIDATOR_BACKUP_ARCHIVE' <<<"$registered_key_preflight" \
+  || { echo 'explicit --restore must bypass the pre-mutation registered-key check' >&2; exit 1; }
 grep -Fq 'cold account owns an existing participant' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'recovered a new cold account; continuing with ordinary participant registration' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'tx inference submit-new-participant' "$ROOT/scripts/phase-join.sh"

@@ -156,7 +156,7 @@ case "$*" in
   # The read-only identity preflight: this Host still holds a validator identity.
   *p2p/node_key.json*) exit 0 ;;
   # The durable TMKMS public key, derived on the Host from its softsign secret.
-  *priv_validator_key.softsign*)
+  *'/srv/dai/signer/tmkms/secrets/priv_validator_key.softsign'*)
     cat >/dev/null
     printf '%s\n' "${GDC_TEST_HOST_SIGNER_KEY:?}"
     exit 0
@@ -278,8 +278,12 @@ grep -Fq 'bash -s' <<<"$(sed -n 1p "$tmp/mismatch-ssh.log")" \
   || fail 'the first Host call was not read-only accelerator inspection'
 grep -Fq 'p2p/node_key.json' <<<"$(sed -n 2p "$tmp/mismatch-ssh.log")" \
   || fail 'the second Host call was not the read-only identity preflight'
-grep -Fq 'priv_validator_key.softsign' <<<"$(sed -n 3p "$tmp/mismatch-ssh.log")" \
+grep -Fq '/srv/dai/signer/tmkms/secrets/priv_validator_key.softsign' <<<"$(sed -n 3p "$tmp/mismatch-ssh.log")" \
   || fail 'the third Host call was not the durable signer key derivation'
+if grep -Fq "/srv/dai/signer/$ALIAS/tmkms" "$tmp/mismatch-ssh.log"; then
+  cat "$tmp/mismatch-ssh.log" >&2
+  fail 'the signer key derivation used the obsolete per-Host signer path'
+fi
 if grep -Eq 'prepare-host|verify-host|install|render|start|systemctl|docker|rsync|scp|BatchMode' "$tmp/mismatch-ssh.log"; then
   cat "$tmp/mismatch-ssh.log" >&2
   fail 'the refused run reached a Host call that changes the Host'
