@@ -116,6 +116,10 @@ load_profiles() {
   model="${GDC_MODEL_PROFILE:-qwen3-0.6b}"
   operator="${GDC_OPERATOR_SERVICES_PROFILE:-gdc-lab}"
 
+  # A Host runtime target always comes from one ordinary release lock.  A
+  # DevShard composition can bind Core and DevShard candidate identities, but
+  # it is not a second Host-profile namespace or selector.
+
   comp_target="${GDC_COMPOSITION:-}"
   if [[ -z "$comp_target" && -f "$root/profiles/compositions/$release.json" ]]; then
     comp_target="$release"

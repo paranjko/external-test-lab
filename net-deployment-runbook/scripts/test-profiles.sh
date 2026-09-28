@@ -781,6 +781,26 @@ grep -Fq 'expected_profile_hash' "$ROOT/scripts/lib.sh"
 grep -Fq 'unexpected binary upgrade marker' "$ROOT/scripts/lib.sh"
 grep -Fq 'live runtime does not match verified source baseline' "$ROOT/scripts/lib.sh"
 
+reconcile_lock="$ROOT/profiles/releases/v2026.09.16.lock"
+[[ -r "$reconcile_lock" ]]
+[[ ! -e "$ROOT/profiles/host-compositions" ]]
+grep -Fxq 'DAPI_SOURCE_REF=release/v0.2.15-post6' "$reconcile_lock"
+grep -Fxq 'DAPI_COMMIT=0fa57e5a550304b92d5162f17d3878d4ef1924c1' "$reconcile_lock"
+grep -Fxq 'DAPI_UPGRADE_SHA256=b3a85b978a614e9c8faa80a1f8ad2231f2a69c3445bba5c6d01e32578b2e1cba' "$reconcile_lock"
+grep -Fxq 'JOIN_NETWORK_CHAIN_ID=gonka-devnet-community' "$reconcile_lock"
+grep -Fq 'host reconcile plan|apply|verify <ssh-alias>' "$ROOT/gdc.sh"
+grep -Fq 'not a second Host-profile namespace or selector' "$ROOT/scripts/profile.sh"
+grep -Fq 'selected release profile lacks a complete DAPI runtime contract' "$ROOT/scripts/phase-host-reconcile.sh"
+! grep -Rq 'HOST_COMPOSITION_\|DAPI_COMPOSITION_' "$ROOT" \
+  --exclude='test-profiles.sh' --exclude-dir=.git
+(
+  source "$ROOT/scripts/profile.sh"
+  GDC_RELEASE_PROFILE=v2026.09.16 load_profiles
+  [[ "$GONKA_RELEASE" == 0.2.15 ]]
+  [[ "$DAPI_SOURCE_REF" == release/v0.2.15-post6 ]]
+  [[ "$DAPI_COMMIT" == 0fa57e5a550304b92d5162f17d3878d4ef1924c1 ]]
+)
+
 trap_test_dir="$test_tmp/evidence-trap"
 mkdir -p "$trap_test_dir"
 set +e

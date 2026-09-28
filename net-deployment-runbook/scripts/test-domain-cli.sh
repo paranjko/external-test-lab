@@ -25,6 +25,7 @@ for contract in \
   './gdc.sh --release v2026.08.06 network upgrade verify <proposal-id>' \
   './gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>' \
   './gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>' \
+  './gdc.sh --release v2026.09.16 host reconcile plan|apply|verify <ssh-alias>' \
   './gdc.sh --release v2026.07.23 gateway apply v3' \
   './gdc.sh --composition <COMPOSITION> gateway migration prepare v5' \
   './gdc.sh --composition <COMPOSITION> gateway migration status' \
