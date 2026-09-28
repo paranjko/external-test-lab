@@ -19,16 +19,20 @@ type Config struct {
 	Incident            string               `json:"incident"`
 	Chain               string               `json:"chain"`
 	PaddingSeconds      int                  `json:"padding_seconds"`
+	RequestDelayMillis  int                  `json:"request_delay_millis,omitempty"`
+	RequireCompleteRPC  bool                 `json:"require_complete_rpc,omitempty"`
 	TimeoutSeconds      int                  `json:"timeout_seconds"`
 	Concurrency         int                  `json:"concurrency"`
 	Nodes               []Node               `json:"nodes"`
 }
 type Node struct {
-	REST string      `json:"rest,omitempty"`
-	ID   string      `json:"id"`
-	RPC  string      `json:"rpc"`
-	SSH  string      `json:"ssh,omitempty"`
-	Logs []LogSource `json:"logs,omitempty"`
+	REST            string      `json:"rest,omitempty"`
+	ID              string      `json:"id"`
+	RPC             string      `json:"rpc"`
+	RPCAlternates   []string    `json:"rpc_alternates,omitempty"`
+	RPCAlternateIDs []string    `json:"rpc_alternate_ids,omitempty"`
+	SSH             string      `json:"ssh,omitempty"`
+	Logs            []LogSource `json:"logs,omitempty"`
 }
 type LogSource struct {
 	Component string `json:"component"`
@@ -86,7 +90,7 @@ func main() {
 }
 func execute(args []string) error {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help" || args[0] == "-h") {
-		fmt.Println("gonkactl-trace (experimental)\n\nreport <mainnet|devnet|testnet> <from> [to]  collect and write an HTML report\nreport [--config file] <from> [to]            collect from an explicit private configuration\nreport --input dataset.json                    rebuild offline from retained sources\ncollect <mainnet|devnet|testnet> <from> [to]  collect without rendering\ncollect <from> [to]                            collect using gonkactl-trace.json\n\n<from> and [to] accept an absolute height, HEAD, or HEAD~N.\ninterpret --help                  inspect application evidence options\nperfetto --help                   inspect native trace/viewer options\notlp | otlp-consensus             export the latest collection locally\nrun | run-consensus               upload the latest collection to TraceKit\n\nReports and collected data are private by default. Read README.md before collecting or uploading.")
+		fmt.Println("gonkactl-trace (experimental)\n\nreport <mainnet|devnet|testnet|RPC> <from> [to]  collect and write an HTML report\nreport [--config file] <from> [to]                collect from an explicit private configuration\nreport --input dataset.json                        rebuild offline from retained sources\ncollect <mainnet|devnet|testnet|RPC> <from> [to]  collect without rendering\ncollect <from> [to]                                collect using gonkactl-trace.json\n\n<from> and [to] accept an absolute height, HEAD, or HEAD~N.\ninterpret --help                  inspect application evidence options\nperfetto --help                   inspect native trace/viewer options\notlp | otlp-consensus             export the latest collection locally\nrun | run-consensus               upload the latest collection to TraceKit\n\nReports and collected data are private by default. Read README.md before collecting or uploading.")
 		return nil
 	}
 	if len(args) > 0 && args[0] == "report" {
@@ -99,11 +103,11 @@ func execute(args []string) error {
 		return runPerfetto(args[1:])
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gonkactl-trace report <from> [to] | collect <from> [to] | perfetto | interpret | otlp | otlp-consensus | run | run-consensus; see --help")
+		return fmt.Errorf("usage: gonkactl-trace report <mainnet|devnet|testnet|RPC> <from> [to] | collect <mainnet|devnet|testnet|RPC> <from> [to] | perfetto | interpret | otlp | otlp-consensus | run | run-consensus; see --help")
 	}
 	if args[0] == "collect" {
 		if len(args) > 1 {
-			if _, err := resolveNetworkAlias(args[1]); err == nil {
+			if isNetworkTarget(args[1]) {
 				c, from, to, e := networkCollectionArguments(args[1:])
 				if e != nil {
 					return e

@@ -27,11 +27,11 @@ func TestNetworkCollectionArgumentsResolveBootstrapAliasAndHEAD(t *testing.T) {
 	bootstrapBaseURL = server.URL
 	t.Cleanup(func() { bootstrapBaseURL = old })
 
-	c, from, to, err := networkCollectionArguments([]string{"mainnet", "HEAD~100"})
+	c, from, to, err := networkCollectionArguments([]string{"mainnet", "HEAD~100", "+10"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Chain != "gonka-mainnet" || c.Nodes[0].RPC != server.URL+"/chain-rpc" || c.Nodes[0].REST != server.URL+"/chain-api" || from != 100 || to != 200 {
+	if c.Chain != "gonka-mainnet" || c.Nodes[0].RPC != server.URL+"/chain-rpc" || c.Nodes[0].REST != server.URL+"/chain-api" || from != 100 || to != 110 {
 		t.Fatalf("unexpected network selection: %+v %d %d", c, from, to)
 	}
 }
@@ -53,6 +53,53 @@ func TestNetworkCollectionArgumentsRejectsWrongChain(t *testing.T) {
 	t.Cleanup(func() { bootstrapBaseURL = old })
 	if _, _, _, err := networkCollectionArguments([]string{"gonka-mainnet", "100", "101"}); err == nil {
 		t.Fatal("accepted a bootstrap seed for the wrong chain")
+	}
+}
+
+func TestNetworkCollectionArgumentsFallsBackToVerifiedBootstrapSeed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gonka-mainnet/bootstrap.json":
+			fmt.Fprintf(w, `{"seeds":[{"node_id":"unavailable","rpc":%q},{"node_id":"working","rpc":%q}]}`, serverURL(r)+"/first/chain-rpc", serverURL(r)+"/second/chain-rpc")
+		case "/first/chain-rpc/status":
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		case "/second/chain-rpc/status":
+			fmt.Fprint(w, `{"result":{"sync_info":{"latest_block_height":"200"}}}`)
+		case "/second/chain-rpc/block":
+			fmt.Fprintf(w, `{"result":{"block":{"header":{"chain_id":"gonka-mainnet","height":%q}}}}`, r.URL.Query().Get("height"))
+		}
+	}))
+	defer server.Close()
+	old := bootstrapBaseURL
+	bootstrapBaseURL = server.URL
+	t.Cleanup(func() { bootstrapBaseURL = old })
+	c, _, _, err := networkCollectionArguments([]string{"mainnet", "HEAD~1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Nodes[0].ID != "working" || c.Nodes[0].RPC != server.URL+"/second/chain-rpc" {
+		t.Fatalf("fallback did not select the verified seed: %+v", c.Nodes[0])
+	}
+}
+
+func TestNetworkCollectionArgumentsAcceptsDirectRPC(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/chain-rpc/status":
+			fmt.Fprint(w, `{"result":{"sync_info":{"latest_block_height":"200"}}}`)
+		case "/chain-rpc/block":
+			fmt.Fprintf(w, `{"result":{"block":{"header":{"chain_id":"gonka-mainnet","height":%q}}}}`, r.URL.Query().Get("height"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	c, from, to, err := networkCollectionArguments([]string{server.URL + "/chain-rpc", "HEAD~100"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Chain != "gonka-mainnet" || c.Nodes[0].RPC != server.URL+"/chain-rpc" || c.Nodes[0].REST != server.URL+"/chain-api" || from != 100 || to != 200 {
+		t.Fatalf("unexpected direct RPC selection: %+v %d %d", c, from, to)
 	}
 }
 

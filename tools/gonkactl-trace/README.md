@@ -48,12 +48,14 @@ gonkactl-trace report mainnet HEAD~100
 ```
 
 The aliases `mainnet`, `devnet`, and `testnet` resolve to `gonka-mainnet`,
-`gonka-devnet-community`, and `gonka-testnet`. They read the first
-Bootstrap-declared `chain-rpc` endpoint from
-`https://gonka-dev.net/<chain-id>/bootstrap.json`. `HEAD` is resolved from that
-endpoint and verified against the expected chain ID before collection. Heights
-may be absolute, `HEAD`, or `HEAD~N`; named-network ranges are limited to 10,000
-blocks.
+`gonka-devnet-community`, and `gonka-testnet`. They read Bootstrap-declared
+`chain-rpc` endpoints from `https://gonka-dev.net/<chain-id>/bootstrap.json`,
+verify the chain ID, and use another declared endpoint if the first one is
+unavailable. A direct `chain-rpc` URL may be used in place of an alias; its
+chain ID is read from the selected block. `HEAD` is resolved from that endpoint.
+Heights may be absolute, `HEAD`, or `HEAD~N`. In the optional final position,
+`+N` means `N` heights after the resolved start: `HEAD~100 +10` is equivalent to
+`HEAD~100 HEAD~90`. Named-network ranges are limited to 10,000 blocks.
 
 This command sends read-only HTTP GET requests. It does not broadcast a
 transaction, modify a signer, reset a node, or collect private logs. Its output

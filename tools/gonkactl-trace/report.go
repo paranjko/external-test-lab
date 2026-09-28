@@ -32,7 +32,7 @@ func runReport(args []string) error {
 		var from, to int64
 		var err error
 		if f.NArg() > 0 {
-			if _, aliasErr := resolveNetworkAlias(f.Arg(0)); aliasErr == nil {
+			if isNetworkTarget(f.Arg(0)) {
 				if *config != "gonkactl-trace.json" {
 					return fmt.Errorf("--config cannot be combined with a named network profile")
 				}
