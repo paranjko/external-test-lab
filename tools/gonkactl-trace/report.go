@@ -28,7 +28,21 @@ func runReport(args []string) error {
 		if *apps != "" || *logs != "" {
 			return fmt.Errorf("supplemental inputs require offline --input")
 		}
-		c, from, to, err := collectionArguments(f.Args(), *config)
+		var c Config
+		var from, to int64
+		var err error
+		if f.NArg() > 0 {
+			if _, aliasErr := resolveNetworkAlias(f.Arg(0)); aliasErr == nil {
+				if *config != "gonkactl-trace.json" {
+					return fmt.Errorf("--config cannot be combined with a named network profile")
+				}
+				c, from, to, err = networkCollectionArguments(f.Args())
+			} else {
+				c, from, to, err = collectionArguments(f.Args(), *config)
+			}
+		} else {
+			c, from, to, err = collectionArguments(f.Args(), *config)
+		}
 		if err != nil {
 			return err
 		}
