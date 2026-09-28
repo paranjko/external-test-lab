@@ -33,6 +33,32 @@ It neither collects from a live node nor uploads evidence. Tests requiring
 private historical samples or a full Perfetto distribution explicitly skip when
 those inputs are absent; their separate qualification commands are below.
 
+## How to use gonkactl-trace
+
+Install Go according to [the official Go installation guide](https://go.dev/doc/install),
+including its instruction to make Go-installed binaries available on `PATH`.
+
+```sh
+git clone -b feat/gonkactl-trace https://github.com/paranjko/external-test-lab.git
+cd external-test-lab
+make install
+
+# Collect and write an HTML report for the latest 101 inclusive heights.
+gonkactl-trace report mainnet HEAD~100
+```
+
+The aliases `mainnet`, `devnet`, and `testnet` resolve to `gonka-mainnet`,
+`gonka-devnet-community`, and `gonka-testnet`. They read the first
+Bootstrap-declared `chain-rpc` endpoint from
+`https://gonka-dev.net/<chain-id>/bootstrap.json`. `HEAD` is resolved from that
+endpoint and verified against the expected chain ID before collection. Heights
+may be absolute, `HEAD`, or `HEAD~N`; named-network ranges are limited to 10,000
+blocks.
+
+This command sends read-only HTTP GET requests. It does not broadcast a
+transaction, modify a signer, reset a node, or collect private logs. Its output
+is private local evidence and must be reviewed before sharing.
+
 ## Collect and report
 
 Copy `gonkactl-trace.example.json` to the ignored `gonkactl-trace.json`, then set

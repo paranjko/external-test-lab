@@ -86,7 +86,7 @@ func main() {
 }
 func execute(args []string) error {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help" || args[0] == "-h") {
-		fmt.Println("gonkactl-trace (experimental)\n\nreport [--config file] <from> [to]   collect and write an HTML report\nreport --input dataset.json        rebuild offline from retained sources\ncollect <from> [to]                collect using gonkactl-trace.json\ninterpret --help                  inspect application evidence options\nperfetto --help                   inspect native trace/viewer options\notlp | otlp-consensus             export the latest collection locally\nrun | run-consensus               upload the latest collection to TraceKit\n\nReports and collected data are private by default. Read README.md before collecting or uploading.")
+		fmt.Println("gonkactl-trace (experimental)\n\nreport <mainnet|devnet|testnet> <from> [to]  collect and write an HTML report\nreport [--config file] <from> [to]            collect from an explicit private configuration\nreport --input dataset.json                    rebuild offline from retained sources\ncollect <mainnet|devnet|testnet> <from> [to]  collect without rendering\ncollect <from> [to]                            collect using gonkactl-trace.json\n\n<from> and [to] accept an absolute height, HEAD, or HEAD~N.\ninterpret --help                  inspect application evidence options\nperfetto --help                   inspect native trace/viewer options\notlp | otlp-consensus             export the latest collection locally\nrun | run-consensus               upload the latest collection to TraceKit\n\nReports and collected data are private by default. Read README.md before collecting or uploading.")
 		return nil
 	}
 	if len(args) > 0 && args[0] == "report" {
@@ -102,6 +102,15 @@ func execute(args []string) error {
 		return fmt.Errorf("usage: gonkactl-trace report <from> [to] | collect <from> [to] | perfetto | interpret | otlp | otlp-consensus | run | run-consensus; see --help")
 	}
 	if args[0] == "collect" {
+		if len(args) > 1 {
+			if _, err := resolveNetworkAlias(args[1]); err == nil {
+				c, from, to, e := networkCollectionArguments(args[1:])
+				if e != nil {
+					return e
+				}
+				return collect(c, from, to)
+			}
+		}
 		c, from, to, e := collectionArguments(args[1:], "gonkactl-trace.json")
 		if e != nil {
 			return e

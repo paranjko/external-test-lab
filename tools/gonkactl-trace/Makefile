@@ -1,4 +1,4 @@
-.PHONY: all build test vet qualify perfetto-ui release qualify-perfetto qualify-history qualify-ui ui-deps demo
+.PHONY: all build test vet install qualify perfetto-ui release qualify-perfetto qualify-history qualify-ui ui-deps demo
 
 export GOWORK := off
 export GOCACHE := $(CURDIR)/.cache/go-build
@@ -17,6 +17,10 @@ demo: build
 build:
 	mkdir -p $(GOCACHE) $(GOTMPDIR)
 	go build -o gonkactl-trace .
+
+install:
+	mkdir -p $(GOCACHE) $(GOTMPDIR)
+	go install .
 
 test:
 	mkdir -p $(GOCACHE) $(GOTMPDIR)
