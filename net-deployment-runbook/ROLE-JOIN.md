@@ -107,6 +107,10 @@ gdc host join --restore <validator-backup.tar> \
   --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
+The verified archive contains the participant cold mnemonic. If its TMKMS key
+is no longer published, JOIN rebinds that participant to the restored key,
+then reads it back before enabling the signer.
+
 Without a second SSH alias, JOIN prepares `<ssh-alias>` as a `network-gpu`
 Host. GDC detects the PCI accelerator before mutation and selects a committed
 profile. NVIDIA requires an R580+ driver. AMD support is limited to `gfx1201`
@@ -202,7 +206,10 @@ the value resolves to an IPv4 address; for a DNS name, create its record first.
 
 The same JOIN command may be repeated for a complete matching local state. It
 queries registration before submission and must not create a second
-participant, funding claim, or validator identity. The repeat must come from
+participant, funding claim, or validator identity. For a participant that
+already exists it also reads the validator key the chain publishes: a
+registration that names another key stops the run, because this Host cannot
+sign for it. The repeat must come from
 the same gdc revision, with the same `GDC_PORTABLE_*` declaration if one was
 used; another revision is refused with `join_reentry_profile_changed` before
 any change. After `--restore` onto a reset Host, only a repeat that names an
@@ -226,6 +233,7 @@ the Host afresh instead of demanding manual recovery.
 | exit 65, `restore_identity_mismatch` | `--restore` names a validator backup for a different signer than the one captured by `gdc host reset` | use the matching validator backup; otherwise use an authorized validator-key rotation |
 | exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
 | `join_reentry_manual_recovery_required` | an earlier JOIN stopped part-way, for example on `lineage_snapshot_unavailable` from the state-sync canary; repeating it changes nothing | `gdc host reset <ssh-alias>`, which keeps the run evidence; then the same command when reset reports the participant unregistered, or `--restore` when it reports a registered participant whose signer had started |
+| registered with another validator key | the chain publishes a validator key for this participant that is not the key this Host signs with, so the Host cannot sign for its own registration; the Host was not changed | repeat with `--mnemonic-prompt` or `--mnemonic-file` and that participant's cold mnemonic; or continue on the Host whose signer owns the registered key |
 
 A participant registered before its signer ever started has no supported way
 back.
