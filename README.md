@@ -54,7 +54,7 @@ Human catalog pointers: [`broker-compat/`](broker-compat/).
 
 ## Experimental incident tooling
 
-[`tools/gonkactl-trace/`](tools/gonkactl-trace/) collects read-only evidence and
+[`gonkactl-trace/`](gonkactl-trace/) collects read-only evidence and
 builds offline HTML incident reports, with optional Perfetto and OTLP exports.
 The draft includes a synthetic example and states its interpretation limits;
 it is separate from the operator CLI and test qualification harness.

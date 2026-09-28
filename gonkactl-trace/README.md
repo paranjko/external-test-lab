@@ -18,7 +18,7 @@ Python 3, and Make. Dependency installation needs network access; report
 generation from retained inputs does not.
 
 ```bash
-cd tools/gonkactl-trace
+cd gonkactl-trace
 make ui-deps
 make all
 make demo

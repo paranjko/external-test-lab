@@ -1,4 +1,4 @@
 .PHONY: install
 
 install:
-	$(MAKE) -C tools/gonkactl-trace install
+	$(MAKE) -C gonkactl-trace install
