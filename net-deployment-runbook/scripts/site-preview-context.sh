@@ -57,6 +57,11 @@ if [[ "$mode" == publish ]]; then
 else
   draft="$(jq -r '.draft // false' <<<"$pr")"
   remove=false
-  [[ "$same_repository" == true && ( "$action" == closed || "$draft" == true || "$has_preview" == false ) ]] && remove=true
+  # Cleanup requires a preview-relevant PR with a recorded preview.
+  if [[ "$same_repository" == true && "$has_preview" == true && ( "$action" == closed || "$draft" == true ) ]]; then
+    marker="<!-- gdc-preview:$number -->"
+    comments="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$number/comments?per_page=100")"
+    jq -e --arg marker "$marker" '[.[][] | select(.body | contains($marker))] | length > 0' <<<"$comments" >/dev/null && remove=true
+  fi
   printf 'remove=%s\nnumber=%s\nhead_sha=%s\n' "$remove" "$number" "$head_sha" >>"$GITHUB_OUTPUT"
 fi
