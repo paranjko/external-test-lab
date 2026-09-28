@@ -310,7 +310,7 @@ func buildConsensus(d Dataset) (ConsensusTimeline, error) {
 	}
 	c.readEvents(d.Events)
 	c.correlate()
-	c.Gaps = append(c.Gaps, "Historical WAL/received-vote stream not collected: delivery times, locks and all intermediate rounds may be unknown", "JOIN receipts linking historical node5 identities are incomplete; missing votes do not prove private-key deletion")
+	c.Gaps = append(c.Gaps, "Historical WAL/received-vote stream not collected: delivery times, locks and all intermediate rounds may be unknown")
 	return c, nil
 }
 func (c *ConsensusTimeline) readCommit(m map[string]any, r Receipt, source string) {

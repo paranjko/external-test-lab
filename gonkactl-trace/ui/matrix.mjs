@@ -3,6 +3,18 @@ import {causalEvidence,ruleCommit} from './causal.mjs';
 export const participants = ['node0','node1','node2','node3','node4','node5-1','node5-2'];
 export const heights = [306550,306551,306552,306553];
 export const matrixHeights = data => Number.isSafeInteger(data.from)&&Number.isSafeInteger(data.to)&&data.from>0&&data.to>=data.from&&data.to-data.from<4?Array.from({length:data.to-data.from+1},(_,i)=>data.from+i):heights;
+const incidentDataset = data => matrixHeights(data).includes(306553)&&(!data.meta||data.meta.incident==='GNK-LAB-2026-0001');
+export function matrixRows(data) {
+  if(incidentDataset(data))return participants.map(node=>({node,identities:null}));
+  const selectedHeights=new Set(matrixHeights(data));
+  const ids=new Set((data.validator_sets??[]).filter(s=>selectedHeights.has(s.height)).flatMap(s=>(s.validators??[]).map(v=>v.Address)).filter(Boolean));
+  for(const e of data.events??[])if(selectedHeights.has(e.height)&&e.validator_id)ids.add(e.validator_id);
+  const actorByID=new Map((data.actors??[]).filter(a=>a.kind==='consensus_identity').map(a=>[a.id,a]));
+  return [...ids].map(id=>{
+    const actor=actorByID.get(id), label=actor?.participant||actor?.label||`Validator ${id.slice(0,12)}`;
+    return {node:label,identities:[id]};
+  }).sort((a,b)=>a.node.localeCompare(b.node)||a.identities[0].localeCompare(b.identities[0]));
+}
 // Dataset text and query parameters are not URL syntax. Keep navigation local,
 // validate identity/height, and encode every variable query value at the sink.
 export function timelineHref(session, language='en', height) {
@@ -19,8 +31,9 @@ const canonicalApplication = value => Array.isArray(value)?value.map(canonicalAp
 export function buildMatrix(data) {
   const actors=data.actors??[], events=data.events??[];
   const cells=[];
-  for(const node of participants) for(const height of matrixHeights(data)) {
-    const identities=unique(actors.filter(a=>a.kind==='consensus_identity'&&a.participant===node).map(a=>a.id));
+  for(const row of matrixRows(data)) for(const height of matrixHeights(data)) {
+    const node=row.node;
+    const identities=row.identities??unique(actors.filter(a=>a.kind==='consensus_identity'&&a.participant===node).map(a=>a.id));
     const sets=(data.validator_sets??[]).filter(s=>s.height===height);
     const versions=unique(sets.map(s=>JSON.stringify([s.membership_complete,s.total,s.quorum,
       (s.validators??[]).map(v=>[v.Address,v.Power]).sort((a,b)=>a[0].localeCompare(b[0]))])));
@@ -53,7 +66,7 @@ export function changesAt(cells,height) {
   const heights=unique(cells.map(c=>c.height)).sort((a,b)=>a-b);
   const previous=heights[heights.indexOf(height)-1];
   if(previous===undefined)return [];
-  return participants.flatMap(node=>{
+  return unique(cells.map(c=>c.node)).flatMap(node=>{
     const before=cells.find(c=>c.node===node&&c.height===previous), after=cells.find(c=>c.node===node&&c.height===height);
     if(before.power===null||after.power===null)return [{node,before,after,unknown:true}];
     return before.membership!==after.membership||before.power!==after.power?[{node,before,after,unknown:false}]:[];
@@ -118,13 +131,13 @@ export function applicationEvidence(data) {
 }
 
 export async function mountMatrix(data,root,session,language='en') {
-  const heights=matrixHeights(data),incident=heights.includes(306553)&&data.meta?.incident==='GNK-LAB-2026-0001';
-  const cells=buildMatrix(data), observations=new Map((data.observations??[]).map(o=>[o.observation_id,o]));
-  const admission=admissionEvidence(data);
-  const application=incident?applicationEvidence(data):null;
-  let causal=null,causalError=null;
-  try{causal=await causalEvidence(data,application,admission);}catch(e){causalError=e.message;}
-  let selected=cells.find(c=>c.node==='node5-2'&&c.height===heights.at(-1))??cells[0];
+	const heights=matrixHeights(data),incident=incidentDataset(data)&&data.meta?.incident==='GNK-LAB-2026-0001';
+	const cells=buildMatrix(data), observations=new Map((data.observations??[]).map(o=>[o.observation_id,o]));
+	const rows=matrixRows(data), admission=incident?admissionEvidence(data):null;
+	const application=incident?applicationEvidence(data):null;
+	let causal=null,causalError=null;
+	if(incident)try{causal=await causalEvidence(data,application,admission);}catch(e){causalError=e.message;}
+	let selected=cells.find(c=>c.node==='node5-2'&&c.height===heights.at(-1))??cells[0];
   let evidencePage=0;
   const t=text=>translate(text,language);
   const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=tag==='pre'?text:t(text);if(cls)e.className=cls;return e;};
@@ -305,7 +318,7 @@ export async function mountMatrix(data,root,session,language='en') {
     }
     append(table,append(el('thead'),head));
     const body=el('tbody');
-    for(const node of participants) {
+	    for(const node of rows.map(row=>row.node)) {
       const row=el('tr'),rowHeader=el('th',node);rowHeader.scope='row';append(row,rowHeader);
       for(const h of heights) {
         const c=cells.find(c=>c.node===node&&c.height===h),cell=el('td');
@@ -335,8 +348,8 @@ export async function mountMatrix(data,root,session,language='en') {
     append(root,detail(`Separate snapshot evidence at H${selected.height} (${snapshots.length} records)`,append(el('div'),
       el('p','Historical subject, separate collection time. These records are not historical message delivery or continuation of the timeline'),
       snapshots.map(e=>detail(`${e.kind} · observer ${e.observer_id} · ${e.verification}`,append(el('div'),pre(e),(e.source_refs??[]).map(id=>observations.get(id)).filter(Boolean).map(observation)))))));
-    append(root,detail('Coverage, attribution and open questions',append(el('div'),
-      el('p','This prototype covers four heights, plus earlier retained jail records. It does not establish the earliest node2 participation, reset timing, or post-halt synchronization'),
+	    append(root,detail('Coverage, attribution and open questions',append(el('div'),
+	      el('p',incident?'This prototype covers four heights, plus earlier retained jail records. It does not establish the earliest node2 participation, reset timing, or post-halt synchronization':'This report is limited to the selected heights and retained sources. It does not establish activity, identity ownership, or conditions outside this collection.'),
       pre(data.findings??[]),pre(data.coverage??[]),pre(data.application?.limits??[]),pre(data.application?.queries?.filter(q=>q.status!=='reported')??[]))));
   }
   render();

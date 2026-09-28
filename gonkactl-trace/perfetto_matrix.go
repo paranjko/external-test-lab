@@ -20,7 +20,13 @@ type PFMatrix struct {
 }
 
 func matrixSubset(a PFAnalysis) PFMatrix {
-	m := PFMatrix{Meta: a.Meta, From: 306550, To: 306553, Actors: a.Actors, Findings: a.Findings, Coverage: a.Coverage}
+	from, to := a.Meta.From, a.Meta.To
+	// Legacy unit fixtures omit range metadata. Real datasets always provide it;
+	// never substitute this fallback for a collected report.
+	if from < 1 || to < from {
+		from, to = 306550, 306553
+	}
+	m := PFMatrix{Meta: a.Meta, From: from, To: to, Actors: a.Actors, Findings: a.Findings, Coverage: a.Coverage}
 	if a.Meta.FocusHeight > 0 {
 		m.To = a.Meta.FocusHeight
 		m.From = m.To - 3
