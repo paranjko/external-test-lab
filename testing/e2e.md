@@ -47,6 +47,15 @@ bin/gcheck run --profile smoke
 
 The run sends at most two completions inside the send window and prints one verdict per check. Exit codes: `0` PASS, `1` FAIL, `2` INCONCLUSIVE, `3` BLOCKED, `4` stopped by a guard. Checks, guards and limits: [gonka-check/README.md](gonka-check/README.md).
 
+## While the gateway is not ready
+
+```sh
+bin/gcheck run --profile chain
+bin/gcheck watch --duration 3600
+```
+
+Both send GET requests only and need no key. `--profile chain` checks the chain and the public nodes. `watch` shows per epoch how much of the send window was ready and why not.
+
 ## Troubleshooting
 
 - `CERTIFICATE_VERIFY_FAILED` with the python.org build on macOS: set `SSL_CERT_FILE=/etc/ssl/cert.pem` or run `Install Certificates.command` once.

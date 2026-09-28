@@ -3,17 +3,19 @@
 import hashlib
 import json
 import os
+import re
 import stat
 from urllib.parse import urlsplit
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PRESET_DIR = os.path.join(ROOT, "presets")
-PROFILES = ("smoke",)
+PROFILES = ("smoke", "chain")
 PUBLIC_TARGETS = {
     "https://api.gonka-dev.net": "https://gonka-dev.net/status/gateway-health",
 }
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+PUBLIC_NODE_RPC = re.compile(r"^https://node[0-9]+\.gonka-dev\.net/chain-rpc$")
 REQUIRED = (
     "name", "base_url", "model", "health_url", "chain_rpc", "chain_api",
     "send_window", "min_blocks_between_sends", "deadline_s", "socket_timeout_s",
@@ -52,7 +54,7 @@ def load_preset(name_or_path):
     return preset
 
 
-def _loopback(url):
+def is_loopback(url):
     parts = urlsplit(url)
     return parts.scheme == "http" and parts.hostname in LOOPBACK
 
@@ -60,15 +62,22 @@ def _loopback(url):
 def check_target(preset):
     """Refuse any target other than the public DevNet API or a local fake."""
     base = preset["base_url"].rstrip("/")
-    if _loopback(base):
+    if is_loopback(base):
         urls = (preset["health_url"], preset["chain_rpc"], preset["chain_api"])
-        if not all(_loopback(url) for url in urls):
+        if not all(is_loopback(url) for url in urls):
             raise TargetRefused("a loopback target must keep every URL on loopback")
     elif PUBLIC_TARGETS.get(base) != preset["health_url"]:
         raise TargetRefused("target %s is not an allowed public gateway" % base)
     for key in ("chain_rpc", "chain_api"):
         if not preset[key].startswith(base + "/"):
             raise TargetRefused("%s must live under %s" % (key, base))
+    for url in preset.get("node_rpcs", []):
+        if not (is_loopback(url) if is_loopback(base) else PUBLIC_NODE_RPC.fullmatch(url)):
+            raise TargetRefused("node RPC %s is not an allowed DevNet node" % url)
+    if not is_loopback(base):
+        # The public chain RPC is rate limited; refuse presets that would poll it harder.
+        if float(preset["chain_poll_s"]) < 2 or float(preset.get("watch_interval_s", 10)) < 5:
+            raise TargetRefused("a public target needs chain_poll_s >= 2 and watch_interval_s >= 5")
     for profile in preset["profiles_allowed"]:
         if profile not in PROFILES:
             raise TargetRefused("profile %s is not implemented" % profile)
@@ -87,8 +96,14 @@ def check_url(preset, url):
     origin = "%s://%s" % (parts.scheme, parts.netloc)
     allowed = {preset["base_url"].rstrip("/")}
     allowed.add("%s://%s" % urlsplit(preset["health_url"])[:2])
-    if origin not in allowed:
-        raise TargetRefused("origin %s is outside the preset" % origin)
+    if origin in allowed:
+        return
+    # A node origin is allowed only under its own chain RPC path.
+    for node in preset.get("node_rpcs", []):
+        node_parts = urlsplit(node)
+        if origin == "%s://%s" % node_parts[:2] and parts.path.startswith(node_parts.path.rstrip("/") + "/"):
+            return
+    raise TargetRefused("origin %s is outside the preset" % origin)
 
 
 def key_path(preset, override=None):

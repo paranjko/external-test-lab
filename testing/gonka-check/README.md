@@ -1,6 +1,6 @@
 # gonka-check
 
-Smoke checks for Gonka inference through the public DevNet gateway.
+Smoke checks for Gonka inference through the public DevNet gateway, chain checks and a readiness watch.
 Python 3.10+, standard library only, nothing to install.
 
 ## Run
@@ -9,6 +9,8 @@ Python 3.10+, standard library only, nothing to install.
 bin/gcheck plan                   # target, budget and checks; no network
 bin/gcheck run --dry-run          # GET only: READY or BLOCKED with reasons
 bin/gcheck run --profile smoke    # at most 2 completions, inside the send window
+bin/gcheck run --profile chain    # GET only, no key: chain and public node checks
+bin/gcheck watch --duration 3600  # GET only: readiness samples and a per-epoch summary
 bin/gcheck selftest               # unit tests against a local fake gateway
 ```
 
@@ -26,10 +28,20 @@ On macOS with the python.org build, set `SSL_CERT_FILE=/etc/ssl/cert.pem` if HTT
 | `canary` | SMK-06 | 1 POST | "7 + 5" answers 12; `finish_reason` and `usage` present |
 | `floor64` | REG-15 | 1 POST | `max_tokens: 1` yields 64 completion tokens, `finish_reason: length` |
 | `fence_audit` | SMK-05, REG-13 | none | `X-GDC-*` heights ordered, permit height inside the proxy fence |
+| `chain_advances` | SMK-01 | GET | chain height grows within `chain_advance_wait_s` |
+| `nodes_at_tip` | SMK-02 | GET | every `node_rpcs` entry answers, is not catching up, lags at most `node_max_lag_blocks` |
+| `epoch_state` | SMK-04 | GET | height, epoch start and the confirmation PoC event agree; a snapshot |
+
+## Watch
+
+`watch` samples every `watch_interval_s` (10 s): chain height, the confirmation PoC event, `/v1/status` and the health receipt.
+Samples go to `samples.jsonl`; `summary.json` gives per epoch the ready share of the send window, confirmation PoC offsets and health reasons.
+It stops after `--duration` seconds or `--epochs` complete epochs; it exits `0`, or `2` when no sample could be read.
 
 ## Safety
 
-- Only `https://api.gonka-dev.net` or a loopback fake; `/status/gateway/*` and `/v1/admission-status` are never requested.
+- Only `https://api.gonka-dev.net`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*` and `/v1/admission-status` are never requested.
+- `watch` samples at most every 5 s against a public target; `--profile chain` and `watch` read no key.
 - One request in flight, one lock per machine, sends at least 2 blocks apart at epoch offset `safe_start+1 .. epoch_length-20`.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.

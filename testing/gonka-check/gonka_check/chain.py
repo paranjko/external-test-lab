@@ -70,9 +70,37 @@ class Chain:
         except (KeyError, TypeError, ValueError):
             raise ChainError("epoch_invalid", reply.seq)
 
+    def epoch_group(self):
+        reply = self._get(self.api + "/current_epoch_group_data", "epoch_unreachable")
+        try:
+            data = reply.json["epoch_group_data"]
+            return {"epoch": int(data["epoch_index"]), "start": int(data["poc_start_block_height"])}
+        except (KeyError, TypeError, ValueError):
+            raise ChainError("epoch_invalid", reply.seq)
+
     def confirmation_phases(self):
         reply = self._get(self.api + "/active_confirmation_poc_event", "confirmation_unreachable")
         return sorted(set(_strings_under(reply.json, "phase"))), reply.seq
+
+    def confirmation_event(self):
+        reply = self._get(self.api + "/active_confirmation_poc_event", "confirmation_unreachable")
+        event = reply.json.get("event") if isinstance(reply.json.get("event"), dict) else {}
+        found = {"active": reply.json.get("is_active") is True, "phase": event.get("phase")}
+        for key in ("epoch_index", "trigger_height", "generation_start_height"):
+            try:
+                found[key] = int(event[key])
+            except (KeyError, TypeError, ValueError):
+                found[key] = None
+        return found
+
+    def node_height(self, rpc):
+        """(height, catching_up) of one public node, or ChainError."""
+        reply = self._get(rpc.rstrip("/") + "/status", "node_unreachable")
+        try:
+            info = reply.json["result"]["sync_info"]
+            return int(info["latest_block_height"]), info.get("catching_up") is True
+        except (KeyError, TypeError, ValueError):
+            raise ChainError("node_status_invalid", reply.seq)
 
 
 def _strings_under(node, key):

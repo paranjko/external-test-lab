@@ -10,15 +10,16 @@ import tempfile
 import time
 import unittest
 
-from gonka_check import cli
+from gonka_check import chaincheck, cli
+from gonka_check.chain import Chain
 from gonka_check.preflight import health_blocker, status_blocker
 from gonka_check.summary import SSL_HINT, hints
 from gonka_check.record import Recorder
 from gonka_check.scheduler import RunLock
-from gonka_check.target import ROOT, TargetRefused, load_preset
+from gonka_check.target import ROOT, TargetRefused, check_target, check_url, load_preset
 from gonka_check.transport import Client
 
-from tests.fake_gateway import EPOCH_LENGTH, FakeGateway
+from tests.fake_gateway import CHAIN_API, EPOCH_LENGTH, FakeGateway
 
 
 KEY = "sk-fake-" + "c" * 24
@@ -211,6 +212,238 @@ class Smoke(Harness):
         self.assertEqual(fake.posts, [])
 
 
+class ChainProfile(Harness):
+    def chain(self, fake):
+        os.remove(self.key_file)
+        code, summary = self.gcheck(fake, "--profile", "chain")
+        self.assertEqual(fake.posts, [])
+        self.assertTrue(all(request["authorization"] is None for request in fake.requests))
+        self.assert_no_forbidden_paths(fake)
+        return code, summary
+
+    def test_healthy_chain_passes_without_a_key(self):
+        with FakeGateway() as fake:
+            code, summary = self.chain(fake)
+        self.assertEqual(code, 0, summary)
+        self.assertEqual(self.verdicts(summary), {"chain_advances": "PASS", "nodes_at_tip": "PASS", "epoch_state": "PASS"})
+
+    def test_lagging_and_unreachable_nodes_fail(self):
+        with FakeGateway(node_state={1: 10, 2: "down"}, freeze=True) as fake:
+            code, summary = self.chain(fake)
+        self.assertEqual(code, 1)
+        reason = [item["reason"] for item in summary["verdicts"] if item["check"] == "nodes_at_tip"][0]
+        self.assertIn("node1: 10 blocks behind", reason)
+        self.assertIn("node2: node_unreachable (502)", reason)
+
+    def test_stalled_chain_fails(self):
+        with FakeGateway(freeze=True) as fake:
+            code, summary = self.chain(fake)
+        self.assertEqual(code, 1)
+        self.assertEqual(self.verdicts(summary)["chain_advances"], "FAIL")
+
+    def test_epoch_state_accepts_the_previous_group_during_poc(self):
+        with FakeGateway(offset=8) as fake:
+            code, summary = self.chain(fake)
+        self.assertEqual(code, 0, summary)
+        reason = [item["reason"] for item in summary["verdicts"] if item["check"] == "epoch_state"][0]
+        self.assertIn("group not switched yet", reason)
+
+    def test_epoch_state_reports_the_confirmation_poc(self):
+        with FakeGateway(offset=40, cpoc=(27, 55)) as fake:
+            _code, summary = self.chain(fake)
+        reason = [item["reason"] for item in summary["verdicts"] if item["check"] == "epoch_state"][0]
+        self.assertIn("CONFIRMATION_POC_GENERATION, trigger at offset 27", reason)
+
+
+class ChainDetails(Harness):
+    def reason(self, summary, check):
+        return [item["reason"] for item in summary["verdicts"] if item["check"] == check][0]
+
+    def direct_epoch_state(self, fake):
+        path = os.path.join(self.tmp.name, "direct.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(fake.preset(), handle)
+        preset = load_preset(path)
+        return chaincheck.epoch_state(Chain(Client(preset, None), preset))
+
+    def test_key_is_not_read_and_nothing_is_posted(self):
+        os.chmod(self.key_file, 0)
+        with FakeGateway() as fake:
+            code, summary = self.gcheck(fake, "--profile", "chain")
+        self.assertEqual(code, 0, summary)
+        self.assertEqual(fake.posts, [])
+        self.assertTrue(all(r["method"] == "GET" and r["authorization"] is None for r in fake.requests))
+        with open(os.path.join(summary["run_dir"], "manifest.json"), encoding="utf-8") as handle:
+            self.assertIsNone(json.load(handle)["key_sha256_prefix"])
+
+    def test_catching_up_and_invalid_nodes_fail(self):
+        with FakeGateway(node_state={0: "catching", 1: "invalid"}) as fake:
+            code, summary = self.gcheck(fake, "--profile", "chain")
+        self.assertEqual(code, 1)
+        self.assertIn("node0: catching up at", self.reason(summary, "nodes_at_tip"))
+        self.assertIn("node1: node_status_invalid", self.reason(summary, "nodes_at_tip"))
+
+    def test_lag_limit_is_inclusive_and_read_from_the_preset(self):
+        with FakeGateway(node_state={0: 5, 1: 6}, freeze=True) as fake:
+            _code, summary = self.gcheck(fake, "--profile", "chain")
+        self.assertIn("node1: 6 blocks behind; at tip:", self.reason(summary, "nodes_at_tip"))
+        self.assertNotIn("node0:", self.reason(summary, "nodes_at_tip").split("; at tip:")[0])
+        with FakeGateway(node_state={0: 3}, freeze=True) as fake:
+            _code, summary = self.gcheck(fake, "--profile", "chain", node_max_lag_blocks=2)
+        self.assertEqual(self.verdicts(summary)["nodes_at_tip"], "FAIL")
+        self.assertIn("node0: 3 blocks behind", self.reason(summary, "nodes_at_tip"))
+
+    def test_lagging_public_rpc_fails(self):
+        with FakeGateway(node_state={0: -20, 1: -20, 2: -20}, freeze=True) as fake:
+            code, summary = self.gcheck(fake, "--profile", "chain")
+        self.assertEqual(code, 1)
+        self.assertIn("public RPC: 20 blocks behind", self.reason(summary, "nodes_at_tip"))
+
+    def test_unreadable_chain_is_inconclusive_not_pass(self):
+        with FakeGateway(fail_paths={"/chain-rpc/status"}) as fake:
+            _code, summary = self.gcheck(fake, "--profile", "chain")
+        verdicts = self.verdicts(summary)
+        self.assertEqual(verdicts["chain_advances"], "INCONCLUSIVE")
+        self.assertEqual(verdicts["epoch_state"], "INCONCLUSIVE")
+        self.assertIn("public RPC: node_unreachable (429)", self.reason(summary, "nodes_at_tip"))
+        with FakeGateway() as fake:
+            code, summary = self.gcheck(fake, "--profile", "chain", node_rpcs=[])
+        self.assertEqual(self.verdicts(summary)["nodes_at_tip"], "INCONCLUSIVE")
+        self.assertEqual(code, 2)
+
+    def test_epoch_state_bounds(self):
+        with FakeGateway(offset=16) as fake:
+            item = self.direct_epoch_state(fake)
+        self.assertEqual(item["verdict"], "PASS")
+        self.assertIn("group not switched yet", item["reason"])
+        with FakeGateway(offset=29, group_switch=40) as fake:
+            self.assertEqual(self.direct_epoch_state(fake)["verdict"], "FAIL")
+        with FakeGateway(offset=4, cpoc=(0, 20)) as fake:
+            self.assertEqual(self.direct_epoch_state(fake)["verdict"], "INCONCLUSIVE")
+        with FakeGateway(offset=40, cpoc=(27, 55), cpoc_phase="CONFIRMATION_POC_BOGUS") as fake:
+            self.assertEqual(self.direct_epoch_state(fake)["verdict"], "FAIL")
+
+    def test_plan_for_the_chain_profile_sends_nothing(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["plan", "--profile", "chain"]), 0)
+        self.assertIn("total    0 POST", out.getvalue())
+        self.assertNotIn("key ", out.getvalue())
+
+
+class WatchMode(Harness):
+    def watch(self, fake, *args):
+        path = os.path.join(self.tmp.name, "watch-%d.json" % time.monotonic_ns())
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(fake.preset(), handle)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = cli.main(["watch", "--preset", path, "--interval", "0"] + list(args))
+        samples = out.getvalue().rsplit("records  ", 1)[1].strip()
+        with open(os.path.join(os.path.dirname(samples), "summary.json"), encoding="utf-8") as handle:
+            return code, json.load(handle), samples
+
+    def test_watch_summarises_a_complete_epoch(self):
+        os.remove(self.key_file)
+        with FakeGateway(offset=60, cpoc=(27, 31)) as fake:
+            code, summary, samples = self.watch(fake, "--epochs", "1", "--duration", "60")
+        self.assertEqual(code, 0)
+        complete = [epoch for epoch in summary["epochs"] if epoch["complete"]]
+        self.assertEqual(len(complete), 1)
+        self.assertEqual(complete[0]["samples"], 70)
+        self.assertEqual(complete[0]["window_samples"], 22)
+        self.assertEqual(complete[0]["window_ready"], 19)
+        self.assertEqual(complete[0]["confirmation_poc"], {"CONFIRMATION_POC_GENERATION": [27, 31]})
+        with open(samples, encoding="utf-8") as handle:
+            self.assertEqual(len(handle.readlines()), sum(epoch["samples"] for epoch in summary["epochs"]))
+        self.assertEqual(fake.posts, [])
+        self.assertTrue(all(request["authorization"] is None for request in fake.requests))
+        self.assert_no_forbidden_paths(fake)
+
+    def test_watch_counts_health_reasons(self):
+        with FakeGateway(offset=30, health="timeout") as fake:
+            _code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "60")
+        self.assertEqual(summary["totals"]["window_ready"], 0)
+        self.assertIn("DEGRADED/UNAVAILABLE (connection_timeout)", summary["totals"]["health"])
+
+
+class WatchDetails(WatchMode):
+    def complete(self, summary):
+        return [epoch for epoch in summary["epochs"] if epoch["complete"]]
+
+    def test_status_and_chain_event_count_separately(self):
+        with FakeGateway(offset=60, cpoc=(29, 33), status_tracks_cpoc=False) as fake:
+            _code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        self.assertEqual(self.complete(summary)[0]["window_ready"], 17)
+        with FakeGateway(offset=60, status="confirmation") as fake:
+            _code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        self.assertEqual(self.complete(summary)[0]["window_ready"], 0)
+        self.assertEqual(self.complete(summary)[0]["confirmation_poc"], {})
+
+    def test_unreadable_confirmation_event_blocks(self):
+        with FakeGateway(offset=60, fail_paths={CHAIN_API + "/active_confirmation_poc_event"}) as fake:
+            _code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        self.assertEqual(self.complete(summary)[0]["window_ready"], 0)
+
+    def test_devnet_phases_and_completed_do_not_block(self):
+        with FakeGateway(offset=60, cpoc=(19, 48), devnet_phases=True) as fake:
+            _code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        epoch = self.complete(summary)[0]
+        self.assertEqual(epoch["confirmation_poc"], {
+            "CONFIRMATION_POC_GRACE_PERIOD": [19, 22], "CONFIRMATION_POC_GENERATION": [23, 43],
+            "CONFIRMATION_POC_VALIDATION": [44, 47], "CONFIRMATION_POC_COMPLETED": [48, 48]})
+        self.assertEqual(epoch["window_ready"], 3)
+        self.assertEqual(summary["totals"]["complete_epochs_with_confirmation_poc"], 1)
+
+    def test_coarse_sampling_still_completes_an_epoch(self):
+        with FakeGateway(offset=60, step=3) as fake:
+            _code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        self.assertEqual([epoch["complete"] for epoch in summary["epochs"]], [False, True, False])
+        self.assertTrue(summary["totals"]["goal_reached"])
+
+    def test_first_epoch_is_partial_even_from_its_first_block(self):
+        with FakeGateway(offset=69) as fake:
+            _code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        self.assertLessEqual(summary["epochs"][0]["max_gap_blocks"], 6)
+        self.assertEqual([epoch["complete"] for epoch in summary["epochs"]], [False, True, False])
+
+    def test_public_watch_interval_has_a_floor(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            cli.main(["watch", "--preset", "devnet", "--interval", "0", "--duration", "0"])
+        run_dir = os.path.dirname(out.getvalue().rsplit("records  ", 1)[1].strip())
+        with open(os.path.join(run_dir, "manifest.json"), encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["interval_s"], 5)
+
+    def test_a_failed_chain_read_is_counted_and_survived(self):
+        with FakeGateway(offset=60, chain_fail_offsets={40}) as fake:
+            _code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        epoch = self.complete(summary)[0]
+        self.assertEqual(epoch["errors"], {"chain_unreachable (429)": 1})
+        self.assertEqual(epoch["window_samples"], 21)
+        self.assertEqual(summary["totals"]["errors"], {"chain_unreachable (429)": 1})
+
+    def test_no_valid_sample_is_inconclusive(self):
+        with FakeGateway(fail_paths={"/chain-rpc/status"}) as fake:
+            code, summary, _samples = self.watch(fake, "--duration", "1")
+        self.assertEqual(code, 2)
+        self.assertGreater(summary["totals"]["samples"], 0)
+        self.assertIn("chain_unreachable (429)", summary["totals"]["errors"])
+
+    def test_stale_health_is_one_reason(self):
+        with FakeGateway(offset=60, health="stale") as fake:
+            _code, summary, samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        self.assertEqual(list(summary["totals"]["health"]), ["stale"])
+        with open(samples, encoding="utf-8") as handle:
+            self.assertTrue(all(json.loads(line).get("health_age_s", 0) >= 99 for line in handle))
+
+    def test_malformed_status_does_not_stop_the_watch(self):
+        with FakeGateway(offset=60, status="badseed") as fake:
+            code, summary, _samples = self.watch(fake, "--epochs", "1", "--duration", "30")
+        self.assertEqual(code, 0)
+        self.assertEqual(summary["totals"]["errors"], {})
+
+
 class Guard(Harness):
     def test_foreign_target_is_refused(self):
         with FakeGateway() as fake:
@@ -236,6 +469,39 @@ class Guard(Harness):
             with self.assertRaises(ValueError):
                 client._send("GET", fake.base_url + "/v1/models", None, KEY, 5, None)
         self.assertEqual(fake.requests, [])
+
+    def test_foreign_node_rpc_is_refused(self):
+        preset = load_preset("devnet")
+        preset["node_rpcs"] = ["https://node0.example.com/chain-rpc"]
+        with self.assertRaises(TargetRefused):
+            check_target(preset)
+
+    def test_tricky_node_rpcs_are_refused(self):
+        good = "https://node0.gonka-dev.net/chain-rpc"
+        for bad in ("https://node0.gonka-dev.net.evil.example/chain-rpc",
+                    "https://node0.gonka-dev.net@evil.example/chain-rpc",
+                    "http://node0.gonka-dev.net/chain-rpc",
+                    good + "\n"):
+            preset = load_preset("devnet")
+            preset["node_rpcs"] = [good, bad]
+            with self.assertRaises(TargetRefused, msg=bad):
+                check_target(preset)
+        with FakeGateway() as fake:
+            with self.assertRaises(TargetRefused):
+                check_target(fake.preset(node_rpcs=[good]))
+
+    def test_node_origin_allows_only_its_rpc_path(self):
+        preset = load_preset("devnet")
+        check_url(preset, "https://node3.gonka-dev.net/chain-rpc/status")
+        for path in ("/v1/chat/completions", "/faucet/claim", "/chain-rpcx/status"):
+            with self.assertRaises(TargetRefused, msg=path):
+                check_url(preset, "https://node3.gonka-dev.net" + path)
+
+    def test_public_target_refuses_fast_polling(self):
+        preset = load_preset("devnet")
+        preset["chain_poll_s"] = 0
+        with self.assertRaises(TargetRefused):
+            check_target(preset)
 
     def test_plan_runs_from_bin_without_network(self):
         result = subprocess.run([os.path.join(ROOT, "bin", "gcheck"), "plan"], capture_output=True, text=True,

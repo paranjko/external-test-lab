@@ -100,7 +100,8 @@ class Client:
 
     def get(self, url, timeout=15):
         reply = self._send("GET", url, None, None, timeout, None)
-        reply.seq = self.recorder.write("http", **reply.to_record())
+        if self.recorder is not None:
+            reply.seq = self.recorder.write("http", **reply.to_record())
         return reply
 
     def post_completion(self, payload, key, check):

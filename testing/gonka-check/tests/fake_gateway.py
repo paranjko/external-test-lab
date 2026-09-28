@@ -2,6 +2,7 @@
 
 import datetime
 import json
+import re
 import threading
 import time
 import uuid
@@ -17,11 +18,25 @@ MODEL = "Qwen/Qwen3-0.6B"
 class FakeGateway:
     """Height advances by one block on every chain status read."""
 
-    def __init__(self, offset=30, scenario="ok", health="ready", status="routable"):
+    def __init__(self, offset=30, scenario="ok", health="ready", status="routable",
+                 cpoc=None, freeze=False, nodes=3, node_state=None, group_switch=18, step=1,
+                 fail_paths=(), chain_fail_offsets=(), status_tracks_cpoc=True, devnet_phases=False,
+                 cpoc_phase=None):
         self.height = EPOCH_START + offset
         self.scenario = scenario
         self.health = health
         self.status = status
+        self.cpoc = cpoc
+        self.freeze = freeze
+        self.nodes = nodes
+        self.node_state = node_state or {}
+        self.group_switch = group_switch
+        self.step = step
+        self.fail_paths = set(fail_paths)
+        self.chain_fail_offsets = set(chain_fail_offsets)
+        self.status_tracks_cpoc = status_tracks_cpoc
+        self.devnet_phases = devnet_phases
+        self.cpoc_phase = cpoc_phase
         self.requests = []
         self.posts = []
         self.lock = threading.Lock()
@@ -46,7 +61,9 @@ class FakeGateway:
             "send_window": {"from_offset": 1, "stop_before_end": 20},
             "min_blocks_between_sends": 2, "deadline_s": 60, "socket_timeout_s": 5,
             "chain_poll_s": 0, "health_poll_s": 0.01, "health_max_age_s": 30,
-            "budget": {"per_run": 4, "per_epoch": 4}, "profiles_allowed": ["smoke"],
+            "budget": {"per_run": 4, "per_epoch": 4}, "profiles_allowed": ["smoke", "chain"],
+            "node_rpcs": ["%s/node%d/chain-rpc" % (self.base_url, i) for i in range(self.nodes)],
+            "node_max_lag_blocks": 5, "chain_advance_wait_s": 0, "watch_interval_s": 0,
             "forbid_paths": ["/status/gateway/", "/v1/admission-status"],
         }
         preset.update(overrides)
@@ -54,6 +71,43 @@ class FakeGateway:
 
     def epoch(self):
         return self.height // EPOCH_LENGTH
+
+    def group_epoch(self):
+        # As on DevNet: the new epoch group appears only after the PoC of that epoch.
+        return self.epoch() - (self.height % EPOCH_LENGTH < self.group_switch)
+
+    def cpoc_active(self):
+        return self.cpoc is not None and self.cpoc[0] <= self.height % EPOCH_LENGTH <= self.cpoc[1]
+
+    def phase(self):
+        if self.cpoc_phase:
+            return self.cpoc_phase
+        if not self.devnet_phases:
+            return "CONFIRMATION_POC_GENERATION"
+        # DevNet 2026-09-24: grace 4 blocks, generation to T+24, validation to T+28, then completed.
+        since = self.height % EPOCH_LENGTH - self.cpoc[0]
+        for limit, name in ((4, "GRACE_PERIOD"), (25, "GENERATION"), (29, "VALIDATION")):
+            if since < limit:
+                return "CONFIRMATION_POC_" + name
+        return "CONFIRMATION_POC_COMPLETED"
+
+    def cpoc_doc(self):
+        if not self.cpoc_active():
+            return {"is_active": False, "event": None}
+        start = self.epoch() * EPOCH_LENGTH
+        return {"is_active": True, "event": {
+            "epoch_index": str(self.epoch()), "trigger_height": str(start + self.cpoc[0]),
+            "generation_start_height": str(start + self.cpoc[0] + 4), "phase": self.phase()}}
+
+    def node_status(self, index):
+        state = self.node_state.get(index, 0)
+        if state == "down":
+            return 502, {"error": "bad gateway"}
+        if state == "invalid":
+            return 200, {"jsonrpc": "2.0", "error": {"code": -32603, "message": "internal error"}}
+        lag = 0 if state == "catching" else state
+        return 200, {"result": {"sync_info": {"latest_block_height": str(self.height - lag),
+                                              "catching_up": state == "catching"}}}
 
     def _handler(self):
         fake = self
@@ -86,10 +140,18 @@ class FakeGateway:
             def do_GET(self):
                 self._note("GET")
                 path = self.path.split("?", 1)[0]
-                if path == "/chain-rpc/status":
+                node = re.match(r"^/node([0-9]+)/chain-rpc/status$", path)
+                if path in fake.fail_paths:
+                    self._json(429, {"error": "rate limited"})
+                elif path == "/chain-rpc/status":
                     with fake.lock:
-                        fake.height += 1
-                    self._json(200, {"result": {"sync_info": {"latest_block_height": str(fake.height)}}})
+                        fake.height += 0 if fake.freeze else fake.step
+                    if fake.height % EPOCH_LENGTH in fake.chain_fail_offsets:
+                        self._json(429, {"error": "rate limited"})
+                    else:
+                        self._json(200, {"result": {"sync_info": {"latest_block_height": str(fake.height)}}})
+                elif node:
+                    self._json(*fake.node_status(int(node.group(1))))
                 elif path == CHAIN_API + "/params":
                     self._json(200, {"params": {
                         "epoch_params": {
@@ -100,9 +162,10 @@ class FakeGateway:
                         "devshard_escrow_params": {"approved_versions": ["v5"]},
                     }})
                 elif path == CHAIN_API + "/current_epoch_group_data":
-                    self._json(200, {"epoch_group_data": {"epoch_index": str(fake.epoch())}})
+                    self._json(200, {"epoch_group_data": {"epoch_index": str(fake.group_epoch()),
+                                                          "poc_start_block_height": str(fake.group_epoch() * EPOCH_LENGTH)}})
                 elif path == CHAIN_API + "/active_confirmation_poc_event":
-                    self._json(200, {"is_active": False, "event": None})
+                    self._json(200, fake.cpoc_doc())
                 elif path == "/v1/status":
                     self._json(200, fake.status_doc())
                 elif path == "/v1/models":
@@ -136,7 +199,10 @@ class FakeGateway:
         doc = {"escrow_id": "27132", "nonce": 0, "phase": "active", "chain_phase": "Inference",
                "confirmation_poc_phase": "CONFIRMATION_POC_INACTIVE", "requests_blocked": False,
                "height_seed": {"state": "ok"}}
-        if self.status == "confirmation":
+        if self.status == "badseed":
+            doc["height_seed"] = {"state": "degraded", "slot_outcomes": 3}
+        blocking_cpoc = self.cpoc_active() and self.phase() != "CONFIRMATION_POC_COMPLETED"
+        if self.status == "confirmation" or (self.status_tracks_cpoc and blocking_cpoc):
             doc.update(confirmation_poc_phase="CONFIRMATION_POC_GENERATION", block_reason="confirmation_poc")
         return doc
 
@@ -152,6 +218,11 @@ class FakeGateway:
         if self.health == "poc_fence":
             doc.update(state="DEGRADED", readiness="UNAVAILABLE", reason="poc_fence",
                        admission="pre_dispatch_rejected")
+        elif self.health == "stale":
+            doc["checked_at"] = (now - datetime.timedelta(seconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        elif self.health == "timeout":
+            doc.update(state="DEGRADED", readiness="UNAVAILABLE", reason="connection_timeout",
+                       admission="not_observed")
         return doc
 
     def completion(self, body, authorized):

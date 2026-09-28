@@ -34,11 +34,12 @@ def render(summary):
             facts["height"], facts["epoch"], facts["epoch_offset"], facts["epoch_length"],
             facts["send_window"][0], facts["send_window"][1]))
     readiness = summary["readiness"]
-    lines.append("ready    %s" % readiness["state"])
+    if readiness["state"] != "SKIPPED":
+        lines.append("ready    %s" % readiness["state"])
     for reason in readiness["reasons"]:
         lines.append("         %s" % reason)
     for item in summary["verdicts"]:
-        lines.append("%-12s %-12s %-15s %s" % (
+        lines.append("%-12s %-14s %-15s %s" % (
             item["verdict"], item["check"], ",".join(item["maps"]), item["reason"]))
     if summary.get("guard"):
         guard = summary["guard"]
