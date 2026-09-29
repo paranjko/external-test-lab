@@ -1,0 +1,331 @@
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "Gonka Community DevNet Status API",
+    "version": "1.0.0",
+    "description": "Read-only public operational observations for Gonka Community DevNet. Responses are not an authentication, governance, or inference API. Inventory represents the latest Prometheus observation within 24 hours."
+  },
+  "servers": [{ "url": "https://gonka-dev.net" }],
+  "tags": [
+    {
+      "name": "Inventory",
+      "description": "Observed Host hardware and software"
+    },
+    { "name": "Network", "description": "Public chain participant registry" },
+    {
+      "name": "Gateway",
+      "description": "Inference gateway readiness and read-only state"
+    },
+    {
+      "name": "Telegram",
+      "description": "Telegram inference consumer readiness"
+    }
+  ],
+  "paths": {
+    "/status/gpus": {
+      "get": {
+        "tags": ["Inventory"],
+        "summary": "Get observed GPU inventory",
+        "description": "Returns the latest GPU-memory observations available during the preceding 24 hours. A Host without an exporter observation is absent rather than inferred.",
+        "operationId": "getGpuInventory",
+        "responses": {
+          "200": {
+            "description": "Prometheus instant-vector response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PrometheusVector" }
+              }
+            }
+          },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/status/software": {
+      "get": {
+        "tags": ["Inventory"],
+        "summary": "Get observed software inventory",
+        "description": "Returns the latest component observations available during the preceding 24 hours. Runtime observations take precedence over container metadata in the site UI.",
+        "operationId": "getSoftwareInventory",
+        "responses": {
+          "200": {
+            "description": "Prometheus instant-vector response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PrometheusVector" }
+              }
+            }
+          },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/status/participants": {
+      "get": {
+        "tags": ["Network"],
+        "summary": "Get the active public participant registry",
+        "description": "A read-only, paginated chain snapshot with blocked participants removed. The adapter pins all pages to one block height.",
+        "operationId": "getParticipants",
+        "responses": {
+          "200": {
+            "description": "Participant registry",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ParticipantRegistry" }
+              }
+            }
+          },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/status/gateway-health": {
+      "get": {
+        "tags": ["Gateway"],
+        "summary": "Get the gateway health observation",
+        "description": "A freshness-sensitive public health probe. `readiness: TRAFFIC_READY` requires a post-recovery authenticated admission receipt, not merely a running process.",
+        "operationId": "getGatewayHealth",
+        "responses": {
+          "200": {
+            "description": "Gateway health observation",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GatewayHealth" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status/gateway-health.prom": {
+      "get": {
+        "tags": ["Gateway"],
+        "summary": "Get gateway health metrics",
+        "operationId": "getGatewayHealthMetrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus text exposition",
+            "content": {
+              "text/plain; version=0.0.4": { "schema": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "/status/gateway/v1/status": {
+      "get": {
+        "tags": ["Gateway"],
+        "summary": "Get read-only DevShard gateway state",
+        "description": "A read-only gateway status projection. Fields may expand with the pinned gateway version; consumers must not use this endpoint for lifecycle mutation.",
+        "operationId": "getGatewayStatus",
+        "responses": {
+          "200": {
+            "description": "Gateway status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GatewayStatus" }
+              }
+            }
+          },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/status/gateway/v1/admission-status": {
+      "get": {
+        "tags": ["Gateway"],
+        "summary": "Get public-edge admission readiness",
+        "description": "Reports whether the public edge can safely admit a gateway request. It does not submit or reserve inference work.",
+        "operationId": "getGatewayAdmissionStatus",
+        "responses": {
+          "200": {
+            "description": "Admission status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AdmissionStatus" }
+              }
+            }
+          },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/status/gateway/metrics": {
+      "get": {
+        "tags": ["Gateway"],
+        "summary": "Get gateway metrics",
+        "operationId": "getGatewayMetrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus text exposition",
+            "content": {
+              "text/plain; version=0.0.4": { "schema": { "type": "string" } }
+            }
+          },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/status/telegram-consumer": {
+      "get": {
+        "tags": ["Telegram"],
+        "summary": "Get Telegram consumer readiness",
+        "operationId": "getTelegramConsumerStatus",
+        "responses": {
+          "200": {
+            "description": "Telegram consumer readiness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramConsumerHealth"
+                }
+              }
+            }
+          },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "ServiceUnavailable": {
+        "description": "The status adapter cannot obtain a bounded upstream observation"
+      },
+      "UpstreamUnavailable": {
+        "description": "The proxied upstream service is unavailable"
+      }
+    },
+    "schemas": {
+      "PrometheusVector": {
+        "type": "object",
+        "required": ["status", "data"],
+        "properties": {
+          "status": { "const": "success" },
+          "data": {
+            "type": "object",
+            "required": ["resultType", "result"],
+            "properties": {
+              "resultType": { "const": "vector" },
+              "result": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/PrometheusSample" }
+              }
+            }
+          }
+        }
+      },
+      "PrometheusSample": {
+        "type": "object",
+        "required": ["metric", "value"],
+        "properties": {
+          "metric": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "examples": [
+              {
+                "host": "gdc-node0",
+                "component": "inference-chain",
+                "version": "v0.2.15",
+                "source": "runtime"
+              }
+            ]
+          },
+          "value": {
+            "type": "array",
+            "prefixItems": [{ "type": "number" }, { "type": "string" }],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      },
+      "ParticipantRegistry": {
+        "type": "object",
+        "required": ["participant", "block_height", "pagination"],
+        "properties": {
+          "block_height": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+          "participant": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Participant" }
+          },
+          "pagination": {
+            "type": "object",
+            "required": ["next_key", "total"],
+            "properties": {
+              "next_key": { "type": ["string", "null"] },
+              "total": { "type": "string", "pattern": "^[0-9]+$" }
+            }
+          }
+        }
+      },
+      "Participant": {
+        "type": "object",
+        "required": ["address", "inference_url", "status"],
+        "properties": {
+          "address": { "type": "string" },
+          "inference_url": { "type": "string", "format": "uri" },
+          "status": { "type": "string" },
+          "validator_key": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "GatewayHealth": {
+        "type": "object",
+        "required": [
+          "state",
+          "readiness",
+          "checked_at",
+          "http_status",
+          "reason"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "examples": ["READY", "DEGRADED", "UNAVAILABLE", "RECOVERING"]
+          },
+          "readiness": {
+            "type": "string",
+            "examples": ["TRAFFIC_READY", "UNAVAILABLE"]
+          },
+          "checked_at": { "type": "string", "format": "date-time" },
+          "http_status": { "type": "integer", "minimum": 0 },
+          "latency_ms": { "type": "integer", "minimum": 0 },
+          "reason": { "type": "string" },
+          "admission": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "GatewayStatus": {
+        "type": "object",
+        "properties": {
+          "escrow_id": { "type": "string" },
+          "phase": { "type": "string" },
+          "chain_phase": { "type": "string" },
+          "requests_blocked": { "type": "boolean" },
+          "balance": { "type": "integer" },
+          "height_seed": { "type": "object" }
+        },
+        "additionalProperties": true
+      },
+      "AdmissionStatus": {
+        "type": "object",
+        "properties": {
+          "available": { "type": "boolean" },
+          "reason": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "TelegramConsumerHealth": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "inference_ready": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}
