@@ -28,6 +28,11 @@ if [[ "${*: -1}" == */.node-control/lock && -f "$CONTROL_TEST_ROOT/concurrent-st
   mv "$CONTROL_TEST_ROOT/concurrent.json" "$CONTROL_TEST_ROOT/containers.json"
   rm "$CONTROL_TEST_ROOT/concurrent-start"
 fi
+if [[ "${*: -1}" == */.node-control/lock && -f "$CONTROL_TEST_ROOT/concurrent-add" ]]; then
+  jq --slurpfile extra "$CONTROL_TEST_ROOT/concurrent-add" '. + $extra' "$CONTROL_TEST_ROOT/containers.json" >"$CONTROL_TEST_ROOT/concurrent.json"
+  mv "$CONTROL_TEST_ROOT/concurrent.json" "$CONTROL_TEST_ROOT/containers.json"
+  rm "$CONTROL_TEST_ROOT/concurrent-add"
+fi
 exec /usr/bin/mkdir "$@"
 SH
 cat >"$tmp/bin/docker" <<'SH'
@@ -128,4 +133,31 @@ run stop
 jq -e 'all(.[]; .running == false)' "$tmp/containers.json" >/dev/null
 jq -e 'length == 2' "$tmp/deploy/old-validator-name/.node-control/stopped.json" >/dev/null
 run start
+cp "$tmp/containers.json" "$tmp/baseline.json"
+# Refuse an additional signer, stopped or running, including one created after
+# discovery but before lock acquisition. A new application container also
+# invalidates the complete stopped inventory instead of being silently ignored.
+for timing in before-lock under-lock; do
+  for extra in running-signer stopped-signer application; do
+    cp "$tmp/baseline.json" "$tmp/containers.json"
+    run stop
+    cp "$tmp/deploy/old-validator-name/.node-control/stopped.json" "$tmp/receipt-before"
+    jq --arg extra "$extra" '.[0] | .id=("c"*64) |
+      .service=(if $extra=="application" then "api" else "tmkms" end) |
+      .running=($extra!="stopped-signer") |
+      .status=(if .running then "running" else "exited" end)' "$tmp/baseline.json" >"$tmp/extra.json"
+    if [[ "$timing" == under-lock ]]; then
+      cp "$tmp/extra.json" "$tmp/concurrent-add"
+    else
+      jq --slurpfile extra "$tmp/extra.json" '. + $extra' "$tmp/containers.json" >"$tmp/changed"
+      mv "$tmp/changed" "$tmp/containers.json"
+    fi
+    cp "$tmp/operations" "$tmp/before"
+    if run start; then echo "additional container accepted: $timing $extra" >&2; exit 1; fi
+    cmp "$tmp/before" "$tmp/operations"
+    cmp "$tmp/receipt-before" "$tmp/deploy/old-validator-name/.node-control/stopped.json"
+    [[ ! -d "$tmp/deploy/old-validator-name/.node-control/lock" ]]
+    rm "$tmp/deploy/old-validator-name/.node-control/stopped.json"
+  done
+done
 printf 'PASS SSH-only stop/start preserves exact containers and refuses signer replacement\n'

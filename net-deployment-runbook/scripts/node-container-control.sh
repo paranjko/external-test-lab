@@ -14,9 +14,9 @@ for path in /srv/dai /srv/dai/deploy; do
   [[ -d "$path" && ! -L "$path" ]] || fail "missing or unsafe deployment directory: $path"
 done
 # Inspect selected public Docker fields, never keys or container environments.
-ids="$(docker ps -aq --no-trunc --filter label=com.docker.compose.project)"
-[[ -n "$ids" ]] || fail 'no installed node containers; use JOIN to deploy the Host'
 read_containers() {
+  ids="$(docker ps -aq --no-trunc --filter label=com.docker.compose.project)"
+  [[ -n "$ids" ]] || fail 'no installed node containers; use JOIN to deploy the Host'
   inventory='[]'
   while IFS= read -r id; do
     [[ "$id" =~ ^[a-f0-9]{64}$ ]] || fail 'invalid container ID'
@@ -24,6 +24,7 @@ read_containers() {
     inventory="$(jq -cn --argjson old "$inventory" --argjson item "$item" '$old + [$item]')"
   done <<<"$ids"
 }
+discover_deployment() {
 read_containers
 # The SSH alias need not equal the original Compose project or directory name.
 # Discover the single Core deployment, accepting both supported layouts without
@@ -35,11 +36,19 @@ candidates="$(jq -c --arg root /srv/dai/deploy '[.[] | select(.service == "node"
       (ltrimstr($root + "/") | test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))))]' <<<"$inventory")"
 [[ "$(jq length <<<"$candidates")" == 1 ]] \
   || fail 'expected one installed node deployment in the supported layouts; none or multiple found; no containers changed'
-deploy="$(jq -er '.[0].working_dir' <<<"$candidates")"
+discovered="$(jq -er '.[0].working_dir' <<<"$candidates")"
+[[ -z "${deploy:-}" || "$deploy" == "$discovered" ]] || fail 'deployment changed during discovery; no containers changed'
+deploy="$discovered"
+project="$(jq -er '.[0].project' <<<"$candidates")"
 [[ -d "$deploy" && ! -L "$deploy" ]] || fail 'missing or unsafe discovered deployment directory'
-inventory="$(jq -c --arg deploy "$deploy" '[.[] | select(.working_dir == $deploy)]' <<<"$inventory")"
-jq -e '([.[].project] | unique | length) == 1 and ([.[] | select(.service == "node")] | length) == 1 and all(.[]; .status == "running" or .status == "exited" or .status == "created")' <<<"$inventory" >/dev/null \
+inventory="$(jq -c --arg deploy "$deploy" --arg project "$project" '[.[] | select(.working_dir == $deploy or .project == $project)]' <<<"$inventory")"
+jq -e --arg deploy "$deploy" 'all(.[]; .working_dir == $deploy) and
+  ([.[].project] | unique | length) == 1 and ([.[] | select(.service == "node")] | length) == 1 and
+  ([.[] | select(.service == "tmkms")] | length) <= 1 and
+  all(.[]; .status == "running" or .status == "exited" or .status == "created")' <<<"$inventory" >/dev/null \
   || fail 'ambiguous or busy deployment; no container was changed'
+}
+discover_deployment
 printf 'READY discovered node deployment=%s\n' "$deploy"
 control="$deploy/.node-control"
 [[ ! -L "$control" ]] || fail 'unsafe node control directory'
@@ -51,13 +60,10 @@ receipt="$control/stopped.json"
 [[ ! -L "$receipt" ]] || fail 'unsafe stop receipt'
 # Discovery runs before locking; refresh state under the lock so a concurrent
 # completed start cannot leave stop acting on an earlier stopped snapshot.
-ids="$(jq -r '.[].id' <<<"$inventory")"
-read_containers
-jq -e 'all(.[]; .status == "running" or .status == "exited" or .status == "created")' <<<"$inventory" >/dev/null \
-  || fail 'deployment became busy during discovery; no containers changed'
+discover_deployment
 
 if [[ "$action" == stop && ! -e "$receipt" ]]; then
-  jq '[.[] | select(.running)]' <<<"$inventory" >"$control/stopped.tmp"
+  jq '.' <<<"$inventory" >"$control/stopped.tmp"
   mv "$control/stopped.tmp" "$receipt"
 fi
 if [[ ! -f "$receipt" ]]; then
@@ -69,8 +75,9 @@ if [[ ! -f "$receipt" ]]; then
 fi
 [[ "$(stat -c %u "$receipt")" == 0 && "$(stat -c %a "$receipt")" == 600 ]] || fail 'unsafe stop receipt ownership or permissions'
 jq -e --argjson current "$inventory" '
-  type == "array" and all(.[]; . as $saved |
-    any($current[]; .id == $saved.id and .project == $saved.project and .service == $saved.service))
+  def identities: map({id,project,working_dir,service}) | sort_by(.id);
+  type == "array" and all(.[]; (.running | type) == "boolean") and
+  (identities) == ($current | identities)
 ' "$receipt" >/dev/null || fail 'containers changed since stop; use JOIN recovery without starting a replacement signer'
 
 if [[ "$action" == stop ]]; then
@@ -85,9 +92,9 @@ if [[ "$action" == stop ]]; then
   done <<<"$order"
   printf 'PASS node stopped; containers, images, keys and signing state retained\n'
 else
-  jq -e 'any(.[]; .service == "node")' "$receipt" >/dev/null \
+  jq -e 'any(.[]; .service == "node" and .running)' "$receipt" >/dev/null \
     || fail 'Core was not running before stop; use JOIN recovery rather than claiming a node restart'
-  order="$(jq -r 'sort_by(if .service == "tmkms" then 2 elif .service == "node" then 1 else 0 end) | .[].id' "$receipt")"
+  order="$(jq -r 'map(select(.running)) | sort_by(if .service == "tmkms" then 2 elif .service == "node" then 1 else 0 end) | .[].id' "$receipt")"
   while IFS= read -r id; do
     [[ -n "$id" ]] || continue
     printf 'WAIT starting container=%s\n' "$id"
