@@ -1,0 +1,21 @@
+{
+  "app_state": {
+    "bank": {
+      "denom_metadata": [
+        {
+          "description": "Coins for the Gonka network.",
+          "base": "ngonka",
+          "display": "ngonka",
+          "name": "Gonka",
+          "symbol": "GNK",
+          "denom_units": [
+            {"denom": "ngonka", "exponent": 0, "aliases": ["nanogonka"]},
+            {"denom": "ugonka", "exponent": 3, "aliases": ["microgonka"]},
+            {"denom": "mgonka", "exponent": 6, "aliases": ["milligonka"]},
+            {"denom": "gonka", "exponent": 9, "aliases": []}
+          ]
+        }
+      ]
+    }
+  }
+}

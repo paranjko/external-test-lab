@@ -70,12 +70,6 @@ jobs:
     environment: ${{ github.event_name == 'workflow_dispatch' && 'gdc-node4-runner' || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Checkout pinned Gonka source
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: gonka-ai/gonka
-          path: net-deployment-runbook/vendor/gonka
-          fetch-depth: 0
       - name: Check runbook shell scripts on Node4
         if: runner.name == 'external-test-lab-gdc-node4'
         run: ./ops/github-actions-runner/run-shellcheck-native.sh net-deployment-runbook
@@ -83,12 +77,24 @@ jobs:
         if: runner.name != 'external-test-lab-gdc-node4'
         run: make -C net-deployment-runbook shellcheck
       - name: Test runbook contracts
-        run: >-
-          GONKA_UPSTREAM_WORKTREE="$GITHUB_WORKSPACE/net-deployment-runbook/vendor/gonka"
-          make -C net-deployment-runbook test
+        run: make -C net-deployment-runbook test
       - name: Test edge installation ownership in disposable root
         if: runner.name != 'external-test-lab-gdc-node4'
         run: sudo make -C net-deployment-runbook test-edge-install-ownership
+
+  upstream-profiles:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Checkout Gonka release refs for upstream audit
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: gonka-ai/gonka
+          path: net-deployment-runbook/.data/upstream/gonka
+          fetch-depth: 0
+      - name: Verify release profiles against upstream
+        run: make -C net-deployment-runbook verify-upstream-profiles
 
   public-edge-integration:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false

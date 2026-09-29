@@ -84,6 +84,10 @@ LAB_CANDIDATE=true \
 GATEWAY_NODE=gateway.example \
   "$temporary/runbook/scripts/build-gateway-image.sh" >"$temporary/v4-keep.stdout"
 grep -Fq "matches pinned v4 source commit $v4_commit" "$temporary/v4-keep.stdout"
+if grep -Eq '^(fetch-upstream|git |docker build)' "$temporary/ssh.log"; then
+  echo 'reusing a pinned gateway image must not fetch or build sources' >&2
+  exit 1
+fi
 
 : >"$temporary/ssh.log"
 TEST_IMAGE_REVISION=1111111111111111111111111111111111111111 \
@@ -100,8 +104,8 @@ GATEWAY_NODE=gateway.example \
   "$temporary/runbook/scripts/build-gateway-image.sh" >"$temporary/v4-rebuild.stdout"
 grep -Fq "expected $v4_commit" "$temporary/v4-rebuild.stdout"
 grep -Fqx 'fetch-upstream' "$temporary/ssh.log"
-grep -Fq "git -C $temporary/runbook/vendor/gonka fetch --depth 1 origin refs/tags/release/v0.2.15-devshard-v4.0.1:refs/tags/release/v0.2.15-devshard-v4.0.1" "$temporary/ssh.log"
-grep -Fq "git -C $temporary/runbook/vendor/gonka rev-parse release/v0.2.15-devshard-v4.0.1^{commit}" "$temporary/ssh.log"
+grep -Fq "git -C $temporary/runbook/.data/upstream/gonka fetch --depth 1 origin refs/tags/release/v0.2.15-devshard-v4.0.1:refs/tags/release/v0.2.15-devshard-v4.0.1" "$temporary/ssh.log"
+grep -Fq "git -C $temporary/runbook/.data/upstream/gonka rev-parse release/v0.2.15-devshard-v4.0.1^{commit}" "$temporary/ssh.log"
 grep -Fq "docker build --pull --target devshardctl-runtime --label org.opencontainers.image.revision=$v4_commit --label org.opencontainers.image.ref.name=release/v0.2.15-devshard-v4.0.1" "$temporary/ssh.log"
 grep -Fq 'docker save ghcr.io/paranjko/gdc-devshard-gateway:candidate' "$temporary/ssh.log"
 grep -Fq 'gateway.example docker load' "$temporary/ssh.log"
