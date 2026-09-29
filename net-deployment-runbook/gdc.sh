@@ -554,6 +554,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 gateway-continuity
   ./gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join --resume <COMPLETE_RUN_ID> --restore <ARCHIVE> --recover-consensus-signer --exclusive-signer --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
@@ -658,7 +659,7 @@ invocation_option_names() {
   local arg names=''
   for arg in "$@"; do
     case "${arg%%=*}" in
-      --mnemonic-file|--mnemonic-prompt|--restore|--verification|--plan|--resume|--public-host|--bootstrap-file|--skip-qualification|--old-signer-fence|--chain-id|--source-rpc|--pex|--preflight-deadline)
+      --mnemonic-file|--mnemonic-prompt|--restore|--verification|--plan|--resume|--recover-consensus-signer|--exclusive-signer|--public-host|--bootstrap-file|--skip-qualification|--old-signer-fence|--chain-id|--source-rpc|--pex|--preflight-deadline)
         [[ " $names " == *" ${arg%%=*} "* ]] || names+="${names:+ }${arg%%=*}" ;;
     esac
   done
@@ -1411,6 +1412,7 @@ case "$COMMAND" in
     unset GDC_JOIN_REBIND_EXISTING_PARTICIPANT
     join_source_rpc='' join_pex=''
     join_source_args=()
+    join_recover_consensus=false join_exclusive_signer=false join_recovery_start=false
     join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_mnemonic_file='' join_mnemonic_prompt=false join_chain_id=gonka-devnet-community join_preflight_deadline="${GDC_JOIN_PREFLIGHT_DEADLINE:-30m}" skip_qualification=false verification=false plan_only=false
     # JOIN derives its exact compatible runtime from the first healthy
     # Bootstrap seed. An operator-selected release or composition could
@@ -1448,6 +1450,8 @@ case "$COMMAND" in
           [[ -z "$join_source_rpc" && "${2:-}" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?(/[A-Za-z0-9/_-]*)?$ ]] || { echo 'host join --source-rpc expects one RPC URL' >&2; exit 2; }
           join_source_rpc="${2%/}"; join_source_args=(--source-rpc "$join_source_rpc"); shift ;;
         --resume) join_resume_run="${2:-}"; shift ;;
+        --recover-consensus-signer) join_recover_consensus=true ;;
+        --exclusive-signer) join_exclusive_signer=true ;;
         --old-signer-fence)
           join_old_signer_fence="${2:-}"
           [[ -n "$join_old_signer_fence" && -f "$join_old_signer_fence" && -r "$join_old_signer_fence" ]] || {
@@ -1513,6 +1517,16 @@ case "$COMMAND" in
       echo 'GDC_JOIN_PREFLIGHT_RETRY_SECONDS must be a positive integer up to 300' >&2; exit 2;
     }
     [[ -z "$join_resume_run" || "$join_resume_run" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { echo 'host join --resume requires a valid run ID' >&2; exit 2; }
+    if [[ "$join_recover_consensus" == true ]]; then
+      [[ -n "$join_resume_run" && -n "$join_restore_archive" && "$join_exclusive_signer" == true ]] || {
+        echo 'consensus recovery requires --resume <completed-run>, --restore <archive> and --exclusive-signer' >&2; exit 2;
+      }
+      [[ "$plan_only" == false && "$skip_qualification" == false && -z "$join_source_rpc" && -z "$join_pex" && -z "$join_gpu_alias" ]] || {
+        echo 'consensus recovery preserves the running deployment and does not accept plan, qualification, peer or GPU overrides' >&2; exit 2;
+      }
+    elif [[ "$join_exclusive_signer" == true ]]; then
+      echo '--exclusive-signer requires --recover-consensus-signer' >&2; exit 2
+    fi
     [[ -z "$join_old_signer_fence" || -n "$join_resume_run" ]] || { echo 'host join --old-signer-fence requires --resume <run-id>' >&2; exit 2; }
     [[ -z "$join_old_signer_fence" ]] || {
       echo 'host join does not accept an externally authored signer-fence receipt: independent prior-Host evidence is not implemented' >&2
@@ -1573,6 +1587,23 @@ case "$COMMAND" in
     fi
     export GDC_JOIN_PREVIOUS_RUN_ID="$join_previous_run_id"
     [[ -n "$join_public_host" ]] || { echo 'host join requires --public-host for a generated Join Profile' >&2; exit 2; }
+    if [[ "$join_recover_consensus" == true ]]; then
+      join_parent_run="$GDC_HOME/runs/$join_resume_run/join-$join_alias"
+      join_recovery_run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$-consensus"
+      join_run="$GDC_HOME/runs/$join_recovery_run_id/join-$join_alias"
+      install -d -m 0700 "$GDC_HOME/runs/$join_recovery_run_id"
+      "$ROOT/scripts/prepare-consensus-recovery-inputs.sh" "$join_alias" "$join_parent_run" \
+        "$join_restore_archive" "$join_recovery_run_id" "$join_run" "$join_public_host"
+      # Explicit operator attestation is bound to this one validated archive
+      # and run. It is not a historical signing-state receipt.
+      (umask 077; set -o noclobber; jq -cn --arg run "$join_recovery_run_id" --arg node "$join_alias" \
+        --arg archive "$(jq -er .archive_sha256 "$join_run/recovery-parent.json")" \
+        '{run_id:$run,node_name:$node,archive_sha256:$archive,exclusive_signer_confirmed:true}' \
+        >"$join_run/owner-authority.json")
+      sync -f "$join_run/owner-authority.json"
+      join_resume_run="$join_recovery_run_id"
+      join_recovery_start=true
+    fi
     if [[ -n "$join_resume_run" ]]; then
       join_run="$GDC_HOME/runs/$join_resume_run/join-$join_alias"
       join_resume_verification="$("$ROOT/scripts/verify-join-resume-inputs.sh" --run-dir "$join_run" \
@@ -1603,6 +1634,18 @@ case "$COMMAND" in
       # shellcheck disable=SC1090 # retained role input was created by the original JOIN.
       source "$join_role_config"
       join_resume_state="$(jq -er .receipt_chain.last_state <<<"$join_resume_verification")"
+      if [[ -e "$join_run/recovery-parent.json" ]]; then
+        join_recovery_mode=readback
+        [[ "$join_recovery_start" != true ]] || join_recovery_mode=start
+        [[ -n "$join_bootstrap_file" ]] || join_bootstrap_file="$STATE/network-bootstrap.json"
+        if [[ "$join_resume_state" == COMPLETE ]]; then
+          printf 'PASS consensus recovery is already complete; no Host action was performed\n'
+        else
+          run_phase "join-consensus-recovery-$join_alias" "$ROOT/scripts/phase-consensus-signer-recovery.sh" \
+            "$join_alias" "$join_run" "$join_bootstrap_file" "$join_recovery_mode"
+        fi
+        exit 0
+      fi
       case "$join_resume_state" in
         CANONICAL_RUNNING|APPLICATION_ACTIVE)
           run_phase "join-resume-canonical-$join_alias" "$ROOT/scripts/phase-join-resume-canonical.sh" \

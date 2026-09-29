@@ -23,6 +23,13 @@ when the portable baseline is sufficient.
 `flock` is required by the preview lifecycle controller and is declared in the
 CI command baseline.
 
+`make test-tmkms-recovery-boundary` builds an isolated test image from the pinned
+TMKMS image. Its extra packages are declared in
+[`scripts/tmkms-boundary-packages.txt`](scripts/tmkms-boundary-packages.txt).
+They provide JSON assertions and the Unix-socket protocol transport; they are
+not operator or Host dependencies. The build checks that the TMKMS executable
+is unchanged, and the test runs without network access or Host mounts.
+
 Before adding an external executable to runbook shell code:
 
 1. Check both manifests and the `runbook-contracts` workflow job.
