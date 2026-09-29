@@ -89,3 +89,11 @@ jobs:
       - name: Test edge installation ownership in disposable root
         if: runner.name != 'external-test-lab-gdc-node4'
         run: sudo make -C net-deployment-runbook test-edge-install-ownership
+
+  public-edge-integration:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Test public edge routing in disposable containers
+        run: make -C net-deployment-runbook edge-integration

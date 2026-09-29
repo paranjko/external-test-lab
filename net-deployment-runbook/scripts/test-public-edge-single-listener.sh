@@ -6,6 +6,11 @@ phase="$ROOT/scripts/phase-ops.sh"
 renderer="$ROOT/04-ops/render-ops.sh"
 user_ops="$ROOT/../ops/chore/user-ops.sh"
 
+grep -Fq 'admin 127.0.0.1:2020' "$renderer"
+for template in Caddyfile PublicCaddyfile; do
+  grep -Fq 'admin 127.0.0.1:2019' "$ROOT/04-ops/edge-node/$template"
+done
+
 grep -Fq 'docker compose --profile public-edge up -d --force-recreate public-grafana' "$phase"
 grep -Fq 'curl -fsS http://127.0.0.1:3001/api/health' "$phase"
 grep -Fq 'for attempt in \$(seq 1 60)' "$phase"

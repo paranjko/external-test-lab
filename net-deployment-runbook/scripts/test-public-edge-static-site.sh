@@ -39,18 +39,37 @@ cat >"$tmp/upstream/Caddyfile" <<'CADDY'
     respond "{http.request.uri}" 200
   }
 }
+https://node5.gonka-dev.net, https://node6.gonka-dev.net, https://node7.gonka-dev.net, https://node8.gonka-dev.net {
+  tls internal
+  respond "participant {host} {uri}" 200
+}
 CADDY
 
 cat >"$tmp/admission/Caddyfile" <<'CADDY'
+{
+  admin 127.0.0.1:2020
+}
 http://127.0.0.1:18083 {
   respond "local admission" 200
+}
+:8000 {
+  respond "local participant {uri}" 200
 }
 CADDY
 
 docker network create "$network" >/dev/null
 docker run -d --name "$upstream_name" --network "$network" --network-alias gateway \
+  --network-alias node5.gonka-dev.net --network-alias node6.gonka-dev.net \
+  --network-alias node7.gonka-dev.net --network-alias node8.gonka-dev.net \
   -v "$tmp/upstream/Caddyfile:/etc/caddy/Caddyfile:ro" \
   caddy:2.11.4-alpine caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+
+# Trust only the disposable upstream CA, preserving real TLS and SNI checks
+deadline=$((SECONDS + 20))
+until docker cp "$upstream_name:/data/caddy/pki/authorities/local/root.crt" "$tmp/root.crt" 2>/dev/null; do
+  (( SECONDS < deadline )) || { docker logs "$upstream_name" >&2; exit 1; }
+  sleep 1
+done
 
 docker run --rm \
   -e PUBLIC_HOST=:18082 \
@@ -74,7 +93,9 @@ grep -Fq '@preview_status path_regexp preview_status ^/(?:preview/)?[1-9][0-9]*/
 grep -Fq '@dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info))$' "$tmp/Caddyfile"
 grep -Fq 'reverse_proxy {re.dynamic_participant_status.1}:443' "$tmp/Caddyfile"
 
-docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 \
+docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 -p 127.0.0.1::18082 \
+  -e SSL_CERT_FILE=/test-root.crt \
+  -v "$tmp/root.crt:/test-root.crt:ro" \
   -e PUBLIC_HOST=:18082 \
   -e SITE_HOST=:18081 \
   -e API_HOST=:18083 \
@@ -107,6 +128,21 @@ curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/" | grep -q '
   exit 1
 }
 curl -fsS "http://127.0.0.1:$port/status/participants" | grep -Fxq '/status/participants'
+for prefix in '' /preview/172; do
+  for node in 5 6 7 8; do
+    for endpoint in health v1/versions chain-rpc/status chain-rpc/net_info; do
+      curl -fsS --max-time 5 "http://127.0.0.1:$port$prefix/status/node$node.gonka-dev.net/$endpoint" \
+        | grep -Fxq "participant node$node.gonka-dev.net /$endpoint"
+    done
+  done
+done
+# Reload each Caddy in a shared network namespace without replacing the other
+docker exec "$admission_name" caddy reload --address 127.0.0.1:2020 --config /etc/caddy/Caddyfile >/dev/null
+curl -fsS "http://127.0.0.1:$port/" | grep -q 'EXTERNAL TEST LAB'
+docker exec "$name" caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+curl -fsS "http://127.0.0.1:$port/" | grep -q 'EXTERNAL TEST LAB'
+participant_port="$(docker port "$name" 18082/tcp | awk -F: 'NR == 1 {print $NF}')"
+curl -fsS "http://127.0.0.1:$participant_port/v1/models" | grep -Fxq 'local participant /v1/models'
 curl -fsS "http://127.0.0.1:$port/preview/172/status/participants" | grep -Fxq '/status/participants'
 curl -fsS "http://127.0.0.1:$port/preview/172/status/index.html" | grep -Fxq '<main>candidate OpenAPI documentation</main>'
 curl -fsS "http://127.0.0.1:$port/preview/172/status/openapi.json" | grep -Fxq '{"openapi":"3.2.0"}'

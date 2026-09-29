@@ -12,7 +12,7 @@
   # fall through to the shared gateway: a gateway outage must not make one
   # Host impersonate every other Host, and a healthy gateway must not mask a
   # failed participant.
-  @participant_api_status path /health /status /v1/versions /v2/participants /v2/participants/*
+  @participant_api_status path /health /status /v1/versions /v1/models /v2/participants /v2/participants/*
   handle @participant_api_status {
     reverse_proxy 127.0.0.1:8000 {
       header_up Host {$PUBLIC_HOST}
@@ -254,6 +254,8 @@ preview.{$SITE_HOST} {
   @status_data {
     path /status/*
     not path /status/telegram-consumer
+    # Caddy sorts path matchers before regexp handlers, regardless of file order
+    not path_regexp ^/status/node[0-9]+\.gonka-dev\.net/(health|v1/versions|chain-rpc/(status|net_info))$
   }
   handle @status_data {
     reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {
