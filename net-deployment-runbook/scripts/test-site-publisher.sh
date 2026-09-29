@@ -28,7 +28,7 @@ grep -Fq -- '--exclude preview/' "$SITE_RELEASE_TEST_LOG"
 make -C "$ROOT" publish-site-release \
   site_release_dir="$tmp/release" site_publish_prefix=preview/1 \
   deploy_host=edge.example deploy_user=deployer
-grep -Fq '/srv/dai/edge/site/preview/1' "$SITE_RELEASE_TEST_LOG"
+grep -Fq '/srv/preview/1' "$SITE_RELEASE_TEST_LOG"
 
 revision=0123456789012345678901234567890123456789
 printf '<script src="/config.js"></script>\n' >"$tmp/release/index.html"
@@ -41,8 +41,13 @@ make -C "$ROOT" publish-site-preview \
   site_release_dir="$tmp/release" site_publish_prefix=preview/1 \
   deploy_host=edge.example deploy_user=deployer
 grep -Fq 'https://gonka-dev.net/preview/1/status/participants' "$SITE_RELEASE_TEST_LOG"
-grep -Fq '/srv/dai/edge/site/preview/.generations/1/.staging-0123456789012345678901234567890123456789' "$SITE_RELEASE_TEST_LOG"
+grep -Fq '/srv/preview/.generations/1/.staging-0123456789012345678901234567890123456789' "$SITE_RELEASE_TEST_LOG"
 grep -Fq 'bash -s -- publish 1 0123456789012345678901234567890123456789' "$SITE_RELEASE_TEST_LOG"
+grep -Fq 'body=$(curl --fail --silent --show-error' "$SITE_RELEASE_TEST_LOG"
+if grep -Fq '| test -s' "$ROOT/scripts/site-release.sh"; then
+  echo 'preview endpoint readiness must not close the curl pipe early' >&2
+  exit 1
+fi
 if grep -Fq 'publish-preview-endpoints' "$SITE_RELEASE_TEST_LOG" || grep -Fq 'publish-preview-static' "$SITE_RELEASE_TEST_LOG"; then
   echo 'preview publication unexpectedly used a split deployment action' >&2
   exit 1
@@ -65,7 +70,7 @@ grep -Fq 'bash -s -- rollback 1' "$SITE_RELEASE_TEST_LOG"
 : >"$SITE_RELEASE_TEST_LOG"
 make -C "$ROOT" remove-site-release site_publish_prefix=preview/83 \
   deploy_host=edge.example deploy_user=deployer
-grep -Fxq -- '-o BatchMode=yes deployer@edge.example rm -rf -- /srv/dai/edge/site/preview/83' "$SITE_RELEASE_TEST_LOG"
+grep -Fxq -- '-o BatchMode=yes deployer@edge.example rm -rf -- /srv/preview/83' "$SITE_RELEASE_TEST_LOG"
 
 if make -C "$ROOT" remove-site-release site_publish_prefix=preview/0 \
   deploy_host=edge.example deploy_user=deployer; then

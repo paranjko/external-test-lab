@@ -23,9 +23,11 @@ printf '<!doctype html><title>backend preview</title>backend\n' >"$artifact_back
 printf '<!doctype html><title>combined preview</title>combined\n' >"$artifact_combined/index.html"
 mkdir -p "$test_root/backend-www/status"
 printf 'backend\n' >"$test_root/backend-www/status/test"
+printf ':8080 {\n  file_server\n}\n' >"$test_root/backend-caddyfile"
 cat >"$test_root/backend.Dockerfile" <<'EOF'
 FROM busybox:1.36.1
 COPY backend-www /srv
+COPY backend-caddyfile /etc/caddy/Caddyfile
 HEALTHCHECK --interval=1s --timeout=1s --retries=10 CMD wget -q -O /dev/null http://127.0.0.1:8080/status/test || exit 1
 CMD ["httpd", "-f", "-p", "8080", "-h", "/srv"]
 EOF
@@ -37,11 +39,11 @@ build_backend() {
 }
 backend_image="$(build_backend "$revision_backend")"
 combined_backend_image="$(build_backend "$revision_combined")"
-backend_digest=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-combined_backend_digest=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+backend_digest="$(sha256sum "$test_root/backend-caddyfile" | awk '{print $1}')"
+combined_backend_digest="$backend_digest"
 
 prepare_artifact() {
-  local artifact="$1" pr="$2" revision="$3" mode="$4" frontend="$5" backend="${6:-}" image="${7:-}" config_digest adapter_digest backend_revision
+  local artifact="$1" pr="$2" revision="$3" mode="$4" frontend="$5" backend="${6:-}" image="${7:-}" config_digest adapter_digest backend_revision archive_digest=''
   printf 'window.GDC_CONFIG = {"chainId":"fixture","nodes":[]};\n' >"$artifact/config.js"
   printf 'window.fetch = window.fetch.bind(window);\n' >"$artifact/preview-status-adapter.js"
   config_digest="$(sha256sum "$artifact/config.js" | awk '{print $1}')"
@@ -49,9 +51,14 @@ prepare_artifact() {
   printf '%s\n' '{"schema_version":1,"source_revision":"'"$revision"'","preview_number":'"$pr"',"renderer_config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","config_sha256":"'"$config_digest"'","status_adapter_sha256":"'"$adapter_digest"'"}' >"$artifact/preview-runtime-config.json"
   printf '%s\n' '{"schema_version":1,"source_revision":"'"$revision"'","source_archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","builder_image_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' >"$artifact/frontend-build.json"
   backend_revision=null
-  [[ "$mode" == static ]] || backend_revision="$revision"
-  jq -n --arg revision "$revision" --arg mode "$mode" --arg frontend "$frontend" --arg config "$config_digest" --arg backend "$backend" --arg image "$image" --arg backend_revision "$backend_revision" \
-    '{schema_version:1,head_revision:$revision,mode:$mode,frontend_revision:$revision,backend_revision:(if $backend_revision == "null" then null else $backend_revision end),frontend_digest:$frontend,runtime_config_sha256:$config,backend_digest:(if $backend == "" then null else $backend end),backend_image_id:(if $image == "" then null else $image end)}' \
+  if [[ "$mode" != static ]]; then
+    backend_revision="$revision"
+    docker image save "$image" -o "$artifact/backend-image.tar"
+    archive_digest="$(sha256sum "$artifact/backend-image.tar" | awk '{print $1}')"
+    printf '%s\n' "$archive_digest" >"$artifact/backend-image.tar.sha256"
+  fi
+  jq -n --arg revision "$revision" --arg mode "$mode" --arg frontend "$frontend" --arg config "$config_digest" --arg backend "$backend" --arg image "$image" --arg backend_revision "$backend_revision" --arg archive "$archive_digest" \
+    '{schema_version:1,head_revision:$revision,mode:$mode,frontend_revision:$revision,backend_revision:(if $backend_revision == "null" then null else $backend_revision end),frontend_digest:$frontend,runtime_config_sha256:$config,backend_digest:(if $backend == "" then null else $backend end),backend_image_id:(if $image == "" then null else $image end),backend_archive_sha256:(if $archive == "" then null else $archive end)}' \
     >"$artifact/preview-composition.json"
 }
 

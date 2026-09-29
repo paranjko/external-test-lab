@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+grep -Fq 'previewPrefix && DYNAMIC_STATUS_HOST.test(host)' "$ROOT/04-ops/site/src/app.js"
 tmp_root="${TMPDIR:-$ROOT/../.data/preview-tmp}"
 mkdir -p "$tmp_root"
 tmp="$(mktemp -d "$tmp_root/gdc-preview-endpoints-test.XXXXXX")"
