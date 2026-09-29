@@ -17,7 +17,8 @@ The Lab provides an independent readiness recommendation. The final release deci
 
 - **Community DevNet** (`gonka-dev.net`) — the primary environment: geographically distributed nodes, chain-accounted DevShard gateway, public dashboards. See [devnet/architecture.md](../devnet/architecture.md).
 - **Burst GPU capacity** — rented when release-candidate, large-model, or load testing requires it; usage itemized in monthly reports.
-- All testing uses DevNet-only keys and accounts; never mainnet keys, funds, or endpoints.
+- Keys, funds and completions stay on DevNet; never mainnet keys, funds, or inference.
+- Public mainnet chain reads (GET only, no key) are in scope for escrow-slot studies.
 
 ## Scope (in)
 
@@ -41,20 +42,18 @@ The Lab builds confidence in protocol changes through ordered, separately
 reported iterations. A later iteration does not turn an earlier baseline into
 an assumed result.
 
-1. **Current baseline — `v2026.07.23` / `devshardd v3`.** Establish a clean
-   Community DevNet, prove independent Host joins, and retain chain,
-   inference, and public-observability evidence for the v3 runtime.
-2. **Next upgrade iteration — `v2026.08.06` / `devshardd v3` and `v4`.** In a
-   separate change and run, rehearse the documented network upgrade and verify
-   the relevant v3/v4 lifecycle before and after it.
-3. **Future target — `devshardd v5`.** Use the completed baseline and upgrade
-   evidence to define the v5 validation request and its acceptance pack; v5 is
-   not assumed compatible until that run succeeds.
+1. **Current baseline — `devshardd v5` (`devshard/v5.0.2`).** Chain name `v5`
+   on mainnet and Community DevNet `approved_versions`. v3 and v4 Lab
+   iterations are retired. Mainnet still lists `v4.1` beside `v5`; that is
+   on-chain coexistence, not a Lab baseline.
+2. **Next published train — Gonka `v0.2.16`.** Open on `gonka-ai/gonka`; no
+   `release/v0.2.16` tag. It is not a Lab target until a validation request
+   names it. No DevShard `v6` release or proposal is published.
 
 Each iteration retains the release-profile lock, immutable run manifest,
 sanitized chain receipts and verdicts, authenticated inference evidence, and
 public dashboard/browser evidence. These are the comparison artifacts for the
-next iteration and the basis for a repeatable v5 procedure.
+next iteration.
 
 ## Release assurance flow
 
