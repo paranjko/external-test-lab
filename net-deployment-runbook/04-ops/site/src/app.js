@@ -1230,7 +1230,7 @@ async function participantNode(
   return {
     name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
     address: participant.address,
-    publicHost: catalog?.publicHost || host,
+    publicHost: host || catalog?.publicHost,
     statusBase: participantStatusBase,
     ip: discovered.ip || catalog?.ip || "",
     geo: discovered.geo || catalog?.geo || null,
@@ -1258,8 +1258,8 @@ function topologyHost(listenAddress: mixed): string {
 
 // The participant registry represents identities, not physical Hosts. A Host
 // may retain an old participant record after recovery, so using its rows as
-// map markers duplicates one machine. Match network-complect: take the
-// observed seed itself plus its P2P peers, deduplicated by the public Host.
+// map markers duplicates one machine. Observe peers as additional Hosts,
+// but never use their absence to hide a registered participant.
 function topologyHosts(status: any, netInfo: any): Array<string> {
   const hosts = [
     topologyHost(status?.result?.node_info?.listen_addr),
@@ -1277,6 +1277,16 @@ function participantHost(participant: Participant): string {
   } catch {
     return "";
   }
+}
+
+function observedParticipantHosts(
+  participants: Array<Participant>,
+  peers: Array<string>,
+): Array<string> {
+  return [...new Set([
+    ...participants.map(participantHost).filter(Boolean),
+    ...peers,
+  ])].sort((left, right) => left.localeCompare(right));
 }
 
 // Prefer the current consensus identity when a Host has historical registry
@@ -1338,9 +1348,7 @@ async function reconcileParticipants(): Promise<number> {
     topologyStatusResult.status === "fulfilled" && topologyResult.status === "fulfilled"
       ? topologyHosts(topologyStatusResult.value, topologyResult.value)
       : [];
-  const hosts = observedTopologyHosts.length
-    ? observedTopologyHosts
-    : [...new Set(participants.map(participantHost).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+  const hosts = observedParticipantHosts(participants, observedTopologyHosts);
   const next = (
     await Promise.all(
       hosts.map((host) =>

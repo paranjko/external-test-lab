@@ -95,8 +95,8 @@ if ssh "$GATEWAY_NODE" docker image inspect "$IMAGE" >/dev/null 2>&1; then
   printf 'REBUILD %s has source revision %s; expected %s\n' \
     "$IMAGE" "${existing_revision:-unreported}" "$SOURCE_COMMIT"
 fi
-"$ROOT/scripts/fetch-upstream.sh"
-SRC="$ROOT/vendor/gonka"
+SRC="$ROOT/.data/upstream/gonka"
+"$ROOT/scripts/fetch-upstream.sh" "$SRC"
 BUILD_TREE="$(mktemp -d /tmp/gdc-devshard-source.XXXXXX)"
 cleanup() { git -C "$SRC" worktree remove --force "$BUILD_TREE" >/dev/null 2>&1 || rm -rf "$BUILD_TREE"; }
 trap cleanup EXIT

@@ -17,15 +17,7 @@ if [[ ! -f "$release_dir/preview-composition.json" ]]; then
   printf 'SKIP no source-bound preview artifact was produced\n'
   exit 0
 fi
-mode="$(jq -r '.mode // empty' "$release_dir/preview-composition.json")"
-case "$mode" in
-  static) ;;
-  backend|combined)
-    image_id="$(docker image inspect --format '{{.Id}}' "$backend_image")"
-    [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'built backend image is unavailable'
-    docker image save "$backend_image" -o "$release_dir/backend-image.tar"
-    sha256sum "$release_dir/backend-image.tar" | awk '{print $1}' >"$release_dir/backend-image.tar.sha256"
-    ;;
-  *) die 'preview composition mode is invalid' ;;
-esac
+# The composition already binds the archive bytes; another docker save can
+# change them even for the same image.
+"$root/scripts/verify-site-preview-artifact.sh" "$release_dir" "$PREVIEW_REVISION"
 printf 'PASS prepared credential-free source-bound preview artifact\n'

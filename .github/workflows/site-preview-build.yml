@@ -50,6 +50,7 @@ jobs:
           test-site-preview-context
           test-preview-status-renderer
           test-preview-frontend-builder
+          test-isolated-preview-ci-artifact
 
       - name: Run validator-map CDP regression
         run: >-

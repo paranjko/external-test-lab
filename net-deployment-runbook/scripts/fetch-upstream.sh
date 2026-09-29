@@ -7,7 +7,7 @@ source "$ROOT/scripts/lib.sh"
 # automatically inherited by a child shell.  Load the same profile here so
 # the repository URL and immutable commit are both defined.
 load_project
-DEST="${1:-$ROOT/vendor/gonka}"
+DEST="${1:-$ROOT/.data/upstream/gonka}"
 if [[ -d "$DEST/.git" ]]; then
   git -C "$DEST" fetch --tags --force origin
 else

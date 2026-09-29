@@ -16,6 +16,7 @@ BATS ?= bats
 BATS_DOCKER_IMAGE ?= gdc-runbook-bats:local
 BATS_DIND_IMAGE ?= gdc-runbook-bats-dind:local
 cmd ?= bash
+upstream_source ?= $(CURDIR)/.data/upstream/gonka
 authorized_key_file ?=
 site_release_dir ?= $(CURDIR)/.data/site-release
 site_publish_prefix ?=
@@ -61,7 +62,7 @@ install-git-hooks:
 	@echo 'Git hooks enabled from .githooks'
 
 verify-upstream-profiles:
-	@./scripts/verify-release-profiles.sh
+	@./scripts/verify-release-profiles.sh "$(upstream_source)"
 
 shellcheck:
 	@docker run --rm \
@@ -284,6 +285,8 @@ site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
 test: test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results
+	@$(MAKE) test-isolated-preview-ci-artifact
+	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-network-bootstrap.py
 	@./scripts/test-network-bootstrap-shell.sh
@@ -332,7 +335,6 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/test-host-identity-layout-probe.sh
-	@./scripts/verify-release-profiles.sh
 	@./scripts/test-profiles.sh
 	@./scripts/test-official-devshard-profile.sh
 	@./scripts/test-api-entrypoint.sh

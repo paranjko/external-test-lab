@@ -384,7 +384,24 @@ assert.match(siteApp, /function participantForTopologyHost\(/);
 assert.match(siteApp, /topologyStatusResult\.status === "fulfilled"/);
 assert.match(siteApp, /topologyHost\(status\?\.result\?\.node_info\?\.listen_addr\)/);
 assert.match(siteApp, /const observedTopologyHosts/);
-assert.match(siteApp, /const hosts = observedTopologyHosts\.length/);
+assert.match(siteApp, /const hosts = observedParticipantHosts\(participants, observedTopologyHosts\)/);
+const discoveryFunctions = siteApp.slice(
+  siteApp.indexOf('function topologyHost('),
+  siteApp.indexOf('async function reconcileParticipants('),
+);
+const discoveredHosts = new Function('DYNAMIC_STATUS_HOST', `${discoveryFunctions}; return observedParticipantHosts;`)(/^node[0-9]+\.gonka-dev\.net$/i);
+const registry = [
+  { inference_url: 'https://node5.gonka-dev.net' },
+  { inference_url: 'https://node8.gonka-dev.net' },
+  { inference_url: 'https://node5.gonka-dev.net' },
+];
+assert.deepEqual(discoveredHosts(registry, ['node4.gonka-dev.net']), [
+  'node4.gonka-dev.net', 'node5.gonka-dev.net', 'node8.gonka-dev.net',
+]);
+assert.deepEqual(discoveredHosts(registry, []), ['node5.gonka-dev.net', 'node8.gonka-dev.net']);
+assert.deepEqual(discoveredHosts([...registry, { inference_url: 'https://node9.gonka-dev.net' }], []), [
+  'node5.gonka-dev.net', 'node8.gonka-dev.net', 'node9.gonka-dev.net',
+]);
 assert.match(siteApp, /hostState\.classify/);
 assert.match(siteApp, /GDC_SOFTWARE_VERSIONS\.formatMlNodes/);
 assert.match(siteApp, /data-k="vp"/);

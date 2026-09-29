@@ -2,28 +2,22 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-UPSTREAM="${GONKA_UPSTREAM_WORKTREE:-}"
-if [[ -z "$UPSTREAM" ]]; then
-  if [[ -d "$ROOT/../../gonka/.git" || -f "$ROOT/../../gonka/.git" ]]; then
-    UPSTREAM="$ROOT/../../gonka"
-  elif [[ -d "$ROOT/../../../code/gonka/.git" || -f "$ROOT/../../../code/gonka/.git" ]]; then
-    UPSTREAM="$ROOT/../../../code/gonka"
-  elif [[ -d "$ROOT/../../code/gonka/.git" || -f "$ROOT/../../code/gonka/.git" ]]; then
-    UPSTREAM="$ROOT/../../code/gonka"
-  else
-    UPSTREAM="$ROOT/../../gonka"
-  fi
-fi
+UPSTREAM="$ROOT/.data/upstream/gonka"
 source "$ROOT/scripts/profile.sh"
 VERIFY_REGISTRY=false
 if [[ "${1:-}" == --registry ]]; then
   VERIFY_REGISTRY=true
   shift
 fi
-[[ $# -eq 0 ]] || { echo 'Usage: verify-release-profiles.sh [--registry]' >&2; exit 2; }
+if [[ $# -eq 1 ]]; then
+  UPSTREAM="$1"
+  shift
+fi
+[[ $# -eq 0 ]] || { echo 'Usage: verify-release-profiles.sh [--registry] [source-checkout]' >&2; exit 2; }
 
 [[ -d "$UPSTREAM/.git" || -f "$UPSTREAM/.git" ]] || {
   echo "Gonka upstream worktree is missing: $UPSTREAM" >&2
+  echo 'Clone gonka-ai/gonka with release tags, then run make verify-upstream-profiles upstream_source=/path/to/gonka' >&2
   exit 2
 }
 
@@ -182,3 +176,10 @@ for variable in TMKMS_IMAGE INFERENCED_IMAGE DAPI_IMAGE EDGE_API_IMAGE VERSIOND_
 done
 
 printf 'PASS release and operator-service profile boundary\n'
+
+upstream_metadata="$(git -C "$UPSTREAM" show '4d687ed6782bcea3931d2d9135bf322f84e190ab:inference-chain/denom.json' | jq -cS .)"
+[[ "$(jq -cS . "$ROOT/test/fixtures/recovery/denom.json")" == "$upstream_metadata" ]] || {
+  echo 'recovery denomination fixture differs from pinned Gonka source' >&2
+  exit 1
+}
+printf 'PASS recovery denomination fixture matches pinned Gonka source\n'

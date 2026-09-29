@@ -30,7 +30,7 @@ while IFS= read -r command; do
 done <"$optional"
 
 forbidden_command="$(printf '%s%s' r g)"
-if grep -R -n -E --include='*.sh' --exclude-dir=vendor \
+if grep -R -n -E --include='*.sh' --exclude-dir=vendor --exclude-dir=.data \
   "(^|[^[:alnum:]_])${forbidden_command}([[:space:];|&()])" \
   "$ROOT"; then
   echo "$forbidden_command is not a runbook dependency; use grep or declare and provision a replacement" >&2

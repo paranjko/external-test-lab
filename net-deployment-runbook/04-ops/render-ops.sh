@@ -124,7 +124,8 @@ jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$AP
 {
   printf '{\n'
   [[ -z "${ACME_EMAIL:-}" ]] || printf '  email {$ACME_EMAIL}\n'
-  printf '  admin 127.0.0.1:2019\n}\n'
+  # OPS and participant edge share the Host network, but not a reload endpoint
+  printf '  admin 127.0.0.1:2020\n}\n'
   cat <<'CADDY'
 # Public TLS belongs exclusively to the configured participant edge. This
 # internal status service intentionally exposes only its explicit HTTP ports.

@@ -6,6 +6,12 @@
 `scripts/test-command-dependency-contract.sh` verifies that baseline before
 the rest of the contract suite.
 
+Ordinary tests and the site do not require Gonka sources. Release auditing is
+separate: `make verify-upstream-profiles upstream_source=/path/to/gonka`
+requires a checkout with release tags. CI runs it in the `upstream-profiles`
+job. Gateway source builds fetch their own cache under `.data/upstream/gonka`
+only when needed.
+
 [`dependencies/optional-commands.txt`](dependencies/optional-commands.txt)
 lists tools detected at runtime. They are not prerequisites of `make test`.
 Each optional use must have a supported fallback or a clear fail-closed
