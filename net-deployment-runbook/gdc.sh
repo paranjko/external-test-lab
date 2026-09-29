@@ -1289,6 +1289,14 @@ case "$COMMAND" in
     for node_alias in "$@"; do
       [[ "$node_alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "node $node_action received an invalid SSH alias: $node_alias" >&2; exit 2; }
     done
+    if [[ "$node_action" == start || "$node_action" == stop ]]; then
+      # Existing container control is Host-local. Do not load JOIN inputs or
+      # replace its active-run pointer merely to stop and restart a deployment.
+      use_node_data_home "$1"
+      acquire_operator_lock
+      bash "$ROOT/scripts/node-container-control.sh" "$node_action" "$1"
+      exit $?
+    fi
     if [[ "$node_action" != reset ]]; then
       use_node_data_home "$1"
       source "$ROOT/scripts/lib.sh"

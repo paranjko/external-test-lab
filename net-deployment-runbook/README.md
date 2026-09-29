@@ -47,6 +47,22 @@ gdc host join gdc-node3
 gdc host join gdc-node4 gdc-node4-ml # node net only + gpu net
 ```
 
+## Stop and restart an installed node
+
+```bash
+gdc node stop <ssh-alias>
+gdc node start <ssh-alias>
+```
+
+Only SSH access with passwordless sudo is required; local JOIN files and keys
+are not needed. GDC discovers both flat and legacy deployments automatically;
+no path option or migration is required. Stop retains state. Start restarts the
+same previously running containers without pulling images or enabling a
+previously stopped signer.
+An interrupted JOIN or changed containers require JOIN recovery instead.
+Edge and monitoring services remain running. Restart success is not proof of
+synchronization or consensus participation.
+
 ## Overview
 
 This package recreates a Gonka Community DevNet for release and
