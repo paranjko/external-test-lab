@@ -36,10 +36,11 @@ case "$mode" in
     expected_tar="$(cat "$release_dir/backend-image.tar.sha256")"
     [[ "$expected_tar" =~ ^[0-9a-f]{64}$ ]] || die 'backend archive digest is invalid'
     [[ "$expected_tar" == "$(sha256sum "$release_dir/backend-image.tar" | awk '{print $1}')" ]] || die 'backend archive digest mismatch'
+    [[ "$expected_tar" == "$(jq -r '.backend_archive_sha256 // empty' "$release_dir/preview-composition.json")" ]] \
+      || die 'backend archive is not bound by the composition manifest'
     docker image load -i "$release_dir/backend-image.tar" >/dev/null
     image_id="$(docker image inspect --format '{{.Id}}' "$backend_image")"
-    manifest_id="$(jq -r '.backend_image_id // empty' "$release_dir/preview-composition.json")"
-    [[ "$image_id" == "$manifest_id" ]] || die 'loaded backend image does not match the composition manifest'
+    [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'loaded backend image does not expose an immutable image ID'
     jq -e --argjson preview "$number" --arg revision "$revision" '
       .schema_version == 1 and .preview_number == $preview and .source_revision == $revision
     ' "$release_dir/backend-build.json" >/dev/null || die 'backend build manifest does not bind this PR and revision'

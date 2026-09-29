@@ -18,9 +18,14 @@ export function publicIpv4(address) {
 }
 
 export function validPath(url) {
+  if (url.pathname === "/health" && url.search === "") return true;
+  if (url.pathname === "/v1/versions" && url.search === "") return true;
+  if (url.pathname === "/devshard/healthz" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/status" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/net_info" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/validators" && url.search === "?per_page=100") return true;
+  if (url.pathname === "/chain-api/productscience/inference/inference/params" && url.search === "") return true;
+  if (/^\/chain-api\/productscience\/inference\/inference\/hardware_nodes\/gonka1[02-9ac-hj-np-z]{6,90}$/.test(url.pathname) && url.search === "") return true;
   return url.pathname === "/chain-api/productscience/inference/inference/participant" &&
     url.search === "?pagination.limit=100&pagination.count_total=true";
 }

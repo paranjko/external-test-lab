@@ -40,7 +40,7 @@ fi
 if [[ -z "$site_publish_prefix" ]]; then
   destination=/srv/dai/edge/site
 elif [[ "$site_publish_prefix" =~ ^preview/[1-9][0-9]*$ ]]; then
-  destination="/srv/dai/edge/site/$site_publish_prefix"
+  destination="/srv/preview/${site_publish_prefix#preview/}"
 else
   echo 'site_publish_prefix must be empty or preview/<positive-PR-number>' >&2
   exit 2
@@ -91,7 +91,7 @@ case "$action" in
     [[ -s "$composition" ]] || { echo 'preview release must contain a composition manifest' >&2; exit 2; }
     mode="$(jq -r '.mode // empty' "$composition")"
     [[ "$mode" =~ ^(static|endpoint|combined)$ ]] || { echo 'preview release composition mode is invalid' >&2; exit 2; }
-    remote_preview_root=/srv/dai/edge/site/preview
+    remote_preview_root=/srv/preview
     remote_generation_root="$remote_preview_root/.generations/$preview_number"
     remote_staging="$remote_generation_root/.staging-$generation"
     remote_generation="$remote_generation_root/$generation"
@@ -100,7 +100,7 @@ case "$action" in
       # copied from an untrusted preview artifact. Refuse before staging when
       # the public edge has not activated that route yet.
       ssh "${ssh_options[@]}" "$remote" \
-        "curl --fail --silent --show-error --connect-timeout 5 --max-time 15 '$site_origin/preview/$preview_number/status/participants' | test -s"
+        "body=\$(curl --fail --silent --show-error --connect-timeout 5 --max-time 15 '$site_origin/preview/$preview_number/status/participants'); test -n \"\$body\""
     fi
     # A repeated publish of the same immutable generation must not overwrite it.
     ssh "${ssh_options[@]}" "$remote" "install -d -m 0755 $remote_generation_root; test ! -e $remote_generation; rm -rf -- $remote_staging; install -d -m 0755 $remote_staging"
@@ -117,7 +117,7 @@ case "$action" in
       echo 'preview rollback requires preview/<positive-PR-number>' >&2
       exit 2
     fi
-    remote_preview_root=/srv/dai/edge/site/preview
+    remote_preview_root=/srv/preview
     ssh "${ssh_options[@]}" "$remote" "bash -s -- rollback $preview_number" <"$script_root/scripts/switch-site-preview-generation.sh"
     ;;
   publish)

@@ -258,26 +258,39 @@ assert_release() {
 }
 
 assert_backend_image() {
-  local source="$1" revision="$2" image="$3" manifest composition observed_id observed_revision observed_managed backend_digest
+  local source="$1" revision="$2" image="$3" manifest composition observed_id observed_revision observed_managed backend_digest archive archive_digest extracted_caddy container
   manifest="$source/backend-build.json"
   composition="$source/preview-composition.json"
   [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'preview backend image must be an immutable local image ID'
   [[ -f "$manifest" && ! -L "$manifest" ]] || die 'backend preview requires a source-bound backend build manifest'
-  jq -e --arg revision "$revision" --arg image "$image" '
-    .schema_version == 1 and .source_revision == $revision and .image_id == $image and
+  jq -e --arg revision "$revision" '
+    .schema_version == 1 and .source_revision == $revision and
     (.source_digest | type == "string" and test("^[0-9a-f]{64}$")) and
     (.rendered_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
     (.backend_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
   ' "$manifest" >/dev/null || die 'backend build manifest does not bind the requested source and image'
   backend_digest="$(jq -r .backend_caddy_sha256 "$manifest")"
-  jq -e --arg backend "$backend_digest" --arg image "$image" '
-    .backend_digest == $backend and .backend_image_id == $image
+  archive="$source/backend-image.tar"
+  [[ -s "$archive" && ! -L "$archive" ]] || die 'preview backend image archive is unavailable'
+  archive_digest="$(sha256sum "$archive" | awk '{print $1}')"
+  jq -e --arg backend "$backend_digest" --arg archive "$archive_digest" '
+    .backend_digest == $backend and .backend_archive_sha256 == $archive and
+    (.backend_image_id | type == "string" and test("^sha256:[0-9a-f]{64}$"))
   ' "$composition" >/dev/null || die 'preview composition does not bind the requested backend build'
   observed_id="$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || true)"
   observed_revision="$(docker image inspect --format '{{ index .Config.Labels "gdc.preview.source-revision" }}' "$image" 2>/dev/null || true)"
   observed_managed="$(docker image inspect --format '{{ index .Config.Labels "gdc.preview.managed" }}' "$image" 2>/dev/null || true)"
   [[ "$observed_id" == "$image" && "$observed_revision" == "$revision" && "$observed_managed" == true ]] \
     || die 'local backend image does not have the expected trusted build identity'
+  container="$(docker create "$image")"
+  extracted_caddy="$CONTROL/staging/backend-caddy-${revision:0:12}-$$"
+  trap 'docker rm -f "$container" >/dev/null 2>&1 || true; rm -f "$extracted_caddy"' RETURN
+  docker cp "$container:/etc/caddy/Caddyfile" "$extracted_caddy" >/dev/null
+  [[ "$(sha256sum "$extracted_caddy" | awk '{print $1}')" == "$backend_digest" ]] \
+    || die 'loaded backend image does not contain the source-bound Caddyfile'
+  docker rm -f "$container" >/dev/null
+  rm -f "$extracted_caddy"
+  trap - RETURN
 }
 
 start_backend() {

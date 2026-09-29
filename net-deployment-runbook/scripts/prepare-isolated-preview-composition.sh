@@ -50,8 +50,19 @@ if [[ "$mode" == static ]]; then
   ' "$candidate" >/dev/null
 else
   backend_manifest="$backend_build_dir/backend-build.json"
+  backend_archive="$release_dir/backend-image.tar"
+  backend_archive_digest_file="$release_dir/backend-image.tar.sha256"
   [[ -f "$backend_manifest" && ! -L "$backend_manifest" ]] || {
     echo "isolated preview requires a PR-built backend manifest for legacy mode=$mode" >&2
+    exit 1
+  }
+  [[ -s "$backend_archive" && ! -L "$backend_archive" && -s "$backend_archive_digest_file" && ! -L "$backend_archive_digest_file" ]] || {
+    echo 'isolated preview requires a source-bound backend image archive' >&2
+    exit 1
+  }
+  backend_archive_digest="$(cat "$backend_archive_digest_file")"
+  [[ "$backend_archive_digest" =~ ^[0-9a-f]{64}$ && "$backend_archive_digest" == "$(sha256sum "$backend_archive" | awk '{print $1}')" ]] || {
+    echo 'isolated preview backend image archive digest is invalid' >&2
     exit 1
   }
   jq -e --arg endpoint "$endpoint_revision" '
@@ -73,7 +84,8 @@ else
     --arg backend "$(jq -r .backend_caddy_sha256 "$backend_manifest")" \
     --arg image "$(jq -r .image_id "$backend_manifest")" \
     --arg source "$(jq -r .source_digest "$backend_manifest")" \
-    '{schema_version:1,head_revision:$head,mode:$mode,frontend_revision:$frontend_revision,backend_revision:$endpoint_revision,frontend_digest:$frontend,runtime_config_sha256:$config,backend_digest:$backend,backend_image_id:$image,backend_source_digest:$source,legacy_composition_sha256:$legacy_sha}' \
+    --arg archive "$backend_archive_digest" \
+    '{schema_version:1,head_revision:$head,mode:$mode,frontend_revision:$frontend_revision,backend_revision:$endpoint_revision,frontend_digest:$frontend,runtime_config_sha256:$config,backend_digest:$backend,backend_image_id:$image,backend_source_digest:$source,backend_archive_sha256:$archive,legacy_composition_sha256:$legacy_sha}' \
     >"$candidate"
   jq -e --arg head "$expected_revision" '
     .schema_version == 1 and .head_revision == $head and (.mode == "backend" or .mode == "combined") and
@@ -83,6 +95,7 @@ else
     (.backend_digest | test("^[0-9a-f]{64}$")) and
     (.backend_image_id | test("^sha256:[0-9a-f]{64}$")) and
     (.backend_source_digest | test("^[0-9a-f]{64}$")) and
+    (.backend_archive_sha256 | test("^[0-9a-f]{64}$")) and
     (.legacy_composition_sha256 | test("^[0-9a-f]{64}$"))
   ' "$candidate" >/dev/null
 fi

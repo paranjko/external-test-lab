@@ -58,6 +58,11 @@ export async function startChromeDevTools({
   }
 
   const port = await reserveLoopbackPort();
+  // Chrome 143 crashes when it inherits a worktree TMPDIR.  The disposable
+  // profile remains caller-owned; remove only the inherited override so
+  // Chromium manages its own transient implementation files.
+  const browserEnv = { ...process.env };
+  delete browserEnv.TMPDIR;
   const browser = spawn(
     chrome,
     [
@@ -70,7 +75,10 @@ export async function startChromeDevTools({
       `--user-data-dir=${profile}`,
       "about:blank",
     ],
-    { stdio: ["ignore", "ignore", "pipe"] },
+    {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: browserEnv,
+    },
   );
   let browserStderr = "";
   let browserLaunchError = "";

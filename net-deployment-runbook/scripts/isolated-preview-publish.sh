@@ -59,6 +59,14 @@ deploy_host="${deploy_host:-${PREVIEW_DEPLOY_HOST:-gdc-node4}}"
 [[ "$prometheus_origin" =~ ^http://[A-Za-z0-9.-]+:9099$ ]] || die 'PREVIEW_PROMETHEUS_ORIGIN must be http://HOST:9099'
 
 ssh_options=(-o BatchMode=yes -o IdentitiesOnly=yes -i "$deploy_key" -o "UserKnownHostsFile=$known_hosts" -o StrictHostKeyChecking=yes)
+# Local preview configuration commonly pins node4's SSH key under its stable
+# IPv4 address while DEPLOY_HOST is the public DNS name. Reuse that pin only
+# when the current DNS answer is already present in known_hosts. A changed DNS
+# answer then fails host-key verification rather than weakening it.
+resolved_host_ip="$( { getent ahostsv4 "$deploy_host" 2>/dev/null || true; } | awk 'NR == 1 { print $1 }')"
+if [[ "$resolved_host_ip" =~ ^[0-9]+(\.[0-9]+){3}$ ]] && ssh-keygen -F "$resolved_host_ip" -f "$known_hosts" >/dev/null 2>&1; then
+  ssh_options+=(-o "HostKeyAlias=$resolved_host_ip")
+fi
 remote="$deploy_user@$deploy_host"
 ssh_transport="$(printf '%q ' ssh "${ssh_options[@]}")"
 remote_root=/srv/preview
@@ -67,11 +75,11 @@ remote_artifact="$remote_root/staging/$preview_number/$revision"
 remote_controller="$remote_source/previewctl.sh"
 
 sync_trusted_controller() {
-  ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; umask 077; install -d -m 0750 '$remote_source'"
+  ssh -n "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; umask 077; install -d -m 0750 '$remote_source'"
   rsync -a --delete -e "$ssh_transport" "$repository_root/ops/preview/" "$remote:$remote_source/"
 }
 
-load_backend_image() {
+verify_local_backend_image() {
   local manifest="$1" requested_image="$2" image_id source_revision source_managed
   [[ "$requested_image" =~ ^[a-z0-9][a-z0-9._/-]*:[a-z0-9][a-z0-9._-]*$ || "$requested_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
     || die 'backend image reference is invalid'
@@ -87,9 +95,20 @@ load_backend_image() {
     (.rendered_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
     (.backend_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
   ' "$manifest" >/dev/null || die 'backend build manifest does not bind the local image'
-  docker image save "$image_id" | ssh "${ssh_options[@]}" "$remote" \
-    "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); docker image load >/dev/null; test \"\$(docker image inspect --format '{{.Id}}' '$image_id')\" = '$image_id'"
-  printf '%s\n' "$image_id"
+}
+
+load_backend_image() {
+  local archive="$1" archive_digest_file="$2" requested_image="$3" remote_archive expected_archive actual_archive remote_image
+  [[ -s "$archive" && ! -L "$archive" && -s "$archive_digest_file" && ! -L "$archive_digest_file" ]] \
+    || die 'source-bound backend image archive is unavailable or unsafe'
+  expected_archive="$(cat "$archive_digest_file")"
+  actual_archive="$(sha256sum "$archive" | awk '{print $1}')"
+  [[ "$expected_archive" =~ ^[0-9a-f]{64}$ && "$expected_archive" == "$actual_archive" ]] \
+    || die 'source-bound backend image archive digest is invalid'
+  remote_archive="$remote_artifact/backend-image.tar"
+  remote_image="$(ssh -n "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/docker.sock; test \"\$(sha256sum '$remote_archive' | awk '{print \$1}')\" = '$expected_archive'; docker image load -i '$remote_archive' >/dev/null; docker image inspect --format '{{.Id}}' '$requested_image'")"
+  [[ "$remote_image" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'remote backend image did not expose an immutable image ID'
+  printf '%s\n' "$remote_image"
 }
 
 case "$action" in
@@ -106,23 +125,26 @@ case "$action" in
     mode="$(jq -r .mode "$manifest")"
     # Reserve before transferring a backend image. A repeated publication then
     # fails without importing an otherwise unreferenced image into preview.
-    ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; umask 077; test ! -e '$remote_artifact'; install -d -m 0750 '$remote_source' '$remote_artifact'"
+    ssh -n "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; umask 077; test ! -e '$remote_artifact'; install -d -m 0750 '$remote_source' '$remote_artifact'"
     backend_image_id=''
     if [[ "$mode" == static ]]; then
       [[ -z "$backend_image" ]] || die 'static preview must not receive a backend image'
     else
-      backend_image_id="$(load_backend_image "$release_dir/backend-build.json" "$backend_image")"
+      verify_local_backend_image "$release_dir/backend-build.json" "$backend_image"
     fi
     sync_trusted_controller
     rsync -a --delete -e "$ssh_transport" "$release_dir/" "$remote:$remote_artifact/"
-    ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); '$remote_controller' install; '$remote_controller' configure-observer '$prometheus_origin'; '$remote_controller' deploy '$preview_number' '$revision' '$remote_artifact' '${backend_image_id}'"
+    if [[ "$mode" != static ]]; then
+      backend_image_id="$(load_backend_image "$release_dir/backend-image.tar" "$release_dir/backend-image.tar.sha256" "$backend_image")"
+    fi
+    ssh -n "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/docker.sock; '$remote_controller' install; '$remote_controller' configure-observer '$prometheus_origin'; '$remote_controller' deploy '$preview_number' '$revision' '$remote_artifact' '${backend_image_id}'"
     ;;
   remove)
     sync_trusted_controller
-    ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); '$remote_controller' remove '$preview_number'"
+    ssh -n "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); '$remote_controller' remove '$preview_number'"
     ;;
   status)
     sync_trusted_controller
-    ssh "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); '$remote_controller' status '$preview_number'"
+    ssh -n "${ssh_options[@]}" "$remote" "set -Eeuo pipefail; export XDG_RUNTIME_DIR=/run/user/\$(id -u); '$remote_controller' status '$preview_number'"
     ;;
 esac
