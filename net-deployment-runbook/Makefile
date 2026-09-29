@@ -285,6 +285,7 @@ site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
 test: test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results
+	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-network-bootstrap.py
