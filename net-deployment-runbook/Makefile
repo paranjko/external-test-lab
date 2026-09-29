@@ -285,6 +285,7 @@ site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
 test: test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results
+	@bash ./scripts/test-node-container-control.sh
 	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
@@ -423,6 +424,11 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-promote-state-sync-generation.sh
 	@./scripts/test-record-state-sync-canary.sh
 	@./scripts/test-verify-tmkms-signing-state.sh
+	@bash ./scripts/test-consensus-recovery-preparation.sh
+	@bash ./scripts/test-consensus-signer-install.sh
+	@bash ./scripts/test-consensus-recovery-inputs.sh
+	@bash ./scripts/test-consensus-signer-recovery.sh
+	@bash ./scripts/test-phase-consensus-signer-recovery.sh
 	@./scripts/test-tmkms-state-schema-agreement.sh
 	@./scripts/test-signer-activation-gate.sh
 	@./scripts/test-verify-participant-validator-key.sh
@@ -505,3 +511,9 @@ test-recover-incident-services-runtime:
 
 test-recovery-rehearsal:
 	@./scripts/test-network-recovery-rehearsal.sh --manifest "$(manifest)" --lab-approval "$(lab_approval)" --evidence-dir "$(evidence_dir)" --timeout-seconds "$(timeout_seconds)"
+
+# Exact released signer, synthetic key, no live mounts and no network.
+.PHONY: test-tmkms-recovery-boundary
+test-tmkms-recovery-boundary:
+	@image="$$(docker build -q -f scripts/tmkms-boundary.Dockerfile scripts)" && \
+		docker run --rm --network none --cpus 0.5 --memory 256m "$$image"

@@ -241,6 +241,22 @@ back.
 Recreate a missing archive with `gdc host backup <ssh-alias>` before any
 `gdc host reset`.
 
+### Recover the staking key without reset
+
+After a completed JOIN, restore a mismatched signer from backup, keeping chain data, images, warm account and P2P identity:
+
+```bash
+gdc host join --resume <completed-run-id> --restore <validator-backup.tar> \
+  --recover-consensus-signer --exclusive-signer \
+  --public-host <IP_or_DOMAIN> <ssh-alias>
+```
+
+Stop every other copy of the key before using `--exclusive-signer`. The local cold keyring must own the participant; jailed or tombstoned keys are refused.
+
+`VALIDATING` proves positive voting power and new signatures across an epoch change, not just `ACTIVE` status.
+
+After signer activation, resume interrupted verification with `--resume <new-run-id>`, without recovery flags or reset. Keep the new backup and run evidence.
+
 `gdc host reset` stops the signer at once. If the Host holds a third or more
 of the voting power the chain halts, so check the validator set first.
 
