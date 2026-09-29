@@ -60,9 +60,16 @@ jq -e --arg head "$expected_revision" '
   (if (.mode == "backend" or .mode == "combined") then
      (.backend_digest | type == "string" and test("^[0-9a-f]{64}$")) and
      (.backend_image_id | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
-     (.backend_source_digest | type == "string" and test("^[0-9a-f]{64}$"))
+     (.backend_source_digest | type == "string" and test("^[0-9a-f]{64}$")) and
+     (.backend_archive_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
    else .backend_digest == null and .backend_revision == null end)
 ' "$composition" >/dev/null || { echo 'preview composition manifest is invalid' >&2; exit 1; }
+if [[ "$(jq -r .mode "$composition")" == backend || "$(jq -r .mode "$composition")" == combined ]]; then
+  [[ -s "$release_dir/backend-image.tar" && -s "$release_dir/backend-image.tar.sha256" ]] || { echo 'preview backend image archive is required' >&2; exit 1; }
+  archive_digest="$(cat "$release_dir/backend-image.tar.sha256")"
+  [[ "$archive_digest" =~ ^[0-9a-f]{64}$ && "$archive_digest" == "$(sha256sum "$release_dir/backend-image.tar" | awk '{print $1}')" ]] || { echo 'preview backend image archive digest is invalid' >&2; exit 1; }
+  [[ "$archive_digest" == "$(jq -r .backend_archive_sha256 "$composition")" ]] || { echo 'preview composition does not bind the backend image archive' >&2; exit 1; }
+fi
 frontend_revision="$(jq -r .frontend_revision "$composition")"
 jq -e --arg frontend "$frontend_revision" '
   .schema_version == 1 and .source_revision == $frontend and

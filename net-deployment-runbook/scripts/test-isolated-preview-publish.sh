@@ -12,8 +12,8 @@ for command in ssh rsync; do
   cat >"$tmp/bin/$command" <<'SH'
 #!/usr/bin/env bash
 printf '%s %s\n' "$(basename "$0")" "$*" >>"$ISOLATED_PREVIEW_PUBLISH_LOG"
-if [[ "$(basename "$0")" == ssh && "$*" == *'docker image load'* ]]; then
-  cat >/dev/null
+if [[ "$(basename "$0")" == ssh && "$*" == *'docker image load -i'* ]]; then
+  printf 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n'
 fi
 SH
   chmod +x "$tmp/bin/$command"
@@ -44,6 +44,10 @@ grep -Fq 'preview@edge.example' "$tmp/commands"
 grep -Fq '/srv/preview/publisher/' "$tmp/commands"
 grep -Fq '/srv/preview/staging/172/' "$tmp/commands"
 grep -Eq "configure-observer.*monitoring\.example:9099" "$tmp/commands"
+if grep -Fq 'HostKeyAlias=' "$tmp/commands"; then
+  echo 'publisher unexpectedly invented an SSH host-key alias without a matching known_hosts pin' >&2
+  exit 1
+fi
 if grep -Fq '/srv/dai' "$tmp/commands"; then
   echo 'isolated publisher must not use the production site directory' >&2
   exit 1
@@ -57,17 +61,23 @@ grep -Fq 'preview@gdc-node4' "$tmp/commands"
 
 mkdir -p "$tmp/backend-release"
 printf '<!doctype html>backend\n' >"$tmp/backend-release/index.html"
-printf '%s\n' '{"schema_version":1,"head_revision":"'"$revision"'","mode":"backend","frontend_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","backend_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}' >"$tmp/backend-release/preview-composition.json"
+printf 'fixture backend archive\n' >"$tmp/backend-release/backend-image.tar"
+backend_archive_digest="$(sha256sum "$tmp/backend-release/backend-image.tar" | awk '{print $1}')"
+printf '%s\n' "$backend_archive_digest" >"$tmp/backend-release/backend-image.tar.sha256"
+printf '%s\n' '{"schema_version":1,"head_revision":"'"$revision"'","mode":"backend","frontend_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","backend_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","backend_archive_sha256":"'"$backend_archive_digest"'"}' >"$tmp/backend-release/preview-composition.json"
 printf '%s\n' '{"schema_version":1,"source_revision":"'"$revision"'","source_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rendered_caddy_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","backend_caddy_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","image_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' >"$tmp/backend-release/backend-build.json"
 : >"$tmp/commands"
 GDC_SITE_PREVIEW_ENV_FILE="$tmp/preview.env" "$ROOT/scripts/isolated-preview-publish.sh" publish "$tmp/backend-release" 173 "$revision" gdc-preview-backend:fixture
-grep -Fq 'docker image save sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$tmp/commands"
-grep -Fq 'docker image load' "$tmp/commands"
+grep -Fq 'docker image load -i' "$tmp/commands"
+if grep -Fq 'docker image save sha256:' "$tmp/commands"; then
+  echo 'publisher must transfer the prepared backend archive rather than stream an image between daemons' >&2
+  exit 1
+fi
 grep -Fq "deploy '173' '$revision'" "$tmp/commands"
 reserve_line="$(grep -n "test ! -e '/srv/preview/staging/173/" "$tmp/commands" | head -1 | cut -d: -f1)"
-image_line="$(grep -n 'docker image save' "$tmp/commands" | head -1 | cut -d: -f1)"
+image_line="$(grep -n 'docker image load -i' "$tmp/commands" | head -1 | cut -d: -f1)"
 [[ -n "$reserve_line" && -n "$image_line" && "$reserve_line" -lt "$image_line" ]] \
-  || { echo 'publisher transferred backend image before reserving the remote artifact' >&2; exit 1; }
+  || { echo 'publisher loaded backend image before reserving the remote artifact' >&2; exit 1; }
 
 : >"$tmp/commands"
 unpublished_revision=9999999999999999999999999999999999999999

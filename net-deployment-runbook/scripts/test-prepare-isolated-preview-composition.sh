@@ -37,11 +37,14 @@ after="$(sha256sum "$tmp/endpoint/preview-composition.json" | awk '{print $1}')"
 
 mkdir -p "$tmp/backend"
 printf '%s\n' '{"schema_version":1,"source_revision":"'"$revision"'","preview_number":172,"source_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","rendered_caddy_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","backend_caddy_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","image_id":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}' >"$tmp/backend/backend-build.json"
+printf 'fixture backend archive\n' >"$tmp/endpoint/backend-image.tar"
+sha256sum "$tmp/endpoint/backend-image.tar" | awk '{print $1}' >"$tmp/endpoint/backend-image.tar.sha256"
 "$ROOT/scripts/prepare-isolated-preview-composition.sh" "$tmp/endpoint" "$revision" "$tmp/backend"
 jq -e --arg revision "$revision" '
   .head_revision == $revision and .mode == "backend" and .frontend_revision == "9999999999999999999999999999999999999999" and .backend_revision == $revision and
   .backend_digest == "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" and
-  .backend_image_id == "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  .backend_image_id == "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" and
+  (.backend_archive_sha256 | test("^[0-9a-f]{64}$"))
 ' "$tmp/endpoint/preview-composition.json" >/dev/null
 cmp "$tmp/backend/backend-build.json" "$tmp/endpoint/backend-build.json"
 

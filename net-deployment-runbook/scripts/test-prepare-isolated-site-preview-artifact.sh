@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+grep -Fq 'docker image save "$backend_image" -o "$release_dir/backend-image.tar"' "$root/scripts/prepare-isolated-site-preview-artifact.sh"
 builder="$root/scripts/prepare-isolated-site-preview-artifact.sh"
 
 [[ -x "$builder" || -f "$builder" ]] || { echo 'isolated artifact builder is missing' >&2; exit 1; }

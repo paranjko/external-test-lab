@@ -14,10 +14,10 @@ NODE_GUARD_NO_LISTEN=1 node --input-type=module -e '
   for (const [address, allowed] of expected) {
     if (publicIpv4(address) !== allowed) throw new Error(`unexpected address policy ${address}`);
   }
-  for (const value of ["https://node4.gonka-dev.net/chain-rpc/status", "https://node4.gonka-dev.net/chain-rpc/net_info", "https://node4.gonka-dev.net/chain-rpc/validators?per_page=100", "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/participant?pagination.limit=100&pagination.count_total=true"]) {
+  for (const value of ["https://node4.gonka-dev.net/health", "https://node4.gonka-dev.net/v1/versions", "https://node4.gonka-dev.net/devshard/healthz", "https://node4.gonka-dev.net/chain-rpc/status", "https://node4.gonka-dev.net/chain-rpc/net_info", "https://node4.gonka-dev.net/chain-rpc/validators?per_page=100", "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/params", "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/hardware_nodes/gonka1p95sawnvspxeghe8eh7ll02nrw2jrqet039l4m", "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/participant?pagination.limit=100&pagination.count_total=true"]) {
     if (!validPath(new URL(value))) throw new Error(`allowed path rejected ${value}`);
   }
-  for (const value of ["https://node4.gonka-dev.net/chain-rpc/status?x=1", "https://node4.gonka-dev.net/chain-rpc/validators?per_page=101", "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/participant?pagination.count_total=true&pagination.limit=100", "https://node4.gonka-dev.net/metadata"]) {
+  for (const value of ["https://node4.gonka-dev.net/health?x=1", "https://node4.gonka-dev.net/v1/versions?x=1", "https://node4.gonka-dev.net/devshard/healthz?x=1", "https://node4.gonka-dev.net/chain-rpc/status?x=1", "https://node4.gonka-dev.net/chain-rpc/validators?per_page=101", "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/params?x=1", "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/hardware_nodes/gonka1invalid?x=1", "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/participant?pagination.count_total=true&pagination.limit=100", "https://node4.gonka-dev.net/metadata"]) {
     if (validPath(new URL(value))) throw new Error(`unsafe path accepted ${value}`);
   }
 ' "$guard"

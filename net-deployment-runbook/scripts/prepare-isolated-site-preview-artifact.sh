@@ -60,6 +60,14 @@ if [[ "$mode" == endpoint || "$mode" == combined ]]; then
     || die 'backend directory must be a new absolute safe path'
   [[ "$backend_image" =~ ^[a-z0-9][a-z0-9._/-]*:[a-z0-9][a-z0-9._-]*$ ]] || die 'backend image reference is invalid'
   "$backend_builder" "$source_repository" "$inventory" "$revision" "$preview_number" "$backend_dir" "$backend_image"
+  backend_image_id="$(docker image inspect --format '{{.Id}}' "$backend_image")"
+  [[ "$backend_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'built preview backend image is unavailable'
+  # Preserve the checked tag in the transport archive. Docker assigns a local
+  # image ID on every daemon, but the tag lets the isolated receiver identify
+  # the imported image before it verifies its portable archive and content
+  # bindings.
+  docker image save "$backend_image" -o "$release_dir/backend-image.tar"
+  sha256sum "$release_dir/backend-image.tar" | awk '{print $1}' >"$release_dir/backend-image.tar.sha256"
   renderer_config="$backend_dir/rendered/config.js"
 else
   renderer_dir="$tmp/renderer"

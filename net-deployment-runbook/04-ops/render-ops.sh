@@ -53,20 +53,6 @@ nodes='[]'; validators='[]'; node_catalog='[]'
 # homepage verifier will reject a deployment that claims a map while active
 # nodes have no resolved positions.
 declare -A geo_by_ip=() geo_by_node=()
-operator_geo() {
-  # These are operator-approved regional display points for the current
-  # DevNet aliases. They intentionally describe an approximate region rather
-  # than a rack or street address; unknown and newly joined hosts still use
-  # the separately labelled GeoIP fallback below.
-  case "$1" in
-    node0.gonka-dev.net) printf '%s\n' '{"latitude":39.0997,"longitude":-94.5786,"rawLatitude":39.0997,"rawLongitude":-94.5786,"displayLatitude":39.0997,"displayLongitude":-94.5786,"city":"Kansas City","country":"United States","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node0-region","locationLabel":"Kansas City, United States"}' ;;
-    node1.gonka-dev.net) printf '%s\n' '{"latitude":60.1695,"longitude":24.9354,"rawLatitude":60.1695,"rawLongitude":24.9354,"displayLatitude":60.1695,"displayLongitude":24.9354,"city":"Helsinki","country":"Finland","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node1-region","locationLabel":"Helsinki, Finland"}' ;;
-    node2.gonka-dev.net) printf '%s\n' '{"latitude":52.3785,"longitude":4.9,"rawLatitude":52.3785,"rawLongitude":4.9,"displayLatitude":52.3785,"displayLongitude":4.9,"city":"Amsterdam","country":"Netherlands","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node2-region","locationLabel":"Amsterdam, Netherlands"}' ;;
-    node3.gonka-dev.net) printf '%s\n' '{"latitude":51.5074,"longitude":-0.1278,"rawLatitude":51.5074,"rawLongitude":-0.1278,"displayLatitude":51.5074,"displayLongitude":-0.1278,"city":"London","country":"United Kingdom","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node3-region","locationLabel":"London, United Kingdom"}' ;;
-    node4.gonka-dev.net) printf '%s\n' '{"latitude":45.4416,"longitude":-122.749,"rawLatitude":45.4416,"rawLongitude":-122.749,"displayLatitude":45.4416,"displayLongitude":-122.749,"city":"Portland metro","country":"United States","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node4-region","locationLabel":"Portland metro, United States"}' ;;
-    *) printf 'null\n' ;;
-  esac
-}
 resolve_geo() {
   local ip="$1" response geo observed_at
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { printf 'null\n'; return 0; }
@@ -105,10 +91,8 @@ for node in "${GDC_NODES[@]}"; do
   gpu_host="$(node_ml_host "$node" || printf '%s' "$node")"
   mapfile -t ips < <(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u)
   ip="${ips[0]:-}"
-  geo="$(operator_geo "$host")"
-  if [[ "$geo" != null ]]; then
-    : # Known topology uses its approved coarse regional display location.
-  elif ((${#ips[@]} == 1)); then
+  geo='null'
+  if ((${#ips[@]} == 1)); then
     geo="$(resolve_geo "$ip")"
   elif ((${#ips[@]} > 1)); then
     locations='[]'
@@ -187,17 +171,20 @@ CADDY
     header Content-Type "text/plain; version=0.0.4"
     file_server
   }
-  # Publish only the fixed GPU inventory query. Do not expose the general
-  # Prometheus query API through the public status origin. Exclude series whose
-  # latest exporter sample is older than the live-inventory freshness bound.
+  # Publish the latest inventory observed within the bounded retention window.
+  # Do not expose the general Prometheus query API through the public status
+  # origin. A temporarily failed scrape must not erase known hardware or
+  # software from the public operator view.
   handle /status/gpus {
-    rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes%20unless%20(time()%20-%20timestamp(gdc_nvidia_memory_total_bytes)%20%3E%20120)
+    rewrite * /api/v1/query?query=last_over_time(gdc_nvidia_memory_total_bytes%5B24h%5D)
     reverse_proxy 127.0.0.1:9099
   }
   # The site consumes software information only from the monitoring inventory,
-  # never from a participant's public inference endpoint.
+  # never from a participant's public inference endpoint. Return the timestamp
+  # of each latest bounded observation, not the query evaluation time: version
+  # is a label, so upgrades and rollbacks retain distinct series for 24 hours.
   handle /status/software {
-    rewrite * /api/v1/query?query=gdc_component_info
+    rewrite * /api/v1/query?query=max_over_time(timestamp(gdc_component_info)%5B24h%3A15s%5D)
     reverse_proxy 127.0.0.1:9099
   }
   root * /srv

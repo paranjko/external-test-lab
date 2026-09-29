@@ -78,7 +78,7 @@ if grep -Eq 'reconcile_monitoring_agents|install-agent.sh' "$ROOT/scripts/phase-
 fi
 grep -Fq 'chainRpcHost:$chainRpcHost' "$ROOT/04-ops/render-ops.sh"
 grep -Eq 'const chainRpcHost[[:space:]]*=' "$ROOT/04-ops/site/src/app.js"
-grep -Fq 'json("/status/participants")' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'json(statusUrl("/participants"))' "$ROOT/04-ops/site/src/app.js"
 for ops_only in GRAFANA_PUBLIC_DASHBOARD_UID GRAFANA_PUBLIC_DASHBOARD_SHARE_UID GRAFANA_PUBLIC_DASHBOARD_TOKEN TELEGRAM_BOT_URL TELEGRAM_BOT_HOST; do
   if sed -n '/^write_inventory()/,/^}/p' "$ROOT/scripts/lib.sh" | grep -q "inventory_value $ops_only"; then
     echo "common Host inventory contains OPS-only field: $ops_only" >&2
