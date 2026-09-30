@@ -8,7 +8,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from . import __version__
-from .target import check_url
+from .target import check_url, gateway_url
 
 
 GDC_HEADERS = {
@@ -105,7 +105,7 @@ class Client:
         return reply
 
     def post_completion(self, payload, key, check):
-        url = self.preset["base_url"].rstrip("/") + "/v1/chat/completions"
+        url = gateway_url(self.preset) + "/v1/chat/completions"
         body = json.dumps(payload).encode()
         deadline_ms = int((time.time() + self.preset["deadline_s"]) * 1000)
         send_seq = self.recorder.write(

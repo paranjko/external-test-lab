@@ -2,6 +2,8 @@
 
 import time
 
+from .target import is_direct
+
 
 BLOCKING_CONFIRMATION_PHASES = {
     "CONFIRMATION_POC_GRACE_PERIOD",
@@ -70,6 +72,14 @@ class Chain:
         except (KeyError, TypeError, ValueError):
             raise ChainError("epoch_invalid", reply.seq)
 
+    def epoch_start(self):
+        """First block of the running PoC cycle."""
+        reply = self._get(self.api + "/epoch_info", "epoch_unreachable")
+        try:
+            return int(reply.json["latest_epoch"]["poc_start_block_height"]), reply.seq
+        except (KeyError, TypeError, ValueError):
+            raise ChainError("epoch_invalid", reply.seq)
+
     def epoch_group(self):
         reply = self._get(self.api + "/current_epoch_group_data", "epoch_unreachable")
         try:
@@ -113,6 +123,15 @@ def _strings_under(node, key):
     elif isinstance(node, list):
         for item in node:
             yield from _strings_under(item, key)
+
+
+def epoch_offset(chain, preset, height, length):
+    """The admission proxy fences by height % length; a direct gateway follows the chain's own cycle,
+    which stops being height-aligned once epoch_length changes."""
+    if not is_direct(preset):
+        return height % length
+    start, _ = chain.epoch_start()
+    return height - start if 0 <= height - start < length else height % length
 
 
 def in_fence(height, params):

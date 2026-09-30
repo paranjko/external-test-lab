@@ -18,6 +18,11 @@ CHECKS = (
      "what": "dispatches sit inside the proxy fence with ordered heights"},
 )
 MAPS = {check["id"]: check["maps"] for check in CHECKS}
+
+
+def active_checks(direct):
+    """Without the admission proxy there is no fence to audit."""
+    return tuple(check for check in CHECKS if not (direct and check["id"] == "fence_audit"))
 OUTPUT_FLOOR = 64
 
 

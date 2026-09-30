@@ -14,7 +14,9 @@ bin/gcheck watch --duration 3600  # GET only: readiness samples and a per-epoch 
 bin/gcheck selftest               # unit tests against a local fake gateway
 ```
 
-The API key is read from `~/.config/gonka-check/devnet.key` (mode 0600) and is sent only with completion POSTs.
+`--preset devnet-a` and `--preset devnet-b` target the DevShard gateways at `/a` and `/b` directly: no admission proxy, no health receipt, no `fence_audit`, and the send window follows the chain's PoC cycle.
+
+The API key is read from `~/.config/gonka-check/<preset>.key` (mode 0600) and is sent only with completion POSTs.
 Runs are written to `~/.local/share/gonka-check/runs/<run>/` (`manifest.json`, `records.jsonl`, `summary.json`).
 The per-epoch budget ledger is `~/.config/gonka-check/ledger.jsonl`.
 
@@ -54,13 +56,13 @@ Checks: `weights` (weights sum to `total_weight`, same effective epoch at start 
 
 ## Safety
 
-- `run` and `watch` reach only `https://api.gonka-dev.net`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*` and `/v1/admission-status` are never requested.
+- `run` and `watch` reach only `https://api.gonka-dev.net` and its gateways `/a` and `/b`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*`, `/v1/admission-status` and gateway admin paths (`/v1/admin/`, `/v1/debug/`, `/v1/finalize`) are never requested.
 - `watch` samples at most every 5 s against a public target; `--profile chain` and `watch` read no key.
 - One request in flight, one lock per machine, sends at least 2 blocks apart at epoch offset `safe_start+1 .. epoch_length-20`.
 - `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.
-- The run stops on a suspected permit leak (408 with a permit height and no dispatch height), on a failed dispatch, on a reply without admission headers, on an unknown outcome, on a proxy protocol misconfiguration, and after two pre-dispatch rejections.
+- The run stops on a suspected permit leak (408 with a permit height and no dispatch height), on a failed dispatch, on a reply without admission headers (except from `/a` and `/b`), on an unknown outcome, on a proxy protocol misconfiguration, and after two pre-dispatch rejections.
 
 ## Exit codes
 
