@@ -605,6 +605,7 @@ See the role guides for required input, then run:
   ./gdc.sh network reset --yes [--hosts <SSH_ALIAS[,SSH_ALIAS...]>]
   ./gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>
+  ./gdc.sh --release v2026.09.16 host reconcile plan|apply|verify <ssh-alias>
   ./gdc.sh --release v2026.07.23 host ml-attach <SSH_ALIAS>
   ./gdc.sh host stop|start|verify <SSH_ALIAS>
   ./gdc.sh host reset <SSH_ALIAS> [<SSH_ALIAS> ...]
@@ -921,6 +922,11 @@ case "$COMMAND" in
         [[ "$upgrade_action" =~ ^(prepare|watch)$ ]] || { usage; exit 2; }
         COMMAND="host-upgrade-$upgrade_action"
         ;;
+      reconcile)
+        reconcile_action="${1:-}"; shift || true
+        [[ "$reconcile_action" =~ ^(plan|apply|verify)$ ]] || { usage; exit 2; }
+        COMMAND="host-reconcile-$reconcile_action"
+        ;;
       ml-attach) COMMAND=ml; set -- attach "$@" ;;
       start|stop|verify|reset) COMMAND=node; set -- "$subcommand" "$@" ;;
       *) usage; exit 2 ;;
@@ -1018,6 +1024,12 @@ case "$COMMAND" in
     else
       run_phase "host-upgrade-watch-$1-$2" "$ROOT/scripts/phase-host-upgrade-watch.sh" "$1" "$2"
     fi
+    ;;
+  host-reconcile-plan|host-reconcile-apply|host-reconcile-verify)
+    [[ $# -eq 1 && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { usage; exit 2; }
+    use_node_data_home "$1"
+    reconcile_action="${COMMAND#host-reconcile-}"
+    run_phase "host-reconcile-$reconcile_action-$1" "$ROOT/scripts/phase-host-reconcile.sh" "$reconcile_action" "$1"
     ;;
   host-backup)
     backup_alias="${1:-}"
