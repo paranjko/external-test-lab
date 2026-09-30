@@ -14,22 +14,20 @@
     {
       "node_id": "0f955d2e5ff3bdeabf04d91b5d590dc902aae4d0",
       "rpc": "https://node1.gonka-dev.net/chain-rpc",
-      "p2p": "tcp://node1.gonka-dev.net:5000"
-    },
-    {
-      "node_id": "ce4ff321a327263939a9f50fce2de988af95a5db",
-      "rpc": "https://node2.gonka-dev.net/chain-rpc",
-      "p2p": "tcp://node2.gonka-dev.net:5000"
-    },
-    {
-      "node_id": "dda7f9dd24446c9e0b9fd6caac9a9d354dfdd651",
-      "rpc": "https://node3.gonka-dev.net/chain-rpc",
-      "p2p": "tcp://node3.gonka-dev.net:5000"
+      "p2p": "tcp://node1.gonka-dev.net:5000",
+      "api": "https://node1.gonka-dev.net"
     },
     {
       "node_id": "1c62708ec56fe02d52c3ecedd388ebcc9ace55b4",
       "rpc": "https://node4.gonka-dev.net/chain-rpc",
-      "p2p": "tcp://node4.gonka-dev.net:5000"
+      "p2p": "tcp://node4.gonka-dev.net:5000",
+      "api": "https://node4.gonka-dev.net"
+    },
+    {
+      "node_id": "7326a7861d5430ff11d6e76e643e7acfabe6e9c4",
+      "rpc": "https://node7.gonka-dev.net/chain-rpc",
+      "p2p": "tcp://node7.gonka-dev.net:5000",
+      "api": "https://node7.gonka-dev.net"
     }
   ],
   "brokers": [

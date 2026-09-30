@@ -69,6 +69,7 @@ umask 077
   printf 'GDC_JOIN_BOOTSTRAP_SCHEMA=%q\n' "$bootstrap_schema"
   printf 'GDC_JOIN_NETWORK_HOST=%q\n' "$network_host"
   printf 'GDC_CHAIN_RPC_URL=%q\n' "$SEED_NODE_RPC_URL/"
+  printf 'GDC_JOIN_REGISTRATION_ENDPOINTS=%q\n' "$GDC_JOIN_REGISTRATION_ENDPOINTS"
   printf 'SEED_API_URL=%q\n' "$SEED_API_URL"
   printf 'SEED_NODE_RPC_URL=%q\n' "$SEED_NODE_RPC_URL"
   printf 'SEED_NODE_P2P_URL=%q\n' "$SEED_NODE_P2P_URL"

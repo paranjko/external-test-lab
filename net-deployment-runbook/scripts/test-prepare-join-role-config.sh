@@ -12,6 +12,7 @@ chmod +x "$temporary/inferenced"
 INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/mitch-demo.env" --ssh-alias mitch-demo --public-host host.example.net --p2p-port 5200 --gpu-ssh-alias mitch-ml --bootstrap-file "$temporary/bootstrap.json"
 source "$temporary/mitch-demo.env"
 [[ "$GDC_NODE_ALIASES" == mitch-demo && "$GDC_NODE_ML_HOSTS" == mitch-demo=mitch-ml && "$SEED_API_URL" == http://one.example:8000 ]]
+[[ "$GDC_JOIN_REGISTRATION_ENDPOINTS" == http://one.example:8000 ]]
 cat >"$temporary/account.json" <<'EOF'
 {"address":"gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq","account_pubkey_b64":"YWJj"}
 EOF

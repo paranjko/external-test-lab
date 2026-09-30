@@ -46,14 +46,20 @@ validate() {
   ' "$file" >/dev/null || die schema '$' 'does not match network bootstrap v1'
   seed_count=$(jq '.seeds | length' "$file")
   api_count=0
-  declare -A ids=() rpcs=() p2ps=()
+  declare -A ids=() rpcs=() p2ps=() apis=()
   for ((i=0; i<seed_count; i++)); do
     node_id=$(jq -r ".seeds[$i].node_id" "$file"); rpc=$(jq -r ".seeds[$i].rpc" "$file"); p2p=$(jq -r ".seeds[$i].p2p" "$file")
     [[ -z "${ids[$node_id]:-}" && -z "${rpcs[$rpc]:-}" && -z "${p2ps[$p2p]:-}" ]] || die semantics "seeds[$i]" 'duplicate seed identity or endpoint'
     ids[$node_id]=1; rpcs[$rpc]=1; p2ps[$p2p]=1
     valid_http_url "$rpc" "seeds[$i].rpc"; valid_p2p_url "$p2p" "seeds[$i].p2p"
     [[ "$rpc" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc/?$ ]] || die semantics "seeds[$i].rpc" 'must use the supported /chain-rpc path'
-    if jq -e ".seeds[$i] | has(\"api\")" "$file" >/dev/null; then api=$(jq -r ".seeds[$i].api" "$file"); valid_http_url "$api" "seeds[$i].api"; ((api_count+=1)); fi
+    if jq -e ".seeds[$i] | has(\"api\")" "$file" >/dev/null; then
+      api=$(jq -r ".seeds[$i].api" "$file")
+      [[ -z "${apis[$api]:-}" ]] || die semantics "seeds[$i].api" 'duplicates a registration API endpoint'
+      apis[$api]=1
+      valid_http_url "$api" "seeds[$i].api"
+      ((api_count+=1))
+    fi
   done
   (( api_count > 0 )) || die semantics seeds 'at least one seed must provide api'
   broker_count=$(jq '.brokers | length' "$file")
@@ -66,12 +72,14 @@ validate() {
 }
 
 render_env() {
-  local file=$1 first_api rpc0 rpc1 p2p
+  local file=$1 first_api registration_apis rpc0 rpc1 p2p
   first_api=$(jq -r '[.seeds[] | select(has("api")) | .api][0]' "$file")
+  registration_apis=$(jq -r '[.seeds[] | select(has("api")) | .api] | join(",")' "$file")
+  [[ -n "$registration_apis" ]] || die env seeds 'at least one registration API is required'
   rpc0=$(jq -r '[.seeds[].rpc] | unique | .[0]' "$file"); rpc1=$(jq -r '[.seeds[].rpc] | unique | .[1]' "$file")
   [[ -n "$rpc0" && -n "$rpc1" && "$rpc1" != null ]] || die env seeds 'two distinct RPC URLs required'
   p2p=$(jq -r '.seeds[0].p2p' "$file")
-  printf "export SEED_API_URL=%q\nexport SEED_NODE_RPC_URL=%q\nexport SEED_NODE_P2P_URL=%q\nexport RPC_SERVER_URL_1=%q\nexport RPC_SERVER_URL_2=%q\n" "$first_api" "$rpc0" "$p2p" "$rpc0" "$rpc1"
+  printf "export SEED_API_URL=%q\nexport GDC_JOIN_REGISTRATION_ENDPOINTS=%q\nexport SEED_NODE_RPC_URL=%q\nexport SEED_NODE_P2P_URL=%q\nexport RPC_SERVER_URL_1=%q\nexport RPC_SERVER_URL_2=%q\n" "$first_api" "$registration_apis" "$rpc0" "$p2p" "$rpc0" "$rpc1"
 }
 
 # JOIN installs the CLI off PATH in the shared operator-root version cache.
