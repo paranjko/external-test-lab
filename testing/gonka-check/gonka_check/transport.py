@@ -98,8 +98,8 @@ class Client:
         self.recorder = recorder
         self.posts = 0
 
-    def get(self, url, timeout=15):
-        reply = self._send("GET", url, None, None, timeout, None)
+    def get(self, url, timeout=15, headers=None):
+        reply = self._send("GET", url, None, None, timeout, None, headers)
         if self.recorder is not None:
             reply.seq = self.recorder.write("http", **reply.to_record())
         return reply
@@ -116,7 +116,7 @@ class Client:
         reply.send_seq = send_seq
         return reply
 
-    def _send(self, method, url, body, key, timeout, deadline_ms):
+    def _send(self, method, url, body, key, timeout, deadline_ms, headers=None):
         check_url(self.preset, url)
         if key is not None and method != "POST":
             raise ValueError("the API key is sent only with a completion POST")
@@ -127,6 +127,8 @@ class Client:
             request.add_header("Content-Type", "application/json")
         if deadline_ms is not None:
             request.add_header("X-Request-Deadline-Ms", str(deadline_ms))
+        for name, value in (headers or {}).items():
+            request.add_header(name, value)
         if key is not None:
             request.add_unredirected_header("Authorization", "Bearer " + key)
         reply = Reply(method, url)

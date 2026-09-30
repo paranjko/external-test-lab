@@ -54,11 +54,24 @@ bin/gcheck escrow report <run>/snapshot.json --out DIR   # replay, 1000 escrows 
 `verify` replays the real escrows only; `simulate` writes the CSV files without the report.
 Checks: `weights` (weights sum to `total_weight`, same effective epoch at start and end), `escrows` (every escrow id of the epoch was read), `slots_replay` (the port matches every real escrow of the snapshot), `slots_source` (with `--slots-go`, the ported file's sha256), `slot_share` and `inclusion` (simulated counts within 5 sigma + 1 of the formulas).
 
+## Group size change
+
+Evidence and verdicts for a DevNet run that changes `group_size` within one epoch. The run itself (gateway admin calls, proposals, votes) is outside gcheck; these commands only read.
+
+```sh
+bin/gcheck escrow preflight --gateway a                          # READY or BLOCKED: group_size, free escrow places, gateway, voters
+bin/gcheck escrow record --a ID --b ID --change N --rollback N   # evidence read at the heights where each value applies
+bin/gcheck escrow verdict <run>                                  # report.md and verdicts.json; no network
+```
+
+Checks: `a_created`, `g_changed`, `b_created`, `a_settled_after`, `own_group` (quorum and fee split by the escrow's own slots), `same_epoch`, `accounting` (payouts, refund, coin balances), `rolled_back`. With `--a` alone it checks a control run.
+
 ## Safety
 
 - `run` and `watch` reach only `https://api.gonka-dev.net` and its gateways `/a` and `/b`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*`, `/v1/admission-status` and gateway admin paths (`/v1/admin/`, `/v1/debug/`, `/v1/finalize`) are never requested.
 - `watch` samples at most every 5 s against a public target; `--profile chain` and `watch` read no key.
 - One request in flight, one lock per machine, sends at least 2 blocks apart at epoch offset `safe_start+1 .. epoch_length-20`.
+- `escrow preflight` and `escrow record` read DevNet the same way, GET only, and never call gateway admin paths.
 - `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.
