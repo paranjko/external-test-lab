@@ -23,7 +23,7 @@ validate() {
     (.phase | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) and
     (.checkpoint | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) and
     (.state | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) and
-    (.category | test("^(configuration|identity|lineage|network|chain|timeout|dependency|operator|unknown)$")) and
+    (.category | test("^(configuration|identity|lineage|network|chain|timeout|dependency|host|operator|unknown)$")) and
     (.tool | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")) and
     (.exit_code | type == "number" and . >= 1 and . <= 255) and
     (.attempts | type == "number" and . >= 1 and . <= 999) and
@@ -40,7 +40,7 @@ validate() {
 write() {
   local output="$1" family="$2" phase="$3" checkpoint="$4" state="$5" category="$6" tool="$7" exit_code="$8" decision="$9" token="${10}" summary="${11}" tmp
   valid_token "$family" && valid_token "$phase" && valid_token "$checkpoint" && valid_token "$state" && valid_token "$tool" || die 'unsafe token'
-  [[ "$category" =~ ^(configuration|identity|lineage|network|chain|timeout|dependency|operator|unknown)$ ]] || die 'unsupported category'
+  [[ "$category" =~ ^(configuration|identity|lineage|network|chain|timeout|dependency|host|operator|unknown)$ ]] || die 'unsupported category'
   [[ "$exit_code" =~ ^[1-9][0-9]*$ && "$exit_code" -le 255 ]] || die 'unsafe exit code'
   [[ "$decision" =~ ^(safe|manual_action_required|unsafe|not_applicable)$ && "$token" =~ ^(none|join-repeat)$ ]] || die 'unsupported resume decision'
   [[ "$decision" == safe && "$token" == join-repeat || "$decision" != safe && "$token" == none ]] || die 'unsafe resume token'

@@ -75,6 +75,11 @@ chmod 0755 "$tmp/bin/curl"
 cat >"$tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+if [[ "${!#}" == 'sudo -n bash -s' ]]; then
+  cat >/dev/null
+  printf 'READY Host readiness preflight\n'
+  exit 0
+fi
 if [[ "${!#}" == 'bash -s' ]]; then
   cat >/dev/null
   if [[ "${ACCELERATOR_PROFILE_UNSUPPORTED:-false}" == true ]]; then

@@ -463,7 +463,19 @@ else
     # ordinary JOIN retry after the operator reboots this Host.
     : >"$RUN/prepare-reboot-required"
     chmod 0600 "$RUN/prepare-reboot-required"
+    "$ROOT/scripts/diagnostic-envelope.sh" write "$RUN/diagnostic-envelope.v1.json" \
+      join join-host-preparation accelerator-runtime reboot_required dependency prepare-host 194 \
+      safe join-repeat 'Host preparation changed the accelerator or kernel stack. Reboot the Host, then repeat JOIN.'
     printf 'REBOOT REQUIRED %s preparation installed a driver. Reboot this Host, then rerun the same gdc host join command. No reset is required.\n' "$NODE" >&2
+  elif (( prepare_rc == 195 )); then
+    # The Host has not received an identity, deployment or signer mutation.
+    # Preparation found a prerequisite that GDC must not repair implicitly.
+    : >"$RUN/prepare-operator-action-required"
+    chmod 0600 "$RUN/prepare-operator-action-required"
+    "$ROOT/scripts/diagnostic-envelope.sh" write "$RUN/diagnostic-envelope.v1.json" \
+      join join-host-preparation host-readiness operator_action_required operator prepare-host 195 \
+      manual_action_required none 'Host preparation needs operator action. Resolve the stated Host prerequisite, then repeat JOIN.'
+    printf 'OPERATOR ACTION REQUIRED %s: resolve the Host preparation prerequisite, then rerun the same gdc host join command. No reset is required.\n' "$NODE" >&2
   fi
   exit "$prepare_rc"
 fi

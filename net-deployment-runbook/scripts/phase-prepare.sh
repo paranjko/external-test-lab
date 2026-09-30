@@ -18,7 +18,7 @@ RUN="$GDC_HOME/runs/${GDC_RUN_ID:-manual}/prepare"
 mkdir -p "$RUN"
 chmod 0700 "$RUN"
 
-ready_hosts=(); reboot_hosts=(); skipped_hosts=(); failed_hosts=()
+ready_hosts=(); reboot_hosts=(); action_hosts=(); skipped_hosts=(); failed_hosts=()
 append_accelerator_remote_env() {
   local role="$1"
   [[ -n "${GDC_JOIN_PROFILE:-}" && ( "$role" == network-gpu || "$role" == ml-only ) ]] || return 0
@@ -164,6 +164,11 @@ for host in "${hosts[@]}"; do
     reboot_hosts+=("$host")
     continue
   fi
+  if (( prepare_rc == 195 )); then
+    echo "OPERATOR_ACTION_REQUIRED  $host: resolve the Host prerequisite in /var/log/gdc-prepare.log, then repeat JOIN"
+    action_hosts+=("$host")
+    continue
+  fi
   if (( prepare_rc != 0 )); then
     echo "FAILED  $host: prepare exited $prepare_rc; details: /var/log/gdc-prepare.log"
     failed_hosts+=("$host")
@@ -187,7 +192,9 @@ done
 printf '\n== Host preparation summary ==\n'
 printf 'READY   %s\n' "${ready_hosts[*]:-none}"
 printf 'REBOOT  %s\n' "${reboot_hosts[*]:-none}"
+printf 'ACTION  %s\n' "${action_hosts[*]:-none}"
 printf 'SKIP    %s\n' "${skipped_hosts[*]:-none}"
 printf 'FAILED  %s\n' "${failed_hosts[*]:-none}"
 (( ${#failed_hosts[@]} == 0 )) || exit 1
+(( ${#action_hosts[@]} == 0 )) || exit 195
 (( ${#reboot_hosts[@]} == 0 )) || exit 194

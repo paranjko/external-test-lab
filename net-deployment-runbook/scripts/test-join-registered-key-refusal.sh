@@ -270,15 +270,15 @@ jq -e '.outcome == "refused" and .mutation == "none" and .reason == "registered_
   "$mismatch_result" >/dev/null \
   || { jq -c . "$mismatch_result" >&2; fail 'the terminal result does not record a refusal before mutation'; }
 
-# Profile inspection plus two identity/key reads and nothing else: the Host
+# Host readiness, profile inspection and two identity/key reads: the Host
 # was never prepared, rendered or started.
-[[ "$(wc -l <"$tmp/mismatch-ssh.log")" == 3 ]] \
+[[ "$(wc -l <"$tmp/mismatch-ssh.log")" == 4 ]] \
   || { cat "$tmp/mismatch-ssh.log" >&2; fail 'the refused run made an unexpected Host call'; }
-grep -Fq 'bash -s' <<<"$(sed -n 1p "$tmp/mismatch-ssh.log")" \
+grep -Fq 'bash -s' <<<"$(sed -n 2p "$tmp/mismatch-ssh.log")" \
   || fail 'the first Host call was not read-only accelerator inspection'
-grep -Fq 'p2p/node_key.json' <<<"$(sed -n 2p "$tmp/mismatch-ssh.log")" \
+grep -Fq 'p2p/node_key.json' <<<"$(sed -n 3p "$tmp/mismatch-ssh.log")" \
   || fail 'the second Host call was not the read-only identity preflight'
-grep -Fq '/srv/dai/signer/tmkms/secrets/priv_validator_key.softsign' <<<"$(sed -n 3p "$tmp/mismatch-ssh.log")" \
+grep -Fq '/srv/dai/signer/tmkms/secrets/priv_validator_key.softsign' <<<"$(sed -n 4p "$tmp/mismatch-ssh.log")" \
   || fail 'the third Host call was not the durable signer key derivation'
 if grep -Fq "/srv/dai/signer/$ALIAS/tmkms" "$tmp/mismatch-ssh.log"; then
   cat "$tmp/mismatch-ssh.log" >&2
@@ -301,11 +301,11 @@ assert_unreadable_before_prepare() {
   result="$(join_result "$home")"
   [[ -n "$result" ]] && jq -e '.outcome == "refused" and .mutation == "none" and .reason == "registered_validator_key_unreadable"' "$result" >/dev/null \
     || fail "$name did not retain a no-mutation unreadable refusal"
-  [[ "$(wc -l <"$tmp/$name-ssh.log")" == 2 ]] \
+  [[ "$(wc -l <"$tmp/$name-ssh.log")" == 3 ]] \
     || { cat "$tmp/$name-ssh.log" >&2; fail "$name made a Host call beyond profile and identity inspection"; }
-  grep -Fq 'bash -s' <<<"$(sed -n 1p "$tmp/$name-ssh.log")" \
+  grep -Fq 'bash -s' <<<"$(sed -n 2p "$tmp/$name-ssh.log")" \
     || fail "$name did not use the read-only accelerator inspection"
-  grep -Fq 'p2p/node_key.json' <<<"$(sed -n 2p "$tmp/$name-ssh.log")" \
+  grep -Fq 'p2p/node_key.json' <<<"$(sed -n 3p "$tmp/$name-ssh.log")" \
     || fail "$name read a signer key after incomplete participant evidence"
 }
 

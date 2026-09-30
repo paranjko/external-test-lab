@@ -23,13 +23,19 @@ failure="$tmp/operator/reporting/invocations/invocation.$failure_id/failure.env"
 [[ -f "$failure" && ! -L "$failure" ]]
 grep -qx 'failure_stage=pre-phase' "$failure"
 grep -qx 'exit_code=2' "$failure"
+diagnostic="$(awk -F= '$1 == "diagnostic_envelope" { print $2 }' "$failure")"
+[[ -n "$diagnostic" && -f "$diagnostic" && ! -L "$diagnostic" ]]
+"$ROOT/scripts/diagnostic-envelope.sh" validate "$diagnostic"
+jq -e '
+  .command_family == "launcher" and .phase == "pre-phase" and
+  .checkpoint == "argument-validation" and .state == "refused" and
+  .category == "operator" and .tool == "argument-parser" and
+  .resume.decision == "manual_action_required"
+' "$diagnostic" >/dev/null
 # Older records may contain an untrusted reconstruction of the command. It is
 # deliberately ignored and must never enter generated report files.
 printf 'safe_invocation=/tmp/legacy-runbook/gdc.sh invalid-command\n' >>"$failure"
 mkdir -p "$tmp/operator/runs/diagnostic-fixture"
-"$ROOT/scripts/diagnostic-envelope.sh" write "$tmp/operator/runs/diagnostic-fixture/diagnostic-envelope.v1.json" \
-  join join-node failed interrupted network curl 28 safe join-repeat 'network readback timed out'
-printf 'diagnostic_envelope=%s\n' "$tmp/operator/runs/diagnostic-fixture/diagnostic-envelope.v1.json" >>"$failure"
 # Current JOIN failures may also retain the private preflight receipt path.
 # It is intentionally not copied into the public report.
 printf 'preflight_receipt=%s\n' "$tmp/operator/runs/diagnostic-fixture/preflight-receipt.env" >>"$failure"
@@ -111,14 +117,12 @@ grep -Fq 'gdc-report-sha256:' "$tmp/published.md"
 ! grep -Fq 'Safe reproduction command' "$tmp/published.md"
 ! grep -Fq '/tmp/legacy-runbook' "$tmp/published.md"
 ! grep -Fq 'safe_invocation=' "$tmp/published.md"
-grep -Fq 'network readback timed out' "$tmp/published.md"
-grep -Fq 'Resume decision: `safe`.' "$tmp/published.md"
 grep -Fq 'Selected failure: ' "$tmp/new.out"
 grep -Fxq '## Terminal result' "$tmp/published.md"
 for row in '| outcome | refused |' '| reason | partial_identity |' '| mutation | none |' '| signer_state | absent |' '| resume | manual_recovery |'; do
   grep -Fxq "$row" "$tmp/published.md" || { printf 'terminal result row is missing: %s\n' "$row" >&2; exit 1; }
 done
-for row in '| category | network |' '| checkpoint | failed |' '| state | interrupted |' '| tool | curl |'; do
+for row in '| category | operator |' '| checkpoint | argument-validation |' '| state | refused |' '| tool | argument-parser |'; do
   grep -Fxq "$row" "$tmp/published.md" || { printf 'typed diagnostic row is missing: %s\n' "$row" >&2; exit 1; }
 done
 grep -Fxq '| invocation_options | --restore --public-host (+1 not listed) |' "$tmp/published.md"
@@ -126,7 +130,6 @@ grep -Fxq '| invocation_options | --restore --public-host (+1 not listed) |' "$t
 # Every die in the runbook exits 1, so the default title names the typed reason.
 grep -Fq 'refused' "$tmp/gh.args"
 grep -Fq 'partial_identity' "$tmp/gh.args"
-grep -Fq 'permits repeating the supported `gdc host join` operation' "$tmp/published.md"
 ! grep -Eq '^\| (docker|gh|docker_compose|nvidia_gpu|filesystem_free_kib) \|' "$tmp/published.md"
 grep -Eq '^\| bash \| [0-9][0-9A-Za-z()._-]* \|$' "$tmp/published.md"
 ! grep -Eiq 'authorization|private key|mnemonic|cookie|token=' "$tmp/published.md"

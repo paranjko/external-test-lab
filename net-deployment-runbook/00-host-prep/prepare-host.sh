@@ -8,7 +8,7 @@ ROLE: network-gpu | network-only | ml-only
 EOF
 }
 [[ $EUID -eq 0 ]] || { echo "Run with sudo" >&2; exit 1; }
-ROLE=""; MONITORING_CIDR=""; PUBLIC_EDGE_CIDR=""; SSH_PORT=""; GATEWAY_SERVICES=false; DRIVER_CHANGED=false
+ROLE=""; MONITORING_CIDR=""; PUBLIC_EDGE_CIDR=""; SSH_PORT=""; GATEWAY_SERVICES=false; DRIVER_CHANGED=false; REBOOT_PENDING=false; DOCKER_CONFIG_CHANGED=false
 OPERATOR_USER="${SUDO_USER:-}"; MIN_DRIVER=580; ML_CLIENT_CIDR="${ML_CLIENT_CIDR:-}"; ML_CALLBACK_CIDR="${ML_CALLBACK_CIDR:-}"
 while (($#)); do
   case "$1" in
@@ -96,11 +96,20 @@ HOST_NAME="$(hostname)"
 : >"$LOG"
 exec 3>&1
 status(){ printf '%s\n' "$*" >&3; }
-on_error(){ local rc=$?; status "FAILED  $HOST_NAME at line $LINENO; details: $LOG"; exit "$rc"; }
+# BASH_LINENO identifies the failed command, not this ERR-trap function.
+on_error(){ local rc=$? line="${BASH_LINENO[0]:-$LINENO}"; status "FAILED  $HOST_NAME at line $line; details: $LOG"; exit "$rc"; }
 trap on_error ERR
 exec >>"$LOG" 2>&1
 status "PREPARE  $HOST_NAME"
 export DEBIAN_FRONTEND=noninteractive
+operator_action_required() {
+  status "OPERATOR_ACTION_REQUIRED $*"
+  trap - ERR
+  exit 195
+}
+if [[ -n "$(dpkg --audit 2>&1 || true)" ]]; then
+  operator_action_required 'package_manager_unresolved: finish the interrupted dpkg transaction before JOIN'
+fi
 ensure_packages() {
   local package missing=()
   for package in "$@"; do
@@ -119,6 +128,10 @@ ensure_packages \
   python3 python3-yaml python3-requests python3-venv chrony fail2ban unattended-upgrades \
   smartmontools nvme-cli pciutils lsof net-tools iptables conntrack socat \
   ubuntu-drivers-common mokutil
+
+# A reboot marker is a host boundary, not a reason to recreate identity.  We
+# still repair NVIDIA modules below before returning the typed continuation.
+[[ ! -e /var/run/reboot-required ]] || REBOOT_PENDING=true
 
 install_amd_rocm() {
   local installer=/tmp/gdc-amdgpu-install.deb
@@ -236,7 +249,9 @@ ensure_nvidia_modules_for_installed_kernels() {
     status "INSTALL  NVIDIA $branch modules for kernel $kernel"
     # Explicit, so the failure ends prepare in every calling context.
     apt-get install -y "$package" || return 1
-    [[ "$kernel" != "$running" ]] || DRIVER_CHANGED=true
+    # A module package can pull matching NVIDIA user-space packages.  Even a
+    # module for the next kernel can therefore leave the loaded driver stale.
+    DRIVER_CHANGED=true
   done < <(dpkg-query -W -f='${Package} ${db:Status-Abbrev}\n' 'linux-image-[0-9]*-generic' 2>/dev/null \
     | awk '$2 ~ /^ii/ {sub(/^linux-image-/, "", $1); print $1}' || true)
 }
@@ -266,6 +281,34 @@ elif [[ "$GPU_ROLE" == true && "$AMD_ACCELERATOR" == false ]]; then
     update-initramfs -u
     DRIVER_CHANGED=true
   fi
+fi
+
+# Do not touch Docker after package work has changed a kernel or accelerator
+# stack.  The same JOIN is safe to repeat after the operator reboots.
+if [[ "$DRIVER_CHANGED" == true || "$REBOOT_PENDING" == true ]]; then
+  if [[ "$DRIVER_CHANGED" == true ]]; then
+    status "REBOOT  $HOST_NAME to activate the accelerator runtime, then rerun prepare"
+  else
+    status "REBOOT  $HOST_NAME has pending Host package updates, then rerun prepare"
+  fi
+  trap - ERR
+  exit 194
+fi
+
+check_existing_docker_state() {
+  local root
+  command -v docker >/dev/null 2>&1 || return 0
+  systemctl is-active --quiet docker.service || return 0
+  root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [[ -n "$root" && -d "$root" && -d "$root/tmp" ]] \
+    || operator_action_required 'docker_storage_unhealthy: Docker root is incomplete; repair Docker storage before JOIN'
+}
+check_existing_docker_state
+
+DAEMON_BEFORE="$(mktemp)"
+cp -- "$DAEMON_JSON" "$DAEMON_BEFORE"
+
+if [[ "$GPU_ROLE" == true && "$AMD_ACCELERATOR" == false ]]; then
   # The selected driver metapackage installs its matching utilities.
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
     | gpg --dearmor --yes -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
@@ -273,13 +316,19 @@ elif [[ "$GPU_ROLE" == true && "$AMD_ACCELERATOR" == false ]]; then
     | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
     > /etc/apt/sources.list.d/nvidia-container-toolkit.list
   apt-get update
-  apt-get install -y nvidia-container-toolkit
+  ensure_packages nvidia-container-toolkit
   nvidia-ctk runtime configure --runtime=docker
 fi
+if ! cmp -s "$DAEMON_BEFORE" "$DAEMON_JSON"; then
+  DOCKER_CONFIG_CHANGED=true
+fi
+rm -f "$DAEMON_BEFORE"
 systemctl enable --now containerd docker.socket
 systemctl reset-failed docker.service || true
 systemctl enable docker.service
-systemctl restart docker.service
+if [[ "$DOCKER_CONFIG_CHANGED" == true ]] && ! systemctl restart docker.service; then
+  operator_action_required 'docker_restart_failed: Docker did not restart after a runtime configuration change; repair it before JOIN'
+fi
 
 id "$OPERATOR_USER" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "$OPERATOR_USER"
 usermod -aG docker "$OPERATOR_USER"
@@ -340,10 +389,3 @@ systemctl enable gonka-firewall.service
 systemctl restart gonka-firewall.service
 
 status "PREPARED  $HOST_NAME"
-
-if [[ "$DRIVER_CHANGED" == true ]]; then
-  status "REBOOT  $HOST_NAME to activate the accelerator runtime, then rerun prepare"
-  # 194 is an intentional operator action, not a failed preparation step.
-  trap - ERR
-  exit 194
-fi
