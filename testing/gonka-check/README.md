@@ -79,12 +79,22 @@ Runs the upstream DevShard gateway session with G in-process hosts and the stub 
 bin/gcheck gateway-load plan                    # source tag and commit, runner, what is written
 bin/gcheck gateway-load stress --dry-run        # fetch the source and build the test: READY or BLOCKED
 bin/gcheck gateway-load stress                  # G=16,32,64, 19,800 nonces each: report.md, checkpoints.csv, charts
+bin/gcheck gateway-load stand --dry-run         # build the images, start a small stand, send one request
+bin/gcheck gateway-load stand                   # gateway as its own process, 7 stub hosts, 8 requests in flight
+bin/gcheck gateway-load stand --hosts 7,G --concurrency 1,8,32 --delay-ms 50   # one stand per combination
 ```
 
 The source is `gonka-ai/gonka` at `devshard/v5.0.2`, pinned to its commit; gcheck adds one test file to that checkout.
 The test is built once and runs as a plain binary, capped at 75% of the machine memory by default (`--memory GB`, `0` for no cap).
 Gateway time per nonce is the wall time minus the time inside the hosts. Each group size is one check: `PASS` when every nonce, the finalization and the settlement check pass.
 Records do not seal by the clock during a run (30 days instead of an hour): a DevNet escrow ends before they would.
+
+`stand` builds the mock chain, stub host and gateway images from the same commit and runs them in Docker on a private network.
+It samples gateway CPU, memory, traffic and storage every 5 s until the escrow reaches the nonce cap, then finalizes and removes the containers.
+A run stops early when the nonce does not move for 10 minutes or, on Linux, when less than 5% of the machine memory is left.
+The finalization reply, the settlement payload, is kept as `g<G>-h<H>-c<x>/finalize.json`; `PASS` needs at least 2G/3 + 1 signatures in it.
+`--hosts G` gives every slot its own stub host; `--delay-ms` delays every packet a stub host sends, through netem.
+Stub hosts gossip every diff to each other, so their timings are not those of `devshardd`; the gateway figures are the result.
 
 ## Safety
 
@@ -94,7 +104,7 @@ Records do not seal by the clock during a run (30 days instead of an hour): a De
 - `escrow preflight` and `escrow record` read DevNet the same way, GET only, and never call gateway admin paths.
 - `scenarios/` is not gcheck: with `--run` a scenario sends transactions through the gateway admin API, and `run-187.sh` and `gov-group-size.sh` also sign proposals with the run account; the gateway keys are read on the gateway host and reach curl on stdin.
 - `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
-- `gateway-load` reaches only GitHub for the source and the Go module proxy; it sends nothing to any Gonka network.
+- `gateway-load` reaches only GitHub for the source, the Go module proxy, Docker Hub for the `golang` and `alpine` base images and the Alpine package mirror; it sends nothing to any Gonka network. The `stand` gateway listens on 127.0.0.1 only.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.
 - The run stops on a suspected permit leak (408 with a permit height and no dispatch height), on a failed dispatch, on a reply without admission headers (except from `/a` and `/b`), on an unknown outcome, on a proxy protocol misconfiguration, and after two pre-dispatch rejections.
