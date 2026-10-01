@@ -120,17 +120,51 @@
     handle /ops-gateway-metrics {
     respond 403
   }
+    @gateway_route_metrics_from_monitoring {
+    path /ops-gateway-route-metrics
+    remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.1 ::1
+  }
+    handle @gateway_route_metrics_from_monitoring {
+    rewrite * /metrics
+    reverse_proxy 127.0.0.1:18100
+  }
+    handle /ops-gateway-route-metrics {
+    respond 403
+  }
+    @gateway_admission_metrics_from_monitoring {
+    path /ops-gateway-admission-metrics
+    remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.1 ::1
+  }
+    handle @gateway_admission_metrics_from_monitoring {
+    rewrite * /metrics
+    reverse_proxy 127.0.0.1:18083
+  }
+    handle /ops-gateway-admission-metrics {
+    respond 403
+  }
     # DevShard 502's public edge is the only permitted caller for its B
     # gateway handoff.  Keeping this private prefix on the B participant
     # avoids the generic public-edge fallback loop while never exposing the
     # gateway's loopback listener to arbitrary clients.
+    @gateway_b_readiness_from_public_edge {
+      path /gateway-b/v1/admission-status
+      method GET
+      remote_ip {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @gateway_b_readiness_from_public_edge {
+      rewrite * /v1/admission-status
+      reverse_proxy {$GDC_GATEWAY_B_READINESS_UPSTREAM:http://127.0.0.1:9}
+    }
+    handle /gateway-b/v1/admission-status {
+      respond 403
+    }
     @gateway_b_from_public_edge {
       path /gateway-b/*
       remote_ip {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
     }
     handle @gateway_b_from_public_edge {
       uri strip_prefix /gateway-b
-      reverse_proxy {$GDC_GATEWAY_B_UPSTREAM}
+      reverse_proxy 127.0.0.1:18100
     }
     handle /gateway-b/* {
       respond 403

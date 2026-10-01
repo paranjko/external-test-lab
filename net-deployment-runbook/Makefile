@@ -424,7 +424,9 @@ test: test-devshard-two-gateways test-devshard-502-fixture-contract test-command
 	@./scripts/test-dashboard-generator.sh
 	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-observer.py
+	@$(MAKE) test-gateway-readiness test-gateway-readiness-lifecycle
 	@python3 ./scripts/test-gateway-admission-proxy.py
+	@python3 ./scripts/test-gateway-route-proxy.py
 	@./scripts/test-gateway-migration.sh
 	@bash ./scripts/test-gateway-poc-windows.sh
 	@./scripts/test-host-sync-verdict.sh
@@ -510,6 +512,13 @@ test-command-dependency-contract:
 
 test-gateway-settings-deployment:
 	@./scripts/test-gateway-settings-deployment.sh
+
+.PHONY: test-gateway-readiness test-gateway-readiness-lifecycle
+test-gateway-readiness:
+	@python3 ./scripts/test-gateway-readiness.py
+
+test-gateway-readiness-lifecycle:
+	@python3 ./scripts/test-gateway-readiness-lifecycle.py
 
 test-monitoring-firewall-deployment:
 	@./scripts/test-monitoring-firewall-deployment.sh

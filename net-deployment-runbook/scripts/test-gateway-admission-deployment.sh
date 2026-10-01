@@ -176,8 +176,14 @@ if [[ "$command_line" == *'gateway-admission-observer.env'* ]]; then
   if [[ "${GDC_TEST_PROTOCOL_VERSION:-5}" != absent ]]; then
     protocol_field=",\"protocol_version\":\"${GDC_TEST_PROTOCOL_VERSION:-5}\""
   fi
-  printf '{"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"routable":true,"total_weight":100}}},"devshards":[{"active":%s%s,"runtime":{"session_version":"%s","phase":"%s","chain_phase":"Inference","requests_blocked":false}}]}\n' \
-    "$active" "$protocol_field" "${GDC_TEST_RUNTIME_VERSION:-v5}" "$phase"
+  runtime_protocol_field=''
+  if [[ "${GDC_TEST_RUNTIME_PROTOCOL_VERSION:-absent}" != absent ]]; then
+    runtime_protocol_field=",\"protocol_version\":\"${GDC_TEST_RUNTIME_PROTOCOL_VERSION}\""
+  fi
+  runtime_session_version="${GDC_TEST_RUNTIME_VERSION:-v5}"
+  [[ "$runtime_session_version" != absent ]] || runtime_session_version=''
+  printf '{"capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":100,"routable":true,"total_weight":100}}},"devshards":[{"active":%s%s,"runtime":{"session_version":"%s"%s,"phase":"%s","chain_phase":"Inference","requests_blocked":false}}]}\n' \
+    "$active" "$protocol_field" "$runtime_session_version" "$runtime_protocol_field" "$phase"
 elif [[ "$command_line" == *'systemctl show gdc-gateway-admission-observer.service'* ]]; then
   case "${GDC_TEST_OBSERVER_STATE:-active}" in
     active) printf 'active\n' ;;
@@ -338,6 +344,19 @@ export GDC_TEST_PROTOCOL_VERSION=absent
 export GDC_TEST_RUNTIME_VERSION=v4
 wait_gateway_admission_observer_ready >"$tmp/readiness-v4.out"
 grep -Fq 'READY gateway admission observer exposes v4 with positive capacity' "$tmp/readiness-v4.out"
+
+# The official v3 runtime publishes its protocol under runtime rather than
+# the legacy top-level field or a session version. It is equally sufficient
+# only after the observer has explicitly preserved that safe identity field.
+: >"$GDC_TEST_READINESS_COUNT"
+export GDC_GATEWAY_VERSION=v3
+export GDC_GATEWAY_OBSERVER_READY_ATTEMPTS=1
+export GDC_TEST_READINESS_FAILURES_BEFORE_PASS=0
+export GDC_TEST_PROTOCOL_VERSION=absent
+export GDC_TEST_RUNTIME_VERSION=absent
+export GDC_TEST_RUNTIME_PROTOCOL_VERSION=3
+wait_gateway_admission_observer_ready >"$tmp/readiness-v3.out"
+grep -Fq 'READY gateway admission observer exposes v3 with positive capacity' "$tmp/readiness-v3.out"
 
 # A different active protocol never satisfies the selected-profile contract.
 : >"$GDC_TEST_READINESS_COUNT"

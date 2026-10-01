@@ -297,6 +297,24 @@ while IFS=$'\t' read -r gateway_id gateway_node; do
     "$(node_public_host "$gateway_node")" "$gateway_id" "$gateway_node"
 done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$gateway_metrics_targets")
 cat <<YAML
+  - job_name: gateway-admission-route
+    scheme: https
+    metrics_path: /ops-gateway-admission-metrics
+    static_configs:
+      - targets: ['$(node_public_host "$PUBLIC_EDGE_NODE"):443']
+        labels: {route: 'S', host: '$PUBLIC_EDGE_NODE'}
+YAML
+cat <<YAML
+  - job_name: gateway-route
+    scheme: https
+    metrics_path: /ops-gateway-route-metrics
+    static_configs:
+YAML
+while IFS=$'\t' read -r gateway_id gateway_node; do
+  printf "      - targets: ['%s:443']\n        labels: {route: '%s', host: '%s'}\n" \
+    "$(node_public_host "$gateway_node")" "$gateway_id" "$gateway_node"
+done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$gateway_metrics_targets")
+cat <<YAML
   - job_name: gateway-readiness
     metrics_path: /status/gateway-health.prom
     static_configs:

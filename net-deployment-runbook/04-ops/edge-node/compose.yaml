@@ -37,6 +37,15 @@ services:
       - ./gateway-admission-proxy.py:/edge/gateway-admission-proxy.py:ro
       - ./status:/edge/status
 
+  gateway-route:
+    image: ${PYTHON_IMAGE:-python:3.13-alpine}
+    restart: unless-stopped
+    network_mode: host
+    env_file: [./gateway-route.env]
+    command: ["python3", "/edge/gateway-route-proxy.py"]
+    volumes:
+      - ./gateway-route-proxy.py:/edge/gateway-route-proxy.py:ro
+
   caddy:
     image: ${CADDY_IMAGE:-caddy:2.11.4-alpine}
     restart: unless-stopped
@@ -52,6 +61,7 @@ services:
       GATEWAY_DAPI_UPSTREAM: ${GATEWAY_DAPI_UPSTREAM:-}
       GDC_GATEWAY_METRICS_UPSTREAM: ${GDC_GATEWAY_METRICS_UPSTREAM:-}
       GDC_GATEWAY_B_UPSTREAM: ${GDC_GATEWAY_B_UPSTREAM:-http://127.0.0.1:9}
+      GDC_GATEWAY_B_READINESS_UPSTREAM: ${GDC_GATEWAY_B_READINESS_UPSTREAM:-http://127.0.0.1:9}
       TELEGRAM_BOT_PUBLIC_HOST: ${TELEGRAM_BOT_PUBLIC_HOST:-}
       PUBLIC_EDGE_HOST: ${PUBLIC_EDGE_HOST:-}
       MONITORING_CIDR: ${MONITORING_CIDR:-127.0.0.1/32}

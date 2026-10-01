@@ -123,11 +123,13 @@ gateway_upstream_port="${GDC_GATEWAY_ADMISSION_UPSTREAM_PORT:-18080}"
 [[ "$gateway_upstream_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( gateway_upstream_port <= 65535 )) \
   || { echo 'GDC_GATEWAY_ADMISSION_UPSTREAM_PORT must be a valid TCP port' >&2; exit 2; }
 gateway_metrics_upstream="http://127.0.0.1:$gateway_upstream_port"
+gateway_route_id=''
 # This sink is deliberately unreachable unless this participant is the B
 # gateway selected by the A/B topology.  Caddy still parses one common
 # participant configuration, while only node B may accept the public edge's
 # private /gateway-b handoff.
 gateway_b_upstream='http://127.0.0.1:9'
+gateway_b_readiness_upstream='http://127.0.0.1:9'
 monitoring_docker_cidr="${GDC_MONITORING_DOCKER_CIDR:-}"
 [[ "$monitoring_docker_cidr" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$ ]] \
   || { echo 'GDC_MONITORING_DOCKER_CIDR must be the explicit Prometheus Docker IPv4 CIDR' >&2; exit 2; }
@@ -156,7 +158,14 @@ if [[ -n "${GDC_GATEWAY_METRICS_TARGETS:-}" ]]; then
     || { echo 'GDC_GATEWAY_METRICS_TARGETS must define one valid target for this edge node' >&2; exit 2; }
   if [[ "$gateway_metrics_id" == 'B' ]]; then
     gateway_b_upstream="$gateway_metrics_upstream"
+    readiness_port="${GDC_GATEWAY_B_READINESS_PORT:-18086}"
+    [[ "$readiness_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( readiness_port >= 1024 && readiness_port <= 65535 )) \
+      || { echo 'GDC_GATEWAY_B_READINESS_PORT must be a private TCP port' >&2; exit 2; }
+    [[ "$readiness_port" != "$gateway_metrics_port" && "$readiness_port" != 18083 && "$readiness_port" != 18084 && "$readiness_port" != 18100 ]] \
+      || { echo 'B readiness port conflicts with a retained service' >&2; exit 2; }
+    gateway_b_readiness_upstream="http://127.0.0.1:$readiness_port"
   fi
+  gateway_route_id="$gateway_metrics_id"
 fi
 gateway_admission_upstream="http://${gateway_public_host}:$gateway_upstream_port"
 # The admission proxy shares the gateway Host network namespace.  Reaching the
@@ -180,6 +189,11 @@ values=(
   "GDC_GATEWAY_ADMISSION_UPSTREAM=$gateway_admission_upstream"
   "GDC_GATEWAY_METRICS_UPSTREAM=$gateway_metrics_upstream"
   "GDC_GATEWAY_B_UPSTREAM=$gateway_b_upstream"
+  "GDC_GATEWAY_B_READINESS_UPSTREAM=$gateway_b_readiness_upstream"
+  "GDC_GATEWAY_ROUTE_PROXY_HOST=127.0.0.1"
+  "GDC_GATEWAY_ROUTE_PROXY_PORT=18100"
+  "GDC_GATEWAY_ROUTE_ID=$gateway_route_id"
+  "GDC_GATEWAY_ROUTE_UPSTREAM=$gateway_metrics_upstream"
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
   # identity and positive capacity instead of deployment intent. The gateway
@@ -190,6 +204,7 @@ values=(
   "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL=https://${PUBLIC_EDGE_HOST}/chain-rpc/status"
   "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/params"
   "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=$gateway_admission_protocols_json"
+  "GDC_GATEWAY_ADMISSION_SELECTED_VERSION=${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
   "GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS=${GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS:-10}"
   "GDC_GATEWAY_ADMISSION_MAX_QUEUE=${GDC_GATEWAY_ADMISSION_MAX_QUEUE:-16}"
   "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS:-300}"

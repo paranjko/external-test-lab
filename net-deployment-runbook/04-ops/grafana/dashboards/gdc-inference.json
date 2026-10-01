@@ -502,7 +502,7 @@
       "title": "Attempts started by role",
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 4,
         "x": 12,
         "y": 6
       },
@@ -576,6 +576,63 @@
         }
       ],
       "description": "Attempts the gateway started per second, by the role it gave the executor. Averaged over an hour because attempts arrive in bursts."
+    },
+    {
+      "id": 57,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Public route entries",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no public route counter was scraped"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (route) (gdc_gateway_route_requests_total)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Requests accepted by the public stable, A and B entry routes. These edge counters prove entrypoint movement only and must not be added to native gateway request counters."
     },
     {
       "id": 63,

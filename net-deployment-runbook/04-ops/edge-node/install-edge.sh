@@ -31,6 +31,11 @@ fi
 if [[ ! -e "$DEST/gateway-admission.env" ]]; then
   install -m 0600 /dev/null "$DEST/gateway-admission.env"
 fi
+if [[ -d "$DEST/gateway-route.env" ]]; then
+  rm -rf "$DEST/gateway-route.env"
+fi
+install -m 0600 "$1" "$DEST/gateway-route.env"
+install -m 0644 "$HERE/gateway-route-proxy.py" "$DEST/gateway-route-proxy.py"
 install -m 0600 "$1" "$DEST/.env"
 # A running public Grafana bind-mounts the dashboards and provisioning
 # directories. Replacing those directories would leave the container on the

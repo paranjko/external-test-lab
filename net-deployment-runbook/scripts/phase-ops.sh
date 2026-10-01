@@ -251,12 +251,12 @@ wait_gateway_admission_observer_ready() {
             | (.capacity.models // {}) as $models
             | any($models[]?; ((.current_weight // .total_weight // 0) | tonumber) > 0)
             and any(.devshards[]?;
-              ([.protocol_version?, .runtime.session_version?]
-                | map(select(. != null) | tostring | ltrimstr("v"))) as $versions
+              ([.protocol_version?, .runtime.session_version?, .runtime.protocol_version?]
+                | map(select(. != null and . != "") | tostring | ltrimstr("v"))) as $versions
               | .active == true
               and (($versions | length) > 0)
               and all($versions[]; . == $protocol_number)
-              and .runtime.session_version == $protocol
+              and any($versions[]; . == $protocol_number)
               and .runtime.phase == "active"
               and .runtime.chain_phase == "Inference"
               and .runtime.requests_blocked == false)
@@ -319,7 +319,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
     edge_destination=/srv/dai/edge
     edge_install_args=''
   fi
-  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; cd '$edge_destination' && docker compose up -d --force-recreate caddy"
+  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; cd '$edge_destination'; if grep -Eq '^GDC_GATEWAY_ROUTE_ID=[AB]$' .env; then docker compose up -d --force-recreate caddy gateway-route; else docker compose up -d --force-recreate caddy; fi"
   # A selected gateway can move after recovery. Reconcile only the retained
   # proxy listener with the current role; never regenerate the node role,
   # reset chain data, or replace a signer here.
@@ -811,7 +811,7 @@ case "$COMPONENT" in
     gateway_ingress_url='http://127.0.0.1:8000/health'
     START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 '$gateway_ingress_url' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 '$gateway_ingress_url' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
     CADDY_START_COMMAND=true
-    POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-admission-observer.service >/dev/null && sudo systemctl restart gdc-gateway-admission-observer.service && sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
+    POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-admission-observer.service >/dev/null && sudo systemctl restart gdc-gateway-admission-observer.service'
     ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"
     ;;
   monitoring)
@@ -919,6 +919,14 @@ if [[ "$COMPONENT" == faucet ]]; then
 fi
 
 if [[ "$COMPONENT" == gateway ]]; then
+  step 'Configure authenticated access and rotation before reconciliation'
+  # A fresh runtime starts with the image defaults.  In particular, an
+  # enabled rotation with no model entries cannot activate an escrow.  Apply
+  # the complete governed settings before starting the reconciler, otherwise
+  # waiting for its active escrow creates a startup deadlock.
+  ssh "$GATEWAY_NODE" "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"poc_max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"participant_throttle\":{\"request_burst\":$gateway_participant_request_burst,\"recovery_per_minute\":$gateway_participant_recovery_per_minute},\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":$gateway_rotation_enabled,\"settlement_enabled\":$gateway_rotation_settlement_enabled,\"pre_poc_blocks\":$gateway_pre_poc_blocks,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":$gateway_rotation_temp_count,\"target_count\":$gateway_rotation_target_count,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .poc_max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .max_input_tokens_in_flight == $gateway_max_input_tokens and .participant_throttle.request_burst == $gateway_participant_request_burst and .participant_throttle.recovery_per_minute == $gateway_participant_recovery_per_minute and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_input_tokens_in_flight == $gateway_max_input_tokens and .access_mode == \"api_key\")) and .escrow_rotation.enabled == $gateway_rotation_enabled and .escrow_rotation.settlement_enabled == $gateway_rotation_settlement_enabled and .escrow_rotation.pre_poc_blocks == $gateway_pre_poc_blocks and .escrow_rotation.models[0].temp_count == $gateway_rotation_temp_count and .escrow_rotation.models[0].target_count == $gateway_rotation_target_count and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
+  step 'Start the gateway escrow reconciler after settings are durable'
+  ssh "$GATEWAY_NODE" 'sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
   step 'Resolve the active committed escrow after reconciliation'
   # Rotation may retire the rendered escrow while this command is running.
   # Observe the gateway's current choice and chain state together; never POST
@@ -947,15 +955,6 @@ if [[ "$COMPONENT" == gateway ]]; then
   sed -i -E "s/^DEVSHARD_ESCROW_ID=.*/DEVSHARD_ESCROW_ID=$gateway_active_escrow/" "$GATEWAY_ENV"
   ssh -T "$GATEWAY_NODE" "sudo sed -i -E 's/^DEVSHARD_ESCROW_ID=.*/DEVSHARD_ESCROW_ID=$gateway_active_escrow/' /srv/dai/ops/gateway.env"
   printf 'READY gateway reconciler selected committed escrow %s\n' "$gateway_active_escrow"
-  step 'Configure authenticated access for the governed model'
-  # A new per-protocol gateway state volume intentionally starts without
-  # persisted model access settings.  The runtime defaults to admin_only,
-  # which would make an apparently ACTIVE public gateway reject every client
-  # key.  Keep the route authenticated rather than making inference public.
-  # These settings persist in gateway.db.  Apply the environment-derived
-  # default explicitly so an existing state volume cannot retain an unsafe
-  # value from a previous deployment.
-  ssh "$GATEWAY_NODE" "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"poc_max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"participant_throttle\":{\"request_burst\":$gateway_participant_request_burst,\"recovery_per_minute\":$gateway_participant_recovery_per_minute},\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":$gateway_rotation_enabled,\"settlement_enabled\":$gateway_rotation_settlement_enabled,\"pre_poc_blocks\":$gateway_pre_poc_blocks,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":$gateway_rotation_temp_count,\"target_count\":$gateway_rotation_target_count,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .poc_max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .max_input_tokens_in_flight == $gateway_max_input_tokens and .participant_throttle.request_burst == $gateway_participant_request_burst and .participant_throttle.recovery_per_minute == $gateway_participant_recovery_per_minute and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_input_tokens_in_flight == $gateway_max_input_tokens and .access_mode == \"api_key\")) and .escrow_rotation.enabled == $gateway_rotation_enabled and .escrow_rotation.settlement_enabled == $gateway_rotation_settlement_enabled and .escrow_rotation.pre_poc_blocks == $gateway_pre_poc_blocks and .escrow_rotation.models[0].temp_count == $gateway_rotation_temp_count and .escrow_rotation.models[0].target_count == $gateway_rotation_target_count and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
   step 'Verify gateway runtime, client authentication, and public route'
   gateway_ready=false
     gateway_ready_timeout="${GDC_GATEWAY_READY_TIMEOUT_SECONDS:-600}"

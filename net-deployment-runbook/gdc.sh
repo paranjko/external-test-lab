@@ -630,6 +630,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
   ./gdc.sh ops gateway-settings preview|apply
+  ./gdc.sh ops gateway-readiness preview|apply
   ./gdc.sh ops monitoring-firewall preview|apply
   ./gdc.sh ops monitoring
   ./gdc.sh ops site
@@ -1267,6 +1268,9 @@ case "$COMMAND" in
     elif [[ "$1" == gateway-settings ]]; then
       [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
       run_phase "ops-gateway-settings-$2" "$ROOT/scripts/phase-gateway-settings.sh" "$2"
+    elif [[ "$1" == gateway-readiness ]]; then
+      [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
+      run_phase "ops-gateway-readiness-$2" bash "$ROOT/scripts/phase-gateway-readiness.sh" "$2"
     elif [[ "$1" == monitoring-firewall ]]; then
       [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
       run_phase "ops-monitoring-firewall-$2" "$ROOT/scripts/phase-monitoring-firewall.sh" "$2"
