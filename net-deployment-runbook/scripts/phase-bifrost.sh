@@ -12,6 +12,10 @@ gateway_env="$GENERATED/ops/gateway.env"
 port="$(awk -F= '$1 == "DEVSHARD_PORT" {print $2; exit}' "$gateway_env")"
 model="$(awk -F= '$1 == "DEVSHARD_MODEL" {print substr($0,index($0,"=")+1); exit}' "$gateway_env")"
 [[ "$port" =~ ^[1-9][0-9]{0,4}$ && -n "$model" ]] || die 'rendered gateway S has no valid port/model'
+bifrost_port="${GDC_BIFROST_PORT:-9467}"
+[[ "$bifrost_port" =~ ^[1-9][0-9]{0,4}$ && "$bifrost_port" -le 65535 \
+  && "$bifrost_port" != 9465 && "$bifrost_port" != 9466 && "$bifrost_port" != "$port" ]] \
+  || die 'GDC_BIFROST_PORT must be a valid private port distinct from gateway, broker and edge ports'
 
 image='maximhq/bifrost@sha256:5f8215163cea192451f4b2ee5e0b583874ffe9435a5ab733e08c07aaf38ace57'
 provider='gonka-s'
@@ -24,8 +28,8 @@ preview_file="$run/preview.json"
 
 synthetic_empty_preview() {
   local desired current before_sha desired_sha
-  desired="$(jq -cn --arg image "$image" --arg provider "$provider" --arg model "$model" --arg upstream "$upstream" \
-    '{image:$image,provider:$provider,model:$model,upstream:$upstream}' | jq -S -c .)"
+  desired="$(jq -cn --arg image "$image" --arg provider "$provider" --arg model "$model" --arg upstream "$upstream" --argjson port "$bifrost_port" \
+    '{image:$image,provider:$provider,model:$model,upstream:$upstream,port:$port}' | jq -S -c .)"
   current='{"bootstrap":"empty","provider":null}'
   before_sha="$(printf '%s' "$current" | sha256sum | awk '{print $1}')"
   desired_sha="$(printf '%s' "$desired" | sha256sum | awk '{print $1}')"
@@ -39,15 +43,15 @@ remote_preview() {
   if ! ssh -n "$GATEWAY_NODE" 'sudo test -r /srv/dai/ops/bifrost.env'; then
     # A missing rendered environment is expected before the first managed
     # bootstrap, but it must not hide a reachable untracked Bifrost instance.
-    status="$(ssh -n "$GATEWAY_NODE" "curl -sS --connect-timeout 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:9464/api/config || true")" \
+    status="$(ssh -n "$GATEWAY_NODE" "curl -sS --connect-timeout 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:$bifrost_port/api/config || true")" \
       || die 'could not determine whether Bifrost is absent before empty-state preview'
     [[ "$status" == 000 ]] \
       || die 'Bifrost has no managed environment but answered locally; refusing synthetic empty-state preview'
     synthetic_empty_preview
     return
   fi
-  overrides="$(printf 'BIFROST_IMAGE=%q BIFROST_GONKA_PROVIDER=%q BIFROST_GONKA_MODEL=%q BIFROST_GONKA_BASE_URL=%q' \
-    "$image" "$provider" "$model" "$upstream")"
+  overrides="$(printf 'BIFROST_IMAGE=%q BIFROST_GONKA_PROVIDER=%q BIFROST_GONKA_MODEL=%q BIFROST_GONKA_BASE_URL=%q BIFROST_PORT=%q' \
+    "$image" "$provider" "$model" "$upstream" "$bifrost_port")"
   command="set -Eeuo pipefail; set -a; . /srv/dai/ops/bifrost.env; set +a; $overrides python3 /srv/dai/ops/bifrost-provision.py --preview"
   receipt="$(ssh -T "$GATEWAY_NODE" "sudo bash -c $(printf '%q' "$command")")" \
     || die 'Bifrost current-state preview failed on the managed gateway Host'

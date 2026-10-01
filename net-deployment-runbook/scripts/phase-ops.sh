@@ -337,9 +337,13 @@ case "$COMPONENT" in
     gateway_port="$(awk -F= '$1 == "DEVSHARD_PORT" { print $2; exit }' "$GATEWAY_ENV")"
     gateway_model="$(awk -F= '$1 == "DEVSHARD_MODEL" { print substr($0, index($0, "=") + 1); exit }' "$GATEWAY_ENV")"
     [[ "$gateway_port" =~ ^[1-9][0-9]{0,4}$ && -n "$gateway_model" ]] || die 'rendered gateway S has no valid port/model'
+    bifrost_port="${GDC_BIFROST_PORT:-9467}"
+    [[ "$bifrost_port" =~ ^[1-9][0-9]{0,4}$ && "$bifrost_port" -le 65535 \
+      && "$bifrost_port" != 9465 && "$bifrost_port" != 9466 && "$bifrost_port" != "$gateway_port" ]] \
+      || die 'GDC_BIFROST_PORT must be a valid private port distinct from gateway, broker and edge ports'
     write_env "$BIFROST_ENV" \
-      'APP_HOST=127.0.0.1' 'APP_PORT=9464' \
-      'BIFROST_MANAGEMENT_URL=http://127.0.0.1:9464' \
+      'APP_HOST=127.0.0.1' "APP_PORT=$bifrost_port" "BIFROST_PORT=$bifrost_port" \
+      "BIFROST_MANAGEMENT_URL=http://127.0.0.1:$bifrost_port" \
       'BIFROST_ADMIN_USERNAME=gdc-bifrost-admin' \
       "BIFROST_ADMIN_PASSWORD=$(<"$SECRETS/bifrost.admin-password")" \
       "BIFROST_SETUP_TOKEN=$(<"$SECRETS/bifrost.setup-token")" \
@@ -349,7 +353,7 @@ case "$COMPONENT" in
       'BIFROST_BROKER_BINDING_FILE=/srv/dai/ops/bifrost/broker-binding.env' \
       'BIFROST_DATA_VOLUME_NAME=gdc-ops_bifrost-data'
     write_env "$BIFROST_BROKER_ENV" \
-      'BIFROST_MANAGEMENT_URL=http://127.0.0.1:9464' 'BIFROST_ADMIN_USERNAME=gdc-bifrost-admin' \
+      "BIFROST_MANAGEMENT_URL=http://127.0.0.1:$bifrost_port" 'BIFROST_ADMIN_USERNAME=gdc-bifrost-admin' \
       "BIFROST_ADMIN_PASSWORD=$(<"$SECRETS/bifrost.admin-password")" \
       "BIFROST_BROKER_TOKEN=$(<"$SECRETS/bifrost.broker-token")" \
       "BIFROST_BROKER_ENCRYPTION_KEY=$(<"$SECRETS/bifrost.broker-encryption-key")" \
@@ -358,13 +362,13 @@ case "$COMPONENT" in
       'BIFROST_BROKER_HOST=127.0.0.1' 'BIFROST_BROKER_PORT=9465'
     write_env "$BIFROST_EDGE_ENV" \
       'BIFROST_EDGE_HOST=127.0.0.1' 'BIFROST_EDGE_PORT=9466' \
-      'BIFROST_EDGE_BROKER_URL=http://127.0.0.1:9465' 'BIFROST_EDGE_UPSTREAM_URL=http://127.0.0.1:9464' \
+      'BIFROST_EDGE_BROKER_URL=http://127.0.0.1:9465' "BIFROST_EDGE_UPSTREAM_URL=http://127.0.0.1:$bifrost_port" \
       "BIFROST_EDGE_TOKEN=$(<"$SECRETS/bifrost.edge-token")"
     bifrost_expected_state_sha="${GDC_BIFROST_EXPECTED_STATE_SHA256:-}"
     [[ -z "$bifrost_expected_state_sha" || "$bifrost_expected_state_sha" =~ ^[0-9a-f]{64}$ ]] \
       || die 'Bifrost apply state fingerprint is invalid'
     BIFROST_OPTION="--bifrost-env '$REMOTE/rendered/bifrost.env' --bifrost-broker-env '$REMOTE/rendered/bifrost-broker.env' --bifrost-edge-env '$REMOTE/rendered/bifrost-edge.env'"
-    START_COMMAND="docker compose up -d --force-recreate bifrost && for attempt in \$(seq 1 30); do curl -fsS http://127.0.0.1:9464/health >/dev/null && break; sleep 1; done; curl -fsS http://127.0.0.1:9464/health >/dev/null && sudo bash -c 'set -a; . /srv/dai/ops/bifrost.env; set +a; exec python3 /srv/dai/ops/bifrost-provision.py --apply --expected-sha256 $bifrost_expected_state_sha' && docker compose up -d --build --force-recreate bifrost-broker bifrost-edge"
+    START_COMMAND="docker compose up -d --force-recreate bifrost && for attempt in \$(seq 1 30); do curl -fsS http://127.0.0.1:$bifrost_port/health >/dev/null && break; sleep 1; done; curl -fsS http://127.0.0.1:$bifrost_port/health >/dev/null && sudo bash -c 'set -a; . /srv/dai/ops/bifrost.env; set +a; exec python3 /srv/dai/ops/bifrost-provision.py --apply --expected-sha256 $bifrost_expected_state_sha' && docker compose up -d --build --force-recreate bifrost-broker bifrost-edge"
     CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
     ENDPOINT='https://configured-gateway-public-host/{v1,anthropic,genai} (credential edge)'
     ;;

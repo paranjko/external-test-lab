@@ -123,11 +123,15 @@ def canonical_sha256(value):
 
 def desired_state():
     """Return the non-secret Bifrost state GDC is allowed to reconcile."""
+    port = os.environ.get("BIFROST_PORT", "9467")
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ProvisionError("BIFROST_PORT must be a valid TCP port")
     return {
         "image": os.environ.get("BIFROST_IMAGE", OFFICIAL_IMAGE),
         "provider": required("BIFROST_GONKA_PROVIDER"),
         "model": required("BIFROST_GONKA_MODEL"),
         "upstream": loopback_url("BIFROST_GONKA_BASE_URL"),
+        "port": int(port),
     }
 
 

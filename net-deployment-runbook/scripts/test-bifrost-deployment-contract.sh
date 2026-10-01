@@ -54,7 +54,7 @@ SH
 chmod +x "$tmp/run-preview"
 
 if PATH="$tmp:$PATH" TEST_BIFROST_HTTP_CODE=200 GATEWAY_NODE=fixture-host \
-  image=fixture-image provider=fixture-provider model=fixture-model upstream=http://127.0.0.1:12345 \
+  image=fixture-image provider=fixture-provider model=fixture-model upstream=http://127.0.0.1:12345 bifrost_port=9467 \
   "$tmp/run-preview" "$tmp/preview-functions.sh" >"$tmp/answered.out" 2>"$tmp/answered.err"
 then
   echo 'a reachable unmanaged Bifrost produced a synthetic empty-state preview' >&2
@@ -63,7 +63,7 @@ fi
 grep -Fq 'refusing synthetic empty-state preview' "$tmp/answered.err"
 
 PATH="$tmp:$PATH" TEST_BIFROST_HTTP_CODE=000 GATEWAY_NODE=fixture-host \
-  image=fixture-image provider=fixture-provider model=fixture-model upstream=http://127.0.0.1:12345 \
+  image=fixture-image provider=fixture-provider model=fixture-model upstream=http://127.0.0.1:12345 bifrost_port=9467 \
   "$tmp/run-preview" "$tmp/preview-functions.sh" >"$tmp/empty.json"
 jq -e '.current.bootstrap == "empty" and .delta == ["bootstrap", "provider", "provider_key"]' \
   "$tmp/empty.json" >/dev/null
