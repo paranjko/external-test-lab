@@ -36,6 +36,7 @@ run_dir="$RUN_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-control-$mode"
 mkdir -p "$run_dir"
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" | tee -a "$run_dir/control.log"; }
 die() { log "STOP: $*"; exit 1; }
+stop() { if [ "$mode" = dry ]; then log "would stop: $*"; else die "$*"; fi; }
 
 # jget FILE PATH: one value from a JSON file by a dotted path, empty when absent.
 jget() {
@@ -95,15 +96,16 @@ REMOTE
 }
 
 log "run $run_dir, mode $mode"
-log "1/8 preflight"
+log "1/8 chain checks; gcheck preflight reads gateway A through the public edge and is kept for the record only"
 set +e
 "$GCHECK" escrow preflight --source devnet --gateway a --from 5 --need 1 2>&1 | tee -a "$run_dir/control.log"
-pre=${PIPESTATUS[0]}
+log "gcheck preflight exit ${PIPESTATUS[0]}; the run does not depend on it"
 set -e
-if [ "$pre" -ne 0 ]; then
-  [ "$mode" = dry ] || die "preflight is not READY (exit $pre)"
-  log "preflight is not READY (exit $pre); the dry run goes on"
-fi
+chain "$API/params" > "$run_dir/params.json" || die "chain params are unreachable"
+group_size=$(jget "$run_dir/params.json" params.devshard_escrow_params.group_size)
+max_escrows=$(jget "$run_dir/params.json" params.devshard_escrow_params.max_escrows_per_epoch)
+log "group_size $group_size, max_escrows_per_epoch $max_escrows"
+[ "$group_size" = 5 ] || stop "group_size is $group_size, the control runs at 5"
 
 log "2/8 gateway A admin API on $GATEWAY_HOST:127.0.0.1:$GATEWAY_PORT"
 code=$(gw - GET /v1/admin/state admin)
@@ -148,6 +150,11 @@ if [ "$offset" -lt "$FIRST" ] || [ "$offset" -gt "$latest" ]; then
     log "height $height, epoch $epoch, P+$offset"
   fi
 fi
+
+created=$(chain "/chain-rpc/tx_search?query=%22devshard_escrow_created.epoch_index=%27$epoch%27%22&per_page=1" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["total_count"])') || die "escrow count is unreadable"
+log "epoch $epoch has $created of $max_escrows escrows"
+[ $((max_escrows - created)) -ge 1 ] || stop "no free escrow place in epoch $epoch"
 
 if [ "$mode" = dry ]; then
   log "plan: create an escrow of $amount ngonka for $model on gateway A, send $REQUESTS requests to /devshard/<id>,"
