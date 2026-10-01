@@ -197,6 +197,8 @@ install -d -m 0755 /etc/docker
 DAEMON_JSON=/etc/docker/daemon.json
 DAEMON_TMP="$(mktemp)"
 [[ -s "$DAEMON_JSON" ]] || echo '{}' >"$DAEMON_JSON"
+DAEMON_BEFORE="$(mktemp)"
+cp -- "$DAEMON_JSON" "$DAEMON_BEFORE"
 jq '
   .["live-restore"] = true
   | .["log-driver"] = "local"
@@ -304,9 +306,6 @@ check_existing_docker_state() {
     || operator_action_required 'docker_storage_unhealthy: Docker root is incomplete; repair Docker storage before JOIN'
 }
 check_existing_docker_state
-
-DAEMON_BEFORE="$(mktemp)"
-cp -- "$DAEMON_JSON" "$DAEMON_BEFORE"
 
 if [[ "$GPU_ROLE" == true && "$AMD_ACCELERATOR" == false ]]; then
   # The selected driver metapackage installs its matching utilities.
