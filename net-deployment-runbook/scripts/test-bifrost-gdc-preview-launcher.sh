@@ -38,6 +38,16 @@ exit 97
 SSH
 chmod +x "$tmp/bin/getent" "$tmp/bin/ssh"
 
+if GDC_TEST_SSH_LOG="$tmp/unsafe-ssh.log" PATH="$tmp/bin:$PATH" \
+  GDC_HOME="$tmp/operator" GDC_ENV="$tmp/operator/.env" GDC_RUN_ID='../unsafe-run' \
+  "$ROOT/gdc.sh" --release v2026.08.06 ops bifrost preview >"$tmp/unsafe.out" 2>"$tmp/unsafe.err"
+then
+  echo 'Bifrost preview accepted an unsafe explicit GDC run ID' >&2
+  exit 1
+fi
+grep -Fq 'GDC run identifier is unsafe' "$tmp/unsafe.out" "$tmp/unsafe.err"
+[[ ! -e "$tmp/unsafe-run" ]] || { echo 'unsafe GDC run ID escaped the run directory' >&2; exit 1; }
+
 if ! GDC_TEST_SSH_LOG="$tmp/ssh.log" PATH="$tmp/bin:$PATH" \
   GDC_HOME="$tmp/operator" GDC_ENV="$tmp/operator/.env" GDC_RUN_ID=bifrost-preview-launcher \
   "$ROOT/gdc.sh" --release v2026.08.06 ops bifrost preview >"$tmp/stdout" 2>"$tmp/stderr"
