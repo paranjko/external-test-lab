@@ -3,15 +3,18 @@ set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$HERE/.env"
 [[ -s "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
-enable_signer=''; canary=false
+enable_signer=''; canary=false; pull_only=false; no_pull=false
 while (($#)); do
   case "$1" in
     --enable-signer) enable_signer=true ;;
     --canary) canary=true ;;
-    *) echo "Usage: $0 [--canary] [--enable-signer]" >&2; exit 2 ;;
+    --pull-only) pull_only=true ;;
+    --no-pull) no_pull=true ;;
+    *) echo "Usage: $0 [--canary] [--enable-signer] [--pull-only | --no-pull]" >&2; exit 2 ;;
   esac
   shift
 done
+[[ "$pull_only" == false || "$no_pull" == false ]] || { echo 'pull options are mutually exclusive' >&2; exit 2; }
 # Existing Genesis, restart and HA callers predate generated JOIN profiles and
 # must retain their consensus signer.  Only a generated JOIN defaults to the
 # explicit signerless lifecycle; callers may still request --enable-signer.
@@ -66,11 +69,14 @@ signerless_env=()
 [[ "$enable_signer" == false ]] && signerless_env=(env CONFIG_PRIV_VALIDATOR_LADDR=)
 "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" config --quiet
 # Images are pinned by digest, and a portable runtime exists only on the Host.
-run_long 'pull node images' "$HERE/start.log" "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull --policy missing
+if [[ "$no_pull" == false ]]; then
+  run_long 'pull node images' "$HERE/start.log" "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull --policy missing
+fi
+[[ "$pull_only" == false ]] || exit 0
 printf 'WAIT  start node services\n'
 services=()
 [[ "$canary" == true ]] && services=(node)
-if ! "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" up -d "${services[@]}" >>"$HERE/start.log" 2>&1; then
+if ! "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" up --pull never -d "${services[@]}" >>"$HERE/start.log" 2>&1; then
   tail -100 "$HERE/start.log" >&2
   exit 1
 fi
