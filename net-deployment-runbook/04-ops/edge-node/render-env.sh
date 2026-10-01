@@ -122,6 +122,42 @@ fi
 gateway_upstream_port="${GDC_GATEWAY_ADMISSION_UPSTREAM_PORT:-18080}"
 [[ "$gateway_upstream_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( gateway_upstream_port <= 65535 )) \
   || { echo 'GDC_GATEWAY_ADMISSION_UPSTREAM_PORT must be a valid TCP port' >&2; exit 2; }
+gateway_metrics_upstream="http://127.0.0.1:$gateway_upstream_port"
+# This sink is deliberately unreachable unless this participant is the B
+# gateway selected by the A/B topology.  Caddy still parses one common
+# participant configuration, while only node B may accept the public edge's
+# private /gateway-b handoff.
+gateway_b_upstream='http://127.0.0.1:9'
+monitoring_docker_cidr="${GDC_MONITORING_DOCKER_CIDR:-}"
+[[ "$monitoring_docker_cidr" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$ ]] \
+  || { echo 'GDC_MONITORING_DOCKER_CIDR must be the explicit Prometheus Docker IPv4 CIDR' >&2; exit 2; }
+if [[ -n "${GDC_GATEWAY_METRICS_TARGETS:-}" ]]; then
+  gateway_metrics_port="$(jq -er --arg node "$NODE" '
+    if type != "array" or length == 0 then error("must be a non-empty array") else . end
+    | length as $count
+    | map(select(
+        (type == "object") and (keys | sort) == ["id", "node", "port"]
+        and (.id | type == "string" and test("^[A-Z][A-Z0-9_-]*$"))
+        and (.node | type == "string" and test("^[A-Za-z0-9._-]+$"))
+        and (.port | type == "number" and floor == . and . >= 1 and . <= 65535)
+      )) as $targets
+    | if ($targets | length) != $count then error("entries must contain id, node, and port") else . end
+    | if ([.[].id] | unique | length) != $count then error("duplicate gateway id") else . end
+    | if ([.[].node] | unique | length) != $count then error("duplicate gateway node") else . end
+    | [ .[] | select(.node == $node) | .port ]
+    | if length == 1 then .[0] else error("node has no unique target") end
+  ' <<<"$GDC_GATEWAY_METRICS_TARGETS")" \
+    || { echo 'GDC_GATEWAY_METRICS_TARGETS must define one valid target for this edge node' >&2; exit 2; }
+  gateway_metrics_upstream="http://127.0.0.1:$gateway_metrics_port"
+  gateway_metrics_id="$(jq -er --arg node "$NODE" '
+    [ .[] | select(.node == $node) | .id ]
+    | if length == 1 then .[0] else error("node has no unique target") end
+  ' <<<"$GDC_GATEWAY_METRICS_TARGETS")" \
+    || { echo 'GDC_GATEWAY_METRICS_TARGETS must define one valid target for this edge node' >&2; exit 2; }
+  if [[ "$gateway_metrics_id" == 'B' ]]; then
+    gateway_b_upstream="$gateway_metrics_upstream"
+  fi
+fi
 gateway_admission_upstream="http://${gateway_public_host}:$gateway_upstream_port"
 # The admission proxy shares the gateway Host network namespace.  Reaching the
 # public hostname here is both unnecessary and fragile: the gateway runtime is
@@ -142,6 +178,8 @@ values=(
   "GATEWAY_PUBLIC_HOST=$gateway_public_host"
   "GATEWAY_DAPI_UPSTREAM=$gateway_dapi_upstream"
   "GDC_GATEWAY_ADMISSION_UPSTREAM=$gateway_admission_upstream"
+  "GDC_GATEWAY_METRICS_UPSTREAM=$gateway_metrics_upstream"
+  "GDC_GATEWAY_B_UPSTREAM=$gateway_b_upstream"
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
   # identity and positive capacity instead of deployment intent. The gateway
@@ -164,6 +202,7 @@ values=(
   "TELEGRAM_BOT_PUBLIC_HOST=$telegram_bot_public_host"
   "PUBLIC_GRAFANA_PROMETHEUS_URL=$prometheus_url"
   "MONITORING_CIDR=$MONITORING_CIDR"
+  "MONITORING_DOCKER_CIDR=$monitoring_docker_cidr"
   "PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR"
 )
 

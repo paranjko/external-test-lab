@@ -109,6 +109,32 @@
     handle /ops-telegram-metrics {
     respond 403
   }
+    @gateway_metrics_from_monitoring {
+    path /ops-gateway-metrics
+    remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+  }
+    handle @gateway_metrics_from_monitoring {
+    rewrite * /metrics
+    reverse_proxy {$GDC_GATEWAY_METRICS_UPSTREAM}
+  }
+    handle /ops-gateway-metrics {
+    respond 403
+  }
+    # DevShard 502's public edge is the only permitted caller for its B
+    # gateway handoff.  Keeping this private prefix on the B participant
+    # avoids the generic public-edge fallback loop while never exposing the
+    # gateway's loopback listener to arbitrary clients.
+    @gateway_b_from_public_edge {
+      path /gateway-b/*
+      remote_ip {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @gateway_b_from_public_edge {
+      uri strip_prefix /gateway-b
+      reverse_proxy {$GDC_GATEWAY_B_UPSTREAM}
+    }
+    handle /gateway-b/* {
+      respond 403
+    }
     # The Network Node proxy accepts its public edge as a trusted upstream.
   # All non-participant public traffic retains the public application origin.
     handle {

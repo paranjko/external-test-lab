@@ -74,7 +74,9 @@ class Backend(BaseHTTPRequestHandler):
                     return
                 body = State.status_override
                 if body is None:
-                    body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}}, "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False, "session_version": State.session_version}}]}
+                    body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}},
+                            "limiter": {"models": {"model": {"effective_max_concurrent_requests": 1 if State.ready else 0}}},
+                            "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False, "session_version": State.session_version}}]}
             elif self.path == "/v1/models":
                 if self.headers.get("Authorization") != "Bearer test-client":
                     self.send_response(401)
@@ -388,7 +390,9 @@ try:
     # unprefixed value. Normalize that exact wire shape, but reject conflicting
     # legacy and current aliases before dispatch.
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
-    State.status_override = {"capacity": {"models": {"model": {"current_weight": 1}}}, "devshards": [{"id": "41", "active": True, "chain_phase": "Inference", "phase": "active", "requests_blocked": False, "protocol_version": "3"}]}
+    State.status_override = {"capacity": {"models": {"model": {"current_weight": 1}}},
+                             "limiter": {"models": {"model": {"effective_max_concurrent_requests": 1}}},
+                             "devshards": [{"id": "41", "active": True, "chain_phase": "Inference", "phase": "active", "requests_blocked": False, "protocol_version": "3"}]}
     process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
     assert post_details(proxy_port) == (429, b'{"error":"single outcome"}', "dispatched_once")
     assert State.dispatches == 1, "legacy v3 protocol_version was not admitted"
@@ -407,6 +411,7 @@ try:
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     State.status_override = {
         "capacity": {"models": {"model": {"current_weight": 1}}},
+        "limiter": {"models": {"model": {"effective_max_concurrent_requests": 1}}},
         "devshards": [{"id": "41", "active": True, "protocol_version": "v3",
                        "runtime": {"phase": "active", "chain_phase": "Inference",
                                    "requests_blocked": False, "session_version": "v3"}}],
@@ -418,12 +423,26 @@ try:
 
     State.dispatches = 0
     State.status_override["capacity"]["models"]["model"]["current_weight"] = 0
+    State.status_override["limiter"] = {"models": {"model": {"effective_max_concurrent_requests": 0}}}
     process, proxy_port = start_proxy(backend_port, wait=0.2); processes.append(process)
     assert json.loads(get(proxy_port, "/v1/admission-status")[1]) == {
         "state": "UNAVAILABLE", "available": False, "reason": "runtime_unavailable",
     }
     assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_runtime_unavailable"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "zero-capacity single-runtime status dispatched"
+
+    # A small but positive weight can still floor the official dynamic
+    # concurrency calculation to zero.  Admission must expose that condition.
+    State.status_override["capacity"]["models"]["model"]["current_weight"] = 296
+    State.status_override["limiter"]["models"]["model"]["effective_max_concurrent_requests"] = 0
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1]) == {
+        "state": "UNAVAILABLE", "available": False, "reason": "runtime_unavailable",
+    }
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_runtime_unavailable"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "zero-effective-limit status dispatched"
+
+    State.status_override["limiter"]["models"]["model"]["effective_max_concurrent_requests"] = 1
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1])["available"] is True
     State.status_override = None
     process.terminate(); process.wait(2); processes.remove(process)
 

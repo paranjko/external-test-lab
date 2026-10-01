@@ -627,6 +627,8 @@ See the role guides for required input, then run:
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
+  ./gdc.sh ops gateway-settings preview|apply
+  ./gdc.sh ops monitoring-firewall preview|apply
   ./gdc.sh ops monitoring
   ./gdc.sh ops site
   ./gdc.sh ops preview bootstrap
@@ -776,6 +778,7 @@ if [[ -n "$RELEASE" ]]; then
   [[ -z "$COMPOSITION" || "$RELEASE" == "$GDC_RELEASE_PROFILE" ]] \
     || { echo "Release profile $RELEASE conflicts with composition core profile $GDC_RELEASE_PROFILE" >&2; exit 2; }
   export GDC_RELEASE_PROFILE="$RELEASE"
+  export GDC_RELEASE_PROFILE_CLI_OVERRIDE=true
 fi
 [[ -z "$MODEL" || "$MODEL" == qwen3-0.6b ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
 [[ -z "$MODEL" ]] || export GDC_MODEL_PROFILE="$MODEL"
@@ -1255,6 +1258,15 @@ case "$COMMAND" in
       [[ $# -ge 3 && $# -le 5 && "$2" == telegram && "$3" =~ ^(apply|status|verify)$ ]] || { usage; exit 2; }
       [[ "$3" == verify || $# -eq 3 ]] || { usage; exit 2; }
       run_phase "ops-consumer-telegram-$3" "$ROOT/scripts/phase-telegram-consumer.sh" "${@:3}"
+    elif [[ "$1" == gateway-settings ]]; then
+      [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
+      run_phase "ops-gateway-settings-$2" "$ROOT/scripts/phase-gateway-settings.sh" "$2"
+    elif [[ "$1" == monitoring-firewall ]]; then
+      [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
+      run_phase "ops-monitoring-firewall-$2" "$ROOT/scripts/phase-monitoring-firewall.sh" "$2"
+    elif [[ "$1" == bifrost ]]; then
+      [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
+      run_phase "ops-bifrost-$2" "$ROOT/scripts/phase-bifrost.sh" "$2"
     elif [[ "$1" == edge-node ]]; then
       [[ $# -eq 2 ]] || { usage; exit 2; }
       source "$ROOT/scripts/lib.sh"

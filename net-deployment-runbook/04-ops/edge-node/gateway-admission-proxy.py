@@ -266,13 +266,6 @@ def safe_generation(deadline=None):
         return None, "capacity_invalid"
     if any(not isinstance(item, dict) for item in models.values()):
         return None, "capacity_invalid"
-    weights = [capacity.get("total_weight"), capacity.get("effective_weight")]
-    weights.extend((item or {}).get("current_weight", (item or {}).get("total_weight"))
-                   for item in models.values())
-    try:
-        positive = any(float(weight) > 0 for weight in weights if weight is not None)
-    except (TypeError, ValueError):
-        return None, "capacity_invalid"
     devshards = status.get("devshards")
     if not isinstance(devshards, list):
         return None, "state_invalid"
@@ -302,6 +295,21 @@ def safe_generation(deadline=None):
                 return None, "protocol_not_approved"
             if item.get("id") is not None:
                 participants.append("%s:%s:%s" % (item["id"], version, chain_phase))
+    limiter = status.get("limiter")
+    if not isinstance(limiter, dict) or not isinstance(limiter.get("models"), dict):
+        return None, "limiter_unavailable"
+    try:
+        # The official gateway floors capacity-derived concurrency.  A positive
+        # weight alone can therefore enforce a zero request limit; do not
+        # publish READY unless a routable model has an actual slot.
+        positive = any(
+            float(model.get("current_weight", model.get("total_weight", 0))) > 0
+            and model.get("routable") is not False
+            and float(limiter["models"].get(name, {}).get("effective_max_concurrent_requests", 0)) > 0
+            for name, model in models.items()
+        )
+    except (TypeError, ValueError):
+        return None, "capacity_invalid"
     if not positive or not participants:
         return None, "runtime_unavailable"
     # Height proves this observation is fresh and fences the next transition,

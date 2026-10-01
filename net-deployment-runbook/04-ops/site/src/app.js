@@ -2559,8 +2559,40 @@ async function refresh(): Promise<void> {
       );
     else
       $("quality-updated").textContent =
-        "Gateway health has not been checked yet";
+      "Gateway health has not been checked yet";
   }
+  await Promise.all(
+    ["a", "b"].map(async (route) => {
+      const state = $("gateway-" + route + "-state");
+      const detail = $("gateway-" + route + "-detail");
+      try {
+        const [routeStatus, routeAdmission] = await Promise.all([
+          json(statusUrl(`/gateways/${route}/v1/status`)),
+          json(statusUrl(`/gateways/${route}/v1/admission-status`)),
+        ]);
+        const modelCapacity = routeStatus?.capacity?.models?.[cfg.model] || {};
+        const limiter = routeStatus?.limiter || {};
+        const inFlight = Number(limiter.in_flight_requests);
+        const effective = Number(limiter.effective_max_concurrent_requests);
+        if (routeAdmission?.available !== true) {
+          const reason = String(routeAdmission?.reason || "admission unavailable").replaceAll("_", " ");
+          state.textContent = reason === "poc fence" ? "PROTOCOL PAUSE" : "UNAVAILABLE";
+          detail.textContent = `admission: ${reason}; ${Number.isFinite(inFlight) ? inFlight : "–"} requests in flight`;
+        } else if (modelCapacity.routable !== true || effective <= 0) {
+          state.textContent = "NO MODEL CAPACITY";
+          detail.textContent = `admission responded, but effective model capacity is ${Number.isFinite(effective) ? effective : "unknown"}`;
+        } else {
+          // This is an admission snapshot, not a claim of a completed model
+          // response. The main traffic state remains gated by its receipt.
+          state.textContent = "ADMISSION AVAILABLE";
+          detail.textContent = `${Number.isFinite(inFlight) ? inFlight : "–"} requests in flight; effective concurrency ${effective}`;
+        }
+      } catch {
+        state.textContent = "STATUS ERROR";
+        detail.textContent = "read-only A/B status is unavailable";
+      }
+    }),
+  );
 }
 refresh();
 setInterval(refresh, 15000);
