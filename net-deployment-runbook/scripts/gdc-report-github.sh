@@ -173,7 +173,7 @@ collect_diagnostic_excerpt() {
     /^END phase=[A-Za-z0-9._-]+ status=[0-9]+ timestamp=[0-9TZ:-]+$/ { print; next }
     /^ERROR [^[:cntrl:]]+$/ { print; next }
     /^error: [^[:cntrl:]]+$/ { print; next }
-    /^(REBOOT REQUIRED|REFUSED|NOTICE|READY|SKIP) [^[:cntrl:]]+$/ { print; next }
+    /^(REBOOT REQUIRED|OPERATOR ACTION REQUIRED|OPERATOR_ACTION_REQUIRED|REFUSED|NOTICE|READY|SKIP) [^[:cntrl:]]+$/ { print; next }
   ' | tail -n 40 | strip_controls | sed -E 's#/(home|root|tmp|srv|var|etc)/[^[:space:]]+#<local-path>#g')"
   [[ -n "$excerpt" ]] || return 0
   kept=''
@@ -417,7 +417,7 @@ write_report() {
     typed_rows category "$DIAGNOSTIC_CATEGORY" checkpoint "$DIAGNOSTIC_CHECKPOINT" state "$DIAGNOSTIC_STATE" tool "$DIAGNOSTIC_TOOL"
     printf '\nResume decision: `%s`.\n\n' "$DIAGNOSTIC_RESUME"
     render_resume_guidance
-    printf '\n## Environment\n\n| Field | Value |\n| --- | --- |\n'
+    printf '\n## Operator environment\n\n| Field | Value |\n| --- | --- |\n'
     awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(os|kernel|architecture|bash|utc_clock)$/ { gsub(/\|/, "\\|", $2); print "| " $1, $2 " |" }' "$metadata"
     printf '\n## Sanitized diagnostic excerpt\n\n<pre>\n'
     printf '%s\n' "$DIAGNOSTIC_EXCERPT" | escape_html

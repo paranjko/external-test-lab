@@ -18,6 +18,7 @@ env
 find
 flock
 git
+go
 grep
 head
 id

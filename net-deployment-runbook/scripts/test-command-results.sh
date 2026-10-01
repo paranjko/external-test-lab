@@ -138,6 +138,27 @@ grep -Fq 'END phase=join-fixture-peer status=194' "$scratch/phase-failure.log"
 [[ "$(tail -n 1 "$scratch/phase-failure.log")" == 'END host join REBOOT_REQUIRED exit=194' ]]
 printf 'PASS reboot-required JOIN phase records one typed terminal result before launcher exit\n'
 
+# A Host readiness stop is distinct from a failed JOIN: no identity exists,
+# and the operator receives a specific remedy plus a reportable typed result.
+action_home="$scratch/prepare-action-required"
+mkdir -p "$action_home"
+action_result="$action_home/join-result.v1.json"
+jq -cn '
+  {schema_version:1,kind:"gdc-host-join-result",outcome:"failed",phase:"staging",category:"host",
+   reason:"host_prepare_operator_action_required",exit_code:195,mutation:"staging_only",signer_state:"disabled",
+   resume:"new_profile",join_profile_sha256:null,evidence:[]}
+' >"$action_result"
+rc=0
+GDC_HOME="$action_home" bash -c '
+  source "$1/gdc.sh" help >/dev/null
+  GDC_END_COMMAND="host join"
+  GDC_JOIN_RESULT_OUTPUT="$2"
+  bash -c "exit 195"
+' bash "$fixture" "$action_result" >"$scratch/prepare-action-required.log" 2>&1 || rc=$?
+[[ "$rc" == 195 ]]
+[[ "$(tail -n 1 "$scratch/prepare-action-required.log")" == 'END host join OPERATOR_ACTION_REQUIRED exit=195' ]]
+printf 'PASS Host preparation action-required result is typed and does not claim a JOIN incident\n'
+
 # A validator backup for a different signer is invalid operator recovery input,
 # not an operational incident. It must retain the typed refusal, avoid the
 # generic failure/report wording, and preserve the data-error exit code.

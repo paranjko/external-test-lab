@@ -284,7 +284,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results
+test: test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 	@bash ./scripts/test-node-container-control.sh
 	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
@@ -364,6 +364,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-gateway-admission-deployment.sh
 	@./scripts/test-suspend-gateway-admission.sh
 	@./scripts/test-firewall-policy.sh
+	@./scripts/test-join-early-host-readiness.sh
 	@./scripts/test-prepare-nvidia-kernel-modules.sh
 	@./scripts/test-prepare-amd-rocm.sh
 	@./scripts/test-public-grafana-targets.sh
@@ -380,6 +381,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-gateway-escrow-reconciler.sh
 	@./scripts/test-faucet-caddy-config.sh
 	@./scripts/test-claim-devnet-faucet.sh
+	@./scripts/test-proxy-ingress-layouts.sh
 	@./scripts/test-participant-edge-start.sh
 	@./scripts/test-public-edge-single-listener.sh
 	@./scripts/test-public-homepage-rendered-asset.sh
@@ -491,6 +493,16 @@ test-recovery-contract: test-recover-incident
 .PHONY: test-command-results
 test-command-results:
 	@bash ./scripts/test-command-results.sh
+
+.PHONY: test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+test-registration-failover:
+	@bash ./scripts/test-register-participant-failover.sh
+
+test-proxy-ingress-layouts:
+	@bash ./scripts/test-proxy-ingress-layouts.sh
+
+test-reconcile-proxy-ingress-remote:
+	@bash ./scripts/test-reconcile-proxy-ingress-remote.sh
 
 .PHONY: test-participants-proxy
 test-participants-proxy:

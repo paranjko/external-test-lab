@@ -40,7 +40,7 @@ def validate(doc):
  if errors:
   e=errors[0];raise BootstrapError("schema",".".join(map(str,e.absolute_path)) or "$",e.message)
  if not CHAIN_ID_RE.fullmatch(doc["chain_id"]):raise BootstrapError("semantics","chain_id","contains unsafe characters")
- ids=set();rpcs=set();p2ps=set();apis=0
+ ids=set();rpcs=set();p2ps=set();apis=set()
  for i,seed in enumerate(doc["seeds"]):
   pre=f"seeds[{i}]"
   if not NODE_ID_RE.fullmatch(seed["node_id"]):raise BootstrapError("semantics",pre+".node_id","must be 40 lowercase hexadecimal characters")
@@ -50,7 +50,10 @@ def validate(doc):
   if p.port is None:raise BootstrapError("semantics",pre+".p2p","must have an explicit port")
   if seed["node_id"] in ids or seed["rpc"] in rpcs or seed["p2p"] in p2ps:raise BootstrapError("semantics",pre,"duplicate seed identity or endpoint")
   ids.add(seed["node_id"]);rpcs.add(seed["rpc"]);p2ps.add(seed["p2p"])
-  if "api" in seed:valid_url(seed["api"],pre+".api",{"http","https"});apis+=1
+  if "api" in seed:
+   valid_url(seed["api"],pre+".api",{"http","https"})
+   if seed["api"] in apis:raise BootstrapError("semantics",pre+".api","duplicates a registration API endpoint")
+   apis.add(seed["api"])
  if not apis:raise BootstrapError("semantics","seeds","at least one seed must provide api")
  for i,b in enumerate(doc["brokers"]):
   if len(set(b["api_urls"])) != len(b["api_urls"]):raise BootstrapError("semantics",f"brokers[{i}].api_urls","contains duplicate endpoint")
@@ -58,12 +61,13 @@ def validate(doc):
   if "access_url" in b:valid_url(b["access_url"],f"brokers[{i}].access_url",{"https"})
  return doc
 def env(doc):
- first=next(seed for seed in doc["seeds"] if "api" in seed);rpcs=[]
+ first=next(seed for seed in doc["seeds"] if "api" in seed);registration_endpoints=[];rpcs=[]
  for seed in doc["seeds"]:
+  if "api" in seed:registration_endpoints.append(seed["api"])
   if seed["rpc"] not in rpcs:rpcs.append(seed["rpc"])
  if len(rpcs)<2:raise BootstrapError("env","seeds","two distinct RPC URLs required")
  def quote(v):return "'"+v.replace("'","'\\\"'\\\"'")+"'"
- return "".join(f"export {k}={quote(v)}\n" for k,v in (("SEED_API_URL",first["api"]),("SEED_NODE_RPC_URL",first["rpc"]),("SEED_NODE_P2P_URL",first["p2p"]),("RPC_SERVER_URL_1",rpcs[0]),("RPC_SERVER_URL_2",rpcs[1]))).encode()
+ return "".join(f"export {k}={quote(v)}\n" for k,v in (("SEED_API_URL",first["api"]),("GDC_JOIN_REGISTRATION_ENDPOINTS",",".join(registration_endpoints)),("SEED_NODE_RPC_URL",first["rpc"]),("SEED_NODE_P2P_URL",first["p2p"]),("RPC_SERVER_URL_1",rpcs[0]),("RPC_SERVER_URL_2",rpcs[1]))).encode()
 def broker_urls(doc):
  values=[]
  for i,broker in enumerate(doc["brokers"]):

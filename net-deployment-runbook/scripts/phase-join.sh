@@ -27,19 +27,32 @@ state_acquisition_mode="$(jq -er .spec.state_acquisition.mode "$GDC_JOIN_PROFILE
   || die 'JOIN profile has an unsupported state acquisition mode'
 restore_fence_method=''
 
-# The initial lineage decision is intentionally made before any Host mutation,
-# but host preparation, model qualification and image installation can take
-# longer than its short trust TTL. Refresh only the state-sync decision after
-# that work completes and immediately before the signerless canary consumes
-# it. The immutable Join Profile and network observation stay unchanged.
+# Preparation can outlast observation TTL. Recheck the selected runtime before
+# obtaining fresh state-sync trust; preserve the original profile and evidence.
 refresh_lineage_for_canary() {
   local receipt="$STATE/lineage-preflight.json" env="$STATE/lineage-preflight.env"
-  local -a args=(--bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE" --observation "$JOIN_OBSERVATION" --receipt "$receipt" --env "$env")
-  [[ -z "${GDC_JOIN_OPERATOR_SOURCE_RPC:-}" ]] || args+=(--source-rpc "$GDC_JOIN_OPERATOR_SOURCE_RPC")
+  local observation="$RUN/network-observation-canary.v1.json"
+  local -a observe_args=(--bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE"
+    --bootstrap-url "$(jq -er .bootstrap.url "$JOIN_OBSERVATION")"
+    --chain-id "$(jq -er .bootstrap.chain_id "$JOIN_OBSERVATION")"
+    --run-id "$GDC_RUN_ID" --output "$observation")
+  local -a args=(--bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE" --observation "$observation" --receipt "$receipt" --env "$env")
+  if [[ -n "${GDC_JOIN_OPERATOR_SOURCE_RPC:-}" ]]; then
+    observe_args+=(--source-rpc "$GDC_JOIN_OPERATOR_SOURCE_RPC")
+    args+=(--source-rpc "$GDC_JOIN_OPERATOR_SOURCE_RPC")
+  fi
   step "Refresh lineage trust immediately before signerless canary for $NODE"
   GDC_JOIN_LINEAGE_FAILURE_FILE="$RUN/lineage-preflight-canary.failure"
   export GDC_JOIN_LINEAGE_FAILURE_FILE
   rm -f "$GDC_JOIN_LINEAGE_FAILURE_FILE"
+  "$ROOT/scripts/observe-network-state.sh" "${observe_args[@]}" || return "$?"
+  jq -e --slurpfile original "$JOIN_OBSERVATION" '
+    .result == {state:"ready",reason:"none"} and
+    .network_state_id == $original[0].network_state_id and
+    .bootstrap == $original[0].bootstrap and
+    .runtime.core == $original[0].runtime.core and
+    .runtime.dapi == $original[0].runtime.dapi
+  ' "$observation" >/dev/null || die 'JOIN runtime changed during Host preparation; start a fresh JOIN before enabling the signer'
   "$ROOT/scripts/preflight-join-lineage.sh" "${args[@]}"
   # The preflight writes this environment atomically after binding both RPC
   # observations, P2P providers and the new trust tuple.
@@ -463,7 +476,19 @@ else
     # ordinary JOIN retry after the operator reboots this Host.
     : >"$RUN/prepare-reboot-required"
     chmod 0600 "$RUN/prepare-reboot-required"
+    "$ROOT/scripts/diagnostic-envelope.sh" write "$RUN/diagnostic-envelope.v1.json" \
+      join join-host-preparation accelerator-runtime reboot_required dependency prepare-host 194 \
+      safe join-repeat 'Host preparation changed the accelerator or kernel stack. Reboot the Host, then repeat JOIN.'
     printf 'REBOOT REQUIRED %s preparation installed a driver. Reboot this Host, then rerun the same gdc host join command. No reset is required.\n' "$NODE" >&2
+  elif (( prepare_rc == 195 )); then
+    # The Host has not received an identity, deployment or signer mutation.
+    # Preparation found a prerequisite that GDC must not repair implicitly.
+    : >"$RUN/prepare-operator-action-required"
+    chmod 0600 "$RUN/prepare-operator-action-required"
+    "$ROOT/scripts/diagnostic-envelope.sh" write "$RUN/diagnostic-envelope.v1.json" \
+      join join-host-preparation host-readiness operator_action_required operator prepare-host 195 \
+      manual_action_required none 'Host preparation needs operator action. Resolve the stated Host prerequisite, then repeat JOIN.'
+    printf 'OPERATOR ACTION REQUIRED %s: resolve the Host preparation prerequisite, then rerun the same gdc host join command. No reset is required.\n' "$NODE" >&2
   fi
   exit "$prepare_rc"
 fi
@@ -715,6 +740,7 @@ if [[ -n "$ML_HOST" ]]; then
 fi
 
 step "Start signerless native P2P synchronization canary for $NODE"
+ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --pull-only --canary"
 # The immutable profile was created before preparation. Recreate only its
 # short-lived lineage decision at the canary boundary, then render and stage
 # the matching state-sync environment without touching identity or signer
@@ -727,7 +753,7 @@ scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
 ssh "$NODE" "owner=\$(id -u); group=\$(id -g); sudo install -o \$owner -g \$group -m 0600 '$REMOTE/node.env' '/srv/dai/deploy/.env'; cd '/srv/dai/deploy' && docker compose --env-file .env -f compose.yaml config --quiet"
 "$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
 record_join_state "$NODE" SYNCING "$ADDRESS"
-ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --canary"
+ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --canary --no-pull"
 record_join_transition CANARY_RUNNING
 ssh "$NODE" "cd /srv/dai/deploy && ./verify-state-sync-config.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
 

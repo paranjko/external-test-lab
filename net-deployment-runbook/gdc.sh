@@ -29,6 +29,19 @@ is_restore_identity_input_refusal() {
     ' "$GDC_JOIN_RESULT_OUTPUT" >/dev/null 2>&1
 }
 
+is_host_prepare_action_required() {
+  local rc="$1"
+  [[ "$rc" -eq 195 && "${GDC_JOIN_HOST_READINESS_ACTION_REQUIRED:-false}" == true ]] && return 0
+  [[ "$rc" -eq 195 && -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] || return 1
+  [[ -f "$GDC_JOIN_RESULT_OUTPUT" && ! -L "$GDC_JOIN_RESULT_OUTPUT" ]] || return 1
+  "$ROOT/scripts/record-join-result.sh" --validate "$GDC_JOIN_RESULT_OUTPUT" >/dev/null 2>&1 \
+    && jq -e '
+      .outcome == "failed" and .phase == "staging" and .category == "host" and
+      .reason == "host_prepare_operator_action_required" and .exit_code == 195 and
+      .mutation == "staging_only" and .signer_state == "disabled" and .resume == "new_profile"
+    ' "$GDC_JOIN_RESULT_OUTPUT" >/dev/null 2>&1
+}
+
 record_join_terminal_result() {
   local outcome="$1" phase="$2" category="$3" reason="$4" exit_code="$5" mutation="$6" signer_state="$7" resume="$8" profile_sha='null' input
   [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] || return 0
@@ -119,6 +132,11 @@ on_launcher_exit() {
   trap - EXIT
   set +e
   trap - ERR
+  # Explicit parser exits do not invoke ERR. Retain the same bounded receipt
+  # here so `gdc report github` can explain pre-phase failures without argv.
+  if [[ "$rc" -eq 2 && "${GDC_ACTIVE_PHASE:-pre-phase}" == pre-phase ]]; then
+    record_prephase_argument_diagnostic || true
+  fi
   # A JOIN run without a terminal result blocks every later run: write one on abort.
   if (( rc != 0 )) && [[ -n "${GDC_JOIN_RESULT_OUTPUT:-}" ]] \
     && [[ ! -e "$GDC_JOIN_RESULT_OUTPUT" ]] && [[ -d "$(dirname "$GDC_JOIN_RESULT_OUTPUT")" ]] \
@@ -139,6 +157,8 @@ on_launcher_exit() {
       printf 'END %s SUCCESS\n' "$GDC_END_COMMAND"
     elif [[ "$GDC_END_COMMAND" == 'host join' && "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]]; then
       printf 'END host join REBOOT_REQUIRED exit=194\n' >&2
+    elif [[ "$GDC_END_COMMAND" == 'host join' ]] && is_host_prepare_action_required "$rc"; then
+      printf 'END host join OPERATOR_ACTION_REQUIRED exit=195\n' >&2
     elif [[ "$GDC_END_COMMAND" == 'host join' ]] && is_restore_identity_input_refusal "$rc"; then
       printf 'END host join REFUSED exit=65\n' >&2
     else
@@ -154,6 +174,10 @@ on_launcher_error() {
   # Do not turn the explicit reboot continuation into an ERROR. The EXIT
   # handler emits its single terminal REBOOT_REQUIRED result instead.
   if [[ "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]]; then
+    exit "$rc"
+  fi
+  if is_host_prepare_action_required "$rc"; then
+    printf 'OPERATOR ACTION REQUIRED: resolve the stated Host preparation prerequisite, then rerun the same gdc host join command. No reset is required.\n' >&2
     exit "$rc"
   fi
   if is_restore_identity_input_refusal "$rc"; then
@@ -194,6 +218,16 @@ initialize_launcher_envelope() {
 
 initialize_launcher_envelope
 trap on_launcher_exit EXIT
+
+record_prephase_argument_diagnostic() {
+  local diagnostic
+  [[ -n "${GDC_LAUNCHER_ENVELOPE_DIR:-}" && -z "${GDC_DIAGNOSTIC_ENVELOPE:-}" ]] || return 0
+  diagnostic="$GDC_LAUNCHER_ENVELOPE_DIR/diagnostic-envelope.v1.json"
+  "$ROOT/scripts/diagnostic-envelope.sh" write "$diagnostic" \
+    launcher pre-phase argument-validation refused operator argument-parser 2 \
+    manual_action_required none 'Command input is invalid. Correct the command arguments, then run GDC again.'
+  export GDC_DIAGNOSTIC_ENVELOPE="$diagnostic"
+}
 
 acquire_operator_lock() {
   [[ "${GDC_OPERATOR_LOCK_STATE:-}" == "$STATE" ]] && return 0
@@ -322,6 +356,8 @@ run_phase() {
       # preflight.
       if (( rc == 194 )); then
         prepare_reason=host_prepare_reboot_required
+      elif (( rc == 195 )); then
+        prepare_reason=host_prepare_operator_action_required
       else
         prepare_reason=host_prepare_failed_before_identity
       fi
@@ -399,6 +435,39 @@ run_join_preflight() {
   printf 'ERROR JOIN preflight failed checkpoint=%s preflight_receipt=%s result=%s\n' \
     "$checkpoint" "$GDC_JOIN_PREFLIGHT_RECEIPT" "${GDC_JOIN_RESULT_OUTPUT:-unavailable}" >&2
   return "$rc"
+}
+
+join_preflight_return_status() {
+  return "$1"
+}
+
+check_join_host_readiness() {
+  local host="$1" rc=0 state=unavailable summary
+  if ssh -T "$host" 'sudo -n bash -s' <"$ROOT/00-host-prep/check-host-readiness.sh"; then
+    printf 'PASS Host readiness preflight host=%s\n' "$host"
+    return 0
+  else
+    rc=$?
+  fi
+  case "$rc" in
+    194)
+      state=reboot_required
+      summary='The Host has pending package updates that require a reboot before JOIN can safely continue.'
+      GDC_JOIN_REBOOT_REQUIRED=true
+      export GDC_JOIN_REBOOT_REQUIRED
+      ;;
+    195)
+      state=operator_action_required
+      summary='The Host has a prerequisite GDC must not repair implicitly before JOIN can safely continue.'
+      GDC_JOIN_HOST_READINESS_ACTION_REQUIRED=true
+      export GDC_JOIN_HOST_READINESS_ACTION_REQUIRED
+      ;;
+    *)
+      summary='The Host readiness preflight could not establish that JOIN may safely continue.'
+      ;;
+  esac
+  run_join_preflight host-readiness "$state" host host-readiness "$summary" \
+    join_preflight_return_status "$rc"
 }
 
 initialize_join_preflight_receipt() {
@@ -1171,6 +1240,11 @@ case "$COMMAND" in
     run_phase "advance-after-upgrade-worker-$1" "$ROOT/scripts/phase-advance-after-upgrade-worker.sh" "$1"
     ;;
   ops)
+    # OPS actions reconcile independently deployable services.  They must not
+    # inherit a prior service's retained evidence or release profile.
+    GDC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    unset GDC_RUN_LOG
+    export GDC_RUN_ID
     use_network_owner_data_home
     # OPS configuration is owned by the network data root.  The network owner
     # has a node-local role input as well, but it must not shadow public
@@ -1711,6 +1785,33 @@ case "$COMMAND" in
     # Persist a bounded receipt before any Bootstrap fetch or network
     # observation. It is updated atomically as public facts become available.
     initialize_join_preflight_receipt
+    # Host readiness and accelerator selection are local facts. Check them
+    # before network observation, profile resolution or CLI download so a
+    # known reboot or operator repair does not consume a JOIN preflight budget.
+    if [[ "$plan_only" != true ]]; then
+      check_join_host_readiness "$join_alias"
+      if [[ -n "$join_gpu_alias" ]]; then
+        check_join_host_readiness "$join_gpu_alias"
+      fi
+    fi
+    join_accelerator_inspection="$join_run/accelerator-inspection.env"
+    join_accelerator_receipt="$join_run/accelerator-profile.v1.json"
+    join_accelerator_alias="${join_gpu_alias:-$join_alias}"
+    if [[ "$plan_only" == true ]]; then
+      # Planning is deliberately Host-independent and retains the historical
+      # NVIDIA execution contract. A mutating JOIN selects a profile from a
+      # direct read-only Host inspection before contacting the network.
+      printf 'vendor=nvidia\n' >"$join_accelerator_inspection"
+    else
+      if ! ssh -T "$join_accelerator_alias" 'bash -s' <"$ROOT/00-host-prep/inspect-accelerator.sh" >"$join_accelerator_inspection"; then
+        record_join_terminal_result refused profile host accelerator_inspection_failed 1 none absent new_profile
+        printf 'host join could not establish a supported accelerator profile on effective ML Host %s before network observation\n' "$join_accelerator_alias" >&2
+        exit 1
+      fi
+    fi
+    run_join_preflight accelerator-profile unavailable configuration accelerator-profile \
+      'The inspected accelerator does not match a supported immutable Host profile.' \
+      "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$join_accelerator_inspection" --output "$join_accelerator_receipt"
     # Bootstrap observation precedes both CLI installation and role-input
     # creation. The public network therefore selects the local immutable
     # profile before any software download or Host mutation.
@@ -1745,26 +1846,8 @@ case "$COMMAND" in
     join_candidate_profile="$STATE/join-profile.candidate.v1.json"
     join_observation="$join_final_observation"
     join_profile="$STATE/join-profile.v1.json"
-    join_accelerator_inspection="$join_run/accelerator-inspection.env"
-    join_accelerator_receipt="$join_run/accelerator-profile.v1.json"
-    join_accelerator_alias="${join_gpu_alias:-$join_alias}"
     join_operation=new
     [[ -z "$join_restore_archive" ]] || join_operation=restore
-    if [[ "$plan_only" == true ]]; then
-      # Planning is deliberately Host-independent and retains the historical
-      # NVIDIA execution contract. A mutating JOIN always replaces this with
-      # a direct read-only Host inspection before compiling its profile.
-      printf 'vendor=nvidia\n' >"$join_accelerator_inspection"
-    else
-      if ! ssh -T "$join_accelerator_alias" 'bash -s' <"$ROOT/00-host-prep/inspect-accelerator.sh" >"$join_accelerator_inspection"; then
-        record_join_terminal_result refused profile host accelerator_inspection_failed 1 none absent new_profile
-        printf 'host join could not establish a supported accelerator profile on effective ML Host %s before Host mutation\n' "$join_accelerator_alias" >&2
-        exit 1
-      fi
-    fi
-    run_join_preflight accelerator-profile unavailable configuration accelerator-profile \
-      'The inspected accelerator does not match a supported immutable Host profile.' \
-      "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$join_accelerator_inspection" --output "$join_accelerator_receipt"
     join_preflight_cycle=0
     while :; do
       join_preflight_cycle=$((join_preflight_cycle + 1))

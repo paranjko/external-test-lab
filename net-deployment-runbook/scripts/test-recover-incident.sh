@@ -13,7 +13,19 @@ returning_aliases=(fixture.West fixture_east)
 source_node=ledger-primary
 returning_node=ledger-west
 SOURCE_ALIAS="$source_alias"
-ssh() { echo 'unexpected SSH in local incident test' >&2; return 99; }
+ssh() {
+  case "$*" in
+    *'sudo -n bash -s'*)
+      cat >/dev/null
+      printf 'READY Host readiness preflight\n'
+      ;;
+    *'bash -s'*)
+      cat >/dev/null
+      printf 'vendor=nvidia\n'
+      ;;
+    *) echo 'unexpected SSH in local incident test' >&2; return 99 ;;
+  esac
+}
 export -f ssh
 valid_source_location "$source_node" "/srv/dai/$source_node/inference" "/srv/dai/$source_node/inference"
 valid_source_location "$returning_node" "/srv/dai/data/$returning_node/inference" "/srv/dai/data/$returning_node/inference"

@@ -104,6 +104,10 @@ profile_vars=("GDC_PROFILE_KIND=generated_join" "GDC_JOIN_PROFILE_SHA256=${GDC_J
 if [[ -z "$JOIN_PROFILE" ]]; then
   profile_vars=("GDC_PROFILE_KIND=release" "GDC_RELEASE_PROFILE=$GDC_RELEASE_PROFILE" "GDC_PROFILE_HASH=$(profile_hash)")
 fi
+registration_endpoints="${GDC_JOIN_REGISTRATION_ENDPOINTS:-https://$GENESIS_PUBLIC_HOST}"
+[[ "$registration_endpoints" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?(,https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?)*$ ]] \
+  || { echo 'JOIN environment has invalid participant registration endpoints' >&2; exit 1; }
+registration_seed_api="${registration_endpoints%%,*}"
 write_env "$OUTPUT" \
   "COMPOSE_PROJECT_NAME=$NODE" "COMPOSE_PROFILES=$EDGE_API_COMPOSE_PROFILE" "NODE_NAME=$NODE" "CHAIN_ID=$CHAIN_ID" "BASE_DENOM=$BASE_DENOM" \
   "${profile_vars[@]}" "GONKA_COMMIT=$GONKA_COMMIT" \
@@ -121,8 +125,9 @@ write_env "$OUTPUT" \
   "GDC_JOIN_TRUST_HEIGHT=${GDC_JOIN_TRUST_HEIGHT:-0}" "GDC_JOIN_TRUST_HASH=${GDC_JOIN_TRUST_HASH:-}" \
   "GDC_JOIN_SNAPSHOT_PEERS=$snapshot_peers" "GDC_JOIN_PERSISTENT_PEERS=$persistent_peers" \
   "GDC_JOIN_PEX=$join_pex" "GDC_JOIN_SEEDS=$join_seeds" \
+  "GDC_JOIN_REGISTRATION_ENDPOINTS=$registration_endpoints" \
   "TRUSTED_BLOCK_PERIOD=${GDC_JOIN_TRUSTED_BLOCK_PERIOD:-2000}" \
-  "SEED_API_URL=https://$GENESIS_PUBLIC_HOST" "SEED_NODE_RPC_URL=${GDC_JOIN_RPC_SERVER_1:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}" \
+  "SEED_API_URL=$registration_seed_api" "SEED_NODE_RPC_URL=${GDC_JOIN_RPC_SERVER_1:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}" \
   "SEED_NODE_P2P_URL=tcp://$GENESIS_PUBLIC_HOST:$GENESIS_P2P_PORT" \
   "RPC_SERVER_URL_1=${GDC_JOIN_RPC_SERVER_1:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}" "RPC_SERVER_URL_2=${GDC_JOIN_RPC_SERVER_2:-https://$PUBLIC_EDGE_HOST/chain-rpc/}" \
   "TMKMS_IMAGE=$TMKMS_IMAGE" "INFERENCED_IMAGE=$INFERENCED_IMAGE" "POSTGRES_IMAGE=$POSTGRES_IMAGE" \

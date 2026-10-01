@@ -313,7 +313,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
     edge_destination=/srv/dai/edge
     edge_install_args=''
   fi
-  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; rm -rf '$edge_remote'; cd '$edge_destination' && docker compose up -d --force-recreate caddy"
+  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; cd '$edge_destination' && docker compose up -d --force-recreate caddy"
   # A selected gateway can move after recovery. Reconcile only the retained
   # proxy listener with the current role; never regenerate the node role,
   # reset chain data, or replace a signer here.
@@ -321,28 +321,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
   if [[ "$EDGE_NODE" == "$GENESIS_NODE" || "$EDGE_NODE" == "$GATEWAY_NODE" ]]; then
     proxy_bind_address=0.0.0.0
   fi
-  ssh -T "$EDGE_NODE" "set -Eeuo pipefail
-    deploy='/srv/dai/deploy'
-    [[ -f \"\$deploy/.env\" && -f \"\$deploy/compose.yaml\" ]] || { echo 'managed Network Node deployment is absent' >&2; exit 1; }
-    previous=\"\$(mktemp \"\$deploy/.env.before-proxy-ingress.XXXXXX\")\"
-    cp -p \"\$deploy/.env\" \"\$previous\"
-    cleanup() { rc=\$?; if (( rc != 0 )); then cp -p \"\$previous\" \"\$deploy/.env\"; docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" up -d --no-deps --force-recreate proxy >/dev/null 2>&1 || true; fi; rm -f \"\$previous\"; exit \"\$rc\"; }
-    trap cleanup EXIT
-    if grep -q '^PROXY_BIND_ADDRESS=' \"\$deploy/.env\"; then
-      sed -i -E 's/^PROXY_BIND_ADDRESS=.*/PROXY_BIND_ADDRESS=$proxy_bind_address/' \"\$deploy/.env\"
-    else
-      printf 'PROXY_BIND_ADDRESS=$proxy_bind_address\\n' >>\"\$deploy/.env\"
-    fi
-    docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" config --quiet
-    docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" up -d --no-deps --force-recreate proxy
-    proxy_ready=false
-    for attempt in \$(seq 1 30); do
-      if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8000/health >/dev/null; then proxy_ready=true; break; fi
-      sleep 1
-    done
-    [[ \"\$proxy_ready\" == true ]] || { echo 'proxy did not become locally healthy after ingress reconciliation' >&2; exit 1; }
-    trap - EXIT
-    rm -f \"\$previous\""
+  ssh -T "$EDGE_NODE" "'$edge_remote/edge/reconcile-proxy-ingress-remote.sh' '$edge_remote' '$EDGE_NODE' '$proxy_bind_address'"
   printf 'PASS participant edge and proxy ingress reconciled on %s; node data and signer retained\n' "$EDGE_NODE"
   exit 0
 fi

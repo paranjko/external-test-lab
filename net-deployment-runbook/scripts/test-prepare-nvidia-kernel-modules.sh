@@ -84,11 +84,12 @@ reset_case
 ensure_nvidia_modules_for_installed_kernels
 [[ ! -s "$tmp/apt.log" && ! -s "$tmp/apt-update.log" && "$DRIVER_CHANGED" == false ]]
 
-# Modules for a kernel that is installed but not running do not need a reboot.
+# Installing modules can update matching NVIDIA user-space packages. The
+# loaded module may then be stale even when the installed kernel is not running.
 reset_case; INSTALLED="$base"; RUNNING=6.8.0-138-generic
 ensure_nvidia_modules_for_installed_kernels
 [[ "$(<"$tmp/apt.log")" == linux-modules-nvidia-595-server-open-6.8.0-139-generic ]]
-[[ "$DRIVER_CHANGED" == false ]]
+[[ "$DRIVER_CHANGED" == true ]]
 
 # The archive may lag behind a new kernel: say so, install nothing.
 reset_case; INSTALLED="$base"; RUNNING=6.8.0-139-generic; AVAILABLE=''

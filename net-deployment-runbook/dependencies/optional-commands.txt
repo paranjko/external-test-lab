@@ -7,7 +7,6 @@ findmnt
 flow
 flow-remove-types
 gh
-go
 google-chrome
 gpg
 gtimeout

@@ -159,6 +159,17 @@ cp "$CHAIN_PROBE_BOOTSTRAP" "$output"
 printf '200'
 EOF
 chmod 0755 "$chain_probe/bin/curl"
+cat >"$chain_probe/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cat >/dev/null
+case "${!#}" in
+  'sudo -n bash -s') printf 'READY Host readiness preflight\n' ;;
+  'bash -s') printf 'vendor=nvidia\n' ;;
+  *) echo 'unexpected SSH operation in Bootstrap chain test' >&2; exit 97 ;;
+esac
+EOF
+chmod 0755 "$chain_probe/bin/ssh"
 for requested_chain in gonka-devnet-community gonka-testnet; do
   args=(host join --chain-id "$requested_chain" --public-host node2.example.net gdc-node2)
   [[ "$requested_chain" == gonka-devnet-community ]] && args=(host join --public-host node2.example.net gdc-node2)

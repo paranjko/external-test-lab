@@ -12,10 +12,10 @@ class TestBootstrap(unittest.TestCase):
  def write(self,d,name,value):p=d/name;p.write_text(json.dumps(value));return p
  def test_schema_three_documents_and_env_parity(self):
   Draft202012Validator.check_schema(json.loads(SCHEMA.read_text()))
-  for name,chain,seeds in (("gonka-devnet-community.json","gonka-devnet-community",5),("gonka-mainnet.json","gonka-mainnet",2),("gonka-testnet.json","gonka-testnet",2)):
+  for name,chain,seeds in (("gonka-devnet-community.json","gonka-devnet-community",4),("gonka-mainnet.json","gonka-mainnet",2),("gonka-testnet.json","gonka-testnet",2)):
    doc=json.loads((RELEASE/name).read_text());self.assertEqual(doc["chain_id"],chain);self.assertEqual(len(doc["seeds"]),seeds);self.assertEqual(self.tool("verify",RELEASE/name).returncode,0);self.assertEqual(self.tool("env",RELEASE/name).stdout.encode(),(RELEASE/(name.removesuffix(".json")+".env")).read_bytes())
-  community=json.loads((RELEASE/"gonka-devnet-community.json").read_text());self.assertEqual([seed["node_id"] for seed in community["seeds"]],["a78baa4988a9be991685080df4c232b1fdbe60ac","0f955d2e5ff3bdeabf04d91b5d590dc902aae4d0","ce4ff321a327263939a9f50fce2de988af95a5db","dda7f9dd24446c9e0b9fd6caac9a9d354dfdd651","1c62708ec56fe02d52c3ecedd388ebcc9ace55b4"])
-  self.assertEqual(community["seeds"][0]["api"],"https://node0.gonka-dev.net");self.assertEqual(community["brokers"][0]["api_urls"],["https://api.gonka-dev.net"])
+  community=json.loads((RELEASE/"gonka-devnet-community.json").read_text());self.assertEqual([seed["node_id"] for seed in community["seeds"]],["a78baa4988a9be991685080df4c232b1fdbe60ac","0f955d2e5ff3bdeabf04d91b5d590dc902aae4d0","1c62708ec56fe02d52c3ecedd388ebcc9ace55b4","7326a7861d5430ff11d6e76e643e7acfabe6e9c4"])
+  self.assertEqual([seed["api"] for seed in community["seeds"]],["https://node0.gonka-dev.net","https://node1.gonka-dev.net","https://node4.gonka-dev.net","https://node7.gonka-dev.net"]);self.assertEqual(community["brokers"][0]["api_urls"],["https://api.gonka-dev.net"])
   self.assertEqual(self.tool("broker-urls",RELEASE/"gonka-devnet-community.json").stdout.splitlines(),["https://api.gonka-dev.net"])
  def test_http_network_control_but_https_brokers(self):
   with tempfile.TemporaryDirectory() as t:
@@ -24,7 +24,7 @@ class TestBootstrap(unittest.TestCase):
    bad=document();bad["brokers"]=[{"api_urls":["https://broker.example","https://broker.example"]}];self.assertNotEqual(self.tool("verify",self.write(d,"duplicate-broker.json",bad)).returncode,0)
  def test_env_projection_and_rejections(self):
   with tempfile.TemporaryDirectory() as t:
-   d=Path(t);p=self.write(d,"good.json",document());r=self.tool("env",p);self.assertEqual(r.returncode,0);self.assertIn("SEED_API_URL='http://one.example:8000'",r.stdout);self.assertIn("RPC_SERVER_URL_2='https://two.example/chain-rpc'",r.stdout)
+   d=Path(t);p=self.write(d,"good.json",document());r=self.tool("env",p);self.assertEqual(r.returncode,0);self.assertIn("SEED_API_URL='http://one.example:8000'",r.stdout);self.assertIn("GDC_JOIN_REGISTRATION_ENDPOINTS='http://one.example:8000'",r.stdout);self.assertIn("RPC_SERVER_URL_2='https://two.example/chain-rpc'",r.stdout)
    self.assertNotEqual(self.tool("broker-urls",p).returncode,0)
    broker=document();broker["brokers"]=[{"api_urls":["https://one.broker.example","https://two.broker.example"]}];self.assertEqual(self.tool("broker-urls",self.write(d,"broker.json",broker)).stdout.splitlines(),["https://one.broker.example","https://two.broker.example"])
    bad=document();bad["brokers"]=[{"api_urls":["https://broker.example/unexpected"]}];self.assertNotEqual(self.tool("broker-urls",self.write(d,"broker-path.json",bad)).returncode,0)

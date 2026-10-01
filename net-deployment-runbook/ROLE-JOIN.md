@@ -66,9 +66,9 @@ gdc host join --bootstrap-file gonka-devnet-community.bootstrap.json --public-ho
 `gdc network bootstrap verify --online <file>` is an optional live check: it
 needs a compatible `inferenced` on `PATH` and fails if any listed seed or
 broker does not pass. JOIN needs neither: it installs its own pinned CLI,
-and its preflight needs only a quorum of seeds. Registration, DevNet faucet
-funding and the `ACTIVE` wait use a single seed (node0 on Community DevNet);
-if it does not answer, JOIN stops after Host preparation.
+and its preflight needs only a quorum of seeds. Registration tries the
+published guardian endpoints in turn. DevNet faucet funding and the `ACTIVE`
+wait still use node0.
 
 `bootstrap.env` is a generated compatibility projection, not an independent
 input. Download it only alongside the matching JSON, verify its attestation,
@@ -132,6 +132,13 @@ runtime change restarts preflight without touching the Host.
 If driver installation needs a reboot, JOIN stops with exit 194. Reboot the Host
 listed under `REBOOT` and rerun the same command; a JOIN without `--restore`
 needs no `host reset`.
+
+Before network observation, JOIN reads reboot, package-manager and Docker
+storage prerequisites over SSH. This changes nothing on the Host.
+
+If preparation reports `ACTION`, GDC found a Host prerequisite it will not
+repair implicitly. Follow `/var/log/gdc-prepare.log`, then rerun the same JOIN;
+no identity or signer was created.
 
 JOIN uses **state sync** and checks the chain lineage before it creates or
 changes anything on the Host. The preflight requires matching observations
@@ -232,6 +239,7 @@ the Host afresh instead of demanding manual recovery.
 | `completed_join_readback_failed` | a repeat of a completed JOIN could not confirm that the Host still runs as that JOIN left it; the Host was not changed | repeat once the Host is reachable and running, with the same `GDC_PORTABLE_*` declaration if one was used |
 | exit 65, `restore_identity_mismatch` | `--restore` names a validator backup for a different signer than the one captured by `gdc host reset` | use the matching validator backup; otherwise use an authorized validator-key rotation |
 | exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
+| exit 195 | Host preparation needs operator action before GDC can safely continue | resolve the stated prerequisite in `/var/log/gdc-prepare.log`, then repeat the same command; no `gdc host reset` is needed |
 | `join_reentry_manual_recovery_required` | an earlier JOIN stopped part-way, for example on `lineage_snapshot_unavailable` from the state-sync canary; repeating it changes nothing | `gdc host reset <ssh-alias>`, which keeps the run evidence; then the same command when reset reports the participant unregistered, or `--restore` when it reports a registered participant whose signer had started |
 | registered with another validator key | the chain publishes a validator key for this participant that is not the key this Host signs with, so the Host cannot sign for its own registration; the Host was not changed | repeat with `--mnemonic-prompt` or `--mnemonic-file` and that participant's cold mnemonic; or continue on the Host whose signer owns the registered key |
 

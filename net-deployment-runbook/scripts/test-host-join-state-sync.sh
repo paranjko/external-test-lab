@@ -2,6 +2,70 @@
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf -- "$tmp"' EXIT
+PRODUCT_ROOT="$ROOT"
+test_canary_observation_refresh() (
+  ROOT="$tmp/refresh-tools"; STATE="$tmp/refresh-state"; RUN="$tmp/refresh-run"
+  export NODE=fixture GDC_RUN_ID=fixture-run
+  mkdir -p "$ROOT/scripts" "$STATE" "$RUN"
+  JOIN_OBSERVATION="$RUN/original.json"; GDC_JOIN_BOOTSTRAP_FILE="$RUN/bootstrap.json"
+  printf '{}\n' >"$GDC_JOIN_BOOTSTRAP_FILE"
+  jq -cn '{network_state_id:("a" * 64),expires_at:"2000-01-01T00:00:00Z",
+    bootstrap:{url:"https://example.test/bootstrap.json",chain_id:"fixture",document_sha256:("b" * 64),genesis_sha256:("c" * 64)},
+    runtime:{core:{version:"0.2.15",commit:("d" * 40)},dapi:{version:"0.2.15-post3",commit:("e" * 40)}},
+    result:{state:"ready",reason:"none"}}' >"$JOIN_OBSERVATION"
+  cp "$JOIN_OBSERVATION" "$RUN/original-before.json"
+  cat >"$ROOT/scripts/observe-network-state.sh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+output=''; source_rpc=''
+while (($#)); do
+  case "$1" in --output) output="$2" ;; --source-rpc) source_rpc="$2" ;; esac
+  shift 2
+done
+[[ "$source_rpc" == "${GDC_JOIN_OPERATOR_SOURCE_RPC:-}" ]]
+[[ "${CHANGED_RUNTIME:-}" != unavailable ]] || exit 22
+jq --arg changed "${CHANGED_RUNTIME:-}" '.expires_at="2999-01-01T00:00:00Z" |
+  if $changed == "core" then .runtime.core.version="different"
+  elif $changed == "dapi" then .runtime.dapi.commit=("f" * 40)
+  elif $changed == "chain" then .bootstrap.chain_id="different"
+  elif $changed == "genesis" then .bootstrap.genesis_sha256=("f" * 64)
+  elif $changed == "authority" then .network_state_id=("f" * 64)
+  else . end' "$JOIN_OBSERVATION" >"$output"
+EOF
+  cat >"$ROOT/scripts/preflight-join-lineage.sh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+while (($#)); do
+  case "$1" in --observation) observation="$2" ;; --receipt) receipt="$2" ;; --env) env_file="$2" ;; esac
+  shift 2
+done
+[[ "$observation" == "$RUN/network-observation-canary.v1.json" ]]
+jq -e '.expires_at == "2999-01-01T00:00:00Z"' "$observation" >/dev/null
+printf '{}\n' >"$receipt"
+printf 'GDC_JOIN_LINEAGE_RECEIPT=%q\n' "$receipt" >"$env_file"
+printf 'called\n' >>"$RUN/preflight-called"
+EOF
+  chmod 0755 "$ROOT/scripts/observe-network-state.sh" "$ROOT/scripts/preflight-join-lineage.sh"
+  export RUN JOIN_OBSERVATION
+  step() { :; }
+  die() { printf '%s\n' "$*" >&2; exit 1; }
+  eval "$(sed -n '/^refresh_lineage_for_canary() {$/,/^}$/p' "$PRODUCT_ROOT/scripts/phase-join.sh")"
+  refresh_lineage_for_canary
+  cmp "$JOIN_OBSERVATION" "$RUN/original-before.json"
+  GDC_JOIN_OPERATOR_SOURCE_RPC=https://example.test/chain-rpc
+  export GDC_JOIN_OPERATOR_SOURCE_RPC
+  refresh_lineage_for_canary
+  [[ $(wc -l <"$RUN/preflight-called") -eq 2 ]]
+  for changed in core dapi chain genesis authority unavailable; do
+    if (export CHANGED_RUNTIME="$changed"; refresh_lineage_for_canary) >"$RUN/changed.out" 2>"$RUN/changed.err"; then
+      echo "$changed unexpectedly reached lineage preflight" >&2; exit 1
+    fi
+    [[ $(wc -l <"$RUN/preflight-called") -eq 2 ]]
+  done
+  cmp "$JOIN_OBSERVATION" "$RUN/original-before.json"
+)
+test_canary_observation_refresh
+printf 'PASS expired initial observation is refreshed; changed runtime stops before canary trust\n'
 cat >"$tmp/receipt.json" <<'EOF'
 {"bootstrap":{"mode":"state_sync","trust":{"height":3000,"expires_at":"2999-01-01T00:00:00Z"}},"checkpoints":{"trust":{"height":3000}},"fault_domains":[{"rpc_url":"https://rpc-a.example.test/chain-rpc","host":"rpc-a.example.test","port":443,"ip":"192.0.2.10"},{"rpc_url":"https://rpc-b.example.test/chain-rpc","host":"rpc-b.example.test","port":443,"ip":"192.0.2.11"}]}
 EOF
