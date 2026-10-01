@@ -19,7 +19,8 @@ from gonka_check.gateway.gotest import GO_TEST, TEST_FILE, TEST_NAME
 def checkpoint(hosts, nonce, wall, host=None):
     host = wall / 2 if host is None else host
     return {"kind": "checkpoint", "hosts": hosts, "nonce": nonce, "gateway_ms": wall - host, "host_ms": host,
-            "wall_ms": wall, "heap_mb": 10.0 + nonce / 100, "elapsed_s": nonce / 10}
+            "wall_ms": wall, "heap_mb": 10.0 + nonce / 100, "elapsed_s": nonce / 10, "live": nonce - nonce // 10,
+            "sealed": nonce // 10}
 
 
 def summary(hosts, nonces):
@@ -74,6 +75,11 @@ class GoTestTemplate(unittest.TestCase):
         for kind in ("start", "checkpoint", "summary"):
             self.assertIn('gcheckEmit("%s"' % kind, GO_TEST)
         self.assertIn('"GCHECK %s\\n"', GO_TEST)
+        self.assertIn('"live": live,', GO_TEST)
+        self.assertIn('"sealed": session.StateMachine().SealedNonceCount()', GO_TEST)
+
+    def test_template_keeps_records_live_for_the_whole_run(self):
+        self.assertIn("InferenceSealGraceSeconds: 30 * 24 * 3600,", GO_TEST)
 
 
 class Runner(unittest.TestCase):
@@ -236,7 +242,7 @@ class Report(unittest.TestCase):
                 "started_at": "2026-10-01T00:00:00Z", "every": 20}
         verdicts = [{"check": "stress_g%d" % hosts, "verdict": "PASS", "reason": "ok"} for hosts in (16, 64)]
         text = report.markdown(meta, self.runs(), verdicts, "PASS")
-        self.assertIn("| G=16 | 40 | 1.00 | 1.50 | 1.50 | 3.0 | 6.0 | 0.25 |", text)
+        self.assertIn("| G=16 | 40 | 36 | 1.00 | 1.50 | 1.50 | 3.0 | 6.0 | 0.25 |", text)
         self.assertIn("| G=64 |", text)
         self.assertIn("Overall: **PASS**.", text)
         self.assertIn("![gateway time per nonce](gateway.svg)", text)
@@ -246,6 +252,10 @@ class Report(unittest.TestCase):
         rows = report.checkpoints_csv(runs).splitlines()
         self.assertEqual(",".join(report.CHECKPOINT_FIELDS), rows[0])
         self.assertEqual(5, len(rows))
+        self.assertTrue(rows[2].endswith(",36,4"))
+        older = [{"hosts": 16, "checkpoints": [checkpoint(16, 20, 2.0)]}]
+        del older[0]["checkpoints"][0]["live"], older[0]["checkpoints"][0]["sealed"]
+        self.assertTrue(report.checkpoints_csv(older).splitlines()[1].endswith(",,"))
         svg = report.chart(runs)
         self.assertEqual(2, svg.count("<polyline"))
         self.assertIn("G=64", svg)

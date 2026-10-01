@@ -85,7 +85,6 @@ func TestGcheckGatewayLoad(t *testing.T) {
     every := gcheckEnv(t, "GCHECK_EVERY")
     runtime.GOMAXPROCS(runtime.NumCPU())
 
-    // As on DevNet, where an escrow lives under the 92-minute seal horizon: nothing seals during the run.
     grace := uint64(nonces + 100)
     balance := uint64(nonces)*actualCostPerInf + stressBalance
 
@@ -101,6 +100,8 @@ func TestGcheckGatewayLoad(t *testing.T) {
         TokenPrice:       1,
         VoteThreshold:    uint32(numHosts) / 2,
         ValidationRate:   1000,
+        // A DevNet escrow ends before its records seal by the clock; a run of hours must not seal them either.
+        InferenceSealGraceSeconds: 30 * 24 * 3600,
     }
     verifier := signing.NewSecp256k1Verifier()
     newSM := func() *state.StateMachine {
@@ -147,10 +148,12 @@ func TestGcheckGatewayLoad(t *testing.T) {
         hostTime := time.Duration(hostBusy.Load() - bucketHost)
         n := i - bucketFrom
         runtime.ReadMemStats(&mem)
+        live, _ := session.StateMachine().InferenceStatusCounts()
         gcheckEmit("checkpoint", map[string]any{"hosts": numHosts, "nonce": i,
             "gateway_ms": gcheckMsPer(wall-hostTime, n), "host_ms": gcheckMsPer(hostTime, n),
             "wall_ms": gcheckMsPer(wall, n), "heap_mb": float64(mem.HeapAlloc) / (1 << 20),
-            "elapsed_s": time.Since(runStart).Seconds()})
+            "elapsed_s": time.Since(runStart).Seconds(), "live": live,
+            "sealed": session.StateMachine().SealedNonceCount()})
         bucketStart, bucketHost, bucketFrom = time.Now(), hostBusy.Load(), i
     }
     loopWall := time.Since(runStart)
