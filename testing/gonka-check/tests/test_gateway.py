@@ -1,0 +1,274 @@
+"""gcheck gateway-load without Go, Docker or the network: a local git repo stands in for gonka-ai/gonka."""
+
+import contextlib
+import io
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+from gonka_check import cli
+from gonka_check.gateway import cli as gateway_cli
+from gonka_check.gateway import report, stress
+from gonka_check.gateway.gotest import GO_TEST, TEST_FILE, TEST_NAME
+
+
+def checkpoint(hosts, nonce, wall, host=None):
+    host = wall / 2 if host is None else host
+    return {"kind": "checkpoint", "hosts": hosts, "nonce": nonce, "gateway_ms": wall - host, "host_ms": host,
+            "wall_ms": wall, "heap_mb": 10.0 + nonce / 100, "elapsed_s": nonce / 10}
+
+
+def summary(hosts, nonces):
+    return {"kind": "summary", "hosts": hosts, "nonces": nonces, "final_nonce": nonces + hosts + 1,
+            "diffs": nonces + hosts + 1, "signatures": hosts, "loop_s": 9.0, "loop_host_s": 6.0, "loop_gateway_s": 3.0,
+            "state_root_ms": 1.5, "finalize_s": 0.25, "finalize_host_s": 0.2, "settlement_ms": 0.1, "state_mb": 0.5,
+            "inferences_mb": 0.5, "host_stats_kb": 0.2, "diff_history_mb": 0.03, "user_cpu_s": 12.0, "sys_cpu_s": 1.0,
+            "max_rss_mb": 80.0}
+
+
+def events_for(hosts, nonces=40, every=20):
+    events = [{"kind": "start", "hosts": hosts, "nonces": nonces, "every": every, "cpus": 4, "go": "go1.25.9"}]
+    events += [checkpoint(hosts, nonce, 1.0 + nonce / 20) for nonce in range(every, nonces + 1, every)]
+    return events + [summary(hosts, nonces)]
+
+
+class GatewayHarness(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {name: os.environ.get(name) for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME")}
+        os.environ["XDG_CONFIG_HOME"] = os.path.join(self.tmp.name, "config")
+        os.environ["XDG_DATA_HOME"] = os.path.join(self.tmp.name, "data")
+
+    def tearDown(self):
+        for name, value in self.env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def gcheck(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(list(args))
+        self.out, self.err = out.getvalue(), err.getvalue()
+        return code
+
+
+class GoTestTemplate(unittest.TestCase):
+    def test_template_is_a_stress_test_of_the_user_package(self):
+        self.assertTrue(GO_TEST.startswith("//go:build stress\n"))
+        self.assertIn("\npackage user\n", GO_TEST)
+        self.assertIn("func %s(t *testing.T)" % TEST_NAME, GO_TEST)
+        self.assertEqual("devshard/user/gcheck_gateway_load_test.go", TEST_FILE)
+
+    def test_template_binds_the_prompt_like_a_v5_host(self):
+        self.assertIn('"max_tokens":100,', GO_TEST)
+        self.assertIn("InputLength: uint64(len(prompt))", GO_TEST)
+
+    def test_template_emits_the_events_the_parser_reads(self):
+        for kind in ("start", "checkpoint", "summary"):
+            self.assertIn('gcheckEmit("%s"' % kind, GO_TEST)
+        self.assertIn('"GCHECK %s\\n"', GO_TEST)
+
+
+class Runner(unittest.TestCase):
+    def test_go_version_parses_go_env_output(self):
+        self.assertEqual((1, 25, 9), stress.go_version("go1.25.9"))
+        self.assertEqual((1, 26, 0), stress.go_version("go1.26"))
+        self.assertIsNone(stress.go_version("devel"))
+
+    def test_local_go_is_used_when_new_enough(self):
+        reply = subprocess.CompletedProcess([], 0, stdout="go1.25.10\n")
+        with mock.patch.object(stress.shutil, "which", lambda name: "/usr/bin/" + name), \
+                mock.patch.object(stress.subprocess, "run", return_value=reply):
+            self.assertEqual(("go", "go1.25.10"), stress.pick_runner("auto"))
+
+    def test_old_go_falls_back_to_docker_or_refuses(self):
+        reply = subprocess.CompletedProcess([], 0, stdout="go1.24.3\n")
+        with mock.patch.object(stress.shutil, "which", lambda name: "/usr/bin/" + name), \
+                mock.patch.object(stress.subprocess, "run", return_value=reply):
+            self.assertEqual(("docker", stress.GO_IMAGE), stress.pick_runner("auto"))
+            with self.assertRaisesRegex(stress.StressError, "older than go1.25.9"):
+                stress.pick_runner("go")
+
+    def test_nothing_to_run_with_is_an_error(self):
+        with mock.patch.object(stress.shutil, "which", lambda name: None):
+            with self.assertRaisesRegex(stress.StressError, "needs go1.25.9 or newer, or docker"):
+                stress.pick_runner("auto")
+
+    def test_docker_command_mounts_source_and_cache_and_passes_the_run_size(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            argv, cwd, env = stress.command("docker", "/src/gonka", tmp, {"GCHECK_HOSTS": "64"}, "run-g64")
+        self.assertIsNone(cwd)
+        self.assertIsNone(env)
+        self.assertEqual(["docker", "run", "--rm", "--name", "run-g64"], argv[:5])
+        self.assertIn("/src/gonka:/src", argv)
+        self.assertIn("GCHECK_HOSTS=64", argv)
+        self.assertIn("CGO_ENABLED=0", argv)
+        self.assertIn("GOTOOLCHAIN=local", argv)
+        image = argv.index(stress.GO_IMAGE)
+        self.assertEqual(["go", "test", "./user/", "-tags", "stress", "-run", "^%s$" % TEST_NAME],
+                         argv[image + 1:image + 8])
+
+    def test_local_command_runs_in_the_devshard_module(self):
+        argv, cwd, env = stress.command("go", "/src/gonka", "/cache", {"GCHECK_NONCES": "19800"}, "x",
+                                        compile_only=True)
+        self.assertEqual(["go", "test", "./user/", "-tags", "stress", "-run", "^$"], argv[:7])
+        self.assertEqual("/src/gonka/devshard", cwd)
+        self.assertEqual("19800", env["GCHECK_NONCES"])
+        self.assertEqual("0", env["CGO_ENABLED"])
+
+
+class Source(unittest.TestCase):
+    def make_upstream(self, root):
+        upstream = os.path.join(root, "upstream")
+        for folder in ("devshard/user", "common", "inference-chain", "proxy"):
+            os.makedirs(os.path.join(upstream, folder))
+            with open(os.path.join(upstream, folder, "README"), "w", encoding="utf-8") as handle:
+                handle.write(folder + "\n")
+        run = {"cwd": upstream, "check": True, "capture_output": True}
+        subprocess.run(["git", "init", "--quiet"], **run)
+        subprocess.run(["git", "add", "."], **run)
+        subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "--quiet", "-m",
+                        "init"], **run)
+        subprocess.run(["git", "tag", stress.TAG], **run)
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], text=True, **run).stdout.strip()
+        return "file://" + upstream, commit
+
+    def test_sparse_checkout_of_the_tag_with_the_test_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, commit = self.make_upstream(tmp)
+            path, got = stress.prepare_source(os.path.join(tmp, "cache"), repo=repo, pinned=commit)
+            self.assertEqual(commit, got)
+            self.assertTrue(os.path.isdir(os.path.join(path, "inference-chain")))
+            self.assertFalse(os.path.exists(os.path.join(path, "proxy")))
+            with open(os.path.join(path, TEST_FILE), encoding="utf-8") as handle:
+                self.assertEqual(GO_TEST, handle.read())
+            again, _ = stress.prepare_source(os.path.join(tmp, "cache"), repo=repo, pinned=commit)
+            self.assertEqual(path, again)
+
+    def test_a_moved_pinned_tag_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _commit = self.make_upstream(tmp)
+            with self.assertRaisesRegex(stress.StressError, "points to"):
+                stress.prepare_source(os.path.join(tmp, "cache"), repo=repo, pinned="0" * 40)
+
+
+class Outcome(unittest.TestCase):
+    def run_script(self, text, tmp):
+        log_path = os.path.join(tmp, "go.log")
+        seen = []
+        code, events, interrupted = stress.run_one([sys.executable, "-c", text], None, None, log_path, seen.append)
+        with open(log_path, encoding="utf-8") as handle:
+            return code, events, interrupted, seen, handle.read()
+
+    def test_events_are_read_from_mixed_output_and_logged(self):
+        lines = ["=== RUN   %s" % TEST_NAME] + ["GCHECK " + json.dumps(event) for event in events_for(16)] + ["PASS"]
+        with tempfile.TemporaryDirectory() as tmp:
+            code, events, interrupted, seen, log = self.run_script("print(%r)" % "\n".join(lines), tmp)
+        self.assertEqual((0, False), (code, interrupted))
+        self.assertEqual(["start", "checkpoint", "checkpoint", "summary"], [event["kind"] for event in events])
+        self.assertEqual(events, seen)
+        self.assertIn("=== RUN", log)
+
+    def test_verdicts_follow_the_go_test_outcome(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = os.path.join(tmp, "go.log")
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("go: downloading x\nFAIL\tdevshard/user\n")
+            events = events_for(32)
+            self.assertEqual("PASS", stress.judge(32, 0, events, False, log_path)["verdict"])
+            failed = stress.judge(32, 1, events[:2], False, log_path)
+            self.assertEqual(("FAIL", "stress_g32"), (failed["verdict"], failed["check"]))
+            self.assertIn("FAIL\tdevshard/user", failed["reason"])
+            self.assertEqual("BLOCKED", stress.judge(32, 1, [], False, log_path)["verdict"])
+            stopped = stress.judge(32, 130, events[:2], True, log_path)
+            self.assertEqual("INCONCLUSIVE", stopped["verdict"])
+            self.assertIn("1 checkpoints", stopped["reason"])
+
+    def test_minutes_left_extrapolates_the_growing_time_per_nonce(self):
+        first, second = checkpoint(64, 1000, 10.0), checkpoint(64, 2000, 20.0)
+        self.assertAlmostEqual((1000 * 20.0 + 0.01 * 1000 * 1000 / 2) / 60000,
+                               gateway_cli.minutes_left(first, second, 3000))
+        self.assertEqual(0.0, gateway_cli.minutes_left(first, second, 2000))
+        self.assertAlmostEqual(2000 * 10.0 / 60000, gateway_cli.minutes_left(None, first, 3000))
+
+
+class Report(unittest.TestCase):
+    def runs(self):
+        out = []
+        for hosts in (16, 64):
+            events = events_for(hosts)
+            out.append({"hosts": hosts, "checkpoints": [event for event in events if event["kind"] == "checkpoint"],
+                        "summary": events[-1], "verdict": {"verdict": "PASS"}})
+        return out
+
+    def test_markdown_has_one_row_per_group_size(self):
+        meta = {"tag": stress.TAG, "commit": stress.TAG_COMMIT, "runner": "docker (x)", "cpus": 4,
+                "started_at": "2026-10-01T00:00:00Z", "every": 20}
+        verdicts = [{"check": "stress_g%d" % hosts, "verdict": "PASS", "reason": "ok"} for hosts in (16, 64)]
+        text = report.markdown(meta, self.runs(), verdicts, "PASS")
+        self.assertIn("| G=16 | 40 | 1.00 | 1.50 | 1.50 | 3.0 | 6.0 | 0.25 |", text)
+        self.assertIn("| G=64 |", text)
+        self.assertIn("Overall: **PASS**.", text)
+        self.assertIn("![gateway time per nonce](gateway.svg)", text)
+
+    def test_csv_and_chart_cover_every_checkpoint(self):
+        runs = self.runs()
+        rows = report.checkpoints_csv(runs).splitlines()
+        self.assertEqual(",".join(report.CHECKPOINT_FIELDS), rows[0])
+        self.assertEqual(5, len(rows))
+        svg = report.chart(runs)
+        self.assertEqual(2, svg.count("<polyline"))
+        self.assertIn("G=64", svg)
+        self.assertNotIn("<polyline", report.chart([{"hosts": 8, "checkpoints": []}]))
+
+
+class Cli(GatewayHarness):
+    def test_bad_group_sizes_are_refused(self):
+        self.assertEqual(4, self.gcheck("gateway-load", "stress", "--groups", "0"))
+        self.assertEqual(4, self.gcheck("gateway-load", "stress", "--groups", "16,200"))
+
+    def test_plan_says_where_the_code_comes_from(self):
+        with mock.patch.object(stress, "pick_runner", side_effect=stress.StressError("needs docker")):
+            self.assertEqual(0, self.gcheck("gateway-load", "plan"))
+        self.assertIn(stress.TAG_COMMIT[:12], self.out)
+        self.assertIn("runner   none: needs docker", self.out)
+        self.assertIn("nothing to any Gonka network", self.out)
+
+    def test_stress_writes_the_report_and_exits_with_the_verdict(self):
+        def fake_run(argv, cwd, env, log_path, on_event=None):
+            hosts = int(next(item.split("=")[1] for item in argv if item.startswith("GCHECK_HOSTS=")))
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("ok\n")
+            events = events_for(hosts)
+            for event in events:
+                on_event(event)
+            return 0, events, False
+
+        with mock.patch.object(stress, "pick_runner", return_value=("docker", stress.GO_IMAGE)), \
+                mock.patch.object(stress, "prepare_source", return_value=("/src/gonka", stress.TAG_COMMIT)), \
+                mock.patch.object(stress, "run_one", side_effect=fake_run):
+            code = self.gcheck("gateway-load", "stress", "--groups", "64,16", "--nonces", "40", "--every", "20")
+        self.assertEqual(0, code)
+        self.assertIn("PASS         stress_g16", self.out)
+        self.assertIn("about 0 min left", self.err)
+        run_dir = self.out.split("written  ")[1].split(":")[0]
+        for name in ("report.md", "checkpoints.csv", "gateway.svg", "host.svg", "summary.json", "manifest.json"):
+            self.assertTrue(os.path.isfile(os.path.join(run_dir, name)), name)
+        with open(os.path.join(run_dir, "summary.json"), encoding="utf-8") as handle:
+            self.assertEqual("PASS", json.load(handle)["overall"])
+
+    def test_a_missing_runner_is_blocked(self):
+        with mock.patch.object(stress, "pick_runner", side_effect=stress.StressError("needs docker")):
+            self.assertEqual(3, self.gcheck("gateway-load", "stress", "--dry-run"))
+        self.assertIn("ready    BLOCKED", self.out)
+
+
+if __name__ == "__main__":
+    unittest.main()

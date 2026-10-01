@@ -1,6 +1,6 @@
 # gonka-check
 
-Smoke checks for Gonka inference through the public DevNet gateway, chain checks, a readiness watch and an escrow slot study from public chain reads.
+Smoke checks for Gonka inference through the public DevNet gateway, chain checks, a readiness watch, an escrow slot study from public chain reads and a gateway load measurement.
 Python 3.10+, standard library only, nothing to install.
 
 ## Run
@@ -52,12 +52,26 @@ bin/gcheck escrow report <run>/snapshot.json --out DIR   # replay, 1000 escrows 
 `verify` replays the real escrows only; `simulate` writes the CSV files without the report.
 Checks: `weights` (weights sum to `total_weight`, same effective epoch at start and end), `escrows` (every escrow id of the epoch was read), `slots_replay` (the port matches every real escrow of the snapshot), `slots_source` (with `--slots-go`, the ported file's sha256), `slot_share` and `inclusion` (simulated counts within 5 sigma + 1 of the formulas).
 
+## Gateway load
+
+Runs the upstream DevShard gateway session with G in-process hosts and the stub model, one request at a time, and measures every 1,000 nonces. Needs `go` 1.25.9 or newer, or Docker.
+
+```sh
+bin/gcheck gateway-load plan                    # source tag and commit, runner, what is written
+bin/gcheck gateway-load stress --dry-run        # fetch the source and build the test: READY or BLOCKED
+bin/gcheck gateway-load stress                  # G=16,32,64, 19,800 nonces each: report.md, checkpoints.csv, charts
+```
+
+The source is `gonka-ai/gonka` at `devshard/v5.0.2`, pinned to its commit; gcheck adds one test file to that checkout.
+Gateway time per nonce is the wall time minus the time inside the hosts. Each group size is one check: `PASS` when every nonce, the finalization and the settlement check pass.
+
 ## Safety
 
 - `run` and `watch` reach only `https://api.gonka-dev.net`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*` and `/v1/admission-status` are never requested.
 - `watch` samples at most every 5 s against a public target; `--profile chain` and `watch` read no key.
 - One request in flight, one lock per machine, sends at least 2 blocks apart at epoch offset `safe_start+1 .. epoch_length-20`.
 - `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
+- `gateway-load` reaches only GitHub for the source and the Go module proxy; it sends nothing to any Gonka network.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.
 - The run stops on a suspected permit leak (408 with a permit height and no dispatch height), on a failed dispatch, on a reply without admission headers, on an unknown outcome, on a proxy protocol misconfiguration, and after two pre-dispatch rejections.
