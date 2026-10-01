@@ -51,7 +51,9 @@ DISPATCH_PERMIT = threading.BoundedSemaphore(1)
 STATUS_OBSERVATION_PERMIT = threading.BoundedSemaphore(1)
 DISPATCH_LOCK = threading.Lock()
 AUDIT_LOCK = threading.Lock()
+ROUTE_COUNTERS_LOCK = threading.Lock()
 DISPATCHES_BY_HEIGHT = {}
+ROUTE_COUNTERS = {}
 COMPLETION_PATH = re.compile(r"^/(?:v1/chat/completions|devshard/[0-9]+/v1/chat/completions)$")
 READ_ONLY_PATHS = {"/v1/models", "/v1/status"}
 ADMISSION_STATUS_PATH = "/v1/admission-status"
@@ -62,6 +64,21 @@ UPSTREAM_CONTENT_TYPES = {
     "text/plain": "text/plain",
 }
 PROTOCOL_CONTRACTS = {}
+
+
+def count_route(status):
+    """Count only stable public completion outcomes, never native gateway work."""
+    outcome = "%dxx" % (status // 100)
+    with ROUTE_COUNTERS_LOCK:
+        ROUTE_COUNTERS[outcome] = ROUTE_COUNTERS.get(outcome, 0) + 1
+
+
+def route_metrics():
+    with ROUTE_COUNTERS_LOCK:
+        rows = ["# TYPE gdc_gateway_route_requests_total counter"]
+        rows.extend('gdc_gateway_route_requests_total{route="S",outcome="%s"} %s' %
+                    (outcome, ROUTE_COUNTERS[outcome]) for outcome in sorted(ROUTE_COUNTERS))
+    return ("\n".join(rows) + "\n").encode()
 
 
 def load_protocol_contracts(value):
@@ -385,6 +402,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+        count_route(status)
 
     def deadline(self):
         client_deadline = self.headers.get("X-Request-Deadline-Ms")
@@ -446,6 +464,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Serve the local admission contract or proxy public gateway discovery."""
         path = self.path.split("?", 1)[0]
+        if path == "/metrics":
+            payload = route_metrics()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if path == ADMISSION_STATUS_PATH:
             # This is a read-only preflight, not a dispatch permit: one fresh
             # observation answers whether a user request should be attempted.
@@ -660,6 +686,7 @@ class Handler(BaseHTTPRequestHandler):
                 response.getheader("Content-Type", "")))
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
+            count_route(response.status)
             try:
                 self.wfile.write(payload)
             except (BrokenPipeError, ConnectionResetError):

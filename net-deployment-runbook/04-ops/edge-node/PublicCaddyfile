@@ -124,6 +124,28 @@
     handle /ops-gateway-metrics {
       respond 403
     }
+    @gateway_route_metrics_from_monitoring {
+      path /ops-gateway-route-metrics
+      remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.1 ::1
+    }
+    handle @gateway_route_metrics_from_monitoring {
+      rewrite * /metrics
+      reverse_proxy 127.0.0.1:18085
+    }
+    handle /ops-gateway-route-metrics {
+      respond 403
+    }
+    @gateway_admission_metrics_from_monitoring {
+      path /ops-gateway-admission-metrics
+      remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.1 ::1
+    }
+    handle @gateway_admission_metrics_from_monitoring {
+      rewrite * /metrics
+      reverse_proxy 127.0.0.1:18083
+    }
+    handle /ops-gateway-admission-metrics {
+      respond 403
+    }
     @root path /
     redir @root /dashboard/gonka/gov 308
     # The public edge owns public TLS but is not necessarily a chain participant.

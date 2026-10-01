@@ -249,6 +249,10 @@ try:
     assert get(proxy_port, "/v1/models", authorization=False)[0] == 401
     missing = get(proxy_port, "/v1/unknown")
     assert missing[0] == 404 and json.loads(missing[1]) == {"error": {"code": "not_found"}}
+    assert post_details(proxy_port, authorization=False)[0] == 401
+    route_metrics = get(proxy_port, "/metrics")
+    assert route_metrics[0] == 200
+    assert b'gdc_gateway_route_requests_total{route="S",outcome="4xx"} 1' in route_metrics[1]
     process.terminate(); process.wait(2); processes.remove(process)
 
     # Admission follows the actual anchor, including both inclusive safe edges.
