@@ -41,6 +41,8 @@ def add_parser(commands):
     stress_cmd.add_argument("--tag", default=stress.TAG, help="gonka-ai/gonka tag (default %s)" % stress.TAG)
     stress_cmd.add_argument("--runner", choices=("auto", "go", "docker"), default="auto",
                             help="local go or the %s image (default auto)" % stress.GO_IMAGE)
+    stress_cmd.add_argument("--memory", type=float, default=None,
+                            help="memory cap per run in GB (default 75%% of this machine; 0 turns it off)")
     stress_cmd.add_argument("--dry-run", action="store_true",
                             help="fetch the source and build the test; READY or BLOCKED")
     return gateway
@@ -75,6 +77,8 @@ def cmd_plan(_args):
     print("runs     one go test per group size (default %s), %d nonces each, one request at a time"
           % (DEFAULT_GROUPS, DEFAULT_NONCES))
     print("runner   %s" % how)
+    print("builds   the test once, then runs the binary per group size; memory cap %s GB per run" % (
+        stress.default_memory_gb() or "none"))
     print("network  github.com for the source and the Go module proxy; nothing to any Gonka network")
     print("cache    %s" % cache)
     print("writes   %s/<run>/: report.md, checkpoints.csv, gateway.svg, host.svg, go-test-g<G>.log" %
@@ -131,13 +135,16 @@ def cmd_stress(args):
             runner, detail = stress.pick_runner(args.runner)
             log("source   %s %s" % (stress.REPO, args.tag))
             source, commit = stress.prepare_source(cache, args.tag)
-            meta.update(commit=commit, runner="%s (%s)" % (runner, detail))
+            memory = stress.default_memory_gb() if args.memory is None else (args.memory or None)
+            meta.update(commit=commit, runner="%s (%s)" % (runner, detail), memory_gb=memory)
             recorder.write_json("manifest.json", meta)
             print("source   %s at %s" % (args.tag, commit[:12]))
             print("runner   %s" % meta["runner"])
-            if args.dry_run:
-                return _dry_run(runner, source, cache, run_id, run_dir, recorder)
-            return _stress(args, groups, runner, source, cache, run_id, run_dir, recorder, meta)
+            print("memory   %s" % ("cap %g GB per run" % memory if memory else "no cap"))
+            built = _build(runner, source, cache, run_id, run_dir)
+            if args.dry_run or not built:
+                return _ready(built, run_dir, recorder)
+            return _stress(args, groups, runner, source, cache, run_id, run_dir, recorder, meta, memory)
     except LockBusy as error:
         print("ready    BLOCKED\n         lock: %s" % error)
         return EXIT_CODES["BLOCKED"]
@@ -147,25 +154,29 @@ def cmd_stress(args):
         return EXIT_CODES["BLOCKED"]
 
 
-def _dry_run(runner, source, cache, run_id, run_dir, recorder):
-    argv, cwd, env = stress.command(runner, source, cache, {}, "%s-build" % run_id, compile_only=True)
-    log_path = os.path.join(run_dir, "go-test-build.log")
-    code, _events, interrupted = stress.run_one(argv, cwd, env, log_path)
-    state = "READY" if code == 0 and not interrupted else "BLOCKED"
-    recorder.write_json("summary.json", {"mode": "gateway-stress-probe", "state": state, "exit": code})
+def _build(runner, source, cache, run_id, run_dir):
+    argv, cwd, env = stress.build_command(runner, source, cache, "%s-build" % run_id)
+    log("build    go test -c -tags stress ./user/")
+    code, _events, interrupted = stress.run_one(argv, cwd, env, os.path.join(run_dir, "go-test-build.log"))
+    return code == 0 and not interrupted
+
+
+def _ready(built, run_dir, recorder):
+    state = "READY" if built else "BLOCKED"
+    recorder.write_json("summary.json", {"mode": "gateway-stress-probe", "state": state})
     print("ready    %s" % state)
-    if state != "READY":
-        print("         %s" % stress.tail(log_path))
+    if not built:
+        print("         %s" % stress.tail(os.path.join(run_dir, "go-test-build.log")))
     print("records  %s" % run_dir)
-    return 0 if state == "READY" else EXIT_CODES["BLOCKED"]
+    return 0 if built else EXIT_CODES["BLOCKED"]
 
 
-def _stress(args, groups, runner, source, cache, run_id, run_dir, recorder, meta):
+def _stress(args, groups, runner, source, cache, run_id, run_dir, recorder, meta, memory):
     runs, verdicts = [], []
     for hosts in groups:
         name = "%s-g%d" % (run_id, hosts)
         env = {"GCHECK_HOSTS": str(hosts), "GCHECK_NONCES": str(args.nonces), "GCHECK_EVERY": str(args.every)}
-        argv, cwd, proc_env = stress.command(runner, source, cache, env, name)
+        argv, cwd, proc_env = stress.command(runner, source, cache, env, name, memory)
         log_path = os.path.join(run_dir, "go-test-g%d.log" % hosts)
         log("G=%d: %d nonces" % (hosts, args.nonces))
         code, events, interrupted = stress.run_one(argv, cwd, proc_env, log_path, progress(args.nonces))
