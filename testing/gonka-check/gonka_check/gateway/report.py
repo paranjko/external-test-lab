@@ -5,7 +5,7 @@ import io
 import os
 from xml.sax.saxutils import escape
 
-CHECKPOINT_FIELDS = ("hosts", "nonce", "gateway_ms", "host_ms", "wall_ms", "heap_mb", "elapsed_s")
+CHECKPOINT_FIELDS = ("hosts", "nonce", "gateway_ms", "host_ms", "wall_ms", "heap_mb", "elapsed_s", "live", "sealed")
 COLORS = ("#2a78d6", "#eb6834", "#1baf7a", "#8a4fd6", "#c23b5a")
 
 
@@ -19,7 +19,7 @@ def checkpoints_csv(runs):
     writer.writerow(CHECKPOINT_FIELDS)
     for run in runs:
         for event in run["checkpoints"]:
-            writer.writerow([_num(event[field], 3) for field in CHECKPOINT_FIELDS])
+            writer.writerow(["" if event.get(field) is None else _num(event[field], 3) for field in CHECKPOINT_FIELDS])
     return out.getvalue()
 
 
@@ -71,14 +71,16 @@ def _row(run):
 
     diff_bytes = ("%.0f" % (summary["diff_history_mb"] * 1048576 / summary["diffs"])
                   if summary.get("diffs") else "–")
-    return ["G=%d" % run["hosts"], get(summary, "nonces", 0), get(first, "gateway_ms"), get(last, "gateway_ms"),
-            get(last, "host_ms"), get(summary, "loop_gateway_s", 1), get(summary, "loop_host_s", 1),
+    return ["G=%d" % run["hosts"], get(summary, "nonces", 0), get(last, "live", 0), get(first, "gateway_ms"),
+            get(last, "gateway_ms"), get(last, "host_ms"), get(summary, "loop_gateway_s", 1),
+            get(summary, "loop_host_s", 1),
             get(summary, "finalize_s", 2), get(summary, "state_mb", 1), get(summary, "diff_history_mb", 1), diff_bytes,
             get(summary, "user_cpu_s", 1), get(summary, "max_rss_mb", 0), run["verdict"]["verdict"]]
 
 
 def markdown(meta, runs, verdicts, overall):
-    header = ("G", "nonces", "gateway ms/nonce, first", "gateway ms/nonce, last", "host ms/nonce, last",
+    header = ("G", "nonces", "live records, last", "gateway ms/nonce, first", "gateway ms/nonce, last",
+              "host ms/nonce, last",
               "gateway s", "host s", "finalize s", "state MB", "diff log MB", "diff B, proto", "CPU s", "peak RSS MB",
               "verdict")
     lines = ["# Gateway load in one process, %s" % meta["tag"], "",
@@ -86,7 +88,8 @@ def markdown(meta, runs, verdicts, overall):
                  meta["tag"], meta["commit"][:12], meta["runner"], meta.get("cpus", "?"), meta["started_at"][:10]),
              "",
              "The upstream gateway session drives G in-process hosts with the stub model, one request at a time. "
-             "Nothing seals during the run, as on DevNet, where an escrow lives under the 92-minute seal horizon. "
+             "The seal clock is set to 30 days: a DevNet escrow ends before its records seal by the clock, and a "
+             "run of hours must not seal them either; validated records still seal by nonce, as on DevNet. "
              "Gateway time is the wall time of a nonce minus the time spent inside the hosts. "
              "Memory and CPU are for the whole process, hosts included.", "",
              "## Checks", "", "| check | verdict | reason |", "|---|---|---|"]

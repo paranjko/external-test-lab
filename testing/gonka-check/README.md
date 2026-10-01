@@ -84,6 +84,7 @@ bin/gcheck gateway-load stress                  # G=16,32,64, 19,800 nonces each
 The source is `gonka-ai/gonka` at `devshard/v5.0.2`, pinned to its commit; gcheck adds one test file to that checkout.
 The test is built once and runs as a plain binary, capped at 75% of the machine memory by default (`--memory GB`, `0` for no cap).
 Gateway time per nonce is the wall time minus the time inside the hosts. Each group size is one check: `PASS` when every nonce, the finalization and the settlement check pass.
+Records do not seal by the clock during a run (30 days instead of an hour): a DevNet escrow ends before they would.
 
 ## Safety
 

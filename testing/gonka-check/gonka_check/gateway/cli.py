@@ -110,9 +110,9 @@ def progress(nonces):
         if event.get("kind") == "checkpoint":
             left = minutes_left(last.get(event["hosts"]), event, nonces)
             last[event["hosts"]] = event
-            log("G=%d nonce %d: gateway %.2f ms, hosts %.2f ms per nonce, heap %.0f MB, %.0f s, about %.0f min left" % (
-                event["hosts"], event["nonce"], event["gateway_ms"], event["host_ms"], event["heap_mb"],
-                event["elapsed_s"], left))
+            log("G=%d nonce %d: gateway %.2f ms, hosts %.2f ms per nonce, live %s, heap %.0f MB, %.0f s, "
+                "about %.0f min left" % (event["hosts"], event["nonce"], event["gateway_ms"], event["host_ms"],
+                                         event.get("live", "?"), event["heap_mb"], event["elapsed_s"], left))
         elif event.get("kind") == "summary":
             log("G=%d done: finalize %.1f s, state %.1f MB, diff log %.1f MB" % (
                 event["hosts"], event["finalize_s"], event["state_mb"], event["diff_history_mb"]))
