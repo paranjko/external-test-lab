@@ -64,6 +64,7 @@ UPSTREAM_CONTENT_TYPES = {
     "text/plain": "text/plain",
 }
 PROTOCOL_CONTRACTS = {}
+SELECTED_GATEWAY_VERSION = env("GDC_GATEWAY_ADMISSION_SELECTED_VERSION", "")
 
 
 def count_route(status):
@@ -287,6 +288,15 @@ def safe_generation(deadline=None):
     if not isinstance(devshards, list):
         return None, "state_invalid"
     participants = []
+    runtime_versions = set()
+    contract = PROTOCOL_CONTRACTS.get(SELECTED_GATEWAY_VERSION)
+    if contract is None:
+        return None, "selected_protocol_not_configured"
+    named = [entry for entry in approved_versions
+             if isinstance(entry, dict) and entry.get("name") == SELECTED_GATEWAY_VERSION]
+    if (len(named) != 1 or named[0].get("binary") != contract["binary"]
+            or named[0].get("sha256") != contract["sha256"]):
+        return None, "selected_protocol_not_approved"
     for item in devshards:
         if not isinstance(item, dict):
             return None, "state_invalid"
@@ -302,14 +312,11 @@ def safe_generation(deadline=None):
             version = runtime_protocol_version(item, runtime)
             if version is None:
                 return None, "protocol_version_unavailable"
-            contract = PROTOCOL_CONTRACTS.get(version)
-            if contract is None:
-                return None, "protocol_not_configured"
-            named = [entry for entry in approved_versions
-                     if isinstance(entry, dict) and entry.get("name") == version]
-            if (len(named) != 1 or named[0].get("binary") != contract["binary"]
-                    or named[0].get("sha256") != contract["sha256"]):
-                return None, "protocol_not_approved"
+            # The official gateway's internal runtime protocol is not the
+            # release selector: pinned DevShard v3 currently reports `1`.
+            # The selected release is verified against governance above; all
+            # active runtimes must still report one unambiguous internal value.
+            runtime_versions.add(version)
             if item.get("id") is not None:
                 participants.append("%s:%s:%s" % (item["id"], version, chain_phase))
     limiter = status.get("limiter")
@@ -327,7 +334,7 @@ def safe_generation(deadline=None):
         )
     except (TypeError, ValueError):
         return None, "capacity_invalid"
-    if not positive or not participants:
+    if not positive or not participants or len(runtime_versions) != 1:
         return None, "runtime_unavailable"
     # Height proves this observation is fresh and fences the next transition,
     # but it is not itself a phase generation.  Including it would reject every
@@ -705,6 +712,8 @@ if __name__ == "__main__":
     try:
         PROTOCOL_CONTRACTS = load_protocol_contracts(
             env("GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON", ""))
+        if SELECTED_GATEWAY_VERSION not in PROTOCOL_CONTRACTS:
+            raise ValueError("selected gateway protocol is not configured")
     except ValueError as error:
         raise SystemExit(str(error)) from error
     if not STATUS_BEARER_TOKEN:

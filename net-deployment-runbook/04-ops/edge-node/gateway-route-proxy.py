@@ -16,7 +16,9 @@ def required(name):
 
 
 HOST = os.environ.get("GDC_GATEWAY_ROUTE_PROXY_HOST", "127.0.0.1")
-PORT = int(os.environ.get("GDC_GATEWAY_ROUTE_PROXY_PORT", "18085"))
+# 18085 is the established loopback faucet/reserve-signer listener.  The
+# route proxy must never contend with it on a host-network Compose deployment.
+PORT = int(os.environ.get("GDC_GATEWAY_ROUTE_PROXY_PORT", "18100"))
 ROUTE = required("GDC_GATEWAY_ROUTE_ID")
 UPSTREAM = urlsplit(required("GDC_GATEWAY_ROUTE_UPSTREAM"))
 MAX_ERROR_BODY = int(os.environ.get("GDC_GATEWAY_ROUTE_PROXY_MAX_ERROR_BODY_BYTES", "1048576"))

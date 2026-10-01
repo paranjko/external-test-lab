@@ -196,6 +196,7 @@ def start_proxy(backend_port, max_queue=1, wait=0.35, max_deadline=None,
         "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("chain", "/chain-status")),
         "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("params", "/params")),
         "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON": json.dumps({"v3": {"binary": "https://example.invalid/devshardd-v3.zip", "sha256": "a" * 64}}),
+        "GDC_GATEWAY_ADMISSION_SELECTED_VERSION": "v3",
         "GDC_GATEWAY_ADMISSION_MAX_QUEUE": str(max_queue),
         "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS": str(wait),
         "GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS": str(max_deadline),
@@ -380,12 +381,12 @@ try:
 
     # A runtime stays locally active after governance revocation only briefly.
     # Admission independently rejects the missing or mismatched exact tuple.
-    State.ready = True; State.protocol_approved = False; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    State.ready = True; State.session_version = "v3"; State.protocol_approved = False; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_protocol_not_approved"}}', "pre_dispatch_rejected")
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_selected_protocol_not_approved"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "revoked protocol dispatched"
     State.protocol_approved = True; State.protocol_sha256 = "b" * 64
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_protocol_not_approved"}}', "pre_dispatch_rejected")
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_selected_protocol_not_approved"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "mismatched protocol artifact dispatched"
     State.protocol_sha256 = "a" * 64
     process.terminate(); process.wait(2); processes.remove(process)
@@ -450,13 +451,12 @@ try:
     State.status_override = None
     process.terminate(); process.wait(2); processes.remove(process)
 
-    # Governance eligibility does not imply gateway support. An exact-approved
-    # v4 Host runtime remains unroutable when the selected gateway profile
-    # configures only v3.
+    # Governance eligibility does not imply selection. A v4 governance tuple
+    # cannot satisfy the selected v3 release contract.
     State.session_version = "v4"; State.protocol_approved = True
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_protocol_not_configured"}}', "pre_dispatch_rejected")
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_selected_protocol_not_approved"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "unsupported exact-approved protocol dispatched"
     State.session_version = "v3"
     process.terminate(); process.wait(2); processes.remove(process)

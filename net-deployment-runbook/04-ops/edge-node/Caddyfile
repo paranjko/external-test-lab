@@ -126,7 +126,7 @@
   }
     handle @gateway_route_metrics_from_monitoring {
     rewrite * /metrics
-    reverse_proxy 127.0.0.1:18085
+    reverse_proxy 127.0.0.1:18100
   }
     handle /ops-gateway-route-metrics {
     respond 403
@@ -152,7 +152,7 @@
     }
     handle @gateway_b_from_public_edge {
       uri strip_prefix /gateway-b
-      reverse_proxy 127.0.0.1:18085
+      reverse_proxy 127.0.0.1:18100
     }
     handle /gateway-b/* {
       respond 403
