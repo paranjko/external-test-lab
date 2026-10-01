@@ -67,6 +67,7 @@ bin/gcheck escrow verdict <run>                                  # report.md and
 Checks: `a_created`, `g_changed`, `b_created`, `a_settled_after`, `own_group` (quorum and fee split by the escrow's own slots), `same_epoch`, `accounting` (payouts, refund, coin balances), `rolled_back`. With `--a` alone it checks a control run.
 
 `scenarios/control-187.sh` is that control run on gateway A at group size 5: one escrow created through the gateway admin API on the gateway host, two requests into it, a manual settlement in the same epoch, then `escrow record` and `verdict`. Without `--run` it only reads.
+`scenarios/run-187.sh` is the live run: escrow A at 5 slots, the 5 → 9 proposal, escrow B at 9 slots, both settled by hand in the same epoch, then the 9 → 5 rollback. The proposals need validator keys the script does not hold: it writes each proposal file, says when to submit it and waits for `group_size`.
 
 ## Safety
 
