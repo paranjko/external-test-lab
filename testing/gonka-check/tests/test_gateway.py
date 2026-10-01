@@ -101,27 +101,47 @@ class Runner(unittest.TestCase):
             with self.assertRaisesRegex(stress.StressError, "needs go1.25.9 or newer, or docker"):
                 stress.pick_runner("auto")
 
-    def test_docker_command_mounts_source_and_cache_and_passes_the_run_size(self):
+    def test_docker_run_uses_the_prebuilt_binary_under_the_memory_cap(self):
         with tempfile.TemporaryDirectory() as tmp:
-            argv, cwd, env = stress.command("docker", "/src/gonka", tmp, {"GCHECK_HOSTS": "64"}, "run-g64")
+            argv, cwd, env = stress.command("docker", "/src/gonka", tmp, {"GCHECK_HOSTS": "64"}, "run-g64", 4)
         self.assertIsNone(cwd)
         self.assertIsNone(env)
         self.assertEqual(["docker", "run", "--rm", "--name", "run-g64"], argv[:5])
+        self.assertEqual(["--memory", "4096m", "--memory-swap", "4096m"], argv[7:11])
         self.assertIn("/src/gonka:/src", argv)
+        self.assertEqual("/src/devshard/user", argv[argv.index("-w") + 1])
         self.assertIn("GCHECK_HOSTS=64", argv)
-        self.assertIn("CGO_ENABLED=0", argv)
-        self.assertIn("GOTOOLCHAIN=local", argv)
+        self.assertIn("GOMEMLIMIT=3686MiB", argv)
         image = argv.index(stress.GO_IMAGE)
-        self.assertEqual(["go", "test", "./user/", "-tags", "stress", "-run", "^%s$" % TEST_NAME],
-                         argv[image + 1:image + 8])
+        self.assertEqual(["/cache/bin/" + stress.BINARY, "-test.run", "^%s$" % TEST_NAME], argv[image + 1:image + 4])
+        self.assertNotIn("go", argv[image + 1:])
 
-    def test_local_command_runs_in_the_devshard_module(self):
-        argv, cwd, env = stress.command("go", "/src/gonka", "/cache", {"GCHECK_NONCES": "19800"}, "x",
-                                        compile_only=True)
-        self.assertEqual(["go", "test", "./user/", "-tags", "stress", "-run", "^$"], argv[:7])
-        self.assertEqual("/src/gonka/devshard", cwd)
+    def test_docker_build_compiles_the_test_once_without_a_cap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            argv, _cwd, _env = stress.build_command("docker", "/src/gonka", tmp, "run-build")
+        self.assertNotIn("--memory", argv)
+        image = argv.index(stress.GO_IMAGE)
+        self.assertEqual(["go", "test", "-c", "-tags", "stress", "-o", "/cache/bin/" + stress.BINARY, "./user/"],
+                         argv[image + 1:])
+        self.assertIn("CGO_ENABLED=0", argv)
+
+    def test_local_build_and_run_share_the_cached_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build, build_cwd, _env = stress.build_command("go", "/src/gonka", tmp, "x")
+            run, cwd, env = stress.command("go", "/src/gonka", tmp, {"GCHECK_NONCES": "19800"}, "x", 2)
+        binary = os.path.join(tmp, "bin", stress.BINARY)
+        self.assertEqual(["go", "test", "-c", "-tags", "stress", "-o", binary, "./user/"], build)
+        self.assertEqual("/src/gonka/devshard", build_cwd)
+        self.assertEqual([binary, "-test.run", "^%s$" % TEST_NAME], run[:3])
+        self.assertEqual("/src/gonka/devshard/user", cwd)
         self.assertEqual("19800", env["GCHECK_NONCES"])
-        self.assertEqual("0", env["CGO_ENABLED"])
+        self.assertEqual("1843MiB", env["GOMEMLIMIT"])
+
+    def test_default_cap_is_three_quarters_of_the_machine(self):
+        with mock.patch.object(stress, "machine_memory_gb", return_value=7.75):
+            self.assertEqual(6.0, stress.default_memory_gb())
+        with mock.patch.object(stress, "machine_memory_gb", return_value=None):
+            self.assertIsNone(stress.default_memory_gb())
 
 
 class Source(unittest.TestCase):
@@ -190,6 +210,9 @@ class Outcome(unittest.TestCase):
             stopped = stress.judge(32, 130, events[:2], True, log_path)
             self.assertEqual("INCONCLUSIVE", stopped["verdict"])
             self.assertIn("1 checkpoints", stopped["reason"])
+            killed = stress.judge(64, 137, events[:2], False, log_path)
+            self.assertEqual("FAIL", killed["verdict"])
+            self.assertIn("out of memory", killed["reason"])
 
     def test_minutes_left_extrapolates_the_growing_time_per_nonce(self):
         first, second = checkpoint(64, 1000, 10.0), checkpoint(64, 2000, 20.0)
@@ -243,9 +266,11 @@ class Cli(GatewayHarness):
 
     def test_stress_writes_the_report_and_exits_with_the_verdict(self):
         def fake_run(argv, cwd, env, log_path, on_event=None):
-            hosts = int(next(item.split("=")[1] for item in argv if item.startswith("GCHECK_HOSTS=")))
             with open(log_path, "w", encoding="utf-8") as handle:
                 handle.write("ok\n")
+            if "-c" in argv:
+                return 0, [], False
+            hosts = int(next(item.split("=")[1] for item in argv if item.startswith("GCHECK_HOSTS=")))
             events = events_for(hosts)
             for event in events:
                 on_event(event)
@@ -263,6 +288,24 @@ class Cli(GatewayHarness):
             self.assertTrue(os.path.isfile(os.path.join(run_dir, name)), name)
         with open(os.path.join(run_dir, "summary.json"), encoding="utf-8") as handle:
             self.assertEqual("PASS", json.load(handle)["overall"])
+
+    def test_a_failed_build_is_blocked_before_any_run(self):
+        calls = []
+
+        def failed_build(argv, cwd, env, log_path, on_event=None):
+            calls.append(argv)
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("user/x.go:1: undefined: y\n")
+            return 1, [], False
+
+        with mock.patch.object(stress, "pick_runner", return_value=("docker", stress.GO_IMAGE)), \
+                mock.patch.object(stress, "prepare_source", return_value=("/src/gonka", stress.TAG_COMMIT)), \
+                mock.patch.object(stress, "run_one", side_effect=failed_build):
+            self.assertEqual(3, self.gcheck("gateway-load", "stress", "--memory", "0"))
+        self.assertEqual(1, len(calls))
+        self.assertIn("ready    BLOCKED", self.out)
+        self.assertIn("undefined: y", self.out)
+        self.assertIn("memory   no cap", self.out)
 
     def test_a_missing_runner_is_blocked(self):
         with mock.patch.object(stress, "pick_runner", side_effect=stress.StressError("needs docker")):

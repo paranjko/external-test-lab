@@ -65,24 +65,61 @@ def pick_runner(choice):
     raise StressError("needs go%s or newer, or docker" % ".".join(map(str, GO_VERSION)))
 
 
-def go_test_args(compile_only=False):
-    pattern = "^$" if compile_only else "^%s$" % TEST_NAME
-    return ["test", "./user/", "-tags", "stress", "-run", pattern, "-count=1", "-v", "-timeout", "0"]
+BINARY = "gateway-load.test"
 
 
-def command(runner, source, cache_dir, env, name, compile_only=False):
-    """(argv, cwd, process env) for one go test run."""
-    env = dict(env, CGO_ENABLED="0", GOTOOLCHAIN="local")
-    if runner == "go":
-        return ["go"] + go_test_args(compile_only), os.path.join(source, "devshard"), dict(os.environ, **env)
+def machine_memory_gb():
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2 ** 30
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def default_memory_gb():
+    total = machine_memory_gb()
+    return round(total * 0.75 * 2) / 2 if total else None
+
+
+def go_env(memory_gb):
+    env = {"CGO_ENABLED": "0", "GOTOOLCHAIN": "local"}
+    if memory_gb:
+        env["GOMEMLIMIT"] = "%dMiB" % int(memory_gb * 1024 * 0.9)
+    return env
+
+
+def _docker(source, cache_dir, name, env, workdir, memory_gb):
     cache = os.path.join(cache_dir, "go")
     os.makedirs(cache, mode=0o700, exist_ok=True)
-    env.update(HOME="/cache/home", GOPATH="/cache/gopath", GOMODCACHE="/cache/mod", GOCACHE="/cache/build")
-    argv = ["docker", "run", "--rm", "--name", name, "--user", "%d:%d" % (os.getuid(), os.getgid()),
-            "-v", "%s:/src" % source, "-v", "%s:/cache" % cache, "-w", "/src/devshard"]
+    env = dict(env, HOME="/cache/home", GOPATH="/cache/gopath", GOMODCACHE="/cache/mod", GOCACHE="/cache/build")
+    argv = ["docker", "run", "--rm", "--name", name, "--user", "%d:%d" % (os.getuid(), os.getgid())]
+    if memory_gb:
+        argv += ["--memory", "%dm" % int(memory_gb * 1024), "--memory-swap", "%dm" % int(memory_gb * 1024)]
+    argv += ["-v", "%s:/src" % source, "-v", "%s:/cache" % cache, "-w", workdir]
     for key in sorted(env):
         argv += ["-e", "%s=%s" % (key, env[key])]
-    return argv + [GO_IMAGE, "go"] + go_test_args(compile_only), None, None
+    return argv + [GO_IMAGE]
+
+
+def build_command(runner, source, cache_dir, name):
+    """(argv, cwd, env) that compiles the test once into the cache, so no go process stays resident during runs."""
+    if runner == "go":
+        out = os.path.join(cache_dir, "bin", BINARY)
+        os.makedirs(os.path.dirname(out), mode=0o700, exist_ok=True)
+        argv = ["go", "test", "-c", "-tags", "stress", "-o", out, "./user/"]
+        return argv, os.path.join(source, "devshard"), dict(os.environ, **go_env(None))
+    argv = _docker(source, cache_dir, name, go_env(None), "/src/devshard", None)
+    return argv + ["go", "test", "-c", "-tags", "stress", "-o", "/cache/bin/%s" % BINARY, "./user/"], None, None
+
+
+def command(runner, source, cache_dir, env, name, memory_gb=None):
+    """(argv, cwd, process env) that runs the prebuilt test for one group size."""
+    flags = ["-test.run", "^%s$" % TEST_NAME, "-test.count=1", "-test.v", "-test.timeout", "0"]
+    env = dict(env, **go_env(memory_gb))
+    if runner == "go":
+        binary = os.path.join(cache_dir, "bin", BINARY)
+        return [binary] + flags, os.path.join(source, "devshard", "user"), dict(os.environ, **env)
+    argv = _docker(source, cache_dir, name, env, "/src/devshard/user", memory_gb)
+    return argv + ["/cache/bin/%s" % BINARY] + flags, None, None
 
 
 def run_one(argv, cwd, env, log_path, on_event=None):
@@ -124,6 +161,9 @@ def judge(hosts, code, events, interrupted, log_path):
             summary["nonces"], summary["finalize_s"], summary["signatures"])
     elif not started:
         value, reason = "BLOCKED", "go test did not start: %s" % tail(log_path)
+    elif code in (137, -9):
+        value, reason = "FAIL", "killed (exit %s), most likely out of memory under the limit, after %d checkpoints" % (
+            code, sum(event.get("kind") == "checkpoint" for event in events))
     else:
         value, reason = "FAIL", "go test exit %s: %s" % (code, tail(log_path))
     return {"check": check, "maps": [], "verdict": value, "reason": reason, "records": []}
