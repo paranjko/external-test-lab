@@ -83,6 +83,65 @@ services:
       retries: 5
       start_period: 5s
 
+  bifrost:
+    # The digest is the tested official transports/v2.2.4 release artifact.
+    image: maximhq/bifrost@sha256:5f8215163cea192451f4b2ee5e0b583874ffe9435a5ab733e08c07aaf38ace57
+    restart: unless-stopped
+    env_file:
+      - path: ./bifrost.env
+        required: false
+    network_mode: host
+    volumes:
+      - bifrost-data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9464/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  bifrost-broker:
+    build:
+      context: .
+      dockerfile: Dockerfile.bifrost-broker
+    restart: unless-stopped
+    env_file:
+      - path: ./bifrost-broker.env
+        required: false
+    network_mode: host
+    volumes:
+      - bifrost-broker-data:/var/lib/bifrost-broker
+      # The binding contains only Bifrost object IDs, never credentials. Mount
+      # it as one read-only file so the broker cannot traverse OPS secrets.
+      - ./bifrost/broker-binding.env:/run/bifrost/broker-binding.env:ro
+    depends_on:
+      bifrost:
+        condition: service_healthy
+      bifrost-broker-init:
+        condition: service_completed_successfully
+
+  bifrost-edge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bifrost-edge
+    restart: unless-stopped
+    env_file:
+      - path: ./bifrost-edge.env
+        required: false
+    network_mode: host
+    depends_on:
+      bifrost-broker:
+        condition: service_started
+
+  bifrost-broker-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.bifrost-broker
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["sh", "-c", "install -d -o 65532 -g 65532 -m 0700 /var/lib/bifrost-broker"]
+    volumes:
+      - bifrost-broker-data:/var/lib/bifrost-broker
+
   faucet:
     build:
       context: ./faucet
@@ -142,3 +201,7 @@ volumes:
     name: ${DEVSHARD_GATEWAY_DATA_VOLUME_V4_NAME:-gdc-ops_gateway-data-v4}
   gateway-data-v5:
     name: ${DEVSHARD_GATEWAY_DATA_VOLUME_V5_NAME:-gdc-ops_gateway-data-v5}
+  bifrost-data:
+    name: ${BIFROST_DATA_VOLUME_NAME:-gdc-ops_bifrost-data}
+  bifrost-broker-data:
+    name: ${BIFROST_BROKER_DATA_VOLUME_NAME:-gdc-ops_bifrost-broker-data}

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import hashlib
 import sqlite3
 import sys
 import threading
@@ -17,12 +18,34 @@ from urllib.request import Request, urlopen
 
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-GATEWAY_API_KEY = os.environ["GATEWAY_API_KEY"]
+GATEWAY_API_KEY = os.environ.get("GATEWAY_API_KEY")
 INTERNAL_API_TOKEN = os.environ["INTERNAL_API_TOKEN"]
 GATEWAY_API_BASE_URL = os.environ.get("GATEWAY_API_BASE_URL", "https://api.gonka-dev.net/v1").rstrip("/")
 GATEWAY_ADMISSION_STATUS_URL = os.environ.get(
     "GATEWAY_ADMISSION_STATUS_URL", f"{GATEWAY_API_BASE_URL}/admission-status"
 )
+_backends_json = os.environ.get("GATEWAY_BACKENDS_JSON")
+if _backends_json:
+    GATEWAY_BACKENDS = json.loads(_backends_json)
+    if not isinstance(GATEWAY_BACKENDS, list) or len(GATEWAY_BACKENDS) != 2:
+        raise RuntimeError("GATEWAY_BACKENDS_JSON must contain exactly A/B backends")
+    if {item.get("name") for item in GATEWAY_BACKENDS if isinstance(item, dict)} != {"A", "B"}:
+        raise RuntimeError("GATEWAY_BACKENDS_JSON must name A and B")
+    for item in GATEWAY_BACKENDS:
+        if not all(isinstance(item.get(field), str) and item[field] for field in ("base_url", "admission_url", "api_key")):
+            raise RuntimeError("each gateway backend requires base_url, admission_url and api_key")
+        if not item["base_url"].startswith("https://") or not item["admission_url"].startswith("https://"):
+            raise RuntimeError("gateway backend URLs must use HTTPS")
+else:
+    if not GATEWAY_API_KEY:
+        raise RuntimeError("GATEWAY_API_KEY is required without GATEWAY_BACKENDS_JSON")
+    GATEWAY_BACKENDS = [{"name": "A", "base_url": GATEWAY_API_BASE_URL,
+                         "admission_url": GATEWAY_ADMISSION_STATUS_URL, "api_key": GATEWAY_API_KEY}]
+_backend_lock = threading.Lock()
+_backend_cursor = 0
+_route_control_lock = threading.Lock()
+_route_control = {"disabled_backends": (), "force_next_backend": None, "expires_at": 0}
+MAX_ROUTE_CONTROL_TTL_SECONDS = 300
 INTERNAL_API_BASE_URL = os.environ.get("INTERNAL_API_BASE_URL", "http://127.0.0.1:9464").rstrip("/")
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-0.6B")
 DB_FILE = Path(os.environ.get("STATE_DB", "/data/bot.sqlite3"))
@@ -42,15 +65,49 @@ GATEWAY_ADMISSION_TIMEOUT_SECONDS = int(os.environ.get("GATEWAY_ADMISSION_TIMEOU
 INTERNAL_API_TIMEOUT_SECONDS = int(os.environ.get("INTERNAL_API_TIMEOUT_SECONDS", "35"))
 TELEGRAM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "10"))
 TELEGRAM_POLL_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_POLL_TIMEOUT_SECONDS", "35"))
+FAUCET_URL = os.environ.get("TELEGRAM_FAUCET_URL", "").rstrip("/")
+FAUCET_TOKEN = os.environ.get("TELEGRAM_FAUCET_TOKEN", "")
+FAUCET_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_FAUCET_TIMEOUT_SECONDS", "12"))
+KEY_BROKER_URL = os.environ.get("TELEGRAM_KEY_BROKER_URL", "").rstrip("/")
+KEY_BROKER_TOKEN = os.environ.get("TELEGRAM_KEY_BROKER_TOKEN", "")
 TYPING_REFRESH_SECONDS = int(os.environ.get("TYPING_REFRESH_SECONDS", "4"))
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 THINK_BLOCK = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
 UNCLOSED_THINK_BLOCK = re.compile(r"<think\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
 THINK_TAG = re.compile(r"</?think\b[^>]*>", re.IGNORECASE)
+BECH32_ALPHABET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+BECH32_GENERATOR = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
 
 
 def now() -> int:
     return int(time.time())
+
+
+def bech32_polymod(values):
+    checksum = 1
+    for value in values:
+        top = checksum >> 25
+        checksum = (checksum & 0x1FFFFFF) << 5 ^ value
+        for index, generator in enumerate(BECH32_GENERATOR):
+            if (top >> index) & 1:
+                checksum ^= generator
+    return checksum
+
+
+def valid_gonka_address(address: str) -> bool:
+    """Reject lookalike account strings before a faucet request leaves the bot."""
+    if not isinstance(address, str) or not re.fullmatch(r"gonka1[0-9a-z]{20,90}", address):
+        return False
+    separator = address.rfind("1")
+    if separator != len("gonka") or len(address) - separator - 1 < 6:
+        return False
+    try:
+        values = [BECH32_ALPHABET.index(character) for character in address[separator + 1:]]
+    except ValueError:
+        return False
+    expanded = [ord(character) >> 5 for character in "gonka"] + [0]
+    expanded += [ord(character) & 31 for character in "gonka"]
+    return bech32_polymod(expanded + values) == 1
 
 
 def visible_output_text(value: str) -> str:
@@ -108,10 +165,27 @@ def connection() -> sqlite3.Connection:
           output_tokens INTEGER NOT NULL DEFAULT 0,
           total_tokens INTEGER NOT NULL DEFAULT 0,
           usage_missing INTEGER NOT NULL DEFAULT 0 CHECK (usage_missing IN (0, 1)),
-          created_at INTEGER NOT NULL
+          created_at INTEGER NOT NULL,
+          backend TEXT NOT NULL DEFAULT 'unknown'
+        );
+        CREATE TABLE IF NOT EXISTS faucet_updates (
+          update_id INTEGER PRIMARY KEY,
+          chat_id INTEGER NOT NULL,
+          telegram_id INTEGER NOT NULL,
+          address TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          amount_ngonka TEXT,
+          txhash TEXT,
+          state TEXT NOT NULL,
+          confirmation TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
         );
         """
     )
+    columns = {row[1] for row in db.execute("PRAGMA table_info(inference_events)")}
+    if "backend" not in columns:
+        db.execute("ALTER TABLE inference_events ADD COLUMN backend TEXT NOT NULL DEFAULT 'unknown'")
     db.commit()
     return db
 
@@ -295,7 +369,7 @@ def bounded_history(db: sqlite3.Connection, conversation_id: str):
     return selected
 
 
-def record_inference(db: sqlite3.Connection, outcome: str, usage=None) -> None:
+def record_inference(db: sqlite3.Connection, outcome: str, usage=None, backend: str = "unknown") -> None:
     usage = usage if isinstance(usage, dict) else {}
     input_tokens = usage.get("prompt_tokens")
     output_tokens = usage.get("completion_tokens")
@@ -303,8 +377,8 @@ def record_inference(db: sqlite3.Connection, outcome: str, usage=None) -> None:
     complete = all(isinstance(value, int) and value >= 0 for value in (input_tokens, output_tokens))
     db.execute(
         "INSERT INTO inference_events "
-        "(model, outcome, input_tokens, output_tokens, total_tokens, usage_missing, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(model, outcome, input_tokens, output_tokens, total_tokens, usage_missing, created_at, backend) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             MODEL,
             outcome,
@@ -313,30 +387,85 @@ def record_inference(db: sqlite3.Connection, outcome: str, usage=None) -> None:
             total_tokens if complete and isinstance(total_tokens, int) and total_tokens >= 0 else 0,
             0 if outcome != "success" or complete else 1,
             now(),
+            backend,
         ),
     )
     db.commit()
     publish_metrics(db)
 
 
-def require_gateway_admission(db: sqlite3.Connection) -> None:
+class GatewayPreDispatchRejected(RuntimeError):
+    """The gateway confirms no completion was dispatched for this attempt."""
+
+
+def route_control_state() -> dict:
+    """Return the short-lived, loopback-operator test control without secrets."""
+    global _route_control
+    with _route_control_lock:
+        if _route_control["expires_at"] <= now():
+            _route_control = {"disabled_backends": (), "force_next_backend": None, "expires_at": 0}
+        return dict(_route_control)
+
+
+def set_route_control(payload) -> dict:
+    """Set an expiry-bounded A/B pre-dispatch test control for LIVE-006 only."""
+    if not isinstance(payload, dict) or set(payload) != {
+        "disabled_backends", "force_next_backend", "ttl_seconds"
+    }:
+        raise ValueError("route control requires disabled_backends, force_next_backend and ttl_seconds")
+    disabled = payload["disabled_backends"]
+    forced = payload["force_next_backend"]
+    ttl = payload["ttl_seconds"]
+    names = {backend["name"] for backend in GATEWAY_BACKENDS}
+    if (
+        not isinstance(disabled, list)
+        or not all(isinstance(name, str) for name in disabled)
+        or len(disabled) != len(set(disabled))
+        or set(disabled) - names
+    ):
+        raise ValueError("disabled_backends must be unique A/B backend names")
+    if forced is not None and forced not in names:
+        raise ValueError("force_next_backend must be an A/B backend name or null")
+    if not isinstance(ttl, int) or isinstance(ttl, bool) or not 1 <= ttl <= MAX_ROUTE_CONTROL_TTL_SECONDS:
+        raise ValueError(f"ttl_seconds must be an integer from 1 to {MAX_ROUTE_CONTROL_TTL_SECONDS}")
+    global _route_control
+    with _route_control_lock:
+        _route_control = {
+            "disabled_backends": tuple(sorted(disabled)),
+            "force_next_backend": forced,
+            "expires_at": now() + ttl,
+        }
+    return route_control_state()
+
+
+def clear_route_control() -> dict:
+    global _route_control
+    with _route_control_lock:
+        _route_control = {"disabled_backends": (), "force_next_backend": None, "expires_at": 0}
+    return route_control_state()
+
+
+def require_gateway_admission(db: sqlite3.Connection, backend, timeout_seconds=None) -> None:
     """Fail before conversation dispatch when the shared gateway says no."""
+    if backend["name"] in route_control_state()["disabled_backends"]:
+        record_inference(db, "pre_dispatch_route_controlled", backend=backend["name"])
+        raise GatewayPreDispatchRejected("gateway route is temporarily disabled for controlled test")
     request = Request(
-        GATEWAY_ADMISSION_STATUS_URL,
-        headers={"Authorization": f"Bearer {GATEWAY_API_KEY}", "Accept": "application/json"},
+        backend["admission_url"],
+        headers={"Authorization": f"Bearer {backend['api_key']}", "Accept": "application/json"},
     )
     try:
-        with urlopen(request, timeout=GATEWAY_ADMISSION_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=timeout_seconds or GATEWAY_ADMISSION_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
     except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
-        record_inference(db, "pre_dispatch_status_unavailable")
-        raise RuntimeError("gateway pre dispatch rejected") from error
+        record_inference(db, "pre_dispatch_status_unavailable", backend=backend["name"])
+        raise GatewayPreDispatchRejected("gateway pre dispatch rejected") from error
     if not isinstance(payload, dict) or payload.get("available") is not True:
         reason = payload.get("reason") if isinstance(payload, dict) else None
         if not isinstance(reason, str) or not re.fullmatch(r"[a-z0-9_]+", reason):
             reason = "runtime_unavailable"
-        record_inference(db, f"pre_dispatch_{reason}")
-        raise RuntimeError("gateway pre dispatch rejected")
+        record_inference(db, f"pre_dispatch_{reason}", backend=backend["name"])
+        raise GatewayPreDispatchRejected("gateway pre dispatch rejected")
 
 
 def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text: str):
@@ -345,7 +474,7 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
     ).fetchone()
     if not conversation:
         raise ValueError("conversation not found")
-    require_gateway_admission(db)
+    global _backend_cursor
     messages = bounded_history(db, conversation_id)
     messages.append({"role": "user", "content": input_text})
     body = json.dumps({
@@ -354,44 +483,75 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
         "max_tokens": MAX_OUTPUT_TOKENS,
         "temperature": 0.2,
     }).encode()
+    deadline_monotonic = time.monotonic() + GATEWAY_TIMEOUT_SECONDS
     deadline_ms = str(int(time.time() * 1000) + GATEWAY_TIMEOUT_SECONDS * 1000)
-    request = Request(
-        f"{GATEWAY_API_BASE_URL}/chat/completions",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {GATEWAY_API_KEY}",
-            "Content-Type": "application/json",
-            "X-Request-Deadline-Ms": deadline_ms,
-        },
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=GATEWAY_TIMEOUT_SECONDS) as response:
-            payload = json.load(response)
-    except HTTPError as error:
-        admission = error.headers.get("X-GDC-Admission", "") if error.headers else ""
-        if admission == "pre_dispatch_rejected":
-            record_inference(db, f"pre_dispatch_http_{error.code}")
-            raise RuntimeError("gateway pre dispatch rejected") from error
-        record_inference(db, f"http_{error.code}")
-        raise RuntimeError(f"gateway returned HTTP {error.code}") from error
-    except ValueError as error:
-        record_inference(db, "invalid_response")
-        raise RuntimeError("gateway returned invalid JSON") from error
-    except (URLError, TimeoutError, OSError) as error:
-        record_inference(db, "transport_error")
-        raise RuntimeError("gateway request failed") from error
+    with _backend_lock:
+        controls = route_control_state()
+        forced = controls["force_next_backend"]
+        if forced:
+            first = next(backend for backend in GATEWAY_BACKENDS if backend["name"] == forced)
+            with _route_control_lock:
+                _route_control["force_next_backend"] = None
+        else:
+            first = GATEWAY_BACKENDS[_backend_cursor % len(GATEWAY_BACKENDS)]
+            _backend_cursor += 1
+    candidates = [first] + [item for item in GATEWAY_BACKENDS if item is not first]
+    last_error = None
+    for backend in candidates:
+        try:
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                raise GatewayPreDispatchRejected("gateway deadline expired before dispatch")
+            require_gateway_admission(db, backend, min(GATEWAY_ADMISSION_TIMEOUT_SECONDS, remaining))
+        except GatewayPreDispatchRejected as error:
+            last_error = error
+            continue
+        request = Request(
+            f"{backend['base_url']}/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {backend['api_key']}",
+                "Content-Type": "application/json",
+                "X-Request-Deadline-Ms": deadline_ms,
+            },
+            method="POST",
+        )
+        try:
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                last_error = GatewayPreDispatchRejected("gateway deadline expired before dispatch")
+                continue
+            with urlopen(request, timeout=remaining) as response:
+                payload = json.load(response)
+        except HTTPError as error:
+            admission = error.headers.get("X-GDC-Admission", "") if error.headers else ""
+            if admission == "pre_dispatch_rejected":
+                record_inference(db, f"pre_dispatch_http_{error.code}", backend=backend["name"])
+                last_error = GatewayPreDispatchRejected("gateway pre dispatch rejected")
+                continue
+            else:
+                record_inference(db, f"http_{error.code}", backend=backend["name"])
+                raise RuntimeError(f"gateway returned HTTP {error.code}") from error
+        except ValueError:
+            record_inference(db, "invalid_response", backend=backend["name"])
+            raise RuntimeError("gateway returned invalid JSON")
+        except (URLError, TimeoutError, OSError):
+            record_inference(db, "transport_error", backend=backend["name"])
+            raise RuntimeError("gateway request failed")
+        break
+    else:
+        raise last_error or RuntimeError("gateway pre dispatch rejected")
     try:
         output_text = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as error:
-        record_inference(db, "invalid_response")
+        record_inference(db, "invalid_response", backend=backend["name"])
         raise RuntimeError("gateway returned an invalid completion") from error
     if not isinstance(output_text, str):
-        record_inference(db, "invalid_response")
+        record_inference(db, "invalid_response", backend=backend["name"])
         raise RuntimeError("gateway returned an invalid completion")
     output_text = visible_output_text(output_text)
     if not output_text:
-        record_inference(db, "empty_response")
+        record_inference(db, "empty_response", backend=backend["name"])
         raise RuntimeError("gateway returned no user-visible completion")
     timestamp = now()
     db.executemany(
@@ -404,7 +564,7 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
     db.execute("UPDATE conversations SET updated_at = ? WHERE conversation_id = ?", (timestamp, conversation_id))
     db.commit()
     usage = payload.get("usage")
-    record_inference(db, "success", usage)
+    record_inference(db, "success", usage, backend["name"])
     response_usage = {}
     if isinstance(usage, dict):
         response_usage = {
@@ -458,6 +618,12 @@ class ConversationAPIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path == "/v1/route-controls":
+            if not self.authenticated():
+                self.send_json(401, {"error": {"message": "unauthorized"}})
+                return
+            self.send_json(200, route_control_state())
+            return
         self.send_json(404, {"error": {"message": "not found"}})
 
     def do_POST(self):
@@ -487,6 +653,14 @@ class ConversationAPIHandler(BaseHTTPRequestHandler):
                         raise ValueError("conversation and input are required")
                     self.send_json(200, gateway_completion(db, conversation_id, input_text))
                     return
+                if self.path == "/v1/route-controls":
+                    self.send_json(200, set_route_control(payload))
+                    return
+                if self.path == "/v1/route-controls/clear":
+                    if payload != {}:
+                        raise ValueError("route control clear requires an empty object")
+                    self.send_json(200, clear_route_control())
+                    return
             self.send_json(404, {"error": {"message": "not found"}})
         except ValueError as error:
             self.send_json(400, {"error": {"message": str(error)}})
@@ -513,7 +687,7 @@ def conversation_for_user(db: sqlite3.Connection, telegram_id: int) -> str:
     ).fetchone()
     if existing:
         return existing["conversation_id"]
-    return internal_api_request("/v1/conversations", {"telegram_user_id": telegram_id})["id"]
+    return create_conversation(db, telegram_id)
 
 
 def split_telegram_text(text: str):
@@ -528,6 +702,132 @@ def send_message(chat_id: int, text: str) -> None:
 
 def send_typing(chat_id: int) -> None:
     telegram_request("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+
+
+def faucet_request(address: str, telegram_id: int, idempotency_key: str):
+    """Retry transport uncertainty only with the same service-side intent key."""
+    if not FAUCET_URL or not FAUCET_TOKEN:
+        return 503, {"state": "unavailable"}
+    body = json.dumps({"address": address, "telegram_user_id": telegram_id}).encode()
+    for attempt in range(2):
+        request = Request(
+            FAUCET_URL,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {FAUCET_TOKEN}",
+                "Content-Type": "application/json",
+                "Idempotency-Key": idempotency_key,
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=FAUCET_TIMEOUT_SECONDS) as response:
+                return response.status, json.load(response)
+        except HTTPError as error:
+            try:
+                return error.code, json.load(error)
+            except (ValueError, json.JSONDecodeError):
+                return error.code, {"state": "unavailable"}
+        except (URLError, TimeoutError, OSError):
+            if attempt == 1:
+                return 503, {"state": "unavailable"}
+
+
+def faucet_admin_request(action: str, telegram_id: int):
+    if not FAUCET_URL or not FAUCET_TOKEN:
+        return 503, {"error": "unavailable"}
+    request = Request(
+        FAUCET_URL.rsplit("/", 1)[0] + "/telegram-admin",
+        data=json.dumps({"telegram_user_id": telegram_id, "action": action}).encode(),
+        headers={"Authorization": f"Bearer {FAUCET_TOKEN}", "Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urlopen(request, timeout=FAUCET_TIMEOUT_SECONDS) as response:
+            return response.status, json.load(response)
+    except HTTPError as error:
+        return error.code, json.load(error)
+    except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+        return 503, {"error": "unavailable"}
+    return 503, {"state": "unavailable"}
+
+
+def key_broker_request(telegram_id: int, update_id: int):
+    if not KEY_BROKER_URL or not KEY_BROKER_TOKEN:
+        return 503, None
+    request = Request(KEY_BROKER_URL + "/v1/keys",
+        data=json.dumps({"telegram_id": telegram_id, "update_id": update_id}).encode(),
+        headers={"Authorization": f"Bearer {KEY_BROKER_TOKEN}", "Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(request, timeout=FAUCET_TIMEOUT_SECONDS) as response:
+            payload = json.load(response)
+            return response.status, payload.get("key") if isinstance(payload, dict) else None
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+        return 503, None
+
+
+def faucet_reply(payload) -> str:
+    state = payload.get("state") if isinstance(payload, dict) else "unavailable"
+    amount = payload.get("amount_ngonka") if isinstance(payload, dict) else None
+    txhash = payload.get("txhash") if isinstance(payload, dict) else None
+    confirmation = payload.get("confirmation") if isinstance(payload, dict) else None
+    if state == "submitted" and isinstance(amount, str) and isinstance(txhash, str):
+        suffix = {
+            "confirmed": "confirmed on chain.",
+            "pending": "submitted; chain confirmation is still pending.",
+            "unavailable": "submitted; chain confirmation is not currently available.",
+            "failed": "submitted, but the chain reports failure.",
+        }.get(confirmation, "submitted; chain confirmation is unknown.")
+        return f"Faucet sent {amount}ngonka. Transaction: {txhash}. Status: {suffix}"
+    if state == "uncertain":
+        return "Faucet transaction is uncertain. No second transfer was sent; please retry this command later to reconcile it."
+    if state == "rate_limited":
+        return "Faucet anti-spam limit reached. Please try again after the configured window."
+    return "Faucet is temporarily unavailable. No transfer has been confirmed; please retry later."
+
+
+def handle_faucet(db: sqlite3.Connection, update, chat_id: int, user_id: int, is_premium: bool, text: str) -> None:
+    parts = text.split()
+    if len(parts) != 2 or not valid_gonka_address(parts[1]):
+        send_message(chat_id, "Usage: /faucet <valid Gonka address>")
+        record_interaction(db, user_id, "faucet", "rejected", is_premium)
+        return
+    update_id = update.get("update_id")
+    if not isinstance(update_id, int) or update_id < 0:
+        send_message(chat_id, "Faucet request cannot be identified safely. Please send the command again.")
+        record_interaction(db, user_id, "faucet", "rejected", is_premium)
+        return
+    address = parts[1]
+    key = hashlib.sha256(f"telegram-update:{update_id}".encode()).hexdigest()
+    timestamp = now()
+    existing = db.execute(
+        "SELECT amount_ngonka, txhash, state, confirmation FROM faucet_updates WHERE update_id = ?", (update_id,)
+    ).fetchone()
+    if existing is None:
+        db.execute(
+            "INSERT INTO faucet_updates(update_id, chat_id, telegram_id, address, idempotency_key, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (update_id, chat_id, user_id, address, key, timestamp, timestamp),
+        )
+        db.commit()
+    else:
+        key = db.execute("SELECT idempotency_key FROM faucet_updates WHERE update_id = ?", (update_id,)).fetchone()[0]
+    status, payload = faucet_request(address, user_id, key)
+    state = payload.get("state") if isinstance(payload, dict) else "unavailable"
+    if status == 429:
+        state = "rate_limited"
+    db.execute(
+        "UPDATE faucet_updates SET amount_ngonka = ?, txhash = ?, state = ?, confirmation = ?, updated_at = ? WHERE update_id = ?",
+        (
+            payload.get("amount_ngonka") if isinstance(payload, dict) else None,
+            payload.get("txhash") if isinstance(payload, dict) else None,
+            state,
+            payload.get("confirmation") if isinstance(payload, dict) else None,
+            now(),
+            update_id,
+        ),
+    )
+    db.commit()
+    send_message(chat_id, faucet_reply({**payload, "state": state} if isinstance(payload, dict) else {"state": state}))
+    record_interaction(db, user_id, "faucet", "success" if state == "submitted" else state, is_premium)
 
 
 @contextmanager
@@ -571,13 +871,43 @@ def handle(db: sqlite3.Connection, update) -> None:
     text = raw_text.strip()
     command = text.split(maxsplit=1)[0].lower() if text.startswith("/") else ""
     if command in ("/start", "/help"):
-        send_message(chat_id, "Send a message to run chain-accounted inference. Use /new to start a new conversation.")
+        send_message(chat_id, "Send a message to run chain-accounted inference. Use /api_key for a stable API key, /new, or /faucet <Gonka address> for test GNK.")
         record_interaction(db, user_id, "command", "success", is_premium)
         return
     if command == "/new":
         reset_user_conversation(db, user_id)
         send_message(chat_id, "Started a new conversation.")
         record_interaction(db, user_id, "command", "success", is_premium)
+        return
+    if command in ("/api_key", "/api-key"):
+        if "forward_origin" in message or "forward_from" in message:
+            send_message(chat_id, "API keys can only be requested in a new private message.")
+            record_interaction(db, user_id, "api_key", "rejected", is_premium)
+            return
+        update_id = update.get("update_id")
+        if not isinstance(update_id, int) or update_id < 0:
+            send_message(chat_id, "API key request cannot be identified safely. Please send the command again.")
+            record_interaction(db, user_id, "api_key", "rejected", is_premium)
+            return
+        status, key = key_broker_request(user_id, update_id)
+        if status == 200 and isinstance(key, str) and key.startswith("sk-gdc-"):
+            send_message(chat_id, "Your stable API key (a later request replaces it):\n" + key + "\nOpenAI: /v1\nAnthropic: /anthropic\nGenAI: /genai")
+            record_interaction(db, user_id, "api_key", "success", is_premium)
+        else:
+            send_message(chat_id, "API key issuance is temporarily unavailable; no replacement was confirmed.")
+            record_interaction(db, user_id, "api_key", "unavailable", is_premium)
+        return
+    if command == "/faucet":
+        parts = text.split()
+        if len(parts) == 2 and parts[1].lower() in {"open", "close", "status"}:
+            status, payload = faucet_admin_request(parts[1].lower(), user_id)
+            if status == 200:
+                send_message(chat_id, f"Faucet is {payload['state']}.")
+            else:
+                send_message(chat_id, "Faucet administration is unavailable or not authorized.")
+            record_interaction(db, user_id, "faucet_admin", "success" if status == 200 else "rejected", is_premium)
+            return
+        handle_faucet(db, update, chat_id, user_id, is_premium, text)
         return
     if command:
         send_message(chat_id, "Unknown command. Use /new to start a new conversation or send a message.")
@@ -589,12 +919,8 @@ def handle(db: sqlite3.Connection, update) -> None:
         return
     try:
         with typing_indicator(chat_id):
-            # Give the user immediate feedback, then fail fast at the shared
-            # Gateway boundary before creating a conversation or contacting
-            # the internal response API.
-            require_gateway_admission(db)
             conversation_id = conversation_for_user(db, user_id)
-            result = internal_api_request("/v1/responses", {"conversation": conversation_id, "input": text})
+            result = gateway_completion(db, conversation_id, text)
         reply = result["output_text"]
         outcome = "success"
     except Exception as error:

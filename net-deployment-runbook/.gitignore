@@ -25,3 +25,4 @@ TREE.txt
 SHA256SUMS
 *.zip
 *.tar.gz
+.python-test-venv/

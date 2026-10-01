@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Deploy the OPS-owned Telegram conversation client. It receives one dedicated
-# gateway client credential and never owns or distributes a key pool.
+# Deploy the OPS-owned Telegram conversation client. It uses two dedicated
+# gateway client credentials and never owns or distributes a key pool.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 BOT_SOURCE="$ROOT/scripts/telegram-bot"
@@ -20,23 +20,40 @@ BOT_HOST="$TELEGRAM_BOT_HOST"
 }
 # Telegram is a real consumer, not a privileged gateway bypass. Route it
 # through the public-edge admission governor with every other inference probe.
-BOT_API_BASE_URL="https://${API_HOST}/v1"
+BOT_A_API_BASE_URL="https://${API_HOST}/a/v1"
+BOT_B_API_BASE_URL="https://${API_HOST}/b/v1"
 BOT_STATE_DB=/data/bot.sqlite3
 BOT_METRICS_FILE=/metrics/telegram-bot.prom
-BOT_KEY_FILE="$SECRETS/gateway.telegram-client-key"
+BOT_A_KEY_FILE="$SECRETS/gateway.telegram-a-client-key"
+BOT_B_KEY_FILE="$SECRETS/gateway.telegram-b-client-key"
 BOT_INTERNAL_TOKEN_FILE="$SECRETS/telegram.conversation-api-token"
+BOT_FAUCET_TOKEN_FILE="$SECRETS/telegram.faucet-token"
+BOT_KEY_BROKER_TOKEN_FILE="$SECRETS/bifrost.broker-token"
 VERIFY_TIMEOUT_SECONDS="${GDC_TELEGRAM_CONSUMER_VERIFY_TIMEOUT_SECONDS:-300}"
 
 [[ -f "$BOT_SOURCE/compose.yaml" && -f "$BOT_SOURCE/bot.py" ]] || {
   echo "embedded Telegram bot source is incomplete: $BOT_SOURCE" >&2; exit 1;
 }
-[[ -s "$BOT_KEY_FILE" ]] || { echo "missing dedicated Telegram gateway credential: $BOT_KEY_FILE" >&2; exit 1; }
+[[ -s "$BOT_A_KEY_FILE" ]] || { echo "missing Telegram gateway A credential: $BOT_A_KEY_FILE" >&2; exit 1; }
+[[ -s "$BOT_B_KEY_FILE" ]] || { echo "missing Telegram gateway B credential: $BOT_B_KEY_FILE" >&2; exit 1; }
 [[ -s "$BOT_INTERNAL_TOKEN_FILE" ]] || { echo "missing Telegram conversation API token: $BOT_INTERNAL_TOKEN_FILE" >&2; exit 1; }
+[[ -s "$BOT_FAUCET_TOKEN_FILE" ]] || { echo "missing Telegram faucet token: $BOT_FAUCET_TOKEN_FILE" >&2; exit 1; }
+[[ -s "$BOT_KEY_BROKER_TOKEN_FILE" ]] || { echo "missing Telegram Bifrost broker token: $BOT_KEY_BROKER_TOKEN_FILE" >&2; exit 1; }
 [[ "$VERIFY_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
   echo 'GDC_TELEGRAM_CONSUMER_VERIFY_TIMEOUT_SECONDS must be a positive integer' >&2; exit 2;
 }
-BOT_GATEWAY_API_KEY="$(<"$BOT_KEY_FILE")"
+BOT_A_GATEWAY_API_KEY="$(<"$BOT_A_KEY_FILE")"
+BOT_B_GATEWAY_API_KEY="$(<"$BOT_B_KEY_FILE")"
 BOT_INTERNAL_API_TOKEN="$(<"$BOT_INTERNAL_TOKEN_FILE")"
+BOT_FAUCET_TOKEN="$(<"$BOT_FAUCET_TOKEN_FILE")"
+BOT_KEY_BROKER_TOKEN="$(<"$BOT_KEY_BROKER_TOKEN_FILE")"
+BOT_GATEWAY_BACKENDS_JSON="$(jq -cn \
+  --arg a_url "$BOT_A_API_BASE_URL" --arg a_key "$BOT_A_GATEWAY_API_KEY" \
+  --arg b_url "$BOT_B_API_BASE_URL" --arg b_key "$BOT_B_GATEWAY_API_KEY" \
+  '[
+    {name:"A", base_url:$a_url, admission_url:($a_url + "/admission-status"), api_key:$a_key},
+    {name:"B", base_url:$b_url, admission_url:($b_url + "/admission-status"), api_key:$b_key}
+  ]')"
 
 remote="/tmp/gdc-telegram-bot-$$"
 runtime_env="$(mktemp)"
@@ -44,10 +61,14 @@ trap 'rm -f "$runtime_env"' EXIT
 umask 077
 printf '%s\n' \
   "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" \
-  "GATEWAY_API_BASE_URL=$BOT_API_BASE_URL" \
-  "GATEWAY_API_KEY=$BOT_GATEWAY_API_KEY" \
+  "TELEGRAM_FAUCET_URL=https://${GENESIS_PUBLIC_HOST}/faucet/v1/telegram-claim" \
+  "TELEGRAM_FAUCET_TOKEN=$BOT_FAUCET_TOKEN" \
+  "TELEGRAM_FAUCET_TIMEOUT_SECONDS=${GDC_TELEGRAM_FAUCET_TIMEOUT_SECONDS:-12}" \
+  "GATEWAY_BACKENDS_JSON=$BOT_GATEWAY_BACKENDS_JSON" \
   "INTERNAL_API_TOKEN=$BOT_INTERNAL_API_TOKEN" \
   "INTERNAL_API_BASE_URL=http://127.0.0.1:9464" \
+  "TELEGRAM_KEY_BROKER_URL=http://127.0.0.1:9465" \
+  "TELEGRAM_KEY_BROKER_TOKEN=$BOT_KEY_BROKER_TOKEN" \
   "HTTP_HOST=127.0.0.1" \
   "MODEL=$MODEL_ID" \
   "GATEWAY_TIMEOUT_SECONDS=${GDC_TELEGRAM_GATEWAY_TIMEOUT_SECONDS:-30}" \
@@ -98,6 +119,13 @@ bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
 [[ -n "$bot" && "$(docker inspect -f '{{.State.Health.Status}}' "$bot")" == healthy ]]
 curl -fsS http://127.0.0.1:9464/metrics | grep -q '^gdc_telegram_bot_up 1$'
 docker exec "$bot" python3 -c 'import json, os; from urllib.request import urlopen; assert json.load(urlopen("https://api.telegram.org/bot" + os.environ["TELEGRAM_BOT_TOKEN"] + "/getMe", timeout=15))["ok"]'
+# The text alias remains accepted for old private messages, but Telegram menus
+# cannot register a hyphenated command and must not advertise other commands.
+curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteMyCommands" | jq -e '.ok == true' >/dev/null
+curl -fsS -X POST \
+  --data-urlencode 'scope={"type":"all_private_chats"}' \
+  --data-urlencode 'commands=[{"command":"api_key","description":"Issue or replace stable API key"}]' \
+  "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands" | jq -e '.ok == true' >/dev/null
 REMOTE
   then
     consumer_runtime_ready=true
