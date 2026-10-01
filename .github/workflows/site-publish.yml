@@ -15,6 +15,7 @@ on:
       - 'net-deployment-runbook/scripts/verify-site-release.sh'
       - 'net-deployment-runbook/scripts/site-static-digest.sh'
       - 'net-deployment-runbook/Makefile'
+      - 'install_inferenced.sh'
       - '.github/workflows/site-publish.yml'
 
 concurrency:
@@ -23,6 +24,8 @@ concurrency:
 
 permissions:
   contents: read
+  attestations: write
+  id-token: write
 
 jobs:
   publish:
@@ -47,6 +50,11 @@ jobs:
         run: >-
           make -C net-deployment-runbook prepare-static-site
           site_release_dir="$RUNNER_TEMP/gonka-dev-site"
+
+      - name: Attest the published installer source
+        uses: actions/attest@v4
+        with:
+          subject-path: install_inferenced.sh
 
       - name: Publish the verified release
         env:
