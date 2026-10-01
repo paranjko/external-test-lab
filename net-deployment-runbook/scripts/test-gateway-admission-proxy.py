@@ -33,6 +33,8 @@ class State:
     epochs = ["7"]
     epoch_index = 0
     height = 50
+    poc_start = 0
+    epoch_info_override = None
     advance_height = False
     dispatches = 0
     in_flight = 0
@@ -55,7 +57,7 @@ class Backend(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        state_path = self.path in {"/v1/status", "/epoch", "/chain-status", "/params"}
+        state_path = self.path in {"/v1/status", "/epoch", "/epoch-info", "/chain-status", "/params"}
         if state_path:
             with State.lock:
                 State.state_in_flight += 1
@@ -89,6 +91,10 @@ class Backend(BaseHTTPRequestHandler):
                 if State.advance_height:
                     State.height += 1
                 body = {"result": {"sync_info": {"latest_block_height": str(height)}}}
+            elif self.path == "/epoch-info":
+                body = State.epoch_info_override
+                if body is None:
+                    body = {"latest_epoch": {"poc_start_block_height": str(State.poc_start)}}
             elif self.path == "/params":
                 approved = [{"name": State.session_version, "binary": "https://example.invalid/devshardd-%s.zip" % State.session_version, "sha256": State.protocol_sha256}] if State.protocol_approved else []
                 body = State.params_override
@@ -184,6 +190,7 @@ def start_proxy(backend_port, max_queue=1, wait=0.35, max_deadline=None,
         "GDC_GATEWAY_ADMISSION_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("status", "/v1/status")),
         "GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN": "test-status",
         "GDC_GATEWAY_ADMISSION_EPOCH_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("epoch", "/epoch")),
+        "GDC_GATEWAY_ADMISSION_EPOCH_INFO_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("epoch_info", "/epoch-info")),
         "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("chain", "/chain-status")),
         "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("params", "/params")),
         "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON": json.dumps({"v3": {"binary": "https://example.invalid/devshardd-v3.zip", "sha256": "a" * 64}}),
@@ -240,6 +247,42 @@ try:
     assert get(proxy_port, "/v1/models", authorization=False)[0] == 401
     missing = get(proxy_port, "/v1/unknown")
     assert missing[0] == 404 and json.loads(missing[1]) == {"error": {"code": "not_found"}}
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    # Admission follows the actual anchor, including both inclusive safe edges.
+    State.ready = True; State.poc_start = 260; State.dispatches = 0
+    process, proxy_port = start_proxy(backend_port); processes.append(process)
+    for offset, available in ((0, False), (10, False), (11, True),
+                              (50, True), (90, True), (91, False), (99, False)):
+        State.height = State.poc_start + offset
+        result = json.loads(get(proxy_port, "/v1/admission-status")[1])
+        assert result["available"] is available, (offset, result)
+        assert result["reason"] == (None if available else "poc_fence")
+    State.height = 310
+    assert post_details(proxy_port)[2] == "dispatched_once"
+    assert State.dispatches == 1
+    for height in (259, 360):
+        State.height = height
+        assert json.loads(get(proxy_port, "/v1/admission-status")[1])["reason"] == "epoch_info_inconsistent"
+    State.height = 310; State.epoch_info_override = {}
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1])["reason"] == "epoch_info_unavailable"
+    State.epoch_info_override = {"latest_epoch": {"poc_start_block_height": "invalid"}}
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1])["reason"] == "state_invalid"
+    State.epoch_info_override = None
+    State.params_override = {"params": {"epoch_params": {
+        "epoch_length": "330", "poc_stage_duration": "2",
+        "poc_exchange_duration": "2", "poc_validation_delay": "2",
+        "poc_validation_duration": "2", "set_new_validators_delay": "19",
+    }, "devshard_escrow_params": {"approved_versions": [valid_approval]}}}
+    State.poc_start = 540800
+    for offset, available in ((0, False), (27, False), (28, True),
+                              (70, True), (320, True), (321, False)):
+        State.height = State.poc_start + offset
+        assert json.loads(get(proxy_port, "/v1/admission-status")[1])["available"] is available
+    State.poc_start += 330; State.height = State.poc_start + 70
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1])["available"] is True
+    State.params_override = None
+    State.epoch_info_override = None; State.poc_start = 0; State.height = 50
     process.terminate(); process.wait(2); processes.remove(process)
 
     # Public admission status has one non-blocking backend observation slot.

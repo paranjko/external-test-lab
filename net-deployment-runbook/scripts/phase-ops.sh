@@ -918,7 +918,10 @@ if [[ "$COMPONENT" == gateway ]]; then
         curl -fsS http://127.0.0.1:1317/productscience/inference/inference/params \
           | jq -r ".params.epoch_params | [.epoch_length,.poc_stage_duration,.poc_exchange_duration,.poc_validation_delay,.poc_validation_duration,.set_new_validators_delay] | map(tonumber) | @tsv"
       )
-      position=$((height % epoch_length))
+      poc_start="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:1317/productscience/inference/inference/epoch_info | jq -er ".latest_epoch.poc_start_block_height | tonumber")"
+      [[ "$poc_start" =~ ^[0-9]+$ ]] || exit 1
+      position=$((height - poc_start))
+      (( epoch_length > 0 && position >= 0 && position < epoch_length )) || exit 1
       safe_start=$((poc_duration + poc_exchange_duration + validation_delay + validation_duration + validators_delay + 1))
       safe_end=$((epoch_length - 10))
       (( position >= safe_start && position <= safe_end ))'; then

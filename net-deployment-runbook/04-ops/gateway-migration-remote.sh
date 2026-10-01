@@ -595,7 +595,7 @@ restore_source_runtime() {
 }
 
 wait_safe_window() {
-  local timeout="$1" deadline height params values epoch_length epoch_shift position
+  local timeout="$1" deadline height params values epoch_length poc_start position
   local poc_duration exchange_duration validation_delay validation_duration validators_delay
   local safe_start safe_end runway
   [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || return 2
@@ -608,27 +608,29 @@ wait_safe_window() {
     params="$(curl -fsS --connect-timeout 3 --max-time 10 \
       http://127.0.0.1:1317/productscience/inference/inference/params 2>/dev/null || true)"
     values="$(jq -er '(.params // .).epoch_params
-      | [(.epoch_length|tonumber),(.epoch_shift // 0|tonumber),(.poc_stage_duration|tonumber),
+      | [(.epoch_length|tonumber),(.poc_stage_duration|tonumber),
          (.poc_exchange_duration|tonumber),(.poc_validation_delay|tonumber),
          (.poc_validation_duration|tonumber),(.set_new_validators_delay|tonumber)] | @tsv' \
       <<<"$params" 2>/dev/null || true)"
-    if [[ "$height" =~ ^[0-9]+$ && -n "$values" ]]; then
-      read -r epoch_length epoch_shift poc_duration exchange_duration validation_delay \
+    poc_start="$(curl -fsS --connect-timeout 3 --max-time 10 \
+      http://127.0.0.1:1317/productscience/inference/inference/epoch_info 2>/dev/null \
+      | jq -er '.latest_epoch.poc_start_block_height | tonumber' 2>/dev/null || true)"
+    if [[ "$height" =~ ^[0-9]+$ && "$poc_start" =~ ^[0-9]+$ && -n "$values" ]]; then
+      read -r epoch_length poc_duration exchange_duration validation_delay \
         validation_duration validators_delay <<<"$values"
       if (( epoch_length <= 0 )); then
         printf 'WAIT gateway migration window epoch_length=invalid\n'
         sleep 3
         continue
       fi
-      position=$(((height - epoch_shift) % epoch_length))
-      (( position < 0 )) && position=$((position + epoch_length))
+      position=$((height - poc_start))
       safe_start=$((poc_duration + exchange_duration + validation_delay + validation_duration + validators_delay + 1))
       safe_end=$((epoch_length - runway))
       if (( safe_end < safe_start )); then
         echo "ERROR gateway migration runway ${runway} cannot fit the configured epoch" >&2
         return 1
       fi
-      if (( safe_start <= position && position <= safe_end )); then
+      if (( position >= 0 && position < epoch_length && safe_start <= position && position <= safe_end )); then
         printf 'PASS gateway migration window phase=Inference position=%s safe_range=%s-%s height=%s\n' \
           "$position" "$safe_start" "$safe_end" "$height"
         return 0

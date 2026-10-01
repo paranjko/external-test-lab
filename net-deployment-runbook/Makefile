@@ -373,6 +373,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@python3 ./scripts/test-gateway-admission-observer.py
 	@python3 ./scripts/test-gateway-admission-proxy.py
 	@./scripts/test-gateway-migration.sh
+	@bash ./scripts/test-gateway-poc-windows.sh
 	@./scripts/test-host-sync-verdict.sh
 	@./scripts/test-ensure-account-balance.sh
 	@./scripts/test-gateway-reserve-policy.sh
