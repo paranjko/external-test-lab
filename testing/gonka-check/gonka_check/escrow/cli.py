@@ -301,10 +301,16 @@ def _share(value):
     return "%.3g%%" % (100 * value)
 
 
+def _devnet_only(name):
+    if name in ("devnet", "loopback"):
+        return False
+    sys.stderr.write("gcheck: a group size change runs on DevNet only\n")
+    return True
+
+
 def cmd_preflight(args):
     name, origin, interval = resolve(args.source)
-    if name not in ("devnet", "loopback"):
-        sys.stderr.write("gcheck: a group size change runs on DevNet only\n")
+    if _devnet_only(name):
         return EXIT_CODES["GUARD_STOP"]
     run_id, run_dir = _run_dir(name, "gchange-preflight")
     recorder = Recorder(run_dir)
@@ -355,6 +361,8 @@ def cmd_preflight(args):
 
 def cmd_record(args):
     name, origin, interval = resolve(args.source)
+    if _devnet_only(name):
+        return EXIT_CODES["GUARD_STOP"]
     attempts = {}
     for text in args.attempt:
         role, _sep, tx_hash = text.partition("=")

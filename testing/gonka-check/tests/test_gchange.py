@@ -16,6 +16,14 @@ class GroupSizeChange(EscrowHarness):
         self.assertEqual(code, 0, self.out + self.err)
         return self.out.rsplit("records  ", 1)[1].strip()
 
+    def edit_evidence(self, run_dir, change):
+        path = os.path.join(run_dir, "evidence.json")
+        with open(path, encoding="utf-8") as handle:
+            evidence = json.load(handle)
+        change(evidence)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(evidence, handle)
+
     def verdict(self, run_dir):
         code = self.gcheck("escrow", "verdict", run_dir)
         with open(os.path.join(run_dir, "report", "verdicts.json"), encoding="utf-8") as handle:
@@ -121,6 +129,38 @@ class GroupSizeChange(EscrowHarness):
         self.assertEqual(checks["accounting"]["verdict"], "FAIL")
         self.assertIn("refund to the creator", checks["accounting"]["reason"])
 
+    def test_escrow_without_slots_is_inconclusive(self):
+        with FakeRun() as fake:
+            run_dir = self.record(fake)
+
+        def drop_slots(evidence):
+            for item in evidence["escrows"].values():
+                item["escrow"]["slots"] = []
+                item["settle"]["escrow"]["slots"] = []
+        self.edit_evidence(run_dir, drop_slots)
+        _code, checks = self.verdict(run_dir)
+        self.assertEqual(checks["own_group"]["verdict"], "INCONCLUSIVE")
+        self.assertIn("the evidence has no slots", checks["own_group"]["reason"])
+        self.assertEqual(checks["accounting"]["verdict"], "INCONCLUSIVE")
+
+    def test_negative_signature_slot_fails_own_group(self):
+        with FakeRun() as fake:
+            run_dir = self.record(fake)
+
+        def negative_slot(evidence):
+            evidence["escrows"]["a"]["settle"]["msg"]["signature_slots"][0] = -1
+        self.edit_evidence(run_dir, negative_slot)
+        _code, checks = self.verdict(run_dir)
+        self.assertEqual(checks["own_group"]["verdict"], "FAIL")
+        self.assertIn("signatures outside the escrow's own quorum", checks["own_group"]["reason"])
+
+    def test_change_submitted_after_the_rollback_is_inconclusive(self):
+        with FakeRun() as fake:
+            run_dir = self.record(fake, roles=("--a", "101", "--b", "102", "--change", "31", "--rollback", "30"))
+        _code, checks = self.verdict(run_dir)
+        self.assertEqual(checks["g_changed"]["verdict"], "INCONCLUSIVE")
+        self.assertIn("before it was submitted at %d" % (START + 40), checks["g_changed"]["reason"])
+
     def test_control_run_checks_only_escrow_a(self):
         with FakeRun() as fake:
             run_dir = self.record(fake, roles=("--a", "101"))
@@ -152,7 +192,13 @@ class GroupSizeChange(EscrowHarness):
 
     def test_preflight_and_record_refuse_mainnet_writes_and_bad_input(self):
         self.assertEqual(self.gcheck("escrow", "preflight", "--source", "mainnet"), 4)
-        self.assertEqual(self.gcheck("escrow", "record", "--source", "mainnet", "--a", "1", "--attempt", "a=xyz"), 4)
+        self.assertEqual(self.gcheck("escrow", "record", "--source", "mainnet", "--a", "1",
+                                     "--attempt", "a=" + SETTLE_A), 4)
+        self.assertIn("runs on DevNet only", self.err)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "data")))
+        self.assertEqual(self.gcheck("escrow", "record", "--source", "http://127.0.0.1:9", "--a", "1",
+                                     "--attempt", "a=xyz"), 4)
+        self.assertIn("--attempt needs", self.err)
         self.assertEqual(self.gcheck("escrow", "verdict", os.path.join(self.tmp.name, "missing")), 4)
 
 
@@ -166,6 +212,18 @@ class PayoutRule(EscrowHarness):
         self.assertEqual(gchange.quorum(5), 4)
         self.assertEqual(gchange.quorum(9), 7)
         self.assertEqual(gchange.quorum(16), 11)
+
+    def test_payouts_skip_empty_slots_and_negative_slot_ids(self):
+        self.assertEqual(gchange.expected_payouts([], {"fees": 10, "host_stats": [{"slot_id": 0, "cost": 1}]}), {})
+        msg = {"fees": 0, "host_stats": [{"slot_id": -1, "cost": 5}]}
+        self.assertEqual(gchange.expected_payouts(["h0", "h1"], msg), {"slot -1": 5})
+
+    def test_applied_height_search_needs_ordered_bounds(self):
+        class NoReads:
+            def params(self, height):
+                raise AssertionError("params read at height %d" % height)
+        self.assertIsNone(gchange.first_height(NoReads(), 100, 50, 9))
+        self.assertIsNone(gchange.first_height(NoReads(), 50, 50, 9))
 
     def test_params_diff_names_every_changed_leaf(self):
         before = {"a": {"b": 1, "c": [1, 2]}, "d": "x"}

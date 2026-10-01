@@ -574,6 +574,16 @@ class Guard(Harness):
             with self.assertRaises(TargetRefused, msg=path):
                 check_url(preset, "https://api.gonka-dev.net" + path)
 
+    def test_admin_path_variants_are_refused(self):
+        preset = load_preset("devnet-a")
+        for path in ("/v1/admin", "/a/v1/admin", "/a/v1/debug", "/b/v1/admin/state", "/a/v1/state",
+                     "/a/debug/pprof/heap", "/a/devshard/7/v1/finalize", "/devshard/7/v1/state",
+                     "/a/x/../v1/admin/state", "//a//v1/admin", "/a/v1/%61dmin/state"):
+            with self.assertRaises(TargetRefused, msg=path):
+                check_url(preset, "https://api.gonka-dev.net" + path)
+        for path in ("/a/v1/status", "/a/v1/chat/completions", "/a/v1/models", "/a/v1/stateless"):
+            check_url(preset, "https://api.gonka-dev.net" + path)
+
     def test_plan_for_a_gateway_has_no_fence_audit(self):
         result = subprocess.run([os.path.join(ROOT, "bin", "gcheck"), "plan", "--preset", "devnet-a"],
                                 capture_output=True, text=True, env=dict(os.environ), check=False)

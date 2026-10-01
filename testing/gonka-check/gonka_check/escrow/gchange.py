@@ -204,7 +204,7 @@ def escrow_evidence(reads, escrow_id, attempt=None):
 
 def first_height(reads, low, high, target):
     """First height in (low, high] whose group_size equals target; group_size(low) must differ."""
-    if _group_size(reads.params(high)) != target:
+    if high <= low or _group_size(reads.params(high)) != target:
         return None
     while high - low > 1:
         middle = (low + high) // 2
@@ -228,6 +228,9 @@ def proposal_evidence(reads, proposal_id, upper):
         return item
     item["group_size_before"] = _group_size(reads.params(item["submit_height"] - 1))
     if item["group_size_before"] == item["group_size"]:
+        return item
+    if upper < item["submit_height"]:
+        item["problem"] = "the search ends at height %d, before it was submitted at %d" % (upper, item["submit_height"])
         return item
     applied = first_height(reads, item["submit_height"] - 1, upper, item["group_size"])
     item["applied_height"] = applied
@@ -259,10 +262,12 @@ def collect(reads, escrows, proposals, attempts, log):
 def expected_payouts(slots, msg, divisor=None):
     """Chain rule: slot cost plus fees split by the slot count, the remainder 1 per slot in host_stats order."""
     divisor = divisor or len(slots)
+    if not divisor:
+        return {}
     share, remainder = divmod(msg["fees"], divisor)
     payouts = {}
     for hs in msg["host_stats"]:
-        address = slots[hs["slot_id"]] if hs["slot_id"] < len(slots) else "slot %d" % hs["slot_id"]
+        address = slots[hs["slot_id"]] if 0 <= hs["slot_id"] < len(slots) else "slot %d" % hs["slot_id"]
         extra = 1 if remainder > 0 else 0
         remainder -= extra
         payouts[address] = payouts.get(address, 0) + hs["cost"] + share + extra
@@ -308,6 +313,8 @@ def check_changed(change):
     if change.get("group_size_before") == change["group_size"]:
         return verdict("g_changed", "INCONCLUSIVE", "proposal %d keeps group_size at %s: nothing changed"
                        % (change["id"], change["group_size"]))
+    if change.get("problem"):
+        return verdict("g_changed", "INCONCLUSIVE", "proposal %d: %s" % (change["id"], change["problem"]))
     if change.get("applied_height") is None:
         return verdict("g_changed", "FAIL", "proposal %d passed but group_size never became %s"
                        % (change["id"], change["group_size"]))
@@ -337,12 +344,14 @@ def check_own_group(role, item):
     if settle is None or settle["code"] != 0:
         return verdict("own_group", "INCONCLUSIVE", "%s has no accepted settlement" % _escrow_text(role, item))
     created, settled = item["escrow"].get("slots") or [], settle["escrow"].get("slots") or []
+    if not created:
+        return verdict("own_group", "INCONCLUSIVE", "%s: the evidence has no slots" % _escrow_text(role, item))
     size = len(created)
     signed = settle["msg"]["signature_slots"]
     where = "%s: %d of %d slot signatures, quorum %d" % (_escrow_text(role, item), len(set(signed)), size, quorum(size))
     if settled != created:
         return verdict("own_group", "FAIL", "%s; its slots changed between creation and settlement" % where)
-    if any(slot >= size for slot in signed) or len(set(signed)) < quorum(size):
+    if any(not 0 <= slot < size for slot in signed) or len(set(signed)) < quorum(size):
         return verdict("own_group", "FAIL", "%s; signatures outside the escrow's own quorum" % where)
     observed = _nonzero({address: found["amount"] for address, found in observed_payouts(settle).items()})
     if observed != _nonzero(expected_payouts(created, settle["msg"])):
@@ -372,7 +381,7 @@ def check_same_epoch(items):
 def _accounting_problems(item):
     settle = item["settle"]
     problems = []
-    expected = expected_payouts(item["escrow"]["slots"], settle["msg"])
+    expected = expected_payouts(item["escrow"].get("slots") or [], settle["msg"])
     observed = observed_payouts(settle)
     for address in sorted(set(expected) | set(observed)):
         amount = expected.get(address, 0)
@@ -401,6 +410,10 @@ def check_accounting(items):
         settle = item["settle"]
         if settle is None or settle["code"] != 0:
             parts.append("%s not settled" % _escrow_text(role, item))
+            value = "INCONCLUSIVE" if value == "PASS" else value
+            continue
+        if not item["escrow"].get("slots"):
+            parts.append("%s: the evidence has no slots" % _escrow_text(role, item))
             value = "INCONCLUSIVE" if value == "PASS" else value
             continue
         problems, total = _accounting_problems(item)
@@ -546,13 +559,14 @@ def markdown(evidence, verdicts):
         settle = item["settle"]
         if not settle or settle["code"] != 0:
             continue
-        expected = expected_payouts(item["escrow"]["slots"], settle["msg"])
+        slots = item["escrow"].get("slots") or []
+        expected = expected_payouts(slots, settle["msg"])
         observed = observed_payouts(settle)
         lines += ["", "### Payouts of %s" % role.upper(), "", "| address | slots | expected | observed | via |",
                   "|---|---:|---:|---:|---|"]
         for address in sorted(set(expected) | set(observed)):
             found = observed.get(address, {"amount": 0, "via": "none"})
-            lines.append("| …%s | %d | %d | %d | %s |" % (address[-6:], item["escrow"]["slots"].count(address),
+            lines.append("| …%s | %d | %d | %d | %s |" % (address[-6:], slots.count(address),
                                                           expected.get(address, 0), found["amount"], found["via"]))
     if proposals:
         lines += ["", "## Proposals", "", "| | id | status | submitted | group_size | applied at | other changes |",

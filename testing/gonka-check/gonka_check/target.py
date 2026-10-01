@@ -3,9 +3,10 @@
 import hashlib
 import json
 import os
+import posixpath
 import re
 import stat
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -17,7 +18,8 @@ PUBLIC_TARGETS = {
 # DevShard gateways reached directly under a path of the public API: no admission proxy, no health receipt.
 PUBLIC_GATEWAY_PATHS = {"https://api.gonka-dev.net": ("/a", "/b")}
 GATEWAY_PATH = re.compile(r"^(/[a-z0-9][a-z0-9-]*)?$")
-ADMIN_PATHS = ("/v1/admin/", "/v1/debug/", "/v1/finalize")
+# Gateway admin paths as devshardctl sees them, also one segment deep (/a, /b) and under /devshard/<id>.
+ADMIN_PATH = re.compile(r"^(/[^/]+)?(/devshard/[^/]+)?(/v1/(admin|debug|finalize|state)|/debug/pprof)(/|$)")
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 PUBLIC_NODE_RPC = re.compile(r"^https://node[0-9]+\.gonka-dev\.net/chain-rpc$")
 REQUIRED = (
@@ -115,12 +117,12 @@ def check_profile(preset, profile):
 
 def check_url(preset, url):
     parts = urlsplit(url)
+    path = posixpath.normpath("/" + unquote(parts.path).lstrip("/"))
     for prefix in preset["forbid_paths"]:
-        if parts.path.startswith(prefix):
+        if path.startswith(prefix):
             raise TargetRefused("path %s is forbidden" % parts.path)
-    for prefix in ADMIN_PATHS:
-        if parts.path.startswith(prefix) or parts.path.startswith(gateway_path(preset) + prefix):
-            raise TargetRefused("path %s is a gateway admin path" % parts.path)
+    if ADMIN_PATH.match(path):
+        raise TargetRefused("path %s is a gateway admin path" % parts.path)
     origin = "%s://%s" % (parts.scheme, parts.netloc)
     allowed = {preset["base_url"].rstrip("/")}
     if preset["health_url"]:
@@ -130,7 +132,7 @@ def check_url(preset, url):
     # A node origin is allowed only under its own chain RPC path.
     for node in preset.get("node_rpcs", []):
         node_parts = urlsplit(node)
-        if origin == "%s://%s" % node_parts[:2] and parts.path.startswith(node_parts.path.rstrip("/") + "/"):
+        if origin == "%s://%s" % node_parts[:2] and path.startswith(node_parts.path.rstrip("/") + "/"):
             return
     raise TargetRefused("origin %s is outside the preset" % origin)
 
