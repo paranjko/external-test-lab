@@ -319,7 +319,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
     edge_destination=/srv/dai/edge
     edge_install_args=''
   fi
-  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; cd '$edge_destination' && docker compose up -d --force-recreate caddy"
+  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; cd '$edge_destination'; if grep -Eq '^GDC_GATEWAY_ROUTE_ID=[AB]$' .env; then docker compose up -d --force-recreate caddy gateway-route; else docker compose up -d --force-recreate caddy; fi"
   # A selected gateway can move after recovery. Reconcile only the retained
   # proxy listener with the current role; never regenerate the node role,
   # reset chain data, or replace a signer here.

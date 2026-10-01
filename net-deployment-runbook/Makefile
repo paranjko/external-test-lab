@@ -425,6 +425,7 @@ test: test-devshard-two-gateways test-devshard-502-fixture-contract test-command
 	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-observer.py
 	@python3 ./scripts/test-gateway-admission-proxy.py
+	@python3 ./scripts/test-gateway-route-proxy.py
 	@./scripts/test-gateway-migration.sh
 	@bash ./scripts/test-gateway-poc-windows.sh
 	@./scripts/test-host-sync-verdict.sh

@@ -123,6 +123,7 @@ gateway_upstream_port="${GDC_GATEWAY_ADMISSION_UPSTREAM_PORT:-18080}"
 [[ "$gateway_upstream_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( gateway_upstream_port <= 65535 )) \
   || { echo 'GDC_GATEWAY_ADMISSION_UPSTREAM_PORT must be a valid TCP port' >&2; exit 2; }
 gateway_metrics_upstream="http://127.0.0.1:$gateway_upstream_port"
+gateway_route_id=''
 # This sink is deliberately unreachable unless this participant is the B
 # gateway selected by the A/B topology.  Caddy still parses one common
 # participant configuration, while only node B may accept the public edge's
@@ -157,6 +158,7 @@ if [[ -n "${GDC_GATEWAY_METRICS_TARGETS:-}" ]]; then
   if [[ "$gateway_metrics_id" == 'B' ]]; then
     gateway_b_upstream="$gateway_metrics_upstream"
   fi
+  gateway_route_id="$gateway_metrics_id"
 fi
 gateway_admission_upstream="http://${gateway_public_host}:$gateway_upstream_port"
 # The admission proxy shares the gateway Host network namespace.  Reaching the
@@ -180,6 +182,10 @@ values=(
   "GDC_GATEWAY_ADMISSION_UPSTREAM=$gateway_admission_upstream"
   "GDC_GATEWAY_METRICS_UPSTREAM=$gateway_metrics_upstream"
   "GDC_GATEWAY_B_UPSTREAM=$gateway_b_upstream"
+  "GDC_GATEWAY_ROUTE_PROXY_HOST=127.0.0.1"
+  "GDC_GATEWAY_ROUTE_PROXY_PORT=18085"
+  "GDC_GATEWAY_ROUTE_ID=$gateway_route_id"
+  "GDC_GATEWAY_ROUTE_UPSTREAM=$gateway_metrics_upstream"
   # The public one-runtime status omits protocol and capacity. Admission uses
   # the authenticated aggregate observer so it binds the actual live runtime
   # identity and positive capacity instead of deployment intent. The gateway

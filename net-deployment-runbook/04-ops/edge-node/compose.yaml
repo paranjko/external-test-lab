@@ -37,6 +37,15 @@ services:
       - ./gateway-admission-proxy.py:/edge/gateway-admission-proxy.py:ro
       - ./status:/edge/status
 
+  gateway-route:
+    image: ${PYTHON_IMAGE:-python:3.13-alpine}
+    restart: unless-stopped
+    network_mode: host
+    env_file: [./gateway-route.env]
+    command: ["python3", "/edge/gateway-route-proxy.py"]
+    volumes:
+      - ./gateway-route-proxy.py:/edge/gateway-route-proxy.py:ro
+
   caddy:
     image: ${CADDY_IMAGE:-caddy:2.11.4-alpine}
     restart: unless-stopped

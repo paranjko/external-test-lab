@@ -130,7 +130,7 @@
     }
     handle @gateway_b_from_public_edge {
       uri strip_prefix /gateway-b
-      reverse_proxy {$GDC_GATEWAY_B_UPSTREAM}
+      reverse_proxy 127.0.0.1:18085
     }
     handle /gateway-b/* {
       respond 403

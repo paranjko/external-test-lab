@@ -333,7 +333,7 @@ preview.{$SITE_HOST} {
   }
   handle @ds502_a_completion {
     uri strip_prefix /a
-    reverse_proxy 127.0.0.1:18087 {
+    reverse_proxy 127.0.0.1:18085 {
       flush_interval -1
     }
   }
@@ -343,7 +343,7 @@ preview.{$SITE_HOST} {
   }
   handle @ds502_a_readonly {
     uri strip_prefix /a
-    reverse_proxy 127.0.0.1:18087
+    reverse_proxy 127.0.0.1:18085
   }
   @ds502_a_admission {
     method GET
