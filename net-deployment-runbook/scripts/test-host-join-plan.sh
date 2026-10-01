@@ -89,7 +89,7 @@ chmod 0755 "$tmp/bin"/*
 mkdir -p "$tmp/inferenced-fixture"
 printf '#!/usr/bin/env bash\nprintf "inferenced v0.2.15\\n"\n' >"$tmp/inferenced-fixture/inferenced"
 chmod 0755 "$tmp/inferenced-fixture/inferenced"
-(cd "$tmp/inferenced-fixture" && zip -q "$tmp/inferenced-linux-amd64.zip" inferenced)
+python3 -m zipfile -c "$tmp/inferenced-linux-amd64.zip" "$tmp/inferenced-fixture/inferenced"
 export FIXTURE_INFERENCED_ARCHIVE="$tmp/inferenced-linux-amd64.zip"
 FIXTURE_INFERENCED_SHA256="$(sha256sum "$FIXTURE_INFERENCED_ARCHIVE" | awk '{print $1}')"
 export FIXTURE_INFERENCED_SHA256

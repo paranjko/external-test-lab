@@ -298,6 +298,8 @@ run_phase() {
     run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     printf '%s\n' "$run_id" >"$run_id_file"
   fi
+  [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+    || die 'GDC run identifier is unsafe'
   run_dir="$GDC_HOME/runs/$run_id"
   log="$run_dir/run.log"
   mkdir -p "$run_dir"
@@ -1245,7 +1247,11 @@ case "$COMMAND" in
   ops)
     # OPS actions reconcile independently deployable services.  They must not
     # inherit a prior service's retained evidence or release profile.
-    GDC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    # A normal OPS invocation gets fresh evidence, while an explicit ID is the
+    # receipt-bound resume mechanism for a preview followed by its apply.
+    if [[ -z "${GDC_RUN_ID:-}" ]]; then
+      GDC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    fi
     unset GDC_RUN_LOG
     export GDC_RUN_ID
     use_network_owner_data_home

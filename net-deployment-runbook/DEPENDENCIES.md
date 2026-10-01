@@ -37,6 +37,13 @@ They provide JSON assertions and the Unix-socket protocol transport; they are
 not operator or Host dependencies. The build checks that the TMKMS executable
 is unchanged, and the test runs without network access or Host mounts.
 
+Python contract dependencies are pinned in
+[`dependencies/python-test-requirements.txt`](dependencies/python-test-requirements.txt).
+The CI workflow provisions them through the named
+`install-python-test-dependencies` Make target before `make test`; local
+operators run the same target when their Python environment lacks a declared
+module.
+
 Before adding an external executable to runbook shell code:
 
 1. Check both manifests and the `runbook-contracts` workflow job.

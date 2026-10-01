@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet --render-dir DIR [--gateway-env FILE] [--gateway-observer-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE]" >&2; }
-RENDER=""; GATEWAY=""; GATEWAY_OBSERVER=""; FAUCET=""; GATEWAY_RESERVE=""; COMPONENT=""
-while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--gateway-observer-env) GATEWAY_OBSERVER="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;*)usage;exit 2;;esac;done
+usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet|bifrost --render-dir DIR [--gateway-env FILE] [--gateway-observer-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE] [--bifrost-env FILE] [--bifrost-broker-env FILE] [--bifrost-edge-env FILE]" >&2; }
+RENDER=""; GATEWAY=""; GATEWAY_OBSERVER=""; FAUCET=""; GATEWAY_RESERVE=""; BIFROST=""; BIFROST_BROKER=""; BIFROST_EDGE=""; COMPONENT=""
+while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--gateway-observer-env) GATEWAY_OBSERVER="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;--bifrost-env) BIFROST="$2";shift 2;;--bifrost-broker-env) BIFROST_BROKER="$2";shift 2;;--bifrost-edge-env) BIFROST_EDGE="$2";shift 2;;*)usage;exit 2;;esac;done
 [[ $EUID -eq 0 && -s "$RENDER/.env" ]] || { usage; exit 2; }
 case "$COMPONENT" in
   gateway) [[ -s "$GATEWAY" && -s "$GATEWAY_OBSERVER" ]] || { usage; exit 2; } ;;
   faucet) [[ -s "$FAUCET" && -s "$GATEWAY_RESERVE" ]] || { usage; exit 2; } ;;
+  bifrost) [[ -s "$BIFROST" && -s "$BIFROST_BROKER" && -s "$BIFROST_EDGE" ]] || { usage; exit 2; } ;;
   monitoring) [[ -s "$RENDER/prometheus.yml" ]] || { usage; exit 2; } ;;
   site) [[ -s "$RENDER/config.js" ]] || { usage; exit 2; } ;;
   *) usage; exit 2 ;;
@@ -31,6 +32,13 @@ if [[ "$COMPONENT" == faucet ]]; then
   install -m 0600 "$GATEWAY_RESERVE" "$DEST/gateway-reserve-signer.env"
 elif [[ ! -e "$DEST/faucet.env" ]]; then
   install -m 0600 /dev/null "$DEST/faucet.env"
+fi
+if [[ "$COMPONENT" == bifrost ]]; then
+  # The broker gets a single read-only binding file, not the OPS secret tree.
+  install -d -m 0755 "$DEST/bifrost"
+  install -m 0600 "$BIFROST" "$DEST/bifrost.env"
+  install -m 0600 "$BIFROST_BROKER" "$DEST/bifrost-broker.env"
+  install -m 0600 "$BIFROST_EDGE" "$DEST/bifrost-edge.env"
 fi
 if [[ -s "$RENDER/prometheus.yml" ]]; then
   # Every OPS component uses the same rendered bundle. Keep the Prometheus

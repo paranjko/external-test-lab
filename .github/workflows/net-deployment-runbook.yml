@@ -76,6 +76,8 @@ jobs:
       - name: Check runbook shell scripts on GitHub-hosted fallback
         if: runner.name != 'external-test-lab-gdc-node4'
         run: make -C net-deployment-runbook shellcheck
+      - name: Install declared Python test dependencies
+        run: make -C net-deployment-runbook install-python-test-dependencies
       - name: Test runbook contracts
         run: make -C net-deployment-runbook test
       - name: Test edge installation ownership in disposable root

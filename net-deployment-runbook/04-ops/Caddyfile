@@ -37,6 +37,18 @@
     reverse_proxy 127.0.0.1:18080
   }
 
+  # Stable credentials are verified and translated only by the private edge;
+  # Bifrost's management and native virtual-key interfaces never face Caddy.
+  handle /v1/* {
+    reverse_proxy 127.0.0.1:9466
+  }
+  handle /anthropic/* {
+    reverse_proxy 127.0.0.1:9466
+  }
+  handle /genai/* {
+    reverse_proxy 127.0.0.1:9466
+  }
+
   handle {
     reverse_proxy 127.0.0.1:8000
   }
