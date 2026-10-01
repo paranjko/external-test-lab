@@ -11,7 +11,8 @@ cp "$ROOT/.env.example" "$tmp/inventory.env"
     'API_HOST=api.gonka-dev.net' \
     'GRAFANA_HOST=grafana.gonka-dev.net' \
     'MONITORING_CIDR=192.0.2.10/32' \
-    'PUBLIC_EDGE_CIDR=192.0.2.20/32'
+    'PUBLIC_EDGE_CIDR=192.0.2.20/32' \
+    "GDC_GATEWAY_METRICS_TARGETS='[{\"id\":\"A\",\"node\":\"validator-e\",\"port\":18087},{\"id\":\"B\",\"node\":\"validator-a\",\"port\":18088}]'"
 } >>"$tmp/inventory.env"
 
 GDC_RELEASE_PROFILE=v2026.08.06 \

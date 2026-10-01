@@ -1,27 +1,24 @@
 #!/bin/sh
-# Install an OS-specific inferenced CLI from Gonka releases
+# Install the pinned official inferenced CLI from Gonka releases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/paranjko/external-test-lab/refs/heads/main/install_inferenced.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/paranjko/external-test-lab/refs/heads/main/install_inferenced.sh | sh -s -- 0.2.15
+#   curl -fsSL https://gonka-dev.net/install_inferenced.sh | sh
 #
 # Optional:
 #   INSTALL_DIR=/usr/local/bin sh install_inferenced.sh
-#   INFERENCED_VERSION=0.2.15 sh install_inferenced.sh
+#   gh attestation verify install_inferenced.sh -R paranjko/external-test-lab && sh install_inferenced.sh
 
 set -eu
 
-RELEASES_URL='https://api.github.com/repos/gonka-ai/gonka/releases?per_page=100'
-RELEASES_PAGE=''
 INSTALL_DIR=${INSTALL_DIR:-"$HOME/.local/bin"}
 OS=$(uname -s)
 MACHINE=$(uname -m)
 WORKDIR=''
 ARCHIVE=''
 TEMP_BINARY=''
-REQUESTED_VERSION=${1:-${INFERENCED_VERSION:-}}
+PINNED_VERSION='0.2.15'
 
-[ "$#" -le 1 ] || fail 'usage: install_inferenced.sh [VERSION]'
+[ "$#" -eq 0 ] || fail 'usage: install_inferenced.sh'
 
 fail() {
   printf '%s\n' "error: $*" >&2
@@ -58,6 +55,15 @@ installed_version_matches() {
 command -v curl >/dev/null 2>&1 || fail 'curl is required'
 command -v unzip >/dev/null 2>&1 || fail 'unzip is required'
 command -v awk >/dev/null 2>&1 || fail 'awk is required'
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    fail 'sha256sum or shasum is required'
+  fi
+}
 
 case "$OS" in
   Linux)
@@ -84,36 +90,17 @@ case "$MACHINE" in
 esac
 
 WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/inferenced-install.XXXXXX")
-if [ -n "$REQUESTED_VERSION" ]; then
-  case "$REQUESTED_VERSION" in
-    release/v[0-9]*.[0-9]*.[0-9]*) RELEASE_TAG="$REQUESTED_VERSION" ;;
-    v[0-9]*.[0-9]*.[0-9]*) RELEASE_TAG="release/$REQUESTED_VERSION" ;;
-    [0-9]*.[0-9]*.[0-9]*) RELEASE_TAG="release/v$REQUESTED_VERSION" ;;
-    *) fail "invalid version: $REQUESTED_VERSION (expected 0.2.15, v0.2.15, or release/v0.2.15)" ;;
-  esac
-else
-  RELEASES_PAGE="$WORKDIR/releases.json"
-  printf '%s\n' 'Resolving the newest published inferenced release...'
-  curl -fsSL --retry 3 --retry-delay 1 -o "$RELEASES_PAGE" "$RELEASES_URL"
-
-  # GitHub returns releases newest-first. Keep prereleases with a normal
-  # release/vX.Y.Z tag: the current CLI release can be marked prerelease.
-  RELEASE_TAG=$(awk -F '"' '
-    /"tag_name"/ {
-      tag = $4
-      if (tag ~ /^release\/v[0-9]+\.[0-9]+\.[0-9]+$/) {
-        print tag
-        exit
-      }
-    }
-  ' "$RELEASES_PAGE")
-  [ -n "$RELEASE_TAG" ] || fail 'no published release/vX.Y.Z tag was found'
-fi
-
+RELEASE_TAG='release/v0.2.15'
+case "$PLATFORM-$ARCH" in
+  linux-amd64) EXPECTED_SHA256='4e506d74491bf2636591d4088f3eebd0ac4c33e739f83bc1cd56785482a9a7ca' ;;
+  linux-arm64) EXPECTED_SHA256='31dac13261d8d27ec674b42974b921c8e69959e8d41adc4d07242bc72026a650' ;;
+  darwin-amd64) EXPECTED_SHA256='049a9b9dd428f7d47b5bb883f0f4737e2a75f604be5b8e682c2a3f5128bd4787' ;;
+  darwin-arm64) EXPECTED_SHA256='119db2736fff15286874b987888d08d84d5991d928348f8efd415da959faa5e3' ;;
+esac
 ASSET="inferenced-$PLATFORM-$ARCH.zip"
 DOWNLOAD_URL="https://github.com/gonka-ai/gonka/releases/download/$RELEASE_TAG/$ASSET"
 ARCHIVE="$WORKDIR/$ASSET"
-RELEASE_VERSION=$(printf '%s\n' "$RELEASE_TAG" | awk -F/ '{ version = $NF; sub(/^v/, "", version); print version }')
+RELEASE_VERSION="$PINNED_VERSION"
 
 if installed_version_matches "$INSTALL_DIR/inferenced" "$RELEASE_VERSION"; then
   printf '%s\n' "inferenced $RELEASE_TAG is already installed at $INSTALL_DIR/inferenced"
@@ -123,6 +110,8 @@ fi
 printf '%s\n' "Downloading inferenced $RELEASE_TAG for $PLATFORM-$ARCH..."
 curl -fsSL --retry 3 --retry-delay 1 -o "$ARCHIVE" "$DOWNLOAD_URL" || \
   fail "the release does not provide $ASSET"
+actual_sha256=$(sha256_file "$ARCHIVE")
+[ "$actual_sha256" = "$EXPECTED_SHA256" ] || fail 'downloaded archive SHA-256 does not match the pinned release artifact'
 
 mkdir -p "$INSTALL_DIR"
 TEMP_BINARY="$INSTALL_DIR/.inferenced.$$"
