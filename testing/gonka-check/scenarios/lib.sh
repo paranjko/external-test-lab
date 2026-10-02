@@ -11,6 +11,12 @@ SSH=${SSH:-ssh}
 REQUESTS=${REQUESTS:-2}
 API=/chain-api/productscience/inference/inference
 FIRST=20
+GOV=/chain-api/cosmos/gov/v1
+GOV_HOME=${GOV_HOME:-$HOME/gov-187}
+GOV_KEY=${GOV_KEY:-gov-187}
+INFERENCED=${INFERENCED:-$GOV_HOME/bin/inferenced}
+CHAIN_ID=${CHAIN_ID:-gonka-devnet-community}
+VOTE_WAIT_S=${VOTE_WAIT_S:-180}
 
 # start_run NAME MODE: tools, gcheck and the run directory.
 start_run() {
@@ -218,4 +224,111 @@ record_and_verdict() {
   set -e
   cat "$run_dir/record.txt" "$run_dir/verdict.txt" >> "$run_dir/$run_name.log"
   return "$verdict"
+}
+
+# gov_params: the gov module account and the proposal deposit.
+gov_params() {
+  authority=$(chain /chain-api/cosmos/auth/v1beta1/module_accounts/gov \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"]["base_account"]["address"])') \
+    || die "gov module account is unreadable"
+  deposit=$(chain "$GOV/params/deposit" | python3 -c 'import json,sys; print(json.load(sys.stdin)["params"]["min_deposit"][0]["amount"])') \
+    || die "gov deposit is unreadable"
+}
+
+# gov_account N: the run account and its balance; status 1 when it cannot pay N deposits.
+gov_account() {
+  [ -x "$INFERENCED" ] || die "inferenced not found: $INFERENCED"
+  gov_address=$("$INFERENCED" keys show "$GOV_KEY" -a --keyring-backend test --keyring-dir "$GOV_HOME" </dev/null) \
+    || die "run account $GOV_KEY is not in $GOV_HOME"
+  balance=$(chain "/chain-api/cosmos/bank/v1beta1/balances/$gov_address" | python3 -c \
+    'import json,sys; print(sum(int(c["amount"]) for c in json.load(sys.stdin)["balances"] if c["denom"] == "ngonka"))') \
+    || die "balance of $gov_address is unreadable"
+  log "run account $gov_address: $balance ngonka; a proposal deposit is $deposit ngonka"
+  [ "$balance" -ge $(($1 * deposit)) ] || { log "the run account has $balance ngonka; $1 deposits need $(($1 * deposit))"; return 1; }
+}
+
+# proposal_file SIZE: MsgUpdateParams from the live parameters with only group_size set to SIZE.
+proposal_file() {
+  chain_params
+  python3 - "$run_dir/params.json" "$authority" "$1" "$run_dir/proposal-group-size-$1.json" "$deposit" <<'PY'
+import json, sys
+params = json.load(open(sys.argv[1]))["params"]
+params["devshard_escrow_params"]["group_size"] = int(sys.argv[3])
+json.dump({"messages": [{"@type": "/inference.inference.MsgUpdateParams", "authority": sys.argv[2], "params": params}],
+           "metadata": "", "deposit": sys.argv[5] + "ngonka", "expedited": False,
+           "title": "DevNet group_size %s for a group size change test" % sys.argv[3],
+           "summary": "Set devshard_escrow_params.group_size to %s; every other parameter keeps its live value." % sys.argv[3]},
+          open(sys.argv[4], "w"), indent=1)
+PY
+  log "proposal file: $run_dir/proposal-group-size-$1.json"
+}
+
+# gov_tx ARGS...: one transaction of the run account; its hash in tx_hash, or the reason logged and status 1.
+gov_tx() {
+  local out
+  out=$("$INFERENCED" "$@" --from "$GOV_KEY" --keyring-backend test --keyring-dir "$GOV_HOME" --chain-id "$CHAIN_ID" \
+    --node "$CHAIN/chain-rpc/" --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --broadcast-mode sync \
+    --output json --yes </dev/null 2>"$run_dir/gov-tx.err" | tail -n 1) \
+    || { log "$2 $3: $(tail -c 300 "$run_dir/gov-tx.err")"; return 1; }
+  tx_hash=$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); sys.exit(1) if r.get("code") else print(r["txhash"])' "$out") \
+    || { log "$2 $3 refused: $out"; return 1; }
+}
+
+# wait_tx HASH NAME: the committed transaction into NAME.json; status 1 unless it passed.
+wait_tx() {
+  for _ in $(seq 1 60); do
+    chain "/chain-api/cosmos/tx/v1beta1/txs/$1" > "$run_dir/$2.json" 2>/dev/null && break
+    sleep 2
+  done
+  python3 -c 'import json,sys; r=json.load(open(sys.argv[1]))["tx_response"]; sys.exit(int(r.get("code") or 0))' \
+    "$run_dir/$2.json" 2>/dev/null || { log "$2: transaction $1 failed or not found"; return 1; }
+}
+
+# proposal_final ID: wait until proposal ID leaves its voting period, at most VOTE_WAIT_S; prints the final status.
+proposal_final() {
+  local until=$((SECONDS + VOTE_WAIT_S)) status
+  while [ "$SECONDS" -lt "$until" ]; do
+    status=$(chain "$GOV/proposals/$1" | tee "$run_dir/proposal-$1.json" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["proposal"]["status"])') || status=""
+    case $status in
+      ""|PROPOSAL_STATUS_DEPOSIT_PERIOD|PROPOSAL_STATUS_VOTING_PERIOD) sleep 3 ;;
+      *) echo "$status"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# gov_change SIZE: the SIZE proposal from the run account, its votes come from the guardian key holders; status 0
+# only if it passed, group_size is SIZE and every other parameter is unchanged. proposal_id is set once it exists.
+gov_change() {
+  local status
+  proposal_id=""
+  proposal_file "$1"
+  cp "$run_dir/params.json" "$run_dir/params-before-$1.json"
+  gov_tx tx gov submit-proposal "$run_dir/proposal-group-size-$1.json" || return 1
+  wait_tx "$tx_hash" "submit-$1" || return 1
+  proposal_id=$(python3 -c '
+import json, sys
+for ev in json.load(open(sys.argv[1]))["tx_response"].get("events", []):
+    for a in ev.get("attributes", []):
+        if ev["type"] == "submit_proposal" and a["key"] == "proposal_id":
+            print(a["value"]); sys.exit(0)
+sys.exit(1)' "$run_dir/submit-$1.json") || { log "no proposal id in transaction $tx_hash"; return 1; }
+  chain "$GOV/proposals/$proposal_id" > "$run_dir/proposal-$proposal_id.json" || true
+  log "NOW: proposal $proposal_id (group_size $1) is in voting until $(jget "$run_dir/proposal-$proposal_id.json" proposal.voting_end_time)"
+  status=$(proposal_final "$proposal_id") || { log "proposal $proposal_id is still open after $VOTE_WAIT_S s"; return 1; }
+  [ "$status" = PROPOSAL_STATUS_PASSED ] || { log "proposal $proposal_id ended $status"; return 1; }
+  chain_params
+  [ "$group_size" = "$1" ] || { log "proposal $proposal_id passed, but group_size is $group_size"; return 1; }
+  python3 - "$run_dir/params-before-$1.json" "$run_dir/params.json" > "$run_dir/params-diff.txt" <<'PY' \
+    || { log "proposal $proposal_id changed more than group_size: $(cat "$run_dir/params-diff.txt")"; return 1; }
+import json, sys
+before, after = (json.load(open(f))["params"] for f in sys.argv[1:3])
+for p in (before, after):
+    p["devshard_escrow_params"].pop("group_size", None)
+changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+print(" ".join(changed))
+sys.exit(1 if changed else 0)
+PY
+  log "proposal $proposal_id passed: group_size $1, every other parameter unchanged"
 }
