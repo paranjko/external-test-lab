@@ -44,8 +44,8 @@ GENESIS_GUARDIAN_ENABLED="${GDC_GENESIS_GUARDIAN_ENABLED:-false}"
 GENESIS_GUARDIAN_ADDRESS=''
 GENESIS_GUARDIAN_ADDRESSES='[]'
 PASSWORD_FILE="$SECRETS/operator.keyring"; [[ -s "$PASSWORD_FILE" ]] || exit 1; PASSWORD="$(<"$PASSWORD_FILE")"
-HOME_DIR="${GDC_OPERATOR_HOME:-$STATE/operator-home}"
-mkdir -p "$HOME_DIR" "$OUTPUT" "$GDC_HOME/genesis"
+INFERENCED_HOME="${INFERENCED_HOME:-$STATE/operator-home}"
+mkdir -p "$INFERENCED_HOME" "$OUTPUT" "$GDC_HOME/genesis"
 LOG="$STATE/logs/genesis.log"
 mkdir -p "$(dirname "$LOG")"
 : >"$LOG"
@@ -55,7 +55,7 @@ run_logged() {
     return 1
   }
 }
-rm -rf "$HOME_DIR/config" "$HOME_DIR/data"
+rm -rf "$INFERENCED_HOME/config" "$INFERENCED_HOME/data"
 
 run_logged "$ROOT/scripts/inferenced.sh" init "$GENESIS_NODE" --chain-id "$CHAIN_ID" --default-denom "${BASE_DENOM:-ngonka}" --overwrite
 GENESIS_GUARDIAN_ADDRESS="$(printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" keys show "${GENESIS_NODE}-cold" --bech val -a --keyring-backend file)"
@@ -68,8 +68,8 @@ OVERLAY="$(mktemp)"; trap 'rm -f "$OVERLAY"' EXIT
 "$ROOT/01-identities-genesis/render-genesis-overrides.sh" \
   --gateway-account "$GATEWAY_ADDRESS" --genesis-guardian "$GENESIS_GUARDIAN_ADDRESS" --output "$OVERLAY" >/dev/null
 OVERLAY_SHA256="$(sha256sum "$OVERLAY" | awk '{print $1}')"
-"$ROOT/01-identities-genesis/deep-merge-json.sh" "$HOME_DIR/config/genesis.json" "$OVERLAY" "$HOME_DIR/config/genesis.merged.json"
-mv "$HOME_DIR/config/genesis.merged.json" "$HOME_DIR/config/genesis.json"
+"$ROOT/01-identities-genesis/deep-merge-json.sh" "$INFERENCED_HOME/config/genesis.json" "$OVERLAY" "$INFERENCED_HOME/config/genesis.merged.json"
+mv "$INFERENCED_HOME/config/genesis.merged.json" "$INFERENCED_HOME/config/genesis.json"
 
 # The faucet is a bounded public test-token reserve. It funds registered Hosts
 # automatically; it is not an approval authority and never holds Host keys.
@@ -84,18 +84,18 @@ printf '%s\n' "$PASSWORD" | run_logged "$ROOT/scripts/inferenced.sh" genesis gen
   --pubkey "$GENESIS_CONSENSUS" --ml-operational-address "$GENESIS_WARM" \
   --url "https://${GENESIS_PUBLIC_HOST}" --chain-id "$CHAIN_ID" --node-id "$GENESIS_ID"
 
-run_logged "$ROOT/scripts/inferenced.sh" genesis collect-gentxs --gentx-dir "$HOME_DIR/config/gentx"
-run_logged "$ROOT/scripts/inferenced.sh" genesis patch-genesis --genparticipant-dir "$HOME_DIR/config/genparticipant"
+run_logged "$ROOT/scripts/inferenced.sh" genesis collect-gentxs --gentx-dir "$INFERENCED_HOME/config/gentx"
+run_logged "$ROOT/scripts/inferenced.sh" genesis patch-genesis --genparticipant-dir "$INFERENCED_HOME/config/genparticipant"
 
 UPDATED_GENESIS="$(mktemp)"
 jq --arg chain "$CHAIN_ID" --arg time "$GENESIS_TIME" \
   '.chain_id = $chain | .genesis_time = $time' \
-  "$HOME_DIR/config/genesis.json" >"$UPDATED_GENESIS"
-mv "$UPDATED_GENESIS" "$HOME_DIR/config/genesis.json"
+  "$INFERENCED_HOME/config/genesis.json" >"$UPDATED_GENESIS"
+mv "$UPDATED_GENESIS" "$INFERENCED_HOME/config/genesis.json"
 run_logged "$ROOT/scripts/inferenced.sh" genesis validate-genesis
 
 printf '%s@%s:%s\n' "$GENESIS_ID" "$GENESIS_PUBLIC_HOST" "$GENESIS_P2P_PORT" >"$OUTPUT/genesis-seeds.txt"
-install -m 0444 "$HOME_DIR/config/genesis.json" "$OUTPUT/genesis.json"
+install -m 0444 "$INFERENCED_HOME/config/genesis.json" "$OUTPUT/genesis.json"
 sha256sum "$OUTPUT/genesis.json" | awk '{print $1"  genesis.json"}' > "$OUTPUT/genesis.sha256"
 
 jq -e --arg genesis "$GENESIS_ADDRESS" --arg gateway "$GATEWAY_ADDRESS" --arg faucet "$FAUCET_ADDRESS" --arg chain "$CHAIN_ID" \

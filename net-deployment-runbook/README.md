@@ -31,8 +31,13 @@ gdc host join [--preflight-deadline <duration>] [--public-host <dns-name>] <ssh-
 runtime confirmation and a first download of a missing pinned CLI. It accepts
 positive seconds or `s`, `m`, and `h` durations up to 24 hours. The default is
 `30m`. Existing verified CLI archives are reused by SHA-256. If preparation
-installs an accelerator runtime, reboot the named Host and rerun the same JOIN
-command; no reset is required.
+installs an accelerator runtime, reboot the named Host, preserve any required
+local keys and evidence, and remove `$GDC_HOME/<ssh-alias>` before a new JOIN;
+no remote reset is required.
+
+Fresh JOIN refuses an existing `$GDC_HOME/<ssh-alias>` path, including with
+`--plan`, `--restore` or mnemonic input. Only `--resume <RUN_ID>` accepts retained
+local state. GDC prints the exact path and does not remove it automatically.
 
 For JOIN, use a lowercase SSH alias beginning with a letter or digit and
 containing only lowercase letters, digits, `_`, or `-`.
@@ -46,6 +51,19 @@ gdc host join gdc-node2
 gdc host join gdc-node3
 gdc host join gdc-node4 gdc-node4-ml # node net only + gpu net
 ```
+
+## Operator CLI paths
+
+`INFERENCED_HOME` selects the CLI configuration and keyring directory, defaulting
+to `$STATE/operator-home` inside the current GDC data scope. Set it only when a
+separate signing keyring is required; the former operator-home override is no
+longer supported. This does not move GDC logs, secrets or run evidence.
+
+The wrapper resolves `INFERENCED_BIN` from the verified JOIN profile or release
+and builds `INFERENCED_CMD` as a Bash array. These two values are derived, not
+environment overrides. It sets `HOME` only for that CLI process to isolate the
+early configuration read, and passes `INFERENCED_HOME` through `--home`. The
+parent shell's `HOME` and the user's configuration remain unchanged.
 
 ## Stop and restart an installed node
 

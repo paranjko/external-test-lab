@@ -31,7 +31,7 @@ run_inferenced() {
       || { echo 'recovery inferenced CLI is unavailable' >&2; return 1; }
     "$GDC_RECOVERY_INFERENCED_BIN" --home "$check_home/keyring" "$@"
   else
-    GDC_OPERATOR_HOME="$check_home/keyring" "$ROOT/scripts/inferenced.sh" "$@"
+    INFERENCED_HOME="$check_home/keyring" "$ROOT/scripts/inferenced.sh" "$@"
   fi
 }
 
