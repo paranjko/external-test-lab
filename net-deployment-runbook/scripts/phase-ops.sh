@@ -4,7 +4,7 @@ source "$(dirname "$0")/lib.sh"
 load_project
 COMPONENT="${1:-}"
 EDGE_NODE="${2:-}"
-[[ "$COMPONENT" =~ ^(gateway|faucet|monitoring|site|explorer|edge|edge-node)$ ]] || die 'expected: ops gateway, ops faucet, ops monitoring, ops site, ops explorer, ops edge, or ops edge-node ssh-alias'
+[[ "$COMPONENT" =~ ^(gateway|faucet|monitoring|site|explorer|edge|bifrost|edge-node)$ ]] || die 'expected: ops gateway, ops faucet, ops monitoring, ops site, ops explorer, ops edge, ops bifrost, or ops edge-node ssh-alias'
 if [[ "$COMPONENT" == edge-node ]]; then
   topology_contains_node "$EDGE_NODE" || die "ops edge-node requires an alias from GDC_NODE_ALIASES: $EDGE_NODE"
 fi
@@ -47,13 +47,17 @@ GATEWAY_ENV="$OPS_RENDER/gateway.env"
 GATEWAY_OBSERVER_ENV="$OPS_RENDER/gateway-admission-observer.env"
 FAUCET_ENV="$OPS_RENDER/faucet.env"
 GATEWAY_RESERVE_ENV="$OPS_RENDER/gateway-reserve-signer.env"
+BIFROST_ENV="$OPS_RENDER/bifrost.env"
+BIFROST_BROKER_ENV="$OPS_RENDER/bifrost-broker.env"
+BIFROST_EDGE_ENV="$OPS_RENDER/bifrost-edge.env"
 REMOTE="/tmp/gdc-ops-$$"
 SITE_INDEX_RENDER=''
 SITE_ASSETS_RENDER=''
 FAUCET_OPTION=''
 FAUCET_SIGNER_HOME=''
+BIFROST_OPTION=''
 
-if [[ "$COMPONENT" == faucet || "$COMPONENT" == gateway ]]; then
+if [[ "$COMPONENT" == faucet || "$COMPONENT" == gateway || "$COMPONENT" == bifrost ]]; then
   reserve_signer_token="$SECRETS/gateway.reserve-signer-token"
   [[ ! -L "$reserve_signer_token" ]] \
     || die 'gateway reserve signer credential must not be a symbolic link'
@@ -70,6 +74,8 @@ fi
 # Only the authenticated Grafana service needs an OPS credential.  Genesis
 # calls this phase for the public faucet, which has no Grafana authority.
 if [[ "$COMPONENT" == monitoring ]]; then
+  [[ -n "${GDC_GATEWAY_METRICS_TARGETS:-}" ]] \
+    || die 'ops monitoring requires GDC_GATEWAY_METRICS_TARGETS for per-gateway metrics scraping'
   if [[ -z "${GDC_GRAFANA_ADMIN_PASSWORD:-}" && -r "$SECRETS/grafana.admin" ]]; then
     GDC_GRAFANA_ADMIN_PASSWORD="$(<"$SECRETS/grafana.admin")"
     export GDC_GRAFANA_ADMIN_PASSWORD
@@ -245,12 +251,12 @@ wait_gateway_admission_observer_ready() {
             | (.capacity.models // {}) as $models
             | any($models[]?; ((.current_weight // .total_weight // 0) | tonumber) > 0)
             and any(.devshards[]?;
-              ([.protocol_version?, .runtime.session_version?]
-                | map(select(. != null) | tostring | ltrimstr("v"))) as $versions
+              ([.protocol_version?, .runtime.session_version?, .runtime.protocol_version?]
+                | map(select(. != null and . != "") | tostring | ltrimstr("v"))) as $versions
               | .active == true
               and (($versions | length) > 0)
               and all($versions[]; . == $protocol_number)
-              and .runtime.session_version == $protocol
+              and any($versions[]; . == $protocol_number)
               and .runtime.phase == "active"
               and .runtime.chain_phase == "Inference"
               and .runtime.requests_blocked == false)
@@ -313,7 +319,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
     edge_destination=/srv/dai/edge
     edge_install_args=''
   fi
-  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; cd '$edge_destination' && docker compose up -d --force-recreate caddy"
+  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; cd '$edge_destination'; if grep -Eq '^GDC_GATEWAY_ROUTE_ID=[AB]$' .env; then docker compose up -d --force-recreate caddy gateway-route; else docker compose up -d --force-recreate caddy; fi"
   # A selected gateway can move after recovery. Reconcile only the retained
   # proxy listener with the current role; never regenerate the node role,
   # reset chain data, or replace a signer here.
@@ -326,16 +332,60 @@ if [[ "$COMPONENT" == edge-node ]]; then
   exit 0
 fi
 case "$COMPONENT" in
+  bifrost)
+    [[ -s "$GATEWAY_ENV" ]] || die 'stable Bifrost requires a rendered official gateway S; deploy gateway first'
+    gateway_port="$(awk -F= '$1 == "DEVSHARD_PORT" { print $2; exit }' "$GATEWAY_ENV")"
+    gateway_model="$(awk -F= '$1 == "DEVSHARD_MODEL" { print substr($0, index($0, "=") + 1); exit }' "$GATEWAY_ENV")"
+    [[ "$gateway_port" =~ ^[1-9][0-9]{0,4}$ && -n "$gateway_model" ]] || die 'rendered gateway S has no valid port/model'
+    bifrost_port="${GDC_BIFROST_PORT:-9467}"
+    [[ "$bifrost_port" =~ ^[1-9][0-9]{0,4}$ && "$bifrost_port" -le 65535 \
+      && "$bifrost_port" != 9465 && "$bifrost_port" != 9466 && "$bifrost_port" != "$gateway_port" ]] \
+      || die 'GDC_BIFROST_PORT must be a valid private port distinct from gateway, broker and edge ports'
+    write_env "$BIFROST_ENV" \
+      'APP_HOST=127.0.0.1' "APP_PORT=$bifrost_port" "BIFROST_PORT=$bifrost_port" \
+      "BIFROST_MANAGEMENT_URL=http://127.0.0.1:$bifrost_port" \
+      'BIFROST_ADMIN_USERNAME=gdc-bifrost-admin' \
+      "BIFROST_ADMIN_PASSWORD=$(<"$SECRETS/bifrost.admin-password")" \
+      "BIFROST_SETUP_TOKEN=$(<"$SECRETS/bifrost.setup-token")" \
+      'BIFROST_GONKA_PROVIDER=gonka-s' "BIFROST_GONKA_MODEL=$gateway_model" \
+      "BIFROST_GONKA_BASE_URL=http://127.0.0.1:$gateway_port" \
+      "BIFROST_GONKA_PROVIDER_KEY=$(cut -d, -f1 "$SECRETS/gateway.client-keys")" \
+      'BIFROST_BROKER_BINDING_FILE=/srv/dai/ops/bifrost/broker-binding.env' \
+      'BIFROST_DATA_VOLUME_NAME=gdc-ops_bifrost-data'
+    write_env "$BIFROST_BROKER_ENV" \
+      "BIFROST_MANAGEMENT_URL=http://127.0.0.1:$bifrost_port" 'BIFROST_ADMIN_USERNAME=gdc-bifrost-admin' \
+      "BIFROST_ADMIN_PASSWORD=$(<"$SECRETS/bifrost.admin-password")" \
+      "BIFROST_BROKER_TOKEN=$(<"$SECRETS/bifrost.broker-token")" \
+      "BIFROST_BROKER_ENCRYPTION_KEY=$(<"$SECRETS/bifrost.broker-encryption-key")" \
+      "BIFROST_EDGE_TOKEN=$(<"$SECRETS/bifrost.edge-token")" \
+      'BIFROST_BROKER_BINDING_FILE=/run/bifrost/broker-binding.env' 'BIFROST_BROKER_DB=/var/lib/bifrost-broker/keys.sqlite3' \
+      'BIFROST_BROKER_HOST=127.0.0.1' 'BIFROST_BROKER_PORT=9465'
+    write_env "$BIFROST_EDGE_ENV" \
+      'BIFROST_EDGE_HOST=127.0.0.1' 'BIFROST_EDGE_PORT=9466' \
+      'BIFROST_EDGE_BROKER_URL=http://127.0.0.1:9465' "BIFROST_EDGE_UPSTREAM_URL=http://127.0.0.1:$bifrost_port" \
+      "BIFROST_EDGE_TOKEN=$(<"$SECRETS/bifrost.edge-token")"
+    bifrost_expected_state_sha="${GDC_BIFROST_EXPECTED_STATE_SHA256:-}"
+    [[ -z "$bifrost_expected_state_sha" || "$bifrost_expected_state_sha" =~ ^[0-9a-f]{64}$ ]] \
+      || die 'Bifrost apply state fingerprint is invalid'
+    BIFROST_OPTION="--bifrost-env '$REMOTE/rendered/bifrost.env' --bifrost-broker-env '$REMOTE/rendered/bifrost-broker.env' --bifrost-edge-env '$REMOTE/rendered/bifrost-edge.env'"
+    START_COMMAND="docker compose up -d --force-recreate bifrost && for attempt in \$(seq 1 30); do curl -fsS http://127.0.0.1:$bifrost_port/health >/dev/null && break; sleep 1; done; curl -fsS http://127.0.0.1:$bifrost_port/health >/dev/null && sudo bash -c 'set -a; . /srv/dai/ops/bifrost.env; set +a; exec python3 /srv/dai/ops/bifrost-provision.py --apply --expected-sha256 $bifrost_expected_state_sha' && docker compose up -d --build --force-recreate bifrost-broker bifrost-edge"
+    CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
+    ENDPOINT='https://configured-gateway-public-host/{v1,anthropic,genai} (credential edge)'
+    ;;
   faucet)
     [[ -s "$ACCOUNTS/gdc-faucet-cold.json" ]] || die 'faucet account is absent; create a fresh Genesis first'
     [[ -s "$GENESIS/genesis.json" ]] || die 'faucet Genesis is absent; create a fresh Genesis first'
     faucet_genesis_sha256="$(genesis_sha256 "$GENESIS/genesis.json")"
     [[ "$faucet_genesis_sha256" =~ ^[0-9a-f]{64}$ ]] || die 'faucet Genesis SHA-256 is invalid'
     faucet_amount="${GDC_FAUCET_CLAIM_NGONKA:-100000000000}"
-    faucet_initial="${GDC_FAUCET_INITIAL_NGONKA:-5000000000000}"
+    faucet_initial="${GDC_FAUCET_INITIAL_NGONKA:-500000000000000}"
     [[ "$faucet_amount" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_CLAIM_NGONKA must be positive'
     [[ "$faucet_initial" =~ ^[1-9][0-9]*$ ]] || die 'GDC_FAUCET_INITIAL_NGONKA must be positive'
-    (( faucet_amount <= faucet_initial )) || die 'GDC_FAUCET_CLAIM_NGONKA must not exceed GDC_FAUCET_INITIAL_NGONKA'
+    faucet_initial_admins_json="${GDC_FAUCET_INITIAL_ADMINS_JSON:-[]}"
+    jq -e 'length as $count | type == "array" and all(.[]; type == "number" and floor == . and . > 0) and (unique | length == $count)' \
+      <<<"$faucet_initial_admins_json" >/dev/null \
+      || die 'GDC_FAUCET_INITIAL_ADMINS_JSON must be a unique JSON array of positive numeric Telegram IDs'
+    [[ -s "$SECRETS/telegram.faucet-token" ]] || die 'Telegram faucet token is missing; rerun secret preparation'
     step 'Reconcile the bounded DevNet faucet reserve'
     "$ROOT/scripts/ensure-account-balance.sh" "$ACCOUNTS/gdc-faucet-cold.json" "$INVENTORY" "$faucet_initial"
     FAUCET_SIGNER_HOME="$("$ROOT/scripts/prepare-faucet-signer.sh")"
@@ -346,6 +396,10 @@ case "$COMPONENT" in
       'FAUCET_KEY_NAME=gdc-faucet-cold' \
       "FAUCET_KEYRING_PASSWORD=$(<"$SECRETS/operator.keyring")" \
       "FAUCET_AMOUNT_NGONKA=$faucet_amount" \
+      'FAUCET_CHAIN_REST_URL=http://127.0.0.1:1317' \
+      "FAUCET_TELEGRAM_TOKEN=$(<"$SECRETS/telegram.faucet-token")" \
+      "FAUCET_TELEGRAM_MAX_CLAIMS_PER_USER=${GDC_FAUCET_TELEGRAM_MAX_CLAIMS_PER_USER:-1}" \
+      "FAUCET_INITIAL_ADMINS_JSON=$faucet_initial_admins_json" \
       "FAUCET_MAX_CLAIMS_PER_IP=${GDC_FAUCET_MAX_CLAIMS_PER_IP:-3}" \
       "FAUCET_WINDOW_SECONDS=${GDC_FAUCET_WINDOW_SECONDS:-86400}"
     gateway_recipient="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
@@ -757,7 +811,7 @@ case "$COMPONENT" in
     gateway_ingress_url='http://127.0.0.1:8000/health'
     START_COMMAND="docker compose up -d --force-recreate caddy; deadline=\$((SECONDS + $gateway_ingress_timeout)); while (( SECONDS < deadline )); do curl -fsS --connect-timeout 3 --max-time 10 '$gateway_ingress_url' >/dev/null && break; sleep 2; done; curl -fsS --connect-timeout 3 --max-time 10 '$gateway_ingress_url' >/dev/null; docker compose --env-file .env --env-file gateway.env up -d --force-recreate devshard-gateway; [[ -n \"\$(docker compose --env-file .env --env-file gateway.env ps --status running -q devshard-gateway)\" ]]"
     CADDY_START_COMMAND=true
-    POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-admission-observer.service >/dev/null && sudo systemctl restart gdc-gateway-admission-observer.service && sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
+    POST_START_COMMAND='sudo systemctl enable --now gdc-gateway-admission-observer.service >/dev/null && sudo systemctl restart gdc-gateway-admission-observer.service'
     ENDPOINT="$GDC_GATEWAY_PUBLIC_URL"
     ;;
   monitoring)
@@ -794,8 +848,9 @@ case "$COMPONENT" in
 esac
 
 step "Install $COMPONENT operations component on $GATEWAY_NODE"
-ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
+ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE/scripts'"
 rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
+scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/scripts/lib-lock.sh"
 scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"
 [[ -z "${SITE_ASSETS_RENDER:-}" ]] || rsync -a --delete "$SITE_ASSETS_RENDER/" "$GATEWAY_NODE:$REMOTE/04-ops/site/"
 rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"
@@ -821,7 +876,7 @@ if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
     sudo cp -a '$REMOTE/faucet-signer/.' /srv/dai/gonka-devnet-faucet/operator-home/
     sudo chmod -R go-rwx /srv/dai/gonka-devnet-faucet
   fi
-  sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION $FAUCET_OPTION
+  sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION $FAUCET_OPTION $BIFROST_OPTION
   rm -rf '$REMOTE'
   {
     cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND && $POST_START_COMMAND
@@ -864,6 +919,14 @@ if [[ "$COMPONENT" == faucet ]]; then
 fi
 
 if [[ "$COMPONENT" == gateway ]]; then
+  step 'Configure authenticated access and rotation before reconciliation'
+  # A fresh runtime starts with the image defaults.  In particular, an
+  # enabled rotation with no model entries cannot activate an escrow.  Apply
+  # the complete governed settings before starting the reconciler, otherwise
+  # waiting for its active escrow creates a startup deadlock.
+  ssh "$GATEWAY_NODE" "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"poc_max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"participant_throttle\":{\"request_burst\":$gateway_participant_request_burst,\"recovery_per_minute\":$gateway_participant_recovery_per_minute},\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":$gateway_rotation_enabled,\"settlement_enabled\":$gateway_rotation_settlement_enabled,\"pre_poc_blocks\":$gateway_pre_poc_blocks,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":$gateway_rotation_temp_count,\"target_count\":$gateway_rotation_target_count,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .poc_max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .max_input_tokens_in_flight == $gateway_max_input_tokens and .participant_throttle.request_burst == $gateway_participant_request_burst and .participant_throttle.recovery_per_minute == $gateway_participant_recovery_per_minute and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_input_tokens_in_flight == $gateway_max_input_tokens and .access_mode == \"api_key\")) and .escrow_rotation.enabled == $gateway_rotation_enabled and .escrow_rotation.settlement_enabled == $gateway_rotation_settlement_enabled and .escrow_rotation.pre_poc_blocks == $gateway_pre_poc_blocks and .escrow_rotation.models[0].temp_count == $gateway_rotation_temp_count and .escrow_rotation.models[0].target_count == $gateway_rotation_target_count and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
+  step 'Start the gateway escrow reconciler after settings are durable'
+  ssh "$GATEWAY_NODE" 'sudo systemctl enable --now gdc-gateway-escrow-reconciler.timer >/dev/null && sudo systemctl start gdc-gateway-escrow-reconciler.service'
   step 'Resolve the active committed escrow after reconciliation'
   # Rotation may retire the rendered escrow while this command is running.
   # Observe the gateway's current choice and chain state together; never POST
@@ -892,15 +955,6 @@ if [[ "$COMPONENT" == gateway ]]; then
   sed -i -E "s/^DEVSHARD_ESCROW_ID=.*/DEVSHARD_ESCROW_ID=$gateway_active_escrow/" "$GATEWAY_ENV"
   ssh -T "$GATEWAY_NODE" "sudo sed -i -E 's/^DEVSHARD_ESCROW_ID=.*/DEVSHARD_ESCROW_ID=$gateway_active_escrow/' /srv/dai/ops/gateway.env"
   printf 'READY gateway reconciler selected committed escrow %s\n' "$gateway_active_escrow"
-  step 'Configure authenticated access for the governed model'
-  # A new per-protocol gateway state volume intentionally starts without
-  # persisted model access settings.  The runtime defaults to admin_only,
-  # which would make an apparently ACTIVE public gateway reject every client
-  # key.  Keep the route authenticated rather than making inference public.
-  # These settings persist in gateway.db.  Apply the environment-derived
-  # default explicitly so an existing state volume cannot retain an unsafe
-  # value from a previous deployment.
-  ssh "$GATEWAY_NODE" "set -Eeuo pipefail; set -a; . /srv/dai/ops/gateway.env; set +a; curl -fsS -X POST http://127.0.0.1:18080/v1/admin/settings -H \"Authorization: Bearer \$DEVSHARD_ADMIN_API_KEY\" -H 'Content-Type: application/json' -d '{\"default_request_max_tokens\":$gateway_default_max_tokens,\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"poc_max_concurrent_requests_per_10000_weight\":$gateway_max_concurrent_per_weight,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"participant_throttle\":{\"request_burst\":$gateway_participant_request_burst,\"recovery_per_minute\":$gateway_participant_recovery_per_minute},\"model_limits\":[{\"model_id\":\"$MODEL_ID\",\"max_concurrent_requests\":$gateway_max_concurrent_requests,\"max_input_tokens_in_flight\":$gateway_max_input_tokens,\"access_mode\":\"api_key\"}],\"escrow_rotation\":{\"enabled\":$gateway_rotation_enabled,\"settlement_enabled\":$gateway_rotation_settlement_enabled,\"pre_poc_blocks\":$gateway_pre_poc_blocks,\"models\":[{\"model_id\":\"$MODEL_ID\",\"temp_count\":$gateway_rotation_temp_count,\"target_count\":$gateway_rotation_target_count,\"amount\":$gateway_rotation_escrow_amount,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\"}]}}' | jq -e '.default_request_max_tokens == $gateway_default_max_tokens and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .poc_max_concurrent_requests_per_10000_weight == $gateway_max_concurrent_per_weight and .max_input_tokens_in_flight == $gateway_max_input_tokens and .participant_throttle.request_burst == $gateway_participant_request_burst and .participant_throttle.recovery_per_minute == $gateway_participant_recovery_per_minute and (.model_limits[] | select(.model_id == \"$MODEL_ID\" and .max_concurrent_requests == $gateway_max_concurrent_requests and .max_input_tokens_in_flight == $gateway_max_input_tokens and .access_mode == \"api_key\")) and .escrow_rotation.enabled == $gateway_rotation_enabled and .escrow_rotation.settlement_enabled == $gateway_rotation_settlement_enabled and .escrow_rotation.pre_poc_blocks == $gateway_pre_poc_blocks and .escrow_rotation.models[0].temp_count == $gateway_rotation_temp_count and .escrow_rotation.models[0].target_count == $gateway_rotation_target_count and .escrow_rotation.models[0].amount == $gateway_rotation_escrow_amount' >/dev/null"
   step 'Verify gateway runtime, client authentication, and public route'
   gateway_ready=false
     gateway_ready_timeout="${GDC_GATEWAY_READY_TIMEOUT_SECONDS:-600}"

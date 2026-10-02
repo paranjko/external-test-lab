@@ -7,6 +7,25 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/profile.sh"
 source "$ROOT/scripts/lib.sh"
 
+# An explicit launcher --release must survive the OPS inventory load. Ordinary
+# inherited environment remains subordinate to the inventory, so a shell's
+# stale profile cannot silently change an OPS deployment.
+cp "$ROOT/.env.example" "$GDC_HOME/.env"
+printf 'GDC_RELEASE_PROFILE=v2026.08.06\n' >>"$GDC_HOME/.env"
+(
+  getent() { [[ "$1" == ahostsv4 ]] && printf '192.0.2.10 STREAM %s\n' "$2"; }
+  export GDC_RELEASE_PROFILE=v2026.07.23 GDC_RELEASE_PROFILE_CLI_OVERRIDE=true
+  load_project
+  [[ "$GDC_RELEASE_PROFILE" == v2026.07.23 ]]
+)
+(
+  getent() { [[ "$1" == ahostsv4 ]] && printf '192.0.2.10 STREAM %s\n' "$2"; }
+  export GDC_RELEASE_PROFILE=v2026.07.23
+  unset GDC_RELEASE_PROFILE_CLI_OVERRIDE
+  load_project
+  [[ "$GDC_RELEASE_PROFILE" == v2026.08.06 ]]
+)
+
 is_safe_integer 9223372036854775807
 if is_safe_integer 9223372036854775808; then
   echo 'safe-integer validation accepted INT64_MAX + 1' >&2

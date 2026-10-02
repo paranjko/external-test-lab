@@ -74,7 +74,9 @@ class Backend(BaseHTTPRequestHandler):
                     return
                 body = State.status_override
                 if body is None:
-                    body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}}, "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False, "session_version": State.session_version}}]}
+                    body = {"capacity": {"models": {"model": {"current_weight": 1 if State.ready else 0}}},
+                            "limiter": {"models": {"model": {"effective_max_concurrent_requests": 1 if State.ready else 0}}},
+                            "devshards": [{"id": "41", "active": State.ready, "chain_phase": State.chain_phase, "runtime": {"phase": "active", "requests_blocked": False, "session_version": State.session_version}}]}
             elif self.path == "/v1/models":
                 if self.headers.get("Authorization") != "Bearer test-client":
                     self.send_response(401)
@@ -194,6 +196,7 @@ def start_proxy(backend_port, max_queue=1, wait=0.35, max_deadline=None,
         "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("chain", "/chain-status")),
         "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL": "http://127.0.0.1:%s%s" % (backend_port, state_paths.get("params", "/params")),
         "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON": json.dumps({"v3": {"binary": "https://example.invalid/devshardd-v3.zip", "sha256": "a" * 64}}),
+        "GDC_GATEWAY_ADMISSION_SELECTED_VERSION": "v3",
         "GDC_GATEWAY_ADMISSION_MAX_QUEUE": str(max_queue),
         "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS": str(wait),
         "GDC_GATEWAY_ADMISSION_MAX_DEADLINE_SECONDS": str(max_deadline),
@@ -247,6 +250,10 @@ try:
     assert get(proxy_port, "/v1/models", authorization=False)[0] == 401
     missing = get(proxy_port, "/v1/unknown")
     assert missing[0] == 404 and json.loads(missing[1]) == {"error": {"code": "not_found"}}
+    assert post_details(proxy_port, authorization=False)[0] == 401
+    route_metrics = get(proxy_port, "/metrics")
+    assert route_metrics[0] == 200
+    assert b'gdc_gateway_route_requests_total{route="S",outcome="4xx"} 1' in route_metrics[1]
     process.terminate(); process.wait(2); processes.remove(process)
 
     # Admission follows the actual anchor, including both inclusive safe edges.
@@ -374,12 +381,12 @@ try:
 
     # A runtime stays locally active after governance revocation only briefly.
     # Admission independently rejects the missing or mismatched exact tuple.
-    State.ready = True; State.protocol_approved = False; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
+    State.ready = True; State.session_version = "v3"; State.protocol_approved = False; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_protocol_not_approved"}}', "pre_dispatch_rejected")
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_selected_protocol_not_approved"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "revoked protocol dispatched"
     State.protocol_approved = True; State.protocol_sha256 = "b" * 64
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_protocol_not_approved"}}', "pre_dispatch_rejected")
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_selected_protocol_not_approved"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "mismatched protocol artifact dispatched"
     State.protocol_sha256 = "a" * 64
     process.terminate(); process.wait(2); processes.remove(process)
@@ -388,7 +395,9 @@ try:
     # unprefixed value. Normalize that exact wire shape, but reject conflicting
     # legacy and current aliases before dispatch.
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
-    State.status_override = {"capacity": {"models": {"model": {"current_weight": 1}}}, "devshards": [{"id": "41", "active": True, "chain_phase": "Inference", "phase": "active", "requests_blocked": False, "protocol_version": "3"}]}
+    State.status_override = {"capacity": {"models": {"model": {"current_weight": 1}}},
+                             "limiter": {"models": {"model": {"effective_max_concurrent_requests": 1}}},
+                             "devshards": [{"id": "41", "active": True, "chain_phase": "Inference", "phase": "active", "requests_blocked": False, "protocol_version": "3"}]}
     process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
     assert post_details(proxy_port) == (429, b'{"error":"single outcome"}', "dispatched_once")
     assert State.dispatches == 1, "legacy v3 protocol_version was not admitted"
@@ -407,6 +416,7 @@ try:
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     State.status_override = {
         "capacity": {"models": {"model": {"current_weight": 1}}},
+        "limiter": {"models": {"model": {"effective_max_concurrent_requests": 1}}},
         "devshards": [{"id": "41", "active": True, "protocol_version": "v3",
                        "runtime": {"phase": "active", "chain_phase": "Inference",
                                    "requests_blocked": False, "session_version": "v3"}}],
@@ -418,22 +428,35 @@ try:
 
     State.dispatches = 0
     State.status_override["capacity"]["models"]["model"]["current_weight"] = 0
+    State.status_override["limiter"] = {"models": {"model": {"effective_max_concurrent_requests": 0}}}
     process, proxy_port = start_proxy(backend_port, wait=0.2); processes.append(process)
     assert json.loads(get(proxy_port, "/v1/admission-status")[1]) == {
         "state": "UNAVAILABLE", "available": False, "reason": "runtime_unavailable",
     }
     assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_runtime_unavailable"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "zero-capacity single-runtime status dispatched"
+
+    # A small but positive weight can still floor the official dynamic
+    # concurrency calculation to zero.  Admission must expose that condition.
+    State.status_override["capacity"]["models"]["model"]["current_weight"] = 296
+    State.status_override["limiter"]["models"]["model"]["effective_max_concurrent_requests"] = 0
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1]) == {
+        "state": "UNAVAILABLE", "available": False, "reason": "runtime_unavailable",
+    }
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_runtime_unavailable"}}', "pre_dispatch_rejected")
+    assert State.dispatches == 0, "zero-effective-limit status dispatched"
+
+    State.status_override["limiter"]["models"]["model"]["effective_max_concurrent_requests"] = 1
+    assert json.loads(get(proxy_port, "/v1/admission-status")[1])["available"] is True
     State.status_override = None
     process.terminate(); process.wait(2); processes.remove(process)
 
-    # Governance eligibility does not imply gateway support. An exact-approved
-    # v4 Host runtime remains unroutable when the selected gateway profile
-    # configures only v3.
+    # Governance eligibility does not imply selection. A v4 governance tuple
+    # cannot satisfy the selected v3 release contract.
     State.session_version = "v4"; State.protocol_approved = True
     State.ready = True; State.epochs = ["10"]; State.epoch_index = 0; State.height = 50; State.dispatches = 0
     process, proxy_port = start_proxy(backend_port, wait=0.3); processes.append(process)
-    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_protocol_not_configured"}}', "pre_dispatch_rejected")
+    assert post_details(proxy_port) == (503, b'{"error": {"code": "admission_selected_protocol_not_approved"}}', "pre_dispatch_rejected")
     assert State.dispatches == 0, "unsupported exact-approved protocol dispatched"
     State.session_version = "v3"
     process.terminate(); process.wait(2); processes.remove(process)

@@ -36,6 +36,27 @@ grafana_public_dashboard_token="${GDC_GRAFANA_PUBLIC_DASHBOARD_TOKEN:-321a0d961e
 mkdir -p "$OUTPUT"
 
 gateway_public_host="$(node_public_host "$GATEWAY_NODE")"
+gateway_metrics_targets="${GDC_GATEWAY_METRICS_TARGETS:-}"
+[[ -n "$gateway_metrics_targets" ]] || {
+  echo 'GDC_GATEWAY_METRICS_TARGETS is required: declare each gateway id, node, and loopback metrics port' >&2
+  exit 2
+}
+jq -e '
+  type == "array" and length > 0
+  and (length as $count
+  | all(.[];
+    (type == "object") and (keys | sort) == ["id", "node", "port"]
+    and (.id | type == "string" and test("^[A-Z][A-Z0-9_-]*$"))
+    and (.node | type == "string" and test("^[A-Za-z0-9._-]+$"))
+    and (.port | type == "number" and floor == . and . >= 1 and . <= 65535))
+  and ([.[].id] | unique | length == $count)
+  and ([.[].node] | unique | length == $count))
+' <<<"$gateway_metrics_targets" >/dev/null \
+  || { echo 'GDC_GATEWAY_METRICS_TARGETS must be a non-empty unique id/node/port JSON array' >&2; exit 2; }
+while IFS= read -r gateway_metrics_node; do
+  topology_contains_node "$gateway_metrics_node" \
+    || { echo "GDC_GATEWAY_METRICS_TARGETS names a node outside the inventory: $gateway_metrics_node" >&2; exit 2; }
+done < <(jq -r '.[].node' <<<"$gateway_metrics_targets")
 write_env "$OUTPUT/.env" \
   "SITE_HOST=$SITE_HOST" "API_HOST=$API_HOST" "GRAFANA_HOST=$GRAFANA_HOST" "ACME_EMAIL=${ACME_EMAIL:-}" \
   "TELEGRAM_BOT_URL=$telegram_bot_url" "GATEWAY_PUBLIC_HOST=$gateway_public_host" "PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR" \
@@ -268,10 +289,32 @@ YAML
   cat <<YAML
   - job_name: gateway
     scheme: https
-    metrics_path: /metrics
+    metrics_path: /ops-gateway-metrics
     static_configs:
-      - targets: ['$API_HOST:443']
-        labels: {host: '$GATEWAY_NODE'}
+YAML
+while IFS=$'\t' read -r gateway_id gateway_node; do
+  printf "      - targets: ['%s:443']\n        labels: {gateway: '%s', host: '%s'}\n" \
+    "$(node_public_host "$gateway_node")" "$gateway_id" "$gateway_node"
+done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$gateway_metrics_targets")
+cat <<YAML
+  - job_name: gateway-admission-route
+    scheme: https
+    metrics_path: /ops-gateway-admission-metrics
+    static_configs:
+      - targets: ['$(node_public_host "$PUBLIC_EDGE_NODE"):443']
+        labels: {route: 'S', host: '$PUBLIC_EDGE_NODE'}
+YAML
+cat <<YAML
+  - job_name: gateway-route
+    scheme: https
+    metrics_path: /ops-gateway-route-metrics
+    static_configs:
+YAML
+while IFS=$'\t' read -r gateway_id gateway_node; do
+  printf "      - targets: ['%s:443']\n        labels: {route: '%s', host: '%s'}\n" \
+    "$(node_public_host "$gateway_node")" "$gateway_id" "$gateway_node"
+done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$gateway_metrics_targets")
+cat <<YAML
   - job_name: gateway-readiness
     metrics_path: /status/gateway-health.prom
     static_configs:

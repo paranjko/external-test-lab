@@ -51,7 +51,9 @@ DISPATCH_PERMIT = threading.BoundedSemaphore(1)
 STATUS_OBSERVATION_PERMIT = threading.BoundedSemaphore(1)
 DISPATCH_LOCK = threading.Lock()
 AUDIT_LOCK = threading.Lock()
+ROUTE_COUNTERS_LOCK = threading.Lock()
 DISPATCHES_BY_HEIGHT = {}
+ROUTE_COUNTERS = {}
 COMPLETION_PATH = re.compile(r"^/(?:v1/chat/completions|devshard/[0-9]+/v1/chat/completions)$")
 READ_ONLY_PATHS = {"/v1/models", "/v1/status"}
 ADMISSION_STATUS_PATH = "/v1/admission-status"
@@ -62,6 +64,22 @@ UPSTREAM_CONTENT_TYPES = {
     "text/plain": "text/plain",
 }
 PROTOCOL_CONTRACTS = {}
+SELECTED_GATEWAY_VERSION = env("GDC_GATEWAY_ADMISSION_SELECTED_VERSION", "")
+
+
+def count_route(status):
+    """Count only stable public completion outcomes, never native gateway work."""
+    outcome = "%dxx" % (status // 100)
+    with ROUTE_COUNTERS_LOCK:
+        ROUTE_COUNTERS[outcome] = ROUTE_COUNTERS.get(outcome, 0) + 1
+
+
+def route_metrics():
+    with ROUTE_COUNTERS_LOCK:
+        rows = ["# TYPE gdc_gateway_route_requests_total counter"]
+        rows.extend('gdc_gateway_route_requests_total{route="S",outcome="%s"} %s' %
+                    (outcome, ROUTE_COUNTERS[outcome]) for outcome in sorted(ROUTE_COUNTERS))
+    return ("\n".join(rows) + "\n").encode()
 
 
 def load_protocol_contracts(value):
@@ -266,17 +284,19 @@ def safe_generation(deadline=None):
         return None, "capacity_invalid"
     if any(not isinstance(item, dict) for item in models.values()):
         return None, "capacity_invalid"
-    weights = [capacity.get("total_weight"), capacity.get("effective_weight")]
-    weights.extend((item or {}).get("current_weight", (item or {}).get("total_weight"))
-                   for item in models.values())
-    try:
-        positive = any(float(weight) > 0 for weight in weights if weight is not None)
-    except (TypeError, ValueError):
-        return None, "capacity_invalid"
     devshards = status.get("devshards")
     if not isinstance(devshards, list):
         return None, "state_invalid"
     participants = []
+    runtime_versions = set()
+    contract = PROTOCOL_CONTRACTS.get(SELECTED_GATEWAY_VERSION)
+    if contract is None:
+        return None, "selected_protocol_not_configured"
+    named = [entry for entry in approved_versions
+             if isinstance(entry, dict) and entry.get("name") == SELECTED_GATEWAY_VERSION]
+    if (len(named) != 1 or named[0].get("binary") != contract["binary"]
+            or named[0].get("sha256") != contract["sha256"]):
+        return None, "selected_protocol_not_approved"
     for item in devshards:
         if not isinstance(item, dict):
             return None, "state_invalid"
@@ -292,17 +312,29 @@ def safe_generation(deadline=None):
             version = runtime_protocol_version(item, runtime)
             if version is None:
                 return None, "protocol_version_unavailable"
-            contract = PROTOCOL_CONTRACTS.get(version)
-            if contract is None:
-                return None, "protocol_not_configured"
-            named = [entry for entry in approved_versions
-                     if isinstance(entry, dict) and entry.get("name") == version]
-            if (len(named) != 1 or named[0].get("binary") != contract["binary"]
-                    or named[0].get("sha256") != contract["sha256"]):
-                return None, "protocol_not_approved"
+            # The official gateway's internal runtime protocol is not the
+            # release selector: pinned DevShard v3 currently reports `1`.
+            # The selected release is verified against governance above; all
+            # active runtimes must still report one unambiguous internal value.
+            runtime_versions.add(version)
             if item.get("id") is not None:
                 participants.append("%s:%s:%s" % (item["id"], version, chain_phase))
-    if not positive or not participants:
+    limiter = status.get("limiter")
+    if not isinstance(limiter, dict) or not isinstance(limiter.get("models"), dict):
+        return None, "limiter_unavailable"
+    try:
+        # The official gateway floors capacity-derived concurrency.  A positive
+        # weight alone can therefore enforce a zero request limit; do not
+        # publish READY unless a routable model has an actual slot.
+        positive = any(
+            float(model.get("current_weight", model.get("total_weight", 0))) > 0
+            and model.get("routable") is not False
+            and float(limiter["models"].get(name, {}).get("effective_max_concurrent_requests", 0)) > 0
+            for name, model in models.items()
+        )
+    except (TypeError, ValueError):
+        return None, "capacity_invalid"
+    if not positive or not participants or len(runtime_versions) != 1:
         return None, "runtime_unavailable"
     # Height proves this observation is fresh and fences the next transition,
     # but it is not itself a phase generation.  Including it would reject every
@@ -377,6 +409,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+        count_route(status)
 
     def deadline(self):
         client_deadline = self.headers.get("X-Request-Deadline-Ms")
@@ -438,6 +471,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Serve the local admission contract or proxy public gateway discovery."""
         path = self.path.split("?", 1)[0]
+        if path == "/metrics":
+            payload = route_metrics()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if path == ADMISSION_STATUS_PATH:
             # This is a read-only preflight, not a dispatch permit: one fresh
             # observation answers whether a user request should be attempted.
@@ -652,6 +693,7 @@ class Handler(BaseHTTPRequestHandler):
                 response.getheader("Content-Type", "")))
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
+            count_route(response.status)
             try:
                 self.wfile.write(payload)
             except (BrokenPipeError, ConnectionResetError):
@@ -670,6 +712,8 @@ if __name__ == "__main__":
     try:
         PROTOCOL_CONTRACTS = load_protocol_contracts(
             env("GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON", ""))
+        if SELECTED_GATEWAY_VERSION not in PROTOCOL_CONTRACTS:
+            raise ValueError("selected gateway protocol is not configured")
     except ValueError as error:
         raise SystemExit(str(error)) from error
     if not STATUS_BEARER_TOKEN:

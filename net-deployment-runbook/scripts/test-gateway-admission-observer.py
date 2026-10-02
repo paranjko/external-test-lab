@@ -52,6 +52,15 @@ class Gateway(BaseHTTPRequestHandler):
                 },
                 "private_capacity": "drop-me",
             },
+            "limiter": {
+                "models": {
+                    "Qwen/Qwen3-0.6B": {
+                        "effective_max_concurrent_requests": 2,
+                        "private_limit": "drop-me",
+                    }
+                },
+                "private_limiter": "drop-me",
+            },
             "devshards": [{
                 "id": "41",
                 "active": True,
@@ -131,6 +140,13 @@ try:
                 }
             },
             "total_weight": 23,
+        },
+        "limiter": {
+            "models": {
+                "Qwen/Qwen3-0.6B": {
+                    "effective_max_concurrent_requests": 2,
+                }
+            },
         },
         "devshards": [{
             "active": True,
