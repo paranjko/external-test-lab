@@ -1,0 +1,608 @@
+{
+ "boundary_escrows": [
+  {
+   "app_hash": "09794159932247755fcabb1875590c8ddccd75751f5c2352ddc624d2ca4b5a43",
+   "epoch_index": "408",
+   "id": "99650",
+   "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "slots": [
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2"
+   ]
+  }
+ ],
+ "epoch_info": {
+  "block_height": "6304026",
+  "latest_epoch": {
+   "index": "408",
+   "poc_start_block_height": "6290883"
+  },
+  "params": {
+   "epoch_params": {
+    "epoch_length": "15391"
+   }
+  }
+ },
+ "escrows": [
+  {
+   "app_hash": "1b53b4a3ab7a2f2635afa3181c7a4c7ece1f743e4503510a98280635a2de8de5",
+   "epoch_index": "408",
+   "id": "99448",
+   "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "slots": [
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5"
+   ]
+  },
+  {
+   "app_hash": "1b53b4a3ab7a2f2635afa3181c7a4c7ece1f743e4503510a98280635a2de8de5",
+   "epoch_index": "408",
+   "id": "99449",
+   "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "slots": [
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2"
+   ]
+  },
+  {
+   "app_hash": "1b53b4a3ab7a2f2635afa3181c7a4c7ece1f743e4503510a98280635a2de8de5",
+   "epoch_index": "408",
+   "id": "99450",
+   "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "slots": [
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr"
+   ]
+  },
+  {
+   "app_hash": "1b53b4a3ab7a2f2635afa3181c7a4c7ece1f743e4503510a98280635a2de8de5",
+   "epoch_index": "408",
+   "id": "99451",
+   "model_id": "MiniMaxAI/MiniMax-M2.7",
+   "slots": [
+    "gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk"
+   ]
+  },
+  {
+   "app_hash": "1b53b4a3ab7a2f2635afa3181c7a4c7ece1f743e4503510a98280635a2de8de5",
+   "epoch_index": "408",
+   "id": "99452",
+   "model_id": "zai-org/GLM-5.3-Flash",
+   "slots": [
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr"
+   ]
+  },
+  {
+   "app_hash": "95d7b06e3e40a11e84bb9ae09547d241398d63ea6b0904cc9672d4e61c904a6f",
+   "epoch_index": "408",
+   "id": "99453",
+   "model_id": "MiniMaxAI/MiniMax-M2.7",
+   "slots": [
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1346p2h8dn4kp98c5e93k5q64g0h7vxjxnd55fh",
+    "gonka1w63xj0j6wxn5w4yuquuckqwmmdyf930pwdy5wh",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq"
+   ]
+  },
+  {
+   "app_hash": "95d7b06e3e40a11e84bb9ae09547d241398d63ea6b0904cc9672d4e61c904a6f",
+   "epoch_index": "408",
+   "id": "99454",
+   "model_id": "zai-org/GLM-5.3-Flash",
+   "slots": [
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk"
+   ]
+  },
+  {
+   "app_hash": "95d7b06e3e40a11e84bb9ae09547d241398d63ea6b0904cc9672d4e61c904a6f",
+   "epoch_index": "408",
+   "id": "99455",
+   "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "slots": [
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2"
+   ]
+  },
+  {
+   "app_hash": "95d7b06e3e40a11e84bb9ae09547d241398d63ea6b0904cc9672d4e61c904a6f",
+   "epoch_index": "408",
+   "id": "99456",
+   "model_id": "MiniMaxAI/MiniMax-M2.7",
+   "slots": [
+    "gonka1ym3np7guxart483yfdxnlztuazx22cjt0e4a2p",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum",
+    "gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939"
+   ]
+  },
+  {
+   "app_hash": "95d7b06e3e40a11e84bb9ae09547d241398d63ea6b0904cc9672d4e61c904a6f",
+   "epoch_index": "408",
+   "id": "99457",
+   "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "slots": [
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2"
+   ]
+  },
+  {
+   "app_hash": "95d7b06e3e40a11e84bb9ae09547d241398d63ea6b0904cc9672d4e61c904a6f",
+   "epoch_index": "408",
+   "id": "99458",
+   "model_id": "MiniMaxAI/MiniMax-M2.7",
+   "slots": [
+    "gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1pd5vx98y59w5v48f6j0gkqyvs5s6z9su7mytch",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5"
+   ]
+  },
+  {
+   "app_hash": "96eb3b0a11252e031641ffcbd44668aab95583db696727a3728d5ebc50ab0a61",
+   "epoch_index": "408",
+   "id": "99459",
+   "model_id": "zai-org/GLM-5.3-Flash",
+   "slots": [
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr"
+   ]
+  }
+ ],
+ "excluded": [
+  {
+   "address": "gonka1pd5vx98y59w5v48f6j0gkqyvs5s6z9su7mytch",
+   "epoch_index": "408",
+   "exclusion_block_height": "6294316",
+   "reason": "failed_confirmation_poc"
+  },
+  {
+   "address": "gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k",
+   "epoch_index": "408",
+   "exclusion_block_height": "6294316",
+   "reason": "failed_confirmation_poc"
+  }
+ ],
+ "group_size": 16,
+ "models": {
+  "MiniMaxAI/MiniMax-M2.7": {
+   "epoch_index": "408",
+   "model_id": "MiniMaxAI/MiniMax-M2.7",
+   "sub_group_models": [],
+   "total_weight": "1525472",
+   "validation_weights": [
+    {
+     "member_address": "gonka1gyk0aahvr3qeju4zx0nplfreej6cy4jjk8svc5",
+     "weight": "2959"
+    },
+    {
+     "member_address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
+     "weight": "5862"
+    },
+    {
+     "member_address": "gonka1qwfrtz9c7kcrfkrrlne2pkcye74mj6ce33xdkl",
+     "weight": "10051"
+    },
+    {
+     "member_address": "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+     "weight": "407839"
+    },
+    {
+     "member_address": "gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq",
+     "weight": "32769"
+    },
+    {
+     "member_address": "gonka1vjz8csqsr0ph0lv0yylc4auypnzrld7y6l2feu",
+     "weight": "6450"
+    },
+    {
+     "member_address": "gonka1ym3np7guxart483yfdxnlztuazx22cjt0e4a2p",
+     "weight": "11480"
+    },
+    {
+     "member_address": "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+     "weight": "112108"
+    },
+    {
+     "member_address": "gonka1346p2h8dn4kp98c5e93k5q64g0h7vxjxnd55fh",
+     "weight": "5427"
+    },
+    {
+     "member_address": "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+     "weight": "141656"
+    },
+    {
+     "member_address": "gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939",
+     "weight": "76040"
+    },
+    {
+     "member_address": "gonka1al62tfyd6xud4hr25zxwcx78rapwhx5gjz0qxy",
+     "weight": "1262"
+    },
+    {
+     "member_address": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+     "weight": "4738"
+    },
+    {
+     "member_address": "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+     "weight": "420419"
+    },
+    {
+     "member_address": "gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum",
+     "weight": "156790"
+    },
+    {
+     "member_address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+     "weight": "5341"
+    },
+    {
+     "member_address": "gonka1pd5vx98y59w5v48f6j0gkqyvs5s6z9su7mytch",
+     "weight": "41120"
+    },
+    {
+     "member_address": "gonka1rqm2u7lxzn7r68y0drcyhag6xnckpsnfmgd53t",
+     "weight": "23892"
+    },
+    {
+     "member_address": "gonka1tlvg4kjx7ljd5thgd5fkgh39q6lu8cmxupktgg",
+     "weight": "9792"
+    },
+    {
+     "member_address": "gonka1w63xj0j6wxn5w4yuquuckqwmmdyf930pwdy5wh",
+     "weight": "44739"
+    },
+    {
+     "member_address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+     "weight": "4738"
+    }
+   ]
+  },
+  "deepseek-ai/DeepSeek-V4-Flash-0731": {
+   "epoch_index": "408",
+   "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "sub_group_models": [],
+   "total_weight": "101060",
+   "validation_weights": [
+    {
+     "member_address": "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+     "weight": "41688"
+    },
+    {
+     "member_address": "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+     "weight": "11591"
+    },
+    {
+     "member_address": "gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k",
+     "weight": "10452"
+    },
+    {
+     "member_address": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+     "weight": "5915"
+    },
+    {
+     "member_address": "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+     "weight": "3474"
+    },
+    {
+     "member_address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+     "weight": "24380"
+    },
+    {
+     "member_address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+     "weight": "3560"
+    }
+   ]
+  },
+  "zai-org/GLM-5.3-Flash": {
+   "epoch_index": "408",
+   "model_id": "zai-org/GLM-5.3-Flash",
+   "sub_group_models": [],
+   "total_weight": "29949",
+   "validation_weights": [
+    {
+     "member_address": "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+     "weight": "5398"
+    },
+    {
+     "member_address": "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+     "weight": "7968"
+    },
+    {
+     "member_address": "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+     "weight": "11788"
+    },
+    {
+     "member_address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+     "weight": "4795"
+    }
+   ]
+  }
+ },
+ "root": {
+  "epoch_index": "408",
+  "model_id": "",
+  "sub_group_models": [
+   "MiniMaxAI/MiniMax-M2.7",
+   "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "zai-org/GLM-5.3-Flash"
+  ],
+  "total_weight": "504716",
+  "validation_weights": [
+   {
+    "member_address": "gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2",
+    "weight": "13601"
+   },
+   {
+    "member_address": "gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx",
+    "weight": "2851"
+   },
+   {
+    "member_address": "gonka1gyk0aahvr3qeju4zx0nplfreej6cy4jjk8svc5",
+    "weight": "894"
+   },
+   {
+    "member_address": "gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m",
+    "weight": "1772"
+   },
+   {
+    "member_address": "gonka1qwfrtz9c7kcrfkrrlne2pkcye74mj6ce33xdkl",
+    "weight": "3039"
+   },
+   {
+    "member_address": "gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv",
+    "weight": "123330"
+   },
+   {
+    "member_address": "gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq",
+    "weight": "9909"
+   },
+   {
+    "member_address": "gonka1vjz8csqsr0ph0lv0yylc4auypnzrld7y6l2feu",
+    "weight": "1950"
+   },
+   {
+    "member_address": "gonka1ym3np7guxart483yfdxnlztuazx22cjt0e4a2p",
+    "weight": "3471"
+   },
+   {
+    "member_address": "gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5",
+    "weight": "33901"
+   },
+   {
+    "member_address": "gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k",
+    "weight": "2571"
+   },
+   {
+    "member_address": "gonka1346p2h8dn4kp98c5e93k5q64g0h7vxjxnd55fh",
+    "weight": "1641"
+   },
+   {
+    "member_address": "gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk",
+    "weight": "47776"
+   },
+   {
+    "member_address": "gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939",
+    "weight": "22994"
+   },
+   {
+    "member_address": "gonka1al62tfyd6xud4hr25zxwcx78rapwhx5gjz0qxy",
+    "weight": "381"
+   },
+   {
+    "member_address": "gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp",
+    "weight": "2887"
+   },
+   {
+    "member_address": "gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr",
+    "weight": "135296"
+   },
+   {
+    "member_address": "gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum",
+    "weight": "47413"
+   },
+   {
+    "member_address": "gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5",
+    "weight": "10584"
+   },
+   {
+    "member_address": "gonka1pd5vx98y59w5v48f6j0gkqyvs5s6z9su7mytch",
+    "weight": "12434"
+   },
+   {
+    "member_address": "gonka1rqm2u7lxzn7r68y0drcyhag6xnckpsnfmgd53t",
+    "weight": "7224"
+   },
+   {
+    "member_address": "gonka1tlvg4kjx7ljd5thgd5fkgh39q6lu8cmxupktgg",
+    "weight": "2961"
+   },
+   {
+    "member_address": "gonka1w63xj0j6wxn5w4yuquuckqwmmdyf930pwdy5wh",
+    "weight": "13529"
+   },
+   {
+    "member_address": "gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le",
+    "weight": "2307"
+   }
+  ]
+ },
+ "source": "mainnet reads of 2026-09-29, epoch 408, trimmed to the fields gcheck escrow uses; boundary_escrows: a slot draw equal to a cumulative weight"
+}
