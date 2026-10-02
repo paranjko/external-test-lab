@@ -43,6 +43,7 @@ MEMINFO = "/proc/meminfo"
 NETEM_IMAGE = PREFIX + "-netem:alpine3.23"
 NETEM_DOCKERFILE = "FROM alpine:3.23\nRUN apk add --no-cache iproute2\n"
 NORMAL_STOPS = ("routing stopped at the nonce cap", "one request")
+LOG_OPTS = ["--log-driver", "json-file", "--log-opt", "max-size=20m", "--log-opt", "max-file=2"]
 
 
 class StandError(Exception):
@@ -155,14 +156,14 @@ def up_commands(names, commit, config_dir, data_dir, hosts):
     """docker argv lists that start the stand, in order."""
     uid = "%d:%d" % (os.getuid(), os.getgid())
     out = [["network", "create", names.network],
-           ["run", "-d", "--name", names.chain, "--network", names.network,
-            "-v", "%s:/app/seed.yaml:ro" % os.path.join(config_dir, "seed.yaml"),
+           ["run", "-d", "--name", names.chain, "--network", names.network] + LOG_OPTS +
+           ["-v", "%s:/app/seed.yaml:ro" % os.path.join(config_dir, "seed.yaml"),
             "-e", "MOCK_CHAIN_CONFIG=/app/seed.yaml", image("chain", commit)]]
     for j in range(hosts):
-        out.append(["run", "-d", "--name", names.host(j), "--network", names.network,
-                    "--env-file", os.path.join(config_dir, "host-%d.env" % j), image("host", commit)])
-    out.append(["run", "-d", "--name", names.gateway, "--network", names.network, "--user", uid,
-                "--env-file", os.path.join(config_dir, "gateway.env"), "-v", "%s:/data" % data_dir,
+        out.append(["run", "-d", "--name", names.host(j), "--network", names.network] + LOG_OPTS +
+                   ["--env-file", os.path.join(config_dir, "host-%d.env" % j), image("host", commit)])
+    out.append(["run", "-d", "--name", names.gateway, "--network", names.network, "--user", uid] + LOG_OPTS +
+               ["--env-file", os.path.join(config_dir, "gateway.env"), "-v", "%s:/data" % data_dir,
                 "-p", "127.0.0.1::8080", image("gateway", commit)])
     return out
 
@@ -277,6 +278,14 @@ def exited(names, hosts):
             out.append("%s %s %s%s" % (parts[0].lstrip("/"), parts[1], parts[2],
                                        " (out of memory)" if parts[3] == "true" else ""))
     return out
+
+
+def docker_root():
+    """Where Docker keeps container logs, or None."""
+    try:
+        return docker(["info", "--format", "{{.DockerRootDir}}"], check=False, timeout=30).stdout.strip() or None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def memory_left():

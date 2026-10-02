@@ -1,5 +1,6 @@
 """gcheck gateway-load without Go, Docker or the network: a local git repo stands in for gonka-ai/gonka."""
 
+import collections
 import contextlib
 import io
 import json
@@ -112,8 +113,8 @@ class Runner(unittest.TestCase):
             argv, cwd, env = stress.command("docker", "/src/gonka", tmp, {"GCHECK_HOSTS": "64"}, "run-g64", 4)
         self.assertIsNone(cwd)
         self.assertIsNone(env)
-        self.assertEqual(["docker", "run", "--rm", "--name", "run-g64"], argv[:5])
-        self.assertEqual(["--memory", "4096m", "--memory-swap", "4096m"], argv[7:11])
+        self.assertEqual(["docker", "run", "--rm", "--name", "run-g64", "--log-driver", "none"], argv[:7])
+        self.assertEqual(["--memory", "4096m", "--memory-swap", "4096m"], argv[9:13])
         self.assertIn("/src/gonka:/src", argv)
         self.assertEqual("/src/devshard/user", argv[argv.index("-w") + 1])
         self.assertIn("GCHECK_HOSTS=64", argv)
@@ -202,6 +203,51 @@ class Outcome(unittest.TestCase):
         self.assertEqual(events, seen)
         self.assertIn("=== RUN", log)
 
+    def test_long_output_keeps_the_events_and_a_short_tail(self):
+        events = events_for(16)
+        script = "\n".join([
+            "import json",
+            "events = %r" % [json.dumps(event) for event in events],
+            "for i in range(3000):",
+            "    print('noise %d' % i)",
+            "    if i % 1000 == 0:",
+            "        print('GCHECK ' + events.pop(0))",
+            "print('x' * 5000)",
+            "print('GCHECK ' + events.pop(0))",
+            "print('PASS')"])
+        with tempfile.TemporaryDirectory() as tmp:
+            code, got, stop, _seen, log = self.run_script(script, tmp)
+        self.assertEqual((0, False), (code, stop))
+        self.assertEqual(4, len(got))
+        lines = log.splitlines()
+        self.assertEqual(4, sum(line.startswith("GCHECK ") for line in lines))
+        self.assertNotIn("noise 0", lines)
+        self.assertIn("noise 2999", lines)
+        self.assertEqual(2000, sum(1 for line in lines if not line.startswith("GCHECK ")))
+        self.assertTrue(any(line == "x" * 2000 + " ... [3000 characters cut]" for line in lines))
+        self.assertEqual("PASS", lines[-1])
+
+    def test_a_guard_stops_the_test_with_its_reason(self):
+        script = "import time\nfor i in range(2000):\n    print('line', i, flush=True)\n    time.sleep(0.01)"
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = os.path.join(tmp, "go.log")
+            code, events, stop = stress.run_one([sys.executable, "-c", script], None, None, log_path,
+                                                guard=lambda: "disk below 5% free at /data", every_s=0)
+            self.assertEqual("disk below 5% free at /data", stop)
+            self.assertNotEqual(0, code)
+            verdict = stress.judge(16, code, events, stop, log_path)
+        self.assertEqual(("INCONCLUSIVE", "disk below 5% free at /data after 0 checkpoints"),
+                         (verdict["verdict"], verdict["reason"]))
+
+    def test_disk_guard_reads_free_space(self):
+        Usage = collections.namedtuple("Usage", "total used free")
+        with mock.patch.object(stress.shutil, "disk_usage", return_value=Usage(100, 97, 3)):
+            self.assertEqual("disk below 5% free at /data", stress.disk_guard(["/data"]))
+        with mock.patch.object(stress.shutil, "disk_usage", return_value=Usage(100, 90, 10)):
+            self.assertIsNone(stress.disk_guard(["/data"]))
+        with mock.patch.object(stress.shutil, "disk_usage", side_effect=OSError("gone")):
+            self.assertIsNone(stress.disk_guard(["/data"]))
+
     def test_verdicts_follow_the_go_test_outcome(self):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = os.path.join(tmp, "go.log")
@@ -275,7 +321,7 @@ class Cli(GatewayHarness):
         self.assertIn("nothing to any Gonka network", self.out)
 
     def test_stress_writes_the_report_and_exits_with_the_verdict(self):
-        def fake_run(argv, cwd, env, log_path, on_event=None):
+        def fake_run(argv, cwd, env, log_path, on_event=None, guard=None):
             with open(log_path, "w", encoding="utf-8") as handle:
                 handle.write("ok\n")
             if "-c" in argv:
@@ -288,9 +334,11 @@ class Cli(GatewayHarness):
 
         with mock.patch.object(stress, "pick_runner", return_value=("docker", stress.GO_IMAGE)), \
                 mock.patch.object(stress, "prepare_source", return_value=("/src/gonka", stress.TAG_COMMIT)), \
-                mock.patch.object(stress, "run_one", side_effect=fake_run):
+                mock.patch.object(stress, "run_one", side_effect=fake_run), \
+                mock.patch.object(stress, "remove_container") as remove:
             code = self.gcheck("gateway-load", "stress", "--groups", "64,16", "--nonces", "40", "--every", "20")
         self.assertEqual(0, code)
+        self.assertEqual(["g16", "g64"], [call.args[0].rsplit("-", 1)[1] for call in remove.call_args_list])
         self.assertIn("PASS         stress_g16", self.out)
         self.assertIn("about 0 min left", self.err)
         run_dir = self.out.split("written  ")[1].split(":")[0]
@@ -298,6 +346,30 @@ class Cli(GatewayHarness):
             self.assertTrue(os.path.isfile(os.path.join(run_dir, name)), name)
         with open(os.path.join(run_dir, "summary.json"), encoding="utf-8") as handle:
             self.assertEqual("PASS", json.load(handle)["overall"])
+
+    def test_a_stopped_group_size_ends_the_run_and_keeps_the_report(self):
+        def fake_run(argv, cwd, env, log_path, on_event=None, guard=None):
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("ok\n")
+            if "-c" in argv:
+                return 0, [], False
+            hosts = int(next(item.split("=")[1] for item in argv if item.startswith("GCHECK_HOSTS=")))
+            events = events_for(hosts)
+            if hosts == 32:
+                return -15, events[:2], "stopped: [Errno 28] No space left on device"
+            return 0, events, False
+
+        with mock.patch.object(stress, "pick_runner", return_value=("docker", stress.GO_IMAGE)), \
+                mock.patch.object(stress, "prepare_source", return_value=("/src/gonka", stress.TAG_COMMIT)), \
+                mock.patch.object(stress, "run_one", side_effect=fake_run), \
+                mock.patch.object(stress, "remove_container") as remove:
+            code = self.gcheck("gateway-load", "stress", "--groups", "16,32,64", "--nonces", "40", "--every", "20")
+        self.assertEqual(2, code)
+        self.assertIn("INCONCLUSIVE stress_g32    stopped: [Errno 28] No space left on device after 1 checkpoints",
+                      self.out)
+        self.assertNotIn("stress_g64", self.out)
+        self.assertEqual(2, remove.call_count)
+        self.assertIn("written  ", self.out)
 
     def test_a_failed_build_is_blocked_before_any_run(self):
         calls = []

@@ -6,7 +6,6 @@ import json
 import os
 import secrets
 import shutil
-import subprocess
 import sys
 import time
 
@@ -224,9 +223,12 @@ def _stress(args, groups, runner, source, cache, run_id, run_dir, recorder, meta
         argv, cwd, proc_env = stress.command(runner, source, cache, env, name, memory)
         log_path = os.path.join(run_dir, "go-test-g%d.log" % hosts)
         log("G=%d: %d nonces" % (hosts, args.nonces))
-        code, events, interrupted = stress.run_one(argv, cwd, proc_env, log_path, progress(args.nonces))
-        if interrupted and runner == "docker":
-            subprocess.run(["docker", "stop", name], capture_output=True)
+        try:
+            code, events, interrupted = stress.run_one(argv, cwd, proc_env, log_path, progress(args.nonces),
+                                                       guard=lambda: stress.disk_guard([run_dir]))
+        finally:
+            if runner == "docker":
+                stress.remove_container(name)
         result = stress.judge(hosts, code, events, interrupted, log_path)
         start = next((event for event in events if event.get("kind") == "start"), {})
         meta.setdefault("cpus", start.get("cpus"))
@@ -250,7 +252,7 @@ def _stress(args, groups, runner, source, cache, run_id, run_dir, recorder, meta
     return EXIT_CODES[result]
 
 
-def _stand_one(groups, hosts, concurrency, args, commit, run_id, run_dir, on_log):
+def _stand_one(groups, hosts, concurrency, args, commit, run_id, run_dir, on_log, guard=None):
     names = stand.Names(run_id, groups, hosts, concurrency)
     label = "G=%d H=%d x%d" % (groups, hosts, concurrency)
     group_dir = os.path.join(run_dir, "g%d-h%d-c%d" % (groups, hosts, concurrency))
@@ -283,7 +285,7 @@ def _stand_one(groups, hosts, concurrency, args, commit, run_id, run_dir, on_log
             load.reason = "one request"
         else:
             load.run(on_sample, every_s=args.every, max_s=args.max_minutes * 60 if args.max_minutes else None,
-                     guard=stand.memory_guard)
+                     guard=guard)
         on_sample()
         on_log("%s: %s; finalizing at nonce %s, Ctrl-C skips it" % (label, load.reason, samples[-1]["nonce"]))
         final = stand.finalize(base, groups, os.path.join(group_dir, "finalize.json"))
@@ -295,7 +297,7 @@ def _stand_one(groups, hosts, concurrency, args, commit, run_id, run_dir, on_log
         stopped = stand.exited(names, hosts)
         for name, file in ((names.gateway, "gateway.log"), (names.host(0), "host-0.log")):
             with open(os.path.join(group_dir, file), "w", encoding="utf-8") as handle:
-                handle.write(stand.logs(name, tail=2000))
+                handle.write("".join(stress.shorten(line + "\n") for line in stand.logs(name, tail=2000).splitlines()))
         stand.down(names, hosts)
     summary = stand.summarize(groups, hosts, concurrency, load, samples, final, error, stop, stopped)
     return {"groups": groups, "label": label, "samples": samples, "summary": summary,
@@ -328,12 +330,18 @@ def cmd_stand(args):
             print("source   %s at %s" % (args.tag, commit[:12]))
             log("build    stub host, mock chain and gateway images (once per commit)")
             stand.build_images(source, commit, os.path.join(run_dir, "docker-build.log"), netem=args.delay_ms > 0)
+            disks = [run_dir] + [path for path in [stand.docker_root()] if path]
+
+            def guard():
+                return stand.memory_guard() or stress.disk_guard(disks)
+
             runs = []
             for size, hosts, concurrency in stands:
-                runs.append(_stand_one(size, hosts, concurrency, args, commit, run_id, run_dir, log))
+                runs.append(_stand_one(size, hosts, concurrency, args, commit, run_id, run_dir, log, guard))
                 verdict, stop = runs[-1]["verdict"], runs[-1]["summary"]["stop"] or ""
                 print("%-12s %-18s %s" % (verdict["verdict"], verdict["check"], verdict["reason"]))
-                if verdict["verdict"] == "BLOCKED" or stop == "interrupted" or stop.startswith("machine memory"):
+                if verdict["verdict"] == "BLOCKED" or stop == "interrupted" or stop.startswith(("machine memory",
+                                                                                               "disk below")):
                     break
     except LockBusy as error:
         print("ready    BLOCKED\n         lock: %s" % error)
