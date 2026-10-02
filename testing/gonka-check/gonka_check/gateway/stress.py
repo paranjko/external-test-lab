@@ -1,10 +1,12 @@
 """gcheck gateway-load stress: the upstream gateway session with G in-process hosts, measured nonce by nonce."""
 
+import collections
 import json
 import os
 import re
 import shutil
 import subprocess
+import time
 
 from .gotest import GO_TEST, TEST_FILE, TEST_NAME
 
@@ -15,6 +17,8 @@ SPARSE = ("devshard", "common", "inference-chain")
 GO_VERSION = (1, 25, 9)
 GO_IMAGE = "golang:1.25.9-alpine3.23"
 EVENT = re.compile(r"^\s*GCHECK (\{.*\})\s*$")
+KEEP_LINES = 2000
+LINE_CHARS = 2000
 
 
 class StressError(Exception):
@@ -91,7 +95,8 @@ def _docker(source, cache_dir, name, env, workdir, memory_gb):
     cache = os.path.join(cache_dir, "go")
     os.makedirs(cache, mode=0o700, exist_ok=True)
     env = dict(env, HOME="/cache/home", GOPATH="/cache/gopath", GOMODCACHE="/cache/mod", GOCACHE="/cache/build")
-    argv = ["docker", "run", "--rm", "--name", name, "--user", "%d:%d" % (os.getuid(), os.getgid())]
+    argv = ["docker", "run", "--rm", "--name", name, "--log-driver", "none",
+            "--user", "%d:%d" % (os.getuid(), os.getgid())]
     if memory_gb:
         argv += ["--memory", "%dm" % int(memory_gb * 1024), "--memory-swap", "%dm" % int(memory_gb * 1024)]
     argv += ["-v", "%s:/src" % source, "-v", "%s:/cache" % cache, "-w", workdir]
@@ -122,25 +127,65 @@ def command(runner, source, cache_dir, env, name, memory_gb=None):
     return argv + ["/cache/bin/%s" % BINARY] + flags, None, None
 
 
-def run_one(argv, cwd, env, log_path, on_event=None):
-    """Run go test, keep its output in log_path; (exit code, events, interrupted)."""
-    events = []
+def shorten(line, chars=LINE_CHARS):
+    body = line.rstrip("\n")
+    return line if len(body) <= chars else "%s ... [%d characters cut]\n" % (body[:chars], len(body) - chars)
+
+
+def remove_container(name):
+    """docker rm -f; quiet when the container is already gone or docker is absent."""
+    try:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def disk_guard(paths, floor=0.05):
+    """A stop reason when a file system holding one of paths has less than floor of its space free."""
+    for path in paths:
+        try:
+            usage = shutil.disk_usage(path)
+        except OSError:
+            continue
+        if usage.total and usage.free / usage.total < floor:
+            return "disk below %d%% free at %s" % (round(floor * 100), path)
+    return None
+
+
+def run_one(argv, cwd, env, log_path, on_event=None, guard=None, every_s=10.0):
+    """Run go test; log its GCHECK lines and the last KEEP_LINES other lines; (exit code, events, stop or False)."""
+    events, rest, stop, checked = [], collections.deque(maxlen=KEEP_LINES), False, time.monotonic()
     with open(log_path, "w", encoding="utf-8") as log, subprocess.Popen(
             argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1) as proc:
         try:
             for line in proc.stdout:
-                log.write(line)
-                log.flush()
                 match = EVENT.match(line)
-                if match:
+                if not match:
+                    rest.append(shorten(line))
+                else:
+                    log.write(line)
+                    log.flush()
                     events.append(json.loads(match.group(1)))
                     if on_event:
                         on_event(events[-1])
-            return proc.wait(), events, False
+                if guard and time.monotonic() - checked >= every_s:
+                    checked = time.monotonic()
+                    stop = guard() or False
+                    if stop:
+                        proc.terminate()
+                        break
+            code = proc.wait()
         except KeyboardInterrupt:
             proc.terminate()
-            proc.wait()
-            return proc.returncode, events, True
+            code, stop = proc.wait(), "interrupted"
+        except OSError as error:
+            proc.terminate()
+            code, stop = proc.wait(), "stopped: %s" % error
+        try:
+            log.write("".join(rest))
+        except OSError:
+            pass
+    return code, events, stop
 
 
 def tail(path, lines=6):
@@ -154,8 +199,9 @@ def judge(hosts, code, events, interrupted, log_path):
     summary = next((event for event in events if event.get("kind") == "summary"), None)
     check = "stress_g%d" % hosts
     if interrupted:
-        value, reason = "INCONCLUSIVE", "interrupted after %d checkpoints" % sum(
-            event.get("kind") == "checkpoint" for event in events)
+        value, reason = "INCONCLUSIVE", "%s after %d checkpoints" % (
+            interrupted if isinstance(interrupted, str) else "interrupted",
+            sum(event.get("kind") == "checkpoint" for event in events))
     elif code == 0 and summary:
         value, reason = "PASS", "%d nonces, finalize %.1f s, %d signatures; settlement verified" % (
             summary["nonces"], summary["finalize_s"], summary["signatures"])

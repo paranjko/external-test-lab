@@ -69,10 +69,11 @@ The source is `gonka-ai/gonka` at `devshard/v5.0.2`, pinned to its commit; gchec
 The test is built once and runs as a plain binary, capped at 75% of the machine memory by default (`--memory GB`, `0` for no cap).
 Gateway time per nonce is the wall time minus the time inside the hosts. Each group size is one check: `PASS` when every nonce, the finalization and the settlement check pass.
 Records do not seal by the clock during a run (30 days instead of an hour): a DevNet escrow ends before they would.
+The run log keeps the `GCHECK` lines and the last 2,000 lines of the test output, each cut to 2,000 characters; the test container keeps no Docker log, and a run stops when less than 5% of the disk is left.
 
 `stand` builds the mock chain, stub host and gateway images from the same commit and runs them in Docker on a private network.
 It samples gateway CPU, memory, traffic and storage every 5 s until the escrow reaches the nonce cap, then finalizes and removes the containers.
-A run stops early when the nonce does not move for 10 minutes or, on Linux, when less than 5% of the machine memory is left.
+A run stops early when the nonce does not move for 10 minutes, when less than 5% of the disk is left or, on Linux, of the machine memory. Container logs are capped at 2 × 20 MB each.
 The finalization reply, the settlement payload, is kept as `g<G>-h<H>-c<x>/finalize.json`; `PASS` needs at least 2G/3 + 1 signatures in it.
 `--hosts G` gives every slot its own stub host; `--delay-ms` delays every packet a stub host sends, through netem.
 Stub hosts gossip every diff to each other, so their timings are not those of `devshardd`; the gateway figures are the result.

@@ -147,6 +147,8 @@ class Config(unittest.TestCase):
         self.assertEqual(stand.image("chain", stress.TAG_COMMIT), argv[1][-1])
         self.assertEqual(3, sum(1 for item in argv if stand.image("host", stress.TAG_COMMIT) in item))
         gateway = argv[-1]
+        for item in argv[1:]:
+            self.assertIn("max-size=20m", item)
         self.assertIn("127.0.0.1::8080", gateway)
         self.assertIn("/data-dir:/data", gateway)
         self.assertIn("--user", gateway)
@@ -393,6 +395,7 @@ class Cli(unittest.TestCase):
     @contextlib.contextmanager
     def docker_free(self, start):
         self.downs = []
+        self.disk = getattr(self, "disk", None)
         with mock.patch.object(stress.shutil, "which", return_value="/usr/bin/docker"), \
                 mock.patch.object(stress, "prepare_source", return_value=("/src/gonka", stress.TAG_COMMIT)), \
                 mock.patch.object(stand, "build_images", return_value=[]), \
@@ -401,6 +404,8 @@ class Cli(unittest.TestCase):
                 mock.patch.object(stand, "logs", return_value="log line\n"), \
                 mock.patch.object(stand, "exited", return_value=[]), \
                 mock.patch.object(stand, "memory_guard", return_value=None), \
+                mock.patch.object(stand, "docker_root", return_value="/var/lib/docker"), \
+                mock.patch.object(stress, "disk_guard", side_effect=lambda paths: self.disk), \
                 mock.patch.object(stand, "stats", return_value={"rx_mb": 1.0, "tx_mb": 2.0, "hosts_mem_mb": 9.0}):
             yield
 
@@ -458,6 +463,16 @@ class Cli(unittest.TestCase):
         self.assertEqual(["g8-h3-c1"], started)
         self.assertEqual(1, fake.chats)
         self.assertIn("ready    READY", self.out)
+
+    def test_a_full_disk_stops_the_stand_and_the_run(self):
+        self.disk = "disk below 5% free at /var/lib/docker"
+        with FakeGateway(per_request=1) as fake, self.docker_free(lambda *args: fake.base):
+            code = self.gcheck("gateway-load", "stand", "--groups", "8,16", "--hosts", "3", "--concurrency", "2",
+                               "--nonces", "100000", "--every", "0.05")
+        self.assertEqual(2, code, self.out + self.err)
+        self.assertIn("INCONCLUSIVE stand_g8_h3_c2", self.out)
+        self.assertIn("disk below 5% free at /var/lib/docker", self.out)
+        self.assertNotIn("stand_g16", self.out)
 
     def test_a_stand_that_cannot_start_keeps_the_finished_group_sizes(self):
         with FakeGateway(per_request=1) as fake:
