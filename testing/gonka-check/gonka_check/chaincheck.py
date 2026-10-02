@@ -93,7 +93,7 @@ def epoch_state(chain):
     if not 0 <= into < length + params["safe_start"]:
         return verdict("epoch_state", "FAIL", "height %d is %d blocks from epoch %d start %d (length %d)"
                        % (height, into, group["epoch"], group["start"], length), records)
-    where = "epoch %d started at %d, height %d, offset %d" % (group["epoch"], group["start"], height, height % length)
+    where = "epoch %d started at %d, height %d, offset %d" % (group["epoch"], group["start"], height, into % length)
     if into >= length:
         where += " (next epoch PoC; group not switched yet)"
     if not event["active"]:
@@ -106,4 +106,4 @@ def epoch_state(chain):
         return verdict("epoch_state", "INCONCLUSIVE", "%s; confirmation PoC %s belongs to epoch %s, trigger %s"
                        % (where, event["phase"], event["epoch_index"], trigger), records)
     return verdict("epoch_state", "PASS", "%s; confirmation PoC %s, trigger at offset %s"
-                   % (where, event["phase"], trigger % length if trigger is not None else "?"), records)
+                   % (where, event["phase"], trigger - group["start"] if trigger is not None else "?"), records)

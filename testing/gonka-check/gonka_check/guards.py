@@ -23,7 +23,8 @@ class GuardStop(Exception):
 
 
 class Guards:
-    def __init__(self):
+    def __init__(self, admission=True):
+        self.admission = admission
         self.rejections = []
 
     def after_post(self, reply):
@@ -38,6 +39,10 @@ class Guards:
                 and "permit_height" in gdc and "dispatch_height" not in gdc):
             raise GuardStop("permit_leak_suspected", "check the admission proxy; "
                             "a restart is the operator's decision", reply.seq)
+        if not self.admission:
+            if reply.status is not None and reply.status >= 500 and code.startswith("gateway_dispatch_"):
+                raise GuardStop("gateway_dispatch_failure", "the gateway could not complete the request", reply.seq)
+            return
         if "admission" not in gdc:
             raise GuardStop("no_admission_header", "the reply did not come from the admission proxy",
                             reply.seq)

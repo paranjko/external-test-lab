@@ -21,7 +21,7 @@ class FakeGateway:
     def __init__(self, offset=30, scenario="ok", health="ready", status="routable",
                  cpoc=None, freeze=False, nodes=3, node_state=None, group_switch=18, step=1,
                  fail_paths=(), chain_fail_offsets=(), status_tracks_cpoc=True, devnet_phases=False,
-                 cpoc_phase=None):
+                 cpoc_phase=None, prefix="", shift=0):
         self.height = EPOCH_START + offset
         self.scenario = scenario
         self.health = health
@@ -37,6 +37,10 @@ class FakeGateway:
         self.status_tracks_cpoc = status_tracks_cpoc
         self.devnet_phases = devnet_phases
         self.cpoc_phase = cpoc_phase
+        # A direct gateway under a path: no admission proxy, so no health receipt and no GDC headers.
+        self.prefix = prefix
+        # After an epoch_length change the PoC cycle no longer starts at a multiple of the length.
+        self.shift = shift
         self.requests = []
         self.posts = []
         self.lock = threading.Lock()
@@ -66,6 +70,8 @@ class FakeGateway:
             "node_max_lag_blocks": 5, "chain_advance_wait_s": 0, "watch_interval_s": 0,
             "forbid_paths": ["/status/gateway/", "/v1/admission-status"],
         }
+        if self.prefix:
+            preset.update(gateway_path=self.prefix, health_url=None)
         preset.update(overrides)
         return preset
 
@@ -164,11 +170,15 @@ class FakeGateway:
                 elif path == CHAIN_API + "/current_epoch_group_data":
                     self._json(200, {"epoch_group_data": {"epoch_index": str(fake.group_epoch()),
                                                           "poc_start_block_height": str(fake.group_epoch() * EPOCH_LENGTH)}})
+                elif path == CHAIN_API + "/epoch_info":
+                    start = fake.height - (fake.height - fake.shift) % EPOCH_LENGTH
+                    self._json(200, {"block_height": str(fake.height), "latest_epoch": {
+                        "index": str(start // EPOCH_LENGTH), "poc_start_block_height": str(start)}})
                 elif path == CHAIN_API + "/active_confirmation_poc_event":
                     self._json(200, fake.cpoc_doc())
-                elif path == "/v1/status":
+                elif path == fake.prefix + "/v1/status":
                     self._json(200, fake.status_doc())
-                elif path == "/v1/models":
+                elif path == fake.prefix + "/v1/models":
                     self._json(200, {"object": "list", "data": [{"id": MODEL, "object": "model"}]})
                 elif path == "/status/gateway-health":
                     self._json(200, fake.health_doc())
@@ -179,12 +189,14 @@ class FakeGateway:
                 length = int(self.headers.get("Content-Length", "0"))
                 body = json.loads(self.rfile.read(length) or b"null")
                 entry = self._note("POST", body)
-                if self.path != "/v1/chat/completions":
+                if self.path != fake.prefix + "/v1/chat/completions":
                     self._json(404, {"error": {"code": "not_found"}})
                     return
                 with fake.lock:
                     fake.posts.append(entry)
                 status, payload, headers = fake.completion(body, bool(entry["authorization"]))
+                if fake.prefix:
+                    headers = {}
                 if status == 302:
                     self.send_response(302)
                     self.send_header("Location", fake.base_url + "/elsewhere")
