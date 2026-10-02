@@ -2,7 +2,8 @@
 # Live run of a group size change on gateway A: escrow A at 5 slots, the 5 -> 9 proposal, escrow B at 9 slots, both
 # settled by hand in the same epoch, the 9 -> 5 rollback, then gcheck escrow record and verdict. The run account
 # submits each proposal and votes yes for the genesis guardians through their vote grants;
-# with --gov wait it only writes the proposal files, says when, and waits for group_size.
+# with --gov wait it only writes the proposal files, says when, and waits for group_size. --check-gov reads only
+# the run account, its vote grants and its balance.
 # shellcheck disable=SC2034,SC2154  # variables are set by the lib.sh functions
 set -euo pipefail
 # shellcheck source=lib.sh
@@ -16,8 +17,8 @@ GOV_KEY=${GOV_KEY:-gov-187}
 INFERENCED=${INFERENCED:-$GOV_HOME/bin/inferenced}
 CHAIN_ID=${CHAIN_ID:-gonka-devnet-community}
 
-mode=dry wait=0 yes=0 amount="" gov=grants
-usage() { echo "usage: $0 [--run] [--yes] [--wait] [--amount NGONKA] [--gov grants|wait]" >&2; exit 2; }
+mode=dry wait=0 yes=0 amount="" gov=grants check=0
+usage() { echo "usage: $0 [--run] [--yes] [--wait] [--amount NGONKA] [--gov grants|wait] | --check-gov" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case $1 in
     --run) mode=run ;;
@@ -25,10 +26,12 @@ while [ $# -gt 0 ]; do
     --wait) wait=1 ;;
     --amount) [ $# -ge 2 ] || usage; amount=$2; shift ;;
     --gov) [ $# -ge 2 ] && [[ $2 =~ ^(grants|wait)$ ]] || usage; gov=$2; shift ;;
+    --check-gov) check=1 ;;
     *) usage ;;
   esac
   shift
 done
+[ "$check" = 0 ] || { [ "$mode" = dry ] && [ "$gov" = grants ]; } || usage
 
 # newest_passed SIZE AFTER: id of the newest passed proposal above AFTER that sets group_size to SIZE.
 newest_passed() {
@@ -73,9 +76,10 @@ wait_group_size() {
   return 1
 }
 
-# grants_check: the share of bonded tokens behind valid vote grants to the run account, then those guardians.
+# grants_check: the share of bonded tokens behind valid vote grants to the run account, then those guardians;
+# one line per guardian into grants.txt.
 grants_check() {
-  python3 - "$CHAIN" "$gov_address" <<'PY'
+  python3 - "$CHAIN" "$gov_address" "$run_dir/grants.txt" <<'PY'
 import json, sys, time, urllib.parse, urllib.request
 chain, grantee = sys.argv[1], sys.argv[2]
 CH = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
@@ -96,14 +100,18 @@ def account(valoper):
 valopers = get("/chain-api/productscience/inference/inference/params")["params"]["genesis_guardian_params"]["guardian_addresses"]
 bonded = get("/chain-api/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED&pagination.limit=200")["validators"]
 tokens = {v["operator_address"]: int(v["tokens"]) for v in bonded}
-now, voters, share = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), [], 0
+total = sum(tokens.values()) or 1
+now, voters, share, rows = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), [], 0, []
 for valoper in valopers:
     query = urllib.parse.urlencode({"granter": account(valoper), "grantee": grantee, "msg_type_url": "/cosmos.gov.v1.MsgVote"})
     grants = get("/chain-api/cosmos/authz/v1beta1/grants?" + query).get("grants") or []
+    until = "vote grant until " + (grants[0].get("expiration") or "no expiry") if grants else "no vote grant"
     if grants and (grants[0].get("expiration") or "9")[:19] > now:
         voters.append(account(valoper))
         share += tokens.get(valoper, 0)
-print("%.1f" % (100.0 * share / (sum(tokens.values()) or 1)), " ".join(voters))
+    rows.append("%s %.1f%% %s" % (account(valoper), 100.0 * tokens.get(valoper, 0) / total, until))
+open(sys.argv[3], "w").write("\n".join(rows) + "\n")
+print("%.1f" % (100.0 * share / total), " ".join(voters))
 PY
 }
 
@@ -177,9 +185,11 @@ remind() {
   log "REMINDER: group_size may still be 9 on DevNet; the 9 -> 5 proposal is $run_dir/proposal-group-size-5.json"
 }
 
-start_run live "$mode"
+run_kind=$mode
+[ "$check" = 0 ] || run_kind=check
+start_run live "$run_kind"
 trap remind EXIT
-log "run $run_dir, mode $mode"
+log "run $run_dir, mode $run_kind"
 log "1/9 chain checks"
 chain_params
 log "group_size $group_size, max_escrows_per_epoch $max_escrows"
@@ -205,9 +215,19 @@ if [ "$gov" = grants ]; then
     'import json,sys; print(sum(int(c["amount"]) for c in json.load(sys.stdin)["balances"] if c["denom"] == "ngonka"))') \
     || die "balance of $gov_address is unreadable"
   log "run account $gov_address: $balance ngonka; vote grants from ${#voters[@]} guardians, $share% of bonded tokens"
+  while read -r guardian weight until; do
+    log "  guardian $guardian, $weight of bonded tokens, $until"
+  done < "$run_dir/grants.txt"
+  gov_ok=1
   python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) > 40 else 1)' "$share" \
-    || stop "vote grants cover $share% of bonded tokens; a proposal needs more than 33.4%, the run wants 40%"
-  [ "$balance" -ge $((2 * deposit)) ] || stop "the run account has $balance ngonka; two deposits need $((2 * deposit))"
+    || { gov_ok=0; stop "vote grants cover $share% of bonded tokens; a proposal needs more than 33.4%, the run wants 40%"; }
+  [ "$balance" -ge $((2 * deposit)) ] \
+    || { gov_ok=0; stop "the run account has $balance ngonka; two deposits need $((2 * deposit))"; }
+  if [ "$check" = 1 ]; then
+    if [ "$gov_ok" = 1 ]; then log "governance check: PASS"; exit 0; fi
+    log "governance check: FAIL"
+    exit 1
+  fi
 fi
 
 log "2/9 gateway A admin API on $GATEWAY_HOST:127.0.0.1:$GATEWAY_PORT"
