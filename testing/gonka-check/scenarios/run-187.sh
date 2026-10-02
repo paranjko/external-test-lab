@@ -103,8 +103,9 @@ tokens = {v["operator_address"]: int(v["tokens"]) for v in bonded}
 total = sum(tokens.values()) or 1
 now, voters, share, rows = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), [], 0, []
 for valoper in valopers:
-    query = urllib.parse.urlencode({"granter": account(valoper), "grantee": grantee, "msg_type_url": "/cosmos.gov.v1.MsgVote"})
-    grants = get("/chain-api/cosmos/authz/v1beta1/grants?" + query).get("grants") or []
+    query = urllib.parse.urlencode({"granter": account(valoper), "grantee": grantee, "pagination.limit": 100})
+    grants = [g for g in get("/chain-api/cosmos/authz/v1beta1/grants?" + query).get("grants") or []
+              if (g.get("authorization") or {}).get("msg") == "/cosmos.gov.v1.MsgVote"]
     until = "vote grant until " + (grants[0].get("expiration") or "no expiry") if grants else "no vote grant"
     if grants and (grants[0].get("expiration") or "9")[:19] > now:
         voters.append(account(valoper))
