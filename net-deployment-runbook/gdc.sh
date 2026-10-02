@@ -1627,6 +1627,15 @@ case "$COMMAND" in
       [[ "$join_gpu_alias" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "invalid GPU SSH alias: $join_gpu_alias (use lowercase letters, digits, _ or -)" >&2; exit 2; }
       [[ "$join_gpu_alias" != "$join_alias" ]] || { echo 'Host and GPU SSH aliases must be different' >&2; exit 2; }
     fi
+    # Fresh JOIN always starts with an absent alias path, regardless of its
+    # options or retained layout. Only explicit resume consumes existing state.
+    join_existing_home="$GDC_DATA_ROOT/$join_alias"
+    if [[ -z "$join_resume_run" && ( -e "$join_existing_home" || -L "$join_existing_home" ) ]]; then
+      printf 'ERROR Local state already exists for %s: %s\n' "$join_alias" "$join_existing_home" >&2
+      printf 'To continue a retained run, use gdc host join --resume <RUN_ID> with the same Host options.\n' >&2
+      printf 'Preserve required keys, backups and run evidence outside this path. Remove this local state path before starting a new JOIN.\n' >&2
+      exit 2
+    fi
     use_node_data_home "$join_alias"
     if [[ ( "$join_mnemonic_prompt" == true || -n "$join_mnemonic_file" ) && "$plan_only" != true ]]; then
       # The mnemonic is read only on the operator machine, then retained as a

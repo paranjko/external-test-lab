@@ -84,6 +84,13 @@ gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>
 
 ## Restore a cold account
 
+Every fresh JOIN requires `$GDC_HOME/<ssh-alias>` to be absent, including
+`--plan`, `--restore` and mnemonic recovery. If that path exists, GDC stops
+before reading a mnemonic, taking a lifecycle lock or contacting the Host.
+Save required keys, backups and run evidence outside it, then remove the
+local state path before starting a new JOIN. GDC never removes it for you.
+Only an explicit `--resume <RUN_ID>` uses retained state.
+
 Never put a mnemonic in a command line. Use exactly one source:
 
 ```bash
@@ -130,15 +137,17 @@ default deadline is 30 minutes; use `--preflight-deadline 60m` deliberately.
 runtime change restarts preflight without touching the Host.
 
 If driver installation needs a reboot, JOIN stops with exit 194. Reboot the Host
-listed under `REBOOT` and rerun the same command; a JOIN without `--restore`
-needs no `host reset`.
+listed under `REBOOT`, preserve required local evidence and keys, then remove
+the alias's local state path before a new JOIN; a JOIN without `--restore`
+needs no remote `host reset`.
 
 Before network observation, JOIN reads reboot, package-manager and Docker
 storage prerequisites over SSH. This changes nothing on the Host.
 
 If preparation reports `ACTION`, GDC found a Host prerequisite it will not
-repair implicitly. Follow `/var/log/gdc-prepare.log`, then rerun the same JOIN;
-no identity or signer was created.
+repair implicitly. Follow `/var/log/gdc-prepare.log`, preserve local evidence,
+and remove the alias's local state path before a new JOIN; no identity or signer
+was created.
 
 JOIN uses **state sync** and checks the chain lineage before it creates or
 changes anything on the Host. The preflight requires matching observations
@@ -182,9 +191,9 @@ weight, positive consensus voting power, and authenticated gateway inference.
 Without the operator-only gateway client key, acceptance cannot return
 `JOIN_PASS`. With
 `--verification`, unless acceptance returns `JOIN_PASS`, `COMPLETE` is not
-recorded, and `gdc host start` and a repeated JOIN are then refused; an
-independent operator therefore omits `--verification`. A repeat after
-`COMPLETE` does not run acceptance.
+recorded, and `gdc host start` is then refused; an independent operator
+therefore omits `--verification`. Fresh JOIN always refuses retained local
+state. Use explicit `--resume` to continue a recorded run.
 
 Voting power follows the first accepted PoC, normally one or two epochs after
 `ACTIVE`. JOIN watches for the first signer record for up to 300 seconds. A
@@ -211,35 +220,36 @@ the value resolves to an IPv4 address; for a DNS name, create its record first.
 
 ## Repeat and recovery scope
 
-The same JOIN command may be repeated for a complete matching local state. It
-queries registration before submission and must not create a second
-participant, funding claim, or validator identity. For a participant that
-already exists it also reads the validator key the chain publishes: a
-registration that names another key stops the run, because this Host cannot
-sign for it. The repeat must come from
-the same gdc revision, with the same `GDC_PORTABLE_*` declaration if one was
-used; another revision is refused with `join_reentry_profile_changed` before
-any change. After `--restore` onto a reset Host, only a repeat that names an
-unchanged copy of the restored archive can be a no-op: JOIN rewrites
-`$GDC_HOME/<ssh-alias>-validator-backup.tar`, and any other repeat is refused
-the same way. A partial, conflicting, different-lineage, or unreachable state
-stops before deployment changes.
+Fresh JOIN exits 2 whenever `$GDC_HOME/<ssh-alias>` exists, even after a
+completed run or a refusal before Host mutation. It prints the exact path and
+does not read or replace the retained Host state. An empty directory, file or
+symlink also blocks a fresh JOIN.
 
-The `partial_identity`, `identity_conflict` and `unreachable` stops come
-before the first Host change and are recorded as a refusal with
-`mutation: none`: the terminal result and the diagnostic that `gdc report
-github` renders state what was found, and the next `gdc host join` classifies
-the Host afresh instead of demanding manual recovery.
+Use `--resume <RUN_ID>` to continue a supported retained run. Resume validates
+the original profile and receipt chain; it does not bypass their checks.
+A supported resume must not create a second participant or funding claim. For
+a new attempt, preserve required recovery material and run evidence outside
+the alias path, then remove that local state. Removing local state does not
+reset the remote Host or remove an on-chain participant; use the appropriate
+Host reset and restore workflow when required.
+
+The `partial_identity`, `identity_conflict` and `unreachable` stops occur
+before the first Host change and retain `mutation: none`. Their diagnostics
+remain available through `gdc report github`; a fresh attempt still requires
+removing the alias's local state after preserving required material.
+
+Every fresh JOIN suggested below requires preserving recovery material and
+removing the local alias path first, including state retained by Host reset.
 
 | Stop | Meaning | Way back |
 |---|---|---|
 | `partial_identity` | the operator state holds some of the identity record, the cold account and the joined marker, but not all three | restore with `--restore` from the validator archive; `gdc host reset` clears the identity only when the chain reports the participant as unregistered, and the next JOIN then starts as `new` |
 | `identity_conflict` | the Host holds an unknown validator identity | restore with `--restore`; `--mnemonic-file` may replace only a stopped key bound to that participant or unregistered on chain |
-| `unreachable` | no SSH session to the Host | repeat the same command once the Host is reachable |
-| `completed_join_readback_failed` | a repeat of a completed JOIN could not confirm that the Host still runs as that JOIN left it; the Host was not changed | repeat once the Host is reachable and running, with the same `GDC_PORTABLE_*` declaration if one was used |
+| existing local state, exit 2 | the alias path already exists, regardless of its contents or JOIN options | use explicit `--resume` for a supported retained run; otherwise preserve required keys and evidence, then remove the printed local state path before a new JOIN |
+| `unreachable` | no SSH session to the Host | restore connectivity, preserve local evidence, then remove local state before a new JOIN |
 | exit 65, `restore_identity_mismatch` | `--restore` names a validator backup for a different signer than the one captured by `gdc host reset` | use the matching validator backup; otherwise use an authorized validator-key rotation |
-| exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT` and repeat the same command; a JOIN without `--restore` needs no `gdc host reset` |
-| exit 195 | Host preparation needs operator action before GDC can safely continue | resolve the stated prerequisite in `/var/log/gdc-prepare.log`, then repeat the same command; no `gdc host reset` is needed |
+| exit 194 | host preparation installed the NVIDIA driver and a Host needs a reboot | reboot the Host listed under `REBOOT`, preserve local evidence, and remove local state before a new JOIN; a JOIN without `--restore` needs no remote `gdc host reset` |
+| exit 195 | Host preparation needs operator action before GDC can safely continue | resolve the stated prerequisite in `/var/log/gdc-prepare.log`, preserve local evidence, and remove local state before a new JOIN; no remote `gdc host reset` is needed |
 | `join_reentry_manual_recovery_required` | an earlier JOIN stopped part-way, for example on `lineage_snapshot_unavailable` from the state-sync canary; repeating it changes nothing | `gdc host reset <ssh-alias>`, which keeps the run evidence; then the same command when reset reports the participant unregistered, or `--restore` when it reports a registered participant whose signer had started |
 | registered with another validator key | the chain publishes a validator key for this participant that is not the key this Host signs with, so the Host cannot sign for its own registration; the Host was not changed | repeat with `--mnemonic-prompt` or `--mnemonic-file` and that participant's cold mnemonic; or continue on the Host whose signer owns the registered key |
 

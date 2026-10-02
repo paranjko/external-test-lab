@@ -952,12 +952,26 @@ for node in fixture-west fixture-east; do
   printf '{}\n' >"$scratch/operator/recovery-$INCIDENT/hosts/$node.json"
   archive="$scratch/$node-validator-backup.tar"
   printf 'dispatcher fixture only\n' >"$archive"
+  # Reset keeps local evidence. Fresh JOIN must refuse it until the operator
+  # has preserved that evidence outside the alias path.
+  if GDC_HOME="$scratch/operator" "$launcher" host join --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
+    echo 'fresh JOIN accepted local state retained by reset' >&2; exit 1
+  fi
+  grep -Fq "Local state already exists for $node:" "$scratch/error"
+  [[ ! -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]
+  mv "$scratch/operator/$node" "$scratch/$node-reset-state"
   if GDC_HOME="$scratch/operator" "$launcher" host join --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
     echo 'JOIN ignored deliberate mock fetch failure' >&2; exit 1
   fi
   [[ -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]
 done
+rm -f "$INCIDENT_TEST_NORMAL_JOIN"
 if GDC_HOME="$scratch/operator" "$launcher" host join --plan --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
+  echo 'fresh plan accepted state retained by failed JOIN' >&2; exit 1
+fi
+grep -Fq "Local state already exists for $node:" "$scratch/error"
+[[ ! -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]
+if GDC_HOME="$scratch/operator" "$launcher" host join --plan --restore "$archive" --public-host restore.example.test fixture-plan >"$scratch/error" 2>&1; then
   echo 'incident route ignored --plan' >&2; exit 1
 fi
 [[ -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Drive the real launcher against fake externals and prove the whole refusal:
-# a Host that already holds its identity and cold account, whose participant
-# publishes a validator key its signer does not hold, is stopped before the
-# Host is prepared, and the next JOIN can still classify it afresh.
+# Drive the real launcher against fake externals and prove the phase refusal:
+# a participant publishing a key this Host cannot sign with is stopped before
+# Host preparation. Seed the phase's local identity fixture only after the
+# launcher's fresh-state gate; existing-home refusal is covered separately.
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -152,6 +152,11 @@ cat >"$tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf '%s\n' "$*" >>"${GDC_TEST_SSH_LOG:?}"
+# The first read-only Host boundary follows the fresh-state gate. Populate
+# only this disposable phase fixture, without bypassing the launcher guard.
+if [[ ! -e "$GDC_TEST_OPERATOR_HOME/$ALIAS/state/joined/$ALIAS" ]]; then
+  seed_completed_host "$GDC_TEST_OPERATOR_HOME"
+fi
 case "$*" in
   # The read-only identity preflight: this Host still holds a validator identity.
   *p2p/node_key.json*) exit 0 ;;
@@ -216,13 +221,14 @@ seed_completed_host() {
     >"$node_home/accounts/$ALIAS-cold.json"
   : >"$node_home/state/joined/$ALIAS"
 }
+export -f seed_completed_host
 
 run_join() {
   local home="$1" registered_key="$2" log="$3" ssh_log="$4" participant_body="${5:-}" participant_status="${6:-200}"
   : >"$ssh_log"
-  seed_completed_host "$home"
   env -u GDC_ENV -u GDC_NODE_ALIASES \
     GDC_HOME="$home" PATH="$tmp/bin:$PATH" \
+    GDC_TEST_OPERATOR_HOME="$home" ALIAS="$ALIAS" ADDRESS="$ADDRESS" HOST_SIGNER_KEY="$HOST_SIGNER_KEY" \
     GDC_TEST_SSH_LOG="$ssh_log" \
     GDC_TEST_HOST_SIGNER_KEY="$HOST_SIGNER_KEY" \
     GDC_TEST_REGISTERED_VALIDATOR_KEY="$registered_key" \
@@ -331,8 +337,8 @@ grep -Fq 'Published and verified:' "$tmp/report.out" \
 ! grep -Fq 'unsafe generated report body' "$tmp/report.err" \
   || fail 'unreadable refusal was rejected by the public report scanner'
 
-# This is the point of the whole change: the refusal is typed, so the next
-# ordinary JOIN classifies the Host afresh instead of demanding recovery.
+# Preserve the phase's typed refusal and its classifier contract. The launcher
+# now separately refuses fresh JOIN against this retained local directory.
 reentry_class="$("$ROOT/scripts/classify-join-reentry.sh" --previous-run-dir "$mismatch_run" \
   --current-profile "$mismatch_run/join-profile.v1.json" | jq -r .classification)"
 [[ "$reentry_class" == refused_before_mutation ]] \
