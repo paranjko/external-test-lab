@@ -567,7 +567,7 @@ grep -Fq 'interrupted validator identity restore is inconsistent' "$REMOTE_RESTO
 grep -Fq 'remote_identity_write:false' "$RUNNING_RECOVERY"
 grep -Fq 'evaluate-running-host-recovery.sh" participant' "$RUNNING_RECOVERY"
 grep -Fq '.account.pub_key.key == $key' "$RUNNING_RECOVERY"
-grep -Fq 'GDC_OPERATOR_HOME="$check_home/keyring"' "$MNEMONIC_IDENTITY"
+grep -Fq 'INFERENCED_HOME="$check_home/keyring"' "$MNEMONIC_IDENTITY"
 grep -Fq '{ set +x; } 2>/dev/null' "$MNEMONIC_IDENTITY" "$TMKMS_PUBLIC_KEY"
 grep -Fq 'keys add "$KEY_NAME" --recover --keyring-backend file' "$MNEMONIC_IDENTITY"
 grep -Fq '"$NODE-cold-recovery-check" "$EXPECTED_ADDRESS"' "$RUNNING_RECOVERY"

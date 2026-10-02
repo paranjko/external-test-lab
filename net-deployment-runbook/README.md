@@ -47,6 +47,19 @@ gdc host join gdc-node3
 gdc host join gdc-node4 gdc-node4-ml # node net only + gpu net
 ```
 
+## Operator CLI paths
+
+`INFERENCED_HOME` selects the CLI configuration and keyring directory, defaulting
+to `$STATE/operator-home` inside the current GDC data scope. Set it only when a
+separate signing keyring is required; the former operator-home override is no
+longer supported. This does not move GDC logs, secrets or run evidence.
+
+The wrapper resolves `INFERENCED_BIN` from the verified JOIN profile or release
+and builds `INFERENCED_CMD` as a Bash array. These two values are derived, not
+environment overrides. It sets `HOME` only for that CLI process to isolate the
+early configuration read, and passes `INFERENCED_HOME` through `--home`. The
+parent shell's `HOME` and the user's configuration remain unchanged.
+
 ## Stop and restart an installed node
 
 ```bash

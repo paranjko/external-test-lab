@@ -923,7 +923,7 @@ if [[ "$rebind_existing_participant" == true ]]; then
   step "Rebind $NODE participant validator key with its restored cold account"
   rebind_rpc="${GDC_CHAIN_RPC_URL:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}"
   rebind_password="$(<"$SECRETS/operator.keyring")"
-  rebind_tx="$(printf '%s\n' "$rebind_password" | GDC_OPERATOR_HOME="$STATE/operator-home" \
+  rebind_tx="$(printf '%s\n' "$rebind_password" | INFERENCED_HOME="$STATE/operator-home" \
     "$ROOT/scripts/inferenced.sh" tx inference submit-new-participant "$URL" \
       --validator-key "$expected_registration_key" \
       --from "$NODE-cold" --keyring-backend file --chain-id "$CHAIN_ID" --node "$rebind_rpc" \

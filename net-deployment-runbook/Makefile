@@ -317,6 +317,7 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-publish-amd-mlnode-ci.sh
 	@./scripts/test-gdc-home.sh
 	@./scripts/test-ensure-inferenced-cli-output.sh
+	@bash ./scripts/test-inferenced-config-isolation.sh
 	@./scripts/test-ensure-warm-key.sh
 	@./scripts/test-launcher-root-contract.sh
 	@./scripts/test-gdc-github-report.sh

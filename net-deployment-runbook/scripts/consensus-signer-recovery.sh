@@ -120,7 +120,7 @@ recovery_reconcile_participant() (
     jq -cn --arg account "$account" --arg key "$target" '{participant_address:$account,validator_key:$key,broadcast:false}'
     return
   fi
-  export GDC_JOIN_PROFILE="$run/join-profile.v1.json" GDC_OPERATOR_HOME="$operator_home"
+  export GDC_JOIN_PROFILE="$run/join-profile.v1.json" INFERENCED_HOME="$operator_home"
   if [[ ! -e "$attempt" && ! -L "$attempt" ]]; then
     [[ -f "$password_path" && ! -L "$password_path" && "$(stat -c %u "$password_path")" == "$(id -u)" ]] || return 2
     case "$(stat -c %a "$password_path")" in 400|600) ;; *) return 2 ;; esac

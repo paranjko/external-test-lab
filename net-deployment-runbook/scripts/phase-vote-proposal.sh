@@ -157,7 +157,7 @@ for node in "${nodes[@]}"; do
   name="$node-cold"
   expected_address="$(jq -er .address "$account_file")"
   password="$(<"$password_file")"
-  signing_address="$(printf '%s\n' "$password" | GDC_OPERATOR_HOME="$operator_home" \
+  signing_address="$(printf '%s\n' "$password" | INFERENCED_HOME="$operator_home" \
     "$ROOT/scripts/inferenced.sh" keys show "$name" --keyring-backend file -a | tail -n1 | tr -d '\r')"
   [[ "$signing_address" == "$expected_address" ]] || \
     die "local governance signing identity for $node does not match its recorded account"
@@ -187,7 +187,7 @@ for node in "${voting_nodes[@]}"; do
   # committed receipt from this exact run.
   step "Vote $option from $name"
   password="$(<"$password_file")"
-  tx="$(printf '%s\n' "$password" | GDC_OPERATOR_HOME="$operator_home" "$ROOT/scripts/inferenced.sh" tx gov vote "$proposal_id" "$option" \
+  tx="$(printf '%s\n' "$password" | INFERENCED_HOME="$operator_home" "$ROOT/scripts/inferenced.sh" tx gov vote "$proposal_id" "$option" \
     --from "$name" --keyring-backend file --chain-id "$CHAIN_ID" --node "$rpc" \
     --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --broadcast-mode sync --output json --yes)"
   jq -e '.code == 0 and (.txhash | test("^[A-F0-9]{64}$"))' <<<"$tx" >/dev/null || die "vote transaction from $name failed"
