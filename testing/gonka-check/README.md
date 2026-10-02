@@ -68,7 +68,6 @@ Checks: `a_created`, `g_changed`, `b_created`, `a_settled_after`, `own_group` (q
 
 `scenarios/control-187.sh` is that control run on gateway A at group size 5: one escrow created through the gateway admin API on the gateway host, two requests into it, a manual settlement in the same epoch, then `escrow record` and `verdict`. Without `--run` it only reads.
 `scenarios/run-187.sh` is the live run: escrow A at 5 slots, the 5 → 9 proposal, escrow B at 9 slots, both settled by hand in the same epoch, then the 9 → 5 rollback. Its account in `GOV_HOME` submits both proposals and votes yes for the genesis guardians through their `MsgVote` grants; after a stop it rolls back to 5 the same way. With `--gov wait` it writes each proposal file, says when to submit it and waits for `group_size`.
-`scenarios/grant-votes-187.sh show|grant|revoke` is for the holder of the guardian keys: `MsgVote` grants to that account for 7 days and the two deposits.
 
 ## Safety
 

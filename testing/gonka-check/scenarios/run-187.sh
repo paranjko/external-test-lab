@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Live run of a group size change on gateway A: escrow A at 5 slots, the 5 -> 9 proposal, escrow B at 9 slots, both
 # settled by hand in the same epoch, the 9 -> 5 rollback, then gcheck escrow record and verdict. The run account
-# submits each proposal and votes yes for the genesis guardians through their vote grants (grant-votes-187.sh);
+# submits each proposal and votes yes for the genesis guardians through their vote grants;
 # with --gov wait it only writes the proposal files, says when, and waits for group_size.
 # shellcheck disable=SC2034,SC2154  # variables are set by the lib.sh functions
 set -euo pipefail
