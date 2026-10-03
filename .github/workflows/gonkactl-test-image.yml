@@ -1,0 +1,16 @@
+name: gonkactl-test runner image
+on:
+  pull_request:
+    paths: ['gonkactl-test/**', '.github/workflows/gonkactl-test-image.yml']
+  push:
+    branches: [main]
+    paths: ['gonkactl-test/**', '.github/workflows/gonkactl-test-image.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Build runner image
+        run: make -C gonkactl-test docker-image DOCKER_IMAGE=gonkactl-test:ci
