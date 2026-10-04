@@ -24,6 +24,11 @@ SECRET_NAMES = {"DEVSHARD_PRIVATE_KEY", "DEVSHARD_ADMIN_API_KEY", "DEVSHARD_API_
 # gateways.  This is intentionally finite for the upstream integer contract,
 # but exceeds every planned laboratory campaign by orders of magnitude.
 TEST_STAND_PARTICIPANT_BUDGET = 1_000_000_000
+# This pinned official gateway restores its default cache for nonpositive caps
+# Every cached response costs at least 256 bytes, so cap1 evicts it immediately
+# Stand requests must exercise inference and escrow counters, not cached replies
+TEST_STAND_CACHE_MAX_BYTES = "1"
+CHAT_CACHE_KEY = "DEVSHARD_CHAT_CACHE_MAX_BYTES"
 ENV = {
     "DEVSHARD_PORT": "8080", "DEVSHARDS_JSON": "[]",
     "DEVSHARD_CHAIN_ID": "gonka-devnet-community", "DEVSHARD_CHAIN_RPC": "http://node:26657/",
@@ -101,7 +106,10 @@ def render(design, secret_paths):
     require(design.get("gateway_image") == IMAGE and design.get("platform") == "linux/amd64",
             "gateway must use the pinned official linux/amd64 digest")
     common = design.get("gateway_common_env")
-    require(isinstance(common, dict) and common.keys() == ENV.keys(), "environment shape differs from qualified contract")
+    require(isinstance(common, dict) and set(common) in (set(ENV), set(ENV) | {CHAT_CACHE_KEY}),
+            "environment shape differs from qualified contract")
+    require(common.get(CHAT_CACHE_KEY, TEST_STAND_CACHE_MAX_BYTES) == TEST_STAND_CACHE_MAX_BYTES,
+            "stand cache policy must retain fresh inference")
     for key, value in ENV.items():
         if key in ("DEVSHARD_CHAIN_RPC", "DEVSHARD_PUBLIC_API"):
             upstream(common[key])
@@ -134,8 +142,10 @@ def render(design, secret_paths):
                 require(member not in seen[kind], f"duplicate A/B {kind}")
                 seen[kind].add(member)
         # Compose reads literal secrets at start, never through interpolation or this output.
+        environment = copy.deepcopy(common)
+        environment[CHAT_CACHE_KEY] = TEST_STAND_CACHE_MAX_BYTES
         service = {"image": IMAGE, "platform": "linux/amd64", "restart": "unless-stopped",
-                   "environment": copy.deepcopy(common),
+                   "environment": environment,
                    "env_file": [{"path": str(secret_path), "format": "raw"}],
                    "volumes": ["state:/root/.devshardctl"],
                    "ports": [item["api_bind"], item["accounting_bind"]], "networks": ["host-private"],

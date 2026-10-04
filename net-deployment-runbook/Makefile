@@ -91,6 +91,30 @@ test-devshard-502-reader:
 
 test-devshard-502-fixture-contract: test-devshard-502-reader
 
+.PHONY: test-devshard-cache-policy
+test-devshard-cache-policy:
+	@python3 ./scripts/test-devshard-cache-policy.py
+
+test: test-devshard-cache-policy
+
+.PHONY: test-devshard-cache-ledger test-devshard-cache-lifecycle
+test-devshard-cache-ledger:
+	@python3 ./scripts/test-devshard-cache-ledger.py
+
+test-devshard-cache-lifecycle: test-devshard-cache-ledger
+	@python3 ./scripts/test-devshard-cache-drain.py
+	@python3 ./scripts/test-devshard-cache-lifecycle.py
+	@python3 ./scripts/test-devshard-cache-runtime.py
+
+test: test-devshard-cache-lifecycle
+
+.PHONY: test-devshard-cache-apply
+test-devshard-cache-apply: test-devshard-cache-lifecycle
+	@python3 ./scripts/test-devshard-cache-apply.py
+	@python3 ./scripts/test-devshard-cache-apply-launcher.py
+
+test: test-devshard-cache-apply
+
 test-amd-mlnode-trial:
 	@./scripts/test-run-amd-mlnode-trial.sh
 

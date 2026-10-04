@@ -176,6 +176,7 @@ class InstanceTests(unittest.TestCase):
             self.assertTrue(all(binding["host_ip"] == "127.0.0.1" for binding in service["ports"]))
             for key in ("DEVSHARD_ESCROW_ROTATION_ENABLED", "DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED"):
                 self.assertEqual(service["environment"][key], "false")
+            self.assertEqual(service["environment"][instances.CHAT_CACHE_KEY], "1")
             for value in instances.secrets(self.files[identity]):
                 self.assertNotIn(value, json.dumps(model))
 
@@ -191,6 +192,24 @@ class InstanceTests(unittest.TestCase):
                 bad["gateways"][0][key] = bad["gateways"][0][key].replace("127.0.0.1", host)
                 with self.subTest(key=key, host=host), self.assertRaises(ValueError):
                     instances.render(bad, self.files)
+
+    def test_fresh_cache_policy_preserves_input_and_explicit_design(self):
+        saved = copy.deepcopy(self.design)
+        implicit = instances.render(self.design, self.files)
+        self.assertEqual(self.design, saved)
+        self.design["gateway_common_env"][instances.CHAT_CACHE_KEY] = "1"
+        self.assertEqual(instances.render(self.design, self.files), implicit)
+        for identity in ("A", "B"):
+            environment = copy.deepcopy(implicit[identity]["services"]["gateway"]["environment"])
+            self.assertEqual(environment.pop(instances.CHAT_CACHE_KEY), "1")
+            self.assertEqual(environment, saved["gateway_common_env"])
+
+    def test_cache_default_restoration_or_unqualified_override_is_refused(self):
+        for value in ("0", "-1", "256000000", "true", 1, None):
+            bad = copy.deepcopy(self.design)
+            bad["gateway_common_env"][instances.CHAT_CACHE_KEY] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "fresh inference"):
+                instances.render(bad, self.files)
 
     def test_duplicate_secrets_and_file_permissions(self):
         self.files["B"].write_text(self.files["A"].read_text())
