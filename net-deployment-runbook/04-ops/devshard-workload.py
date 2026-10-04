@@ -351,9 +351,15 @@ class Runner:
                     terminal.update(charged=charge, observed_charge=charge, after=after)
                     require(charge <= before["request_reserve"], "request exceeded reserved spend")
                     if parsed:
+                        # Heartbeat/cleanup diffs can follow the inference nonce.
+                        # A cache replay still fails the strict pre-dispatch bound.
                         require(parsed["escrow_id"] == before["escrow_id"] and
-                                before["nonce"] < parsed["nonce"] == after["nonce"] <= before["nonce"] + before["nonce_reserve"],
+                                before["nonce"] < parsed["nonce"] <= after["nonce"] <= before["nonce"] + before["nonce_reserve"],
                                 "response/escrow/nonce correlation failed")
+                        require(not any(e["kind"] == "terminal" and e.get("response", {}).get("id") == parsed["id"]
+                                        for e in self.campaign.events), "response ID already accounted for")
+                        terminal.update(accounting_scope="whole observed escrow interval, including protocol overhead",
+                                        protocol_nonces_after_response=after["nonce"] - parsed["nonce"])
                     break
                 self.clock.sleep(min(1, max(0, drain_deadline - self.clock.monotonic())))
             else:

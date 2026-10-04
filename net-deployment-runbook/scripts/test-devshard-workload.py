@@ -300,6 +300,57 @@ class WorkloadTests(unittest.TestCase):
             self.assertEqual(result["automated_outcome"], "BLOCKED")
             self.assertFalse(self.adapter.calls)
 
+    def test_background_protocol_nonces_keep_full_interval_charge(self):
+        for state in self.adapter.states.values():
+            state["nonce_reserve"] = 3
+
+        def heartbeat_after_response(*args):
+            result = self.adapter.send(*args)
+            self.adapter.states[args[0]]["nonce"] += 2
+            self.adapter.states[args[0]]["balance"] -= 2000
+            return result
+
+        with self.campaign() as campaign:
+            result = w.Runner(campaign, self.adapter.observe, heartbeat_after_response, self.clock).run(1)
+            self.assertEqual(result["automated_outcome"], "PASS")
+            terminals = [e for e in campaign.events if e["kind"] == "terminal"]
+            self.assertEqual(len(terminals), 40)
+            self.assertTrue(all(e["charged"] == 2010 and e["protocol_nonces_after_response"] == 2 for e in terminals))
+
+    def test_cached_response_cannot_be_relabelled_by_later_heartbeat(self):
+        self.adapter.states["A"].update(nonce=2, nonce_reserve=3)
+
+        def cached(*args):
+            result = self.adapter.send(*args)
+            result["body"] = completion("1", 2)
+            return result
+
+        with self.campaign() as campaign:
+            result = w.Runner(campaign, self.adapter.observe, cached, self.clock).run(1)
+            self.assertEqual(result["automated_outcome"], "INCONCLUSIVE")
+            terminal = next(e for e in campaign.events if e["kind"] == "terminal")
+            self.assertEqual(terminal["charged"], 2152)
+            self.assertEqual(len(self.adapter.calls), 1)
+
+    def test_protocol_overhead_cannot_exceed_nonce_reservation(self):
+        def overflow(*args):
+            result = self.adapter.send(*args)
+            self.adapter.states[args[0]]["nonce"] += 1
+            return result
+
+        with self.campaign() as campaign:
+            result = w.Runner(campaign, self.adapter.observe, overflow, self.clock).run(1)
+            self.assertEqual(result["automated_outcome"], "INCONCLUSIVE")
+            self.assertEqual(len(self.adapter.calls), 1)
+
+    def test_historical_response_id_cannot_count_twice_even_with_regressed_preimage(self):
+        with self.campaign() as campaign:
+            campaign.append("terminal", request_id="prior-smoke", gateway="A", outcome="PASS", charged=10,
+                            response={"id": "devshard-1-1"})
+            result = w.Runner(campaign, self.adapter.observe, self.adapter.send, self.clock).run(1)
+            self.assertEqual(result["automated_outcome"], "INCONCLUSIVE")
+            self.assertEqual(len(self.adapter.calls), 1)
+
     def test_drain_is_bounded_after_one_dispatched_request(self):
         def busy(deadline):
             obs = self.adapter.observe(deadline)

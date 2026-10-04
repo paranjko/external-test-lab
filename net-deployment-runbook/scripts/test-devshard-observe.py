@@ -185,6 +185,91 @@ class ObservationContracts(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 o.uint(value)
 
+    def mock_samples(self):
+        chain = "gonka-test-ds502-isolated"
+        return [{"started_at": self.clock.time() - (150 - height) - .8 + poll * .2 - .02,
+                 "observed_at": self.clock.time() - (150 - height) - .8 + poll * .2,
+                 "value": {"result": {"node_info": {"network": chain},
+                    "sync_info": {"catching_up": False, "latest_block_height": str(height)}}}}
+                for height in range(129, 151) for poll in range(5)]
+
+    def mock_epoch(self):
+        return {"stub": {"block_height": 150, "latest_epoch": {"index": 1},
+                         "phase": "Inference", "is_confirmation_poc_active": False},
+                "revision": {"block_height": 150, "params_block_height": 1,
+                             "epoch_index": 1, "next_poc_start_block_height": 100000}}
+
+    def test_mock_interval_lower_bounds_do_not_invent_header_timestamps(self):
+        samples = self.mock_samples()
+        intervals = o.measured_intervals(samples, "gonka-test-ds502-isolated", 150, self.clock.time())
+        self.assertEqual(len(intervals), 20)
+        for value in intervals:
+            self.assertAlmostEqual(value, .78, places=5)
+
+    def test_mock_observation_cannot_qualify_devnet_or_mainnet(self):
+        for chain in ("gonka-devnet-community", "gonka-mainnet"):
+            with self.subTest(chain=chain), self.assertRaisesRegex(ValueError, "cannot qualify DevNet"):
+                o.measured_intervals(self.mock_samples(), chain, 150, self.clock.time())
+            with self.subTest(chain=chain), self.assertRaisesRegex(ValueError, "cannot qualify DevNet"):
+                o.isolated_chain_state(self.status, self.mock_epoch(), chain)
+
+    def test_measured_samples_reject_gaps_regression_and_chain_drift(self):
+        for field, value in (("latest_block_height", "140"), ("latest_block_height", "128"),
+                             ("catching_up", True)):
+            samples = self.mock_samples()
+            samples[1]["value"]["result"]["sync_info"][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                o.measured_intervals(samples, "gonka-test-ds502-isolated", 150, self.clock.time())
+        samples = self.mock_samples()
+        samples[1]["value"]["result"]["node_info"]["network"] = "gonka-devnet-community"
+        with self.assertRaisesRegex(ValueError, "chain mismatch"):
+            o.measured_intervals(samples, "gonka-test-ds502-isolated", 150, self.clock.time())
+
+    def test_measured_samples_require_complete_current_nonoverlapping_window(self):
+        for mutation in (lambda rows: rows.__delitem__(slice(21, None)),
+                         lambda rows: rows[1].update(started_at=rows[0]["observed_at"] - .1),
+                         lambda rows: rows[-1].update(observed_at=self.clock.time() + 1)):
+            samples = self.mock_samples()
+            mutation(samples)
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                o.measured_intervals(samples, "gonka-test-ds502-isolated", 150, self.clock.time())
+        for height, now in ((151, self.clock.time()), (150, self.clock.time() + 6)):
+            with self.subTest(height=height, now=now), self.assertRaises(ValueError):
+                o.measured_intervals(self.mock_samples(), "gonka-test-ds502-isolated", height, now)
+
+    def test_isolated_phase_requires_unchanged_stub_and_current_revision(self):
+        status = copy.deepcopy(self.status)
+        status["result"]["node_info"]["network"] = "gonka-test-ds502-isolated"
+        status["result"]["sync_info"]["latest_block_height"] = "150"
+        projected = o.isolated_chain_state(status, self.mock_epoch(), "gonka-test-ds502-isolated")
+        self.assertEqual(projected["blocks_to_poc"], 99850)
+        self.assertEqual(projected["phase_source"], "isolated-static-stub-and-current-revision")
+        for section, field, value in (("revision", "block_height", 153),
+                                     ("revision", "epoch_index", 2),
+                                     ("revision", "params_block_height", 2),
+                                     ("revision", "next_poc_start_block_height", 151),
+                                     ("stub", "phase", "PoC"),
+                                     ("stub", "is_confirmation_poc_active", True)):
+            evidence = self.mock_epoch()
+            evidence[section][field] = value
+            with self.subTest(section=section, field=field), self.assertRaises(ValueError):
+                o.isolated_chain_state(status, evidence, "gonka-test-ds502-isolated")
+
+    def test_connected_mock_projection_is_explicitly_separate_from_devnet(self):
+        self.bindings["chain_id"] = "gonka-test-ds502-isolated"
+        self.status["result"]["node_info"]["network"] = self.bindings["chain_id"]
+        self.status["result"]["sync_info"]["latest_block_height"] = "150"
+        self.epoch, self.headers = self.mock_epoch(), self.mock_samples()
+        self.hosts["host-a"]["context_source"] = "mock-unbounded"
+        collector = o.Collector(self.read, lambda kind, **fields: self.retained.append((kind, fields)),
+                                self.bindings, "lab-mock", self.clock)
+        observation = collector.observe(self.clock.monotonic() + 10)
+        self.assertEqual(observation["environment_kind"], "lab-mock")
+        self.assertEqual(observation["height"], 150)
+        self.assertEqual(len(self.retained), 9)
+        with self.assertRaisesRegex(ValueError, "environment/chain mismatch"):
+            o.Collector(self.read, lambda *args: None, self.bindings, "devnet", self.clock)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -68,6 +68,54 @@ def chain_state(status, epoch, chain_id):
             "blocks_to_poc": max(0, next_poc - max(height, epoch_height))}
 
 
+def measured_intervals(samples, chain_id, height, now):
+    """Conservative transition bounds for the timestamp-free isolated mock only."""
+    require(chain_id == "gonka-test-ds502-isolated", "measured mock intervals cannot qualify DevNet")
+    require(isinstance(samples, list) and 22 <= len(samples) <= 1000, "bounded block samples required")
+    previous, transitions = None, []
+    for sample in samples:
+        start, end = sample["started_at"], sample["observed_at"]
+        require(w.number(start) and w.number(end) and 0 <= end - start <= w.FRESH_SECONDS,
+                "invalid block observation bounds")
+        result = sample["value"]["result"]
+        require(result["node_info"]["network"] == chain_id and result["sync_info"]["catching_up"] is False,
+                "block sample chain mismatch")
+        current = uint(result["sync_info"]["latest_block_height"], 1)
+        if previous is not None:
+            require(start >= previous["observed_at"], "overlapping or reversed block observations")
+            delta = current - previous["height"]
+            require(delta in (0, 1), "missing or regressed block transition")
+            if delta:
+                transitions.append((previous["started_at"], end))
+        previous = {"height": current, "started_at": start, "observed_at": end}
+    require(previous["height"] == height and 0 <= now - previous["observed_at"] <= w.FRESH_SECONDS,
+            "measured block head is stale or mismatched")
+    require(len(transitions) >= 21, "twenty-one measured transitions required")
+    transitions = transitions[-21:]
+    intervals = [right[0] - left[1] for left, right in zip(transitions, transitions[1:])]
+    require(all(w.number(n, .001) for n in intervals), "unresolved block interval lower bound")
+    require(0 <= now - transitions[-1][1] <= w.FRESH_SECONDS, "measured chain has stopped progressing")
+    return intervals
+
+
+def isolated_chain_state(status, evidence, chain_id):
+    require(chain_id == "gonka-test-ds502-isolated", "isolated phase evidence cannot qualify DevNet")
+    result, stub, revision = status["result"], evidence["stub"], evidence["revision"]
+    require(result["node_info"]["network"] == chain_id and result["sync_info"]["catching_up"] is False,
+            "wrong or catching-up isolated chain")
+    height, actual = uint(result["sync_info"]["latest_block_height"], 1), uint(revision["block_height"], 1)
+    require(abs(height - actual) <= 2, "isolated revision is not current")
+    require(uint(revision["params_block_height"], 1) == 1 and uint(revision["epoch_index"], 1) == 1 and
+            uint(revision["next_poc_start_block_height"], 1) == 100000,
+            "isolated revision changed; static stub no longer qualifies")
+    require(uint(stub["block_height"], 1) == 150 and uint(stub["latest_epoch"]["index"], 1) == 1 and
+            stub["phase"] == "Inference" and stub["is_confirmation_poc_active"] is False,
+            "isolated phase stub differs")
+    require(max(height, actual) < 100000, "isolated initial-epoch scope exhausted")
+    return {"chain_id": chain_id, "height": height, "epoch": 1, "phase": "Inference", "cpoc": False,
+            "blocks_to_poc": 100000 - max(height, actual), "phase_source": "isolated-static-stub-and-current-revision"}
+
+
 def gateway_state(registry, queried, hosts, params, creator, chain, environment_kind):
     require(queried["found"] is True, "escrow not confirmed on chain")
     escrow = queried["escrow"]
@@ -163,9 +211,11 @@ class Collector:
             return receipt["value"]
 
         status, epoch = read("status"), read("epoch")
-        chain = chain_state(status, epoch, self.bindings["chain_id"])
+        project_chain = isolated_chain_state if self.environment_kind == "lab-mock" else chain_state
+        chain = project_chain(status, epoch, self.bindings["chain_id"])
         headers = read("blocks", chain["height"])
-        intervals = block_intervals(headers, chain["chain_id"], chain["height"], self.clock.time())
+        project_intervals = measured_intervals if self.environment_kind == "lab-mock" else block_intervals
+        intervals = project_intervals(headers, chain["chain_id"], chain["height"], self.clock.time())
         params, hosts = read("params"), read("hosts")
         gateways = {}
         for name in ("A", "B"):

@@ -56,6 +56,8 @@ def load(root, expected):
                 require(mount["type"] == "bind" and Path(mount["source"]).resolve().is_relative_to(root), "mount escaped fixture")
             if service_name == "gateway":
                 env = service["environment"]
+                require(not receipt.get("fresh_inference") or env.get("DEVSHARD_CHAT_CACHE_MAX_BYTES") == "1",
+                        "fresh-inference cache policy drift")
                 require(env["DEVSHARD_CHAIN_ID"] == fixture.CHAIN and env["DEVSHARDS_JSON"] == "[]" and
                         env["DEVSHARD_ESCROW_ROTATION_ENABLED"] == env["DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED"] == "false",
                         "fresh isolated gateway settings required")

@@ -85,6 +85,12 @@ test-inspect-devshard-runtime:
 
 test: test-inspect-devshard-runtime
 
+.PHONY: test-devshard-502-reader
+test-devshard-502-reader:
+	@python3 ./scripts/test-devshard-502-reader.py
+
+test-devshard-502-fixture-contract: test-devshard-502-reader
+
 test-amd-mlnode-trial:
 	@./scripts/test-run-amd-mlnode-trial.sh
 

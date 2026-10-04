@@ -74,7 +74,7 @@ def bind(source, target, readonly=True):
             "read_only": readonly, "bind": {"create_host_path": False}}
 
 
-def composition(generated, root, project, initial_version="5.0.2"):
+def composition(generated, root, project, initial_version="5.0.2", fresh_inference=False):
     require(initial_version in ("5.0.2", "5.0.0-cached"), "unsupported initial artifact")
     services = generated["services"]
     require(set(services) == {"mock-chain", "mock-dapi", "mock-openai", "versiond-0",
@@ -132,6 +132,9 @@ def composition(generated, root, project, initial_version="5.0.2"):
         DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED="false",
         DEVSHARD_ADMIN_API_KEY="fixture-a-admin-key-not-for-live-use",
         DEVSHARD_API_KEYS="fixture-a-client-key-not-for-live-use")
+    if fresh_inference:
+        # Official positive size cap, zero would restore the default cache
+        gateway["environment"]["DEVSHARD_CHAT_CACHE_MAX_BYTES"] = "1"
     for service in services.values():
         service["platform"] = "linux/amd64"
         for mount in service.get("volumes", []):
@@ -184,6 +187,9 @@ def pair_documents(document, second, root, project):
 
 
 def preparation_inputs(args):
+    require(not getattr(args, "fresh_inference", False) or
+            (args.two_gateways and args.initial_version == "5.0.2"),
+            "fresh inference requires a new official A/B fixture")
     require(args.archive_502, "official 5.0.2 archive required")
     require(args.initial_version != "5.0.0-cached" or args.old_500,
             "cached 5.0.0 initial state requires its exact executable")
@@ -270,7 +276,7 @@ def prepare(args):
     generated = json.loads(run(["docker", "--context", "default", "compose", "-p", project,
                                "-f", root / "upstream.yaml", "config", "--format", "json"],
                               capture_output=True, text=True).stdout)
-    document = composition(generated, root, project, args.initial_version)
+    document = composition(generated, root, project, args.initial_version, args.fresh_inference)
     pair = None
     if args.two_gateways:
         identity_root = root / "identity-b"
@@ -307,6 +313,8 @@ def prepare(args):
                        config_sha256=digest(root / "config.yaml"),
                        gateway_compose_sha256={name: digest(root / ("compose-" + name + ".json")) for name in ("a", "b")},
                        identity_b_seed_sha256=digest(identity_root / "config.yaml"))
+    if args.fresh_inference:
+        receipt["fresh_inference"] = True
     write_json(root / "prepared.json", receipt)
     print(json.dumps({"project": project, "prepared": str(root), "runtime_acceptance": "NOT RUN"}))
 
@@ -322,11 +330,13 @@ def main():
     parser.add_argument("--archive-501", type=Path)
     parser.add_argument("--old-500", type=Path)
     parser.add_argument("--two-gateways", action="store_true", help="prepare fresh independent A/B projects on one internal fixture network")
+    parser.add_argument("--fresh-inference", action="store_true", help="bind official positive response-cache cap for real nonce movement")
     parser.add_argument("--render-existing-to", help="new Compose filename; retain earlier renders and data")
     args = parser.parse_args()
     os.umask(0o077)
     try:
         if args.render_existing_to:
+            require(not args.fresh_inference, "fresh-inference requires new preparation")
             root = args.root.resolve(strict=True)
             require(Path(args.render_existing_to).name == args.render_existing_to,
                     "render output must be a new filename inside the fixture")

@@ -175,6 +175,21 @@ class FixtureContracts(unittest.TestCase):
         args.archive_501 = Path("501.zip")
         self.assertEqual(len(fixture.preparation_inputs(args)), 2)
 
+    def test_fresh_inference_uses_official_positive_cap_without_runtime_changes(self):
+        original = self.render()
+        fresh = fixture.composition(copy.deepcopy(self.generated), self.root, "ds502-fixture-unit", fresh_inference=True)
+        self.assertNotIn("DEVSHARD_CHAT_CACHE_MAX_BYTES", original["services"]["devshardctl"]["environment"])
+        self.assertEqual(fresh["services"]["devshardctl"]["environment"].pop("DEVSHARD_CHAT_CACHE_MAX_BYTES"), "1")
+        self.assertEqual(original, fresh)
+
+    def test_fresh_inference_requires_new_paired_official_state(self):
+        args = SimpleNamespace(archive_502=Path("502.zip"), archive_501=None, old_500=None,
+                               initial_version="5.0.2", two_gateways=True, fresh_inference=True)
+        self.assertEqual(fixture.preparation_inputs(args), [("5.0.2", Path("502.zip"))])
+        args.two_gateways = False
+        with self.assertRaisesRegex(ValueError, "new official A/B"):
+            fixture.preparation_inputs(args)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
