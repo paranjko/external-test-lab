@@ -519,6 +519,65 @@ class TelegramConsumerTest(unittest.TestCase):
         broker.assert_not_called()
         self.assertEqual(replies, ["API keys can only be requested in a new private message."])
 
+    def test_faucet_controls_use_actual_sender_never_chat_id_or_inference(self):
+        with BOT.connection() as db, patch.object(BOT, "send_message"), patch.object(BOT, "gateway_completion") as inference, patch.object(
+            BOT, "faucet_admin_request", return_value=(200, {"state": "closed", "limit_ngonka": "100000000000", "administrator_ids": [77]})
+        ) as admin:
+            for text in ("/faucet add 88", "/faucet remove 88", "/faucet list", "/faucet limit 100.000000001"):
+                BOT.handle(db, {"message": {"chat": {"id": 999, "type": "private"}, "from": {"id": 77}, "text": text}})
+        self.assertEqual(admin.call_args_list, [call("add", 77, 88), call("remove", 77, 88), call("list", 77), call("limit", 77, 100000000001)])
+        inference.assert_not_called()
+
+    def test_faucet_control_parser_rejects_ambiguous_or_unbounded_amounts(self):
+        for text in ("/faucet limit -1", "/faucet limit 1e2", "/faucet limit 01", "/faucet limit 0.0000000001", "/faucet limit 9223372037", "/faucet add true", "/faucet remove 0", "/faucet open extra"):
+            with self.assertRaises(ValueError):
+                BOT.faucet_control(text.split())
+        with self.assertRaises(ValueError):
+            BOT.faucet_control("/faucet limit 0".split())
+        self.assertEqual(BOT.faucet_control("/faucet limit 100 24h".split()), ("limit", 100000000000))
+
+    def test_faucet_control_invalid_input_does_not_leave_bot(self):
+        with BOT.connection() as db, patch.object(BOT, "send_message"), patch.object(BOT, "faucet_admin_request") as admin, patch.object(BOT, "gateway_completion") as inference:
+            BOT.handle(db, {"message": {"chat": {"id": 77, "type": "private"}, "from": {"id": 77}, "text": "/faucet limit 1e9"}})
+        admin.assert_not_called()
+        inference.assert_not_called()
+
+    def test_faucet_forwards_groups_and_boolean_identity_cannot_control_service(self):
+        with BOT.connection() as db, patch.object(BOT, "send_message"), patch.object(BOT, "faucet_admin_request") as admin, patch.object(BOT, "faucet_request") as funding:
+            for field in ("forward_origin", "forward_from", "forward_from_chat", "forward_sender_name", "forward_date"):
+                BOT.handle(db, {"message": {"chat": {"id": 77, "type": "private"}, "from": {"id": 77}, "text": "/faucet open", field: {}}})
+            for kind, actor in (("group", 77), ("private", True), ("private", "77")):
+                BOT.handle(db, {"message": {"chat": {"id": 77, "type": kind}, "from": {"id": actor}, "text": "/faucet open"}})
+        admin.assert_not_called()
+        funding.assert_not_called()
+
+    def test_faucet_admin_request_separate_capability_exact_integer_payload(self):
+        with patch.object(BOT, "FAUCET_URL", "http://127.0.0.1:1/v1/telegram-claim"), patch.object(BOT, "FAUCET_TOKEN", "private-fixture"), patch.object(BOT, "urlopen", return_value=FakeResponse({"state": "closed"})) as request:
+            BOT.faucet_admin_request("limit", 77, 100000000001)
+        sent = request.call_args.args[0]
+        self.assertEqual(sent.full_url, "http://127.0.0.1:1/v1/telegram-admin")
+        self.assertEqual(sent.get_header("Authorization"), "Bearer private-fixture")
+        self.assertEqual(json.loads(sent.data), {"telegram_user_id": 77, "action": "limit", "limit_ngonka": 100000000001})
+
+    def test_faucet_reports_distinct_closure_quota_and_unknown_amount(self):
+        self.assertIn("closed", BOT.faucet_reply({"error": "telegram faucet is closed"}))
+        self.assertIn("rolling 24-hour", BOT.faucet_reply({"error": "telegram faucet rolling amount limit reached", "state": "rate_limited"}))
+        self.assertIn("unknown", BOT.faucet_reply({"error": "telegram faucet legacy amount requires reconciliation or window expiry"}))
+        self.assertIn("will not be rebroadcast", BOT.faucet_reply({"state": "pending"}))
+        self.assertIn("failed", BOT.faucet_reply({"state": "failed"}))
+
+    def test_admins_alias_and_user_status_stay_outside_model_prompts(self):
+        replies = []
+        with BOT.connection() as db, patch.object(BOT, "send_message", side_effect=lambda _, text: replies.append(text)), patch.object(BOT, "gateway_completion") as inference, patch.object(
+            BOT, "faucet_admin_request", return_value=(200, {"state": "open", "remaining_ngonka": "100000000000", "chain_service_state": "unverified", "accounting": "known", "administrator_ids": [77]})
+        ) as admin:
+            for text in ("/admins list", "/admins add 88", "/admins remove 88", "/faucet status"):
+                BOT.handle(db, {"message": {"chat": {"id": 44, "type": "private"}, "from": {"id": 44}, "text": text}})
+        self.assertEqual(admin.call_args_list, [call("list", 44), call("add", 44, 88), call("remove", 44, 88), call("status", 44)])
+        self.assertIn("Remaining rolling 24-hour allowance", replies[-1])
+        self.assertIn("unverified", replies[-1])
+        inference.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

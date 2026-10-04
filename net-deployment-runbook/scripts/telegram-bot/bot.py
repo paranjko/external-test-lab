@@ -733,19 +733,27 @@ def faucet_request(address: str, telegram_id: int, idempotency_key: str):
                 return 503, {"state": "unavailable"}
 
 
-def faucet_admin_request(action: str, telegram_id: int):
+def faucet_admin_request(action: str, telegram_id: int, value=None):
     if not FAUCET_URL or not FAUCET_TOKEN:
         return 503, {"error": "unavailable"}
+    payload = {"telegram_user_id": telegram_id, "action": action}
+    if action in {"add", "remove"}:
+        payload["administrator_id"] = value
+    elif action == "limit":
+        payload["limit_ngonka"] = value
     request = Request(
         FAUCET_URL.rsplit("/", 1)[0] + "/telegram-admin",
-        data=json.dumps({"telegram_user_id": telegram_id, "action": action}).encode(),
+        data=json.dumps(payload).encode(),
         headers={"Authorization": f"Bearer {FAUCET_TOKEN}", "Content-Type": "application/json"}, method="POST",
     )
     try:
         with urlopen(request, timeout=FAUCET_TIMEOUT_SECONDS) as response:
             return response.status, json.load(response)
     except HTTPError as error:
-        return error.code, json.load(error)
+        try:
+            return error.code, json.load(error)
+        except (ValueError, OSError):
+            return error.code, {"error": "unavailable"}
     except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
         return 503, {"error": "unavailable"}
     return 503, {"state": "unavailable"}
@@ -778,11 +786,41 @@ def faucet_reply(payload) -> str:
             "failed": "submitted, but the chain reports failure.",
         }.get(confirmation, "submitted; chain confirmation is unknown.")
         return f"Faucet sent {amount}ngonka. Transaction: {txhash}. Status: {suffix}"
-    if state == "uncertain":
-        return "Faucet transaction is uncertain. No second transfer was sent; please retry this command later to reconcile it."
+    reason = payload.get("error") if isinstance(payload, dict) else None
+    if reason == "telegram faucet is closed":
+        return "The user faucet is closed by its administrators, inference remains independent"
+    if reason == "telegram faucet rolling amount limit reached":
+        return "Your rolling 24-hour faucet allowance is exhausted, requests across all your addresses share the same allowance\nNext eligibility timestamp: " + str(payload.get("next_eligible_at"))
+    if reason == "telegram faucet legacy amount requires reconciliation or window expiry":
+        return "An earlier faucet amount is unknown, funding stays reserved until reconciliation or its rolling window expires"
+    if state in {"uncertain", "pending"}:
+        return "Faucet transaction is pending or uncertain, the existing request will not be rebroadcast and still reserves your allowance"
+    if state == "failed":
+        return "The chain reports that the faucet transaction failed, no replacement transfer was sent"
+    if state == "cancelled":
+        return "The faucet closed before dispatch, this request was not signed and its allowance was released"
     if state == "rate_limited":
-        return "Faucet anti-spam limit reached. Please try again after the configured window."
+        return "Faucet anti-spam limit reached\nNext eligibility timestamp: " + str(payload.get("next_eligible_at"))
     return "Faucet is temporarily unavailable. No transfer has been confirmed; please retry later."
+
+
+def faucet_control(parts):
+    """Parse private commands without floats, all limits are GNK at the UI."""
+    action = parts[1].lower() if len(parts) > 1 else ""
+    if action == "limit" and len(parts) == 4 and parts[3] == "24h":
+        parts = parts[:3]
+    if action in {"open", "close", "status", "list"} and len(parts) == 2:
+        return action, None
+    if action in {"add", "remove"} and len(parts) == 3 and re.fullmatch(r"[1-9][0-9]*", parts[2]):
+        value = int(parts[2])
+        if 0 < value <= 2**63 - 1:
+            return action, value
+    if action == "limit" and len(parts) == 3 and re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]{1,9})?", parts[2]):
+        whole, _, fraction = parts[2].partition(".")
+        value = int(whole) * 10**9 + int(fraction.ljust(9, "0"))
+        if 0 < value <= 2**63 - 1:
+            return action, value
+    raise ValueError("invalid private faucet control")
 
 
 def handle_faucet(db: sqlite3.Connection, update, chat_id: int, user_id: int, is_premium: bool, text: str) -> None:
@@ -860,7 +898,7 @@ def handle(db: sqlite3.Connection, update) -> None:
     user = message.get("from") or {}
     raw_text = message.get("text")
     chat_id, user_id = chat.get("id"), user.get("id")
-    if not chat_id or not user_id or chat.get("type") != "private":
+    if type(chat_id) is not int or chat_id <= 0 or type(user_id) is not int or not 0 < user_id <= 2**63 - 1 or chat.get("type") != "private":
         return
     is_premium = user.get("is_premium") is True
     upsert_user(db, user_id, is_premium)
@@ -897,12 +935,33 @@ def handle(db: sqlite3.Connection, update) -> None:
             send_message(chat_id, "API key issuance is temporarily unavailable; no replacement was confirmed.")
             record_interaction(db, user_id, "api_key", "unavailable", is_premium)
         return
-    if command == "/faucet":
+    if command in {"/faucet", "/admins"}:
+        if any(field in message for field in ("forward_origin", "forward_from", "forward_from_chat", "forward_sender_name", "forward_date")):
+            send_message(chat_id, "Faucet requests require a new private message from the actual sender")
+            record_interaction(db, user_id, "faucet", "rejected", is_premium)
+            return
         parts = text.split()
-        if len(parts) == 2 and parts[1].lower() in {"open", "close", "status"}:
-            status, payload = faucet_admin_request(parts[1].lower(), user_id)
-            if status == 200:
-                send_message(chat_id, f"Faucet is {payload['state']}.")
+        if command == "/admins" and (len(parts) < 2 or parts[1].lower() not in {"list", "add", "remove"}):
+            send_message(chat_id, "Usage: /admins list, /admins add <numeric ID>, /admins remove <numeric ID>")
+            record_interaction(db, user_id, "faucet_admin", "rejected", is_premium)
+            return
+        if len(parts) > 1 and parts[1].lower() in {"open", "close", "status", "list", "add", "remove", "limit"}:
+            try:
+                action, value = faucet_control(parts)
+            except ValueError:
+                send_message(chat_id, "Usage: /faucet open|close|status, /faucet limit <positive GNK> [24h], /admins list|add|remove [numeric administrator ID]")
+                record_interaction(db, user_id, "faucet_admin", "rejected", is_premium)
+                return
+            status, payload = faucet_admin_request(action, user_id, value) if value is not None else faucet_admin_request(action, user_id)
+            if status == 200 and isinstance(payload, dict) and payload.get("state") in {"open", "closed"}:
+                reply = f"Faucet is {payload['state']}."
+                if action not in {"open", "close", "status"}:
+                    reply = f"Faucet is {payload['state']}\nRolling 24-hour limit: {payload.get('limit_ngonka')}ngonka\nAdministrator IDs: " + ", ".join(str(value) for value in payload.get("administrator_ids", []))
+                elif action == "status":
+                    reply = f"Faucet is {payload['state']}\nRemaining rolling 24-hour allowance: {payload.get('remaining_ngonka')}ngonka\nNext eligibility timestamp: {payload.get('next_eligible_at')}\nAccounting: {payload.get('accounting')}\nChain service: {payload.get('chain_service_state')}"
+                send_message(chat_id, reply)
+            elif status == 409:
+                send_message(chat_id, "The last faucet administrator cannot be removed")
             else:
                 send_message(chat_id, "Faucet administration is unavailable or not authorized.")
             record_interaction(db, user_id, "faucet_admin", "success" if status == 200 else "rejected", is_premium)

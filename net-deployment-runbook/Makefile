@@ -115,6 +115,18 @@ test-devshard-cache-apply: test-devshard-cache-lifecycle
 
 test: test-devshard-cache-apply
 
+.PHONY: test-faucet-policy
+test-faucet-policy:
+	@python3 ./scripts/test-faucet-policy.py
+
+test: test-faucet-policy
+
+.PHONY: test-faucet-policy-http
+test-faucet-policy-http:
+	@python3 ./scripts/test-faucet-policy-http.py
+
+test: test-faucet-policy-http
+
 test-amd-mlnode-trial:
 	@./scripts/test-run-amd-mlnode-trial.sh
 
