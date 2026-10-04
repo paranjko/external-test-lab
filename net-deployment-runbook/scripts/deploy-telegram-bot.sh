@@ -118,14 +118,11 @@ set -Eeuo pipefail
 bot="$(docker ps -q --filter name=gonka-devnet-bot-bot)"
 [[ -n "$bot" && "$(docker inspect -f '{{.State.Health.Status}}' "$bot")" == healthy ]]
 curl -fsS http://127.0.0.1:9464/metrics | grep -q '^gdc_telegram_bot_up 1$'
-docker exec "$bot" python3 -c 'import json, os; from urllib.request import urlopen; assert json.load(urlopen("https://api.telegram.org/bot" + os.environ["TELEGRAM_BOT_TOKEN"] + "/getMe", timeout=15))["ok"]'
 # The text alias remains accepted for old private messages, but Telegram menus
 # cannot register a hyphenated command and must not advertise other commands.
-curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteMyCommands" | jq -e '.ok == true' >/dev/null
-curl -fsS -X POST \
-  --data-urlencode 'scope={"type":"all_private_chats"}' \
-  --data-urlencode 'commands=[{"command":"api_key","description":"Issue or replace stable API key"}]' \
-  "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setMyCommands" | jq -e '.ok == true' >/dev/null
+# The remote SSH shell deliberately has no BotFather capability. Read it
+# only in the configured container; never put it in a shell argument or URL.
+docker exec "$bot" python3 /app/register-commands.py
 REMOTE
   then
     consumer_runtime_ready=true

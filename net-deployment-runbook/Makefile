@@ -1,5 +1,6 @@
 SHELLCHECK_VERSION ?= v0.11.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:$(SHELLCHECK_VERSION)
+
 SHELL_SCRIPTS := $(shell find . -path './vendor' -prune -o -path './.data' -prune -o -type f -name '*.sh' -print | LC_ALL=C sort)
 DEVCONTAINER_CLI ?= npx --yes --loglevel=silent @devcontainers/cli
 # Docker Desktop for Mac cannot bind-mount the launchd ssh-agent socket that
@@ -444,6 +445,7 @@ test: test-devshard-two-gateways test-devshard-502-fixture-contract test-command
 	@./scripts/test-participant-poc-caddy-config.sh
 	@python3 ./scripts/test-devnet-faucet.py
 	@./scripts/test-telegram-bot-deployment.sh
+	@$(MAKE) test-telegram-registration-lifecycle
 	@./scripts/test-telegram-consumer-probe-loop.sh
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
@@ -597,6 +599,10 @@ test-recovery-rehearsal:
 	@./scripts/test-network-recovery-rehearsal.sh --manifest "$(manifest)" --lab-approval "$(lab_approval)" --evidence-dir "$(evidence_dir)" --timeout-seconds "$(timeout_seconds)"
 
 # Exact released signer, synthetic key, no live mounts and no network.
+.PHONY: test-telegram-registration-lifecycle
+test-telegram-registration-lifecycle:
+	@python3 scripts/test-telegram-registration-lifecycle.py
+
 .PHONY: test-tmkms-recovery-boundary
 test-tmkms-recovery-boundary:
 	@image="$$(docker build -q -f scripts/tmkms-boundary.Dockerfile scripts)" && \
