@@ -3,6 +3,7 @@
 import http.client
 import json
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -29,6 +30,17 @@ if not (ROUTE in {"A", "B"} and UPSTREAM.scheme == "http" and UPSTREAM.hostname
 COUNTERS = {}
 COUNTERS_LOCK = threading.Lock()
 ALLOWED_PATHS = {"/v1/chat/completions", "/v1/models", "/v1/status", "/v1/admission-status"}
+HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+
+
+def validate_response_headers(headers):
+    """Reject unsafe metadata before emitting any upstream response status."""
+    for name, value in headers:
+        if (HEADER_NAME.fullmatch(name) is None
+                or any((ord(char) < 32 and char != "\t") or ord(char) == 127
+                       for char in value)):
+            raise ValueError("invalid upstream response header")
+    return headers
 
 
 def count(outcome):
@@ -90,6 +102,7 @@ class Handler(BaseHTTPRequestHandler):
             connection.request(self.command, self.path, body, headers)
             response = connection.getresponse()
             status = response.status
+            response_headers = validate_response_headers(response.getheaders())
             # Errors are bounded and inspected before headers so an upstream that
             # labels a JSON error as text/plain is corrected without relabelling text.
             payload = response.read(MAX_ERROR_BODY + 1) if status >= 400 else None
@@ -99,11 +112,14 @@ class Handler(BaseHTTPRequestHandler):
             content_type = response.getheader("Content-Type")
             if payload is not None and valid_json_error(payload):
                 content_type = "application/json"
-            for key, value in response.getheaders():
+            for key, value in response_headers:
                 if key.lower() not in {"connection", "transfer-encoding", "content-length", "content-type"}:
-                    self.send_header(key, value)
+                    # Explicit sink sanitization complements preflight rejection
+                    # and makes the CR/LF boundary visible to static analyzers.
+                    self.send_header(key.replace("\r", "").replace("\n", ""),
+                                     value.replace("\r", "").replace("\n", ""))
             if content_type:
-                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Type", content_type.replace("\r", "").replace("\n", ""))
             if payload is not None:
                 self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
