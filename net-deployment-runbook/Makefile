@@ -79,6 +79,12 @@ shellcheck:
 test-amd-mlnode-build:
 	@./scripts/test-build-amd-mlnode.sh
 
+.PHONY: test-inspect-devshard-runtime
+test-inspect-devshard-runtime:
+	@python3 ./scripts/test-inspect-devshard-runtime.py
+
+test: test-inspect-devshard-runtime
+
 test-amd-mlnode-trial:
 	@./scripts/test-run-amd-mlnode-trial.sh
 
