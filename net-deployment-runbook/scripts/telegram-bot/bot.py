@@ -183,9 +183,16 @@ def connection() -> sqlite3.Connection:
         );
         """
     )
+    db.execute("BEGIN IMMEDIATE")
     columns = {row[1] for row in db.execute("PRAGMA table_info(inference_events)")}
     if "backend" not in columns:
         db.execute("ALTER TABLE inference_events ADD COLUMN backend TEXT NOT NULL DEFAULT 'unknown'")
+    if "delivery_state" not in columns:
+        db.execute("ALTER TABLE inference_events ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'unverified'")
+    if "delivery_observed_at" not in columns:
+        db.execute("ALTER TABLE inference_events ADD COLUMN delivery_observed_at INTEGER")
+    if "delivery_order" not in columns:
+        db.execute("ALTER TABLE inference_events ADD COLUMN delivery_order INTEGER NOT NULL DEFAULT 0")
     db.commit()
     return db
 
@@ -279,6 +286,27 @@ def render_metrics(db: sqlite3.Connection) -> str:
         "# TYPE gdc_telegram_bot_last_success_timestamp_seconds gauge",
         f"gdc_telegram_bot_last_success_timestamp_seconds {last_success}",
     ])
+    lines.extend([
+        "# HELP gdc_telegram_bot_backend_requests_total Actual inference attempts by backend, model and outcome",
+        "# TYPE gdc_telegram_bot_backend_requests_total counter",
+        "# HELP gdc_telegram_bot_inference_deliveries_total Completed inference replies with observed Telegram delivery outcomes",
+        "# TYPE gdc_telegram_bot_inference_deliveries_total counter",
+        "# HELP gdc_telegram_bot_last_delivery_timestamp_seconds Last observed successful inference reply delivery, never scrape time",
+        "# TYPE gdc_telegram_bot_last_delivery_timestamp_seconds gauge",
+    ])
+    for row in db.execute("SELECT backend, model, outcome, count(*) AS count FROM inference_events GROUP BY backend, model, outcome"):
+        lines.append('gdc_telegram_bot_backend_requests_total'
+                     f'{{backend="{escape_label(row["backend"])}",model="{escape_label(row["model"])}",outcome="{escape_label(row["outcome"])}"}} {row["count"]}')
+    for row in db.execute("SELECT backend, model, delivery_state, count(*) AS count "
+                          "FROM inference_events WHERE outcome='success' AND delivery_state IN ('delivered','failed') "
+                          "GROUP BY backend, model, delivery_state"):
+        labels = f'backend="{escape_label(row["backend"])}",model="{escape_label(row["model"])}"'
+        lines.append(f'gdc_telegram_bot_inference_deliveries_total{{{labels},outcome="{row["delivery_state"]}"}} {row["count"]}')
+        if row["delivery_state"] == "delivered":
+            observed = db.execute("SELECT delivery_observed_at FROM inference_events "
+                                  "WHERE backend=? AND model=? AND delivery_state='delivered' "
+                                  "ORDER BY delivery_order DESC LIMIT 1", (row["backend"], row["model"])).fetchone()[0]
+            lines.append(f'gdc_telegram_bot_last_delivery_timestamp_seconds{{{labels}}} {observed}')
     return "\n".join(lines) + "\n"
 
 
@@ -300,7 +328,41 @@ def health_payload(db: sqlite3.Connection) -> dict:
         "inference_ready": age is not None and age <= HEALTH_MAX_AGE_SECONDS,
         "last_success_timestamp": last_success or None,
         "last_success_age_seconds": age,
+        "delivery_observation": delivery_observation(db),
     }
+
+
+def delivery_observation(db: sqlite3.Connection) -> dict:
+    """Delivery evidence only, current model/backend eligibility is separate."""
+    row = db.execute("SELECT backend, model, delivery_state, delivery_observed_at FROM inference_events "
+                     "WHERE outcome='success' AND delivery_observed_at IS NOT NULL "
+                     "ORDER BY delivery_order DESC LIMIT 1").fetchone()
+    result = {"schema_version": 1, "scope": "telegram_inference_delivery",
+              "state": "UNVERIFIED", "combined_readiness": "UNVERIFIED",
+              "observed_at": None, "expires_at": None, "backend": None, "model": None}
+    if row is None:
+        return result
+    observed = row["delivery_observed_at"]
+    result.update(observed_at=observed, expires_at=observed + 120,
+                  backend=row["backend"], model=row["model"])
+    if observed > now():
+        return result
+    result["state"] = "STALE" if now() - observed > 120 else "RECENT" if row["delivery_state"] == "delivered" else "DELIVERY_FAILED"
+    return result
+
+
+def record_delivery(db: sqlite3.Connection, event_id, succeeded: bool) -> None:
+    # Never attach a delivery to the latest global event, another request may
+    # have completed concurrently, only this response's exact receipt can bind.
+    if type(event_id) is not int or event_id <= 0:
+        return
+    db.execute("BEGIN IMMEDIATE")
+    order = db.execute("SELECT coalesce(max(delivery_order),0)+1 FROM inference_events").fetchone()[0]
+    db.execute("UPDATE inference_events SET delivery_state=?, delivery_observed_at=?, delivery_order=? "
+               "WHERE id=? AND outcome='success' AND delivery_state='unverified'",
+               ("delivered" if succeeded else "failed", now(), order, event_id))
+    db.commit()
+    publish_metrics(db)
 
 
 def upsert_user(db: sqlite3.Connection, telegram_id: int, is_premium: bool) -> None:
@@ -369,13 +431,13 @@ def bounded_history(db: sqlite3.Connection, conversation_id: str):
     return selected
 
 
-def record_inference(db: sqlite3.Connection, outcome: str, usage=None, backend: str = "unknown") -> None:
+def record_inference(db: sqlite3.Connection, outcome: str, usage=None, backend: str = "unknown") -> int:
     usage = usage if isinstance(usage, dict) else {}
     input_tokens = usage.get("prompt_tokens")
     output_tokens = usage.get("completion_tokens")
     total_tokens = usage.get("total_tokens")
     complete = all(isinstance(value, int) and value >= 0 for value in (input_tokens, output_tokens))
-    db.execute(
+    cursor = db.execute(
         "INSERT INTO inference_events "
         "(model, outcome, input_tokens, output_tokens, total_tokens, usage_missing, created_at, backend) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -392,6 +454,7 @@ def record_inference(db: sqlite3.Connection, outcome: str, usage=None, backend: 
     )
     db.commit()
     publish_metrics(db)
+    return cursor.lastrowid
 
 
 class GatewayPreDispatchRejected(RuntimeError):
@@ -564,7 +627,7 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
     db.execute("UPDATE conversations SET updated_at = ? WHERE conversation_id = ?", (timestamp, conversation_id))
     db.commit()
     usage = payload.get("usage")
-    record_inference(db, "success", usage, backend["name"])
+    event_id = record_inference(db, "success", usage, backend["name"])
     response_usage = {}
     if isinstance(usage, dict):
         response_usage = {
@@ -585,6 +648,7 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
         }],
         "output_text": output_text,
         "usage": response_usage,
+        "inference_event_id": event_id,
     }
 
 
@@ -976,6 +1040,7 @@ def handle(db: sqlite3.Connection, update) -> None:
         send_message(chat_id, f"Message must contain between 1 and {MAX_USER_MESSAGE_CHARS} characters.")
         record_interaction(db, user_id, "message", "rejected", is_premium)
         return
+    result = None
     try:
         with typing_indicator(chat_id):
             conversation_id = conversation_for_user(db, user_id)
@@ -993,6 +1058,8 @@ def handle(db: sqlite3.Connection, update) -> None:
         # keeping the polling loop alive for the next user message.
         print(f"Telegram reply delivery failed: {type(error).__name__}", flush=True)
         outcome = "delivery_error"
+    if result is not None:
+        record_delivery(db, result.get("inference_event_id"), outcome == "success")
     record_interaction(db, user_id, "message", outcome, is_premium)
 
 

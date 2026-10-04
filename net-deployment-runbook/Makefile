@@ -127,6 +127,10 @@ test-faucet-policy-http:
 
 test: test-faucet-policy-http
 
+.PHONY: test-telegram-delivery
+test-telegram-delivery:
+	@python3 ./scripts/test-telegram-bot.py
+
 test-amd-mlnode-trial:
 	@./scripts/test-run-amd-mlnode-trial.sh
 
@@ -495,7 +499,7 @@ test: test-devshard-two-gateways test-devshard-502-fixture-contract test-command
 	@./scripts/test-telegram-bot-deployment.sh
 	@$(MAKE) test-telegram-registration-lifecycle
 	@./scripts/test-telegram-consumer-probe-loop.sh
-	@python3 ./scripts/test-telegram-bot.py
+	@$(MAKE) test-telegram-delivery
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
 	@./scripts/test-inspect-accelerator.sh

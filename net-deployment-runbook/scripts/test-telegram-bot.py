@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -577,6 +578,141 @@ class TelegramConsumerTest(unittest.TestCase):
         self.assertIn("Remaining rolling 24-hour allowance", replies[-1])
         self.assertIn("unverified", replies[-1])
         inference.assert_not_called()
+
+    def test_local_inference_without_telegram_is_not_delivery_proof(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            BOT.record_inference(db, "success", backend="A")
+            self.assertTrue(BOT.health_payload(db)["inference_ready"])
+            self.assertEqual(BOT.delivery_observation(db)["state"], "UNVERIFIED")
+            self.assertNotIn('outcome="delivered"', BOT.render_metrics(db))
+
+    def test_delivery_binds_actual_fallback_receipt_and_does_not_count_a_twice(self):
+        def admission(_db, backend, *_args):
+            if backend["name"] == "A":
+                raise BOT.GatewayPreDispatchRejected("temporary")
+        payload = {"choices": [{"message": {"content": "visible answer"}}]}
+        update = {"message": {"chat": {"id": 3003, "type": "private"}, "from": {"id": 3003}, "text": "hello"}}
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "GATEWAY_BACKENDS", self.ab_backends()), patch.object(
+            BOT, "require_gateway_admission", side_effect=admission
+        ), patch.object(BOT, "urlopen", return_value=FakeResponse(payload)), patch.object(BOT, "send_typing"), patch.object(BOT, "send_message"):
+            BOT.handle(db, update)
+            observation = BOT.delivery_observation(db)
+            self.assertEqual((observation["state"], observation["backend"], observation["model"]), ("RECENT", "B", BOT.MODEL))
+            self.assertEqual(observation["combined_readiness"], "UNVERIFIED")
+            rows = db.execute("SELECT backend, delivery_state FROM inference_events WHERE outcome='success'").fetchall()
+            self.assertEqual([(row[0], row[1]) for row in rows], [("B", "delivered")])
+            metrics = BOT.render_metrics(db)
+            self.assertIn(f'gdc_telegram_bot_inference_deliveries_total{{backend="B",model="{BOT.MODEL}",outcome="delivered"}} 1', metrics)
+            self.assertNotIn('telegram_id=', metrics)
+            self.assertNotIn('inference_event_id=', metrics)
+            self.assertNotIn("visible answer", metrics)
+
+    def test_delivery_failure_does_not_invent_inference_failure_or_positive_delivery(self):
+        payload = {"choices": [{"message": {"content": "visible answer"}}]}
+        update = {"message": {"chat": {"id": 3003, "type": "private"}, "from": {"id": 3003}, "text": "hello"}}
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), self.admission_ready(), patch.object(
+            BOT, "urlopen", return_value=FakeResponse(payload)
+        ), patch.object(BOT, "send_typing"), patch.object(BOT, "send_message", side_effect=OSError("Telegram unavailable")):
+            BOT.handle(db, update)
+            self.assertEqual(BOT.delivery_observation(db)["state"], "DELIVERY_FAILED")
+            self.assertTrue(BOT.health_payload(db)["inference_ready"])
+            self.assertNotIn('outcome="delivered"', BOT.render_metrics(db))
+
+    def test_delivery_expiry_and_reads_never_renew_event_timestamp(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            event = BOT.record_inference(db, "success", backend="B")
+            BOT.record_delivery(db, event, True)
+        for current, state in ((1120, "RECENT"), (1121, "STALE"), (999, "UNVERIFIED")):
+            with BOT.connection() as db, patch.object(BOT, "now", return_value=current):
+                observation = BOT.health_payload(db)["delivery_observation"]
+                self.assertEqual(observation["state"], state)
+                self.assertEqual(observation["observed_at"], 1000)
+                self.assertEqual(observation["expires_at"], 1120)
+                self.assertIn(f'gdc_telegram_bot_last_delivery_timestamp_seconds{{backend="B",model="{BOT.MODEL}"}} 1000', BOT.render_metrics(db))
+
+    def test_delivery_duplicate_or_wrong_receipt_cannot_rebind_or_refresh(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            delivered = BOT.record_inference(db, "success", backend="A")
+            other = BOT.record_inference(db, "success", backend="B")
+            failed = BOT.record_inference(db, "http_400", backend="A")
+            for wrong in (None, True, "1", -1, failed, 99999):
+                BOT.record_delivery(db, wrong, True)
+            BOT.record_delivery(db, delivered, True)
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1050):
+            BOT.record_delivery(db, delivered, False)
+            observation = BOT.delivery_observation(db)
+            self.assertEqual((observation["observed_at"], observation["state"], observation["backend"]), (1000, "RECENT", "A"))
+            self.assertEqual(db.execute("SELECT delivery_state FROM inference_events WHERE id=?", (other,)).fetchone()[0], "unverified")
+
+    def test_same_second_delivery_order_is_not_completion_order(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            first = BOT.record_inference(db, "success", backend="A")
+            second = BOT.record_inference(db, "success", backend="B")
+            BOT.record_delivery(db, second, True)
+            BOT.record_delivery(db, first, False)
+            self.assertEqual(BOT.delivery_observation(db)["state"], "DELIVERY_FAILED")
+            self.assertEqual(BOT.delivery_observation(db)["backend"], "A")
+
+    def test_clock_rollback_and_restart_cannot_hide_newer_delivery_failure(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            first = BOT.record_inference(db, "success", backend="A")
+            BOT.record_delivery(db, first, True)
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=999):
+            second = BOT.record_inference(db, "success", backend="B")
+            BOT.record_delivery(db, second, False)
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1001):
+            observation = BOT.delivery_observation(db)
+            self.assertEqual(observation["state"], "DELIVERY_FAILED")
+            self.assertEqual((observation["backend"], observation["observed_at"]), ("B", 999))
+
+    def test_delivery_timestamp_metric_uses_actual_last_event_not_max_wall_clock(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            first = BOT.record_inference(db, "success", backend="B")
+            BOT.record_delivery(db, first, True)
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=999):
+            second = BOT.record_inference(db, "success", backend="B")
+            BOT.record_delivery(db, second, True)
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1001):
+            self.assertEqual(BOT.delivery_observation(db)["observed_at"], 999)
+            metric = f'gdc_telegram_bot_last_delivery_timestamp_seconds{{backend="B",model="{BOT.MODEL}"}}'
+            self.assertIn(metric + " 999\n", BOT.render_metrics(db))
+            self.assertNotIn(metric + " 1000\n", BOT.render_metrics(db))
+
+    def test_unfinished_delivery_after_restart_is_not_positive(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            event = BOT.record_inference(db, "success", backend="A")
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1001):
+            self.assertEqual(BOT.delivery_observation(db)["state"], "UNVERIFIED")
+            self.assertEqual(db.execute("SELECT delivery_state FROM inference_events WHERE id=?", (event,)).fetchone()[0], "unverified")
+
+    def test_older_success_rows_migrate_without_inventing_delivery(self):
+        with sqlite3.connect(BOT.DB_FILE) as db:
+            db.execute("CREATE TABLE inference_events (id INTEGER PRIMARY KEY AUTOINCREMENT, model TEXT NOT NULL, "
+                       "outcome TEXT NOT NULL, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, "
+                       "total_tokens INTEGER NOT NULL DEFAULT 0, usage_missing INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, "
+                       "backend TEXT NOT NULL DEFAULT 'unknown')")
+            db.execute("INSERT INTO inference_events(model,outcome,created_at,backend) VALUES (?,?,?,?)", (BOT.MODEL, "success", 1000, "B"))
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1001):
+            self.assertTrue(BOT.health_payload(db)["inference_ready"])
+            self.assertEqual(BOT.delivery_observation(db)["state"], "UNVERIFIED")
+            self.assertNotIn('outcome="delivered"', BOT.render_metrics(db))
+
+    def test_partial_telegram_chunk_delivery_is_failure_not_completed_reply(self):
+        parts = []
+        def telegram(method, payload):
+            self.assertEqual(method, "sendMessage")
+            parts.append(payload["text"])
+            if len(parts) == 2:
+                raise OSError("second chunk unavailable")
+        payload = {"choices": [{"message": {"content": "a" * 8100}}]}
+        update = {"message": {"chat": {"id": 3003, "type": "private"}, "from": {"id": 3003}, "text": "hello"}}
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), self.admission_ready(), patch.object(
+            BOT, "urlopen", return_value=FakeResponse(payload)
+        ), patch.object(BOT, "send_typing"), patch.object(BOT, "telegram_request", side_effect=telegram):
+            BOT.handle(db, update)
+            self.assertEqual(BOT.delivery_observation(db)["state"], "DELIVERY_FAILED")
+            self.assertEqual(len(parts), 2)
+            self.assertNotIn('outcome="delivered"', BOT.render_metrics(db))
 
 
 if __name__ == "__main__":
