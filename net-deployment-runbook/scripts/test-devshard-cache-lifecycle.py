@@ -309,6 +309,42 @@ class LifecycleContracts(unittest.TestCase):
         self.assertEqual(self.adapter.compose, compose)
         self.assertFalse(self.adapter.restarted)
 
+    def test_inactive_inventory_is_preserved_alongside_active_session(self):
+        original_state = self.adapter.read_state
+        original_ledgers = self.adapter.read_ledgers
+        def state():
+            result = original_state()
+            result['devshards'].append({'id': '41', 'active': False,
+                                       'storage_path': '/root/.devshardctl/escrow-41', 'unknown': 7})
+            return result
+        def ledgers(checkpoint):
+            active = copy.deepcopy(checkpoint)
+            retired = active['escrows'].pop('41')
+            self.assertIsNone(retired['session'])
+            result = original_ledgers(active)
+            result['41'] = {'schema': 'gdc-devshard-inactive-storage/1', 'escrow_id': '41',
+                            'files': {'_meta.db': {'schema_sha256': 'a' * 64, 'tables': {}},
+                                      'epoch_1.db': {'schema_sha256': 'c' * 64, 'tables': {}}}}
+            if self.adapter.restarted and self.adapter.failure == 'inactive-storage':
+                result['41']['files']['_meta.db']['schema_sha256'] = 'b' * 64
+            return result
+        self.adapter.read_state = state
+        self.adapter.read_ledgers = ledgers
+        receipt = self.perform()
+        self.assertEqual(receipt['escrow_count'], 2)
+        self.assertTrue(receipt['ledger_preservation']['extensions']['41']['inactive_storage_preserved'])
+        self.adapter = Adapter()
+        # Use the same bound fixture functions with a fresh sequencer state
+        original_state = self.adapter.read_state
+        original_ledgers = self.adapter.read_ledgers
+        self.adapter.read_state = state
+        self.adapter.read_ledgers = ledgers
+        self.adapter.failure = 'inactive-storage'
+        with self.assertRaisesRegex(ValueError, 'inactive retained storage changed'):
+            self.perform()
+        self.assertEqual(self.adapter.calls, ['fence', 'compose', 'recreate'])
+        self.assertTrue(self.adapter.settings['disabled']['enabled'])
+
 
 if __name__ == '__main__':
     unittest.main()

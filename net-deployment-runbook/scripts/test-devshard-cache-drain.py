@@ -32,6 +32,46 @@ class DrainContracts(unittest.TestCase):
         self.assertEqual(receipt['escrow_count'], 1)
         self.assertEqual(first, original)
 
+    def retired_state(self):
+        state = self.state()
+        state['devshards'].append({'id': '41', 'active': False,
+                                  'model': 'synthetic-model',
+                                  'storage_path': '/root/.devshardctl/escrow-41',
+                                  'unknown_retained': {'keep': 7}})
+        return state
+
+    def test_retired_runtime_less_record_is_preserved_without_invented_accounting(self):
+        state = self.retired_state()
+        original = copy.deepcopy(state)
+        checkpoint = drain.confirm_drained(state, copy.deepcopy(state))
+        self.assertEqual(set(checkpoint['escrows']), {'41', '42'})
+        self.assertIsNone(checkpoint['escrows']['41']['session'])
+        self.assertEqual(checkpoint['escrows']['41']['persisted'], state['devshards'][1])
+        self.assertEqual(drain.confirm_preserved(checkpoint, state)['escrow_count'], 2)
+        self.assertEqual(state, original)
+
+    def test_retired_record_loss_change_or_reactivation_refuses_preservation(self):
+        before = self.retired_state()
+        checkpoint = drain.snapshot(before)
+        for mutation in (
+            lambda s: s['devshards'].pop(),
+            lambda s: s['devshards'][1]['unknown_retained'].update(keep=8),
+            lambda s: s['devshards'][1].update(active=True),
+            lambda s: s['devshards'][1].update(storage_path='changed'),
+        ):
+            after = copy.deepcopy(before)
+            mutation(after)
+            with self.assertRaises(ValueError):
+                drain.confirm_preserved(checkpoint, after)
+
+    def test_retired_record_does_not_hide_unknown_runtime_or_pending_settlement(self):
+        for fields in ({'runtime': None}, {'runtime': {}}, {'active': 0},
+                       {'settlement_pending': True}, {'private_key_hex': 'synthetic-secret'}):
+            state = self.retired_state()
+            state['devshards'][1].update(fields)
+            with self.assertRaises(ValueError):
+                drain.snapshot(state)
+
     def test_every_foreground_background_and_reserved_counter_must_be_zero(self):
         for field in ('active_requests', 'pending_race_cleanup', 'reserved_tokens'):
             for value in (1, -1, False, '0', None):

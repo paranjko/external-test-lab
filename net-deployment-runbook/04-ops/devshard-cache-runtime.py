@@ -152,6 +152,11 @@ class Native:
             identity = row.get('id')
             require(isinstance(identity, str) and identity not in checkpoint['escrows'],
                     'unique retained storage identity required')
+            if 'runtime' not in row and row.get('active') is False:
+                require(row.get('settlement_pending', False) is False,
+                        'inactive settlement must not be pending')
+                checkpoint['escrows'][identity] = {'persisted': dict(row), 'session': None}
+                continue
             runtime = row.get('runtime')
             require(isinstance(runtime, dict) and runtime.get('id') == identity,
                     'retained session binding required')

@@ -47,6 +47,11 @@ def snapshot(document):
         # Admin state redacts this value, never accept a key-bearing snapshot
         require(not row.get('private_key') and not row.get('private_key_hex'),
                 'unredacted state is refused')
+        if 'runtime' not in row and row['active'] is False:
+            # Official retirement removes the runtime, not retained metadata
+            # None is explicit absence, never invented zero session accounting
+            inventory[identity] = {'persisted': copy.deepcopy(row), 'session': None}
+            continue
         runtime = row.get('runtime')
         require(isinstance(runtime, dict) and runtime.get('id') == identity
                 and runtime.get('active') is row['active'], 'retained runtime binding missing')

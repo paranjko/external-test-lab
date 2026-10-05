@@ -104,12 +104,87 @@ def read_database(path):
         connection.close()
 
 
+def collect_inactive(directory, identity):
+    """Fingerprint every retained SQLite table without inventing runtime state."""
+    directory = Path(directory)
+    require(isinstance(identity, str) and re.fullmatch('[1-9][0-9]*', identity),
+            'exact inactive escrow identity required')
+    require(directory.is_dir() and directory.resolve(strict=True) == directory,
+            'qualified nonsymlink inactive directory required')
+    require(not (directory / '.pg-bound').exists(), 'PostgreSQL-bound ledger is unsupported')
+    paths = sorted(directory.iterdir())
+    require(all(path.is_file() and path.resolve(strict=True) == path for path in paths),
+            'complete nonsymlink inactive file inventory required')
+    databases = {path.name for path in paths if path.suffix == '.db'}
+    def logical_paths(values):
+        require(all(path.is_file() and path.resolve(strict=True) == path for path in values),
+                'complete nonsymlink inactive file inventory required')
+        return [path for path in values if not any(path.name == name + suffix
+                for name in databases for suffix in ('-wal', '-shm', '-journal'))]
+    require('_meta.db' in databases, 'existing inactive metadata database required')
+    with read_database(directory / '_meta.db') as meta:
+        epochs = meta.execute('SELECT epoch_id FROM escrow_epoch WHERE escrow_id=?', (identity,)).fetchall()
+        require(bool(epochs) and all(type(epoch) is int and epoch > 0 for (epoch,) in epochs)
+                and len(set(epochs)) == len(epochs), 'complete inactive epoch binding required')
+    require(all('epoch_' + str(epoch) + '.db' in databases for (epoch,) in epochs),
+            'complete inactive epoch files required')
+    files = {}
+    for path in paths:
+        if any(path.name == name + suffix for name in databases for suffix in ('-wal', '-shm', '-journal')):
+            # SQLite's read transaction includes committed WAL contents
+            # Physical checkpoint layout is not logical historical evidence
+            continue
+        if path.name in databases:
+            with read_database(path) as database:
+                schema = database.execute('SELECT type,name,tbl_name,sql FROM sqlite_schema '
+                                          'ORDER BY type,name').fetchall()
+                tables = {}
+                for kind, name, _, sql in schema:
+                    if kind != 'table':
+                        continue
+                    require(not sql or 'VIRTUAL TABLE' not in sql.upper(),
+                            'virtual inactive storage tables are unsupported')
+                    table = '"' + name.replace('"', '""') + '"'
+                    cursor = database.execute('SELECT * FROM ' + table + ' LIMIT 0')
+                    columns = {column[0].lower() for column in cursor.description}
+                    alias = next((value for value in ('_rowid_', 'rowid', 'oid') if value not in columns), None)
+                    require(alias is not None, 'unambiguous inactive row identity required')
+                    try:
+                        cursor = database.execute('SELECT retained_rows.' + alias + ',retained_rows.* FROM '
+                                                  + table + ' AS retained_rows')
+                    except sqlite3.OperationalError as error:
+                        # WITHOUT ROWID tables have only their declared primary key
+                        # Refuse every other acquisition failure, never omit identity
+                        require(str(error) == 'no such column: retained_rows.' + alias,
+                                'inactive row identity query failed')
+                        cursor = database.execute('SELECT * FROM ' + table)
+                    rows = cursor.fetchmany(1000001)
+                    require(len(rows) <= 1000000, 'bounded complete inactive table required')
+                    # Hash typed rows independently, then sort to preserve duplicates
+                    tables[name] = {'rows': len(rows), 'sha256': digest(sorted(fingerprint([row]) for row in rows))}
+                files[path.name] = {'schema_sha256': fingerprint(schema), 'tables': tables}
+        else:
+            with path.open('rb') as stream:
+                fingerprint_hash = hashlib.sha256()
+                for block in iter(lambda: stream.read(1048576), b''):
+                    fingerprint_hash.update(block)
+            files[path.name] = {'sha256': fingerprint_hash.hexdigest()}
+    # Read-only WAL readers may create shared-memory sidecars for closed stores
+    # Retain logical inventory exactly, permit only qualified SQLite sidecars
+    require(logical_paths(sorted(directory.iterdir())) == logical_paths(paths),
+            'inactive file inventory changed during observation')
+    return {'schema': 'gdc-devshard-inactive-storage/1', 'escrow_id': identity,
+            'files': files}
+
+
 def collect(directory, identity, session):
     """Read only a caller-qualified SQLite session directory, never initialize it.
 
     PostgreSQL, missing state and symlink layouts are refused, not substituted
     The native caller must bind this directory to its actual retained volume
     """
+    if session is None:
+        return collect_inactive(directory, identity)
     directory = Path(directory)
     require(isinstance(identity, str) and re.fullmatch('[1-9][0-9]*', identity),
             'exact ledger escrow identity required')
@@ -179,6 +254,30 @@ def collect(directory, identity, session):
 
 
 def validate(ledger, identity, session):
+    if session is None:
+        require(isinstance(ledger, dict) and ledger.get('schema') == 'gdc-devshard-inactive-storage/1'
+                and ledger.get('escrow_id') == identity and isinstance(ledger.get('files'), dict)
+                and '_meta.db' in ledger['files'], 'complete inactive storage manifest required')
+        require(any(re.fullmatch(r'epoch_[1-9][0-9]*\.db', name) for name in ledger['files']),
+                'inactive epoch inventory required')
+        for name, content in ledger['files'].items():
+            require(isinstance(name, str) and name not in ('.', '..') and '/' not in name
+                    and isinstance(content, dict), 'invalid inactive file identity')
+            if name.endswith('.db'):
+                require(isinstance(content.get('schema_sha256'), str)
+                        and re.fullmatch('[0-9a-f]{64}', content['schema_sha256'])
+                        and isinstance(content.get('tables'), dict), 'complete inactive database manifest required')
+                for table, rows in content['tables'].items():
+                    require(isinstance(table, str) and bool(table) and isinstance(rows, dict)
+                            and type(rows.get('rows')) is int and 0 <= rows['rows'] <= 1000000
+                            and isinstance(rows.get('sha256'), str)
+                            and re.fullmatch('[0-9a-f]{64}', rows['sha256']),
+                            'complete inactive table fingerprint required')
+            else:
+                require(isinstance(content.get('sha256'), str)
+                        and re.fullmatch('[0-9a-f]{64}', content['sha256']),
+                        'complete inactive file fingerprint required')
+        return
     require(isinstance(ledger, dict) and ledger.get('schema') == 'gdc-devshard-session-ledger/1',
             'qualified session ledger required')
     require(ledger.get('escrow_id') == identity and ledger.get('version') == session['session_version'] == 'v5',
@@ -225,6 +324,16 @@ def confirm(drained, restarted, before_ledgers, after_ledgers):
         restored = after[identity]
         require(original['persisted'] == restored['persisted'], 'persisted escrow changed')
         old_session, new_session = original['session'], restored['session']
+        if old_session is None or new_session is None:
+            require(old_session is None and new_session is None
+                    and original['persisted'].get('active') is False,
+                    'inactive runtime binding changed')
+            old, new = before_ledgers[identity], after_ledgers[identity]
+            validate(old, identity, None)
+            validate(new, identity, None)
+            require(old == new, 'inactive retained storage changed')
+            extensions[identity] = {'inactive_storage_preserved': True}
+            continue
         require(set(old_session) == set(new_session) == {'nonce', 'balance', 'session_version'},
                 'complete session accounting required')
         for session in (old_session, new_session):

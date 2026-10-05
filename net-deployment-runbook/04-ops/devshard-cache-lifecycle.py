@@ -81,7 +81,8 @@ def perform(adapter, journal, identity, expected_compose, expected_settings,
         pending = False
         for escrow, row in checkpoint['escrows'].items():
             ledger.validate(manifests[escrow], escrow, row['session'])
-            pending = pending or bool(manifests[escrow]['open_inferences'])
+            if row['session'] is not None:
+                pending = pending or bool(manifests[escrow]['open_inferences'])
         if pending:
             raise drain.Busy('retained inference still awaits its protocol terminal')
     # A dispatch record must be durable before any corresponding mutation
@@ -94,7 +95,8 @@ def perform(adapter, journal, identity, expected_compose, expected_settings,
                                    qualify=qualify_closed)
         before_ledgers = adapter.read_ledgers(quiet)
         require(clock() < drain_deadline, 'drain deadline exceeded before checkpoint, gateway remains fenced')
-        require(all(not row['open_inferences'] for row in before_ledgers.values()),
+        require(all(quiet['escrows'][escrow]['session'] is None or not row['open_inferences']
+                    for escrow, row in before_ledgers.items()),
                 'inference closure changed before checkpoint')
         journal.record('drained', {'state_sha256': digest(quiet), 'escrow_count': len(quiet['escrows']),
                                   'checkpoint': quiet, 'ledgers': before_ledgers})

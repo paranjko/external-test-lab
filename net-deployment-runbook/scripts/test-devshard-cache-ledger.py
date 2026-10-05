@@ -203,6 +203,109 @@ class SQLiteCollectorContracts(unittest.TestCase):
                              (b'\x12\x02\x52\x00',))
         self.assertEqual(self.collect()['open_inferences'], [1])
 
+    def test_inactive_storage_preserves_every_table_and_unknown_file(self):
+        with sqlite3.connect(self.directory / 'epoch_1.db') as database:
+            database.execute('CREATE TABLE retained_unknown(value BLOB)')
+            database.execute('INSERT INTO retained_unknown VALUES(?)', (b'private-retained-content',))
+        (self.directory / 'retained.snapshot').write_bytes(b'private-retained-snapshot')
+        original = {path.name: path.read_bytes() for path in self.directory.iterdir()}
+        manifest = ledger.collect(self.directory, '42', None)
+        self.assertEqual(manifest['schema'], 'gdc-devshard-inactive-storage/1')
+        self.assertEqual(manifest['files']['epoch_1.db']['tables']['retained_unknown']['rows'], 1)
+        self.assertEqual(set(manifest['files']), set(original))
+        self.assertNotIn('private-retained', json.dumps(manifest))
+        self.assertNotIn('latest_nonce', manifest)
+        self.assertEqual({path.name: path.read_bytes() for path in self.directory.iterdir()}, original)
+        checkpoint = {'settings': {}, 'escrows': {'42': {'persisted': {'id': '42', 'active': False},
+                                                       'session': None}}}
+        ledgers = {'42': manifest}
+        self.assertTrue(ledger.confirm(checkpoint, checkpoint, ledgers, ledgers)['preserved'])
+        with sqlite3.connect(self.directory / 'epoch_1.db') as database:
+            database.execute('UPDATE retained_unknown SET value=?', (b'changed',))
+        changed = {'42': ledger.collect(self.directory, '42', None)}
+        with self.assertRaisesRegex(ValueError, 'inactive retained storage changed'):
+            ledger.confirm(checkpoint, checkpoint, ledgers, changed)
+
+    def test_inactive_missing_epoch_symlink_and_reactivation_refuse(self):
+        manifest = ledger.collect(self.directory, '42', None)
+        checkpoint = {'settings': {}, 'escrows': {'42': {'persisted': {'id': '42', 'active': False},
+                                                       'session': None}}}
+        restored = copy.deepcopy(checkpoint)
+        restored['escrows']['42']['session'] = self.session
+        with self.assertRaisesRegex(ValueError, 'inactive runtime binding changed'):
+            ledger.confirm(checkpoint, restored, {'42': manifest}, {'42': manifest})
+        epoch = self.directory / 'epoch_1.db'
+        saved = self.directory / 'saved.db'
+        epoch.rename(saved)
+        with self.assertRaisesRegex(ValueError, 'epoch files'):
+            ledger.collect(self.directory, '42', None)
+        epoch.symlink_to(saved)
+        with self.assertRaisesRegex(ValueError, 'nonsymlink'):
+            ledger.collect(self.directory, '42', None)
+
+    def test_inactive_logical_fingerprint_survives_wal_checkpoint_without_losing_rows(self):
+        with sqlite3.connect(self.directory / 'epoch_1.db') as database:
+            database.execute('PRAGMA journal_mode=WAL')
+            database.execute('PRAGMA wal_autocheckpoint=0')
+            database.execute('CREATE TABLE history(value BLOB)')
+            database.executemany('INSERT INTO history VALUES(?)', [(b'first',), (b'first',), (b'second',)])
+            database.commit()
+            before = ledger.collect(self.directory, '42', None)
+            self.assertEqual(before['files']['epoch_1.db']['tables']['history']['rows'], 3)
+            database.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            self.assertEqual(ledger.collect(self.directory, '42', None), before)
+            database.execute('DELETE FROM history WHERE rowid=1')
+            database.commit()
+            self.assertNotEqual(ledger.collect(self.directory, '42', None), before)
+
+    def test_inactive_incomplete_or_untyped_manifest_is_not_preservation_evidence(self):
+        original = ledger.collect(self.directory, '42', None)
+        for mutate in (
+            lambda value: value['files'].pop('epoch_1.db'),
+            lambda value: value['files']['_meta.db'].pop('schema_sha256'),
+            lambda value: value['files']['_meta.db']['tables']['escrow_epoch'].update(rows=True),
+            lambda value: value['files']['_meta.db']['tables']['escrow_epoch'].update(sha256='not-a-hash'),
+        ):
+            manifest = copy.deepcopy(original)
+            mutate(manifest)
+            with self.assertRaises(ValueError):
+                ledger.validate(manifest, '42', None)
+
+    def test_closed_wal_store_allows_reader_sidecars_but_preserves_logical_inventory(self):
+        for name in ('_meta.db', 'epoch_1.db'):
+            database = sqlite3.connect(self.directory / name)
+            database.execute('PRAGMA journal_mode=WAL')
+            database.close()
+        self.assertEqual({path.name for path in self.directory.iterdir()}, {'_meta.db', 'epoch_1.db'})
+        first = ledger.collect(self.directory, '42', None)
+        self.assertEqual(set(first['files']), {'_meta.db', 'epoch_1.db'})
+        self.assertEqual(ledger.collect(self.directory, '42', None), first)
+
+    def test_inactive_implicit_row_identity_is_preserved_not_only_column_values(self):
+        with sqlite3.connect(self.directory / 'epoch_1.db') as database:
+            database.execute('CREATE TABLE historical_events(payload TEXT)')
+            database.execute('INSERT INTO historical_events(rowid,payload) VALUES(11,?)', ('retained',))
+        before = ledger.collect(self.directory, '42', None)
+        with sqlite3.connect(self.directory / 'epoch_1.db') as database:
+            database.execute('UPDATE historical_events SET rowid=22')
+        self.assertNotEqual(ledger.collect(self.directory, '42', None), before)
+
+    def test_inactive_without_rowid_and_shadowed_alias_keep_exact_identity(self):
+        with sqlite3.connect(self.directory / 'epoch_1.db') as database:
+            database.execute('CREATE TABLE keyed_history(id TEXT PRIMARY KEY,payload BLOB) WITHOUT ROWID')
+            database.execute('INSERT INTO keyed_history VALUES(?,?)', ('one', b'retained'))
+            database.execute('CREATE TABLE shadowed_history(_rowid_ TEXT,payload BLOB)')
+            database.execute('INSERT INTO shadowed_history(rowid,_rowid_,payload) VALUES(11,?,?)',
+                             ('shadow', b'retained'))
+        before = ledger.collect(self.directory, '42', None)
+        self.assertEqual(before, ledger.collect(self.directory, '42', None))
+        with sqlite3.connect(self.directory / 'epoch_1.db') as database:
+            database.execute('UPDATE shadowed_history SET rowid=22')
+        self.assertNotEqual(before, ledger.collect(self.directory, '42', None))
+        with sqlite3.connect(self.directory / 'epoch_1.db') as database:
+            database.execute('UPDATE keyed_history SET id=?', ('two',))
+        self.assertNotEqual(before, ledger.collect(self.directory, '42', None))
+
     def test_missing_duplicate_or_unbound_inference_identity_refuses(self):
         for blob in (b'\x12\x02\x1a\x00', b'\x12\x04\x1a\x02\x08\x02',
                      b'\x12\x04\x0a\x02\x08\x01'):
