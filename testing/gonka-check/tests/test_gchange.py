@@ -95,6 +95,15 @@ class GroupSizeChange(EscrowHarness):
         self.assertEqual(checks["accounting"]["verdict"], "PASS")
         self.assertEqual(checks["own_group"]["verdict"], "PASS")
 
+    def test_escrows_settled_in_different_epochs_fail_same_epoch(self):
+        with FakeRun(bug="b_next_epoch") as fake:
+            run_dir = self.record(fake)
+        _code, checks = self.verdict(run_dir)
+        self.assertEqual(checks["same_epoch"]["verdict"], "FAIL")
+        self.assertIn("in epoch %d" % EPOCH, checks["same_epoch"]["reason"])
+        self.assertIn("in epoch %d" % (EPOCH + 1), checks["same_epoch"]["reason"])
+        self.assertIn("the escrows settled in different epochs", checks["same_epoch"]["reason"])
+
     def test_b_with_the_old_size_fails(self):
         with FakeRun(bug="b5") as fake:
             run_dir = self.record(fake)
@@ -160,6 +169,14 @@ class GroupSizeChange(EscrowHarness):
         _code, checks = self.verdict(run_dir)
         self.assertEqual(checks["g_changed"]["verdict"], "INCONCLUSIVE")
         self.assertIn("before it was submitted at %d" % (START + 40), checks["g_changed"]["reason"])
+
+    def test_change_is_found_without_the_rollback_id(self):
+        with FakeRun() as fake:
+            run_dir = self.record(fake, roles=("--a", "101", "--b", "102", "--change", "30"))
+        _code, checks = self.verdict(run_dir)
+        self.assertEqual(checks["g_changed"]["verdict"], "PASS", checks["g_changed"])
+        self.assertIn("group_size 9 at height %d" % (START + 29), checks["g_changed"]["reason"])
+        self.assertEqual(checks["b_created"]["verdict"], "PASS", checks["b_created"])
 
     def test_control_run_checks_only_escrow_a(self):
         with FakeRun() as fake:

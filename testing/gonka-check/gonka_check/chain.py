@@ -127,11 +127,12 @@ def _strings_under(node, key):
 
 def epoch_offset(chain, preset, height, length):
     """The admission proxy fences by height % length; a direct gateway follows the chain's own cycle,
-    which stops being height-aligned once epoch_length changes."""
+    which stops being height-aligned once epoch_length changes. Outside the cycle the offset stays outside
+    0..length-1, so no send window matches it."""
     if not is_direct(preset):
         return height % length
     start, _ = chain.epoch_start()
-    return height - start if 0 <= height - start < length else height % length
+    return height - start
 
 
 def in_fence(height, params):

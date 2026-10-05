@@ -215,7 +215,7 @@ def first_height(reads, low, high, target):
     return high
 
 
-def proposal_evidence(reads, proposal_id, upper):
+def proposal_evidence(reads, proposal_id, upper, known=()):
     proposal = reads.proposal(proposal_id)
     new = next((m.get("params") for m in proposal.get("messages") or []
                 if str(m.get("@type", "")).endswith("MsgUpdateParams")), None)
@@ -232,6 +232,9 @@ def proposal_evidence(reads, proposal_id, upper):
     if upper < item["submit_height"]:
         item["problem"] = "the search ends at height %d, before it was submitted at %d" % (upper, item["submit_height"])
         return item
+    # The first known height with the new size bounds the search even when the size changed back by the head.
+    upper = min([h for h, size in known if size == item["group_size"] and item["submit_height"] <= h <= upper],
+                default=upper)
     applied = first_height(reads, item["submit_height"] - 1, upper, item["group_size"])
     item["applied_height"] = applied
     if applied is not None:
@@ -251,11 +254,16 @@ def collect(reads, escrows, proposals, attempts, log):
     if "rollback" in proposals:
         submitted, _total = reads.txs("submit_proposal.proposal_id='%d'" % proposals["rollback"], 1)
         rollback_submit = submitted[0]["height"] if submitted else None
+    known = []
+    for item in evidence["escrows"].values():
+        known.append((item["create"]["height"] - 1, item["group_size_at_create"]))
+        if item["settle"] is not None:
+            known.append((item["settle"]["height"] - 1, item["settle"]["group_size"]))
     for role in ("change", "rollback"):
         if role in proposals:
             log("proposal %s = %d" % (role, proposals[role]))
             upper = rollback_submit if role == "change" and rollback_submit else evidence["head"]
-            evidence["proposals"][role] = proposal_evidence(reads, proposals[role], upper)
+            evidence["proposals"][role] = proposal_evidence(reads, proposals[role], upper, known)
     return evidence
 
 
@@ -364,7 +372,7 @@ def check_own_group(role, item):
 
 
 def check_same_epoch(items):
-    parts, value = [], "PASS"
+    parts, value, epochs = [], "PASS", set()
     for role, item in items:
         settle = item["settle"]
         if settle is None or settle["code"] != 0:
@@ -373,8 +381,12 @@ def check_same_epoch(items):
             continue
         offset = settle["height"] - item["epoch"]["start"]
         parts.append("%s in epoch %d at P+%d" % (_escrow_text(role, item), settle["epoch"], offset))
+        epochs.add(settle["epoch"])
         if settle["epoch"] != item["epoch"]["index"]:
             value = "FAIL"
+    if len(epochs) > 1:
+        parts.append("the escrows settled in different epochs")
+        value = "FAIL"
     return verdict("same_epoch", value, "; ".join(parts))
 
 

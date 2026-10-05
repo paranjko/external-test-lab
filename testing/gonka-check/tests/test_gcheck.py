@@ -11,7 +11,7 @@ import time
 import unittest
 
 from gonka_check import chaincheck, cli
-from gonka_check.chain import Chain
+from gonka_check.chain import Chain, epoch_offset
 from gonka_check.preflight import health_blocker, status_blocker
 from gonka_check.summary import SSL_HINT, hints
 from gonka_check.record import Recorder
@@ -616,6 +616,16 @@ class Rules(unittest.TestCase):
         pooled["devshards"][0]["runtime"]["requests_blocked"] = True
         self.assertEqual(status_blocker(pooled), "runtime_not_routable")
         self.assertIsNone(status_blocker({"routable": True}))
+
+    def test_direct_offset_outside_the_cycle_is_outside_every_window(self):
+        class Cycle:
+            def epoch_start(self):
+                return 507885, 0
+        direct = {"gateway_path": "/a"}
+        self.assertEqual(epoch_offset(Cycle(), direct, 507920, 70), 35)
+        self.assertEqual(epoch_offset(Cycle(), direct, 507955, 70), 70)
+        self.assertEqual(epoch_offset(Cycle(), direct, 507880, 70), -5)
+        self.assertEqual(epoch_offset(Cycle(), {}, 507955, 70), 35)
 
     def test_ssl_failure_gets_a_hint(self):
         failed = {"readiness": {"reasons": ["chain: chain_unreachable (SSLCertVerificationError: "

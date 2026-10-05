@@ -27,12 +27,14 @@ class FakeRun:
         self.change = {"id": 30, "submit": START + 23, "applied": START + 29, "size": 9}
         self.rollback = {"id": 31, "submit": START + 40, "applied": START + 47, "size": group_size}
         late = bug == "late"
+        # b_next_epoch: B lives wholly in the next epoch, so each escrow alone settles in its own epoch.
+        b_at = START + LENGTH + 25 if bug == "b_next_epoch" else START + 31
         self.escrows = {
             101: {"created": START + 21, "slots": [HOSTS[0], HOSTS[1], HOSTS[2], HOSTS[0], HOSTS[3]],
                   "settled": START + 355 if late else START + 35, "costs": [300, 0, 120, 0, 0],
                   "signed": [0, 1] if bug == "few_signatures" else [0, 1, 2, 3]},
-            102: {"created": START + 31, "slots": [HOSTS[i % 5] for i in range(5 if bug == "b5" else 9)],
-                  "settled": START + 38, "costs": [0] * (5 if bug == "b5" else 9), "signed": list(range(8))},
+            102: {"created": b_at, "slots": [HOSTS[i % 5] for i in range(5 if bug == "b5" else 9)],
+                  "settled": b_at + 7, "costs": [0] * (5 if bug == "b5" else 9), "signed": list(range(8))},
         }
         self.requests = []
         self.lock = threading.Lock()
@@ -205,8 +207,11 @@ class FakeRun:
             return 200, {"block_height": str(at), "latest_epoch": {"index": str(self.epoch(at)),
                                                                    "poc_start_block_height": str(cycle)},
                          "params": {"epoch_params": {"epoch_length": str(LENGTH)}}}
-        if path == "%s/epoch_group_data/%d" % (API, EPOCH):
-            return 200, {"epoch_group_data": {"epoch_index": str(EPOCH), "poc_start_block_height": str(START)}}
+        match = re.fullmatch(API + r"/epoch_group_data/(\d+)", path)
+        if match and int(match.group(1)) in (EPOCH, EPOCH + 1):
+            epoch = int(match.group(1))
+            return 200, {"epoch_group_data": {"epoch_index": str(epoch),
+                                              "poc_start_block_height": str(START + LENGTH * (epoch - EPOCH))}}
         match = re.fullmatch(API + r"/devshard_escrow/(\d+)", path)
         if match:
             return 200, self.escrow_doc(int(match.group(1)), at)
