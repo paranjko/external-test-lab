@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import secrets
 import shutil
 import sys
@@ -17,6 +18,7 @@ from ..target import config_dir, data_dir
 from . import keys, report, stand, stress
 
 DEFAULT_GROUPS = "16,32,64"
+CPUS = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
 DEFAULT_NONCES = 19800
 DEFAULT_EVERY = 1000
 
@@ -49,6 +51,8 @@ def add_parser(commands):
     stand_cmd.add_argument("--groups", default=DEFAULT_GROUPS, help="group sizes (default %s)" % DEFAULT_GROUPS)
     stand_cmd.add_argument("--hosts", default="7", help="stub host counts, G for one per slot (default 7)")
     stand_cmd.add_argument("--concurrency", default="8", help="requests in flight, a list (default 8)")
+    stand_cmd.add_argument("--gateway-cpus", default=None, help="CPUs for the gateway alone, e.g. 0 (default: any)")
+    stand_cmd.add_argument("--host-cpus", default=None, help="CPUs for the stub hosts and the chain, e.g. 1-3")
     stand_cmd.add_argument("--delay-ms", type=int, default=0,
                            help="netem delay on every packet a stub host sends (default 0)")
     stand_cmd.add_argument("--nonces", type=positive, default=DEFAULT_NONCES,
@@ -266,7 +270,8 @@ def _stand_one(groups, hosts, concurrency, args, commit, run_id, run_dir, on_log
     target = 1 if args.dry_run else args.nonces
     samples, load, final, error, stop, stopped = [], None, None, None, None, []
     try:
-        base = stand.start(names, commit, group_dir, gateway_data, hosts, args.delay_ms)
+        base = stand.start(names, commit, group_dir, gateway_data, hosts, args.delay_ms,
+                           gateway_cpus=args.gateway_cpus, host_cpus=args.host_cpus)
         on_log("%s: stand up on %s%s" % (label, base, ", delay %d ms" % args.delay_ms if args.delay_ms else ""))
         started = time.monotonic()
         load = stand.Load(base, 1 if args.dry_run else concurrency, target, run_id[-4:])
@@ -310,6 +315,9 @@ def cmd_stand(args):
         stands = stands_of(groups_of(args.groups), hosts_of(args.hosts), flights)
         if args.delay_ms < 0 or args.delay_ms > 10000:
             raise ValueError("--delay-ms needs 0 to 10000")
+        for flag, value in (("--gateway-cpus", args.gateway_cpus), ("--host-cpus", args.host_cpus)):
+            if value is not None and not CPUS.match(value):
+                raise ValueError("%s needs a CPU list such as 0, 1-3 or 0,2" % flag)
     except ValueError as error:
         sys.stderr.write("gcheck: %s\n" % error)
         return EXIT_CODES["GUARD_STOP"]
@@ -319,7 +327,8 @@ def cmd_stand(args):
     recorder = Recorder(run_dir)
     cache = os.path.join(data_dir(), "cache", "gateway-load")
     meta = {"tool": "gonka-check %s" % __version__, "run_id": run_id, "mode": "gateway-stand", "tag": args.tag,
-            "stands": stands, "delay_ms": args.delay_ms, "nonces": args.nonces, "started_at": utc_now()}
+            "stands": stands, "delay_ms": args.delay_ms, "gateway_cpus": args.gateway_cpus,
+            "host_cpus": args.host_cpus, "nonces": args.nonces, "started_at": utc_now()}
     try:
         with RunLock(os.path.join(config_dir(), "gateway-load.lock")):
             if not shutil.which("docker"):
