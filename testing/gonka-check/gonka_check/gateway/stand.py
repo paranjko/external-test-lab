@@ -152,17 +152,19 @@ def write_env(path, env):
         handle.write("".join("%s=%s\n" % item for item in sorted(env.items())))
 
 
-def up_commands(names, commit, config_dir, data_dir, hosts):
-    """docker argv lists that start the stand, in order."""
+def up_commands(names, commit, config_dir, data_dir, hosts, gateway_cpus=None, host_cpus=None):
+    """docker argv lists that start the stand, in order; the cpus pin the gateway and the rest to their own cores."""
     uid = "%d:%d" % (os.getuid(), os.getgid())
+    rest = ["--cpuset-cpus", host_cpus] if host_cpus else []
     out = [["network", "create", names.network],
-           ["run", "-d", "--name", names.chain, "--network", names.network] + LOG_OPTS +
+           ["run", "-d", "--name", names.chain, "--network", names.network] + LOG_OPTS + rest +
            ["-v", "%s:/app/seed.yaml:ro" % os.path.join(config_dir, "seed.yaml"),
             "-e", "MOCK_CHAIN_CONFIG=/app/seed.yaml", image("chain", commit)]]
     for j in range(hosts):
-        out.append(["run", "-d", "--name", names.host(j), "--network", names.network] + LOG_OPTS +
+        out.append(["run", "-d", "--name", names.host(j), "--network", names.network] + LOG_OPTS + rest +
                    ["--env-file", os.path.join(config_dir, "host-%d.env" % j), image("host", commit)])
     out.append(["run", "-d", "--name", names.gateway, "--network", names.network, "--user", uid] + LOG_OPTS +
+               (["--cpuset-cpus", gateway_cpus] if gateway_cpus else []) +
                ["--env-file", os.path.join(config_dir, "gateway.env"), "-v", "%s:/data" % data_dir,
                 "-p", "127.0.0.1::8080", image("gateway", commit)])
     return out
@@ -212,9 +214,9 @@ def delay_commands(names, hosts, delay_ms):
              "tc", "qdisc", "add", "dev", "eth0", "root", "netem", "delay", "%dms" % delay_ms] for j in range(hosts)]
 
 
-def start(names, commit, config_dir, data_dir, hosts, delay_ms=0):
+def start(names, commit, config_dir, data_dir, hosts, delay_ms=0, gateway_cpus=None, host_cpus=None):
     """Start the stand; returns the gateway base URL on 127.0.0.1."""
-    for args in up_commands(names, commit, config_dir, data_dir, hosts):
+    for args in up_commands(names, commit, config_dir, data_dir, hosts, gateway_cpus, host_cpus):
         docker(args)
         if args[0] == "run" and args[3] == names.chain:
             wait("mock chain", lambda: "gRPC listening" in logs(names.chain), 60)

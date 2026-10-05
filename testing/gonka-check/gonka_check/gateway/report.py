@@ -182,9 +182,11 @@ def stand_markdown(meta, runs, verdicts, overall):
              "escrow values are the DevNet ones, except the seal clock of 30 days, so that no record seals by the "
              "clock during a run, as on DevNet, where an escrow ends first. Each stand, G slots on H hosts with "
              "x requests in flight, runs until the escrow nonce reaches %d or the gateway stops routing at its cap. "
-             "Network delay added to every stub host: %d ms. Stub hosts also gossip every request to their peers, "
-             "which `devshardd` does not, so the hosts are slower than real ones." % (
-                 meta["tag"], meta["commit"][:12], meta["nonces"], meta.get("delay_ms", 0)), "",
+             "Network delay added to every stub host: %d ms. CPUs: gateway %s, stub hosts and chain %s. "
+             "Stub hosts also gossip every request to their peers, which `devshardd` does not, so the hosts are "
+             "slower than real ones." % (
+                 meta["tag"], meta["commit"][:12], meta["nonces"], meta.get("delay_ms", 0),
+                 meta.get("gateway_cpus") or "any", meta.get("host_cpus") or "any"), "",
              "## Checks", "", "| check | verdict | reason |", "|---|---|---|"]
     lines += ["| %s | %s | %s |" % (item["check"], item["verdict"], item["reason"].replace("|", "/"))
               for item in verdicts]

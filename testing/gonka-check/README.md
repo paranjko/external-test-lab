@@ -94,6 +94,7 @@ It samples gateway CPU, memory, traffic and storage every 5 s until the escrow r
 A run stops early when the nonce does not move for 10 minutes, when less than 5% of the disk is left or, on Linux, of the machine memory. Container logs are capped at 2 × 20 MB each.
 The finalization reply, the settlement payload, is kept as `g<G>-h<H>-c<x>/finalize.json`; `PASS` needs at least 2G/3 + 1 signatures in it.
 `--hosts G` gives every slot its own stub host; `--delay-ms` delays every packet a stub host sends, through netem.
+`--gateway-cpus 0 --host-cpus 1-3` gives the gateway its own core, so the stub hosts do not crowd it out.
 Stub hosts gossip every diff to each other, so their timings are not those of `devshardd`; the gateway figures are the result.
 
 ## Safety

@@ -154,6 +154,15 @@ class Config(unittest.TestCase):
         self.assertIn("--user", gateway)
         self.assertTrue(all(name.startswith(stand.PREFIX) for name in (self.names.network, self.names.gateway)))
 
+    def test_pinned_cpus_split_the_gateway_from_the_rest(self):
+        argv = stand.up_commands(self.names, stress.TAG_COMMIT, "/cfg", "/data-dir", 2, gateway_cpus="0",
+                                 host_cpus="1-3")
+        gateway, rest = argv[-1], argv[1:-1]
+        self.assertEqual("0", gateway[gateway.index("--cpuset-cpus") + 1])
+        self.assertEqual(["1-3"] * 3, [item[item.index("--cpuset-cpus") + 1] for item in rest])
+        self.assertFalse(any("--cpuset-cpus" in item for item in stand.up_commands(
+            self.names, stress.TAG_COMMIT, "/cfg", "/data-dir", 2)))
+
     def test_quorum_is_two_thirds_plus_one(self):
         self.assertEqual([11, 22, 43], [stand.quorum(groups) for groups in (16, 32, 64)])
 
@@ -359,6 +368,7 @@ class Report(unittest.TestCase):
         self.assertIn("| G=16 H=7 x8 | 5.00 | 80 | 350 | 2.0 | 20.00 | 10.00 |", text)
         self.assertIn("| G=16 H=7 x8 | 117 | 0.50 | 16 | 11 | 16 | 4.2 |", text)
         self.assertIn("Network delay added to every stub host: 0 ms.", text)
+        self.assertIn("CPUs: gateway any, stub hosts and chain any.", text)
         self.assertEqual(3, len(report.samples_csv([run]).splitlines()))
 
     def test_a_blocked_run_still_renders(self):
@@ -416,9 +426,11 @@ class Cli(unittest.TestCase):
         self.assertEqual(4, self.gcheck("gateway-load", "stand", "--hosts", "65"))
         self.assertEqual(4, self.gcheck("gateway-load", "stand", "--concurrency", "0,8"))
         self.assertEqual(4, self.gcheck("gateway-load", "stand", "--delay-ms", "-5"))
+        self.assertEqual(4, self.gcheck("gateway-load", "stand", "--gateway-cpus", "0-"))
+        self.assertEqual(4, self.gcheck("gateway-load", "stand", "--host-cpus", "one"))
 
     def test_stand_runs_every_group_size_and_cleans_up(self):
-        with FakeGateway(per_request=1) as fake, self.docker_free(lambda *args: fake.base):
+        with FakeGateway(per_request=1) as fake, self.docker_free(lambda *args, **kw: fake.base):
             code = self.gcheck("gateway-load", "stand", "--groups", "16,8", "--hosts", "3", "--concurrency", "2",
                                "--nonces", "20", "--every", "0.05")
         self.assertEqual(0, code, self.out + self.err)
@@ -435,25 +447,28 @@ class Cli(unittest.TestCase):
     def test_every_host_count_and_concurrency_gets_its_stand(self):
         started = []
         with FakeGateway(per_request=1) as fake:
-            def start(names, commit, config_dir, data_dir, hosts, delay_ms):
-                started.append((names.base.split("-", 3)[3], hosts, delay_ms))
+            def start(names, commit, config_dir, data_dir, hosts, delay_ms, gateway_cpus=None, host_cpus=None):
+                started.append((names.base.split("-", 3)[3], hosts, delay_ms, gateway_cpus, host_cpus))
                 return fake.base
 
             with self.docker_free(start):
                 code = self.gcheck("gateway-load", "stand", "--groups", "8", "--hosts", "3,G", "--concurrency",
-                                   "1,2", "--nonces", "10", "--every", "0.05", "--delay-ms", "20")
+                                   "1,2", "--nonces", "10", "--every", "0.05", "--delay-ms", "20",
+                                   "--gateway-cpus", "0", "--host-cpus", "1-3")
         self.assertEqual(0, code, self.out + self.err)
-        self.assertEqual([("g8-h3-c1", 3, 20), ("g8-h3-c2", 3, 20), ("g8-h8-c1", 8, 20), ("g8-h8-c2", 8, 20)],
-                         started)
+        self.assertEqual([("g8-h3-c1", 3, 20, "0", "1-3"), ("g8-h3-c2", 3, 20, "0", "1-3"),
+                          ("g8-h8-c1", 8, 20, "0", "1-3"), ("g8-h8-c2", 8, 20, "0", "1-3")], started)
         self.assertEqual([3, 3, 8, 8], self.downs)
         self.assertIn("PASS         stand_g8_h8_c2", self.out)
         with open(os.path.join(self.run_dir(), "report.md"), encoding="utf-8") as handle:
-            self.assertIn("Network delay added to every stub host: 20 ms.", handle.read())
+            text = handle.read()
+        self.assertIn("Network delay added to every stub host: 20 ms.", text)
+        self.assertIn("CPUs: gateway 0, stub hosts and chain 1-3.", text)
 
     def test_dry_run_sends_one_request_on_the_first_stand(self):
         started = []
         with FakeGateway(per_request=1) as fake:
-            def start(names, *_args):
+            def start(names, *_args, **_kw):
                 started.append(names.base.split("-", 3)[3])
                 return fake.base
 
@@ -466,7 +481,7 @@ class Cli(unittest.TestCase):
 
     def test_a_full_disk_stops_the_stand_and_the_run(self):
         self.disk = "disk below 5% free at /var/lib/docker"
-        with FakeGateway(per_request=1) as fake, self.docker_free(lambda *args: fake.base):
+        with FakeGateway(per_request=1) as fake, self.docker_free(lambda *args, **kw: fake.base):
             code = self.gcheck("gateway-load", "stand", "--groups", "8,16", "--hosts", "3", "--concurrency", "2",
                                "--nonces", "100000", "--every", "0.05")
         self.assertEqual(2, code, self.out + self.err)
@@ -476,7 +491,7 @@ class Cli(unittest.TestCase):
 
     def test_a_stand_that_cannot_start_keeps_the_finished_group_sizes(self):
         with FakeGateway(per_request=1) as fake:
-            def start(names, *_args):
+            def start(names, *_args, **_kw):
                 if "-g32-" in names.base:
                     raise stand.StandError("gateway not ready after 120s")
                 return fake.base
