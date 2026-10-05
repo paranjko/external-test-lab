@@ -17,7 +17,8 @@ from gonka_check.summary import SSL_HINT, hints
 from gonka_check.record import Recorder
 from gonka_check.scheduler import RunLock
 from gonka_check.target import ROOT, TargetRefused, check_target, check_url, load_preset
-from gonka_check.transport import Client
+from gonka_check.checks import status_gate
+from gonka_check.transport import Client, Reply
 
 from tests.fake_gateway import CHAIN_API, EPOCH_LENGTH, FakeGateway
 
@@ -471,7 +472,11 @@ class DirectGateway(Harness):
         with FakeGateway(prefix="/a") as fake:
             code, summary = self.gcheck(fake)
         self.assertEqual(code, 0, summary)
-        self.assertEqual(self.verdicts(summary), {"model_served": "PASS", "canary": "PASS", "floor64": "PASS"})
+        self.assertEqual(self.verdicts(summary), {"model_served": "PASS", "canary": "PASS", "floor64": "PASS",
+                                                  "status_gate": "PASS"})
+        gate = next(item for item in summary["verdicts"] if item["check"] == "status_gate")
+        self.assertEqual(gate["maps"], ["SMK-05"])
+        self.assertIn("2 completion(s) after a routable /v1/status", gate["reason"])
         self.assertEqual(summary["target"], fake.base_url + "/a")
         self.assertEqual([post["path"] for post in fake.posts], ["/a/v1/chat/completions"] * 2)
         self.assertFalse(any(request["path"].startswith("/status/") for request in fake.requests))
@@ -505,6 +510,7 @@ class DirectGateway(Harness):
         self.assertEqual(code, 4)
         self.assertEqual(summary["guard"]["reason"], "gateway_dispatch_failure")
         self.assertEqual(len(fake.posts), 1)
+        self.assertEqual(self.verdicts(summary)["status_gate"], "INCONCLUSIVE")
 
     def test_watch_reads_only_the_gateway_status(self):
         os.remove(self.key_file)
@@ -604,13 +610,14 @@ class Guard(Harness):
         for path in ("/a/v1/status", "/a/v1/chat/completions", "/a/v1/models", "/a/v1/stateless"):
             check_url(preset, "https://api.gonka-dev.net" + path)
 
-    def test_plan_for_a_gateway_has_no_fence_audit(self):
+    def test_plan_for_a_gateway_audits_the_status_gate(self):
         result = subprocess.run([os.path.join(ROOT, "bin", "gcheck"), "plan", "--preset", "devnet-a"],
                                 capture_output=True, text=True, env=dict(os.environ), check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("target   https://api.gonka-dev.net/a (devnet-a, point gateway A)", result.stdout)
         self.assertIn("total    2 POST", result.stdout)
         self.assertNotIn("fence_audit", result.stdout)
+        self.assertIn("status_gate  SMK-05", result.stdout)
 
     def test_plan_runs_from_bin_without_network(self):
         result = subprocess.run([os.path.join(ROOT, "bin", "gcheck"), "plan"], capture_output=True, text=True,
@@ -648,6 +655,17 @@ class Rules(unittest.TestCase):
         self.assertTrue(in_fence(35, params))
         self.assertFalse(in_fence(70, params))
         self.assertFalse(in_fence(-5, params))
+
+    def test_status_gate_fails_a_send_outside_the_fence(self):
+        reply = Reply("POST", "http://127.0.0.1/a/v1/chat/completions")
+        reply.status, reply.send_seq, reply.seq = 200, 4, 5
+        facts = {"epoch_length": 70, "safe_start": 28}
+        inside, outside = {"offset": 35, "status_seq": 3}, {"offset": 65, "status_seq": 3}
+        self.assertEqual(status_gate([(reply, inside)], facts)["verdict"], "PASS")
+        failed = status_gate([(reply, inside), (reply, outside)], facts)
+        self.assertEqual(failed["verdict"], "FAIL")
+        self.assertIn("sent at epoch offset 65, fence 28..60", failed["reason"])
+        self.assertEqual(status_gate([], facts)["verdict"], "INCONCLUSIVE")
 
     def test_ssl_failure_gets_a_hint(self):
         failed = {"readiness": {"reasons": ["chain: chain_unreachable (SSLCertVerificationError: "

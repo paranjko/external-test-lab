@@ -16,13 +16,16 @@ CHECKS = (
      "what": "max_tokens 1 yields 64 completion tokens, finish_reason length"},
     {"id": "fence_audit", "maps": ["SMK-05", "REG-13"], "posts": 0,
      "what": "dispatches sit inside the proxy fence with ordered heights"},
+    {"id": "status_gate", "maps": ["SMK-05"], "posts": 0,
+     "what": "each completion follows a routable /v1/status inside the PoC fence"},
 )
 MAPS = {check["id"]: check["maps"] for check in CHECKS}
 
 
 def active_checks(direct):
-    """Without the admission proxy there is no fence to audit."""
-    return tuple(check for check in CHECKS if not (direct and check["id"] == "fence_audit"))
+    """Without the admission proxy there is no fence to audit; the gateway's own status gates the sends."""
+    skip = "fence_audit" if direct else "status_gate"
+    return tuple(check for check in CHECKS if check["id"] != skip)
 OUTPUT_FLOOR = 64
 
 
@@ -158,6 +161,25 @@ def fence_audit(sent, facts):
                            % reply.seq, records)
     return verdict("fence_audit", "PASS", "%d dispatch(es) inside fence %d..%d, heights ordered"
                    % (len(dispatched), low, high), records)
+
+
+def status_gate(sent, facts):
+    """sent: (reply, slot) pairs; the slot holds the /v1/status read that cleared the send."""
+    params = {"epoch_length": facts["epoch_length"], "safe_start": facts["safe_start"]}
+    low, high = params["safe_start"], params["epoch_length"] - FENCE_GUARD_BLOCKS
+    sent = list(sent)
+    if not sent:
+        return verdict("status_gate", "INCONCLUSIVE", "no completion was sent")
+    records = [seq for reply, slot in sent for seq in (slot["status_seq"], reply.send_seq, reply.seq)]
+    for reply, slot in sent:
+        if not in_fence(slot["offset"], params):
+            return verdict("status_gate", "FAIL", "record %d: sent at epoch offset %d, fence %d..%d"
+                           % (reply.send_seq, slot["offset"], low, high), records)
+        if not reply.ok:
+            return verdict("status_gate", "INCONCLUSIVE", "record %d: HTTP %s, the gateway did not take the completion"
+                           % (reply.seq, reply.status or reply.transport_error), records)
+    return verdict("status_gate", "PASS", "%d completion(s) after a routable /v1/status at epoch offsets %s, fence %d..%d"
+                   % (len(sent), ", ".join(str(slot["offset"]) for _reply, slot in sent), low, high), records)
 
 
 JUDGES = {"canary": (canary_payload, canary), "floor64": (floor64_payload, floor64)}

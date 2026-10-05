@@ -121,7 +121,8 @@ class Scheduler:
             except ChainError as error:
                 reason = error.reason
                 continue
-            return {"height": height, "epoch": epoch, "offset": offset, "start": height - offset}
+            return {"height": height, "epoch": epoch, "offset": offset, "start": height - offset,
+                    "status_seq": reply.seq}
         raise NoSlot(reason)
 
     def reserve(self, check, slot):

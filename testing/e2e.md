@@ -47,6 +47,15 @@ bin/gcheck run --profile smoke
 
 The run sends at most two completions inside the send window and prints one verdict per check. Exit codes: `0` PASS, `1` FAIL, `2` INCONCLUSIVE, `3` BLOCKED, `4` stopped by a guard. Checks, guards and limits: [gonka-check/README.md](gonka-check/README.md).
 
+## Gateways A and B
+
+```sh
+bin/gcheck run --preset devnet-a --dry-run
+bin/gcheck run --preset devnet-a --profile smoke
+```
+
+These presets reach the DevShard gateways at `/a` and `/b` without the admission proxy. They read the key from `~/.config/gonka-check/devnet-a.key` or `devnet-b.key`: a client key of that gateway, mode `0600`.
+
 ## While the gateway is not ready
 
 ```sh

@@ -12,7 +12,7 @@ import unittest
 from . import __version__
 from . import chaincheck
 from .chain import Chain
-from .checks import JUDGES, active_checks, fence_audit, model_served, verdict
+from .checks import JUDGES, active_checks, fence_audit, model_served, status_gate, verdict
 from .escrow import cli as escrow_cli
 from .guards import GuardStop, Guards
 from .preflight import preflight
@@ -114,8 +114,8 @@ def smoke(client, chain, preset, readiness, key, run_id, wait_s):
         except GuardStop as error:
             stop = error
             log("guard stop: %s; %s" % (error.reason, error.advice))
-    if not direct:
-        verdicts.append(fence_audit(zip(replies, slots), readiness["facts"]))
+    audit = status_gate if direct else fence_audit
+    verdicts.append(audit(zip(replies, slots), readiness["facts"]))
     return verdicts, replies, stop
 
 

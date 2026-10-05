@@ -14,7 +14,7 @@ bin/gcheck watch --duration 3600  # GET only: readiness samples and a per-epoch 
 bin/gcheck selftest               # unit tests against a local fake gateway
 ```
 
-`--preset devnet-a` and `--preset devnet-b` target the DevShard gateways at `/a` and `/b` directly: no admission proxy, no health receipt, no `fence_audit`, and the send window follows the chain's PoC cycle.
+`--preset devnet-a` and `--preset devnet-b` target the DevShard gateways at `/a` and `/b` directly: no admission proxy, no health receipt; `status_gate` takes the place of `fence_audit`.
 
 The API key is read from `~/.config/gonka-check/<preset>.key` (mode 0600) and is sent only with completion POSTs.
 Runs are written to `~/.local/share/gonka-check/runs/<run>/` (`manifest.json`, `records.jsonl`, `summary.json`).
@@ -29,7 +29,8 @@ On macOS with the python.org build, set `SSL_CERT_FILE=/etc/ssl/cert.pem` if HTT
 | `model_served` | REG-11 | `GET /v1/models` | the preset model is listed |
 | `canary` | SMK-06 | 1 POST | "7 + 5" answers 12; `finish_reason` and `usage` present |
 | `floor64` | REG-15 | 1 POST | `max_tokens: 1` yields 64 completion tokens, `finish_reason: length` |
-| `fence_audit` | SMK-05, REG-13 | none | `X-GDC-*` heights ordered, permit height inside the proxy fence |
+| `fence_audit` | SMK-05, REG-13 | none | proxy path: `X-GDC-*` heights ordered, permit height inside the proxy fence |
+| `status_gate` | SMK-05 | none | `/a`, `/b`: each completion follows a routable `/v1/status` and is sent inside the PoC fence |
 | `chain_advances` | SMK-01 | GET | chain height grows within `chain_advance_wait_s` |
 | `nodes_at_tip` | SMK-02 | GET | every `node_rpcs` entry answers, is not catching up, lags at most `node_max_lag_blocks` |
 | `epoch_state` | SMK-04 | GET | height, epoch start and the confirmation PoC event agree; a snapshot |
