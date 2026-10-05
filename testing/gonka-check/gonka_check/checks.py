@@ -2,7 +2,7 @@
 
 import re
 
-from .chain import in_fence
+from .chain import FENCE_GUARD_BLOCKS, in_fence
 from .guards import CONFIG_REJECTIONS
 from .preflight import ADMISSION_ID, SAFE_GENERATION
 
@@ -129,24 +129,26 @@ def floor64(reply):
                    % (tokens, finish, OUTPUT_FLOOR), records)
 
 
-def fence_audit(replies, facts):
+def fence_audit(sent, facts):
+    """sent: (reply, slot) pairs; the slot carries the PoC start the send was scheduled against."""
     params = {"epoch_length": facts["epoch_length"], "safe_start": facts["safe_start"]}
-    low, high = params["safe_start"], params["epoch_length"] - 10
-    dispatched = [r for r in replies if r.gdc.get("admission") == "dispatched_once"]
+    low, high = params["safe_start"], params["epoch_length"] - FENCE_GUARD_BLOCKS
+    sent = list(sent)
+    dispatched = [(r, slot) for r, slot in sent if r.gdc.get("admission") == "dispatched_once"]
     if not dispatched:
         return verdict("fence_audit", "INCONCLUSIVE", "no dispatched completion to audit",
-                       [r.seq for r in replies])
-    records = [r.seq for r in dispatched]
-    for reply in dispatched:
+                       [r.seq for r, _slot in sent])
+    records = [r.seq for r, _slot in dispatched]
+    for reply, slot in dispatched:
         gdc = reply.gdc
         heights = [gdc.get(name) for name in
                    ("arrival_height", "permit_height", "dispatch_height", "response_height")]
         if not all(isinstance(h, int) for h in heights):
             return verdict("fence_audit", "INCONCLUSIVE", "record %d lacks height headers" % reply.seq, records)
         arrival, permit, dispatch, response = heights
-        if not in_fence(permit, params):
+        if not in_fence(permit - slot["start"], params):
             return verdict("fence_audit", "FAIL", "record %d: permit height %d at epoch offset %d, fence %d..%d"
-                           % (reply.seq, permit, permit % params["epoch_length"], low, high), records)
+                           % (reply.seq, permit, permit - slot["start"], low, high), records)
         if not arrival <= permit <= dispatch <= response:
             return verdict("fence_audit", "FAIL", "record %d: heights out of order %s" % (reply.seq, heights),
                            records)

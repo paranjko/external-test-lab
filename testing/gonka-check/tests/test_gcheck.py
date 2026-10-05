@@ -11,7 +11,7 @@ import time
 import unittest
 
 from gonka_check import chaincheck, cli
-from gonka_check.chain import Chain, epoch_offset
+from gonka_check.chain import Chain, epoch_offset, in_fence
 from gonka_check.preflight import health_blocker, status_blocker
 from gonka_check.summary import SSL_HINT, hints
 from gonka_check.record import Recorder
@@ -134,6 +134,15 @@ class Smoke(Harness):
         self.assert_no_forbidden_paths(fake)
         with open(os.path.join(self.config, "ledger.jsonl"), encoding="utf-8") as handle:
             self.assertEqual(len(handle.readlines()), 2)
+
+    def test_window_and_fence_follow_the_poc_start(self):
+        # As the proxy counts since its PoC windows were anchored: height offset 5 is block 40 of the cycle.
+        with FakeGateway(offset=5, shift=35) as fake:
+            code, summary = self.gcheck(fake)
+        self.assertEqual(code, 0, summary)
+        self.assertEqual(self.verdicts(summary)["fence_audit"], "PASS")
+        for post in fake.posts:
+            self.assertTrue(29 <= (post["height"] - 35) % EPOCH_LENGTH <= 50, post["height"])
 
     def test_sends_wait_for_the_window(self):
         with FakeGateway(offset=5) as fake:
@@ -359,6 +368,17 @@ class WatchMode(Harness):
         self.assertEqual(fake.posts, [])
         self.assertTrue(all(request["authorization"] is None for request in fake.requests))
         self.assert_no_forbidden_paths(fake)
+
+    def test_epochs_and_offsets_follow_the_poc_start(self):
+        os.remove(self.key_file)
+        with FakeGateway(offset=60, shift=35) as fake:
+            code, summary, samples = self.watch(fake, "--epochs", "1", "--duration", "60")
+        self.assertEqual(code, 0)
+        complete = [epoch for epoch in summary["epochs"] if epoch["complete"]]
+        self.assertEqual((len(complete), complete[0]["samples"], complete[0]["window_samples"]), (1, 70, 22))
+        with open(samples, encoding="utf-8") as handle:
+            for sample in map(json.loads, handle):
+                self.assertEqual(sample["offset"], (sample["height"] - 35) % EPOCH_LENGTH, sample)
 
     def test_watch_counts_health_reasons(self):
         with FakeGateway(offset=30, health="timeout") as fake:
@@ -617,15 +637,17 @@ class Rules(unittest.TestCase):
         self.assertEqual(status_blocker(pooled), "runtime_not_routable")
         self.assertIsNone(status_blocker({"routable": True}))
 
-    def test_direct_offset_outside_the_cycle_is_outside_every_window(self):
+    def test_offset_outside_the_cycle_is_outside_every_window(self):
         class Cycle:
             def epoch_start(self):
                 return 507885, 0
-        direct = {"gateway_path": "/a"}
-        self.assertEqual(epoch_offset(Cycle(), direct, 507920, 70), 35)
-        self.assertEqual(epoch_offset(Cycle(), direct, 507955, 70), 70)
-        self.assertEqual(epoch_offset(Cycle(), direct, 507880, 70), -5)
-        self.assertEqual(epoch_offset(Cycle(), {}, 507955, 70), 35)
+        params = {"epoch_length": 70, "safe_start": 28}
+        self.assertEqual(epoch_offset(Cycle(), 507920), 35)
+        self.assertEqual(epoch_offset(Cycle(), 507955), 70)
+        self.assertEqual(epoch_offset(Cycle(), 507880), -5)
+        self.assertTrue(in_fence(35, params))
+        self.assertFalse(in_fence(70, params))
+        self.assertFalse(in_fence(-5, params))
 
     def test_ssl_failure_gets_a_hint(self):
         failed = {"readiness": {"reasons": ["chain: chain_unreachable (SSLCertVerificationError: "

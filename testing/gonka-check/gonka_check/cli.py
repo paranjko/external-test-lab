@@ -87,7 +87,7 @@ def smoke(client, chain, preset, readiness, key, run_id, wait_s):
         return verdicts, [], None
     scheduler = Scheduler(client, chain, preset, readiness["facts"],
                           Ledger(os.path.join(config_dir(), "ledger.jsonl")), run_id, log)
-    guards, replies, stop = Guards(admission=not direct), [], None
+    guards, replies, slots, stop = Guards(admission=not direct), [], [], None
     tag = "gcheck-%s" % secrets.token_hex(4)
     for check, (build, judge) in JUDGES.items():
         if stop is not None:
@@ -107,6 +107,7 @@ def smoke(client, chain, preset, readiness, key, run_id, wait_s):
         log("sending %s at height %d (epoch %d, offset %d)" % (check, slot["height"], slot["epoch"], slot["offset"]))
         reply = client.post_completion(build(preset["model"], "%s-%s" % (tag, check)), key, check)
         replies.append(reply)
+        slots.append(slot)
         verdicts.append(judge(reply))
         try:
             guards.after_post(reply)
@@ -114,7 +115,7 @@ def smoke(client, chain, preset, readiness, key, run_id, wait_s):
             stop = error
             log("guard stop: %s; %s" % (error.reason, error.advice))
     if not direct:
-        verdicts.append(fence_audit(replies, readiness["facts"]))
+        verdicts.append(fence_audit(zip(replies, slots), readiness["facts"]))
     return verdicts, replies, stop
 
 

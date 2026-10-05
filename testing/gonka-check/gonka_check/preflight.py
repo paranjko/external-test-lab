@@ -173,7 +173,7 @@ def preflight(client, chain, preset, key_problem, wait_s, log):
         facts = {
             "height": height, "epoch": epoch, "epoch_length": params["epoch_length"],
             "safe_start": params["safe_start"], "send_window": [low, high],
-            "epoch_offset": epoch_offset(chain, preset, height, params["epoch_length"]),
+            "epoch_offset": epoch_offset(chain, height),
         }
         items.append(_item("epoch_params", low <= high,
                            "epoch %d, length %d, send window %d..%d" % (epoch, params["epoch_length"], low, high),

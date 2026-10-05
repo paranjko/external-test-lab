@@ -97,7 +97,7 @@ class Scheduler:
         while time.monotonic() < deadline:
             try:
                 height, _ = self.chain.height()
-                offset = epoch_offset(self.chain, self.preset, height, length)
+                offset = epoch_offset(self.chain, height)
             except ChainError as error:
                 reason = error.reason
                 continue
@@ -121,7 +121,7 @@ class Scheduler:
             except ChainError as error:
                 reason = error.reason
                 continue
-            return {"height": height, "epoch": epoch, "offset": offset}
+            return {"height": height, "epoch": epoch, "offset": offset, "start": height - offset}
         raise NoSlot(reason)
 
     def reserve(self, check, slot):

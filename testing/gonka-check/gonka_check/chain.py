@@ -2,8 +2,6 @@
 
 import time
 
-from .target import is_direct
-
 
 BLOCKING_CONFIRMATION_PHASES = {
     "CONFIRMATION_POC_GRACE_PERIOD",
@@ -72,13 +70,19 @@ class Chain:
         except (KeyError, TypeError, ValueError):
             raise ChainError("epoch_invalid", reply.seq)
 
-    def epoch_start(self):
-        """First block of the running PoC cycle."""
+    def epoch_cycle(self):
+        """Index and first block of the running PoC cycle."""
         reply = self._get(self.api + "/epoch_info", "epoch_unreachable")
         try:
-            return int(reply.json["latest_epoch"]["poc_start_block_height"]), reply.seq
+            latest = reply.json["latest_epoch"]
+            return int(latest["index"]), int(latest["poc_start_block_height"]), reply.seq
         except (KeyError, TypeError, ValueError):
             raise ChainError("epoch_invalid", reply.seq)
+
+    def epoch_start(self):
+        """First block of the running PoC cycle."""
+        _index, start, seq = self.epoch_cycle()
+        return start, seq
 
     def epoch_group(self):
         reply = self._get(self.api + "/current_epoch_group_data", "epoch_unreachable")
@@ -125,20 +129,17 @@ def _strings_under(node, key):
             yield from _strings_under(item, key)
 
 
-def epoch_offset(chain, preset, height, length):
-    """The admission proxy fences by height % length; a direct gateway follows the chain's own cycle,
-    which stops being height-aligned once epoch_length changes. Outside the cycle the offset stays outside
+def epoch_offset(chain, height):
+    """Blocks since the PoC start, as the admission proxy counts them; the cycle stops being
+    height-aligned once epoch_length changes. Outside the cycle the offset stays outside
     0..length-1, so no send window matches it."""
-    if not is_direct(preset):
-        return height % length
     start, _ = chain.epoch_start()
     return height - start
 
 
-def in_fence(height, params):
-    """The admission proxy's own rule for opening a dispatch."""
-    length = params["epoch_length"]
-    return params["safe_start"] <= height % length <= length - FENCE_GUARD_BLOCKS
+def in_fence(offset, params):
+    """The admission proxy's own rule for opening a dispatch, by blocks since the PoC start."""
+    return params["safe_start"] <= offset <= params["epoch_length"] - FENCE_GUARD_BLOCKS
 
 
 def send_window(params, preset):

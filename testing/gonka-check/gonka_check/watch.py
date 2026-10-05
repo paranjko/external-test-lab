@@ -91,7 +91,7 @@ class Watch:
         self.log = log
         self.out = out
         self.params = None
-        self.params_epoch = None
+        self.params_cycle = None
         self.epochs = collections.OrderedDict()
         self.signature = None
         self.samples = 0
@@ -102,18 +102,18 @@ class Watch:
         found = {"at": utc_now()}
         try:
             height, _ = self.chain.height()
-            # The proxy fences by height % epoch_length; the chain's epoch group only
+            # Grouped by the PoC cycle the proxy fences by; the chain's epoch group only
             # switches after the PoC of the next epoch, so it is not used for grouping.
-            if self.params is None or height // self.params["epoch_length"] != self.params_epoch:
+            cycle, start, _ = self.chain.epoch_cycle()
+            if self.params is None or cycle != self.params_cycle:
                 self.params = self.chain.epoch_params()
-                self.params_epoch = height // self.params["epoch_length"]
+                self.params_cycle = cycle
         except ChainError as error:
             found["error"] = error.reason
             return found
-        length = self.params["epoch_length"]
         low, high = send_window(self.params, self.preset)
-        offset = height % length
-        found.update(height=height, epoch=height // length, offset=offset, in_window=low <= offset <= high)
+        offset = height - start
+        found.update(height=height, epoch=cycle, offset=offset, in_window=low <= offset <= high)
         try:
             event = self.chain.confirmation_event()
             found["cpoc"] = event["phase"] if event["active"] else None
