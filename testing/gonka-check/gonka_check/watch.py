@@ -9,6 +9,7 @@ import time
 from .chain import BLOCKING_CONFIRMATION_PHASES, ChainError, send_window
 from .preflight import health_blocker, status_blocker
 from .record import utc_now
+from .target import gateway_url
 
 
 # An epoch counts as complete only when no two consecutive samples are further apart than this.
@@ -121,7 +122,7 @@ class Watch:
             found["cpoc"] = None
             found["cpoc_error"] = error.reason
             blocking = True
-        reply = self.client.get(self.preset["base_url"].rstrip("/") + "/v1/status")
+        reply = self.client.get(gateway_url(self.preset) + "/v1/status")
         found["status"] = status_blocker(reply.json) if reply.ok else "status HTTP %s" % (
             reply.status or reply.transport_error)
         doc = reply.json if isinstance(reply.json, dict) else {}
@@ -133,6 +134,10 @@ class Watch:
             found["height_seed"] = seed.get("state")
             found["seed_declined"] = sorted({str(slot.get("reason", "")).strip()[:120] for slot in slots
                                              if isinstance(slot, dict) and slot.get("verdict") != "anchored"})
+        if not self.preset["health_url"]:
+            found["health"] = None
+            found["ready"] = not blocking and found["status"] is None
+            return found
         reply = self.client.get(self.preset["health_url"])
         blocker = health_blocker(reply.json, self.preset["health_max_age_s"]) if reply.ok \
             else "HTTP %s" % (reply.status or reply.transport_error)

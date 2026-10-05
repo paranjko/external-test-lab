@@ -4,7 +4,8 @@ import datetime
 import re
 import time
 
-from .chain import BLOCKING_CONFIRMATION_PHASES, ChainError, send_window
+from .chain import BLOCKING_CONFIRMATION_PHASES, ChainError, epoch_offset, send_window
+from .target import gateway_url
 
 
 ALLOWED_CONFIRMATION = {"NORMAL_OPERATION", "CONFIRMATION_POC_INACTIVE", "CONFIRMATION_POC_COMPLETED"}
@@ -138,7 +139,7 @@ def _blocked(items, facts, models_reply):
 
 
 def _poll_live(client, chain, preset):
-    base = preset["base_url"].rstrip("/")
+    base = gateway_url(preset)
     items = []
     try:
         phases, seq = chain.confirmation_phases()
@@ -150,6 +151,8 @@ def _poll_live(client, chain, preset):
     reply = client.get(base + "/v1/status")
     blocker = status_blocker(reply.json) if reply.ok else "status HTTP %s" % (reply.status or reply.transport_error)
     items.append(_item("gateway_status", blocker is None, blocker or "routable", reply.seq))
+    if not preset["health_url"]:
+        return items
     reply = client.get(preset["health_url"])
     blocker = health_blocker(reply.json, preset["health_max_age_s"]) if reply.ok \
         else "health HTTP %s" % (reply.status or reply.transport_error)
@@ -159,7 +162,7 @@ def _poll_live(client, chain, preset):
 
 def preflight(client, chain, preset, key_problem, wait_s, log):
     """Return READY only when every item holds at the same poll."""
-    base = preset["base_url"].rstrip("/")
+    base = gateway_url(preset)
     items, facts = [], {}
     try:
         height, seq = chain.height()
@@ -170,7 +173,7 @@ def preflight(client, chain, preset, key_problem, wait_s, log):
         facts = {
             "height": height, "epoch": epoch, "epoch_length": params["epoch_length"],
             "safe_start": params["safe_start"], "send_window": [low, high],
-            "epoch_offset": height % params["epoch_length"],
+            "epoch_offset": epoch_offset(chain, preset, height, params["epoch_length"]),
         }
         items.append(_item("epoch_params", low <= high,
                            "epoch %d, length %d, send window %d..%d" % (epoch, params["epoch_length"], low, high),
