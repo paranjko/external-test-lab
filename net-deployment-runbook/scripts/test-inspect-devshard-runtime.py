@@ -50,6 +50,20 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(slot["processes"][0]["binary_sha256"], BINARY)
         self.assertEqual(slot["processes"][0]["binary_version"], "v5.0.2")
 
+    def test_monitoring_exposes_observed_binary_and_separate_archive_without_private_identity(self):
+        result = self.execute()
+        text = runtime.prometheus(result, "fixture", 1000)
+        self.assertIn('version="v5.0.2"', text)
+        self.assertIn(f'binary_sha256="{BINARY}"', text)
+        self.assertIn('archive_sha256="unreported"', text)
+        self.assertIn('gdc_devshard_runtime_observed_at_seconds{host="fixture"} 1000', text)
+        for private in ("/opt/", "start_ticks", CONTAINER, "official@"):
+            self.assertNotIn(private, text)
+
+    def test_monitoring_stopped_slot_does_not_advertise_installed_binary(self):
+        result = self.execute(health=[{"name": "v5", "status": "stopped"}], first="", second="")
+        self.assertNotIn("gdc_devshard_runtime_info", runtime.prometheus(result, "fixture", 1000))
+
     def test_new_health_keeps_archive_separate(self):
         slot = self.execute(health=[{"name": "v5", "port": 5002,
             "status": "running", "sha256": ARCHIVE, "binary_version": "v5.0.2"}])["slots"][0]

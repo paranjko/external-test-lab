@@ -85,6 +85,12 @@ test-inspect-devshard-runtime:
 
 test: test-inspect-devshard-runtime
 
+.PHONY: test-devshard-runtime-monitoring
+test-devshard-runtime-monitoring:
+	@python3 ./scripts/test-devshard-runtime-monitoring.py
+
+test: test-devshard-runtime-monitoring
+
 .PHONY: test-devshard-502-reader
 test-devshard-502-reader:
 	@python3 ./scripts/test-devshard-502-reader.py
@@ -128,8 +134,12 @@ test-faucet-policy-http:
 test: test-faucet-policy-http
 
 .PHONY: test-telegram-delivery
-test-telegram-delivery:
+test-telegram-delivery: test-gateway-traffic
 	@python3 ./scripts/test-telegram-bot.py
+
+.PHONY: test-gateway-traffic
+test-gateway-traffic:
+	@python3 ./scripts/test-gateway-traffic.py
 
 test-amd-mlnode-trial:
 	@./scripts/test-run-amd-mlnode-trial.sh
@@ -585,6 +595,7 @@ verify-candidate-workflow:
 
 edge-integration: site-vendor
 	@./scripts/test-public-edge-static-site.sh
+	@python3 ./scripts/test-devshard-runtime-status.py
 
 # Bats remains test-only. These two targets exercise the JOIN contracts in a
 # disposable host-shaped container; no production host, key or GPU is used.

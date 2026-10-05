@@ -209,6 +209,20 @@ CADDY
     rewrite * /api/v1/query?query=max_over_time(timestamp(gdc_component_info)%5B24h%3A15s%5D)
     reverse_proxy 127.0.0.1:9099
   }
+  # Unlike retained software inventory, DevShard identity is a current process
+  # observation. Return its source time, discard failed/stale/future collectors.
+  handle /status/devshard-runtime {
+    route {
+      @runtime_identity_get method GET
+      handle @runtime_identity_get {
+        rewrite * /api/v1/query?query=(gdc_devshard_runtime_info%20*%20on(host)%20group_left()%20gdc_devshard_runtime_observed_at_seconds)%20and%20on(host)%20(gdc_devshard_runtime_scrape_success%20%3D%3D%201)%20and%20on(host)%20(time()%20-%20gdc_devshard_runtime_observed_at_seconds%20%3E%3D%200)%20and%20on(host)%20(time()%20-%20gdc_devshard_runtime_observed_at_seconds%20%3C%3D%2090)
+        reverse_proxy 127.0.0.1:9099
+      }
+      handle {
+        respond 405
+      }
+    }
+  }
   root * /srv
   file_server
   header {

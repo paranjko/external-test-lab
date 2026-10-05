@@ -157,6 +157,7 @@ type SoftwareVersionsApi = {
     mlnodes: Array<{ version?: string, node_id?: string }>,
   ) => Array<string>,
   selectLatestInventory: (samples: Array<any>) => Map<string, any>,
+  selectDevShardIdentity: (samples: Array<any>, host: string, timestamp: number) => Map<string, any>,
 };
 
 declare var GDC_SOFTWARE_VERSIONS: SoftwareVersionsApi;
@@ -265,6 +266,79 @@ const chainRpcOrigin =
 const statusUrl = (path: string): string => `${statusBase}${path}`;
 $("chain-id").textContent = cfg.chainId;
 $("model-id").textContent = cfg.model;
+let telegramStatusFetch = 0;
+let telegramProjection: any = null;
+let telegramProjectionRevision = -1;
+function renderTelegramProjection(): void {
+  const link = $("contact");
+  const projection = telegramProjection;
+  const timestamp = Date.now() / 1000;
+  const fresh = (input: any, maxAge: number = 30): boolean =>
+    typeof input?.observed_at === "number" &&
+    typeof input?.expires_at === "number" &&
+    Number.isFinite(input.observed_at) && input.expires_at === input.observed_at + maxAge &&
+    input.observed_at <= timestamp && timestamp <= input.expires_at;
+  let combined = String(projection?.combined_state || "UNVERIFIED");
+  const backends = Array.isArray(projection?.backends) ? projection.backends : [];
+  const eligible = backends.filter((item) => item.state === "ELIGIBLE" && fresh(item));
+  if (combined === "LIVE" && (
+    projection?.model !== cfg.model || !eligible.length ||
+    projection?.bot?.state !== "OK" || !fresh(projection?.bot) ||
+    projection?.delivery?.state !== "RECENT" || !fresh(projection?.delivery, 120)
+  )) combined = "UNVERIFIED";
+  if (combined === "BOT_FAILED" && !(
+    (projection?.bot?.state === "FAILED" && fresh(projection?.bot)) ||
+    (projection?.delivery?.state === "DELIVERY_FAILED" && fresh(projection?.delivery, 120))
+  )) combined = "UNVERIFIED";
+  if (combined === "UNAVAILABLE" && !backends.every((item) => fresh(item) && item.state === "UNAVAILABLE"))
+    combined = "UNVERIFIED";
+  link.textContent = `Telegram: ${combined} ↗`;
+  link.dataset.state = combined;
+  link.title = projection
+    ? `${cfg.model}; gateway ${projection.gateway_state}; bot ${projection.bot.state}; delivery ${projection.delivery.state}; observed ${projection.delivery.observed_at ?? "unknown"}; expires ${projection.delivery.expires_at ?? "unknown"}; telemetry ${projection.telemetry.state}; ${projection.reason.replaceAll("_", " ")}`
+    : "Telegram status is unverified, current observations could not be read";
+  for (const route of ["a", "b"]) {
+    const state = $("gateway-" + route + "-state");
+    const detail = $("gateway-" + route + "-detail");
+    const observation = backends.find((item) => item.backend === route.toUpperCase() && item.model === cfg.model);
+    state.textContent = observation && fresh(observation) ? observation.state : "UNVERIFIED";
+    detail.textContent = observation
+      ? `${cfg.model}; ${observation.reason.replaceAll("_", " ")}; observed ${observation.observed_at}; expires ${observation.expires_at}`
+      : `${cfg.model}; current backend observation missing`;
+  }
+  const native = projection?.telemetry;
+  const traffic = native?.scope === "native_gateway_requests_including_bot_and_direct_clients" && native?.model === cfg.model && Array.isArray(native?.backends)
+    ? native.backends : [];
+  const currentTraffic = traffic.filter((item) => item.model === cfg.model && ["A", "B"].includes(item.backend) && traffic.filter((other) => other.backend === item.backend).length === 1 && item.state === "FRESH" && fresh(item) && Array.isArray(item.counters) && item.counters.length && new Set(item.counters.map((entry) => `${entry.outcome}:${entry.reason}`)).size === item.counters.length && item.counters.every((entry) => typeof entry.outcome === "string" && typeof entry.reason === "string" && typeof entry.value === "number" && Number.isFinite(entry.value) && entry.value >= 0));
+  const measured = currentTraffic.map((item) => item.backend);
+  const trafficState = new Set(measured).size === 2 ? "CURRENT" : measured.length ? "PARTIAL" : "UNVERIFIED";
+  const total = (outcome: string): string => measured.length && currentTraffic.every((item) => item.counters.some((entry) => entry.outcome === outcome))
+    ? currentTraffic.reduce((sum, item) => sum + item.counters.filter((entry) => entry.outcome === outcome).reduce((count, entry) => count + entry.value, 0), 0).toLocaleString()
+    : "unknown";
+  const gateway = eligible.length === backends.length && backends.length ? "AVAILABLE" : eligible.length ? "DEGRADED" :
+    backends.length && backends.every((item) => item.model === cfg.model && fresh(item) && item.state === "UNAVAILABLE") ? "UNAVAILABLE" : "UNVERIFIED";
+  const values = ["unknown", "unknown", total("success"), total("failed"), "unknown"];
+  const labels = ["Active native requests", "Input tokens", "Successful native requests", "Failed native requests", "Network capacity"];
+  [...$("quality-metrics").children].forEach((card, index) => {
+    card.querySelector("strong").textContent = values[index];
+    card.querySelector("span").textContent = labels[index];
+    card.querySelector("small").textContent = index === 2 || index === 3
+      ? `Native ${measured.join(" + ") || "unknown"}; includes bot and direct clients; other backend data not inferred`
+      : "Not measured by native request counters";
+  });
+  $("quality-active").textContent = "unknown";
+  $("quality-accepted").textContent = total("success");
+  $("quality-rejected").textContent = total("failed");
+  $("quality-failure-label").textContent = "failed native requests since restart";
+  $("quality-health-state").textContent = `A/B ${gateway}; telemetry ${trafficState}`;
+  $("quality-health").dataset.state = eligible.length ? "idle" : gateway === "UNAVAILABLE" ? "down" : "degraded";
+  $("quality-recovery").hidden = true;
+  $("quality-updated").textContent = `Native ${measured.join(" + ") || "unknown"}; source ${currentTraffic.map((item) => `${item.backend} observed ${item.observed_at}, expires ${item.expires_at}`).join("; ") || "unverified"}`;
+  for (const item of currentTraffic) {
+    $("gateway-" + item.backend.toLowerCase() + "-detail").textContent +=
+      `; native traffic ${item.counters.map((entry) => `${entry.outcome}:${entry.reason}=${entry.value}`).join(", ")}; metrics observed ${item.observed_at}, expires ${item.expires_at}`;
+  }
+}
 async function refreshTelegramConsumer(): Promise<void> {
   const link = $("contact");
   link.hidden = true;
@@ -275,15 +349,27 @@ async function refreshTelegramConsumer(): Promise<void> {
   link.target = "_blank";
   link.rel = "noopener";
   link.hidden = false;
+  const fetchOrder = ++telegramStatusFetch;
   try {
     const health = await json(statusUrl("/telegram-consumer"));
-    if (health.status !== "ok" || health.inference_ready !== true) {
-      link.title =
-        "The Telegram client is available; inference is temporarily unavailable.";
-      return;
-    }
-    link.removeAttribute("title");
-  } catch {}
+    if (fetchOrder !== telegramStatusFetch) return;
+    const projection = health.readiness_projection;
+    if (health.status !== "ok" || projection?.schema_version !== 1 ||
+        projection?.scope !== "telegram_model_backend" || projection?.model !== cfg.model ||
+        !Number.isInteger(projection.revision) || !Array.isArray(projection.backends) ||
+        !projection.bot || !projection.delivery || !projection.telemetry ||
+        typeof projection.reason !== "string" ||
+        !["LIVE", "BOT_FAILED", "UNAVAILABLE", "UNVERIFIED"].includes(projection.combined_state) ||
+        !projection.backends.every((item) => item && typeof item.reason === "string" && typeof item.state === "string"))
+      throw new Error("projection unverified");
+    if (projection.revision < telegramProjectionRevision) return;
+    telegramProjectionRevision = projection.revision;
+    telegramProjection = projection;
+  } catch {
+    if (fetchOrder !== telegramStatusFetch) return;
+    telegramProjection = null;
+  }
+  renderTelegramProjection();
 }
 $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana;
 $("grafana-inference").href = cfg.grafanaInference;
@@ -299,6 +385,9 @@ let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({
 }));
 let cardGpuInventory: GpuInventory = new Map();
 let cardSoftwareInventory: SoftwareInventory = new Map();
+let cardDevShardInventory: SoftwareInventory = new Map();
+let devShardInventoryWatermarks: Map<string, any> = new Map();
+let devShardInventoryRequest = 0;
 let cardHardwareInventory: HardwareInventory = new Map();
 let expandedCardKeys: Array<string> = [];
 let selectedCardKey = "";
@@ -670,6 +759,15 @@ function updateSoftware(
 function updateDevShards(node: SiteNode, card: HTMLElement): void {
   const state: ?DevShardHealth = node.devShardHealth;
   const target = card.querySelector('[data-k="devshard"]');
+  const key = softwareInventoryKeys(node).find((host) => cardDevShardInventory.has(host));
+  const identities = GDC_SOFTWARE_VERSIONS.selectDevShardIdentity(cardDevShardInventory.get(key || "") || [], key || "", Date.now() / 1000);
+  if (identities.size) {
+    const values = [...identities.values()].sort((left, right) => left.slot.localeCompare(right.slot));
+    const unknown = [...new Set((state?.runtimes || []).filter((item) => item.status === "running" && ["v3", "v4", "v5"].includes(item.name) && !identities.has(item.name)).map((item) => item.name))].sort();
+    target.textContent = [...values.map((item) => `${item.slot} ${item.version === "unreported" ? "version unknown" : item.version}`), ...unknown.map((slot) => `${slot} identity unknown`)].join(" · ");
+    target.title = [...values.map((item) => `${item.slot}; observed binary SHA-256 ${item.binarySha256}; archive SHA-256 ${item.archiveSha256 || "unreported"}; observed ${item.observedAt}; expires ${item.observedAt + 90}`), ...unknown.map((slot) => `${slot}; health reports running, observed binary identity unverified`)].join("\n");
+    return;
+  }
   if (!state || state.state === "checking") {
     target.textContent = "Checking…";
     target.title = "Checking the Host DevShard health endpoint";
@@ -698,13 +796,50 @@ function updateDevShards(node: SiteNode, card: HTMLElement): void {
   }
   target.textContent = runtimes.map((runtime) => String(runtime.name)).join(" · ");
   target.title = runtimes.map((runtime) => {
-    const hash = String(runtime?.sha256 || "").trim();
-    const version = String(runtime?.binary_version || "").trim();
     const port = String(runtime?.port || "").trim();
-    return [String(runtime.name), version, hash, port ? `port ${port}` : ""]
+    return [String(runtime.name), "Observed binary identity unverified", port ? `port ${port}` : ""]
       .filter(Boolean)
       .join(" · ");
   }).join("\n");
+}
+
+async function refreshDevShardInventory(): Promise<void> {
+  const request = ++devShardInventoryRequest;
+  const next: SoftwareInventory = new Map();
+  try {
+    const response = await json(statusUrl("/devshard-runtime"));
+    if (response?.status !== "success" || response?.data?.resultType !== "vector" || !Array.isArray(response?.data?.result)) throw new Error("Unverified runtime inventory");
+    for (const sample of response.data.result) {
+      const host = String(sample?.metric?.host || "");
+      if (host) next.set(host, [...(next.get(host) || []), sample]);
+    }
+  } catch {}
+  if (request !== devShardInventoryRequest) return;
+  for (const [host, samples] of next) {
+    const identities = GDC_SOFTWARE_VERSIONS.selectDevShardIdentity(samples, host, Date.now() / 1000);
+    const accepted = [];
+    for (const sample of samples) {
+      const identity = identities.get(sample?.metric?.slot);
+      if (!identity) continue;
+      const key = `${host}:${identity.slot}`;
+      const fingerprint = JSON.stringify(identity);
+      const previous = devShardInventoryWatermarks.get(key);
+      if (previous && (identity.observedAt < previous.observedAt ||
+          (identity.observedAt === previous.observedAt && fingerprint !== previous.fingerprint))) continue;
+      devShardInventoryWatermarks.set(key, { observedAt: identity.observedAt, fingerprint });
+      accepted.push(sample);
+    }
+    next.set(host, accepted);
+  }
+  cardDevShardInventory = next;
+  renderDevShardInventory();
+}
+
+function renderDevShardInventory(): void {
+  for (const node of observedNodes) {
+    const card = cards.get(nodeKey(node));
+    if (card) updateDevShards(node, card);
+  }
 }
 
 function updateMlNodes(
@@ -2308,9 +2443,9 @@ async function refresh(): Promise<void> {
   let best = 0;
   let referenceKnown = false;
   let referenceHeight = 0;
-  refreshTelegramConsumer();
   refreshGpuInventory().catch(() => {});
   refreshSoftwareInventory().catch(() => {});
+  refreshDevShardInventory().catch(() => {});
   refreshDevShardVersions().catch(() => {});
   try {
     best = await reconcileParticipants();
@@ -2488,6 +2623,7 @@ async function refresh(): Promise<void> {
   } catch (error) {
     $("gateway-access").hidden = true;
   }
+  if (cfg.telegramBot) return renderTelegramProjection();
   try {
     const availability = gatewayStatus.classify(
       gatewayState,
@@ -2561,6 +2697,7 @@ async function refresh(): Promise<void> {
       $("quality-updated").textContent =
       "Gateway health has not been checked yet";
   }
+  if (cfg.telegramBot) return; // A/B labels share the bot's timed projection.
   await Promise.all(
     ["a", "b"].map(async (route) => {
       const state = $("gateway-" + route + "-state");
@@ -2596,3 +2733,7 @@ async function refresh(): Promise<void> {
 }
 refresh();
 setInterval(refresh, 15000);
+refreshTelegramConsumer();
+setInterval(refreshTelegramConsumer, 5000);
+setInterval(() => { if (cfg.telegramBot) renderTelegramProjection(); }, 1000);
+setInterval(renderDevShardInventory, 1000);

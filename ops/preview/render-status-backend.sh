@@ -20,8 +20,8 @@ query_for() {
   awk -v endpoint="$endpoint" '
     $0 == "  handle /status/" endpoint " {" { inside=1; next }
     inside && $0 == "  }" { exit }
-    inside && $0 ~ /^    rewrite \* \/api\/v1\/query\?query=/ {
-      sub(/^    rewrite \* \/api\/v1\/query\?query=/, "")
+    inside && $0 ~ /^ +rewrite \* \/api\/v1\/query\?query=/ {
+      sub(/^ +rewrite \* \/api\/v1\/query\?query=/, "")
       print
       exit
     }
@@ -30,6 +30,16 @@ query_for() {
 
 gpu_query="$(query_for gpus)"
 software_query="$(query_for software)"
+runtime_query="$(query_for devshard-runtime)"
+approved_runtime_query='(gdc_devshard_runtime_info%20*%20on(host)%20group_left()%20gdc_devshard_runtime_observed_at_seconds)%20and%20on(host)%20(gdc_devshard_runtime_scrape_success%20%3D%3D%201)%20and%20on(host)%20(time()%20-%20gdc_devshard_runtime_observed_at_seconds%20%3E%3D%200)%20and%20on(host)%20(time()%20-%20gdc_devshard_runtime_observed_at_seconds%20%3C%3D%2090)'
+# Older renderer revisions have no runtime endpoint. Never accept a broader
+# query from a candidate that does publish it.
+if grep -Fq '  handle /status/devshard-runtime {' "$input"; then
+  [[ "$runtime_query" == "$approved_runtime_query" ]] || {
+    echo 'renderer DevShard runtime query is not approved for preview observation' >&2
+    exit 1
+  }
+fi
 [[ -n "$gpu_query" && -n "$software_query" ]] || { echo 'renderer output lacks required GPU/software queries' >&2; exit 1; }
 
 # Keep the compiler intentionally narrow.  It accepts the stable query and
@@ -87,6 +97,23 @@ cat >"$output" <<EOF
   @gateway_path path /status/gateway-health /status/gateway-health.prom /status/gateway/* /status/telegram-consumer
   respond @gateway_path "{\"error\":\"preview_gateway_status_unavailable\"}" 503
 EOF
+
+if [[ -n "$runtime_query" ]]; then
+  cat >>"$output" <<EOF
+  handle /status/devshard-runtime {
+    route {
+      @runtime_identity_get method GET
+      handle @runtime_identity_get {
+        rewrite * /prometheus/api/v1/query?query=$runtime_query
+        reverse_proxy http://gdc-preview-egress:8080
+      }
+      handle {
+        respond 405
+      }
+    }
+  }
+EOF
+fi
 
 while IFS=$'\t' read -r node host; do
   [[ -n "$node" && -n "$host" ]] || continue

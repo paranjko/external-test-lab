@@ -586,6 +586,287 @@ class TelegramConsumerTest(unittest.TestCase):
             self.assertEqual(BOT.delivery_observation(db)["state"], "UNVERIFIED")
             self.assertNotIn('outcome="delivered"', BOT.render_metrics(db))
 
+    def finish_observation(self, db, scope, state, reason):
+        receipt = BOT.begin_status_observation(db, scope)
+        BOT.finish_status_observation(db, receipt, state, reason)
+        return receipt
+
+    def projection_ready(self, db):
+        for scope, state, reason in (("backend_A", "ELIGIBLE", "model_eligible"),
+                                    ("backend_B", "ELIGIBLE", "model_eligible"),
+                                    ("telegram_poll", "OK", "telegram_poll_succeeded")):
+            self.finish_observation(db, scope, state, reason)
+
+    def traffic_snapshot(self):
+        def vector(rows):
+            return {"status": "success", "data": {"resultType": "vector", "result": rows}}
+        counters = vector([{"metric": {"gateway": "A", "model": BOT.MODEL, "outcome": "success"}, "value": [1000, "3"]}])
+        sources = vector([{"metric": {"gateway": "A", "model": BOT.MODEL}, "value": [1000, "1000"]}])
+        return BOT.TRAFFIC.parse_snapshot(counters, sources, BOT.MODEL, 1000)
+
+    def test_native_traffic_projection_preserves_source_scope_and_expiry(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "TRAFFIC_METRICS_URL", "https://grafana.example/query"), patch.object(BOT.TRAFFIC, "collect", return_value=self.traffic_snapshot()) as collect:
+            before = BOT.readiness_projection(db)["revision"]
+            BOT.observe_traffic(db)
+            projection = BOT.readiness_projection(db)
+            self.assertGreater(projection["revision"], before)
+            self.assertEqual(projection["telemetry"]["scope"], "native_gateway_requests_including_bot_and_direct_clients")
+            self.assertEqual(projection["telemetry"]["backends"][0]["counters"][0]["value"], 3)
+            self.assertIsNone(projection["telemetry"]["backends"][0]["tokens"])
+            collect.assert_called_once()
+            after = projection["revision"]
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1031), patch.object(BOT, "TRAFFIC_METRICS_URL", "https://grafana.example/query"):
+            projection = BOT.readiness_projection(db)
+            self.assertEqual(projection["revision"], after)
+            self.assertEqual(projection["telemetry"]["state"], "UNVERIFIED")
+            self.assertEqual(projection["telemetry"]["backends"][0]["observed_at"], 1000)
+
+    def test_native_metrics_failure_never_cancels_delivered_inference_or_dispatches(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "TRAFFIC_METRICS_URL", "https://grafana.example/query"), patch.object(BOT.TRAFFIC, "collect", return_value=BOT.TRAFFIC.unknown(BOT.MODEL)), patch.object(BOT, "gateway_completion") as inference:
+            self.projection_ready(db)
+            BOT.record_delivery(db, BOT.record_inference(db, "success", backend="A"), True)
+            BOT.observe_traffic(db)
+            projection = BOT.readiness_projection(db)
+            self.assertEqual(projection["combined_state"], "LIVE")
+            self.assertEqual(projection["telemetry"]["state"], "UNVERIFIED")
+            inference.assert_not_called()
+
+    def test_status_command_exposes_same_native_traffic_without_private_dimensions(self):
+        update = {"message": {"chat": {"id": 3003, "type": "private"}, "from": {"id": 3003}, "text": "/status"}}
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "TRAFFIC_METRICS_URL", "https://grafana.example/query"), patch.object(BOT.TRAFFIC, "collect", return_value=self.traffic_snapshot()), patch.object(BOT, "send_message") as send, patch.object(BOT, "gateway_completion") as inference:
+            BOT.observe_traffic(db)
+            BOT.handle(db, update)
+            self.assertIn("native_gateway_requests_including_bot_and_direct_clients", send.call_args.args[1])
+            self.assertIn("success:none=3", send.call_args.args[1])
+            self.assertIn("observed 1000.0; expires 1030.0", send.call_args.args[1])
+            self.assertNotIn("3003", send.call_args.args[1])
+            inference.assert_not_called()
+
+    def test_projection_requires_real_delivery_and_current_inputs(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "GATEWAY_BACKENDS", self.ab_backends()):
+            self.projection_ready(db)
+            event = BOT.record_inference(db, "success", backend="A")
+            self.assertEqual(BOT.readiness_projection(db)["combined_state"], "UNVERIFIED")
+            BOT.record_delivery(db, event, True)
+            self.assertEqual(BOT.readiness_projection(db)["combined_state"], "LIVE")
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1031), patch.object(BOT, "GATEWAY_BACKENDS", self.ab_backends()):
+            projection = BOT.readiness_projection(db)
+            self.assertEqual(projection["delivery"]["state"], "RECENT")
+            self.assertEqual(projection["combined_state"], "UNVERIFIED")
+            self.assertEqual(projection["gateway_state"], "UNVERIFIED")
+
+    def test_projection_degraded_is_usable_and_missing_is_not_outage(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "GATEWAY_BACKENDS", self.ab_backends()):
+            self.projection_ready(db)
+            self.finish_observation(db, "backend_A", "UNAVAILABLE", "poc_fence")
+            event = BOT.record_inference(db, "success", backend="B")
+            BOT.record_delivery(db, event, True)
+            projection = BOT.readiness_projection(db)
+            self.assertEqual((projection["gateway_state"], projection["combined_state"]), ("DEGRADED", "LIVE"))
+            self.finish_observation(db, "backend_B", "UNVERIFIED", "status_observation_unavailable")
+            self.assertEqual(BOT.readiness_projection(db)["gateway_state"], "UNVERIFIED")
+            self.finish_observation(db, "backend_B", "UNAVAILABLE", "poc_fence")
+            self.assertEqual(BOT.readiness_projection(db)["gateway_state"], "UNAVAILABLE")
+
+    def test_projection_delayed_old_snapshot_never_overrides_newer_started_fetch(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            old = BOT.begin_status_observation(db, "backend_A")
+            self.finish_observation(db, "backend_A", "UNAVAILABLE", "poc_fence")
+            BOT.finish_status_observation(db, old, "ELIGIBLE", "model_eligible")
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "UNAVAILABLE")
+            BOT.finish_status_observation(db, old, "ELIGIBLE", "model_eligible")
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=999):
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "UNVERIFIED")
+
+    def test_projection_revision_advances_on_completion_and_survives_restart(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            receipt = BOT.begin_status_observation(db, "backend_A")
+            before = BOT.readiness_projection(db)["revision"]
+            BOT.finish_status_observation(db, receipt, "UNAVAILABLE", "poc_fence")
+            after = BOT.readiness_projection(db)["revision"]
+            self.assertGreater(after, before)
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1001):
+            self.assertEqual(BOT.readiness_projection(db)["revision"], after)
+            BOT.finish_status_observation(db, receipt, "ELIGIBLE", "model_eligible")
+            self.assertEqual(BOT.readiness_projection(db)["revision"], after)
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "UNAVAILABLE")
+
+    def test_projection_telegram_poll_completion_clock_and_no_duplicate_renewal(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            receipt = BOT.begin_status_observation(db, "telegram_poll")
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1030):
+            BOT.finish_status_observation(db, receipt, "OK", "telegram_poll_succeeded")
+            pending = BOT.begin_status_observation(db, "telegram_poll")
+            self.assertEqual(BOT.readiness_projection(db)["bot"]["observed_at"], 1030)
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1035):
+            BOT.finish_status_observation(db, receipt, "OK", "telegram_poll_succeeded")
+            self.assertEqual(BOT.readiness_projection(db)["bot"]["observed_at"], 1030)
+            BOT.finish_status_observation(db, pending, "FAILED", "telegram_poll_failed")
+            self.assertEqual(BOT.readiness_projection(db)["combined_state"], "BOT_FAILED")
+
+    def test_projection_new_service_failure_cancels_live_not_request_errors(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            self.projection_ready(db)
+            event = BOT.record_inference(db, "success", backend="A")
+            BOT.record_delivery(db, event, True)
+            for outcome in ("http_400", "http_401", "pre_dispatch_route_controlled"):
+                BOT.record_inference(db, outcome, backend="A")
+            self.assertEqual(BOT.readiness_projection(db)["combined_state"], "LIVE")
+            BOT.record_inference(db, "transport_error", backend="A")
+            projection = BOT.readiness_projection(db)
+            self.assertEqual((projection["combined_state"], projection["reason"]), ("UNVERIFIED", "inference_failure_after_delivery"))
+            self.assertEqual(projection["gateway_state"], "AVAILABLE")
+            event = BOT.record_inference(db, "success", backend="A")
+            BOT.record_delivery(db, event, True)
+            self.assertEqual(BOT.readiness_projection(db)["combined_state"], "LIVE")
+
+    def test_projection_wrong_model_or_expired_delivery_cannot_establish_live(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            self.projection_ready(db)
+            event = BOT.record_inference(db, "success", backend="A")
+            BOT.record_delivery(db, event, True)
+            db.execute("UPDATE inference_events SET model='other-model' WHERE id=?", (event,))
+            db.commit()
+            self.assertEqual(BOT.readiness_projection(db)["combined_state"], "UNVERIFIED")
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1121):
+            self.projection_ready(db)
+            self.assertEqual(BOT.readiness_projection(db)["combined_state"], "UNVERIFIED")
+
+    def test_backend_observer_uses_actual_selected_model_capacity_without_inference(self):
+        status = {"capacity": {"models": {BOT.MODEL: {"current_weight": 4, "routable": True, "access_enabled": True}}},
+                  "limiter": {"models": {BOT.MODEL: {"effective_max_concurrent_requests": 2}}},
+                  "devshards": [{"model": BOT.MODEL, "active": True, "runtime": {"model": BOT.MODEL, "phase": "active", "requests_blocked": False, "chain_phase": "Inference"}}]}
+        def response(request, timeout):
+            self.assertLessEqual(timeout, 3)
+            self.assertIsNone(request.data)
+            return FakeResponse({"available": True} if request.full_url.endswith("admission-status") else status)
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "urlopen", side_effect=response) as read:
+            BOT.observe_backend(db, self.ab_backends()[0])
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "ELIGIBLE")
+            self.assertEqual(read.call_count, 2)
+            status["limiter"]["models"][BOT.MODEL]["effective_max_concurrent_requests"] = 0
+            BOT.observe_backend(db, self.ab_backends()[0])
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "UNAVAILABLE")
+
+    def test_backend_observer_requires_matching_unambiguous_runtime_model(self):
+        for outer, inner, expected in (("OTHER-MODEL", None, "UNAVAILABLE"),
+                                       (None, None, "UNVERIFIED"),
+                                       (BOT.MODEL, "OTHER-MODEL", "UNVERIFIED"),
+                                       ("OTHER-MODEL", BOT.MODEL, "UNVERIFIED"),
+                                       (BOT.MODEL, None, "ELIGIBLE"),
+                                       (None, BOT.MODEL, "ELIGIBLE")):
+            with self.subTest(outer=outer, inner=inner):
+                runtime = {"phase": "active", "requests_blocked": False, "chain_phase": "Inference"}
+                item = {"active": True, "runtime": runtime}
+                if outer is not None:
+                    item["model"] = outer
+                if inner is not None:
+                    runtime["model"] = inner
+                status = {"capacity": {"models": {BOT.MODEL: {"current_weight": 4, "routable": True, "access_enabled": True}}},
+                          "limiter": {"models": {BOT.MODEL: {"effective_max_concurrent_requests": 2}}}, "devshards": [item]}
+                with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "urlopen", side_effect=[FakeResponse({"available": True}), FakeResponse(status)]):
+                    BOT.observe_backend(db, self.ab_backends()[0])
+                    self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], expected)
+
+    def test_backend_observer_requires_explicit_enabled_model_access(self):
+        for access, expected in ((False, "UNAVAILABLE"), (None, "UNVERIFIED"), ("true", "UNVERIFIED"), (1, "UNVERIFIED"), (True, "ELIGIBLE")):
+            with self.subTest(access=access):
+                capacity = {"current_weight": 4, "routable": True}
+                if access is not None:
+                    capacity["access_enabled"] = access
+                status = {"capacity": {"models": {BOT.MODEL: capacity}},
+                          "limiter": {"models": {BOT.MODEL: {"effective_max_concurrent_requests": 2}}},
+                          "devshards": [{"model": BOT.MODEL, "active": True, "phase": "active", "requests_blocked": False, "chain_phase": "Inference"}]}
+                with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "urlopen", side_effect=[FakeResponse({"available": True}), FakeResponse(status)]):
+                    BOT.observe_backend(db, self.ab_backends()[0])
+                    self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], expected)
+
+    def test_projection_delivery_of_other_model_never_overrides_current_model(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            self.projection_ready(db)
+            current = BOT.record_inference(db, "success", backend="A")
+            BOT.record_delivery(db, current, True)
+            with patch.object(BOT, "MODEL", "OTHER-MODEL"):
+                other = BOT.record_inference(db, "success", backend="B")
+                BOT.record_delivery(db, other, False)
+            projection = BOT.readiness_projection(db)
+            self.assertEqual(projection["delivery"]["model"], BOT.MODEL)
+            self.assertEqual(projection["combined_state"], "LIVE")
+            self.assertEqual(BOT.delivery_observation(db)["state"], "DELIVERY_FAILED")
+            BOT.record_delivery(db, BOT.record_inference(db, "success", backend="A"), False)
+            self.assertEqual(BOT.readiness_projection(db)["combined_state"], "BOT_FAILED")
+
+    def test_delivery_callback_retains_receipt_model_after_model_change(self):
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000):
+            self.projection_ready(db)
+            current = BOT.record_inference(db, "success", backend="A")
+            BOT.record_delivery(db, current, True)
+            with patch.object(BOT, "MODEL", "OTHER-MODEL"):
+                other = BOT.record_inference(db, "success", backend="B")
+            BOT.record_delivery(db, other, False)
+            projection = BOT.readiness_projection(db)
+            self.assertEqual(projection["combined_state"], "LIVE")
+            self.assertEqual(projection["bot"]["state"], "OK")
+            row = db.execute("SELECT model FROM status_observations WHERE scope='telegram_delivery_path' ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertEqual(row[0], "OTHER-MODEL")
+
+    def test_backend_observer_rejects_missing_route_proof_and_mixed_runtime_conflict(self):
+        capacity = {"current_weight": 4, "access_enabled": True}
+        status = {"capacity": {"models": {BOT.MODEL: capacity}},
+                  "limiter": {"models": {BOT.MODEL: {"effective_max_concurrent_requests": 2}}},
+                  "devshards": [{"model": BOT.MODEL, "active": True, "phase": "active", "requests_blocked": False, "chain_phase": "Inference"}]}
+        with BOT.connection() as db, patch.object(BOT, "urlopen", side_effect=[FakeResponse({"available": True}), FakeResponse(status)]):
+            BOT.observe_backend(db, self.ab_backends()[0])
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "UNVERIFIED")
+        capacity["routable"] = True
+        status["devshards"].append({"model": BOT.MODEL, "active": True,
+                                    "runtime": {"model": "OTHER-MODEL", "phase": "active", "requests_blocked": False, "chain_phase": "Inference"}})
+        with BOT.connection() as db, patch.object(BOT, "urlopen", side_effect=[FakeResponse({"available": True}), FakeResponse(status)]):
+            BOT.observe_backend(db, self.ab_backends()[0])
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "UNVERIFIED")
+
+    def test_backend_observation_transport_or_missing_model_is_unknown_not_zero(self):
+        with BOT.connection() as db, patch.object(BOT, "urlopen", side_effect=URLError("offline")):
+            BOT.observe_backend(db, self.ab_backends()[0])
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "UNVERIFIED")
+        with BOT.connection() as db, patch.object(BOT, "urlopen", side_effect=[FakeResponse({"available": True}), FakeResponse({"capacity": {"models": {}}})]):
+            BOT.observe_backend(db, self.ab_backends()[0])
+            projection = BOT.readiness_projection(db)
+            self.assertEqual(projection["backends"][0]["state"], "UNVERIFIED")
+            self.assertEqual(projection["telemetry"]["reason"], "direct_client_metrics_not_collected")
+
+    def test_status_command_uses_same_projection_without_dispatch(self):
+        update = {"message": {"chat": {"id": 3003, "type": "private"}, "from": {"id": 3003}, "text": "/status"}}
+        with BOT.connection() as db, patch.object(BOT, "now", return_value=1000), patch.object(BOT, "send_message") as send, patch.object(BOT, "gateway_completion") as inference:
+            self.projection_ready(db)
+            event = BOT.record_inference(db, "success", backend="A")
+            BOT.record_delivery(db, event, True)
+            BOT.handle(db, update)
+            self.assertIn("Telegram inference: LIVE", send.call_args.args[1])
+            self.assertIn("observed 1000; expires 1120", send.call_args.args[1])
+            inference.assert_not_called()
+
+    def test_backend_observer_invalid_values_or_phase_cannot_invent_eligibility(self):
+        for capacity, slots, phase, expected in (({"current_weight": True}, 2, "Inference", "UNVERIFIED"),
+                                                ({"current_weight": "nan"}, 2, "Inference", "UNVERIFIED"),
+                                                ({"current_weight": 4, "routable": "yes"}, 2, "Inference", "UNVERIFIED"),
+                                                ({"current_weight": 4}, True, "Inference", "UNVERIFIED"),
+                                                ({"current_weight": 4}, 2, "PoCValidate", "UNAVAILABLE")):
+            capacity.setdefault("routable", True)
+            capacity["access_enabled"] = True
+            status = {"capacity": {"models": {BOT.MODEL: capacity}},
+                      "limiter": {"models": {BOT.MODEL: {"effective_max_concurrent_requests": slots}}},
+                      "devshards": [{"model": BOT.MODEL, "active": True, "phase": "active", "requests_blocked": False, "chain_phase": phase}]}
+            with BOT.connection() as db, patch.object(BOT, "urlopen", side_effect=[FakeResponse({"available": True}), FakeResponse(status)]):
+                BOT.observe_backend(db, self.ab_backends()[0])
+                self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], expected)
+
+    def test_backend_observer_discards_response_that_exhausts_absolute_budget(self):
+        with BOT.connection() as db, patch.object(BOT, "urlopen", return_value=FakeResponse({"available": True})) as read, patch.object(BOT.time, "monotonic", side_effect=[0, 1, 6]):
+            BOT.observe_backend(db, self.ab_backends()[0])
+            self.assertEqual(read.call_count, 1)
+            self.assertEqual(BOT.readiness_projection(db)["backends"][0]["state"], "UNVERIFIED")
+
     def test_delivery_binds_actual_fallback_receipt_and_does_not_count_a_twice(self):
         def admission(_db, backend, *_args):
             if backend["name"] == "A":

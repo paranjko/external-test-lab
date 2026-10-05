@@ -2,10 +2,12 @@
 """Telegram conversation client for the Community DevNet inference gateway."""
 
 import json
+import importlib.util
 import os
 import re
 import secrets
 import hashlib
+import math
 import sqlite3
 import sys
 import threading
@@ -15,6 +17,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+TRAFFIC_SPEC = importlib.util.spec_from_file_location("gateway_traffic", Path(__file__).with_name("gateway_traffic.py"))
+TRAFFIC = importlib.util.module_from_spec(TRAFFIC_SPEC)
+TRAFFIC_SPEC.loader.exec_module(TRAFFIC)
+TRAFFIC_METRICS_URL = os.environ.get("GATEWAY_TRAFFIC_METRICS_URL", "")
 
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -181,6 +188,23 @@ def connection() -> sqlite3.Connection:
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS status_observations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scope TEXT NOT NULL,
+          model TEXT NOT NULL,
+          observed_at INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          reason TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS status_observations_scope_model
+          ON status_observations(scope, model, id);
+        CREATE TABLE IF NOT EXISTS status_projection_clock (
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+          revision INTEGER NOT NULL
+        );
+        INSERT OR IGNORE INTO status_projection_clock(singleton, revision)
+          SELECT 1, (SELECT count(*) + coalesce(max(id),0) FROM status_observations)
+          WHERE NOT EXISTS(SELECT 1 FROM status_projection_clock WHERE singleton=1);
         """
     )
     db.execute("BEGIN IMMEDIATE")
@@ -194,6 +218,7 @@ def connection() -> sqlite3.Connection:
     if "delivery_order" not in columns:
         db.execute("ALTER TABLE inference_events ADD COLUMN delivery_order INTEGER NOT NULL DEFAULT 0")
     db.commit()
+    TRAFFIC.initialize(db)
     return db
 
 
@@ -329,14 +354,191 @@ def health_payload(db: sqlite3.Connection) -> dict:
         "last_success_timestamp": last_success or None,
         "last_success_age_seconds": age,
         "delivery_observation": delivery_observation(db),
+        "readiness_projection": readiness_projection(db),
     }
 
 
-def delivery_observation(db: sqlite3.Connection) -> dict:
+def begin_status_observation(db: sqlite3.Connection, scope: str, model=None) -> int:
+    # Allocate order before I/O: a delayed old fetch cannot replace a newer
+    # started observation, including within the same wall-clock second.
+    cursor = db.execute("INSERT INTO status_observations(scope,model,observed_at,state,reason) "
+                        "VALUES (?,?,?,'UNVERIFIED','observation_pending')", (scope, MODEL if model is None else model, now()))
+    db.execute("UPDATE status_projection_clock SET revision=revision+1 WHERE singleton=1")
+    db.commit()
+    return cursor.lastrowid
+
+
+def finish_status_observation(db: sqlite3.Connection, receipt: int, state: str, reason: str) -> None:
+    if state not in {"ELIGIBLE", "UNAVAILABLE", "UNVERIFIED", "OK", "FAILED"}:
+        raise ValueError("invalid observation state")
+    if not re.fullmatch(r"[a-z0-9_]+", reason):
+        raise ValueError("invalid public observation reason")
+    db.execute("UPDATE status_observations SET state=?,reason=? WHERE id=? AND reason='observation_pending'",
+               (state, reason, receipt))
+    # Telegram long polling observes the network when the response arrives,
+    # not when the up-to-30-second poll began, a duplicate cannot renew it.
+    if db.execute("SELECT changes()").fetchone()[0]:
+        db.execute("UPDATE status_projection_clock SET revision=revision+1 WHERE singleton=1")
+        db.execute("UPDATE status_observations SET observed_at=? WHERE id=? AND scope IN ('telegram_poll','telegram_delivery_path')", (now(), receipt))
+    db.commit()
+
+
+def readiness_projection(db: sqlite3.Connection) -> dict:
+    owned_snapshot = not db.in_transaction
+    if owned_snapshot:
+        db.execute("BEGIN")
+    try:
+        return read_readiness_projection(db)
+    finally:
+        if owned_snapshot:
+            db.rollback()  # Read-only snapshot, never commit caller writes.
+
+
+def read_readiness_projection(db: sqlite3.Connection) -> dict:
+    timestamp = now()
+    def latest(scope):
+        scopes = ("telegram_poll", "telegram_delivery_path") if scope == "telegram_poll" else (scope, scope)
+        row = db.execute("SELECT * FROM status_observations WHERE scope IN (?,?) AND model=? AND reason!='observation_pending' ORDER BY id DESC LIMIT 1",
+                         (*scopes, MODEL)).fetchone()
+        if row is None:
+            return {"state": "UNVERIFIED", "reason": "observation_missing", "observed_at": None, "expires_at": None}
+        result = {key: row[key] for key in ("state", "reason", "observed_at")}
+        result["expires_at"] = row["observed_at"] + 30
+        if not row["observed_at"] <= timestamp <= result["expires_at"]:
+            result.update(state="UNVERIFIED", reason="observation_stale")
+        return result
+    backends = [{"backend": backend["name"], "model": MODEL, **latest("backend_" + backend["name"])}
+                for backend in GATEWAY_BACKENDS]
+    eligible = sum(item["state"] == "ELIGIBLE" for item in backends)
+    gateway = "AVAILABLE" if eligible == len(backends) else "DEGRADED" if eligible else (
+        "UNAVAILABLE" if all(item["state"] == "UNAVAILABLE" for item in backends) else "UNVERIFIED")
+    bot = latest("telegram_poll")
+    delivery = delivery_observation(db, model=MODEL)
+    delivered = db.execute("SELECT id FROM inference_events WHERE model=? AND delivery_state='delivered' ORDER BY delivery_order DESC LIMIT 1",
+                           (MODEL,)).fetchone()
+    contradictory = delivered is not None and db.execute(
+        "SELECT 1 FROM inference_events WHERE model=? AND id>? AND "
+        "(outcome IN ('transport_error','invalid_response','empty_response') OR outcome GLOB 'http_5[0-9][0-9]') LIMIT 1",
+        (MODEL, delivered[0])).fetchone() is not None
+    combined = "UNVERIFIED"
+    reason = "delivery_unverified"
+    if bot["state"] == "FAILED" or delivery["state"] == "DELIVERY_FAILED":
+        combined, reason = "BOT_FAILED", "telegram_path_failed"
+    elif gateway == "UNAVAILABLE":
+        combined, reason = "UNAVAILABLE", "no_eligible_backend"
+    elif delivery["state"] == "STALE":
+        reason = "delivery_stale"
+    elif contradictory:
+        reason = "inference_failure_after_delivery"
+    elif bot["state"] == "OK" and eligible and delivery["state"] == "RECENT" and delivery["model"] == MODEL:
+        combined, reason = "LIVE", "recent_delivery_and_current_eligibility"
+    revision = db.execute("SELECT (SELECT revision FROM status_projection_clock WHERE singleton=1) + "
+                          "(SELECT coalesce(max(id),0)+coalesce(max(delivery_order),0) FROM inference_events)").fetchone()[0]
+    telemetry = TRAFFIC.latest(db, MODEL, timestamp) if TRAFFIC_METRICS_URL else {
+        "scope": "consumer_inference_attempts", "state": "PARTIAL", "reason": "direct_client_metrics_not_collected"}
+    revision += TRAFFIC.revision(db)
+    return {"schema_version": 1, "scope": "telegram_model_backend", "model": MODEL, "revision": revision,
+            "gateway_state": gateway, "combined_state": combined, "reason": reason,
+            "backends": backends, "bot": bot, "delivery": delivery,
+            "telemetry": telemetry}
+
+
+def observe_backend(db: sqlite3.Connection, backend) -> None:
+    receipt = begin_status_observation(db, "backend_" + backend["name"])
+    deadline = time.monotonic() + 6
+    def read(url):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("status deadline elapsed")
+        request = Request(url, headers={"Authorization": f"Bearer {backend['api_key']}", "Accept": "application/json"})
+        with urlopen(request, timeout=min(3, remaining)) as response:
+            payload = json.load(response)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("status deadline elapsed")
+        return payload
+    try:
+        admission = read(backend["admission_url"])
+        if not isinstance(admission, dict) or type(admission.get("available")) is not bool:
+            raise ValueError("invalid admission observation")
+        if admission["available"] is False:
+            reason = admission.get("reason")
+            if not isinstance(reason, str) or not re.fullmatch(r"[a-z0-9_]+", reason):
+                reason = "runtime_unavailable"
+            finish_status_observation(db, receipt, "UNAVAILABLE", reason)
+            return
+        status = read(backend["base_url"] + "/status")
+        capacity = status["capacity"]["models"][MODEL]
+        limiter = status["limiter"]["models"][MODEL]
+        weight = float(capacity.get("current_weight", capacity.get("total_weight", 0)))
+        slots = float(limiter["effective_max_concurrent_requests"])
+        if (not math.isfinite(weight) or not math.isfinite(slots)
+                or type(capacity.get("current_weight", capacity.get("total_weight", 0))) is bool
+                or type(limiter["effective_max_concurrent_requests"]) is bool
+                or type(capacity.get("routable")) is not bool
+                or type(capacity.get("access_enabled")) is not bool):
+            raise ValueError("invalid model capacity")
+        runtimes = status["devshards"]
+        if not isinstance(runtimes, list) or not all(isinstance(item, dict) for item in runtimes):
+            raise ValueError("invalid current runtime observation")
+        def active(item):
+            runtime = item.get("runtime", item)
+            if not (isinstance(runtime, dict) and item.get("active") is True
+                    and runtime.get("phase") == "active" and runtime.get("requests_blocked") is False
+                    and (item.get("chain_phase") or runtime.get("chain_phase")) == "Inference"):
+                return False
+            # Both supported layouts carry a runtime model, never infer its
+            # identity from positive capacity for a different model.
+            models = [value["model"] for value in (item, runtime) if "model" in value]
+            if not models or any(not isinstance(model, str) or not model for model in models) or len(set(models)) != 1:
+                raise ValueError("missing or contradictory runtime model")
+            return models[0] == MODEL
+        model_runtimes = [active(item) for item in runtimes]
+        eligible = (weight > 0 and slots > 0 and capacity["routable"]
+                    and capacity["access_enabled"] and any(model_runtimes))
+        if time.monotonic() >= deadline:
+            raise TimeoutError("status deadline elapsed")
+        finish_status_observation(db, receipt, "ELIGIBLE" if eligible else "UNAVAILABLE",
+                                  "model_eligible" if eligible else "model_capacity_unavailable")
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        finish_status_observation(db, receipt, "UNVERIFIED", "status_observation_unavailable")
+
+
+def status_observer(stopped: threading.Event) -> None:
+    # Bounded read-only observations, never inference dispatch or website I/O.
+    with connection() as db:
+        while not stopped.is_set():
+            for backend in GATEWAY_BACKENDS:
+                if stopped.is_set():
+                    return
+                observe_backend(db, backend)
+            stopped.wait(5)
+
+
+def observe_traffic(db: sqlite3.Connection) -> None:
+    if not TRAFFIC_METRICS_URL:
+        return
+    previous = TRAFFIC.latest(db, MODEL, now())
+    receipt = TRAFFIC.begin(db, MODEL, now())
+    snapshot = TRAFFIC.collect(TRAFFIC_METRICS_URL, MODEL, previous=previous)
+    TRAFFIC.finish(db, receipt, snapshot)
+
+
+def traffic_observer(stopped: threading.Event) -> None:
+    # Separate from backend readiness I/O, telemetry cannot extend its cycle
+    # or dispatch inference, native counters already include bot attempts.
+    if not TRAFFIC_METRICS_URL:
+        return
+    with connection() as db:
+        while not stopped.is_set():
+            observe_traffic(db)
+            stopped.wait(5)
+
+
+def delivery_observation(db: sqlite3.Connection, model=None) -> dict:
     """Delivery evidence only, current model/backend eligibility is separate."""
     row = db.execute("SELECT backend, model, delivery_state, delivery_observed_at FROM inference_events "
                      "WHERE outcome='success' AND delivery_observed_at IS NOT NULL "
-                     "ORDER BY delivery_order DESC LIMIT 1").fetchone()
+                     "AND (? IS NULL OR model=?) ORDER BY delivery_order DESC LIMIT 1", (model, model)).fetchone()
     result = {"schema_version": 1, "scope": "telegram_inference_delivery",
               "state": "UNVERIFIED", "combined_readiness": "UNVERIFIED",
               "observed_at": None, "expires_at": None, "backend": None, "model": None}
@@ -361,7 +563,13 @@ def record_delivery(db: sqlite3.Connection, event_id, succeeded: bool) -> None:
     db.execute("UPDATE inference_events SET delivery_state=?, delivery_observed_at=?, delivery_order=? "
                "WHERE id=? AND outcome='success' AND delivery_state='unverified'",
                ("delivered" if succeeded else "failed", now(), order, event_id))
+    updated = db.execute("SELECT changes()").fetchone()[0]
+    delivery_model = db.execute("SELECT model FROM inference_events WHERE id=?", (event_id,)).fetchone()
     db.commit()
+    if updated:
+        receipt = begin_status_observation(db, "telegram_delivery_path", model=delivery_model[0])
+        finish_status_observation(db, receipt, "OK" if succeeded else "FAILED",
+                                  "telegram_delivery_succeeded" if succeeded else "telegram_delivery_failed")
     publish_metrics(db)
 
 
@@ -973,8 +1181,24 @@ def handle(db: sqlite3.Connection, update) -> None:
     text = raw_text.strip()
     command = text.split(maxsplit=1)[0].lower() if text.startswith("/") else ""
     if command in ("/start", "/help"):
-        send_message(chat_id, "Send a message to run chain-accounted inference. Use /api_key for a stable API key, /new, or /faucet <Gonka address> for test GNK.")
+        send_message(chat_id, "Send a message to run chain-accounted inference. Use /status for current observations, /api_key for a stable API key, /new, or /faucet <Gonka address> for test GNK.")
         record_interaction(db, user_id, "command", "success", is_premium)
+        return
+    if command == "/status":
+        projection = readiness_projection(db)
+        rows = [f"Model: {projection['model']}",
+                f"Gateway: {projection['gateway_state']}; Telegram inference: {projection['combined_state']}",
+                f"Reason: {projection['reason']}"]
+        for item in [*projection["backends"], {"backend": "Telegram", **projection["bot"]},
+                     {"backend": "Delivery", **projection["delivery"]}]:
+            rows.append(f"{item['backend']}: {item['state']}; observed {item['observed_at']}; expires {item['expires_at']}")
+        telemetry = projection["telemetry"]
+        rows.append(f"Telemetry: {telemetry['scope']}; {telemetry['state']}")
+        for item in telemetry.get("backends", []):
+            counts = ", ".join(f"{entry['outcome']}:{entry['reason']}={entry['value']:g}" for entry in item["counters"]) or "unknown"
+            rows.append(f"{item['backend']} traffic: {counts}; observed {item['observed_at']}; expires {item['expires_at']}; token counts unknown")
+        send_message(chat_id, "\n".join(rows))
+        record_interaction(db, user_id, "status", "success", is_premium)
         return
     if command == "/new":
         reset_user_conversation(db, user_id)
@@ -1083,15 +1307,20 @@ def main() -> None:
         publish_metrics(db)
     server = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), ConversationAPIHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=status_observer, args=(threading.Event(),), daemon=True).start()
+    threading.Thread(target=traffic_observer, args=(threading.Event(),), daemon=True).start()
     offset = None
     with connection() as db:
         while True:
+            poll_receipt = begin_status_observation(db, "telegram_poll")
             try:
                 updates = telegram_request("getUpdates", {"offset": offset, "timeout": 30, "allowed_updates": ["message"]})
+                finish_status_observation(db, poll_receipt, "OK", "telegram_poll_succeeded")
                 for update in updates:
                     offset = update["update_id"] + 1
                     handle(db, update)
             except Exception as error:
+                finish_status_observation(db, poll_receipt, "FAILED", "telegram_poll_failed")
                 print(f"retrying after bot error: {type(error).__name__}", flush=True)
                 time.sleep(3)
 

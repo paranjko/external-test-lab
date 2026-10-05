@@ -12,6 +12,17 @@ childProcess.execFileSync(
   { cwd: temporaryRoot, stdio: 'inherit' },
 );
 const state = require(path.join(siteBuild, 'gateway-state.js'));
+const softwareIdentity = require(path.join(siteBuild, 'software-versions.js'));
+const observedRuntime = {metric:{host:'fixture',slot:'v5',source:'process',version:'v5.0.2',binary_sha256:'b'.repeat(64),archive_sha256:'c'.repeat(64)},value:[9999,'1000']};
+const selectRuntime = (samples, timestamp=1001) => softwareIdentity.selectDevShardIdentity(samples,'fixture',timestamp);
+assert.equal(selectRuntime([observedRuntime]).get('v5').binarySha256,'b'.repeat(64));
+assert.equal(selectRuntime([observedRuntime]).get('v5').archiveSha256,'c'.repeat(64));
+assert.equal(selectRuntime([observedRuntime],1091).size,0);
+assert.equal(selectRuntime([observedRuntime],999).size,0);
+assert.equal(selectRuntime([observedRuntime,observedRuntime]).size,0);
+for (const override of [{host:'other'},{source:'container'},{version:'v5'},{binary_sha256:'installed'},{slot:'v6'}]) {
+  assert.equal(selectRuntime([{...observedRuntime,metric:{...observedRuntime.metric,...override}}]).size,0);
+}
 const hostState = require(path.join(siteBuild, 'host-state.js'));
 const generatedGatewayState = fs.readFileSync(path.join(siteBuild, 'gateway-state.js'), 'utf8');
 assert.doesNotMatch(generatedGatewayState, /run make site-js\n\n\n/);
@@ -556,5 +567,126 @@ assert.match(
   /await rm\(profile, \{ recursive: true, force: true \}\)/,
 );
 
-fs.rmSync(siteBuild, { recursive: true, force: true });
-console.log('PASS gateway public-site state contract');
+async function testSharedTelegramProjection() {
+  const elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) elements.set(id, { dataset: {}, children: [], removeAttribute() {} });
+    return elements.get(id);
+  };
+  let timestamp = 1000000;
+  let read = async () => ({ status: 'ok', readiness_projection: snapshot });
+  const source = siteApp.slice(siteApp.indexOf('let telegramStatusFetch ='), siteApp.indexOf('$("grafana-network")'));
+  assert.ok(source.includes('renderTelegramProjection'));
+  const consumer = new Function('$', 'cfg', 'json', 'statusUrl', 'Date', `${source};return {refreshTelegramConsumer,renderTelegramProjection};`)(
+    element, { model: 'model', telegramBot: 'https://t.me/test' }, (...args) => read(...args), (path) => '/status' + path, { now: () => timestamp },
+  );
+  const observation = (state, backend) => ({ state, backend, model: 'model', reason: 'observed', observed_at: 1000, expires_at: 1030 });
+  let snapshot = { schema_version: 1, scope: 'telegram_model_backend', model: 'model', revision: 5,
+    combined_state: 'LIVE', gateway_state: 'DEGRADED', reason: 'recent_delivery_and_current_eligibility',
+    backends: [observation('UNAVAILABLE', 'A'), observation('ELIGIBLE', 'B')],
+    bot: observation('OK'), delivery: { state: 'RECENT', model: 'model', observed_at: 1000, expires_at: 1120 },
+    telemetry: { state: 'PARTIAL' } };
+  await consumer.refreshTelegramConsumer();
+  assert.equal(element('contact').dataset.state, 'LIVE');
+  assert.equal(element('gateway-a-state').textContent, 'UNAVAILABLE');
+  assert.equal(element('gateway-b-state').textContent, 'ELIGIBLE');
+  assert.match(element('contact').title, /telemetry PARTIAL/);
+  assert.equal(element('quality-health-state').textContent, 'A/B DEGRADED; telemetry UNVERIFIED');
+  assert.equal(element('quality-accepted').textContent, 'unknown');
+  const telemetry = { scope: 'native_gateway_requests_including_bot_and_direct_clients', model: 'model', state: 'CURRENT',
+    backends: [{ ...observation('FRESH', 'A'), counters: [{outcome:'success',reason:'none',value:3},{outcome:'failed',reason:'none',value:1}] },
+               { ...observation('FRESH', 'B'), counters: [{outcome:'success',reason:'none',value:4}] }] };
+  snapshot = { ...snapshot, revision: 6, telemetry };
+  await consumer.refreshTelegramConsumer();
+  assert.equal(element('quality-accepted').textContent, '7');
+  assert.equal(element('quality-rejected').textContent, 'unknown');
+  assert.equal(element('quality-active').textContent, 'unknown');
+  assert.equal(element('quality-health-state').textContent, 'A/B DEGRADED; telemetry CURRENT');
+  assert.match(element('gateway-b-detail').textContent, /native traffic success:none=4/);
+  snapshot = { ...snapshot, revision: 7, telemetry: { ...telemetry, backends: [telemetry.backends[0]] } };
+  await consumer.refreshTelegramConsumer();
+  assert.equal(element('quality-accepted').textContent, '3');
+  assert.equal(element('quality-rejected').textContent, '1');
+  assert.equal(element('quality-health-state').textContent, 'A/B DEGRADED; telemetry PARTIAL');
+  timestamp = 1031000;
+  consumer.renderTelegramProjection();
+  assert.equal(element('contact').dataset.state, 'UNVERIFIED');
+  assert.equal(element('gateway-b-state').textContent, 'UNVERIFIED');
+  assert.equal(element('quality-accepted').textContent, 'unknown');
+  assert.equal(element('quality-health-state').textContent, 'A/B UNVERIFIED; telemetry UNVERIFIED');
+  timestamp = 1000000;
+  snapshot = { ...snapshot, revision: 8, combined_state: 'BOT_FAILED', bot: observation('FAILED') };
+  await consumer.refreshTelegramConsumer();
+  assert.equal(element('contact').dataset.state, 'BOT_FAILED');
+  snapshot = { ...snapshot, revision: 7, combined_state: 'LIVE', bot: observation('OK') };
+  await consumer.refreshTelegramConsumer();
+  assert.equal(element('contact').dataset.state, 'BOT_FAILED');
+  let releaseOld;
+  read = () => new Promise((resolve) => { releaseOld = resolve; });
+  const old = consumer.refreshTelegramConsumer();
+  read = async () => ({ status: 'ok', readiness_projection: { ...snapshot, revision: 9, combined_state: 'UNVERIFIED' } });
+  await consumer.refreshTelegramConsumer();
+  releaseOld({ status: 'ok', readiness_projection: { ...snapshot, revision: 999 } });
+  await old;
+  assert.equal(element('contact').dataset.state, 'UNVERIFIED');
+  read = async () => ({ status: 'ok', inference_ready: true });
+  await consumer.refreshTelegramConsumer();
+  assert.equal(element('contact').dataset.state, 'UNVERIFIED');
+  assert.equal(element('gateway-a-state').textContent, 'UNVERIFIED');
+  assert.match(element('contact').title, /unverified/);
+}
+async function testObservedFleetIdentity() {
+  const target = {};
+  const card = {querySelector: () => target};
+  const node = {name:'fixture',devShardHealth:{state:'observed',runtimes:[{name:'v5',status:'running',binary_version:'nominal-only',sha256:'claimed-archive'},{name:'v4',status:'running'}]}};
+  let timestamp = 1001000;
+  let read = async () => ({status:'success',data:{resultType:'vector',result:[observedRuntime]}});
+  const source = siteApp.slice(siteApp.indexOf('function updateDevShards('),siteApp.indexOf('function updateMlNodes('));
+  const fleet = new Function('GDC_SOFTWARE_VERSIONS','softwareInventoryKeys','Date','json','statusUrl','observedNodes','cards','nodeKey',
+    `let cardDevShardInventory = new Map(); let devShardInventoryRequest = 0; let devShardInventoryWatermarks = new Map(); ${source}; return {refreshDevShardInventory,renderDevShardInventory};`)(
+    softwareIdentity,(item) => [item.name],{now:() => timestamp},(...args) => read(...args),(item) => '/status'+item,
+    [node],new Map([['fixture',card]]),(item) => item.name);
+  await fleet.refreshDevShardInventory();
+  assert.match(target.textContent,/v5 v5\.0\.2/);
+  assert.match(target.textContent,/v4 identity unknown/);
+  assert.match(target.title,new RegExp('binary SHA-256 '+'b'.repeat(64)));
+  assert.match(target.title,new RegExp('archive SHA-256 '+'c'.repeat(64)));
+  assert.doesNotMatch(target.title,/nominal-only|claimed-archive/);
+  timestamp=1091000;
+  fleet.renderDevShardInventory();
+  assert.match(target.title,/identity unverified/);
+  assert.doesNotMatch(target.title,new RegExp('b'.repeat(64)));
+  timestamp=1001000;
+  let releaseOld;
+  read=() => new Promise((resolve) => {releaseOld=resolve;});
+  const old=fleet.refreshDevShardInventory();
+  read=async () => {throw new Error('unreachable fixture');};
+  await fleet.refreshDevShardInventory();
+  releaseOld({status:'success',data:{resultType:'vector',result:[observedRuntime]}});
+  await old;
+  assert.match(target.title,/identity unverified/);
+  assert.doesNotMatch(target.title,new RegExp('b'.repeat(64)));
+  const response = (samples) => ({status:'success',data:{resultType:'vector',result:samples}});
+  const sample = (source, version, hash) => ({...observedRuntime,metric:{...observedRuntime.metric,version,binary_sha256:hash.repeat(64)},value:[1005,String(source)]});
+  read=async () => response([sample(995,'v5.0.0','a')]);
+  await fleet.refreshDevShardInventory();
+  assert.match(target.title,/identity unverified/);
+  assert.doesNotMatch(target.title,new RegExp('a'.repeat(64)));
+  read=async () => response([sample(1000,'v5.0.0','d')]);
+  await fleet.refreshDevShardInventory();
+  assert.match(target.title,/identity unverified/);
+  assert.doesNotMatch(target.title,new RegExp('d'.repeat(64)));
+  read=async () => response([]);
+  await fleet.refreshDevShardInventory();
+  read=async () => response([sample(995,'v5.0.0','a')]);
+  await fleet.refreshDevShardInventory();
+  assert.match(target.title,/identity unverified/);
+  read=async () => response([sample(1001,'v5.0.3','e')]);
+  await fleet.refreshDevShardInventory();
+  assert.match(target.textContent,/v5\.0\.3/);
+  assert.match(target.title,new RegExp('e'.repeat(64)));
+}
+testSharedTelegramProjection().then(testObservedFleetIdentity).then(() => {
+  fs.rmSync(siteBuild, { recursive: true, force: true });
+  console.log('PASS gateway public-site and timed Telegram projection contracts');
+}).catch((error) => { console.error(error); process.exitCode = 1; });

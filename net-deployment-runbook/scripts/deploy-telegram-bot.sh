@@ -22,6 +22,7 @@ BOT_HOST="$TELEGRAM_BOT_HOST"
 # through the public-edge admission governor with every other inference probe.
 BOT_A_API_BASE_URL="https://${API_HOST}/a/v1"
 BOT_B_API_BASE_URL="https://${API_HOST}/b/v1"
+BOT_TRAFFIC_METRICS_URL="https://${GRAFANA_HOST}/api/datasources/proxy/uid/prometheus/api/v1/query"
 BOT_STATE_DB=/data/bot.sqlite3
 BOT_METRICS_FILE=/metrics/telegram-bot.prom
 BOT_A_KEY_FILE="$SECRETS/gateway.telegram-a-client-key"
@@ -31,7 +32,7 @@ BOT_FAUCET_TOKEN_FILE="$SECRETS/telegram.faucet-token"
 BOT_KEY_BROKER_TOKEN_FILE="$SECRETS/bifrost.broker-token"
 VERIFY_TIMEOUT_SECONDS="${GDC_TELEGRAM_CONSUMER_VERIFY_TIMEOUT_SECONDS:-300}"
 
-[[ -f "$BOT_SOURCE/compose.yaml" && -f "$BOT_SOURCE/bot.py" ]] || {
+[[ -f "$BOT_SOURCE/compose.yaml" && -f "$BOT_SOURCE/bot.py" && -f "$BOT_SOURCE/gateway_traffic.py" ]] || {
   echo "embedded Telegram bot source is incomplete: $BOT_SOURCE" >&2; exit 1;
 }
 [[ -s "$BOT_A_KEY_FILE" ]] || { echo "missing Telegram gateway A credential: $BOT_A_KEY_FILE" >&2; exit 1; }
@@ -65,6 +66,7 @@ printf '%s\n' \
   "TELEGRAM_FAUCET_TOKEN=$BOT_FAUCET_TOKEN" \
   "TELEGRAM_FAUCET_TIMEOUT_SECONDS=${GDC_TELEGRAM_FAUCET_TIMEOUT_SECONDS:-12}" \
   "GATEWAY_BACKENDS_JSON=$BOT_GATEWAY_BACKENDS_JSON" \
+  "GATEWAY_TRAFFIC_METRICS_URL=$BOT_TRAFFIC_METRICS_URL" \
   "INTERNAL_API_TOKEN=$BOT_INTERNAL_API_TOKEN" \
   "INTERNAL_API_BASE_URL=http://127.0.0.1:9464" \
   "TELEGRAM_KEY_BROKER_URL=http://127.0.0.1:9465" \

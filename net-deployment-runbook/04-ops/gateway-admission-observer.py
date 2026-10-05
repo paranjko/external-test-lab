@@ -21,7 +21,7 @@ def sanitize_runtime(runtime):
         return None
     return {
         key: runtime.get(key)
-        for key in ("phase", "chain_phase", "requests_blocked", "session_version", "protocol_version")
+        for key in ("model", "phase", "chain_phase", "requests_blocked", "session_version", "protocol_version")
         if key in runtime
     }
 
@@ -43,7 +43,7 @@ def sanitize_capacity(capacity):
             raise ValueError("gateway model capacity is invalid")
         safe["models"][model_id] = {
             key: model.get(key)
-            for key in ("current_weight", "total_weight", "routable")
+            for key in ("current_weight", "total_weight", "routable", "access_enabled")
             if key in model
         }
     return safe
@@ -82,11 +82,13 @@ def sanitize_state(payload):
             raise ValueError("gateway runtime is not an object")
         safe = {
             key: item.get(key)
-            for key in ("id", "active", "protocol_version")
+            for key in ("id", "model", "active", "protocol_version")
             if key in item
         }
         if "runtime" in item:
             safe["runtime"] = sanitize_runtime(item["runtime"])
+            if safe["runtime"] is None:
+                raise ValueError("gateway runtime is not an object")
             if "chain_phase" not in safe["runtime"] and "chain_phase" in item:
                 safe["runtime"]["chain_phase"] = item["chain_phase"]
         safe_devshards.append(safe)

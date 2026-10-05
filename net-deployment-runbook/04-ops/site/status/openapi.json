@@ -3,7 +3,7 @@
   "info": {
     "title": "Gonka Community DevNet Status API",
     "version": "1.0.0",
-    "description": "Read-only public operational observations for Gonka Community DevNet. Responses are not an authentication, governance, or inference API. Inventory represents the latest Prometheus observation within 24 hours."
+    "description": "Read-only public operational observations for Gonka Community DevNet, not an authentication, governance or inference API, retained hardware and software inventory covers 24 hours, actual DevShard process identity expires after 90 seconds"
   },
   "servers": [{ "url": "https://gonka-dev.net" }],
   "tags": [
@@ -50,6 +50,25 @@
         "responses": {
           "200": {
             "description": "Prometheus instant-vector response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PrometheusVector" }
+              }
+            }
+          },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/status/devshard-runtime": {
+      "get": {
+        "tags": ["Inventory"],
+        "summary": "Get current observed DevShard process identity",
+        "description": "Returns running child binary versions and binary SHA-256 separately from supervisor-reported archive SHA-256, each sample value is the original observation time, stale, failed and future observations are absent, missing version or archive identity remains unreported, no PID, executable path, keyring or credentials are exposed",
+        "operationId": "getDevShardRuntimeIdentity",
+        "responses": {
+          "200": {
+            "description": "Prometheus vector of current process observations, an empty vector does not prove that all runtimes stopped",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/PrometheusVector" }

@@ -70,5 +70,14 @@
 		uri strip_prefix /prometheus
 		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
 	}
+	@prometheus_devshard_runtime {
+		method GET
+		path /prometheus/api/v1/query
+		expression `query({'query':'(gdc_devshard_runtime_info * on(host) group_left() gdc_devshard_runtime_observed_at_seconds) and on(host) (gdc_devshard_runtime_scrape_success == 1) and on(host) (time() - gdc_devshard_runtime_observed_at_seconds >= 0) and on(host) (time() - gdc_devshard_runtime_observed_at_seconds <= 90)'})`
+	}
+	handle @prometheus_devshard_runtime {
+		uri strip_prefix /prometheus
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
 	respond "not found" 404
 }
