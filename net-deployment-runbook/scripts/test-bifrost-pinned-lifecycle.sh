@@ -12,7 +12,7 @@ port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); 
 upstream_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 broker_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 edge_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-compose=(docker compose --project-name "$name" --env-file "$tmp/compose.env" -f "$ROOT/04-ops/compose.yaml" -f "$tmp/compose.override.yaml")
+compose=(docker compose --project-name "$name" --env-file "$tmp/compose.env" -f "$tmp/compose.fixture.yaml" -f "$tmp/compose.override.yaml")
 upstream_pid=''; broker_pid=''; edge_pid=''
 cleanup() { [[ -z "$edge_pid" ]] || kill "$edge_pid" >/dev/null 2>&1 || true; [[ -z "$broker_pid" ]] || kill "$broker_pid" >/dev/null 2>&1 || true; [[ -z "$upstream_pid" ]] || kill "$upstream_pid" >/dev/null 2>&1 || true; "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true; rm -rf "$tmp"; }
 trap cleanup EXIT
@@ -20,6 +20,23 @@ trap cleanup EXIT
 printf 'BIFROST_DATA_VOLUME_NAME=%s\nINFERENCED_IMAGE=fixture/unused:latest\nSITE_HOST=fixture.invalid\nAPI_HOST=fixture.invalid\nGRAFANA_HOST=fixture.invalid\nGATEWAY_PUBLIC_HOST=fixture.invalid\nPUBLIC_EDGE_CIDR=127.0.0.1/32\n' "$name" >"$tmp/compose.env"
 printf 'APP_HOST=127.0.0.1\nAPP_PORT=%s\nBIFROST_SETUP_TOKEN=temporary-setup-token\n' "$port" >"$tmp/bifrost.env"
 printf 'services:\n  bifrost:\n    env_file:\n      - %s\n' "$tmp/bifrost.env" >"$tmp/compose.override.yaml"
+# Select the shipped YAML before Compose reads any unrelated service env_file
+# Older Compose versions check file existence even with --no-env-resolution
+# Retain the whole service and volume blocks, refuse missing/duplicate blocks
+awk '
+  BEGIN { print "services:" }
+  /^volumes:$/ { section="volumes"; capture=0; print; next }
+  /^  [a-zA-Z0-9_-]+:$/ {
+    capture=($0 == "  bifrost:" && section != "volumes") || ($0 == "  bifrost-data:" && section == "volumes")
+    if (capture && section == "volumes") volumes++; else if (capture) services++
+  }
+  capture { print }
+  END { if (services != 1 || volumes != 1) exit 1 }
+' "$ROOT/04-ops/compose.yaml" >"$tmp/compose.fixture.yaml"
+"${compose[@]}" config --no-env-resolution --format json \
+  | jq '{name, services: {bifrost: .services.bifrost}, volumes: {"bifrost-data": .volumes["bifrost-data"]}}' \
+  >"$tmp/compose.json"
+compose=(docker compose --project-name "$name" -f "$tmp/compose.json")
 "$python_test" "$ROOT/scripts/bifrost-fake-inference.py" "$upstream_port" >/dev/null 2>&1 & upstream_pid=$!
 "${compose[@]}" up -d bifrost >/dev/null
 ready=false
