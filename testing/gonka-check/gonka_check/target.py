@@ -3,9 +3,10 @@
 import hashlib
 import json
 import os
+import posixpath
 import re
 import stat
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,6 +15,11 @@ PROFILES = ("smoke", "chain")
 PUBLIC_TARGETS = {
     "https://api.gonka-dev.net": "https://gonka-dev.net/status/gateway-health",
 }
+# DevShard gateways reached directly under a path of the public API: no admission proxy, no health receipt.
+PUBLIC_GATEWAY_PATHS = {"https://api.gonka-dev.net": ("/a", "/b")}
+GATEWAY_PATH = re.compile(r"^(/[a-z0-9][a-z0-9-]*)?$")
+# Gateway admin paths as devshardctl sees them, also one segment deep (/a, /b) and under /devshard/<id>.
+ADMIN_PATH = re.compile(r"^(/[^/]+)?(/devshard/[^/]+)?(/v1/(admin|debug|finalize|state)|/debug/pprof)(/|$)")
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 PUBLIC_NODE_RPC = re.compile(r"^https://node[0-9]+\.gonka-dev\.net/chain-rpc$")
 REQUIRED = (
@@ -59,13 +65,34 @@ def is_loopback(url):
     return parts.scheme == "http" and parts.hostname in LOOPBACK
 
 
+def gateway_path(preset):
+    return preset.get("gateway_path") or ""
+
+
+def gateway_url(preset):
+    return preset["base_url"].rstrip("/") + gateway_path(preset)
+
+
+def is_direct(preset):
+    """A gateway without the admission proxy: no health receipt, no GDC headers, no fence."""
+    return bool(gateway_path(preset))
+
+
 def check_target(preset):
     """Refuse any target other than the public DevNet API or a local fake."""
     base = preset["base_url"].rstrip("/")
+    path = gateway_path(preset)
+    if not GATEWAY_PATH.fullmatch(path):
+        raise TargetRefused("gateway path %r is malformed" % path)
+    if (preset["health_url"] is None) != bool(path):
+        raise TargetRefused("a gateway path goes without a health receipt, the admission point with one")
     if is_loopback(base):
-        urls = (preset["health_url"], preset["chain_rpc"], preset["chain_api"])
+        urls = [url for url in (preset["health_url"], preset["chain_rpc"], preset["chain_api"]) if url]
         if not all(is_loopback(url) for url in urls):
             raise TargetRefused("a loopback target must keep every URL on loopback")
+    elif path:
+        if path not in PUBLIC_GATEWAY_PATHS.get(base, ()):
+            raise TargetRefused("gateway %s%s is not an allowed DevNet gateway" % (base, path))
     elif PUBLIC_TARGETS.get(base) != preset["health_url"]:
         raise TargetRefused("target %s is not an allowed public gateway" % base)
     for key in ("chain_rpc", "chain_api"):
@@ -90,18 +117,22 @@ def check_profile(preset, profile):
 
 def check_url(preset, url):
     parts = urlsplit(url)
+    path = posixpath.normpath("/" + unquote(parts.path).lstrip("/"))
     for prefix in preset["forbid_paths"]:
-        if parts.path.startswith(prefix):
+        if path.startswith(prefix):
             raise TargetRefused("path %s is forbidden" % parts.path)
+    if ADMIN_PATH.match(path):
+        raise TargetRefused("path %s is a gateway admin path" % parts.path)
     origin = "%s://%s" % (parts.scheme, parts.netloc)
     allowed = {preset["base_url"].rstrip("/")}
-    allowed.add("%s://%s" % urlsplit(preset["health_url"])[:2])
+    if preset["health_url"]:
+        allowed.add("%s://%s" % urlsplit(preset["health_url"])[:2])
     if origin in allowed:
         return
     # A node origin is allowed only under its own chain RPC path.
     for node in preset.get("node_rpcs", []):
         node_parts = urlsplit(node)
-        if origin == "%s://%s" % node_parts[:2] and parts.path.startswith(node_parts.path.rstrip("/") + "/"):
+        if origin == "%s://%s" % node_parts[:2] and path.startswith(node_parts.path.rstrip("/") + "/"):
             return
     raise TargetRefused("origin %s is outside the preset" % origin)
 

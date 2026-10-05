@@ -444,6 +444,60 @@ class WatchDetails(WatchMode):
         self.assertEqual(summary["totals"]["errors"], {})
 
 
+class DirectGateway(Harness):
+    """A DevShard gateway under a path of the public API: no admission proxy in front of it."""
+
+    def test_smoke_passes_without_the_proxy(self):
+        with FakeGateway(prefix="/a") as fake:
+            code, summary = self.gcheck(fake)
+        self.assertEqual(code, 0, summary)
+        self.assertEqual(self.verdicts(summary), {"model_served": "PASS", "canary": "PASS", "floor64": "PASS"})
+        self.assertEqual(summary["target"], fake.base_url + "/a")
+        self.assertEqual([post["path"] for post in fake.posts], ["/a/v1/chat/completions"] * 2)
+        self.assertFalse(any(request["path"].startswith("/status/") for request in fake.requests))
+        self.assert_key_only_in_posts(fake, summary)
+        with open(os.path.join(self.config, "ledger.jsonl"), encoding="utf-8") as handle:
+            self.assertEqual({json.loads(line)["target"] for line in handle}, {fake.base_url + "/a"})
+
+    def test_dry_run_needs_no_health_receipt(self):
+        with FakeGateway(prefix="/a") as fake:
+            code, summary = self.gcheck(fake, "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertNotIn("health", [item["name"] for item in summary["readiness"]["items"]])
+        self.assertEqual(fake.posts, [])
+
+    def test_window_follows_the_chain_cycle_not_the_height(self):
+        # Cycle starts at offset 35 of the height grid: height offset 5 is block 40 of the cycle.
+        with FakeGateway(prefix="/a", offset=5, shift=35) as fake:
+            code, summary = self.gcheck(fake)
+        self.assertEqual(code, 0, summary)
+        for post in fake.posts:
+            self.assertTrue(29 <= (post["height"] - 35) % EPOCH_LENGTH <= 50, post["height"])
+        # Height offset 30 would pass the proxy fence but is block 65 of the cycle.
+        with FakeGateway(prefix="/a", offset=30, shift=35, freeze=True) as fake:
+            code, summary = self.gcheck(fake)
+        self.assertEqual(fake.posts, [])
+        self.assertEqual(self.verdicts(summary)["canary"], "INCONCLUSIVE")
+
+    def test_gateway_failure_still_stops_the_run(self):
+        with FakeGateway(prefix="/a", scenario="dispatch_fail") as fake:
+            code, summary = self.gcheck(fake)
+        self.assertEqual(code, 4)
+        self.assertEqual(summary["guard"]["reason"], "gateway_dispatch_failure")
+        self.assertEqual(len(fake.posts), 1)
+
+    def test_watch_reads_only_the_gateway_status(self):
+        os.remove(self.key_file)
+        with FakeGateway(prefix="/b", offset=60) as fake:
+            code, summary, _samples = WatchMode.watch(self, fake, "--epochs", "1", "--duration", "60")
+        self.assertEqual(code, 0)
+        self.assertEqual(summary["target"], fake.base_url + "/b")
+        complete = [epoch for epoch in summary["epochs"] if epoch["complete"]]
+        self.assertEqual(complete[0]["window_ready"], complete[0]["window_samples"])
+        self.assertIn("/b/v1/status", [request["path"] for request in fake.requests])
+        self.assertFalse(any(request["path"].startswith("/status/") for request in fake.requests))
+
+
 class Guard(Harness):
     def test_foreign_target_is_refused(self):
         with FakeGateway() as fake:
@@ -502,6 +556,41 @@ class Guard(Harness):
         preset["chain_poll_s"] = 0
         with self.assertRaises(TargetRefused):
             check_target(preset)
+
+    def test_only_gateways_a_and_b_are_reachable_by_path(self):
+        for name in ("devnet-a", "devnet-b"):
+            self.assertIsNone(load_preset(name)["health_url"])
+        preset = load_preset("devnet-a")
+        for path in ("/c", "/a/b", "/A", "a", "/a/"):
+            with self.assertRaises(TargetRefused, msg=path):
+                check_target(dict(preset, gateway_path=path))
+        with self.assertRaises(TargetRefused):
+            check_target(dict(preset, health_url="https://gonka-dev.net/status/gateway-health"))
+        with self.assertRaises(TargetRefused):
+            check_target(dict(load_preset("devnet"), health_url=None))
+        check_url(preset, "https://api.gonka-dev.net/a/v1/status")
+        for path in ("/a/v1/admin/state", "/a/v1/admin/escrows", "/a/v1/debug/rotation", "/a/v1/finalize",
+                     "/v1/admin/devshards"):
+            with self.assertRaises(TargetRefused, msg=path):
+                check_url(preset, "https://api.gonka-dev.net" + path)
+
+    def test_admin_path_variants_are_refused(self):
+        preset = load_preset("devnet-a")
+        for path in ("/v1/admin", "/a/v1/admin", "/a/v1/debug", "/b/v1/admin/state", "/a/v1/state",
+                     "/a/debug/pprof/heap", "/a/devshard/7/v1/finalize", "/devshard/7/v1/state",
+                     "/a/x/../v1/admin/state", "//a//v1/admin", "/a/v1/%61dmin/state"):
+            with self.assertRaises(TargetRefused, msg=path):
+                check_url(preset, "https://api.gonka-dev.net" + path)
+        for path in ("/a/v1/status", "/a/v1/chat/completions", "/a/v1/models", "/a/v1/stateless"):
+            check_url(preset, "https://api.gonka-dev.net" + path)
+
+    def test_plan_for_a_gateway_has_no_fence_audit(self):
+        result = subprocess.run([os.path.join(ROOT, "bin", "gcheck"), "plan", "--preset", "devnet-a"],
+                                capture_output=True, text=True, env=dict(os.environ), check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("target   https://api.gonka-dev.net/a (devnet-a, point gateway A)", result.stdout)
+        self.assertIn("total    2 POST", result.stdout)
+        self.assertNotIn("fence_audit", result.stdout)
 
     def test_plan_runs_from_bin_without_network(self):
         result = subprocess.run([os.path.join(ROOT, "bin", "gcheck"), "plan"], capture_output=True, text=True,

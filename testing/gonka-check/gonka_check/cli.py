@@ -12,7 +12,7 @@ import unittest
 from . import __version__
 from . import chaincheck
 from .chain import Chain
-from .checks import CHECKS, JUDGES, fence_audit, model_served, verdict
+from .checks import JUDGES, active_checks, fence_audit, model_served, verdict
 from .escrow import cli as escrow_cli
 from .gateway import cli as gateway_cli
 from .guards import GuardStop, Guards
@@ -20,8 +20,8 @@ from .preflight import preflight
 from .record import Recorder, utc_now
 from .scheduler import BudgetSpent, Ledger, LockBusy, NoSlot, RunLock, Scheduler
 from .summary import EXIT_CODES, SSL_HINT, hints, overall, render
-from .target import (ROOT, TargetRefused, check_profile, config_dir, data_dir, is_loopback, key_fingerprint,
-                     key_path, load_key, load_preset)
+from .target import (ROOT, TargetRefused, check_profile, config_dir, data_dir, gateway_url, is_direct, is_loopback,
+                     key_fingerprint, key_path, load_key, load_preset)
 from .transport import Client
 from .watch import Watch
 
@@ -42,7 +42,7 @@ def log(message):
 
 
 def plan_chain(preset):
-    print("target   %s (%s)" % (preset["base_url"], preset["name"]))
+    print("target   %s (%s)" % (gateway_url(preset), preset["name"]))
     print("profile  chain: GET only, no key, no completion")
     print("nodes    %s" % (", ".join(preset.get("node_rpcs", [])) or "none"))
     print("checks")
@@ -60,7 +60,7 @@ def cmd_plan(args):
     path = key_path(preset, args.key_file)
     _key, problem = load_key(path)
     window = preset["send_window"]
-    print("target   %s (%s, point %s)" % (preset["base_url"], preset["name"], preset.get("point", "-")))
+    print("target   %s (%s, point %s)" % (gateway_url(preset), preset["name"], preset.get("point", "-")))
     print("model    %s" % preset["model"])
     print("profile  %s" % args.profile)
     print("window   epoch offset from safe_start+%d to epoch_length-%d, read from chain params at run time"
@@ -70,22 +70,25 @@ def cmd_plan(args):
     print("budget   %d POST per run, %d per epoch; ledger %s" % (
         preset["budget"]["per_run"], preset["budget"]["per_epoch"], os.path.join(config_dir(), "ledger.jsonl")))
     print("key      %s (%s)" % (path, problem or "present, mode 0600"))
+    checks = active_checks(is_direct(preset))
     print("checks")
-    for check in CHECKS:
+    for check in checks:
         print("  %-12s %-15s %d POST  %s" % (check["id"], ",".join(check["maps"]), check["posts"], check["what"]))
-    print("total    %d POST" % sum(check["posts"] for check in CHECKS))
+    print("total    %d POST" % sum(check["posts"] for check in checks))
     return 0
 
 
 def smoke(client, chain, preset, readiness, key, run_id, wait_s):
+    direct = is_direct(preset)
     verdicts = [model_served(readiness["models_reply"], preset["model"])]
     if readiness["state"] != "READY":
         reason = "not sent: preflight BLOCKED"
-        verdicts += [verdict(check, "BLOCKED", reason) for check in ("canary", "floor64", "fence_audit")]
+        verdicts += [verdict(check["id"], "BLOCKED", reason) for check in active_checks(direct)
+                     if check["id"] != "model_served"]
         return verdicts, [], None
     scheduler = Scheduler(client, chain, preset, readiness["facts"],
                           Ledger(os.path.join(config_dir(), "ledger.jsonl")), run_id, log)
-    guards, replies, stop = Guards(), [], None
+    guards, replies, stop = Guards(admission=not direct), [], None
     tag = "gcheck-%s" % secrets.token_hex(4)
     for check, (build, judge) in JUDGES.items():
         if stop is not None:
@@ -100,7 +103,8 @@ def smoke(client, chain, preset, readiness, key, run_id, wait_s):
         except BudgetSpent as error:
             verdicts.append(verdict(check, "BLOCKED", "not sent: %s" % error))
             continue
-        client.get(preset["health_url"])
+        if preset["health_url"]:
+            client.get(preset["health_url"])
         log("sending %s at height %d (epoch %d, offset %d)" % (check, slot["height"], slot["epoch"], slot["offset"]))
         reply = client.post_completion(build(preset["model"], "%s-%s" % (tag, check)), key, check)
         replies.append(reply)
@@ -110,7 +114,8 @@ def smoke(client, chain, preset, readiness, key, run_id, wait_s):
         except GuardStop as error:
             stop = error
             log("guard stop: %s; %s" % (error.reason, error.advice))
-    verdicts.append(fence_audit(replies, readiness["facts"]))
+    if not direct:
+        verdicts.append(fence_audit(replies, readiness["facts"]))
     return verdicts, replies, stop
 
 
@@ -162,7 +167,7 @@ def cmd_run(args):
         code = EXIT_CODES[result]
     summary = {
         "tool": "gonka-check %s" % __version__, "run_id": run_id, "run_dir": run_dir,
-        "preset": preset["name"], "target": preset["base_url"], "mode": mode,
+        "preset": preset["name"], "target": gateway_url(preset), "mode": mode,
         "started_at": started, "finished_at": utc_now(), "readiness": readiness,
         "posts": client.posts, "interrupted": interrupted, "verdicts": verdicts,
         "guard": stop.to_dict() if stop else None, "overall": result, "exit_code": code,
@@ -196,12 +201,12 @@ def cmd_watch(args):
 
     watcher = Watch(client, Chain(client, preset), preset, run_dir, log, out)
     out("watch    %s every %ss, up to %ds%s, GET only" % (
-        preset["base_url"], interval, duration, " or %d complete epochs" % args.epochs if args.epochs else ""))
+        gateway_url(preset), interval, duration, " or %d complete epochs" % args.epochs if args.epochs else ""))
     interrupted = watcher.run(interval, duration, args.epochs)
     if watcher.epochs:
         out(next(reversed(watcher.epochs.values())).line(watcher.params["epoch_length"]))
     summary = {"tool": "gonka-check %s" % __version__, "run_id": run_id, "run_dir": run_dir,
-               "preset": preset["name"], "target": preset["base_url"], "mode": "watch",
+               "preset": preset["name"], "target": gateway_url(preset), "mode": "watch",
                "started_at": started, "finished_at": utc_now(), "interrupted": interrupted}
     summary.update(watcher.summary(args.epochs))
     totals = summary["totals"]

@@ -6,8 +6,9 @@ import json
 import os
 import time
 
-from .chain import ChainError, send_window
+from .chain import ChainError, epoch_offset, send_window
 from .preflight import status_blocker
+from .target import gateway_url
 
 
 class NoSlot(Exception):
@@ -96,10 +97,10 @@ class Scheduler:
         while time.monotonic() < deadline:
             try:
                 height, _ = self.chain.height()
+                offset = epoch_offset(self.chain, self.preset, height, length)
             except ChainError as error:
                 reason = error.reason
                 continue
-            offset = height % length
             if not low <= offset <= high:
                 reason = "epoch offset %d outside %d..%d" % (offset, low, high)
                 if logged_at is None or time.monotonic() - logged_at >= 60:
@@ -109,7 +110,7 @@ class Scheduler:
                 continue
             if self.last_height is not None and height - self.last_height < gap:
                 continue
-            reply = self.client.get(self.preset["base_url"].rstrip("/") + "/v1/status")
+            reply = self.client.get(gateway_url(self.preset) + "/v1/status")
             blocker = status_blocker(reply.json) if reply.ok else "status HTTP %s" % reply.status
             if blocker is not None:
                 reason = "gateway %s" % blocker
@@ -125,7 +126,7 @@ class Scheduler:
 
     def reserve(self, check, slot):
         budget = self.preset["budget"]
-        target = self.preset["base_url"].rstrip("/")
+        target = gateway_url(self.preset)
         if self.sent >= int(budget["per_run"]):
             raise BudgetSpent("run budget of %s POST spent" % budget["per_run"])
         spent = self.ledger.spent(target, slot["epoch"])
