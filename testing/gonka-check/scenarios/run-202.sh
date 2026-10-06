@@ -47,6 +47,27 @@ quiet_samples() {
   log "Q nonce $(head -n 1 "$run_dir/quiet.tsv" | cut -f 2) -> ${nonce:-?} in $((SECONDS - t0)) s without requests"
 }
 
+# open_proposals: "id title" of every proposal in its voting period, one per line; status 1 on a read error.
+open_proposals() {
+  chain "$GOV/proposals?proposal_status=PROPOSAL_STATUS_VOTING_PERIOD" | python3 -c '
+import json, sys
+for p in json.load(sys.stdin).get("proposals", []):
+    print(p["id"], (p.get("title") or "").replace("\n", " ")[:80])'
+}
+
+# quiet_gov WAIT_S: no other proposal in voting, waiting up to WAIT_S; a parameter proposal of ours built while
+# another one is open would put back the values it changes.
+quiet_gov() {
+  local until=$((SECONDS + $1)) open
+  while :; do
+    open=$(open_proposals) || { log "open proposals are unreadable"; return 1; }
+    [ -n "$open" ] || return 0
+    [ "$SECONDS" -lt "$until" ] || { log "still in voting: $(echo "$open" | tr '\n' ';')"; return 1; }
+    log "waiting for proposals in voting: $(echo "$open" | tr '\n' ';')"
+    sleep 15
+  done
+}
+
 # summary: settlement gas, signatures and host stats of W and Q, and the nonces Q spent per turn, into summary.json.
 summary() {
   python3 - "$run_dir" "$SIZE" "$base" "$TURN_S" <<'PY' | tee -a "$run_dir/$run_name.log"
@@ -99,6 +120,7 @@ remind() {
   chain_params
   [ "$group_size" = "$SIZE" ] || { log "group_size is $group_size after the stop, nothing to roll back"; return 0; }
   log "group_size is $SIZE after the stop: proposal $SIZE -> $base"
+  quiet_gov 600 || log "WARN: rolling back while another proposal is in voting"
   gov_change "$base" && return 0
   log "REMINDER: group_size may still be $SIZE on DevNet; the rollback is $run_dir/proposal-group-size-$base.json"
 }
@@ -130,6 +152,7 @@ wait_window "$NEED"
 free_places 2
 proposal_file "$SIZE"
 proposal_file "$base"
+quiet_gov 0 || stop "another proposal is in voting; ours would overwrite the parameters it changes"
 
 if [ "$mode" = dry ]; then
   log "plan, all in epoch $epoch:"
@@ -149,6 +172,7 @@ if [ "$yes" != 1 ]; then
 fi
 
 log "4/8 proposal $base -> $SIZE"
+quiet_gov 0 || die "another proposal is in voting; ours would overwrite the parameters it changes"
 changed=1
 gov_change "$SIZE" || die "the $base -> $SIZE proposal was not accepted"
 change=$proposal_id
@@ -164,6 +188,7 @@ gw heightsync-start GET /v1/debug/heightsync admin > /dev/null
 
 log "6/8 rollback $SIZE -> $base, then $REQUESTS requests into W"
 rollback=""
+quiet_gov 600 || log "WARN: rolling back while another proposal is in voting"
 for try in 1 2 3; do
   if gov_change "$base"; then
     rolled=1 rollback=$proposal_id
