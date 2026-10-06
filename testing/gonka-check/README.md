@@ -96,7 +96,7 @@ A run stops early when the nonce does not move for 10 minutes, when less than 5%
 The finalization reply, the settlement payload, is kept as `g<G>-h<H>-c<x>/finalize.json`; `PASS` needs at least 2G/3 + 1 signatures in it.
 `--hosts G` gives every slot its own stub host; `--delay-ms` delays every packet a stub host sends, through netem.
 `--gateway-cpus 0 --host-cpus 1-3` gives the gateway its own core, so the stub hosts do not crowd it out.
-`scenarios/run-202.sh` is the live DevNet window at group size 64 on gateway A: the 5 → 64 proposal, escrows W and Q at 64 slots, the rollback right after, requests into W, Q left without requests, both settled by hand. `summary.json` keeps the settlement gas, signatures and host stats, and the nonces Q spent per heartbeat turn.
+`scenarios/run-202.sh` is the live DevNet window at group size 64 on gateway A: the 5 → 64 proposal, escrows W and Q at 64 slots, the rollback right after, requests into W, Q left without requests, both settled by hand. It submits nothing while another proposal is in voting. `summary.json` keeps the settlement gas, signatures and host stats, and the nonces Q spent per heartbeat turn.
 Stub hosts gossip every diff to each other, so their timings are not those of `devshardd`; the gateway figures are the result.
 
 ## Safety
