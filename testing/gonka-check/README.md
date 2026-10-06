@@ -95,6 +95,7 @@ A run stops early when the nonce does not move for 10 minutes, when less than 5%
 The finalization reply, the settlement payload, is kept as `g<G>-h<H>-c<x>/finalize.json`; `PASS` needs at least 2G/3 + 1 signatures in it.
 `--hosts G` gives every slot its own stub host; `--delay-ms` delays every packet a stub host sends, through netem.
 `--gateway-cpus 0 --host-cpus 1-3` gives the gateway its own core, so the stub hosts do not crowd it out.
+`scenarios/run-202.sh` is the live DevNet window at group size 64 on gateway A: the 5 → 64 proposal, escrows W and Q at 64 slots, the rollback right after, requests into W, Q left without requests, both settled by hand. `summary.json` keeps the settlement gas, signatures and host stats, and the nonces Q spent per heartbeat turn.
 Stub hosts gossip every diff to each other, so their timings are not those of `devshardd`; the gateway figures are the result.
 
 ## Safety
@@ -103,7 +104,7 @@ Stub hosts gossip every diff to each other, so their timings are not those of `d
 - `watch` samples at most every 5 s against a public target; `--profile chain` and `watch` read no key.
 - One request in flight, one lock per machine, sends at least 2 blocks apart at epoch offset `safe_start+1 .. epoch_length-20`.
 - `escrow preflight` and `escrow record` read DevNet the same way, GET only, and never call gateway admin paths.
-- `scenarios/` is not gcheck: with `--run` a scenario sends transactions through the gateway admin API, and `run-187.sh` and `gov-group-size.sh` also sign proposals with the run account; the gateway keys are read on the gateway host and reach curl on stdin.
+- `scenarios/` is not gcheck: with `--run` a scenario sends transactions through the gateway admin API, and `run-187.sh`, `run-202.sh` and `gov-group-size.sh` also sign proposals with the run account; the gateway keys are read on the gateway host and reach curl on stdin.
 - `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
 - `gateway-load` reaches only GitHub for the source, the Go module proxy, Docker Hub for the `golang` and `alpine` base images and the Alpine package mirror; it sends nothing to any Gonka network. The `stand` gateway listens on 127.0.0.1 only.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
