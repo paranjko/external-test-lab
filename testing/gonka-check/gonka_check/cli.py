@@ -1,4 +1,4 @@
-"""gcheck: plan, run --dry-run, run --profile smoke|chain, watch, escrow, selftest."""
+"""gcheck: plan, run --dry-run, run --profile smoke|chain, watch, escrow, gateway-load, selftest."""
 
 import argparse
 import datetime
@@ -14,6 +14,7 @@ from . import chaincheck
 from .chain import Chain
 from .checks import JUDGES, active_checks, fence_audit, model_served, status_gate, verdict
 from .escrow import cli as escrow_cli
+from .gateway import cli as gateway_cli
 from .guards import GuardStop, Guards
 from .preflight import preflight
 from .record import Recorder, utc_now
@@ -255,13 +256,14 @@ def build_parser():
     watch.add_argument("--epochs", type=int, default=0, help="stop after this many complete epochs")
     commands.add_parser("selftest", help="run the unit tests against a local fake gateway")
     escrow_cli.add_parser(commands)
+    gateway_cli.add_parser(commands)
     return parser
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
     handler = {"plan": cmd_plan, "run": cmd_run, "watch": cmd_watch, "selftest": cmd_selftest,
-               "escrow": escrow_cli.run}[args.command]
+               "escrow": escrow_cli.run, "gateway-load": gateway_cli.run}[args.command]
     try:
         return handler(args)
     except TargetRefused as error:

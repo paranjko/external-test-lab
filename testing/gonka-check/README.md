@@ -1,6 +1,6 @@
 # gonka-check
 
-Smoke checks for Gonka inference through the public DevNet gateway, chain checks, a readiness watch and an escrow slot study from public chain reads.
+Smoke checks for Gonka inference through the public DevNet gateway, chain checks, a readiness watch, an escrow slot study from public chain reads and a gateway load measurement.
 Python 3.10+, standard library only, nothing to install.
 
 ## Run
@@ -71,14 +71,43 @@ Checks: `a_created`, `g_changed`, `b_created`, `a_settled_after`, `own_group` (q
 `scenarios/run-187.sh` is the live run: escrow A at 5 slots, the 5 → 9 proposal, escrow B at 9 slots, both settled by hand in the same epoch, then the 9 → 5 rollback. Its account in `GOV_HOME` submits both proposals, the guardian key holders vote, and the run checks the result; after a stop at 9 it proposes 5 again. With `--gov wait` it writes each proposal file, says when to submit it and waits for `group_size`. `--check-gov` only reads the run account and its balance for two deposits.
 `scenarios/gov-group-size.sh SIZE --submit` sends one such proposal and exits 0 only if it passed, `group_size` is SIZE and every other parameter kept its value. Without `--submit` it only reads; SIZE equal to the live value makes a proposal that changes nothing.
 
+## Gateway load
+
+Runs the upstream DevShard gateway session with G in-process hosts and the stub model, one request at a time, and measures every 1,000 nonces. Needs `go` 1.25.9 or newer, or Docker.
+
+```sh
+bin/gcheck gateway-load plan                    # source tag and commit, runner, what is written
+bin/gcheck gateway-load stress --dry-run        # fetch the source and build the test: READY or BLOCKED
+bin/gcheck gateway-load stress                  # G=16,32,64, 19,800 nonces each: report.md, checkpoints.csv, charts
+bin/gcheck gateway-load stand --dry-run         # build the images, start a small stand, send one request
+bin/gcheck gateway-load stand                   # gateway as its own process, 7 stub hosts, 8 requests in flight
+bin/gcheck gateway-load stand --hosts 7,G --concurrency 1,8,32 --delay-ms 50   # one stand per combination
+```
+
+The source is `gonka-ai/gonka` at `devshard/v5.0.2`, pinned to its commit; gcheck adds one test file to that checkout.
+The test is built once and runs as a plain binary, capped at 75% of the machine memory by default (`--memory GB`, `0` for no cap).
+Gateway time per nonce is the wall time minus the time inside the hosts. Each group size is one check: `PASS` when every nonce, the finalization and the settlement check pass.
+Records do not seal by the clock during a run (30 days instead of an hour): a DevNet escrow ends before they would.
+The run log keeps the `GCHECK` lines and the last 2,000 lines of the test output, each cut to 2,000 characters; the test container keeps no Docker log, and a run stops when less than 5% of the disk is left.
+
+`stand` builds the mock chain, stub host and gateway images from the same commit and runs them in Docker on a private network.
+It samples gateway CPU, memory, traffic and storage every 5 s until the escrow reaches the nonce cap, then finalizes and removes the containers.
+A run stops early when the nonce does not move for 10 minutes, when less than 5% of the disk is left or, on Linux, of the machine memory. Container logs are capped at 2 × 20 MB each.
+The finalization reply, the settlement payload, is kept as `g<G>-h<H>-c<x>/finalize.json`; `PASS` needs at least 2G/3 + 1 signatures in it.
+`--hosts G` gives every slot its own stub host; `--delay-ms` delays every packet a stub host sends, through netem.
+`--gateway-cpus 0 --host-cpus 1-3` gives the gateway its own core, so the stub hosts do not crowd it out.
+`scenarios/run-202.sh` is the live DevNet window at group size 64 on gateway A: the 5 → 64 proposal, escrows W and Q at 64 slots, the rollback right after, requests into W, Q left without requests, both settled by hand. It submits nothing while another proposal is in voting. `summary.json` keeps the settlement gas, signatures and host stats, and the nonces Q spent per heartbeat turn.
+Stub hosts gossip every diff to each other, so their timings are not those of `devshardd`; the gateway figures are the result.
+
 ## Safety
 
 - `run` and `watch` reach only `https://api.gonka-dev.net` and its gateways `/a` and `/b`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*`, `/v1/admission-status` and gateway admin paths (`/v1/admin`, `/v1/debug`, `/v1/finalize`, `/v1/state`, `/debug/pprof`, also under `/devshard/<id>`) are never requested.
 - `watch` samples at most every 5 s against a public target; `--profile chain` and `watch` read no key.
 - One request in flight, one lock per machine, sends at least 2 blocks apart at epoch offset `safe_start+1 .. epoch_length-20`.
 - `escrow preflight` and `escrow record` read DevNet the same way, GET only, and never call gateway admin paths.
-- `scenarios/` is not gcheck: with `--run` a scenario sends transactions through the gateway admin API, and `run-187.sh` and `gov-group-size.sh` also sign proposals with the run account; the gateway keys are read on the gateway host and reach curl on stdin.
+- `scenarios/` is not gcheck: with `--run` a scenario sends transactions through the gateway admin API, and `run-187.sh`, `run-202.sh` and `gov-group-size.sh` also sign proposals with the run account; the gateway keys are read on the gateway host and reach curl on stdin.
 - `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
+- `gateway-load` reaches only GitHub for the source, the Go module proxy, Docker Hub for the `golang` and `alpine` base images and the Alpine package mirror; it sends nothing to any Gonka network. The `stand` gateway listens on 127.0.0.1 only.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.
 - The run stops on a suspected permit leak (408 with a permit height and no dispatch height), on a failed dispatch, on a reply without admission headers (except from `/a` and `/b`), on an unknown outcome, on a proxy protocol misconfiguration, and after two pre-dispatch rejections.
