@@ -1,4 +1,20 @@
-# Community DevNet — M2 regional capacity
+# Community DevNet – regional capacity
+
+## Current hardware reference
+
+[Hardware inventory](hardware.md) records the read-only SSH audit of all ten
+machines on **2026-10-07**: CPU model and instruction compatibility, RAM, filesystem capacity,
+GPU, driver and observed container presence. See the dated per-machine table
+for current observations. These observations do not establish JOIN,
+inference, PoC or model qualification.
+
+The older provider and regional assignments below have not been reverified
+against provider accounts. The M2 state column remains the historical report
+cutoff, not the latest operational status. In particular, the current GPU name
+reported by both `node4-ml` and `node6` is RTX PRO 2000 Blackwell.
+`node8` now exposes an RTX 3090, its AMD entry below remains historical.
+
+## M2 reporting snapshot
 
 **Snapshot:** 2026-08-10 — 2026-09-09
 
@@ -16,4 +32,3 @@ Public inventory of rented M2 capacity. Hosts used for JOIN / reset / restore te
 | `node6` | Full Host | HOSTKEY | Russia | RTX 2000 PRO | staged; preparation at cutoff |
 | `node7` | Full Host | OneProvider | Helsinki, Finland | Tesla T4 | staged; preparation at cutoff |
 | `node8` | Experimental | GIGAGPU | London, UK | RX 9070 XT | pending; not counted as validated MLNode |
-
