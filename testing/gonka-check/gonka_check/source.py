@@ -66,9 +66,10 @@ class SourceClient:
             raise TargetRefused("path %s is outside %s" % (parts.path, " and ".join(PATHS)))
         return url
 
-    def get(self, path):
-        """GET one document; retry busy answers with backoff; return the Reply (any final status)."""
+    def get(self, path, height=None):
+        """GET one document, at a past height when given; retry busy answers with backoff; return the Reply."""
         url = self.url(path)
+        headers = {"x-cosmos-block-height": str(int(height))} if height is not None else None
         attempt = 0
         while True:
             if self.requests >= self.max_requests:
@@ -79,7 +80,7 @@ class SourceClient:
                     time.sleep(pause)
             self._last = time.monotonic()
             self.requests += 1
-            reply = self._client.get(url, timeout=20)
+            reply = self._client.get(url, timeout=20, headers=headers)
             error = reply.transport_error or ""
             busy = reply.status in RETRY_STATUS or (error and "CERTIFICATE_VERIFY_FAILED" not in error)
             if not busy or attempt == len(self.backoff_s):
@@ -88,8 +89,8 @@ class SourceClient:
             time.sleep(self.backoff_s[attempt])
             attempt += 1
 
-    def get_json(self, path, what):
-        reply = self.get(path)
+    def get_json(self, path, what, height=None):
+        reply = self.get(path, height)
         if not reply.ok or not isinstance(reply.json, dict):
             raise SourceError("%s: HTTP %s%s" % (what, reply.status or reply.transport_error, _detail(reply)))
         return reply.json
