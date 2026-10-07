@@ -534,6 +534,34 @@ class DirectGateway(Harness):
         self.assertFalse(any(request["path"].startswith("/status/") for request in fake.requests))
 
 
+class Evidence(Harness):
+    def test_evidence_run_collects_key_free_results(self):
+        out = os.path.join(self.tmp.name, "evidence")
+        with FakeGateway() as fake:
+            smoke = os.path.join(self.tmp.name, "smoke.json")
+            with open(smoke, "w", encoding="utf-8") as handle:
+                json.dump(fake.preset(), handle)
+            result = subprocess.run(
+                [os.path.join(ROOT, "scenarios", "smoke-evidence.sh"), "--out", out, "--smoke", smoke,
+                 "--chain", smoke, "--key-dir", self.config, "--wait", "30", "--allow-dirty"],
+                capture_output=True, text=True, env=dict(os.environ), check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with open(os.path.join(out, "evidence.json"), encoding="utf-8") as handle:
+            evidence = json.load(handle)
+        self.assertEqual([(run["profile"], run["overall"]) for run in evidence["runs"]],
+                         [("dry-run", "READY"), ("smoke", "PASS"), ("chain", "PASS")])
+        self.assertEqual(len(fake.posts), 2)
+        with open(os.path.join(out, "evidence.md"), encoding="utf-8") as handle:
+            self.assertIn("- PASS `canary` SMK-06", handle.read())
+        for folder, _dirs, files in os.walk(out):
+            for name in files:
+                with open(os.path.join(folder, name), encoding="utf-8", errors="replace") as handle:
+                    self.assertNotIn(KEY, handle.read(), name)
+        manifest = os.path.join(out, "runs", evidence["runs"][1]["run_id"], "manifest.json")
+        with open(manifest, encoding="utf-8") as handle:
+            self.assertIn("dirty", json.load(handle)["source"])
+
+
 class Guard(Harness):
     def test_foreign_target_is_refused(self):
         with FakeGateway() as fake:

@@ -17,7 +17,7 @@ bin/gcheck selftest               # unit tests against a local fake gateway
 `--preset devnet-a` and `--preset devnet-b` target the DevShard gateways at `/a` and `/b` directly: no admission proxy, no health receipt; `status_gate` takes the place of `fence_audit`.
 
 The API key is read from `~/.config/gonka-check/<preset>.key` (mode 0600) and is sent only with completion POSTs.
-Runs are written to `~/.local/share/gonka-check/runs/<run>/` (`manifest.json`, `records.jsonl`, `summary.json`).
+Runs are written to `~/.local/share/gonka-check/runs/<run>/` (`manifest.json`, `records.jsonl`, `summary.json`); `manifest.json` names the commit and whether the tree has local changes.
 The per-epoch budget ledger is `~/.config/gonka-check/ledger.jsonl`.
 
 On macOS with the python.org build, set `SSL_CERT_FILE=/etc/ssl/cert.pem` if HTTPS fails certificate verification.
@@ -40,6 +40,11 @@ On macOS with the python.org build, set `SSL_CERT_FILE=/etc/ssl/cert.pem` if HTT
 `watch` samples every `watch_interval_s` (10 s): chain height, the confirmation PoC event, `/v1/status` and the health receipt.
 Samples go to `samples.jsonl`; `summary.json` gives per epoch the ready share of the send window, confirmation PoC offsets and health reasons.
 It stops after `--duration` seconds or `--epochs` complete epochs; it exits `0`, or `2` when no sample could be read.
+
+## Evidence
+
+`scenarios/smoke-evidence.sh --out DIR` runs a dry run and the smoke profile on `devnet-a` and `devnet-b`, then the chain profile, and copies the run records into DIR with `evidence.md` and `evidence.json`.
+It names the commit, refuses local changes without `--allow-dirty` and stops with exit `4` if a key reached DIR. `--key-dir DIR` reads `<preset>.key` from DIR; under GitHub Actions the table also goes to the job summary.
 
 ## Escrow slots
 

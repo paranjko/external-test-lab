@@ -4,6 +4,7 @@ import argparse
 import datetime
 import os
 import secrets
+import subprocess
 import sys
 import time
 import traceback
@@ -77,6 +78,19 @@ def cmd_plan(args):
     return 0
 
 
+def source_revision():
+    """The commit gcheck runs from and whether the tree has local changes; None outside a checkout."""
+    def git(*args):
+        try:
+            done = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return done.stdout.strip() if done.returncode == 0 else None
+    commit = git("rev-parse", "HEAD")
+    status = git("status", "--porcelain", "--", ".") if commit else None
+    return {"commit": commit, "dirty": None if status is None else bool(status)}
+
+
 def smoke(client, chain, preset, readiness, key, run_id, wait_s):
     direct = is_direct(preset)
     verdicts = [model_served(readiness["models_reply"], preset["model"])]
@@ -138,7 +152,7 @@ def cmd_run(args):
     recorder.write_json("manifest.json", {
         "tool": "gonka-check %s" % __version__, "run_id": run_id, "preset": preset,
         "mode": mode, "started_at": started, "key_sha256_prefix": key_fingerprint(key),
-        "wait_s": args.wait,
+        "wait_s": args.wait, "source": source_revision(),
     })
     client = Client(preset, recorder)
     chain = Chain(client, preset)
@@ -198,6 +212,7 @@ def cmd_watch(args):
     recorder.write_json("manifest.json", {
         "tool": "gonka-check %s" % __version__, "run_id": run_id, "preset": preset, "mode": "watch",
         "started_at": started, "interval_s": interval, "duration_s": duration, "epochs": args.epochs,
+        "source": source_revision(),
     })
     client = Client(preset, None)
     def out(text):
