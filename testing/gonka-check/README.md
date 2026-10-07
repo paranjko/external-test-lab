@@ -1,6 +1,6 @@
 # gonka-check
 
-Smoke checks for Gonka inference through the public DevNet gateway, chain checks and a readiness watch.
+Smoke checks for Gonka inference through the public DevNet gateway, chain checks, a readiness watch and an escrow slot study from public chain reads.
 Python 3.10+, standard library only, nothing to install.
 
 ## Run
@@ -41,11 +41,26 @@ On macOS with the python.org build, set `SSL_CERT_FILE=/etc/ssl/cert.pem` if HTT
 Samples go to `samples.jsonl`; `summary.json` gives per epoch the ready share of the send window, confirmation PoC offsets and health reasons.
 It stops after `--duration` seconds or `--epochs` complete epochs; it exits `0`, or `2` when no sample could be read.
 
+## Escrow slots
+
+Replays how the chain draws escrow slots by weight and simulates other group sizes. Only `snapshot` reads the network.
+
+```sh
+bin/gcheck escrow plan --source mainnet                  # what a snapshot reads and how long; no network
+bin/gcheck escrow snapshot --source mainnet --dry-run    # a few reads: READY or BLOCKED
+bin/gcheck escrow snapshot --source mainnet              # weights and the real escrows of the effective epoch
+bin/gcheck escrow report <run>/snapshot.json --out DIR   # replay, 1000 escrows per model at G=16,32,64, report.md, charts, CSV
+```
+
+`verify` replays the real escrows only; `simulate` writes the CSV files without the report.
+Checks: `weights` (weights sum to `total_weight`, same effective epoch at start and end), `escrows` (every escrow id of the epoch was read), `slots_replay` (the port matches every real escrow of the snapshot), `slots_source` (with `--slots-go`, the ported file's sha256), `slot_share` and `inclusion` (simulated counts within 5 sigma + 1 of the formulas).
+
 ## Safety
 
 - `run` and `watch` reach only `https://api.gonka-dev.net` and its gateways `/a` and `/b`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*`, `/v1/admission-status` and gateway admin paths (`/v1/admin`, `/v1/debug`, `/v1/finalize`, `/v1/state`, `/debug/pprof`, also under `/devshard/<id>`) are never requested.
 - `watch` samples at most every 5 s against a public target; `--profile chain` and `watch` read no key.
 - One request in flight, one lock per machine, sends at least 2 blocks apart at epoch offset `safe_start+1 .. epoch_length-20`.
+- `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.
 - The run stops on a suspected permit leak (408 with a permit height and no dispatch height), on a failed dispatch, on a reply without admission headers (except from `/a` and `/b`), on an unknown outcome, on a proxy protocol misconfiguration, and after two pre-dispatch rejections.
@@ -53,4 +68,4 @@ It stops after `--duration` seconds or `--epochs` complete epochs; it exits `0`,
 ## Exit codes
 
 `0` PASS · `1` FAIL · `2` INCONCLUSIVE · `3` BLOCKED · `4` stopped by a guard or refused.
-`run --dry-run` exits `0` when READY and `3` when BLOCKED.
+`run --dry-run` and `escrow snapshot --dry-run` exit `0` when READY and `3` when BLOCKED.
