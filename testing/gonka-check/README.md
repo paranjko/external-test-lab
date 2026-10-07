@@ -67,12 +67,17 @@ bin/gcheck escrow verdict <run>                                  # report.md and
 
 Checks: `a_created`, `g_changed`, `b_created`, `a_settled_after`, `own_group` (quorum and fee split by the escrow's own slots), `same_epoch`, `accounting` (payouts, refund, coin balances), `rolled_back`. With `--a` alone it checks a control run.
 
+`scenarios/control-187.sh` is that control run on gateway A at group size 5: one escrow created through the gateway admin API on the gateway host, two requests into it, a manual settlement in the same epoch, then `escrow record` and `verdict`. Without `--run` it only reads.
+`scenarios/run-187.sh` is the live run: escrow A at 5 slots, the 5 → 9 proposal, escrow B at 9 slots, both settled by hand in the same epoch, then the 9 → 5 rollback. Its account in `GOV_HOME` submits both proposals, the guardian key holders vote, and the run checks the result; after a stop at 9 it proposes 5 again. With `--gov wait` it writes each proposal file, says when to submit it and waits for `group_size`. `--check-gov` only reads the run account and its balance for two deposits.
+`scenarios/gov-group-size.sh SIZE --submit` sends one such proposal and exits 0 only if it passed, `group_size` is SIZE and every other parameter kept its value. Without `--submit` it only reads; SIZE equal to the live value makes a proposal that changes nothing.
+
 ## Safety
 
 - `run` and `watch` reach only `https://api.gonka-dev.net` and its gateways `/a` and `/b`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*`, `/v1/admission-status` and gateway admin paths (`/v1/admin`, `/v1/debug`, `/v1/finalize`, `/v1/state`, `/debug/pprof`, also under `/devshard/<id>`) are never requested.
 - `watch` samples at most every 5 s against a public target; `--profile chain` and `watch` read no key.
 - One request in flight, one lock per machine, sends at least 2 blocks apart at epoch offset `safe_start+1 .. epoch_length-20`.
 - `escrow preflight` and `escrow record` read DevNet the same way, GET only, and never call gateway admin paths.
+- `scenarios/` is not gcheck: with `--run` a scenario sends transactions through the gateway admin API, and `run-187.sh` and `gov-group-size.sh` also sign proposals with the run account; the gateway keys are read on the gateway host and reach curl on stdin.
 - `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.
