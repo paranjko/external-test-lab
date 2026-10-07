@@ -267,7 +267,10 @@ def stats(names, hosts):
 
 def exited(names, hosts):
     """Stand containers that are not running, with exit code and whether memory ran out."""
-    containers = [names.gateway, names.chain] + [names.host(j) for j in range(hosts)]
+    return stopped([names.gateway, names.chain] + [names.host(j) for j in range(hosts)])
+
+
+def stopped(containers):
     try:
         reply = docker(["inspect", "--format", "{{.Name}} {{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}"]
                        + containers, check=False, timeout=60)

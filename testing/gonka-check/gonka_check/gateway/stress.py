@@ -32,21 +32,24 @@ def git(args, cwd=None):
     return reply.stdout.strip()
 
 
-def prepare_source(cache_dir, tag=TAG, repo=REPO, pinned=TAG_COMMIT):
+def prepare_source(cache_dir, tag=TAG, repo=REPO, pinned=TAG_COMMIT, sparse=SPARSE, test_file=True):
     """Sparse checkout of the tag in cache_dir/gonka; returns (path, commit). Refuses a moved pinned tag."""
     path = os.path.join(cache_dir, "gonka")
     if not os.path.isdir(os.path.join(path, ".git")):
         os.makedirs(cache_dir, mode=0o700, exist_ok=True)
         git(["clone", "--quiet", "--filter=blob:none", "--no-checkout", repo, path])
         git(["-C", path, "sparse-checkout", "init", "--cone"])
-        git(["-C", path, "sparse-checkout", "set"] + list(SPARSE))
+    git(["-C", path, "sparse-checkout", "set"] + list(sparse))
     git(["-C", path, "fetch", "--quiet", "--no-tags", "origin", "+refs/tags/%s:refs/tags/%s" % (tag, tag)])
     git(["-C", path, "checkout", "--quiet", "--force", "--detach", "refs/tags/%s" % tag])
     commit = git(["-C", path, "rev-parse", "HEAD"])
     if tag == TAG and pinned and commit != pinned:
         raise StressError("tag %s points to %s, expected %s" % (tag, commit, pinned))
-    with open(os.path.join(path, TEST_FILE), "w", encoding="utf-8") as handle:
-        handle.write(GO_TEST)
+    if test_file:
+        with open(os.path.join(path, TEST_FILE), "w", encoding="utf-8") as handle:
+            handle.write(GO_TEST)
+    elif os.path.exists(os.path.join(path, TEST_FILE)):
+        os.remove(os.path.join(path, TEST_FILE))
     return path, commit
 
 

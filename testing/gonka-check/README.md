@@ -99,6 +99,16 @@ The finalization reply, the settlement payload, is kept as `g<G>-h<H>-c<x>/final
 `scenarios/run-202.sh` is the live DevNet window at group size 64 on gateway A: the 5 → 64 proposal, escrows W and Q at 64 slots, the rollback right after, requests into W, Q left without requests, both settled by hand. It submits nothing while another proposal is in voting. `summary.json` keeps the settlement gas, signatures and host stats, and the nonces Q spent per heartbeat turn.
 Stub hosts gossip every diff to each other, so their timings are not those of `devshardd`; the gateway figures are the result.
 
+```sh
+bin/gcheck gateway-load testenv --dry-run                                      # build, bring up G=8 on 3 hosts, 3 chats, finalize
+bin/gcheck gateway-load testenv --gateway-cpus 0 --host-cpus 1-7               # G=64 on 4 hosts: drive to nonce 19,800, 10 quiet minutes, finalize
+bin/gcheck gateway-load testenv --groups 16,32,64 --quiet-only                 # heartbeat nonces per minute and per turn of an idle escrow
+bin/gcheck gateway-load testenv --cleanup                                      # remove its containers, networks, volumes, work dirs and images
+```
+
+`testenv` runs the upstream `devshard/testenv`: real `devshardd` hosts under `versiond`, the router and the gateway, with the mock chain, dapi and ML node, one compose stack per G.
+`PASS` when the escrow still settles after the gateway stopped routing at 19,800; `FAIL` carries the hosts' last diff, the active cap max_nonce − (G+1) and the finalization error.
+
 ## Safety
 
 - `run` and `watch` reach only `https://api.gonka-dev.net` and its gateways `/a` and `/b`, the health receipt on `https://gonka-dev.net` and GET on `https://nodeN.gonka-dev.net/chain-rpc`, or a loopback fake; `/status/gateway/*`, `/v1/admission-status` and gateway admin paths (`/v1/admin`, `/v1/debug`, `/v1/finalize`, `/v1/state`, `/debug/pprof`, also under `/devshard/<id>`) are never requested.
@@ -108,6 +118,7 @@ Stub hosts gossip every diff to each other, so their timings are not those of `d
 - `scenarios/` is not gcheck: with `--run` a scenario sends transactions through the gateway admin API, and `run-187.sh`, `run-202.sh` and `gov-group-size.sh` also sign proposals with the run account; the gateway keys are read on the gateway host and reach curl on stdin.
 - `escrow snapshot` reads public chain data under `/chain-api/` and `/chain-rpc/` of `https://node3.gonka.ai` (mainnet) or `https://api.gonka-dev.net` (DevNet): GET only, no key, one request per second on mainnet and every 2 s on DevNet, at most `--max-requests` (4000) per run, one snapshot per machine.
 - `gateway-load` reaches only GitHub for the source, the Go module proxy, Docker Hub for the `golang` and `alpine` base images and the Alpine package mirror; it sends nothing to any Gonka network. The `stand` gateway listens on 127.0.0.1 only.
+- `testenv` also pulls `haproxy` from Docker Hub, publishes only its gateway, on 127.0.0.1, and `--cleanup` touches only containers, networks, volumes and images named `gcheck-tenv-*`.
 - `X-Request-Deadline-Ms` is absolute: now + 60 s. A POST is never retried.
 - At most 4 POST per run and per epoch; the ledger entry is written before the send.
 - The run stops on a suspected permit leak (408 with a permit height and no dispatch height), on a failed dispatch, on a reply without admission headers (except from `/a` and `/b`), on an unknown outcome, on a proxy protocol misconfiguration, and after two pre-dispatch rejections.

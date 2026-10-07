@@ -214,3 +214,91 @@ def write_stand(run_dir, meta, runs, verdicts, overall):
         with open(os.path.join(run_dir, name), "w", encoding="utf-8") as handle:
             handle.write(text)
     return sorted(files)
+
+
+TESTENV_FIELDS = ("groups", "phase", "t_s", "nonce", "cpu_pct", "cpu_s", "rss_mb", "mem_mb", "rx_mb", "tx_mb",
+                  "write_mb", "storage_mb", "hosts_cpu_pct", "hosts_mem_mb", "host_last_min", "host_last_max",
+                  "heartbeats", "abandoned", "no_height", "cap_lines", "dead_lines")
+HOST_FIELDS = ("groups", "phase", "t_s", "host", "cpu_pct", "mem_mb", "write_mb", "last_diff")
+
+
+def _csv(fields, rows):
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(fields)
+    for row in rows:
+        writer.writerow(["" if row.get(field) is None else _num(row[field], 3) for field in fields])
+    return out.getvalue()
+
+
+def testenv_samples_csv(runs):
+    return _csv(TESTENV_FIELDS, [dict(item, groups=run["groups"]) for run in runs for item in run["samples"]])
+
+
+def testenv_hosts_csv(runs):
+    return _csv(HOST_FIELDS, [dict(row, groups=run["groups"], phase=item["phase"], t_s=item["t_s"])
+                              for run in runs for item in run["samples"] for row in item.get("hosts", [])])
+
+
+def testenv_markdown(meta, runs, verdicts, overall):
+    load, gateway, hosts, settle = [], [], [], []
+    for run in runs:
+        item = run["summary"]
+        size, quiet, cost, done = "G=%d" % item["groups"], item["quiet"], item["gateway"], item["finalize"] or {}
+        load.append([size, str(item["hosts"]), "%d/%d" % (item["warm_ok"], item["warm_sent"]), str(item["requests"]),
+                     _cell(item["drive_nonce"], 0), _cell(item["nonces_per_s"]), str(item["unquarantines"]),
+                     _cell(quiet.get("minutes"), 1), _cell(quiet.get("per_min"), 1), _cell(quiet.get("per_turn"), 1),
+                     _cell(quiet.get("turns"), 0), _cell(quiet.get("abandoned"), 0), run["verdict"]["verdict"]])
+        gateway.append([size, _cell(cost["cpu_mean_pct"], 1), _cell(cost["cpu_peak_pct"], 1),
+                        _cell(cost["rss_peak_mb"], 0), _cell(cost["rx_mb"], 1), _cell(cost["tx_mb"], 1),
+                        _cell(cost["write_mb"], 1), _cell(cost["storage_mb"], 1)])
+        hosts += [[size, str(host["host"]), str(host["slots"]), _cell(host["cpu_mean_pct"], 1),
+                   _cell(host["mem_peak_mb"], 0), _cell(host["last_diff"], 0)] for host in item["per_host"]]
+        settle.append([size, _cell(item["nonce"], 0), "%s..%s" % (_cell(item["host_last_min"], 0),
+                                                                  _cell(item["host_last_max"], 0)),
+                       str(item["active_cap"]), _cell(item["cap_lines"], 0), _cell(item["dead_lines"], 0),
+                       _cell(done.get("code"), 0), _cell(done.get("seconds")), _cell(done.get("weight"), 0),
+                       _cell(done.get("quorum"), 0), (done.get("error") or "").replace("|", "/")])
+
+    def table(header, rows):
+        return ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)] + [
+            "| " + " | ".join(row) + " |" for row in rows]
+
+    run = {"drive": "drives one escrow with %d chats in flight until the gateway stops routing at nonce %d, then "
+                    "sends nothing for %g minutes" % (meta["concurrency"], meta["routing_stop"], meta["quiet_minutes"]),
+           "quiet-only": "sends nothing for %g minutes" % meta["quiet_minutes"]}.get(meta.get("run"), "")
+    lines = ["# Gateway load against real devshardd hosts, %s" % meta["tag"], "",
+             "Source `%s` at `%s`. The upstream `devshard/testenv` runs the real `devshardd` hosts under `versiond`, "
+             "the `versiond` router and the `devshardctl` gateway; the chain, dapi and ML node are its mocks. "
+             "max_nonce is %d, so hosts take diffs with completion-type txs up to max_nonce − (G+1) and heartbeat "
+             "diffs up to max_nonce. Each stack warms up with 20 chats so heartbeats start, %s, and finalizes. "
+             "CPUs: gateway %s, hosts, router and mocks %s." % (
+                 meta["tag"], meta["commit"][:12], meta["max_nonce"], run, meta.get("gateway_cpus") or "any",
+                 meta.get("host_cpus") or "any"), "",
+             "## Checks", "", "| check | verdict | reason |", "|---|---|---|"]
+    lines += ["| %s | %s | %s |" % (item["check"], item["verdict"], item["reason"].replace("|", "/"))
+              for item in verdicts]
+    lines += ["", "Overall: **%s**." % overall, "", "## Load", ""]
+    lines += table(("G", "hosts", "warm-up", "drive chats", "drive nonce", "nonces/s", "unquarantines", "quiet min",
+                    "quiet nonces/min", "nonces/turn", "turns", "abandoned", "verdict"), load)
+    lines += ["", "A heartbeat turn costs G diffs plus 1 to 4 ack diffs.", "", "## Gateway", ""]
+    lines += table(("G", "CPU mean %", "CPU peak %", "peak RSS MB", "received MB", "sent MB", "written MB",
+                    "storage MB"), gateway)
+    lines += ["", "## Hosts", ""]
+    lines += table(("G", "host", "slots", "CPU mean %", "peak memory MB", "last diff"), hosts)
+    lines += ["", "## Settlement", ""]
+    lines += table(("G", "gateway nonce", "hosts' last diff", "active cap", "refusals at the cap", "dead host lines",
+                    "finalize", "seconds", "signature weight", "quorum", "error"), settle)
+    lines += ["", "Gateway nonce: the gateway's own count before finalizing. Refusals at the cap and dead host lines "
+              "are gateway log lines. The finalization reply is in `g<G>/finalize.json`; quorum is 2G/3 + 1 slots. "
+              "Every sample is in `samples.csv`, every host sample in `hosts.csv`.", ""]
+    return "\n".join(lines)
+
+
+def write_testenv(run_dir, meta, runs, verdicts, overall):
+    files = {"report.md": testenv_markdown(meta, runs, verdicts, overall), "samples.csv": testenv_samples_csv(runs),
+             "hosts.csv": testenv_hosts_csv(runs)}
+    for name, text in files.items():
+        with open(os.path.join(run_dir, name), "w", encoding="utf-8") as handle:
+            handle.write(text)
+    return sorted(files)

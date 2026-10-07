@@ -15,12 +15,13 @@ from ..record import Recorder, utc_now
 from ..scheduler import LockBusy, RunLock
 from ..summary import EXIT_CODES, overall
 from ..target import config_dir, data_dir
-from . import keys, report, stand, stress
+from . import keys, report, stand, stress, testenv
 
 DEFAULT_GROUPS = "16,32,64"
 CPUS = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
 DEFAULT_NONCES = 19800
 DEFAULT_EVERY = 1000
+DEFAULT_QUIET_MINUTES = 10
 
 
 def positive(text):
@@ -62,11 +63,30 @@ def add_parser(commands):
     stand_cmd.add_argument("--tag", default=stress.TAG, help="gonka-ai/gonka tag (default %s)" % stress.TAG)
     stand_cmd.add_argument("--dry-run", action="store_true",
                            help="build the images, bring up a small stand, send one request; READY or BLOCKED")
+    tenv = sub.add_parser("testenv", help="the gateway against real devshardd hosts in the upstream devshard/testenv")
+    tenv.add_argument("--groups", default="64", help="group sizes (default 64)")
+    tenv.add_argument("--hosts", type=positive, default=4, help="devshardd host processes, at most G (default 4)")
+    tenv.add_argument("--concurrency", type=positive, default=8, help="chats in flight during the drive (default 8)")
+    tenv.add_argument("--quiet-minutes", type=float, default=DEFAULT_QUIET_MINUTES,
+                      help="minutes of no requests after the drive (default %d)" % DEFAULT_QUIET_MINUTES)
+    tenv.add_argument("--quiet-only", action="store_true",
+                      help="no drive: warm up, then sample the idle escrow for --quiet-minutes")
+    tenv.add_argument("--gateway-cpus", default=None, help="CPUs for the gateway alone, e.g. 0 (default: any)")
+    tenv.add_argument("--host-cpus", default=None, help="CPUs for the hosts, router and mocks, e.g. 1-7")
+    tenv.add_argument("--every", type=float, default=5.0, help="seconds between samples (default 5)")
+    tenv.add_argument("--max-minutes", type=float, default=None, help="stop each drive after this long")
+    tenv.add_argument("--keep", action="store_true", help="leave each stack up for inspection")
+    tenv.add_argument("--tag", default=stress.TAG, help="gonka-ai/gonka tag (default %s)" % stress.TAG)
+    tenv.add_argument("--dry-run", action="store_true",
+                      help="build the images, bring up G=8 on 3 hosts, 3 chats, finalize; READY or BLOCKED")
+    tenv.add_argument("--cleanup", action="store_true",
+                      help="remove every container, network, volume, work dir and image of this mode")
     return gateway
 
 
 def run(args):
-    return {"plan": cmd_plan, "stress": cmd_stress, "stand": cmd_stand}[args.gateway_command](args)
+    return {"plan": cmd_plan, "stress": cmd_stress, "stand": cmd_stand,
+            "testenv": cmd_testenv}[args.gateway_command](args)
 
 
 def log(message):
@@ -124,13 +144,21 @@ def cmd_plan(_args):
         stress.default_memory_gb() or "none"))
     print("stand    stub hosts, mock chain and gateway images built once per commit; one stand per G, host count "
           "and concurrency; default 7 hosts, 8 in flight, no delay")
+    print("testenv  real devshardd hosts under versiond, the versiond router and the gateway from the same commit "
+          "(source adds %s); mock chain, dapi and ML node; one compose stack per G, default G=64 on 4 hosts: "
+          "20 warm-up chats, 8 in flight to nonce %d, %d quiet minutes, finalize, down" % (
+              ", ".join(testenv.SPARSE[len(stress.SPARSE):]), testenv.ROUTING_STOP, DEFAULT_QUIET_MINUTES))
+    print("         builds %s-<image>:<commit>, devshardd extracted to the cache; --quiet-only skips the drive; "
+          "--cleanup removes all of it" % testenv.PREFIX)
     print("network  github.com for the source, the Go module proxy, Docker Hub base images, Alpine packages; "
-          "nothing to any Gonka network; the stand gateway on 127.0.0.1 only")
+          "nothing to any Gonka network; the stand and testenv gateways on 127.0.0.1 only")
     print("cache    %s" % cache)
     print("writes   %s/<run>/: report.md, checkpoints.csv, gateway.svg, host.svg, go-test-g<G>.log" %
           os.path.join(data_dir(), "runs"))
     print("         stand: report.md, samples.csv, stand-cpu.svg, stand-rss.svg, g<G>-h<H>-c<x>/ with seed, env, logs, "
           "finalize.json")
+    print("         testenv: report.md, samples.csv, hosts.csv, g<G>/ with gencompose.log, logs, finalize.json; "
+          "stacks in %s while they run" % os.path.join(data_dir(), "testenv"))
     return 0
 
 
@@ -371,6 +399,178 @@ def cmd_stand(args):
                    "summaries": [run["summary"] for run in runs], "finished_at": utc_now()}, handle, indent=2,
                   sort_keys=True)
         handle.write("\n")
+    print("written  %s: %s" % (run_dir, ", ".join(files)))
+    print("overall  %s (exit %d)" % (result, EXIT_CODES[result]))
+    return EXIT_CODES[result]
+
+
+def _testenv_one(size, hosts, index, args, source, cache, commit, devshardd, run_id, run_dir, on_log, guard=None):
+    work_root = os.path.join(data_dir(), "testenv")
+    stack = testenv.Stack(run_id, size, hosts, work_root)
+    label = "G=%d N=%d" % (size, hosts)
+    group_dir = os.path.join(run_dir, "g%d" % size)
+    os.makedirs(group_dir, mode=0o700, exist_ok=True)
+    mode = "dry-run" if args.dry_run else "quiet-only" if args.quiet_only else "drive"
+    tag = "%s-g%d" % (run_id[-4:], size)
+    sampler, warm, drive, final, error, stop, stopped = None, None, None, None, None, None, []
+    try:
+        on_log("%s: gencompose and compose patch" % label)
+        stack.generate(source, cache, devshardd, commit, testenv.binary_version(args.tag),
+                       os.path.join(group_dir, "gencompose.log"), testenv.SUBNET_OCTET + index,
+                       args.gateway_cpus, args.host_cpus)
+        base = stack.up()
+        on_log("%s: stack %s up, gateway on %s" % (label, stack.project, base))
+        sampler = testenv.Sampler(stack, base, time.monotonic())
+        sampler.take("up")
+        warm = testenv.warm_up(base, testenv.DRY_CHATS if args.dry_run else testenv.WARM_CHATS, tag + "-w",
+                               stack.addresses)
+        sampler.take("warm")
+        on_log("%s: warm-up %d of %d chats, nonce %s" % (label, warm.codes.get(200, 0), sum(warm.codes.values()),
+                                                         sampler.samples[-1]["nonce"]))
+        if mode == "drive":
+            drive = testenv.Drive(base, args.concurrency, testenv.ROUTING_STOP, tag, stack.addresses)
+
+            def on_sample():
+                nonce = sampler.take("drive")
+                if len(sampler.samples) % 12 == 0:
+                    item = sampler.samples[-1]
+                    on_log("%s drive nonce %s: gateway CPU %s%%, RSS %.0f MB, hosts %.0f MB, unquarantined %d" % (
+                        label, nonce, item["cpu_pct"], item["rss_mb"], item["hosts_mem_mb"], drive.unquarantines))
+                return nonce
+
+            drive.run(on_sample, every_s=args.every, max_s=args.max_minutes * 60 if args.max_minutes else None,
+                      guard=guard)
+            on_log("%s: drive %s" % (label, drive.reason))
+        if mode == "quiet-only" or (mode == "drive" and testenv.reached(drive, sampler.samples)):
+            on_log("%s: quiet for %g min" % (label, args.quiet_minutes))
+
+            def on_quiet():
+                sampler.take("quiet", diffs=True)
+                if len(sampler.samples) % 12 == 0:
+                    item = sampler.samples[-1]
+                    on_log("%s quiet nonce %s: hosts' last diff %s..%s, %s turns, %d refusals at the active cap" % (
+                        label, item["nonce"], item["host_last_min"], item["host_last_max"], item["heartbeats"],
+                        item["cap_lines"]))
+
+            stop = testenv.quiet(on_quiet, args.quiet_minutes, args.every, guard)
+        sampler.take("settle", diffs=True)
+        on_log("%s: finalizing at nonce %s, Ctrl-C skips it" % (label, sampler.samples[-1]["nonce"]))
+        final = testenv.finalize(base, size, os.path.join(group_dir, "finalize.json"))
+        sampler.take("final", diffs=True)
+        on_log("%s: finalize %s in %.1f s, weight %s of %s" % (label, final["code"], final["seconds"],
+                                                               final["weight"], final["quorum"]))
+    except stand.StandError as failure:
+        error = str(failure)
+    except KeyboardInterrupt:
+        stop = "interrupted"
+    finally:
+        stopped = stack.exited()
+        for service, file in (("devshardctl", "gateway.log"), ("versiond-0", "host-0.log")):
+            with open(os.path.join(group_dir, file), "w", encoding="utf-8") as handle:
+                handle.write("".join(stress.shorten(line + "\n") for line in stack.logs(service).splitlines()))
+        if args.keep:
+            on_log("%s: kept; docker compose -p %s -f %s; gcheck gateway-load testenv --cleanup removes it" % (
+                label, stack.project, stack.compose_file))
+        else:
+            stack.down()
+    samples = sampler.samples if sampler else []
+    summary = testenv.summarize(size, hosts, args.concurrency, mode, warm, drive, samples, final, error, stop, stopped)
+    return {"groups": size, "label": label, "samples": samples, "summary": summary, "verdict": testenv.judge(summary)}
+
+
+def _testenv_cleanup():
+    roots = [os.path.join(data_dir(), "testenv"), os.path.join(data_dir(), "cache", "gateway-load", "testenv")]
+    try:
+        with RunLock(os.path.join(config_dir(), "gateway-load.lock")):
+            if not shutil.which("docker"):
+                raise stress.StressError("needs docker")
+            removed = testenv.cleanup(roots)
+    except LockBusy as error:
+        print("cleanup  BLOCKED\n         lock: %s" % error)
+        return EXIT_CODES["BLOCKED"]
+    except stress.StressError as error:
+        print("cleanup  BLOCKED\n         %s" % error)
+        return EXIT_CODES["BLOCKED"]
+    for kind in ("containers", "networks", "volumes", "dirs", "images"):
+        print("removed  %s: %s" % (kind, ", ".join(removed[kind]) or "none"))
+    return 0
+
+
+def cmd_testenv(args):
+    if args.cleanup:
+        return _testenv_cleanup()
+    try:
+        groups = [8] if args.dry_run else groups_of(args.groups)
+        if args.hosts > len(keys.HOST_ADDRESSES):
+            raise ValueError("--hosts needs 1 to %d" % len(keys.HOST_ADDRESSES))
+        if args.concurrency > 256:
+            raise ValueError("--concurrency needs 1 to 256")
+        if args.quiet_minutes <= 0 or args.every <= 0:
+            raise ValueError("--quiet-minutes and --every need a positive number")
+        if len(groups) > 100:
+            raise ValueError("--groups takes at most 100 sizes")
+        for flag, value in (("--gateway-cpus", args.gateway_cpus), ("--host-cpus", args.host_cpus)):
+            if value is not None and not CPUS.match(value):
+                raise ValueError("%s needs a CPU list such as 0, 1-7 or 0,2" % flag)
+    except ValueError as error:
+        sys.stderr.write("gcheck: %s\n" % error)
+        return EXIT_CODES["GUARD_STOP"]
+    hosts = 3 if args.dry_run else args.hosts
+    run_id, run_dir = _run_dir("testenv")
+    recorder = Recorder(run_dir)
+    cache = os.path.join(data_dir(), "cache", "gateway-load")
+    mode = "dry-run" if args.dry_run else "quiet-only" if args.quiet_only else "drive"
+    meta = {"tool": "gonka-check %s" % __version__, "run_id": run_id, "mode": "gateway-testenv", "tag": args.tag,
+            "groups": groups, "hosts": hosts, "concurrency": args.concurrency, "run": mode,
+            "quiet_minutes": args.quiet_minutes, "gateway_cpus": args.gateway_cpus, "host_cpus": args.host_cpus,
+            "max_nonce": testenv.MAX_NONCE, "routing_stop": testenv.ROUTING_STOP, "started_at": utc_now()}
+    runs = []
+    try:
+        with RunLock(os.path.join(config_dir(), "gateway-load.lock")):
+            if not shutil.which("docker"):
+                raise stress.StressError("needs docker")
+            source, commit = stress.prepare_source(cache, args.tag, sparse=testenv.SPARSE, test_file=False)
+            meta["commit"] = commit
+            recorder.write_json("manifest.json", meta)
+            print("source   %s at %s" % (args.tag, commit[:12]))
+            log("build    devshardd, gateway, versiond, router and mock images (once per commit)")
+            devshardd, built = testenv.build_images(source, commit, cache, os.path.join(run_dir, "docker-build.log"),
+                                                    args.tag)
+            log("build    %s" % (", ".join(built) or "all images already there"))
+            disks = [run_dir, data_dir()] + [path for path in [stand.docker_root()] if path]
+
+            def guard():
+                return stand.memory_guard() or stress.disk_guard(disks)
+
+            for index, size in enumerate(groups):
+                runs.append(_testenv_one(size, min(hosts, size), index, args, source, cache, commit, devshardd,
+                                         run_id, run_dir, log, guard))
+                verdict, stop = runs[-1]["verdict"], runs[-1]["summary"]["stop"] or ""
+                print("%-12s %-13s %s" % (verdict["verdict"], verdict["check"], verdict["reason"]))
+                if verdict["verdict"] == "BLOCKED" or stop == "interrupted" or stop.startswith(("machine memory",
+                                                                                               "disk below")):
+                    break
+    except LockBusy as error:
+        print("ready    BLOCKED\n         lock: %s" % error)
+        return EXIT_CODES["BLOCKED"]
+    except (stress.StressError, stand.StandError) as error:
+        print("ready    BLOCKED\n         %s" % error)
+        recorder.write_json("summary.json", {"mode": "gateway-testenv", "overall": "BLOCKED", "reason": str(error)})
+        return EXIT_CODES["BLOCKED"]
+    verdicts = [run["verdict"] for run in runs]
+    result = overall(verdicts)
+    with open(os.path.join(run_dir, "summary.json"), "w", encoding="utf-8") as handle:
+        json.dump({"mode": "gateway-testenv", "overall": result, "verdicts": verdicts,
+                   "summaries": [run["summary"] for run in runs], "finished_at": utc_now()}, handle, indent=2,
+                  sort_keys=True)
+        handle.write("\n")
+    if args.dry_run:
+        print("ready    %s" % ("READY" if result == "PASS" else "BLOCKED"))
+        if result != "PASS":
+            print("         %s" % "; ".join(item["reason"] for item in verdicts))
+        print("records  %s" % run_dir)
+        return 0 if result == "PASS" else EXIT_CODES["BLOCKED"]
+    files = report.write_testenv(run_dir, meta, runs, verdicts, result)
     print("written  %s: %s" % (run_dir, ", ".join(files)))
     print("overall  %s (exit %d)" % (result, EXIT_CODES[result]))
     return EXIT_CODES[result]
