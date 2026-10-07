@@ -298,6 +298,8 @@ run_phase() {
     run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     printf '%s\n' "$run_id" >"$run_id_file"
   fi
+  [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+    || die 'GDC run identifier is unsafe'
   run_dir="$GDC_HOME/runs/$run_id"
   log="$run_dir/run.log"
   mkdir -p "$run_dir"
@@ -627,6 +629,9 @@ See the role guides for required input, then run:
   ./gdc.sh host backup <SSH_ALIAS>
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
+  ./gdc.sh ops gateway-settings preview|apply
+  ./gdc.sh ops gateway-readiness preview|apply
+  ./gdc.sh ops monitoring-firewall preview|apply
   ./gdc.sh ops monitoring
   ./gdc.sh ops site
   ./gdc.sh ops preview bootstrap
@@ -776,6 +781,7 @@ if [[ -n "$RELEASE" ]]; then
   [[ -z "$COMPOSITION" || "$RELEASE" == "$GDC_RELEASE_PROFILE" ]] \
     || { echo "Release profile $RELEASE conflicts with composition core profile $GDC_RELEASE_PROFILE" >&2; exit 2; }
   export GDC_RELEASE_PROFILE="$RELEASE"
+  export GDC_RELEASE_PROFILE_CLI_OVERRIDE=true
 fi
 [[ -z "$MODEL" || "$MODEL" == qwen3-0.6b ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
 [[ -z "$MODEL" ]] || export GDC_MODEL_PROFILE="$MODEL"
@@ -1242,7 +1248,11 @@ case "$COMMAND" in
   ops)
     # OPS actions reconcile independently deployable services.  They must not
     # inherit a prior service's retained evidence or release profile.
-    GDC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    # A normal OPS invocation gets fresh evidence, while an explicit ID is the
+    # receipt-bound resume mechanism for a preview followed by its apply.
+    if [[ -z "${GDC_RUN_ID:-}" ]]; then
+      GDC_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    fi
     unset GDC_RUN_LOG
     export GDC_RUN_ID
     use_network_owner_data_home
@@ -1255,6 +1265,18 @@ case "$COMMAND" in
       [[ $# -ge 3 && $# -le 5 && "$2" == telegram && "$3" =~ ^(apply|status|verify)$ ]] || { usage; exit 2; }
       [[ "$3" == verify || $# -eq 3 ]] || { usage; exit 2; }
       run_phase "ops-consumer-telegram-$3" "$ROOT/scripts/phase-telegram-consumer.sh" "${@:3}"
+    elif [[ "$1" == gateway-settings ]]; then
+      [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
+      run_phase "ops-gateway-settings-$2" "$ROOT/scripts/phase-gateway-settings.sh" "$2"
+    elif [[ "$1" == gateway-readiness ]]; then
+      [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
+      run_phase "ops-gateway-readiness-$2" bash "$ROOT/scripts/phase-gateway-readiness.sh" "$2"
+    elif [[ "$1" == monitoring-firewall ]]; then
+      [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
+      run_phase "ops-monitoring-firewall-$2" "$ROOT/scripts/phase-monitoring-firewall.sh" "$2"
+    elif [[ "$1" == bifrost ]]; then
+      [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
+      run_phase "ops-bifrost-$2" "$ROOT/scripts/phase-bifrost.sh" "$2"
     elif [[ "$1" == edge-node ]]; then
       [[ $# -eq 2 ]] || { usage; exit 2; }
       source "$ROOT/scripts/lib.sh"

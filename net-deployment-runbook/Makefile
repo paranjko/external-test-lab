@@ -1,5 +1,6 @@
 SHELLCHECK_VERSION ?= v0.11.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:$(SHELLCHECK_VERSION)
+
 SHELL_SCRIPTS := $(shell find . -path './vendor' -prune -o -path './.data' -prune -o -type f -name '*.sh' -print | LC_ALL=C sort)
 DEVCONTAINER_CLI ?= npx --yes --loglevel=silent @devcontainers/cli
 # Docker Desktop for Mac cannot bind-mount the launchd ssh-agent socket that
@@ -34,10 +35,12 @@ preview_backend_dir ?= $(site_release_dir)-backend
 preview_base_revision ?=
 site_origin ?= https://gonka-dev.net
 preview_origin ?= https://preview.gonka-dev.net
+python_test_venv ?= $(CURDIR)/.python-test-venv
+python_test ?= $(python_test_venv)/bin/python
 site_preview_expected_card_count ?= 9
 site_preview_expected_node_states ?= node3.gonka-dev.net=Inactive
 
-.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-preview-platform test-preview-isolation test-preview-lifecycle test-preview-provision test-preview-status-renderer test-preview-frontend-builder test-isolated-preview-ci test-isolated-preview-ci-artifact test-record-site-preview-deployment test-verify-isolated-site-preview-live test-isolated-preview-runtime-config test-isolated-preview-publish test-prepare-isolated-preview-composition test-prepare-isolated-site-preview-artifact test-prepare-public-preview-inventory test-node-observation-guard test-edge-install-ownership prepare-static-site prepare-site-preview-artifact prepare-isolated-site-preview-artifact prepare-isolated-preview-ci prepare-isolated-preview-ci-artifact write-isolated-preview-deploy-env publish-site-release publish-site-preview publish-isolated-site-preview publish-isolated-preview-ci rollback-site-preview remove-site-release remove-isolated-site-preview verify-site-release verify-site-preview-artifact verify-isolated-preview-ci-artifact verify-isolated-site-preview-live verify-site-preview-live verify-site-preview-endpoints smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test test-command-dependency-contract edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
+.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-preview-platform test-preview-isolation test-preview-lifecycle test-preview-provision test-preview-status-renderer test-preview-frontend-builder test-isolated-preview-ci test-isolated-preview-ci-artifact test-record-site-preview-deployment test-verify-isolated-site-preview-live test-isolated-preview-runtime-config test-isolated-preview-publish test-prepare-isolated-preview-composition test-prepare-isolated-site-preview-artifact test-prepare-public-preview-inventory test-node-observation-guard test-edge-install-ownership prepare-static-site prepare-site-preview-artifact prepare-isolated-site-preview-artifact prepare-isolated-preview-ci prepare-isolated-preview-ci-artifact write-isolated-preview-deploy-env publish-site-release publish-site-preview publish-isolated-site-preview publish-isolated-preview-ci rollback-site-preview remove-site-release remove-isolated-site-preview verify-site-release verify-site-preview-artifact verify-isolated-preview-ci-artifact verify-isolated-site-preview-live verify-site-preview-live verify-site-preview-endpoints smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test test-command-dependency-contract install-python-test-dependencies test-bifrost-key-broker test-bifrost-protocol-edge test-bifrost-provision test-bifrost-broker-container test-bifrost-pinned-lifecycle test-bifrost-deployment-contract edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -76,6 +79,68 @@ shellcheck:
 test-amd-mlnode-build:
 	@./scripts/test-build-amd-mlnode.sh
 
+.PHONY: test-inspect-devshard-runtime
+test-inspect-devshard-runtime:
+	@python3 ./scripts/test-inspect-devshard-runtime.py
+
+test: test-inspect-devshard-runtime
+
+.PHONY: test-devshard-runtime-monitoring
+test-devshard-runtime-monitoring:
+	@python3 ./scripts/test-devshard-runtime-monitoring.py
+
+test: test-devshard-runtime-monitoring
+
+.PHONY: test-devshard-502-reader
+test-devshard-502-reader:
+	@python3 ./scripts/test-devshard-502-reader.py
+
+test-devshard-502-fixture-contract: test-devshard-502-reader
+
+.PHONY: test-devshard-cache-policy
+test-devshard-cache-policy:
+	@python3 ./scripts/test-devshard-cache-policy.py
+
+test: test-devshard-cache-policy
+
+.PHONY: test-devshard-cache-ledger test-devshard-cache-lifecycle
+test-devshard-cache-ledger:
+	@python3 ./scripts/test-devshard-cache-ledger.py
+
+test-devshard-cache-lifecycle: test-devshard-cache-ledger
+	@python3 ./scripts/test-devshard-cache-drain.py
+	@python3 ./scripts/test-devshard-cache-lifecycle.py
+	@python3 ./scripts/test-devshard-cache-runtime.py
+
+test: test-devshard-cache-lifecycle
+
+.PHONY: test-devshard-cache-apply
+test-devshard-cache-apply: test-devshard-cache-lifecycle
+	@python3 ./scripts/test-devshard-cache-apply.py
+	@python3 ./scripts/test-devshard-cache-apply-launcher.py
+
+test: test-devshard-cache-apply
+
+.PHONY: test-faucet-policy
+test-faucet-policy:
+	@python3 ./scripts/test-faucet-policy.py
+
+test: test-faucet-policy
+
+.PHONY: test-faucet-policy-http
+test-faucet-policy-http:
+	@python3 ./scripts/test-faucet-policy-http.py
+
+test: test-faucet-policy-http
+
+.PHONY: test-telegram-delivery
+test-telegram-delivery: test-gateway-traffic
+	@python3 ./scripts/test-telegram-bot.py
+
+.PHONY: test-gateway-traffic
+test-gateway-traffic:
+	@python3 ./scripts/test-gateway-traffic.py
+
 test-amd-mlnode-trial:
 	@./scripts/test-run-amd-mlnode-trial.sh
 
@@ -112,11 +177,13 @@ test-validator-map: site-vendor site-js site-host-requirements-check
 prepare-static-site: site-vendor site-host-requirements-check
 	@mkdir -p "$(site_release_dir)"
 	@rsync -a --exclude src/ --exclude .gitignore 04-ops/site/ "$(site_release_dir)/"
+	@install -m 0755 ../install_inferenced.sh "$(site_release_dir)/install_inferenced.sh"
 	@SITE_REVISION="$(site_revision)" ./scripts/render-site-revision.sh 04-ops/site/index.html "$(site_release_dir)/index.html"
 	@./scripts/build-site-js.sh --output "$(site_release_dir)"
 	@rm -f "$(site_release_dir)/config.js"
 	@revision="$(site_revision)"; test -n "$$revision" || revision="$$(git rev-parse HEAD)"; ./scripts/render-site-build-info.sh "$(site_release_dir)" "$$revision"
 	@test -s "$(site_release_dir)/index.html"
+	@test -x "$(site_release_dir)/install_inferenced.sh"
 	@test ! -e "$(site_release_dir)/config.js"
 
 prepare-site-preview-artifact:
@@ -284,7 +351,55 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+.PHONY: test-devshard-two-gateways test-devshard-502-fixture-contract test-devshard-workload test-devshard-transport test-devshard-observe test-devshard-public-workload
+test-devshard-two-gateways: test-devshard-workload
+	@python3 ./scripts/test-devshard-two-gateways.py
+	@python3 ./scripts/test-devshard-settings.py
+
+test-devshard-workload: test-devshard-transport test-devshard-observe test-devshard-public-workload
+	@python3 ./scripts/test-devshard-workload.py
+
+test-devshard-observe:
+	@python3 ./scripts/test-devshard-observe.py
+
+test-devshard-transport:
+	@python3 ./scripts/test-devshard-transport.py
+
+test-devshard-public-workload:
+	@python3 ./scripts/test-devshard-public-workload.py
+
+test-devshard-502-fixture-contract:
+	@python3 ./scripts/test-devshard-502-fixture.py
+	@python3 ./scripts/test-devshard-502-pair.py
+	@python3 ./scripts/test-devshard-502-exercise.py
+	@python3 ./scripts/test-devshard-502-state.py
+
+install-python-test-dependencies:
+	@python3 -m venv "$(python_test_venv)"
+	@"$(python_test)" -m pip install --disable-pip-version-check --requirement dependencies/python-test-requirements.txt
+
+test-bifrost-key-broker:
+	@"$(python_test)" ./scripts/test-bifrost-key-broker.py
+
+test-bifrost-protocol-edge:
+	@"$(python_test)" ./scripts/test-bifrost-protocol-edge.py
+
+test-bifrost-provision:
+	@"$(python_test)" ./scripts/test-bifrost-provision.py
+
+test-bifrost-broker-container:
+	@./scripts/test-bifrost-broker-container.sh
+
+test-bifrost-pinned-lifecycle:
+	@./scripts/test-bifrost-pinned-lifecycle.sh
+
+test-bifrost-deployment-contract:
+	@./scripts/test-bifrost-deployment-contract.sh
+
+test-bifrost-gdc-preview-launcher:
+	@./scripts/test-bifrost-gdc-preview-launcher.sh
+
+test: test-devshard-two-gateways test-devshard-502-fixture-contract test-command-dependency-contract test-gateway-settings-deployment test-monitoring-firewall-deployment test-install-inferenced site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote test-bifrost-key-broker test-bifrost-protocol-edge test-bifrost-provision test-bifrost-broker-container test-bifrost-pinned-lifecycle test-bifrost-deployment-contract test-bifrost-gdc-preview-launcher
 	@bash ./scripts/test-node-container-control.sh
 	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
@@ -372,7 +487,9 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-dashboard-generator.sh
 	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-observer.py
+	@$(MAKE) test-gateway-readiness test-gateway-readiness-lifecycle
 	@python3 ./scripts/test-gateway-admission-proxy.py
+	@python3 ./scripts/test-gateway-route-proxy.py
 	@./scripts/test-gateway-migration.sh
 	@bash ./scripts/test-gateway-poc-windows.sh
 	@./scripts/test-host-sync-verdict.sh
@@ -390,8 +507,9 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 	@./scripts/test-participant-poc-caddy-config.sh
 	@python3 ./scripts/test-devnet-faucet.py
 	@./scripts/test-telegram-bot-deployment.sh
+	@$(MAKE) test-telegram-registration-lifecycle
 	@./scripts/test-telegram-consumer-probe-loop.sh
-	@python3 ./scripts/test-telegram-bot.py
+	@$(MAKE) test-telegram-delivery
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
 	@./scripts/test-inspect-accelerator.sh
@@ -456,11 +574,28 @@ test: test-command-dependency-contract site-js-check site-host-requirements-chec
 test-command-dependency-contract:
 	@./scripts/test-command-dependency-contract.sh
 
+test-gateway-settings-deployment:
+	@./scripts/test-gateway-settings-deployment.sh
+
+.PHONY: test-gateway-readiness test-gateway-readiness-lifecycle
+test-gateway-readiness:
+	@python3 ./scripts/test-gateway-readiness.py
+
+test-gateway-readiness-lifecycle:
+	@python3 ./scripts/test-gateway-readiness-lifecycle.py
+
+test-monitoring-firewall-deployment:
+	@./scripts/test-monitoring-firewall-deployment.sh
+
+test-install-inferenced:
+	@./scripts/test-install-inferenced.sh
+
 verify-candidate-workflow:
 	@./scripts/test-candidate-workflow.sh
 
 edge-integration: site-vendor
 	@./scripts/test-public-edge-static-site.sh
+	@python3 ./scripts/test-devshard-runtime-status.py
 
 # Bats remains test-only. These two targets exercise the JOIN contracts in a
 # disposable host-shaped container; no production host, key or GPU is used.
@@ -527,6 +662,10 @@ test-recovery-rehearsal:
 	@./scripts/test-network-recovery-rehearsal.sh --manifest "$(manifest)" --lab-approval "$(lab_approval)" --evidence-dir "$(evidence_dir)" --timeout-seconds "$(timeout_seconds)"
 
 # Exact released signer, synthetic key, no live mounts and no network.
+.PHONY: test-telegram-registration-lifecycle
+test-telegram-registration-lifecycle:
+	@python3 scripts/test-telegram-registration-lifecycle.py
+
 .PHONY: test-tmkms-recovery-boundary
 test-tmkms-recovery-boundary:
 	@image="$$(docker build -q -f scripts/tmkms-boundary.Dockerfile scripts)" && \

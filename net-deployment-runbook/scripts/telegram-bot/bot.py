@@ -2,9 +2,12 @@
 """Telegram conversation client for the Community DevNet inference gateway."""
 
 import json
+import importlib.util
 import os
 import re
 import secrets
+import hashlib
+import math
 import sqlite3
 import sys
 import threading
@@ -15,14 +18,41 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+TRAFFIC_SPEC = importlib.util.spec_from_file_location("gateway_traffic", Path(__file__).with_name("gateway_traffic.py"))
+TRAFFIC = importlib.util.module_from_spec(TRAFFIC_SPEC)
+TRAFFIC_SPEC.loader.exec_module(TRAFFIC)
+TRAFFIC_METRICS_URL = os.environ.get("GATEWAY_TRAFFIC_METRICS_URL", "")
+
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-GATEWAY_API_KEY = os.environ["GATEWAY_API_KEY"]
+GATEWAY_API_KEY = os.environ.get("GATEWAY_API_KEY")
 INTERNAL_API_TOKEN = os.environ["INTERNAL_API_TOKEN"]
 GATEWAY_API_BASE_URL = os.environ.get("GATEWAY_API_BASE_URL", "https://api.gonka-dev.net/v1").rstrip("/")
 GATEWAY_ADMISSION_STATUS_URL = os.environ.get(
     "GATEWAY_ADMISSION_STATUS_URL", f"{GATEWAY_API_BASE_URL}/admission-status"
 )
+_backends_json = os.environ.get("GATEWAY_BACKENDS_JSON")
+if _backends_json:
+    GATEWAY_BACKENDS = json.loads(_backends_json)
+    if not isinstance(GATEWAY_BACKENDS, list) or len(GATEWAY_BACKENDS) != 2:
+        raise RuntimeError("GATEWAY_BACKENDS_JSON must contain exactly A/B backends")
+    if {item.get("name") for item in GATEWAY_BACKENDS if isinstance(item, dict)} != {"A", "B"}:
+        raise RuntimeError("GATEWAY_BACKENDS_JSON must name A and B")
+    for item in GATEWAY_BACKENDS:
+        if not all(isinstance(item.get(field), str) and item[field] for field in ("base_url", "admission_url", "api_key")):
+            raise RuntimeError("each gateway backend requires base_url, admission_url and api_key")
+        if not item["base_url"].startswith("https://") or not item["admission_url"].startswith("https://"):
+            raise RuntimeError("gateway backend URLs must use HTTPS")
+else:
+    if not GATEWAY_API_KEY:
+        raise RuntimeError("GATEWAY_API_KEY is required without GATEWAY_BACKENDS_JSON")
+    GATEWAY_BACKENDS = [{"name": "A", "base_url": GATEWAY_API_BASE_URL,
+                         "admission_url": GATEWAY_ADMISSION_STATUS_URL, "api_key": GATEWAY_API_KEY}]
+_backend_lock = threading.Lock()
+_backend_cursor = 0
+_route_control_lock = threading.Lock()
+_route_control = {"disabled_backends": (), "force_next_backend": None, "expires_at": 0}
+MAX_ROUTE_CONTROL_TTL_SECONDS = 300
 INTERNAL_API_BASE_URL = os.environ.get("INTERNAL_API_BASE_URL", "http://127.0.0.1:9464").rstrip("/")
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-0.6B")
 DB_FILE = Path(os.environ.get("STATE_DB", "/data/bot.sqlite3"))
@@ -42,15 +72,49 @@ GATEWAY_ADMISSION_TIMEOUT_SECONDS = int(os.environ.get("GATEWAY_ADMISSION_TIMEOU
 INTERNAL_API_TIMEOUT_SECONDS = int(os.environ.get("INTERNAL_API_TIMEOUT_SECONDS", "35"))
 TELEGRAM_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "10"))
 TELEGRAM_POLL_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_POLL_TIMEOUT_SECONDS", "35"))
+FAUCET_URL = os.environ.get("TELEGRAM_FAUCET_URL", "").rstrip("/")
+FAUCET_TOKEN = os.environ.get("TELEGRAM_FAUCET_TOKEN", "")
+FAUCET_TIMEOUT_SECONDS = int(os.environ.get("TELEGRAM_FAUCET_TIMEOUT_SECONDS", "12"))
+KEY_BROKER_URL = os.environ.get("TELEGRAM_KEY_BROKER_URL", "").rstrip("/")
+KEY_BROKER_TOKEN = os.environ.get("TELEGRAM_KEY_BROKER_TOKEN", "")
 TYPING_REFRESH_SECONDS = int(os.environ.get("TYPING_REFRESH_SECONDS", "4"))
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 THINK_BLOCK = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
 UNCLOSED_THINK_BLOCK = re.compile(r"<think\b[^>]*>.*\Z", re.IGNORECASE | re.DOTALL)
 THINK_TAG = re.compile(r"</?think\b[^>]*>", re.IGNORECASE)
+BECH32_ALPHABET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+BECH32_GENERATOR = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
 
 
 def now() -> int:
     return int(time.time())
+
+
+def bech32_polymod(values):
+    checksum = 1
+    for value in values:
+        top = checksum >> 25
+        checksum = (checksum & 0x1FFFFFF) << 5 ^ value
+        for index, generator in enumerate(BECH32_GENERATOR):
+            if (top >> index) & 1:
+                checksum ^= generator
+    return checksum
+
+
+def valid_gonka_address(address: str) -> bool:
+    """Reject lookalike account strings before a faucet request leaves the bot."""
+    if not isinstance(address, str) or not re.fullmatch(r"gonka1[0-9a-z]{20,90}", address):
+        return False
+    separator = address.rfind("1")
+    if separator != len("gonka") or len(address) - separator - 1 < 6:
+        return False
+    try:
+        values = [BECH32_ALPHABET.index(character) for character in address[separator + 1:]]
+    except ValueError:
+        return False
+    expanded = [ord(character) >> 5 for character in "gonka"] + [0]
+    expanded += [ord(character) & 31 for character in "gonka"]
+    return bech32_polymod(expanded + values) == 1
 
 
 def visible_output_text(value: str) -> str:
@@ -108,11 +172,53 @@ def connection() -> sqlite3.Connection:
           output_tokens INTEGER NOT NULL DEFAULT 0,
           total_tokens INTEGER NOT NULL DEFAULT 0,
           usage_missing INTEGER NOT NULL DEFAULT 0 CHECK (usage_missing IN (0, 1)),
-          created_at INTEGER NOT NULL
+          created_at INTEGER NOT NULL,
+          backend TEXT NOT NULL DEFAULT 'unknown'
         );
+        CREATE TABLE IF NOT EXISTS faucet_updates (
+          update_id INTEGER PRIMARY KEY,
+          chat_id INTEGER NOT NULL,
+          telegram_id INTEGER NOT NULL,
+          address TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          amount_ngonka TEXT,
+          txhash TEXT,
+          state TEXT NOT NULL,
+          confirmation TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS status_observations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scope TEXT NOT NULL,
+          model TEXT NOT NULL,
+          observed_at INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          reason TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS status_observations_scope_model
+          ON status_observations(scope, model, id);
+        CREATE TABLE IF NOT EXISTS status_projection_clock (
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+          revision INTEGER NOT NULL
+        );
+        INSERT OR IGNORE INTO status_projection_clock(singleton, revision)
+          SELECT 1, (SELECT count(*) + coalesce(max(id),0) FROM status_observations)
+          WHERE NOT EXISTS(SELECT 1 FROM status_projection_clock WHERE singleton=1);
         """
     )
+    db.execute("BEGIN IMMEDIATE")
+    columns = {row[1] for row in db.execute("PRAGMA table_info(inference_events)")}
+    if "backend" not in columns:
+        db.execute("ALTER TABLE inference_events ADD COLUMN backend TEXT NOT NULL DEFAULT 'unknown'")
+    if "delivery_state" not in columns:
+        db.execute("ALTER TABLE inference_events ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'unverified'")
+    if "delivery_observed_at" not in columns:
+        db.execute("ALTER TABLE inference_events ADD COLUMN delivery_observed_at INTEGER")
+    if "delivery_order" not in columns:
+        db.execute("ALTER TABLE inference_events ADD COLUMN delivery_order INTEGER NOT NULL DEFAULT 0")
     db.commit()
+    TRAFFIC.initialize(db)
     return db
 
 
@@ -205,6 +311,27 @@ def render_metrics(db: sqlite3.Connection) -> str:
         "# TYPE gdc_telegram_bot_last_success_timestamp_seconds gauge",
         f"gdc_telegram_bot_last_success_timestamp_seconds {last_success}",
     ])
+    lines.extend([
+        "# HELP gdc_telegram_bot_backend_requests_total Actual inference attempts by backend, model and outcome",
+        "# TYPE gdc_telegram_bot_backend_requests_total counter",
+        "# HELP gdc_telegram_bot_inference_deliveries_total Completed inference replies with observed Telegram delivery outcomes",
+        "# TYPE gdc_telegram_bot_inference_deliveries_total counter",
+        "# HELP gdc_telegram_bot_last_delivery_timestamp_seconds Last observed successful inference reply delivery, never scrape time",
+        "# TYPE gdc_telegram_bot_last_delivery_timestamp_seconds gauge",
+    ])
+    for row in db.execute("SELECT backend, model, outcome, count(*) AS count FROM inference_events GROUP BY backend, model, outcome"):
+        lines.append('gdc_telegram_bot_backend_requests_total'
+                     f'{{backend="{escape_label(row["backend"])}",model="{escape_label(row["model"])}",outcome="{escape_label(row["outcome"])}"}} {row["count"]}')
+    for row in db.execute("SELECT backend, model, delivery_state, count(*) AS count "
+                          "FROM inference_events WHERE outcome='success' AND delivery_state IN ('delivered','failed') "
+                          "GROUP BY backend, model, delivery_state"):
+        labels = f'backend="{escape_label(row["backend"])}",model="{escape_label(row["model"])}"'
+        lines.append(f'gdc_telegram_bot_inference_deliveries_total{{{labels},outcome="{row["delivery_state"]}"}} {row["count"]}')
+        if row["delivery_state"] == "delivered":
+            observed = db.execute("SELECT delivery_observed_at FROM inference_events "
+                                  "WHERE backend=? AND model=? AND delivery_state='delivered' "
+                                  "ORDER BY delivery_order DESC LIMIT 1", (row["backend"], row["model"])).fetchone()[0]
+            lines.append(f'gdc_telegram_bot_last_delivery_timestamp_seconds{{{labels}}} {observed}')
     return "\n".join(lines) + "\n"
 
 
@@ -226,7 +353,224 @@ def health_payload(db: sqlite3.Connection) -> dict:
         "inference_ready": age is not None and age <= HEALTH_MAX_AGE_SECONDS,
         "last_success_timestamp": last_success or None,
         "last_success_age_seconds": age,
+        "delivery_observation": delivery_observation(db),
+        "readiness_projection": readiness_projection(db),
     }
+
+
+def begin_status_observation(db: sqlite3.Connection, scope: str, model=None) -> int:
+    # Allocate order before I/O: a delayed old fetch cannot replace a newer
+    # started observation, including within the same wall-clock second.
+    cursor = db.execute("INSERT INTO status_observations(scope,model,observed_at,state,reason) "
+                        "VALUES (?,?,?,'UNVERIFIED','observation_pending')", (scope, MODEL if model is None else model, now()))
+    db.execute("UPDATE status_projection_clock SET revision=revision+1 WHERE singleton=1")
+    db.commit()
+    return cursor.lastrowid
+
+
+def finish_status_observation(db: sqlite3.Connection, receipt: int, state: str, reason: str) -> None:
+    if state not in {"ELIGIBLE", "UNAVAILABLE", "UNVERIFIED", "OK", "FAILED"}:
+        raise ValueError("invalid observation state")
+    if not re.fullmatch(r"[a-z0-9_]+", reason):
+        raise ValueError("invalid public observation reason")
+    db.execute("UPDATE status_observations SET state=?,reason=? WHERE id=? AND reason='observation_pending'",
+               (state, reason, receipt))
+    # Telegram long polling observes the network when the response arrives,
+    # not when the up-to-30-second poll began, a duplicate cannot renew it.
+    if db.execute("SELECT changes()").fetchone()[0]:
+        db.execute("UPDATE status_projection_clock SET revision=revision+1 WHERE singleton=1")
+        db.execute("UPDATE status_observations SET observed_at=? WHERE id=? AND scope IN ('telegram_poll','telegram_delivery_path')", (now(), receipt))
+    db.commit()
+
+
+def readiness_projection(db: sqlite3.Connection) -> dict:
+    owned_snapshot = not db.in_transaction
+    if owned_snapshot:
+        db.execute("BEGIN")
+    try:
+        return read_readiness_projection(db)
+    finally:
+        if owned_snapshot:
+            db.rollback()  # Read-only snapshot, never commit caller writes.
+
+
+def read_readiness_projection(db: sqlite3.Connection) -> dict:
+    timestamp = now()
+    def latest(scope):
+        scopes = ("telegram_poll", "telegram_delivery_path") if scope == "telegram_poll" else (scope, scope)
+        row = db.execute("SELECT * FROM status_observations WHERE scope IN (?,?) AND model=? AND reason!='observation_pending' ORDER BY id DESC LIMIT 1",
+                         (*scopes, MODEL)).fetchone()
+        if row is None:
+            return {"state": "UNVERIFIED", "reason": "observation_missing", "observed_at": None, "expires_at": None}
+        result = {key: row[key] for key in ("state", "reason", "observed_at")}
+        result["expires_at"] = row["observed_at"] + 30
+        if not row["observed_at"] <= timestamp <= result["expires_at"]:
+            result.update(state="UNVERIFIED", reason="observation_stale")
+        return result
+    backends = [{"backend": backend["name"], "model": MODEL, **latest("backend_" + backend["name"])}
+                for backend in GATEWAY_BACKENDS]
+    eligible = sum(item["state"] == "ELIGIBLE" for item in backends)
+    gateway = "AVAILABLE" if eligible == len(backends) else "DEGRADED" if eligible else (
+        "UNAVAILABLE" if all(item["state"] == "UNAVAILABLE" for item in backends) else "UNVERIFIED")
+    bot = latest("telegram_poll")
+    delivery = delivery_observation(db, model=MODEL)
+    delivered = db.execute("SELECT id FROM inference_events WHERE model=? AND delivery_state='delivered' ORDER BY delivery_order DESC LIMIT 1",
+                           (MODEL,)).fetchone()
+    contradictory = delivered is not None and db.execute(
+        "SELECT 1 FROM inference_events WHERE model=? AND id>? AND "
+        "(outcome IN ('transport_error','invalid_response','empty_response') OR outcome GLOB 'http_5[0-9][0-9]') LIMIT 1",
+        (MODEL, delivered[0])).fetchone() is not None
+    combined = "UNVERIFIED"
+    reason = "delivery_unverified"
+    if bot["state"] == "FAILED" or delivery["state"] == "DELIVERY_FAILED":
+        combined, reason = "BOT_FAILED", "telegram_path_failed"
+    elif gateway == "UNAVAILABLE":
+        combined, reason = "UNAVAILABLE", "no_eligible_backend"
+    elif delivery["state"] == "STALE":
+        reason = "delivery_stale"
+    elif contradictory:
+        reason = "inference_failure_after_delivery"
+    elif bot["state"] == "OK" and eligible and delivery["state"] == "RECENT" and delivery["model"] == MODEL:
+        combined, reason = "LIVE", "recent_delivery_and_current_eligibility"
+    revision = db.execute("SELECT (SELECT revision FROM status_projection_clock WHERE singleton=1) + "
+                          "(SELECT coalesce(max(id),0)+coalesce(max(delivery_order),0) FROM inference_events)").fetchone()[0]
+    telemetry = TRAFFIC.latest(db, MODEL, timestamp) if TRAFFIC_METRICS_URL else {
+        "scope": "consumer_inference_attempts", "state": "PARTIAL", "reason": "direct_client_metrics_not_collected"}
+    revision += TRAFFIC.revision(db)
+    return {"schema_version": 1, "scope": "telegram_model_backend", "model": MODEL, "revision": revision,
+            "gateway_state": gateway, "combined_state": combined, "reason": reason,
+            "backends": backends, "bot": bot, "delivery": delivery,
+            "telemetry": telemetry}
+
+
+def observe_backend(db: sqlite3.Connection, backend) -> None:
+    receipt = begin_status_observation(db, "backend_" + backend["name"])
+    deadline = time.monotonic() + 6
+    def read(url):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("status deadline elapsed")
+        request = Request(url, headers={"Authorization": f"Bearer {backend['api_key']}", "Accept": "application/json"})
+        with urlopen(request, timeout=min(3, remaining)) as response:
+            payload = json.load(response)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("status deadline elapsed")
+        return payload
+    try:
+        admission = read(backend["admission_url"])
+        if not isinstance(admission, dict) or type(admission.get("available")) is not bool:
+            raise ValueError("invalid admission observation")
+        if admission["available"] is False:
+            reason = admission.get("reason")
+            if not isinstance(reason, str) or not re.fullmatch(r"[a-z0-9_]+", reason):
+                reason = "runtime_unavailable"
+            finish_status_observation(db, receipt, "UNAVAILABLE", reason)
+            return
+        status = read(backend["base_url"] + "/status")
+        capacity = status["capacity"]["models"][MODEL]
+        limiter = status["limiter"]["models"][MODEL]
+        weight = float(capacity.get("current_weight", capacity.get("total_weight", 0)))
+        slots = float(limiter["effective_max_concurrent_requests"])
+        if (not math.isfinite(weight) or not math.isfinite(slots)
+                or type(capacity.get("current_weight", capacity.get("total_weight", 0))) is bool
+                or type(limiter["effective_max_concurrent_requests"]) is bool
+                or type(capacity.get("routable")) is not bool
+                or type(capacity.get("access_enabled")) is not bool):
+            raise ValueError("invalid model capacity")
+        runtimes = status["devshards"]
+        if not isinstance(runtimes, list) or not all(isinstance(item, dict) for item in runtimes):
+            raise ValueError("invalid current runtime observation")
+        def active(item):
+            runtime = item.get("runtime", item)
+            if not (isinstance(runtime, dict) and item.get("active") is True
+                    and runtime.get("phase") == "active" and runtime.get("requests_blocked") is False
+                    and (item.get("chain_phase") or runtime.get("chain_phase")) == "Inference"):
+                return False
+            # Both supported layouts carry a runtime model, never infer its
+            # identity from positive capacity for a different model.
+            models = [value["model"] for value in (item, runtime) if "model" in value]
+            if not models or any(not isinstance(model, str) or not model for model in models) or len(set(models)) != 1:
+                raise ValueError("missing or contradictory runtime model")
+            return models[0] == MODEL
+        model_runtimes = [active(item) for item in runtimes]
+        eligible = (weight > 0 and slots > 0 and capacity["routable"]
+                    and capacity["access_enabled"] and any(model_runtimes))
+        if time.monotonic() >= deadline:
+            raise TimeoutError("status deadline elapsed")
+        finish_status_observation(db, receipt, "ELIGIBLE" if eligible else "UNAVAILABLE",
+                                  "model_eligible" if eligible else "model_capacity_unavailable")
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        finish_status_observation(db, receipt, "UNVERIFIED", "status_observation_unavailable")
+
+
+def status_observer(stopped: threading.Event) -> None:
+    # Bounded read-only observations, never inference dispatch or website I/O.
+    with connection() as db:
+        while not stopped.is_set():
+            for backend in GATEWAY_BACKENDS:
+                if stopped.is_set():
+                    return
+                observe_backend(db, backend)
+            stopped.wait(5)
+
+
+def observe_traffic(db: sqlite3.Connection) -> None:
+    if not TRAFFIC_METRICS_URL:
+        return
+    previous = TRAFFIC.latest(db, MODEL, now())
+    receipt = TRAFFIC.begin(db, MODEL, now())
+    snapshot = TRAFFIC.collect(TRAFFIC_METRICS_URL, MODEL, previous=previous)
+    TRAFFIC.finish(db, receipt, snapshot)
+
+
+def traffic_observer(stopped: threading.Event) -> None:
+    # Separate from backend readiness I/O, telemetry cannot extend its cycle
+    # or dispatch inference, native counters already include bot attempts.
+    if not TRAFFIC_METRICS_URL:
+        return
+    with connection() as db:
+        while not stopped.is_set():
+            observe_traffic(db)
+            stopped.wait(5)
+
+
+def delivery_observation(db: sqlite3.Connection, model=None) -> dict:
+    """Delivery evidence only, current model/backend eligibility is separate."""
+    row = db.execute("SELECT backend, model, delivery_state, delivery_observed_at FROM inference_events "
+                     "WHERE outcome='success' AND delivery_observed_at IS NOT NULL "
+                     "AND (? IS NULL OR model=?) ORDER BY delivery_order DESC LIMIT 1", (model, model)).fetchone()
+    result = {"schema_version": 1, "scope": "telegram_inference_delivery",
+              "state": "UNVERIFIED", "combined_readiness": "UNVERIFIED",
+              "observed_at": None, "expires_at": None, "backend": None, "model": None}
+    if row is None:
+        return result
+    observed = row["delivery_observed_at"]
+    result.update(observed_at=observed, expires_at=observed + 120,
+                  backend=row["backend"], model=row["model"])
+    if observed > now():
+        return result
+    result["state"] = "STALE" if now() - observed > 120 else "RECENT" if row["delivery_state"] == "delivered" else "DELIVERY_FAILED"
+    return result
+
+
+def record_delivery(db: sqlite3.Connection, event_id, succeeded: bool) -> None:
+    # Never attach a delivery to the latest global event, another request may
+    # have completed concurrently, only this response's exact receipt can bind.
+    if type(event_id) is not int or event_id <= 0:
+        return
+    db.execute("BEGIN IMMEDIATE")
+    order = db.execute("SELECT coalesce(max(delivery_order),0)+1 FROM inference_events").fetchone()[0]
+    db.execute("UPDATE inference_events SET delivery_state=?, delivery_observed_at=?, delivery_order=? "
+               "WHERE id=? AND outcome='success' AND delivery_state='unverified'",
+               ("delivered" if succeeded else "failed", now(), order, event_id))
+    updated = db.execute("SELECT changes()").fetchone()[0]
+    delivery_model = db.execute("SELECT model FROM inference_events WHERE id=?", (event_id,)).fetchone()
+    db.commit()
+    if updated:
+        receipt = begin_status_observation(db, "telegram_delivery_path", model=delivery_model[0])
+        finish_status_observation(db, receipt, "OK" if succeeded else "FAILED",
+                                  "telegram_delivery_succeeded" if succeeded else "telegram_delivery_failed")
+    publish_metrics(db)
 
 
 def upsert_user(db: sqlite3.Connection, telegram_id: int, is_premium: bool) -> None:
@@ -295,16 +639,16 @@ def bounded_history(db: sqlite3.Connection, conversation_id: str):
     return selected
 
 
-def record_inference(db: sqlite3.Connection, outcome: str, usage=None) -> None:
+def record_inference(db: sqlite3.Connection, outcome: str, usage=None, backend: str = "unknown") -> int:
     usage = usage if isinstance(usage, dict) else {}
     input_tokens = usage.get("prompt_tokens")
     output_tokens = usage.get("completion_tokens")
     total_tokens = usage.get("total_tokens")
     complete = all(isinstance(value, int) and value >= 0 for value in (input_tokens, output_tokens))
-    db.execute(
+    cursor = db.execute(
         "INSERT INTO inference_events "
-        "(model, outcome, input_tokens, output_tokens, total_tokens, usage_missing, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(model, outcome, input_tokens, output_tokens, total_tokens, usage_missing, created_at, backend) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             MODEL,
             outcome,
@@ -313,30 +657,86 @@ def record_inference(db: sqlite3.Connection, outcome: str, usage=None) -> None:
             total_tokens if complete and isinstance(total_tokens, int) and total_tokens >= 0 else 0,
             0 if outcome != "success" or complete else 1,
             now(),
+            backend,
         ),
     )
     db.commit()
     publish_metrics(db)
+    return cursor.lastrowid
 
 
-def require_gateway_admission(db: sqlite3.Connection) -> None:
+class GatewayPreDispatchRejected(RuntimeError):
+    """The gateway confirms no completion was dispatched for this attempt."""
+
+
+def route_control_state() -> dict:
+    """Return the short-lived, loopback-operator test control without secrets."""
+    global _route_control
+    with _route_control_lock:
+        if _route_control["expires_at"] <= now():
+            _route_control = {"disabled_backends": (), "force_next_backend": None, "expires_at": 0}
+        return dict(_route_control)
+
+
+def set_route_control(payload) -> dict:
+    """Set an expiry-bounded A/B pre-dispatch test control for LIVE-006 only."""
+    if not isinstance(payload, dict) or set(payload) != {
+        "disabled_backends", "force_next_backend", "ttl_seconds"
+    }:
+        raise ValueError("route control requires disabled_backends, force_next_backend and ttl_seconds")
+    disabled = payload["disabled_backends"]
+    forced = payload["force_next_backend"]
+    ttl = payload["ttl_seconds"]
+    names = {backend["name"] for backend in GATEWAY_BACKENDS}
+    if (
+        not isinstance(disabled, list)
+        or not all(isinstance(name, str) for name in disabled)
+        or len(disabled) != len(set(disabled))
+        or set(disabled) - names
+    ):
+        raise ValueError("disabled_backends must be unique A/B backend names")
+    if forced is not None and forced not in names:
+        raise ValueError("force_next_backend must be an A/B backend name or null")
+    if not isinstance(ttl, int) or isinstance(ttl, bool) or not 1 <= ttl <= MAX_ROUTE_CONTROL_TTL_SECONDS:
+        raise ValueError(f"ttl_seconds must be an integer from 1 to {MAX_ROUTE_CONTROL_TTL_SECONDS}")
+    global _route_control
+    with _route_control_lock:
+        _route_control = {
+            "disabled_backends": tuple(sorted(disabled)),
+            "force_next_backend": forced,
+            "expires_at": now() + ttl,
+        }
+    return route_control_state()
+
+
+def clear_route_control() -> dict:
+    global _route_control
+    with _route_control_lock:
+        _route_control = {"disabled_backends": (), "force_next_backend": None, "expires_at": 0}
+    return route_control_state()
+
+
+def require_gateway_admission(db: sqlite3.Connection, backend, timeout_seconds=None) -> None:
     """Fail before conversation dispatch when the shared gateway says no."""
+    if backend["name"] in route_control_state()["disabled_backends"]:
+        record_inference(db, "pre_dispatch_route_controlled", backend=backend["name"])
+        raise GatewayPreDispatchRejected("gateway route is temporarily disabled for controlled test")
     request = Request(
-        GATEWAY_ADMISSION_STATUS_URL,
-        headers={"Authorization": f"Bearer {GATEWAY_API_KEY}", "Accept": "application/json"},
+        backend["admission_url"],
+        headers={"Authorization": f"Bearer {backend['api_key']}", "Accept": "application/json"},
     )
     try:
-        with urlopen(request, timeout=GATEWAY_ADMISSION_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=timeout_seconds or GATEWAY_ADMISSION_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
     except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
-        record_inference(db, "pre_dispatch_status_unavailable")
-        raise RuntimeError("gateway pre dispatch rejected") from error
+        record_inference(db, "pre_dispatch_status_unavailable", backend=backend["name"])
+        raise GatewayPreDispatchRejected("gateway pre dispatch rejected") from error
     if not isinstance(payload, dict) or payload.get("available") is not True:
         reason = payload.get("reason") if isinstance(payload, dict) else None
         if not isinstance(reason, str) or not re.fullmatch(r"[a-z0-9_]+", reason):
             reason = "runtime_unavailable"
-        record_inference(db, f"pre_dispatch_{reason}")
-        raise RuntimeError("gateway pre dispatch rejected")
+        record_inference(db, f"pre_dispatch_{reason}", backend=backend["name"])
+        raise GatewayPreDispatchRejected("gateway pre dispatch rejected")
 
 
 def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text: str):
@@ -345,7 +745,7 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
     ).fetchone()
     if not conversation:
         raise ValueError("conversation not found")
-    require_gateway_admission(db)
+    global _backend_cursor
     messages = bounded_history(db, conversation_id)
     messages.append({"role": "user", "content": input_text})
     body = json.dumps({
@@ -354,44 +754,75 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
         "max_tokens": MAX_OUTPUT_TOKENS,
         "temperature": 0.2,
     }).encode()
+    deadline_monotonic = time.monotonic() + GATEWAY_TIMEOUT_SECONDS
     deadline_ms = str(int(time.time() * 1000) + GATEWAY_TIMEOUT_SECONDS * 1000)
-    request = Request(
-        f"{GATEWAY_API_BASE_URL}/chat/completions",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {GATEWAY_API_KEY}",
-            "Content-Type": "application/json",
-            "X-Request-Deadline-Ms": deadline_ms,
-        },
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=GATEWAY_TIMEOUT_SECONDS) as response:
-            payload = json.load(response)
-    except HTTPError as error:
-        admission = error.headers.get("X-GDC-Admission", "") if error.headers else ""
-        if admission == "pre_dispatch_rejected":
-            record_inference(db, f"pre_dispatch_http_{error.code}")
-            raise RuntimeError("gateway pre dispatch rejected") from error
-        record_inference(db, f"http_{error.code}")
-        raise RuntimeError(f"gateway returned HTTP {error.code}") from error
-    except ValueError as error:
-        record_inference(db, "invalid_response")
-        raise RuntimeError("gateway returned invalid JSON") from error
-    except (URLError, TimeoutError, OSError) as error:
-        record_inference(db, "transport_error")
-        raise RuntimeError("gateway request failed") from error
+    with _backend_lock:
+        controls = route_control_state()
+        forced = controls["force_next_backend"]
+        if forced:
+            first = next(backend for backend in GATEWAY_BACKENDS if backend["name"] == forced)
+            with _route_control_lock:
+                _route_control["force_next_backend"] = None
+        else:
+            first = GATEWAY_BACKENDS[_backend_cursor % len(GATEWAY_BACKENDS)]
+            _backend_cursor += 1
+    candidates = [first] + [item for item in GATEWAY_BACKENDS if item is not first]
+    last_error = None
+    for backend in candidates:
+        try:
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                raise GatewayPreDispatchRejected("gateway deadline expired before dispatch")
+            require_gateway_admission(db, backend, min(GATEWAY_ADMISSION_TIMEOUT_SECONDS, remaining))
+        except GatewayPreDispatchRejected as error:
+            last_error = error
+            continue
+        request = Request(
+            f"{backend['base_url']}/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {backend['api_key']}",
+                "Content-Type": "application/json",
+                "X-Request-Deadline-Ms": deadline_ms,
+            },
+            method="POST",
+        )
+        try:
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                last_error = GatewayPreDispatchRejected("gateway deadline expired before dispatch")
+                continue
+            with urlopen(request, timeout=remaining) as response:
+                payload = json.load(response)
+        except HTTPError as error:
+            admission = error.headers.get("X-GDC-Admission", "") if error.headers else ""
+            if admission == "pre_dispatch_rejected":
+                record_inference(db, f"pre_dispatch_http_{error.code}", backend=backend["name"])
+                last_error = GatewayPreDispatchRejected("gateway pre dispatch rejected")
+                continue
+            else:
+                record_inference(db, f"http_{error.code}", backend=backend["name"])
+                raise RuntimeError(f"gateway returned HTTP {error.code}") from error
+        except ValueError:
+            record_inference(db, "invalid_response", backend=backend["name"])
+            raise RuntimeError("gateway returned invalid JSON")
+        except (URLError, TimeoutError, OSError):
+            record_inference(db, "transport_error", backend=backend["name"])
+            raise RuntimeError("gateway request failed")
+        break
+    else:
+        raise last_error or RuntimeError("gateway pre dispatch rejected")
     try:
         output_text = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as error:
-        record_inference(db, "invalid_response")
+        record_inference(db, "invalid_response", backend=backend["name"])
         raise RuntimeError("gateway returned an invalid completion") from error
     if not isinstance(output_text, str):
-        record_inference(db, "invalid_response")
+        record_inference(db, "invalid_response", backend=backend["name"])
         raise RuntimeError("gateway returned an invalid completion")
     output_text = visible_output_text(output_text)
     if not output_text:
-        record_inference(db, "empty_response")
+        record_inference(db, "empty_response", backend=backend["name"])
         raise RuntimeError("gateway returned no user-visible completion")
     timestamp = now()
     db.executemany(
@@ -404,7 +835,7 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
     db.execute("UPDATE conversations SET updated_at = ? WHERE conversation_id = ?", (timestamp, conversation_id))
     db.commit()
     usage = payload.get("usage")
-    record_inference(db, "success", usage)
+    event_id = record_inference(db, "success", usage, backend["name"])
     response_usage = {}
     if isinstance(usage, dict):
         response_usage = {
@@ -425,6 +856,7 @@ def gateway_completion(db: sqlite3.Connection, conversation_id: str, input_text:
         }],
         "output_text": output_text,
         "usage": response_usage,
+        "inference_event_id": event_id,
     }
 
 
@@ -458,6 +890,12 @@ class ConversationAPIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path == "/v1/route-controls":
+            if not self.authenticated():
+                self.send_json(401, {"error": {"message": "unauthorized"}})
+                return
+            self.send_json(200, route_control_state())
+            return
         self.send_json(404, {"error": {"message": "not found"}})
 
     def do_POST(self):
@@ -487,6 +925,14 @@ class ConversationAPIHandler(BaseHTTPRequestHandler):
                         raise ValueError("conversation and input are required")
                     self.send_json(200, gateway_completion(db, conversation_id, input_text))
                     return
+                if self.path == "/v1/route-controls":
+                    self.send_json(200, set_route_control(payload))
+                    return
+                if self.path == "/v1/route-controls/clear":
+                    if payload != {}:
+                        raise ValueError("route control clear requires an empty object")
+                    self.send_json(200, clear_route_control())
+                    return
             self.send_json(404, {"error": {"message": "not found"}})
         except ValueError as error:
             self.send_json(400, {"error": {"message": str(error)}})
@@ -513,7 +959,7 @@ def conversation_for_user(db: sqlite3.Connection, telegram_id: int) -> str:
     ).fetchone()
     if existing:
         return existing["conversation_id"]
-    return internal_api_request("/v1/conversations", {"telegram_user_id": telegram_id})["id"]
+    return create_conversation(db, telegram_id)
 
 
 def split_telegram_text(text: str):
@@ -528,6 +974,170 @@ def send_message(chat_id: int, text: str) -> None:
 
 def send_typing(chat_id: int) -> None:
     telegram_request("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+
+
+def faucet_request(address: str, telegram_id: int, idempotency_key: str):
+    """Retry transport uncertainty only with the same service-side intent key."""
+    if not FAUCET_URL or not FAUCET_TOKEN:
+        return 503, {"state": "unavailable"}
+    body = json.dumps({"address": address, "telegram_user_id": telegram_id}).encode()
+    for attempt in range(2):
+        request = Request(
+            FAUCET_URL,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {FAUCET_TOKEN}",
+                "Content-Type": "application/json",
+                "Idempotency-Key": idempotency_key,
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=FAUCET_TIMEOUT_SECONDS) as response:
+                return response.status, json.load(response)
+        except HTTPError as error:
+            try:
+                return error.code, json.load(error)
+            except (ValueError, json.JSONDecodeError):
+                return error.code, {"state": "unavailable"}
+        except (URLError, TimeoutError, OSError):
+            if attempt == 1:
+                return 503, {"state": "unavailable"}
+
+
+def faucet_admin_request(action: str, telegram_id: int, value=None):
+    if not FAUCET_URL or not FAUCET_TOKEN:
+        return 503, {"error": "unavailable"}
+    payload = {"telegram_user_id": telegram_id, "action": action}
+    if action in {"add", "remove"}:
+        payload["administrator_id"] = value
+    elif action == "limit":
+        payload["limit_ngonka"] = value
+    request = Request(
+        FAUCET_URL.rsplit("/", 1)[0] + "/telegram-admin",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {FAUCET_TOKEN}", "Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urlopen(request, timeout=FAUCET_TIMEOUT_SECONDS) as response:
+            return response.status, json.load(response)
+    except HTTPError as error:
+        try:
+            return error.code, json.load(error)
+        except (ValueError, OSError):
+            return error.code, {"error": "unavailable"}
+    except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+        return 503, {"error": "unavailable"}
+    return 503, {"state": "unavailable"}
+
+
+def key_broker_request(telegram_id: int, update_id: int):
+    if not KEY_BROKER_URL or not KEY_BROKER_TOKEN:
+        return 503, None
+    request = Request(KEY_BROKER_URL + "/v1/keys",
+        data=json.dumps({"telegram_id": telegram_id, "update_id": update_id}).encode(),
+        headers={"Authorization": f"Bearer {KEY_BROKER_TOKEN}", "Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(request, timeout=FAUCET_TIMEOUT_SECONDS) as response:
+            payload = json.load(response)
+            return response.status, payload.get("key") if isinstance(payload, dict) else None
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError):
+        return 503, None
+
+
+def faucet_reply(payload) -> str:
+    state = payload.get("state") if isinstance(payload, dict) else "unavailable"
+    amount = payload.get("amount_ngonka") if isinstance(payload, dict) else None
+    txhash = payload.get("txhash") if isinstance(payload, dict) else None
+    confirmation = payload.get("confirmation") if isinstance(payload, dict) else None
+    if state == "submitted" and isinstance(amount, str) and isinstance(txhash, str):
+        suffix = {
+            "confirmed": "confirmed on chain.",
+            "pending": "submitted; chain confirmation is still pending.",
+            "unavailable": "submitted; chain confirmation is not currently available.",
+            "failed": "submitted, but the chain reports failure.",
+        }.get(confirmation, "submitted; chain confirmation is unknown.")
+        return f"Faucet sent {amount}ngonka. Transaction: {txhash}. Status: {suffix}"
+    reason = payload.get("error") if isinstance(payload, dict) else None
+    if reason == "telegram faucet is closed":
+        return "The user faucet is closed by its administrators, inference remains independent"
+    if reason == "telegram faucet rolling amount limit reached":
+        return "Your rolling 24-hour faucet allowance is exhausted, requests across all your addresses share the same allowance\nNext eligibility timestamp: " + str(payload.get("next_eligible_at"))
+    if reason == "telegram faucet legacy amount requires reconciliation or window expiry":
+        return "An earlier faucet amount is unknown, funding stays reserved until reconciliation or its rolling window expires"
+    if state in {"uncertain", "pending"}:
+        return "Faucet transaction is pending or uncertain, the existing request will not be rebroadcast and still reserves your allowance"
+    if state == "failed":
+        return "The chain reports that the faucet transaction failed, no replacement transfer was sent"
+    if state == "cancelled":
+        return "The faucet closed before dispatch, this request was not signed and its allowance was released"
+    if state == "rate_limited":
+        return "Faucet anti-spam limit reached\nNext eligibility timestamp: " + str(payload.get("next_eligible_at"))
+    return "Faucet is temporarily unavailable. No transfer has been confirmed; please retry later."
+
+
+def faucet_control(parts):
+    """Parse private commands without floats, all limits are GNK at the UI."""
+    action = parts[1].lower() if len(parts) > 1 else ""
+    if action == "limit" and len(parts) == 4 and parts[3] == "24h":
+        parts = parts[:3]
+    if action in {"open", "close", "status", "list"} and len(parts) == 2:
+        return action, None
+    if action in {"add", "remove"} and len(parts) == 3 and re.fullmatch(r"[1-9][0-9]*", parts[2]):
+        value = int(parts[2])
+        if 0 < value <= 2**63 - 1:
+            return action, value
+    if action == "limit" and len(parts) == 3 and re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]{1,9})?", parts[2]):
+        whole, _, fraction = parts[2].partition(".")
+        value = int(whole) * 10**9 + int(fraction.ljust(9, "0"))
+        if 0 < value <= 2**63 - 1:
+            return action, value
+    raise ValueError("invalid private faucet control")
+
+
+def handle_faucet(db: sqlite3.Connection, update, chat_id: int, user_id: int, is_premium: bool, text: str) -> None:
+    parts = text.split()
+    if len(parts) != 2 or not valid_gonka_address(parts[1]):
+        send_message(chat_id, "Usage: /faucet <valid Gonka address>")
+        record_interaction(db, user_id, "faucet", "rejected", is_premium)
+        return
+    update_id = update.get("update_id")
+    if not isinstance(update_id, int) or update_id < 0:
+        send_message(chat_id, "Faucet request cannot be identified safely. Please send the command again.")
+        record_interaction(db, user_id, "faucet", "rejected", is_premium)
+        return
+    address = parts[1]
+    key = hashlib.sha256(f"telegram-update:{update_id}".encode()).hexdigest()
+    timestamp = now()
+    existing = db.execute(
+        "SELECT amount_ngonka, txhash, state, confirmation FROM faucet_updates WHERE update_id = ?", (update_id,)
+    ).fetchone()
+    if existing is None:
+        db.execute(
+            "INSERT INTO faucet_updates(update_id, chat_id, telegram_id, address, idempotency_key, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (update_id, chat_id, user_id, address, key, timestamp, timestamp),
+        )
+        db.commit()
+    else:
+        key = db.execute("SELECT idempotency_key FROM faucet_updates WHERE update_id = ?", (update_id,)).fetchone()[0]
+    status, payload = faucet_request(address, user_id, key)
+    state = payload.get("state") if isinstance(payload, dict) else "unavailable"
+    if status == 429:
+        state = "rate_limited"
+    db.execute(
+        "UPDATE faucet_updates SET amount_ngonka = ?, txhash = ?, state = ?, confirmation = ?, updated_at = ? WHERE update_id = ?",
+        (
+            payload.get("amount_ngonka") if isinstance(payload, dict) else None,
+            payload.get("txhash") if isinstance(payload, dict) else None,
+            state,
+            payload.get("confirmation") if isinstance(payload, dict) else None,
+            now(),
+            update_id,
+        ),
+    )
+    db.commit()
+    send_message(chat_id, faucet_reply({**payload, "state": state} if isinstance(payload, dict) else {"state": state}))
+    record_interaction(db, user_id, "faucet", "success" if state == "submitted" else state, is_premium)
 
 
 @contextmanager
@@ -560,7 +1170,7 @@ def handle(db: sqlite3.Connection, update) -> None:
     user = message.get("from") or {}
     raw_text = message.get("text")
     chat_id, user_id = chat.get("id"), user.get("id")
-    if not chat_id or not user_id or chat.get("type") != "private":
+    if type(chat_id) is not int or chat_id <= 0 or type(user_id) is not int or not 0 < user_id <= 2**63 - 1 or chat.get("type") != "private":
         return
     is_premium = user.get("is_premium") is True
     upsert_user(db, user_id, is_premium)
@@ -571,13 +1181,80 @@ def handle(db: sqlite3.Connection, update) -> None:
     text = raw_text.strip()
     command = text.split(maxsplit=1)[0].lower() if text.startswith("/") else ""
     if command in ("/start", "/help"):
-        send_message(chat_id, "Send a message to run chain-accounted inference. Use /new to start a new conversation.")
+        send_message(chat_id, "Send a message to run chain-accounted inference. Use /status for current observations, /api_key for a stable API key, /new, or /faucet <Gonka address> for test GNK.")
         record_interaction(db, user_id, "command", "success", is_premium)
+        return
+    if command == "/status":
+        projection = readiness_projection(db)
+        rows = [f"Model: {projection['model']}",
+                f"Gateway: {projection['gateway_state']}; Telegram inference: {projection['combined_state']}",
+                f"Reason: {projection['reason']}"]
+        for item in [*projection["backends"], {"backend": "Telegram", **projection["bot"]},
+                     {"backend": "Delivery", **projection["delivery"]}]:
+            rows.append(f"{item['backend']}: {item['state']}; observed {item['observed_at']}; expires {item['expires_at']}")
+        telemetry = projection["telemetry"]
+        rows.append(f"Telemetry: {telemetry['scope']}; {telemetry['state']}")
+        for item in telemetry.get("backends", []):
+            counts = ", ".join(f"{entry['outcome']}:{entry['reason']}={entry['value']:g}" for entry in item["counters"]) or "unknown"
+            rows.append(f"{item['backend']} traffic: {counts}; observed {item['observed_at']}; expires {item['expires_at']}; token counts unknown")
+        send_message(chat_id, "\n".join(rows))
+        record_interaction(db, user_id, "status", "success", is_premium)
         return
     if command == "/new":
         reset_user_conversation(db, user_id)
         send_message(chat_id, "Started a new conversation.")
         record_interaction(db, user_id, "command", "success", is_premium)
+        return
+    if command in ("/api_key", "/api-key"):
+        if "forward_origin" in message or "forward_from" in message:
+            send_message(chat_id, "API keys can only be requested in a new private message.")
+            record_interaction(db, user_id, "api_key", "rejected", is_premium)
+            return
+        update_id = update.get("update_id")
+        if not isinstance(update_id, int) or update_id < 0:
+            send_message(chat_id, "API key request cannot be identified safely. Please send the command again.")
+            record_interaction(db, user_id, "api_key", "rejected", is_premium)
+            return
+        status, key = key_broker_request(user_id, update_id)
+        if status == 200 and isinstance(key, str) and key.startswith("sk-gdc-"):
+            send_message(chat_id, "Your stable API key (a later request replaces it):\n" + key + "\nOpenAI: /v1\nAnthropic: /anthropic\nGenAI: /genai")
+            record_interaction(db, user_id, "api_key", "success", is_premium)
+        else:
+            send_message(chat_id, "API key issuance is temporarily unavailable; no replacement was confirmed.")
+            record_interaction(db, user_id, "api_key", "unavailable", is_premium)
+        return
+    if command in {"/faucet", "/admins"}:
+        if any(field in message for field in ("forward_origin", "forward_from", "forward_from_chat", "forward_sender_name", "forward_date")):
+            send_message(chat_id, "Faucet requests require a new private message from the actual sender")
+            record_interaction(db, user_id, "faucet", "rejected", is_premium)
+            return
+        parts = text.split()
+        if command == "/admins" and (len(parts) < 2 or parts[1].lower() not in {"list", "add", "remove"}):
+            send_message(chat_id, "Usage: /admins list, /admins add <numeric ID>, /admins remove <numeric ID>")
+            record_interaction(db, user_id, "faucet_admin", "rejected", is_premium)
+            return
+        if len(parts) > 1 and parts[1].lower() in {"open", "close", "status", "list", "add", "remove", "limit"}:
+            try:
+                action, value = faucet_control(parts)
+            except ValueError:
+                send_message(chat_id, "Usage: /faucet open|close|status, /faucet limit <positive GNK> [24h], /admins list|add|remove [numeric administrator ID]")
+                record_interaction(db, user_id, "faucet_admin", "rejected", is_premium)
+                return
+            status, payload = faucet_admin_request(action, user_id, value) if value is not None else faucet_admin_request(action, user_id)
+            if status == 200 and isinstance(payload, dict) and payload.get("state") in {"open", "closed"}:
+                reply = f"Faucet is {payload['state']}."
+                if action not in {"open", "close", "status"}:
+                    reply = f"Faucet is {payload['state']}\nRolling 24-hour limit: {payload.get('limit_ngonka')}ngonka\nAdministrator IDs: " + ", ".join(str(value) for value in payload.get("administrator_ids", []))
+                elif action == "status":
+                    reply = f"Faucet is {payload['state']}\nRemaining rolling 24-hour allowance: {payload.get('remaining_ngonka')}ngonka\nNext eligibility timestamp: {payload.get('next_eligible_at')}\nAccounting: {payload.get('accounting')}\nChain service: {payload.get('chain_service_state')}"
+                send_message(chat_id, reply)
+            elif status == 409:
+                send_message(chat_id, "The last faucet administrator cannot be removed")
+            else:
+                send_message(chat_id, "Faucet administration is unavailable or not authorized.")
+            record_interaction(db, user_id, "faucet_admin", "success" if status == 200 else "rejected", is_premium)
+            return
+        handle_faucet(db, update, chat_id, user_id, is_premium, text)
         return
     if command:
         send_message(chat_id, "Unknown command. Use /new to start a new conversation or send a message.")
@@ -587,14 +1264,11 @@ def handle(db: sqlite3.Connection, update) -> None:
         send_message(chat_id, f"Message must contain between 1 and {MAX_USER_MESSAGE_CHARS} characters.")
         record_interaction(db, user_id, "message", "rejected", is_premium)
         return
+    result = None
     try:
         with typing_indicator(chat_id):
-            # Give the user immediate feedback, then fail fast at the shared
-            # Gateway boundary before creating a conversation or contacting
-            # the internal response API.
-            require_gateway_admission(db)
             conversation_id = conversation_for_user(db, user_id)
-            result = internal_api_request("/v1/responses", {"conversation": conversation_id, "input": text})
+            result = gateway_completion(db, conversation_id, text)
         reply = result["output_text"]
         outcome = "success"
     except Exception as error:
@@ -608,6 +1282,8 @@ def handle(db: sqlite3.Connection, update) -> None:
         # keeping the polling loop alive for the next user message.
         print(f"Telegram reply delivery failed: {type(error).__name__}", flush=True)
         outcome = "delivery_error"
+    if result is not None:
+        record_delivery(db, result.get("inference_event_id"), outcome == "success")
     record_interaction(db, user_id, "message", outcome, is_premium)
 
 
@@ -631,15 +1307,20 @@ def main() -> None:
         publish_metrics(db)
     server = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), ConversationAPIHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=status_observer, args=(threading.Event(),), daemon=True).start()
+    threading.Thread(target=traffic_observer, args=(threading.Event(),), daemon=True).start()
     offset = None
     with connection() as db:
         while True:
+            poll_receipt = begin_status_observation(db, "telegram_poll")
             try:
                 updates = telegram_request("getUpdates", {"offset": offset, "timeout": 30, "allowed_updates": ["message"]})
+                finish_status_observation(db, poll_receipt, "OK", "telegram_poll_succeeded")
                 for update in updates:
                     offset = update["update_id"] + 1
                     handle(db, update)
             except Exception as error:
+                finish_status_observation(db, poll_receipt, "FAILED", "telegram_poll_failed")
                 print(f"retrying after bot error: {type(error).__name__}", flush=True)
                 time.sleep(3)
 

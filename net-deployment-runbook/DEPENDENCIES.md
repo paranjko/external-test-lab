@@ -20,6 +20,13 @@ operator diagnostic.
 `rg` is deliberately not a runbook dependency. Shell code must use `grep`
 when the portable baseline is sufficient.
 
+The standalone `install_inferenced.sh` requires `curl`, `unzip`, `awk`, `jq`,
+and either `sha256sum` or `shasum`. `jq` validates the selected official
+release and its asset digest; it is already in the CI baseline. DevNet callers
+pass their profile version explicitly, while generic no-argument installation
+retains newest-published-release selection. See
+[`inferenced-installer.md`](../broker-ops/inferenced-installer.md).
+
 `flock` is required by the preview lifecycle controller and is declared in the
 CI command baseline.
 
@@ -29,6 +36,13 @@ TMKMS image. Its extra packages are declared in
 They provide JSON assertions and the Unix-socket protocol transport; they are
 not operator or Host dependencies. The build checks that the TMKMS executable
 is unchanged, and the test runs without network access or Host mounts.
+
+Python contract dependencies are pinned in
+[`dependencies/python-test-requirements.txt`](dependencies/python-test-requirements.txt).
+The CI workflow provisions them through the named
+`install-python-test-dependencies` Make target before `make test`; local
+operators run the same target when their Python environment lacks a declared
+module.
 
 Before adding an external executable to runbook shell code:
 

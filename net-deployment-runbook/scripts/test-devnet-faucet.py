@@ -15,8 +15,32 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FAUCET = ROOT / "04-ops" / "faucet" / "faucet.py"
-ADDRESS_A = "gonka1" + "a" * 38
-ADDRESS_B = "gonka1" + "b" * 38
+BECH32_ALPHABET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+BECH32_GENERATOR = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
+
+
+def polymod(values):
+    checksum = 1
+    for value in values:
+        top = checksum >> 25
+        checksum = (checksum & 0x1FFFFFF) << 5 ^ value
+        for index, generator in enumerate(BECH32_GENERATOR):
+            if (top >> index) & 1:
+                checksum ^= generator
+    return checksum
+
+
+def address(seed):
+    human = "gonka"
+    data = [(seed + index) % 32 for index in range(32)]
+    expanded = [ord(char) >> 5 for char in human] + [0] + [ord(char) & 31 for char in human]
+    remainder = polymod(expanded + data + [0] * 6) ^ 1
+    checksum = [(remainder >> 5 * (5 - index)) & 31 for index in range(6)]
+    return human + "1" + "".join(BECH32_ALPHABET[value] for value in data + checksum)
+
+
+ADDRESS_A = address(1)
+ADDRESS_B = address(2)
 
 
 def reserve_port():
@@ -32,6 +56,33 @@ def request(port, address, forwarded_for="198.51.100.7"):
         "/v1/claim",
         body=json.dumps({"address": address}),
         headers={"Content-Type": "application/json", "X-Forwarded-For": forwarded_for},
+    )
+    response = connection.getresponse()
+    payload = json.loads(response.read())
+    connection.close()
+    return response.status, payload
+
+
+def telegram_request(port, address, key, telegram_id=77, token="test-telegram-token"):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request(
+        "POST",
+        "/v1/telegram-claim",
+        body=json.dumps({"address": address, "telegram_user_id": telegram_id}),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}", "Idempotency-Key": key},
+    )
+    response = connection.getresponse()
+    payload = json.loads(response.read())
+    connection.close()
+    return response.status, payload
+
+
+def telegram_admin(port, action, telegram_id=77, token="test-telegram-token"):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    connection.request(
+        "POST", "/v1/telegram-admin",
+        body=json.dumps({"telegram_user_id": telegram_id, "action": action}),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
     )
     response = connection.getresponse()
     payload = json.loads(response.read())
@@ -85,6 +136,9 @@ with tempfile.TemporaryDirectory() as temporary:
         "FAUCET_LISTEN_HOST": "127.0.0.1",
         "FAUCET_LISTEN_PORT": str(port),
         "FAUCET_MAX_CLAIMS_PER_IP": "1",
+        "FAUCET_TELEGRAM_TOKEN": "test-telegram-token",
+        "FAUCET_INITIAL_ADMINS_JSON": "[77]",
+        "FAUCET_TELEGRAM_MAX_CLAIMS_PER_USER": "1",
     }
     process = subprocess.Popen(["python3", str(FAUCET)], env=environment)
     try:
@@ -100,6 +154,25 @@ with tempfile.TemporaryDirectory() as temporary:
         assert status == 429, status
         status, _ = request(port, "not-a-gonka-address", "203.0.113.4")
         assert status == 400, status
+        key_a = "a" * 64
+        status, payload = telegram_request(port, ADDRESS_A, key_a)
+        assert status == 403 and payload["error"] == "telegram faucet is closed", (status, payload)
+        status, payload = telegram_admin(port, "open", telegram_id=78)
+        assert status == 403 and payload["error"] == "telegram user is not a faucet administrator", (status, payload)
+        status, payload = telegram_admin(port, "open")
+        assert status == 200 and payload == {"state": "open", "admin": True}, (status, payload)
+        status, payload = telegram_request(port, ADDRESS_A, key_a)
+        assert status == 202 and payload["state"] == "submitted" and payload["confirmation"] == "unavailable", (status, payload)
+        status, duplicate = telegram_request(port, ADDRESS_A, key_a)
+        assert status == 202 and duplicate == payload, (status, duplicate, payload)
+        status, _ = telegram_request(port, ADDRESS_A, "b" * 64)
+        assert status == 429, status
+        status, payload = telegram_admin(port, "close")
+        assert status == 200 and payload == {"state": "closed", "admin": True}, (status, payload)
+        status, payload = telegram_request(port, ADDRESS_B, "d" * 64)
+        assert status == 403 and payload["error"] == "telegram faucet is closed", (status, payload)
+        status, _ = telegram_request(port, ADDRESS_B, "c" * 64, token="wrong")
+        assert status == 403, status
     finally:
         process.terminate()
         process.wait(timeout=5)

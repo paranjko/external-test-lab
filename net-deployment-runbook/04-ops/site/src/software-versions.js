@@ -15,6 +15,7 @@ type SoftwareVersionsApi = {
   formatMlNodes: (chain: string, mlnodes: Array<VersionValue>) => string,
   describeMlNodes: (chain: string, mlnodes: Array<VersionValue>) => Array<string>,
   selectLatestInventory: (samples: Array<any>) => Map<string, any>,
+  selectDevShardIdentity: (samples: Array<any>, host: string, timestamp: number) => Map<string, any>,
 };
 (function attachSoftwareVersions(
   root: any,
@@ -125,6 +126,29 @@ type SoftwareVersionsApi = {
       return `chain ${chain} · DAPI ${dapi}`;
     }
 
+    function selectDevShardIdentity(samples: Array<any>, host: string, timestamp: number): Map<string, any> {
+      const selected: Map<string, any> = new Map();
+      const ambiguous: Set<string> = new Set();
+      for (const sample of samples) {
+        const metric = sample?.metric;
+        if (metric?.host !== host || !["v3", "v4", "v5"].includes(metric?.slot)) continue;
+        const slot = metric.slot;
+        if (selected.has(slot)) ambiguous.add(slot);
+        const source = Number(sample?.value?.[1]);
+        if (metric.source !== "process" || typeof sample?.value?.[1] !== "string" || !Number.isFinite(source) || source <= 0 || source > timestamp || timestamp - source > 90 ||
+            !/^[0-9a-f]{64}$/.test(metric.binary_sha256 || "") ||
+            !(metric.version === "unreported" || /^v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(metric.version || ""))) {
+          ambiguous.add(slot);
+          continue;
+        }
+        selected.set(slot, { slot, version: metric.version, binarySha256: metric.binary_sha256,
+          archiveSha256: /^[0-9a-f]{64}$/.test(metric.archive_sha256 || "") ? metric.archive_sha256 : null,
+          observedAt: source });
+      }
+      for (const slot of ambiguous) selected.delete(slot);
+      return selected;
+    }
+
     return {
       format,
       displayVersion,
@@ -132,6 +156,7 @@ type SoftwareVersionsApi = {
       formatMlNodes,
       describeMlNodes,
       selectLatestInventory,
+      selectDevShardIdentity,
     };
   },
 );

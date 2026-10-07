@@ -8,6 +8,7 @@ tmp="$(mktemp -d "$tmp_root/gdc-site-release-paths.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
 
 make -C "$ROOT" prepare-static-site site_release_dir="$tmp/site"
+cmp "$ROOT/../install_inferenced.sh" "$tmp/site/install_inferenced.sh"
 
 node - "$tmp/site" <<'NODE'
 const fs = require('fs');

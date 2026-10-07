@@ -113,6 +113,39 @@
     handle /ops-telegram-consumer-health {
       respond 403
     }
+    @gateway_metrics_from_monitoring {
+      path /ops-gateway-metrics
+      remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @gateway_metrics_from_monitoring {
+      rewrite * /metrics
+      reverse_proxy {$GDC_GATEWAY_METRICS_UPSTREAM}
+    }
+    handle /ops-gateway-metrics {
+      respond 403
+    }
+    @gateway_route_metrics_from_monitoring {
+      path /ops-gateway-route-metrics
+      remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.1 ::1
+    }
+    handle @gateway_route_metrics_from_monitoring {
+      rewrite * /metrics
+      reverse_proxy 127.0.0.1:18100
+    }
+    handle /ops-gateway-route-metrics {
+      respond 403
+    }
+    @gateway_admission_metrics_from_monitoring {
+      path /ops-gateway-admission-metrics
+      remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.1 ::1
+    }
+    handle @gateway_admission_metrics_from_monitoring {
+      rewrite * /metrics
+      reverse_proxy 127.0.0.1:18083
+    }
+    handle /ops-gateway-admission-metrics {
+      respond 403
+    }
     @root path /
     redir @root /dashboard/gonka/gov 308
     # The public edge owns public TLS but is not necessarily a chain participant.
@@ -186,6 +219,45 @@ preview.{$SITE_HOST} {
   handle /status/gateway/v1/admission-status {
     rewrite * /v1/admission-status
     reverse_proxy 127.0.0.1:18083
+  }
+  # The traffic widget needs independent, read-only A/B observations. Keep
+  # these exact routes narrow: neither admin nor accounting endpoints are
+  # available through the site origin.
+  handle /status/gateways/a/v1/status {
+    rewrite * /a/v1/status
+    reverse_proxy https://{$API_HOST} {
+      transport http {
+        tls_server_name {$API_HOST}
+      }
+      header_up Host {$API_HOST}
+    }
+  }
+  handle /status/gateways/a/v1/admission-status {
+    rewrite * /a/v1/admission-status
+    reverse_proxy https://{$API_HOST} {
+      transport http {
+        tls_server_name {$API_HOST}
+      }
+      header_up Host {$API_HOST}
+    }
+  }
+  handle /status/gateways/b/v1/status {
+    rewrite * /b/v1/status
+    reverse_proxy https://{$API_HOST} {
+      transport http {
+        tls_server_name {$API_HOST}
+      }
+      header_up Host {$API_HOST}
+    }
+  }
+  handle /status/gateways/b/v1/admission-status {
+    rewrite * /b/v1/admission-status
+    reverse_proxy https://{$API_HOST} {
+      transport http {
+        tls_server_name {$API_HOST}
+      }
+      header_up Host {$API_HOST}
+    }
   }
   # A preview endpoint must exercise the same status route as production.
   # Keep this shared route ahead of the static preview file handler. Admission
@@ -274,6 +346,66 @@ preview.{$SITE_HOST} {
 
 {$API_HOST} {
   encode zstd gzip
+  # The A/B load-test routes terminate only at their independently managed
+  # gateways.  Keep the prefixes explicit so a later edge rollout cannot
+  # silently fall through to the retired canonical upstream.
+  @ds502_a_completion {
+    method POST
+    path /a/v1/chat/completions
+  }
+  handle @ds502_a_completion {
+    uri strip_prefix /a
+    reverse_proxy 127.0.0.1:18100 {
+      flush_interval -1
+    }
+  }
+  @ds502_a_readonly {
+    method GET
+    path /a/v1/models /a/v1/status
+  }
+  handle @ds502_a_readonly {
+    uri strip_prefix /a
+    reverse_proxy 127.0.0.1:18100
+  }
+  @ds502_a_admission {
+    method GET
+    path /a/v1/admission-status
+  }
+  handle @ds502_a_admission {
+    uri strip_prefix /a
+    reverse_proxy 127.0.0.1:18083
+  }
+  @ds502_b_completion {
+    method POST
+    path /b/v1/chat/completions
+  }
+  handle @ds502_b_completion {
+    route {
+      uri strip_prefix /b
+      rewrite * /gateway-b{uri}
+      reverse_proxy https://node0.gonka-dev.net {
+        header_up Host node0.gonka-dev.net
+        flush_interval -1
+      }
+    }
+  }
+  @ds502_b_readonly {
+    method GET
+    path /b/v1/models /b/v1/status /b/v1/admission-status
+  }
+  handle @ds502_b_readonly {
+    route {
+      uri strip_prefix /b
+      rewrite * /gateway-b{uri}
+      reverse_proxy https://node0.gonka-dev.net {
+        header_up Host node0.gonka-dev.net
+      }
+    }
+  }
+  @ds502_ab_closed path /a/* /b/* /v1/admin/* /admin/* /accounting/*
+  handle @ds502_ab_closed {
+    respond 404
+  }
   # Chain state is read from the public edge participant, not from the
   # Gateway runtime. This keeps governance, discovery, and client reads
   # available before the Gateway is deployed.

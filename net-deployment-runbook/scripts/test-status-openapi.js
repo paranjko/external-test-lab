@@ -23,6 +23,7 @@ assert.equal(spec.servers[0].url, 'https://gonka-dev.net');
 for (const endpoint of [
   '/status/gpus',
   '/status/software',
+  '/status/devshard-runtime',
   '/status/participants',
   '/status/gateway-health',
   '/status/gateway-health.prom',
