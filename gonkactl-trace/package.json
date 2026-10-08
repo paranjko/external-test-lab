@@ -1,0 +1,9 @@
+{
+  "name": "gonkactl-trace-ui-tests",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Development-only dependencies for the experimental trace viewer tests",
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
