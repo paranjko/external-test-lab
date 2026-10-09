@@ -21,7 +21,7 @@ class FakeGateway:
     def __init__(self, offset=30, scenario="ok", health="ready", status="routable",
                  cpoc=None, freeze=False, nodes=3, node_state=None, group_switch=18, step=1,
                  fail_paths=(), chain_fail_offsets=(), status_tracks_cpoc=True, devnet_phases=False,
-                 cpoc_phase=None, prefix="", shift=0, health_jump=0):
+                 cpoc_phase=None, prefix="", shift=0, health_jump=0, approved="params"):
         self.height = EPOCH_START + offset
         self.scenario = scenario
         self.health = health
@@ -33,6 +33,7 @@ class FakeGateway:
         self.group_switch = group_switch
         self.step = step
         self.fail_paths = set(fail_paths)
+        self.approved = approved
         self.chain_fail_offsets = set(chain_fail_offsets)
         self.status_tracks_cpoc = status_tracks_cpoc
         self.devnet_phases = devnet_phases
@@ -167,8 +168,10 @@ class FakeGateway:
                             "poc_exchange_duration": "2", "poc_validation_delay": "3",
                             "poc_validation_duration": "10", "set_new_validators_delay": "2",
                         },
-                        "devshard_escrow_params": {"approved_versions": ["v5"]},
+                        "devshard_escrow_params": {"approved_versions": ["v5"] if fake.approved == "params" else []},
                     }})
+                elif path == CHAIN_API + "/devshard_approved_versions":
+                    self._json(200, {"versions": [{"name": "v5"}] if fake.approved == "store" else []})
                 elif path == CHAIN_API + "/current_epoch_group_data":
                     self._json(200, {"epoch_group_data": {"epoch_index": str(fake.group_epoch()),
                                                           "poc_start_block_height": str(fake.group_epoch() * EPOCH_LENGTH)}})

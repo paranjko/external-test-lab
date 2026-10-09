@@ -19,12 +19,9 @@
     "https://node0.gonka-dev.net/chain-rpc",
     "https://node1.gonka-dev.net/chain-rpc",
     "https://node2.gonka-dev.net/chain-rpc",
-    "https://node3.gonka-dev.net/chain-rpc",
     "https://node4.gonka-dev.net/chain-rpc",
-    "https://node5.gonka-dev.net/chain-rpc",
     "https://node6.gonka-dev.net/chain-rpc",
-    "https://node7.gonka-dev.net/chain-rpc",
-    "https://node8.gonka-dev.net/chain-rpc"
+    "https://node7.gonka-dev.net/chain-rpc"
   ],
   "node_max_lag_blocks": 5,
   "chain_advance_wait_s": 12,

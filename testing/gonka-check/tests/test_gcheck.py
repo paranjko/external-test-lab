@@ -268,6 +268,17 @@ class ChainProfile(Harness):
         reason = [item["reason"] for item in summary["verdicts"] if item["check"] == "epoch_state"][0]
         self.assertIn("group not switched yet", reason)
 
+    def test_epoch_state_reads_approved_versions_from_their_store(self):
+        with FakeGateway(approved="store") as fake:
+            code, summary = self.chain(fake)
+        self.assertEqual(code, 0, summary)
+        self.assertEqual(self.verdicts(summary)["epoch_state"], "PASS")
+
+    def test_epoch_state_without_approved_versions_is_inconclusive(self):
+        with FakeGateway(approved="none") as fake:
+            _code, summary = self.chain(fake)
+        self.assertEqual(self.verdicts(summary)["epoch_state"], "INCONCLUSIVE")
+
     def test_epoch_state_reports_the_confirmation_poc(self):
         with FakeGateway(offset=40, cpoc=(27, 55)) as fake:
             _code, summary = self.chain(fake)
@@ -610,10 +621,10 @@ class Guard(Harness):
 
     def test_node_origin_allows_only_its_rpc_path(self):
         preset = load_preset("devnet")
-        check_url(preset, "https://node3.gonka-dev.net/chain-rpc/status")
+        check_url(preset, "https://node4.gonka-dev.net/chain-rpc/status")
         for path in ("/v1/chat/completions", "/faucet/claim", "/chain-rpcx/status"):
             with self.assertRaises(TargetRefused, msg=path):
-                check_url(preset, "https://node3.gonka-dev.net" + path)
+                check_url(preset, "https://node4.gonka-dev.net" + path)
 
     def test_public_target_refuses_fast_polling(self):
         preset = load_preset("devnet")

@@ -56,12 +56,17 @@ class Chain:
             params = root["epoch_params"]
             length = int(params["epoch_length"])
             safe_start = sum(int(params[name]) for name in SAFE_START_PARAMS) + 1
-            approved = root["devshard_escrow_params"]["approved_versions"]
-        except (KeyError, TypeError, ValueError):
+            approved = root["devshard_escrow_params"].get("approved_versions") or self.approved_versions()
+        except (KeyError, TypeError, ValueError, AttributeError):
             raise ChainError("params_invalid", reply.seq)
         if length <= 0 or not approved:
             raise ChainError("params_invalid", reply.seq)
         return {"epoch_length": length, "safe_start": safe_start, "seq": reply.seq}
+
+    def approved_versions(self):
+        # Since chain v0.2.16 the approved DevShard versions have their own store, outside the params.
+        reply = self.client.get(self.api + "/devshard_approved_versions")
+        return reply.json.get("versions") if reply.ok and isinstance(reply.json, dict) else []
 
     def epoch_index(self):
         reply = self._get(self.api + "/current_epoch_group_data", "epoch_unreachable")
