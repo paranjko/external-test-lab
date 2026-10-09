@@ -284,7 +284,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+test: test-bootstrap-monitor test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 	@bash ./scripts/test-node-container-control.sh
 	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
@@ -492,6 +492,24 @@ test-recovery-contract: test-recover-incident
 	@./scripts/test-network-recovery-contract.sh
 
 .PHONY: test-recover-incident
+.PHONY: bootstrap-monitor-dependencies bootstrap-monitor bootstrap-monitor-notify test-bootstrap-monitor
+
+bootstrap_monitor_report ?= $(CURDIR)/.data/bootstrap-monitor/report.json
+bootstrap_monitor_base_url ?= https://gonka-dev.net
+bootstrap_monitor_release_dir ?= $(CURDIR)/bootstrap/release
+
+bootstrap-monitor-dependencies:
+	@python3 -m pip install --disable-pip-version-check jsonschema==4.23.0
+
+bootstrap-monitor:
+	@python3 ./scripts/monitor-network-bootstrap.py check --report "$(bootstrap_monitor_report)" --base-url "$(bootstrap_monitor_base_url)" --release-dir "$(bootstrap_monitor_release_dir)"
+
+bootstrap-monitor-notify:
+	@python3 ./scripts/monitor-network-bootstrap.py notify --report "$(bootstrap_monitor_report)"
+
+test-bootstrap-monitor:
+	@python3 ./scripts/test-monitor-network-bootstrap.py
+
 .PHONY: test-command-results
 test-command-results:
 	@bash ./scripts/test-command-results.sh
