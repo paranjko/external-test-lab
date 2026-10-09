@@ -157,8 +157,8 @@ def cmd_plan(_args):
           os.path.join(data_dir(), "runs"))
     print("         stand: report.md, samples.csv, stand-cpu.svg, stand-rss.svg, g<G>-h<H>-c<x>/ with seed, env, logs, "
           "finalize.json")
-    print("         testenv: report.md, samples.csv, hosts.csv, g<G>/ with gencompose.log, logs, finalize.json; "
-          "stacks in %s while they run" % os.path.join(data_dir(), "testenv"))
+    print("         testenv: report.md, samples.csv, hosts.csv, cores.csv, containers.csv, g<G>/ with gencompose.log, "
+          "logs, finalize.json; stacks in %s while they run" % os.path.join(data_dir(), "testenv"))
     return 0
 
 
@@ -474,7 +474,8 @@ def _testenv_one(size, hosts, index, args, source, cache, commit, devshardd, run
         else:
             stack.down()
     samples = sampler.samples if sampler else []
-    summary = testenv.summarize(size, hosts, args.concurrency, mode, warm, drive, samples, final, error, stop, stopped)
+    summary = testenv.summarize(size, hosts, args.concurrency, mode, warm, drive, samples, final, error, stop, stopped,
+                                (args.gateway_cpus, args.host_cpus))
     return {"groups": size, "label": label, "samples": samples, "summary": summary, "verdict": testenv.judge(summary)}
 
 

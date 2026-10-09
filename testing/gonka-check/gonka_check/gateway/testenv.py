@@ -391,8 +391,8 @@ class Stack:
     def stats(self):
         try:
             reply = stand.docker(["stats", "--no-stream", "--format",
-                                  "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}",
-                                  self.gateway] + [self.host(i) for i in range(self.hosts)], check=False, timeout=60)
+                                  "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}"]
+                                 + self.containers(), check=False, timeout=60)
         except subprocess.TimeoutExpired:
             return {}
         return parse_stats(reply.stdout)
@@ -423,6 +423,61 @@ def parse_stats(text):
         out[parts[0]] = {"cpu_pct": cpu, "mem_mb": (stand.to_bytes(parts[2].split("/")[0]) or 0) / 2 ** 20,
                          "rx_mb": rx / 1e6, "tx_mb": tx / 1e6, "read_mb": read / 1e6, "write_mb": write / 1e6}
     return out
+
+
+def cpu_list(text):
+    """CPU numbers of a list such as 0, 1-7 or 0,2-3."""
+    out = []
+    for part in (text or "").split(","):
+        if part:
+            low, _, high = part.partition("-")
+            out += range(int(low), int(high or low) + 1)
+    return out
+
+
+def cpu_ticks(path="/proc/stat"):
+    """(busy, total) jiffies per CPU, or None off Linux."""
+    try:
+        with open(path, encoding="ascii") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return None
+    out = {}
+    for line in lines:
+        name, *fields = line.split()
+        if not name.startswith("cpu") or name == "cpu":
+            continue
+        values = [int(value) for value in fields[:8]]
+        idle = values[3] + (values[4] if len(values) > 4 else 0)
+        out[int(name[3:])] = (sum(values) - idle, sum(values))
+    return out
+
+
+def core_busy(before, after):
+    """Busy share of each CPU between two cpu_ticks readings, in %."""
+    out = {}
+    for cpu, (busy, total) in (after or {}).items():
+        if cpu in (before or {}) and total > before[cpu][1]:
+            out[cpu] = round(100.0 * (busy - before[cpu][0]) / (total - before[cpu][1]), 1)
+    return out
+
+
+def mem_available_mb(path="/proc/meminfo"):
+    try:
+        with open(path, encoding="ascii") as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def load1():
+    try:
+        return os.getloadavg()[0]
+    except OSError:
+        return None
 
 
 def diff_nonces(text):
@@ -478,7 +533,7 @@ class Sampler:
 
     def __init__(self, stack, base, started):
         self.stack, self.base, self.started = stack, base, started
-        self.samples, self.known = [], {}
+        self.samples, self.known, self.ticks = [], {}, cpu_ticks()
         self.since, self.cap_lines, self.dead_lines = time.time(), 0, 0
 
     def take(self, phase, diffs=False):
@@ -487,6 +542,8 @@ class Sampler:
         nonce = stand.nonce_of(self.base)
         usage = self.stack.stats()
         now = time.time()
+        ticks = cpu_ticks()
+        cores, self.ticks = core_busy(self.ticks, ticks), ticks
         cap, dead = count_lines(self.stack.gateway_log(self.since, now))
         self.since, self.cap_lines, self.dead_lines = now, self.cap_lines + cap, self.dead_lines + dead
         events = cadence(text)
@@ -499,7 +556,12 @@ class Sampler:
                 "storage_mb": stand.tree_bytes(self.stack.gateway_data) / 2 ** 20,
                 "heartbeats": events.get("heartbeat_opened"), "abandoned": events.get("turn_abandoned"),
                 "no_height": events.get("skipped_no_height"), "cap_lines": self.cap_lines,
-                "dead_lines": self.dead_lines, "hosts": []}
+                "dead_lines": self.dead_lines, "load1": load1(), "mem_avail_mb": mem_available_mb(),
+                "cores": cores, "hosts": [], "others": {}}
+        mine = {self.stack.gateway} | {self.stack.host(i) for i in range(self.stack.hosts)}
+        for name, row in usage.items():
+            if name not in mine:
+                item["others"][name[len(self.stack.project) + 1:]] = row
         for i in range(self.stack.hosts):
             if diffs and nonce is not None:
                 self.known[i] = host_last(lambda low, high, i=i: self.stack.diffs(i, low, high), nonce,
@@ -643,7 +705,39 @@ def _peak(values):
     return round(max(values), 1) if values else None
 
 
-def summarize(groups, hosts, concurrency, mode, warm, drive, samples, final, error=None, stop=None, stopped=()):
+def busy_of(samples, cpus):
+    """Mean and peak busy % over the CPUs of a list, or every CPU when the list is empty."""
+    values = []
+    for item in samples:
+        cores = item.get("cores") or {}
+        picked = [cores[cpu] for cpu in cpus if cpu in cores] if cpus else list(cores.values())
+        if picked:
+            values.append(sum(picked) / len(picked))
+    return _mean(values), _peak(values)
+
+
+def machine(samples, gateway_cpus=None, host_cpus=None):
+    gateway, hosts = busy_of(samples, cpu_list(gateway_cpus)), busy_of(samples, cpu_list(host_cpus))
+    every = busy_of(samples, [])
+    peak_core = _peak(max(item["cores"].values()) for item in samples if item.get("cores"))
+    avail = [item.get("mem_avail_mb") for item in samples if item.get("mem_avail_mb") is not None]
+    return {"gateway_cpus": gateway_cpus, "host_cpus": host_cpus, "gateway_busy_mean": gateway[0],
+            "gateway_busy_peak": gateway[1], "host_busy_mean": hosts[0], "host_busy_peak": hosts[1],
+            "all_busy_mean": every[0], "all_busy_peak": every[1], "core_peak": peak_core,
+            "load_peak": _peak(item.get("load1") for item in samples),
+            "mem_avail_min_mb": round(min(avail)) if avail else None}
+
+
+def others(samples):
+    names = sorted({name for item in samples for name in item.get("others") or {}})
+    return [{"container": name, "cpu_mean_pct": _mean((item.get("others") or {}).get(name, {}).get("cpu_pct")
+                                                        for item in samples),
+             "mem_peak_mb": _peak((item.get("others") or {}).get(name, {}).get("mem_mb") for item in samples)}
+            for name in names]
+
+
+def summarize(groups, hosts, concurrency, mode, warm, drive, samples, final, error=None, stop=None, stopped=(),
+              cpus=(None, None)):
     driven = [item for item in samples if item["phase"] == "drive" and item.get("nonce") is not None]
     rate = None
     if len(driven) >= 2 and driven[-1]["t_s"] > driven[0]["t_s"]:
@@ -673,7 +767,8 @@ def summarize(groups, hosts, concurrency, mode, warm, drive, samples, final, err
                         "rss_peak_mb": _peak(item.get("rss_mb") or item.get("mem_mb") for item in samples),
                         "rx_mb": end.get("rx_mb"), "tx_mb": end.get("tx_mb"), "write_mb": end.get("write_mb"),
                         "storage_mb": end.get("storage_mb")},
-            "per_host": per_host, "nonce": last.get("nonce"), "host_last_min": lasts.get("host_last_min"),
+            "per_host": per_host, "machine": machine(samples, *cpus), "others": others(samples),
+            "nonce": last.get("nonce"), "host_last_min": lasts.get("host_last_min"),
             "host_last_max": lasts.get("host_last_max"), "active_cap": active_cap(groups),
             "cap_lines": end.get("cap_lines"), "dead_lines": end.get("dead_lines"), "finalize": final,
             "stop": stop or error or (drive.reason if drive else None), "error": error, "stopped": list(stopped)}

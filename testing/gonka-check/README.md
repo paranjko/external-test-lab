@@ -108,6 +108,7 @@ bin/gcheck gateway-load testenv --cleanup                                      #
 
 `testenv` runs the upstream `devshard/testenv`: real `devshardd` hosts under `versiond`, the router and the gateway, with the mock chain, dapi and ML node, one compose stack per G.
 `PASS` when the escrow still settles after the gateway stopped routing at 19,800; `FAIL` carries the hosts' last diff, the active cap max_nonce − (G+1) and the finalization error.
+Every sample also keeps the busy share of each CPU from `/proc/stat` (`cores.csv`) and the router and mocks (`containers.csv`).
 
 ## Safety
 

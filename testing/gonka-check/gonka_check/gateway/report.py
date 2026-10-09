@@ -220,6 +220,7 @@ TESTENV_FIELDS = ("groups", "phase", "t_s", "nonce", "cpu_pct", "cpu_s", "rss_mb
                   "write_mb", "storage_mb", "hosts_cpu_pct", "hosts_mem_mb", "host_last_min", "host_last_max",
                   "heartbeats", "abandoned", "no_height", "cap_lines", "dead_lines")
 HOST_FIELDS = ("groups", "phase", "t_s", "host", "cpu_pct", "mem_mb", "write_mb", "last_diff")
+CONTAINER_FIELDS = ("groups", "phase", "t_s", "container", "cpu_pct", "mem_mb", "rx_mb", "tx_mb", "write_mb")
 
 
 def _csv(fields, rows):
@@ -240,8 +241,23 @@ def testenv_hosts_csv(runs):
                               for run in runs for item in run["samples"] for row in item.get("hosts", [])])
 
 
+def testenv_cores_csv(runs):
+    cpus = sorted({cpu for run in runs for item in run["samples"] for cpu in item.get("cores") or {}})
+    fields = ("groups", "phase", "t_s", "load1", "mem_avail_mb") + tuple("cpu%d" % cpu for cpu in cpus)
+    return _csv(fields, [dict({"cpu%d" % cpu: value for cpu, value in (item.get("cores") or {}).items()},
+                              groups=run["groups"], phase=item["phase"], t_s=item["t_s"], load1=item.get("load1"),
+                              mem_avail_mb=item.get("mem_avail_mb"))
+                         for run in runs for item in run["samples"]])
+
+
+def testenv_containers_csv(runs):
+    return _csv(CONTAINER_FIELDS, [dict(row, groups=run["groups"], phase=item["phase"], t_s=item["t_s"], container=name)
+                                   for run in runs for item in run["samples"]
+                                   for name, row in sorted((item.get("others") or {}).items())])
+
+
 def testenv_markdown(meta, runs, verdicts, overall):
-    load, gateway, hosts, settle = [], [], [], []
+    load, gateway, hosts, settle, box, rest = [], [], [], [], [], []
     for run in runs:
         item = run["summary"]
         size, quiet, cost, done = "G=%d" % item["groups"], item["quiet"], item["gateway"], item["finalize"] or {}
@@ -254,6 +270,13 @@ def testenv_markdown(meta, runs, verdicts, overall):
                         _cell(cost["write_mb"], 1), _cell(cost["storage_mb"], 1)])
         hosts += [[size, str(host["host"]), str(host["slots"]), _cell(host["cpu_mean_pct"], 1),
                    _cell(host["mem_peak_mb"], 0), _cell(host["last_diff"], 0)] for host in item["per_host"]]
+        busy = item.get("machine") or {}
+        pair = [" / ".join((_cell(busy.get(name + "_mean"), 1), _cell(busy.get(name + "_peak"), 1)))
+                for name in ("gateway_busy", "host_busy", "all_busy")]
+        box.append([size] + pair + [_cell(busy.get("core_peak"), 1), _cell(busy.get("load_peak"), 1),
+                    _cell(busy.get("mem_avail_min_mb"), 0)])
+        rest += [[size, other["container"], _cell(other["cpu_mean_pct"], 1), _cell(other["mem_peak_mb"], 0)]
+                 for other in item.get("others") or []]
         settle.append([size, _cell(item["nonce"], 0), "%s..%s" % (_cell(item["host_last_min"], 0),
                                                                   _cell(item["host_last_max"], 0)),
                        str(item["active_cap"]), _cell(item["cap_lines"], 0), _cell(item["dead_lines"], 0),
@@ -286,18 +309,26 @@ def testenv_markdown(meta, runs, verdicts, overall):
                     "storage MB"), gateway)
     lines += ["", "## Hosts", ""]
     lines += table(("G", "host", "slots", "CPU mean %", "peak memory MB", "last diff"), hosts)
+    lines += ["", "## Machine", ""]
+    lines += table(("G", "gateway CPUs busy mean / peak %", "host CPUs busy mean / peak %", "all CPUs mean / peak %",
+                    "busiest CPU peak %", "load peak", "min available MB"), box)
+    lines += ["", "Busy shares come from /proc/stat between samples, averaged over the CPUs of each list; every CPU "
+              "of the machine when no list was given. Per CPU in `cores.csv`.", "", "## Other containers", ""]
+    lines += table(("G", "container", "CPU mean %", "peak memory MB"), rest)
     lines += ["", "## Settlement", ""]
     lines += table(("G", "gateway nonce", "hosts' last diff", "active cap", "refusals at the cap", "dead host lines",
                     "finalize", "seconds", "signature weight", "quorum", "error"), settle)
     lines += ["", "Gateway nonce: the gateway's own count before finalizing. Refusals at the cap and dead host lines "
               "are gateway log lines. The finalization reply is in `g<G>/finalize.json`; quorum is 2G/3 + 1 slots. "
-              "Every sample is in `samples.csv`, every host sample in `hosts.csv`.", ""]
+              "Every sample is in `samples.csv`, every host sample in `hosts.csv`, the router and mocks in "
+              "`containers.csv`.", ""]
     return "\n".join(lines)
 
 
 def write_testenv(run_dir, meta, runs, verdicts, overall):
     files = {"report.md": testenv_markdown(meta, runs, verdicts, overall), "samples.csv": testenv_samples_csv(runs),
-             "hosts.csv": testenv_hosts_csv(runs)}
+             "hosts.csv": testenv_hosts_csv(runs), "cores.csv": testenv_cores_csv(runs),
+             "containers.csv": testenv_containers_csv(runs)}
     for name, text in files.items():
         with open(os.path.join(run_dir, name), "w", encoding="utf-8") as handle:
             handle.write(text)

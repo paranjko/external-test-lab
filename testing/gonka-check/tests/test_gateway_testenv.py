@@ -348,6 +348,63 @@ class Rates(unittest.TestCase):
         self.assertEqual(40, item["cap_lines"])
 
 
+class Machine(unittest.TestCase):
+    STAT = ("cpu  10 0 10 80 0 0 0 0 0 0\n"
+            "cpu0 5 0 5 40 0 0 0 0 0 0\n"
+            "cpu1 5 0 5 30 10 0 0 0 0 0\n"
+            "intr 1 2 3\n")
+
+    def test_cpu_lists(self):
+        self.assertEqual([0], testenv.cpu_list("0"))
+        self.assertEqual([0, 2, 3, 4, 9], testenv.cpu_list("0,2-4,9"))
+        self.assertEqual([], testenv.cpu_list(None))
+
+    def test_busy_share_per_cpu_from_proc_stat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "stat")
+            with open(path, "w", encoding="ascii") as handle:
+                handle.write(self.STAT)
+            before = testenv.cpu_ticks(path)
+            self.assertEqual({0: (10, 50), 1: (10, 50)}, before)
+            with open(path, "w", encoding="ascii") as handle:
+                handle.write(self.STAT.replace("cpu0 5 0 5 40", "cpu0 45 0 5 50").replace("cpu1 5 0 5 30 10",
+                                                                                         "cpu1 5 0 5 80 10"))
+            self.assertEqual({0: 80.0, 1: 0.0}, testenv.core_busy(before, testenv.cpu_ticks(path)))
+            self.assertIsNone(testenv.cpu_ticks(os.path.join(tmp, "missing")))
+            self.assertEqual({}, testenv.core_busy(None, before))
+            with open(os.path.join(tmp, "meminfo"), "w", encoding="ascii") as handle:
+                handle.write("MemTotal: 62914560 kB\nMemAvailable:   61865984 kB\n")
+            self.assertEqual(60416, testenv.mem_available_mb(os.path.join(tmp, "meminfo")))
+
+    def test_machine_splits_gateway_and_host_cpus(self):
+        samples = [dict(sample("drive", 5, 100), cores={0: 90.0, 1: 10.0, 2: 30.0}, load1=2.0, mem_avail_mb=50000.0,
+                        others={"mock-chain": {"cpu_pct": 4.0, "mem_mb": 30.0}}),
+                   dict(sample("drive", 10, 200), cores={0: 70.0, 1: 50.0, 2: 50.0}, load1=3.5, mem_avail_mb=49000.0,
+                        others={"mock-chain": {"cpu_pct": 6.0, "mem_mb": 40.0}})]
+        item = summary(samples=samples, cpus=("0", "1-2"))
+        busy = item["machine"]
+        self.assertEqual((80.0, 90.0), (busy["gateway_busy_mean"], busy["gateway_busy_peak"]))
+        self.assertEqual((35.0, 50.0), (busy["host_busy_mean"], busy["host_busy_peak"]))
+        self.assertEqual(90.0, busy["core_peak"])
+        self.assertEqual(3.5, busy["load_peak"])
+        self.assertEqual(49000, busy["mem_avail_min_mb"])
+        self.assertEqual([{"container": "mock-chain", "cpu_mean_pct": 5.0, "mem_peak_mb": 40.0}], item["others"])
+        run = {"groups": 64, "samples": samples, "summary": item, "verdict": testenv.judge(item)}
+        meta = {"tag": stress.TAG, "commit": COMMIT, "max_nonce": 20000, "concurrency": 8, "routing_stop": 19800,
+                "quiet_minutes": 10, "run": "drive", "gateway_cpus": "0", "host_cpus": "1-2"}
+        text = report.testenv_markdown(meta, [run], [run["verdict"]], "PASS")
+        self.assertIn("| G=64 | 80.0 / 90.0 | 35.0 / 50.0 |", text)
+        self.assertIn("| G=64 | mock-chain | 5.0 | 40 |", text)
+        self.assertEqual("groups,phase,t_s,load1,mem_avail_mb,cpu0,cpu1,cpu2",
+                         report.testenv_cores_csv([run]).splitlines()[0])
+        self.assertIn("64,drive,5.000,mock-chain,4.000,30.000", report.testenv_containers_csv([run]))
+
+    def test_without_proc_stat_every_cpu_figure_is_empty(self):
+        busy = summary()["machine"]
+        self.assertIsNone(busy["gateway_busy_mean"])
+        self.assertIsNone(busy["core_peak"])
+
+
 class Verdict(unittest.TestCase):
     def verdict(self, item):
         result = testenv.judge(item)
@@ -589,8 +646,8 @@ class Cli(unittest.TestCase):
         self.assertIn("PASS         testenv_g8", self.out)
         self.assertIn("PASS         testenv_g16", self.out)
         self.assertEqual(2, len(self.downs))
-        for name in ("report.md", "samples.csv", "hosts.csv", "summary.json", "manifest.json", "g8/finalize.json",
-                     "g16/gateway.log", "g16/host-0.log"):
+        for name in ("report.md", "samples.csv", "hosts.csv", "cores.csv", "containers.csv", "summary.json",
+                     "manifest.json", "g8/finalize.json", "g16/gateway.log", "g16/host-0.log"):
             self.assertTrue(os.path.isfile(os.path.join(self.run_dir(), name)), name)
         with open(os.path.join(self.run_dir(), "report.md"), encoding="utf-8") as handle:
             text = handle.read()
