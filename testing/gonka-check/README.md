@@ -103,6 +103,8 @@ Stub hosts gossip every diff to each other, so their timings are not those of `d
 bin/gcheck gateway-load testenv --dry-run                                      # build, bring up G=8 on 3 hosts, 3 chats, finalize
 bin/gcheck gateway-load testenv --gateway-cpus 0 --host-cpus 1-7               # G=64 on 4 hosts: drive to nonce 19,800, 10 quiet minutes, finalize
 bin/gcheck gateway-load testenv --groups 16,32,64 --quiet-only                 # heartbeat nonces per minute and per turn of an idle escrow
+bin/gcheck gateway-load testenv --quiet-minutes 0                              # finalize right at the routing stop
+bin/gcheck gateway-load testenv --rotation settle                              # the gateway replaces escrow 1 and settles it itself; deactivate: only deactivates, gcheck settles it
 bin/gcheck gateway-load testenv --cleanup                                      # remove its containers, networks, volumes, work dirs and images
 ```
 

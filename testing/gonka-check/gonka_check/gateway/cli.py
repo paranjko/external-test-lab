@@ -68,9 +68,14 @@ def add_parser(commands):
     tenv.add_argument("--hosts", type=positive, default=4, help="devshardd host processes, at most G (default 4)")
     tenv.add_argument("--concurrency", type=positive, default=8, help="chats in flight during the drive (default 8)")
     tenv.add_argument("--quiet-minutes", type=float, default=DEFAULT_QUIET_MINUTES,
-                      help="minutes of no requests after the drive (default %d)" % DEFAULT_QUIET_MINUTES)
+                      help="minutes of no requests after the drive, 0 finalizes at once (default %d)" %
+                      DEFAULT_QUIET_MINUTES)
     tenv.add_argument("--quiet-only", action="store_true",
                       help="no drive: warm up, then sample the idle escrow for --quiet-minutes")
+    tenv.add_argument("--rotation", choices=testenv.ROTATIONS, default="off",
+                      help="settle: the gateway replaces escrow 1 at the routing stop and settles it itself; "
+                           "deactivate: it only deactivates it, and gcheck settles it through the admin API after "
+                           "--quiet-minutes (default off)")
     tenv.add_argument("--gateway-cpus", default=None, help="CPUs for the gateway alone, e.g. 0 (default: any)")
     tenv.add_argument("--host-cpus", default=None, help="CPUs for the hosts, router and mocks, e.g. 1-7")
     tenv.add_argument("--every", type=float, default=5.0, help="seconds between samples (default 5)")
@@ -411,13 +416,15 @@ def _testenv_one(size, hosts, index, args, source, cache, commit, devshardd, run
     group_dir = os.path.join(run_dir, "g%d" % size)
     os.makedirs(group_dir, mode=0o700, exist_ok=True)
     mode = "dry-run" if args.dry_run else "quiet-only" if args.quiet_only else "drive"
+    rotating = args.rotation if mode == "drive" and args.rotation != "off" else None
     tag = "%s-g%d" % (run_id[-4:], size)
     sampler, warm, drive, final, error, stop, stopped = None, None, None, None, None, None, []
+    manual_t = None
     try:
         on_log("%s: gencompose and compose patch" % label)
         stack.generate(source, cache, devshardd, commit, testenv.binary_version(args.tag),
                        os.path.join(group_dir, "gencompose.log"), testenv.SUBNET_OCTET + index,
-                       args.gateway_cpus, args.host_cpus)
+                       args.gateway_cpus, args.host_cpus, args.rotation)
         base = stack.up()
         on_log("%s: stack %s up, gateway on %s" % (label, stack.project, base))
         sampler = testenv.Sampler(stack, base, time.monotonic())
@@ -440,12 +447,21 @@ def _testenv_one(size, hosts, index, args, source, cache, commit, devshardd, run
 
             drive.run(on_sample, every_s=args.every, max_s=args.max_minutes * 60 if args.max_minutes else None,
                       guard=guard)
+            sampler.stop_t = round((drive.ended or time.monotonic()) - sampler.started, 1)
             on_log("%s: drive %s" % (label, drive.reason))
-        if mode == "quiet-only" or (mode == "drive" and testenv.reached(drive, sampler.samples)):
-            on_log("%s: quiet for %g min" % (label, args.quiet_minutes))
+        reached = mode == "drive" and testenv.reached(drive, sampler.samples)
+        if (mode == "quiet-only" or reached) and args.quiet_minutes > 0:
+            on_log("%s: quiet for %g min%s" % (label, args.quiet_minutes, ", the gateway rotates escrow 1 (%s)" %
+                                               rotating if rotating else ""))
 
             def on_quiet():
+                known = set(sampler.events)
                 sampler.take("quiet", diffs=True)
+                for name in sorted(set(sampler.events) - known):
+                    item = sampler.events[name]
+                    on_log("%s: %s +%.0f s after the routing stop, nonce %s, hosts' last diff %s..%s" % (
+                        label, name, item["t_s"] - (sampler.stop_t or 0), item["nonce"], item["host_last_min"],
+                        item["host_last_max"]))
                 if len(sampler.samples) % 12 == 0:
                     item = sampler.samples[-1]
                     on_log("%s quiet nonce %s: hosts' last diff %s..%s, %s turns, %d refusals at the active cap" % (
@@ -454,11 +470,20 @@ def _testenv_one(size, hosts, index, args, source, cache, commit, devshardd, run
 
             stop = testenv.quiet(on_quiet, args.quiet_minutes, args.every, guard)
         sampler.take("settle", diffs=True)
-        on_log("%s: finalizing at nonce %s, Ctrl-C skips it" % (label, sampler.samples[-1]["nonce"]))
-        final = testenv.finalize(base, size, os.path.join(group_dir, "finalize.json"))
+        if rotating == "settle":
+            on_log("%s: no finalize from here, the gateway settles escrow 1 itself" % label)
+        elif rotating == "deactivate":
+            on_log("%s: settling escrow 1 by hand at nonce %s, Ctrl-C skips it" % (label, sampler.nonce))
+            manual_t = time.monotonic() - sampler.started
+            final = testenv.settle(base, size, os.path.join(group_dir, "settle.json"))
+            on_log("%s: manual settlement %s in %.1f s %s" % (label, final["code"], final["seconds"],
+                                                              final["error"] or final["tx_hash"]))
+        else:
+            on_log("%s: finalizing at nonce %s, Ctrl-C skips it" % (label, sampler.samples[-1]["nonce"]))
+            final = testenv.finalize(base, size, os.path.join(group_dir, "finalize.json"))
+            on_log("%s: finalize %s in %.1f s, weight %s of %s" % (label, final["code"], final["seconds"],
+                                                                   final["weight"], final["quorum"]))
         sampler.take("final", diffs=True)
-        on_log("%s: finalize %s in %.1f s, weight %s of %s" % (label, final["code"], final["seconds"],
-                                                               final["weight"], final["quorum"]))
     except stand.StandError as failure:
         error = str(failure)
     except KeyboardInterrupt:
@@ -474,8 +499,11 @@ def _testenv_one(size, hosts, index, args, source, cache, commit, devshardd, run
         else:
             stack.down()
     samples = sampler.samples if sampler else []
+    rotation = None
+    if sampler and args.rotation != "off":
+        rotation = testenv.timeline(args.rotation, sampler, args.quiet_minutes, final, manual_t)
     summary = testenv.summarize(size, hosts, args.concurrency, mode, warm, drive, samples, final, error, stop, stopped,
-                                (args.gateway_cpus, args.host_cpus))
+                                (args.gateway_cpus, args.host_cpus), rotation)
     return {"groups": size, "label": label, "samples": samples, "summary": summary, "verdict": testenv.judge(summary)}
 
 
@@ -506,8 +534,12 @@ def cmd_testenv(args):
             raise ValueError("--hosts needs 1 to %d" % len(keys.HOST_ADDRESSES))
         if args.concurrency > 256:
             raise ValueError("--concurrency needs 1 to 256")
-        if args.quiet_minutes <= 0 or args.every <= 0:
-            raise ValueError("--quiet-minutes and --every need a positive number")
+        if args.quiet_minutes < 0 or args.every <= 0:
+            raise ValueError("--quiet-minutes needs 0 or more and --every a positive number")
+        if args.quiet_minutes == 0 and (args.quiet_only or args.rotation != "off"):
+            raise ValueError("--quiet-only and --rotation need --quiet-minutes above 0")
+        if args.quiet_only and args.rotation != "off":
+            raise ValueError("--rotation needs the drive, not --quiet-only")
         if len(groups) > 100:
             raise ValueError("--groups takes at most 100 sizes")
         for flag, value in (("--gateway-cpus", args.gateway_cpus), ("--host-cpus", args.host_cpus)):
@@ -523,8 +555,9 @@ def cmd_testenv(args):
     mode = "dry-run" if args.dry_run else "quiet-only" if args.quiet_only else "drive"
     meta = {"tool": "gonka-check %s" % __version__, "run_id": run_id, "mode": "gateway-testenv", "tag": args.tag,
             "groups": groups, "hosts": hosts, "concurrency": args.concurrency, "run": mode,
-            "quiet_minutes": args.quiet_minutes, "gateway_cpus": args.gateway_cpus, "host_cpus": args.host_cpus,
-            "max_nonce": testenv.MAX_NONCE, "routing_stop": testenv.ROUTING_STOP, "started_at": utc_now()}
+            "quiet_minutes": args.quiet_minutes, "rotation": args.rotation, "gateway_cpus": args.gateway_cpus,
+            "host_cpus": args.host_cpus, "max_nonce": testenv.MAX_NONCE, "routing_stop": testenv.ROUTING_STOP,
+            "started_at": utc_now()}
     runs = []
     try:
         with RunLock(os.path.join(config_dir(), "gateway-load.lock")):

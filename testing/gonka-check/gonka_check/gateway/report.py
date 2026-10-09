@@ -218,7 +218,7 @@ def write_stand(run_dir, meta, runs, verdicts, overall):
 
 TESTENV_FIELDS = ("groups", "phase", "t_s", "nonce", "cpu_pct", "cpu_s", "rss_mb", "mem_mb", "rx_mb", "tx_mb",
                   "write_mb", "storage_mb", "hosts_cpu_pct", "hosts_mem_mb", "host_last_min", "host_last_max",
-                  "heartbeats", "abandoned", "no_height", "cap_lines", "dead_lines")
+                  "heartbeats", "abandoned", "no_height", "cap_lines", "dead_lines", "escrows")
 HOST_FIELDS = ("groups", "phase", "t_s", "host", "cpu_pct", "mem_mb", "write_mb", "last_diff")
 CONTAINER_FIELDS = ("groups", "phase", "t_s", "container", "cpu_pct", "mem_mb", "rx_mb", "tx_mb", "write_mb")
 
@@ -256,8 +256,28 @@ def testenv_containers_csv(runs):
                                    for name, row in sorted((item.get("others") or {}).items())])
 
 
+def _since(event):
+    return "–" if not event or event.get("after_s") is None else "+%s s" % _num(float(event["after_s"]), 1)
+
+
+def rotation_row(size, rotation, final):
+    events, result, beats = rotation["events"], rotation["result"], rotation["heartbeats"] or {}
+    state = {"settled": "settled", "failed": "failed: %s" % result["detail"]}.get(result["state"], "none")
+    if rotation["mode"] == "deactivate":
+        state = "manual %s%s" % (_cell(final.get("code"), 0), ": %s" % result["detail"] if result["detail"] else "")
+    if beats.get("continued") is None:
+        moved = "–"
+    else:
+        moved = "%s: nonce %s to %s, last diff %s to %s" % (
+            "yes" if beats["continued"] else "no", _cell(beats["nonce_from"], 0), _cell(beats["nonce_to"], 0),
+            _cell(beats["host_last_from"], 0), _cell(beats["host_last_to"], 0))
+    return [size, rotation["mode"], _since(events.get("nonce_high")), _since(events.get("replacement_created")),
+            _since(events.get("deactivated")), state.replace("|", "/"), _since(result), _cell(result["nonce"], 0),
+            "%s..%s" % (_cell(result["host_last_min"], 0), _cell(result["host_last_max"], 0)), moved]
+
+
 def testenv_markdown(meta, runs, verdicts, overall):
-    load, gateway, hosts, settle, box, rest = [], [], [], [], [], []
+    load, gateway, hosts, settle, box, rest, turns = [], [], [], [], [], [], []
     for run in runs:
         item = run["summary"]
         size, quiet, cost, done = "G=%d" % item["groups"], item["quiet"], item["gateway"], item["finalize"] or {}
@@ -282,19 +302,28 @@ def testenv_markdown(meta, runs, verdicts, overall):
                        str(item["active_cap"]), _cell(item["cap_lines"], 0), _cell(item["dead_lines"], 0),
                        _cell(done.get("code"), 0), _cell(done.get("seconds")), _cell(done.get("weight"), 0),
                        _cell(done.get("quorum"), 0), (done.get("error") or "").replace("|", "/")])
+        if item.get("rotation") and item["mode"] == "drive":
+            turns.append(rotation_row(size, item["rotation"], done))
 
     def table(header, rows):
         return ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)] + [
             "| " + " | ".join(row) + " |" for row in rows]
 
-    run = {"drive": "drives one escrow with %d chats in flight until the gateway stops routing at nonce %d, then "
-                    "sends nothing for %g minutes" % (meta["concurrency"], meta["routing_stop"], meta["quiet_minutes"]),
-           "quiet-only": "sends nothing for %g minutes" % meta["quiet_minutes"]}.get(meta.get("run"), "")
+    idle = "then sends nothing for %g minutes" % meta["quiet_minutes"]
+    after = {"settle": "%s while the gateway replaces escrow 1 and settles it itself" % idle,
+             "deactivate": "%s while the gateway replaces escrow 1 and only deactivates it, and settles escrow 1 "
+                           "through the gateway admin API" % idle}.get(meta.get("rotation"), "%s, and finalizes" % idle)
+    if not meta["quiet_minutes"]:
+        after = "and finalizes at once"
+    run = {"drive": "drives one escrow with %d chats in flight until the gateway stops routing at nonce %d, %s" % (
+               meta["concurrency"], meta["routing_stop"], after),
+           "quiet-only": "sends nothing for %g minutes, and finalizes" % meta["quiet_minutes"]}.get(
+        meta.get("run"), "and finalizes")
     lines = ["# Gateway load against real devshardd hosts, %s" % meta["tag"], "",
              "Source `%s` at `%s`. The upstream `devshard/testenv` runs the real `devshardd` hosts under `versiond`, "
              "the `versiond` router and the `devshardctl` gateway; the chain, dapi and ML node are its mocks. "
              "max_nonce is %d, so hosts take diffs with completion-type txs up to max_nonce − (G+1) and heartbeat "
-             "diffs up to max_nonce. Each stack warms up with 20 chats so heartbeats start, %s, and finalizes. "
+             "diffs up to max_nonce. Each stack warms up with 20 chats so heartbeats start, %s. "
              "CPUs: gateway %s, hosts, router and mocks %s." % (
                  meta["tag"], meta["commit"][:12], meta["max_nonce"], run, meta.get("gateway_cpus") or "any",
                  meta.get("host_cpus") or "any"), "",
@@ -322,6 +351,14 @@ def testenv_markdown(meta, runs, verdicts, overall):
               "are gateway log lines. The finalization reply is in `g<G>/finalize.json`; quorum is 2G/3 + 1 slots. "
               "Every sample is in `samples.csv`, every host sample in `hosts.csv`, the router and mocks in "
               "`containers.csv`.", ""]
+    if turns:
+        lines += ["## Rotation", ""]
+        lines += table(("G", "mode", "nonce high", "replacement", "deactivated", "settlement", "at", "gateway nonce",
+                        "hosts' last diff", "heartbeats after deactivation"), turns)
+        lines += ["", "Times are seconds after the gateway stopped routing, from its log lines about escrow 1; the "
+                  "gateway nonce and the hosts' last diff are those of the first sample after the line. In deactivate "
+                  "mode the settlement is `POST /v1/admin/devshards/1/settle` after the quiet minutes, its reply in "
+                  "`g<G>/settle.json`. Every first line is in `summary.json`.", ""]
     return "\n".join(lines)
 
 

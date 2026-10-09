@@ -1,5 +1,6 @@
 """gcheck gateway-load testenv: the v5 gateway against real devshardd hosts in the upstream devshard/testenv."""
 
+import calendar
 import copy
 import json
 import os
@@ -46,6 +47,24 @@ MOCK_OPENAI_FIX = ("RUN grep -q 'utf8CodeUnits(alt)' testenv/mockopenai/config.g
                    " && sed -i '/\"bytes\": *utf8CodeUnits(alt),/d' testenv/mockopenai/config.go"
                    " && ! grep -q 'utf8CodeUnits(alt)' testenv/mockopenai/config.go\n")
 LOGGING = {"driver": "local", "options": {"max-size": "20m", "max-file": "3"}}
+ROTATIONS = ("off", "settle", "deactivate")
+KEY_ENV = "DEVSHARD_PRIVATE_KEY"
+# The mock dapi always puts the epoch switch 30 blocks ahead; a window of 30 or more makes the rotator open temp
+# escrows and retire escrow 1 on its first pass. Validation needs at least 1, and the counts above 0.
+PRE_POC_BLOCKS = 1
+SETTLE_PATH = "/v1/admin/devshards/%d/settle"
+WATCH = (("nonce_high", "escrow_nonce_high"), ("balance_low", "escrow_balance_low"),
+         ("replacement_created", "escrow_depletion_replacement_created"),
+         ("replacement_failed", "escrow_depletion_replacement_failed"), ("deactivated", "deactivated: "),
+         ("queued", "settlement_queued_waiting_for_drain"), ("rotator_retired", "escrow_rotation_settling"),
+         ("rotator_retired", "escrow_rotation_deactivated_without_settlement"),
+         ("quorum_check", "finalize quorum check"), ("finalize_failed", "finalize failed"),
+         ("settle_failed", "devshard_settle_failed"), ("auto_failed", "auto_settle_failed"),
+         ("exhausted", "auto_settle_exhausted"), ("settled", "devshard_settle_confirmed"),
+         ("settled", "auto_settle_already_settled"))
+FAILURES = ("replacement_failed", "finalize_failed", "settle_failed", "auto_failed", "exhausted")
+OURS = re.compile(r'\b(?:old_)?escrow=%d\b|"escrow":"?%d"?[,}]|\bdevshard %d deactivated' % ((ESCROW_ID,) * 3))
+STAMP = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?Z ")
 CADENCE = re.compile(r'^devshard_gateway_heightsync_cadence_events_total\{([^}]*)\}\s+([0-9.eE+-]+)\s*$', re.M)
 LABEL = '{{.Label "com.docker.compose.project"}}'
 
@@ -211,7 +230,20 @@ def direct_urls(text):
     return "\n".join(lines), list(ids)
 
 
-def patch_compose(spec, project, commit, uid, gateway_cpus=None, host_cpus=None):
+def rotation_env(mode, environment):
+    """Gateway env for a rotation mode: replace escrow 1 at nonce 19,800, settle it or only deactivate it."""
+    if mode == "off":
+        return {"DEVSHARD_ESCROW_ROTATION_ENABLED": "false"}
+    if KEY_ENV not in environment:
+        raise TestenvError("compose gives the gateway no %s for the replacement escrow" % KEY_ENV)
+    models = [{"model_id": MODEL, "temp_count": 1, "target_count": 1, "amount": AMOUNT, "private_key_env": KEY_ENV}]
+    return {"DEVSHARD_ESCROW_ROTATION_ENABLED": "true",
+            "DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED": "true" if mode == "settle" else "false",
+            "DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS": str(PRE_POC_BLOCKS),
+            "DEVSHARD_ESCROW_ROTATION_MODELS_JSON": json.dumps(models, separators=(",", ":"))}
+
+
+def patch_compose(spec, project, commit, uid, gateway_cpus=None, host_cpus=None, rotation="off"):
     """The compose model of gencompose, for prebuilt images, solo hosts and loopback ports."""
     spec = copy.deepcopy(spec)
     spec["name"] = project
@@ -245,8 +277,8 @@ def patch_compose(spec, project, commit, uid, gateway_cpus=None, host_cpus=None)
         if name not in services:
             raise TestenvError("compose has no %s service" % name)
     gateway = services["devshardctl"]
-    gateway["environment"].update(DEVSHARD_ADMIN_API_KEY=stand.ADMIN_KEY, DEVSHARD_ESCROW_ROTATION_ENABLED="false",
-                                  DEVSHARD_LOG_LEVEL="info")
+    gateway["environment"].update(DEVSHARD_ADMIN_API_KEY=stand.ADMIN_KEY, DEVSHARD_LOG_LEVEL="info")
+    gateway["environment"].update(rotation_env(rotation, gateway["environment"]))
     gateway["user"] = uid
     gateway["ports"] = [{"target": GATEWAY_PORT, "host_ip": "127.0.0.1", "protocol": "tcp"}]
     # With more than one host in its pool the router marks every request HA and sqlite hosts refuse them.
@@ -311,7 +343,7 @@ class Stack:
             raise TestenvError("docker compose %s took over %d s" % (args[0], timeout)) from None
 
     def generate(self, source, cache_dir, devshardd, commit, version, log_path, octet=SUBNET_OCTET,
-                 gateway_cpus=None, host_cpus=None):
+                 gateway_cpus=None, host_cpus=None, rotation="off"):
         for sub in ["binaries", os.path.join("data", "devshardctl")] + [
                 os.path.join("data", "versiond-%d" % i) for i in range(self.hosts)]:
             os.makedirs(os.path.join(self.work, sub), mode=0o700, exist_ok=True)
@@ -336,7 +368,7 @@ class Stack:
                               os.path.join(self.work, "docker-compose.yml"), "config", "--format", "json"],
                              timeout=120).stdout
         spec = patch_compose(json.loads(model), self.project, commit, "%d:%d" % (os.getuid(), os.getgid()),
-                             gateway_cpus, host_cpus)
+                             gateway_cpus, host_cpus, rotation)
         self.services = sorted(spec["services"])
         with open(self.compose_file, "w", encoding="utf-8") as handle:
             json.dump(spec, handle, indent=2)
@@ -382,7 +414,8 @@ class Stack:
 
     def gateway_log(self, since, until):
         try:
-            reply = stand.docker(["logs", "--since", _stamp(since), "--until", _stamp(until), self.gateway],
+            reply = stand.docker(["logs", "--timestamps", "--since", _stamp(since), "--until", _stamp(until),
+                                  self.gateway],
                                  check=False, timeout=60)
         except subprocess.TimeoutExpired:
             return ""
@@ -512,11 +545,13 @@ def host_last(fetch, nonce, known=None, window=500, step=1000):
         low, high = max(0, low - step), low
 
 
-def cadence(text):
-    """Height-sync cadence events of the gateway from /metrics, summed over escrows."""
+def cadence(text, escrow=None):
+    """Height-sync cadence events of the gateway from /metrics, summed over escrows or of one."""
     out = {}
     for labels, value in CADENCE.findall(text):
         match = re.search(r'event="([^"]+)"', labels)
+        if escrow is not None and 'devshard_id="%d"' % escrow not in labels:
+            continue
         if match:
             out[match.group(1)] = out.get(match.group(1), 0) + int(float(value))
     return out
@@ -528,6 +563,54 @@ def count_lines(text):
     return sum(CAP_LINE in line for line in lines), sum(DEAD_LINE in line for line in lines)
 
 
+def _int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def escrow_status(text, escrow=ESCROW_ID):
+    """(nonce, active, runtimes) of one escrow in GET /v1/status: one runtime answers for itself, more list theirs."""
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None, None, None
+    if not isinstance(doc, dict):
+        return None, None, None
+    rows = doc.get("devshards")
+    if isinstance(rows, list):
+        row = next((row for row in rows if isinstance(row, dict) and str(row.get("id")) == str(escrow)), None)
+        # The nonce is omitted while it is 0.
+        return (None, None, len(rows)) if row is None else (_int(row.get("nonce", 0)), row.get("active"), len(rows))
+    if str(doc.get("escrow_id", escrow)) != str(escrow):
+        return None, None, 1
+    return _int(doc.get("nonce")), None, 1
+
+
+def watch_lines(text):
+    """(event, wall time or None, line) of the watched gateway lines about escrow 1, in log order."""
+    out = []
+    for line in text.splitlines():
+        if not OURS.search(line):
+            continue
+        event = next((name for name, key in WATCH if key in line), None)
+        if event:
+            match = STAMP.match(line)
+            at = None
+            if match:
+                at = calendar.timegm(time.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S")) + float(match.group(2) or 0)
+            out.append((event, at, line[match.end():] if match else line))
+    return out
+
+
+def detail(line):
+    """The error of a gateway log line, or its tail; log.Printf lines arrive quoted inside slog's msg."""
+    line = line.replace('\\"', '"')
+    match = re.search(r'error=(?:"([^"]*)"|(.+))', line)
+    return (match.group(1) or match.group(2)).strip().rstrip('"') if match else line.strip()[-200:]
+
+
 class Sampler:
     """Gateway, hosts and heartbeats every few seconds; host diffs only when asked."""
 
@@ -535,20 +618,27 @@ class Sampler:
         self.stack, self.base, self.started = stack, base, started
         self.samples, self.known, self.ticks = [], {}, cpu_ticks()
         self.since, self.cap_lines, self.dead_lines = time.time(), 0, 0
+        self.wall = time.time() - (time.monotonic() - started)
+        self.nonce, self.stop_t, self.events, self.counts = None, None, {}, {}
 
     def take(self, phase, diffs=False):
         _code, text = stand.http("GET", self.base + "/metrics", timeout=10)
         text = text.decode("utf-8", "replace")
-        nonce = stand.nonce_of(self.base)
+        code, status = stand.http("GET", self.base + "/v1/status", timeout=10)
+        nonce, active, runtimes = escrow_status(status if code == 200 else b"")
+        # A settled escrow leaves the gateway; its hosts are still read from its last nonce.
+        self.nonce = nonce if nonce is not None else self.nonce
         usage = self.stack.stats()
         now = time.time()
         ticks = cpu_ticks()
         cores, self.ticks = core_busy(self.ticks, ticks), ticks
-        cap, dead = count_lines(self.stack.gateway_log(self.since, now))
+        log = self.stack.gateway_log(self.since, now)
+        cap, dead = count_lines(log)
         self.since, self.cap_lines, self.dead_lines = now, self.cap_lines + cap, self.dead_lines + dead
-        events = cadence(text)
+        events = cadence(text, ESCROW_ID)
         gateway = usage.get(self.stack.gateway, {})
         item = {"phase": phase, "t_s": round(time.monotonic() - self.started, 1), "nonce": nonce,
+                "escrow_active": active, "escrows": runtimes,
                 "cpu_s": stand.metric(text, "process_cpu_seconds_total"),
                 "rss_mb": (stand.metric(text, "process_resident_memory_bytes") or 0) / 2 ** 20,
                 "cpu_pct": gateway.get("cpu_pct"), "mem_mb": gateway.get("mem_mb"), "rx_mb": gateway.get("rx_mb"),
@@ -563,8 +653,8 @@ class Sampler:
             if name not in mine:
                 item["others"][name[len(self.stack.project) + 1:]] = row
         for i in range(self.stack.hosts):
-            if diffs and nonce is not None:
-                self.known[i] = host_last(lambda low, high, i=i: self.stack.diffs(i, low, high), nonce,
+            if diffs and self.nonce is not None:
+                self.known[i] = host_last(lambda low, high, i=i: self.stack.diffs(i, low, high), self.nonce,
                                           self.known.get(i))
             row = usage.get(self.stack.host(i), {})
             item["hosts"].append({"host": i, "cpu_pct": row.get("cpu_pct"), "mem_mb": row.get("mem_mb"),
@@ -574,6 +664,12 @@ class Sampler:
                     hosts_mem_mb=sum(row["mem_mb"] or 0 for row in item["hosts"]),
                     host_last_min=min(lasts) if lasts else None, host_last_max=max(lasts) if lasts else None)
         self.samples.append(item)
+        for event, at, line in watch_lines(log):
+            self.counts[event] = self.counts.get(event, 0) + 1
+            if event not in self.events:
+                self.events[event] = {"t_s": round((at or now) - self.wall, 1), "nonce": self.nonce,
+                                      "host_last_min": item["host_last_min"], "host_last_max": item["host_last_max"],
+                                      "line": stress.shorten(line, 400).strip()}
         return nonce
 
 
@@ -582,7 +678,12 @@ class Drive(stand.Load):
 
     def __init__(self, base, concurrency, target, run_tag, participants=()):
         super().__init__(base, concurrency, target, run_tag)
-        self.participants, self.unquarantines, self.cleared = list(participants), 0, None
+        self.participants, self.unquarantines, self.cleared, self.ended = list(participants), 0, None, None
+
+    def finish(self, reason):
+        with self.lock:
+            self.ended = self.ended or time.monotonic()
+        super().finish(reason)
 
     def one(self, number):
         body = {"model": MODEL, "max_tokens": 32,
@@ -668,6 +769,76 @@ def finalize(base, groups, path=None):
     return out
 
 
+def settle(base, groups, path=None, escrow=ESCROW_ID):
+    """What an operator settles by hand with: finalize, then MsgSettleDevshardEscrow through the gateway."""
+    url = SETTLE_PATH % escrow
+    started = time.monotonic()
+    code, body = stand.http("POST", base + url, {}, timeout=3600)
+    out = {"path": url, "code": code, "seconds": round(time.monotonic() - started, 3), "quorum": stand.quorum(groups),
+           "weight": None, "tx_hash": None, "error": None}
+    try:
+        data = json.loads(body)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        failure = data.get("error")
+        out["tx_hash"] = data.get("tx_hash")
+        if code != 200:
+            out["error"] = (failure.get("message") if isinstance(failure, dict) else failure) or str(data)[-300:]
+    elif code != 200:
+        out["error"] = body.decode("utf-8", "replace")[-300:]
+    if path:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(dict(out, reply=data if data is not None else body.decode("utf-8", "replace")[-2000:]), handle,
+                      indent=2)
+            handle.write("\n")
+    return out
+
+
+def after_deactivation(samples, deactivated):
+    """Did escrow 1 keep spending nonces on heartbeats after the gateway deactivated it, before any settle."""
+    if not deactivated:
+        return None
+    points = [item for item in samples if item["t_s"] >= deactivated["t_s"] and item["phase"] in ("quiet", "settle")]
+    out = {"samples": len(points)}
+    for name, field in (("nonce", "nonce"), ("host_last", "host_last_max"), ("turns", "heartbeats")):
+        values = [item[field] for item in points if item.get(field) is not None]
+        out[name + "_from"], out[name + "_to"] = (values[0], values[-1]) if values else (None, None)
+    moved = [out[name + "_to"] - out[name + "_from"] for name in ("nonce", "host_last", "turns")
+             if out[name + "_from"] is not None]
+    out["continued"] = any(value > 0 for value in moved) if moved else None
+    return out
+
+
+def timeline(mode, sampler, window_min, manual=None, manual_t=None):
+    """What the gateway did with escrow 1 after the routing stop, in seconds after it, and how it ended."""
+    stop = sampler.stop_t
+    events = {name: dict(item, after_s=None if stop is None else round(item["t_s"] - stop, 1))
+              for name, item in sampler.events.items()}
+    early = [item.get("escrows") or 0 for item in sampler.samples if item["phase"] in ("up", "warm", "drive")]
+    result = {"state": "none", "after_s": None, "nonce": None, "host_last_min": None, "host_last_max": None,
+              "detail": None}
+    if mode == "deactivate" and manual:
+        before = next((item for item in reversed(sampler.samples) if item["phase"] == "settle"), {})
+        nonce = before.get("nonce")
+        result.update(state="settled" if manual.get("code") == 200 else "failed",
+                      nonce=sampler.nonce if nonce is None else nonce,
+                      after_s=None if stop is None or manual_t is None else round(manual_t - stop, 1),
+                      host_last_min=before.get("host_last_min"), host_last_max=before.get("host_last_max"),
+                      detail=manual.get("tx_hash") if manual.get("code") == 200 else manual.get("error"))
+    elif mode == "settle":
+        failed = sorted((events[name] for name in FAILURES if name in events), key=lambda item: item["t_s"])
+        picked = events.get("settled") or (failed[0] if failed else None)
+        if picked:
+            result.update(state="settled" if "settled" in events else "failed", after_s=picked["after_s"],
+                          nonce=picked["nonce"], host_last_min=picked["host_last_min"],
+                          host_last_max=picked["host_last_max"],
+                          detail=None if "settled" in events else detail(picked["line"]))
+    return {"mode": mode, "window_min": window_min, "stop_t": stop, "events": events, "counts": dict(sampler.counts),
+            "escrows_before_stop": max(early, default=0), "result": result,
+            "heartbeats": after_deactivation(sampler.samples, sampler.events.get("deactivated"))}
+
+
 def active_cap(groups):
     """Highest nonce a host accepts for diffs with completion-type txs: host/host.go at max_nonce − (G+1)."""
     return MAX_NONCE - (groups + 1)
@@ -737,12 +908,12 @@ def others(samples):
 
 
 def summarize(groups, hosts, concurrency, mode, warm, drive, samples, final, error=None, stop=None, stopped=(),
-              cpus=(None, None)):
+              cpus=(None, None), rotation=None):
     driven = [item for item in samples if item["phase"] == "drive" and item.get("nonce") is not None]
     rate = None
     if len(driven) >= 2 and driven[-1]["t_s"] > driven[0]["t_s"]:
         rate = round((driven[-1]["nonce"] - driven[0]["nonce"]) / (driven[-1]["t_s"] - driven[0]["t_s"]), 2)
-    before = [item for item in samples if item["phase"] != "final"]
+    before = [item for item in samples if item["phase"] != "final" and item.get("nonce") is not None]
     last = before[-1] if before else {}
     with_diffs = [item for item in samples if item.get("host_last_max") is not None]
     lasts = with_diffs[-1] if with_diffs else {}
@@ -771,15 +942,65 @@ def summarize(groups, hosts, concurrency, mode, warm, drive, samples, final, err
             "nonce": last.get("nonce"), "host_last_min": lasts.get("host_last_min"),
             "host_last_max": lasts.get("host_last_max"), "active_cap": active_cap(groups),
             "cap_lines": end.get("cap_lines"), "dead_lines": end.get("dead_lines"), "finalize": final,
-            "stop": stop or error or (drive.reason if drive else None), "error": error, "stopped": list(stopped)}
+            "stop": stop or error or (drive.reason if drive else None), "error": error, "stopped": list(stopped),
+            "rotation": rotation}
 
 
 def _num(value, digits=1):
     return "?" if value is None else ("%%.%df" % digits) % value if isinstance(value, float) else str(value)
 
 
+def _after(event):
+    return "+%s s" % _num(event.get("after_s")) if event else "none"
+
+
+def _beats(beats):
+    if not beats or beats["continued"] is None:
+        return "heartbeats after it unknown"
+    return "heartbeats after it %s: escrow nonce %s to %s, hosts' last diff %s to %s, %s turns" % (
+        "went on" if beats["continued"] else "stopped", beats["nonce_from"], beats["nonce_to"], beats["host_last_from"],
+        beats["host_last_to"], (beats["turns_to"] or 0) - (beats["turns_from"] or 0))
+
+
+def judge_rotation(summary):
+    """The gateway's own path after the routing stop: settle mode settles escrow 1, deactivate mode leaves it to us."""
+    rotation = summary["rotation"]
+    events, result, window = rotation["events"], rotation["result"], rotation["window_min"]
+    seen = ", ".join("%s %s" % (name, _after(events[name]))
+                     for name in sorted(events, key=lambda name: events[name]["t_s"])) or "no watched gateway line"
+    hosts = "gateway nonce %s, hosts' last diff %s..%s of max_nonce %d" % (
+        result["nonce"], result["host_last_min"], result["host_last_max"], MAX_NONCE)
+    final = summary["finalize"] or {}
+    manual = "manual settlement POST %s answered %s %s in %s s" % (
+        SETTLE_PATH % ESCROW_ID, final.get("code"), result["detail"] or "", final.get("seconds"))
+    deactivated = "escrow 1 deactivated %s after the routing stop, not settled; %s; %s" % (
+        _after(events.get("deactivated")), _beats(rotation["heartbeats"]), manual)
+    if rotation["escrows_before_stop"] > 1:
+        value, reason = "INCONCLUSIVE", "the rotator opened escrows before the routing stop (%d runtimes), so the " \
+                                        "drive left escrow 1" % rotation["escrows_before_stop"]
+    elif rotation["mode"] == "settle" and result["state"] == "settled":
+        value, reason = "PASS", "the gateway settled escrow 1 itself %s after the routing stop; %s; %s" % (
+            _after(result), hosts, seen)
+    elif rotation["mode"] == "settle" and result["state"] == "failed":
+        value, reason = "FAIL", "the gateway's settlement of escrow 1 failed %s after the routing stop: %s; %s; " \
+                                "%d auto-settle failures; %s" % (_after(result), result["detail"], hosts,
+                                                                 rotation["counts"].get("auto_failed", 0), seen)
+    elif rotation["mode"] == "settle":
+        value, reason = "INCONCLUSIVE", "no settlement and no settlement failure of escrow 1 within %g min after " \
+                                        "the routing stop; %s" % (window, seen)
+    elif "deactivated" not in events:
+        value, reason = "INCONCLUSIVE", "the gateway did not deactivate escrow 1 within %g min after the routing " \
+                                        "stop; %s; %s" % (window, manual, seen)
+    elif result["state"] == "settled":
+        value, reason = "PASS", deactivated
+    else:
+        value, reason = "FAIL", "%s; %s; %s" % (deactivated, hosts, seen)
+    return value, reason
+
+
 def judge(summary):
-    check = "testenv_g%d" % summary["groups"]
+    rotation = summary.get("rotation")
+    check = "testenv_g%d%s" % (summary["groups"], "_rotation" if rotation else "")
     final = summary["finalize"] or {}
     settled = final.get("code") == 200 and (final.get("weight") or 0) >= final.get("quorum", 1)
     gateway_down = [item for item in summary["stopped"] if "-devshardctl " in item]
@@ -802,6 +1023,8 @@ def judge(summary):
                 final.get("code"), final.get("error") or "", final.get("weight"), final.get("quorum")))
         if summary["host_last_max"] is None:
             missing.append("no host diffs readable through the router")
+        if rotation and rotation["escrows_before_stop"] > 1:
+            missing.append("the rotator opened escrows on its own (%d runtimes)" % rotation["escrows_before_stop"])
         value = "FAIL" if missing else "PASS"
         reason = "; ".join(missing) or "%d chats, hosts hold diffs up to %s, finalize %s s, weight %s of %s" % (
             summary["warm_ok"], summary["host_last_max"], final["seconds"], final["weight"], final["quorum"])
@@ -819,11 +1042,13 @@ def judge(summary):
     elif not summary["reached"]:
         value, reason = "INCONCLUSIVE", "drive stopped at nonce %s of %d: %s" % (
             summary["drive_nonce"], ROUTING_STOP, summary["stop"])
+    elif rotation:
+        value, reason = judge_rotation(summary)
     elif settled:
-        value, reason = "PASS", (
-            "drive to %s, quiet %s min to nonce %s, hosts hold diffs up to %s, finalize %s s, weight %s of %s" % (
-                summary["drive_nonce"], quiet_part.get("minutes"), summary["nonce"], summary["host_last_max"],
-                final["seconds"], final["weight"], final["quorum"]))
+        idle = "quiet %s min to nonce %s" % (quiet_part["minutes"], summary["nonce"]) if quiet_part.get(
+            "minutes") else "finalized at once at nonce %s" % summary["nonce"]
+        value, reason = "PASS", "drive to %s, %s, hosts hold diffs up to %s, finalize %s s, weight %s of %s" % (
+            summary["drive_nonce"], idle, summary["host_last_max"], final["seconds"], final["weight"], final["quorum"])
     else:
         value, reason = "FAIL", (
             "finalize answered %s %s after %s s; gateway nonce %s, hosts' last diff %s..%s, active cap %d, "
