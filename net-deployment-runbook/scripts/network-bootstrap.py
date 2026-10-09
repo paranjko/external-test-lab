@@ -31,9 +31,9 @@ def valid_url(value,field,schemes):
  except ValueError as error:raise BootstrapError("semantics",field,"has an invalid port") from error
  if p.scheme not in schemes or not p.netloc or p.username or p.password or p.fragment or p.query or port==0:raise BootstrapError("semantics",field,"has an unsupported scheme or unsafe URL component")
  return p
-def validate(doc):
+def validate(doc,schema=None):
  if not isinstance(doc,dict):raise BootstrapError("schema","$","must be an object")
- schema=load(schema_path())
+ if schema is None:schema=load(schema_path())
  try:
   jsonschema.Draft202012Validator.check_schema(schema); errors=sorted(jsonschema.Draft202012Validator(schema).iter_errors(doc),key=lambda x:list(x.path))
  except jsonschema.SchemaError as error:raise BootstrapError("schema","schema","repository schema is invalid") from error
