@@ -91,6 +91,9 @@ jobs:
       - name: Test edge installation ownership in disposable root
         if: runner.name != 'external-test-lab-gdc-node4'
         run: sudo make -C net-deployment-runbook test-edge-install-ownership
+      - name: Test bootstrap publication with separate directory owners
+        if: runner.name != 'external-test-lab-gdc-node4'
+        run: sudo make -C net-deployment-runbook test-bootstrap-publisher-ownership
 
   upstream-profiles:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false

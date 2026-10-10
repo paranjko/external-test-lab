@@ -9,7 +9,9 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import pwd
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -127,6 +129,25 @@ def switch(root, target):
         temporary.unlink(missing_ok=True)
 
 
+def permissions(root, user):
+    """Prepare only the directories the unprivileged publisher must move."""
+    require(os.geteuid() == 0, "permission setup requires root")
+    require(root.is_dir() and not root.is_symlink(), "publication root must be a real directory")
+    current = root / "current"
+    require(not current.exists() or current.is_symlink() or current.is_dir(),
+            "current is not a directory")
+    account = pwd.getpwnam(user)
+    os.chown(root, account.pw_uid, account.pw_gid, follow_symlinks=False)
+    root.chmod(0o755)
+    if current.is_dir() and not current.is_symlink():
+        # Moving a directory to another parent updates its '..' entry and
+        # requires write access to the directory itself, not just its parents.
+        mode = stat.S_IMODE(current.stat().st_mode)
+        os.chown(current, account.pw_uid, account.pw_gid, follow_symlinks=False)
+        current.chmod(mode | stat.S_IWUSR)
+    print("PASS publisher directory permissions prepared; artifact files unchanged")
+
+
 def activate(root, upload, expected):
     require(root.is_dir() and not root.is_symlink(), "publication root must be a real directory")
     require(upload.parent == root and upload.name.startswith(".upload-"), "upload outside publication root")
@@ -228,6 +249,7 @@ def main():
     p = sub.add_parser("prepare")
     p.add_argument("repository", type=Path); p.add_argument("destination", type=Path); p.add_argument("revision")
     p = sub.add_parser("check"); p.add_argument("release", type=Path)
+    p = sub.add_parser("permissions"); p.add_argument("root", type=Path); p.add_argument("user")
     p = sub.add_parser("activate")
     p.add_argument("root", type=Path); p.add_argument("upload", type=Path); p.add_argument("generation")
     p = sub.add_parser("rollback"); p.add_argument("root", type=Path); p.add_argument("generation")
@@ -237,6 +259,7 @@ def main():
     try:
         if args.command == "prepare": prepare(args.repository, args.destination, args.revision)
         elif args.command == "check": print(check(args.release)[1])
+        elif args.command == "permissions": permissions(args.root, args.user)
         elif args.command == "activate": activate(args.root, args.upload, args.generation)
         elif args.command == "rollback": rollback(args.root, args.generation)
         elif args.command == "verify": verify(args.release, args.origin)

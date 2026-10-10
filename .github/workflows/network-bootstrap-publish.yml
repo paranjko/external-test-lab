@@ -42,6 +42,8 @@ jobs:
         run: make -C net-deployment-runbook bootstrap-publication-dependencies
       - name: Test release preparation and activation
         run: make -C net-deployment-runbook test-bootstrap-publication
+      - name: Test activation with separate directory owners
+        run: sudo make -C net-deployment-runbook test-bootstrap-publisher-ownership
       - name: Prepare exact merged artifacts
         run: >-
           make -C net-deployment-runbook prepare-bootstrap-release

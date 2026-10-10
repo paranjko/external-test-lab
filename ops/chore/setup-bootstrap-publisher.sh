@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # extend sudo permissions. CI subsequently writes static artifacts as ops.
 [[ ${EUID} -eq 0 ]] || { echo 'run as root on the public edge' >&2; exit 2; }
 [[ $# -eq 1 ]] || { echo 'usage: setup-bootstrap-publisher.sh PATH_TO_BOOTSTRAP_RELEASE_PY' >&2; exit 2; }
-tool=$1
+tool="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 edge=/srv/dai/edge
 root=$edge/bootstrap
 getent passwd ops >/dev/null
@@ -25,8 +25,11 @@ if ! cmp -s "$temporary/Caddyfile" "$edge/Caddyfile"; then
     exit 1
   fi
 fi
-# Only this public artifact directory, not its parent, config or existing data.
-chown ops:ops "$root"
-chmod 0755 "$root"
+# The legacy current directory also needs write access for its first move
+# into releases. Never recursively change existing artifact ownership.
+python3 "$tool" permissions "$root" ops
 runuser -u ops -- test -w "$root"
+if [[ -d "$root/current" && ! -L "$root/current" ]]; then
+  runuser -u ops -- test -w "$root/current"
+fi
 printf 'PASS bootstrap publisher prepared; previous Caddyfile retained at %s\n' "$temporary/Caddyfile.before"

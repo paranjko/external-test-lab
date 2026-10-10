@@ -28,8 +28,14 @@ Bootstrap publication uses Python 3 with `jsonschema==4.23.0`, OpenSSH, and
 `bootstrap-publication-dependencies` target installs the validator and checks
 the transport tools. The destination requires Python 3 (standard library only)
 and rsync. One-time root setup additionally uses the existing Docker Compose
-installation and the system's `getent` and `runuser`; CI does not use sudo.
+installation and the system's `getent` and `runuser`; delivery never uses sudo
+on the destination server.
 The publication tests replace SSH and rsync with local fixtures.
+The separate `test-bootstrap-publisher-ownership` target requires Linux root
+and the standard `nobody` account. GitHub-hosted CI invokes it with sudo; local
+checks can run in a disposable root container. It uses only Python's standard
+library, temporary directories, and a child process with a different UID/GID;
+it never writes to `/srv` or connects to a server.
 
 `make test-tmkms-recovery-boundary` builds an isolated test image from the pinned
 TMKMS image. Its extra packages are declared in

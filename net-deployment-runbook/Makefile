@@ -527,6 +527,10 @@ test-core-release-profile:
 test-bootstrap-publication:
 	@python3 ./scripts/test-bootstrap-release.py
 
+.PHONY: test-bootstrap-publisher-ownership
+test-bootstrap-publisher-ownership:
+	@python3 ./scripts/test-bootstrap-publisher-ownership.py
+
 prepare-bootstrap-release:
 	@python3 ./scripts/bootstrap-release.py prepare "$(CURDIR)/.." "$(bootstrap_release_dir)" "$(bootstrap_revision)"
 

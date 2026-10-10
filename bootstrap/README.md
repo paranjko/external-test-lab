@@ -81,10 +81,15 @@ sudo bash ops/chore/setup-bootstrap-publisher.sh \
 
 The script validates and gracefully reloads Caddy with a generic
 `/*.schema.json` route, keeps the previous Caddyfile, and grants `ops`
-ownership of the bootstrap directory itself. It leaves existing artifact files,
+ownership of the bootstrap directory and any legacy real `current` directory.
+The latter needs write access to move into `releases` during first publication.
+Ownership changes are not recursive; an already-managed `current` symlink and
+its target are left untouched. It leaves existing artifact files,
 SSH keys, sudo policy, site content and node services unchanged. The script
 expects the existing `/srv/dai/edge/compose.yaml` layout and the `caddy`
 service; it refuses an unrecognized configuration.
+Repeated edge installation preserves bootstrap publisher ownership in both
+the legacy and per-node deployment layouts.
 
 Prepare and inspect a release without contacting the server:
 
