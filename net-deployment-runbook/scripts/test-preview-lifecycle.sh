@@ -142,17 +142,30 @@ for receipt in preview-composition.json backend-build.json preview-runtime-confi
   [[ "$status" == 404 ]] || { echo "preview receipt unexpectedly served: $receipt status=$status" >&2; exit 1; }
 done
 
+shared_before="$(docker inspect --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}' gdc-preview-caddy gdc-preview-egress gdc-preview-node-guard)"
+combined_before="$(docker inspect --format '{{.Id}} {{.State.StartedAt}}' "gdc-preview-pr-174-${revision_combined:0:12}")"
 run_controller remove 172
-if curl --fail --silent --show-error "http://127.0.0.1:$port/172/" >/dev/null 2>&1; then
-  echo 'removed preview route still responds successfully' >&2
-  exit 1
-fi
+run_controller remove 172 # Repeated removal is safe
+run_controller remove 999 # A closed PR that never had a preview is safe
+status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/172/")"
+[[ "$status" == 404 ]] || { echo "removed preview returned HTTP $status" >&2; exit 1; }
 [[ ! -e "$test_root/runtime/releases/172" && ! -e "$test_root/runtime/staging/172" ]] \
   || { echo 'removed preview retained release or staging state' >&2; exit 1; }
 run_controller deploy 172 "$revision_two" "$artifact_two"
 curl --fail --silent --show-error "http://127.0.0.1:$port/172/" | grep -Fq two
 run_controller remove 172
+# Reproduce interruption after deleting the registry: retry must still remove
+# the labelled backend, release and network without relying on that entry.
+rm "$test_root/runtime/control/registry/173.json"
 run_controller remove 173
+run_controller remove 173
+if docker inspect "gdc-preview-pr-173-${revision_backend:0:12}" >/dev/null 2>&1; then
+  echo 'interrupted cleanup retained its backend' >&2; exit 1
+fi
+curl --fail --silent --show-error "http://127.0.0.1:$port/174/" | grep -Fq combined
+curl --fail --silent --show-error "http://127.0.0.1:$port/174/status/test" | grep -Fxq backend
+[[ "$combined_before" == "$(docker inspect --format '{{.Id}} {{.State.StartedAt}}' "gdc-preview-pr-174-${revision_combined:0:12}")" ]]
+[[ "$shared_before" == "$(docker inspect --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}' gdc-preview-caddy gdc-preview-egress gdc-preview-node-guard)" ]]
 run_controller remove 174
 for network in gdc-preview-pr-172 gdc-preview-pr-173 gdc-preview-pr-174; do
   if docker network inspect "$network" >/dev/null 2>&1; then

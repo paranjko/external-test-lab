@@ -32,6 +32,31 @@ The publisher preserves the host's `config.js` and `preview/` directory, it does
 
 `make test-site-publisher` checks the executed publication commands and `make edge-integration` verifies new site bytes, unchanged bootstrap bytes and unchanged Caddy container identity in a disposable local container
 
+## Preview cleanup
+
+Closing or merging a same-repository PR, or converting it to draft, removes its isolated preview using the current GitHub PR state
+
+Cleanup does not depend on a PR comment or the latest changed-file list, publication may have succeeded even when comment recording failed
+
+The workflow checks PR state again after waiting for its environment, a reopened PR or one marked ready for review keeps its preview
+
+The trusted controller reloads only preview routes and removes the selected PR's labelled backend, network, releases and staging files, it does not install assets, rebuild images or restart shared services
+
+Repeated cleanup and cleanup of a PR without a preview are safe, interrupted cleanup can find its remaining backend by labels
+
+The workflow requires HTTP 404 for the removed frontend, build metadata and status route, connection failures, redirects and HTTP 5xx do not count as successful removal
+
+The `preview` account, its rootless Docker runtime and running preview Caddy must already be provisioned, cleanup does not repair or provision the host
+
+For an operator-authorized retry, first verify the PR is still closed or draft, then use the existing publisher configuration:
+
+```sh
+make -C net-deployment-runbook remove-isolated-site-preview preview_number=PR_NUMBER preview_revision=FULL_HEAD_SHA
+make -C net-deployment-runbook verify-removed-site-preview-live preview_number=PR_NUMBER
+```
+
+`make test-preview-lifecycle` exercises removal, repeated removal and interruption recovery with real disposable containers while checking that another preview and shared services stay unchanged
+
 ## Validator-map basemap provenance
 
 `world-map.svg` is a local land-only, equirectangular schematic for approximate

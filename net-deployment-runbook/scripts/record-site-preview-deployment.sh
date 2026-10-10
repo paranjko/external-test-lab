@@ -31,6 +31,7 @@ status_payload="$(jq -cn \
   --arg log_url "${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
   '{state:"success", description:"Preview verified", environment:$environment, environment_url:$environment_url, log_url:$log_url}')"
 gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" --input - <<<"$status_payload" >/dev/null
+printf 'PASS recorded verified deployment pr=%s deployment=%s url=%s\n' "$number" "$deployment_id" "$environment_url"
 
 # Keep one durable discovery comment per preview. The marker is intentionally
 # not user-facing and lets a later verified deployment update the same comment.
@@ -38,13 +39,22 @@ marker="<!-- gdc-preview:$number -->"
 comment_body="$marker
 
 Preview updated: $environment_url"
-comments="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$number/comments?per_page=100")"
+comments="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$number/comments?per_page=100")" || {
+  echo "ERROR preview is deployed but PR comments could not be read; deployment=$deployment_id url=$environment_url" >&2
+  exit 1
+}
 comment_id="$(jq -r --arg marker "$marker" '[.[][] | select(.body | contains($marker))] | last | .id // empty' <<<"$comments")"
 if [[ "$comment_id" =~ ^[0-9]+$ ]]; then
   jq -n --arg body "$comment_body" '{body:$body}' | \
-    gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input - >/dev/null
+    gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input - >/dev/null || {
+      echo "ERROR preview is deployed but its PR comment could not be updated; deployment=$deployment_id url=$environment_url" >&2
+      exit 1
+    }
 else
   jq -n --arg body "$comment_body" '{body:$body}' | \
-    gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$number/comments" --input - >/dev/null
+    gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$number/comments" --input - >/dev/null || {
+      echo "ERROR preview is deployed but its PR comment could not be created; deployment=$deployment_id url=$environment_url" >&2
+      exit 1
+    }
 fi
 printf 'PASS recorded preview deployment pr=%s url=%s\n' "$number" "$environment_url"

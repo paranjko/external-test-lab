@@ -10,15 +10,20 @@ cat >"$tmp/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ "$*" == *'/files?per_page=100'* ]]; then
+  [[ "${PREVIEW_CLEANUP_TEST:-}" != 1 ]] || { echo 'cleanup must not depend on the current diff' >&2; exit 97; }
   printf '%s\n' "$PREVIEW_FILE_PAGES"
 elif [[ "$*" == *'/comments?per_page=100'* ]]; then
-  printf '%s\n' "${PREVIEW_COMMENT_PAGES:-[[]]}"
-else
+  echo 'cleanup must not depend on PR comments' >&2
+  exit 97
+elif [[ "$*" == 'api repos/paranjko/external-test-lab/pulls/81' ]]; then
   if [[ -n "${PREVIEW_PR_PAYLOAD:-}" ]]; then
     printf '%s\n' "$PREVIEW_PR_PAYLOAD"
   else
     printf '%s\n' '{"head":{"repo":{"full_name":"paranjko/external-test-lab"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"state":"open","draft":false}'
   fi
+else
+  echo "unexpected GitHub operation: $*" >&2
+  exit 97
 fi
 SH
 chmod +x "$tmp/bin/gh"
@@ -66,12 +71,10 @@ run_cleanup_case() {
   local name="$1"
   local event_payload="$2"
   local pr_payload="$3"
-  local pages="$4"
-  local comments="$5"
-  local expected="$6"
+  local expected="$4"
   : >"$output"
   printf '%s\n' "$event_payload" >"$event"
-  PREVIEW_FILE_PAGES="$pages" PREVIEW_COMMENT_PAGES="$comments" PREVIEW_PR_PAYLOAD="$pr_payload" PATH="$tmp/bin:$PATH" GH_TOKEN=fixture \
+  PREVIEW_CLEANUP_TEST=1 PREVIEW_PR_PAYLOAD="$pr_payload" PATH="$tmp/bin:$PATH" GH_TOKEN=fixture \
     GITHUB_EVENT_PATH="$event" GITHUB_OUTPUT="$output" \
     GITHUB_REPOSITORY=paranjko/external-test-lab \
     "$root/scripts/site-preview-context.sh" cleanup
@@ -81,18 +84,25 @@ run_cleanup_case() {
   }
 }
 
-# Closing a PR with no preview-relevant changes must not invoke the credentialed
-# cleanup job. This is the regression that previously made ordinary PRs fail.
-run_cleanup_case no-preview '{"action":"closed","pull_request":{"number":81}}' \
+# A successful publication with failed comment recording still needs cleanup,
+# as does a PR whose latest diff no longer includes preview inputs.
+run_cleanup_case preview-without-comment '{"action":"closed","pull_request":{"number":81}}' \
   '{"head":{"repo":{"full_name":"paranjko/external-test-lab"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"state":"closed","draft":false}' \
-  '[[{"filename":"docs/README.md"}]]' '[[]]' false
-run_cleanup_case preview-unpublished '{"action":"closed","pull_request":{"number":81}}' \
-  '{"head":{"repo":{"full_name":"paranjko/external-test-lab"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"state":"closed","draft":false}' \
-  '[[{"filename":"net-deployment-runbook/04-ops/site/index.html"}]]' '[[]]' false
-run_cleanup_case preview-closed '{"action":"closed","pull_request":{"number":81}}' \
-  '{"head":{"repo":{"full_name":"paranjko/external-test-lab"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"state":"closed","draft":false}' \
-  '[[{"filename":"net-deployment-runbook/04-ops/site/index.html"}]]' '[[{"body":"<!-- gdc-preview:81 -->"}]]' true
+  true
 run_cleanup_case preview-draft '{"action":"converted_to_draft","pull_request":{"number":81}}' \
   '{"head":{"repo":{"full_name":"paranjko/external-test-lab"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"state":"open","draft":true}' \
-  '[[{"filename":"net-deployment-runbook/04-ops/site/index.html"}]]' '[[{"body":"<!-- gdc-preview:81 -->"}]]' true
+  true
+run_cleanup_case reopened-after-close '{"action":"closed","pull_request":{"number":81}}' \
+  '{"head":{"repo":{"full_name":"paranjko/external-test-lab"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"state":"open","draft":false}' \
+  false
+run_cleanup_case ready-after-draft '{"action":"converted_to_draft","pull_request":{"number":81}}' \
+  '{"head":{"repo":{"full_name":"paranjko/external-test-lab"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"state":"open","draft":false}' \
+  false
+run_cleanup_case foreign-repository '{"action":"closed","pull_request":{"number":81}}' \
+  '{"head":{"repo":{"full_name":"other/fork"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"state":"closed","draft":false}' \
+  false
+run_cleanup_case unknown-state '{"action":"closed","pull_request":{"number":81}}' \
+  '{"head":{"repo":{"full_name":"paranjko/external-test-lab"},"sha":"0123456789012345678901234567890123456789"},"base":{"sha":"9999999999999999999999999999999999999999"},"draft":false}' \
+  false
 printf 'PASS preview context aggregates every relevant paginated file page and binds source revisions\n'
+printf 'PASS cleanup uses current PR state without depending on files or comments\n'

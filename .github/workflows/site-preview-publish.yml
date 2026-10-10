@@ -15,8 +15,6 @@ concurrency:
 permissions:
   actions: read
   contents: read
-  deployments: write
-  issues: write
   pull-requests: read
 
 jobs:
@@ -46,6 +44,11 @@ jobs:
         run: make -C trusted/net-deployment-runbook site-preview-publish-context
 
   publish:
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+      pull-requests: write
     needs: publish-context
     if: needs.publish-context.outputs.publish == 'true'
     name: Publish PR preview
@@ -159,9 +162,23 @@ jobs:
           PREVIEW_DEPLOY_ENV_FILE: ${{ runner.temp }}/gonka-dev-site-preview-deploy/config.env
         run: make -C trusted/net-deployment-runbook write-isolated-preview-deploy-env
 
+      - name: Recheck PR state after waiting for the cleanup environment
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make -C trusted/net-deployment-runbook site-preview-cleanup-context
+
       - name: Remove only this isolated preview
+        if: steps.current.outputs.remove == 'true'
         env:
           GDC_SITE_PREVIEW_ENV_FILE: ${{ runner.temp }}/gonka-dev-site-preview-deploy/config.env
           preview_number: ${{ needs.cleanup-context.outputs.number }}
           preview_revision: ${{ needs.cleanup-context.outputs.head_sha }}
         run: make -C trusted/net-deployment-runbook remove-isolated-site-preview
+
+      - name: Verify the removed preview returns HTTP 404
+        if: steps.current.outputs.remove == 'true'
+        env:
+          preview_number: ${{ needs.cleanup-context.outputs.number }}
+          PREVIEW_ORIGIN: https://preview.gonka-dev.net
+        run: make -C trusted/net-deployment-runbook verify-removed-site-preview-live

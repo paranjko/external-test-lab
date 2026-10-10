@@ -165,8 +165,15 @@ test-site-release-verifier:
 test-site-publisher: test-site-preview-context test-site-preview-live
 	@./scripts/test-site-publisher.sh
 
-test-site-preview-context:
+test-site-preview-context: test-verify-removed-site-preview-live
 	@./scripts/test-site-preview-context.sh
+
+.PHONY: verify-removed-site-preview-live test-verify-removed-site-preview-live
+verify-removed-site-preview-live:
+	@preview_number="$(preview_number)" bash ./scripts/verify-removed-site-preview-live.sh
+
+test-verify-removed-site-preview-live:
+	@bash ./scripts/test-verify-removed-site-preview-live.sh
 
 test-site-preview-live:
 	@bash ./scripts/test-site-preview-live.sh
