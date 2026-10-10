@@ -63,6 +63,7 @@ install-git-hooks:
 
 verify-upstream-profiles:
 	@./scripts/verify-release-profiles.sh "$(upstream_source)"
+	@bash ./scripts/verify-bootstrap-upstream.sh "$(upstream_source)"
 
 shellcheck:
 	@docker run --rm \
@@ -284,13 +285,11 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: test-bootstrap-monitor test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 	@bash ./scripts/test-node-container-control.sh
 	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
-	@python3 ./scripts/test-network-bootstrap.py
-	@./scripts/test-network-bootstrap-shell.sh
 	@python3 ./scripts/test-pin-candidate-dockerfile.py
 	@python3 ./scripts/test-patch-candidate-go-mod-download.py
 	@python3 ./scripts/test-patch-candidate-dapi-dockerfile.py
@@ -468,11 +467,11 @@ bats:
 	@$(BATS) test
 
 bats-docker:
-	@docker build --file test/Dockerfile --tag $(BATS_DOCKER_IMAGE) .
+	@docker build --file test/Dockerfile --tag $(BATS_DOCKER_IMAGE) ..
 	@docker run --rm --user root -e GDC_BATS_CONTAINER=true $(BATS_DOCKER_IMAGE) test
 
 bats-dind:
-	@docker build --file test/Dockerfile.dind --tag $(BATS_DIND_IMAGE) .
+	@docker build --file test/Dockerfile.dind --tag $(BATS_DIND_IMAGE) ..
 	@docker run --rm --privileged -e GDC_BATS_CONTAINER=true -e GDC_BATS_DIND=true $(BATS_DIND_IMAGE) test
 
 # Named JOIN gates stay local and disposable. The cleanroom contract exercises
@@ -496,7 +495,7 @@ test-recovery-contract: test-recover-incident
 
 bootstrap_monitor_report ?= $(CURDIR)/.data/bootstrap-monitor/report.json
 bootstrap_monitor_base_url ?= https://gonka-dev.net
-bootstrap_monitor_release_dir ?= $(CURDIR)/bootstrap/release
+bootstrap_monitor_release_dir ?= $(CURDIR)/../bootstrap
 
 bootstrap-monitor-dependencies:
 	@python3 -m pip install --disable-pip-version-check jsonschema==4.23.0
@@ -509,6 +508,30 @@ bootstrap-monitor-notify:
 
 test-bootstrap-monitor:
 	@python3 ./scripts/test-monitor-network-bootstrap.py
+
+.PHONY: bootstrap-publication-dependencies test-bootstrap-publication test-network-bootstrap test-core-release-profile prepare-bootstrap-release publish-bootstrap-release
+bootstrap_release_dir ?= $(CURDIR)/.data/bootstrap-release
+bootstrap_revision ?= $(shell git rev-parse HEAD)
+
+bootstrap-publication-dependencies: bootstrap-monitor-dependencies
+	@command -v ssh >/dev/null && command -v rsync >/dev/null || { echo 'Install openssh-client and rsync on the publication runner' >&2; exit 2; }
+
+test-network-bootstrap:
+	@python3 ./scripts/test-network-bootstrap.py
+	@bash ./scripts/test-network-bootstrap-shell.sh
+	@python3 ./scripts/test-bootstrap-software.py
+
+test-core-release-profile:
+	@bash ./scripts/test-core-release-profile.sh
+
+test-bootstrap-publication:
+	@python3 ./scripts/test-bootstrap-release.py
+
+prepare-bootstrap-release:
+	@python3 ./scripts/bootstrap-release.py prepare "$(CURDIR)/.." "$(bootstrap_release_dir)" "$(bootstrap_revision)"
+
+publish-bootstrap-release:
+	@bash ./scripts/publish-bootstrap-release.sh "$(bootstrap_release_dir)" "$(deploy_host)" "$(deploy_user)"
 
 .PHONY: test-command-results
 test-command-results:

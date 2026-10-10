@@ -29,7 +29,7 @@ jq -e '
   and .signer.state == "LINEAGE_VERIFIED"
   and .result.terminal_state == "canary_verified"
 ' "$tmp/receipt.json" >/dev/null
-python3 - "$ROOT/lineage/join-lineage-preflight.v1.schema.json" "$tmp/receipt.json" <<'PY'
+python3 - "$ROOT/../schema/join-lineage-preflight.v1.schema.json" "$tmp/receipt.json" <<'PY'
 import json
 import sys
 from jsonschema import Draft202012Validator

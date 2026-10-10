@@ -4,7 +4,7 @@ set -Eeuo pipefail
 MAX_DOCUMENT_BYTES=262144
 
 die() { printf 'bootstrap validation failed stage=%s field=%s: %s\n' "$1" "$2" "$3" >&2; exit 1; }
-usage() { echo "Usage: $0 verify|env|stage|online FILE [DESTINATION]" >&2; }
+usage() { echo "Usage: $0 verify|env|software|stage|online FILE [DESTINATION]" >&2; }
 require_jq() { command -v jq >/dev/null 2>&1 || die dependency jq 'jq is required by the operator runbook'; }
 
 valid_http_url() {
@@ -31,7 +31,7 @@ validate() {
   jq -e . "$file" >/dev/null 2>&1 || die parse "$file" 'invalid JSON'
   jq --stream -e -s '[.[] | select(length == 2) | .[0] | @json] | length == (unique | length)' "$file" >/dev/null 2>&1 || die parse "$file" 'duplicate key'
   jq -e '
-    type == "object" and (keys | sort) == ["$schema","brokers","chain_id","genesis","seeds"] and
+    type == "object" and ((keys - ["software"]) | sort) == ["$schema","brokers","chain_id","genesis","seeds"] and
     .["$schema"] == "https://gonka-dev.net/v1.bootstrap.schema.json" and
     (.chain_id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")) and
     (.genesis | type == "object" and (keys | sort) == ["sha256"] and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))) and
@@ -44,6 +44,13 @@ validate() {
       (.api_urls | type == "array" and length >= 1 and all(.[]; type == "string")) and
       ((has("access_url") | not) or (.access_url | type == "string")))
   ' "$file" >/dev/null || die schema '$' 'does not match network bootstrap v1'
+  if jq -e 'has("software")' "$file" >/dev/null; then
+    jq -e -f "$(dirname "${BASH_SOURCE[0]}")/bootstrap-software.jq" "$file" >/dev/null ||
+      die schema software 'does not match software v1'
+    while IFS= read -r url; do valid_http_url "$url" software; done < <(
+      jq -r '.software | .deployment.repository, .operator_cli.artifact.url, (.components[] | .upgrade?.artifact.url? // empty)' "$file"
+    )
+  fi
   seed_count=$(jq '.seeds | length' "$file")
   api_count=0
   declare -A ids=() rpcs=() p2ps=() apis=()
@@ -144,6 +151,7 @@ command=${1:-}; shift || true
 case "$command" in
   verify) [[ $# -eq 1 ]] || { usage; exit 2; }; validate "$1"; printf 'PASS offline network bootstrap file=%s chain_id=%s genesis_sha256=%s seeds=%s\n' "$1" "$(jq -r .chain_id "$1")" "$(jq -r .genesis.sha256 "$1")" "$(jq '.seeds | length' "$1")"; printf 'Repository attestation and live RPC checks were not run.\n' ;;
   env) [[ $# -eq 1 ]] || { usage; exit 2; }; validate "$1"; render_env "$1" ;;
+  software) [[ $# -eq 1 ]] || { usage; exit 2; }; validate "$1"; jq -e 'has("software")' "$1" >/dev/null || die software software 'not declared by this bootstrap'; jq -S '.software' "$1" ;;
   stage) [[ $# -eq 2 ]] || { usage; exit 2; }; validate "$1"; stage "$1" "$2" ;;
   online) [[ $# -eq 1 ]] || { usage; exit 2; }; validate "$1"; online "$1" ;;
   *) usage; exit 2 ;;

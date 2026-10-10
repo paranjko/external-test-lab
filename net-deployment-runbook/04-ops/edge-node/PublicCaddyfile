@@ -67,7 +67,7 @@
   # Bootstrap documents are static release artifacts. They use no legacy
   # compatibility bundle and expose no credentials or topology.
   route {
-    handle /v1.bootstrap.schema.json {
+    handle /*.schema.json {
       root * /edge/bootstrap/current
       file_server
     }
@@ -151,7 +151,7 @@ preview.{$SITE_HOST} {
   # Bootstrap is a public consumer contract on the canonical site origin as
   # well as the node and API origins. Keep this static route ahead of the site
   # fallback so a published descriptor never reaches the dashboard handler.
-  handle /v1.bootstrap.schema.json {
+  handle /*.schema.json {
     root * /edge/bootstrap/current
     file_server
   }
@@ -292,7 +292,7 @@ preview.{$SITE_HOST} {
       header_up Host {$GATEWAY_PUBLIC_HOST}
     }
   }
-  handle /v1.bootstrap.schema.json {
+  handle /*.schema.json {
     root * /edge/bootstrap/current
     file_server
   }

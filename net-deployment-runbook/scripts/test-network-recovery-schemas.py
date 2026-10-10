@@ -26,8 +26,8 @@ def load_without_duplicate_keys(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=object_pairs)
 
 
-manifest_schema = load_without_duplicate_keys(ROOT / "schemas/recovery-manifest-v1.schema.json")
-receipt_schema = load_without_duplicate_keys(ROOT / "schemas/recovery-receipt-v1.schema.json")
+manifest_schema = load_without_duplicate_keys(ROOT.parent / "schema/recovery-manifest-v1.schema.json")
+receipt_schema = load_without_duplicate_keys(ROOT.parent / "schema/recovery-receipt-v1.schema.json")
 Draft202012Validator.check_schema(manifest_schema)
 Draft202012Validator.check_schema(receipt_schema)
 

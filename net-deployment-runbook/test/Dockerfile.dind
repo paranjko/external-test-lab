@@ -6,9 +6,11 @@ RUN apk add --no-cache bash coreutils curl findutils jq openssl py3-jsonschema p
 COPY --from=bats /opt/bats /opt/bats
 
 ENV PATH="/opt/bats/bin:${PATH}"
-WORKDIR /workspace
-COPY . /workspace
-COPY test/dind-entrypoint.sh /usr/local/bin/gdc-bats-dind
+COPY net-deployment-runbook /workspace/net-deployment-runbook
+COPY schema /workspace/schema
+COPY bootstrap /workspace/bootstrap
+WORKDIR /workspace/net-deployment-runbook
+COPY net-deployment-runbook/test/dind-entrypoint.sh /usr/local/bin/gdc-bats-dind
 RUN chmod 0755 /usr/local/bin/gdc-bats-dind
 
 ENTRYPOINT ["gdc-bats-dind"]

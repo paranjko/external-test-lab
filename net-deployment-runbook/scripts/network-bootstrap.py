@@ -24,7 +24,7 @@ def load(path):
  try:return json.loads(data.decode("utf-8","strict"),object_pairs_hook=duplicates)
  except UnicodeDecodeError as error:raise BootstrapError("parse",str(path),"invalid UTF-8") from error
  except json.JSONDecodeError as error:raise BootstrapError("parse",str(path),f"invalid JSON at line {error.lineno}") from error
-def schema_path():return Path(__file__).resolve().parent.parent/"bootstrap"/"v1.bootstrap.schema.json"
+def schema_path():return Path(__file__).resolve().parents[2]/"schema"/"v1.bootstrap.schema.json"
 def valid_url(value,field,schemes):
  p=urlsplit(value)
  try: port=p.port
@@ -59,6 +59,14 @@ def validate(doc,schema=None):
   if len(set(b["api_urls"])) != len(b["api_urls"]):raise BootstrapError("semantics",f"brokers[{i}].api_urls","contains duplicate endpoint")
   for j,v in enumerate(b["api_urls"]):valid_url(v,f"brokers[{i}].api_urls[{j}]",{"https"})
   if "access_url" in b:valid_url(b["access_url"],f"brokers[{i}].access_url",{"https"})
+ if "software" in doc:
+  software=doc["software"]
+  paths=[item["path"] for item in software["deployment"]["compose_files"]]
+  if len(set(paths))!=len(paths):raise BootstrapError("semantics","software.deployment.compose_files","duplicate compose path")
+  if software["operator_cli"]["version"]!=software["components"]["node"]["version"]:raise BootstrapError("semantics","software.operator_cli.version","must match the node runtime version")
+  urls=[software["deployment"]["repository"],software["operator_cli"]["artifact"]["url"]]
+  urls.extend(c["upgrade"]["artifact"]["url"] for c in software["components"].values() if "upgrade" in c)
+  for url in urls:valid_url(url,"software",{"https"})
  return doc
 def env(doc):
  first=next(seed for seed in doc["seeds"] if "api" in seed);registration_endpoints=[];rpcs=[]
@@ -110,7 +118,7 @@ def online(doc):
  print(f"PASS online network bootstrap chain_id={doc['chain_id']} seeds={len(doc['seeds'])}")
 def main(argv):
  parser=argparse.ArgumentParser();sub=parser.add_subparsers(dest="command",required=True)
- for name in ("verify","online","env","broker-urls"):p=sub.add_parser(name);p.add_argument("file",type=Path)
+ for name in ("verify","online","env","software","broker-urls"):p=sub.add_parser(name);p.add_argument("file",type=Path)
  p=sub.add_parser("stage");p.add_argument("file",type=Path);p.add_argument("destination",type=Path)
  p=sub.add_parser("render");p.add_argument("input",type=Path);p.add_argument("output",type=Path)
  a=parser.parse_args(argv)
@@ -119,6 +127,9 @@ def main(argv):
   if a.command=="verify":print(f"PASS offline network bootstrap file={a.file} chain_id={doc['chain_id']} genesis_sha256={doc['genesis']['sha256']} seeds={len(doc['seeds'])}");print("Repository attestation and live RPC checks were not run.")
   elif a.command=="online":online(doc)
   elif a.command=="env":sys.stdout.buffer.write(env(doc))
+  elif a.command=="software":
+   if "software" not in doc:raise BootstrapError("software","software","not declared by this bootstrap")
+   print(json.dumps(doc["software"],sort_keys=True,indent=2))
   elif a.command=="broker-urls":print(*broker_urls(doc),sep="\n")
   elif a.command=="render":a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_bytes((json.dumps(doc,sort_keys=True,separators=(",",":"))+"\n").encode())
   elif a.command=="stage":

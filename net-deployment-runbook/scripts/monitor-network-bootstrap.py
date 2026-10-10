@@ -148,7 +148,7 @@ def validator():
     return module
 
 
-def check_bootstrap(chain_id, url, schema, transport):
+def check_bootstrap(chain_id, url, schema, transport, expected=None):
     result = {"chain_id": chain_id, "bootstrap_url": url, "ok": False, "checks": []}
 
     def check(stage, endpoint, operation):
@@ -163,8 +163,15 @@ def check_bootstrap(chain_id, url, schema, transport):
             item["error"] = str(error)[:400] if isinstance(error, MonitorError) else type(error).__name__
             return None
 
+    def equal_bytes(actual, wanted):
+        if actual != wanted:
+            raise MonitorError("published bytes differ from the repository")
+
     def document():
-        doc = strict_json(transport.get(url))
+        raw = transport.get(url)
+        if expected is not None:
+            check("publication-json", url, lambda: equal_bytes(raw, expected["json"]))
+        doc = strict_json(raw)
         contract = validator()
         try:
             contract.validate(doc, schema=schema)
@@ -175,6 +182,10 @@ def check_bootstrap(chain_id, url, schema, transport):
         return doc
 
     doc = check("bootstrap", url, document)
+    if expected is not None:
+        env_url = url.removesuffix(".json") + ".env"
+        check("publication-env", env_url,
+              lambda: equal_bytes(transport.get(env_url), expected["env"]))
     if doc is None:
         return result
 
@@ -212,7 +223,7 @@ def check_bootstrap(chain_id, url, schema, transport):
 
 def targets(release_dir, base_url):
     safe_url(base_url)
-    networks = [path.stem for path in sorted(release_dir.glob("gonka-*.json"))]
+    networks = [path.stem for path in sorted(release_dir.glob("*.json"))]
     if not networks:
         raise MonitorError("no bootstrap descriptors in release directory")
     if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", name) for name in networks):
@@ -220,7 +231,7 @@ def targets(release_dir, base_url):
     return [(name, f"{base_url.rstrip('/')}/{name}/bootstrap.json") for name in networks]
 
 
-def run_checks(networks, transport):
+def run_checks(networks, transport, expected=None):
     try:
         schema = load_schema(transport)
     except Exception as error:
@@ -228,7 +239,9 @@ def run_checks(networks, transport):
         return [{"chain_id": name, "bootstrap_url": url, "ok": False,
                  "checks": [{"stage": "schema", "url": SCHEMA_URL, "ok": False, "error": reason}]}
                 for name, url in networks]
-    return [check_bootstrap(name, url, schema, transport) for name, url in networks]
+    return [check_bootstrap(name, url, schema, transport,
+                            expected[name] if expected is not None else None)
+            for name, url in networks]
 
 
 def telegram_payload(result, chat_id, run_url, run_id):
@@ -288,14 +301,17 @@ def notify(results, environment, sender=send_telegram):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("check", "notify"))
-    parser.add_argument("--release-dir", type=Path, default=ROOT / "bootstrap/release")
+    parser.add_argument("--release-dir", type=Path, default=ROOT.parent / "bootstrap")
     parser.add_argument("--base-url", default="https://gonka-dev.net")
     parser.add_argument("--report", type=Path, default=ROOT / ".data/bootstrap-monitor/report.json")
     args = parser.parse_args(argv)
     try:
         if args.command == "notify":
             return notify(strict_json(args.report.read_bytes())["results"], os.environ)
-        results = run_checks(targets(args.release_dir, args.base_url), Transport())
+        networks = targets(args.release_dir, args.base_url)
+        expected = {name: {suffix: (args.release_dir / (name + "." + suffix)).read_bytes()
+                           for suffix in ("json", "env")} for name, _ in networks}
+        results = run_checks(networks, Transport(), expected)
         failed = sum(not result["ok"] for result in results)
         report = {"observed_at": datetime.now(timezone.utc).isoformat(), "results": results}
         args.report.parent.mkdir(parents=True, exist_ok=True)

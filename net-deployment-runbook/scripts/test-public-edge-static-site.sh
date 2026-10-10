@@ -26,6 +26,7 @@ printf '%s\n' '{"chain_id":"gonka-devnet-community","fixture":"byte-equivalent"}
 printf '%s\n' 'CHAIN_ID=gonka-devnet-community' >"$tmp/bootstrap/gonka-devnet-community/bootstrap.env"
 schema_id='$id'
 printf '{"%s":"https://gonka-dev.net/v1.bootstrap.schema.json"}\n' "$schema_id" >"$tmp/bootstrap/v1.bootstrap.schema.json"
+cp "$ROOT/../schema/join-profile.v1.schema.json" "$tmp/bootstrap/join-profile.v1.schema.json"
 
 cat >"$tmp/upstream/Caddyfile" <<'CADDY'
 :8081 {
@@ -165,5 +166,8 @@ alias_content_type="$(awk 'BEGIN { IGNORECASE=1 } /^Content-Type:/ { sub(/\r$/, 
 [[ "$alias_content_type" == "$json_content_type" ]] || { echo "bootstrap alias content type differs: $alias_content_type != $json_content_type" >&2; exit 1; }
 curl -fsS "http://127.0.0.1:$port/gonka-devnet-community/bootstrap.env" | cmp - "$tmp/bootstrap/gonka-devnet-community/bootstrap.env"
 curl -fsS "http://127.0.0.1:$port/v1.bootstrap.schema.json" | cmp - "$tmp/bootstrap/v1.bootstrap.schema.json"
+curl -fsS "http://127.0.0.1:$port/join-profile.v1.schema.json" | cmp - "$tmp/bootstrap/join-profile.v1.schema.json"
+missing_schema="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/missing.schema.json")"
+[[ "$missing_schema" == 404 ]] || { echo "missing schema must return 404, not the site homepage" >&2; exit 1; }
 
 printf 'PASS public edge validates the shared preview status overlay, local admission exception and bootstrap alias\n'

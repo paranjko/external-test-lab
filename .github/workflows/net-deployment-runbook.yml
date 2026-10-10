@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - 'net-deployment-runbook/**'
+      - 'schema/**'
+      - 'bootstrap/**'
+      - 'ops/chore/setup-bootstrap-publisher.sh'
+      - '.github/workflows/network-bootstrap-publish.yml'
+      - '.github/workflows/network-bootstrap-monitor.yml'
       - '.github/workflows/net-deployment-runbook.yml'
   pull_request:
     types:
@@ -15,6 +20,11 @@ on:
       - synchronize
     paths:
       - 'net-deployment-runbook/**'
+      - 'schema/**'
+      - 'bootstrap/**'
+      - 'ops/chore/setup-bootstrap-publisher.sh'
+      - '.github/workflows/network-bootstrap-publish.yml'
+      - '.github/workflows/network-bootstrap-monitor.yml'
       - '.github/workflows/net-deployment-runbook.yml'
   workflow_dispatch:
 

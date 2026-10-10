@@ -7,7 +7,7 @@ trap 'rm -rf -- "$tmp"' EXIT
 
 # Checked-in lineage examples are contract fixtures, not templates that tests
 # may silently normalize. Validate the supported state-sync receipt directly.
-python3 - "$ROOT/lineage/join-lineage-preflight.v1.schema.json" \
+python3 - "$ROOT/../schema/join-lineage-preflight.v1.schema.json" \
   "$ROOT/test/fixtures/join-lineage-preflight-state-sync.json" <<'PY'
 import json
 import sys
@@ -120,7 +120,7 @@ jq -e '
 # The receipt producer and the published schema are one contract.  Validate
 # both the initial receipt and the canary-mutated receipt in their dedicated
 # tests so a future closed-schema drift fails locally.
-python3 - "$ROOT/lineage/join-lineage-preflight.v1.schema.json" "$tmp/receipt.json" <<'PY'
+python3 - "$ROOT/../schema/join-lineage-preflight.v1.schema.json" "$tmp/receipt.json" <<'PY'
 import json
 import sys
 from jsonschema import Draft202012Validator
@@ -180,7 +180,7 @@ grep -Fq 'https://rpc-b.example.test/chain-rpc/status' "$tmp/source-spy"
 # shellcheck source=/dev/null
 source "$tmp/source.env"
 [[ "$GDC_JOIN_RPC_SERVER_1" == https://rpc-a.example.test/chain-rpc/ && "$GDC_JOIN_RPC_SERVER_2" == https://rpc-b.example.test/chain-rpc/ && "$GDC_JOIN_SOURCE_RPC" == https://rpc-a.example.test/chain-rpc ]]
-python3 - "$ROOT/lineage/join-lineage-preflight.v1.schema.json" "$tmp/source-receipt.json" <<'PY'
+python3 - "$ROOT/../schema/join-lineage-preflight.v1.schema.json" "$tmp/source-receipt.json" <<'PY'
 import json, sys
 from jsonschema import Draft202012Validator
 schema, receipt = [json.load(open(path)) for path in sys.argv[1:]]

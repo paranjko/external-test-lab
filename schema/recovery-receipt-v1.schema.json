@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://gonka-dev.net/schemas/recovery-receipt-v1.schema.json",
+  "$id": "https://gonka-dev.net/recovery-receipt-v1.schema.json",
   "title": "GDC network recovery receipt",
   "description": "Append-only phase, approval, checkpoint, and terminal-verdict evidence for one recovery run attempt. Raw evidence remains in access-restricted files referenced by digest.",
   "type": "object",

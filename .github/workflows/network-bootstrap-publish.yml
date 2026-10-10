@@ -1,0 +1,70 @@
+name: Publish schemas and network bootstraps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'schema/**'
+      - 'bootstrap/**'
+      - 'net-deployment-runbook/scripts/bootstrap-release.py'
+      - 'net-deployment-runbook/scripts/publish-bootstrap-release.sh'
+      - 'net-deployment-runbook/scripts/network-bootstrap.py'
+      - 'net-deployment-runbook/Makefile'
+      - '.github/workflows/network-bootstrap-publish.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: gonka-dev-bootstrap-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: gonka-dev-site-publish
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5.0.0
+        with:
+          python-version: '3.12'
+      - name: Install publication dependencies
+        run: make -C net-deployment-runbook bootstrap-publication-dependencies
+      - name: Test release preparation and activation
+        run: make -C net-deployment-runbook test-bootstrap-publication
+      - name: Prepare exact merged artifacts
+        run: >-
+          make -C net-deployment-runbook prepare-bootstrap-release
+          bootstrap_release_dir="$RUNNER_TEMP/bootstrap-release"
+      - name: Attest every published schema and JSON/ENV pair
+        uses: actions/attest@v4
+        with:
+          subject-path: '${{ runner.temp }}/bootstrap-release/public/**/*'
+      - name: Publish and verify every public artifact
+        env:
+          DEPLOY_HOST: ${{ secrets.GONKA_DEV_SITE_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.GONKA_DEV_SITE_DEPLOY_USER }}
+          DEPLOY_PRIVATE_KEY: ${{ secrets.GONKA_DEV_SITE_DEPLOY_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.GONKA_DEV_SITE_DEPLOY_KNOWN_HOSTS }}
+        run: >-
+          make -C net-deployment-runbook publish-bootstrap-release
+          bootstrap_release_dir="$RUNNER_TEMP/bootstrap-release"
+          deploy_host="$DEPLOY_HOST" deploy_user="$DEPLOY_USER"
+      - name: Retain the release manifest and artifacts
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: bootstrap-release
+          path: '${{ runner.temp }}/bootstrap-release'
+          if-no-files-found: warn
+          retention-days: 30
