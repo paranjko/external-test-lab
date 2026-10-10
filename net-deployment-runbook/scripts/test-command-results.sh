@@ -121,13 +121,12 @@ for expected_rc in 0 70; do
 done
 printf 'PASS phase and command success follow the terminal receipt; write failure returns 70\n'
 
-# A reboot-required phase must reach run_phase post-processing. It retains its
-# non-zero continuation code but is not rendered as a command failure.
+# A reboot-required setup phase must reach run_phase post-processing. It
+# retains its non-zero continuation code but is not rendered as a command failure.
 rc=0
 GDC_HOME="$scratch/phase-failure" GDC_RESULT_FIXTURE_RC=0 bash -c '
   source "$1/gdc.sh" help >/dev/null
-  GDC_END_COMMAND="host join"
-  GDC_JOIN_REBOOT_REQUIRED=true
+  GDC_END_COMMAND="host setup"
   ensure_run_manifest() { :; }
   GDC_JOIN_RESULT_OUTPUT="$GDC_HOME/result.json"
   run_phase join-fixture-peer bash -c "exit 194"
@@ -136,8 +135,11 @@ GDC_HOME="$scratch/phase-failure" GDC_RESULT_FIXTURE_RC=0 bash -c '
 grep -Fq 'fixture terminal receipt write attempted' "$scratch/phase-failure.log"
 grep -Fq 'END phase=join-fixture-peer status=194' "$scratch/phase-failure.log"
 ! grep -Fq 'ERROR gdc command failed' "$scratch/phase-failure.log"
-[[ "$(tail -n 1 "$scratch/phase-failure.log")" == 'END host join REBOOT_REQUIRED exit=194' ]]
-printf 'PASS reboot-required JOIN phase records one typed terminal result before launcher exit\n'
+reboot_log="$(<"$scratch/phase-failure.log")"
+[[ "$reboot_log" == *'REBOOT REQUIRED: reboot the prepared Host, then rerun the same command'* ]]
+[[ "$reboot_log" != *'Hint: review the retained local failure'* ]]
+[[ "$(tail -n 1 "$scratch/phase-failure.log")" == 'END host setup REBOOT_REQUIRED exit=194' ]]
+printf 'PASS reboot-required setup records one typed terminal result before launcher exit\n'
 
 # A Host readiness stop is distinct from a failed JOIN: no identity exists,
 # and the operator receives a specific remedy plus a reportable typed result.

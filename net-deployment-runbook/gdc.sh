@@ -119,8 +119,8 @@ record_launcher_failure() {
   local rc="$1" tmp failure_dir run_manifest
   [[ "$rc" -ne 0 && -n "${GDC_LAUNCHER_ENVELOPE_DIR:-}" ]] || return 0
   # A driver reboot is an operator-directed continuation point, not a failed
-  # command. Its JOIN terminal receipt is already persisted by run_phase.
-  [[ "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]] && return 0
+  # command.
+  [[ "$rc" -eq 194 && "${GDC_REBOOT_REQUIRED:-false}" == true ]] && return 0
   # A report-publication failure retains its own local draft; making it the
   # latest incident would recursively hide the selected operational failure.
   [[ "${GDC_REPORT_MODE:-false}" != true ]] || return 0
@@ -223,8 +223,8 @@ on_launcher_exit() {
     fi
     if (( rc == 0 )); then
       printf 'END %s SUCCESS\n' "$GDC_END_COMMAND"
-    elif [[ "$GDC_END_COMMAND" == 'host join' && "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]]; then
-      printf 'END host join REBOOT_REQUIRED exit=194\n' >&2
+    elif [[ "$rc" -eq 194 && "${GDC_REBOOT_REQUIRED:-false}" == true ]]; then
+      printf 'END %s REBOOT_REQUIRED exit=194\n' "$GDC_END_COMMAND" >&2
     elif [[ "$GDC_END_COMMAND" == 'host join' ]] && is_host_prepare_action_required "$rc"; then
       printf 'END host join OPERATOR_ACTION_REQUIRED exit=195\n' >&2
     elif [[ "$GDC_END_COMMAND" == 'host join' && "${GDC_JOIN_TARGET_CLEAN_REFUSAL:-false}" == true ]]; then
@@ -246,8 +246,9 @@ on_launcher_error() {
   local rc="$?"
   trap - ERR
   # Do not turn the explicit reboot continuation into an ERROR. The EXIT
-  # handler emits its single terminal REBOOT_REQUIRED result instead.
-  if [[ "$rc" -eq 194 && "${GDC_JOIN_REBOOT_REQUIRED:-false}" == true ]]; then
+  # handler emits its terminal REBOOT_REQUIRED result instead.
+  if [[ "$rc" -eq 194 && "${GDC_REBOOT_REQUIRED:-false}" == true ]]; then
+    printf 'REBOOT REQUIRED: reboot the prepared Host, then rerun the same command\n' >&2
     exit "$rc"
   fi
   if is_host_prepare_action_required "$rc"; then
@@ -401,6 +402,10 @@ run_phase() {
     rc=${PIPESTATUS[0]}
   fi
   if (( rc != 0 )); then
+    if (( rc == 194 )); then
+      GDC_REBOOT_REQUIRED=true
+      export GDC_REBOOT_REQUIRED
+    fi
     diagnostic_envelope="$(find "$run_dir" -maxdepth 2 -type f -name diagnostic-envelope.v1.json -print 2>/dev/null | LC_ALL=C sort | tail -n1 || true)"
     if [[ -z "$diagnostic_envelope" ]]; then
       "$ROOT/scripts/phase-diagnostic-adapter.sh" "$run_dir/diagnostic-envelope.v1.json" "$phase" "$rc"
@@ -742,6 +747,8 @@ See the role guides for required input, then run:
   ./gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host join --resume <COMPLETE_RUN_ID> --restore <ARCHIVE> --recover-consensus-signer --exclusive-signer --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
+  ./gdc.sh host setup <NETWORK_SSH_ALIAS> add mlnode --mlnode-peer <MLNODE_IP_OR_DOMAIN> <ML_SSH_ALIAS>
+  ./gdc.sh host setup <NETWORK_SSH_ALIAS> status mlnode
   ./gdc.sh --release v2026.07.23 ml attach <SSH_ALIAS>
   ./gdc.sh ops faucet
   ./gdc.sh ops monitoring
@@ -1109,6 +1116,24 @@ case "$COMMAND" in
         COMMAND="host-upgrade-$upgrade_action"
         ;;
       ml-attach) COMMAND=ml; set -- attach "$@" ;;
+      setup)
+        setup_node="${1:-}"
+        setup_action="${2:-}"
+        setup_kind="${3:-}"
+        shift 3 || true
+        [[ "$setup_node" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$setup_kind" == mlnode ]] || { usage; exit 2; }
+        case "$setup_action" in
+          add)
+            [[ "${1:-}" == --mlnode-peer && -n "${2:-}" && -n "${3:-}" && $# -eq 3 ]] || { usage; exit 2; }
+            COMMAND=ml; set -- add "$setup_node" "$2" "$3"
+            ;;
+          status)
+            [[ $# -eq 0 ]] || { usage; exit 2; }
+            COMMAND=ml; set -- status "$setup_node"
+            ;;
+          *) usage; exit 2 ;;
+        esac
+        ;;
       start|stop|verify|reset) COMMAND=node; set -- "$subcommand" "$@" ;;
       *) usage; exit 2 ;;
     esac
@@ -1116,6 +1141,13 @@ case "$COMMAND" in
 esac
 case "$COMMAND" in
   join) GDC_END_COMMAND='host join' ;;
+  ml)
+    if [[ "${1:-}" == attach ]]; then
+      GDC_END_COMMAND='host ml-attach'
+    else
+      GDC_END_COMMAND='host setup'
+    fi
+    ;;
   node) [[ "${1:-}" != reset ]] || GDC_END_COMMAND='host reset' ;;
   host-peers) GDC_END_COMMAND='host peers' ;;
   network-recover)
@@ -2301,13 +2333,28 @@ case "$COMMAND" in
       --registry-host "$GDC_JOIN_MONITORING_REGISTRY_HOST" --node "$join_alias" --public-host "$join_public_host"
     ;;
   ml)
-    [[ $# -eq 2 && "$1" == attach ]] || { usage; exit 2; }
+    ml_action="${1:-}"
+    case "$ml_action" in
+      attach|status) [[ $# -eq 2 ]] || { usage; exit 2; } ;;
+      add) [[ $# -eq 4 ]] || { usage; exit 2; } ;;
+      *) usage; exit 2 ;;
+    esac
     use_node_data_home "$2"
     source "$ROOT/scripts/lib.sh"
     load_project
-    topology_contains_node "$2" || { echo "ml attach expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
-    [[ -n "$(node_ml_host "$2" || true)" ]] || { echo "no network GPU configured for $2 in GDC_NODE_ML_HOSTS" >&2; exit 2; }
-    run_phase "ml-attach-$2" "$ROOT/scripts/phase-ml-attach.sh" "$2"
+    topology_contains_node "$2" || { echo "ml $ml_action expects an alias from GDC_NODE_ALIASES, got: $2" >&2; exit 2; }
+    case "$ml_action" in
+      attach)
+        [[ -n "$(node_ml_host "$2" || true)" ]] || { echo "no network GPU configured for $2 in GDC_NODE_ML_HOSTS" >&2; exit 2; }
+        run_phase "ml-attach-$2" "$ROOT/scripts/phase-ml-attach.sh" "$2"
+        ;;
+      add)
+        run_phase "ml-add-$2-$4" "$ROOT/scripts/phase-ml-add.sh" "$2" "$3" "$4"
+        ;;
+      status)
+        run_phase "ml-status-$2" "$ROOT/scripts/phase-ml-status.sh" "$2"
+        ;;
+    esac
     ;;
   help|-h|--help) usage ;;
   *) echo "Unknown phase: $COMMAND" >&2; usage; exit 2 ;;

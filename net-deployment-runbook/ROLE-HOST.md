@@ -71,6 +71,20 @@ attachment:
 gdc host ml-attach <ssh-alias>
 ```
 
+To add a second ML endpoint without changing validator identity or signer, use
+a clean ML-only Host. Give DAPI its explicit reachable address; the SSH alias
+is only used to install the MLNode:
+
+```bash
+gdc host setup <network-ssh-alias> add mlnode \
+  --mlnode-peer <mlnode-ip-or-domain> <ml-ssh-alias>
+gdc host setup <network-ssh-alias> status mlnode
+```
+
+The Network Node keeps its local ML endpoint. The API sends work to both
+endpoints. `host reset <network-ssh-alias>` also resets ML-only Hosts recorded
+by this command.
+
 ## Governance
 
 An active Host may vote with its current PoC-derived voting power. Query live

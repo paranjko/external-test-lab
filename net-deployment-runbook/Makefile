@@ -433,6 +433,7 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-recover-incident-flat-layout.sh
 	@./scripts/test-host-join-resume-signer-readback.sh
 	@./scripts/test-phase-ml-attach-completion.sh
+	@./scripts/test-network-ml-endpoints.sh
 	@./scripts/test-resolve-reset-dai-backup.sh
 	@./scripts/test-verify-inactive-validator-key.sh
 	@./scripts/test-verify-complete-join-state.sh
