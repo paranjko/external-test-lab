@@ -23,6 +23,14 @@ when the portable baseline is sufficient.
 `flock` is required by the preview lifecycle controller and is declared in the
 CI command baseline.
 
+Bootstrap publication uses Python 3 with `jsonschema==4.23.0`, OpenSSH, and
+`rsync` on the GitHub-hosted Ubuntu runner. The named
+`bootstrap-publication-dependencies` target installs the validator and checks
+the transport tools. The destination requires Python 3 (standard library only)
+and rsync. One-time root setup additionally uses the existing Docker Compose
+installation and the system's `getent` and `runuser`; CI does not use sudo.
+The publication tests replace SSH and rsync with local fixtures.
+
 `make test-tmkms-recovery-boundary` builds an isolated test image from the pinned
 TMKMS image. Its extra packages are declared in
 [`scripts/tmkms-boundary-packages.txt`](scripts/tmkms-boundary-packages.txt).

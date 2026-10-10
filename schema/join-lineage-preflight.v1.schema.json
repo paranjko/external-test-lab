@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://gonka-dev.net/schemas/join-lineage-preflight.v1.schema.json",
+  "$id": "https://gonka-dev.net/join-lineage-preflight.v1.schema.json",
   "title": "GDC Host JOIN lineage preflight receipt",
   "type": "object",
   "additionalProperties": false,
@@ -41,15 +41,14 @@
     "runtime_component": {"type": "object", "additionalProperties": false, "required": ["version", "commit"], "properties": {"version": {"type": "string", "minLength": 1, "maxLength": 64}, "commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"}}},
     "bootstrap": {
       "type": "object", "additionalProperties": false,
-      "required": ["mode", "chain_id", "genesis_sha256"],
+      "required": ["mode", "chain_id", "genesis_sha256", "trust", "snapshot"],
       "properties": {
         "mode": {"const": "state_sync"},
         "chain_id": {"type": "string", "minLength": 1, "maxLength": 128},
         "genesis_sha256": {"$ref": "#/$defs/sha256"},
         "trust": {"$ref": "#/$defs/trust"},
         "snapshot": {"$ref": "#/$defs/snapshot"}
-      },
-      "required": ["trust", "snapshot"]
+      }
     },
     "fault_domain": {
       "type": "object", "additionalProperties": false,

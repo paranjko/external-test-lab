@@ -48,7 +48,7 @@
   # Bootstrap documents are static release artifacts. This participant edge
   # serves no compatibility bundle and never exposes credentials or topology.
   route {
-    handle /v1.bootstrap.schema.json {
+    handle /*.schema.json {
       root * /edge/bootstrap/current
       file_server
     }

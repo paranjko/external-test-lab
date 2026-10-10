@@ -1,6 +1,6 @@
 {
   "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "$id":"https://gonka-dev.net/schemas/join-profile.v1.schema.json",
+  "$id":"https://gonka-dev.net/join-profile.v1.schema.json",
   "type":"object","additionalProperties":false,
   "required":["schema_version","kind","run_id","created_at","valid_until","operation","observation","profile_id","spec","decision"],
   "properties":{

@@ -5,16 +5,18 @@ at 07:17 UTC. The schedule starts after the workflow is merged into the default
 branch. GitHub may delay scheduled runs; this is not a real-time availability
 monitor. Use **Run workflow** for an extra check.
 
-Every `gonka-*.json` filename in `bootstrap/release/` selects a network at
+Every `*.json` filename directly in `bootstrap/` selects a network at
 `https://gonka-dev.net/<chain_id>/bootstrap.json`. Adding a release descriptor
 automatically adds that network to monitoring. The check reads the published
-document, not the repository copy; an unpublished network fails the check.
+document and compares it with the repository copy; an unpublished network or
+undelivered update fails the check. Examples in subdirectories are not networks.
 
 ## Checks
 
 - Strict JSON and the published bootstrap schema, including optional fields
   supported by that schema
 - Bootstrap chain ID matches the selected network
+- Published JSON and ENV bytes match the current repository files
 - Every seed's RPC reports the declared node ID and chain ID
 - Every seed serves a genesis with the declared SHA-256 and chain ID
 - Every seed's P2P TCP port accepts a connection

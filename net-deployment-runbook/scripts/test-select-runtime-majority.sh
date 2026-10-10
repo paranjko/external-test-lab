@@ -71,7 +71,7 @@ if "$SELECT" --observations "$tmp/private-address.json" --output "$tmp/private-a
   echo 'private observation address unexpectedly influenced selection' >&2; exit 1
 fi
 grep -Fq 'software_incomplete: usable runtime observation has no public IPv4 address' "$tmp/private-address.err"
-python3 - "$ROOT/lineage/network-observation.v1.schema.json" "$tmp/result.json" "$tmp/core-tie.json" "$tmp/conflict-result.json" "$tmp/duplicate-node-result.json" "$tmp/byzantine-result.json" "$tmp/community-one.json" "$tmp/community-split.json" "$tmp/conflict-with-majority-result.json" "$tmp/duplicate-report-result.json" <<'PY'
+python3 - "$ROOT/../schema/network-observation.v1.schema.json" "$tmp/result.json" "$tmp/core-tie.json" "$tmp/conflict-result.json" "$tmp/duplicate-node-result.json" "$tmp/byzantine-result.json" "$tmp/community-one.json" "$tmp/community-split.json" "$tmp/conflict-with-majority-result.json" "$tmp/duplicate-report-result.json" <<'PY'
 import json
 import pathlib
 import sys

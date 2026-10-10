@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://gonka-dev.net/schemas/recovery-manifest-v1.schema.json",
+  "$id": "https://gonka-dev.net/recovery-manifest-v1.schema.json",
   "title": "GDC network recovery manifest",
   "description": "Immutable inputs and safety policy for a history-preserving GDC network recovery. This document contains public bindings only; secrets and signer material are forbidden by contract.",
   "type": "object",

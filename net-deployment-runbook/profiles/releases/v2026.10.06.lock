@@ -1,0 +1,52 @@
+# Host software target based on official release/v0.2.16-post1 deploy/join.
+# Date: UTC date of its source commit. Stand qualification remains separate.
+# Container envelopes and upgraded Core/DAPI executables are distinct inputs.
+# DevNet proxy/versiond mirrors and router are explicitly pinned below.
+# Apply only differing services, preserve keys/data and existing GPU placement.
+UPGRADE_FROM_PROFILE=v2026.08.06
+PROFILE_SCOPE=existing-host-stack
+GONKA_REPOSITORY=https://github.com/gonka-ai/gonka.git
+GONKA_SOURCE_REF=release/v0.2.16-post1
+GONKA_COMMIT=136041c81ea8ff38e7620d76af66a7c7fe7eec50
+GONKA_RELEASE=0.2.16-post1
+DAPI_SOURCE_REF=release/v0.2.16-post1
+DAPI_COMMIT=136041c81ea8ff38e7620d76af66a7c7fe7eec50
+TMKMS_IMAGE=ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21
+INFERENCED_IMAGE=ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112
+DAPI_IMAGE=ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c
+EDGE_API_IMAGE=ghcr.io/product-science/edge-api:0.2.15@sha256:4f98b337ea837d711bdd7e0d0e3172a0034f37a5f7fb9764251b7155bb727025
+EDGE_API_ENABLED=true
+EDGE_API_COMPOSE_PROFILE=edge-api
+EDGE_API_SERVICE_NAME=edge-api
+# Official deploy/join/docker-compose.mlnode.yml at GONKA_COMMIT.
+MLNODE_GENERIC_IMAGE=ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1
+MLNODE_PROXY_IMAGE=nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+# DevNet deployments use these immutable published namespace mirrors.
+VERSIOND_IMAGE=ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5@sha256:d772b89046d794eed8f00e6630777911779b0650e436fae190171eef273b050c
+VERSIOND_ROUTER_IMAGE=ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5@sha256:b90ccca4c4c4c9979a282755e69a2f4ebac93e312b0bc4ea7f86d11f08021092
+PROXY_IMAGE=ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5@sha256:2f04e9f4bfc662c16df72adbd60d660e61db6e8e200c7f250c8a00cea92a1f22
+PROXY_ROUTER_IMAGE=ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5@sha256:2f04e9f4bfc662c16df72adbd60d660e61db6e8e200c7f250c8a00cea92a1f22
+PROXY_POLICY_IMAGE=ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5@sha256:59e374aee755964a8c79447ad5ed076b98a352204170488493327cf37a7232af
+BRIDGE_IMAGE=ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d
+# Database/model/observability inputs remain in their explicit profile layers.
+# Governed DevShard versions remain governed; this file submits no proposal.
+# The governance plan name is intentionally different from binary version.
+# Existing generic prepare/watch scripts derive it from GONKA_RELEASE and
+# must not be used for this already-executed recovery without adapting that
+# binding. Apply through the explicit existing-host recovery procedure.
+UPGRADE_PLAN_NAME=v0.2.16
+INFERENCED_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/inferenced-amd64.zip
+INFERENCED_UPGRADE_SHA256=d2ef13374fb15518a02ae5fac83d139d66fb79a8c93d97f4e78b43ce30e14f98
+DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/decentralized-api-amd64.zip
+DAPI_UPGRADE_SHA256=f64b9433cd27d9ee433f1aede89d6be910f6deb8df644d55e2dfe30b8f873802
+# Executable checksums supplied in the operator upgrade announcement.
+INFERENCED_BINARY_SHA256=2f6a31c3ecda063a84fcfd80782fe5b00908f9b678da9204d6c7acba602260de
+DAPI_BINARY_SHA256=332699b4ec760569f5670c6e1feb9d579c2a0c4ec6e0cc5095bf74ea1a37007f
+INFERENCED_OPERATOR_URL_LINUX_AMD64=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/inferenced-linux-amd64.zip
+INFERENCED_OPERATOR_SHA256_LINUX_AMD64=50b333ea4680a05f18a69f30f284357b173c9d68b193e9028b603c67c1d5697f
+INFERENCED_OPERATOR_URL_LINUX_ARM64=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/inferenced-linux-arm64.zip
+INFERENCED_OPERATOR_SHA256_LINUX_ARM64=7e0a21c5b1336ec941dd7d73d00c8971ca6a6ce592cd77386c102d00d0dea0c2
+INFERENCED_OPERATOR_URL_DARWIN_AMD64=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/inferenced-darwin-amd64.zip
+INFERENCED_OPERATOR_SHA256_DARWIN_AMD64=9f798af8cb74852d1c4cb283362d5f9dc2b7b72e204f0e09c2139341f7d19912
+INFERENCED_OPERATOR_URL_DARWIN_ARM64=https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/inferenced-darwin-arm64.zip
+INFERENCED_OPERATOR_SHA256_DARWIN_ARM64=38a8b9b9cc6fa6743dc3de91dd95bf6d68c9765296efab8362c100bbe710d370

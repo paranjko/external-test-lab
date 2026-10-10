@@ -296,7 +296,7 @@ jq -e '.state == "insufficient_quorum" and .minimum_quorum == 3' "$tmp/mainnet-t
 SEED_DAPI=post3 PEER_COUNT=1 run_case "$tmp/bootstrap-mainnet.json" "$tmp/mainnet-three.json" gonka-mainnet
 jq -e '.policy.minimum_valid_observations == 3 and .policy.quorum_policy.scope == "default" and .policy.authority.strict_majority_count == 3' "$tmp/mainnet-three.json" >/dev/null
 
-python3 - "$ROOT/lineage/network-observation.v1.schema.json" \
+python3 - "$ROOT/../schema/network-observation.v1.schema.json" \
   "$tmp/normal.json" "$tmp/reversed.json" "$tmp/seed-aliases.json" "$tmp/seed-peer-dedup.json" \
   "$tmp/unreachable.json" "$tmp/other-app.json" "$tmp/private-remote.json" "$tmp/other-chain.json" "$tmp/no-chain-evidence.json" \
   "$tmp/stale-conflicts.json" "$tmp/community-two.json" "$tmp/mainnet-three.json" <<'PY'

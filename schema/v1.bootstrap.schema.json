@@ -1,0 +1,349 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gonka-dev.net/v1.bootstrap.schema.json",
+  "title": "Gonka Network Bootstrap",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "chain_id",
+    "genesis",
+    "seeds",
+    "brokers"
+  ],
+  "properties": {
+    "software": {
+      "$ref": "#/$defs/software"
+    },
+    "$schema": {
+      "const": "https://gonka-dev.net/v1.bootstrap.schema.json"
+    },
+    "chain_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "genesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "seeds": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node_id",
+          "rpc",
+          "p2p"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "rpc": {
+            "type": "string",
+            "pattern": "^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc/?$"
+          },
+          "p2p": {
+            "type": "string"
+          },
+          "api": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "brokers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "api_urls"
+        ],
+        "properties": {
+          "api_urls": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "access_url": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relative_path": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"
+    },
+    "software_url": {
+      "type": "string",
+      "pattern": "^https://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?(/[A-Za-z0-9._~/%:-]*)?$"
+    },
+    "software_version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "software_image": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$"
+    },
+    "software_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "sha256",
+        "format",
+        "executable"
+      ],
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/software_url"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "format": {
+          "const": "zip"
+        },
+        "executable": {
+          "$ref": "#/$defs/relative_path"
+        }
+      }
+    },
+    "software_upgrade": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "artifact"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"
+        },
+        "artifact": {
+          "$ref": "#/$defs/software_artifact"
+        }
+      }
+    },
+    "software_image_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "image"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/software_version"
+        },
+        "image": {
+          "$ref": "#/$defs/software_image"
+        }
+      }
+    },
+    "software_runtime_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "image"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/software_version"
+        },
+        "image": {
+          "$ref": "#/$defs/software_image"
+        },
+        "upgrade": {
+          "$ref": "#/$defs/software_upgrade"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "software": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "platform",
+        "accelerator",
+        "deployment",
+        "components",
+        "operator_cli",
+        "model"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "platform": {
+          "enum": [
+            "linux/amd64",
+            "linux/arm64"
+          ]
+        },
+        "accelerator": {
+          "enum": [
+            "cuda",
+            "rocm",
+            "cpu"
+          ]
+        },
+        "deployment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repository",
+            "commit",
+            "compose_files"
+          ],
+          "properties": {
+            "repository": {
+              "$ref": "#/$defs/software_url"
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "compose_files": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "$ref": "#/$defs/relative_path"
+                  },
+                  "sha256": {
+                    "$ref": "#/$defs/sha256"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "components": {
+          "type": "object",
+          "required": [
+            "node",
+            "api",
+            "tmkms",
+            "mlnode"
+          ],
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "properties": {
+            "node": {
+              "$ref": "#/$defs/software_runtime_component"
+            },
+            "api": {
+              "$ref": "#/$defs/software_runtime_component"
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/software_image_component"
+          }
+        },
+        "operator_cli": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "artifact"
+          ],
+          "properties": {
+            "version": {
+              "$ref": "#/$defs/software_version"
+            },
+            "artifact": {
+              "$ref": "#/$defs/software_artifact"
+            }
+          }
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "revision",
+            "context_length",
+            "max_num_seqs",
+            "gpu_memory_utilization",
+            "dtype",
+            "tensor_parallel_size"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "context_length": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_num_seqs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "gpu_memory_utilization": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "dtype": {
+              "enum": [
+                "auto",
+                "float16",
+                "bfloat16",
+                "float32"
+              ]
+            },
+            "tensor_parallel_size": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

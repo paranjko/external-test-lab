@@ -139,8 +139,8 @@ except Exception as error:
 ' "$schema" "$document"
 }
 
-recovery_manifest_schema() { printf '%s/schemas/recovery-manifest-v1.schema.json\n' "$RECOVERY_ROOT"; }
-recovery_receipt_schema() { printf '%s/schemas/recovery-receipt-v1.schema.json\n' "$RECOVERY_ROOT"; }
+recovery_manifest_schema() { printf '%s/../schema/recovery-manifest-v1.schema.json\n' "$RECOVERY_ROOT"; }
+recovery_receipt_schema() { printf '%s/../schema/recovery-receipt-v1.schema.json\n' "$RECOVERY_ROOT"; }
 
 recovery_validate_manifest() {
   local manifest="$1" host="$2" phase="$3" lifecycle incident role_count

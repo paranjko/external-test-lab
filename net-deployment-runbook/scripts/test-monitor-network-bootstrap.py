@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("monitor", ROOT / "scripts/monitor-network-bootstrap.py")
 monitor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(monitor)
-SCHEMA = json.loads((ROOT / "bootstrap/v1.bootstrap.schema.json").read_text())
+SCHEMA = json.loads((ROOT.parent / "schema/v1.bootstrap.schema.json").read_text())
 RAW_GENESIS = b'{ "chain_id": "gonka-fixture", "memo": "escaped \\" }", "app_state": {} }'
 
 
@@ -144,8 +144,8 @@ class BootstrapTests(unittest.TestCase):
 
     def test_published_schema_extension_is_used(self):
         schema = copy.deepcopy(SCHEMA)
-        schema["properties"]["software"] = {"type": "object"}
-        self.doc["software"] = {}
+        schema["properties"]["extension"] = {"type": "object"}
+        self.doc["extension"] = {}
         self.assertTrue(self.check(schema)["ok"])
         self.assertFalse(self.check()["ok"])
 
@@ -176,6 +176,34 @@ class BootstrapTests(unittest.TestCase):
             monitor.Transport(timeout=1).get(origin + "/retry")
         self.assertEqual(self.fixture.requests.count(route) - previous, 2)
 
+    def test_stale_json_and_missing_env_keep_checking_seeds_and_notify(self):
+        self.fixture.route(0, "/gonka-fixture/bootstrap.json", self.doc)
+        expected = {"json": b"old published version", "env": b"expected projection"}
+        result = monitor.check_bootstrap("gonka-fixture", self.fixture.url,
+                                         SCHEMA, self.transport, expected)
+        self.assertFalse(result["ok"])
+        self.assertEqual([c["stage"] for c in result["checks"] if not c["ok"]],
+                         ["publication-json", "publication-env"])
+        self.assertTrue(all(c["ok"] for c in result["checks"][-8:]))
+        sent = []
+        environment = {"GDC_TELEGRAM_BOT_TOKEN": "123:synthetic",
+                       "GDC_TELEGRAM_NOTIFICATION": "-456",
+                       "GITHUB_RUN_ID": "789", "GITHUB_REPOSITORY": "owner/repo"}
+        monitor.notify([result], environment, lambda token, payload: sent.append(payload))
+        self.assertEqual(len(sent), 1)
+
+    def test_matching_publication_then_stale_env(self):
+        expected = {"json": json.dumps(self.doc).encode(),
+                    "env": monitor.validator().env(self.doc)}
+        self.fixture.route(0, "/gonka-fixture/bootstrap.json", expected["json"])
+        self.fixture.route(0, "/gonka-fixture/bootstrap.env", expected["env"])
+        self.assertTrue(monitor.check_bootstrap("gonka-fixture", self.fixture.url,
+                                               SCHEMA, self.transport, expected)["ok"])
+        self.fixture.route(0, "/gonka-fixture/bootstrap.env", b"stale ENV")
+        result = monitor.check_bootstrap("gonka-fixture", self.fixture.url,
+                                         SCHEMA, self.transport, expected)
+        self.assertEqual([c["stage"] for c in result["checks"] if not c["ok"]], ["publication-env"])
+
     def test_cli_writes_report_and_ci_output_on_success_and_failure(self):
         # Real subprocess, actual HTTP and TCP; only the fixed schema origin is redirected to loopback.
         schema = copy.deepcopy(SCHEMA)
@@ -187,8 +215,11 @@ class BootstrapTests(unittest.TestCase):
                   "m.SCHEMA_URL=sys.argv[2]; sys.exit(m.main(sys.argv[3:]))")
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
-            (directory / "gonka-fixture.json").write_text("{}")
-            report = directory / "report.json"
+            (directory / "gonka-fixture.json").write_text(json.dumps(self.fixture.doc))
+            projection = monitor.validator().env(self.fixture.doc)
+            (directory / "gonka-fixture.env").write_bytes(projection)
+            self.fixture.route(0, "/gonka-fixture/bootstrap.env", projection)
+            report = directory / "reports/report.json"
             output = directory / "output"
             args = [sys.executable, "-c", loader, str(ROOT / "scripts/monitor-network-bootstrap.py"),
                     self.fixture.schema_url, "check", "--release-dir", str(directory),
@@ -232,11 +263,15 @@ class ParsingTests(unittest.TestCase):
             directory = Path(folder)
             with self.assertRaises(monitor.MonitorError):
                 monitor.targets(directory, "https://example.net")
-            for name in ("gonka-new.json", "gonka-testnet.json", "v1.bootstrap.schema.json"):
+            for name in ("gonka-new.json", "gonka-testnet.json", "new-chain.json"):
                 (directory / name).touch()
             self.assertEqual(monitor.targets(directory, "https://example.net/"), [
                 ("gonka-new", "https://example.net/gonka-new/bootstrap.json"),
-                ("gonka-testnet", "https://example.net/gonka-testnet/bootstrap.json")])
+                ("gonka-testnet", "https://example.net/gonka-testnet/bootstrap.json"),
+                ("new-chain", "https://example.net/new-chain/bootstrap.json")])
+
+    def test_inventory_does_not_publish_examples(self):
+        self.assertEqual(len(monitor.targets(ROOT.parent / "bootstrap", "https://example.net")), 5)
 
 
 class NotificationTests(unittest.TestCase):
