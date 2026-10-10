@@ -14,7 +14,12 @@ type SoftwareVersionsApi = {
   normalizeMlNodeVersion: (chain: string, reported: string) => string,
   formatMlNodes: (chain: string, mlnodes: Array<VersionValue>) => string,
   describeMlNodes: (chain: string, mlnodes: Array<VersionValue>) => Array<string>,
-  selectLatestInventory: (samples: Array<any>) => Map<string, any>,
+  selectLatestInventory: (samples: Array<any>, nowSeconds?: number, maxAgeSeconds?: number) => Map<string, any>,
+  freshInventoryVersion: (reported: string, samples: Array<any>, component: string, nowSeconds?: number, maxAgeSeconds?: number) => string,
+  freshPayloadVersion: (state: any, component: string, nowMs?: number, maxAgeMs?: number) => string,
+  freshNetworkInferenceVersion: (inferenced: any, chainRpc: any, nodeId: string, chainId: string, nowMs?: number, maxAgeMs?: number) => string,
+  selectMlNodes: (versions: any, hardware: any) => {observed: boolean, source: string, nodes: Array<VersionValue>},
+  emptyMlNodeLabel: (observation: {observed: boolean, nodes: Array<VersionValue>}) => string,
 };
 (function attachSoftwareVersions(
   root: any,
@@ -35,12 +40,8 @@ type SoftwareVersionsApi = {
     }
 
     function normalizeMlNodeVersion(chain: string, reported: string): string {
-      if (
-        ["0.2.14", "0.2.15"].includes(displayVersion(chain)) &&
-        displayVersion(reported) === "0.2.0"
-      ) {
-        return "3.0.14-post2";
-      }
+      // Keep only the MLNode version actually reported by the runtime. A
+      // core release is not evidence of the independently deployed MLNode.
       return reported;
     }
 
@@ -92,15 +93,17 @@ type SoftwareVersionsApi = {
       return sample?.metric?.source === "runtime" ? 1 : 0;
     }
 
-    function selectLatestInventory(samples: Array<any>): Map<string, any> {
+    function selectLatestInventory(samples: Array<any>, nowSeconds?: number, maxAgeSeconds?: number): Map<string, any> {
       const selected: Map<string, any> = new Map();
       for (const sample of samples) {
         const component = inventoryComponent(sample);
         const version = String(sample?.metric?.version || "");
+        const age = (Number(nowSeconds) || Date.now() / 1000) - observedAt(sample);
+        const freshness = maxAgeSeconds === undefined ? Number.POSITIVE_INFINITY : maxAgeSeconds;
         // `unreported` is a collector sentinel, not a software release. A
         // real container observation remains useful when a runtime probe has
         // no version to report.
-        if (!component || !version || version === "unreported") continue;
+        if (!component || !version || version === "unreported" || !Number.isFinite(age) || age < -30 || age > freshness) continue;
         const existing = selected.get(component);
         if (
           !existing ||
@@ -119,10 +122,81 @@ type SoftwareVersionsApi = {
       );
     }
 
+    function freshInventoryVersion(reported: string, samples: Array<any>, component: string, nowSeconds?: number, maxAgeSeconds?: number): string {
+      if (reported && reported !== "unreported") return reported;
+      const selected = selectLatestInventory(
+        samples,
+        nowSeconds === undefined ? Date.now() / 1000 : nowSeconds,
+        maxAgeSeconds === undefined ? 300 : maxAgeSeconds,
+      ).get(component);
+      return String(selected?.version || "");
+    }
+
+    function freshTimestamp(value: any, nowMs: number, maxAgeMs: number): boolean {
+      const observedAt = Date.parse(String(value || ""));
+      const ageMs = nowMs - observedAt;
+      return Number.isFinite(observedAt) && ageMs >= -30000 && ageMs <= maxAgeMs;
+    }
+
+    function freshPayloadVersion(state: any, component: string, nowMs?: number, maxAgeMs?: number): string {
+      const now = nowMs === undefined ? Date.now() : nowMs;
+      const maxAge = maxAgeMs === undefined ? 300000 : maxAgeMs;
+      if (!state || typeof state !== "object") return "";
+      const sourceTimestamp = state.source_timestamp || state.timestamp;
+      if (!freshTimestamp(sourceTimestamp, now, maxAge)) return "";
+      if (state.observed_at && !freshTimestamp(state.observed_at, now, maxAge)) return "";
+      const key = component === "chain" ? "node_version" : component === "DAPI" ? "api_version" : "";
+      const version = String(key ? state?.[key]?.version || "" : "").trim();
+      return version && version !== "unreported" ? version : "";
+    }
+
+    function freshNetworkInferenceVersion(inferenced: any, chainRpc: any, nodeId: string, chainId: string, nowMs?: number, maxAgeMs?: number): string {
+      const now = nowMs === undefined ? Date.now() : nowMs;
+      const maxAge = maxAgeMs === undefined ? 300000 : maxAgeMs;
+      const expectedNodeId = String(nodeId || "").toLowerCase();
+      const rpcNodeId = String(chainRpc?.p2p_node_id || "").toLowerCase();
+      const applicationName = String(inferenced?.application_name || "");
+      const version = String(inferenced?.version || "").trim();
+      if (
+        inferenced?.state !== "observed" || chainRpc?.state !== "observed" ||
+        !/^[0-9a-f]{40}$/.test(expectedNodeId) || rpcNodeId !== expectedNodeId ||
+        String(chainRpc?.chain_id || "") !== chainId || !chainId ||
+        !["inference-chain", "inferenced"].includes(applicationName) ||
+        !version || version === "unreported" ||
+        !freshTimestamp(inferenced?.observed_at, now, maxAge) ||
+        !freshTimestamp(chainRpc?.observed_at, now, maxAge)
+      ) return "";
+      return version;
+    }
+
     function format(state: ?SoftwareVersionsState): string {
       const chain = displayVersion(state?.node_version?.version || "unknown");
       const dapi = displayVersion(state?.api_version?.version || "unknown");
       return `chain ${chain} · DAPI ${dapi}`;
+    }
+
+    function selectMlNodes(versions: any, hardware: any): {observed: boolean, source: string, nodes: Array<VersionValue>} {
+      let currentVersions = versions;
+      if (versions?.observed_at) {
+        const observedAt = Date.parse(String(versions.observed_at));
+        if (!Number.isFinite(observedAt) || Date.now() - observedAt > 300000 || observedAt - Date.now() > 30000) currentVersions = null;
+      }
+      // An explicitly empty DAPI list is an observation, not a request to
+      // resurrect old chain inventory. A missing field is not an empty list.
+      if (Array.isArray(currentVersions?.mlnodes)) {
+        return {observed: true, source: "DAPI runtime report", nodes: currentVersions.mlnodes};
+      }
+      if (hardware?.state === "observed" && Array.isArray(hardware.nodes)) {
+        return {observed: true, source: "Chain runtime inventory", nodes: hardware.nodes.map(runtime => ({
+          node_id: String(runtime?.local_id || ""), version: String(runtime?.version || ""),
+        }))};
+      }
+      return {observed: false, source: "No MLNode observation", nodes: []};
+    }
+
+    function emptyMlNodeLabel(observation: {observed: boolean, nodes: Array<VersionValue>}): string {
+      if (!observation.observed) return "Unavailable";
+      return observation.nodes.length > 0 ? "Version unavailable" : "Not assigned";
     }
 
     return {
@@ -132,6 +206,11 @@ type SoftwareVersionsApi = {
       formatMlNodes,
       describeMlNodes,
       selectLatestInventory,
+      freshInventoryVersion,
+      freshPayloadVersion,
+      freshNetworkInferenceVersion,
+      selectMlNodes,
+      emptyMlNodeLabel,
     };
   },
 );

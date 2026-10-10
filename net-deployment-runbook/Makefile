@@ -102,7 +102,7 @@ test-browser-devtools:
 	@node --check ./scripts/capture-homepage-viewport.mjs
 	@node ./scripts/test-chrome-devtools.mjs
 
-test-gateway-site-state: site-js-check test-browser-devtools
+test-gateway-site-state: site-vendor site-js-check test-browser-devtools
 	@node ./scripts/test-gateway-site-state.js
 
 test-validator-map: site-vendor site-js site-host-requirements-check
@@ -292,7 +292,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-network-observer test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 	@bash ./scripts/test-node-container-control.sh
 	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
@@ -567,6 +567,10 @@ test-reconcile-proxy-ingress-remote:
 .PHONY: test-participants-proxy
 test-participants-proxy:
 	@node ./scripts/test-participants-proxy.mjs
+
+.PHONY: test-network-observer
+test-network-observer:
+	@node ./scripts/test-network-observer.mjs
 
 test-recover-incident:
 	@bash ./scripts/test-recover-incident.sh

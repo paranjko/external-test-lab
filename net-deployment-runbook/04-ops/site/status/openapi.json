@@ -11,7 +11,7 @@
       "name": "Inventory",
       "description": "Observed Host hardware and software"
     },
-    { "name": "Network", "description": "Public chain participant registry" },
+    { "name": "Network", "description": "Public chain topology and diagnostic registry" },
     {
       "name": "Gateway",
       "description": "Inference gateway readiness and read-only state"
@@ -22,6 +22,25 @@
     }
   ],
   "paths": {
+    "/status/network": {
+      "get": {
+        "tags": ["Network"],
+        "summary": "Get the cached current network observation",
+        "description": "Lists bootstrap seeds and their current P2P peers, then records each reachable node's software and chain endpoints. The last valid snapshot remains available while a refresh fails.",
+        "operationId": "getNetworkObservation",
+        "responses": {
+          "200": {
+            "description": "Network topology and component observation",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/NetworkObservation" }
+              }
+            }
+          },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/status/gpus": {
       "get": {
         "tags": ["Inventory"],
@@ -241,6 +260,33 @@
             "maxItems": 2
           }
         }
+      },
+      "NetworkObservation": {
+        "type": "object",
+        "required": ["schema_version", "chain_id", "observed_at", "nodes"],
+        "properties": {
+          "schema_version": { "const": 1 },
+          "chain_id": { "type": "string" },
+          "observed_at": { "type": "string", "format": "date-time" },
+          "bootstrap_url": { "type": "string", "format": "uri" },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["node_id", "active", "components"],
+              "properties": {
+                "node_id": { "type": "string" },
+                "node_name": { "type": ["string", "null"] },
+                "dapi_url": { "type": ["string", "null"], "format": "uri" },
+                "active": { "type": "boolean" },
+                "error": { "type": "string" },
+                "components": { "type": "object" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "ParticipantRegistry": {
         "type": "object",

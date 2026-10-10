@@ -57,16 +57,14 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
       <div id="nodes" class="nodes compact" role="list" aria-label="Participant status Host accordion"></div>
     </section>
     <section class="network-map-section" aria-labelledby="network-map-title">
-      <div class="section-title"><div><span class="eyebrow">VALIDATOR MAP</span><h2 id="network-map-title">Validator locations</h2></div><p class="map-note">Approximate public IP locations</p></div>
+      <div class="section-title"><div><span class="eyebrow">OBSERVED NETWORK HOSTS</span><h2 id="network-map-title">Network node map</h2></div><p class="map-note">Approximate public IP locations · current validator membership is shown only when verified</p></div>
       <ul class="validator-map-legend" aria-label="Validator status legend">
         <li class="validator-map-legend--validating">Validating</li>
         <li class="validator-map-legend--active">Active</li>
-        <li class="validator-map-legend--inactive">Inactive</li>
-        <li class="validator-map-legend--unknown">Unknown</li>
+        <li class="validator-map-legend--waiting">Checking / Unavailable</li>
       </ul>
-      <p class="validator-map-encoding-note">Marker size = nodes at location · Marker slices = node states</p>
       <div id="validator-map-shell" class="validator-map-shell">
-        <div id="validator-map" class="validator-map" aria-label="Interactive map of validator status by approximate public IP location"></div>
+        <div id="validator-map" class="validator-map" aria-label="Interactive map of observed network hosts by approximate public IP location"></div>
         <button id="validator-map-fullscreen" class="validator-map-fullscreen" type="button" aria-label="Open validator map fullscreen" aria-pressed="false">Fullscreen</button>
       </div>
     </section>
@@ -118,6 +116,7 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
   <script src="config.js"></script>
   <script src="gateway-state.js"></script>
   <script src="host-state.js"></script>
+  <script src="network-observation-state.js"></script>
   <script src="software-versions.js"></script>
   <script src="site-build.js"></script>
   <script src="vendor/leaflet/leaflet.js"></script>
