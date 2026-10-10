@@ -1,0 +1,11 @@
+[project]
+name = "gonka-check"
+version = "0.1.0"
+description = "Smoke checks for Gonka inference through a public gateway"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+dependencies = []
+
+[project.scripts]
+gcheck = "gonka_check.cli:main"
