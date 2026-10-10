@@ -715,10 +715,10 @@ local_ml=(); gpu=()
 if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
   # The public edge owns /srv/dai/edge on this Host.  A participant JOIN must
   # never replace that shared TLS configuration with the node-local edge.
-  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
+  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]} && sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
   printf 'READY retained shared public edge on %s during participant JOIN\n' "$NODE"
 else
-  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env' --node-name '$NODE'; sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
+  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]} && sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env' --node-name '$NODE' && sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
 fi
 # Persist the explicit external-GPU association as soon as the validator
 # deployment exists.  A join can fail later (for example, while claiming the

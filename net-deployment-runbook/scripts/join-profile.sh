@@ -74,11 +74,30 @@ validate() {
      (.spec.state_acquisition.mode == "native_p2p_state_sync" and (.spec.state_acquisition.providers | length >= 2) and .spec.state_acquisition.minimum_providers >= 2)) and
     .spec.activation_policy.application_required_for_complete == true and .spec.activation_policy.signer_allowed_in_profile == false and
     (.spec.components.core | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
-    and (.spec.components.dapi | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.url | test("^https://github.com/")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
+    and (.spec.components.dapi | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.url | test("^https://")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
   ' "$file" >/dev/null || die 'document has an invalid closed v1 shape'
   expected_id="$(jq -cS .spec "$file" | sha256sum | awk '{print $1}')"
   actual_id="$(jq -r .profile_id "$file")"
   [[ "$expected_id" == "$actual_id" ]] || die 'profile_id does not bind the canonical executable spec'
+  if jq -e '.spec.deployment | has("software")' "$file" >/dev/null; then
+    local scripts software_input software_components
+    scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    software_input="$(mktemp)"; software_components="$(mktemp)"
+    jq '{software:.spec.deployment.software,bootstrap:{document_sha256:.spec.network.bootstrap_sha256},runtime:{core:.spec.components.core.observed,dapi:.spec.components.dapi.observed}}' "$file" >"$software_input"
+    if ! jq -e -f "$scripts/bootstrap-software.jq" "$software_input" >/dev/null \
+      || ! bash "$scripts/resolve-bootstrap-software.sh" components "$software_input" "$software_components" >/dev/null \
+      || ! jq -e --slurpfile compiled "$software_components" '
+        .spec.components == ($compiled[0] | {core,dapi}) and
+        .spec.deployment.host_envelope == $compiled[0].host_envelope and
+        .spec.target.accelerator.qualification_backend == .spec.deployment.software.accelerator and
+        .spec.components.core.observed == (.spec.deployment.software.components.node | {version:(.version|ltrimstr("v")),commit}) and
+        .spec.components.dapi.observed == (.spec.deployment.software.components.api | {version:(.version|ltrimstr("v")),commit})
+      ' "$file" >/dev/null; then
+      rm -f -- "$software_input" "$software_components"
+      die 'executable profile differs from Bootstrap software declaration'
+    fi
+    rm -f -- "$software_input" "$software_components"
+  fi
   operation="$(jq -r .operation "$file")"; identity_mode="$(jq -r .spec.identity.mode "$file")"
   [[ "$operation" == new && "$identity_mode" == generate || "$operation" == restore && "$identity_mode" == restore ]] \
     || die 'operation and identity mode disagree'

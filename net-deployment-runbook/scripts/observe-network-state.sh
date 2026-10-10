@@ -29,6 +29,9 @@ QUORUM_POLICY_FILE="$ROOT/profiles/join-software-authority-policy.json"
 command -v curl >/dev/null || die dependency_missing 'curl is required'
 command -v jq >/dev/null || die dependency_missing 'jq is required'
 [[ "$(jq -r .chain_id "$BOOTSTRAP")" == "$CHAIN_ID" ]] || die chain_id_mismatch 'Bootstrap chain_id does not match --chain-id'
+if jq -e 'has("software")' "$BOOTSTRAP" >/dev/null; then
+  exec bash "$ROOT/scripts/resolve-bootstrap-software.sh" observation "$BOOTSTRAP" "$OUTPUT" "$BOOTSTRAP_URL" "$RUN_ID" "$SOURCE_RPC"
+fi
 [[ -r "$QUORUM_POLICY_FILE" ]] || die dependency_missing 'local JOIN software authority policy is missing'
 jq -e '
   type == "object" and (keys | sort) == ["default","networks","policy_id","schema_version"] and

@@ -190,3 +190,32 @@ assert len(receipt['fault_domains']) >= 2
 assert len(receipt['bootstrap']['snapshot']['providers']) >= 2
 PY
 printf 'PASS explicit source preflight, bound checkpoint and strict default schema\n'
+
+# Software authority must not weaken chain authority. Compile a real declaration
+# with fixture endpoints, then require the same independent historical witnesses.
+jq --slurpfile fixture "$tmp/bootstrap.json" '
+  .chain_id = $fixture[0].chain_id | .genesis.sha256 = $fixture[0].genesis.sha256 |
+  .seeds = $fixture[0].seeds | .brokers = []
+' "$ROOT/../bootstrap/gonka-devnet-community.json" >"$tmp/declared.json"
+mv "$tmp/declared.json" "$tmp/bootstrap.json"
+bash "$ROOT/scripts/resolve-bootstrap-software.sh" observation "$tmp/bootstrap.json" "$tmp/observation.json" \
+  https://example.test/bootstrap.json fixture '' >"$tmp/compiled.out"
+run_preflight >"$tmp/declared.out"
+jq -e '.runtime.source.kind == "bootstrap_software" and (.fault_domains|length) == 2 and
+  (.bootstrap.snapshot.providers|length) == 2 and .signer.state == "PREPARED"' "$tmp/receipt.json" >/dev/null
+grep -Fqx 'https://rpc-b.example.test/chain-api/productscience/inference/inference/last_upgrade_height' "$tmp/curl-spy"
+if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=one,rpc-b.example.test=one' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" \
+    --receipt "$tmp/declared-refused.json" --env "$tmp/declared-refused.env" >"$tmp/declared-refused.out" 2>"$tmp/declared-refused.err"; then
+  echo 'declared software bypassed independent lineage witnesses' >&2; exit 1
+fi
+grep -Fq 'lineage_rpc_fault_domain_alias:' "$tmp/declared-refused.err"
+jq '.software.model.context_length += 1' "$tmp/observation.json" >"$tmp/tampered.json"
+mv "$tmp/tampered.json" "$tmp/observation.json"
+before="$(wc -l <"$tmp/curl-spy")"
+if run_preflight >"$tmp/tampered.out" 2>"$tmp/tampered.err"; then
+  echo 'tampered software receipt accepted by lineage preflight' >&2; exit 1
+fi
+grep -Fq 'software receipt differs from Bootstrap' "$tmp/tampered.err"
+[[ "$(wc -l <"$tmp/curl-spy")" == "$before" ]]
+printf 'PASS declared software retains independent lineage and rejects altered receipts before requests\n'

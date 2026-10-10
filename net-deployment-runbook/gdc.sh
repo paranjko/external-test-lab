@@ -527,6 +527,11 @@ wait_for_join_software_observation() {
   local stage="$1" output="$2" deadline="$3" retry_seconds="$4" attempt=0 consecutive=0 previous_identity='' identity=''
   local attempt_dir attempt_observation attempt_stdout attempt_stderr rc remaining
   unset GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT
+  if jq -e 'has("software")' "$join_bootstrap_file" >/dev/null; then
+    "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" \
+      --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID" --output "$output" "${join_source_args[@]}"
+    return $?
+  fi
   attempt_dir="$STATE/network-observation-attempts/$GDC_RUN_ID/$stage"
   install -d -m 0700 "$attempt_dir"
   GDC_JOIN_SOFTWARE_OBSERVATION_ATTEMPTS_DIR="$attempt_dir"

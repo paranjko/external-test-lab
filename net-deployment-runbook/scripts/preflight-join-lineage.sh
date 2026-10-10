@@ -42,7 +42,7 @@ if [[ -n "$OBSERVATION" ]]; then
     (.runtime.core.commit | test("^[a-f0-9]{40}$")) and
     (.runtime.dapi.version | type == "string" and length > 0) and
     (.runtime.dapi.commit | test("^[a-f0-9]{40}$")) and
-    (.runtime_api_origins | type == "array" and length > 0)
+    ((.runtime_api_origins | type == "array" and length > 0) or .policy.policy_id == "bootstrap-software/v1")
   ' "$OBSERVATION" >/dev/null || die configuration 'network observation is not a ready v1 document'
   [[ "$(jq -r .bootstrap.chain_id "$OBSERVATION")" == "$(jq -r .chain_id "$BOOTSTRAP")" ]] \
     || die configuration 'observation and Bootstrap chain IDs differ'
@@ -63,6 +63,10 @@ if [[ -n "$OBSERVATION" ]]; then
   GDC_NETWORK_DAPI_COMMIT="$(jq -r .runtime.dapi.commit "$OBSERVATION")"
   OBSERVATION_SHA256="$(sha256sum "$OBSERVATION" | awk '{print $1}')"
   RUNTIME_SOURCE_KIND=network_observation
+  if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$OBSERVATION" >/dev/null; then
+    [[ "$(jq -cS .software "$OBSERVATION")" == "$(jq -cS .software "$BOOTSTRAP")" ]] || die configuration 'software receipt differs from Bootstrap'
+    RUNTIME_SOURCE_KIND=bootstrap_software
+  fi
   RUNTIME_SOURCE_ID="$GDC_NETWORK_FINGERPRINT"
 else
   # Compatibility input for the old JOIN dispatcher. New JOIN callers must
@@ -297,7 +301,7 @@ select_tip_quorum() {
 # Derive the post-upgrade checkpoint before selecting the tip quorum so
 # provider eligibility can cover every historical checkpoint in one pass.
 declare -a applied_heights=()
-if [[ -n "$OBSERVATION" ]]; then
+if [[ -n "$OBSERVATION" && "$RUNTIME_SOURCE_KIND" != bootstrap_software ]]; then
   mapfile -t runtime_apis < <(jq -r '.runtime_api_origins[].api_url' "$OBSERVATION" | LC_ALL=C sort -u)
 else
   mapfile -t runtime_apis < <(jq -r '[.seeds[].api // empty] | unique[]' "$BOOTSTRAP")

@@ -344,6 +344,7 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/test-host-identity-layout-probe.sh
 	@./scripts/test-profiles.sh
+	@bash ./scripts/test-core-release-profile.sh
 	@./scripts/test-official-devshard-profile.sh
 	@./scripts/test-api-entrypoint.sh
 	@./scripts/test-network-verify-identity-resolution.sh
