@@ -23,12 +23,19 @@ make -C "$ROOT" publish-site-release \
   site_release_dir="$tmp/release" deploy_host=edge.example deploy_user=deployer
 grep -Fq '/srv/dai/edge/site' "$SITE_RELEASE_TEST_LOG"
 grep -Fq -- '--exclude preview/' "$SITE_RELEASE_TEST_LOG"
+# Inspect executed transport calls, not source text: static delivery needs
+# only directory preparation and rsync, with no remote service command.
+[[ "$(wc -l <"$SITE_RELEASE_TEST_LOG")" -eq 2 ]]
+grep -Fxq -- '-o BatchMode=yes deployer@edge.example install -d -m 0755 /srv/dai/edge/site' "$SITE_RELEASE_TEST_LOG"
+grep -Fq -- '--exclude config.js' "$SITE_RELEASE_TEST_LOG"
 
 : >"$SITE_RELEASE_TEST_LOG"
 make -C "$ROOT" publish-site-release \
   site_release_dir="$tmp/release" site_publish_prefix=preview/1 \
   deploy_host=edge.example deploy_user=deployer
 grep -Fq '/srv/preview/1' "$SITE_RELEASE_TEST_LOG"
+[[ "$(wc -l <"$SITE_RELEASE_TEST_LOG")" -eq 2 ]]
+grep -Fxq -- '-o BatchMode=yes deployer@edge.example install -d -m 0755 /srv/preview/1' "$SITE_RELEASE_TEST_LOG"
 
 revision=0123456789012345678901234567890123456789
 printf '<script src="/config.js"></script>\n' >"$tmp/release/index.html"

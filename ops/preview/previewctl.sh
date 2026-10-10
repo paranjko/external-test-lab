@@ -382,21 +382,33 @@ deploy() {
 }
 
 remove_preview() {
-  local pr="$1" registry backend network
+  local pr="$1" registry backend network backends status
   valid_pr "$pr" || die 'preview number must be a positive integer'
   registry="$(registry_file "$pr")"
-  backend=""
-  [[ ! -f "$registry" ]] || backend="$(jq -r '.backend // empty' "$registry")"
-  rm -f "$registry"
-  start
-  reload_caddy
-  [[ -z "$backend" ]] || docker rm -f "$backend" >/dev/null 2>&1 || true
+  # Keep recovery evidence until the route reload succeeds. Cleanup must not
+  # install assets, rebuild images or recreate the shared preview services.
+  [[ ! -e "$registry" ]] || mv -f "$registry" "$registry.removing"
+  if ! (reconcile); then
+    [[ ! -f "$registry.removing" ]] || mv -f "$registry.removing" "$registry"
+    die 'preview route removal failed; resources retained for retry'
+  fi
+  status="$(curl --silent --show-error --max-time 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PREVIEW_CADDY_PORT/$pr/")"
+  [[ "$status" == 404 ]] || die "removed preview still returns HTTP $status; resources retained for retry"
+  # Labels also find a backend left by an interrupted cleanup after its
+  # registry entry was removed. Never select another PR or shared service.
+  backends="$(docker ps -aq --filter label=gdc.preview.managed=true --filter "label=gdc.preview.pr=$pr")"
+  for backend in $backends; do
+    docker rm -f "$backend" >/dev/null
+  done
   network="$(network_name "$pr")"
-  docker network disconnect "$network" gdc-preview-caddy >/dev/null 2>&1 || true
-  docker network disconnect "$network" gdc-preview-egress >/dev/null 2>&1 || true
-  docker network disconnect "$network" gdc-preview-node-guard >/dev/null 2>&1 || true
-  docker network rm "$network" >/dev/null 2>&1 || true
+  if docker network inspect "$network" >/dev/null 2>&1; then
+    docker network disconnect "$network" gdc-preview-caddy >/dev/null 2>&1 || true
+    docker network disconnect "$network" gdc-preview-egress >/dev/null 2>&1 || true
+    docker network disconnect "$network" gdc-preview-node-guard >/dev/null 2>&1 || true
+    docker network rm "$network" >/dev/null
+  fi
   rm -rf -- "${RELEASES:?}/$pr" "${PREVIEW_ROOT:?}/staging/$pr"
+  rm -f "$registry.removing"
   printf 'READY preview=%s removed\n' "$pr"
 }
 

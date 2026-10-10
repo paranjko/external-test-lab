@@ -43,11 +43,18 @@ jobs:
           node-version: 22
 
       - name: Validate the untrusted preview source without deployment credentials
+        env:
+          # Lifecycle fixtures need an owned directory for their Unix socket,
+          # not an operator login's /run/user directory on the hosted runner
+          XDG_RUNTIME_DIR: ${{ runner.temp }}
         run: >-
           make -C net-deployment-runbook
           test-gateway-site-state
           test-site-release-paths
           test-site-preview-context
+          test-record-site-preview-deployment
+          test-isolated-preview-publish
+          test-preview-lifecycle
           test-preview-status-renderer
           test-preview-frontend-builder
           test-isolated-preview-ci-artifact
