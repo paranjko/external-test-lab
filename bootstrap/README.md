@@ -65,6 +65,10 @@ available for inspection. A failed public readback restores the previous release
 only if this invocation activated the failing generation; it never rolls back
 another publisher or an already-active release.
 
+Each failed HTTPS readback logs the artifact path, attempt number and a bounded reason: HTTP status, DNS, TLS, timeout, connection failure, refused redirect or content mismatch
+
+Diagnostics do not print response bodies, redirect targets or raw transport exception messages, retries and exact-byte verification remain unchanged
+
 Seed outages do not block delivery of corrected metadata. The separate
 [daily monitor](MONITORING.md) checks publication currency and seed availability,
 then notifies Telegram once per failed network.

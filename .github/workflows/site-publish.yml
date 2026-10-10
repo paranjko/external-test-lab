@@ -14,6 +14,8 @@ on:
       - 'net-deployment-runbook/scripts/verify-public-homepage.sh'
       - 'net-deployment-runbook/scripts/verify-site-release.sh'
       - 'net-deployment-runbook/scripts/site-static-digest.sh'
+      - 'net-deployment-runbook/scripts/site-release.sh'
+      - 'net-deployment-runbook/scripts/test-site-publisher.sh'
       - 'net-deployment-runbook/Makefile'
       - '.github/workflows/site-publish.yml'
 

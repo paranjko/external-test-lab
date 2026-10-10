@@ -12,10 +12,13 @@ from pathlib import Path
 import pwd
 import re
 import stat
+import socket
+import ssl
 import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
 
@@ -206,9 +209,31 @@ def rollback(root, generation):
     print("PASS restored previous release; failed generation retained")
 
 
+class ReadbackError(ValueError):
+    """Safe, locally generated detail; never include an HTTP body or redirect URL."""
+
+
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
-        raise ValueError("public artifact redirect refused")
+        raise ReadbackError("redirect_refused")
+
+
+def readback_reason(error):
+    if isinstance(error, ReadbackError):
+        return str(error)
+    if isinstance(error, HTTPError):
+        return f"http_status={error.code}"
+    cause = error.reason if isinstance(error, URLError) else error
+    for kind, reason in ((ssl.SSLCertVerificationError, "tls_certificate_error"),
+                         (ssl.SSLError, "tls_error"),
+                         (socket.gaierror, "dns_error"),
+                         (TimeoutError, "timeout"),
+                         (ConnectionRefusedError, "connection_refused"),
+                         (ConnectionResetError, "connection_reset")):
+        if isinstance(cause, kind):
+            return reason
+    # Exception messages may carry proxy credentials, response bodies or URLs.
+    return f"transport_error type={type(cause).__name__}"
 
 
 def verify(release, origin, attempts=3):
@@ -225,12 +250,17 @@ def verify(release, origin, attempts=3):
             try:
                 request = Request(origin.rstrip("/") + "/" + name, headers={"Cache-Control": "no-cache"})
                 with opener.open(request, timeout=10) as response:
-                    require(response.status == 200 and response.read(len(expected) + 1) == expected,
-                            f"published content differs: {name}")
+                    if response.status != 200:
+                        raise ReadbackError(f"http_status={response.status}")
+                    if response.read(len(expected) + 1) != expected:
+                        raise ReadbackError("content_mismatch")
                 break
-            except Exception:
+            except Exception as error:
+                reason = readback_reason(error)
+                print(f"WARN bootstrap readback path={name} attempt={attempt + 1}/{attempts} reason={reason}",
+                      file=sys.stderr)
                 if attempt + 1 == attempts:
-                    raise ValueError(f"public readback failed: {name}") from None
+                    raise ValueError(f"public readback failed: {name}; reason={reason}; attempts={attempts}") from None
                 time.sleep(2)
     print(f"PASS public bytes match all {len(manifest['files'])} artifacts")
 

@@ -8,12 +8,15 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
+import ssl
 import subprocess
 import tempfile
 import threading
 import unittest
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
+from urllib.error import URLError
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "net-deployment-runbook/scripts/bootstrap-release.py"
@@ -51,8 +54,8 @@ class ReleaseTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             release.activate(self.edge, self.upload(), self.generation)
 
-    def server(self, directory):
-        server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=str(directory)))
+    def server(self, directory, handler=Handler):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(handler, directory=str(directory)))
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         self.addCleanup(server.server_close)
@@ -165,15 +168,61 @@ class ReleaseTests(unittest.TestCase):
         release.verify(self.prepared, origin, attempts=1)
         target = served / "gonka-mainnet/bootstrap.env"
         target.write_text("stale")
-        with self.assertRaisesRegex(ValueError, "public readback"):
+        with self.assertRaisesRegex(ValueError, r"public readback failed: gonka-mainnet/bootstrap.env; reason=content_mismatch; attempts=1"):
             release.verify(self.prepared, origin, attempts=1)
         target.unlink()
-        with self.assertRaisesRegex(ValueError, "public readback"):
+        with self.assertRaisesRegex(ValueError, r"reason=http_status=404; attempts=1"):
             release.verify(self.prepared, origin, attempts=1)
         # A directory causes SimpleHTTPServer to redirect to the trailing slash.
         target.mkdir()
-        with self.assertRaisesRegex(ValueError, "public readback"):
+        with self.assertRaisesRegex(ValueError, r"reason=redirect_refused; attempts=1"):
             release.verify(self.prepared, origin, attempts=1)
+
+    def test_readback_reports_http_attempts_and_recovers_without_weakening_bytes_check(self):
+        class RecoveringHandler(Handler):
+            failures = 0
+
+            def do_GET(self):
+                if type(self).failures < 2:
+                    type(self).failures += 1
+                    self.send_error(503, "private upstream response must not enter diagnostics")
+                    return
+                super().do_GET()
+
+        origin = self.server(self.prepared / "public", RecoveringHandler)
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), patch.object(release.time, "sleep") as sleep:
+            release.verify(self.prepared, origin)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertIn("attempt=1/3 reason=http_status=503", errors.getvalue())
+        self.assertIn("attempt=2/3 reason=http_status=503", errors.getvalue())
+        self.assertNotIn("private upstream", errors.getvalue())
+
+    def test_transport_diagnostics_are_bounded_and_do_not_expose_exception_messages(self):
+        private = "https://private:secret@proxy.invalid/private-token"
+        cases = (
+            (URLError(socket.gaierror(-2, private)), "dns_error"),
+            (URLError(ssl.SSLCertVerificationError(1, private)), "tls_certificate_error"),
+            (ssl.SSLError(1, private), "tls_error"),
+            (TimeoutError(private), "timeout"),
+            (URLError(ConnectionRefusedError(111, private)), "connection_refused"),
+            (ConnectionResetError(104, private), "connection_reset"),
+            (URLError(private), "transport_error type=str"),
+        )
+        for failure, reason in cases:
+            with self.subTest(reason=reason):
+                errors = io.StringIO()
+                with patch.object(release, "build_opener") as factory, \
+                     patch.object(release.time, "sleep") as sleep, \
+                     contextlib.redirect_stderr(errors):
+                    factory.return_value.open.side_effect = failure
+                    with self.assertRaises(ValueError) as caught:
+                        release.verify(self.prepared, "https://fixture.invalid")
+                self.assertEqual(factory.return_value.open.call_count, 3)
+                self.assertEqual(sleep.call_count, 2)
+                self.assertIn(f"reason={reason}; attempts=3", str(caught.exception))
+                self.assertIn(f"attempt=3/3 reason={reason}", errors.getvalue())
+                self.assertNotIn(private, errors.getvalue() + str(caught.exception))
 
     def test_route_preparation_changes_only_schema_matchers_and_is_idempotent(self):
         path = self.root / "Caddyfile"

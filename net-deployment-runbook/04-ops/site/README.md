@@ -24,6 +24,14 @@ npx --yes prettier@3.6.2 --write 04-ops/site/src/*.js
 make site-js
 ```
 
+## Static publication
+
+`make publish-site-release` copies files into the existing Caddy bind mount without restarting or reloading Caddy, so site delivery does not interrupt the shared HTTPS listener used by bootstrap publication
+
+The publisher preserves the host's `config.js` and `preview/` directory, it does not apply pending Compose or Caddy configuration changes
+
+`make test-site-publisher` checks the executed publication commands and `make edge-integration` verifies new site bytes, unchanged bootstrap bytes and unchanged Caddy container identity in a disposable local container
+
 ## Validator-map basemap provenance
 
 `world-map.svg` is a local land-only, equirectangular schematic for approximate

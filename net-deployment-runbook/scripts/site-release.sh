@@ -125,8 +125,8 @@ case "$action" in
     ssh "${ssh_options[@]}" "$remote" "install -d -m 0755 $destination"
     rsync -a --delete --exclude config.js --exclude preview/ -e "$ssh_transport" \
       "$site_release_dir/" "$remote:$destination/"
-    ssh "${ssh_options[@]}" "$remote" \
-      'cd /srv/dai/edge && sudo /usr/bin/docker compose up -d --force-recreate caddy'
+    # Caddy serves these bind-mounted files directly. Static publication must
+    # not recreate the shared HTTPS listener or apply pending Compose changes.
     ;;
   remove)
     [[ "$site_publish_prefix" =~ ^preview/[1-9][0-9]*$ ]] || {
