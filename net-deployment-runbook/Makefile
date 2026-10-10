@@ -327,6 +327,8 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-ensure-warm-key.sh
 	@./scripts/test-launcher-root-contract.sh
 	@./scripts/test-gdc-github-report.sh
+	@./scripts/test-gdc-github-signer-diagnostic.sh
+	@./scripts/test-monitoring-inventory-drift.sh
 	@./scripts/test-diagnostic-envelope.sh
 	@./scripts/test-diagnostic-summaries-publishable.sh
 	@./scripts/test-phase-diagnostic-adapter.sh
@@ -337,6 +339,9 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-replace-retained-validator-identity.sh
 	@./scripts/test-authorize-retained-validator-replacement.sh
 	@./scripts/test-join-refusal-diagnostics.sh
+	@./scripts/test-join-blocklist-preflight.sh
+	@./scripts/test-join-run-log-lifecycle.sh
+	@./scripts/test-join-signer-diagnostic.sh
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-ml-qualification-evidence.sh
 	@bash ./scripts/test-ml-qualification-failure.sh

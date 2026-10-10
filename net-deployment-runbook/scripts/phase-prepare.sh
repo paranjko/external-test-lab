@@ -140,6 +140,15 @@ for host in "${hosts[@]}"; do
     ready_hosts+=("$host")
     continue
   fi
+  # JOIN prepares a clean base Host once.  A retained host.env means an
+  # earlier preparation reached a managed state but is not valid now; repairing
+  # it in an ordinary JOIN would hide a partial attempt and make recovery
+  # ambiguous.  Stop for explicit operator investigation instead.
+  if ssh "$host" 'sudo test -e /etc/gonka/host.env -o -L /etc/gonka/host.env' >/dev/null 2>&1; then
+    echo "OPERATOR_ACTION_REQUIRED  $host: retained Host preparation is not valid; ordinary JOIN does not repair it"
+    action_hosts+=("$host")
+    continue
+  fi
   remote_env=()
   append_accelerator_remote_env "$role"
   if [[ "$role" == ml-only ]]; then

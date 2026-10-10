@@ -33,7 +33,7 @@ require_regular_beneath() {
 read_failure_record() {
   local record="$1" key value seen_keys=' '
   require_regular_beneath "$REPORTING_ROOT" "$record" || die 'selected failure record is unsafe; inspect the local reporting directory'
-  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG='' FAILURE_DIAGNOSTIC_ENVELOPE='' FAILURE_JOIN_RESULT='' FAILURE_INVOCATION_OPTIONS=''
+  FAILURE_SCHEMA_VERSION='' FAILURE_INVOCATION_ID='' FAILURE_EXIT_CODE='' FAILURE_STAGE='' FAILURE_PHASE='' FAILURE_RUN_ID='' FAILURE_RECORDED_AT='' FAILURE_RUN_MANIFEST='' FAILURE_RUN_LOG='' FAILURE_DIAGNOSTIC_ENVELOPE='' FAILURE_JOIN_RESULT='' FAILURE_INVOCATION_OPTIONS='' FAILURE_SIGNER_DIAGNOSTIC=''
   while IFS='=' read -r key value; do
     [[ "$seen_keys" != *" $key "* ]] || die 'failure record has a duplicate field'
     seen_keys+="$key "
@@ -53,6 +53,7 @@ read_failure_record() {
       envelope) : ;; # Private paths are deliberately not collected.
       diagnostic_envelope) FAILURE_DIAGNOSTIC_ENVELOPE="$value" ;;
       join_result) FAILURE_JOIN_RESULT="$value" ;;
+      signer_diagnostic) FAILURE_SIGNER_DIAGNOSTIC="$value" ;;
       invocation_options) FAILURE_INVOCATION_OPTIONS="$value" ;;
       # JOIN preflight receipts are private, bounded evidence referenced by
       # the current launcher failure contract.  The public report is built
@@ -137,6 +138,28 @@ collect_invocation_options() {
   [[ -n "$kept" ]] || kept='none recognised'
   (( dropped == 0 )) || kept+=" (+$dropped not listed)"
   INVOCATION_OPTIONS="$kept"
+}
+
+collect_signer_diagnostic() {
+  SIGNER_DIAG_AVAILABLE=false
+  SIGNER_LAST_COMPLETED='unavailable' SIGNER_FAILED_CHECKPOINT='unavailable' SIGNER_ERROR_CLASS='unavailable'
+  SIGNER_TRANSPORT_STAGE='unavailable' SIGNER_TRANSPORT_RESULT='unavailable' SIGNER_MUTATION='unavailable'
+  SIGNER_READBACK='unavailable' SIGNER_ATTEMPTS='unavailable' SIGNER_RECOVERY='unavailable' SIGNER_RECOVERY_TOKEN='unavailable'
+  [[ -n "${FAILURE_SIGNER_DIAGNOSTIC:-}" ]] || return 0
+  require_regular_beneath "$GDC_DATA_ROOT" "$FAILURE_SIGNER_DIAGNOSTIC" || die 'signer diagnostic is unsafe; retained report was not published'
+  "$ROOT/scripts/join-signer-diagnostic.sh" validate "$FAILURE_SIGNER_DIAGNOSTIC" \
+    || die 'signer diagnostic is invalid; retained report was not published'
+  SIGNER_LAST_COMPLETED="$(typed_value "$FAILURE_SIGNER_DIAGNOSTIC" last_completed_checkpoint)"
+  SIGNER_FAILED_CHECKPOINT="$(typed_value "$FAILURE_SIGNER_DIAGNOSTIC" failed_checkpoint)"
+  SIGNER_ERROR_CLASS="$(typed_value "$FAILURE_SIGNER_DIAGNOSTIC" error_class)"
+  SIGNER_TRANSPORT_STAGE="$(typed_value "$FAILURE_SIGNER_DIAGNOSTIC" transport_stage)"
+  SIGNER_TRANSPORT_RESULT="$(typed_value "$FAILURE_SIGNER_DIAGNOSTIC" transport_result)"
+  SIGNER_MUTATION="$(typed_value "$FAILURE_SIGNER_DIAGNOSTIC" mutation_state)"
+  SIGNER_READBACK="$(typed_value "$FAILURE_SIGNER_DIAGNOSTIC" signer_readback)"
+  SIGNER_ATTEMPTS="$(typed_value "$FAILURE_SIGNER_DIAGNOSTIC" attempt_count)"
+  SIGNER_RECOVERY="$(jq -r .recovery.decision "$FAILURE_SIGNER_DIAGNOSTIC")"
+  SIGNER_RECOVERY_TOKEN="$(jq -r .recovery.token "$FAILURE_SIGNER_DIAGNOSTIC")"
+  SIGNER_DIAG_AVAILABLE=true
 }
 
 render_resume_guidance() {
@@ -362,9 +385,10 @@ write_report() {
   local report_id created_at body_hash
   report_id="gdc-${FAILURE_RECORDED_AT//[-:TZ]/}-${FAILURE_INVOCATION_ID}"
   created_at="$(date -u +%FT%TZ)"
-  collect_manifest_identity
+    collect_manifest_identity
   collect_diagnostic_envelope
   collect_join_result
+  collect_signer_diagnostic
   collect_invocation_options
   collect_diagnostic_excerpt
   {
@@ -417,6 +441,20 @@ write_report() {
     typed_rows category "$DIAGNOSTIC_CATEGORY" checkpoint "$DIAGNOSTIC_CHECKPOINT" state "$DIAGNOSTIC_STATE" tool "$DIAGNOSTIC_TOOL"
     printf '\nResume decision: `%s`.\n\n' "$DIAGNOSTIC_RESUME"
     render_resume_guidance
+    printf '\n## Signer diagnostic\n\n'
+    if [[ "${SIGNER_DIAG_AVAILABLE:-false}" == true ]]; then
+      typed_rows last_completed_checkpoint "$SIGNER_LAST_COMPLETED" failed_checkpoint "$SIGNER_FAILED_CHECKPOINT" \
+        error_class "$SIGNER_ERROR_CLASS" transport_stage "$SIGNER_TRANSPORT_STAGE" \
+        transport_result "$SIGNER_TRANSPORT_RESULT" mutation_state "$SIGNER_MUTATION" \
+        signer_readback "$SIGNER_READBACK" attempt_count "$SIGNER_ATTEMPTS" recovery_decision "$SIGNER_RECOVERY" \
+        recovery_token "$SIGNER_RECOVERY_TOKEN"
+      printf '\nThe phase retained this signer diagnostic at its own stop boundary; it classifies the stop without raw stderr.\n\n'
+    else
+      printf 'The phase retained no signer diagnostic of its own, so the fields below are unavailable. The report is therefore insufficient to classify a signer stop causally.\n\n'
+      typed_rows last_completed_checkpoint unavailable failed_checkpoint unavailable error_class unavailable \
+        transport_stage unavailable transport_result unavailable mutation_state unavailable \
+        signer_readback unavailable attempt_count unavailable recovery_decision unavailable recovery_token unavailable
+    fi
     printf '\n## Operator environment\n\n| Field | Value |\n| --- | --- |\n'
     awk -F= 'BEGIN { OFS=" | " } $1 ~ /^(os|kernel|architecture|bash|utc_clock)$/ { gsub(/\|/, "\\|", $2); print "| " $1, $2 " |" }' "$metadata"
     printf '\n## Sanitized diagnostic excerpt\n\n<pre>\n'

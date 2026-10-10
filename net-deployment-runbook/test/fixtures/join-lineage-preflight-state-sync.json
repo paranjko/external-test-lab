@@ -24,10 +24,6 @@
     "post_upgrade": {"height": 100, "block_id": "3333333333333333333333333333333333333333333333333333333333333333", "app_hash": "4444444444444444444444444444444444444444444444444444444444444444"},
     "trust": {"height": 120, "block_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "app_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
   },
-  "devshard_compatibility": {
-    "approvals": [{"name": "v3", "url": "https://example.test/devshard-v3.zip", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
-    "sources": [{"chain_api_url": "https://rpc-a.example/chain-api/"}, {"chain_api_url": "https://rpc-b.example/chain-api/"}]
-  },
   "staging": {"previous_deployment_digest": "5555555555555555555555555555555555555555555555555555555555555555", "rendered_config_digest": "6666666666666666666666666666666666666666666666666666666666666666", "compose_validated": true},
   "signer": {"state": "LINEAGE_VERIFIED", "tmkms_monotonic": false},
   "result": {"terminal_state": "prepared", "category": "none", "resume": "safe_exact_resume"}

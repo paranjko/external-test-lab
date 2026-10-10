@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 --output FILE --ssh-alias ALIAS --bootstrap-file FILE [--public-host HOST] [--p2p-port PORT] [--gpu-ssh-alias ALIAS]" >&2
+  echo "Usage: $0 --output FILE --ssh-alias ALIAS --bootstrap-file FILE [--public-host HOST] [--p2p-port PORT] [--gpu-ssh-alias ALIAS] [--monitoring-registry-host ALIAS]" >&2
 }
 
 OUTPUT=''
@@ -12,6 +12,7 @@ PUBLIC_HOST=''
 P2P_PORT=5000
 GPU_SSH_ALIAS=''
 SOURCE_RPC=''
+MONITORING_REGISTRY_HOST=''
 while (($#)); do
   case "$1" in
     --output) OUTPUT="${2:-}"; shift 2 ;;
@@ -21,11 +22,13 @@ while (($#)); do
     --p2p-port) P2P_PORT="${2:-}"; shift 2 ;;
     --gpu-ssh-alias) GPU_SSH_ALIAS="${2:-}"; shift 2 ;;
     --source-rpc) SOURCE_RPC="${2%/}"; shift 2 ;;
+    --monitoring-registry-host) MONITORING_REGISTRY_HOST="${2:-}"; shift 2 ;;
     *) usage; exit 2 ;;
   esac
 done
 [[ -n "$OUTPUT" && -n "$SSH_ALIAS" && -r "$BOOTSTRAP_FILE" ]] || { usage; exit 2; }
 [[ "$SSH_ALIAS" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo 'invalid JOIN SSH alias (use lowercase letters, digits, _ or -)' >&2; exit 2; }
+[[ -z "$MONITORING_REGISTRY_HOST" || "$MONITORING_REGISTRY_HOST" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo 'invalid monitoring registry SSH alias' >&2; exit 2; }
 [[ "$P2P_PORT" =~ ^[1-9][0-9]{0,4}$ && "$P2P_PORT" -le 65535 ]] || { echo 'invalid JOIN P2P port' >&2; exit 2; }
 if [[ -n "$GPU_SSH_ALIAS" ]]; then
   [[ "$GPU_SSH_ALIAS" =~ ^[a-z0-9][a-z0-9_-]*$ && "$GPU_SSH_ALIAS" != "$SSH_ALIAS" ]] || { echo 'invalid JOIN GPU SSH alias' >&2; exit 2; }
@@ -74,4 +77,5 @@ umask 077
   printf 'SEED_NODE_RPC_URL=%q\n' "$SEED_NODE_RPC_URL"
   printf 'SEED_NODE_P2P_URL=%q\n' "$SEED_NODE_P2P_URL"
   printf 'GDC_JOIN_ROLE_INPUT=true\n'
+  printf 'GDC_JOIN_MONITORING_REGISTRY_HOST=%q\n' "$MONITORING_REGISTRY_HOST"
 } >"$OUTPUT"

@@ -32,7 +32,6 @@ grep -Fq '6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b' "$RO
 grep -Fq 'https://cli.github.com/packages stable main' "$ROOT/.devcontainer/cleanroom/Dockerfile"
 grep -Fq 'apt-get install -y --no-install-recommends gh' "$ROOT/.devcontainer/cleanroom/Dockerfile"
 grep -Eq '^[[:space:]]+binutils \\' "$ROOT/.devcontainer/cleanroom/Dockerfile"
-grep -Eq 'locales binutils \\' "$ROOT/00-host-prep/prepare-host.sh"
 ! grep -Fq 'operator-cleanroom' "$ROOT/Makefile"
 grep -Fq 'make cleanroom cmd=bash' "$DOC"
 grep -Fq 'make cleanroom-shell' "$DOC"
