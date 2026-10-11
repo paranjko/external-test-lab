@@ -475,6 +475,16 @@ verify-candidate-workflow:
 edge-integration: site-vendor
 	@./scripts/test-public-edge-static-site.sh
 
+# The Bootstrap installer is only exercised in an ephemeral container with a
+# new /srv/dai mount, never against an operator Host
+.PHONY: test-bootstrap-install test-bootstrap-install-root
+test-bootstrap-install:
+	@docker build --file test/Dockerfile.bootstrap --tag gdc-bootstrap-install-test ..
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_TEST_DISPOSABLE_ROOT=true gdc-bootstrap-install-test
+
+test-bootstrap-install-root:
+	@python3 ./scripts/test-bootstrap-install.py
+
 # Bats remains test-only. These two targets exercise the JOIN contracts in a
 # disposable host-shaped container; no production host, key or GPU is used.
 bats:

@@ -1,11 +1,8 @@
 FROM docker:27-cli
 RUN apk add --no-cache bash coreutils curl findutils jq make python3 py3-jsonschema unzip
-WORKDIR /workspace
-COPY Makefile ./
-COPY scripts ./scripts
-COPY 02-node ./02-node
-COPY 03-join ./03-join
-COPY bootstrap ./bootstrap
-COPY lineage ./lineage
-COPY profiles ./profiles
+RUN mkdir -p /srv/dai
+COPY net-deployment-runbook /workspace/net-deployment-runbook
+COPY bootstrap /workspace/bootstrap
+COPY schema /workspace/schema
+WORKDIR /workspace/net-deployment-runbook
 ENTRYPOINT ["make", "test-bootstrap-install-root"]
