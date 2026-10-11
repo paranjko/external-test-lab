@@ -2,14 +2,13 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS [--join-profile FILE] [--gateway-admission-protocols-json JSON] --output FILE" >&2
+  echo "Usage: $0 --inventory FILE --node-name SSH_ALIAS [--join-profile FILE] --output FILE" >&2
 }
 
 INVENTORY=''
 NODE=''
 OUTPUT=''
 JOIN_PROFILE=''
-GATEWAY_ADMISSION_PROTOCOLS_JSON=''
 
 while (($#)); do
   case "$1" in
@@ -27,10 +26,6 @@ while (($#)); do
       ;;
     --join-profile)
       JOIN_PROFILE="$2"
-      shift 2
-      ;;
-    --gateway-admission-protocols-json)
-      GATEWAY_ADMISSION_PROTOCOLS_JSON="$2"
       shift 2
       ;;
     *)
@@ -72,22 +67,7 @@ if [[ "$NODE" != "${GATEWAY_NODE:-}" ]]; then
 fi
 
 gateway_admission_protocols_json='{}'
-if [[ -n "$JOIN_PROFILE" ]]; then
-  # Runtime discovery and DevShard governance are deliberately separate.
-  # The immutable Join Profile binds the quorum-backed Core/DAPI pair selected
-  # from chain-bound seed and public-peer observations. A later lineage
-  # preflight observes the governed compatibility set
-  # and passes it here without electing one active DevShard protocol.
-  gateway_admission_protocols_json="$(jq -ce '
-    type == "object" and length > 0 and
-    all(to_entries[];
-      (.key | test("^v[1-9][0-9]*$")) and
-      (.value | type == "object" and (keys | sort) == ["binary","sha256"]) and
-      (.value.binary | type == "string" and test("^https://[^[:space:]]+$")) and
-      (.value.sha256 | type == "string" and test("^[0-9a-f]{64}$")))
-  ' <<<"$GATEWAY_ADMISSION_PROTOCOLS_JSON")" \
-    || { echo 'JOIN lineage preflight did not provide a valid DevShard compatibility set' >&2; exit 2; }
-else
+if [[ -z "$JOIN_PROFILE" ]]; then
   gateway_protocol_contract="$(selected_gateway_protocol_contract)" || exit 2
   read -r -a gateway_supported_protocols <<<"$gateway_protocol_contract"
   (( ${#gateway_supported_protocols[@]} > 0 )) || {

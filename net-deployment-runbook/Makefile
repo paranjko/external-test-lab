@@ -102,7 +102,7 @@ test-browser-devtools:
 	@node --check ./scripts/capture-homepage-viewport.mjs
 	@node ./scripts/test-chrome-devtools.mjs
 
-test-gateway-site-state: site-js-check test-browser-devtools
+test-gateway-site-state: site-vendor site-js-check test-browser-devtools
 	@node ./scripts/test-gateway-site-state.js
 
 test-validator-map: site-vendor site-js site-host-requirements-check
@@ -292,7 +292,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-network-observer test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 	@bash ./scripts/test-node-container-control.sh
 	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
@@ -327,6 +327,8 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-ensure-warm-key.sh
 	@./scripts/test-launcher-root-contract.sh
 	@./scripts/test-gdc-github-report.sh
+	@./scripts/test-gdc-github-signer-diagnostic.sh
+	@./scripts/test-monitoring-inventory-drift.sh
 	@./scripts/test-diagnostic-envelope.sh
 	@./scripts/test-diagnostic-summaries-publishable.sh
 	@./scripts/test-phase-diagnostic-adapter.sh
@@ -337,6 +339,9 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-replace-retained-validator-identity.sh
 	@./scripts/test-authorize-retained-validator-replacement.sh
 	@./scripts/test-join-refusal-diagnostics.sh
+	@./scripts/test-join-blocklist-preflight.sh
+	@./scripts/test-join-run-log-lifecycle.sh
+	@./scripts/test-join-signer-diagnostic.sh
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-ml-qualification-evidence.sh
 	@bash ./scripts/test-ml-qualification-failure.sh
@@ -344,6 +349,7 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/test-host-identity-layout-probe.sh
 	@./scripts/test-profiles.sh
+	@bash ./scripts/test-core-release-profile.sh
 	@./scripts/test-official-devshard-profile.sh
 	@./scripts/test-api-entrypoint.sh
 	@./scripts/test-network-verify-identity-resolution.sh
@@ -427,6 +433,7 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-recover-incident-flat-layout.sh
 	@./scripts/test-host-join-resume-signer-readback.sh
 	@./scripts/test-phase-ml-attach-completion.sh
+	@./scripts/test-network-ml-endpoints.sh
 	@./scripts/test-resolve-reset-dai-backup.sh
 	@./scripts/test-verify-inactive-validator-key.sh
 	@./scripts/test-verify-complete-join-state.sh
@@ -467,6 +474,16 @@ verify-candidate-workflow:
 
 edge-integration: site-vendor
 	@./scripts/test-public-edge-static-site.sh
+
+# The Bootstrap installer is only exercised in an ephemeral container with a
+# new /srv/dai mount, never against an operator Host
+.PHONY: test-bootstrap-install test-bootstrap-install-root
+test-bootstrap-install:
+	@docker build --file test/Dockerfile.bootstrap --tag gdc-bootstrap-install-test ..
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_TEST_DISPOSABLE_ROOT=true gdc-bootstrap-install-test
+
+test-bootstrap-install-root:
+	@python3 ./scripts/test-bootstrap-install.py
 
 # Bats remains test-only. These two targets exercise the JOIN contracts in a
 # disposable host-shaped container; no production host, key or GPU is used.
@@ -561,6 +578,10 @@ test-reconcile-proxy-ingress-remote:
 .PHONY: test-participants-proxy
 test-participants-proxy:
 	@node ./scripts/test-participants-proxy.mjs
+
+.PHONY: test-network-observer
+test-network-observer:
+	@node ./scripts/test-network-observer.mjs
 
 test-recover-incident:
 	@bash ./scripts/test-recover-incident.sh

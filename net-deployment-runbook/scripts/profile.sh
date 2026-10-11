@@ -272,6 +272,18 @@ load_join_profile() {
   DAPI_UPGRADE_SHA256="$(jq -r .spec.components.dapi.installation.binary.sha256 "$profile")"
   DAPI_EXPECTED_VERSION="$(jq -r .spec.components.dapi.expected_runtime.version "$profile")"
   DAPI_EXPECTED_COMMIT="$(jq -r .spec.components.dapi.expected_runtime.commit "$profile")"
+  GDC_BOOTSTRAP_SOFTWARE=false
+  if jq -e '.spec.deployment | has("software")' "$profile" >/dev/null; then
+    [[ -z "${GDC_PORTABLE_CORE_IMAGE:-}${GDC_PORTABLE_DAPI_IMAGE:-}" ]] || {
+      echo 'Bootstrap software pins cannot be replaced by portable image overrides' >&2; return 1;
+    }
+    GDC_BOOTSTRAP_SOFTWARE=true
+    PROXY_POLICY_IMAGE="$(jq -r '.spec.deployment.software.components["proxy-policy"].image' "$profile")"
+    VERSIOND_ROUTER_IMAGE="$(jq -r '.spec.deployment.software.components["versiond-router"].image' "$profile")"
+    BRIDGE_IMAGE="$(jq -r '.spec.deployment.software.components.bridge.image' "$profile")"
+    export PROXY_POLICY_IMAGE VERSIOND_ROUTER_IMAGE BRIDGE_IMAGE
+  fi
+  export GDC_BOOTSTRAP_SOFTWARE
   # Operator-built images for a Host without ADX/BMI2, see PORTABLE-RUNTIME.md.
   # Both chain images or neither: verify-host.sh waives its ISA check for a
   # declared portable runtime, and a Core or DAPI left on the published image

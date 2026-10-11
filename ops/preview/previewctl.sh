@@ -115,6 +115,21 @@ start() {
     || die 'preview Caddy container did not become ready'
   [[ "$(docker inspect --format '{{.State.Running}}' gdc-preview-node-guard 2>/dev/null || true)" == true ]] \
     || die 'preview node observation guard did not become ready'
+  # Compose recreates shared services on upgrades and drops their extra PR
+  # networks. Restore all registered backends, not just the PR being deployed.
+  local registry pr network container
+  for registry in "$REGISTRY"/*.json; do
+    [[ -f "$registry" ]] || continue
+    [[ "$(jq -r '.backend // empty' "$registry")" != '' ]] || continue
+    pr="$(jq -r '.pr // empty' "$registry")"
+    valid_pr "$pr" || die "invalid preview registry: $registry"
+    network="$(network_name "$pr")"
+    for container in gdc-preview-caddy gdc-preview-egress gdc-preview-node-guard; do
+      if ! docker inspect "$container" | jq -e --arg network "$network" '.[0].NetworkSettings.Networks | has($network)' >/dev/null; then
+        docker network connect "$network" "$container"
+      fi
+    done
+  done
   reconcile
 }
 

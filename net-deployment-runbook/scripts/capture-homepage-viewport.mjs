@@ -2,6 +2,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startChromeDevTools, stopChromeDevTools } from './chrome-devtools.mjs';
+import { compareHostIdentitySets } from './preview-host-identities.mjs';
 
 const [url, widthText, heightText, output, visibleNodesText = '0'] = process.argv.slice(2);
 const width = Number(widthText);
@@ -67,7 +68,9 @@ const homepageStateExpression = `JSON.stringify({
   }))(document.querySelector("#devshard-versions")),
   mapPoints: document.querySelectorAll("#validator-map .validator-marker").length,
   mapMarkers: Number(document.querySelector("#validator-map")?.dataset.markerCount || 0),
-  mapValidators: Number(document.querySelector("#validator-map")?.dataset.validatorCount || 0),
+  mapHosts: Number(document.querySelector("#validator-map")?.dataset.hostCount || 0),
+  currentValidatorCount: document.querySelector("#validator-map")?.dataset.currentValidatorCount || "unavailable",
+  validatorHeight: document.querySelector("#validator-map")?.dataset.validatorHeight || "",
   mapWorld: Boolean(document.querySelector("#validator-map .validator-map-world")?.complete && document.querySelector("#validator-map .validator-map-world")?.naturalWidth),
   mapMarkerDetails: [...document.querySelectorAll("#validator-map .validator-marker")].map(marker => {
     const rect = marker.getBoundingClientRect();
@@ -320,6 +323,24 @@ try {
     returnByValue: true,
   }, sessionId);
   const state = JSON.parse(result.value);
+  if (expectedStatusPrefix) {
+    const networkPath = `${expectedStatusPrefix}network`;
+    const { result: networkIdentityResult } = await call('Runtime.evaluate', {
+      expression: `fetch(${JSON.stringify(networkPath)}, { cache: 'no-store' }).then(async response => { const payload = await response.json(); return JSON.stringify({ status: response.status, nodeIds: (Array.isArray(payload.nodes) ? payload.nodes : []).map(node => String(node?.node_id || '').trim().toUpperCase()) }); })`,
+      awaitPromise: true,
+      returnByValue: true,
+    }, sessionId);
+    const networkIdentity = JSON.parse(networkIdentityResult.value || '{}');
+    const identityComparison = compareHostIdentitySets(
+      networkIdentity.nodeIds,
+      state.nodes.map(node => node.key),
+    );
+    state.p2pNodeIds = identityComparison.expected;
+    state.renderedNodeIds = identityComparison.rendered;
+    if (networkIdentity.status !== 200 || !identityComparison.matches) {
+      throw new Error(`rendered Host identities do not match current preview P2P observations ${JSON.stringify({ status: networkIdentity.status, ...identityComparison })}`);
+    }
+  }
   const { result: appDigestResult } = await call('Runtime.evaluate', {
     expression: '(async()=>{const script=[...document.scripts].find(item=>new URL(item.src,location.href).pathname.endsWith("/app.js"));if(!script)return"";const bytes=await fetch(script.src,{cache:"no-store"}).then(response=>{if(!response.ok)throw new Error(`app.js fetch failed ${response.status}`);return response.arrayBuffer()});const digest=await crypto.subtle.digest("SHA-256",bytes);return [...new Uint8Array(digest)].map(byte=>byte.toString(16).padStart(2,"0")).join("")})()',
     awaitPromise: true,
@@ -416,14 +437,28 @@ try {
     : joinRequirements.guide.left - joinRequirements.toggle.right >= 12 && Math.abs(joinRequirements.guide.top - joinRequirements.toggle.top) <= 2;
   if (!summarySpacingValid) throw new Error(`JOIN requirements summary spacing failed ${JSON.stringify(joinRequirements)}`);
   const mappedNodes = state.nodes;
-  if (!expectResetState && state.mapValidators !== mappedNodes.length) throw new Error(`validator map has ${state.mapValidators} validators for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
+  if (!expectResetState && state.mapHosts !== mappedNodes.length) throw new Error(`network node map has ${state.mapHosts} hosts for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
   if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
-  if (!expectResetState && (state.mapMarkerDetails.reduce((total, marker) => total + marker.count, 0) !== state.mapValidators || state.mapMarkerDetails.some(marker => !Number.isFinite(marker.radius) || Math.abs(marker.radius - (marker.count <= 1 ? 6 : Math.min(7.5 * Math.sqrt(marker.count), 18))) > 0.1))) throw new Error(`validator map grouping or radius contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
+  if (!expectResetState && (state.mapMarkerDetails.reduce((total, marker) => total + marker.count, 0) !== state.mapHosts || state.mapMarkerDetails.some(marker => !Number.isFinite(marker.radius) || Math.abs(marker.radius - (marker.count <= 1 ? 6 : Math.min(7.5 * Math.sqrt(marker.count), 18))) > 0.1))) throw new Error(`network node map grouping or radius contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
   if (mappedNodes.filter(node => node.expanded).some(node => [node.inferenced, node.dapi, node.devshard, node.gpu, node.mlnodes].some(field => !field.visible || !field.text || field.text === 'Checking…' || field.clipped))) throw new Error(`participant runtime inventory is incomplete ${JSON.stringify(state)}`);
   if (mappedNodes.some(node => /\bunreported\b/i.test(`${node.inferenced.text || ''} ${node.dapi.text || ''} ${node.gpu.text || ''} ${node.mlnodes.text || ''}`))) {
     throw new Error(`participant cards rendered a diagnostic placeholder as a value ${JSON.stringify(mappedNodes)}`);
   }
-  if (state.devshardVersions.text !== 'v3 · v4 · v5' || !/v3: [a-f0-9]{64}/i.test(state.devshardVersions.title) || !/v4: [a-f0-9]{64}/i.test(state.devshardVersions.title) || !/v5: [a-f0-9]{64}/i.test(state.devshardVersions.title)) throw new Error(`approved DevShard versions did not render as chain-wide state ${JSON.stringify(state.devshardVersions)}`);
+  const approvalRequest = [...networkRequests.values()].find(request => {
+    try {
+      return new URL(request.url).pathname.endsWith('/chain-api/productscience/inference/inference/devshard_approved_versions');
+    } catch {
+      return false;
+    }
+  });
+  if (!approvalRequest) throw new Error('homepage did not request the dedicated current DevShard approvals query');
+  const { result: approvalReadResult } = await call('Runtime.evaluate', {
+    expression: `fetch(${JSON.stringify(approvalRequest.url)}, { cache: 'no-store' }).then(async response => { let payload = null; try { payload = await response.json(); } catch {} const records = payload?.versions; const seen = new Set(); let versions = []; let valid = response.ok && Array.isArray(records); if (valid) { for (const item of records) { const name = String(item?.name || '').trim(); const binary = String(item?.binary || '').trim(); const sha256 = String(item?.sha256 || '').trim().toLowerCase(); if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name) || !binary || !/^[0-9a-f]{64}$/.test(sha256) || seen.has(name)) { valid = false; break; } seen.add(name); versions.push({ name, sha256 }); } } versions.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true })); return JSON.stringify({ expectedText: !valid ? 'Unavailable' : versions.length ? versions.map(item => item.name).join(' · ') : 'None approved', expectedTitle: !valid ? 'Approved DevShard versions could not be read from verified chain state' : versions.length ? versions.map(item => item.name + ': ' + item.sha256).join('\\n') : 'Chain state reports no approved DevShard versions', status: response.status }); }).catch(() => JSON.stringify({ expectedText: 'Unavailable', expectedTitle: 'Approved DevShard versions could not be read from verified chain state', status: 0 }))`,
+    awaitPromise: true,
+    returnByValue: true,
+  }, sessionId);
+  const approvalRead = JSON.parse(approvalReadResult.value || '{}');
+  if (state.devshardVersions.text !== approvalRead.expectedText || state.devshardVersions.title !== approvalRead.expectedTitle) throw new Error(`approved DevShard versions did not match a fresh dedicated chain query (HTTP ${approvalRead.status}) ${JSON.stringify({ rendered: state.devshardVersions, expectedText: approvalRead.expectedText, expectedTitle: approvalRead.expectedTitle })}`);
   const hasUnboundedHostDiagnostic = node => {
     const endpoint = node.endpoint || '';
     return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
@@ -474,7 +509,7 @@ try {
   }
   if (expectResetState) {
     const active = state.nodes;
-    if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapValidators !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {
+    if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapHosts !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {
       throw new Error(`homepage does not show the real reset/offline state ${JSON.stringify(state)}`);
     }
   }
@@ -563,7 +598,9 @@ try {
     footer_github: state.footerGithub,
     expected_status_prefix: expectedStatusPrefix || null,
     map: {
-      participants: state.mapValidators,
+      hosts: state.mapHosts,
+      currentValidators: state.currentValidatorCount,
+      validatorHeight: state.validatorHeight,
       groups: state.mapMarkers,
       markers: state.mapMarkerDetails,
     },

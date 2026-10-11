@@ -117,10 +117,10 @@ discard_local_identity() {
 }
 
 reset_node() {
-  local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias
+  local source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias state_record
   local local_identity local_account local_joined join_classification join_class active_run_id active_join_result
   local reset_metadata stamp discarded
-  linked_ml_host=''
+  local -a linked_ml_hosts=() configured_endpoints=()
   source=''
   local_identity="$(node_identity_file "$NODE")"
   local_account="$(node_account_file "$NODE")"
@@ -146,44 +146,69 @@ reset_node() {
     join_class=partial_identity
     printf 'READY %s retained identity belongs to an incomplete JOIN run; resetting it for fresh JOIN\n' "$NODE"
   fi
-  endpoint="$(ssh -T "$NODE" "jq -r '.[]?.host // empty' /srv/dai/deploy/node-config.json 2>/dev/null" 2>/dev/null | head -n 1 || true)"
+  mapfile -t configured_endpoints < <(ssh -T "$NODE" "jq -r '.[]?.host // empty' /srv/dai/deploy/node-config.json 2>/dev/null" 2>/dev/null || true)
 
   # `phase-ml-attach.sh` records this relationship in the operator state. It
   # is available even when a reset intentionally has no .env or role input.
-  if [[ -s "$STATE/ml-attached/$NODE" ]]; then
-    linked_ml_host="$(<"$STATE/ml-attached/$NODE")"
+  if [[ -s "$STATE/ml-attached/$NODE.json" ]]; then
+    state_record="$(<"$STATE/ml-attached/$NODE.json")"
+    mapfile -t linked_ml_hosts < <(jq -r --arg node "$NODE" '
+      select(.schema_version == 2 and .validator_alias == $node)
+      | .ml_hosts[]?.ssh_alias
+    ' <<<"$state_record" 2>/dev/null || true)
+    source='operator state'
+  elif [[ -s "$STATE/ml-attached/$NODE" ]]; then
+    linked_ml_hosts=("$(<"$STATE/ml-attached/$NODE")")
     source='operator state'
   fi
 
   # The deployment record is written by `host join` / `host ml-attach`. It is
   # an explicit operator decision, unlike a guessed naming convention.
-  if [[ -z "$linked_ml_host" && -n "$endpoint" && "$endpoint" != inference ]]; then
+  if (( ${#linked_ml_hosts[@]} == 0 )); then
     link_record="$(ssh -T "$NODE" "sudo cat /srv/dai/deploy/gdc-ml-link.json 2>/dev/null" 2>/dev/null || true)"
-    link_alias="$(jq -er --arg node "$NODE" --arg endpoint "$endpoint" '
-      select(.schema_version == 1 and .validator_alias == $node and .ml_endpoint == $endpoint)
-      | .ml_ssh_alias
-    ' <<<"$link_record" 2>/dev/null || true)"
-    [[ "$link_alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
-      || die "cannot safely reset external GPU for $NODE: missing a valid /srv/dai/deploy/gdc-ml-link.json; use the GDC_HOME created by host join or reset the GPU host explicitly"
-    linked_ml_host="$link_alias"
-    source='Network Node deployment record'
+    if jq -e --arg node "$NODE" '.schema_version == 2 and .validator_alias == $node' <<<"$link_record" >/dev/null 2>&1; then
+      mapfile -t linked_ml_hosts < <(jq -r '.ml_hosts[]?.ssh_alias' <<<"$link_record")
+    else
+      link_alias="$(jq -er --arg node "$NODE" '
+        select(.schema_version == 1 and .validator_alias == $node) | .ml_ssh_alias
+      ' <<<"$link_record" 2>/dev/null || true)"
+      [[ -z "$link_alias" ]] || linked_ml_hosts=("$link_alias")
+    fi
+    (( ${#linked_ml_hosts[@]} == 0 )) || source='Network Node deployment record'
   fi
 
-  if [[ -n "$linked_ml_host" && -n "$endpoint" && "$endpoint" != inference ]]; then
-    candidate_host="$(ssh -G "$linked_ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
-    candidate_ip="$(getent ahostsv4 "$candidate_host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
-    endpoint_ip="$(getent ahostsv4 "$endpoint" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
-    { [[ "$endpoint" == "$candidate_host" ]] || [[ -n "$endpoint_ip" && "$endpoint_ip" == "$candidate_ip" ]]; } \
-      || die "linked GPU host $linked_ml_host does not match $NODE ML endpoint $endpoint; no reset was performed"
+  if (( ${#linked_ml_hosts[@]} == 0 )); then
+    for endpoint in "${configured_endpoints[@]}"; do
+      [[ "$endpoint" == inference ]] || die "cannot safely reset external GPU for $NODE: missing a valid /srv/dai/deploy/gdc-ml-link.json; use the GDC_HOME created by host join or reset the GPU host explicitly"
+    done
   fi
 
-  if [[ -n "$linked_ml_host" ]]; then
+  for linked_ml_host in "${linked_ml_hosts[@]}"; do
     [[ "$linked_ml_host" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$linked_ml_host" != "$NODE" ]] \
       || die "refusing invalid linked GPU alias for $NODE: $linked_ml_host"
+    candidate_host="$(ssh -G "$linked_ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+    candidate_ip="$(getent ahostsv4 "$candidate_host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    if (( ${#configured_endpoints[@]} > 0 )); then
+      endpoint_matched=false
+      for endpoint in "${configured_endpoints[@]}"; do
+        [[ "$endpoint" == inference ]] && continue
+        endpoint_ip="$(getent ahostsv4 "$endpoint" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+        if [[ "$endpoint" == "$candidate_host" || ( -n "$endpoint_ip" && "$endpoint_ip" == "$candidate_ip" ) ]]; then
+          endpoint_matched=true
+          break
+        fi
+      done
+      [[ "$endpoint_matched" == true ]] \
+        || die "linked GPU host $linked_ml_host does not match any $NODE ML endpoint; no reset was performed"
+    elif [[ -s "$STATE/ml-attached/$NODE" ]]; then
+      : # v1 operator state predates endpoint binding; preserve its reset contract.
+    else
+      die "linked GPU host $linked_ml_host cannot be verified without $NODE ML endpoint configuration; no reset was performed"
+    fi
     ssh_ready "$linked_ml_host" \
       || die "linked GPU host $linked_ml_host for $NODE is unreachable; no reset was performed"
     printf 'READY detected linked GPU host %s for %s (%s)\n' "$linked_ml_host" "$NODE" "$source"
-  fi
+  done
 
   reset_remote_host() {
     local host="$1"
@@ -318,7 +343,7 @@ REMOTE
   discarded="$(discard_local_identity "$NODE" "$stamp")"
   printf 'READY removed %s local identity record(s) for %s; external reset archive is retained for explicit recovery\n' \
     "$discarded" "$NODE"
-  if [[ -n "$linked_ml_host" ]]; then
+  for linked_ml_host in "${linked_ml_hosts[@]}"; do
     step "Reset linked GPU host $linked_ml_host for $NODE"
     # A GPU Host holds no validator identity. If this one does, the alias is
     # not what the operator state says it is: stop instead of removing it.
@@ -327,8 +352,10 @@ REMOTE
       *) die "$linked_ml_host holds validator identity material and is linked as the GPU Host of $NODE; no reset of the linked Host was performed" ;;
     esac
     reset_remote_host "$linked_ml_host"
-    rm -f "$STATE/ml-attached/$NODE"
     printf 'PASS %s linked GPU reset\n' "$linked_ml_host"
+  done
+  if (( ${#linked_ml_hosts[@]} > 0 )); then
+    rm -f "$STATE/ml-attached/$NODE" "$STATE/ml-attached/$NODE.json"
   fi
   printf 'PASS %s reset\n' "$NODE"
 }

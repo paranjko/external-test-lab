@@ -26,6 +26,9 @@ state_acquisition_mode="$(jq -er .spec.state_acquisition.mode "$GDC_JOIN_PROFILE
 [[ "$state_acquisition_mode" == pending ]] \
   || die 'JOIN profile has an unsupported state acquisition mode'
 restore_fence_method=''
+# shellcheck source=/dev/null # ROOT comes from the phase's loaded runbook library.
+source "$ROOT/scripts/lib-join-diagnostics.sh"
+install_join_signer_boundary_exit_trap
 
 # Preparation can outlast observation TTL. Recheck the selected runtime before
 # obtaining fresh state-sync trust; preserve the original profile and evidence.
@@ -60,7 +63,6 @@ refresh_lineage_for_canary() {
   source "$env"
   export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
   export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
-  export GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON
   GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
   export GDC_JOIN_LINEAGE_RECEIPT_SHA256
   install -m 0600 "$receipt" "$RUN/lineage-preflight-canary.v1.json"
@@ -688,7 +690,6 @@ edge_env_args=(--inventory "$INVENTORY" --node-name "$NODE" --output "$GENERATED
 agent_env_args=(--inventory "$INVENTORY" --host "$NODE" --output "$GENERATED/agents/$NODE.env")
 if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
   edge_env_args+=(--join-profile "$GDC_JOIN_PROFILE")
-  edge_env_args+=(--gateway-admission-protocols-json "${GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON:-}")
   agent_env_args+=(--join-profile "$GDC_JOIN_PROFILE")
 fi
 "$ROOT/04-ops/edge-node/render-env.sh" "${edge_env_args[@]}" >/dev/null
@@ -715,10 +716,10 @@ local_ml=(); gpu=()
 if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
   # The public edge owns /srv/dai/edge on this Host.  A participant JOIN must
   # never replace that shared TLS configuration with the node-local edge.
-  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
+  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]} && sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
   printf 'READY retained shared public edge on %s during participant JOIN\n' "$NODE"
 else
-  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]}; sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env' --node-name '$NODE'; sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
+  ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env '$REMOTE/node.env' --node-config '$REMOTE/node-config.json' --genesis '$REMOTE/genesis.json' --join-profile '$REMOTE/join-profile.v1.json' ${local_ml[*]} && sudo '$REMOTE/edge/install-edge.sh' '$REMOTE/edge.env' --node-name '$NODE' && sudo '$REMOTE/agent/install-agent.sh' '$NODE' '$REMOTE/agent.env' ${gpu[*]}"
 fi
 # Persist the explicit external-GPU association as soon as the validator
 # deployment exists.  A join can fail later (for example, while claiming the
@@ -740,7 +741,8 @@ if [[ -n "$ML_HOST" ]]; then
 fi
 
 step "Start signerless native P2P synchronization canary for $NODE"
-ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --pull-only --canary"
+join_canary_transport_step canary_image_pull canary_running \
+  ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --pull-only --canary"
 # The immutable profile was created before preparation. Recreate only its
 # short-lived lineage decision at the canary boundary, then render and stage
 # the matching state-sync environment without touching identity or signer
@@ -748,34 +750,48 @@ ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --pull-only --canary"
 # trust checkpoint expired while images or a model were loading.
 refresh_lineage_for_canary
 "$ROOT/02-node/render-node-env.sh" "${env_args[@]}" --output "$NODE_DIR/.env" >/dev/null
-scp -q "$NODE_DIR/.env" "$NODE:$REMOTE/node.env"
-scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
-ssh "$NODE" "owner=\$(id -u); group=\$(id -g); sudo install -o \$owner -g \$group -m 0600 '$REMOTE/node.env' '/srv/dai/deploy/.env'; cd '/srv/dai/deploy' && docker compose --env-file .env -f compose.yaml config --quiet"
+join_canary_transport_step canary_env_transfer canary_running \
+  scp -q "$NODE_DIR/.env" "$NODE:$REMOTE/node.env"
+join_canary_transport_step canary_lineage_transfer canary_running \
+  scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
+join_canary_transport_step canary_env_transfer canary_running ssh "$NODE" "owner=\$(id -u); group=\$(id -g); sudo install -o \$owner -g \$group -m 0600 '$REMOTE/node.env' '/srv/dai/deploy/.env'; cd '/srv/dai/deploy' && docker compose --env-file .env -f compose.yaml config --quiet"
 "$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
 record_join_state "$NODE" SYNCING "$ADDRESS"
-ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --canary --no-pull"
+join_canary_transport_step canary_start canary_running \
+  ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --canary --no-pull"
 record_join_transition CANARY_RUNNING
-ssh "$NODE" "cd /srv/dai/deploy && ./verify-state-sync-config.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
+join_canary_reached canary_running
+join_canary_transport_step canary_verify canary_caught_up \
+  ssh "$NODE" "cd /srv/dai/deploy && ./verify-state-sync-config.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
 
 step "Wait until signerless P2P canary for $NODE is synchronized"
-ssh "$NODE" "cd /srv/dai/deploy && ./wait-state-sync-canary.sh /srv/dai/deploy '${GDC_JOIN_RPC_SERVER_1%/}'"
+join_canary_transport_step canary_wait canary_caught_up \
+  ssh "$NODE" "cd /srv/dai/deploy && ./wait-state-sync-canary.sh /srv/dai/deploy '${GDC_JOIN_RPC_SERVER_1%/}'"
 record_join_state "$NODE" CAUGHT_UP "$ADDRESS"
 record_join_transition CANARY_CAUGHT_UP
+join_canary_reached canary_caught_up
 step "Verify $NODE acquired the selected source lineage before enabling its signer"
-ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json'"
-ssh "$NODE" "cd /srv/dai/deploy && ./record-state-sync-canary.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
-scp -q "$NODE:$REMOTE/lineage-receipt.json" "$RUN/lineage-state-sync-receipt.json"
+join_canary_transport_step canary_verify canary_verified \
+  ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json'"
+join_canary_transport_step canary_verify canary_verified \
+  ssh "$NODE" "cd /srv/dai/deploy && ./record-state-sync-canary.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
+join_canary_transport_step canary_lineage_transfer canary_verified \
+  scp -q "$NODE:$REMOTE/lineage-receipt.json" "$RUN/lineage-state-sync-receipt.json"
 printf 'READY retained verified signerless P2P canary receipt=%s\n' "$RUN/lineage-state-sync-receipt.json"
 record_join_state "$NODE" LINEAGE_VERIFIED "$ADDRESS"
 record_join_transition CANARY_VERIFIED
+join_canary_reached canary_verified
 step "Stop signerless P2P canary before promoting $NODE state"
-ssh "$NODE" "sudo /srv/dai/deploy/stop-state-sync-canary.sh /srv/dai/deploy"
+join_canary_transport_step canary_stop canary_stopped \
+  ssh "$NODE" "sudo /srv/dai/deploy/stop-state-sync-canary.sh /srv/dai/deploy"
 record_join_state "$NODE" CANARY_STOPPED "$ADDRESS"
 record_join_transition CANARY_STOPPED
+join_canary_reached canary_stopped
 step "Promote verified $NODE state-sync generation atomically"
 record_join_transition PROMOTION_PREPARED
 record_join_transition PROMOTING
-ssh "$NODE" "sudo /srv/dai/deploy/promote-state-sync-generation.sh '$NODE' '$generation_dir' '/srv/dai/data'"
+join_canary_transport_step promotion_transfer promoted \
+  ssh "$NODE" "sudo /srv/dai/deploy/promote-state-sync-generation.sh '$NODE' '$generation_dir' '/srv/dai/data'"
 record_join_transition PROMOTED
 # Canonical Core remains signerless until membership is reconciled. Upstream
 # initialization intentionally creates a disposable local validator key in
@@ -1066,19 +1082,26 @@ if [[ "$join_operation" == restore ]]; then
 fi
 
 step "Fence existing $NODE signer after membership reconciliation"
+# The signer diagnostic vocabulary deliberately records the last safe
+# canonical boundary before the fence. Later membership/permission receipts
+# remain in the receipt chain and are not copied into public diagnostics.
+join_canary_reached canonical_verified
 signer_consensus_pubkey="$(jq -er .consensus_pubkey "$IDENTITY")"
 signer_fence_remote="/srv/dai/deploy/.gdc/runs/${GDC_RUN_ID:-manual}/signer-fence-receipt.v1.json"
-ssh "$NODE" "sudo /srv/dai/deploy/fence-existing-signer.sh /srv/dai/deploy '${GDC_RUN_ID:-manual}' '$signer_consensus_pubkey' '$NODE'"
+join_signer_boundary_step signer_fence signer_fenced signer canonical_signer_off fenced \
+  ssh "$NODE" "sudo /srv/dai/deploy/fence-existing-signer.sh /srv/dai/deploy '${GDC_RUN_ID:-manual}' '$signer_consensus_pubkey' '$NODE'"
 # The fence helper is deliberately root-owned: it observed and stopped a
 # privileged service. Do not weaken its remote permissions merely to make an
 # ordinary SSH account read it. Retrieve this bounded document through the
 # same sudo authority that ran the helper, then keep the local copy private.
-ssh "$NODE" "sudo cat '$signer_fence_remote'" >"$RUN/signer-fence-receipt.v1.json"
+join_signer_boundary_step signer_fence signer_fenced readback canonical_signer_off unavailable \
+  ssh "$NODE" "sudo cat '$signer_fence_remote'" >"$RUN/signer-fence-receipt.v1.json"
 chmod 600 "$RUN/signer-fence-receipt.v1.json"
 "$ROOT/scripts/verify-signer-fence-receipt.sh" --receipt "$RUN/signer-fence-receipt.v1.json" \
   --run-id "${GDC_RUN_ID:-manual}" --consensus-pubkey "$signer_consensus_pubkey"
 record_join_state "$NODE" SIGNER_FENCE_VERIFIED "$ADDRESS"
 record_join_transition SIGNER_FENCE_VERIFIED
+join_canary_reached signer_fenced
 step "Enable $NODE consensus signer after application and membership verification"
 # Persist the conservative terminal result before the remote start.  If SSH
 # drops after Docker accepts the request, a later invocation must not infer
@@ -1086,29 +1109,41 @@ step "Enable $NODE consensus signer after application and membership verificatio
 record_signer_activation_guard
 record_join_transition SIGNER_ACTIVATING true
 step "Capture $NODE TMKMS signing minimum before enablement"
-ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$RUN/tmkms-signing-state-before-enable.json"
+join_signer_boundary_step signer_pre_enable_state signer_activating readback signer_may_be_on unavailable \
+  ssh "$NODE" "sudo cat '/srv/dai/signer/tmkms/state/priv_validator_state.json'" >"$RUN/tmkms-signing-state-before-enable.json"
 chmod 600 "$RUN/tmkms-signing-state-before-enable.json"
 [[ -s "$RUN/tmkms-signing-state-before-enable.json" ]] || die 'TMKMS signing minimum is unavailable before enablement'
 ssh -T "$NODE" 'curl -fsS --max-time 10 http://127.0.0.1:26657/status' >"$RUN/status-before-enable.json"
 jq -e --slurpfile state "$RUN/tmkms-signing-state-before-enable.json" '.result.sync_info.catching_up==false
   and (.result.sync_info.latest_block_height|tonumber)>($state[0].height|tonumber)' "$RUN/status-before-enable.json" >/dev/null \
   || die 'restored chain has not passed the last height signed before reset'
-ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --enable-signer"
+join_signer_boundary_step signer_enable signer_enabled signer signer_may_be_on unknown \
+  ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --enable-signer"
 # Enabling the signer recreates Core. Its RPC answers and leaves block sync
 # some seconds later, so one immediate readback fails on a healthy Host.
 signer_readback_deadline=$((SECONDS+300))
 until ssh "$NODE" "cd /srv/dai/deploy && ./verify-active-signer-state.sh '/srv/dai/deploy' '$expected_chain_id' '$expected_core_version'" >"$RUN/active-signer-readback.log" 2>&1; do
   if (( SECONDS>=signer_readback_deadline )); then
     cat "$RUN/active-signer-readback.log" >&2
+    record_post_enable_signer_failure signer_active_readback readback signer_may_be_on unavailable \
+      "$RUN/active-signer-readback.log"
     die 'active signer readback did not pass after signer enablement'
   fi
   printf 'WAIT active signer readback for %s: %s\n' "$NODE" "$(tail -n 1 "$RUN/active-signer-readback.log")"
   sleep 5
 done
 cat "$RUN/active-signer-readback.log"
-active_signer_key="$(ssh -T "$NODE" 'curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:26657/status' | jq -r '.result.validator_info.pub_key.value // empty')"
-[[ "$active_signer_key" == "$signer_consensus_pubkey" ]] \
-  || die "$NODE enabled signer does not expose the registered TMKMS validator key"
+active_signer_key_stderr="$RUN/active-signer-key-readback.err"
+if ! active_signer_key="$(ssh -T "$NODE" 'curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:26657/status' \
+  2>"$active_signer_key_stderr" | jq -r '.result.validator_info.pub_key.value // empty')"; then
+  record_post_enable_signer_failure signer_identity_readback readback signer_may_be_on unavailable \
+    "$active_signer_key_stderr"
+  die "$NODE active signer identity could not be read back after signer enablement"
+fi
+if [[ "$active_signer_key" != "$signer_consensus_pubkey" ]]; then
+  record_post_enable_signer_failure signer_identity_readback readback signer_enabled enabled
+  die "$NODE enabled signer does not expose the registered TMKMS validator key"
+fi
 printf 'PASS %s enabled signer exposes its registered TMKMS validator key\n' "$NODE"
 advanced=false
 # The key signs only once it is in the validator set. ACTIVE does not mean

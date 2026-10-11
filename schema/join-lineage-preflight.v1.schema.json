@@ -4,7 +4,7 @@
   "title": "GDC Host JOIN lineage preflight receipt",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "kind", "runtime", "bootstrap", "fault_domains", "checkpoints", "devshard_compatibility", "staging", "signer", "result"],
+  "required": ["schema_version", "kind", "runtime", "bootstrap", "fault_domains", "checkpoints", "staging", "signer", "result"],
   "properties": {
     "schema_version": {"const": 1},
     "kind": {"const": "gdc-host-join-lineage-preflight"},
@@ -13,15 +13,14 @@
     "fault_domains": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/fault_domain"}},
     "trust_authority": {"type": "object", "additionalProperties": false, "required": ["kind", "rpc_url"], "properties": {"kind": {"enum": ["operator_source", "bootstrap_archival_source"]}, "rpc_url": {"$ref": "#/$defs/url"}}},
     "checkpoints": {"$ref": "#/$defs/checkpoints"},
-    "devshard_compatibility": {"$ref": "#/$defs/devshard_compatibility"},
     "staging": {"$ref": "#/$defs/staging"},
     "signer": {"$ref": "#/$defs/signer"},
     "result": {"$ref": "#/$defs/result"}
   },
   "allOf": [{
     "if": {"required": ["trust_authority"]},
-    "then": {"properties": {"fault_domains": {"minItems": 2}, "bootstrap": {"properties": {"snapshot": {"properties": {"providers": {"minItems": 2}}}}}, "devshard_compatibility": {"properties": {"sources": {"minItems": 2}}}}},
-    "else": {"properties": {"fault_domains": {"minItems": 2}, "bootstrap": {"properties": {"snapshot": {"properties": {"providers": {"minItems": 2}}}}}, "devshard_compatibility": {"properties": {"sources": {"minItems": 2}}}}}
+    "then": {"properties": {"fault_domains": {"minItems": 2}, "bootstrap": {"properties": {"snapshot": {"properties": {"providers": {"minItems": 2}}}}}}},
+    "else": {"properties": {"fault_domains": {"minItems": 2}, "bootstrap": {"properties": {"snapshot": {"properties": {"providers": {"minItems": 2}}}}}}}
   }],
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
@@ -94,13 +93,6 @@
       "type": "object", "additionalProperties": false,
       "required": ["previous_deployment_digest", "rendered_config_digest", "compose_validated"],
       "properties": {"previous_deployment_digest": {"$ref": "#/$defs/sha256"}, "rendered_config_digest": {"$ref": "#/$defs/sha256"}, "compose_validated": {"type": "boolean"}}
-    },
-    "devshard_compatibility": {
-      "type": "object", "additionalProperties": false, "required": ["approvals", "sources"],
-      "properties": {
-        "approvals": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["name", "url", "sha256"], "properties": {"name": {"type": "string", "pattern": "^v[1-9][0-9]*$"}, "url": {"type": "string", "pattern": "^https://[^\\s]+$"}, "sha256": {"$ref": "#/$defs/sha256"}}}},
-        "sources": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["chain_api_url"], "properties": {"chain_api_url": {"type": "string", "pattern": "^https?://[A-Za-z0-9.-]+(?::[1-9][0-9]{0,4})?/chain-api/"}}}}
-      }
     },
     "signer": {
       "type": "object", "additionalProperties": false,

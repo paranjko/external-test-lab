@@ -3,6 +3,11 @@ set -eu
 
 STATE_DIR=${STATE_DIR:-/root/.inference}
 INIT_FLAG="$STATE_DIR/.node_initialized"
+if [ "${GDC_BOOTSTRAP_SOFTWARE:-false}" = true ]; then
+  sh /usr/local/bin/gdc-bootstrap-runtime "$STATE_DIR" /gdc-bootstrap-runtime/node inferenced
+  PATH="$STATE_DIR/cosmovisor/current/bin:$PATH"
+  export PATH
+fi
 
 # The active data directory is a replaceable state-sync generation.  Never
 # let its initialisation choose a new P2P key when the Host identity mounted

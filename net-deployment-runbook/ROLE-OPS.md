@@ -25,10 +25,17 @@ they are not published through Genesis bootstrap or stored in Host inventory.
 
 ```bash
 gdc ops monitoring
+gdc ops monitoring check
 gdc ops site
 gdc ops edge
 gdc ops consumer telegram apply
 ```
+
+Run `gdc ops monitoring check` before and after a monitoring reconciliation.
+It is read-only: it compares locally retained JOIN markers with the OPS
+inventory and deployed Prometheus `gonka-node` targets. A drift result names
+only the affected alias and status; correct the OPS inventory or rerun
+`gdc ops monitoring` as appropriate. A Host JOIN never redeploys monitoring.
 
 The site and Grafana remain separate from validator lifecycle. A chain reset
 must leave them online and showing the current state, including an unavailable

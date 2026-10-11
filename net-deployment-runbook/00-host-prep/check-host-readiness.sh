@@ -13,6 +13,18 @@ if [[ -n "$(dpkg --audit 2>&1 || true)" ]]; then
   exit 195
 fi
 
+# A JOIN must not begin on a Host whose package state will immediately become
+# stale.  Do not install or upgrade anything here: the operator updates and
+# reboots the Host, then starts a new JOIN from the clean-target gate.
+if ! upgrade_plan="$(apt-get -s -o Debug::NoLocking=true upgrade 2>&1)"; then
+  echo 'OPERATOR_ACTION_REQUIRED package_update_state_unavailable'
+  exit 195
+fi
+if awk '$1 == "Inst" { found=1 } END { exit !found }' <<<"$upgrade_plan"; then
+  echo 'OPERATOR_ACTION_REQUIRED package_updates_pending'
+  exit 195
+fi
+
 if command -v docker >/dev/null 2>&1 && systemctl is-active --quiet docker.service; then
   docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
   if [[ -z "$docker_root" || ! -d "$docker_root" || ! -d "$docker_root/tmp" ]]; then

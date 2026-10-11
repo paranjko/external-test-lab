@@ -13,6 +13,16 @@ esac
 current="$dapi_home/cosmovisor/current"
 binary="$current/bin/decentralized-api"
 cosmovisor_home="$dapi_home/cosmovisor"
+if [ "${GDC_BOOTSTRAP_SOFTWARE:-false}" = true ]; then
+  # Complete the first-start setup normally performed by init-docker.sh,
+  # without asking that script to reinitialize an existing Cosmovisor home.
+  if [ ! -e "$cosmovisor_home" ] && [ ! -L "$cosmovisor_home" ]; then
+    mkdir -p "$dapi_home/data" "$dapi_home/.nats"
+    [ -f "$dapi_home/api-config.yaml" ] || cp /root/api-config.yaml "$dapi_home/api-config.yaml"
+  fi
+  sh /usr/local/bin/gdc-bootstrap-runtime "$dapi_home" /gdc-bootstrap-runtime/api decentralized-api
+  exec cosmovisor run
+fi
 
 join_url="${GDC_JOIN_DAPI_UPGRADE_URL:-}"
 join_sha256="${GDC_JOIN_DAPI_UPGRADE_SHA256:-}"
@@ -37,7 +47,15 @@ verify_join_receipt() {
       printf 'ERROR generated JOIN DAPI runtime receipt does not match profile\n' >&2
       exit 1
     }
-  actual_binary_sha256="$(sha256sum "$binary" | awk '{print $1}')"
+  # The JOIN receipt binds the initial binary copied by cosmovisor init.
+  # Cosmovisor later advances current through on-chain upgrades; comparing
+  # that upgraded binary to the initial receipt prevents every later restart.
+  join_binary="$cosmovisor_home/genesis/bin/decentralized-api"
+  if [ ! -f "$join_binary" ] || [ ! -x "$join_binary" ]; then
+    printf 'ERROR generated JOIN DAPI genesis binary is missing\n' >&2
+    exit 1
+  fi
+  actual_binary_sha256="$(sha256sum "$join_binary" | awk '{print $1}')"
   [ "$actual_binary_sha256" = "$receipt_binary_sha256" ] || {
     printf 'ERROR generated JOIN DAPI binary does not match runtime receipt\n' >&2
     exit 1

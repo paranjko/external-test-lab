@@ -1,0 +1,17 @@
+[Unit]
+Description=Serve cached Community DevNet network observation
+
+[Service]
+ExecStart=/usr/bin/bash /usr/local/lib/gonka-devnet/network-observer.sh --serve
+StandardInput=socket
+StandardOutput=inherit
+StandardError=journal
+DynamicUser=yes
+User=gonka-network-observer
+StateDirectory=gonka-network-observer
+StateDirectoryMode=0755
+RuntimeMaxSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

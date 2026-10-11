@@ -42,7 +42,7 @@ if [[ -n "$OBSERVATION" ]]; then
     (.runtime.core.commit | test("^[a-f0-9]{40}$")) and
     (.runtime.dapi.version | type == "string" and length > 0) and
     (.runtime.dapi.commit | test("^[a-f0-9]{40}$")) and
-    (.runtime_api_origins | type == "array" and length > 0)
+    ((.runtime_api_origins | type == "array" and length > 0) or .policy.policy_id == "bootstrap-software/v1")
   ' "$OBSERVATION" >/dev/null || die configuration 'network observation is not a ready v1 document'
   [[ "$(jq -r .bootstrap.chain_id "$OBSERVATION")" == "$(jq -r .chain_id "$BOOTSTRAP")" ]] \
     || die configuration 'observation and Bootstrap chain IDs differ'
@@ -63,6 +63,10 @@ if [[ -n "$OBSERVATION" ]]; then
   GDC_NETWORK_DAPI_COMMIT="$(jq -r .runtime.dapi.commit "$OBSERVATION")"
   OBSERVATION_SHA256="$(sha256sum "$OBSERVATION" | awk '{print $1}')"
   RUNTIME_SOURCE_KIND=network_observation
+  if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$OBSERVATION" >/dev/null; then
+    [[ "$(jq -cS .software "$OBSERVATION")" == "$(jq -cS .software "$BOOTSTRAP")" ]] || die configuration 'software receipt differs from Bootstrap'
+    RUNTIME_SOURCE_KIND=bootstrap_software
+  fi
   RUNTIME_SOURCE_ID="$GDC_NETWORK_FINGERPRINT"
 else
   # Compatibility input for the old JOIN dispatcher. New JOIN callers must
@@ -297,7 +301,7 @@ select_tip_quorum() {
 # Derive the post-upgrade checkpoint before selecting the tip quorum so
 # provider eligibility can cover every historical checkpoint in one pass.
 declare -a applied_heights=()
-if [[ -n "$OBSERVATION" ]]; then
+if [[ -n "$OBSERVATION" && "$RUNTIME_SOURCE_KIND" != bootstrap_software ]]; then
   mapfile -t runtime_apis < <(jq -r '.runtime_api_origins[].api_url' "$OBSERVATION" | LC_ALL=C sort -u)
 else
   mapfile -t runtime_apis < <(jq -r '[.seeds[].api // empty] | unique[]' "$BOOTSTRAP")
@@ -356,47 +360,6 @@ post="$(one_record post_upgrade "${post_records[@]}")"
 # proven by the signerless canary, not by a made-up HTTP endpoint.
 snapshot="$(printf '%s\n' "${snapshot_providers[@]}" | jq -R . | jq -s '{discovery:"p2p_canary_pending",providers:.}')"
 
-# DevShard approvals are mutable chain state and do not participate in choosing
-# the software profile.  The profile above has already bound the full Core/DAPI
-# tuple from one healthy Bootstrap seed.  Before rendering the participant edge
-# we still need a current, normalized compatibility set for Versiond.  Keep it
-# in this later lineage receipt rather than smuggling a protocol choice into the
-# immutable Join Profile.
-declare -a approval_sets=() approval_sources=()
-for i in "${!quorum_rpcs[@]}"; do
-  rpc="${quorum_rpcs[$i]}"
-  chain_api="$(chain_api_for_rpc "$rpc" || true)"
-  [[ -n "$chain_api" ]] || die configuration "Bootstrap RPC cannot derive a chain API: $rpc"
-  params="$tmp/params-${#approval_sets[@]}.json"
-  if ! curl -fsS --connect-timeout 5 --max-time 15 --resolve "${quorum_hosts[$i]}:${quorum_ports[$i]}:${quorum_ips[$i]}" "$chain_api" >"$params" 2>/dev/null; then
-    continue
-  fi
-  approval_set="$(jq -cer '
-    (.params // .).devshard_escrow_params.approved_versions
-    | if type == "array" and length > 0 then . else error("empty approval set") end
-    | if all(.[];
-        type == "object" and (keys | sort) == ["binary","name","sha256"] and
-        (.name | type == "string" and test("^v[1-9][0-9]*$")) and
-        (.binary | type == "string" and test("^https://[^[:space:]]+$")) and
-        (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))
-      then . else error("malformed approval record") end
-    | if (map(.name) | unique | length) == length
-      then . else error("duplicate approval name") end
-    | map({name, url:.binary, sha256}) | sort_by(.name, .url, .sha256)
-  ' "$params" 2>/dev/null || true)"
-  [[ -n "$approval_set" ]] || continue
-  approval_sets+=("$approval_set")
-  approval_sources+=("$chain_api")
-done
-(( ${#approval_sets[@]} >= required_origins )) || die devshard_approval_quorum 'not enough selected chain APIs exposed a valid DevShard compatibility set'
-mapfile -t unique_approval_sets < <(printf '%s\n' "${approval_sets[@]}" | LC_ALL=C sort -u)
-(( ${#unique_approval_sets[@]} == 1 )) || die devshard_approval_conflict 'independent chain APIs disagree about DevShard compatibility records'
-devshard_approvals="${unique_approval_sets[0]}"
-gateway_admission_protocols="$(jq -ce '
-  reduce .[] as $record ({};
-    . + {($record.name):{binary:$record.url,sha256:$record.sha256}})
-' <<<"$devshard_approvals")"
-
 expires_at="$(date -u -d "+${ttl} seconds" +%FT%TZ)"
 empty_digest="$(printf '' | sha256sum | awk '{print $1}')"
 mkdir -p "$(dirname "$RECEIPT")" "$(dirname "$ENV_FILE")"
@@ -408,11 +371,9 @@ jq -n \
   --arg dapi_version "$GDC_NETWORK_DAPI_VERSION" --arg dapi_commit "$GDC_NETWORK_DAPI_COMMIT" \
   --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" --arg expires "$expires_at" \
   --argjson early "$early" --argjson post "$post" --argjson trust "$trust" --argjson snapshot "$snapshot" \
-  --argjson devshard_approvals "$devshard_approvals" \
-  --argjson devshard_sources "$(for source in "${approval_sources[@]}"; do jq -cn --arg url "$source" '{chain_api_url:$url}'; done | jq -s .)" \
   --argjson domains "$(for i in "${!quorum_rpcs[@]}"; do jq -cn --arg id "${quorum_domains[$i]}" --arg rpc "${quorum_rpcs[$i]}" --arg host "${quorum_hosts[$i]}" --argjson port "${quorum_ports[$i]}" --arg ip "${quorum_ips[$i]}" --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" '{id:$id,rpc_url:$rpc,host:$host,port:$port,ip:$ip,chain_id:$chain,genesis_sha256:$genesis}'; done | jq -s .)" \
   --arg empty "$empty_digest" \
-  '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:(if $observation_sha256 == "" then null else $observation_sha256 end),source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,trust:($trust+{expires_at:$expires}),snapshot:$snapshot},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},devshard_compatibility:{approvals:$devshard_approvals,sources:$devshard_sources},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
+  '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:(if $observation_sha256 == "" then null else $observation_sha256 end),source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,trust:($trust+{expires_at:$expires}),snapshot:$snapshot},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
 jq --arg rpc "$selected_source_rpc" --arg kind "$([[ -n "$SOURCE_RPC" ]] && printf operator_source || printf bootstrap_archival_source)" \
   '. + {trust_authority:{kind:$kind,rpc_url:$rpc}}' "$receipt_tmp" >"$receipt_tmp.source"
 mv "$receipt_tmp.source" "$receipt_tmp"
@@ -426,7 +387,6 @@ mv "$receipt_tmp.source" "$receipt_tmp"
   printf 'GDC_JOIN_SOURCE_RPC=%q\n' "$selected_source_rpc"
   printf 'GDC_JOIN_TRUSTED_BLOCK_PERIOD=%q\n' "$period"
   printf 'GDC_JOIN_LINEAGE_RECEIPT=%q\n' "$RECEIPT"
-  printf 'GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON=%q\n' "$gateway_admission_protocols"
 } >"$env_tmp"
 chmod 0600 "$receipt_tmp" "$env_tmp"
 mv -f "$receipt_tmp" "$RECEIPT"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Serve cached Community DevNet network observation
+
+[Socket]
+ListenStream=127.0.0.1:18094
+Accept=yes
+MaxConnections=16
+
+[Install]
+WantedBy=sockets.target

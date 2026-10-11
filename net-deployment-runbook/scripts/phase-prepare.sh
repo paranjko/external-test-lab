@@ -73,7 +73,8 @@ if [[ -n "${GDC_PREPARE_HOSTS:-}" ]]; then
   explicit_hosts=true
   read -r -a prepare_nodes <<<"$GDC_PREPARE_HOSTS"
   for node in "${prepare_nodes[@]}"; do
-    topology_contains_node "$node" || die "prepare expects an alias from GDC_NODE_ALIASES, got: $node"
+    topology_contains_node "$node" || [[ "$node" == "${GDC_PREPARE_ML_ONLY_HOST:-}" ]] \
+      || die "prepare expects a validator alias or the requested ML-only Host, got: $node"
   done
 fi
 hosts=("${prepare_nodes[@]}")
@@ -94,7 +95,11 @@ for host in "${hosts[@]}"; do
   fi
   network_node="$(node_for_ml_host "$host" || true)"
   role=network-gpu
-  if [[ -n "$network_node" ]]; then
+  if [[ "$host" == "${GDC_PREPARE_ML_ONLY_HOST:-}" ]]; then
+    network_node="${GDC_PREPARE_ML_ONLY_FOR:-}"
+    topology_contains_node "$network_node" || die 'ML-only preparation lacks a valid owning Network Node'
+    role=ml-only
+  elif [[ -n "$network_node" ]]; then
     role=ml-only
   elif [[ -n "$(node_ml_host "$host" || true)" ]]; then
     role=network-only
@@ -138,6 +143,15 @@ for host in "${hosts[@]}"; do
   if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh $verify_host_args" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
+    continue
+  fi
+  # JOIN prepares a clean base Host once.  A retained host.env means an
+  # earlier preparation reached a managed state but is not valid now; repairing
+  # it in an ordinary JOIN would hide a partial attempt and make recovery
+  # ambiguous.  Stop for explicit operator investigation instead.
+  if ssh "$host" 'sudo test -e /etc/gonka/host.env -o -L /etc/gonka/host.env' >/dev/null 2>&1; then
+    echo "OPERATOR_ACTION_REQUIRED  $host: retained Host preparation is not valid; ordinary JOIN does not repair it"
+    action_hosts+=("$host")
     continue
   fi
   remote_env=()

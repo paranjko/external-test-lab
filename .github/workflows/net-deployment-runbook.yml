@@ -116,3 +116,5 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Test public edge routing in disposable containers
         run: make -C net-deployment-runbook edge-integration
+      - name: Test Bootstrap JOIN installation in a disposable root
+        run: make -C net-deployment-runbook test-bootstrap-install
