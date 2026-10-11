@@ -17,6 +17,7 @@ if (!siteRootText || !evidenceDir) {
   );
 }
 const siteRoot = resolve(siteRootText);
+await mkdir(evidenceDir, { recursive: true });
 const now = new Date().toISOString();
 const delay = (ms) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
@@ -1006,6 +1007,7 @@ try {
   const groupedStateNodes = [
     {
       name: "node0",
+      gpuHost: "gpu-kansas-node0",
       address: "kansas-node0",
       participantState: "ACTIVE",
       isOnline: false,
@@ -1024,6 +1026,7 @@ try {
     },
     {
       name: "node5",
+      gpuHost: "gpu-kansas-node5",
       address: "kansas-node5",
       participantState: "ACTIVE",
       isOnline: false,
@@ -1042,6 +1045,7 @@ try {
     },
     {
       name: "node3",
+      gpuHost: "gpu-london-node3",
       address: "london-node3",
       participantState: "INACTIVE",
       isOnline: false,
@@ -1057,6 +1061,7 @@ try {
     },
     {
       name: "node8",
+      gpuHost: "gpu-london-node8",
       address: "london-node8",
       participantState: "ACTIVE",
       isOnline: false,
@@ -1076,6 +1081,7 @@ try {
   ];
   const stateDistributionNodes = [
     {
+      gpuHost: "gpu-milan-validating",
       address: "milan-validating",
       participantState: "ACTIVE",
       isOnline: true,
@@ -1090,6 +1096,7 @@ try {
       },
     },
     {
+      gpuHost: "gpu-milan-inactive",
       address: "milan-inactive",
       participantState: "INACTIVE",
       isOnline: false,
@@ -1104,6 +1111,7 @@ try {
       },
     },
     ...["paris-active-1", "paris-active-2"].map((address) => ({
+      gpuHost: `gpu-${address}`,
       address,
       participantState: "ACTIVE",
       isOnline: false,
@@ -1121,6 +1129,7 @@ try {
       },
     })),
     {
+      gpuHost: "gpu-paris-inactive",
       address: "paris-inactive",
       participantState: "INACTIVE",
       isOnline: false,
@@ -1448,12 +1457,13 @@ try {
       await delay(120);
       const { result: mixedStateResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const popup=document.querySelector(".leaflet-popup"),summary=popup?.querySelector(".validator-map-summary span:nth-child(2)")?.textContent?.trim()||"",rows=[...(popup?.querySelectorAll("li")||[])].map(row=>{const spans=row.querySelectorAll("span"),membership=spans[1]?.textContent?.trim()||"",markerState=membership.split(" · ")[0];return{markerState,membership}});const order=["Validating","Active","Checking","Unavailable"];const counts=new Map();for(const row of rows)counts.set(row.markerState,(counts.get(row.markerState)||0)+1);const expected=order.filter(value=>counts.has(value)).map(value=>counts.get(value)+" "+value).join(" · ");return{summary,expected,rows,validMapStates:rows.length===2&&counts.get("Active")===1&&counts.get("Unavailable")===1&&rows.every(row=>order.includes(row.markerState)&&row.membership.endsWith("Membership unavailable"))}})())',
+          'JSON.stringify((()=>{const popup=document.querySelector(".leaflet-popup"),summary=popup?.querySelector(".validator-map-summary span:nth-child(3)")?.textContent?.trim()||"",gpus=popup?.querySelector(".validator-map-summary span:nth-child(2)")?.textContent?.trim()||"",rows=[...(popup?.querySelectorAll("li")||[])].map(row=>{const spans=row.querySelectorAll("span"),membership=spans[1]?.textContent?.trim()||"",markerState=membership.split(" · ")[0];return{markerState,membership}});const order=["Validating","Active","Checking","Unavailable"];const counts=new Map();for(const row of rows)counts.set(row.markerState,(counts.get(row.markerState)||0)+1);const expected=order.filter(value=>counts.has(value)).map(value=>counts.get(value)+" "+value).join(" · ");return{summary,gpus,expected,rows,validMapStates:rows.length===2&&counts.get("Active")===1&&counts.get("Unavailable")===1&&rows.every(row=>order.includes(row.markerState)&&row.membership.endsWith("Membership unavailable"))}})())',
         returnByValue: true,
       });
       const mixedState = JSON.parse(mixedStateResult.value);
       if (
         mixedState.summary !== mixedState.expected ||
+        mixedState.gpus !== "1 GPU" ||
         !mixedState.validMapStates
       )
         throw new Error(
@@ -1676,12 +1686,17 @@ try {
       );
     if (width === 1280) {
       await call("Runtime.evaluate", {
-        expression: `validatorMapController.update(${JSON.stringify(groupedStateNodes)})`,
+        expression: `cardGpuInventory = new Map(${JSON.stringify([
+          ["gpu-kansas-node0", ["Fixture GPU A"]],
+          ["gpu-kansas-node5", ["Fixture GPU B"]],
+          ["gpu-london-node3", ["Fixture GPU C", "Fixture GPU D"]],
+          ["gpu-london-node8", ["Fixture GPU E"]],
+        ])}); validatorMapController.update(${JSON.stringify(groupedStateNodes)})`,
       });
       await delay(80);
       const { result: groupedStateResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const face=marker.querySelector(".validator-marker-face"),rect=marker.getBoundingClientRect(),label=marker.getAttribute("aria-label")||"";return{label,radius:rect.width/2,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),countLabel:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(face).backgroundImage}}))',
+          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const face=marker.querySelector(".validator-marker-face"),rect=marker.getBoundingClientRect(),label=marker.getAttribute("aria-label")||"";return{label,radius:rect.width/2,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),gpus:Number(/; (\\d+) GPUs?;/.exec(label)?.[1]||0),countLabel:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(face).backgroundImage}}))',
         returnByValue: true,
       });
       const groupedState = JSON.parse(groupedStateResult.value);
@@ -1693,15 +1708,18 @@ try {
         !kansas ||
         !london ||
         Math.abs(kansas.radius - 7.5 * Math.sqrt(2)) > 0.15 ||
-        Math.abs(london.radius - kansas.radius) > 0.1 ||
+        Math.abs(london.radius - 7.5 * Math.sqrt(3)) > 0.15 ||
         kansas.count !== 2 ||
         london.count !== 2 ||
+        kansas.gpus !== 2 ||
+        london.gpus !== 3 ||
         kansas.countLabel ||
         london.countLabel ||
-        !kansas.label.includes("2 nodes; 2 Active") ||
-        !london.label.includes("2 nodes; 1 Active, 1 Checking") ||
-        !kansas.background.includes("conic-gradient") ||
-        !london.background.includes("conic-gradient")
+        !kansas.label.includes("2 nodes; 2 GPUs; 2 Active") ||
+        !london.label.includes("2 nodes; 3 GPUs; 1 Active, 1 Checking") ||
+        !kansas.background.includes("rgb(255, 157, 74)") ||
+        !london.background.includes("rgb(255, 157, 74)") ||
+        !london.background.includes("rgb(154, 160, 173)")
       )
         throw new Error(
           `grouped marker encoding failed: ${JSON.stringify(groupedState)}`,
@@ -1731,18 +1749,21 @@ try {
           `mixed marker popup failed: ${JSON.stringify(londonPopup)}`,
         );
       await call("Runtime.evaluate", {
-        expression: `validatorMapController.update(${JSON.stringify([groupedStateNodes[2]])})`,
+        expression: `cardGpuInventory = new Map(); validatorMapController.update(${JSON.stringify([groupedStateNodes[2]])})`,
       });
       await delay(80);
       const { result: reducedResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>({label:marker.getAttribute("aria-label")||"",countLabel:marker.querySelector(".validator-marker-number")?.textContent||""})),countLabels:document.querySelectorAll(".validator-marker-number").length})',
+          'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",face=marker.querySelector(".validator-marker-face"),rect=marker.getBoundingClientRect();return{label,radius:rect.width/2,gpus:Number(/; (\\d+) GPUs?;/.exec(label)?.[1]||0),countLabel:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(face).backgroundImage}}),countLabels:document.querySelectorAll(".validator-marker-number").length})',
         returnByValue: true,
       });
       const reduced = JSON.parse(reducedResult.value);
       if (
         reduced.markers.length !== 1 ||
-        !reduced.markers[0].label.includes("IO91; 1 node; 1 Checking") ||
+        !reduced.markers[0].label.includes("IO91; 1 node; 0 GPUs; 1 Checking") ||
+        reduced.markers[0].gpus !== 0 ||
+        Math.abs(reduced.markers[0].radius - 6) > 0.1 ||
+        !reduced.markers[0].background.includes("rgb(154, 160, 173)") ||
         reduced.markers[0].countLabel ||
         reduced.countLabels !== 0
       )
@@ -1750,12 +1771,18 @@ try {
           `marker refresh left stale composition DOM: ${JSON.stringify(reduced)}`,
         );
       await call("Runtime.evaluate", {
-        expression: `validatorMapController.update(${JSON.stringify(stateDistributionNodes)})`,
+        expression: `cardGpuInventory = new Map(${JSON.stringify([
+          ["gpu-milan-validating", ["Fixture GPU F"]],
+          ["gpu-milan-inactive", ["Fixture GPU G", "Fixture GPU H"]],
+          ["gpu-paris-active-1", ["Fixture GPU I"]],
+          ["gpu-paris-active-2", ["Fixture GPU J"]],
+          ["gpu-paris-inactive", ["Fixture GPU K"]],
+        ])}); validatorMapController.update(${JSON.stringify(stateDistributionNodes)})`,
       });
       await delay(80);
       const { result: distributionResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"";return{label,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),background:getComputedStyle(marker.querySelector(".validator-marker-face")).backgroundImage}}))',
+          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",rect=marker.getBoundingClientRect();return{label,radius:rect.width/2,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),gpus:Number(/; (\\d+) GPUs?;/.exec(label)?.[1]||0),background:getComputedStyle(marker.querySelector(".validator-marker-face")).backgroundImage}}))',
         returnByValue: true,
       });
       const distributions = JSON.parse(distributionResult.value);
@@ -1764,10 +1791,16 @@ try {
       if (
         !milan ||
         !paris ||
-        !milan.label.includes("1 Validating, 1 Checking") ||
-        !paris.label.includes("2 Active, 2 Checking") ||
-        !milan.background.includes("conic-gradient") ||
-        !paris.background.includes("conic-gradient")
+        milan.gpus !== 3 ||
+        paris.gpus !== 3 ||
+        Math.abs(milan.radius - 7.5 * Math.sqrt(3)) > 0.15 ||
+        Math.abs(paris.radius - 7.5 * Math.sqrt(3)) > 0.15 ||
+        !milan.label.includes("2 nodes; 3 GPUs; 1 Validating, 1 Checking") ||
+        !paris.label.includes("4 nodes; 3 GPUs; 2 Active, 2 Checking") ||
+        !milan.background.includes("rgb(120, 184, 61)") ||
+        !milan.background.includes("rgb(154, 160, 173)") ||
+        !paris.background.includes("rgb(255, 157, 74)") ||
+        !paris.background.includes("rgb(154, 160, 173)")
       )
         throw new Error(
           `state distribution encoding failed: ${JSON.stringify(distributions)}`,
