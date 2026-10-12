@@ -21,6 +21,10 @@ jq -e '.schema_version == 1 and .kind == "gdc-network-observation" and .result =
 
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
+if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$observation" >/dev/null; then
+  bash "$ROOT/scripts/resolve-bootstrap-software.sh" components "$observation" "$output"
+  exit 0
+fi
 
 fetch_json() {
   local url="$1" target="$2"

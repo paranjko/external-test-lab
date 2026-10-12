@@ -78,7 +78,11 @@ if grep -Eq 'reconcile_monitoring_agents|install-agent.sh' "$ROOT/scripts/phase-
 fi
 grep -Fq 'chainRpcHost:$chainRpcHost' "$ROOT/04-ops/render-ops.sh"
 grep -Eq 'const chainRpcHost[[:space:]]*=' "$ROOT/04-ops/site/src/app.js"
-grep -Fq 'json(statusUrl("/participants"))' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'json(statusUrl("/network"))' "$ROOT/04-ops/site/src/app.js"
+if grep -Fq 'statusUrl("/participants")' "$ROOT/04-ops/site/src/app.js"; then
+  echo 'The public site must derive live topology from network observation, not participant registry state' >&2
+  exit 1
+fi
 for ops_only in GRAFANA_PUBLIC_DASHBOARD_UID GRAFANA_PUBLIC_DASHBOARD_SHARE_UID GRAFANA_PUBLIC_DASHBOARD_TOKEN TELEGRAM_BOT_URL TELEGRAM_BOT_HOST; do
   if sed -n '/^write_inventory()/,/^}/p' "$ROOT/scripts/lib.sh" | grep -q "inventory_value $ops_only"; then
     echo "common Host inventory contains OPS-only field: $ops_only" >&2

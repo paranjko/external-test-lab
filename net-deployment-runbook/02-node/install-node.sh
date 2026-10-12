@@ -101,6 +101,15 @@ else
   chmod 600 "$STAGE/.gdc-release"
 fi
 install -m 0644 "$NODE_CONFIG" "$STAGE/node-config.json"
+if [[ "$profile_kind" == generated_join ]] && jq -e '.spec.deployment | has("software")' "$JOIN_PROFILE" >/dev/null; then
+  bash "$(dirname "$0")/prepare-bootstrap-runtime.sh" "$JOIN_PROFILE" "$STAGE"
+  install -m 0755 "$(dirname "$0")/bootstrap-runtime.sh" "$STAGE/bootstrap-runtime.sh"
+  # Keep variables and relative bind paths intact. This is a complete Compose
+  # document, not an overlay that can retain incompatible proxy settings.
+  bash "$(dirname "$0")/render-bootstrap-compose.sh" "$STAGE/compose.yaml" "$STAGE/.env" >"$STAGE/compose.bootstrap.json"
+  mv "$STAGE/compose.bootstrap.json" "$STAGE/compose.yaml"
+  chmod 0600 "$STAGE/compose.yaml"
+fi
 printf '%s\n' "$LOCAL_ML" > "$STAGE/.local-ml"
 chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$STAGE"
 # Validate the complete staged Compose configuration before it can replace the

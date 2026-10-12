@@ -957,7 +957,7 @@ for node in fixture-west fixture-east; do
   if GDC_HOME="$scratch/operator" "$launcher" host join --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
     echo 'fresh JOIN accepted local state retained by reset' >&2; exit 1
   fi
-  grep -Fq "Local state already exists for $node:" "$scratch/error"
+  grep -Fq 'JOIN stopped because retained local state requires explicit recovery or removal before a new JOIN' "$scratch/error"
   [[ ! -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]
   mv "$scratch/operator/$node" "$scratch/$node-reset-state"
   if GDC_HOME="$scratch/operator" "$launcher" host join --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
@@ -969,7 +969,7 @@ rm -f "$INCIDENT_TEST_NORMAL_JOIN"
 if GDC_HOME="$scratch/operator" "$launcher" host join --plan --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
   echo 'fresh plan accepted state retained by failed JOIN' >&2; exit 1
 fi
-grep -Fq "Local state already exists for $node:" "$scratch/error"
+grep -Fq 'JOIN stopped because retained local state requires explicit recovery or removal before a new JOIN' "$scratch/error"
 [[ ! -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]
 if GDC_HOME="$scratch/operator" "$launcher" host join --plan --restore "$archive" --public-host restore.example.test fixture-plan >"$scratch/error" 2>&1; then
   echo 'incident route ignored --plan' >&2; exit 1

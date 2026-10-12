@@ -346,6 +346,7 @@ case "$COMPONENT" in
       'FAUCET_KEY_NAME=gdc-faucet-cold' \
       "FAUCET_KEYRING_PASSWORD=$(<"$SECRETS/operator.keyring")" \
       "FAUCET_AMOUNT_NGONKA=$faucet_amount" \
+      'FAUCET_GAS_PRICES=1ngonka' \
       "FAUCET_MAX_CLAIMS_PER_IP=${GDC_FAUCET_MAX_CLAIMS_PER_IP:-3}" \
       "FAUCET_WINDOW_SECONDS=${GDC_FAUCET_WINDOW_SECONDS:-86400}"
     gateway_recipient="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
@@ -353,7 +354,7 @@ case "$COMPONENT" in
       "FAUCET_CHAIN_ID=$CHAIN_ID" "FAUCET_GENESIS_SHA256=$faucet_genesis_sha256" \
       'FAUCET_RPC_URL=http://127.0.0.1:26657' 'FAUCET_CHAIN_REST_URL=http://127.0.0.1:1317' \
       'FAUCET_KEY_NAME=gdc-faucet-cold' "FAUCET_KEYRING_PASSWORD=$(<"$SECRETS/operator.keyring")" \
-      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18085' \
+      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_GAS_PRICES=1ngonka' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18085' \
       "FAUCET_GATEWAY_RESERVE_RECIPIENT=$gateway_recipient" "FAUCET_GATEWAY_RESERVE_TOKEN=$(<"$reserve_signer_token")" \
       "FAUCET_GATEWAY_RESERVE_MAX_NGONKA=${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
     FAUCET_OPTION="--faucet-env '$REMOTE/rendered/faucet.env' --gateway-reserve-env '$REMOTE/rendered/gateway-reserve-signer.env'"

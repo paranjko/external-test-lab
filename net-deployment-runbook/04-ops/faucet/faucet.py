@@ -9,6 +9,8 @@ import sqlite3
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ADDRESS = re.compile(r"^gonka1[0-9a-z]{20,90}$")
@@ -18,9 +20,11 @@ RPC_URL = os.environ["FAUCET_RPC_URL"]
 KEY_NAME = os.environ.get("FAUCET_KEY_NAME", "gdc-faucet-cold")
 PASSWORD = os.environ["FAUCET_KEYRING_PASSWORD"]
 AMOUNT = os.environ["FAUCET_AMOUNT_NGONKA"]
+GAS_PRICES = os.environ.get("FAUCET_GAS_PRICES", "1ngonka")
 STATE_DB = os.environ.get("FAUCET_STATE_DB", "/data/faucet.sqlite3")
 WINDOW_SECONDS = int(os.environ.get("FAUCET_WINDOW_SECONDS", "86400"))
 MAX_CLAIMS_PER_IP = int(os.environ.get("FAUCET_MAX_CLAIMS_PER_IP", "3"))
+CONFIRM_TIMEOUT_SECONDS = int(os.environ.get("FAUCET_CONFIRM_TIMEOUT_SECONDS", "45"))
 LISTEN_HOST = os.environ.get("FAUCET_LISTEN_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("FAUCET_LISTEN_PORT", "18081"))
 LOCK = threading.Lock()
@@ -75,19 +79,50 @@ def submit(address, amount=AMOUNT):
     result = subprocess.run(
         ["inferenced", "tx", "bank", "send", KEY_NAME, address, f"{amount}ngonka", "--from", KEY_NAME,
          "--keyring-backend", "file", "--chain-id", CHAIN_ID, "--node", RPC_URL, "--gas", "auto",
-         "--gas-adjustment", "1.5", "--gas-prices", "0ngonka", "--broadcast-mode", "sync", "--output", "json", "--yes"],
+         "--gas-adjustment", "1.5", "--gas-prices", GAS_PRICES, "--broadcast-mode", "sync", "--output", "json", "--yes"],
         input=f"{PASSWORD}\n", text=True, capture_output=True, env=env, timeout=45, check=False,
     )
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "inferenced transaction failed")
     try:
         payload = json.loads(result.stdout)
-        txhash = payload.get("txhash") or payload.get("tx_response", {}).get("txhash")
+        response = payload.get("tx_response", payload)
+        txhash = payload.get("txhash") or response.get("txhash")
+        code = response.get("code", payload.get("code", 0))
     except json.JSONDecodeError as error:
         raise RuntimeError("inferenced returned non-JSON transaction output") from error
     if not isinstance(txhash, str) or not re.fullmatch(r"[0-9A-Fa-f]{64}", txhash):
         raise RuntimeError("inferenced did not return a transaction hash")
+    if not isinstance(code, int) or code != 0:
+        raise RuntimeError("inferenced transaction was rejected by the mempool")
     return txhash
+
+
+def confirm(txhash):
+    """Wait for a successful DeliverTx before recording a public claim."""
+    deadline = time.monotonic() + CONFIRM_TIMEOUT_SECONDS
+    endpoint = f"{RPC_URL.rstrip('/')}/tx?hash=0x{txhash}"
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(endpoint, timeout=5) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code != 500:
+                raise RuntimeError("faucet transaction lookup failed") from error
+            time.sleep(1)
+            continue
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("faucet transaction lookup failed") from error
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            time.sleep(1)
+            continue
+        tx_result = result.get("tx_result", {})
+        code = tx_result.get("code", result.get("code", 0))
+        if code in (0, "0"):
+            return
+        raise RuntimeError("faucet transaction failed in a block")
+    raise RuntimeError("faucet transaction was not included before confirmation timeout")
 
 
 def safe_transaction_error(error):
@@ -95,8 +130,16 @@ def safe_transaction_error(error):
     message = str(error).lower()
     if "insufficient funds" in message:
         return "gateway reserve funding account has insufficient funds"
+    if "insufficient fee" in message:
+        return "faucet fee configuration is below the chain minimum"
     if "account sequence mismatch" in message or "incorrect account sequence" in message:
         return "gateway reserve signer sequence conflict"
+    if "too many failed passphrase attempts" in message or "incorrect passphrase" in message:
+        return "faucet signer credential is unavailable"
+    if "not a valid name or address" in message or "key not found" in message:
+        return "faucet signing key is unavailable"
+    if "unknown flag" in message or "unsupported" in message:
+        return "faucet signer CLI is incompatible with the network"
     if "timed out" in message or "timeout" in message:
         return "gateway reserve transaction timed out"
     return "gateway reserve transaction was not accepted"
@@ -161,7 +204,10 @@ class FaucetHandler(BaseHTTPRequestHandler):
         with LOCK, database() as db:
             existing = db.execute("SELECT txhash, state FROM claims WHERE address = ?", (address,)).fetchone()
             if existing:
-                self.reply(409, {"error": "this address has already claimed faucet funds", "txhash": existing[0], "state": existing[1]})
+                if existing[1] == "confirmed":
+                    self.reply(200, {"address": address, "amount_ngonka": AMOUNT, "txhash": existing[0], "state": "confirmed"})
+                else:
+                    self.reply(409, {"error": "the earlier faucet claim needs operator recovery", "txhash": existing[0], "state": existing[1]})
                 return
             recent = db.execute("SELECT count(*) FROM claims WHERE ip = ? AND created_at > ?", (ip, now - WINDOW_SECONDS)).fetchone()[0]
             if recent >= MAX_CLAIMS_PER_IP:
@@ -171,14 +217,15 @@ class FaucetHandler(BaseHTTPRequestHandler):
             db.commit()
             try:
                 txhash = submit(address)
+                confirm(txhash)
             except (OSError, subprocess.TimeoutExpired, RuntimeError) as error:
                 db.execute("DELETE FROM claims WHERE address = ?", (address,))
                 db.commit()
-                self.reply(503, {"error": "faucet transaction was not accepted", "detail": str(error)[:240]})
+                self.reply(503, {"error": "faucet transaction was not accepted", "detail": safe_transaction_error(error)})
                 return
-            db.execute("UPDATE claims SET txhash = ?, state = 'submitted' WHERE address = ?", (txhash, address))
+            db.execute("UPDATE claims SET txhash = ?, state = 'confirmed' WHERE address = ?", (txhash, address))
             db.commit()
-        self.reply(202, {"address": address, "amount_ngonka": AMOUNT, "txhash": txhash, "state": "submitted"})
+        self.reply(200, {"address": address, "amount_ngonka": AMOUNT, "txhash": txhash, "state": "confirmed"})
 
     def gateway_reserve(self):
         """Private loopback-only target reconciliation; no caller address/amount."""

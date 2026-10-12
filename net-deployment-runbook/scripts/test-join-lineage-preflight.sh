@@ -37,7 +37,7 @@ cat >"$tmp/bin/curl" <<'EOF'
 set -Eeuo pipefail
 url="${!#}"
 printf '%s\n' "$url" >>"${CURL_SPY:-/dev/null}"
-if [[ "$url" == */status || "$url" == */block\?height=* || "$url" == */chain-api/productscience/inference/inference/params ]]; then
+if [[ "$url" == */status || "$url" == */block\?height=* ]]; then
   resolved=''
   for ((i = 1; i <= $#; i++)); do
     [[ "${!i}" == --resolve ]] || continue
@@ -68,9 +68,6 @@ case "$url" in
     printf '{"result":{"node_info":{"id":"%s","network":"gonka-fixture"},"sync_info":{"latest_block_height":"5000"}}}\n' "$node_id"
     ;;
   */last_upgrade_height) printf '%s\n' '{"lastUpgradeHeight":"100","found":true}' ;;
-  */chain-api/productscience/inference/inference/params)
-    printf '%s\n' '{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"3333333333333333333333333333333333333333333333333333333333333333"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"4444444444444444444444444444444444444444444444444444444444444444"},{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"5555555555555555555555555555555555555555555555555555555555555555"}]}}}'
-    ;;
   */block?height=*)
     # This seed is reachable and agrees at the tip, but has pruned the
     # historical checkpoints required by the JOIN receipt. It must be
@@ -100,8 +97,6 @@ run_preflight() {
 run_preflight >"$tmp/out"
 GDC_TEST_PRUNED_PAYLOAD=null run_preflight >"$tmp/null-pruned.out"
 grep -Fqx 'https://rpc-a.example.test/chain-api/productscience/inference/inference/last_upgrade_height' "$tmp/curl-spy"
-grep -Fqx 'https://rpc-a.example.test/chain-api/productscience/inference/inference/params' "$tmp/curl-spy"
-grep -Fqx 'https://rpc-b.example.test/chain-api/productscience/inference/inference/params' "$tmp/curl-spy"
 grep -Fqx 'https://rpc-c.example.test/chain-rpc/status' "$tmp/curl-spy"
 jq -e '
   .runtime.source.kind == "network_observation" and
@@ -113,10 +108,16 @@ jq -e '
   (.fault_domains | length == 2) and .signer.state == "PREPARED" and
   .trust_authority == {kind:"bootstrap_archival_source",rpc_url:"https://rpc-a.example.test/chain-rpc"} and
   ([.fault_domains[].rpc_url] | index("https://rpc-b.example.test/chain-rpc")) and
-  (.devshard_compatibility.approvals | map(.name) == ["v3","v4","v5"]) and
-  (.devshard_compatibility.sources | length == 2) and
   .result.terminal_state == "prepared"
 ' "$tmp/receipt.json" >/dev/null
+python3 - "$tmp/curl-spy" <<'PY'
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    requests = source.read().splitlines()
+if any("/chain-api/productscience/inference/inference/params" in request for request in requests):
+    raise SystemExit("JOIN lineage preflight queried mutable DevShard governance")
+PY
 # The receipt producer and the published schema are one contract.  Validate
 # both the initial receipt and the canary-mutated receipt in their dedicated
 # tests so a future closed-schema drift fails locally.
@@ -137,8 +138,10 @@ grep -qx 'GDC_JOIN_RPC_SERVER_1=https://rpc-a.example.test/chain-rpc/' "$tmp/lin
 # shellcheck source=/dev/null
 source "$tmp/lineage.env"
 [[ "$GDC_JOIN_SNAPSHOT_PEERS" == '0123456789abcdef0123456789abcdef01234567@tcp://rpc-a.example.test:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://rpc-b.example.test:5000' ]]
-jq -e 'keys == ["v3","v4","v5"] and .v4.binary == "https://example.test/devshard-v4.zip"' \
-  <<<"$GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON" >/dev/null
+if [[ -v GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON ]]; then
+  echo 'JOIN lineage preflight exported a mutable DevShard governance contract' >&2
+  exit 1
+fi
 
 # The source is chosen from Bootstrap evidence, not a topology name or a
 # caller-provided alias. When the first seed is pruned, the next independent
@@ -190,3 +193,32 @@ assert len(receipt['fault_domains']) >= 2
 assert len(receipt['bootstrap']['snapshot']['providers']) >= 2
 PY
 printf 'PASS explicit source preflight, bound checkpoint and strict default schema\n'
+
+# Software authority must not weaken chain authority. Compile a real declaration
+# with fixture endpoints, then require the same independent historical witnesses.
+jq --slurpfile fixture "$tmp/bootstrap.json" '
+  .chain_id = $fixture[0].chain_id | .genesis.sha256 = $fixture[0].genesis.sha256 |
+  .seeds = $fixture[0].seeds | .brokers = []
+' "$ROOT/../bootstrap/gonka-devnet-community.json" >"$tmp/declared.json"
+mv "$tmp/declared.json" "$tmp/bootstrap.json"
+bash "$ROOT/scripts/resolve-bootstrap-software.sh" observation "$tmp/bootstrap.json" "$tmp/observation.json" \
+  https://example.test/bootstrap.json fixture '' >"$tmp/compiled.out"
+run_preflight >"$tmp/declared.out"
+jq -e '.runtime.source.kind == "bootstrap_software" and (.fault_domains|length) == 2 and
+  (.bootstrap.snapshot.providers|length) == 2 and .signer.state == "PREPARED"' "$tmp/receipt.json" >/dev/null
+grep -Fqx 'https://rpc-b.example.test/chain-api/productscience/inference/inference/last_upgrade_height' "$tmp/curl-spy"
+if PATH="$tmp/bin:$PATH" GDC_JOIN_FAULT_DOMAIN_MAP='rpc-a.example.test=one,rpc-b.example.test=one' GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10,rpc-b.example.test=192.0.2.11' \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/bootstrap.json" --observation "$tmp/observation.json" \
+    --receipt "$tmp/declared-refused.json" --env "$tmp/declared-refused.env" >"$tmp/declared-refused.out" 2>"$tmp/declared-refused.err"; then
+  echo 'declared software bypassed independent lineage witnesses' >&2; exit 1
+fi
+grep -Fq 'lineage_rpc_fault_domain_alias:' "$tmp/declared-refused.err"
+jq '.software.model.context_length += 1' "$tmp/observation.json" >"$tmp/tampered.json"
+mv "$tmp/tampered.json" "$tmp/observation.json"
+before="$(wc -l <"$tmp/curl-spy")"
+if run_preflight >"$tmp/tampered.out" 2>"$tmp/tampered.err"; then
+  echo 'tampered software receipt accepted by lineage preflight' >&2; exit 1
+fi
+grep -Fq 'software receipt differs from Bootstrap' "$tmp/tampered.err"
+[[ "$(wc -l <"$tmp/curl-spy")" == "$before" ]]
+printf 'PASS declared software retains independent lineage and rejects altered receipts before requests\n'

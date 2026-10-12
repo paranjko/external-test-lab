@@ -38,7 +38,7 @@ trap 'rm -f "$grant_output"' EXIT
 if printf '%s\n' "$PASSWORD" | "$ROOT/scripts/inferenced.sh" tx inference grant-ml-ops-permissions \
   "$COLD" "$WARM" --from "$COLD" --keyring-backend file --chain-id "$CHAIN_ID" \
   --node "$RPC" \
-  --gas auto --gas-adjustment 1.5 --gas-prices 0ngonka --yes >"$grant_output" 2>&1; then
+  --gas auto --gas-adjustment 1.5 --gas-prices "${GDC_CHAIN_GAS_PRICES:-1ngonka}" --yes >"$grant_output" 2>&1; then
   cat "$grant_output"
   exit 0
 fi
