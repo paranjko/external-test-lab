@@ -91,7 +91,7 @@ grep -Fq 'preview.{$SITE_HOST} {' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'reverse_proxy 127.0.0.1:18090' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq '@preview_admission path_regexp preview_admission ^/(?:preview/)?[1-9][0-9]*/status/gateway/v1/admission-status$' "$tmp/Caddyfile"
 grep -Fq '@preview_status path_regexp preview_status ^/(?:preview/)?[1-9][0-9]*/status/(.+)$' "$tmp/Caddyfile"
-grep -Fq '@dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info))$' "$tmp/Caddyfile"
+grep -Fq '@dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info|validators))$' "$tmp/Caddyfile"
 grep -Fq 'reverse_proxy {re.dynamic_participant_status.1}:443' "$tmp/Caddyfile"
 
 docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 -p 127.0.0.1::18082 \
@@ -131,7 +131,7 @@ curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/" | grep -q '
 curl -fsS "http://127.0.0.1:$port/status/participants" | grep -Fxq '/status/participants'
 for prefix in '' /preview/172; do
   for node in 5 6 7 8; do
-    for endpoint in health v1/versions chain-rpc/status chain-rpc/net_info; do
+    for endpoint in health v1/versions chain-rpc/status chain-rpc/net_info 'chain-rpc/validators?height=1&page=1&per_page=100'; do
       curl -fsS --max-time 5 "http://127.0.0.1:$port$prefix/status/node$node.gonka-dev.net/$endpoint" \
         | grep -Fxq "participant node$node.gonka-dev.net /$endpoint"
     done

@@ -26,6 +26,8 @@ grep -Fq 'gdc-preview-egress:8080' "$tmp/backend.Caddyfile"
 grep -Fq 'gdc_nvidia_memory_total_bytes' "$tmp/backend.Caddyfile"
 grep -Fq 'gdc_component_info' "$tmp/backend.Caddyfile"
 grep -Fq '/preview/172/node/node4' "$tmp/backend.Caddyfile"
+grep -Fq 'handle /status/network {' "$tmp/backend.Caddyfile"
+grep -Fq 'rewrite * /network' "$tmp/backend.Caddyfile"
 grep -Fq 'preview_gateway_status_unavailable' "$tmp/backend.Caddyfile"
 grep -Fq 'path_regexp node_node4 ^/status/node4(/.*)$' "$tmp/backend.Caddyfile"
 grep -Fq 'rewrite * /preview/172/node/node4{re.node_node4.1}' "$tmp/backend.Caddyfile"
@@ -78,6 +80,7 @@ cat >"$tmp/egress.Caddyfile" <<'EOF'
   auto_https off
 }
 :8080 {
+	respond /network "network status" 200
   respond /preview/172/node/node4/chain-rpc/status "node status" 200
   respond "not found" 404
 }
@@ -95,5 +98,7 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 [[ "${response:-}" == 'node status' ]] || { echo 'compiled node route did not strip the status prefix' >&2; exit 1; }
+network_response="$(docker exec "$backend" wget -qO- http://127.0.0.1:8080/status/network || true)"
+[[ "$network_response" == 'network status' ]] || { echo 'compiled network route did not use the fixed observation endpoint' >&2; exit 1; }
 
 printf 'PASS preview status renderer accepts a secret-free inventory fixture\n'

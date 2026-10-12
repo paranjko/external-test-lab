@@ -24,6 +24,41 @@ npx --yes prettier@3.6.2 --write 04-ops/site/src/*.js
 make site-js
 ```
 
+## Local view
+
+Build and serve the current static site only on loopback:
+
+```sh
+make -C net-deployment-runbook site-serve
+```
+
+Open <http://127.0.0.1:8080/>. The markup, styles and JavaScript come from the checkout; `config.js` and `/status/*` are read from `https://gonka-dev.net`. Override `site_serve_port` when that port is in use, or use a preview as the public data source:
+
+```sh
+make -C net-deployment-runbook site-serve \
+  site_serve_origin=https://preview.gonka-dev.net/215
+```
+
+The local server never changes a Host or the public site.
+
+## Public network selection
+
+`?chainId=<id>` and `#chainId=<id>` ask `/status/network?chainId=<id>` to
+observe the bootstrap at `https://gonka-dev.net/<id>/bootstrap.json`. The
+browser does not fetch bootstrap or peer endpoints itself.
+
+The observer returns only public evidence: bootstrap seeds and discovered P2P
+peers, RPC identity/height/sync state, component versions, MLNode entries
+published by `/v1/versions`, and DevShard health. A selected network has no
+inherited DevNet model, GPU, participant voting power, PoC, gateway, or
+geographic inventory. Those values remain `Not reported` unless a public
+endpoint proves them.
+
+The first selected-network request may return `202 observation_pending`. It
+only queues the observation; the periodic worker fetches the bootstrap and
+updates the cache. This keeps a browser request bounded and prevents it from
+starting unbounded peer scans.
+
 ## Static publication
 
 `make publish-site-release` copies files into the existing Caddy bind mount without restarting or reloading Caddy, so site delivery does not interrupt the shared HTTPS listener used by bootstrap publication

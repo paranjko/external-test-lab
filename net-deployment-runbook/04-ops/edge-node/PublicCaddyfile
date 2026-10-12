@@ -219,7 +219,7 @@ preview.{$SITE_HOST} {
   # participant registry. Permit only conventional nodeN hostnames and only
   # the read-only observations used by the site. This preserves the
   # same-origin preview contract without creating an arbitrary proxy.
-  @dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info))$
+  @dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info|validators))$
   handle @dynamic_participant_status {
     rewrite * /{re.dynamic_participant_status.2}
     reverse_proxy {re.dynamic_participant_status.1}:443 {
@@ -255,7 +255,7 @@ preview.{$SITE_HOST} {
     path /status/*
     not path /status/telegram-consumer
     # Caddy sorts path matchers before regexp handlers, regardless of file order
-    not path_regexp ^/status/node[0-9]+\.gonka-dev\.net/(health|v1/versions|chain-rpc/(status|net_info))$
+    not path_regexp ^/status/node[0-9]+\.gonka-dev\.net/(health|v1/versions|chain-rpc/(status|net_info|validators))$
   }
   handle @status_data {
     reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {

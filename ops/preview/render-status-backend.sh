@@ -76,6 +76,10 @@ cat >"$output" <<EOF
     rewrite * /preview/$preview_number/node/$gateway_node/chain-api/productscience/inference/inference/participant?pagination.limit=100&pagination.count_total=true
     reverse_proxy http://gdc-preview-egress:8080
   }
+  handle /status/network {
+    rewrite * /network
+    reverse_proxy http://gdc-preview-egress:8080
+  }
   handle /status/gpus {
     rewrite * /prometheus/api/v1/query?query=$gpu_query
     reverse_proxy http://gdc-preview-egress:8080

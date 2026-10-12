@@ -3,12 +3,16 @@
 declare var module: any;
 
 type HostStateInput = {
+  networkObserved?: boolean,
+  networkActive?: boolean,
   participantKnown?: boolean,
   participantStatus?: mixed,
   validatorKnown?: boolean,
+  observationComplete?: boolean,
   votingPower?: mixed,
   endpointState?: string,
   endpointDiagnostic?: mixed,
+  chainDiagnostic?: mixed,
   catchingUp?: boolean,
   blocksBehind?: mixed,
   blockAgeSeconds?: mixed,
@@ -18,7 +22,7 @@ type HostStateInput = {
 };
 
 type HostState = {
-  state: "validating" | "active" | "inactive" | "unknown",
+  state: "validating" | "active" | "degraded" | "inactive" | "unknown" | "unavailable",
   stateLabel: string,
   reason: string,
   primaryLabel: string,
@@ -74,6 +78,109 @@ type HostStateApi = {
     }
 
     function classify(input: HostStateInput): HostState {
+      if (input.networkObserved === true) {
+        const endpointState = input.endpointState || "unknown";
+        const diagnostic = String(input.endpointDiagnostic || "Network peer unavailable");
+        const lag = input.blocksBehind == null ? NaN : Number(input.blocksBehind);
+        const blockAge = input.blockAgeSeconds == null ? NaN : Number(input.blockAgeSeconds);
+        const power = input.validatorKnown === true ? normalizedVotingPower(input.votingPower) : null;
+        const syncLabel =
+          endpointState === "unavailable"
+              ? "Unavailable"
+              : endpointState !== "reachable"
+                ? "Pending observation"
+              : input.catchingUp === true || (input.referenceKnown === true && Number.isFinite(lag) && lag > 5)
+                ? Number.isFinite(lag) && lag > 0
+                  ? `Lagging – ${Math.floor(lag).toLocaleString()} blocks`
+                  : "Lagging"
+                : Number.isFinite(blockAge) && (blockAge > 90 || input.progressing === false)
+                  ? "Stale"
+                  : endpointState !== "reachable" || input.catchingUp !== false || input.referenceKnown !== true || input.referenceAgrees !== true || !Number.isFinite(lag) || !Number.isFinite(blockAge)
+                    ? "Pending observation"
+                    : "Synced";
+        // Membership and endpoint health are different facts. The primary
+        // badge describes the verified current set; sync remains a detail.
+        const validating = power != null && BigInt(power) > 0n;
+        if (endpointState === "unavailable") {
+          return {
+            state: "unavailable",
+            stateLabel: "Wait",
+            reason: "Public chain endpoint unavailable; P2P visibility is independent",
+            primaryLabel: "Wait",
+            primaryClass: "status unknown",
+            votingPower: "Unavailable",
+            endpointLabel: `Unreachable – ${diagnostic}`,
+            syncLabel,
+            validatorEffective: false,
+          };
+        }
+        if (endpointState !== "reachable") {
+          const failed = input.observationComplete === true;
+          return {
+            state: failed ? "unavailable" : "unknown",
+            stateLabel: "Wait",
+            reason: String(input.chainDiagnostic || (endpointState === "reachable"
+              ? "Current validator membership is not verified"
+              : "Checking public chain endpoint")),
+            primaryLabel: "Wait",
+            primaryClass: "status unknown",
+            votingPower: "Unavailable",
+            endpointLabel: endpointState === "reachable" ? "Reachable" : failed ? "Unavailable" : "Checking",
+            syncLabel,
+            validatorEffective: false,
+          };
+        }
+        if (power === null) {
+          return {
+            state: "unknown",
+            stateLabel: "Wait",
+            reason: String(input.chainDiagnostic || "Current validator membership is not verified"),
+            primaryLabel: "Wait",
+            primaryClass: "status unknown",
+            votingPower: "Unavailable",
+            endpointLabel: "Reachable",
+            syncLabel,
+            validatorEffective: false,
+          };
+        }
+        if (validating) {
+          return {
+            state: "validating",
+            stateLabel: "Validating",
+            reason: "Member of the current validator set",
+            primaryLabel: "Validating",
+            primaryClass: "status validating",
+            votingPower: String(power),
+            endpointLabel: "Reachable",
+            syncLabel,
+            validatorEffective: syncLabel === "Synced",
+          };
+        }
+        if (input.networkActive === true) {
+          return {
+            state: "active",
+            stateLabel: "Active",
+            reason: "Observed peer, not currently validating",
+            primaryLabel: "Active",
+            primaryClass: "status active",
+            votingPower: "0",
+            endpointLabel: "Reachable",
+            syncLabel,
+            validatorEffective: false,
+          };
+        }
+        return {
+          state: "unknown",
+          stateLabel: "Wait",
+          reason: "Participant activity is not verified",
+          primaryLabel: "Wait",
+          primaryClass: "status unknown",
+          votingPower: "0",
+          endpointLabel: "Reachable",
+          syncLabel,
+          validatorEffective: false,
+        };
+      }
       const participantKnown = input.participantKnown === true;
       const validatorKnown = input.validatorKnown === true;
       const power = normalizedVotingPower(input.votingPower);

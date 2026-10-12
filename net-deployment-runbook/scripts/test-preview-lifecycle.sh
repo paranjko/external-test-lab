@@ -137,6 +137,14 @@ run_controller deploy 174 "$revision_combined" "$artifact_combined" "$combined_b
 curl --fail --silent --show-error "http://127.0.0.1:$port/174/" | grep -Fq combined
 curl --fail --silent --show-error "http://127.0.0.1:$port/174/status/test" | grep -Fxq backend
 run_controller status 174 | jq -e --arg revision "$revision_combined" '.revision == $revision and .mode == "combined"' >/dev/null
+# Exercise a shared-service replacement while two independent previews exist.
+docker rm -f gdc-preview-node-guard >/dev/null
+run_controller start
+for network in gdc-preview-pr-173 gdc-preview-pr-174; do
+  docker inspect gdc-preview-node-guard | jq -e --arg network "$network" '.[0].NetworkSettings.Networks | has($network)' >/dev/null
+done
+curl --fail --silent --show-error "http://127.0.0.1:$port/173/status/test" | grep -Fxq backend
+curl --fail --silent --show-error "http://127.0.0.1:$port/174/status/test" | grep -Fxq backend
 for receipt in preview-composition.json backend-build.json preview-runtime-config.json; do
   status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/174/$receipt")"
   [[ "$status" == 404 ]] || { echo "preview receipt unexpectedly served: $receipt status=$status" >&2; exit 1; }

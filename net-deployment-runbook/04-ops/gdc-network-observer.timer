@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh Community DevNet network observation
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=1min
+RandomizedDelaySec=10s
+
+[Install]
+WantedBy=timers.target

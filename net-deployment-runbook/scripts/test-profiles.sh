@@ -337,7 +337,8 @@ if grep -Eq 'node[0-9]\.gonka-dev\.net' "$ROOT/04-ops/edge-node/public-grafana/p
   exit 1
 fi
 grep -Fq 'No current version was available from the Host or monitoring inventory' "$ROOT/04-ops/site/src/app.js"
-grep -Fq 'Chain runtime inventory could not be read' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'responds, but its version endpoint does not report a version and no current inventory version is available' "$ROOT/04-ops/site/src/app.js"
+grep -Fq '? "Version unavailable"' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'json(statusUrl("/software"))' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'json(statusUrl("/gpus"))' "$ROOT/04-ops/site/src/app.js"
 ! grep -Fq '/v1/versions' "$ROOT/04-ops/site/src/app.js"

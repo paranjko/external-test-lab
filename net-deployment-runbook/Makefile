@@ -307,7 +307,7 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check test-network-selection site-host-requirements-check test-recovery-contract test-participants-proxy test-network-observer test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check test-network-selection site-host-requirements-check test-recovery-contract test-participants-proxy test-network-observer test-site-serve test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 	@$(MAKE) test-devshard-release
 	@bash ./scripts/test-node-container-control.sh
 	@bash ./scripts/test-node-container-lending.sh

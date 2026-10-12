@@ -4,6 +4,18 @@
 }
 
 :8080 {
+	# The preview must show the same current topology that the public site sees.
+	# Its backend can request this one fixed, read-only endpoint only.
+	@network_observation {
+		method GET HEAD
+		path /network
+	}
+	handle @network_observation {
+		rewrite * /status/network
+		reverse_proxy https://gonka-dev.net {
+			header_up Host gonka-dev.net
+		}
+	}
 	@allowed {
 		method GET HEAD
 		path /gonka-api /gonka-api/*

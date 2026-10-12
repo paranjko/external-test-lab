@@ -77,7 +77,7 @@ if grep -Eq 'reconcile_monitoring_agents|install-agent.sh' "$ROOT/scripts/phase-
   exit 1
 fi
 grep -Fq 'chainRpcHost:$chainRpcHost' "$ROOT/04-ops/render-ops.sh"
-grep -Eq 'const chainRpcHost[[:space:]]*=' "$ROOT/04-ops/site/src/app.js"
+grep -Eq 'let chainRpcHost[[:space:]]*=' "$ROOT/04-ops/site/src/app.js"
 grep -Fq 'json(statusUrl("/network"))' "$ROOT/04-ops/site/src/app.js"
 if grep -Fq 'statusUrl("/participants")' "$ROOT/04-ops/site/src/app.js"; then
   echo 'The public site must derive live topology from network observation, not participant registry state' >&2
