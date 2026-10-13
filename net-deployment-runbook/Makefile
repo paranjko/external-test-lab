@@ -309,6 +309,7 @@ site-preview-cleanup-context:
 
 test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check test-network-selection site-host-requirements-check test-recovery-contract test-participants-proxy test-network-observer test-site-serve test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 	@$(MAKE) test-devshard-release
+	@$(MAKE) test-devshard-artifacts
 	@bash ./scripts/test-node-container-control.sh
 	@bash ./scripts/test-node-container-lending.sh
 	@bash ./scripts/test-node-container-lending-docker.sh
@@ -749,3 +750,29 @@ devshard-release-verify:
 
 devshard-release-publish:
 	@python3 ./scripts/devshard-release.py publish
+
+.PHONY: test-devshard-artifacts devshard-artifacts-prepare devshard-artifacts-fetch devshard-artifacts-build devshard-artifacts-verify devshard-artifacts-smoke devshard-artifacts-verify-reuse devshard-artifacts-publish
+DEVSHARD_ARTIFACT_GROUP_ARGS := $(foreach group,$(groups),--group $(group))
+test-devshard-artifacts:
+	@python3 ./scripts/test-devshard-artifacts.py
+
+devshard-artifacts-prepare:
+	@python3 ./scripts/devshard-artifacts.py prepare $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-fetch:
+	@python3 ./scripts/devshard-artifacts.py fetch $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-build:
+	@python3 ./scripts/devshard-artifacts.py build $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-verify:
+	@python3 ./scripts/devshard-artifacts.py verify $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-smoke:
+	@python3 ./scripts/devshard-artifacts.py smoke $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-verify-reuse:
+	@python3 ./scripts/devshard-artifacts.py verify-reuse $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-publish:
+	@python3 ./scripts/devshard-artifacts.py publish $(DEVSHARD_ARTIFACT_GROUP_ARGS)
