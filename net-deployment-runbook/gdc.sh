@@ -895,6 +895,7 @@ See the role guides for required input, then run:
   ./gdc.sh network recover handoff|check <SSH_ALIAS> --hosts <RETURNING_ALIAS,...>
   ./gdc.sh host join --pex false --restore <ARCHIVE> --public-host <HOST> <SSH_ALIAS>
   ./gdc.sh host peers --pex true <SSH_ALIAS>
+  ./gdc.sh host models plan|apply|rollback <SSH_ALIAS> [OPTIONS]
   ./gdc.sh network recover inspect --incident <INCIDENT_ID> --host <SSH_ALIAS> --run-id <RUN_ID> --output <ABSOLUTE_PATH>
   ./gdc.sh network recover prepare|freeze|stage|activate|retire|abort --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --approval <ABSOLUTE_PATH>
   ./gdc.sh network recover status --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH>
@@ -1229,6 +1230,7 @@ case "$COMMAND" in
       join) COMMAND='join' ;;
       backup) COMMAND='host-backup' ;;
       peers) COMMAND='host-peers' ;;
+      models) COMMAND='host-models' ;;
       upgrade)
         upgrade_action="${1:-}"; shift || true
         [[ "$upgrade_action" =~ ^(prepare|watch)$ ]] || { usage; exit 2; }
@@ -1295,6 +1297,14 @@ case "$COMMAND" in
     ;;
 esac
 case "$COMMAND" in
+  host-models)
+    [[ $# -ge 2 && "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { usage; exit 2; }
+    [[ "$RELEASE_OPTION_SEEN" == false && "$COMPOSITION_OPTION_SEEN" == false && "$MODEL_OPTION_SEEN" == false ]] \
+      || { echo 'host models uses an explicit model map, not a release or qualification overlay' >&2; exit 2; }
+    use_node_data_home "$2"
+    acquire_operator_lock
+    python3 "$ROOT/scripts/host-models.py" "$@"
+    ;;
   host-peers)
     bash "$ROOT/scripts/host-peers.sh" "$@"
     ;;
