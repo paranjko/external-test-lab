@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Prove that a successful --plan compiles only local evidence and never
-# reaches the remote deployment tools.
+# Prove that a successful --preflight compiles only local evidence and never
+# reaches the remote deployment tools. `--plan` remains accepted as a
+# compatibility spelling.
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -86,15 +87,95 @@ chmod 0755 "$tmp/bin"/*
 
 # Completed-JOIN re-entry verifies a profile-bound CLI. Keep this fixture
 # hermetic: no-op regression coverage must not fetch a public release asset.
-mkdir -p "$tmp/inferenced-fixture"
-printf '#!/usr/bin/env bash\nprintf "inferenced v0.2.15\\n"\n' >"$tmp/inferenced-fixture/inferenced"
-chmod 0755 "$tmp/inferenced-fixture/inferenced"
-(cd "$tmp/inferenced-fixture" && zip -q "$tmp/inferenced-linux-amd64.zip" inferenced)
+# This minimal executable ZIP is a fixed test artifact. Do not construct it
+# with `zip`: it is not part of the declared runbook command baseline. Its
+# decoder, base64, is already declared and present in every test image.
+base64 -d >"$tmp/inferenced-linux-amd64.zip" <<'EOF'
+UEsDBAoAAAAAAM4BTF0wfLEgMgAAADIAAAAKABwAaW5mZXJlbmNlZFVUCQADRArMakQKzGp1eAsAAQToAwAABOgDAAAjIS91c3IvYmluL2VudiBiYXNoCnByaW50ZiAiaW5mZXJlbmNlZCB2MC4yLjE1XG4iClBLAQIeAwoAAAAAAM4BTF0wfLEgMgAAADIAAAAKABgAAAAAAAEAAADtgQAAAABpbmZlcmVuY2VkVVQFAANECsxqdXgLAAEE6AMAAAToAwAAUEsFBgAAAAABAAEAUAAAAHYAAAAAAA==
+EOF
 export FIXTURE_INFERENCED_ARCHIVE="$tmp/inferenced-linux-amd64.zip"
 FIXTURE_INFERENCED_SHA256="$(sha256sum "$FIXTURE_INFERENCED_ARCHIVE" | awk '{print $1}')"
 export FIXTURE_INFERENCED_SHA256
 
 printf 'retained validator archive\n' >"$tmp/validator-backup.tar"
+# Every fresh JOIN variant refuses an existing alias path before remote
+# readiness, mnemonic input, lifecycle locking or profile preparation.
+guard_operator="$tmp/guard-operator"
+guard_home="$guard_operator/validator-existing"
+mkdir -p "$guard_home"
+assert_existing_state_refused() {
+  local label="$1" rc
+  shift
+  : >"$tmp/guard-remote-effects.log"
+  if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/guard-remote-effects.log" GDC_HOME="$guard_operator" \
+    "$ROOT/gdc.sh" host join "$@" >"$tmp/guard-$label.out" 2>"$tmp/guard-$label.err"; then
+    echo "existing state unexpectedly accepted: $label" >&2; exit 1
+  else
+    rc=$?
+  fi
+  [[ "$rc" == 2 ]]
+  user_error_lines=()
+  while IFS= read -r line; do
+    [[ "$line" == JOIN\ stopped\ because\ retained\ local\ state* ]] && user_error_lines+=("$line")
+  done <"$tmp/guard-$label.err"
+  [[ "${#user_error_lines[@]}" == 1 ]]
+  [[ "${user_error_lines[0]}" == 'JOIN stopped because retained local state requires explicit recovery or removal before a new JOIN' ]]
+  ! grep -Eiq 'gdc report github|reporting/|/home/|/tmp/' "$tmp/guard-$label.err"
+  [[ ! -s "$tmp/guard-remote-effects.log" ]]
+}
+assert_existing_state_refused plain --public-host existing.example.test validator-existing
+assert_existing_state_refused plan validator-existing --plan --public-host existing.example.test
+assert_existing_state_refused restore --restore "$tmp/validator-backup.tar" --public-host existing.example.test validator-existing
+assert_existing_state_refused mnemonic-file --mnemonic-file "$tmp/unread-mnemonic" --public-host existing.example.test validator-existing
+assert_existing_state_refused mnemonic-equals --mnemonic-file="$tmp/unread-mnemonic" --public-host existing.example.test validator-existing
+assert_existing_state_refused mnemonic-prompt --mnemonic-prompt --public-host existing.example.test validator-existing
+assert_existing_state_refused verification --verification --public-host existing.example.test validator-existing
+assert_existing_state_refused skip-qualification --skip-qualification --public-host existing.example.test validator-existing
+assert_existing_state_refused separate-gpu --public-host existing.example.test validator-existing validator-ml
+assert_existing_state_refused combined --plan --restore "$tmp/validator-backup.tar" --bootstrap-file "$tmp/bootstrap.json" \
+  --source-rpc https://rpc.example.test --pex false --chain-id gonka-devnet-community --preflight-deadline=60m \
+  --p2p-port 5000 --verification --skip-qualification --public-host existing.example.test validator-existing validator-ml
+[[ -z "$(find "$guard_home" -mindepth 1 -print -quit)" ]]
+
+# A completed reset retains a recovery archive and lifecycle history, but it
+# has discarded the local identity. The next ordinary JOIN must reach its
+# preflight rather than require the operator to delete that recovery evidence.
+reset_guard_operator="$tmp/reset-guard-operator"
+reset_guard_home="$reset_guard_operator/validator-reset"
+mkdir -p "$reset_guard_home/state/reset/validator-reset"
+printf '%s\n' '{"schema_version":1,"kind":"gdc-reset-dai-backup","identity_present":true,"signer_stopped":true,"archive_path":"/srv/backup/reset-fixture-dai-backup.tar","archive_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
+  >"$reset_guard_home/state/reset/validator-reset/reset-fixture-dai-backup.json"
+chmod 600 "$reset_guard_home/state/reset/validator-reset/reset-fixture-dai-backup.json"
+reset_guard_hash="$(sha256sum "$reset_guard_home/state/reset/validator-reset/reset-fixture-dai-backup.json")"
+: >"$tmp/reset-guard-remote-effects.log"
+PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/reset-guard-remote-effects.log" GDC_HOME="$reset_guard_operator" \
+  "$ROOT/gdc.sh" host join --plan --bootstrap-file "$tmp/bootstrap.json" --public-host existing.example.test validator-reset >"$tmp/reset-guard.out" 2>"$tmp/reset-guard.err"
+! grep -Fq 'retained local state requires explicit recovery or removal' "$tmp/reset-guard.err"
+grep -Fq 'PASS JOIN preflight completed without Host mutation' "$tmp/reset-guard.out"
+[[ ! -s "$tmp/reset-guard-remote-effects.log" && ! -e "$reset_guard_home/state/active-run-id" ]]
+[[ "$(sha256sum "$reset_guard_home/state/reset/validator-reset/reset-fixture-dai-backup.json")" == "$reset_guard_hash" ]]
+reset_plan_result="$(find "$reset_guard_home/runs" -type f -path '*/join-validator-reset/join-result.v1.json' -print -quit)"
+[[ -n "$reset_plan_result" ]]
+jq -e '.outcome == "no_op" and .reason == "plan_completed" and .mutation == "none" and .signer_state == "absent"' "$reset_plan_result" >/dev/null
+
+# The gate depends on path existence, not a deployment layout or receipt.
+mkdir -p "$guard_home/state/secrets" "$guard_home/runs/prior/join-validator-existing/receipts"
+printf 'retain local identity and evidence\n' >"$guard_home/state/secrets/marker"
+assert_existing_state_refused retained --public-host existing.example.test validator-existing
+[[ "$(cat "$guard_home/state/secrets/marker")" == 'retain local identity and evidence' ]]
+[[ ! -e "$guard_home/state/.lifecycle.lock" ]]
+mv "$guard_home" "$tmp/retained-guard-home"
+ln -s "$tmp/retained-guard-home" "$guard_home"
+assert_existing_state_refused symlink --public-host existing.example.test validator-existing
+mv "$guard_home" "$tmp/retained-guard-link"
+ln -s "$tmp/missing-guard-target" "$guard_home"
+assert_existing_state_refused broken-symlink --public-host existing.example.test validator-existing
+[[ ! -e "$tmp/missing-guard-target" ]]
+mv "$guard_home" "$tmp/retained-broken-link"
+printf 'retain unexpected file\n' >"$guard_home"
+assert_existing_state_refused regular-file --public-host existing.example.test validator-existing
+[[ "$(cat "$guard_home")" == 'retain unexpected file' ]]
+
 # An unfinished incident for another Host must not intercept normal restore.
 incident="$tmp/operator/recovery-GNK-LAB-2026-0001"
 mkdir -p "$incident/hosts"
@@ -117,8 +198,53 @@ result="$(find "$tmp/operator" -type f -path '*/join-validator-a/join-result.v1.
 "$ROOT/scripts/join-profile.sh" validate "$profile"
 jq -e '.operation == "restore" and .spec.identity.mode == "restore"' "$profile" >/dev/null
 jq -e '.outcome == "no_op" and .phase == "profile" and .mutation == "none" and .signer_state == "absent" and .reason == "plan_completed"' "$result" >/dev/null
-grep -Fq "profile=$profile" "$tmp/out"
-grep -Fq "result=$result" "$tmp/out"
+grep -Fq 'PASS JOIN preflight completed without Host mutation' "$tmp/out"
+
+# A successful plan leaves reusable, non-mutating evidence. A normal JOIN
+# must pass the local-state guard, reach the readiness/clean-host preflights,
+# and stop at the deliberately unsupported accelerator fixture. The SSH
+# fixture allows only those exact read-only probes and rejects every other
+# destination or command.
+cat >"$tmp/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+host=${2:-}
+remote_command=${3:-}
+printf '%s|%s\n' "$host" "$remote_command" >>"$GDC_PLAN_REMOTE_EFFECT_LOG"
+input="$(cat)"
+if [[ "$host" == validator-a && "$remote_command" == 'sudo -n bash -s' ]]; then
+  if [[ "$input" == *'READY Host readiness preflight'* ]]; then
+    printf 'READY Host readiness preflight\n'
+    exit 0
+  fi
+  if [[ "$input" == *'READY JOIN target is clean'* ]]; then
+    printf 'READY JOIN target is clean\n'
+    exit 0
+  fi
+fi
+if [[ "$host" == validator-a && "$remote_command" == 'bash -s' && "$input" == *'Report the hardware execution backend only'* ]]; then
+  printf 'vendor=unsupported\n'
+  exit 0
+fi
+printf 'unexpected JOIN fixture SSH call host=%s command=%s\n' "$host" "$remote_command" >&2
+exit 97
+EOF
+chmod 0755 "$tmp/bin/ssh"
+plan_reentry_ssh_log="$tmp/plan-reentry-ssh.log"
+if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$plan_reentry_ssh_log" GDC_HOME="$tmp/operator" \
+  "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
+    --skip-qualification --public-host validator-a.example.test validator-a \
+    >"$tmp/plan-reentry.out" 2>"$tmp/plan-reentry.err"; then
+  echo 'ordinary JOIN unexpectedly passed the unsupported accelerator fixture' >&2; exit 1
+fi
+grep -Fq 'PASS Host readiness preflight host=validator-a' "$tmp/plan-reentry.out"
+grep -Fq 'PASS JOIN target clean host=validator-a' "$tmp/plan-reentry.out"
+grep -Fq 'ERROR JOIN preflight failed checkpoint=accelerator-profile' "$tmp/plan-reentry.err"
+! grep -Fq 'retained local state requires explicit recovery or removal' "$tmp/plan-reentry.err"
+[[ "$(<"$plan_reentry_ssh_log")" == $'validator-a|sudo -n bash -s\nvalidator-a|sudo -n bash -s\nvalidator-a|bash -s' ]]
+plan_reentry_result="$(find "$tmp/operator/validator-a/runs" -type f -path '*/join-validator-a/join-result.v1.json' -print | LC_ALL=C sort | tail -n1)"
+[[ -n "$plan_reentry_result" ]]
+jq -e '.outcome == "refused" and .reason == "join_preflight_failed" and .mutation == "none"' "$plan_reentry_result" >/dev/null
 
 run_dir="$(dirname "$profile")"
 run_id="$(basename "$(dirname "$run_dir")")"
@@ -129,9 +255,8 @@ touch "$incident/complete"
 profile_sha256="$(sha256sum "$profile" | awk '{print $1}')"
 observation_sha256="$(sha256sum "$observation" | awk '{print $1}')"
 
-# A normal repeated command is permitted to stop before lineage, installation
-# or deployment only when a prior receipt chain is COMPLETE and the freshly
-# observed executable profile is byte-for-byte the same semantic profile.
+# A completed JOIN can be continued only through explicit --resume. A fresh
+# repeated command is refused before observing the network or reading state.
 completed_id=completed-join
 completed_run="$tmp/operator/validator-a/runs/$completed_id/join-validator-a"
 mkdir -p "$completed_run/receipts"
@@ -154,7 +279,8 @@ cat >"$tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf '%s\n' "$*" >>"$GDC_PLAN_REMOTE_EFFECT_LOG"
-exit 0
+printf 'unexpected SSH call during local JOIN planning: %s\n' "$*" >&2
+exit 97
 EOF
 chmod 0755 "$tmp/bin/ssh"
 : >"$tmp/remote-effects.log"
@@ -173,15 +299,13 @@ install -m 0600 "$tmp/completed-result-fixed.json" "$completed_run/join-result.v
 PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
   "$ROOT/gdc.sh" host join --plan --resume "$completed_id" --public-host validator-a.example.test validator-a >"$tmp/complete-resume-valid.out" 2>"$tmp/complete-resume-valid.err"
 grep -Fq "PASS Host JOIN resume plan verified run_id=$completed_id; no Host action was performed" "$tmp/complete-resume-valid.out"
-if ! PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
+if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
   "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
     --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/reentry.out" 2>"$tmp/reentry.err"; then
-  cat "$tmp/reentry.out" "$tmp/reentry.err" >&2
-  exit 1
+  echo 'completed local state accepted a fresh JOIN' >&2; exit 1
 fi
-grep -Fq 'PASS Host JOIN is already complete with the current immutable profile; no Host mutation was performed' "$tmp/reentry.out"
-[[ -s "$tmp/remote-effects.log" ]]
-! grep -Eq 'start-node|install-node|rsync|scp' "$tmp/remote-effects.log"
+grep -Fq 'JOIN stopped because retained local state requires explicit recovery or removal before a new JOIN' "$tmp/reentry.err"
+[[ ! -s "$tmp/remote-effects.log" ]]
 : >"$tmp/remote-effects.log"
 
 mkdir -m 0700 "$run_dir/receipts"
@@ -216,4 +340,30 @@ if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GD
 fi
 grep -Fq 'profile_id does not bind' "$tmp/tampered-resume.err"
 
-printf 'PASS Host JOIN --plan creates a restore-bound local profile without remote effects\n'
+# Even a previous refusal before Host mutation requires explicit local state
+# removal before fresh JOIN. Retain its evidence unchanged at this gate.
+refused_id=refused-join
+refused_run="$tmp/operator/validator-a/runs/$refused_id/join-validator-a"
+mkdir -p "$refused_run/receipts"
+install -m 0600 "$completed_run/join-profile.v1.json" "$refused_run/join-profile.v1.json"
+[[ "$(sha256sum "$refused_run/join-profile.v1.json" | awk '{print $1}')" == "$completed_profile_sha256" ]]
+jq -c --arg run_id "$refused_id" '.run_id = $run_id | .generation_id = $run_id | .state = "JOIN_PROFILE_READY" | .signer_ever_started = false' \
+  "$tmp/completed-receipt.json" >"$tmp/refused-ready.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$refused_run/receipts" --input "$tmp/refused-ready.json" >/dev/null
+jq -c '.state = "REFUSED" | .outcome = "refused" | .resume_policy = "new_profile"' "$tmp/refused-ready.json" >"$tmp/refused-stop.json"
+"$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$refused_run/receipts" --input "$tmp/refused-stop.json" >/dev/null
+jq -cn --arg profile "$completed_profile_sha256" '
+  {schema_version:1,kind:"gdc-host-join-result",outcome:"refused",phase:"identity",category:"identity",reason:"partial_identity",exit_code:1,mutation:"none",signer_state:"absent",resume:"manual_recovery",join_profile_sha256:$profile,evidence:[]}
+' >"$tmp/refused-result.json"
+"$ROOT/scripts/record-join-result.sh" --output "$refused_run/join-result.v1.json" --input "$tmp/refused-result.json" >/dev/null
+printf '%s\n' "$refused_id" >"$tmp/operator/validator-a/state/active-run-id"
+: >"$tmp/remote-effects.log"
+PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
+  "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
+    --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/refused-reentry.out" 2>"$tmp/refused-reentry.err" || true
+grep -Fq 'JOIN stopped because retained local state requires explicit recovery or removal before a new JOIN' "$tmp/refused-reentry.err"
+[[ "$(cat "$tmp/operator/validator-a/state/active-run-id")" == "$refused_id" ]]
+[[ ! -s "$tmp/remote-effects.log" ]]
+
+printf 'PASS fresh JOIN variants refuse existing state before effects; clean plan and explicit resume preserve their contracts\n'
+"$ROOT/scripts/test-join-blocklist-refusal.sh"

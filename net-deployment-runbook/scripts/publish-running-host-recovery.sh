@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091 # ROOT is resolved above.
+source "$ROOT/scripts/lib-lock.sh"
 
 die() {
   printf 'error: %s\n' "$*" >&2
@@ -167,8 +170,8 @@ for target in "${targets[@]}" "$evidence_target"; do
 done
 
 lock_file="$(dirname "$joined_marker")/.${node}.recovery-publication.lock"
-exec 9>"$lock_file"
-flock -n 9 || die "another $node recovery publication is in progress"
+gdc_lock_acquire "$lock_file" 0 "another $node recovery publication is in progress" || die "another $node recovery publication is in progress"
+publication_lock_dir="$GDC_LOCK_DIR"
 
 if [[ -e "$runtime_file" ]]; then
   [[ -f "$runtime_file" && ! -L "$runtime_file" && -s "$runtime_file" ]] \
@@ -197,6 +200,7 @@ cleanup() {
   for directory in "${temporary_dirs[@]}"; do
     rm -rf -- "$directory"
   done
+  gdc_lock_release "${publication_lock_dir:-}"
 }
 trap cleanup EXIT INT TERM
 umask 077

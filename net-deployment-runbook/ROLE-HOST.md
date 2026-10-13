@@ -35,6 +35,24 @@ gdc host reset <ssh-alias-1> <ssh-alias-2> [<ssh-alias-3> ...]
 Each Host is reset by the same phase as a separate command. If one reset
 fails, later aliases are not touched.
 
+Reset removes the deployment on the Host and the local joined marker. What it
+does with the validator identity depends on the chain: before anything is
+stopped or deleted it reads the participant of the local cold account through
+the public API of the Bootstrap seeds retained by the last JOIN.
+
+- Registered: identity and signer stay on the Host and locally; recover with
+  `gdc host join --restore`. A Host that still keeps its signer below the
+  deployment root is not reset at all until the archive exists.
+- Not registered: the identity record and the cold account move to
+  `state/recovery-partial-<timestamp>/`, the Host identity is archived under
+  `/srv/dai/rejoin/<ssh-alias>/` and removed, and the next JOIN starts as
+  `new`. Mnemonics stay.
+- Unknown (no answer from the seeds, no retained Bootstrap, no cold account):
+  everything is retained; rerun the reset when the public API answers.
+
+`gdc host backup` needs the running deployment: create the archive before a
+reset, not after it.
+
 The Host's local accounts, imported public Genesis data, mnemonics, runs and
 state are stored below `$GDC_HOME/<ssh-alias>/`; they are never shared with
 another Host's directory.
@@ -52,6 +70,46 @@ attachment:
 ```bash
 gdc host ml-attach <ssh-alias>
 ```
+
+### Lend an installed validator GPU
+
+To lend the GPU of an installed validator to another Network Node, use the
+donor alias directly. Setup stops the donor validator and exposes only its
+existing ML runtime; it does not reset, reinstall or change its identity.
+
+```bash
+gdc host setup <parent-ssh-alias> add mlnode <donor-ssh-alias>
+
+# Use this only when automatic endpoint discovery is ambiguous
+gdc host setup <parent-ssh-alias> add mlnode \
+  --mlnode-peer <mlnode-ip-or-domain> <donor-ssh-alias>
+
+gdc host start <donor-ssh-alias>
+```
+
+`start` removes only the donor endpoint from its recorded parent, waits for
+DAPI to release the worker, then restores the donor's existing services. If
+release is uncertain, the donor remains stopped; do not reset it. The parent
+validator and its other ML endpoints remain running.
+
+This restores runtime ownership, not validator membership or signatures. Check
+those separately before treating the donor as validating again.
+
+### Add a clean ML-only Host
+
+To add a second endpoint without changing validator identity or signer, use a
+clean ML-only Host. Give DAPI its explicit reachable address; the SSH alias is
+only used to install the MLNode:
+
+```bash
+gdc host setup <network-ssh-alias> add mlnode \
+  --mlnode-peer <mlnode-ip-or-domain> <ml-ssh-alias>
+gdc host setup <network-ssh-alias> status mlnode
+```
+
+The Network Node keeps its local ML endpoint. The API sends work to both
+endpoints. `host reset <network-ssh-alias>` also resets ML-only Hosts recorded
+by this command.
 
 ## Governance
 

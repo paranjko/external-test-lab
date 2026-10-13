@@ -90,7 +90,7 @@ done
 jq -e '.escrow.settled == true' "$RUN/escrow.json" >/dev/null || die 'escrow did not reach settled:true'
 ssh "$GENESIS_NODE" "curl -fsS http://127.0.0.1:1317/cosmos/bank/v1beta1/balances/$creator" >"$RUN/balance-after.json"
 ssh "$GATEWAY_NODE" 'cd /srv/dai/ops && docker compose logs --no-color --tail=200 devshard-gateway' >"$RUN/gateway.log" || true
-ssh "$GENESIS_NODE" "cd /srv/dai/deploy/$GENESIS_NODE && docker compose logs --no-color --tail=200 versiond api" >"$RUN/versiond-and-api.log" || true
+ssh "$GENESIS_NODE" "cd /srv/dai/deploy && docker compose logs --no-color --tail=200 versiond api" >"$RUN/versiond-and-api.log" || true
 cat >"$RUN/verdict.md" <<EOF
 # Chain-accounted inference: PASS
 

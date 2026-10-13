@@ -272,6 +272,47 @@ load_join_profile() {
   DAPI_UPGRADE_SHA256="$(jq -r .spec.components.dapi.installation.binary.sha256 "$profile")"
   DAPI_EXPECTED_VERSION="$(jq -r .spec.components.dapi.expected_runtime.version "$profile")"
   DAPI_EXPECTED_COMMIT="$(jq -r .spec.components.dapi.expected_runtime.commit "$profile")"
+  GDC_BOOTSTRAP_SOFTWARE=false
+  if jq -e '.spec.deployment | has("software")' "$profile" >/dev/null; then
+    [[ -z "${GDC_PORTABLE_CORE_IMAGE:-}${GDC_PORTABLE_DAPI_IMAGE:-}" ]] || {
+      echo 'Bootstrap software pins cannot be replaced by portable image overrides' >&2; return 1;
+    }
+    GDC_BOOTSTRAP_SOFTWARE=true
+    PROXY_POLICY_IMAGE="$(jq -r '.spec.deployment.software.components["proxy-policy"].image' "$profile")"
+    VERSIOND_ROUTER_IMAGE="$(jq -r '.spec.deployment.software.components["versiond-router"].image' "$profile")"
+    BRIDGE_IMAGE="$(jq -r '.spec.deployment.software.components.bridge.image' "$profile")"
+    export PROXY_POLICY_IMAGE VERSIOND_ROUTER_IMAGE BRIDGE_IMAGE
+  fi
+  export GDC_BOOTSTRAP_SOFTWARE
+  # Operator-built images for a Host without ADX/BMI2, see PORTABLE-RUNTIME.md.
+  # Both chain images or neither: verify-host.sh waives its ISA check for a
+  # declared portable runtime, and a Core or DAPI left on the published image
+  # would abort with SIGILL after the Host was prepared.
+  if [[ -n "${GDC_PORTABLE_CORE_IMAGE:-}${GDC_PORTABLE_DAPI_IMAGE:-}" ]] \
+    && [[ -z "${GDC_PORTABLE_CORE_IMAGE:-}" || -z "${GDC_PORTABLE_DAPI_IMAGE:-}" ]]; then
+    echo 'GDC_PORTABLE_CORE_IMAGE and GDC_PORTABLE_DAPI_IMAGE must be declared together' >&2
+    return 1
+  fi
+  # Upgrade inputs are cleared: the pinned DAPI payload is the binary that crashes.
+  # Readback still checks version and commit against the Join Profile.
+  if [[ -n "${GDC_PORTABLE_CORE_IMAGE:-}" ]]; then
+    [[ "$GDC_PORTABLE_CORE_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || {
+      echo 'GDC_PORTABLE_CORE_IMAGE must be digest-qualified' >&2; return 1; }
+    INFERENCED_IMAGE="$GDC_PORTABLE_CORE_IMAGE"
+    printf 'NOTE operator-built portable Core runtime image=%s; Core is not artifact-verified in this deployment, runtime identity is still enforced by the canonical readback\n' \
+      "$GDC_PORTABLE_CORE_IMAGE" >&2
+  fi
+  if [[ -n "${GDC_PORTABLE_DAPI_IMAGE:-}" ]]; then
+    [[ "$GDC_PORTABLE_DAPI_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]] || {
+      echo 'GDC_PORTABLE_DAPI_IMAGE must be digest-qualified' >&2; return 1; }
+    DAPI_IMAGE="$GDC_PORTABLE_DAPI_IMAGE"
+    DAPI_UPGRADE_URL=''
+    DAPI_UPGRADE_SHA256=''
+    DAPI_EXPECTED_VERSION=''
+    DAPI_EXPECTED_COMMIT=''
+    printf 'NOTE operator-built portable DAPI runtime image=%s; DAPI is not artifact-verified in this deployment, runtime identity is still enforced by the canonical readback\n' \
+      "$GDC_PORTABLE_DAPI_IMAGE" >&2
+  fi
   TMKMS_IMAGE="$(jq -r .spec.deployment.host_envelope.tmkms_image "$profile")"
   POSTGRES_IMAGE="$(jq -r .spec.deployment.host_envelope.postgres_image "$profile")"
   EDGE_API_IMAGE="$(jq -r .spec.deployment.host_envelope.edge_api_image "$profile")"
@@ -279,6 +320,30 @@ load_join_profile() {
   PROXY_IMAGE="$(jq -r .spec.deployment.host_envelope.proxy_image "$profile")"
   EXPLORER_IMAGE="$(jq -r .spec.deployment.host_envelope.explorer_image "$profile")"
   MLNODE_GENERIC_IMAGE="$(jq -r .spec.deployment.host_envelope.mlnode_image "$profile")"
+  if jq -e '.spec.target | has("accelerator")' "$profile" >/dev/null; then
+    ACCELERATOR_VENDOR="$(jq -r .spec.target.accelerator.vendor "$profile")"
+    ACCELERATOR_ARCHITECTURE="$(jq -r '.spec.target.accelerator.architecture // empty' "$profile")"
+    ACCELERATOR_READINESS="$(jq -r '.spec.target.accelerator.readiness // "ready"' "$profile")"
+    ACCELERATOR_QUALIFICATION_BACKEND="$(jq -r .spec.target.accelerator.qualification_backend "$profile")"
+    MLNODE_COMPOSE_VARIANT="$(jq -r .spec.target.accelerator.compose_variant "$profile")"
+  else
+    # Only join-profile validation with --allow-expired admits this historical
+    # v1 shape. It predates accelerator receipts and used the NVIDIA runtime.
+    ACCELERATOR_VENDOR=nvidia
+    ACCELERATOR_ARCHITECTURE=''
+    ACCELERATOR_READINESS=ready
+    ACCELERATOR_QUALIFICATION_BACKEND=cuda
+    MLNODE_COMPOSE_VARIANT=nvidia
+  fi
+  if [[ "$ACCELERATOR_VENDOR" == amd && "$ACCELERATOR_READINESS" == ready ]]; then
+    MLNODE_GENERIC_IMAGE="$(jq -r .spec.target.accelerator.mlnode_image "$profile")"
+    AMD_KFD_DEVICE="$(jq -r .spec.target.accelerator.devices.kfd "$profile")"
+    AMD_RENDER_DEVICE="$(jq -r .spec.target.accelerator.devices.render "$profile")"
+    AMD_KFD_GROUP_ID="$(jq -r .spec.target.accelerator.group_ids.kfd "$profile")"
+    AMD_RENDER_GROUP_ID="$(jq -r .spec.target.accelerator.group_ids.render "$profile")"
+  else
+    AMD_KFD_DEVICE=''; AMD_RENDER_DEVICE=''; AMD_KFD_GROUP_ID=''; AMD_RENDER_GROUP_ID=''
+  fi
   MLNODE_PROXY_IMAGE="$(jq -r .spec.deployment.host_envelope.mlnode_proxy_image "$profile")"
   CADDY_IMAGE="$(jq -r .spec.deployment.host_envelope.caddy_image "$profile")"
   GRAFANA_IMAGE="$(jq -r .spec.deployment.host_envelope.grafana_image "$profile")"
@@ -304,6 +369,8 @@ load_join_profile() {
   export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
   export MODEL_ID MODEL_REVISION MLNODE_CONTEXT_LENGTH MLNODE_MAX_NUM_SEQS MLNODE_GPU_MEMORY_UTILIZATION
   export MLNODE_DTYPE MLNODE_TENSOR_PARALLEL_SIZE GDC_JOIN_EFFECTIVE_EPOCHS GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS
+  export ACCELERATOR_VENDOR ACCELERATOR_ARCHITECTURE ACCELERATOR_READINESS ACCELERATOR_QUALIFICATION_BACKEND MLNODE_COMPOSE_VARIANT
+  export AMD_KFD_DEVICE AMD_RENDER_DEVICE AMD_KFD_GROUP_ID AMD_RENDER_GROUP_ID
 }
 
 profile_summary() {

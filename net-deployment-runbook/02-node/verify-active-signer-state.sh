@@ -30,11 +30,11 @@ abci="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:26657/abci_
   || { echo 'active_signer_chain_mismatch: Core serves another chain' >&2; exit 1; }
 [[ "$(jq -r '.result.sync_info.catching_up' <<<"$status")" == false ]] \
   || { echo 'active_signer_core_not_synced: Core is still catching up' >&2; exit 1; }
-[[ "$(jq -er '.result.response.version' <<<"$abci")" == "$expected_core_version" ]] \
+[[ "$(jq -er '.result.response.version | strings | ltrimstr("v") | select(length > 0)' <<<"$abci")" == "$expected_core_version" ]] \
   || { echo 'active_signer_core_version_mismatch: Core differs from generated profile' >&2; exit 1; }
 
 signer_dir="$(awk -F= '$1 == "SIGNER_DIR" {print substr($0, index($0, "=") + 1); exit}' "$deploy_dir/.env")"
-[[ "$signer_dir" =~ ^/srv/dai/signer/[a-z0-9][a-z0-9_-]*$ ]] \
+[[ "$signer_dir" == /srv/dai/signer ]] \
   || { echo 'active_signer_unavailable: rendered signer directory is invalid' >&2; exit 1; }
 state="$signer_dir/tmkms/state/priv_validator_state.json"
 [[ -s "$state" ]] || { echo 'active_signer_unavailable: TMKMS signing state is absent' >&2; exit 1; }

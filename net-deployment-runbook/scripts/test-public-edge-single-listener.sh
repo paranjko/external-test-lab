@@ -6,6 +6,11 @@ phase="$ROOT/scripts/phase-ops.sh"
 renderer="$ROOT/04-ops/render-ops.sh"
 user_ops="$ROOT/../ops/chore/user-ops.sh"
 
+grep -Fq 'admin 127.0.0.1:2020' "$renderer"
+for template in Caddyfile PublicCaddyfile; do
+  grep -Fq 'admin 127.0.0.1:2019' "$ROOT/04-ops/edge-node/$template"
+done
+
 grep -Fq 'docker compose --profile public-edge up -d --force-recreate public-grafana' "$phase"
 grep -Fq 'curl -fsS http://127.0.0.1:3001/api/health' "$phase"
 grep -Fq 'for attempt in \$(seq 1 60)' "$phase"
@@ -19,16 +24,16 @@ grep -Fq 'root * /srv/dai/edge/site' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq './site:/srv/dai/edge/site:ro' "$ROOT/04-ops/edge-node/compose.yaml"
 ! grep -Fq 'bootstrap:' "$ROOT/04-ops/edge-node/compose.yaml"
 ! grep -Fq 'join-bootstrap' "$ROOT/04-ops/edge-node/compose.yaml"
-grep -Fq 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/Caddyfile"
+grep -Fq 'handle /*.schema.json' "$ROOT/04-ops/edge-node/Caddyfile"
 grep -Fq 'handle /gonka-devnet-community/bootstrap' "$ROOT/04-ops/edge-node/Caddyfile"
 grep -Fq 'rewrite * /gonka-devnet-community/bootstrap.json' "$ROOT/04-ops/edge-node/Caddyfile"
 grep -Fq 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/Caddyfile"
-grep -Fq 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq 'handle /*.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 [[ "$(grep -Fc 'handle /gonka-devnet-community/bootstrap' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
 [[ "$(grep -Fc 'rewrite * /gonka-devnet-community/bootstrap.json' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
 grep -Fq 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'root * /edge/bootstrap/current' "$ROOT/04-ops/edge-node/PublicCaddyfile"
-[[ "$(grep -Fc 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
+[[ "$(grep -Fc 'handle /*.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
 [[ "$(grep -Fc 'path_regexp network_bootstrap' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -eq 3 ]]
 [[ "$(grep -Fc 'root * /edge/bootstrap/current' "$ROOT/04-ops/edge-node/PublicCaddyfile")" -ge 3 ]]
 ! grep -Fq 'reconcile-join-bootstrap.sh' "$ROOT/04-ops/edge-node/install-edge.sh"

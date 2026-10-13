@@ -6,6 +6,29 @@ die() {
   exit 1
 }
 
+acquire_lock() {
+  local lock_dir="${1}.d" pid entries
+  while ! mkdir -m 0700 -- "$lock_dir" 2>/dev/null; do
+    [[ -d "$lock_dir" && ! -L "$lock_dir" && -f "$lock_dir/pid" && ! -L "$lock_dir/pid" ]] \
+      || die 'validator identity lock is unsafe'
+    pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null; then
+      die 'another validator identity operation is in progress'
+    fi
+    entries="$(find "$lock_dir" -mindepth 1 -maxdepth 1 -printf . 2>/dev/null || true)"
+    [[ "$entries" == . ]] || die 'validator identity lock is unsafe'
+    rm -f -- "$lock_dir/pid"; rmdir -- "$lock_dir" 2>/dev/null || continue
+  done
+  printf '%s\n' "$$" >"$lock_dir/pid" || die 'could not initialize validator identity lock'
+  lock_dir="$lock_dir"
+}
+
+release_lock() {
+  [[ -n "${lock_dir:-}" && -f "$lock_dir/pid" && ! -L "$lock_dir/pid" ]] || return 0
+  [[ "$(cat "$lock_dir/pid" 2>/dev/null || true)" == "$$" ]] || return 0
+  rm -f -- "$lock_dir/pid"; rmdir -- "$lock_dir" 2>/dev/null || true
+}
+
 state="${1:-}"
 candidate="${2:-}"
 expected_consensus_key="${3:-}"
@@ -15,9 +38,9 @@ if [[ "${GDC_VALIDATOR_IDENTITY_TEST_MODE:-false}" == true ]]; then
     && "$deployment_env" == /* && "$deployment_env" != / ]] \
     || die 'validator identity restore requires absolute bounded paths'
 else
-  [[ "$state" =~ ^/srv/dai/[A-Za-z0-9][A-Za-z0-9._-]*$ \
+  [[ "$state" == /srv/dai \
     && "$candidate" =~ ^/tmp/gdc-[A-Za-z0-9][A-Za-z0-9._-]*-validator-restore-[0-9]+$ \
-    && "$deployment_env" == "/srv/dai/deploy/${state##*/}/.env" ]] \
+    && "$deployment_env" == /srv/dai/deploy/.env ]] \
     || die 'validator identity restore paths are outside the managed Host scope'
 fi
 [[ "$expected_consensus_key" =~ ^[A-Za-z0-9+/]{43}=$ ]] \
@@ -53,9 +76,8 @@ derive_tmkms_public_key() (
 )
 
 lock="/run/lock/gdc-validator-identity-$(basename "$state").lock"
-exec 9>"$lock"
-flock -n 9 || die 'another validator identity operation is in progress'
-trap 'rm -rf -- "$candidate"' EXIT
+acquire_lock "$lock"
+trap 'rm -rf -- "$candidate"; release_lock' EXIT
 
 # The candidate was uploaded by the unprivileged SSH account. Take ownership
 # of its root before inspecting descendants so another process under that

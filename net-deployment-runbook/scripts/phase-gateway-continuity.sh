@@ -132,17 +132,17 @@ step 'Capture the live topology and calculate the next PoC boundary'
 continuity_curl -fsS "$chain_base/chain-api/productscience/inference/inference/params" >"$RUN/params.json"
 continuity_curl -fsS "$chain_base/chain-api/productscience/inference/inference/participant" >"$RUN/participants.json"
 continuity_curl -fsS "$chain_base/chain-api/productscience/inference/inference/current_epoch_group_data" >"$RUN/epoch-group-before.json"
+continuity_curl -fsS "$chain_base/chain-api/productscience/inference/inference/epoch_info" >"$RUN/epoch-info-before.json"
 continuity_curl -fsS "$chain_base/chain-rpc/status" >"$RUN/chain-status-before.json"
 continuity_curl -fsS "$chain_base/chain-rpc/genesis" | jq -eS '.result.genesis' >"$RUN/genesis.json"
 genesis_sha256="$(genesis_sha256 "$RUN/genesis.json")"
-read -r epoch_length epoch_shift < <(
-  jq -er '(.params // .).epoch_params | [(.epoch_length|tonumber),(.epoch_shift|tonumber)] | @tsv' "$RUN/params.json"
-)
+epoch_length="$(jq -er '(.params // .).epoch_params.epoch_length | tonumber' "$RUN/params.json")"
+poc_start="$(jq -er '.latest_epoch.poc_start_block_height | tonumber' "$RUN/epoch-info-before.json")"
 height="$(jq -er '.result.sync_info.latest_block_height | tonumber' "$RUN/chain-status-before.json")"
-(( epoch_length > 0 )) || die 'live epoch length must be positive'
-position=$(((height - epoch_shift) % epoch_length))
-(( position < 0 )) && position=$((position + epoch_length))
-target_anchor=$((height + epoch_length - position))
+[[ "$poc_start" =~ ^[0-9]+$ && "$epoch_length" =~ ^[1-9][0-9]*$ ]] || die 'live epoch anchor and length must be valid'
+position=$((height - poc_start))
+(( position >= 0 && position < epoch_length )) || die 'live epoch anchor does not match the observed height; repeat continuity preflight'
+target_anchor=$((poc_start + epoch_length))
 current_height="$(continuity_curl -fsS "$chain_base/chain-rpc/status" | jq -er '.result.sync_info.latest_block_height | tonumber')"
 # The topology and evidence preflight can consume several short block
 # intervals.  Starting an exact-height observer with too little lead time
@@ -163,7 +163,7 @@ start_height=$((target_anchor - pre_blocks))
   printf 'initial_height=%s\n' "$height"
   printf 'target_poc_anchor=%s\n' "$target_anchor"
   printf 'epoch_length=%s\n' "$epoch_length"
-  printf 'epoch_shift=%s\n' "$epoch_shift"
+  printf 'poc_start_block_height=%s\n' "$poc_start"
   printf 'continuity_timeout_seconds=%s\n' "$timeout_seconds"
   printf 'request_timeout_seconds=%s\n' "$request_timeout"
   printf 'post_success_target=%s\n' "$post_success_target"

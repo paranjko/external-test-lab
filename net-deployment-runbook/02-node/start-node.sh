@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -s "$HERE/.env" ]] || { echo "Missing $HERE/.env" >&2; exit 1; }
-enable_signer=''; canary=false
+ENV_FILE="$HERE/.env"
+[[ -s "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
+enable_signer=''; canary=false; pull_only=false; no_pull=false
 while (($#)); do
   case "$1" in
     --enable-signer) enable_signer=true ;;
     --canary) canary=true ;;
-    *) echo "Usage: $0 [--canary] [--enable-signer]" >&2; exit 2 ;;
+    --pull-only) pull_only=true ;;
+    --no-pull) no_pull=true ;;
+    *) echo "Usage: $0 [--canary] [--enable-signer] [--pull-only | --no-pull]" >&2; exit 2 ;;
   esac
   shift
 done
+[[ "$pull_only" == false || "$no_pull" == false ]] || { echo 'pull options are mutually exclusive' >&2; exit 2; }
 # Existing Genesis, restart and HA callers predate generated JOIN profiles and
 # must retain their consensus signer.  Only a generated JOIN defaults to the
 # explicit signerless lifecycle; callers may still request --enable-signer.
@@ -38,7 +42,22 @@ run_long() {
   if ! wait "$pid"; then tail -100 "$log" >&2; return 1; fi
 }
 files=(-f "$HERE/compose.yaml")
-[[ "$(cat "$HERE/.local-ml" 2>/dev/null || echo false)" == true ]] && files+=(-f "$HERE/compose.ml-local.yaml")
+if [[ "$(cat "$HERE/.local-ml" 2>/dev/null || echo false)" == true ]]; then
+  ml_variant="$(awk -F= '$1 == "MLNODE_COMPOSE_VARIANT" {print $2}' "$ENV_FILE")"
+  case "${ml_variant:-nvidia}" in
+    nvidia) files+=(-f "$HERE/compose.ml-local.yaml") ;;
+    amd)
+      amd_kfd_group="$(awk -F= '$1 == "AMD_KFD_GROUP_ID" {print $2; exit}' "$ENV_FILE")"
+      amd_render_group="$(awk -F= '$1 == "AMD_RENDER_GROUP_ID" {print $2; exit}' "$ENV_FILE")"
+      if [[ -n "$amd_kfd_group" && "$amd_kfd_group" == "$amd_render_group" ]]; then
+        files+=(-f "$HERE/compose.ml-amd-single-group.yaml")
+      else
+        files+=(-f "$HERE/compose.ml-amd.yaml")
+      fi
+      ;;
+    *) echo "unsupported MLNode Compose variant: $ml_variant" >&2; exit 1 ;;
+  esac
+fi
 [[ -e "$HERE/.ha-enabled" ]] && files+=(-f "$HERE/compose.devshard-ha.yaml")
 profiles=()
 [[ "$enable_signer" == true ]] && profiles=(--profile signer)
@@ -49,11 +68,15 @@ profiles=()
 signerless_env=()
 [[ "$enable_signer" == false ]] && signerless_env=(env CONFIG_PRIV_VALIDATOR_LADDR=)
 "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" config --quiet
-run_long 'pull node images' "$HERE/start.log" "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull
+# Images are pinned by digest, and a portable runtime exists only on the Host.
+if [[ "$no_pull" == false ]]; then
+  run_long 'pull node images' "$HERE/start.log" "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" pull --policy missing
+fi
+[[ "$pull_only" == false ]] || exit 0
 printf 'WAIT  start node services\n'
 services=()
 [[ "$canary" == true ]] && services=(node)
-if ! "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" up -d "${services[@]}" >>"$HERE/start.log" 2>&1; then
+if ! "${signerless_env[@]}" docker compose --env-file "$HERE/.env" "${profiles[@]}" "${files[@]}" up --pull never -d "${services[@]}" >>"$HERE/start.log" 2>&1; then
   tail -100 "$HERE/start.log" >&2
   exit 1
 fi

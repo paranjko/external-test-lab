@@ -11,12 +11,12 @@ signer_home="$STATE/faucet-signer-home"
 rm -rf "$signer_home"
 mkdir -p "$signer_home"
 
-GDC_OPERATOR_HOME="$signer_home" "$ROOT/scripts/inferenced.sh" init faucet --chain-id "$CHAIN_ID" --default-denom "$BASE_DENOM" --overwrite >/dev/null 2>&1
+INFERENCED_HOME="$signer_home" "$ROOT/scripts/inferenced.sh" init faucet --chain-id "$CHAIN_ID" --default-denom "$BASE_DENOM" --overwrite >/dev/null 2>&1
 if ! printf '%s\n%s\n%s\n' "$(<"$mnemonic")" "$password" "$password" \
-  | GDC_OPERATOR_HOME="$signer_home" "$ROOT/scripts/inferenced.sh" keys add gdc-faucet-cold --recover --keyring-backend file >/dev/null 2>&1; then
+  | INFERENCED_HOME="$signer_home" "$ROOT/scripts/inferenced.sh" keys add gdc-faucet-cold --recover --keyring-backend file >/dev/null 2>&1; then
   die 'failed to import the dedicated faucet key into its isolated signer home'
 fi
-address="$(printf '%s\n' "$password" | GDC_OPERATOR_HOME="$signer_home" "$ROOT/scripts/inferenced.sh" keys show gdc-faucet-cold --keyring-backend file -a)"
+address="$(printf '%s\n' "$password" | INFERENCED_HOME="$signer_home" "$ROOT/scripts/inferenced.sh" keys show gdc-faucet-cold --keyring-backend file -a)"
 expected="$(jq -er .address "$ACCOUNTS/gdc-faucet-cold.json")"
 [[ "$address" == "$expected" ]] || die 'isolated faucet signer address differs from the funded Genesis faucet account'
 printf '%s\n' "$signer_home"

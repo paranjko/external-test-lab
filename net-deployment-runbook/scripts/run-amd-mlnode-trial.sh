@@ -9,7 +9,7 @@ image="${1:-}"
 
 container="${GDC_AMD_MLNODE_CONTAINER:-gdc-amd-mlnode-trial}"
 port="${GDC_AMD_MLNODE_PORT:-18080}"
-hf_home="${GDC_AMD_HF_HOME:-/srv/dai/hf-cache}"
+hf_home="${GDC_AMD_HF_HOME:-/srv/hf-cache}"
 model="${GDC_AMD_MODEL:-Qwen/Qwen3-0.6B}"
 revision="${GDC_AMD_MODEL_REVISION:-c1899de289a04d12100db370d81485cdf75e47ca}"
 dtype="${GDC_AMD_DTYPE:-auto}"

@@ -99,8 +99,8 @@ ID, manifest, additional SSH key, or SSH-agent forwarding is required.
 
 Local contract tests: `make test-recover-incident`. SSH and governance in those
 tests are mocked; they do not prove native handoff acceptance.
-`GONKA_UPSTREAM_WORKTREE=/path/to/gonka make test-recover-incident-runtime`
-uses disposable identities and an internal Docker network to verify real
+`make test-recover-incident-runtime` uses pinned denomination metadata,
+disposable identities, and an internal Docker network to verify real
 history preservation, restart, snapshot creation, and signerless P2P state
 sync. It does not exercise incident Hosts, their PoC, or the native
 temporary-key removal. Successful full handoff and final checks must be

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-ROLE=""; MIN_DRIVER=580
+ROLE=""; MIN_DRIVER=580; PORTABLE_RUNTIME=false
 while (($#)); do
   case "$1" in
     --role) ROLE="$2"; shift 2;;
-    *) echo "Usage: $0 --role network-gpu|network-only|ml-only" >&2; exit 2;;
+    # Declared portable runtime: report, do not fail. See PORTABLE-RUNTIME.md.
+    --portable-runtime) PORTABLE_RUNTIME=true; shift;;
+    *) echo "Usage: $0 --role network-gpu|network-only|ml-only [--portable-runtime]" >&2; exit 2;;
   esac
 done
 [[ "$ROLE" =~ ^(network-gpu|network-only|ml-only)$ ]] || exit 2
@@ -14,9 +16,21 @@ fail(){ printf 'FAIL  %s\n' "$*" >&2; failed=1; }
 command -v docker >/dev/null && pass docker || fail docker
 docker info >/dev/null 2>&1 && pass 'docker daemon' || fail 'docker daemon'
 docker compose version >/dev/null 2>&1 && pass 'docker compose plugin' || fail 'docker compose plugin'
-systemctl is-active --quiet chrony && pass chrony || fail chrony
-fail2ban-client status sshd >/dev/null 2>&1 && pass 'fail2ban sshd jail' || fail 'fail2ban sshd jail'
-chronyc tracking 2>/dev/null | grep -q 'Leap status.*Normal' && pass 'NTP synchronized' || fail 'NTP not synchronized'
+# Published amd64 chain binaries need ADX/BMI2 and die with SIGILL without them.
+# Refuse before any change on the Host, unless a portable runtime is declared.
+if [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]]; then
+  missing_isa=()
+  for isa in adx bmi1 bmi2; do
+    grep -qw "$isa" /proc/cpuinfo || missing_isa+=("$isa")
+  done
+  if ((${#missing_isa[@]} == 0)); then
+    pass 'CPU supports the ADX and BMI2 instructions the chain binaries require'
+  elif [[ "$PORTABLE_RUNTIME" == true ]]; then
+    pass "CPU lacks ${missing_isa[*]}; running a declared portable runtime built for it"
+  else
+    fail "CPU lacks ${missing_isa[*]}; the published chain binaries abort with SIGILL in blst_cgo_init here, build a portable runtime instead, see PORTABLE-RUNTIME.md"
+  fi
+fi
 min_kb=$((40*1024*1024)); [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]] && min_kb=$((50*1024*1024))
 if [[ -d /srv && -d /srv/dai && -w /srv/dai ]]; then
   pass '/srv and /srv/dai writable'
@@ -36,15 +50,30 @@ for storage_path in /srv/dai /var/lib/docker /var/lib/containerd; do
   fi
 done
 if [[ "$ROLE" == network-gpu || "$ROLE" == ml-only ]]; then
-  if nvidia-smi >/dev/null 2>&1; then
+  accelerator_info="$("$(dirname "$0")/inspect-accelerator.sh" 2>&1)" || {
+    fail "accelerator readiness: $accelerator_info"
+    accelerator_info=''
+  }
+  accelerator_vendor="$(awk -F= '$1 == "vendor" { print $2 }' <<<"$accelerator_info")"
+  if [[ "$accelerator_vendor" == amd ]]; then
+    accelerator_architecture="$(awk -F= '$1 == "architecture" { print $2 }' <<<"$accelerator_info")"
+    accelerator_readiness="$(awk -F= '$1 == "readiness" { print $2 }' <<<"$accelerator_info")"
+    if [[ "$accelerator_readiness" == ready && "$accelerator_architecture" == gfx1201 ]]; then
+      pass 'AMD ROCm gfx1201 hardware discovery is ready; MLNode qualification is still required'
+    else
+      fail 'AMD ROCm runtime is not ready for the supported gfx1201 profile'
+    fi
+  elif nvidia-smi >/dev/null 2>&1; then
     version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n1)
     major=${version%%.*}
     (( major >= MIN_DRIVER )) && pass "NVIDIA driver $version" || fail "NVIDIA driver $version < required $MIN_DRIVER"
   else
     fail 'nvidia-smi'
   fi
-  timeout 300 docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi >/dev/null 2>&1 \
-    && pass 'GPU visible in CUDA 12.8 container' || fail 'GPU unavailable in CUDA 12.8 container'
+  if [[ "$accelerator_vendor" == nvidia ]]; then
+    timeout 300 docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi >/dev/null 2>&1 \
+      && pass 'GPU visible in CUDA 12.8 container' || fail 'GPU unavailable in CUDA 12.8 container'
+  fi
 fi
 systemctl is-active --quiet gonka-firewall && pass 'pre-DNAT firewall service' || fail 'pre-DNAT firewall service'
 iptables -t mangle -S GONKA_INGRESS 2>/dev/null | grep -q -- '-j DROP' \

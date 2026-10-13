@@ -13,7 +13,19 @@ returning_aliases=(fixture.West fixture_east)
 source_node=ledger-primary
 returning_node=ledger-west
 SOURCE_ALIAS="$source_alias"
-ssh() { echo 'unexpected SSH in local incident test' >&2; return 99; }
+ssh() {
+  case "$*" in
+    *'sudo -n bash -s'*)
+      cat >/dev/null
+      printf 'READY Host readiness preflight\n'
+      ;;
+    *'bash -s'*)
+      cat >/dev/null
+      printf 'vendor=nvidia\n'
+      ;;
+    *) echo 'unexpected SSH in local incident test' >&2; return 99 ;;
+  esac
+}
 export -f ssh
 valid_source_location "$source_node" "/srv/dai/$source_node/inference" "/srv/dai/$source_node/inference"
 valid_source_location "$returning_node" "/srv/dai/data/$returning_node/inference" "/srv/dai/data/$returning_node/inference"
@@ -901,7 +913,13 @@ printf 'PASS single-target recovery, per-target reset/restore and quorum-based s
 
 # Exercise the actual launcher with a recording incident entry point in a
 # disposable copy. No SSH, Docker, production archive or credential is used.
-cp -a "$RUNBOOK" "$scratch/runbook"
+mkdir -p "$scratch/runbook"
+# Runtime receipts are untracked and may contain daemon-owned paths. The
+# disposable launcher fixture needs the runbook inputs, never `.data`.
+(
+  cd "$RUNBOOK"
+  tar --exclude=./.data -cf - .
+) | tar -xf - -C "$scratch/runbook"
 cat >"$scratch/runbook/scripts/recover-incident.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$INCIDENT_TEST_ARGS"
@@ -934,12 +952,26 @@ for node in fixture-west fixture-east; do
   printf '{}\n' >"$scratch/operator/recovery-$INCIDENT/hosts/$node.json"
   archive="$scratch/$node-validator-backup.tar"
   printf 'dispatcher fixture only\n' >"$archive"
+  # Reset keeps local evidence. Fresh JOIN must refuse it until the operator
+  # has preserved that evidence outside the alias path.
+  if GDC_HOME="$scratch/operator" "$launcher" host join --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
+    echo 'fresh JOIN accepted local state retained by reset' >&2; exit 1
+  fi
+  grep -Fq 'JOIN stopped because retained local state requires explicit recovery or removal before a new JOIN' "$scratch/error"
+  [[ ! -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]
+  mv "$scratch/operator/$node" "$scratch/$node-reset-state"
   if GDC_HOME="$scratch/operator" "$launcher" host join --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
     echo 'JOIN ignored deliberate mock fetch failure' >&2; exit 1
   fi
   [[ -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]
 done
+rm -f "$INCIDENT_TEST_NORMAL_JOIN"
 if GDC_HOME="$scratch/operator" "$launcher" host join --plan --restore "$archive" --public-host restore.example.test "$node" >"$scratch/error" 2>&1; then
+  echo 'fresh plan accepted state retained by failed JOIN' >&2; exit 1
+fi
+grep -Fq 'JOIN stopped because retained local state requires explicit recovery or removal before a new JOIN' "$scratch/error"
+[[ ! -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]
+if GDC_HOME="$scratch/operator" "$launcher" host join --plan --restore "$archive" --public-host restore.example.test fixture-plan >"$scratch/error" 2>&1; then
   echo 'incident route ignored --plan' >&2; exit 1
 fi
 [[ -e "$INCIDENT_TEST_NORMAL_JOIN" && ! -e "$scratch/args" ]]

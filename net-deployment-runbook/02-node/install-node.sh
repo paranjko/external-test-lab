@@ -11,10 +11,10 @@ while (($#)); do
 done
 [[ $EUID -eq 0 ]] || { echo 'Run with sudo' >&2; exit 1; }
 [[ "$NODE" =~ ^[a-z0-9][a-z0-9_-]*$ && -s "$ENV_FILE" && -s "$NODE_CONFIG" && -s "$GENESIS" ]] || { usage; exit 2; }
-DEST="/srv/dai/deploy/$NODE"
+DEST="/srv/dai/deploy"
 PARENT="$(dirname "$DEST")"
 mkdir -p "$PARENT"
-STAGE="$(mktemp -d "$PARENT/.${NODE}.gdc-stage.XXXXXX")"
+STAGE="$(mktemp -d "$PARENT/.gdc-stage.XXXXXX")"
 BACKUP="${DEST}.gdc-rollback.$$"
 activated=false
 backup_made=false
@@ -63,6 +63,8 @@ case "$profile_kind" in
 esac
 install -m 0644 "$(dirname "$0")/compose.yaml" "$STAGE/compose.yaml"
 install -m 0644 "$(dirname "$0")/compose.ml-local.yaml" "$STAGE/compose.ml-local.yaml"
+install -m 0644 "$(dirname "$0")/compose.ml-amd.yaml" "$STAGE/compose.ml-amd.yaml"
+install -m 0644 "$(dirname "$0")/compose.ml-amd-single-group.yaml" "$STAGE/compose.ml-amd-single-group.yaml"
 install -m 0644 "$(dirname "$0")/compose.devshard-ha.yaml" "$STAGE/compose.devshard-ha.yaml"
 install -m 0644 "$(dirname "$0")/compose.bridge-sepolia.yaml" "$STAGE/compose.bridge-sepolia.yaml"
 install -d -m 0755 "$STAGE/versiond-router"
@@ -99,6 +101,15 @@ else
   chmod 600 "$STAGE/.gdc-release"
 fi
 install -m 0644 "$NODE_CONFIG" "$STAGE/node-config.json"
+if [[ "$profile_kind" == generated_join ]] && jq -e '.spec.deployment | has("software")' "$JOIN_PROFILE" >/dev/null; then
+  bash "$(dirname "$0")/prepare-bootstrap-runtime.sh" "$JOIN_PROFILE" "$STAGE"
+  install -m 0755 "$(dirname "$0")/bootstrap-runtime.sh" "$STAGE/bootstrap-runtime.sh"
+  # Keep variables and relative bind paths intact. This is a complete Compose
+  # document, not an overlay that can retain incompatible proxy settings.
+  bash "$(dirname "$0")/render-bootstrap-compose.sh" "$STAGE/compose.yaml" "$STAGE/.env" >"$STAGE/compose.bootstrap.json"
+  mv "$STAGE/compose.bootstrap.json" "$STAGE/compose.yaml"
+  chmod 0600 "$STAGE/compose.yaml"
+fi
 printf '%s\n' "$LOCAL_ML" > "$STAGE/.local-ml"
 chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$STAGE"
 # Validate the complete staged Compose configuration before it can replace the

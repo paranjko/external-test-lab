@@ -83,3 +83,17 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Gateway readiness observation is stale"
+  - name: gdc-collection
+    rules:
+      - alert: GdcCollectorFileStale
+        expr: time() - node_textfile_mtime_seconds > 900
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Collector file {{ $labels.file }} on {{ $labels.host }} is no longer being rewritten"
+      - alert: GdcChainTargetLost
+        expr: count(up{job="gonka-node"}) < max_over_time(count(up{job="gonka-node"})[7d:1h])
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "A chain target that used to be scraped is no longer in the monitoring inventory"

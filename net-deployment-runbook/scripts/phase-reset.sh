@@ -83,8 +83,8 @@ preservation_manifest() {
   ssh "$host" 'set -Eeuo pipefail
     docker image ls --no-trunc --format "{{.ID}} {{.Repository}}:{{.Tag}}" | LC_ALL=C sort
     printf "%s\\n" "-- hf-cache --"
-    if [[ -d /srv/dai/hf-cache ]]; then
-      find /srv/dai/hf-cache -type f -printf "%P %s %T@\n" | LC_ALL=C sort
+    if [[ -d /srv/hf-cache ]]; then
+      find /srv/hf-cache -type f -printf "%P %s %T@\n" | LC_ALL=C sort
     fi
     printf "%s\n" "-- preserved-secondary-state --"
     if [[ -d /srv/dai/gonka-devnet-bot ]]; then
@@ -94,10 +94,29 @@ preservation_manifest() {
 
 genesis_reset=false
 managed_aliases=("${reset_nodes[@]}")
+declare -A reset_ml_host_seen=()
+reset_ml_hosts=()
 for node in "${reset_nodes[@]}"; do
   ml_host="$(node_ml_host "$node" || true)"
-  [[ -z "$ml_host" ]] || managed_aliases+=("$ml_host")
+  if [[ -n "$ml_host" && -z "${reset_ml_host_seen[$ml_host]:-}" ]]; then
+    reset_ml_host_seen["$ml_host"]=true
+    reset_ml_hosts+=("$ml_host")
+  fi
+  link_state="$STATE/ml-attached/$node.json"
+  if [[ -s "$link_state" && ! -L "$link_state" ]]; then
+    while IFS= read -r ml_host; do
+      [[ "$ml_host" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "reset found an invalid ML SSH alias for $node"
+      if [[ -z "${reset_ml_host_seen[$ml_host]:-}" ]]; then
+        reset_ml_host_seen["$ml_host"]=true
+        reset_ml_hosts+=("$ml_host")
+      fi
+    done < <(jq -r --arg node "$node" '
+      select(.schema_version == 2 and .validator_alias == $node)
+      | .ml_hosts[]?.ssh_alias
+    ' "$link_state")
+  fi
 done
+managed_aliases+=("${reset_ml_hosts[@]}")
 managed_aliases_serialized="${managed_aliases[*]}"
 printf '%s\n' "${reset_nodes[@]}" >"$MANIFEST_DIR/reset-hosts.txt"
 for host in "${reset_nodes[@]}"; do
@@ -116,19 +135,17 @@ for host in "${reset_nodes[@]}"; do
   ssh "$host" "sudo env $reset_remote_env bash -s" \
     <"$ROOT/scripts/reset-remote-host.sh"
   preservation_manifest "$host" after
-  cmp -s "$MANIFEST_DIR/$host.before" "$MANIFEST_DIR/$host.after" || die "$host reset changed Docker image IDs or /srv/dai/hf-cache; see $MANIFEST_DIR"
+  cmp -s "$MANIFEST_DIR/$host.before" "$MANIFEST_DIR/$host.after" || die "$host reset changed Docker image IDs or /srv/hf-cache; see $MANIFEST_DIR"
   [[ "$host" == "$GENESIS_NODE" ]] && genesis_reset=true
 done
-for host in "${reset_nodes[@]}"; do
-  ml_host="$(node_ml_host "$host" || true)"
-  [[ -n "$ml_host" ]] || continue
-  step "Reset ML host $ml_host for $host"
+for ml_host in "${reset_ml_hosts[@]}"; do
+  step "Reset ML host $ml_host"
   if ssh_ready "$ml_host"; then
     preservation_manifest "$ml_host" before
     ssh "$ml_host" "sudo env GDC_RESET_MANAGED_ALIASES=$(printf '%q' "$managed_aliases_serialized") bash -s" \
       <"$ROOT/scripts/reset-remote-host.sh"
     preservation_manifest "$ml_host" after
-    cmp -s "$MANIFEST_DIR/$ml_host.before" "$MANIFEST_DIR/$ml_host.after" || die "$ml_host reset changed Docker image IDs or /srv/dai/hf-cache; see $MANIFEST_DIR"
+    cmp -s "$MANIFEST_DIR/$ml_host.before" "$MANIFEST_DIR/$ml_host.after" || die "$ml_host reset changed Docker image IDs or /srv/hf-cache; see $MANIFEST_DIR"
   else
     echo "SKIP  $ml_host is unreachable"
   fi
@@ -140,7 +157,7 @@ done
 # marker that prevents the next clean Genesis from starting.  Keep the
 # lifecycle lock until this process exits: deleting its pathname while held
 # would let a concurrent reset create a new lock and race this publication.
-find "$STATE" -mindepth 1 -maxdepth 1 ! -name .lifecycle.lock -exec rm -rf -- {} +
+find "$STATE" -mindepth 1 -maxdepth 1 ! -name .lifecycle.lock -a ! -name .lifecycle.lock.d -exec rm -rf -- {} +
 rm -rf "$GDC_HOME/accounts" "$GDC_HOME/genesis" "$GDC_HOME/mnemonics"
 step 'Refresh public site contract for reset state'
 # The chain REST process may retain its former participant list until it is

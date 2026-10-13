@@ -1,6 +1,6 @@
 SHELLCHECK_VERSION ?= v0.11.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:$(SHELLCHECK_VERSION)
-SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' -not -path './vendor/*' -print | LC_ALL=C sort)
+SHELL_SCRIPTS := $(shell find . -path './vendor' -prune -o -path './.data' -prune -o -type f -name '*.sh' -print | LC_ALL=C sort)
 DEVCONTAINER_CLI ?= npx --yes --loglevel=silent @devcontainers/cli
 # Docker Desktop for Mac cannot bind-mount the launchd ssh-agent socket that
 # $SSH_AUTH_SOCK points to; it exposes the host agent at a fixed path inside
@@ -16,6 +16,7 @@ BATS ?= bats
 BATS_DOCKER_IMAGE ?= gdc-runbook-bats:local
 BATS_DIND_IMAGE ?= gdc-runbook-bats-dind:local
 cmd ?= bash
+upstream_source ?= $(CURDIR)/.data/upstream/gonka
 authorized_key_file ?=
 site_release_dir ?= $(CURDIR)/.data/site-release
 site_publish_prefix ?=
@@ -24,11 +25,22 @@ deploy_host ?=
 deploy_user ?=
 map_evidence_dir ?= $(CURDIR)/.data/validator-map-regressions
 chrome_bin ?= google-chrome
+site_serve_host ?= 127.0.0.1
+site_serve_port ?= 8080
+site_serve_origin ?= https://gonka-dev.net
 preview_number ?=
 preview_revision ?=
+preview_backend_image ?=
+preview_source_repository ?= $(CURDIR)/..
+preview_inventory ?= $(CURDIR)/../ops/preview/status-renderer-inventory.env
+preview_backend_dir ?= $(site_release_dir)-backend
+preview_base_revision ?=
 site_origin ?= https://gonka-dev.net
+preview_origin ?= https://preview.gonka-dev.net
+site_preview_expected_card_count ?= 0
+site_preview_expected_node_states ?=
 
-.PHONY: bats bats-docker bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-host-requirements-check test-browser-devtools test-gateway-site-state test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-edge-install-ownership prepare-static-site publish-site-release remove-site-release verify-site-release verify-site-preview-artifact verify-site-preview-live smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
+.PHONY: bats bats-docker bats-docker-image bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-serve test-site-serve site-host-requirements-check test-browser-devtools test-gateway-site-state test-network-selection test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-preview-platform test-preview-isolation test-preview-lifecycle test-preview-provision test-preview-status-renderer test-preview-frontend-builder test-isolated-preview-ci test-isolated-preview-ci-artifact test-record-site-preview-deployment test-verify-isolated-site-preview-live test-isolated-preview-runtime-config test-isolated-preview-publish test-prepare-isolated-preview-composition test-prepare-isolated-site-preview-artifact test-prepare-public-preview-inventory test-node-observation-guard test-edge-install-ownership prepare-static-site prepare-site-preview-artifact prepare-isolated-site-preview-artifact prepare-isolated-preview-ci prepare-isolated-preview-ci-artifact write-isolated-preview-deploy-env publish-site-release publish-site-preview publish-isolated-site-preview publish-isolated-preview-ci rollback-site-preview remove-site-release remove-isolated-site-preview verify-site-release verify-site-preview-artifact verify-isolated-preview-ci-artifact verify-isolated-site-preview-live verify-site-preview-live verify-site-preview-endpoints smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test test-command-dependency-contract test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-network-ml-endpoints edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
 
 cleanroom: cleanroom-reset
 	@$(DEVCONTAINER_CLI) exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)
@@ -53,7 +65,8 @@ install-git-hooks:
 	@echo 'Git hooks enabled from .githooks'
 
 verify-upstream-profiles:
-	@./scripts/verify-release-profiles.sh
+	@./scripts/verify-release-profiles.sh "$(upstream_source)"
+	@bash ./scripts/verify-bootstrap-upstream.sh "$(upstream_source)"
 
 shellcheck:
 	@docker run --rm \
@@ -73,6 +86,9 @@ test-amd-mlnode-trial:
 test-amd-mlnode-ci-publish:
 	@./scripts/test-publish-amd-mlnode-ci.sh
 
+test-network-ml-endpoints:
+	@./scripts/test-network-ml-endpoints.sh
+
 amd-mlnode-ci-publish:
 	@./scripts/publish-amd-mlnode-ci.sh profiles/amd-mlnode/gfx1201.json
 
@@ -85,6 +101,12 @@ site-js:
 site-js-check:
 	@./scripts/build-site-js.sh --check
 
+site-serve: site-vendor site-js
+	@node ./scripts/serve-site.mjs 04-ops/site "$(site_serve_host)" "$(site_serve_port)" "$(site_serve_origin)"
+
+test-site-serve:
+	@node ./scripts/test-serve-site.mjs
+
 site-host-requirements-check:
 	@node ./scripts/verify-devnet-hardware-profile.mjs profiles/devnet-hadware.json 04-ops/site/index.html
 
@@ -92,8 +114,24 @@ test-browser-devtools:
 	@node --check ./scripts/capture-homepage-viewport.mjs
 	@node ./scripts/test-chrome-devtools.mjs
 
-test-gateway-site-state: site-js-check test-browser-devtools
+test-gateway-site-state: site-vendor site-js-check test-browser-devtools test-production-network-browser test-site-snapshot-acceptance
 	@node ./scripts/test-gateway-site-state.js
+
+.PHONY: test-production-network-browser test-site-snapshot-acceptance test-verify-network-observer verify-network-observer
+test-production-network-browser: site-vendor site-js
+	@node ./scripts/test-production-network-browser.mjs
+
+test-site-snapshot-acceptance: site-vendor site-js
+	@node ./scripts/test-site-snapshot-acceptance.mjs
+
+test-verify-network-observer:
+	@node ./scripts/test-verify-network-observer.mjs
+
+verify-network-observer:
+	@node ./scripts/verify-network-observer.mjs --base-url "$(site_origin)"
+
+test-network-selection: site-js-check
+	@node ./scripts/test-network-selection.js 04-ops/site
 
 test-validator-map: site-vendor site-js site-host-requirements-check
 	@mkdir -p "$(map_evidence_dir)"
@@ -110,11 +148,41 @@ prepare-static-site: site-vendor site-host-requirements-check
 	@test -s "$(site_release_dir)/index.html"
 	@test ! -e "$(site_release_dir)/config.js"
 
+prepare-site-preview-artifact:
+	@./scripts/prepare-site-preview-artifact.sh
+
+prepare-isolated-site-preview-artifact:
+	@./scripts/prepare-isolated-site-preview-artifact.sh "$(preview_source_repository)" "$(site_release_dir)" "$(preview_base_revision)" "$(site_revision)" "$(preview_inventory)" "$(preview_number)" "$(preview_backend_dir)" "$(preview_backend_image)"
+
+prepare-isolated-preview-ci:
+	@./scripts/prepare-isolated-preview-ci.sh
+
+prepare-isolated-preview-ci-artifact:
+	@./scripts/prepare-isolated-preview-ci-artifact.sh
+
+write-isolated-preview-deploy-env:
+	@./scripts/write-isolated-preview-deploy-env.sh
+
+publish-isolated-preview-ci:
+	@./scripts/publish-isolated-preview-ci.sh
+
 publish-site-release:
 	@./scripts/site-release.sh publish "$(site_release_dir)" "$(site_publish_prefix)" "$(deploy_host)" "$(deploy_user)"
 
+publish-site-preview:
+	@GDC_SITE_PREVIEW_ENV_FILE="$${GDC_SITE_PREVIEW_ENV_FILE:-}" ./scripts/site-release.sh publish-preview "$(site_release_dir)" "$(site_publish_prefix)" "$(deploy_host)" "$(deploy_user)"
+
+publish-isolated-site-preview:
+	@GDC_SITE_PREVIEW_ENV_FILE="$${GDC_SITE_PREVIEW_ENV_FILE:-}" ./scripts/isolated-preview-publish.sh publish "$(site_release_dir)" "$(preview_number)" "$(preview_revision)" "$(preview_backend_image)"
+
+rollback-site-preview:
+	@GDC_SITE_PREVIEW_ENV_FILE="$${GDC_SITE_PREVIEW_ENV_FILE:-}" ./scripts/site-release.sh rollback-preview '' "$(site_publish_prefix)" "$(deploy_host)" "$(deploy_user)"
+
 remove-site-release:
 	@./scripts/site-release.sh remove '' "$(site_publish_prefix)" "$(deploy_host)" "$(deploy_user)"
+
+remove-isolated-site-preview:
+	@GDC_SITE_PREVIEW_ENV_FILE="$${GDC_SITE_PREVIEW_ENV_FILE:-}" ./scripts/isolated-preview-publish.sh remove '' "$(preview_number)" "$(preview_revision)"
 
 test-site-release-paths:
 	@./scripts/test-site-release-paths.sh
@@ -125,11 +193,93 @@ test-site-release-verifier:
 test-site-publisher: test-site-preview-context test-site-preview-live
 	@./scripts/test-site-publisher.sh
 
-test-site-preview-context:
+test-site-preview-context: test-verify-removed-site-preview-live
 	@./scripts/test-site-preview-context.sh
+
+.PHONY: verify-removed-site-preview-live test-verify-removed-site-preview-live
+verify-removed-site-preview-live:
+	@preview_number="$(preview_number)" bash ./scripts/verify-removed-site-preview-live.sh
+
+test-verify-removed-site-preview-live:
+	@bash ./scripts/test-verify-removed-site-preview-live.sh
 
 test-site-preview-live:
 	@bash ./scripts/test-site-preview-live.sh
+
+test-site-preview-plan:
+	@python3 ./scripts/test-plan-site-preview.py
+
+test-site-preview-generation:
+	@./scripts/test-site-preview-generation.sh
+
+test-site-preview-endpoints:
+	@./scripts/test-site-preview-endpoints.sh
+
+test-site-preview-platform: site-vendor
+	@$(MAKE) test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher
+	@./scripts/test-public-edge-static-site.sh
+
+.PHONY: test-status-openapi test-public-gpu-freshness test-public-edge-static-site test-site-preview-acceptance
+
+test-status-openapi:
+	@node ./scripts/test-status-openapi.js
+
+test-public-gpu-freshness:
+	@./scripts/test-public-gpu-freshness.sh
+
+test-public-edge-static-site:
+	@./scripts/test-public-edge-static-site.sh
+
+test-site-preview-acceptance: site-vendor
+	@$(MAKE) test-gateway-site-state test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher test-status-openapi
+	@node ./scripts/test-software-versions.js
+	@./scripts/test-public-gpu-freshness.sh
+	@./scripts/test-public-edge-static-site.sh
+
+test-preview-isolation:
+	@./scripts/test-preview-isolation.sh
+
+test-preview-lifecycle:
+	@./scripts/test-preview-lifecycle.sh
+
+test-preview-provision:
+	@./scripts/test-preview-provision.sh
+
+test-preview-status-renderer:
+	@./scripts/test-preview-status-renderer.sh
+
+test-preview-frontend-builder:
+	@./scripts/test-preview-frontend-builder.sh
+
+test-isolated-preview-ci:
+	@./scripts/test-isolated-preview-ci.sh
+
+test-isolated-preview-ci-artifact:
+	@./scripts/test-isolated-preview-ci-artifact.sh
+
+test-record-site-preview-deployment:
+	@./scripts/test-record-site-preview-deployment.sh
+
+test-verify-isolated-site-preview-live:
+	@./scripts/test-verify-isolated-site-preview-live.sh
+
+test-prepare-public-preview-inventory:
+	@./scripts/test-prepare-public-preview-inventory.sh
+
+test-node-observation-guard:
+	@./scripts/test-node-observation-guard.sh
+
+test-isolated-preview-runtime-config:
+	@./scripts/test-isolated-preview-runtime-config.sh
+
+test-prepare-isolated-site-preview-artifact:
+	@./scripts/test-prepare-isolated-site-preview-artifact.sh
+
+test-isolated-preview-publish:
+	@./scripts/test-isolated-preview-publish.sh
+
+test-prepare-isolated-preview-composition:
+	@./scripts/test-prepare-isolated-preview-composition.sh
 
 test-edge-install-ownership:
 	@./scripts/test-edge-install-ownership.sh
@@ -141,8 +291,22 @@ verify-site-release:
 verify-site-preview-artifact:
 	@./scripts/verify-site-preview-artifact.sh "$(site_release_dir)" "$(preview_revision)"
 
+verify-isolated-preview-ci-artifact:
+	@./scripts/verify-isolated-preview-ci-artifact.sh
+
+verify-isolated-site-preview-live:
+	@./scripts/verify-isolated-site-preview-live.sh
+
 verify-site-preview-live:
 	@./scripts/verify-site-preview-live.sh "$(site_release_dir)" "$(site_publish_prefix)" "$(preview_revision)" "$(site_origin)"
+
+verify-site-preview-endpoints:
+	@./scripts/verify-site-preview-endpoints.sh "$(site_release_dir)" "$(site_publish_prefix)" "$(site_origin)"
+
+.PHONY: smoke-site-preview-acceptance
+
+smoke-site-preview-acceptance:
+	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" GDC_EXPECT_STATUS_PREFIX="/$(preview_number)/status/" GDC_EXPECT_NETWORK_SNAPSHOT=true GDC_EXPECT_GATEWAY_STATE=UNAVAILABLE GDC_EXPECT_CARD_COUNT="$(site_preview_expected_card_count)" GDC_EXPECT_NODE_STATES="$(site_preview_expected_node_states)" node ./scripts/capture-homepage-viewport.mjs "$(preview_origin)/$(preview_number)/" 1280 900 "$(site_release_dir).png" 0
 
 smoke-site-preview:
 	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" node ./scripts/capture-homepage-viewport.mjs "$(site_origin)/$(site_publish_prefix)/" 1280 900 "$(site_release_dir).png" 0
@@ -156,10 +320,20 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results
+test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check test-network-selection site-host-requirements-check test-recovery-contract test-participants-proxy test-network-observer test-site-serve test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+	@$(MAKE) test-devshard-release
+	@$(MAKE) test-devshard-artifacts
+	@bash ./scripts/test-node-container-control.sh
+	@bash ./scripts/test-node-container-lending.sh
+	@bash ./scripts/test-node-container-lending-docker.sh
+	@bash ./scripts/test-phase-ml-add-ownership.sh
+	@bash ./scripts/test-ml-lend-generic-pairs.sh
+	@bash ./scripts/test-ml-lending-two-host-layouts.sh
+	@bash ./scripts/test-detach-network-ml-host.sh
+	@bash ./scripts/test-validator-ml-lifecycle.sh
+	@$(MAKE) test-isolated-preview-ci-artifact
+	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
-	@python3 ./scripts/test-network-bootstrap.py
-	@./scripts/test-network-bootstrap-shell.sh
 	@python3 ./scripts/test-pin-candidate-dockerfile.py
 	@python3 ./scripts/test-patch-candidate-go-mod-download.py
 	@python3 ./scripts/test-patch-candidate-dapi-dockerfile.py
@@ -186,20 +360,33 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-publish-amd-mlnode-ci.sh
 	@./scripts/test-gdc-home.sh
 	@./scripts/test-ensure-inferenced-cli-output.sh
+	@bash ./scripts/test-inferenced-config-isolation.sh
 	@./scripts/test-ensure-warm-key.sh
 	@./scripts/test-launcher-root-contract.sh
 	@./scripts/test-gdc-github-report.sh
+	@./scripts/test-gdc-github-signer-diagnostic.sh
+	@./scripts/test-monitoring-inventory-drift.sh
 	@./scripts/test-diagnostic-envelope.sh
+	@./scripts/test-diagnostic-summaries-publishable.sh
 	@./scripts/test-phase-diagnostic-adapter.sh
 	@./scripts/test-classify-join-state.sh
 	@./scripts/test-classify-join-reentry.sh
 	@./scripts/test-join-identity-diagnostics.sh
 	@./scripts/test-join-existing-participant-rebind.sh
+	@./scripts/test-replace-retained-validator-identity.sh
+	@./scripts/test-authorize-retained-validator-replacement.sh
+	@./scripts/test-join-refusal-diagnostics.sh
+	@./scripts/test-join-blocklist-preflight.sh
+	@./scripts/test-join-run-log-lifecycle.sh
+	@./scripts/test-join-signer-diagnostic.sh
 	@./scripts/test-join-ml-qualification.sh
+	@bash ./scripts/test-ml-qualification-evidence.sh
+	@bash ./scripts/test-ml-qualification-failure.sh
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
-	@./scripts/verify-release-profiles.sh
+	@./scripts/test-host-identity-layout-probe.sh
 	@./scripts/test-profiles.sh
+	@bash ./scripts/test-core-release-profile.sh
 	@./scripts/test-official-devshard-profile.sh
 	@./scripts/test-api-entrypoint.sh
 	@./scripts/test-network-verify-identity-resolution.sh
@@ -220,18 +407,23 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-recovery-readiness-predicate.sh
 	@./scripts/test-capture-poc-snapshot.sh
 	@$(MAKE) test-gateway-site-state
-	@$(MAKE) test-site-release-paths test-site-release-verifier test-site-publisher
+	@$(MAKE) test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-generation test-site-preview-platform
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
 	@./scripts/test-public-traffic-readiness.sh
 	@./scripts/test-gateway-admission-deployment.sh
 	@./scripts/test-suspend-gateway-admission.sh
 	@./scripts/test-firewall-policy.sh
+	@./scripts/test-join-early-host-readiness.sh
+	@./scripts/test-prepare-nvidia-kernel-modules.sh
+	@./scripts/test-prepare-amd-rocm.sh
 	@./scripts/test-public-grafana-targets.sh
+	@./scripts/test-dashboard-generator.sh
 	@./scripts/test-public-gpu-freshness.sh
 	@python3 ./scripts/test-gateway-admission-observer.py
 	@python3 ./scripts/test-gateway-admission-proxy.py
 	@./scripts/test-gateway-migration.sh
+	@bash ./scripts/test-gateway-poc-windows.sh
 	@./scripts/test-host-sync-verdict.sh
 	@./scripts/test-ensure-account-balance.sh
 	@./scripts/test-gateway-reserve-policy.sh
@@ -239,6 +431,9 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-inference-until-ready.sh
 	@./scripts/test-gateway-escrow-reconciler.sh
 	@./scripts/test-faucet-caddy-config.sh
+	@./scripts/test-claim-devnet-faucet.sh
+	@./scripts/test-proxy-ingress-layouts.sh
+	@./scripts/test-participant-edge-start.sh
 	@./scripts/test-public-edge-single-listener.sh
 	@./scripts/test-public-homepage-rendered-asset.sh
 	@./scripts/test-participant-poc-caddy-config.sh
@@ -248,6 +443,10 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@python3 ./scripts/test-telegram-bot.py
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
+	@./scripts/test-inspect-accelerator.sh
+	@./scripts/test-accelerator-profile.sh
+	@./scripts/test-amd-preflight-order.sh
+	@./scripts/test-select-nvidia-driver.sh
 	@./scripts/test-validator-backup-contract.sh
 	@./scripts/test-observe-network-composition.sh
 	@./scripts/test-observe-network-state.sh
@@ -260,22 +459,43 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-resolve-join-components.sh
 	@./scripts/test-resolve-join-profile.sh
 	@./scripts/test-host-join-plan.sh
+	@bash ./scripts/test-reset-then-join-entry.sh
 	@./scripts/test-join-preflight-diagnostics.sh
 	@./scripts/test-join-lineage-preflight.sh
 	@./scripts/test-join-lineage-quorum-adversarial.sh
 	@./scripts/test-host-join-state-sync.sh
+	@bash ./scripts/test-verify-lineage-trust-fresh-boundaries.sh
 	@./scripts/test-verify-state-sync-config.sh
 	@./scripts/test-migrate-v1-validator-identity.sh
 	@./scripts/test-verify-canonical-join-state.sh
+	@bash ./scripts/test-post-sync-join-helper.sh
+	@./scripts/test-verify-post-sync-join-state.sh
+	@./scripts/test-verify-post-sync-join-state-layouts.sh
+	@./scripts/test-join-resume-new-canonical.sh
+	@./scripts/test-join-resume-post-sync-shared.sh
+	@./scripts/test-join-resume-restore-post-sync-refusal.sh
+	@./scripts/test-join-resume-restore-membership.sh
 	@./scripts/test-host-join-resume-canonical.sh
+	@./scripts/test-recover-incident-flat-layout.sh
 	@./scripts/test-host-join-resume-signer-readback.sh
 	@./scripts/test-phase-ml-attach-completion.sh
+	@./scripts/test-network-ml-endpoints.sh
+	@./scripts/test-resolve-reset-dai-backup.sh
+	@./scripts/test-verify-inactive-validator-key.sh
 	@./scripts/test-verify-complete-join-state.sh
 	@./scripts/test-wait-state-sync-canary.sh
 	@./scripts/test-promote-state-sync-generation.sh
 	@./scripts/test-record-state-sync-canary.sh
 	@./scripts/test-verify-tmkms-signing-state.sh
+	@bash ./scripts/test-consensus-recovery-preparation.sh
+	@bash ./scripts/test-consensus-signer-install.sh
+	@bash ./scripts/test-consensus-recovery-inputs.sh
+	@bash ./scripts/test-consensus-signer-recovery.sh
+	@bash ./scripts/test-phase-consensus-signer-recovery.sh
+	@./scripts/test-tmkms-state-schema-agreement.sh
 	@./scripts/test-signer-activation-gate.sh
+	@./scripts/test-verify-participant-validator-key.sh
+	@./scripts/test-join-registered-key-refusal.sh
 	@./scripts/test-init-identity-restore-diagnostics.sh
 	@./scripts/test-collect-identities-transport-resume.sh
 	@./scripts/test-cleanroom-no-python-restore.sh
@@ -286,28 +506,53 @@ test: site-js-check site-host-requirements-check test-recovery-contract test-par
 	@./scripts/test-running-host-recovery-orchestration.sh
 	@./scripts/test-genesis-role-config.sh
 	@./scripts/test-prepare-join-role-config.sh
+	@./scripts/test-prepare-accelerator-binding.sh
 	@./scripts/test-role-separation.sh
 	@./scripts/test-domain-cli.sh
 	@./scripts/test-explicit-public-host.sh
 	@./scripts/test-cleanroom-contract.sh
 
+test-command-dependency-contract:
+	@./scripts/test-command-dependency-contract.sh
+
+test-verify-post-sync-join-state:
+	@./scripts/test-verify-post-sync-join-state.sh
+
+# This executes the remote post-sync body in an isolated container. It is
+# separate from the hermetic unit fixture because it exercises /srv/dai's
+# flat promoted pointer and proves a legacy directory fails closed.
+test-verify-post-sync-join-state-layouts:
+	@./scripts/test-verify-post-sync-join-state-layouts.sh
+
 verify-candidate-workflow:
 	@./scripts/test-candidate-workflow.sh
 
-edge-integration:
+edge-integration: site-vendor
 	@./scripts/test-public-edge-static-site.sh
+
+# The Bootstrap installer is only exercised in an ephemeral container with a
+# new /srv/dai mount, never against an operator Host
+.PHONY: test-bootstrap-install test-bootstrap-install-root
+test-bootstrap-install:
+	@docker build --file test/Dockerfile.bootstrap --tag gdc-bootstrap-install-test ..
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_TEST_DISPOSABLE_ROOT=true gdc-bootstrap-install-test
+
+test-bootstrap-install-root:
+	@python3 ./scripts/test-bootstrap-install.py
 
 # Bats remains test-only. These two targets exercise the JOIN contracts in a
 # disposable host-shaped container; no production host, key or GPU is used.
 bats:
 	@$(BATS) test
 
-bats-docker:
-	@docker build --file test/Dockerfile --tag $(BATS_DOCKER_IMAGE) .
+bats-docker-image:
+	@docker build --file test/Dockerfile --tag $(BATS_DOCKER_IMAGE) ..
+
+bats-docker: bats-docker-image
 	@docker run --rm --user root -e GDC_BATS_CONTAINER=true $(BATS_DOCKER_IMAGE) test
 
 bats-dind:
-	@docker build --file test/Dockerfile.dind --tag $(BATS_DIND_IMAGE) .
+	@docker build --file test/Dockerfile.dind --tag $(BATS_DIND_IMAGE) ..
 	@docker run --rm --privileged -e GDC_BATS_CONTAINER=true -e GDC_BATS_DIND=true $(BATS_DIND_IMAGE) test
 
 # Named JOIN gates stay local and disposable. The cleanroom contract exercises
@@ -327,13 +572,166 @@ test-recovery-contract: test-recover-incident
 	@./scripts/test-network-recovery-contract.sh
 
 .PHONY: test-recover-incident
-.PHONY: test-command-results
+.PHONY: bootstrap-monitor-dependencies bootstrap-monitor bootstrap-monitor-notify test-bootstrap-monitor
+
+bootstrap_monitor_report ?= $(CURDIR)/.data/bootstrap-monitor/report.json
+bootstrap_monitor_base_url ?= https://gonka-dev.net
+bootstrap_monitor_release_dir ?= $(CURDIR)/../bootstrap
+
+bootstrap-monitor-dependencies:
+	@python3 -m pip install --disable-pip-version-check jsonschema==4.23.0
+
+bootstrap-monitor:
+	@python3 ./scripts/monitor-network-bootstrap.py check --report "$(bootstrap_monitor_report)" --base-url "$(bootstrap_monitor_base_url)" --release-dir "$(bootstrap_monitor_release_dir)"
+
+bootstrap-monitor-notify:
+	@python3 ./scripts/monitor-network-bootstrap.py notify --report "$(bootstrap_monitor_report)"
+
+test-bootstrap-monitor:
+	@python3 ./scripts/test-monitor-network-bootstrap.py
+
+.PHONY: bootstrap-publication-dependencies test-bootstrap-publication test-network-bootstrap test-core-release-profile prepare-bootstrap-release publish-bootstrap-release
+bootstrap_release_dir ?= $(CURDIR)/.data/bootstrap-release
+bootstrap_revision ?= $(shell git rev-parse HEAD)
+
+bootstrap-publication-dependencies: bootstrap-monitor-dependencies
+	@command -v ssh >/dev/null && command -v rsync >/dev/null || { echo 'Install openssh-client and rsync on the publication runner' >&2; exit 2; }
+
+test-network-bootstrap:
+	@python3 ./scripts/test-network-bootstrap.py
+	@bash ./scripts/test-network-bootstrap-shell.sh
+	@python3 ./scripts/test-bootstrap-software.py
+
+test-core-release-profile:
+	@bash ./scripts/test-core-release-profile.sh
+
+test-bootstrap-publication:
+	@python3 ./scripts/test-bootstrap-release.py
+
+.PHONY: test-bootstrap-publisher-ownership
+test-bootstrap-publisher-ownership:
+	@python3 ./scripts/test-bootstrap-publisher-ownership.py
+
+prepare-bootstrap-release:
+	@python3 ./scripts/bootstrap-release.py prepare "$(CURDIR)/.." "$(bootstrap_release_dir)" "$(bootstrap_revision)"
+
+publish-bootstrap-release:
+	@bash ./scripts/publish-bootstrap-release.sh "$(bootstrap_release_dir)" "$(deploy_host)" "$(deploy_user)"
+
+.PHONY: test-command-results test-post-sync-join-helper test-phase-ml-add-ownership test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-node-container-control test-node-container-lending-docker test-prepare-accelerator-binding test-reset-then-join-entry test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-ml-lend-generic-pairs test-ml-lending-two-host-layouts test-detach-network-ml-host test-wait-dapi-worker-removal test-validator-ml-lifecycle test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal test-gdc-p0a
 test-command-results:
 	@bash ./scripts/test-command-results.sh
+
+test-post-sync-join-helper:
+	@bash ./scripts/test-post-sync-join-helper.sh
+
+test-phase-ml-add-ownership:
+	@bash ./scripts/test-phase-ml-add-ownership.sh
+
+test-phase-ml-remove-ownership:
+	@bash ./scripts/test-phase-ml-remove-ownership.sh
+
+test-phase-ml-status:
+	@bash ./scripts/test-phase-ml-status.sh
+
+test-node-container-lending-docker:
+	@bash ./scripts/test-node-container-lending-docker.sh
+
+test-phase-node-stop-lifecycle:
+	@bash ./scripts/test-phase-node-stop-lifecycle.sh
+
+test-node-container-control:
+	@bash ./scripts/test-node-container-control.sh
+
+test-prepare-accelerator-binding:
+	@bash ./scripts/test-prepare-accelerator-binding.sh
+
+test-ml-lend-generic-pairs:
+	@bash ./scripts/test-ml-lend-generic-pairs.sh
+
+test-ml-lending-two-host-layouts:
+	@bash ./scripts/test-ml-lending-two-host-layouts.sh
+
+test-detach-network-ml-host:
+	@bash ./scripts/test-detach-network-ml-host.sh
+
+test-wait-dapi-worker-removal:
+	@bash ./scripts/test-wait-dapi-worker-removal.sh
+
+test-validator-ml-lifecycle:
+	@bash ./scripts/test-validator-ml-lifecycle.sh
+
+test-read-lent-ml-record:
+	@bash ./scripts/test-read-lent-ml-record.sh
+
+test-two-host-lifecycle-locks:
+	@bash ./scripts/test-two-host-lifecycle-locks.sh
+
+test-pinned-dapi-worker-removal: bats-docker-image
+	@bash ./scripts/test-pinned-dapi-worker-removal.sh
+
+test-gdc-p0a: test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-join-resume-caught-up-canary test-phase-join-caught-up-lineage test-phase-ml-add-ownership test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-host-layouts test-detach-network-ml-host test-wait-dapi-worker-removal test-validator-ml-lifecycle test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal
+
+test-reset-then-join-entry:
+	@bash ./scripts/test-reset-then-join-entry.sh
+
+test-verify-lineage-trust-fresh-boundaries:
+	@bash ./scripts/test-verify-lineage-trust-fresh-boundaries.sh
+
+test-verify-state-sync-config:
+	@bash ./scripts/test-verify-state-sync-config.sh
+
+test-wait-state-sync-canary:
+	@bash ./scripts/test-wait-state-sync-canary.sh
+
+test-phase-join-caught-up-lineage:
+	@bash ./scripts/test-phase-join-caught-up-lineage.sh
+
+test-join-resume-new-canonical:
+	@bash ./scripts/test-join-resume-new-canonical.sh
+
+test-join-resume-post-sync-shared:
+	@bash ./scripts/test-join-resume-post-sync-shared.sh
+
+test-join-resume-restore-post-sync-refusal:
+	@bash ./scripts/test-join-resume-restore-post-sync-refusal.sh
+
+test-join-resume-restore-membership:
+	@bash ./scripts/test-join-resume-restore-membership.sh
+
+test-join-resume-caught-up-canary:
+	@bash ./scripts/test-join-resume-caught-up-canary.sh
+
+test-register-join-monitoring-targets:
+	@bash ./scripts/test-register-join-monitoring-targets.sh
+
+.PHONY: test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+test-registration-failover:
+	@bash ./scripts/test-register-participant-failover.sh
+
+test-proxy-ingress-layouts:
+	@bash ./scripts/test-proxy-ingress-layouts.sh
+
+test-reconcile-proxy-ingress-remote:
+	@bash ./scripts/test-reconcile-proxy-ingress-remote.sh
 
 .PHONY: test-participants-proxy
 test-participants-proxy:
 	@node ./scripts/test-participants-proxy.mjs
+
+.PHONY: test-network-observer test-network-observer-http test-network-observer-install
+test-network-observer: test-network-observer-http test-network-observer-install test-verify-network-observer
+	@node ./scripts/test-network-observer.mjs
+
+test-network-observer-http:
+	@node ./scripts/test-network-observer-http.mjs
+
+test-network-observer-install:
+	@docker build --file test/Dockerfile.bootstrap --tag gdc-network-observer-install-test ..
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec \
+		-e GDC_TEST_DISPOSABLE_ROOT=true --volume "$(CURDIR)/..:/source:ro" \
+		--entrypoint python3 gdc-network-observer-install-test \
+		/source/net-deployment-runbook/scripts/test-network-observer-install.py
 
 test-recover-incident:
 	@bash ./scripts/test-recover-incident.sh
@@ -350,3 +748,54 @@ test-recover-incident-services-runtime:
 
 test-recovery-rehearsal:
 	@./scripts/test-network-recovery-rehearsal.sh --manifest "$(manifest)" --lab-approval "$(lab_approval)" --evidence-dir "$(evidence_dir)" --timeout-seconds "$(timeout_seconds)"
+
+# Exact released signer, synthetic key, no live mounts and no network.
+.PHONY: test-tmkms-recovery-boundary
+test-tmkms-recovery-boundary:
+	@image="$$(docker build -q -f scripts/tmkms-boundary.Dockerfile scripts)" && \
+		docker run --rm --network none --cpus 0.5 --memory 256m "$$image"
+
+.PHONY: test-devshard-release devshard-release-prepare devshard-release-fetch devshard-release-build devshard-release-verify devshard-release-publish
+test-devshard-release:
+	@python3 ./scripts/test-devshard-release.py
+
+devshard-release-prepare:
+	@python3 ./scripts/devshard-release.py prepare
+
+devshard-release-fetch:
+	@python3 ./scripts/devshard-release.py fetch
+
+devshard-release-build:
+	@python3 ./scripts/devshard-release.py build
+
+devshard-release-verify:
+	@python3 ./scripts/devshard-release.py verify
+
+devshard-release-publish:
+	@python3 ./scripts/devshard-release.py publish
+
+.PHONY: test-devshard-artifacts devshard-artifacts-prepare devshard-artifacts-fetch devshard-artifacts-build devshard-artifacts-verify devshard-artifacts-smoke devshard-artifacts-verify-reuse devshard-artifacts-publish
+DEVSHARD_ARTIFACT_GROUP_ARGS := $(foreach group,$(groups),--group $(group))
+test-devshard-artifacts:
+	@python3 ./scripts/test-devshard-artifacts.py
+
+devshard-artifacts-prepare:
+	@python3 ./scripts/devshard-artifacts.py prepare $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-fetch:
+	@python3 ./scripts/devshard-artifacts.py fetch $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-build:
+	@python3 ./scripts/devshard-artifacts.py build $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-verify:
+	@python3 ./scripts/devshard-artifacts.py verify $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-smoke:
+	@python3 ./scripts/devshard-artifacts.py smoke $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-verify-reuse:
+	@python3 ./scripts/devshard-artifacts.py verify-reuse $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+devshard-artifacts-publish:
+	@python3 ./scripts/devshard-artifacts.py publish $(DEVSHARD_ARTIFACT_GROUP_ARGS)

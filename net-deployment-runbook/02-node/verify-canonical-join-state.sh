@@ -95,7 +95,11 @@ abci_info="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:26657/
   || { echo 'canonical_core_unavailable: local Core abci_info endpoint is unavailable' >&2; exit 1; }
 # `status.node_info.version` is the embedded CometBFT version (for example
 # 0.38.19), not the Gonka Core version selected by the JOIN profile.
-actual_core_version="$(jq -er '.result.response.version' <<<"$abci_info")"
+# Core releases are reported by different official runtimes as either
+# `0.x.y` or `v0.x.y`; the JOIN profile stores the canonical form without the
+# presentation prefix.  Do not weaken the comparison beyond that one prefix.
+actual_core_version="$(jq -er '.result.response.version | strings | ltrimstr("v") | select(length > 0)' <<<"$abci_info")" \
+  || { echo 'canonical_core_unavailable: local Core abci_info endpoint lacks its version' >&2; exit 1; }
 [[ "$actual_chain_id" == "$expected_chain_id" ]] \
   || { echo 'canonical_chain_id_mismatch: local Core serves another chain' >&2; exit 1; }
 [[ "$actual_p2p_node_id" == "$expected_p2p_node_id" ]] \
@@ -130,23 +134,48 @@ dapi_exe="$(docker exec "$api_container" readlink -f /proc/1/exe)" \
 [[ "$dapi_exe" == /* ]] \
   || { echo 'canonical_dapi_unavailable: DAPI pid 1 executable is not absolute' >&2; exit 1; }
 expected_dapi_archive_sha256="$(awk -F= '$1 == "DAPI_UPGRADE_SHA256" {print substr($0, index($0, "=") + 1); exit}' "$deploy_dir/.env")"
-[[ "$expected_dapi_archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
-  || { echo 'canonical_dapi_unavailable: generated DAPI archive digest is missing' >&2; exit 1; }
-dapi_receipt="$(docker exec "$api_container" cat /root/.dapi/gdc-join-dapi-runtime.env)" \
-  || { echo 'canonical_dapi_unavailable: DAPI runtime receipt is unavailable' >&2; exit 1; }
-receipt_dapi_version="$(awk -F= '$1 == "DAPI_VERSION" {print $2; exit}' <<<"$dapi_receipt")"
-receipt_dapi_commit="$(awk -F= '$1 == "DAPI_COMMIT" {print tolower($2); exit}' <<<"$dapi_receipt")"
-receipt_archive_sha256="$(awk -F= '$1 == "DAPI_ARCHIVE_SHA256" {print $2; exit}' <<<"$dapi_receipt")"
-receipt_binary_sha256="$(awk -F= '$1 == "DAPI_BINARY_SHA256" {print $2; exit}' <<<"$dapi_receipt")"
-[[ "$receipt_dapi_version" == "$expected_dapi_version" && "$receipt_dapi_commit" == "$expected_dapi_commit" && "$receipt_archive_sha256" == "$expected_dapi_archive_sha256" && "$receipt_binary_sha256" =~ ^[0-9a-f]{64}$ ]] \
-  || { echo 'canonical_dapi_receipt_mismatch: DAPI runtime receipt differs from generated profile' >&2; exit 1; }
-actual_dapi_binary_sha256="$(docker exec "$api_container" sha256sum /root/.dapi/cosmovisor/current/bin/decentralized-api | awk '{print $1}')" \
+expected_dapi_archive_url="$(awk -F= '$1 == "DAPI_UPGRADE_URL" {print substr($0, index($0, "=") + 1); exit}' "$deploy_dir/.env")"
+dapi_binary=/root/.dapi/cosmovisor/current/bin/decentralized-api
+if [[ -z "$expected_dapi_archive_sha256$expected_dapi_archive_url" ]]; then
+  # Operator-built portable DAPI, see PORTABLE-RUNTIME.md: the profile clears
+  # the archive inputs, so the entrypoint installs nothing and writes no
+  # receipt. The image binding above is the artifact identity; version and
+  # commit are read from the running DAPI below.
+  dapi_runtime_source=image
+else
+  dapi_runtime_source=archive
+  [[ "$expected_dapi_archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo 'canonical_dapi_unavailable: generated DAPI archive digest is missing' >&2; exit 1; }
+  dapi_receipt="$(docker exec "$api_container" cat /root/.dapi/gdc-join-dapi-runtime.env)" \
+    || { echo 'canonical_dapi_unavailable: DAPI runtime receipt is unavailable' >&2; exit 1; }
+  receipt_dapi_version="$(awk -F= '$1 == "DAPI_VERSION" {print $2; exit}' <<<"$dapi_receipt")"
+  receipt_dapi_commit="$(awk -F= '$1 == "DAPI_COMMIT" {print tolower($2); exit}' <<<"$dapi_receipt")"
+  receipt_archive_sha256="$(awk -F= '$1 == "DAPI_ARCHIVE_SHA256" {print $2; exit}' <<<"$dapi_receipt")"
+  receipt_binary_sha256="$(awk -F= '$1 == "DAPI_BINARY_SHA256" {print $2; exit}' <<<"$dapi_receipt")"
+  [[ "$receipt_dapi_version" == "$expected_dapi_version" && "$receipt_dapi_commit" == "$expected_dapi_commit" && "$receipt_archive_sha256" == "$expected_dapi_archive_sha256" && "$receipt_binary_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo 'canonical_dapi_receipt_mismatch: DAPI runtime receipt differs from generated profile' >&2; exit 1; }
+  actual_dapi_version="$receipt_dapi_version"
+  actual_dapi_commit="$receipt_dapi_commit"
+fi
+actual_dapi_binary_sha256="$(docker exec "$api_container" sha256sum "$dapi_binary" | awk '{print $1}')" \
   || { echo 'canonical_dapi_unavailable: cannot hash running DAPI binary' >&2; exit 1; }
-[[ "$actual_dapi_binary_sha256" == "$receipt_binary_sha256" ]] \
+[[ "$actual_dapi_binary_sha256" =~ ^[0-9a-f]{64}$ ]] \
+  || { echo 'canonical_dapi_unavailable: cannot hash running DAPI binary' >&2; exit 1; }
+[[ "$dapi_runtime_source" == image || "$actual_dapi_binary_sha256" == "$receipt_binary_sha256" ]] \
   || { echo 'canonical_dapi_binary_mismatch: running DAPI binary differs from verified runtime receipt' >&2; exit 1; }
 dapi_versions="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:9000/v1/versions)" \
   || { echo 'canonical_dapi_unavailable: local DAPI versions endpoint is unavailable' >&2; exit 1; }
 api_node_version="$(jq -er '.node_version.version | strings | select(length > 0)' <<<"$dapi_versions")" \
   || { echo 'canonical_dapi_unavailable: DAPI versions endpoint lacks a live node version' >&2; exit 1; }
-printf 'PASS canonical runtime verified signer=%s chain_id=%s node_id=%s height=%s core=%s core_commit=%s profile_core_commit=%s core_exe=%s dapi=%s dapi_commit=%s dapi_exe=%s api_node_version=%s\n' \
-  "$expected_signer_state" "$actual_chain_id" "$actual_p2p_node_id" "$height" "$actual_core_version" "$actual_core_commit" "$expected_core_commit" "$core_exe" "$receipt_dapi_version" "$receipt_dapi_commit" "$dapi_exe" "$api_node_version"
+if [[ "$dapi_runtime_source" == image ]]; then
+  # A release build reports its tag as `v0.2.15-post3`, an operator build as
+  # `0.2.15-post3`; the Join Profile records the bare version.
+  actual_dapi_version="$(jq -er '.api_version.version | strings | ltrimstr("v") | select(length > 0)' <<<"$dapi_versions")" \
+    || { echo 'canonical_dapi_unavailable: DAPI versions endpoint lacks its own build version' >&2; exit 1; }
+  actual_dapi_commit="$(jq -er '.api_version.commit | strings | ascii_downcase | select(length > 0)' <<<"$dapi_versions")" \
+    || { echo 'canonical_dapi_unavailable: DAPI versions endpoint lacks its own build commit' >&2; exit 1; }
+  [[ "$actual_dapi_version" == "$expected_dapi_version" && "$actual_dapi_commit" == "$expected_dapi_commit" ]] \
+    || { echo 'canonical_dapi_runtime_mismatch: running DAPI build differs from generated profile' >&2; exit 1; }
+fi
+printf 'PASS canonical runtime verified signer=%s chain_id=%s node_id=%s height=%s core=%s core_commit=%s profile_core_commit=%s core_exe=%s dapi=%s dapi_commit=%s dapi_exe=%s api_node_version=%s dapi_source=%s dapi_binary_sha256=%s\n' \
+  "$expected_signer_state" "$actual_chain_id" "$actual_p2p_node_id" "$height" "$actual_core_version" "$actual_core_commit" "$expected_core_commit" "$core_exe" "$actual_dapi_version" "$actual_dapi_commit" "$dapi_exe" "$api_node_version" "$dapi_runtime_source" "$actual_dapi_binary_sha256"

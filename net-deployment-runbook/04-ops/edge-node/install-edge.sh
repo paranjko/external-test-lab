@@ -6,7 +6,7 @@ DEST=/srv/dai/edge
 if [[ $# -eq 3 ]]; then
   NODE="$3"
   [[ "$NODE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'invalid edge SSH alias' >&2; exit 2; }
-  DEST="/srv/dai/deploy/$NODE/edge"
+  DEST=/srv/dai/deploy/edge
 fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -a
@@ -21,7 +21,7 @@ expected_remote_prometheus="https://${GATEWAY_PUBLIC_HOST:-}/ops-prometheus"
 
 mkdir -p "$DEST"
 install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"
-install -d -m 0755 "$DEST/bootstrap"
+[[ -d "$DEST/bootstrap" ]] || install -d -m 0755 "$DEST/bootstrap"
 # Compose validates env_file paths even when only Caddy is selected. Seed an
 # empty non-contract file once for participant edges; only gateway apply may
 # replace it with a routable protocol contract.
@@ -32,8 +32,14 @@ if [[ ! -e "$DEST/gateway-admission.env" ]]; then
   install -m 0600 /dev/null "$DEST/gateway-admission.env"
 fi
 install -m 0600 "$1" "$DEST/.env"
-rm -rf "$DEST/public-grafana"
-cp -a "$HERE/public-grafana" "$DEST/public-grafana"
+# A running public Grafana bind-mounts the dashboards and provisioning
+# directories. Replacing those directories would leave the container on the
+# deleted inodes, serving its last imported definitions while the files on
+# disk are already current. Refresh the files inside the existing
+# directories instead so the provisioner sees every change.
+install -d -m 0755 "$DEST/public-grafana"
+find "$DEST/public-grafana" -mindepth 1 ! -type d -delete
+cp -a "$HERE/public-grafana/." "$DEST/public-grafana/"
 sed "s|__PUBLIC_GRAFANA_PROMETHEUS_URL__|$PUBLIC_GRAFANA_PROMETHEUS_URL|g" \
   "$HERE/public-grafana/provisioning/datasources/prometheus.yml" \
   >"$DEST/public-grafana/provisioning/datasources/prometheus.yml"
@@ -53,8 +59,7 @@ else
 fi
 edge_owner="${SUDO_USER:-root}:${SUDO_USER:-root}"
 chown "$edge_owner" "$DEST"
-# The site is provisioned by the OPS/site publisher and may include a
-# separately-owned preview tree. Preserve those owners while retaining the
-# installer ownership for every other edge file.
-find "$DEST" -mindepth 1 -maxdepth 1 ! -name site -exec chown -R "$edge_owner" {} +
+# Site and bootstrap releases are maintained by unprivileged publishers.
+# Preserve their owners while reconciling the other edge files.
+find "$DEST" -mindepth 1 -maxdepth 1 ! -name site ! -name bootstrap -exec chown -R "$edge_owner" {} +
 printf 'READY installed edge proxy in %s\n' "$DEST"

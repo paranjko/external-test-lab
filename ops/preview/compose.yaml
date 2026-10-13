@@ -1,0 +1,59 @@
+name: gdc-preview
+
+services:
+  caddy:
+    image: ${PREVIEW_CADDY_IMAGE:-caddy:2.11.4-alpine}
+    user: "${PREVIEW_CONTAINER_UID:-0}:${PREVIEW_CONTAINER_GID:-0}"
+    container_name: gdc-preview-caddy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PREVIEW_CADDY_PORT:-18090}:8080"
+    command: ["caddy", "run", "--config", "/etc/gdc-preview-control/Caddyfile.active", "--adapter", "caddyfile"]
+    volumes:
+      - ${PREVIEW_ROOT:?PREVIEW_ROOT is required}/control:/etc/gdc-preview-control:ro
+      - ${PREVIEW_RUNTIME_DIR:?PREVIEW_RUNTIME_DIR is required}:/run/gdc-preview
+      - ${PREVIEW_ROOT:?PREVIEW_ROOT is required}/control/caddy-data:/data
+      - ${PREVIEW_ROOT:?PREVIEW_ROOT is required}/control/caddy-config:/config
+      - ${PREVIEW_ROOT:?PREVIEW_ROOT is required}/releases:/srv/preview/releases:ro
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "2"
+
+  egress:
+    image: ${PREVIEW_CADDY_IMAGE:-caddy:2.11.4-alpine}
+    user: "${PREVIEW_CONTAINER_UID:-0}:${PREVIEW_CONTAINER_GID:-0}"
+    container_name: gdc-preview-egress
+    restart: unless-stopped
+    command: ["caddy", "run", "--config", "/etc/gdc-preview-control/egress.Caddyfile", "--adapter", "caddyfile"]
+    environment:
+      PREVIEW_OBSERVATION_HOST: api.gonka-dev.net
+      PREVIEW_PROMETHEUS_ORIGIN: ${PREVIEW_PROMETHEUS_ORIGIN:?PREVIEW_PROMETHEUS_ORIGIN is required}
+    volumes:
+      - ${PREVIEW_ROOT:?PREVIEW_ROOT is required}/control:/etc/gdc-preview-control:ro
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "2"
+
+  node-observation-guard:
+    image: ${PREVIEW_NODE_GUARD_IMAGE:-gdc-preview-node-observation-guard:local}
+    user: "${PREVIEW_CONTAINER_UID:-0}:${PREVIEW_CONTAINER_GID:-0}"
+    container_name: gdc-preview-node-guard
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,size=16m"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5

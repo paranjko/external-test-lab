@@ -13,7 +13,7 @@ NODE="$1"
 # local MLNode, so it restarts DAPI alone.
 ssh -T "$NODE" "NODE='$NODE' bash -s" <<'REMOTE'
 set -Eeuo pipefail
-cd "/srv/dai/deploy/$NODE"
+cd /srv/dai/deploy
 compose_files=(-f compose.yaml)
 services=(api)
 if [[ "$(cat .local-ml 2>/dev/null || printf false)" == true ]]; then

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://gonka-dev.net/v1.bootstrap.schema.json",
+  "chain_id": "gonka-software-fixture",
+  "genesis": {
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "seeds": [
+    {
+      "node_id": "1111111111111111111111111111111111111111",
+      "rpc": "https://one.example/chain-rpc",
+      "p2p": "tcp://one.example:5000",
+      "api": "https://one.example"
+    },
+    {
+      "node_id": "2222222222222222222222222222222222222222",
+      "rpc": "https://two.example/chain-rpc",
+      "p2p": "tcp://two.example:5000"
+    }
+  ],
+  "brokers": [],
+  "software": {
+    "schema_version": 1,
+    "platform": "linux/amd64",
+    "accelerator": "cuda",
+    "deployment": {
+      "repository": "https://example.com/gonka-fixture.git",
+      "commit": "1111111111111111111111111111111111111111",
+      "compose_files": [
+        {
+          "path": "deploy/join/docker-compose.yml",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "path": "deploy/join/docker-compose.mlnode.yml",
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      ]
+    },
+    "components": {
+      "node": {
+        "version": "v0.2.16-post1",
+        "image": "registry.example/node:0.2.15@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "upgrade": {
+          "name": "v0.2.16",
+          "artifact": {
+            "url": "https://example.com/inferenced-amd64.zip",
+            "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+            "format": "zip",
+            "executable": "inferenced"
+          }
+        }
+      },
+      "api": {
+        "version": "v0.2.16-post1",
+        "image": "registry.example/api:0.2.15-post3@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "upgrade": {
+          "name": "v0.2.16",
+          "artifact": {
+            "url": "https://example.com/decentralized-api-amd64.zip",
+            "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+            "format": "zip",
+            "executable": "decentralized-api"
+          }
+        }
+      },
+      "tmkms": {
+        "version": "0.2.15",
+        "image": "registry.example/tmkms:0.2.15@sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      "mlnode": {
+        "version": "3.0.16",
+        "image": "registry.example/mlnode:3.0.16@sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      }
+    },
+    "operator_cli": {
+      "version": "v0.2.16-post1",
+      "artifact": {
+        "url": "https://example.com/inferenced-linux-amd64.zip",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "format": "zip",
+        "executable": "inferenced"
+      }
+    },
+    "model": {
+      "id": "Qwen/Qwen3-0.6B",
+      "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "context_length": 2048,
+      "max_num_seqs": 64,
+      "gpu_memory_utilization": 0.85,
+      "dtype": "auto",
+      "tensor_parallel_size": 1
+    }
+  }
+}

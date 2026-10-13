@@ -1,0 +1,61 @@
+name: Network bootstrap monitor
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: network-bootstrap-monitor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      failed: ${{ steps.check.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5.0.0
+        with:
+          python-version: '3.12'
+      - name: Install schema validator
+        run: make -C net-deployment-runbook bootstrap-monitor-dependencies
+      - name: Check published bootstraps and every declared seed
+        id: check
+        run: make -C net-deployment-runbook bootstrap-monitor
+      - name: Retain per-network results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: bootstrap-monitor-report
+          path: net-deployment-runbook/.data/bootstrap-monitor/report.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30
+
+  notify:
+    needs: check
+    if: ${{ always() && needs.check.outputs.failed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: telgram_gonka_dev_bot
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: bootstrap-monitor-report
+          path: net-deployment-runbook/.data/bootstrap-monitor
+      - name: Notify Telegram once per failed network
+        env:
+          GDC_TELEGRAM_BOT_TOKEN: ${{ secrets.GDC_TELEGRAM_BOT_TOKEN }}
+          GDC_TELEGRAM_NOTIFICATION: ${{ vars.GDC_TELEGRAM_NOTIFICATION }}
+        run: make -C net-deployment-runbook bootstrap-monitor-notify

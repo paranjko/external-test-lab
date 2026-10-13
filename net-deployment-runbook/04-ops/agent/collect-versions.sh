@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 [[ $# -eq 1 && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2
-ENV_FILE="/srv/dai/deploy/$1/monitoring-agent/.env"
+ENV_FILE=/srv/dai/deploy/monitoring-agent/.env
 [[ -s "$ENV_FILE" ]] || exit 1
 # shellcheck disable=SC1090
 source "$ENV_FILE"

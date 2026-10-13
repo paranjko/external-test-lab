@@ -118,7 +118,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the gateway has counted no request yet"
         },
         "overrides": []
       },
@@ -139,11 +140,12 @@
       },
       "targets": [
         {
-          "expr": "sum(devshard_gateway_requests_total) or vector(0)",
+          "expr": "sum(devshard_gateway_requests_total)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Chat requests the gateway has counted since it started, by user-visible outcome. A cache hit counts here without a routed completion."
     },
     {
       "id": 53,
@@ -173,7 +175,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the gateway limiter was not scraped"
         },
         "overrides": []
       },
@@ -194,11 +197,12 @@
       },
       "targets": [
         {
-          "expr": "sum(devshard_gateway_inflight_requests) or vector(0)",
+          "expr": "sum(devshard_gateway_inflight_requests)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "A zero here is a measured idle gateway. Empty means the gateway limiter was not scraped."
     },
     {
       "id": 54,
@@ -228,7 +232,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the readiness probe is missing or stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -249,11 +254,12 @@
       },
       "targets": [
         {
-          "expr": "max(gdc_gateway_readiness_state{state=\"TRAFFIC_READY\"}) or vector(0)",
+          "expr": "max(gdc_gateway_readiness_state{state=\"TRAFFIC_READY\"}) and on() (time() - max(gdc_gateway_readiness_observed_timestamp_seconds) < 30)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "One when a verified routed completion is currently available. Gated on the age of the probe observation, so a stopped probe stops the tile instead of freezing it."
     },
     {
       "id": 55,
@@ -283,7 +289,8 @@
               }
             ]
           },
-          "unit": "percent"
+          "unit": "percent",
+          "noValue": "the gateway was not scraped"
         },
         "overrides": []
       },
@@ -304,11 +311,12 @@
       },
       "targets": [
         {
-          "expr": "max(devshard_gateway_capacity_scale) * 100 or vector(0)",
+          "expr": "max(devshard_gateway_capacity_scale) * 100",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Share of baseline capacity the gateway can currently route to. Empty means the gateway was not scraped."
     },
     {
       "id": 56,
@@ -317,7 +325,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Rate-limited requests since restart",
+      "title": "Participant-budget rejections (7d)",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -338,7 +346,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no rejection counter was scraped"
         },
         "overrides": []
       },
@@ -359,11 +368,12 @@
       },
       "targets": [
         {
-          "expr": "sum(devshard_gateway_limit_rejections_total) or vector(0)",
+          "expr": "round(sum(increase(devshard_gateway_participant_limit_rejections_total[7d])))",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Attempts refused by a per-participant budget. The build exports no gateway-wide rejection counter, so this is the participant-scoped one."
     },
     {
       "id": 210,
@@ -416,8 +426,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -435,7 +445,8 @@
               }
             ]
           },
-          "unit": "reqps"
+          "unit": "reqps",
+          "noValue": "the gateway has counted no request yet"
         },
         "overrides": []
       },
@@ -455,11 +466,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome) (rate(devshard_gateway_requests_total[5m])) or vector(0)",
+          "expr": "sum by (outcome) (rate(devshard_gateway_requests_total[15m]))",
           "refId": "A",
           "legendFormat": "{{outcome}}"
         }
-      ]
+      ],
+      "description": "Requests per second by user-visible outcome. A flat zero is a measured idle gateway; a gap is a window with no counter to read."
     },
     {
       "id": 62,
@@ -499,8 +511,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -518,7 +530,8 @@
               }
             ]
           },
-          "unit": "reqps"
+          "unit": "reqps",
+          "noValue": "the gateway has started no attempt yet"
         },
         "overrides": []
       },
@@ -538,11 +551,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (role) (rate(devshard_gateway_attempts_started_total[5m])) or vector(0)",
+          "expr": "sum by (role) (rate(devshard_gateway_attempts_started_total[1h]))",
           "refId": "A",
           "legendFormat": "{{role}}"
         }
-      ]
+      ],
+      "description": "Attempts the gateway started per second, by the role it gave the executor. Averaged over an hour because attempts arrive in bursts."
     },
     {
       "id": 63,
@@ -551,7 +565,7 @@
         "uid": "prometheus"
       },
       "type": "table",
-      "title": "Requests by outcome",
+      "title": "Requests by model and outcome",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -566,7 +580,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "the gateway has counted no request yet"
         },
         "overrides": []
       },
@@ -584,10 +599,27 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome,reason) (devshard_gateway_requests_total)",
+          "expr": "sum by (model,outcome,reason) (devshard_gateway_requests_total)",
           "refId": "A",
           "format": "table",
           "instant": true
+        }
+      ],
+      "description": "Every request the gateway has counted, by model, user-visible outcome and the bounded reason behind it.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "model": "Model",
+              "outcome": "Outcome",
+              "reason": "Reason",
+              "Value": "Count"
+            }
+          }
         }
       ]
     },
@@ -613,7 +645,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "the gateway tracks no executor"
         },
         "overrides": []
       },
@@ -637,6 +670,7 @@
           "instant": true
         }
       ],
+      "description": "Rows appear once a participant is registered with the gateway for a model. An empty table means no executor is tracked at all, not that every executor is idle.",
       "transformations": [
         {
           "id": "organize",
@@ -704,8 +738,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -723,7 +757,8 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "s",
+          "noValue": "no first-content histogram was scraped"
         },
         "overrides": []
       },
@@ -743,11 +778,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[15m]))) or vector(0)",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[6h])))",
           "refId": "A",
           "legendFormat": "p50"
         }
-      ]
+      ],
+      "description": "Time from gateway send to first content, over a six-hour window. The window is wide because the gateway observes only a few attempts an hour; a narrower one leaves the line undefined between bursts."
     },
     {
       "id": 72,
@@ -787,8 +823,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -806,7 +842,8 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "s",
+          "noValue": "no first-content histogram was scraped"
         },
         "overrides": []
       },
@@ -826,11 +863,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[15m]))) or vector(0)",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(devshard_gateway_participant_first_content_seconds_bucket[6h])))",
           "refId": "A",
           "legendFormat": "p95"
         }
-      ]
+      ],
+      "description": "Time from gateway send to first content, over a six-hour window. The window is wide because the gateway observes only a few attempts an hour; a narrower one leaves the line undefined between bursts."
     },
     {
       "id": 73,
@@ -870,8 +908,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -889,7 +927,8 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "s",
+          "noValue": "no attempt duration histogram was scraped"
         },
         "overrides": []
       },
@@ -909,11 +948,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_sum) / sum by (participant_key) (devshard_gateway_participant_total_attempt_seconds_count) or vector(0)",
+          "expr": "sum by (participant_key) (rate(devshard_gateway_participant_total_attempt_seconds_sum[6h])) / sum by (participant_key) (rate(devshard_gateway_participant_total_attempt_seconds_count[6h]))",
           "refId": "A",
           "legendFormat": "{{participant_key}}"
         }
-      ]
+      ],
+      "description": "Mean attempt duration per executor over a six-hour window. Dividing the totals instead would average every attempt since the gateway started."
     },
     {
       "id": 74,
@@ -937,7 +977,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "no executor has won a request yet"
         },
         "overrides": []
       },
@@ -959,6 +1000,22 @@
           "refId": "A",
           "format": "table",
           "instant": true
+        }
+      ],
+      "description": "Requests each executor won for a model. A win is a routed completion the user received.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "participant_key": "Executor",
+              "model": "Model",
+              "Value": "Wins"
+            }
+          }
         }
       ]
     },
@@ -984,7 +1041,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "no attempt has failed yet, or the gateway was not scraped"
         },
         "overrides": []
       },
@@ -1002,10 +1060,27 @@
       },
       "targets": [
         {
-          "expr": "sum by (participant_key,model,reason) (devshard_gateway_attempt_failures_total) or vector(0)",
+          "expr": "sum by (participant_key,model,reason) (devshard_gateway_attempt_failures_total)",
           "refId": "A",
           "format": "table",
           "instant": true
+        }
+      ],
+      "description": "Attempts that failed per executor, model and reason.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "participant_key": "Executor",
+              "model": "Model",
+              "reason": "Reason",
+              "Value": "Failures"
+            }
+          }
         }
       ]
     },
@@ -1031,7 +1106,8 @@
               "type": "auto"
             },
             "inspect": false
-          }
+          },
+          "noValue": "the gateway tracks no participant"
         },
         "overrides": []
       },
@@ -1054,7 +1130,8 @@
           "format": "table",
           "instant": true
         }
-      ]
+      ],
+      "description": "Quarantine state exists per participant and model. An empty table means the gateway is tracking no participant, which is not the same as every participant being healthy."
     },
     {
       "id": 230,
@@ -1107,8 +1184,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1126,7 +1203,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the gateway published no capacity weight"
         },
         "overrides": []
       },
@@ -1146,11 +1224,17 @@
       },
       "targets": [
         {
-          "expr": "devshard_gateway_capacity_total_weight or devshard_gateway_capacity_baseline_weight",
+          "expr": "devshard_gateway_capacity_total_weight",
           "refId": "A",
-          "legendFormat": "weight"
+          "legendFormat": "effective"
+        },
+        {
+          "expr": "devshard_gateway_capacity_baseline_weight",
+          "refId": "B",
+          "legendFormat": "baseline"
         }
-      ]
+      ],
+      "description": "Both weights carry the same labels, so joining them with or showed only the effective one."
     },
     {
       "id": 82,
@@ -1190,8 +1274,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1209,7 +1293,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no escrow is active"
         },
         "overrides": []
       },
@@ -1229,11 +1314,12 @@
       },
       "targets": [
         {
-          "expr": "devshard_gateway_escrow_weight",
+          "expr": "sum(devshard_gateway_escrow_weight)",
           "refId": "A",
-          "legendFormat": "escrow {{devshard_id}}"
+          "legendFormat": "all escrows"
         }
-      ]
+      ],
+      "description": "Summed across escrows: the identifier churns with every escrow, so one line per escrow filled the legend with hundreds of rows."
     },
     {
       "id": 83,
@@ -1242,7 +1328,7 @@
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Blocked participants (active escrow)",
+      "title": "Blocked participants",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -1273,8 +1359,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1292,7 +1378,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no escrow is active"
         },
         "overrides": []
       },
@@ -1312,11 +1399,12 @@
       },
       "targets": [
         {
-          "expr": "devshard_gateway_escrow_blocked_participants or vector(0)",
+          "expr": "max by (model) (devshard_gateway_escrow_blocked_participants)",
           "refId": "A",
-          "legendFormat": "escrow {{devshard_id}}"
+          "legendFormat": "{{model}}"
         }
-      ]
+      ],
+      "description": "A zero is a measured escrow blocking nobody. Empty means no escrow is active."
     },
     {
       "id": 84,
@@ -1325,7 +1413,7 @@
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Gateway and participant rejections",
+      "title": "Participant-budget rejection rate",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1356,8 +1444,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1375,7 +1463,8 @@
               }
             ]
           },
-          "unit": "reqps"
+          "unit": "reqps",
+          "noValue": "no rejection counter was scraped"
         },
         "overrides": []
       },
@@ -1395,11 +1484,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (reason) (rate(devshard_gateway_limit_rejections_total[5m])) or sum by (scope) (rate(devshard_gateway_participant_limit_rejections_total[5m])) or vector(0)",
+          "expr": "sum by (participant_key,scope) (rate(devshard_gateway_participant_limit_rejections_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{reason}}{{scope}}"
+          "legendFormat": "{{participant_key}} · {{scope}}"
         }
-      ]
+      ],
+      "description": "The build exports no gateway-wide rejection counter, so the three-way or chain only ever showed the participant-scoped one."
     },
     {
       "id": 85,
@@ -1439,8 +1529,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1458,7 +1548,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no request has hidden a failure yet, or the gateway was not scraped"
         },
         "overrides": []
       },
@@ -1478,11 +1569,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (model) (devshard_gateway_user_requests_with_hidden_failure_total) or vector(0)",
+          "expr": "sum by (model) (devshard_gateway_user_requests_with_hidden_failure_total)",
           "refId": "A",
           "legendFormat": "{{model}}"
         }
-      ]
+      ],
+      "description": "Requests the user received although an executor failed behind them. A zero is a measured clean path."
     },
     {
       "id": 240,
@@ -1504,10 +1596,10 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Gateway request sample age (0 when none)",
+      "title": "Gateway scrape age",
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 0,
         "y": 55
       },
@@ -1522,15 +1614,24 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 300
               }
             ]
           },
-          "unit": "s"
+          "unit": "s",
+          "noValue": "no successful gateway scrape in the last hour"
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -1546,11 +1647,12 @@
       },
       "targets": [
         {
-          "expr": "time() - max(timestamp(devshard_gateway_requests_total)) or vector(0)",
+          "expr": "time() - max((timestamp(up{job=\"gateway\"}) and up{job=\"gateway\"} == 1) or max_over_time((timestamp(up{job=\"gateway\"}) and up{job=\"gateway\"} == 1)[1h:15s]))",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Seconds since the last successful gateway scrape. A failed scrape still writes up, so only a successful one resets this."
     },
     {
       "id": 92,
@@ -1559,11 +1661,11 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Current executors",
+      "title": "Executors tracked",
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
+        "w": 4,
+        "x": 4,
         "y": 55
       },
       "fieldConfig": {
@@ -1580,7 +1682,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the gateway is not scraped"
         },
         "overrides": []
       },
@@ -1601,11 +1704,12 @@
       },
       "targets": [
         {
-          "expr": "count(count by (participant_key) (devshard_gateway_participant_quarantine_state)) or vector(0)",
+          "expr": "max(devshard_gateway_participants_tracked)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Executors the gateway is currently tracking, as the gateway itself reports."
     },
     {
       "id": 93,
@@ -1617,7 +1721,64 @@
       "title": "Models observed",
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
+        "x": 8,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "the gateway has counted no request yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "count(count by (model) (devshard_gateway_requests_total))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Models the gateway has counted a request for."
+    },
+    {
+      "id": 94,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Transport errors (7d)",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
         "x": 12,
         "y": 55
       },
@@ -1635,7 +1796,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no transport error counter was scraped"
         },
         "overrides": []
       },
@@ -1656,24 +1818,25 @@
       },
       "targets": [
         {
-          "expr": "count(count by (model) (devshard_gateway_requests_total)) or vector(0)",
+          "expr": "round(sum(increase(devshard_gateway_participant_transport_errors_total[7d])))",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Executor transport failures in the window."
     },
     {
-      "id": 94,
+      "id": 95,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Transport errors",
+      "title": "Telegram exporter age",
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
+        "w": 4,
+        "x": 16,
         "y": 55
       },
       "fieldConfig": {
@@ -1687,15 +1850,24 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 900
+              },
+              {
+                "color": "red",
+                "value": 3600
               }
             ]
           },
-          "unit": "none"
+          "unit": "s",
+          "noValue": "the consumer exporter is not present"
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -1711,11 +1883,77 @@
       },
       "targets": [
         {
-          "expr": "sum(devshard_gateway_participant_transport_errors_total) or vector(0)",
+          "expr": "max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"})",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Seconds since the consumer last wrote its metrics file. The whole Telegram row below is gated on this."
+    },
+    {
+      "id": 96,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Readiness observation age",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 120
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "the readiness probe has never written an observation"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "time() - max(gdc_gateway_readiness_observed_timestamp_seconds)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Seconds since the readiness probe last observed the gateway. Traffic ready is gated on this: past thirty seconds that tile stops showing a number rather than freezing on its last one."
     },
     {
       "id": 250,
@@ -1758,7 +1996,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -1779,11 +2018,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_unique_users) or vector(0)",
+          "expr": "sum(gdc_telegram_bot_unique_users) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 102,
@@ -1813,7 +2053,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -1834,11 +2075,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_unique_users{premium=\"true\"}) or vector(0)",
+          "expr": "sum(gdc_telegram_bot_unique_users{premium=\"true\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 103,
@@ -1868,7 +2110,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -1889,11 +2132,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_conversations) or vector(0)",
+          "expr": "sum(gdc_telegram_bot_conversations) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 104,
@@ -1923,7 +2167,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -1944,11 +2189,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_interactions_total) or vector(0)",
+          "expr": "sum(gdc_telegram_bot_interactions_total) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 105,
@@ -1978,7 +2224,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -1999,11 +2246,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_tokens_total{direction=\"input\"}) or vector(0)",
+          "expr": "sum(gdc_telegram_bot_tokens_total{direction=\"input\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 106,
@@ -2033,7 +2281,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -2054,11 +2303,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_tokens_total{direction=\"output\"}) or vector(0)",
+          "expr": "sum(gdc_telegram_bot_tokens_total{direction=\"output\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 111,
@@ -2098,8 +2348,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -2117,7 +2367,8 @@
               }
             ]
           },
-          "unit": "reqps"
+          "unit": "reqps",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -2137,11 +2388,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total[15m])) or vector(0)",
+          "expr": "sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total[15m])) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "legendFormat": "{{outcome}} · premium={{premium}}"
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 112,
@@ -2181,8 +2433,8 @@
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "never",
-            "spanNulls": true,
+            "showPoints": "auto",
+            "spanNulls": false,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -2200,7 +2452,8 @@
               }
             ]
           },
-          "unit": "reqps"
+          "unit": "reqps",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -2220,11 +2473,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total[15m])) or vector(0)",
+          "expr": "sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total[15m])) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "legendFormat": "{{outcome}}"
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 113,
@@ -2233,7 +2487,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Last successful bot inference (0 when unavailable)",
+      "title": "Time since last successful bot inference",
       "gridPos": {
         "h": 4,
         "w": 8,
@@ -2254,12 +2508,13 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "s",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -2275,11 +2530,12 @@
       },
       "targets": [
         {
-          "expr": "(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) or vector(0)",
+          "expr": "(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero would have read as a success just now, the most reassuring possible value for a consumer that never answered. Empty now means the exporter is stale."
     },
     {
       "id": 114,
@@ -2309,7 +2565,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
         },
         "overrides": []
       },
@@ -2330,11 +2587,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_usage_missing_total) or vector(0)",
+          "expr": "sum(gdc_telegram_bot_usage_missing_total) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
     },
     {
       "id": 115,
@@ -2364,12 +2622,30 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "the consumer exporter is stale; the state of the bot is unknown",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Stopped",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Running",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -2385,11 +2661,12 @@
       },
       "targets": [
         {
-          "expr": "max(gdc_telegram_bot_up) or vector(0)",
+          "expr": "max(gdc_telegram_bot_up) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "The value comes from a file the consumer writes, which node-exporter republishes on every scrape. Without the freshness gate a stopped consumer reads as running."
     },
     {
       "id": 99,
@@ -2402,7 +2679,7 @@
         "y": 76
       },
       "options": {
-        "content": "This board adapts **Gonka: Inference & Devshards Observatory** to live Community DevNet gateway metrics. **Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even if the gateway metrics scrape succeeds. Request and active-escrow panels can be zero before the first routed request or while no escrow is active; they never claim traffic occurred. Counters start when the gateway process starts and are retained by Prometheus for 30 days. Telegram panels contain aggregate consumer activity and exact API-reported tokens without user identifiers or message content; a zero last-success age means the consumer has not reported a successful inference yet. GNK notional value and archive-node SQL are not available, so the board does not invent those panels.",
+        "content": "**Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even when the gateway metrics scrape succeeds. That tile is gated on the age of the readiness observation, shown by **Readiness observation age**: past thirty seconds it stops showing a number instead of freezing on its last one. The gateway began exporting its per-routing request, attempt, win, hidden-failure and first-content counters on 2026-09-22, so a window that reaches further back is empty for them rather than idle. It does export an HTTP-level request counter, but that counts every request the listener sees, including probes and scanner traffic, so it is not a measure of inference. The one counter still missing is the gateway-wide rejection total, so the rejection panels read the participant-scoped one instead. Any panel that can return nothing says so in its body rather than drawing a zero. Most counted requests are cache hits, which are served without a routed completion, so **Requests served** runs well ahead of the routed ones. Every Telegram panel is gated on the age of the file the consumer writes: node-exporter republishes the contents of that file on every scrape, so without the gate a stopped consumer would keep reporting its last numbers as current. **Telegram exporter age** in the Data passport row shows that age. Telegram panels carry aggregate activity and API-reported token counts, with no user identifiers and no message content. Counters start when the gateway process starts, and Prometheus keeps up to 30 days of samples, so a longer window shows only what is stored rather than an empty result. GNK notional value and archive-node SQL are not available, so this board does not fabricate those panels.",
         "mode": "markdown"
       }
     }
@@ -2417,7 +2694,7 @@
     "list": []
   },
   "time": {
-    "from": "now-7d",
+    "from": "now-24h",
     "to": "now"
   },
   "timepicker": {

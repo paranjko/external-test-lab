@@ -4,8 +4,8 @@
 set -Eeuo pipefail
 umask 077
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-denom_metadata="${GONKA_UPSTREAM_WORKTREE:-$ROOT/vendor/gonka}/inference-chain/denom.json"
-[[ -f "$denom_metadata" ]] || { echo 'set GONKA_UPSTREAM_WORKTREE to the existing Gonka checkout for its Genesis denomination metadata' >&2; exit 2; }
+denom_metadata="$ROOT/test/fixtures/recovery/denom.json"
+[[ -f "$denom_metadata" ]] || { echo "Gonka Genesis denomination metadata is missing: $denom_metadata" >&2; exit 2; }
 image="$(docker image inspect -f '{{.Id}}' ghcr.io/product-science/inferenced:0.2.15)"
 probe_image="$(docker image inspect -f '{{.Id}}' gdc-runbook-bats:local)"
 scratch="$(mktemp -d)"

@@ -66,16 +66,18 @@ warm_key_restore_failure_reason() {
 }
 
 # Create or reuse the warm key in the persistent /root/.inference keyring.
-if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
-  'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file -a' >/dev/null 2>&1; then
+# Use the Core image: the inferenced in the API image dies with SIGILL without ADX/BMI2.
+# Core mounts $IDENTITY_DIR at /gdc-identity, so the keyring is /gdc-identity/warm.
+if ! "${compose[@]}" run --rm --no-deps -T -e KEYRING_PASSWORD --entrypoint /bin/sh node -c \
+  'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file --keyring-dir /gdc-identity/warm -a' >/dev/null 2>&1; then
   key_output="$TMP/warm-key.out"
   if [[ -n "$WARM_MNEMONIC" ]]; then
     # A validator backup's mnemonic is authoritative for the warm identity.
     # `keyring-file` is now a stable bind mount, so renaming that mount fails
     # with EBUSY.  Refuse links and clear only its contents before importing
     # the archived identity; the mount point itself must remain in place.
-    keyring_state="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
-      'if [ -L /root/.inference/keyring-file ]; then exit 64; fi; if [ -e /root/.inference/keyring-file ]; then test -d /root/.inference/keyring-file && find /root/.inference/keyring-file -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && printf cleared; else printf absent; fi')" || {
+    keyring_state="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh node -c \
+      'if [ -L /gdc-identity/warm/keyring-file ]; then exit 64; fi; if [ -e /gdc-identity/warm/keyring-file ]; then test -d /gdc-identity/warm/keyring-file && find /gdc-identity/warm/keyring-file -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && printf cleared; else printf absent; fi')" || {
       echo 'Cannot clear stale warm keyring before restoring validator backup' >&2
       exit 1
     }
@@ -85,14 +87,14 @@ if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
       *) echo 'Cannot determine whether a stale warm keyring was cleared' >&2; exit 1 ;;
     esac
     if ! printf '%s\n%s\n%s\n' "$(<"$WARM_MNEMONIC")" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" \
-      | "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
-        'inferenced keys add "$KEY_NAME" --recover --keyring-backend file' >"$key_output" 2>&1; then
+      | "${compose[@]}" run --rm --no-deps -T -e KEYRING_PASSWORD --entrypoint /bin/sh node -c \
+        'inferenced keys add "$KEY_NAME" --recover --keyring-backend file --keyring-dir /gdc-identity/warm' >"$key_output" 2>&1; then
       printf 'Cannot restore warm key: reason=%s\n' "$(warm_key_restore_failure_reason "$key_output")" >&2
       exit 1
     fi
   else
-    "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
-      'printf "%s\n%s\n" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" | inferenced keys add "$KEY_NAME" --keyring-backend file' \
+    "${compose[@]}" run --rm --no-deps -T -e KEYRING_PASSWORD --entrypoint /bin/sh node -c \
+      'printf "%s\n%s\n" "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" | inferenced keys add "$KEY_NAME" --keyring-backend file --keyring-dir /gdc-identity/warm' \
       >"$key_output" 2>&1 || {
         printf 'Cannot create warm key: reason=%s\n' "$(warm_key_creation_failure_reason "$key_output")" >&2
         exit 1
@@ -106,8 +108,8 @@ if ! "${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c \
 fi
 NODE_ID="$("${compose[@]}" run --rm --no-deps -T --entrypoint inferenced node tendermint show-node-id | tail -n1 | tr -d '\r')"
 CONSENSUS="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh tmkms -c 'tmkms-pubkey' | grep -Eo '[A-Za-z0-9+/]{43}=' | tail -n1)"
-WARM_ADDRESS="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c 'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file -a' | tail -n1 | tr -d '\r')"
-WARM_PUB_JSON="$("${compose[@]}" run --rm --no-deps -T --entrypoint /bin/sh api -c 'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file --pubkey')"
+WARM_ADDRESS="$("${compose[@]}" run --rm --no-deps -T -e KEYRING_PASSWORD --entrypoint /bin/sh node -c 'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file --keyring-dir /gdc-identity/warm -a' | tail -n1 | tr -d '\r')"
+WARM_PUB_JSON="$("${compose[@]}" run --rm --no-deps -T -e KEYRING_PASSWORD --entrypoint /bin/sh node -c 'printf "%s\n" "$KEYRING_PASSWORD" | inferenced keys show "$KEY_NAME" --keyring-backend file --keyring-dir /gdc-identity/warm --pubkey')"
 [[ "$NODE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
   echo "Invalid node SSH alias: $NODE_NAME" >&2
   exit 2

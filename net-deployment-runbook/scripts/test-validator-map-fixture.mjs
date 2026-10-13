@@ -4,7 +4,6 @@
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
 import {
   startChromeDevTools,
@@ -18,6 +17,8 @@ if (!siteRootText || !evidenceDir) {
   );
 }
 const siteRoot = resolve(siteRootText);
+const captureScreenshots = process.env.GDC_MAP_FIXTURE_SCREENSHOTS === "1";
+await mkdir(evidenceDir, { recursive: true });
 const now = new Date().toISOString();
 const delay = (ms) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
@@ -113,6 +114,7 @@ const config = (port) =>
     model: "Qwen/Qwen3-0.6B",
     chainRpcHost: "fixture.invalid",
     chainRpcOrigin: `http://127.0.0.1:${port}`,
+    gatewayNode: "fixture-a",
     grafanaNetwork: "https://grafana.gonka-dev.net/d/gdc-network/fixture?kiosk",
     grafanaInference:
       "https://grafana.gonka-dev.net/d/gdc-inference/fixture?kiosk",
@@ -120,7 +122,7 @@ const config = (port) =>
       {
         name: "fixture-a",
         address: "gonka1fixturea",
-        publicHost: "fixture.local",
+        publicHost: "fixture.invalid",
         statusBase: `http://127.0.0.1:${port}`,
         ip: "127.0.0.1",
         geo: {
@@ -309,23 +311,58 @@ const participantKeys = [
   "dynamic",
   ...Array.from({ length: 11 }, (_, index) => `overflow${index + 1}`),
 ];
+const fixtureNames = [
+  "fixture-a",
+  "fixture-b",
+  "fixture-clamped",
+  "fixture-invalid",
+  "fixture-greenwich",
+  "fixture-kansas",
+  "fixture-south",
+  "fixture-antimeridian",
+  "fixture-south-pole",
+  "fixture-north-pole",
+  "fixture-dynamic",
+  ...Array.from({ length: 11 }, (_, index) => `fixture-overflow-${index + 1}`),
+];
 let participantLimit = 11;
+let healthStatus = 200;
 const api = (port) => ({
+  "/status/network": {
+    schema_version: 1,
+    chain_id: "fixture-chain",
+    observed_at: now,
+    nodes: participantKeys.slice(0, participantLimit).map((key, index) => ({
+      node_id: index.toString(16).padStart(40, "0"),
+      node_name: fixtureNames[index],
+      dapi_url:
+        key === "a"
+          ? "https://fixture.invalid"
+          : key === "dynamic"
+            ? "https://geo-fixture.invalid"
+            : "https://fixture.local",
+      active: key !== "a",
+      error: key === "a" ? "HTTP 502" : undefined,
+      components: {
+        chain_rpc: {
+          latest_block_height: 424,
+          catching_up: false,
+        },
+      },
+    })),
+  },
   "/status/participants": {
     block_height: "424",
     participant: participantKeys.slice(0, participantLimit).map((key) => ({
       address: `gonka1fixture${key}`,
-      inference_url:
-        key === "dynamic"
-          ? "https://geo-fixture.invalid"
-          : `http://127.0.0.1:${port}`,
+      inference_url: `https://node${participantKeys.indexOf(key)}.gonka-dev.net`,
       validator_key: `fixture-key-${key}`,
       status: key === "a" ? "INACTIVE" : "ACTIVE",
     })),
   },
   "/status/gpus": {
     data: {
-      result: [{ metric: { host: "fixture-a", gpu_name: "NVIDIA RTX A5000" } }],
+      result: [{ metric: { host: "fixture-a", gpu_name: "NVIDIA RTX A5000" }, value: ["0", String(24 * 1024 ** 3)] }],
     },
   },
   "/status/software": {
@@ -344,6 +381,7 @@ const api = (port) => ({
   "/status/telegram-consumer": { status: "ok", inference_ready: true },
   "/chain-rpc/status": {
     result: {
+      node_info: { listen_addr: "tcp://node0.gonka-dev.net:5000" },
       sync_info: {
         latest_block_height: "424",
         catching_up: false,
@@ -352,8 +390,31 @@ const api = (port) => ({
     },
   },
   "/chain-rpc/validators": { result: { validators: [] } },
-  "/chain-rpc/net_info": { result: { n_peers: "4" } },
-  "/v1/versions": {},
+  "/chain-rpc/net_info": {
+    result: {
+      n_peers: String(Math.max(0, participantLimit - 1)),
+      peers: participantKeys.slice(1, participantLimit).map((_, index) => ({
+        node_info: { listen_addr: `tcp://node${index + 1}.gonka-dev.net:5000` },
+      })),
+    },
+  },
+  "/chain-api/productscience/inference/inference/devshard_approved_versions": {
+    versions: [
+      { name: "v3", binary: "https://example.test/v3.zip", sha256: "3".repeat(64) },
+      { name: "v4", binary: "https://example.test/v4.zip", sha256: "4".repeat(64) },
+      { name: "v5", binary: "https://example.test/v5.zip", sha256: "5".repeat(64) },
+    ],
+  },
+  "/health": { status: "ok" },
+  "/v1/versions": {
+    node_version: { version: "v1.2.3" },
+    api_version: { version: "v2.3.4" },
+    mlnodes: [
+      { version: "3.4.5" },
+      { version: "3.4.5" },
+      { version: "3.4.6" },
+    ],
+  },
   "/status/gateway/v1/status": {
     escrow_id: "fixture",
     active: true,
@@ -396,6 +457,28 @@ const server = createServer(async (request, response) => {
     );
     return;
   }
+  if (pathname === "/health") {
+    response.writeHead(healthStatus, { "content-type": "text/plain" });
+    response.end(healthStatus === 200 ? "healthy\n" : "unavailable\n");
+    return;
+  }
+  if (pathname === "/chain-rpc/status") {
+    response.writeHead(healthStatus, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      result: {
+        node_info: { id: "0".repeat(40), network: "fixture-chain" },
+        sync_info: {
+          latest_block_height: "424",
+          catching_up: false,
+          // The browser regression repeatedly refreshes verified chain reads
+          // across multiple viewport checks; keep each sampled peer status
+          // inside the application's freshness window.
+          latest_block_time: new Date().toISOString(),
+        },
+      },
+    }));
+    return;
+  }
   const state = api(server.address().port)[pathname];
   if (state) {
     response.writeHead(200, { "content-type": "application/json" });
@@ -424,7 +507,10 @@ await new Promise((resolvePromise, reject) => {
   server.once("error", reject);
   server.listen(0, "127.0.0.1", resolvePromise);
 });
-const profile = await mkdtemp(join(tmpdir(), "gdc-map-fixture-"));
+const browserTempRoot =
+  process.env.TMPDIR || join(process.cwd(), "..", ".data", "browser-tmp");
+await mkdir(browserTempRoot, { recursive: true });
+const profile = await mkdtemp(join(browserTempRoot, "gdc-map-fixture-"));
 let browser;
 let socket;
 let sequence = 0;
@@ -445,6 +531,12 @@ const call = (method, params = {}, target = sessionId) =>
       }),
     );
   });
+const saveScreenshot = async (name, settleMs) => {
+  if (!captureScreenshots) return;
+  await delay(settleMs);
+  const screenshot = await call("Page.captureScreenshot", { format: "png" });
+  await writeFile(join(evidenceDir, name), Buffer.from(screenshot.data, "base64"));
+};
 const mapRestorationExpression =
   'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect(),covers=(value,bounds)=>Boolean(value&&bounds&&value.left<=bounds.left+1&&value.right>=bounds.right-1);return{worldCoversMap:covers(world,mr),popup:Boolean(document.querySelector(".leaflet-popup")),world:world&&{left:world.left,right:world.right,top:world.top,bottom:world.bottom},map:mr&&{left:mr.left,right:mr.right,top:mr.top,bottom:mr.bottom}}})())';
 const waitForMapRestoration = async (context) => {
@@ -520,6 +612,7 @@ try {
     chrome: process.env.CHROME_BIN || "google-chrome",
     profile,
     context: "validator-map fixture",
+    readyTimeoutMilliseconds: 60_000,
   });
   browser = chromeSession.browser;
   socket = new WebSocket(
@@ -576,6 +669,12 @@ try {
       window.fetch = (input, options) => {
         const url = String(input);
         if (url.startsWith("https://cloudflare-dns.com/dns-query?")) {
+          const host = new URL(url).searchParams.get("name");
+          if (host !== "geo-fixture.invalid") {
+            return Promise.resolve(new Response(JSON.stringify({ Answer: [] }), {
+              headers: { "content-type": "application/json" },
+            }));
+          }
           return Promise.resolve(new Response(JSON.stringify({
             Answer: [
               { data: "203.0.113.10" },
@@ -602,7 +701,7 @@ try {
   });
   const reports = [];
   const mapStateExpression =
-    'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),rect=map?.getBoundingClientRect(),world=map?.querySelector(".validator-map-world"),worldRect=world?.getBoundingClientRect(),markers=[...map.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",classes:[...marker.classList],fill:marker.getAttribute("fill"),left:r.left+r.width/2,top:r.top+r.height/2,width:r.width,height:r.height}});return{world:Boolean(world?.complete&&world?.naturalWidth),worldRatio:worldRect?worldRect.width/worldRect.height:0,validators:Number(map?.dataset.validatorCount),markerCount:Number(map?.dataset.markerCount),hitTargetCount:map?.querySelectorAll(".validator-marker-hit").length||0,centersInside:markers.every(marker=>marker.left>=rect.left-.1&&marker.left<=rect.right+.1&&marker.top>=rect.top-.1&&marker.top<=rect.bottom+.1),markerNodes:markers,mapRect:rect&&{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},worldRect:worldRect&&{left:worldRect.left,top:worldRect.top,width:worldRect.width,height:worldRect.height},scrollWidth:document.documentElement.scrollWidth,width:innerWidth}})())';
+    'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),rect=map?.getBoundingClientRect(),world=map?.querySelector(".validator-map-world"),worldRect=world?.getBoundingClientRect(),markers=[...map.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect(),face=marker.querySelector(".validator-marker-face"),number=marker.querySelector(".validator-marker-number");return{label:marker.getAttribute("aria-label")||"",classes:[...marker.classList],background:getComputedStyle(face).backgroundImage,left:r.left+r.width/2,top:r.top+r.height/2,width:r.width,height:r.height,count:number?.textContent||""}});return{world:Boolean(world?.complete&&world?.naturalWidth),worldRatio:worldRect?worldRect.width/worldRect.height:0,hosts:Number(map?.dataset.hostCount),markerCount:Number(map?.dataset.markerCount),hitTargetCount:map?.querySelectorAll(".validator-marker-hit").length||0,centersInside:markers.every(marker=>marker.left>=rect.left-.1&&marker.left<=rect.right+.1&&marker.top>=rect.top-.1&&marker.top<=rect.bottom+.1),markerNodes:markers,mapRect:rect&&{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},worldRect:worldRect&&{left:worldRect.left,top:worldRect.top,width:worldRect.width,height:worldRect.height},scrollWidth:document.documentElement.scrollWidth,width:innerWidth}})())';
   const hostGeometryExpression = `JSON.stringify((() => {
     const deck = document.querySelector("#nodes");
     const cards = [...document.querySelectorAll("#nodes .node")];
@@ -650,19 +749,32 @@ try {
         ? [{ key, before, after }]
         : [];
     });
-    setText('[data-k="host"]', "node0.example.test with a deliberately long hostname");
-    setText('[data-k="status"]', "VALIDATING");
-    setText('[data-k="status-reason"]', "Effective and synchronized validator with a long diagnostic reason");
-    setText('[data-k="scope"]', "gonka1abcdefghijklmnopqrstuvwxyz0123456789");
+    const longHost = "node0.example.test with a deliberately long hostname";
+    set(card, "host", longHost);
+    set(card, "status", "VALIDATING");
+    setText('[data-k="node-id"]', "0123456789abcdef0123456789abcdef01234567");
     setText('[data-k="height"]', "123456789");
     setText('[data-k="vp"]', "9223372036854775807");
     setText('[data-k="sync"]', "Synced");
     setText('[data-k="endpoint"]', "Unavailable – Network error");
     setText('[data-k="peers"]', "123");
-    setText('[data-k="versions"]', "chain v2026.09.02-extremely-long-build-identifier · DAPI v0.2.16-post999999999999 · MLNode v3.0.14-post2-with-another-extremely-long-build-identifier");
-    const gpuRow = card.querySelector('[data-k-row="gpu"]');
-    if (gpuRow) gpuRow.hidden = false;
-    setText('[data-k="gpu"]', "RTX PRO 2000 Blackwell ×8 + GeForce RTX 4090 SUPER Extremely Long Vendor Edition ×8 + Accelerator Model With An UnbrokenIdentifier012345678901234567890123456789 – net");
+    setText('[data-k="poc"]', "12 accept · 0 reject");
+    const cpocRow = card.querySelector('[data-k-row="cpoc"]');
+    const inactiveCpocHidden = Boolean(cpocRow?.hidden);
+    // The production card hides inactive cPoC contributions. Exercise the
+    // larger active-event layout as well as that initial visibility contract.
+    if (cpocRow) cpocRow.hidden = false;
+    setText('[data-k="cpoc"]', "12 accept · 0 reject");
+    setText('[data-k="inference"]', "Not observed");
+    setText('[data-k="inferenced"]', "0.2.15");
+    setText('[data-k="dapi"]', "0.2.15-post3");
+    setText('[data-k="devshard"]', "v3 · v4 · v5");
+    const mlnodeRow = card.querySelector('[data-k-row="mlnode"]');
+    if (mlnodeRow) mlnodeRow.hidden = false;
+    const longMlNode = "gpu.example.test:5000 · 3.0.15 · RTX PRO 2000 Blackwell 16 GiB ×8";
+    const mlNodeItem = document.createElement("li");
+    mlNodeItem.textContent = longMlNode;
+    card.querySelector('[data-k="mlnode"]')?.replaceChildren(mlNodeItem);
     const textBounds = element => {
       if (!element) return null;
       const range = document.createRange();
@@ -674,10 +786,12 @@ try {
       const rect = bounds(element);
       const text = textBounds(element);
       const visible = Boolean(element && element.offsetParent !== null && rect && rect.right > rect.left && rect.bottom > rect.top && text && text.right > text.left && text.bottom > text.top);
+      const style = element && getComputedStyle(element);
       return {
         text: element?.textContent?.trim() || "",
         visible,
         clipped: Boolean(!visible || element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || text.left < rect.left - 2 || text.right > rect.right + 2 || text.top < rect.top - 2 || text.bottom > rect.bottom + 2),
+        singleLineEllipsis: Boolean(visible && style.whiteSpace === "nowrap" && style.overflowX === "hidden" && style.textOverflow === "ellipsis" && element.scrollHeight <= element.clientHeight && text.top >= rect.top - 2 && text.bottom <= rect.bottom + 2),
       };
     };
     const details = card.querySelector(".node-details");
@@ -686,7 +800,9 @@ try {
       .map(element => ({
         key: element.dataset.kRow || element.dataset.k || element.tagName.toLowerCase(),
         bounds: bounds(element),
-        textBounds: textBounds(element),
+        // Copy controls include an off-screen accessible label. Measure the
+        // displayed value, not that intentionally hidden assistive text.
+        textBounds: textBounds(element.querySelector("code") || element),
       }));
     const rowOverlaps = rows.slice(0, -1).flatMap((row, index) => {
       const next = rows[index + 1];
@@ -701,8 +817,8 @@ try {
     const deckStyle = getComputedStyle(deck);
     const mobile = innerWidth <= 700;
     let expectedExpandedCount = Math.min(innerWidth <= 900 ? 1 : innerWidth < 1200 ? 2 : 4, cards.length);
-    while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 270) expectedExpandedCount -= 1;
-    const oneRow = cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5 && Math.abs(rect.bottom - cardRects[0].bottom) <= 0.5);
+    while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 320) expectedExpandedCount -= 1;
+    const oneRow = cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5);
     const cardsInside = cardRects.every(rect => rect.left >= deckRect.left - 1 && rect.right <= deckRect.right + 1);
     const initialDeckScrollLeft = deck.scrollLeft;
     deck.scrollLeft = 0;
@@ -721,20 +837,20 @@ try {
     const deckOverflows = maximumDeckScrollLeft > 1;
     const minimumDeckWidth = mobile
       ? deck.clientWidth
-      : expectedExpandedCount * 270 + (cards.length - expectedExpandedCount) * 32;
+      : expectedExpandedCount * 320 + (cards.length - expectedExpandedCount) * 32;
     const overflowExpected = !mobile && minimumDeckWidth > deck.clientWidth + 1;
     const cardsReachable = firstCardAtStart && (!deckOverflows || (appliedDeckScrollLeft > 1 && lastCardAtEnd));
     const expandedGeometry = expandedCards.every(candidate => {
       const rect = candidate.getBoundingClientRect();
       return mobile
         ? Math.abs(rect.width - deck.clientWidth) <= 1
-        : Math.abs(rect.height - 424) <= 0.5 && rect.width >= 269;
+        : rect.height >= 350 && rect.width >= 319;
     });
     const collapsedGeometry = collapsedCards.every(candidate => {
       const rect = candidate.getBoundingClientRect();
       return mobile
         ? Math.abs(rect.height - 52) <= 0.5 && Math.abs(rect.width - deck.clientWidth) <= 1
-        : Math.abs(rect.height - 424) <= 0.5 && rect.width >= 31 && rect.width <= 33;
+        : rect.height >= 350 && rect.width >= 31 && rect.width <= 33;
     });
     const collapsedSemantics = collapsedCards.every(candidate => {
       const host = candidate.querySelector('[data-k="host"]');
@@ -747,33 +863,29 @@ try {
     const fields = {
       host: fieldInfo('[data-k="host"]'),
       status: fieldInfo('[data-k="status"]'),
-      statusReason: fieldInfo('[data-k="status-reason"]'),
-      scope: fieldInfo('[data-k="scope"]'),
+      nodeId: fieldInfo('[data-k="node-id"]'),
       height: fieldInfo('[data-k="height"]'),
       votingPower: fieldInfo('[data-k="vp"]'),
       sync: fieldInfo('[data-k="sync"]'),
       endpoint: fieldInfo('[data-k="endpoint"]'),
       peers: fieldInfo('[data-k="peers"]'),
-      software: fieldInfo('[data-k="versions"]'),
-      gpu: fieldInfo('[data-k="gpu"]'),
+      poc: fieldInfo('[data-k="poc"]'),
+      cpoc: fieldInfo('[data-k="cpoc"]'),
+      inference: fieldInfo('[data-k="inference"]'),
+      inferenced: fieldInfo('[data-k="inferenced"]'),
+      dapi: fieldInfo('[data-k="dapi"]'),
+      devshard: fieldInfo('[data-k="devshard"]'),
+      mlnode: fieldInfo('[data-k="mlnode"]'),
     };
-    const hiddenProbe = card.querySelector('[data-k="status-reason"]');
-    const hiddenBefore = hiddenProbe?.style.display;
-    if (hiddenProbe) hiddenProbe.style.display = "none";
-    const hiddenRect = hiddenProbe?.getBoundingClientRect();
-    const hiddenRange = hiddenProbe ? (() => { const range = document.createRange(); range.selectNodeContents(hiddenProbe); return range.getBoundingClientRect(); })() : null;
-    const hiddenVisible = Boolean(hiddenProbe && hiddenProbe.offsetParent !== null && hiddenRect && hiddenRect.width > 0 && hiddenRect.height > 0 && hiddenRange && hiddenRange.width > 0 && hiddenRange.height > 0);
-    const hiddenRejected = Boolean(hiddenProbe && (!hiddenVisible || getComputedStyle(hiddenProbe).display === "none"));
-    if (hiddenProbe) hiddenProbe.style.display = hiddenBefore;
     const skippedCard = cards.find((candidate) => candidate.classList.contains("skip"));
-    const skippedGpuRow = skippedCard?.querySelector('[data-k-row="gpu"]');
-    const skippedGpuValue = skippedGpuRow?.querySelector('[data-k="gpu"]');
-    const skippedGpu = {
+    const skippedMlNodeRow = skippedCard?.querySelector('[data-k-row="mlnode"]');
+    const skippedMlNodeValue = skippedMlNodeRow?.querySelector('[data-k="mlnode"]');
+    const skippedMlNode = {
       exists: Boolean(skippedCard),
-      hidden: Boolean(skippedGpuRow?.hidden),
-      display: skippedGpuRow ? getComputedStyle(skippedGpuRow).display : null,
-      text: skippedGpuValue?.textContent?.trim() || "",
-      clientHeight: skippedGpuRow?.clientHeight || 0,
+      hidden: Boolean(skippedMlNodeRow?.hidden),
+      display: skippedMlNodeRow ? getComputedStyle(skippedMlNodeRow).display : null,
+      text: skippedMlNodeValue?.textContent?.trim() || "",
+      clientHeight: skippedMlNodeRow?.clientHeight || 0,
     };
     const initialExpandedKey = expandedCards[0]?.dataset.nodeKey;
     const activatedCard = collapsedCards[0];
@@ -800,7 +912,22 @@ try {
     const expectedFocusedKey = cards[(activatedIndex + 1) % cards.length]?.dataset.nodeKey;
     const focusedKey = document.activeElement?.closest(".node")?.dataset.nodeKey;
     const keyboardValid = Boolean(activatedButton && focusedKey === expectedFocusedKey);
-    const complete = Object.values(fields).every(field => field.text && field.visible && !field.clipped);
+    // Long identities retain their complete DOM value and are deliberately
+    // single-line clipped, while ordinary metrics must remain fully visible.
+    const longIdentityContract = fields.host.text === longHost &&
+      fields.mlnode.text === longMlNode &&
+      card.querySelector(".node-toggle")?.getAttribute("aria-label")?.includes(longHost) &&
+      card.querySelector(".node-toggle")?.title.includes(longHost);
+    const complete = Object.entries(fields).every(([key, field]) =>
+      field.text && field.visible &&
+      (["host", "mlnode"].includes(key) ? field.singleLineEllipsis : !field.clipped)
+    ) && longIdentityContract && inactiveCpocHidden;
+    const devshardValue = document.querySelector('#devshard-versions');
+    const devshardContract =
+      devshardValue?.textContent?.trim() === "v3 · v4 · v5" &&
+      devshardValue.title.includes("v3: " + "3".repeat(64)) &&
+      devshardValue.title.includes("v4: " + "4".repeat(64)) &&
+      devshardValue.title.includes("v5: " + "5".repeat(64));
     const negativeTracking = [...document.querySelectorAll("body *")]
       .filter(element => {
         const spacing = getComputedStyle(element).letterSpacing;
@@ -810,17 +937,20 @@ try {
     const desktopLayout = !mobile && deckStyle.flexDirection === "row" && oneRow;
     const mobileLayout = mobile && deckStyle.flexDirection === "column" && !oneRow;
     return {
-      pass: cards.length > 5 && expandedCards.length === expectedExpandedCount && collapsedCards.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && deck.getAttribute("role") === "list" && deck.getAttribute("aria-label")?.includes("Host accordion") && deckStyle.overflowX === (mobile ? "visible" : "auto") && deckOverflows === overflowExpected && cardsReachable && (deckOverflows || cardsInside) && expandedGeometry && collapsedGeometry && collapsedSemantics && (mobile ? mobileLayout : desktopLayout) && card.scrollHeight <= card.clientHeight && rowOverlaps.length === 0 && contentBottom <= cardRect.bottom + 0.5 && complete && negativeTracking.length === 0 && statusLayoutShifts.length === 0 && hiddenRejected && skippedGpu.exists && skippedGpu.hidden && skippedGpu.display === "none" && skippedGpu.text === "" && skippedGpu.clientHeight === 0 && activationValid && keyboardValid && document.documentElement.scrollWidth <= innerWidth,
+      pass: cards.length > 5 && expandedCards.length === expectedExpandedCount && collapsedCards.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && deck.getAttribute("role") === "list" && deck.getAttribute("aria-label")?.includes("Host accordion") && deckStyle.overflowX === (mobile ? "visible" : "auto") && deckOverflows === overflowExpected && cardsReachable && (deckOverflows || cardsInside) && expandedGeometry && collapsedGeometry && collapsedSemantics && (mobile ? mobileLayout : desktopLayout) && card.scrollHeight <= card.clientHeight && rowOverlaps.length === 0 && contentBottom <= cardRect.bottom + 0.5 && complete && devshardContract && negativeTracking.length === 0 && statusLayoutShifts.length === 0 && skippedMlNode.exists && !skippedMlNode.hidden && skippedMlNode.display !== "none" && skippedMlNode.text.includes("GPU not reported") && activationValid && keyboardValid && document.documentElement.scrollWidth <= innerWidth,
       expectedExpandedCount,
       initialExpandedCount: expandedCards.length,
       collapsedCount: collapsedCards.length,
       layout: { mobile, flexDirection: deckStyle.flexDirection, oneRow, cardsInside, cardsReachable, firstCardAtStart, lastCardAtEnd, deckOverflows, overflowExpected, maximumDeckScrollLeft, appliedDeckScrollLeft, minimumDeckWidth, expandedGeometry, collapsedGeometry, clientWidth: deck.clientWidth, scrollWidth: deck.scrollWidth, cardWidths: cardRects.map(rect => rect.width), cardHeights: cardRects.map(rect => rect.height) },
       fields,
+      inactiveCpocHidden,
+      longIdentityContract,
+      devshardContract,
+      devshardTitle: devshardValue?.title || "",
       negativeTracking,
       statusLayoutShifts,
       rowOverlaps,
-      hiddenRequiredFieldRejected: hiddenRejected,
-      skippedGpu,
+      skippedMlNode,
       card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight, contentBottom },
       interaction: { initialExpandedKey, activatedKey, activationValid, expectedFocusedKey, focusedKey, keyboardValid },
       documentScrollWidth: document.documentElement.scrollWidth,
@@ -838,7 +968,7 @@ try {
     const deckRect = deck.getBoundingClientRect();
     const cardRects = cards.map(card => card.getBoundingClientRect());
     let expectedExpandedCount = Math.min(innerWidth <= 900 ? 1 : innerWidth < 1200 ? 2 : 4, cards.length);
-    while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 270) expectedExpandedCount -= 1;
+    while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 320) expectedExpandedCount -= 1;
     deck.scrollLeft = 0;
     const firstRect = cards[0].getBoundingClientRect();
     const firstAtStart = firstRect.left >= deckRect.left - 1 && firstRect.right <= deckRect.right + 1;
@@ -848,7 +978,7 @@ try {
     const lastAtEnd = lastRect.left >= deckRect.left - 1 && lastRect.right <= deckRect.right + 1;
     const appliedScrollLeft = deck.scrollLeft;
     deck.scrollLeft = 0;
-    const desktopGeometry = !mobile && style.flexDirection === "row" && cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5 && Math.abs(rect.bottom - cardRects[0].bottom) <= 0.5) && expanded.every(card => card.getBoundingClientRect().width >= 269) && collapsed.every(card => { const rect = card.getBoundingClientRect(); return rect.width >= 31 && rect.width <= 33; });
+    const desktopGeometry = !mobile && style.flexDirection === "row" && cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5 && Math.abs(rect.bottom - cardRects[0].bottom) <= 0.5) && expanded.every(card => card.getBoundingClientRect().width >= 319) && collapsed.every(card => { const rect = card.getBoundingClientRect(); return rect.width >= 31 && rect.width <= 33; });
     const mobileGeometry = mobile && style.flexDirection === "column" && deck.scrollWidth <= deck.clientWidth + 1 && expanded.every(card => Math.abs(card.getBoundingClientRect().width - deck.clientWidth) <= 1) && collapsed.every(card => { const rect = card.getBoundingClientRect(); return Math.abs(rect.width - deck.clientWidth) <= 1 && Math.abs(rect.height - 52) <= 0.5; });
     const desktopReachability = !mobile && style.overflowX === "auto" && maximumScrollLeft > 1 && appliedScrollLeft > 1 && firstAtStart && lastAtEnd;
     const mobileReachability = mobile && style.overflowX === "visible" && maximumScrollLeft <= 1 && firstAtStart && lastAtEnd;
@@ -870,22 +1000,186 @@ try {
       viewportWidth: innerWidth,
     };
   })())`;
-  const bubbleNodes = [1, 2, 4, 9].flatMap((count) =>
-    Array.from({ length: count }, (_, index) => ({
-      address: `bubble-${count}-${index}`,
+  const bubbleNodes = [1, 2, 4, 9].map((gpuCapacity) =>
+    ({
+      name: `bubble-gpu-${gpuCapacity}`,
+      gpuHost: `gpu-bubble-${gpuCapacity}`,
+      address: `bubble-gpu-${gpuCapacity}`,
       participantState: "ACTIVE",
       isOnline: true,
       geo: {
-        latitude: 10 + count * 3,
-        longitude: count,
-        city: `Bubble ${count}`,
+        latitude: 10 + gpuCapacity * 3,
+        longitude: gpuCapacity,
+        city: `Bubble ${gpuCapacity}`,
         country: "Fixtureland",
         isp: "fixture",
-        locationId: `fixture-bubble-${count}`,
-        locationLabel: `Fixture bubble ${count}`,
+        locationId: `fixture-bubble-${gpuCapacity}`,
+        locationLabel: `Fixture bubble ${gpuCapacity}`,
+      },
+    }),
+  );
+  const maidenheadCases = [
+    [39.0997282, -94.5785689, "EM29"],
+    [45.5234482, -122.6762071, "CN85"],
+    [51.5127864, -0.0918442, "IO91"],
+    [52.374028, 4.8896881, "JO22"],
+    [60.1695173, 24.9354499, "KP20"],
+    [55.7520384, 37.6178147, "KO85"],
+  ];
+  const groupedStateNodes = [
+    {
+      name: "node0",
+      gpuHost: "gpu-kansas-node0",
+      address: "kansas-node0",
+      participantState: "ACTIVE",
+      isOnline: false,
+      endpointState: "reachable",
+      votingPower: "1",
+      catchingUp: true,
+      geo: {
+        latitude: 39.0997,
+        longitude: -94.5786,
+        city: "Kansas City",
+        country: "United States",
+        isp: "fixture",
+        locationId: "fixture-kansas-city",
+        locationLabel: "Kansas City, United States",
+      },
+    },
+    {
+      name: "node5",
+      gpuHost: "gpu-kansas-node5",
+      address: "kansas-node5",
+      participantState: "ACTIVE",
+      isOnline: false,
+      endpointState: "reachable",
+      votingPower: "1",
+      catchingUp: true,
+      geo: {
+        latitude: 39.0997,
+        longitude: -94.5786,
+        city: "Kansas City",
+        country: "United States",
+        isp: "fixture",
+        locationId: "fixture-kansas-city",
+        locationLabel: "Kansas City, United States",
+      },
+    },
+    {
+      name: "node3",
+      gpuHost: "gpu-london-node3",
+      address: "london-node3",
+      participantState: "INACTIVE",
+      isOnline: false,
+      geo: {
+        latitude: 51.5074,
+        longitude: -0.1278,
+        city: "London",
+        country: "United Kingdom",
+        isp: "fixture",
+        locationId: "fixture-london",
+        locationLabel: "London, United Kingdom",
+      },
+    },
+    {
+      name: "node8",
+      gpuHost: "gpu-london-node8",
+      address: "london-node8",
+      participantState: "ACTIVE",
+      isOnline: false,
+      endpointState: "reachable",
+      votingPower: "1",
+      catchingUp: true,
+      geo: {
+        latitude: 51.5074,
+        longitude: -0.1278,
+        city: "London",
+        country: "United Kingdom",
+        isp: "fixture",
+        locationId: "fixture-london",
+        locationLabel: "London, United Kingdom",
+      },
+    },
+  ];
+  const stateDistributionNodes = [
+    {
+      gpuHost: "gpu-milan-validating",
+      address: "milan-validating",
+      participantState: "ACTIVE",
+      isOnline: true,
+      geo: {
+        latitude: 45.4642,
+        longitude: 9.19,
+        city: "Milan",
+        country: "Italy",
+        isp: "fixture",
+        locationId: "fixture-milan",
+        locationLabel: "Milan, Italy",
+      },
+    },
+    {
+      gpuHost: "gpu-milan-inactive",
+      address: "milan-inactive",
+      participantState: "INACTIVE",
+      isOnline: false,
+      geo: {
+        latitude: 45.4642,
+        longitude: 9.19,
+        city: "Milan",
+        country: "Italy",
+        isp: "fixture",
+        locationId: "fixture-milan",
+        locationLabel: "Milan, Italy",
+      },
+    },
+    ...["paris-active-1", "paris-active-2"].map((address) => ({
+      gpuHost: `gpu-${address}`,
+      address,
+      participantState: "ACTIVE",
+      isOnline: false,
+      endpointState: "reachable",
+      votingPower: "1",
+      catchingUp: true,
+      geo: {
+        latitude: 48.8566,
+        longitude: 2.3522,
+        city: "Paris",
+        country: "France",
+        isp: "fixture",
+        locationId: "fixture-paris",
+        locationLabel: "Paris, France",
       },
     })),
-  );
+    {
+      gpuHost: "gpu-paris-inactive",
+      address: "paris-inactive",
+      participantState: "INACTIVE",
+      isOnline: false,
+      geo: {
+        latitude: 48.8566,
+        longitude: 2.3522,
+        city: "Paris",
+        country: "France",
+        isp: "fixture",
+        locationId: "fixture-paris",
+        locationLabel: "Paris, France",
+      },
+    },
+    {
+      address: "paris-unknown",
+      participantKnown: false,
+      isOnline: false,
+      geo: {
+        latitude: 48.8566,
+        longitude: 2.3522,
+        city: "Paris",
+        country: "France",
+        isp: "fixture",
+        locationId: "fixture-paris",
+        locationLabel: "Paris, France",
+      },
+    },
+  ];
   const stableNodes = [
     ["a", 48.14, 17.14],
     ["b", 48.13, 17.13],
@@ -956,7 +1250,7 @@ try {
     }
     throw new Error("fixture did not restore the initial boundary map");
   };
-  for (const [width, height] of [
+  const viewports = [
     [1280, 720],
     [1399, 720],
     [1321, 720],
@@ -974,7 +1268,19 @@ try {
     [360, 640],
     [320, 568],
     [844, 390],
-  ]) {
+  ];
+  const requestedViewports = String(process.env.GDC_MAP_FIXTURE_VIEWPORTS || "")
+    .split(",")
+    .filter(Boolean);
+  const selectedViewports = requestedViewports.length
+    ? viewports.filter(([width, height]) =>
+        requestedViewports.includes(`${width}x${height}`),
+      )
+    : viewports;
+  if (requestedViewports.length && selectedViewports.length !== requestedViewports.length)
+    throw new Error(`unknown fixture viewport: ${requestedViewports.join(", ")}`);
+  for (const [width, height] of selectedViewports) {
+    const viewportStarted = performance.now();
     await call("Emulation.setDeviceMetricsOverride", {
       width,
       height,
@@ -994,7 +1300,7 @@ try {
       if (attempt === 119) {
         const { result: mapResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify({text:document.querySelector("#validator-map")?.textContent,leaflet:typeof window.L,updated:document.querySelector("#updated")?.dateTime||"",nodes:document.querySelectorAll("#nodes .node").length,validators:document.querySelector("#validator-map")?.dataset.validatorCount||"",markers:document.querySelector("#validator-map")?.dataset.markerCount||"",mapRect:(()=>{const rect=document.querySelector("#validator-map")?.getBoundingClientRect();return rect?{width:rect.width,height:rect.height}:null})(),world:Boolean(document.querySelector(".validator-map-world")?.complete&&document.querySelector(".validator-map-world")?.naturalWidth)})',
+            'JSON.stringify({text:document.querySelector("#validator-map")?.textContent,leaflet:typeof window.L,updated:document.querySelector("#updated")?.dateTime||"",nodes:document.querySelectorAll("#nodes .node").length,hosts:document.querySelector("#validator-map")?.dataset.hostCount||"",markers:document.querySelector("#validator-map")?.dataset.markerCount||"",mapRect:(()=>{const rect=document.querySelector("#validator-map")?.getBoundingClientRect();return rect?{width:rect.width,height:rect.height}:null})(),world:Boolean(document.querySelector(".validator-map-world")?.complete&&document.querySelector(".validator-map-world")?.naturalWidth)})',
           returnByValue: true,
         });
         throw new Error(
@@ -1006,6 +1312,44 @@ try {
     // Leaflet applies the fractional initial zoom asynchronously after its
     // image overlay has loaded. Measure the settled map, not that transition.
     await delay(500);
+    if (width === 1280) {
+      const { result: gpuRecordsResult } = await call("Runtime.evaluate", {
+        expression: `JSON.stringify((() => {
+          const hardware = count => ({type: "NVIDIA Fixture GPU | 16 GiB", count});
+          const records = count => reportedGpuRecords({hardware: [hardware(count)]});
+          return {
+            ordinary: records(8).length,
+            stringCount: records("8").length,
+            maximum: records(256).length,
+            combinedMaximum: reportedGpuRecords({hardware: [hardware(128), hardware(128)]}).length,
+            combinedOverflow: reportedGpuRecords({hardware: [hardware(128), hardware(129)]}).length,
+            rejected: [0, -1, 1.5, 257, 2 ** 32, 1e12, Infinity, NaN, "invalid"].map(count => records(count).length),
+            malformed: reportedGpuRecords({hardware: {count: 8}}).length,
+            formatted: formatGpuRecords(records(8)),
+            unavailable: formatGpuRecords(records(1e12)),
+          };
+        })())`,
+        returnByValue: true,
+      });
+      const gpuRecords = JSON.parse(gpuRecordsResult.value);
+      if (gpuRecords.ordinary !== 8 || gpuRecords.stringCount !== 8 ||
+        gpuRecords.maximum !== 256 || gpuRecords.combinedMaximum !== 256 ||
+        gpuRecords.combinedOverflow !== 0 || gpuRecords.malformed !== 0 ||
+        gpuRecords.rejected.some(count => count !== 0) ||
+        gpuRecords.formatted !== "Fixture GPU · 16 GiB ×8" ||
+        gpuRecords.unavailable !== "GPU not reported")
+        throw new Error(`public GPU inventory allocation boundary failed: ${JSON.stringify(gpuRecords)}`);
+      const observedRequests = requests.filter((url) =>
+        url.startsWith(`http://127.0.0.1:${server.address().port}/status/`),
+      );
+      if (
+        !observedRequests.some((url) => url.endsWith("/status/network")) ||
+        observedRequests.some((url) => url.endsWith("/status/participants"))
+      )
+        throw new Error(
+          `network observation source contract failed: ${JSON.stringify(observedRequests)}`,
+        );
+    }
     const { result } = await call("Runtime.evaluate", {
       expression: mapStateExpression,
       returnByValue: true,
@@ -1019,7 +1363,7 @@ try {
           'JSON.stringify({requests:window.__fixtureGeoIpRequests,dynamicMarker:[...document.querySelectorAll(".validator-marker")].some(marker=>marker.getAttribute("aria-label")?.includes("geo-fixture"))})',
         returnByValue: true,
       });
-      const geoIp = JSON.parse(geoIpResult.value);
+    const geoIp = JSON.parse(geoIpResult.value);
       if (geoIp.requests !== 2 || geoIp.dynamicMarker)
         throw new Error(
           `partial GeoIP evidence contract failed: ${JSON.stringify(geoIp)}`,
@@ -1038,21 +1382,48 @@ try {
         throw new Error(
           `GeoIP failure backoff contract failed: ${JSON.stringify(retry)}`,
         );
+      healthStatus = 502;
+      await call("Runtime.evaluate", {
+        expression: "refresh()",
+        awaitPromise: true,
+      });
+      const { result: failedHealthResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify({status:document.querySelector("#nodes .node [data-k=\\"status\\"]")?.textContent?.trim(),endpoint:document.querySelector("#nodes .node [data-k=\\"endpoint\\"]")?.textContent?.trim()})',
+        returnByValue: true,
+      });
+      const failedHealth = JSON.parse(failedHealthResult.value);
+      if (
+        failedHealth.status !== "Wait" ||
+        failedHealth.endpoint !== "Unreachable – HTTP 502"
+      )
+        throw new Error(
+          `text health HTTP failure contract failed: ${JSON.stringify(failedHealth)}`,
+        );
+      healthStatus = 200;
+      await call("Runtime.evaluate", {
+        expression: "refresh()",
+        awaitPromise: true,
+      });
+      const { result: recoveredHealthResult } = await call("Runtime.evaluate", {
+        expression:
+          'document.querySelector("#nodes .node [data-k=\\"endpoint\\"]")?.textContent?.trim()',
+        returnByValue: true,
+      });
+      if (recoveredHealthResult.value !== "Reachable")
+        throw new Error(
+          `text health recovery contract failed: ${JSON.stringify(recoveredHealthResult.value)}`,
+        );
     }
     const expectedCoordinates = {
-      "<Bratislava>": [48.15, 17.11],
-      "North edge": [90, -180],
-      Greenwich: [0, 0],
-      "Kansas City": [39.0997285, -94.5785681],
-      "South east": [-45, 90],
-      Antimeridian: [45, 180],
-      "South pole": [-90, -180],
-      "Multiple locations": [90, -180],
+      JN88: [48.15, 17.11],
+      JJ00: [0, 0],
+      EM29: [39.0997285, -94.5785681],
     };
     const geographyValid = (candidate) =>
       candidate.markerNodes.every((marker) => {
-        const city = marker.label.split(":")[0].split(",")[0];
-        if (!/^(?:<Bratislava>|Greenwich|Kansas City)$/.test(city)) return true;
+        const city = marker.label.split(/[,:;]/)[0];
+        if (!/^(?:JN88|JJ00|EM29)$/.test(city)) return true;
         const coordinate = expectedCoordinates[city];
         if (!coordinate || !candidate.worldRect) return false;
         const [latitude, longitude] = coordinate;
@@ -1075,9 +1446,10 @@ try {
         );
       });
     const hasCompactMarkers = state.markerNodes.every((marker) => {
-      const city = marker.label.split(":")[0].split(",")[0];
+      const city = marker.label.split(/[,:;]/)[0];
       const coordinate = expectedCoordinates[city];
-      if (!coordinate) return false;
+      if (!coordinate)
+        return marker.width >= 12 && marker.height >= 12 && marker.width <= 36 && marker.height <= 36;
       const [latitude, longitude] = coordinate;
       const expectedLeft =
         state.worldRect.left + ((longitude + 180) / 360) * state.worldRect.width;
@@ -1091,19 +1463,19 @@ try {
       )
         return true;
       return (
-        marker.width >= 5 &&
-        marker.height >= 5 &&
-        marker.width <= 21 &&
-        marker.height <= 21
+        marker.width >= 12 &&
+        marker.height >= 12 &&
+        marker.width <= 36 &&
+        marker.height <= 36
       );
     });
-    const hasInactiveState = state.markerNodes.some(
-        (marker) =>
-          marker.classes.includes("validator-marker--inactive") &&
-          marker.fill === "#ef6c65",
-      );
+    const hasMixedSegments = state.markerNodes.some(
+      (marker) =>
+        /; 2 nodes;/.test(marker.label) &&
+        marker.background.includes("conic-gradient"),
+    );
     const coreMarkersInside = state.markerNodes
-      .filter((marker) => /^(?:<Bratislava>|Greenwich|Kansas City),/.test(marker.label))
+      .filter((marker) => /^(?:JN88|JJ00|EM29);/.test(marker.label))
       .every(
         (marker) =>
           marker.left >= state.mapRect.left &&
@@ -1114,18 +1486,39 @@ try {
     if (
       !state.world ||
       Math.abs(state.worldRatio - 2) > 0.01 ||
-      state.validators !== 9 ||
+      state.hosts !== 9 ||
       state.markerCount !== 7 ||
       state.hitTargetCount !== state.markerCount ||
       !coreMarkersInside ||
       !geographyValid(state) ||
       !hasCompactMarkers ||
-      !hasInactiveState ||
+      !hasMixedSegments ||
       state.scrollWidth > state.width
     )
       throw new Error(
         `map projection or responsive contract failed at ${width}x${height}: ${JSON.stringify(state)}`,
       );
+    if (width === 320) {
+      await call("Runtime.evaluate", {
+        expression:
+          '(()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88; 2 nodes;"));marker?.focus();marker?.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));})()',
+      });
+      await delay(120);
+      const { result: mixedStateResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify((()=>{const popup=document.querySelector(".leaflet-popup"),summary=popup?.querySelector(".validator-map-summary span:nth-child(3)")?.textContent?.trim()||"",gpus=popup?.querySelector(".validator-map-summary span:nth-child(2)")?.textContent?.trim()||"",rows=[...(popup?.querySelectorAll("li")||[])].map(row=>{const spans=row.querySelectorAll("span"),membership=spans[1]?.textContent?.trim()||"",markerState=membership.split(" · ")[0];return{markerState,membership}});const order=["Validating","Active","Wait"];const counts=new Map();for(const row of rows)counts.set(row.markerState,(counts.get(row.markerState)||0)+1);const expected=order.filter(value=>counts.has(value)).map(value=>counts.get(value)+" "+value).join(" · ");return{summary,gpus,expected,rows,validMapStates:rows.length===2&&counts.get("Wait")===2&&rows.every(row=>order.includes(row.markerState)&&row.membership.endsWith("Membership unavailable"))}})())',
+        returnByValue: true,
+      });
+      const mixedState = JSON.parse(mixedStateResult.value);
+      if (
+        mixedState.summary !== mixedState.expected ||
+        mixedState.gpus !== "1 GPU" ||
+        !mixedState.validMapStates
+      )
+        throw new Error(
+          `mixed map/card state contract failed: ${JSON.stringify(mixedState)}`,
+        );
+    }
     const { result: landResult } = await call("Runtime.evaluate", {
       expression:
         'JSON.stringify((()=>{const image=document.querySelector(".validator-map-world"),canvas=document.createElement("canvas"),points={"gdc-node0 region":[39.0997,-94.5786],"gdc-node1 region":[60.1695,24.9354],"gdc-node2 region":[52.3785,4.9],"gdc-node3 region":[51.5074,-0.1278],"gdc-node4 region":[45.4416,-122.749],Lisbon:[38.72,-9.14],Reykjavik:[64.15,-21.94],Tokyo:[35.68,139.69],Sydney:[-33.87,151.21]};if(!image?.naturalWidth)return{error:"world image unavailable"};canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;const context=canvas.getContext("2d");context.drawImage(image,0,0);const onLand=([lat,lon])=>{const x=Math.round((lon+180)/360*canvas.width),y=Math.round((90-lat)/180*canvas.height);for(let dy=-3;dy<=3;dy+=1)for(let dx=-3;dx<=3;dx+=1)if(context.getImageData(x+dx,y+dy,1,1).data[3]>0)return true;return false};return Object.fromEntries(Object.entries(points).map(([name,point])=>[name,onLand(point)]))})())',
@@ -1150,7 +1543,7 @@ try {
       if (
         Math.abs(resized.worldRatio - 2) > 0.01 ||
         !resized.markerNodes
-          .filter((marker) => /^(?:<Bratislava>|Greenwich|Kansas City),/.test(marker.label))
+          .filter((marker) => /^(?:JN88|JJ00|EM29);/.test(marker.label))
           .every(
             (marker) =>
               marker.left >= resized.mapRect.left &&
@@ -1243,7 +1636,7 @@ try {
       await delay(80);
       const { result: controlResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const button=document.querySelector(".leaflet-control-zoom-in"),control=button?.getBoundingClientRect(),marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Control overlap,"))?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect();return{control:{disabled:button?.classList.contains("leaflet-disabled"),x:control?.left+control?.width/2,y:control?.top+control?.height/2},marker:{x:marker?.left+marker?.width/2,y:marker?.top+marker?.height/2},worldWidth:world?.width}})())',
+          'JSON.stringify((()=>{const button=document.querySelector(".leaflet-control-zoom-in"),control=button?.getBoundingClientRect(),marker=document.querySelector(".validator-marker")?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect();return{control:{disabled:button?.classList.contains("leaflet-disabled"),x:control?.left+control?.width/2,y:control?.top+control?.height/2},marker:{x:marker?.left+marker?.width/2,y:marker?.top+marker?.height/2},worldWidth:world?.width}})())',
         returnByValue: true,
       });
       const control = JSON.parse(controlResult.value);
@@ -1304,34 +1697,164 @@ try {
       await delay(500);
     }
     await call("Runtime.evaluate", {
-      expression: `validatorMapController.update(${JSON.stringify(bubbleNodes)})`,
+      expression: `cardGpuInventory = new Map(${JSON.stringify(
+        [1, 2, 4, 9].map((gpuCapacity) => [
+          `gpu-bubble-${gpuCapacity}`,
+          Array(gpuCapacity).fill({ name: `Fixture GPU ${gpuCapacity}`, memoryBytes: null }),
+        ]),
+      )}); validatorMapController.update(${JSON.stringify(bubbleNodes)})`,
     });
     await delay(80);
+    const { result: maidenheadResult } = await call("Runtime.evaluate", {
+      expression: `JSON.stringify(${JSON.stringify(maidenheadCases)}.map(([lat,lon])=>maidenheadLocator(lat,lon)))`,
+      returnByValue: true,
+    });
+    const locators = JSON.parse(maidenheadResult.value);
+    if (locators.some((locator, index) => locator !== maidenheadCases[index][2]))
+      throw new Error(`Maidenhead conversion failed: ${JSON.stringify(locators)}`);
     const { result: bubbleResult } = await call("Runtime.evaluate", {
       expression:
-        'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",radius=Number(/a([0-9.]+),/.exec(marker.getAttribute("d")||"")?.[1]);return{label,radius}}))',
+        'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",rect=marker.getBoundingClientRect();return{label,radius:rect.width/2,nodes:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),gpus:Number(/; (\\d+) GPUs?;/.exec(label)?.[1]||0),countLabel:marker.querySelector(".validator-marker-number")?.textContent||""}}))',
       returnByValue: true,
     });
     const bubbles = JSON.parse(bubbleResult.value);
-    const bubbleRadius = (count) =>
-      bubbles.find((bubble) =>
-        bubble.label.startsWith(`Fixture bubble ${count}:`),
-      )?.radius;
+    const bubbleRadius = (gpus) => bubbles.find((bubble) => bubble.gpus === gpus)?.radius;
     const [r1, r2, r4, r9] = [1, 2, 4, 9].map(bubbleRadius);
-    const areaRatio = (left, right) => left ** 2 / right ** 2;
     if (
       ![r1, r2, r4, r9].every(Number.isFinite) ||
-      !(r1 < r2 && r2 < r4 && r4 < r9) ||
-      r1 > 4 ||
-      r9 > 9 ||
-      areaRatio(r2, r1) < 1.5 ||
-      areaRatio(r2, r1) > 2.5 ||
-      areaRatio(r4, r1) < 2.5 ||
-      areaRatio(r4, r1) > 5
+      !bubbles.every((bubble) => bubble.nodes === 1) ||
+      Math.abs(r1 - 6) > 0.1 ||
+      Math.abs(r2 - 7.5 * Math.sqrt(2)) > 0.15 ||
+      Math.abs(r4 - 15) > 0.1 ||
+      Math.abs(r9 - 18) > 0.1 ||
+      !(r2 > r1 * 1.6) ||
+      bubbles.some((bubble) => bubble.countLabel)
     )
       throw new Error(
         `bubble size contract failed: ${JSON.stringify(bubbles)}`,
       );
+    if (width === 1280) {
+      await call("Runtime.evaluate", {
+        expression: `cardGpuInventory = new Map(${JSON.stringify([
+          ["gpu-kansas-node0", [{ name: "Fixture GPU A", memoryBytes: null }]],
+          ["gpu-kansas-node5", [{ name: "Fixture GPU B", memoryBytes: null }]],
+          ["gpu-london-node3", [{ name: "Fixture GPU C", memoryBytes: null }, { name: "Fixture GPU D", memoryBytes: null }]],
+          ["gpu-london-node8", [{ name: "Fixture GPU E", memoryBytes: null }]],
+        ])}); validatorMapController.update(${JSON.stringify(groupedStateNodes)})`,
+      });
+      await delay(80);
+      const { result: groupedStateResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const face=marker.querySelector(".validator-marker-face"),rect=marker.getBoundingClientRect(),label=marker.getAttribute("aria-label")||"";return{label,radius:rect.width/2,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),gpus:Number(/; (\\d+) GPUs?;/.exec(label)?.[1]||0),countLabel:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(face).backgroundImage}}))',
+        returnByValue: true,
+      });
+      const groupedState = JSON.parse(groupedStateResult.value);
+      const markerFor = (name) =>
+        groupedState.find((marker) => marker.label.startsWith(`${name};`));
+      const kansas = markerFor("EM29");
+      const london = markerFor("IO91");
+      if (
+        !kansas ||
+        !london ||
+        Math.abs(kansas.radius - 7.5 * Math.sqrt(2)) > 0.15 ||
+        Math.abs(london.radius - 7.5 * Math.sqrt(3)) > 0.15 ||
+        kansas.count !== 2 ||
+        london.count !== 2 ||
+        kansas.gpus !== 2 ||
+        london.gpus !== 3 ||
+        kansas.countLabel ||
+        london.countLabel ||
+        !kansas.label.includes("2 nodes; 2 GPUs; 2 Active") ||
+        !london.label.includes("2 nodes; 3 GPUs; 1 Active, 1 Wait") ||
+        !kansas.background.includes("rgb(255, 157, 74)") ||
+        !london.background.includes("rgb(255, 157, 74)") ||
+        !london.background.includes("rgb(154, 160, 173)")
+      )
+        throw new Error(
+          `grouped marker encoding failed: ${JSON.stringify(groupedState)}`,
+        );
+      await call("Runtime.evaluate", {
+        expression:
+          '(()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("IO91;"));marker?.focus();marker?.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));})()',
+      });
+      await delay(80);
+      const { result: londonPopupResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify({text:document.querySelector(".leaflet-popup-content")?.textContent||"",focused:document.activeElement?.getAttribute("aria-label")||""})',
+        returnByValue: true,
+      });
+      const londonPopup = JSON.parse(londonPopupResult.value);
+      if (
+        !londonPopup.focused.startsWith("IO91;") ||
+        !londonPopup.text.includes("Mixed") ||
+        !londonPopup.text.includes("2 nodes at this location") ||
+        !londonPopup.text.includes("1 Active · 1 Wait") ||
+        !londonPopup.text.includes("node3") ||
+        !londonPopup.text.includes("node8") ||
+        !londonPopup.text.includes("Wait") ||
+        !londonPopup.text.includes("Active")
+      )
+        throw new Error(
+          `mixed marker popup failed: ${JSON.stringify(londonPopup)}`,
+        );
+      await call("Runtime.evaluate", {
+        expression: `cardGpuInventory = new Map(); validatorMapController.update(${JSON.stringify([groupedStateNodes[2]])})`,
+      });
+      await delay(80);
+      const { result: reducedResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",face=marker.querySelector(".validator-marker-face"),rect=marker.getBoundingClientRect();return{label,radius:rect.width/2,gpus:Number(/; (\\d+) GPUs?;/.exec(label)?.[1]||0),countLabel:marker.querySelector(".validator-marker-number")?.textContent||"",background:getComputedStyle(face).backgroundImage}}),countLabels:document.querySelectorAll(".validator-marker-number").length})',
+        returnByValue: true,
+      });
+      const reduced = JSON.parse(reducedResult.value);
+      if (
+        reduced.markers.length !== 1 ||
+        !reduced.markers[0].label.includes("IO91; 1 node; 0 GPUs; 1 Wait") ||
+        reduced.markers[0].gpus !== 0 ||
+        Math.abs(reduced.markers[0].radius - 6) > 0.1 ||
+        !reduced.markers[0].background.includes("rgb(154, 160, 173)") ||
+        reduced.markers[0].countLabel ||
+        reduced.countLabels !== 0
+      )
+        throw new Error(
+          `marker refresh left stale composition DOM: ${JSON.stringify(reduced)}`,
+        );
+      await call("Runtime.evaluate", {
+        expression: `cardGpuInventory = new Map(${JSON.stringify([
+          ["gpu-milan-validating", [{ name: "Fixture GPU F", memoryBytes: null }]],
+          ["gpu-milan-inactive", [{ name: "Fixture GPU G", memoryBytes: null }, { name: "Fixture GPU H", memoryBytes: null }]],
+          ["gpu-paris-active-1", [{ name: "Fixture GPU I", memoryBytes: null }]],
+          ["gpu-paris-active-2", [{ name: "Fixture GPU J", memoryBytes: null }]],
+          ["gpu-paris-inactive", [{ name: "Fixture GPU K", memoryBytes: null }]],
+        ])}); validatorMapController.update(${JSON.stringify(stateDistributionNodes)})`,
+      });
+      await delay(80);
+      const { result: distributionResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify([...document.querySelectorAll(".validator-marker")].map(marker=>{const label=marker.getAttribute("aria-label")||"",rect=marker.getBoundingClientRect();return{label,radius:rect.width/2,count:Number(/; (\\d+) nodes?\\b/.exec(label)?.[1]||0),gpus:Number(/; (\\d+) GPUs?;/.exec(label)?.[1]||0),background:getComputedStyle(marker.querySelector(".validator-marker-face")).backgroundImage}}))',
+        returnByValue: true,
+      });
+      const distributions = JSON.parse(distributionResult.value);
+      const milan = distributions.find((marker) => marker.count === 2);
+      const paris = distributions.find((marker) => marker.count === 4);
+      if (
+        !milan ||
+        !paris ||
+        milan.gpus !== 3 ||
+        paris.gpus !== 3 ||
+        Math.abs(milan.radius - 7.5 * Math.sqrt(3)) > 0.15 ||
+        Math.abs(paris.radius - 7.5 * Math.sqrt(3)) > 0.15 ||
+        !milan.label.includes("2 nodes; 3 GPUs; 1 Validating, 1 Wait") ||
+        !paris.label.includes("4 nodes; 3 GPUs; 2 Active, 2 Wait") ||
+        !milan.background.includes("rgb(120, 184, 61)") ||
+        !milan.background.includes("rgb(154, 160, 173)") ||
+        !paris.background.includes("rgb(255, 157, 74)") ||
+        !paris.background.includes("rgb(154, 160, 173)")
+      )
+        throw new Error(
+          `state distribution encoding failed: ${JSON.stringify(distributions)}`,
+        );
+    }
     await call("Runtime.evaluate", {
       expression: `validatorMapController.update(${JSON.stringify(stableNodes)})`,
     });
@@ -1339,7 +1862,7 @@ try {
     const stablePosition = async () => {
       const { result } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Stable,")),rect=marker?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect();return{left:(rect?.left+rect?.width/2-world?.left)/world?.width,top:(rect?.top+rect?.height/2-world?.top)/world?.height}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88;")),rect=marker?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect();return{left:(rect?.left+rect?.width/2-world?.left)/world?.width,top:(rect?.top+rect?.height/2-world?.top)/world?.height}})())',
         returnByValue: true,
       });
       return JSON.parse(result.value);
@@ -1368,165 +1891,211 @@ try {
       throw new Error(
         `stable group position contract failed: ${JSON.stringify({ stableInitial, stableReordered, stableWithoutFirst })}`,
       );
-    await call("Emulation.setDeviceMetricsOverride", {
-      width: 1280,
-      height: 5000,
-      deviceScaleFactor: 1,
-      mobile: false,
-    });
-    await call("Emulation.setVisibleSize", { width: 1280, height: 5000 });
-    await call("Runtime.evaluate", {
-      expression: `validatorMapController.update(${JSON.stringify(overlappingEuropeanMarkers)})`,
-    });
-    await delay(80);
-    await call("Runtime.evaluate", {
-      expression:
-        'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
-    });
-    await delay(80);
-    const { result: overlappingResult } = await call("Runtime.evaluate", {
-      expression:
-        'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label"),x:r.left+r.width/2,y:r.top+r.height/2}}),hits:[...document.querySelectorAll(".validator-marker-hit")].map(hit=>{const r=hit.getBoundingClientRect();return{className:hit.getAttribute("class"),x:r.left+r.width/2,y:r.top+r.height/2,width:r.width,height:r.height,pointerEvents:getComputedStyle(hit).pointerEvents,opacity:getComputedStyle(hit).opacity,parentPointerEvents:getComputedStyle(hit.parentElement).pointerEvents}})})',
-      returnByValue: true,
-    });
-    const overlappingState = JSON.parse(overlappingResult.value);
-    const singleton = overlappingState.markers.find((marker) =>
-      marker.label?.startsWith("Singleton,"),
-    );
-    const prague = overlappingState.markers.find((marker) =>
-      marker.label?.startsWith("Prague,"),
-    );
-    const hitFor = (marker) =>
-      overlappingState.hits.find(
-        (hit) => Math.hypot(hit.x - marker.x, hit.y - marker.y) < 0.1,
+    // This scenario selects its own fixed desktop/mobile sizes. Run it once,
+    // including when a caller selects only a subset of the viewport matrix.
+    if (width === selectedViewports[0][0]) {
+      await call("Emulation.setDeviceMetricsOverride", {
+        width: 1280,
+        height: 5000,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await call("Emulation.setVisibleSize", { width: 1280, height: 5000 });
+      await call("Runtime.evaluate", {
+        expression: `validatorMapController.update(${JSON.stringify(overlappingEuropeanMarkers)})`,
+      });
+      await delay(80);
+      await call("Runtime.evaluate", {
+        expression:
+          'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
+      });
+      await delay(80);
+      const { result: overlappingResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label"),x:r.left+r.width/2,y:r.top+r.height/2}}),hits:[...document.querySelectorAll(".validator-marker-hit")].map(hit=>{const r=hit.getBoundingClientRect();return{className:hit.getAttribute("class"),x:r.left+r.width/2,y:r.top+r.height/2,width:r.width,height:r.height,pointerEvents:getComputedStyle(hit).pointerEvents,opacity:getComputedStyle(hit).opacity,parentPointerEvents:getComputedStyle(hit.parentElement).pointerEvents}})})',
+        returnByValue: true,
+      });
+      const overlappingState = JSON.parse(overlappingResult.value);
+      const singleton = overlappingState.markers.find((marker) =>
+        marker.label?.startsWith("JN98; 1 node;"),
       );
-    const singletonHit = singleton && hitFor(singleton);
-    const pragueHit = prague && hitFor(prague);
-    const hitDistance =
-      singleton && prague
-        ? Math.hypot(singleton.x - prague.x, singleton.y - prague.y)
-        : NaN;
-    const combinedHitRadius =
-      singletonHit && pragueHit
-        ? singletonHit.width / 2 + pragueHit.width / 2
-        : NaN;
-    if (!(hitDistance < combinedHitRadius))
-      throw new Error(
-        `fixture no longer exercises overlapping hit areas: ${JSON.stringify({ overlappingState, hitDistance, combinedHitRadius })}`,
+      const prague = overlappingState.markers.find((marker) =>
+        marker.label?.startsWith("JO70; 4 nodes;"),
       );
-    const waitForSettledOverlappingMarker = async (expected) => {
-      let previous = null;
-      let stableSamples = 0;
-      let observed = null;
-      for (let attempt = 0; attempt < 40; attempt += 1) {
-        const { result: markerResult } = await call(
-          "Runtime.evaluate",
-          {
+      const hitFor = (marker) =>
+        overlappingState.hits.find(
+          (hit) => Math.hypot(hit.x - marker.x, hit.y - marker.y) < 0.1,
+        );
+      const singletonHit = singleton && hitFor(singleton);
+      const pragueHit = prague && hitFor(prague);
+      const hitDistance =
+        singleton && prague
+          ? Math.hypot(singleton.x - prague.x, singleton.y - prague.y)
+          : NaN;
+      const combinedHitRadius =
+        singletonHit && pragueHit
+          ? singletonHit.width / 2 + pragueHit.width / 2
+          : NaN;
+      if (!(hitDistance < combinedHitRadius))
+        throw new Error(
+          `fixture no longer exercises overlapping hit areas: ${JSON.stringify({ overlappingState, hitDistance, combinedHitRadius })}`,
+        );
+      const waitForSettledOverlappingMarker = async (expected) => {
+        let previous = null;
+        let stableSamples = 0;
+        let observed = null;
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          const { result: markerResult } = await call(
+            "Runtime.evaluate",
+            {
+              expression:
+                'JSON.stringify((()=>({animating:Boolean(document.querySelector(".leaflet-pan-anim,.leaflet-zoom-anim")),markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const rect=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",x:rect.left+rect.width/2,y:rect.top+rect.height/2}})}))())',
+              returnByValue: true,
+            },
+          );
+          observed = JSON.parse(markerResult.value);
+          const position = observed.markers.find((marker) =>
+            marker.label.startsWith(expected),
+          );
+          if (
+            position &&
+            previous &&
+            !observed.animating &&
+            Math.hypot(position.x - previous.x, position.y - previous.y) <= 0.1
+          )
+            stableSamples += 1;
+          else stableSamples = 0;
+          if (stableSamples >= 3) return position;
+          previous = position;
+          await delay(50);
+        }
+        throw new Error(
+          `overlapping marker did not settle ${JSON.stringify({ expected, observed })}`,
+        );
+      };
+      const assertOverlappingPointers = async () => {
+        for (const expected of ["JN98", "JO70"]) {
+          await call("Runtime.evaluate", {
             expression:
-              'JSON.stringify((()=>({animating:Boolean(document.querySelector(".leaflet-pan-anim,.leaflet-zoom-anim")),markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const rect=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",x:rect.left+rect.width/2,y:rect.top+rect.height/2}})}))())',
-            returnByValue: true,
-          },
-        );
-        observed = JSON.parse(markerResult.value);
-        const position = observed.markers.find((marker) =>
-          marker.label.startsWith(expected),
-        );
-        if (
-          position &&
-          previous &&
-          !observed.animating &&
-          Math.hypot(position.x - previous.x, position.y - previous.y) <= 0.1
-        )
-          stableSamples += 1;
-        else stableSamples = 0;
-        if (stableSamples >= 3) return position;
-        previous = position;
-        await delay(50);
-      }
-      throw new Error(
-        `overlapping marker did not settle ${JSON.stringify({ expected, observed })}`,
-      );
-    };
-    const assertOverlappingPointers = async () => {
-      for (const expected of ["Singleton,", "Prague,"]) {
-        await call("Runtime.evaluate", {
-          expression:
-            'document.querySelector(".leaflet-popup-close-button")?.click()',
-        });
-        for (let attempt = 0; attempt < 20; attempt += 1) {
-          const { result: closedResult } = await call("Runtime.evaluate", {
-            expression: '!document.querySelector(".leaflet-popup")',
+              'document.querySelector(".validator-map-tooltip-close")?.click()',
+          });
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            const { result: closedResult } = await call("Runtime.evaluate", {
+              expression: '!document.querySelector(".validator-map-tooltip")',
+              returnByValue: true,
+            });
+            if (closedResult.value) break;
+            if (attempt === 19)
+              throw new Error("previous marker popup did not close");
+            await delay(20);
+          }
+          // Leaflet can continue popup auto-pan after removing the popup DOM.
+          // Bind the pointer coordinates to three stable geometry samples so a
+          // slower runner cannot dispatch at a stale marker position.
+          const marker = await waitForSettledOverlappingMarker(expected);
+          await call("Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            x: marker.x,
+            y: marker.y,
+          });
+          await delay(40);
+          const hoverMarker = await waitForSettledOverlappingMarker(expected);
+          if (Math.hypot(hoverMarker.x - marker.x, hoverMarker.y - marker.y) > 0.1)
+            throw new Error(
+              `hover popup moved the map ${JSON.stringify({ expected, marker, hoverMarker })}`,
+            );
+          const { result: hoverResult } = await call("Runtime.evaluate", {
+            expression:
+              'JSON.stringify((()=>{const popup=document.querySelector(".validator-map-tooltip"),control=document.querySelector(".leaflet-control-container"),fullscreen=document.querySelector("#validator-map-fullscreen");return{popup:popup?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip")),parentIsBody:popup?.parentElement===document.body,position:getComputedStyle(popup).position,tooltipZIndex:Number(getComputedStyle(popup).zIndex||0),controlZIndex:Number(getComputedStyle(control).zIndex||0),fullscreenZIndex:Number(getComputedStyle(fullscreen).zIndex||0)}})())',
             returnByValue: true,
           });
-          if (closedResult.value) break;
-          if (attempt === 19)
-            throw new Error("previous marker popup did not close");
-          await delay(20);
+          const hover = JSON.parse(hoverResult.value);
+          if (
+            !hover.popup.startsWith(expected) ||
+            hover.tooltip ||
+            !hover.parentIsBody ||
+            hover.position !== "fixed" ||
+            hover.tooltipZIndex <= hover.controlZIndex ||
+            hover.tooltipZIndex <= hover.fullscreenZIndex
+          )
+            throw new Error(
+              `hover popup layering contract failed ${JSON.stringify({ expected, marker, hover })}`,
+            );
+          await call("Input.dispatchMouseEvent", {
+            type: "mousePressed",
+            x: marker.x,
+            y: marker.y,
+            button: "left",
+            clickCount: 1,
+          });
+          await call("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            x: marker.x,
+            y: marker.y,
+            button: "left",
+            clickCount: 1,
+          });
+          await delay(80);
+          const pinnedMarker = await waitForSettledOverlappingMarker(expected);
+          if (Math.hypot(pinnedMarker.x - marker.x, pinnedMarker.y - marker.y) > 0.1)
+            throw new Error(
+              `pinned popup moved the map ${JSON.stringify({ expected, marker, pinnedMarker })}`,
+            );
+          const { result: pointerResult } = await call("Runtime.evaluate", {
+            expression: `JSON.stringify({popup:document.querySelector(".validator-map-tooltip")?.textContent||"",pinned:document.querySelector(".validator-map-tooltip")?.classList.contains("is-pinned")||false,tooltip:document.querySelector(".leaflet-tooltip")?.textContent||"",atPoint:document.elementFromPoint(${marker.x},${marker.y})?.getAttribute("class")||"",viewport:{width:innerWidth,height:innerHeight,scrollY}})`,
+            returnByValue: true,
+          });
+          const pointer = JSON.parse(pointerResult.value);
+          if (
+            !pointer.popup.includes(expected) ||
+            !pointer.pinned ||
+            pointer.tooltip
+          )
+            throw new Error(
+              `overlapping hit dispatch failed ${JSON.stringify({ expected, marker, pointer, overlappingState })}`,
+            );
+          await call("Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            x: marker.x + 60,
+            y: marker.y + 60,
+          });
+          await delay(40);
+          const { result: pinnedResult } = await call("Runtime.evaluate", {
+            expression:
+              'JSON.stringify(document.querySelector(".validator-map-tooltip")?.textContent||"")',
+            returnByValue: true,
+          });
+          if (!JSON.parse(pinnedResult.value).includes(expected))
+            throw new Error("clicked popup did not remain open after pointer leave");
         }
-        // Leaflet can continue popup auto-pan after removing the popup DOM.
-        // Bind the pointer coordinates to three stable geometry samples so a
-        // slower runner cannot dispatch at a stale marker position.
-        const marker = await waitForSettledOverlappingMarker(expected);
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: marker.x,
-          y: marker.y,
-        });
-        await call("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x: marker.x,
-          y: marker.y,
-          button: "left",
-          clickCount: 1,
-        });
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x: marker.x,
-          y: marker.y,
-          button: "left",
-          clickCount: 1,
-        });
-        await delay(80);
-        const { result: pointerResult } = await call("Runtime.evaluate", {
-          expression: `JSON.stringify({popup:document.querySelector(".leaflet-popup-content")?.textContent||"",tooltip:document.querySelector(".leaflet-tooltip")?.textContent||"",atPoint:document.elementFromPoint(${marker.x},${marker.y})?.getAttribute("class")||"",viewport:{width:innerWidth,height:innerHeight,scrollY}})`,
-          returnByValue: true,
-        });
-        const pointer = JSON.parse(pointerResult.value);
-        if (
-          !pointer.popup.startsWith(expected) ||
-          !pointer.tooltip.startsWith(expected)
-        )
-          throw new Error(
-            `overlapping hit dispatch failed ${JSON.stringify({ expected, marker, pointer, overlappingState })}`,
-          );
-      }
-    };
-    await assertOverlappingPointers();
-    await call("Runtime.evaluate", {
-      expression: `validatorMapController.update(${JSON.stringify([...overlappingEuropeanMarkers].reverse())})`,
-    });
-    await delay(80);
-    await assertOverlappingPointers();
-    await call("Emulation.setDeviceMetricsOverride", {
-      width: 390,
-      height: 844,
-      deviceScaleFactor: 1,
-      mobile: true,
-    });
-    await call("Emulation.setVisibleSize", { width: 390, height: 844 });
-    await delay(160);
-    const { result: mobileResizeResult } = await call("Runtime.evaluate", {
-      expression: mapStateExpression,
-      returnByValue: true,
-    });
-    const mobileResize = JSON.parse(mobileResizeResult.value);
-    if (
-      Math.abs(mobileResize.worldRatio - 2) > 0.01 ||
-      !mobileResize.centersInside
-    )
-      throw new Error(
-        `overlapping mobile resize geometry failed: ${JSON.stringify(mobileResize)}`,
-      );
+      };
+      await assertOverlappingPointers();
+      await call("Runtime.evaluate", {
+        expression: `validatorMapController.update(${JSON.stringify([...overlappingEuropeanMarkers].reverse())})`,
+      });
+      await delay(80);
+      await assertOverlappingPointers();
+      await call("Emulation.setDeviceMetricsOverride", {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await call("Emulation.setVisibleSize", { width: 390, height: 844 });
+      await delay(160);
+      const { result: mobileResizeResult } = await call("Runtime.evaluate", {
+        expression: mapStateExpression,
+        returnByValue: true,
+      });
+      const mobileResize = JSON.parse(mobileResizeResult.value);
+      if (
+        Math.abs(mobileResize.worldRatio - 2) > 0.01 ||
+        !mobileResize.centersInside
+      )
+        throw new Error(
+          `overlapping mobile resize geometry failed: ${JSON.stringify(mobileResize)}`,
+        );
+    }
     await call("Emulation.setDeviceMetricsOverride", {
       width,
       height,
@@ -1552,7 +2121,7 @@ try {
       throw new Error("unresolved GeoIP location was rendered as a precise marker");
     await call("Runtime.evaluate", {
       expression:
-        'validatorMapController.update([{address:"fixture-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:48.15,longitude:17.11,city:"Bratislava",country:"Slovakia",isp:"fixture"}},{address:"fixture-active",participantState:"ACTIVE",isOnline:false,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture",source:"ip-geolocation",resolvedIp:"203.0.113.10",observedAt:"2026-08-31T12:00:00Z",accuracy:"city"}},{address:"fixture-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:40.71,longitude:-74,city:"New York",country:"United States",isp:"fixture"}},{address:"fixture-unknown",participantKnown:false,isOnline:false,geo:{latitude:41.9,longitude:12.5,city:"Rome",country:"Italy",isp:"fixture"}},{address:"fixture-group-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}},{address:"fixture-group-active",participantState:"ACTIVE",isOnline:false,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}},{address:"fixture-group-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}}])',
+        'validatorMapController.update([{address:"fixture-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:48.15,longitude:17.11,city:"Bratislava",country:"Slovakia",isp:"fixture"}},{address:"fixture-active",participantState:"ACTIVE",isOnline:false,endpointState:"reachable",votingPower:"1",catchingUp:true,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture",source:"ip-geolocation",resolvedIp:"203.0.113.10",observedAt:"2026-08-31T12:00:00Z",accuracy:"city"}},{address:"fixture-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:40.71,longitude:-74,city:"New York",country:"United States",isp:"fixture"}},{address:"fixture-unknown",participantKnown:false,isOnline:false,geo:{latitude:41.9,longitude:12.5,city:"Rome",country:"Italy",isp:"fixture"}},{address:"fixture-group-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}},{address:"fixture-group-active",participantState:"ACTIVE",isOnline:false,endpointState:"reachable",votingPower:"1",catchingUp:true,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}},{address:"fixture-group-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:50.08,longitude:14.44,city:"Prague",country:"Czechia",isp:"fixture"}}])',
     });
     await delay(80);
     const { result: semanticsResult } = await call("Runtime.evaluate", {
@@ -1561,19 +2130,19 @@ try {
       returnByValue: true,
     });
     const semantics = JSON.parse(semanticsResult.value);
-    for (const [city, stateLabel] of [
-      ["Bratislava", "Validating"],
-      ["Vienna", "Active – not validating"],
-      ["New York", "Inactive"],
-      ["Rome", "Unknown – status unavailable"],
+    for (const [locator, stateSummary] of [
+      ["JN88", "1 Validating"],
+      ["JN88", "1 Active"],
+      ["FN30", "1 Wait"],
+      ["JN61", "1 Wait"],
     ]) {
       if (
         !semantics.some(
-          (label) => label.startsWith(`${city},`) && label.includes(stateLabel),
+          (label) => label.startsWith(`${locator};`) && label.includes(stateSummary),
         )
       )
         throw new Error(
-          `marker state text contract failed for ${city}: ${JSON.stringify(semantics)}`,
+          `marker state text contract failed for ${locator}: ${JSON.stringify(semantics)}`,
         );
     }
     const legend = await call("Runtime.evaluate", {
@@ -1583,15 +2152,13 @@ try {
     });
     const legendLabels = JSON.parse(legend.result.value);
     if (
-      !legendLabels.includes("Validating") ||
-      !legendLabels.includes("Active – not validating") ||
-      !legendLabels.includes("Inactive") ||
-      !legendLabels.includes("Unknown – status unavailable") ||
+      JSON.stringify(legendLabels) !==
+        JSON.stringify(["Validating", "Active", "Wait"]) ||
       !semantics.some(
         (label) =>
-          label.startsWith("Prague,") &&
+          label.startsWith("JO70;") &&
           label.includes(
-            "1 validating · 1 active – not validating · 1 inactive",
+            "1 Validating, 1 Active, 1 Wait",
           ),
       )
     )
@@ -1605,24 +2172,53 @@ try {
     await delay(80);
     const { result: duplicateLocationsResult } = await call("Runtime.evaluate", {
       expression:
-        'String([...document.querySelectorAll(".validator-marker")].filter(marker=>marker.getAttribute("aria-label")?.startsWith("Springfield,")).length)',
+        'String([...document.querySelectorAll(".validator-marker")].filter(marker=>marker.getAttribute("aria-label")?.startsWith("JK62;")||marker.getAttribute("aria-label")?.startsWith("LO62;")).length)',
       returnByValue: true,
     });
     if (Number(duplicateLocationsResult.value) !== 2)
       throw new Error("distant dynamic locations with identical labels collided");
     await call("Runtime.evaluate", {
       expression:
-        'validatorMapController.update([{address:"fixture-active",participantState:"ACTIVE",isOnline:false,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture",source:"ip-geolocation",resolvedIp:"203.0.113.10",observedAt:"2026-08-31T12:00:00Z",accuracy:"city"}}])',
+        'validatorMapController.update([{address:"fixture-active",participantState:"ACTIVE",isOnline:false,endpointState:"reachable",votingPower:"1",catchingUp:true,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture",source:"ip-geolocation",resolvedIp:"203.0.113.10",observedAt:"2026-08-31T12:00:00Z",accuracy:"city"}}])',
     });
     await delay(80);
     const { result: focusResult } = await call("Runtime.evaluate", {
       expression:
-        'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Vienna,"));marker?.focus();return{found:Boolean(marker),tabindex:marker?.getAttribute("tabindex"),focused:document.activeElement?.getAttribute("aria-label")||""}})())',
+        'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88;"));marker?.focus();return{found:Boolean(marker),tabindex:marker?.getAttribute("tabindex"),focused:document.activeElement?.getAttribute("aria-label")||""}})())',
       returnByValue: true,
     });
     const focus = JSON.parse(focusResult.value);
-    if (!focus.found || !focus.focused.startsWith("Vienna,"))
+    if (!focus.found || !focus.focused.startsWith("JN88;"))
       throw new Error(`marker focus contract failed: ${JSON.stringify(focus)}`);
+    await delay(40);
+    const { result: focusPopupResult } = await call("Runtime.evaluate", {
+      expression:
+        'JSON.stringify(Boolean(document.querySelector(".validator-map-tooltip")))',
+      returnByValue: true,
+    });
+    if (!JSON.parse(focusPopupResult.value))
+      throw new Error("marker focus did not open the detailed popup");
+    await call("Runtime.evaluate", {
+      expression: 'document.activeElement?.blur()',
+    });
+    let blurClosed = false;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const { result: blurResult } = await call("Runtime.evaluate", {
+        expression: 'JSON.stringify(Boolean(document.querySelector(".leaflet-popup,.validator-map-tooltip")))',
+        returnByValue: true,
+      });
+      if (!JSON.parse(blurResult.value)) {
+        blurClosed = true;
+        break;
+      }
+      await delay(20);
+    }
+    if (!blurClosed)
+      throw new Error("focus popup did not close after marker blur");
+    await call("Runtime.evaluate", {
+      expression:
+        '[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88;"))?.focus()',
+    });
     await call("Runtime.evaluate", {
       expression:
         'document.activeElement?.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}))',
@@ -1637,19 +2233,19 @@ try {
     if (
       !popup.open ||
       popup.all.length !== 1 ||
-      !popup.text.includes("Active – not validating") ||
+      !popup.text.includes("Active participant, currently not validating") ||
       !popup.text.includes("IP geolocation snapshot") ||
       !popup.text.includes("203.0.113.10") ||
       !popup.text.includes("observed 2026-08-31T12:00:00Z") ||
       popup.unsafe ||
-      !popup.focused.startsWith("Vienna,")
+      !popup.focused.startsWith("JN88;")
     )
       throw new Error(
         `keyboard popup escaping contract failed: ${JSON.stringify(popup)}`,
       );
     await call("Runtime.evaluate", {
       expression:
-        'validatorMapController.update([{address:"fixture-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:48.15,longitude:17.11,city:"Bratislava",country:"Slovakia",isp:"fixture"}},{address:"fixture-active",participantState:"ACTIVE",isOnline:false,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture"}},{address:"fixture-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:40.71,longitude:-74,city:"New York",country:"United States",isp:"fixture"}}])',
+        'validatorMapController.update([{address:"fixture-validating",participantState:"ACTIVE",isOnline:true,geo:{latitude:48.15,longitude:17.11,city:"Bratislava",country:"Slovakia",isp:"fixture"}},{address:"fixture-active",participantState:"ACTIVE",isOnline:false,endpointState:"reachable",votingPower:"1",catchingUp:true,geo:{latitude:48.2,longitude:16.37,city:"Vienna",country:"Austria",isp:"fixture"}},{address:"fixture-inactive",participantState:"INACTIVE",isOnline:false,geo:{latitude:40.71,longitude:-74,city:"New York",country:"United States",isp:"fixture"}}])',
     });
     await delay(80);
     const { result: retainedResult } = await call("Runtime.evaluate", {
@@ -1658,7 +2254,7 @@ try {
       returnByValue: true,
     });
     const retained = JSON.parse(retainedResult.value);
-    if (!retained.popup || !retained.focused.startsWith("Vienna,"))
+    if (!retained.popup || !retained.focused.startsWith("JN88;"))
       throw new Error(
         `popup/focus refresh contract failed: ${JSON.stringify(retained)}`,
       );
@@ -1692,7 +2288,7 @@ try {
     const escape = JSON.parse(escapeResult.value);
     if (
       escape.popup ||
-      !escape.focused.startsWith("Vienna,") ||
+      !escape.focused.startsWith("JN88;") ||
       escape.observed
     )
       throw new Error(`Escape contract failed: ${JSON.stringify(escape)}`);
@@ -1766,7 +2362,7 @@ try {
       if (width === 844 && height === 390) {
         const { result: groupedRequestResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Multiple locations"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88; 2 nodes;"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
           returnByValue: true,
         });
         const groupedRequest = JSON.parse(groupedRequestResult.value);
@@ -1782,7 +2378,7 @@ try {
         if (
           !groupedPopup.open ||
           !groupedPopup.visible ||
-          !groupedPopup.text.includes("Multiple locations")
+          !groupedPopup.text.includes("JN88")
         )
           throw new Error(
             `fullscreen grouped popup containment failed: ${JSON.stringify(groupedPopup)}`,
@@ -1804,7 +2400,7 @@ try {
         await delay(80);
         const { result: edgeRequestResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("Multiple locations"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88; 2 nodes;"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
           returnByValue: true,
         });
         const edgeRequest = JSON.parse(edgeRequestResult.value);
@@ -1813,7 +2409,7 @@ try {
         await delay(180);
         const { result: replacementRequestResult } = await call("Runtime.evaluate", {
           expression:
-            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("<Bratislava>,"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+            'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88; 2 nodes;"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
           returnByValue: true,
         });
         const replacementRequest = JSON.parse(replacementRequestResult.value);
@@ -1841,7 +2437,7 @@ try {
       }
       const { result: popupRequestResult } = await call("Runtime.evaluate", {
         expression:
-          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>{const label=item.getAttribute("aria-label")||"";return label.startsWith("Bratislava,")||label.startsWith("<Bratislava>,")});if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
+          'JSON.stringify((()=>{const marker=[...document.querySelectorAll(".validator-marker")].find(item=>item.getAttribute("aria-label")?.startsWith("JN88;"));if(!marker)return{found:false};marker.focus();marker.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",bubbles:true,cancelable:true}));return{found:true}})())',
         returnByValue: true,
       });
       const popupRequest = JSON.parse(popupRequestResult.value);
@@ -1857,8 +2453,7 @@ try {
       if (
         !popupGeometry.open ||
         !popupGeometry.visible ||
-        (!popupGeometry.text.includes("Bratislava,") &&
-          !popupGeometry.text.includes("<Bratislava>,"))
+        !popupGeometry.text.includes("JN88")
       )
         throw new Error(
           `fullscreen popup containment failed: ${JSON.stringify(popupGeometry)}`,
@@ -1881,7 +2476,7 @@ try {
         if (
           !resizedPopup.open ||
           !resizedPopup.visible ||
-          !resizedPopup.text.includes("Bratislava,")
+          !resizedPopup.text.includes("JN88")
         )
           throw new Error(
             `open-popup resize containment failed: ${JSON.stringify(resizedPopup)}`,
@@ -1903,7 +2498,7 @@ try {
         if (
           !restoredPopup.open ||
           !restoredPopup.visible ||
-          !restoredPopup.text.includes("Bratislava,")
+          !restoredPopup.text.includes("JN88")
         )
           throw new Error(
             `open-popup restore containment failed: ${JSON.stringify(restoredPopup)}`,
@@ -1950,25 +2545,17 @@ try {
         expression:
           'document.querySelector("#nodes")?.scrollIntoView({behavior:"instant",block:"start"})',
       });
-      await delay(80);
-      const hostRowScreenshot = await call("Page.captureScreenshot", {
-        format: "png",
-      });
-      await mkdir(evidenceDir, { recursive: true });
-      await writeFile(
-        join(evidenceDir, `host-row-${width}x${height}.png`),
-        Buffer.from(hostRowScreenshot.data, "base64"),
-      );
+      await saveScreenshot(`host-row-${width}x${height}.png`, 80);
       const { result: fiveHostInitialResult } = await call(
         "Runtime.evaluate",
         {
           expression:
-            'JSON.stringify((()=>{const cards=[...document.querySelectorAll("#nodes .node")];cards.slice(5).forEach(card=>card.remove());layoutHostCards();const remaining=[...document.querySelectorAll("#nodes .node")];return{count:remaining.length,expanded:remaining.filter(card=>card.classList.contains("is-expanded")).map(card=>card.dataset.nodeKey),collapsed:remaining.filter(card=>card.classList.contains("is-collapsed")).map(card=>card.dataset.nodeKey)}})())',
+            'JSON.stringify((()=>{const cards=[...document.querySelectorAll("#nodes .node")];cards.slice(5).forEach(card=>card.remove());layoutHostCards();const remaining=[...document.querySelectorAll("#nodes .node")];return{count:remaining.length,capacity:hostCardCapacity(remaining.length),expanded:remaining.filter(card=>card.classList.contains("is-expanded")).map(card=>card.dataset.nodeKey),collapsed:remaining.filter(card=>card.classList.contains("is-collapsed")).map(card=>card.dataset.nodeKey)}})())',
           returnByValue: true,
         },
       );
       const fiveHostInitial = JSON.parse(fiveHostInitialResult.value);
-      const fiveHostExpectedExpanded = width <= 900 ? 1 : 4;
+      const fiveHostExpectedExpanded = fiveHostInitial.capacity;
       if (
         fiveHostInitial.count !== 5 ||
         fiveHostInitial.expanded.length !== fiveHostExpectedExpanded ||
@@ -1977,14 +2564,7 @@ try {
         throw new Error(
           `five-Host initial accordion contract failed at ${width}x${height}: ${JSON.stringify(fiveHostInitial)}`,
         );
-      await delay(380);
-      const fiveHostScreenshot = await call("Page.captureScreenshot", {
-        format: "png",
-      });
-      await writeFile(
-        join(evidenceDir, `host-row-five-${width}x${height}.png`),
-        Buffer.from(fiveHostScreenshot.data, "base64"),
-      );
+      await saveScreenshot(`host-row-five-${width}x${height}.png`, 380);
       const { result: fiveHostActivatedResult } = await call(
         "Runtime.evaluate",
         {
@@ -2004,51 +2584,51 @@ try {
         throw new Error(
           `five-Host activation contract failed at ${width}x${height}: ${JSON.stringify(fiveHostActivated)}`,
         );
+      await saveScreenshot(`host-row-five-selected-${width}x${height}.png`, 380);
+      const { result: fourHostResult } = await call(
+        "Runtime.evaluate",
+        {
+          expression:
+            'JSON.stringify((()=>{const deck=document.querySelector("#nodes"),cards=[...document.querySelectorAll("#nodes .node")];cards.slice(4).forEach(card=>card.remove());layoutHostCards();const remaining=[...document.querySelectorAll("#nodes .node")];return{count:remaining.length,capacity:hostCardCapacity(remaining.length),expanded:remaining.filter(card=>card.classList.contains("is-expanded")).length,collapsed:remaining.filter(card=>card.classList.contains("is-collapsed")).length,fourthOpen:remaining[3]?.querySelector(".node-details")?.hidden===false}})())',
+          returnByValue: true,
+        },
+      );
       await delay(380);
-      const fiveHostActivatedScreenshot = await call(
-        "Page.captureScreenshot",
-        { format: "png" },
+      const { result: fourHostGeometryResult } = await call(
+        "Runtime.evaluate",
+        {
+          expression:
+            'JSON.stringify((()=>{const deck=document.querySelector("#nodes"),cards=[...document.querySelectorAll("#nodes .node")];return{overflows:deck.scrollWidth>deck.clientWidth+1,widths:cards.map(card=>card.getBoundingClientRect().width)}})())',
+          returnByValue: true,
+        },
       );
-      await writeFile(
-        join(
-          evidenceDir,
-          `host-row-five-selected-${width}x${height}.png`,
-        ),
-        Buffer.from(fiveHostActivatedScreenshot.data, "base64"),
-      );
+      const fourHost = { ...JSON.parse(fourHostResult.value), ...JSON.parse(fourHostGeometryResult.value) };
+      const desktop = width > 900;
+      if (
+        fourHost.count !== 4 ||
+        (desktop && (fourHost.capacity !== 4 || fourHost.expanded !== 4 || fourHost.collapsed !== 0 || !fourHost.fourthOpen || fourHost.overflows || fourHost.widths.some((value) => value < 200)))
+      )
+        throw new Error(
+          `four-Host full-card contract failed at ${width}x${height}: ${JSON.stringify(fourHost)}`,
+        );
       await call("Page.navigate", {
         url: `http://127.0.0.1:${server.address().port}/`,
       });
       await waitForInitialMap();
       await delay(500);
     }
-    if ([1280, 390, 320].includes(width)) {
+    if (captureScreenshots && [1280, 390, 320].includes(width)) {
       await call("Runtime.evaluate", {
         expression:
           '(()=>{const details=document.querySelector(".join-requirements");if(details)details.open=true;document.querySelector("#join-node")?.scrollIntoView({behavior:"instant",block:"start"})})()',
       });
-      await delay(80);
-      const joinScreenshot = await call("Page.captureScreenshot", {
-        format: "png",
-      });
-      await mkdir(evidenceDir, { recursive: true });
-      await writeFile(
-        join(evidenceDir, `join-requirements-${width}x${height}.png`),
-        Buffer.from(joinScreenshot.data, "base64"),
-      );
+      await saveScreenshot(`join-requirements-${width}x${height}.png`, 80);
       if (width <= 390) {
         await call("Runtime.evaluate", {
           expression:
             'document.querySelector(".join-requirements-note")?.scrollIntoView({behavior:"instant",block:"end"})',
         });
-        await delay(80);
-        const joinNoteScreenshot = await call("Page.captureScreenshot", {
-          format: "png",
-        });
-        await writeFile(
-          join(evidenceDir, `join-requirements-note-${width}x${height}.png`),
-          Buffer.from(joinNoteScreenshot.data, "base64"),
-        );
+        await saveScreenshot(`join-requirements-note-${width}x${height}.png`, 80);
       }
     }
     if ([701, 700].includes(width)) {
@@ -2078,6 +2658,13 @@ try {
       await delay(380);
     }
     if ([1920, 1440, 1400, 1399, 1321, 1320, 1280, 1101, 1100, 844, 701, 700, 521, 390, 375, 360, 320].includes(width)) {
+      // Geometry includes the asynchronously loaded DevShard inventory. Bind
+      // it to a completed refresh instead of relying on pointer/screenshot
+      // work to outlast the initial details request or the periodic refresh.
+      await call("Runtime.evaluate", {
+        expression: "(async () => { await refresh(); await detailsInFlight; refreshDetails(); await detailsInFlight; })()",
+        awaitPromise: true,
+      });
       const { result: hostGeometryResult } = await call("Runtime.evaluate", {
         expression: hostGeometryExpression,
         returnByValue: true,
@@ -2085,28 +2672,52 @@ try {
       hostGeometry = JSON.parse(hostGeometryResult.value);
       if (!hostGeometry.pass)
         throw new Error(
-          `Host-card geometry contract failed at ${width}x${height}: ${JSON.stringify(hostGeometry)}`,
+          `Host-card geometry contract failed at ${width}x${height}: ${JSON.stringify({ ...hostGeometry, chainApiRequestCount: requests.filter((url) => url.includes("/chain-api/")).length, chainStatusRequestCount: requests.filter((url) => url.includes("/chain-rpc/status")).length })}`,
         );
     }
-    await call("Runtime.evaluate", {
-      expression:
-        'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
-    });
-    await delay(80);
-    const screenshot = await call("Page.captureScreenshot", { format: "png" });
-    await mkdir(evidenceDir, { recursive: true });
-    await writeFile(
-      join(evidenceDir, `validator-map-${width}x${height}.png`),
-      Buffer.from(screenshot.data, "base64"),
-    );
-    reports.push({ width, height, ...state, hostGeometry, denseHostGeometry });
+    if (width === 1280) {
+      await call("Runtime.evaluate", {
+        expression:
+          '(()=>{window.__fixtureCopiedAccount="";Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:value=>{window.__fixtureCopiedAccount=value;return Promise.resolve();}}});const value=document.querySelector("#nodes .node.is-expanded [data-k=\\"account\\"]"),button=document.querySelector("#nodes .node.is-expanded [data-copy-value=\\"account\\"]");if(!value||!button)return;button.closest("[data-k-row=\\"account\\"]").hidden=false;value.textContent="gonka1fixtureaccountaddress";button.click();})()',
+      });
+      await delay(20);
+      const { result: copyResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify((()=>{const value=document.querySelector("#nodes .node.is-expanded [data-k=\\"account\\"]"),button=document.querySelector("#nodes .node.is-expanded [data-copy-value=\\"account\\"]");return{copied:window.__fixtureCopiedAccount,title:button?.title,whiteSpace:getComputedStyle(value).whiteSpace}})())',
+        returnByValue: true,
+      });
+      const copiedAccount = JSON.parse(copyResult.value);
+      if (
+        copiedAccount.copied !== "gonka1fixtureaccountaddress" ||
+        copiedAccount.title !== "Copied" ||
+        copiedAccount.whiteSpace !== "nowrap"
+      )
+        throw new Error(
+          `account address copy contract failed: ${JSON.stringify(copiedAccount)}`,
+        );
+    }
+    if (captureScreenshots) {
+      await call("Runtime.evaluate", {
+        expression:
+          'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
+      });
+      await saveScreenshot(`validator-map-${width}x${height}.png`, 80);
+    }
+    const durationMs = Math.round(performance.now() - viewportStarted);
+    reports.push({ width, height, ...state, hostGeometry, denseHostGeometry, durationMs });
+    process.stdout.write(`PASS validator-map ${width}x${height} ${durationMs}ms\n`);
   }
   const forbidden = requests.filter((url) => forbiddenMapRequest.test(url));
   if (forbidden.length)
     throw new Error(`forbidden map requests: ${JSON.stringify(forbidden)}`);
+  const configuredApprovalsOrigin = `http://127.0.0.1:${server.address().port}/chain-api/productscience/inference/inference/devshard_approved_versions`;
+  const configuredOriginApprovalRequest = requests.includes(configuredApprovalsOrigin);
+  const deprecatedParamsRequested = requests.some((url) => url.endsWith("/chain-api/productscience/inference/inference/params"));
+  if (!configuredOriginApprovalRequest || deprecatedParamsRequested)
+    throw new Error("current DevShard approvals must use the dedicated query at the explicitly configured local chain API origin, never deprecated params");
   await writeFile(
     join(evidenceDir, "validator-map-fixture.json"),
-    `${JSON.stringify({ reports, requests }, null, 2)}\n`,
+    `${JSON.stringify({ reports, requests, configuredOriginApprovalRequest, deprecatedParamsRequested }, null, 2)}\n`,
   );
   process.stdout.write(
     `PASS deterministic validator-map fixture evidence=${evidenceDir}\n`,

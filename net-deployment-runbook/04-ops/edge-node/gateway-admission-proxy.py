@@ -24,6 +24,7 @@ UPSTREAM = urlsplit(env("GDC_GATEWAY_ADMISSION_UPSTREAM", "http://127.0.0.1:1808
 STATUS_URL = env("GDC_GATEWAY_ADMISSION_STATUS_URL", "http://127.0.0.1:18080/v1/status")
 STATUS_BEARER_TOKEN = env("GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN", "")
 EPOCH_URL = env("GDC_GATEWAY_ADMISSION_EPOCH_URL", "http://127.0.0.1:1317/productscience/inference/inference/current_epoch_group_data")
+EPOCH_INFO_URL = env("GDC_GATEWAY_ADMISSION_EPOCH_INFO_URL", EPOCH_URL.rsplit("/", 1)[0] + "/epoch_info")
 CHAIN_STATUS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL", "http://127.0.0.1:26657/status")
 CHAIN_PARAMS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL", "http://127.0.0.1:1317/productscience/inference/inference/params")
 SAFE_GUARD_BLOCKS = int(env("GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS", 10))
@@ -216,6 +217,12 @@ def safe_generation(deadline=None):
     except Exception:
         return None, "chain_status_unavailable"
     try:
+        poc_start = get_json(EPOCH_INFO_URL, deadline)["latest_epoch"]["poc_start_block_height"]
+    except TimeoutError:
+        return None, "deadline_elapsed"
+    except Exception:
+        return None, "epoch_info_unavailable"
+    try:
         params_payload = get_json(CHAIN_PARAMS_URL, deadline)
     except TimeoutError:
         return None, "deadline_elapsed"
@@ -236,12 +243,18 @@ def safe_generation(deadline=None):
     try:
         height = int(height)
         epoch_length = int(params["epoch_length"])
+        if not re.fullmatch(r"[0-9]+", str(poc_start)):
+            return None, "state_invalid"
+        poc_start = int(poc_start)
         safe_start = sum(int(params[name]) for name in ("poc_stage_duration", "poc_exchange_duration", "poc_validation_delay", "poc_validation_duration", "set_new_validators_delay")) + 1
     except (KeyError, TypeError, ValueError):
         return None, "state_invalid"
     # A block-derived fence is required in addition to a fresh runtime view:
     # do not open a first dispatch near a known PoC lifecycle boundary.
-    if not safe_start <= height % epoch_length <= epoch_length - SAFE_GUARD_BLOCKS:
+    position = height - poc_start
+    if epoch_length <= 0 or safe_start <= 0 or not 0 <= position < epoch_length:
+        return None, "epoch_info_inconsistent"
+    if not safe_start <= position <= epoch_length - SAFE_GUARD_BLOCKS:
         return None, "poc_fence"
     if not isinstance(epoch, (str, int)):
         return None, "epoch_invalid"

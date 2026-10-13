@@ -17,7 +17,7 @@ remote_values="$(ssh -T "$node" "sudo awk -F= '
   \$1 == \"KEYRING_PASSWORD\" || \$1 == \"POSTGRES_PASSWORD\" {
     print \$1 \"=\" substr(\$0, index(\$0, \"=\") + 1)
   }
-' '/srv/dai/deploy/$node/.env'")" \
+' '/srv/dai/deploy/.env'")" \
   || die "$node deployed keyring and database secrets are unavailable"
 
 remote_secret() {

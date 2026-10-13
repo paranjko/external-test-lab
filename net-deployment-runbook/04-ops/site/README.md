@@ -24,6 +24,100 @@ npx --yes prettier@3.6.2 --write 04-ops/site/src/*.js
 make site-js
 ```
 
+## Local view
+
+Build and serve the current static site only on loopback:
+
+```sh
+make -C net-deployment-runbook site-serve
+```
+
+Open <http://127.0.0.1:8080/>. The markup, styles and JavaScript come from the checkout; `config.js` and `/status/*` are read from `https://gonka-dev.net`. Override `site_serve_port` when that port is in use, or use a preview as the public data source:
+
+```sh
+make -C net-deployment-runbook site-serve \
+  site_serve_origin=https://preview.gonka-dev.net/215
+```
+
+The local server never changes a Host or the public site.
+
+## Public network selection
+
+`?chainId=<id>` and `#chainId=<id>` ask `/status/network?chainId=<id>` to
+observe the bootstrap at `https://gonka-dev.net/<id>/bootstrap.json`. The
+browser does not fetch bootstrap or peer endpoints itself.
+
+The observer returns only public evidence: bootstrap seeds and discovered P2P
+peers, RPC identity/height/sync state, component versions, MLNode entries
+published by `/v1/versions`, and DevShard health. A selected network has no
+inherited DevNet model, GPU, participant voting power, PoC, gateway, or
+geographic inventory. Those values remain `Not reported` unless a public
+endpoint proves them.
+
+The first selected-network request may return `202 observation_pending`. It
+only queues the observation; the periodic worker fetches the bootstrap and
+updates the cache. This keeps a browser request bounded and prevents it from
+starting unbounded peer scans.
+
+## Static publication
+
+`make publish-site-release` copies files into the existing Caddy bind mount without restarting or reloading Caddy, so site delivery does not interrupt the shared HTTPS listener used by bootstrap publication
+
+The publisher preserves the host's `config.js` and `preview/` directory, it does not apply pending Compose or Caddy configuration changes
+
+`make test-site-publisher` checks the executed publication commands and `make edge-integration` verifies new site bytes, unchanged bootstrap bytes and unchanged Caddy container identity in a disposable local container
+
+The static publisher does not update or restart the production network observer
+
+Before site publication, CI verifies that `/status/network` serves a fresh full chain snapshot and `/status/network/ws` streams its current snapshot envelope
+
+If this capability check fails, the static release is not published
+
+Updating the observer adapter and its Caddy and systemd wiring requires a separate, explicitly scoped operator upgrade
+
+## Preview cleanup
+
+Closing or merging a same-repository PR, or converting it to draft, removes its isolated preview using the current GitHub PR state
+
+Cleanup does not depend on a PR comment or the latest changed-file list, publication may have succeeded even when comment recording failed
+
+The workflow checks PR state again after waiting for its environment, a reopened PR or one marked ready for review keeps its preview
+
+The trusted controller reloads only preview routes and removes the selected PR's labelled backend, network, releases and staging files, it does not install assets, rebuild images or restart shared services
+
+Repeated cleanup and cleanup of a PR without a preview are safe, interrupted cleanup can find its remaining backend by labels
+
+The workflow requires HTTP 404 for the removed frontend, build metadata and status route, connection failures, redirects and HTTP 5xx do not count as successful removal
+
+The `preview` account, its rootless Docker runtime and running preview Caddy must already be provisioned, cleanup does not repair or provision the host
+
+For an operator-authorized retry, first verify the PR is still closed or draft, then use the existing publisher configuration:
+
+```sh
+make -C net-deployment-runbook remove-isolated-site-preview preview_number=PR_NUMBER preview_revision=FULL_HEAD_SHA
+make -C net-deployment-runbook verify-removed-site-preview-live preview_number=PR_NUMBER
+```
+
+`make test-preview-lifecycle` exercises removal, repeated removal and interruption recovery with real disposable containers while checking that another preview and shared services stay unchanged
+
+## Browser regression
+
+`make test-validator-map` checks all 17 viewport sizes, including responsive
+breakpoints, Host-card geometry, keyboard access, map projection and fullscreen
+popups. The overlapping-marker pointer scenario selects its own desktop and
+mobile dimensions and runs once per invocation. Each viewport prints its
+duration; the JSON report remains in `map_evidence_dir`.
+
+PNG captures are optional diagnostics, not image-comparison assertions. Enable
+them for visual inspection:
+
+```sh
+GDC_MAP_FIXTURE_SCREENSHOTS=1 make test-validator-map
+```
+
+To investigate a specific viewport, set `GDC_MAP_FIXTURE_VIEWPORTS=390x844`.
+Keep the full matrix for acceptance; the filter is only a debugging aid.
+
 ## Validator-map basemap provenance
 
 `world-map.svg` is a local land-only, equirectangular schematic for approximate

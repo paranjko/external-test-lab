@@ -1,0 +1,110 @@
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	# The preview must show the same current topology that the public site sees.
+	# Its backend can request this one fixed, read-only endpoint only.
+	@network_observation {
+		method GET HEAD
+		path /network
+	}
+	handle @network_observation {
+		rewrite * /status/network
+		reverse_proxy https://gonka-dev.net {
+			header_up Host gonka-dev.net
+		}
+	}
+	@allowed {
+		method GET HEAD
+		path /gonka-api /gonka-api/*
+	}
+	@observer_bootstrap {
+		method GET
+		path_regexp observer_bootstrap ^/observer/bootstrap/([A-Za-z0-9][A-Za-z0-9._-]{0,127})/bootstrap\.json$
+	}
+	handle @observer_bootstrap {
+		rewrite * /bootstrap/{re.observer_bootstrap.1}/bootstrap.json
+		reverse_proxy gdc-preview-node-guard:8090
+	}
+	@observer_node {
+		method GET
+		path_regexp observer_node ^/observer/node/(node[0-9]+)(/.*)$
+	}
+	handle @observer_node {
+		rewrite * /node/{re.observer_node.1}{re.observer_node.2}
+		reverse_proxy gdc-preview-node-guard:8090
+	}
+	@observer_geo {
+		method GET
+		path_regexp observer_geo ^/observer/geo/([0-9]{1,3}(\.[0-9]{1,3}){3})$
+	}
+	handle @observer_geo {
+		rewrite * /geo/{re.observer_geo.1}
+		reverse_proxy gdc-preview-node-guard:8090
+	}
+	# Community DevNet Hosts have public node<N>.gonka-dev.net names. The
+	# preview backend can address only this narrow read-only route family; it
+	# cannot select an arbitrary hostname, port, scheme or request method.
+	@preview_node {
+		method GET HEAD
+		path_regexp preview_node ^/preview/[1-9][0-9]*/node/(node[0-9]+)(/.*)$
+	}
+	handle @preview_node {
+		rewrite * /node/{re.preview_node.1}{re.preview_node.2}
+		reverse_proxy gdc-preview-node-guard:8090
+	}
+	handle @allowed {
+		uri strip_prefix /gonka-api
+		reverse_proxy https://{$PREVIEW_OBSERVATION_HOST} {
+			header_up Host {$PREVIEW_OBSERVATION_HOST}
+		}
+	}
+	@prometheus_gpu {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		query query=gdc_nvidia_memory_total_bytes
+	}
+	handle @prometheus_gpu {
+		rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	@prometheus_gpu_fresh {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		expression `query({'query':'gdc_nvidia_memory_total_bytes unless (time() - timestamp(gdc_nvidia_memory_total_bytes) > 120)'})`
+	}
+	handle @prometheus_gpu_fresh {
+		rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes%20unless%20%28time%28%29%20-%20timestamp%28gdc_nvidia_memory_total_bytes%29%20%3E%20120%29
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	@prometheus_gpu_retained {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		query query=last_over_time(gdc_nvidia_memory_total_bytes[24h])
+	}
+	handle @prometheus_gpu_retained {
+		rewrite * /api/v1/query?query=last_over_time%28gdc_nvidia_memory_total_bytes%5B24h%5D%29
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	@prometheus_software {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		query query=gdc_component_info
+	}
+	handle @prometheus_software {
+		rewrite * /api/v1/query?query=gdc_component_info
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	@prometheus_software_retained {
+		method GET HEAD
+		path /prometheus/api/v1/query
+		query query=max_over_time(timestamp(gdc_component_info)[24h:15s])
+	}
+	handle @prometheus_software_retained {
+		rewrite * /api/v1/query?query=max_over_time%28timestamp%28gdc_component_info%29%5B24h%3A15s%5D%29
+		reverse_proxy {$PREVIEW_PROMETHEUS_ORIGIN}
+	}
+	respond "not found" 404
+}

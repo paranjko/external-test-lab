@@ -12,15 +12,69 @@ else
   load_profiles
 fi
 record_phase_profile prepare
+# run_phase exports GDC_RUN_ID for managed invocations. load_project assigns
+# the established timestamped manual run ID for direct phase execution.
+RUN="$GDC_HOME/runs/${GDC_RUN_ID:-manual}/prepare"
+mkdir -p "$RUN"
+chmod 0700 "$RUN"
 
-ready_hosts=(); reboot_hosts=(); skipped_hosts=(); failed_hosts=()
+ready_hosts=(); reboot_hosts=(); action_hosts=(); skipped_hosts=(); failed_hosts=()
+append_accelerator_remote_env() {
+  local role="$1"
+  [[ -n "${GDC_JOIN_PROFILE:-}" && ( "$role" == network-gpu || "$role" == ml-only ) ]] || return 0
+  remote_env+=("GDC_ACCELERATOR_VENDOR='$ACCELERATOR_VENDOR'" "GDC_ACCELERATOR_ARCHITECTURE='$ACCELERATOR_ARCHITECTURE'" "GDC_ACCELERATOR_READINESS='$ACCELERATOR_READINESS'")
+}
+
+revalidate_join_accelerator() {
+  local host="$1" role="$2" expected_vendor evidence_dir inspection inspection_tmp receipt expected actual
+  [[ -n "${GDC_JOIN_PROFILE:-}" && ( "$role" == network-gpu || "$role" == ml-only ) ]] || return 0
+  if jq -e '.spec.target | has("accelerator")' "$GDC_JOIN_PROFILE" >/dev/null; then
+    expected_vendor="$(jq -er '.spec.target.accelerator.vendor' "$GDC_JOIN_PROFILE")" || return 1
+  else
+    # join-profile validation admits this shape only for historical v1
+    # recovery, and profile.sh maps that validated contract to NVIDIA.
+    [[ "${ACCELERATOR_VENDOR:-}" == nvidia ]] || return 1
+    return 0
+  fi
+  [[ "$expected_vendor" == amd ]] || return 0
+
+  evidence_dir="$RUN/accelerator-revalidation/$host"
+  mkdir -p "$evidence_dir"
+  chmod 0700 "$evidence_dir"
+  inspection="$evidence_dir/inspection.env"
+  receipt="$evidence_dir/receipt.json"
+  inspection_tmp="$(mktemp "$RUN/.accelerator-inspection.XXXXXX")"
+  if ! ssh -T "$host" 'bash -s' <"$ROOT/00-host-prep/inspect-accelerator.sh" >"$inspection_tmp"; then
+    rm -f "$inspection_tmp"
+    printf 'FAILED  %s: fresh accelerator inspection failed before Host preparation\n' "$host"
+    return 1
+  fi
+  if ! "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$inspection_tmp" --output "$receipt"; then
+    rm -f "$inspection_tmp" "$receipt"
+    printf 'FAILED  %s: fresh accelerator inspection no longer selects the generated profile\n' "$host"
+    return 1
+  fi
+  install -m 0600 "$inspection_tmp" "$inspection"
+  rm -f "$inspection_tmp"
+  chmod 0600 "$receipt"
+  expected="$(jq -Sc '.spec.target.accelerator' "$GDC_JOIN_PROFILE")" || return 1
+  actual="$(jq -Sc '.' "$receipt")" || return 1
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'FAILED  %s: accelerator receipt changed after JOIN profile generation; evidence: %s\n' \
+      "$host" "$evidence_dir"
+    return 1
+  fi
+  printf 'BOUND  %s accelerator receipt matches generated JOIN profile; evidence: %s\n' "$host" "$evidence_dir"
+}
+
 prepare_nodes=("${GDC_NODES[@]}")
 explicit_hosts=false
 if [[ -n "${GDC_PREPARE_HOSTS:-}" ]]; then
   explicit_hosts=true
   read -r -a prepare_nodes <<<"$GDC_PREPARE_HOSTS"
   for node in "${prepare_nodes[@]}"; do
-    topology_contains_node "$node" || die "prepare expects an alias from GDC_NODE_ALIASES, got: $node"
+    topology_contains_node "$node" || [[ "$node" == "${GDC_PREPARE_ML_ONLY_HOST:-}" ]] \
+      || die "prepare expects a validator alias or the requested ML-only Host, got: $node"
   done
 fi
 hosts=("${prepare_nodes[@]}")
@@ -29,22 +83,20 @@ for node in "${prepare_nodes[@]}"; do
   [[ -z "$ml_host" ]] || hosts+=("$ml_host")
 done
 for host in "${hosts[@]}"; do
-  if ! ssh_ready "$host"; then
-    if [[ "$explicit_hosts" == true ]]; then
-      echo "FAILED  $host: SSH is unavailable; cannot prepare the requested Host"
-      failed_hosts+=("$host")
-      continue
-    fi
-    echo "SKIP  $host is unreachable"
-    skipped_hosts+=("$host")
-    continue
-  fi
   network_node="$(node_for_ml_host "$host" || true)"
   role=network-gpu
-  if [[ -n "$network_node" ]]; then
+  if [[ "$host" == "${GDC_PREPARE_ML_ONLY_HOST:-}" ]]; then
+    network_node="${GDC_PREPARE_ML_ONLY_FOR:-}"
+    topology_contains_node "$network_node" || die 'ML-only preparation lacks a valid owning Network Node'
+    role=ml-only
+  elif [[ -n "$network_node" ]]; then
     role=ml-only
   elif [[ -n "$(node_ml_host "$host" || true)" ]]; then
     role=network-only
+  fi
+  if ! revalidate_join_accelerator "$host" "$role"; then
+    failed_hosts+=("$host")
+    continue
   fi
   callback_check='true'
   if [[ "$role" == network-only ]]; then
@@ -66,17 +118,57 @@ for host in "${hosts[@]}"; do
     continue
   fi
   step "Prepare $host"
-  if ! tar -C "$ROOT/00-host-prep" -cf - . | ssh "$host" 'rm -rf /tmp/gdc-host-prep && mkdir -p /tmp/gdc-host-prep && tar -C /tmp/gdc-host-prep -xf -'; then
+  # The transfer is the first preparation action that actually needs SSH. Do
+  # not probe it with a separate connection: JOIN preflight owns baseline Host
+  # readiness, while this action owns availability at mutation time. Retain
+  # the transport verdict so an unreachable optional Host can still be skipped
+  # without hiding another transfer failure.
+  set +e
+  tar -C "$ROOT/00-host-prep" -cf - . \
+    | ssh "$host" 'rm -rf /tmp/gdc-host-prep && mkdir -p /tmp/gdc-host-prep && tar -C /tmp/gdc-host-prep -xf -'
+  transfer_statuses=("${PIPESTATUS[@]}")
+  set -e
+  if (( transfer_statuses[0] == 0 && transfer_statuses[1] == 0 )); then
+    :
+  else
+    transfer_status="${transfer_statuses[1]}"
+    if (( transfer_status == 255 )); then
+      if [[ "$explicit_hosts" == true ]]; then
+        echo "FAILED  $host: SSH is unavailable; cannot prepare the requested Host"
+        failed_hosts+=("$host")
+        continue
+      fi
+      echo "SKIP  $host is unreachable"
+      skipped_hosts+=("$host")
+      continue
+    fi
     echo "FAILED  $host: cannot transfer host-prep files"
     failed_hosts+=("$host")
     continue
   fi
-  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" >/dev/null 2>&1; then
+  # A declared portable runtime satisfies the ADX/BMI2 check. The chain images
+  # are replaced only under a generated JOIN profile, and profile.sh refuses a
+  # declaration of one image without the other.
+  verify_host_args="--role '$role'"
+  if [[ -n "${GDC_JOIN_PROFILE:-}" && -n "${GDC_PORTABLE_CORE_IMAGE:-}" && -n "${GDC_PORTABLE_DAPI_IMAGE:-}" ]]; then
+    verify_host_args="$verify_host_args --portable-runtime"
+  fi
+  if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh $verify_host_args" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
     continue
   fi
+  # Host preparation is durable host state, while reset deliberately removes
+  # /srv/dai. Re-run the idempotent preparation when its verification fails so
+  # JOIN can recreate that node root. A symbolic link is not GDC-managed
+  # configuration and must never be followed by the privileged writer.
+  if ssh "$host" 'sudo test -L /etc/gonka/host.env' >/dev/null 2>&1; then
+    echo "OPERATOR_ACTION_REQUIRED  $host: /etc/gonka/host.env is a symbolic link and cannot be prepared safely"
+    action_hosts+=("$host")
+    continue
+  fi
   remote_env=()
+  append_accelerator_remote_env "$role"
   if [[ "$role" == ml-only ]]; then
     # The ML host is contacted by the network Host, not by its public edge
     # hostname. Prefer the SSH endpoint and use public DNS only as a fallback.
@@ -99,12 +191,17 @@ for host in "${hosts[@]}"; do
     reboot_hosts+=("$host")
     continue
   fi
+  if (( prepare_rc == 195 )); then
+    echo "OPERATOR_ACTION_REQUIRED  $host: resolve the Host prerequisite in /var/log/gdc-prepare.log, then repeat JOIN"
+    action_hosts+=("$host")
+    continue
+  fi
   if (( prepare_rc != 0 )); then
     echo "FAILED  $host: prepare exited $prepare_rc; details: /var/log/gdc-prepare.log"
     failed_hosts+=("$host")
     continue
   fi
-  if ! verify_output=$(ssh -o ConnectTimeout=10 "$host" "sudo /tmp/gdc-host-prep/verify-host.sh --role '$role'" 2>&1); then
+  if ! verify_output=$(ssh -o ConnectTimeout=10 "$host" "sudo /tmp/gdc-host-prep/verify-host.sh $verify_host_args" 2>&1); then
     printf 'FAILED  %s verification:\n%s\n' "$host" "$verify_output"
     failed_hosts+=("$host")
     continue
@@ -122,7 +219,9 @@ done
 printf '\n== Host preparation summary ==\n'
 printf 'READY   %s\n' "${ready_hosts[*]:-none}"
 printf 'REBOOT  %s\n' "${reboot_hosts[*]:-none}"
+printf 'ACTION  %s\n' "${action_hosts[*]:-none}"
 printf 'SKIP    %s\n' "${skipped_hosts[*]:-none}"
 printf 'FAILED  %s\n' "${failed_hosts[*]:-none}"
 (( ${#failed_hosts[@]} == 0 )) || exit 1
+(( ${#action_hosts[@]} == 0 )) || exit 195
 (( ${#reboot_hosts[@]} == 0 )) || exit 194

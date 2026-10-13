@@ -77,8 +77,12 @@ if grep -Eq 'reconcile_monitoring_agents|install-agent.sh' "$ROOT/scripts/phase-
   exit 1
 fi
 grep -Fq 'chainRpcHost:$chainRpcHost' "$ROOT/04-ops/render-ops.sh"
-grep -Eq 'const chainRpcHost[[:space:]]*=' "$ROOT/04-ops/site/src/app.js"
-grep -Fq 'json("/status/participants")' "$ROOT/04-ops/site/src/app.js"
+grep -Eq 'let chainRpcHost[[:space:]]*=' "$ROOT/04-ops/site/src/app.js"
+grep -Fq 'json(statusUrl("/network"))' "$ROOT/04-ops/site/src/app.js"
+if grep -Fq 'statusUrl("/participants")' "$ROOT/04-ops/site/src/app.js"; then
+  echo 'The public site must derive live topology from network observation, not participant registry state' >&2
+  exit 1
+fi
 for ops_only in GRAFANA_PUBLIC_DASHBOARD_UID GRAFANA_PUBLIC_DASHBOARD_SHARE_UID GRAFANA_PUBLIC_DASHBOARD_TOKEN TELEGRAM_BOT_URL TELEGRAM_BOT_HOST; do
   if sed -n '/^write_inventory()/,/^}/p' "$ROOT/scripts/lib.sh" | grep -q "inventory_value $ops_only"; then
     echo "common Host inventory contains OPS-only field: $ops_only" >&2
@@ -88,3 +92,25 @@ done
 ! grep -q 'GDC_TELEGRAM_BOT_HOST' "$ROOT/scripts/prepare-join-role-config.sh"
 ! grep -q 'GDC_TELEGRAM_BOT_HOST' "$ROOT/scripts/write-genesis-role-config.sh"
 printf 'PASS role documentation and OPS observation boundary\n'
+
+# Node startup must pull only absent images.
+grep -Fq 'pull --policy missing' "$ROOT/02-node/start-node.sh"
+echo 'PASS node startup pulls only absent images'
+
+# Registration must pass the durable TMKMS key: the signerless node reports a
+# throwaway one, and the rendered .env is the only transport that carries it.
+grep -Fq -- '--consensus-key' "$ROOT/03-join/register-participant.sh"
+grep -Fq 'refuse registration with an inferred validator key' "$ROOT/03-join/register-participant.sh"
+grep -Fq 'expected_registration_key="$(jq -er .consensus_pubkey "$IDENTITY")"' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'registered validator key does not match the durable TMKMS signer' "$ROOT/scripts/phase-join.sh"
+echo 'PASS participant registration binds the identity consensus key'
+
+# A portable runtime replaces both chain images or neither: the ISA gate is
+# waived only when Core and DAPI are both declared under a JOIN profile.
+grep -Fq 'GDC_PORTABLE_CORE_IMAGE and GDC_PORTABLE_DAPI_IMAGE must be declared together' "$ROOT/scripts/profile.sh"
+grep -Fq '[[ -n "${GDC_JOIN_PROFILE:-}" && -n "${GDC_PORTABLE_CORE_IMAGE:-}" && -n "${GDC_PORTABLE_DAPI_IMAGE:-}" ]]' "$ROOT/scripts/phase-prepare.sh"
+if grep -Fq '[[ -z "${GDC_PORTABLE_DAPI_IMAGE:-}" ]] || verify_host_args' "$ROOT/scripts/phase-prepare.sh"; then
+  echo 'phase-prepare.sh must not waive the ISA gate on a DAPI-only portable declaration' >&2
+  exit 1
+fi
+echo 'PASS portable runtime is declared for both chain images or neither'

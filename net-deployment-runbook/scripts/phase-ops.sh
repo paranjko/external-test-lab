@@ -307,13 +307,13 @@ if [[ "$COMPONENT" == edge-node ]]; then
   ssh "$EDGE_NODE" "rm -rf '$edge_remote' && mkdir -p '$edge_remote'"
   rsync -a "$ROOT/04-ops/edge-node/" "$EDGE_NODE:$edge_remote/edge/"
   scp -q "$edge_env" "$EDGE_NODE:$edge_remote/edge.env"
-  edge_destination="/srv/dai/deploy/$EDGE_NODE/edge"
+  edge_destination=/srv/dai/deploy/edge
   edge_install_args="--node-name '$EDGE_NODE'"
   if [[ "$EDGE_NODE" == "$PUBLIC_EDGE_NODE" ]]; then
     edge_destination=/srv/dai/edge
     edge_install_args=''
   fi
-  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; rm -rf '$edge_remote'; cd '$edge_destination' && docker compose up -d --force-recreate caddy"
+  ssh -T "$EDGE_NODE" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_args; cd '$edge_destination' && docker compose up -d --force-recreate caddy"
   # A selected gateway can move after recovery. Reconcile only the retained
   # proxy listener with the current role; never regenerate the node role,
   # reset chain data, or replace a signer here.
@@ -321,28 +321,7 @@ if [[ "$COMPONENT" == edge-node ]]; then
   if [[ "$EDGE_NODE" == "$GENESIS_NODE" || "$EDGE_NODE" == "$GATEWAY_NODE" ]]; then
     proxy_bind_address=0.0.0.0
   fi
-  ssh -T "$EDGE_NODE" "set -Eeuo pipefail
-    deploy='/srv/dai/deploy/$EDGE_NODE'
-    [[ -f \"\$deploy/.env\" && -f \"\$deploy/compose.yaml\" ]] || { echo 'managed Network Node deployment is absent' >&2; exit 1; }
-    previous=\"\$(mktemp \"\$deploy/.env.before-proxy-ingress.XXXXXX\")\"
-    cp -p \"\$deploy/.env\" \"\$previous\"
-    cleanup() { rc=\$?; if (( rc != 0 )); then cp -p \"\$previous\" \"\$deploy/.env\"; docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" up -d --no-deps --force-recreate proxy >/dev/null 2>&1 || true; fi; rm -f \"\$previous\"; exit \"\$rc\"; }
-    trap cleanup EXIT
-    if grep -q '^PROXY_BIND_ADDRESS=' \"\$deploy/.env\"; then
-      sed -i -E 's/^PROXY_BIND_ADDRESS=.*/PROXY_BIND_ADDRESS=$proxy_bind_address/' \"\$deploy/.env\"
-    else
-      printf 'PROXY_BIND_ADDRESS=$proxy_bind_address\\n' >>\"\$deploy/.env\"
-    fi
-    docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" config --quiet
-    docker compose --project-directory \"\$deploy\" --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" up -d --no-deps --force-recreate proxy
-    proxy_ready=false
-    for attempt in \$(seq 1 30); do
-      if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8000/health >/dev/null; then proxy_ready=true; break; fi
-      sleep 1
-    done
-    [[ \"\$proxy_ready\" == true ]] || { echo 'proxy did not become locally healthy after ingress reconciliation' >&2; exit 1; }
-    trap - EXIT
-    rm -f \"\$previous\""
+  ssh -T "$EDGE_NODE" "'$edge_remote/edge/reconcile-proxy-ingress-remote.sh' '$edge_remote' '$EDGE_NODE' '$proxy_bind_address'"
   printf 'PASS participant edge and proxy ingress reconciled on %s; node data and signer retained\n' "$EDGE_NODE"
   exit 0
 fi
@@ -367,6 +346,7 @@ case "$COMPONENT" in
       'FAUCET_KEY_NAME=gdc-faucet-cold' \
       "FAUCET_KEYRING_PASSWORD=$(<"$SECRETS/operator.keyring")" \
       "FAUCET_AMOUNT_NGONKA=$faucet_amount" \
+      'FAUCET_GAS_PRICES=1ngonka' \
       "FAUCET_MAX_CLAIMS_PER_IP=${GDC_FAUCET_MAX_CLAIMS_PER_IP:-3}" \
       "FAUCET_WINDOW_SECONDS=${GDC_FAUCET_WINDOW_SECONDS:-86400}"
     gateway_recipient="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
@@ -374,7 +354,7 @@ case "$COMPONENT" in
       "FAUCET_CHAIN_ID=$CHAIN_ID" "FAUCET_GENESIS_SHA256=$faucet_genesis_sha256" \
       'FAUCET_RPC_URL=http://127.0.0.1:26657' 'FAUCET_CHAIN_REST_URL=http://127.0.0.1:1317' \
       'FAUCET_KEY_NAME=gdc-faucet-cold' "FAUCET_KEYRING_PASSWORD=$(<"$SECRETS/operator.keyring")" \
-      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18085' \
+      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_GAS_PRICES=1ngonka' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18085' \
       "FAUCET_GATEWAY_RESERVE_RECIPIENT=$gateway_recipient" "FAUCET_GATEWAY_RESERVE_TOKEN=$(<"$reserve_signer_token")" \
       "FAUCET_GATEWAY_RESERVE_MAX_NGONKA=${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
     FAUCET_OPTION="--faucet-env '$REMOTE/rendered/faucet.env' --gateway-reserve-env '$REMOTE/rendered/gateway-reserve-signer.env'"
@@ -817,6 +797,7 @@ esac
 step "Install $COMPONENT operations component on $GATEWAY_NODE"
 ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
 rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
+scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/04-ops/lib-lock.sh"
 scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"
 [[ -z "${SITE_ASSETS_RENDER:-}" ]] || rsync -a --delete "$SITE_ASSETS_RENDER/" "$GATEWAY_NODE:$REMOTE/04-ops/site/"
 rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"
@@ -939,7 +920,10 @@ if [[ "$COMPONENT" == gateway ]]; then
         curl -fsS http://127.0.0.1:1317/productscience/inference/inference/params \
           | jq -r ".params.epoch_params | [.epoch_length,.poc_stage_duration,.poc_exchange_duration,.poc_validation_delay,.poc_validation_duration,.set_new_validators_delay] | map(tonumber) | @tsv"
       )
-      position=$((height % epoch_length))
+      poc_start="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:1317/productscience/inference/inference/epoch_info | jq -er ".latest_epoch.poc_start_block_height | tonumber")"
+      [[ "$poc_start" =~ ^[0-9]+$ ]] || exit 1
+      position=$((height - poc_start))
+      (( epoch_length > 0 && position >= 0 && position < epoch_length )) || exit 1
       safe_start=$((poc_duration + poc_exchange_duration + validation_delay + validation_duration + validators_delay + 1))
       safe_end=$((epoch_length - 10))
       (( position >= safe_start && position <= safe_end ))'; then

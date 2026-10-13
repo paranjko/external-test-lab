@@ -93,3 +93,106 @@ join_acceptance_state_restore_strongest() {
     | {epoch,participant_weight:(.weight_evidence.participant_weight | tonumber),accepted_weight_sum:(.weight_evidence.accepted_weight_sum | tonumber),committed_total:(.weight_evidence.committed_total | tonumber)}]
     | max_by(.epoch) // empty' "$observations"
 }
+
+# Preserve the completed chain-eligibility boundary separately from the final
+# gateway regression.  A missing operator credential must not force a later
+# resume to repeat or extend the immutable epoch window.
+join_acceptance_state_record_eligibility() {
+  local run="$1" epoch="$2" validator_key="$3" temporary
+  local state="$run/acceptance-state.json"
+  [[ "$epoch" =~ ^[1-9][0-9]*$ && -n "$validator_key" ]] || return 2
+  jq -e --argjson epoch "$epoch" --arg validator_key "$validator_key" '
+    .strongest_observed as $strongest
+    | .distribution_evidence as $distribution
+    | $epoch == (.deadline_epoch | tonumber)
+      and ($strongest.epoch | tonumber) <= $epoch
+      and ($strongest.participant_weight | tonumber) > 0
+      and ($strongest.accepted_weight_sum | tonumber) > 0
+      and ($strongest.accepted_weight_sum | tonumber) == ($strongest.committed_total | tonumber)
+      and ($distribution.stage | tonumber) > 0
+      and ($distribution.tx_hash | test("^[A-F0-9]{64}$"))
+      and ($distribution.tx_code | tonumber) == 0
+  ' "$state" >/dev/null || return 1
+  temporary="$(mktemp "$run/.acceptance-state.tmp.XXXXXX")"
+  jq --argjson epoch "$epoch" --arg validator_key "$validator_key" '
+    .eligibility_verified = {
+      epoch:$epoch,
+      validator_key:$validator_key,
+      participant_weight:(.strongest_observed.participant_weight | tonumber),
+      accepted_weight_sum:(.strongest_observed.accepted_weight_sum | tonumber),
+      committed_total:(.strongest_observed.committed_total | tonumber),
+      distribution_stage:(.distribution_evidence.stage | tonumber),
+      distribution_tx_hash:.distribution_evidence.tx_hash,
+      distribution_tx_code:(.distribution_evidence.tx_code | tonumber)
+    }
+  ' "$state" >"$temporary"
+  mv "$temporary" "$state"
+}
+
+join_acceptance_state_restore_eligibility() {
+  local run="$1" validator_key="$2"
+  local state="$run/acceptance-state.json"
+  jq -ce --arg validator_key "$validator_key" '
+    .eligibility_verified as $verified
+    | .strongest_observed as $strongest
+    | .distribution_evidence as $distribution
+    | select(($verified.epoch | tonumber) == (.deadline_epoch | tonumber))
+    | select($verified.validator_key == $validator_key)
+    | select(($verified.participant_weight | tonumber) > 0)
+    | select(($verified.accepted_weight_sum | tonumber) > 0)
+    | select(($verified.accepted_weight_sum | tonumber) == ($verified.committed_total | tonumber))
+    | select(($verified.participant_weight | tonumber) == ($strongest.participant_weight | tonumber))
+    | select(($verified.accepted_weight_sum | tonumber) == ($strongest.accepted_weight_sum | tonumber))
+    | select(($verified.committed_total | tonumber) == ($strongest.committed_total | tonumber))
+    | select(($verified.distribution_stage | tonumber) == ($distribution.stage | tonumber))
+    | select($verified.distribution_tx_hash == $distribution.tx_hash)
+    | select(($verified.distribution_tx_code | tonumber) == 0 and ($distribution.tx_code | tonumber) == 0)
+    | $verified
+  ' "$state"
+}
+
+# Runs produced before eligibility_verified existed wrote this exact BLOCKED
+# receipt only after every bounded chain gate had passed.  Adopt that receipt
+# once, but only when all identity, profile and evidence fields still match the
+# durable state file.
+join_acceptance_state_adopt_gateway_blocked_receipt() {
+  local run="$1" validator_key="$2" profile_hash="$3" temporary
+  local state="$run/acceptance-state.json" receipt="$run/receipt.json"
+  [[ -s "$state" && -s "$receipt" && -n "$validator_key" && -n "$profile_hash" ]] || return 1
+  jq -e --arg validator_key "$validator_key" --arg profile_hash "$profile_hash" \
+    --slurpfile state "$state" '
+      .verdict == "BLOCKED"
+      and .reason == "the verified public bootstrap did not provide the scoped gateway client credential required for the final authenticated gateway regression"
+      and .run_id == $state[0].run_id
+      and .genesis_sha256 == $state[0].genesis_sha256
+      and .participant_address == $state[0].participant_address
+      and .runtime_id == $state[0].runtime_id
+      and .validator_key == $validator_key
+      and .profile_hash == $profile_hash
+      and (.deadline_epoch | tonumber) == ($state[0].deadline_epoch | tonumber)
+      and .poc_accepted_once == true
+      and (.poc_accepted_epoch | tonumber) <= (.deadline_epoch | tonumber)
+      and (.poc_participant_weight | tonumber) == ($state[0].strongest_observed.participant_weight | tonumber)
+      and (.poc_accepted_weight_sum | tonumber) == ($state[0].strongest_observed.accepted_weight_sum | tonumber)
+      and (.poc_committed_total | tonumber) == ($state[0].strongest_observed.committed_total | tonumber)
+      and (.poc_accepted_weight_sum | tonumber) > 0
+      and (.poc_accepted_weight_sum | tonumber) == (.poc_committed_total | tonumber)
+      and .poc_distribution_tx_hash == $state[0].distribution_evidence.tx_hash
+      and (.poc_distribution_tx_code | tonumber) == 0
+      and ($state[0].distribution_evidence.tx_code | tonumber) == 0
+    ' "$receipt" >/dev/null || return 1
+  temporary="$(mktemp "$run/.acceptance-state.tmp.XXXXXX")"
+  jq --arg validator_key "$validator_key" '
+    .eligibility_verified = {
+      epoch:(.deadline_epoch | tonumber),
+      validator_key:$validator_key,
+      participant_weight:(.strongest_observed.participant_weight | tonumber),
+      accepted_weight_sum:(.strongest_observed.accepted_weight_sum | tonumber),
+      committed_total:(.strongest_observed.committed_total | tonumber),
+      distribution_stage:(.distribution_evidence.stage | tonumber),
+      distribution_tx_hash:.distribution_evidence.tx_hash,
+      distribution_tx_code:(.distribution_evidence.tx_code | tonumber)
+    }
+  ' "$state" >"$temporary"
+  mv "$temporary" "$state"
+}

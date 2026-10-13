@@ -11,7 +11,7 @@ MAX_SEQS="$6"; GPU_UTILIZATION="$7"; CONTEXT_LENGTH="$8"
 ssh -T "$NODE" \
   "NODE='$NODE' MODEL='$MODEL' REVISION='$REVISION' DTYPE='$DTYPE' TENSOR='$TENSOR' MAX_SEQS='$MAX_SEQS' GPU_UTILIZATION='$GPU_UTILIZATION' CONTEXT_LENGTH='$CONTEXT_LENGTH' bash -s" <<'REMOTE'
 set -Eeuo pipefail
-cd "/srv/dai/deploy/$NODE"
+cd /srv/dai/deploy
 compose=(sudo docker compose --env-file .env -f compose.yaml -f compose.ml-local.yaml)
 request="$(jq -nc \
   --arg model "$MODEL" --arg dtype "$DTYPE" --arg revision "$REVISION" \
