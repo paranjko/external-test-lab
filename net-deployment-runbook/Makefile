@@ -1,6 +1,8 @@
 SHELLCHECK_VERSION ?= v0.11.0
 SHELLCHECK_IMAGE := koalaman/shellcheck:$(SHELLCHECK_VERSION)
 SHELL_SCRIPTS := $(shell find . -path './vendor' -prune -o -path './.data' -prune -o -type f -name '*.sh' -print | LC_ALL=C sort)
+shellcheck_shard ?= 0
+shellcheck_shards ?= 1
 DEVCONTAINER_CLI ?= npx --yes --loglevel=silent @devcontainers/cli
 # Docker Desktop for Mac cannot bind-mount the launchd ssh-agent socket that
 # $SSH_AUTH_SOCK points to; it exposes the host agent at a fixed path inside
@@ -69,13 +71,12 @@ verify-upstream-profiles:
 	@bash ./scripts/verify-bootstrap-upstream.sh "$(upstream_source)"
 
 shellcheck:
-	@docker run --rm \
-		--volume "$(CURDIR):/mnt:ro" \
-		--workdir /mnt \
-		$(SHELLCHECK_IMAGE) \
-		--external-sources \
-		--severity=warning \
-		$(SHELL_SCRIPTS)
+	@bash ./scripts/run-shellcheck.sh "$(SHELLCHECK_IMAGE)" "$(shellcheck_shard)" "$(shellcheck_shards)"
+
+# Keep the complete inventory available for shard coverage checks.
+.PHONY: shellcheck-files
+shellcheck-files:
+	@printf '%s\n' $(SHELL_SCRIPTS)
 
 test-amd-mlnode-build:
 	@./scripts/test-build-amd-mlnode.sh
@@ -215,8 +216,7 @@ test-site-preview-generation:
 test-site-preview-endpoints:
 	@./scripts/test-site-preview-endpoints.sh
 
-test-site-preview-platform: site-vendor
-	@$(MAKE) test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher
+test-site-preview-platform: site-vendor test-site-release-paths test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-publisher
 	@./scripts/test-public-edge-static-site.sh
 
 .PHONY: test-status-openapi test-public-gpu-freshness test-public-edge-static-site test-site-preview-acceptance
@@ -320,18 +320,20 @@ site-preview-publish-context:
 site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
-test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check test-network-selection site-host-requirements-check test-recovery-contract test-participants-proxy test-network-observer test-site-serve test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
-	@$(MAKE) test-devshard-release
-	@$(MAKE) test-devshard-artifacts
-	@bash ./scripts/test-node-container-control.sh
+# Each CI group runs sequentially in its own checkout. In particular, site
+# builders and fixed-port HTTP fixtures must not share a parallel checkout.
+RUNBOOK_CI_GROUPS := bootstrap contracts site join
+P0A_SHARED_TESTS := test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-phase-ml-add-ownership test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-host-layouts test-detach-network-ml-host test-validator-ml-lifecycle
+.PHONY: $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) test-ci-layout
+test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(P0A_SHARED_TESTS)
+
+test-ci-layout:
+	@python3 ./scripts/test-runbook-ci.py
+
+test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+
+test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts
 	@bash ./scripts/test-node-container-lending.sh
-	@bash ./scripts/test-node-container-lending-docker.sh
-	@bash ./scripts/test-phase-ml-add-ownership.sh
-	@bash ./scripts/test-ml-lend-generic-pairs.sh
-	@bash ./scripts/test-ml-lending-two-host-layouts.sh
-	@bash ./scripts/test-detach-network-ml-host.sh
-	@bash ./scripts/test-validator-ml-lifecycle.sh
-	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
 	@python3 ./scripts/test-pin-candidate-dockerfile.py
@@ -386,7 +388,6 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/test-host-identity-layout-probe.sh
 	@./scripts/test-profiles.sh
-	@bash ./scripts/test-core-release-profile.sh
 	@./scripts/test-official-devshard-profile.sh
 	@./scripts/test-api-entrypoint.sh
 	@./scripts/test-network-verify-identity-resolution.sh
@@ -406,8 +407,8 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-gateway-continuity-verdict.sh
 	@./scripts/test-recovery-readiness-predicate.sh
 	@./scripts/test-capture-poc-snapshot.sh
-	@$(MAKE) test-gateway-site-state
-	@$(MAKE) test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-generation test-site-preview-platform
+
+test-ci-site: test-command-dependency-contract test-isolated-preview-ci-artifact site-js-check test-network-selection site-host-requirements-check test-site-serve test-gateway-site-state test-site-release-verifier test-site-preview-platform
 	@node ./scripts/test-software-versions.js
 	@./scripts/test-gateway-health-probe.sh
 	@./scripts/test-public-traffic-readiness.sh
@@ -432,7 +433,6 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-gateway-escrow-reconciler.sh
 	@./scripts/test-faucet-caddy-config.sh
 	@./scripts/test-claim-devnet-faucet.sh
-	@./scripts/test-proxy-ingress-layouts.sh
 	@./scripts/test-participant-edge-start.sh
 	@./scripts/test-public-edge-single-listener.sh
 	@./scripts/test-public-homepage-rendered-asset.sh
@@ -441,6 +441,8 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-telegram-bot-deployment.sh
 	@./scripts/test-telegram-consumer-probe-loop.sh
 	@python3 ./scripts/test-telegram-bot.py
+
+test-ci-join: test-command-dependency-contract
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
 	@./scripts/test-inspect-accelerator.sh
@@ -459,22 +461,12 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-resolve-join-components.sh
 	@./scripts/test-resolve-join-profile.sh
 	@./scripts/test-host-join-plan.sh
-	@bash ./scripts/test-reset-then-join-entry.sh
 	@./scripts/test-join-preflight-diagnostics.sh
 	@./scripts/test-join-lineage-preflight.sh
 	@./scripts/test-join-lineage-quorum-adversarial.sh
 	@./scripts/test-host-join-state-sync.sh
-	@bash ./scripts/test-verify-lineage-trust-fresh-boundaries.sh
-	@./scripts/test-verify-state-sync-config.sh
 	@./scripts/test-migrate-v1-validator-identity.sh
 	@./scripts/test-verify-canonical-join-state.sh
-	@bash ./scripts/test-post-sync-join-helper.sh
-	@./scripts/test-verify-post-sync-join-state.sh
-	@./scripts/test-verify-post-sync-join-state-layouts.sh
-	@./scripts/test-join-resume-new-canonical.sh
-	@./scripts/test-join-resume-post-sync-shared.sh
-	@./scripts/test-join-resume-restore-post-sync-refusal.sh
-	@./scripts/test-join-resume-restore-membership.sh
 	@./scripts/test-host-join-resume-canonical.sh
 	@./scripts/test-recover-incident-flat-layout.sh
 	@./scripts/test-host-join-resume-signer-readback.sh
@@ -483,7 +475,6 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-resolve-reset-dai-backup.sh
 	@./scripts/test-verify-inactive-validator-key.sh
 	@./scripts/test-verify-complete-join-state.sh
-	@./scripts/test-wait-state-sync-canary.sh
 	@./scripts/test-promote-state-sync-generation.sh
 	@./scripts/test-record-state-sync-canary.sh
 	@./scripts/test-verify-tmkms-signing-state.sh
@@ -506,7 +497,6 @@ test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap t
 	@./scripts/test-running-host-recovery-orchestration.sh
 	@./scripts/test-genesis-role-config.sh
 	@./scripts/test-prepare-join-role-config.sh
-	@./scripts/test-prepare-accelerator-binding.sh
 	@./scripts/test-role-separation.sh
 	@./scripts/test-domain-cli.sh
 	@./scripts/test-explicit-public-host.sh
@@ -670,7 +660,7 @@ test-two-host-lifecycle-locks:
 test-pinned-dapi-worker-removal: bats-docker-image
 	@bash ./scripts/test-pinned-dapi-worker-removal.sh
 
-test-gdc-p0a: test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-join-resume-caught-up-canary test-phase-join-caught-up-lineage test-phase-ml-add-ownership test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-host-layouts test-detach-network-ml-host test-wait-dapi-worker-removal test-validator-ml-lifecycle test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal
+test-gdc-p0a: $(P0A_SHARED_TESTS) test-join-resume-caught-up-canary test-phase-join-caught-up-lineage test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-wait-dapi-worker-removal test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal
 
 test-reset-then-join-entry:
 	@bash ./scripts/test-reset-then-join-entry.sh

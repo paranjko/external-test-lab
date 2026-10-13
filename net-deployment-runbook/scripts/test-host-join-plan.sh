@@ -4,6 +4,10 @@
 # compatibility spelling.
 set -Eeuo pipefail
 
+# Exercise both real observations without waiting the operator's 15-second
+# retry interval. This fixture verifies planning and effects, not elapsed time.
+export GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
