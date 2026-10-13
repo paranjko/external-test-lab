@@ -134,18 +134,26 @@ func rewriteStorageResponse(response *http.Response, prefix, origin string) ([]b
 		return nil, err
 	}
 	contentType := response.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "application/json") {
-		if response.Header.Get("Content-Encoding") == "gzip" {
-			reader, gzipErr := gzip.NewReader(bytes.NewReader(body))
-			if gzipErr != nil {
-				return nil, gzipErr
-			}
-			body, err = io.ReadAll(reader)
-			_ = reader.Close()
-			if err != nil {
-				return nil, err
-			}
+	encoding := strings.TrimSpace(response.Header.Get("Content-Encoding"))
+	if strings.EqualFold(encoding, "gzip") {
+		reader, gzipErr := gzip.NewReader(bytes.NewReader(body))
+		if gzipErr != nil {
+			return nil, gzipErr
 		}
+		body, err = io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil {
+			return nil, err
+		}
+		response.Header.Del("Content-Encoding")
+	} else if encoding != "" && !strings.EqualFold(encoding, "identity") {
+		if strings.HasPrefix(contentType, "application/json") || strings.HasPrefix(contentType, "text/html") {
+			return nil, fmt.Errorf("unsupported Storage content encoding: %s", encoding)
+		}
+		// Opaque assets need no rewriting: preserve their encoded bytes and headers.
+		return body, nil
+	}
+	if strings.HasPrefix(contentType, "application/json") {
 		body, err = rewriteStorageAPIURL(body, origin, prefix)
 		if err != nil {
 			return nil, err
@@ -154,7 +162,6 @@ func rewriteStorageResponse(response *http.Response, prefix, origin string) ([]b
 		body = []byte(strings.ReplaceAll(strings.ReplaceAll(string(body), `href="/`, `href="`+prefix+`/`), `src="/`, `src="`+prefix+`/`))
 	}
 	response.Header.Del("Content-Length")
-	response.Header.Del("Content-Encoding")
 	return body, nil
 }
 
