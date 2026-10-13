@@ -293,6 +293,7 @@ site-preview-cleanup-context:
 	@./scripts/site-preview-context.sh cleanup
 
 test: test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-command-dependency-contract site-js-check site-host-requirements-check test-recovery-contract test-participants-proxy test-command-results test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+	@$(MAKE) test-devshard-release
 	@bash ./scripts/test-node-container-control.sh
 	@$(MAKE) test-isolated-preview-ci-artifact
 	@bash ./scripts/test-upstream-isolation.sh
@@ -583,3 +584,22 @@ test-recovery-rehearsal:
 test-tmkms-recovery-boundary:
 	@image="$$(docker build -q -f scripts/tmkms-boundary.Dockerfile scripts)" && \
 		docker run --rm --network none --cpus 0.5 --memory 256m "$$image"
+
+.PHONY: test-devshard-release devshard-release-prepare devshard-release-fetch devshard-release-build devshard-release-verify devshard-release-publish
+test-devshard-release:
+	@python3 ./scripts/test-devshard-release.py
+
+devshard-release-prepare:
+	@python3 ./scripts/devshard-release.py prepare
+
+devshard-release-fetch:
+	@python3 ./scripts/devshard-release.py fetch
+
+devshard-release-build:
+	@python3 ./scripts/devshard-release.py build
+
+devshard-release-verify:
+	@python3 ./scripts/devshard-release.py verify
+
+devshard-release-publish:
+	@python3 ./scripts/devshard-release.py publish

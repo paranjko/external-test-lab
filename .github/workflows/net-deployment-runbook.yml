@@ -12,6 +12,7 @@ on:
       - '.github/workflows/network-bootstrap-publish.yml'
       - '.github/workflows/network-bootstrap-monitor.yml'
       - '.github/workflows/net-deployment-runbook.yml'
+      - '.github/workflows/devshard-release.yml'
   pull_request:
     types:
       - opened
@@ -26,6 +27,7 @@ on:
       - '.github/workflows/network-bootstrap-publish.yml'
       - '.github/workflows/network-bootstrap-monitor.yml'
       - '.github/workflows/net-deployment-runbook.yml'
+      - '.github/workflows/devshard-release.yml'
   workflow_dispatch:
 
 concurrency:

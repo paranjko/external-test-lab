@@ -10,7 +10,10 @@ gh
 google-chrome
 gpg
 gtimeout
+nm
 nvidia-smi
+objdump
+od
 rsync
 scp
 shellcheck
@@ -18,3 +21,4 @@ sqlite3
 ssh
 sudo
 ufw
+zipinfo
