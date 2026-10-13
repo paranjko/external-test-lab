@@ -120,6 +120,7 @@ fi
 # covered by test-bifrost-pinned-lifecycle.sh.
 launcher="$tmp/launcher"
 cp -a "$ROOT" "$launcher"
+cp -a "$ROOT/../model" "$launcher/../model"
 cat >"$launcher/scripts/phase-ops.sh" <<'PHASE_OPS'
 #!/usr/bin/env bash
 set -Eeuo pipefail

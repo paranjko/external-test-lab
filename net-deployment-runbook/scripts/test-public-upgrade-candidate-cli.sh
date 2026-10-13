@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-runbook="$tmp/runbook"
+runbook="$tmp/source/net-deployment-runbook"
 home="$tmp/home"
 fake_bin="$tmp/bin"
 candidate=v2026.08.25-rc.0
@@ -13,7 +13,7 @@ source_profile=v2026.08.06
 mkdir -p "$fake_bin" "$home/receipts/gate-b" "$home/state/lineage" "$runbook"
 # A cleanroom must contain only revisioned source. In particular, never copy
 # untracked local .data evidence, which may be intentionally unreadable.
-git -C "$ROOT" archive HEAD | tar -xf - -C "$runbook"
+git -C "$ROOT/.." archive HEAD | tar -xf - -C "$tmp/source"
 [[ ! -e "$runbook/.data" ]]
 cp "$runbook/profiles/releases/$source_profile.lock" \
   "$runbook/profiles/releases/$candidate.lock"

@@ -38,6 +38,7 @@ fixture="$scratch/runbook"
 mkdir -p "$fixture"
 cp "$ROOT/gdc.sh" "$fixture/gdc.sh"
 cp -a "$ROOT/scripts" "$ROOT/profiles" "$fixture/"
+cp -a "$ROOT/../model" "$fixture/../model"
 # The launcher fixture replaces every Host-mutating phase.  Its resume tests
 # exercise dispatcher selection, not profile-schema validation, so keep the
 # manifest writer out of the synthetic phase path.

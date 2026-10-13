@@ -1016,7 +1016,7 @@ if [[ -n "$RELEASE" ]]; then
   export GDC_RELEASE_PROFILE_CLI_OVERRIDE=true
 fi
 [[ -z "$MODEL" || "$MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "Invalid model overlay: $MODEL" >&2; exit 2; }
-[[ -z "$MODEL" || -r "$ROOT/profiles/models/$MODEL.lock" ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
+[[ -z "$MODEL" || -r "$ROOT/../model/$MODEL.lock" ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
 if [[ -n "$MODEL" && "$MODEL" != qwen3-0.6b ]]; then
   [[ "${1:-}" == qualify-ml || "${1:-}" == prefetch-ml ]] || {
     echo "Model overlay $MODEL is qualification-only; only prefetch-ml and qualify-ml are implemented" >&2

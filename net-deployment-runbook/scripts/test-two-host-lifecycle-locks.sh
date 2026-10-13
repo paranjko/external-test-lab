@@ -19,6 +19,7 @@ fixture="$tmp/runbook"
 mkdir -p "$fixture" "$tmp/bin"
 cp "$ROOT/gdc.sh" "$fixture/gdc.sh"
 cp -a "$ROOT/scripts" "$ROOT/profiles" "$fixture/"
+cp -a "$ROOT/../model" "$fixture/../model"
 # This test covers lifecycle ownership at the command boundary. Dedicated
 # tests validate manifest construction, so the isolated fixture has no
 # release profile dependency.

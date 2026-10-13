@@ -47,7 +47,7 @@ load_profiles
 expected_network_hash="$({
   sha256sum "$ROOT/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
     "$ROOT/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$ROOT/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}'
+    "$ROOT/../model/$GDC_MODEL_PROFILE.lock" | awk '{print $1}'
 } | sha256sum | awk '{print $1}')"
 expected_operator_hash="$(sha256sum "$ROOT/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
 [[ "$(profile_hash)" == "$expected_network_hash" ]]
@@ -490,7 +490,7 @@ for release in v2026.07.23 v2026.08.06; do
   expected_network_hash="$(sha256sum \
     "$ROOT/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
     "$ROOT/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$ROOT/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+    "$ROOT/../model/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
   expected_operator_hash="$(sha256sum \
     "$ROOT/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" \
     | awk '{print $1}' | sha256sum | awk '{print $1}')"

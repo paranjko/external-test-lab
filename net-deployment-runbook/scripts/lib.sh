@@ -1301,10 +1301,10 @@ latest_baseline_pass_bundle() {
   genesis_profile_hash="$(awk -F= '$1 == "profile_hash" {print $2; exit}' "$STATE/phase-profiles/genesis.env" 2>/dev/null || true)"
   [[ -n "$genesis_profile_hash" ]] || return 1
   root="$(profile_root)"
-  [[ -r "$root/profiles/releases/$profile.lock" && -r "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" && -r "$root/profiles/models/$GDC_MODEL_PROFILE.lock" ]] || return 1
+  [[ -r "$root/profiles/releases/$profile.lock" && -r "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" && -r "$root/../model/$GDC_MODEL_PROFILE.lock" ]] || return 1
   expected_profile_hash="$(sha256sum "$root/profiles/releases/$profile.lock" \
     "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+    "$root/../model/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
   [[ -n "$expected_profile_hash" ]] || return 1
   if [[ "$profile" == v2026.07.23 && "$expected_profile_hash" != "$genesis_profile_hash" ]]; then return 1; fi
   while IFS= read -r verdict; do
@@ -1337,11 +1337,11 @@ require_current_baseline_pass() {
 
   step "Require a current $profile baseline PASS before the upgrade lifecycle"
   root="$(profile_root)"
-  [[ -r "$root/profiles/releases/$profile.lock" && -r "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" && -r "$root/profiles/models/$GDC_MODEL_PROFILE.lock" ]] \
+  [[ -r "$root/profiles/releases/$profile.lock" && -r "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" && -r "$root/../model/$GDC_MODEL_PROFILE.lock" ]] \
     || die "unknown profile inputs for $profile ($GDC_DEPLOYMENT_PROFILE / $GDC_MODEL_PROFILE)"
   expected_profile_hash="$(sha256sum "$root/profiles/releases/$profile.lock" \
     "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+    "$root/../model/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
 
   source_release="$(awk -F= '$1 == "GONKA_RELEASE" {gsub(/\"/, "", $2); print $2; exit}' "$root/profiles/releases/$profile.lock")"
   source_commit="$(awk -F= '$1 == "GONKA_COMMIT" {gsub(/\"/, "", $2); print $2; exit}' "$root/profiles/releases/$profile.lock")"
