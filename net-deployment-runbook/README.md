@@ -49,7 +49,7 @@ gdc --release v2026.07.23 genesis gdc-node0 --public-edge gdc-node4
 gdc host join gdc-node1
 gdc host join gdc-node2
 gdc host join gdc-node3
-gdc host join gdc-node4 gdc-node4-ml # node net only + gpu net
+gdc host join gdc-node4 gdc-node9 # Network Node + separate ML machine (formerly node4-ml)
 ```
 
 ## Operator CLI paths

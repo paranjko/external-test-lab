@@ -1,11 +1,11 @@
-# gonkactl-test 1.0.0-beta.1
+# gonkactl-test 1.0.0-alpha.1
 
 Run and verify Gonka fixtures, validate environment profiles and composition
-digests, and produce test evidence and Allure reports. This beta has reviewed
+digests, and produce test evidence and Allure reports. This alpha has reviewed
 DevShard v5 bindings; unsupported scenarios remain `not_run`.
 
 Install from https://gonka-dev.net/test or unpack the archive for your platform.
-`gonkactl-test --version` prints `1.0.0-beta.1`; `build-info` prints source and
+`gonkactl-test --version` prints `1.0.0-alpha.1`; `build-info` prints source and
 build metadata. Linux and macOS archives contain `gonkactl-test`; Windows
 contains `gonkactl-test.exe` (the shell installer runs in Git Bash/MSYS).
 
@@ -25,7 +25,7 @@ On Windows, use a Linux Docker engine (for example Docker Desktop with WSL2).
 Cross-compilation alone does not establish that every external fixture works
 on every platform.
 
-Release tags are tool-scoped: `gonkactl-test/v1.0.0-beta.1`. Verify downloads
+Release tags are tool-scoped: `gonkactl-test-v1.0.0-alpha.1`. Verify downloads
 against `checksums.txt` from the same release before unpacking. Checksums detect
 corruption; they do not replace trust in the GitHub release publisher and HTTPS.
 
@@ -44,5 +44,5 @@ Builds use CGO_ENABLED=0 and inject version, source commit and commit time.
 The five archives have normalized metadata and a SHA-256 manifest. Use an
 empty output directory for each candidate (`RELEASE_OUTPUT=/absolute/path`).
 The workflow publishes only from an existing tag that matches the tested
-source. It creates a draft with generated release notes and marks it public
+source. It creates a draft with the checked-in release notes and marks it public
 only after all assets have uploaded. An existing release is never overwritten.

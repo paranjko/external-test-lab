@@ -1,15 +1,15 @@
 name: gonkactl-test release
 on:
   push:
-    tags: ['gonkactl-test/v*']
+    tags: ['gonkactl-test-v*']
   workflow_dispatch:
     inputs:
       tag:
         description: Existing gonkactl-test release tag
         required: true
-        default: gonkactl-test/v1.0.0-beta.1
+        default: gonkactl-test-v1.0.0-alpha.1
         type: choice
-        options: [gonkactl-test/v1.0.0-beta.1]
+        options: [gonkactl-test-v1.0.0-alpha.1]
 permissions:
   contents: read
 concurrency:

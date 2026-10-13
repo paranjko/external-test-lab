@@ -4,10 +4,10 @@
 set -eu
 
 main() {
-    version=${GONKACTL_TEST_VERSION:-1.0.0-beta.1}
+    version=${GONKACTL_TEST_VERSION:-1.0.0-alpha.1}
     version=${version#v}
     case "$version" in ''|*[!0-9A-Za-z.-]*) die 'Invalid GONKACTL_TEST_VERSION';; esac
-    base="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv$version"
+    base="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test-v$version"
     base=${GONKACTL_TEST_RELEASE_BASE_URL:-$base}
     case "$base" in https://*) ;; *) die 'Release base URL must use HTTPS';; esac
     install_dir=${GONKACTL_TEST_INSTALL_DIR:-${HOME:?HOME is required}/.local/bin}

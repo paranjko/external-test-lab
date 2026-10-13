@@ -11,7 +11,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT.parent / "net-deployment-runbook/04-ops/site/test/install.sh"
-VERSION = "1.0.0-beta.1"
+VERSION = "1.0.0-alpha.1"
 
 
 class InstallerTests(unittest.TestCase):
@@ -33,7 +33,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in --output) shift; out=$1;; https:*) url=$1;; esac
   shift
 done
-case "$url" in https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv*/gonkactl-test_*|https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv*/checksums.txt) ;; *) exit 71;; esac
+case "$url" in https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test-v*/gonkactl-test_*|https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test-v*/checksums.txt) ;; *) exit 71;; esac
 cp "$TEST_ASSETS/${url##*/}" "$out"
 ''')
 

@@ -73,7 +73,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_publication_requires_clean_matching_source_and_tag(self):
         for tag, dirty, commit, checkout in [
-            ("v1.0.0-beta.1", False, "a" * 40, ""),
+            ("v1.0.0-alpha.1", False, "a" * 40, ""),
             (release.TAG, True, "a" * 40, ""),
             (release.TAG, False, "b" * 40, ""),
             (release.TAG, False, "a" * 40, " M source.go"),
@@ -97,6 +97,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(create[:4], ["gh", "release", "create", release.TAG])
             self.assertIn("--draft", create)
             self.assertIn("--verify-tag", create)
+            self.assertEqual(create[create.index("--notes-file") + 1], str(release.ROOT / "RELEASE_NOTES.md"))
+            self.assertIn(release.VERSION, (release.ROOT / "RELEASE_NOTES.md").read_text())
             self.assertTrue(all(str(self.output / release.name(t)) in create for t in release.TARGETS))
             self.assertEqual(edit[:4], ["gh", "release", "edit", release.TAG])
             self.assertIn("--draft=false", edit)

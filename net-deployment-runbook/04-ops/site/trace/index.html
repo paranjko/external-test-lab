@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Read-only on-chain tracing and incident triage for Gonka nodes and testbeds.">
+  <title>gonkactl-trace — Gonka on-chain investigation</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101411; color: #edf4ee; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 880px; margin: auto; padding: 48px 24px 64px; }
+    nav, .install { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    nav { font-size: .9rem; margin-bottom: 80px; }
+    a { color: #b4ecc4; text-underline-offset: 4px; }
+    a:hover { color: #fff; }
+    .badge { border: 1px solid #42624b; border-radius: 20px; padding: 6px 12px; font-size: .8rem; color: #b4ecc4; }
+    h1 { font-size: clamp(2.3rem, 7vw, 4.6rem); letter-spacing: -.055em; margin: 20px 0; overflow-wrap: anywhere; }
+    h2 { margin-top: 48px; font-size: 1.3rem; }
+    h3 { font-size: 1rem; }
+    p { line-height: 1.7; color: #bbc9be; }
+    .lead { font-size: 1.25rem; max-width: 650px; }
+    .install, pre { background: #1a231d; border: 1px solid #354739; border-radius: 10px; padding: 20px; }
+    code { font-family: ui-monospace, monospace; font-size: .9rem; overflow-wrap: anywhere; }
+    pre { white-space: pre-wrap; line-height: 1.8; }
+    button { flex-shrink: 0; border: 0; border-radius: 6px; padding: 10px 16px; background: #b4ecc4; color: #102817; cursor: pointer; font: inherit; }
+    button:hover { background: #d4f9df; }
+    :focus-visible { outline: 3px solid #b4ecc4; outline-offset: 5px; }
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 48px; }
+    .features p, .note, footer { font-size: .9rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; border-bottom: 1px solid #354739; padding: 14px 8px; }
+    footer { margin-top: 64px; color: #bbc9be; }
+    #copy-status { min-height: 1.5em; }
+    @media (max-width: 600px) { main { padding: 28px 20px; } nav { margin-bottom: 48px; } .features { grid-template-columns: 1fr; gap: 8px; } .install { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+<main>
+  <nav aria-label="Main"><a href="/">Gonka Community DevNet</a><a href="https://github.com/paranjko/external-test-lab/tree/feat/gonkactl-trace/gonkactl-trace">Source &amp; docs ↗</a></nav>
+  <span class="badge">v1.0.0-beta.1 · experimental</span>
+  <h1>gonkactl-trace</h1>
+  <p class="lead">Fast on-chain event tracing &amp; triage for Gonka network nodes and testbeds.</p>
+  <p>Turn a range of blocks into a local, interactive report. Follow consensus evidence, inspect anomalies, and keep the sources behind every finding.</p>
+  <h2>Install in one command</h2>
+  <div class="install"><code id="install-command">curl -LsSf https://gonka-dev.net/trace/install.sh | sh</code><button type="button" id="copy">Copy command</button></div>
+  <p id="copy-status" role="status" aria-live="polite"></p>
+  <p class="note">Linux &amp; macOS. Verifies SHA256 before installing into <code>~/.local/bin</code>. No sudo or profile edits. <a href="install.sh">Inspect the installer</a>; use <code>sh install.sh --dry-run</code> to preview, or set <code>GONKACTL_INSTALL_DIR</code> to choose a directory. Windows: download the ZIP below.</p>
+  <section class="features" aria-label="Features">
+    <article><h3>Trace on-chain evidence</h3><p>Collect recent or historical blocks and inspect events, signatures, validator membership and available application responses. Bounded snapshots, not continuous real-time monitoring.</p></article>
+    <article><h3>Investigate the unexpected</h3><p>Analyze emergency states and anomalies across distributed testbeds. Provenance and explicit gaps separate observed evidence from unknown causes.</p></article>
+    <article><h3>Check your test runs</h3><p>Inspect on-chain outcomes from E2E runs, compare retained evidence, and rebuild reports offline for diagnostics. Test pass/fail remains your harness's decision.</p></article>
+  </section>
+  <h2>From blocks to a report</h2>
+  <pre><code>gonkactl-trace --version
+gonkactl-trace --help
+gonkactl-trace report mainnet HEAD~10
+# Or: gonkactl-trace report devnet HEAD~10</code></pre>
+  <p class="note">Open the printed HTML path in your browser. Collection reads public endpoints; reports and retained data stay local. Review evidence before sharing. Signature fields are not cryptographically verified.</p>
+  <h2>Download v1.0.0-beta.1</h2>
+  <p>Latest trace beta. Choose your operating system and CPU.</p>
+  <table>
+    <thead><tr><th scope="col">System</th><th scope="col">CPU</th><th scope="col">Archive</th></tr></thead>
+    <tbody>
+      <tr><td>Linux</td><td>x86-64</td><td><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.1/gonkactl-trace_1.0.0-beta.1_linux_amd64.tar.gz">tar.gz</a></td></tr>
+      <tr><td>Linux</td><td>ARM64</td><td><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.1/gonkactl-trace_1.0.0-beta.1_linux_arm64.tar.gz">tar.gz</a></td></tr>
+      <tr><td>macOS</td><td>Intel</td><td><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.1/gonkactl-trace_1.0.0-beta.1_darwin_amd64.tar.gz">tar.gz</a></td></tr>
+      <tr><td>macOS</td><td>Apple Silicon</td><td><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.1/gonkactl-trace_1.0.0-beta.1_darwin_arm64.tar.gz">tar.gz</a></td></tr>
+      <tr><td>Windows</td><td>x86-64</td><td><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.1/gonkactl-trace_1.0.0-beta.1_windows_amd64.zip">ZIP</a></td></tr>
+    </tbody>
+  </table>
+  <p class="note"><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.1/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/paranjko/external-test-lab/releases/tag/gonkactl-trace-v1.0.0-beta.1">Release notes</a>. Checksums detect corruption; they are not publisher signatures. Binaries are unsigned. The optional full Perfetto viewer is a separate source build.</p>
+  <footer>Built for the Gonka External Test Lab. An independent experimental tool.</footer>
+</main>
+<script>
+  document.getElementById('copy').addEventListener('click', async () => {
+    const command = document.getElementById('install-command');
+    const status = document.getElementById('copy-status');
+    try {
+      await navigator.clipboard.writeText(command.textContent);
+      status.textContent = 'Command copied.';
+    } catch {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(command);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      status.textContent = 'Command selected. Press Ctrl+C or ⌘C to copy.';
+    }
+  });
+</script>
+</body>
+</html>

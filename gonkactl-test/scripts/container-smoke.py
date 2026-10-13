@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix="gonkactl-test-smoke-") as temporary:
             raise SystemExit("streamed installation failed")
         binary = home / ".local/bin/gonkactl-test"
         version = subprocess.check_output([str(binary), "--version"], env=env, text=True).strip()
-        if version != "1.0.0-beta.1":
+        if version != "1.0.0-alpha.1":
             raise SystemExit(f"unexpected installed version: {version}")
         subprocess.run([str(binary), "--help"], env=env, check=True, stdout=subprocess.DEVNULL)
         print(f"PASS: clean-home HTTPS installation and --version={version}")

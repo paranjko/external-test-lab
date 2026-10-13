@@ -14,8 +14,8 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.0.0-beta.1"
-TAG = "gonkactl-test/v" + VERSION
+VERSION = "1.0.0-alpha.1"
+TAG = "gonkactl-test-v" + VERSION
 TARGETS = ("linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64")
 
 
@@ -114,7 +114,7 @@ def publish(output):
         raise ValueError("archives were built from a different source commit")
     repo = "paranjko/external-test-lab"
     # Never replace an existing release or assets, including another tool's.
-    subprocess.run(["gh", "release", "create", TAG, "--repo", repo, "--verify-tag", "--draft", "--prerelease", "--title", f"gonkactl-test {VERSION}", "--generate-notes", *[str(output / name(t)) for t in TARGETS], str(output / "checksums.txt"), str(output / "build.json")], check=True)
+    subprocess.run(["gh", "release", "create", TAG, "--repo", repo, "--verify-tag", "--draft", "--prerelease", "--title", f"gonkactl-test {VERSION}", "--notes-file", str(ROOT / "RELEASE_NOTES.md"), *[str(output / name(t)) for t in TARGETS], str(output / "checksums.txt"), str(output / "build.json")], check=True)
     subprocess.run(["gh", "release", "edit", TAG, "--repo", repo, "--draft=false", "--prerelease"], check=True)
 
 

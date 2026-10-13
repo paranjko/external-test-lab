@@ -1,0 +1,15 @@
+{
+  "incident": "my-investigation",
+  "chain": "my-chain-id",
+  "discover_application": true,
+  "padding_seconds": 120,
+  "timeout_seconds": 20,
+  "concurrency": 4,
+  "nodes": [
+    {
+      "id": "node0",
+      "rpc": "http://127.0.0.1:26657",
+      "rest": "http://127.0.0.1:1317"
+    }
+  ]
+}
