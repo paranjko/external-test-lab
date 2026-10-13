@@ -438,6 +438,23 @@ preview.{$SITE_HOST} {
     root * /edge/bootstrap/current
     file_server
   }
+  # Bot-issued stable credentials must reach the private credential adapter,
+  # not the native gateway. Keep legacy keys and observer routes unchanged.
+  @stable_openai {
+    path /v1/chat/completions /v1/models
+    header Authorization "Bearer sk-*"
+  }
+  handle @stable_openai {
+    reverse_proxy 127.0.0.1:9466 {
+      flush_interval -1
+    }
+  }
+  @stable_protocols path /anthropic/* /genai/*
+  handle @stable_protocols {
+    reverse_proxy 127.0.0.1:9466 {
+      flush_interval -1
+    }
+  }
   # This proxy may wait only before it opens its one gateway connection.
   # Reconciler probes retain their explicit runtime path but share exactly the
   # same permit as public, health, Telegram, and acceptance requests.

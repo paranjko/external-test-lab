@@ -126,4 +126,16 @@ done
 [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/config")" == 401 ]]
 [[ "$(curl -sS -u 'admin:Valid!Password1' -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/config")" == 200 ]]
 [[ "$(jq '.delta | length' <<<"$(run_provision --preview)")" == 0 ]]
+# An operator can change the existing provider transport and key in place:
+# stable user keys remain bound to the same provider/key IDs after migration.
+provider_before="$(curl -fsS -u 'admin:Valid!Password1' "http://127.0.0.1:$port/api/providers" | jq '.providers[] | select(.name == "gonka-s")')"
+jq -c --arg base "http://127.0.0.1:$upstream_port/" '{network_config:(.network_config + {base_url:$base}),concurrency_and_buffer_size,custom_provider_config,proxy_config}' <<<"$provider_before" \
+  | curl -fsS -u 'admin:Valid!Password1' -X PUT "http://127.0.0.1:$port/api/providers/gonka-s" -H 'Content-Type: application/json' --data-binary @- >/dev/null
+curl -fsS -u 'admin:Valid!Password1' "http://127.0.0.1:$port/api/providers/gonka-s/keys" \
+  | jq -c '.keys[0] | .value={value:"provider-secret"} | del(.status)' \
+  | curl -fsS -u 'admin:Valid!Password1' -X PUT "http://127.0.0.1:$port/api/providers/gonka-s/keys/$provider_key_id" -H 'Content-Type: application/json' --data-binary @- >/dev/null
+[[ "$(curl -fsS -u 'admin:Valid!Password1' "http://127.0.0.1:$port/api/providers/gonka-s/keys" | jq -r '.keys[0].id')" == "$provider_key_id" ]]
+curl -fsS "http://127.0.0.1:$edge_port/v1/chat/completions" -H "Authorization: Bearer $rotated" -H 'Content-Type: application/json' \
+  -d '{"model":"test-model","messages":[{"role":"user","content":"probe"}]}' | jq -e '.choices[0].message.content == "fixture-ok"' >/dev/null
+printf 'PASS pinned provider transport/key update preserves existing stable client credentials\n'
 printf 'PASS pinned Bifrost bootstrap, stable edge protocols and rotation, preview/apply, stale/no-op and restart lifecycle\n'
