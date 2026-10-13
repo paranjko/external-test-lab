@@ -53,7 +53,13 @@ jq -r '.[][] | .filename' <<<"$files" | LC_ALL=C sort -u >"$tmp/changed-files.tx
   --output "$tmp/preview-composition.json" \
   --repository-root "$(cd "$(dirname "$0")/.." && pwd)" \
   --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/edge-node/PublicCaddyfile" \
-  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/render-ops.sh"
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/render-ops.sh" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/network-observer.sh" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/network-observer-http.py" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/gdc-network-observer.service" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/gdc-network-observer.socket" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/gdc-network-observer@.service" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/gdc-network-observer.timer"
 preview_mode="$(jq -r '.mode // empty' "$tmp/preview-composition.json")"
 [[ "$preview_mode" =~ ^(none|static|endpoint|combined)$ ]] || { echo 'preview mode is invalid' >&2; exit 2; }
 has_preview=false

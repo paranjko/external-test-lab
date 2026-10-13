@@ -797,6 +797,7 @@ esac
 step "Install $COMPONENT operations component on $GATEWAY_NODE"
 ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE'"
 rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
+scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/04-ops/lib-lock.sh"
 scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"
 [[ -z "${SITE_ASSETS_RENDER:-}" ]] || rsync -a --delete "$SITE_ASSETS_RENDER/" "$GATEWAY_NODE:$REMOTE/04-ops/site/"
 rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"

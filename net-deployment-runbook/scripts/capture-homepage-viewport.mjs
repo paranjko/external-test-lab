@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import { startChromeDevTools, stopChromeDevTools } from './chrome-devtools.mjs';
 import { compareHostIdentitySets } from './preview-host-identities.mjs';
 
-const [url, widthText, heightText, output, visibleNodesText = '0'] = process.argv.slice(2);
+const [url, widthText, heightText, output, visibleNodesText = '0', screenshotScrollText = '0'] = process.argv.slice(2);
 const width = Number(widthText);
 const height = Number(heightText);
 const visibleNodes = Number(visibleNodesText);
+const screenshotScroll = Number(screenshotScrollText);
 const expectResetState = process.env.GDC_EXPECT_RESET_STATE === 'true';
+const expectNetworkSnapshot = process.env.GDC_EXPECT_NETWORK_SNAPSHOT === 'true';
 const checkMapFullscreen = process.env.GDC_CHECK_MAP_FULLSCREEN === 'true';
 const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
 const expectGatewayReady = process.env.GDC_EXPECT_GATEWAY_READY === 'true';
@@ -35,11 +37,14 @@ const reportBrowserFailure = error => {
 };
 process.on('uncaughtException', reportBrowserFailure);
 process.on('unhandledRejection', reportBrowserFailure);
-if (!url || !Number.isInteger(width) || !Number.isInteger(height) || !output || !Number.isInteger(visibleNodes) || visibleNodes < 0) {
-  throw new Error('usage: capture-homepage-viewport.mjs URL WIDTH HEIGHT OUTPUT.png [MIN_VISIBLE_NODES]');
+if (!url || !Number.isInteger(width) || !Number.isInteger(height) || !output || !Number.isInteger(visibleNodes) || visibleNodes < 0 || !Number.isSafeInteger(screenshotScroll) || screenshotScroll < 0) {
+  throw new Error('usage: capture-homepage-viewport.mjs URL WIDTH HEIGHT OUTPUT.png [MIN_VISIBLE_NODES [SCREENSHOT_SCROLL]]');
 }
 if (expectedStatusPrefix && !expectedStatusPrefix.startsWith('/')) {
   throw new Error('GDC_EXPECT_STATUS_PREFIX must be an absolute path prefix');
+}
+if (expectNetworkSnapshot && !expectedStatusPrefix) {
+  throw new Error('GDC_EXPECT_NETWORK_SNAPSHOT requires GDC_EXPECT_STATUS_PREFIX');
 }
 if (!Number.isInteger(expectedCardCount) || expectedCardCount < 0) {
   throw new Error('GDC_EXPECT_CARD_COUNT must be a non-negative integer');
@@ -76,17 +81,22 @@ const homepageStateExpression = `JSON.stringify({
     const rect = marker.getBoundingClientRect();
     const label = marker.getAttribute("aria-label") || "";
     const count = Number(/; (\\d+) nodes?\\b/.exec(label)?.[1] || 0);
+    const gpuCount = Number(/; (\\d+) GPUs?;/.exec(label)?.[1] || 0);
     const radius = rect.width / 2;
-    return { label, count, radius, width: rect.width, height: rect.height, filter: getComputedStyle(marker).filter };
+    return { label, count, gpuCount, radius, width: rect.width, height: rect.height, filter: getComputedStyle(marker).filter };
   }),
   siteRevision: document.querySelector("#site-revision")?.dataset.revision || "",
   appDigest: document.querySelector("#site-revision")?.dataset.appDigest || "",
+  configuredChainId: String(window.GDC_CONFIG?.chainId || ""),
+  publicBootstrap: window.GDC_CONFIG?.publicBootstrap === true,
   footerGithub: ((element) => ({
     href: element?.href || "",
     ariaLabel: element?.getAttribute("aria-label") || "",
     width: element?.getBoundingClientRect().width || 0,
     height: element?.getBoundingClientRect().height || 0,
   }))(document.querySelector("#footer-github")),
+  epoch: document.querySelector("#epoch-label")?.textContent?.trim() || "",
+  epochOverviewHidden: document.querySelector("#epoch-overview")?.hidden !== false,
   gatewayAccessHidden: document.querySelector("#gateway-access")?.hidden,
   join: ((element) => ({
     exists: Boolean(element),
@@ -156,9 +166,22 @@ const homepageStateExpression = `JSON.stringify({
     };
     const textBounds = element => {
       if (!element) return null;
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      return bounds(range);
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      const rectangles = [];
+      while (walker.nextNode()) {
+        const text = walker.currentNode;
+        if (!String(text.textContent || "").trim() || text.parentElement?.closest(".sr-only,[aria-hidden='true'],[hidden]")) continue;
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        rectangles.push(...range.getClientRects());
+      }
+      const visible = rectangles.filter(rect => rect.width > 0 && rect.height > 0);
+      if (!visible.length) return null;
+      const left = Math.min(...visible.map(rect => rect.left));
+      const right = Math.max(...visible.map(rect => rect.right));
+      const top = Math.min(...visible.map(rect => rect.top));
+      const bottom = Math.max(...visible.map(rect => rect.bottom));
+      return { top, bottom, left, right, width: right - left, height: bottom - top };
     };
     const rowInfo = element => {
       const value = textBounds(element);
@@ -203,16 +226,31 @@ const homepageStateExpression = `JSON.stringify({
         clipped: Boolean(!visible || value.scrollWidth > value.clientWidth || value.scrollHeight > value.clientHeight || (range && (range.left < rect.left - 2 || range.right > rect.right + 2 || range.top < rect.top - 2 || range.bottom > rect.bottom + 2))),
       };
     };
+    const mlnodesField = (() => {
+      const value = node.querySelector('[data-k="mlnode"]');
+      const row = node.querySelector('[data-k-row="mlnode"]');
+      const rect = value?.getBoundingClientRect();
+      const range = textBounds(value);
+      const style = value && getComputedStyle(value);
+      const visible = Boolean(value && row && !row.hidden && value.offsetParent !== null && rect && rect.width > 0 && rect.height > 0 && range && range.width > 0 && range.height > 0);
+      const ellipsisContract = style?.overflowX === "hidden" && style?.textOverflow === "ellipsis" && style?.whiteSpace === "nowrap";
+      const horizontalOverflow = Boolean(value && value.scrollWidth > value.clientWidth && !ellipsisContract);
+      const verticalOverflow = Boolean(value && (value.scrollHeight > value.clientHeight || (row?.scrollHeight || 0) > (row?.clientHeight || 0)));
+      const outsideBounds = Boolean(range && rect && (range.top < rect.top - 2 || range.bottom > rect.bottom + 2 || (!ellipsisContract && (range.left < rect.left - 2 || range.right > rect.right + 2))));
+      return { text: value?.textContent?.trim(), visible, clipped: Boolean(!visible || horizontalOverflow || verticalOverflow || outsideBounds), truncated: Boolean(value && value.scrollWidth > value.clientWidth) };
+    })();
     const statusField = textField("[data-k=status]");
-    const statusReasonField = textField("[data-k=status-reason]");
-    const scopeField = textField("[data-k=scope]");
     const hostField = textField("[data-k=host]");
+    const statusTitle = node.querySelector("[data-k=status]")?.title || "";
     const details = node.querySelector(".node-details");
     const toggle = node.querySelector(".node-toggle");
     const rows = [node.querySelector("h3"), ...(details?.children || [])]
       .filter(row => row && row.offsetParent !== null)
-      .map(rowInfo);
-    const rowOverlap = rows.slice(0, -1).some((row, index) => row.textBounds && rows[index + 1].bounds && row.textBounds.bottom > rows[index + 1].bounds.top + 0.5);
+      .map((row, index) => ({ key: index === 0 ? "heading" : row.dataset.kRow || row.dataset.k || row.tagName.toLowerCase(), ...rowInfo(row) }));
+    const rowOverlapDetails = rows.slice(0, -1).flatMap((row, index) => row.textBounds && rows[index + 1].bounds && row.textBounds.bottom > rows[index + 1].bounds.top + 0.5
+      ? [{ from: row.key, to: rows[index + 1].key, textBottom: row.textBounds.bottom, nextTop: rows[index + 1].bounds.top }]
+      : []);
+    const rowOverlap = rowOverlapDetails.length > 0;
     const contentBottom = rows.reduce((bottom, row) => Math.max(bottom, row.textBounds?.bottom ?? -Infinity), -Infinity);
     return {
       key: node.dataset.nodeKey,
@@ -229,20 +267,14 @@ const homepageStateExpression = `JSON.stringify({
       status: statusField.text,
       statusVisible: statusField.visible,
       statusClipped: statusField.clipped,
-      statusReason: statusReasonField.text,
-      statusReasonVisible: statusReasonField.visible,
-      statusReasonClipped: statusReasonField.clipped,
-      scope: scopeField.text,
-      scopeVisible: scopeField.visible,
-      scopeClipped: scopeField.clipped,
+      statusTitle,
       vp: node.querySelector("[data-k=vp]")?.textContent,
       sync: node.querySelector("[data-k=sync]")?.textContent,
       endpoint: node.querySelector("[data-k=endpoint]")?.textContent,
       inferenced: metric("inferenced"),
       dapi: metric("dapi"),
       devshard: metric("devshard"),
-      gpu: metric("gpu"),
-      mlnodes: metric("mlnodes"),
+      mlnodes: mlnodesField,
       valueFields: ["height", "vp", "sync", "endpoint"].map(valueField),
       top: rect.top,
       bottom: rect.bottom,
@@ -250,6 +282,7 @@ const homepageStateExpression = `JSON.stringify({
       clientHeight: node.clientHeight,
       scrollHeight: node.scrollHeight,
       rowOverlap,
+      rowOverlapDetails,
       contentOverflowsCard: contentBottom > rect.bottom + 0.5,
     };
   }),
@@ -260,6 +293,8 @@ let sequence = 0;
 let pageSessionId = '';
 const pending = new Map();
 const networkRequests = new Map();
+const networkSockets = new Map();
+const websocketSnapshots = [];
 try {
   const chromeSession = await startChromeDevTools({
     chrome,
@@ -286,6 +321,39 @@ try {
     if (message.sessionId === pageSessionId && message.method === 'Network.loadingFailed') {
       const request = networkRequests.get(message.params.requestId);
       if (request) request.error = message.params.errorText || 'network request failed';
+      const socketRequest = networkSockets.get(message.params.requestId);
+      if (socketRequest) socketRequest.error = message.params.errorText || 'websocket handshake failed';
+    }
+    if (message.sessionId === pageSessionId && message.method === 'Network.webSocketCreated') {
+      networkSockets.set(message.params.requestId, {
+        url: message.params.url,
+        status: null,
+        error: '',
+      });
+    }
+    if (message.sessionId === pageSessionId && message.method === 'Network.webSocketHandshakeResponseReceived') {
+      const request = networkSockets.get(message.params.requestId);
+      if (request) request.status = message.params.response.status;
+    }
+    if (message.sessionId === pageSessionId && message.method === 'Network.webSocketFrameReceived') {
+      const request = networkSockets.get(message.params.requestId);
+      if (!request) return;
+      try {
+        const frame = JSON.parse(message.params.response.payloadData || '');
+        const snapshot = frame?.type === 'network_snapshot' ? frame.snapshot : null;
+        if (snapshot && Array.isArray(snapshot.nodes)) {
+          websocketSnapshots.push({
+            url: request.url,
+            status: request.status,
+            schema_version: snapshot.schema_version,
+            chain_id: snapshot.chain_id || '',
+            chain_state: snapshot.chain?.state || '',
+            epoch: String(snapshot.chain?.activity?.epoch?.latest_epoch?.index || ''),
+            node_count: snapshot.nodes.length,
+            node_ids: snapshot.nodes.map(node => String(node?.node_id || '').trim().toUpperCase()),
+          });
+        }
+      } catch {}
     }
     const waiter = pending.get(message.id);
     if (!waiter) return;
@@ -308,7 +376,7 @@ try {
   await call('Page.navigate', { url }, sessionId);
   const gatewayStateReadyExpression = expectGatewayReady
     ? '/^TRAFFIC_READY – /.test(document.querySelector("#quality-health-state")?.textContent || "")'
-    : '["TRAFFIC_READY – verified inference; processing requests","TRAFFIC_READY – verified inference; no requests in flight","CONTROL_READY","ROUTING_READY","RECOVERING","SATURATED","PENDING","UNAVAILABLE","OFFLINE"].includes(document.querySelector("#quality-health-state")?.textContent || "")';
+    : '["TRAFFIC_READY – verified inference; processing requests","TRAFFIC_READY – verified inference; no requests in flight","CONTROL_READY","ROUTING_READY","RECOVERING","SATURATED","PENDING","UNAVAILABLE","OFFLINE","NOT REPORTED"].includes(document.querySelector("#quality-health-state")?.textContent || "")';
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const { result } = await call('Runtime.evaluate', {
       expression: `Boolean(document.querySelector("#updated")?.dateTime && /^Updated .* UTC$/.test(document.querySelector("#updated")?.textContent || "") && document.querySelector("#validator-map .validator-map-world")?.complete && document.querySelector("#validator-map .validator-map-world")?.naturalWidth && ${gatewayStateReadyExpression})`,
@@ -323,14 +391,18 @@ try {
     returnByValue: true,
   }, sessionId);
   const state = JSON.parse(result.value);
+  let networkSnapshotHttp = null;
+  let hasEmbeddedChainSnapshot = false;
   if (expectedStatusPrefix) {
     const networkPath = `${expectedStatusPrefix}network`;
     const { result: networkIdentityResult } = await call('Runtime.evaluate', {
-      expression: `fetch(${JSON.stringify(networkPath)}, { cache: 'no-store' }).then(async response => { const payload = await response.json(); return JSON.stringify({ status: response.status, nodeIds: (Array.isArray(payload.nodes) ? payload.nodes : []).map(node => String(node?.node_id || '').trim().toUpperCase()) }); })`,
+      expression: `fetch(${JSON.stringify(networkPath)}, { cache: 'no-store' }).then(async response => { let payload = null; try { payload = await response.json(); } catch {} return JSON.stringify({ status: response.status, payload, nodeIds: (Array.isArray(payload?.nodes) ? payload.nodes : []).map(node => String(node?.node_id || '').trim().toUpperCase()) }); })`,
       awaitPromise: true,
       returnByValue: true,
     }, sessionId);
     const networkIdentity = JSON.parse(networkIdentityResult.value || '{}');
+    networkSnapshotHttp = networkIdentity;
+    hasEmbeddedChainSnapshot = Object.hasOwn(networkIdentity.payload || {}, 'chain');
     const identityComparison = compareHostIdentitySets(
       networkIdentity.nodeIds,
       state.nodes.map(node => node.key),
@@ -339,6 +411,50 @@ try {
     state.renderedNodeIds = identityComparison.rendered;
     if (networkIdentity.status !== 200 || !identityComparison.matches) {
       throw new Error(`rendered Host identities do not match current preview P2P observations ${JSON.stringify({ status: networkIdentity.status, ...identityComparison })}`);
+    }
+    if (expectNetworkSnapshot) {
+      const payload = networkIdentity.payload;
+      const chainId = String(payload?.chain_id || '');
+      const chain = payload?.chain;
+      const epoch = chain?.activity?.epoch?.latest_epoch || {};
+      const epochIndex = String(epoch.index || '');
+      const stageHeight = Number(epoch.poc_start_block_height);
+      const endHeight = Number(epoch.end_height);
+      const referenceHeight = Number(chain?.reference?.height);
+      const chainObservedAt = Date.parse(String(chain?.observed_at || ''));
+      const chainAgeMs = Date.now() - chainObservedAt;
+      const chainMismatches = (Array.isArray(payload?.nodes) ? payload.nodes : [])
+        .filter(node => node?.components?.chain_rpc?.state === 'observed' && node.components.chain_rpc.chain_id !== chainId)
+        .map(node => ({ node_id: node.node_id || '', chain_id: node.components.chain_rpc.chain_id || '' }));
+      if (payload?.schema_version !== 1 || !chainId || chainId !== state.configuredChainId || (chain?.chain_id && chain.chain_id !== chainId) || chain?.state !== 'observed' ||
+          !Number.isFinite(chainAgeMs) || chainAgeMs < 0 || chainAgeMs > 90000 ||
+          !/^[1-9]\d*$/.test(epochIndex) || !Number.isSafeInteger(stageHeight) || !Number.isSafeInteger(endHeight) ||
+          !Number.isSafeInteger(referenceHeight) || stageHeight <= 0 || endHeight <= stageHeight || referenceHeight < stageHeight ||
+          chainMismatches.length || state.epoch !== `Epoch ${epochIndex}` || state.epochOverviewHidden) {
+        throw new Error(`live HTTP network snapshot does not provide matching fresh chain and meaningful rendered epoch ${JSON.stringify({ status: networkIdentity.status, schema_version: payload?.schema_version, chain_id: chainId, configured_chain_id: state.configuredChainId, chain_state: chain?.state, chain_age_ms: chainAgeMs, chain_mismatches: chainMismatches, epoch: epochIndex, stage_height: stageHeight, end_height: endHeight, reference_height: referenceHeight, rendered_epoch: state.epoch, epoch_hidden: state.epochOverviewHidden })}`);
+      }
+      const isNetworkSocket = request => {
+        try { return new URL(request.url).pathname === `${expectedStatusPrefix}network/ws`; }
+        catch { return false; }
+      };
+      const matchingNetworkSockets = () => [...networkSockets.values()].filter(isNetworkSocket);
+      const matchingSocketSnapshot = () => websocketSnapshots.find(snapshot => isNetworkSocket(snapshot) && snapshot.schema_version === 1 && snapshot.chain_id === chainId && snapshot.chain_state === 'observed' && snapshot.epoch === epochIndex);
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const rejectedSocket = matchingNetworkSockets().find(request => [401, 404].includes(Number(request.status)));
+        if (rejectedSocket) throw new Error(`network WebSocket was rejected ${JSON.stringify(rejectedSocket)}`);
+        if (matchingNetworkSockets().some(request => request.status === 101 && !request.error) && matchingSocketSnapshot()) break;
+        if (attempt === 49) throw new Error(`network WebSocket did not deliver a matching network snapshot ${JSON.stringify({ sockets: [...networkSockets.values()], snapshots: websocketSnapshots, expected_chain_id: chainId, expected_epoch: epochIndex })}`);
+        await delay(200);
+      }
+      const wsSnapshot = matchingSocketSnapshot();
+      const websocketIdentityComparison = compareHostIdentitySets(networkIdentity.nodeIds, wsSnapshot?.node_ids);
+      if (!wsSnapshot || wsSnapshot.status !== 101 || !websocketIdentityComparison.matches || !matchingNetworkSockets().some(request => request.status === 101 && !request.error)) {
+        throw new Error(`network WebSocket receipt did not match the HTTP chain snapshot ${JSON.stringify({ sockets: [...networkSockets.values()], snapshots: websocketSnapshots, expected_chain_id: chainId, expected_epoch: epochIndex })}`);
+      }
+      state.networkSnapshot = {
+        http: { status: networkIdentity.status, schema_version: payload.schema_version, chain_id: chainId, epoch: epochIndex, node_count: payload.nodes.length },
+        websocket: wsSnapshot,
+      };
     }
   }
   const { result: appDigestResult } = await call('Runtime.evaluate', {
@@ -380,7 +496,7 @@ try {
     const escapedGeneration = [...networkRequests.values()].filter(request => {
       try {
         const requestUrl = new URL(request.url);
-        return requestUrl.origin === pageOrigin && requestUrl.pathname.startsWith("/status/");
+        return requestUrl.origin === pageOrigin && requestUrl.pathname.startsWith("/status/") && !requestUrl.pathname.startsWith(expectedStatusPrefix);
       } catch {
         return false;
       }
@@ -388,18 +504,14 @@ try {
     if (escapedGeneration.length) {
       throw new Error(`preview request escaped generation status prefix ${JSON.stringify(escapedGeneration)}`);
     }
-    // These are the shared contracts that make a preview useful. A Host-local
-    // DevShard 404, unavailable component inventory, or inactive Host is
-    // instead rendered as a bounded card diagnostic and must not invalidate
-    // the entire browser acceptance run.
+    // The embedded chain snapshot replaces these inventory reads in snapshot
+    // mode. The gateway remains an independent shared contract; a Host-local
+    // unavailable component is rendered as a bounded card diagnostic.
     const requiredPaths = [
-      "participants",
-      "gpus",
-      "software",
-      "gateway/v1/status",
-      "gateway-health",
-      "gateway/v1/admission-status",
+      ...(hasEmbeddedChainSnapshot ? [] : ["participants", "gpus", "software"]),
+      ...(state.publicBootstrap ? [] : ["gateway/v1/status", "gateway-health", "gateway/v1/admission-status"]),
     ].map(path => `${expectedStatusPrefix}${path}`);
+    const expectedPreviewGatewayUnavailable = expectedGatewayState === 'UNAVAILABLE' && !state.publicBootstrap;
     const requiredFailures = requiredPaths.flatMap(path => {
       const requests = statusRequests.filter(request => {
         try {
@@ -408,12 +520,27 @@ try {
           return false;
         }
       });
-      return !requests.length || requests.some(request => request.error || Number(request.status) >= 400)
+      const isGatewayPath = path.includes('/gateway/') || path.endsWith('/gateway-health');
+      const expected503 = expectedPreviewGatewayUnavailable && isGatewayPath;
+      return !requests.length || requests.some(request => request.error || (expected503
+        ? Number(request.status) !== 503
+        : Number(request.status) >= 400))
         ? [{ path, requests }]
         : [];
     });
     if (requiredFailures.length) {
       throw new Error(`preview shared status request failed ${JSON.stringify(requiredFailures)}`);
+    }
+    if (expectedPreviewGatewayUnavailable) {
+      const { result: unavailableGatewayResult } = await call('Runtime.evaluate', {
+        expression: `Promise.all(${JSON.stringify(requiredPaths.filter(path => path.includes('/gateway/') || path.endsWith('/gateway-health')))}.map(async path => { try { const response = await fetch(path, { cache: 'no-store' }); let payload = null; try { payload = await response.json(); } catch {} return { path, status: response.status, reason: payload?.error || '' }; } catch (error) { return { path, status: 0, reason: String(error) }; } })).then(JSON.stringify)`,
+        awaitPromise: true,
+        returnByValue: true,
+      }, sessionId);
+      const unavailableGatewayResponses = JSON.parse(unavailableGatewayResult.value || '[]');
+      if (state.publicBootstrap || unavailableGatewayResponses.length !== 3 || unavailableGatewayResponses.some(response => response.status !== 503 || response.reason !== 'preview_gateway_status_unavailable')) {
+        throw new Error(`preview gateway unavailability did not match the explicit read-only backend contract ${JSON.stringify({ publicBootstrap: state.publicBootstrap, responses: unavailableGatewayResponses })}`);
+      }
     }
   }
   if (expectedCardCount && state.nodes.length !== expectedCardCount) {
@@ -437,41 +564,57 @@ try {
     : joinRequirements.guide.left - joinRequirements.toggle.right >= 12 && Math.abs(joinRequirements.guide.top - joinRequirements.toggle.top) <= 2;
   if (!summarySpacingValid) throw new Error(`JOIN requirements summary spacing failed ${JSON.stringify(joinRequirements)}`);
   const mappedNodes = state.nodes;
-  if (!expectResetState && state.mapHosts !== mappedNodes.length) throw new Error(`network node map has ${state.mapHosts} hosts for ${mappedNodes.length} live participant cards ${JSON.stringify(state)}`);
-  if ((!expectResetState && state.mapMarkers < 1) || state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
-  if (!expectResetState && (state.mapMarkerDetails.reduce((total, marker) => total + marker.count, 0) !== state.mapHosts || state.mapMarkerDetails.some(marker => !Number.isFinite(marker.radius) || Math.abs(marker.radius - (marker.count <= 1 ? 6 : Math.min(7.5 * Math.sqrt(marker.count), 18))) > 0.1))) throw new Error(`network node map grouping or radius contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
-  if (mappedNodes.filter(node => node.expanded).some(node => [node.inferenced, node.dapi, node.devshard, node.gpu, node.mlnodes].some(field => !field.visible || !field.text || field.text === 'Checking…' || field.clipped))) throw new Error(`participant runtime inventory is incomplete ${JSON.stringify(state)}`);
-  if (mappedNodes.some(node => /\bunreported\b/i.test(`${node.inferenced.text || ''} ${node.dapi.text || ''} ${node.gpu.text || ''} ${node.mlnodes.text || ''}`))) {
-    throw new Error(`participant cards rendered a diagnostic placeholder as a value ${JSON.stringify(mappedNodes)}`);
-  }
-  const approvalRequest = [...networkRequests.values()].find(request => {
-    try {
-      return new URL(request.url).pathname.endsWith('/chain-api/productscience/inference/inference/devshard_approved_versions');
-    } catch {
-      return false;
+  if (!expectResetState && state.mapHosts > mappedNodes.length) throw new Error(`network node map has more geographic Hosts than live participant cards ${JSON.stringify({ mapHosts: state.mapHosts, cards: mappedNodes.length })}`);
+  if (state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
+  if (!expectResetState && (state.mapMarkerDetails.reduce((total, marker) => total + marker.count, 0) !== state.mapHosts || state.mapMarkerDetails.some(marker => !Number.isInteger(marker.count) || marker.count < 1 || !Number.isInteger(marker.gpuCount) || marker.gpuCount < 0 || !Number.isFinite(marker.radius) || Math.abs(marker.radius - (marker.gpuCount <= 1 ? 6 : Math.min(7.5 * Math.sqrt(marker.gpuCount), 18))) > 0.1))) throw new Error(`network node map grouping or GPU-radius contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
+  if (mappedNodes.filter(node => node.expanded).some(node => [node.inferenced, node.dapi, node.devshard, node.mlnodes].some(field => !field.visible || !field.text || field.text === 'Checking…' || field.clipped))) throw new Error(`participant runtime inventory is incomplete ${JSON.stringify(state)}`);
+  if (hasEmbeddedChainSnapshot) {
+    const chain = networkSnapshotHttp.payload.chain;
+    const observedAt = Date.parse(String(chain?.observed_at || ''));
+    const age = Date.now() - observedAt;
+    const fresh = chain?.state === 'observed' && Number.isFinite(age) && age >= 0 && age <= 90000;
+    const approvals = Array.isArray(chain?.approved_devshards) ? chain.approved_devshards : [];
+    const expectedText = !fresh ? 'Unavailable' : approvals.length ? approvals.map(item => String(item?.name || '').trim()).join(' · ') : 'None approved';
+    const expectedTitle = !fresh ? 'Approved DevShard versions could not be read from verified chain state' : approvals.length
+      ? approvals.map(item => `${String(item?.name || '').trim()}: ${String(item?.sha256 || '').trim().toLowerCase()}`).join('\n')
+      : 'Chain state reports no approved DevShard versions';
+    if (state.devshardVersions.text !== expectedText || state.devshardVersions.title !== expectedTitle) {
+      throw new Error(`approved DevShard versions did not match the HTTP network snapshot ${JSON.stringify({ rendered: state.devshardVersions, expectedText, expectedTitle })}`);
     }
-  });
-  if (!approvalRequest) throw new Error('homepage did not request the dedicated current DevShard approvals query');
-  const { result: approvalReadResult } = await call('Runtime.evaluate', {
-    expression: `fetch(${JSON.stringify(approvalRequest.url)}, { cache: 'no-store' }).then(async response => { let payload = null; try { payload = await response.json(); } catch {} const records = payload?.versions; const seen = new Set(); let versions = []; let valid = response.ok && Array.isArray(records); if (valid) { for (const item of records) { const name = String(item?.name || '').trim(); const binary = String(item?.binary || '').trim(); const sha256 = String(item?.sha256 || '').trim().toLowerCase(); if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name) || !binary || !/^[0-9a-f]{64}$/.test(sha256) || seen.has(name)) { valid = false; break; } seen.add(name); versions.push({ name, sha256 }); } } versions.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true })); return JSON.stringify({ expectedText: !valid ? 'Unavailable' : versions.length ? versions.map(item => item.name).join(' · ') : 'None approved', expectedTitle: !valid ? 'Approved DevShard versions could not be read from verified chain state' : versions.length ? versions.map(item => item.name + ': ' + item.sha256).join('\\n') : 'Chain state reports no approved DevShard versions', status: response.status }); }).catch(() => JSON.stringify({ expectedText: 'Unavailable', expectedTitle: 'Approved DevShard versions could not be read from verified chain state', status: 0 }))`,
-    awaitPromise: true,
-    returnByValue: true,
-  }, sessionId);
-  const approvalRead = JSON.parse(approvalReadResult.value || '{}');
-  if (state.devshardVersions.text !== approvalRead.expectedText || state.devshardVersions.title !== approvalRead.expectedTitle) throw new Error(`approved DevShard versions did not match a fresh dedicated chain query (HTTP ${approvalRead.status}) ${JSON.stringify({ rendered: state.devshardVersions, expectedText: approvalRead.expectedText, expectedTitle: approvalRead.expectedTitle })}`);
+    const directChainRequests = [...networkRequests.values()].filter(request => {
+      try { return /\/chain-api\/productscience\/inference\/inference\//.test(new URL(request.url).pathname); }
+      catch { return false; }
+    });
+    if (expectNetworkSnapshot && directChainRequests.length) {
+      throw new Error(`snapshot acceptance unexpectedly made direct per-Host chain API requests ${JSON.stringify(directChainRequests)}`);
+    }
+  } else {
+    const approvalRequest = [...networkRequests.values()].find(request => {
+      try { return new URL(request.url).pathname.endsWith('/chain-api/productscience/inference/inference/devshard_approved_versions'); }
+      catch { return false; }
+    });
+    if (!approvalRequest) throw new Error('legacy homepage did not request the dedicated current DevShard approvals query');
+    const { result: approvalReadResult } = await call('Runtime.evaluate', {
+      expression: `fetch(${JSON.stringify(approvalRequest.url)}, { cache: 'no-store' }).then(async response => { let payload = null; try { payload = await response.json(); } catch {} const records = payload?.versions; const seen = new Set(); let versions = []; let valid = response.ok && Array.isArray(records); if (valid) { for (const item of records) { const name = String(item?.name || '').trim(); const binary = String(item?.binary || '').trim(); const sha256 = String(item?.sha256 || '').trim().toLowerCase(); if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name) || !binary || !/^[0-9a-f]{64}$/.test(sha256) || seen.has(name)) { valid = false; break; } seen.add(name); versions.push({ name, sha256 }); } } versions.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true })); return JSON.stringify({ expectedText: !valid ? 'Unavailable' : versions.length ? versions.map(item => item.name).join(' · ') : 'None approved', expectedTitle: !valid ? 'Approved DevShard versions could not be read from verified chain state' : versions.length ? versions.map(item => item.name + ': ' + item.sha256).join('\\n') : 'Chain state reports no approved DevShard versions', status: response.status }); }).catch(() => JSON.stringify({ expectedText: 'Unavailable', expectedTitle: 'Approved DevShard versions could not be read from verified chain state', status: 0 }))`,
+      awaitPromise: true,
+      returnByValue: true,
+    }, sessionId);
+    const approvalRead = JSON.parse(approvalReadResult.value || '{}');
+    if (state.devshardVersions.text !== approvalRead.expectedText || state.devshardVersions.title !== approvalRead.expectedTitle) throw new Error(`approved DevShard versions did not match a fresh dedicated chain query (HTTP ${approvalRead.status}) ${JSON.stringify({ rendered: state.devshardVersions, expectedText: approvalRead.expectedText, expectedTitle: approvalRead.expectedTitle })}`);
+  }
   const hasUnboundedHostDiagnostic = node => {
     const endpoint = node.endpoint || '';
     return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
       || (/\b[45]\d\d\b/.test(endpoint) && !/^Unavailable – HTTP [45]\d\d$/.test(endpoint));
   };
   let expectedExpandedCards = mappedNodes.length
-    ? Math.min(width <= 900 ? 1 : width < 1200 ? 2 : 4, mappedNodes.length)
+    ? width <= 900 ? 1 : mappedNodes.length <= 4 ? mappedNodes.length : Math.min(width < 1200 ? 2 : 4, mappedNodes.length)
     : 0;
-  while (expectedExpandedCards > 1 && (state.nodeDeck.clientWidth - (mappedNodes.length - expectedExpandedCards) * 32) / expectedExpandedCards < 270) expectedExpandedCards -= 1;
+  while (expectedExpandedCards > 1 && (state.nodeDeck.clientWidth - (mappedNodes.length - expectedExpandedCards) * 32) / expectedExpandedCards < 320) expectedExpandedCards -= 1;
   const expandedNodes = mappedNodes.filter(node => node.expanded);
   const collapsedNodes = mappedNodes.filter(node => node.collapsed);
   if (mappedNodes.some(node => !node.key || !node.name || !node.hostVisible || !node.status || !node.statusVisible || !node.toggleControls || node.toggleControls !== node.detailsId || !node.toggleLabel?.includes(node.name) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card identity contract failed ${JSON.stringify(mappedNodes)}`);
-  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusReason || !node.statusReasonVisible || node.statusReasonClipped || !node.scope || !node.scopeVisible || node.scopeClipped || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || [node.inferenced, node.dapi, node.devshard, node.gpu, node.mlnodes].some(field => !field.visible || !field.text || field.clipped))) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
+  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusTitle || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || [node.inferenced, node.dapi, node.devshard, node.mlnodes].some(field => !field.visible || !field.text || field.clipped))) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
   if (collapsedNodes.some(node => node.toggleExpanded !== 'false' || !node.detailsHidden || node.statusClipped)) throw new Error(`Collapsed Host-tab contract failed ${JSON.stringify(collapsedNodes)}`);
   const deck = state.nodeDeck;
   const desktopDeckValid = width > 700 && deck.flexDirection === 'row' && deck.oneRow && deck.cards.every(card => card.height >= 350) && deck.cards.filter(card => !card.expanded).every(card => card.width >= 31 && card.width <= 33);
@@ -556,7 +699,13 @@ try {
     returnByValue: true,
   }, sessionId);
   const gateway = JSON.parse(gatewayResult.value);
-  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["TRAFFIC_READY – verified inference; processing requests", "TRAFFIC_READY – verified inference; no requests in flight", "CONTROL_READY", "ROUTING_READY", "RECOVERING", "SATURATED", "PENDING", "UNAVAILABLE", "OFFLINE"].includes(gateway.health) || (!expectResetState && gateway.counts.some(value => !/^\d+$/.test(value || '')))) throw new Error(`incomplete live gateway contract ${JSON.stringify(gateway)}`);
+  const readyGateway = /^TRAFFIC_READY – /.test(gateway.health || '');
+  const numericGatewayCounts = gateway.counts.every(value => /^\d+$/.test(value || ''));
+  const unavailableGatewayCounts = gateway.counts.every(value => value === '–');
+  const gatewayCountsValid = expectResetState || (readyGateway ? numericGatewayCounts : unavailableGatewayCounts);
+  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["TRAFFIC_READY – verified inference; processing requests", "TRAFFIC_READY – verified inference; no requests in flight", "CONTROL_READY", "ROUTING_READY", "RECOVERING", "SATURATED", "PENDING", "UNAVAILABLE", "OFFLINE", "NOT REPORTED"].includes(gateway.health) || !gatewayCountsValid) throw new Error(`incomplete live gateway contract ${JSON.stringify({ ...gateway, gatewayCountsValid, publicBootstrap: state.publicBootstrap })}`);
+  if ((gateway.health === 'NOT REPORTED') !== state.publicBootstrap) throw new Error(`gateway reporting state does not match selected network capability ${JSON.stringify({ health: gateway.health, publicBootstrap: state.publicBootstrap })}`);
+  if (state.publicBootstrap && !state.gatewayAccessHidden) throw new Error(`gateway access details must be hidden when the selected network does not report gateway state`);
   if (expectResetState && gateway.health !== 'OFFLINE') throw new Error(`gateway must be OFFLINE after reset ${JSON.stringify(gateway)}`);
   if (expectedGatewayState && gateway.health !== expectedGatewayState) throw new Error(`gateway state ${gateway.health} does not match expected ${expectedGatewayState}`);
   if (expectGatewayReady && !/^TRAFFIC_READY – /.test(gateway.health || '')) {
@@ -578,8 +727,16 @@ try {
   const nodeViewport = JSON.parse(nodeViewportResult.value);
   const visible = nodeViewport.nodes.filter(node => node.top >= 0 && node.bottom <= nodeViewport.height).length;
   if (visible < visibleNodes) throw new Error(`only ${visible}/${visibleNodes} required node cards are visible after scrolling to participant status`);
-  await call('Runtime.evaluate', { expression: 'document.querySelector("#join-node")?.scrollIntoView({block:"start",behavior:"instant"})' }, sessionId);
-  await delay(300);
+  await call('Runtime.evaluate', { expression: `window.scrollTo({ top: ${screenshotScroll}, left: 0, behavior: 'instant' })` }, sessionId);
+  await delay(150);
+  const { result: screenshotScrollResult } = await call('Runtime.evaluate', {
+    expression: 'JSON.stringify({x:scrollX,y:scrollY})',
+    returnByValue: true,
+  }, sessionId);
+  const screenshotPosition = JSON.parse(screenshotScrollResult.value);
+  if (screenshotPosition.x !== 0 || screenshotPosition.y !== screenshotScroll) {
+    throw new Error(`homepage did not reach requested screenshot scroll position ${JSON.stringify({ requested: { x: 0, y: screenshotScroll }, actual: screenshotPosition })}`);
+  }
   const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);
   const screenshotBytes = Buffer.from(screenshot.data, 'base64');
   const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -597,6 +754,8 @@ try {
     app_digest: state.appDigest,
     footer_github: state.footerGithub,
     expected_status_prefix: expectedStatusPrefix || null,
+    screenshot_scroll: screenshotPosition,
+    network_snapshot: state.networkSnapshot || null,
     map: {
       hosts: state.mapHosts,
       currentValidators: state.currentValidatorCount,
@@ -611,7 +770,6 @@ try {
       inferenced: node.inferenced.text,
       dapi: node.dapi.text,
       devshard: node.devshard.text,
-      gpu: node.gpu.text,
       mlnodes: node.mlnodes.text,
       height: node.height,
     })),

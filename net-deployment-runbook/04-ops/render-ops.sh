@@ -154,6 +154,9 @@ http://:8081 {
   handle /status/network {
     reverse_proxy 127.0.0.1:18094
   }
+  handle /status/network/ws {
+    reverse_proxy 127.0.0.1:18094
+  }
   handle /status/participants {
     reverse_proxy 127.0.0.1:18089
   }

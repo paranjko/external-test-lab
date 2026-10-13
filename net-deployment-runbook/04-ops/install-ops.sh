@@ -12,6 +12,19 @@ case "$COMPONENT" in
   *) usage; exit 2 ;;
 esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST=/srv/dai/ops
+ops_shared_asset() {
+  local name="$1"
+  if [[ -s "$HERE/$name" ]]; then
+    printf '%s\n' "$HERE/$name"
+  elif [[ -s "$HERE/../scripts/$name" ]]; then
+    printf '%s\n' "$HERE/../scripts/$name"
+  else
+    echo "OPS shared asset is missing from staged files and repository scripts: $name" >&2
+    return 1
+  fi
+}
+GATEWAY_RESERVE_POLICY="$(ops_shared_asset gateway-reserve-policy.sh)"
+OPS_LIB_LOCK="$(ops_shared_asset lib-lock.sh)"
 service_user="${SUDO_USER:-root}"
 service_group="$(id -gn "$service_user")"
 mkdir -p "$DEST"; cp -a "$HERE"/. "$DEST"/
@@ -69,13 +82,14 @@ install -o root -g root -m 0755 "$HERE/participants-proxy.sh" /usr/local/lib/gon
 install -m 0644 "$HERE/gdc-participants-proxy.socket" /etc/systemd/system/gdc-participants-proxy.socket
 install -m 0644 "$HERE/gdc-participants-proxy@.service" /etc/systemd/system/gdc-participants-proxy@.service
 install -o root -g root -m 0755 "$HERE/network-observer.sh" /usr/local/lib/gonka-devnet/network-observer.sh
+install -o root -g root -m 0755 "$HERE/network-observer-http.py" /usr/local/lib/gonka-devnet/network-observer-http.py
 install -m 0644 "$HERE/gdc-network-observer.service" /etc/systemd/system/gdc-network-observer.service
 install -m 0644 "$HERE/gdc-network-observer.timer" /etc/systemd/system/gdc-network-observer.timer
 install -m 0644 "$HERE/gdc-network-observer.socket" /etc/systemd/system/gdc-network-observer.socket
 install -m 0644 "$HERE/gdc-network-observer@.service" /etc/systemd/system/gdc-network-observer@.service
-install -m 0644 "$HERE/../scripts/lib-lock.sh" /usr/local/lib/gonka-devnet/lib-lock.sh
+install -m 0644 "$OPS_LIB_LOCK" /usr/local/lib/gonka-devnet/lib-lock.sh
 install -o root -g root -m 0755 "$HERE/gateway-reserve-controller.sh" /usr/local/lib/gonka-devnet/gateway-reserve-controller.sh
-install -o root -g root -m 0755 "$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
+install -o root -g root -m 0755 "$GATEWAY_RESERVE_POLICY" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
 install -m 0755 "$HERE/gateway-status-routable.sh" "$DEST/gateway-status-routable.sh"
 install -m 0644 "$HERE/gdc-gateway-reserve-controller.service" /etc/systemd/system/gdc-gateway-reserve-controller.service
 sed -i -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \

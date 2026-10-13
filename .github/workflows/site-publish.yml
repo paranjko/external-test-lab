@@ -16,6 +16,8 @@ on:
       - 'net-deployment-runbook/scripts/site-static-digest.sh'
       - 'net-deployment-runbook/scripts/site-release.sh'
       - 'net-deployment-runbook/scripts/test-site-publisher.sh'
+      - 'net-deployment-runbook/scripts/verify-network-observer.mjs'
+      - 'net-deployment-runbook/scripts/test-verify-network-observer.mjs'
       - 'net-deployment-runbook/Makefile'
       - '.github/workflows/site-publish.yml'
 
@@ -43,12 +45,15 @@ jobs:
           node-version: 22
 
       - name: Build and validate browser assets
-        run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths test-site-release-verifier test-site-publisher
+        run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths test-site-release-verifier test-site-publisher test-verify-network-observer
 
       - name: Prepare the exact static site release
         run: >-
           make -C net-deployment-runbook prepare-static-site
           site_release_dir="$RUNNER_TEMP/gonka-dev-site"
+
+      - name: Verify production network observer capability
+        run: make -C net-deployment-runbook verify-network-observer
 
       - name: Publish the verified release
         env:

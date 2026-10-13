@@ -10,10 +10,18 @@ const nodeHost = (name) => `${name}.gonka-dev.net`;
 export function publicIpv4(address) {
   if (net.isIP(address) !== 4) return false;
   const [a, b] = address.split(".").map(Number);
-  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
-  if (a === 169 && b === 254) return false;
-  if (a === 172 && b >= 16 && b <= 31) return false;
-  if (a === 192 && b === 168) return false;
+  if (
+    a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0 && address.split(".")[2] === "0") ||
+    (a === 192 && b === 0 && address.split(".")[2] === "2") ||
+    (a === 192 && b === 88 && address.split(".")[2] === "99") ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19 || b === 51 && address.split(".")[2] === "100")) ||
+    (a === 203 && b === 0 && address.split(".")[2] === "113")
+  ) return false;
   return true;
 }
 
@@ -21,13 +29,40 @@ export function validPath(url) {
   if (url.pathname === "/health" && url.search === "") return true;
   if (url.pathname === "/v1/versions" && url.search === "") return true;
   if (url.pathname === "/devshard/healthz" && url.search === "") return true;
+  if (url.pathname === "/devshard/stats/shards" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/status" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/net_info" && url.search === "") return true;
+  if (url.pathname === "/chain-rpc/block" && validPositiveIntegerQuery(url, "height")) return true;
   if (url.pathname === "/chain-rpc/validators" && validValidatorQuery(url)) return true;
+  if (url.pathname === "/chain-api/cosmos/base/tendermint/v1beta1/node_info" && url.search === "") return true;
   if (url.pathname === "/chain-api/productscience/inference/inference/params" && url.search === "") return true;
   if (/^\/chain-api\/productscience\/inference\/inference\/hardware_nodes\/gonka1[02-9ac-hj-np-z]{6,90}$/.test(url.pathname) && url.search === "") return true;
-  return url.pathname === "/chain-api/productscience/inference/inference/participant" &&
-    url.search === "?pagination.limit=100&pagination.count_total=true";
+  const apiPath = "/chain-api/productscience/inference/inference/";
+  const suffix = url.pathname.startsWith(apiPath) ? url.pathname.slice(apiPath.length) : "";
+  if (
+    ["devshard_approved_versions", "models_all", "epoch_info", "active_confirmation_poc_event"].includes(suffix) &&
+    url.search === ""
+  ) return true;
+  if (/^(?:epoch_group_data|all_poc_v2_store_commits|poc_v2_validations_for_stage|confirmation_poc_events)\/[1-9]\d*$/.test(suffix) && url.search === "") return true;
+  if (url.pathname === `${apiPath}participant`) {
+    return url.search === "?pagination.limit=100" ||
+      url.search === "?pagination.limit=100&pagination.count_total=true";
+  }
+  return false;
+}
+
+export function validBootstrapPath(path) {
+  return /^\/bootstrap\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/bootstrap\.json$/.test(path);
+}
+
+export function validGeoPath(path) {
+  const match = /^\/geo\/(\d{1,3}(?:\.\d{1,3}){3})$/.exec(path);
+  return Boolean(match && publicIpv4(match[1]));
+}
+
+function validPositiveIntegerQuery(url, key) {
+  const match = new RegExp(`^\\?${key}=([1-9]\\d*)$`).exec(url.search);
+  return Boolean(match && Number.isSafeInteger(Number(match[1])));
 }
 
 function validValidatorQuery(url) {
@@ -63,30 +98,15 @@ export async function resolvedPublicIpv4(host) {
   return addresses[0];
 }
 
-const server = http.createServer(async (request, response) => {
-  if (!["GET", "HEAD"].includes(request.method || "")) return reject(response, 405, "method_not_allowed");
-  const match = /^\/node\/(node[0-9]+)(\/.*)$/.exec(request.url || "");
-  if (!match) return reject(response, 404, "not_found");
-  const host = nodeHost(match[1]);
-  const target = new URL(`https://${host}${match[2]}`);
-  if (!validPath(target)) return reject(response, 404, "not_found");
-
-  let address;
-  try {
-    address = await resolvedPublicIpv4(host);
-  } catch {
-    return reject(response, 502, "unsafe_or_unavailable_dns");
-  }
+function proxyRequest(request, response, host, path, address) {
   const upstream = https.request({
     hostname: host,
     port: 443,
-    path: `${target.pathname}${target.search}`,
+    path,
     method: request.method,
     servername: host,
     rejectUnauthorized: true,
     timeout: timeoutMs,
-    // The address is resolved and policy-checked above. Node 26 otherwise enables
-    // multi-address selection and expects the custom lookup to return an array.
     autoSelectFamily: false,
     lookup: (_hostname, _options, callback) => callback(null, address, 4),
     headers: { host, accept: "application/json" },
@@ -105,6 +125,40 @@ const server = http.createServer(async (request, response) => {
   upstream.on("timeout", () => upstream.destroy(new Error("upstream_timeout")));
   upstream.on("error", () => reject(response, 502, "upstream_unavailable"));
   upstream.end();
+}
+
+async function proxyPublicHost(request, response, host, path) {
+  let address;
+  try {
+    address = await resolvedPublicIpv4(host);
+  } catch {
+    return reject(response, 502, "unsafe_or_unavailable_dns");
+  }
+  return proxyRequest(request, response, host, path, address);
+}
+
+const server = http.createServer(async (request, response) => {
+  if (!["GET", "HEAD"].includes(request.method || "")) return reject(response, 405, "method_not_allowed");
+  const geoMatch = /^\/geo\/(\d{1,3}(?:\.\d{1,3}){3})$/.exec(request.url || "");
+  if (geoMatch) {
+    if (request.method !== "GET") return reject(response, 405, "method_not_allowed");
+    const ip = geoMatch[1];
+    if (!publicIpv4(ip)) return reject(response, 404, "not_found");
+    return proxyPublicHost(request, response, "ipwho.is", `/${ip}`);
+  }
+  const bootstrapMatch = /^\/bootstrap\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\/bootstrap\.json$/.exec(request.url || "");
+  if (bootstrapMatch) {
+    if (request.method !== "GET") return reject(response, 405, "method_not_allowed");
+    return proxyPublicHost(request, response, "gonka-dev.net", `/${bootstrapMatch[1]}/bootstrap.json`);
+  }
+  const match = /^\/node\/(node[0-9]+)(\/.*)$/.exec(request.url || "");
+  if (!match) return reject(response, 404, "not_found");
+  const host = nodeHost(match[1]);
+  const target = new URL(`https://${host}${match[2]}`);
+  if (!validPath(target)) return reject(response, 404, "not_found");
+
+  // The address is resolved and policy-checked above before connecting.
+  return proxyPublicHost(request, response, host, `${target.pathname}${target.search}`);
 });
 
 if (process.env.NODE_GUARD_NO_LISTEN !== "1") server.listen(port, "0.0.0.0");

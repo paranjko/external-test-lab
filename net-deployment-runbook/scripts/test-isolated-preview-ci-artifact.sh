@@ -78,7 +78,7 @@ for mode in static endpoint combined; do
     printf 'original sealed archive\n' >"$fixture/backend-image.tar"
     sha256sum "$fixture/backend-image.tar" | awk '{print $1}' >"$fixture/backend-image.tar.sha256"
     jq -n --arg head "$PREVIEW_REVISION" --arg digest "$digest" \
-      '{schema_version:1,source_revision:$head,preview_number:193,source_digest:$digest,rendered_caddy_sha256:$digest,backend_caddy_sha256:$digest,image_id:("sha256:"+$digest)}' >"$tmp/backend/backend-build.json"
+      '{schema_version:1,source_revision:$head,preview_number:193,source_digest:$digest,rendered_caddy_sha256:$digest,backend_caddy_sha256:$digest,network_observer_http_sha256:$digest,network_observer_collector_sha256:$digest,network_observer_env_sha256:$digest,preview_curl_sha256:$digest,network_observer_runtime_sha256:$digest,start_status_backend_sha256:$digest,image_id:("sha256:"+$digest)}' >"$tmp/backend/backend-build.json"
   fi
   "$root/scripts/render-site-build-info.sh" "$fixture" "$PREVIEW_REVISION"
   "$root/scripts/prepare-isolated-preview-composition.sh" "$fixture" "$PREVIEW_REVISION" "$tmp/backend"
@@ -94,6 +94,23 @@ if grep -q '^image save ' "$TEST_DOCKER_LOG"; then
   echo 'CI wrapper repackaged a sealed backend archive' >&2
   exit 1
 fi
+for receipt_case in missing tampered; do
+  receipt_release="$tmp/receipt-$receipt_case"
+  cp -a "$PREVIEW_RELEASE_DIR" "$receipt_release"
+  if [[ "$receipt_case" == missing ]]; then
+    jq 'del(.network_observer_runtime_sha256)' "$receipt_release/backend-build.json" >"$tmp/backend-build.json"
+  else
+    jq '.preview_curl_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"' \
+      "$receipt_release/backend-build.json" >"$tmp/backend-build.json"
+  fi
+  mv "$tmp/backend-build.json" "$receipt_release/backend-build.json"
+  if site_release_dir="$receipt_release" preview_number=193 preview_base_revision="$base" \
+    preview_revision="$PREVIEW_REVISION" preview_backend_image="$PREVIEW_BACKEND_IMAGE" "$verifier" >"$tmp/receipt-$receipt_case.log" 2>&1; then
+    echo "trusted verifier accepted a $receipt_case backend observer runtime receipt" >&2
+    exit 1
+  fi
+  grep -Fq 'preview composition does not bind the backend runtime manifest' "$tmp/receipt-$receipt_case.log"
+done
 printf 'tampered archive\n' >>"$PREVIEW_RELEASE_DIR/backend-image.tar"
 if site_release_dir="$PREVIEW_RELEASE_DIR" preview_number=193 preview_base_revision="$base" \
   preview_revision="$PREVIEW_REVISION" preview_backend_image="$PREVIEW_BACKEND_IMAGE" "$verifier" >"$tmp/tampered.log" 2>&1; then

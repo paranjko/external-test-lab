@@ -67,6 +67,14 @@ The publisher preserves the host's `config.js` and `preview/` directory, it does
 
 `make test-site-publisher` checks the executed publication commands and `make edge-integration` verifies new site bytes, unchanged bootstrap bytes and unchanged Caddy container identity in a disposable local container
 
+The static publisher does not update or restart the production network observer
+
+Before site publication, CI verifies that `/status/network` serves a fresh full chain snapshot and `/status/network/ws` streams its current snapshot envelope
+
+If this capability check fails, the static release is not published
+
+Updating the observer adapter and its Caddy and systemd wiring requires a separate, explicitly scoped operator upgrade
+
 ## Preview cleanup
 
 Closing or merging a same-repository PR, or converting it to draft, removes its isolated preview using the current GitHub PR state
