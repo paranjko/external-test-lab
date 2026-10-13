@@ -44,6 +44,12 @@ They provide JSON assertions and the Unix-socket protocol transport; they are
 not operator or Host dependencies. The build checks that the TMKMS executable
 is unchanged, and the test runs without network access or Host mounts.
 
+DevShard [archive builds](releases/README.md) require Python 3.11+, Docker
+Buildx, Go, binutils, `od` and `zipinfo`; publication also needs `gh`.
+`devshard-release.yml` installs Go/binutils and uses Ubuntu's unzip/GNU tools.
+`make test-devshard-release` mocks external commands; it neither builds nor
+publishes artifacts.
+
 Before adding an external executable to runbook shell code:
 
 1. Check both manifests and the `runbook-contracts` workflow job.
