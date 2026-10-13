@@ -1,6 +1,8 @@
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -42,6 +44,17 @@ class ReleaseTests(unittest.TestCase):
 
     def test_complete_manifest(self):
         release.verify(self.output)
+
+    def test_default_generated_paths_do_not_dirty_source(self):
+        checkout = self.output / "checkout"
+        checkout.mkdir()
+        subprocess.run(["git", "init", "--quiet", str(checkout)], check=True)
+        (checkout / ".gitignore").write_bytes((release.ROOT.parent / ".gitignore").read_bytes())
+        for path in ("build/gonkactl-test/receipt", "build/gonkactl-test-browser-tmp/profile",
+                     "build/gonkactl-test-release/build.json", "gonkactl-test/cmd/cli.go"):
+            ignored = subprocess.run(["git", "-c", f"core.excludesFile={os.devnull}",
+                                      "check-ignore", "--quiet", "--no-index", path], cwd=checkout)
+            self.assertEqual(ignored.returncode, 0 if path.startswith("build/") else 1, path)
 
     def test_corruption_and_missing_entries(self):
         archive = self.output / release.name(release.TARGETS[0])
