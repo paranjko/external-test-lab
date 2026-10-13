@@ -148,6 +148,8 @@ preview.{$SITE_HOST} {
 
 {$SITE_HOST} {
   encode zstd gzip
+  @test_installer path /test/install.sh
+  header @test_installer Content-Type "text/plain; charset=utf-8"
   # Bootstrap is a public consumer contract on the canonical site origin as
   # well as the node and API origins. Keep this static route ahead of the site
   # fallback so a published descriptor never reaches the dashboard handler.

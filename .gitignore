@@ -1,4 +1,9 @@
 /net-deployment-data/
 
+# Generated test CLI checks, browser profiles and release archives.
+/build/gonkactl-test/
+/build/gonkactl-test-browser-tmp/
+/build/gonkactl-test-release/
+
 # Reviewed public endpoint projections, not operator secrets.
 !/bootstrap/*.env

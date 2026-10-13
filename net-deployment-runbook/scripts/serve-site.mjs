@@ -42,6 +42,7 @@ const contentTypes = new Map([
   [".js", "application/javascript; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
   [".svg", "image/svg+xml"],
+  [".sh", "text/plain; charset=utf-8"],
   [".woff2", "font/woff2"],
 ]);
 
@@ -299,6 +300,16 @@ const server = http.createServer(async (request, response) => {
   let metadata;
   try {
     metadata = statSync(file);
+    if (metadata.isDirectory()) {
+      const url = new URL(requestUrl, "http://localhost");
+      if (!url.pathname.endsWith("/")) {
+        response.writeHead(308, { Location: `${url.pathname}/${url.search}` });
+        response.end();
+        return;
+      }
+      file = resolve(file, "index.html");
+      metadata = statSync(file);
+    }
   } catch {
     response.writeHead(404);
     response.end();

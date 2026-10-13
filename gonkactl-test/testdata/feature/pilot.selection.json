@@ -1,0 +1,5 @@
+[
+  {"case_id":"case-97c545755fcb939c","scenario":"Assertions are not inferred from the renderer [smoke/receipt]"},
+  {"case_id":"case-1d6a8eeaa6293489","scenario":"Assertions are not inferred from the renderer [status/response]"},
+  {"case_id":"case-04910d083e917afb","scenario":"DocString and table reach the executor"}
+]

@@ -15,6 +15,7 @@ command -v docker >/dev/null || { echo 'docker is required for the public-edge i
 docker info >/dev/null 2>&1 || { echo 'docker daemon is required for the public-edge integration test' >&2; exit 2; }
 
 mkdir -p "$tmp/site/preview/172/status" "$tmp/bootstrap/gonka-devnet-community" "$tmp/upstream" "$tmp/admission"
+cp -R "$ROOT/04-ops/site/test" "$tmp/site/test"
 sed -e '/^[[:space:]]*email {\$ACME_EMAIL}[[:space:]]*$/d' \
   -e '/^www\.{$SITE_HOST} {/,/^}/d' \
   -e '/^preview\.{$SITE_HOST} {/,/^}/d' \
@@ -129,6 +130,10 @@ curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/" | grep -q '
   exit 1
 }
 curl -fsS "http://127.0.0.1:$port/status/participants" | grep -Fxq '/status/participants'
+curl -fsSL "http://127.0.0.1:$port/test" | cmp - "$tmp/site/test/index.html"
+curl -fsS -D "$tmp/test-installer.headers" -o "$tmp/test-installer.body" "http://127.0.0.1:$port/test/install.sh"
+cmp "$tmp/test-installer.body" "$tmp/site/test/install.sh"
+grep -Eiq '^Content-Type: (text/plain|application/x-sh)(;|\r?$)' "$tmp/test-installer.headers"
 for prefix in '' /preview/172; do
   for node in 5 6 7 8; do
     for endpoint in health v1/versions chain-rpc/status chain-rpc/net_info 'chain-rpc/validators?height=1&page=1&per_page=100'; do
