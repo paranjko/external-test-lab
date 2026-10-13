@@ -466,6 +466,17 @@ def observe_backend(db: sqlite3.Connection, backend) -> None:
                 reason = "runtime_unavailable"
             finish_status_observation(db, receipt, "UNAVAILABLE", reason)
             return
+        # The model-bound admission observer already checks authenticated admin
+        # state. Native /status changes shape when exactly one runtime remains.
+        if any(key in admission for key in ("gateway", "model", "protocol")):
+            if (admission.get("state") != "READY" or admission.get("reason") is not None
+                    or admission.get("gateway") != backend["name"]
+                    or admission.get("model") != MODEL
+                    or not isinstance(admission.get("protocol"), str)
+                    or not re.fullmatch(r"v[1-9][0-9]*", admission["protocol"])):
+                raise ValueError("invalid model-bound admission observation")
+            finish_status_observation(db, receipt, "ELIGIBLE", "model_eligible")
+            return
         status = read(backend["base_url"] + "/status")
         capacity = status["capacity"]["models"][MODEL]
         limiter = status["limiter"]["models"][MODEL]

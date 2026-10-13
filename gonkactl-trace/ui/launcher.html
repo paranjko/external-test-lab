@@ -1,0 +1,32 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Gonka incident workspace</title>
+<style>body{margin:0;font:14px system-ui;background:#f3f5f8}header,nav{padding:8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}iframe{width:100%;height:calc(100vh - 100px);border:0}#status{flex:1}button{padding:6px 10px}</style>
+<header><strong>Gonka · local investigation</strong><a id="matrix-link">State matrix</a><span id="status">Loading offline Perfetto…</span><a id="trace">Download trace</a><a id="analysis">Analysis JSON</a></header>
+<nav aria-label="Time window"><span>View window:</span><button data-range="incident" disabled>Incident · last 10 min</button><button data-range="node2" disabled>Node2 · two epochs</button><button data-range="all" disabled>Full history…</button><button id="reset">Reload small window</button><span>All evidence remains available; only the viewport changes</span></nav>
+<iframe id="ui" src="/#!/"></iframe>
+<script>
+(async()=>{
+ const status=document.getElementById('status'),frame=document.getElementById('ui');
+ const params=new URLSearchParams(location.search),id=params.get('session');if(!/^[a-f0-9]{24}$/.test(id||'')){status.textContent='Invalid session';return}
+ document.getElementById('matrix-link').href='/gonka/?session='+id;
+ const initialHeight=Number(params.get('height'));
+ const requested=params.get('range');const initialRange=['incident','node2','all','saved'].includes(requested)?requested:'incident';
+ document.getElementById('reset').onclick=()=>{const url=new URL(location.href);url.searchParams.delete('range');location.assign(url.href)};
+ document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>{
+  const range=button.dataset.range;
+  if(range==='all'&&!confirm('Show the entire history? Rendering may be slower. Incident returns to the last 10 minutes.'))return;
+  frame.contentWindow.postMessage({gonkaDataset:id,gonkaRange:range},location.origin);
+ }));
+ const base='/api/session/'+id+'/';document.getElementById('trace').href=base+'trace';document.getElementById('analysis').href=base+'analysis';
+ try{
+  const [manifest,view,buffer]=await Promise.all([fetch(base+'manifest').then(r=>{if(!r.ok)throw Error('manifest unavailable');return r.json()}),fetch(base+'view').then(r=>r.json()),fetch(base+'trace').then(r=>r.arrayBuffer())]);
+  let sent=false;const timer=setTimeout(()=>{clearInterval(ping);status.textContent='Perfetto/WASM load timed out; files remain available above'},60000);
+  const ping=setInterval(()=>frame.contentWindow.postMessage('PING',location.origin),300);
+  addEventListener('message',event=>{
+   if(event.origin!==location.origin||event.source!==frame.contentWindow)return;
+   if(event.data==='PONG'&&!sent){sent=true;clearInterval(ping);frame.contentWindow.postMessage({perfetto:{buffer,title:'Gonka '+id,fileName:'incident.pftrace',pluginArgs:{'net.gonka.Consensus':{datasetId:id,analysisUrl:base+'analysis',viewUrl:base+'view',viewState:view,initialRange,initialHeight}}}},location.origin,[buffer]);status.textContent='Trace received; preparing Gonka views…'}
+   if(event.data?.gonkaReady===id){clearTimeout(timer);status.textContent='Offline · '+manifest.input_kind+' · '+id;document.querySelectorAll('[data-range]').forEach(button=>button.disabled=false)}
+   if(event.data?.gonkaError){clearTimeout(timer);status.textContent='Load error: '+event.data.gonkaError}
+  });
+ }catch(e){status.textContent='Cannot open dataset: '+e.message}
+})();
+</script></html>

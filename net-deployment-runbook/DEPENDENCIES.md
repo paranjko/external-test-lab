@@ -6,6 +6,22 @@
 `scripts/test-command-dependency-contract.sh` verifies that baseline before
 the rest of the contract suite.
 
+CI runs `test-ci-bootstrap`, `test-ci-contracts`, `test-ci-site` and
+`test-ci-join` in independent checkouts, plus the existing `test-gdc-p0a`
+job. Tests within each group remain sequential: some fixtures use fixed
+loopback ports or write generated site files. Do not run groups concurrently
+in the same checkout. `make test` still runs the complete original local
+suite, including the shared P0-A tests, and `make test test-gdc-p0a` adds the
+remaining P0-A checks without rerunning shared targets.
+
+`make test-ci-layout` checks that the CI groups cover the local suite and do
+not duplicate test entrypoints (apart from each group's dependency check).
+ShellCheck runs once across two CI shards, retaining the pinned version and
+external-source analysis. `make shellcheck` checks every script locally;
+`make shellcheck shellcheck_shard=0 shellcheck_shards=2` reproduces one shard.
+The `runbook-contracts` result requires all test, lint, ownership, upstream
+and edge jobs to succeed; failed, cancelled or skipped jobs fail the gate.
+
 Ordinary tests and the site do not require Gonka sources. Release auditing is
 separate: `make verify-upstream-profiles upstream_source=/path/to/gonka`
 requires a checkout with release tags. CI runs it in the `upstream-profiles`

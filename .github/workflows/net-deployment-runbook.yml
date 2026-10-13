@@ -41,64 +41,60 @@ permissions:
   pull-requests: read
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      shell: ${{ steps.filter.outputs.shell }}
-    steps:
-      - id: filter
-        uses: actions/github-script@v9.0.0
-        with:
-          script: |
-            if (context.eventName !== 'pull_request') {
-              core.setOutput('shell', 'true');
-              return;
-            }
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              per_page: 100,
-            });
-            const shellRelevant = files.some(({ filename }) =>
-              filename.endsWith('.sh') ||
-              filename === 'net-deployment-runbook/Makefile' ||
-              filename === '.github/workflows/net-deployment-runbook.yml'
-            );
-            core.setOutput('shell', String(shellRelevant));
-
   shellcheck:
-    needs: changes
-    if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
-      needs.changes.outputs.shell == 'true'
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Check runbook shell scripts
-        run: make -C net-deployment-runbook shellcheck
+        run: make -C net-deployment-runbook shellcheck shellcheck_shard=${{ matrix.shard }} shellcheck_shards=2
 
-  runbook-contracts:
+  runbook-contract-tests:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ vars.GDC_NODE4_RUNNER_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && fromJSON('["self-hosted", "linux", "x64", "gdc-node4"]') || 'ubuntu-latest' }}
     environment: ${{ github.event_name == 'workflow_dispatch' && 'gdc-node4-runner' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [bootstrap, contracts, site, join, gateways]
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Check runbook shell scripts on Node4
-        if: runner.name == 'external-test-lab-gdc-node4'
-        run: ./ops/github-actions-runner/run-shellcheck-native.sh net-deployment-runbook
-      - name: Check runbook shell scripts on GitHub-hosted fallback
-        if: runner.name != 'external-test-lab-gdc-node4'
-        run: make -C net-deployment-runbook shellcheck
       - name: Install declared Python test dependencies
+        if: matrix.group == 'gateways'
         run: make -C net-deployment-runbook install-python-test-dependencies
+      - name: Verify CI group coverage
+        run: make -C net-deployment-runbook test-ci-layout
       - name: Test runbook contracts
-        run: make -C net-deployment-runbook test
+        run: make -C net-deployment-runbook test-ci-${{ matrix.group }}
+
+  # Preserve the stable required-check name. Skipped/cancelled shards must
+  # never turn a partially executed suite green.
+  runbook-contracts:
+    needs: [shellcheck, runbook-contract-tests, p0a-lifecycle, public-edge-integration, ownership, upstream-profiles]
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9.0.0
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const failed = Object.entries(JSON.parse(process.env.NEEDS))
+              .filter(([, job]) => job.result !== 'success');
+            if (failed.length) core.setFailed(`Required jobs did not pass: ${failed.map(([name]) => name).join(', ')}`);
+
+  ownership:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
       - name: Test edge installation ownership in disposable root
-        if: runner.name != 'external-test-lab-gdc-node4'
         run: sudo make -C net-deployment-runbook test-edge-install-ownership
       - name: Test bootstrap publication with separate directory owners
-        if: runner.name != 'external-test-lab-gdc-node4'
         run: sudo make -C net-deployment-runbook test-bootstrap-publisher-ownership
 
   p0a-lifecycle:

@@ -1,19 +1,22 @@
-# Community DevNet — M2 regional capacity
+# Community DevNet regional capacity
 
-**Snapshot:** 2026-08-10 — 2026-09-09
+Fleet reference: **13 October 2026**, 10 machines, 9 NVIDIA GPUs, 5 providers.
 
-Public inventory of rented M2 capacity. Hosts used for JOIN / reset / restore testing may be rebuilt and disappear from the live participant set; current state is on [gonka-dev.net](https://gonka-dev.net).
+| Host | Provider | Recorded location | GPU |
+|---|---|---|---|
+| node0 | DatabaseMart | North Kansas City, US | RTX A5000 |
+| node1 | OneProvider | Helsinki, Finland | Tesla T4 |
+| node2 | LeaderGPU | Amsterdam, Netherlands | RTX 4090 |
+| node3 | GIGAGPU | London, UK | RTX 3090 |
+| node4 | OneProvider | Portland, US | None; remote ML on node9 |
+| node5 | DatabaseMart | North Kansas City, US | RTX A5000 |
+| node6 | HOSTKEY | Russia; city unconfirmed | RTX PRO 2000 Blackwell |
+| node7 | OneProvider | Helsinki, Finland | Tesla T4 |
+| node8 | GIGAGPU | London, UK | RTX 3090 |
+| node9 (formerly node4-ml) | DatabaseMart | League City, US | RTX PRO 2000 Blackwell |
 
-| Host | Role | Provider | Region | GPU | M2 state |
-|---|---|---|---|---|---|
-| `node0` | Full Host | DatabaseMart | North Kansas City, US | RTX A5000 | stable baseline |
-| `node1` | Full Host | OneProvider | Helsinki, Finland | Tesla T4 | DevNet / reusable test host |
-| `node2` | Full Host | LeaderGPU | Amsterdam, Netherlands | RTX 4090 | DevNet / reusable test host |
-| `node3` | Full Host | GIGAGPU | London, UK | RTX 3090 | DevNet / reusable test host |
-| `node4` | Network Host | OneProvider | Portland, US | — | network-only |
-| `node4-ml` | ML-only | DatabaseMart | League City, US | RTX Pro 2000 | remote ML capacity |
-| `node5` | Full Host | DatabaseMart | North Kansas City, US | RTX A4000 | JOIN / backup / restore target |
-| `node6` | Full Host | HOSTKEY | Russia | RTX 2000 PRO | staged; preparation at cutoff |
-| `node7` | Full Host | OneProvider | Helsinki, Finland | Tesla T4 | staged; preparation at cutoff |
-| `node8` | Experimental | GIGAGPU | London, UK | RX 9070 XT | pending; not counted as validated MLNode |
+**Distribution:** US 4, Finland 2, UK 2, Netherlands 1, Russia 1.
 
+Hardware was checked by read-only SSH on 13 October. Provider and location assignments are carried forward from the [M2 inventory](../reports/monthly/2026-09-month-2.md); they have not been reverified against provider accounts. The node9 rename is operator-confirmed.
+
+See [architecture](architecture.md) for machine roles, [hardware](hardware.md) for measured capacity and [live observations](https://gonka-dev.net) for network participation. Historical M2 equipment and spending remain in the monthly report.
