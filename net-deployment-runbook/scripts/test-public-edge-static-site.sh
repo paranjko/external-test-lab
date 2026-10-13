@@ -16,10 +16,16 @@ docker info >/dev/null 2>&1 || { echo 'docker daemon is required for the public-
 
 # Verify Compose, not only a manually injected docker exec environment: the
 # renderer's selections must reach the actual Caddy container on deployment.
+# Some Compose versions still validate unrelated service env_file paths with
+# --no-env-resolution. Keep the shipped model intact in a disposable directory,
+# with empty fixture files rather than depending on an operator's deployment.
+mkdir -p "$tmp/compose"
+cp "$ROOT/04-ops/edge-node/compose.yaml" "$tmp/compose/compose.yaml"
+touch "$tmp/compose/gateway-admission.env" "$tmp/compose/gateway-route.env"
 COMPOSE_PROJECT_NAME=fixture PUBLIC_HOST=fixture.invalid GRAFANA_IMAGE=grafana/grafana \
 GDC_MONITORING_DOCKER_CIDR=172.21.0.0/16 MONITORING_DOCKER_CIDR=172.21.0.0/16 \
 GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:18186 GDC_STABLE_HEALTH_MODE=native_observation \
-  docker compose -f "$ROOT/04-ops/edge-node/compose.yaml" config --no-env-resolution --format json caddy \
+  docker compose -f "$tmp/compose/compose.yaml" config --no-env-resolution --format json caddy \
   | jq -e '.services.caddy.environment | .GDC_STABLE_READINESS_UPSTREAM == "127.0.0.1:18186" and .GDC_STABLE_HEALTH_MODE == "native_observation"' >/dev/null
 
 phase_ops="$ROOT/scripts/phase-ops.sh"
