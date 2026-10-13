@@ -92,6 +92,24 @@ make -C net-deployment-runbook verify-removed-site-preview-live preview_number=P
 
 `make test-preview-lifecycle` exercises removal, repeated removal and interruption recovery with real disposable containers while checking that another preview and shared services stay unchanged
 
+## Browser regression
+
+`make test-validator-map` checks all 17 viewport sizes, including responsive
+breakpoints, Host-card geometry, keyboard access, map projection and fullscreen
+popups. The overlapping-marker pointer scenario selects its own desktop and
+mobile dimensions and runs once per invocation. Each viewport prints its
+duration; the JSON report remains in `map_evidence_dir`.
+
+PNG captures are optional diagnostics, not image-comparison assertions. Enable
+them for visual inspection:
+
+```sh
+GDC_MAP_FIXTURE_SCREENSHOTS=1 make test-validator-map
+```
+
+To investigate a specific viewport, set `GDC_MAP_FIXTURE_VIEWPORTS=390x844`.
+Keep the full matrix for acceptance; the filter is only a debugging aid.
+
 ## Validator-map basemap provenance
 
 `world-map.svg` is a local land-only, equirectangular schematic for approximate

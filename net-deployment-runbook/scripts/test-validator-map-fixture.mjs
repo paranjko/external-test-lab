@@ -17,6 +17,7 @@ if (!siteRootText || !evidenceDir) {
   );
 }
 const siteRoot = resolve(siteRootText);
+const captureScreenshots = process.env.GDC_MAP_FIXTURE_SCREENSHOTS === "1";
 await mkdir(evidenceDir, { recursive: true });
 const now = new Date().toISOString();
 const delay = (ms) =>
@@ -530,6 +531,12 @@ const call = (method, params = {}, target = sessionId) =>
       }),
     );
   });
+const saveScreenshot = async (name, settleMs) => {
+  if (!captureScreenshots) return;
+  await delay(settleMs);
+  const screenshot = await call("Page.captureScreenshot", { format: "png" });
+  await writeFile(join(evidenceDir, name), Buffer.from(screenshot.data, "base64"));
+};
 const mapRestorationExpression =
   'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),mr=map?.getBoundingClientRect(),world=document.querySelector(".validator-map-world")?.getBoundingClientRect(),covers=(value,bounds)=>Boolean(value&&bounds&&value.left<=bounds.left+1&&value.right>=bounds.right-1);return{worldCoversMap:covers(world,mr),popup:Boolean(document.querySelector(".leaflet-popup")),world:world&&{left:world.left,right:world.right,top:world.top,bottom:world.bottom},map:mr&&{left:mr.left,right:mr.right,top:mr.top,bottom:mr.bottom}}})())';
 const waitForMapRestoration = async (context) => {
@@ -1273,6 +1280,7 @@ try {
   if (requestedViewports.length && selectedViewports.length !== requestedViewports.length)
     throw new Error(`unknown fixture viewport: ${requestedViewports.join(", ")}`);
   for (const [width, height] of selectedViewports) {
+    const viewportStarted = performance.now();
     await call("Emulation.setDeviceMetricsOverride", {
       width,
       height,
@@ -1883,207 +1891,211 @@ try {
       throw new Error(
         `stable group position contract failed: ${JSON.stringify({ stableInitial, stableReordered, stableWithoutFirst })}`,
       );
-    await call("Emulation.setDeviceMetricsOverride", {
-      width: 1280,
-      height: 5000,
-      deviceScaleFactor: 1,
-      mobile: false,
-    });
-    await call("Emulation.setVisibleSize", { width: 1280, height: 5000 });
-    await call("Runtime.evaluate", {
-      expression: `validatorMapController.update(${JSON.stringify(overlappingEuropeanMarkers)})`,
-    });
-    await delay(80);
-    await call("Runtime.evaluate", {
-      expression:
-        'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
-    });
-    await delay(80);
-    const { result: overlappingResult } = await call("Runtime.evaluate", {
-      expression:
-        'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label"),x:r.left+r.width/2,y:r.top+r.height/2}}),hits:[...document.querySelectorAll(".validator-marker-hit")].map(hit=>{const r=hit.getBoundingClientRect();return{className:hit.getAttribute("class"),x:r.left+r.width/2,y:r.top+r.height/2,width:r.width,height:r.height,pointerEvents:getComputedStyle(hit).pointerEvents,opacity:getComputedStyle(hit).opacity,parentPointerEvents:getComputedStyle(hit.parentElement).pointerEvents}})})',
-      returnByValue: true,
-    });
-    const overlappingState = JSON.parse(overlappingResult.value);
-    const singleton = overlappingState.markers.find((marker) =>
-      marker.label?.startsWith("JN98; 1 node;"),
-    );
-    const prague = overlappingState.markers.find((marker) =>
-      marker.label?.startsWith("JO70; 4 nodes;"),
-    );
-    const hitFor = (marker) =>
-      overlappingState.hits.find(
-        (hit) => Math.hypot(hit.x - marker.x, hit.y - marker.y) < 0.1,
+    // This scenario selects its own fixed desktop/mobile sizes. Run it once,
+    // including when a caller selects only a subset of the viewport matrix.
+    if (width === selectedViewports[0][0]) {
+      await call("Emulation.setDeviceMetricsOverride", {
+        width: 1280,
+        height: 5000,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await call("Emulation.setVisibleSize", { width: 1280, height: 5000 });
+      await call("Runtime.evaluate", {
+        expression: `validatorMapController.update(${JSON.stringify(overlappingEuropeanMarkers)})`,
+      });
+      await delay(80);
+      await call("Runtime.evaluate", {
+        expression:
+          'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
+      });
+      await delay(80);
+      const { result: overlappingResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify({markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label"),x:r.left+r.width/2,y:r.top+r.height/2}}),hits:[...document.querySelectorAll(".validator-marker-hit")].map(hit=>{const r=hit.getBoundingClientRect();return{className:hit.getAttribute("class"),x:r.left+r.width/2,y:r.top+r.height/2,width:r.width,height:r.height,pointerEvents:getComputedStyle(hit).pointerEvents,opacity:getComputedStyle(hit).opacity,parentPointerEvents:getComputedStyle(hit.parentElement).pointerEvents}})})',
+        returnByValue: true,
+      });
+      const overlappingState = JSON.parse(overlappingResult.value);
+      const singleton = overlappingState.markers.find((marker) =>
+        marker.label?.startsWith("JN98; 1 node;"),
       );
-    const singletonHit = singleton && hitFor(singleton);
-    const pragueHit = prague && hitFor(prague);
-    const hitDistance =
-      singleton && prague
-        ? Math.hypot(singleton.x - prague.x, singleton.y - prague.y)
-        : NaN;
-    const combinedHitRadius =
-      singletonHit && pragueHit
-        ? singletonHit.width / 2 + pragueHit.width / 2
-        : NaN;
-    if (!(hitDistance < combinedHitRadius))
-      throw new Error(
-        `fixture no longer exercises overlapping hit areas: ${JSON.stringify({ overlappingState, hitDistance, combinedHitRadius })}`,
+      const prague = overlappingState.markers.find((marker) =>
+        marker.label?.startsWith("JO70; 4 nodes;"),
       );
-    const waitForSettledOverlappingMarker = async (expected) => {
-      let previous = null;
-      let stableSamples = 0;
-      let observed = null;
-      for (let attempt = 0; attempt < 40; attempt += 1) {
-        const { result: markerResult } = await call(
-          "Runtime.evaluate",
-          {
+      const hitFor = (marker) =>
+        overlappingState.hits.find(
+          (hit) => Math.hypot(hit.x - marker.x, hit.y - marker.y) < 0.1,
+        );
+      const singletonHit = singleton && hitFor(singleton);
+      const pragueHit = prague && hitFor(prague);
+      const hitDistance =
+        singleton && prague
+          ? Math.hypot(singleton.x - prague.x, singleton.y - prague.y)
+          : NaN;
+      const combinedHitRadius =
+        singletonHit && pragueHit
+          ? singletonHit.width / 2 + pragueHit.width / 2
+          : NaN;
+      if (!(hitDistance < combinedHitRadius))
+        throw new Error(
+          `fixture no longer exercises overlapping hit areas: ${JSON.stringify({ overlappingState, hitDistance, combinedHitRadius })}`,
+        );
+      const waitForSettledOverlappingMarker = async (expected) => {
+        let previous = null;
+        let stableSamples = 0;
+        let observed = null;
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          const { result: markerResult } = await call(
+            "Runtime.evaluate",
+            {
+              expression:
+                'JSON.stringify((()=>({animating:Boolean(document.querySelector(".leaflet-pan-anim,.leaflet-zoom-anim")),markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const rect=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",x:rect.left+rect.width/2,y:rect.top+rect.height/2}})}))())',
+              returnByValue: true,
+            },
+          );
+          observed = JSON.parse(markerResult.value);
+          const position = observed.markers.find((marker) =>
+            marker.label.startsWith(expected),
+          );
+          if (
+            position &&
+            previous &&
+            !observed.animating &&
+            Math.hypot(position.x - previous.x, position.y - previous.y) <= 0.1
+          )
+            stableSamples += 1;
+          else stableSamples = 0;
+          if (stableSamples >= 3) return position;
+          previous = position;
+          await delay(50);
+        }
+        throw new Error(
+          `overlapping marker did not settle ${JSON.stringify({ expected, observed })}`,
+        );
+      };
+      const assertOverlappingPointers = async () => {
+        for (const expected of ["JN98", "JO70"]) {
+          await call("Runtime.evaluate", {
             expression:
-              'JSON.stringify((()=>({animating:Boolean(document.querySelector(".leaflet-pan-anim,.leaflet-zoom-anim")),markers:[...document.querySelectorAll(".validator-marker")].map(marker=>{const rect=marker.getBoundingClientRect();return{label:marker.getAttribute("aria-label")||"",x:rect.left+rect.width/2,y:rect.top+rect.height/2}})}))())',
-            returnByValue: true,
-          },
-        );
-        observed = JSON.parse(markerResult.value);
-        const position = observed.markers.find((marker) =>
-          marker.label.startsWith(expected),
-        );
-        if (
-          position &&
-          previous &&
-          !observed.animating &&
-          Math.hypot(position.x - previous.x, position.y - previous.y) <= 0.1
-        )
-          stableSamples += 1;
-        else stableSamples = 0;
-        if (stableSamples >= 3) return position;
-        previous = position;
-        await delay(50);
-      }
-      throw new Error(
-        `overlapping marker did not settle ${JSON.stringify({ expected, observed })}`,
-      );
-    };
-    const assertOverlappingPointers = async () => {
-      for (const expected of ["JN98", "JO70"]) {
-        await call("Runtime.evaluate", {
-          expression:
-            'document.querySelector(".validator-map-tooltip-close")?.click()',
-        });
-        for (let attempt = 0; attempt < 20; attempt += 1) {
-          const { result: closedResult } = await call("Runtime.evaluate", {
-            expression: '!document.querySelector(".validator-map-tooltip")',
+              'document.querySelector(".validator-map-tooltip-close")?.click()',
+          });
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            const { result: closedResult } = await call("Runtime.evaluate", {
+              expression: '!document.querySelector(".validator-map-tooltip")',
+              returnByValue: true,
+            });
+            if (closedResult.value) break;
+            if (attempt === 19)
+              throw new Error("previous marker popup did not close");
+            await delay(20);
+          }
+          // Leaflet can continue popup auto-pan after removing the popup DOM.
+          // Bind the pointer coordinates to three stable geometry samples so a
+          // slower runner cannot dispatch at a stale marker position.
+          const marker = await waitForSettledOverlappingMarker(expected);
+          await call("Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            x: marker.x,
+            y: marker.y,
+          });
+          await delay(40);
+          const hoverMarker = await waitForSettledOverlappingMarker(expected);
+          if (Math.hypot(hoverMarker.x - marker.x, hoverMarker.y - marker.y) > 0.1)
+            throw new Error(
+              `hover popup moved the map ${JSON.stringify({ expected, marker, hoverMarker })}`,
+            );
+          const { result: hoverResult } = await call("Runtime.evaluate", {
+            expression:
+              'JSON.stringify((()=>{const popup=document.querySelector(".validator-map-tooltip"),control=document.querySelector(".leaflet-control-container"),fullscreen=document.querySelector("#validator-map-fullscreen");return{popup:popup?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip")),parentIsBody:popup?.parentElement===document.body,position:getComputedStyle(popup).position,tooltipZIndex:Number(getComputedStyle(popup).zIndex||0),controlZIndex:Number(getComputedStyle(control).zIndex||0),fullscreenZIndex:Number(getComputedStyle(fullscreen).zIndex||0)}})())',
             returnByValue: true,
           });
-          if (closedResult.value) break;
-          if (attempt === 19)
-            throw new Error("previous marker popup did not close");
-          await delay(20);
+          const hover = JSON.parse(hoverResult.value);
+          if (
+            !hover.popup.startsWith(expected) ||
+            hover.tooltip ||
+            !hover.parentIsBody ||
+            hover.position !== "fixed" ||
+            hover.tooltipZIndex <= hover.controlZIndex ||
+            hover.tooltipZIndex <= hover.fullscreenZIndex
+          )
+            throw new Error(
+              `hover popup layering contract failed ${JSON.stringify({ expected, marker, hover })}`,
+            );
+          await call("Input.dispatchMouseEvent", {
+            type: "mousePressed",
+            x: marker.x,
+            y: marker.y,
+            button: "left",
+            clickCount: 1,
+          });
+          await call("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            x: marker.x,
+            y: marker.y,
+            button: "left",
+            clickCount: 1,
+          });
+          await delay(80);
+          const pinnedMarker = await waitForSettledOverlappingMarker(expected);
+          if (Math.hypot(pinnedMarker.x - marker.x, pinnedMarker.y - marker.y) > 0.1)
+            throw new Error(
+              `pinned popup moved the map ${JSON.stringify({ expected, marker, pinnedMarker })}`,
+            );
+          const { result: pointerResult } = await call("Runtime.evaluate", {
+            expression: `JSON.stringify({popup:document.querySelector(".validator-map-tooltip")?.textContent||"",pinned:document.querySelector(".validator-map-tooltip")?.classList.contains("is-pinned")||false,tooltip:document.querySelector(".leaflet-tooltip")?.textContent||"",atPoint:document.elementFromPoint(${marker.x},${marker.y})?.getAttribute("class")||"",viewport:{width:innerWidth,height:innerHeight,scrollY}})`,
+            returnByValue: true,
+          });
+          const pointer = JSON.parse(pointerResult.value);
+          if (
+            !pointer.popup.includes(expected) ||
+            !pointer.pinned ||
+            pointer.tooltip
+          )
+            throw new Error(
+              `overlapping hit dispatch failed ${JSON.stringify({ expected, marker, pointer, overlappingState })}`,
+            );
+          await call("Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            x: marker.x + 60,
+            y: marker.y + 60,
+          });
+          await delay(40);
+          const { result: pinnedResult } = await call("Runtime.evaluate", {
+            expression:
+              'JSON.stringify(document.querySelector(".validator-map-tooltip")?.textContent||"")',
+            returnByValue: true,
+          });
+          if (!JSON.parse(pinnedResult.value).includes(expected))
+            throw new Error("clicked popup did not remain open after pointer leave");
         }
-        // Leaflet can continue popup auto-pan after removing the popup DOM.
-        // Bind the pointer coordinates to three stable geometry samples so a
-        // slower runner cannot dispatch at a stale marker position.
-        const marker = await waitForSettledOverlappingMarker(expected);
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: marker.x,
-          y: marker.y,
-        });
-        await delay(40);
-        const hoverMarker = await waitForSettledOverlappingMarker(expected);
-        if (Math.hypot(hoverMarker.x - marker.x, hoverMarker.y - marker.y) > 0.1)
-          throw new Error(
-            `hover popup moved the map ${JSON.stringify({ expected, marker, hoverMarker })}`,
-          );
-        const { result: hoverResult } = await call("Runtime.evaluate", {
-          expression:
-            'JSON.stringify((()=>{const popup=document.querySelector(".validator-map-tooltip"),control=document.querySelector(".leaflet-control-container"),fullscreen=document.querySelector("#validator-map-fullscreen");return{popup:popup?.textContent||"",tooltip:Boolean(document.querySelector(".leaflet-tooltip")),parentIsBody:popup?.parentElement===document.body,position:getComputedStyle(popup).position,tooltipZIndex:Number(getComputedStyle(popup).zIndex||0),controlZIndex:Number(getComputedStyle(control).zIndex||0),fullscreenZIndex:Number(getComputedStyle(fullscreen).zIndex||0)}})())',
-          returnByValue: true,
-        });
-        const hover = JSON.parse(hoverResult.value);
-        if (
-          !hover.popup.startsWith(expected) ||
-          hover.tooltip ||
-          !hover.parentIsBody ||
-          hover.position !== "fixed" ||
-          hover.tooltipZIndex <= hover.controlZIndex ||
-          hover.tooltipZIndex <= hover.fullscreenZIndex
-        )
-          throw new Error(
-            `hover popup layering contract failed ${JSON.stringify({ expected, marker, hover })}`,
-          );
-        await call("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x: marker.x,
-          y: marker.y,
-          button: "left",
-          clickCount: 1,
-        });
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x: marker.x,
-          y: marker.y,
-          button: "left",
-          clickCount: 1,
-        });
-        await delay(80);
-        const pinnedMarker = await waitForSettledOverlappingMarker(expected);
-        if (Math.hypot(pinnedMarker.x - marker.x, pinnedMarker.y - marker.y) > 0.1)
-          throw new Error(
-            `pinned popup moved the map ${JSON.stringify({ expected, marker, pinnedMarker })}`,
-          );
-        const { result: pointerResult } = await call("Runtime.evaluate", {
-          expression: `JSON.stringify({popup:document.querySelector(".validator-map-tooltip")?.textContent||"",pinned:document.querySelector(".validator-map-tooltip")?.classList.contains("is-pinned")||false,tooltip:document.querySelector(".leaflet-tooltip")?.textContent||"",atPoint:document.elementFromPoint(${marker.x},${marker.y})?.getAttribute("class")||"",viewport:{width:innerWidth,height:innerHeight,scrollY}})`,
-          returnByValue: true,
-        });
-        const pointer = JSON.parse(pointerResult.value);
-        if (
-          !pointer.popup.includes(expected) ||
-          !pointer.pinned ||
-          pointer.tooltip
-        )
-          throw new Error(
-            `overlapping hit dispatch failed ${JSON.stringify({ expected, marker, pointer, overlappingState })}`,
-          );
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: marker.x + 60,
-          y: marker.y + 60,
-        });
-        await delay(40);
-        const { result: pinnedResult } = await call("Runtime.evaluate", {
-          expression:
-            'JSON.stringify(document.querySelector(".validator-map-tooltip")?.textContent||"")',
-          returnByValue: true,
-        });
-        if (!JSON.parse(pinnedResult.value).includes(expected))
-          throw new Error("clicked popup did not remain open after pointer leave");
-      }
-    };
-    await assertOverlappingPointers();
-    await call("Runtime.evaluate", {
-      expression: `validatorMapController.update(${JSON.stringify([...overlappingEuropeanMarkers].reverse())})`,
-    });
-    await delay(80);
-    await assertOverlappingPointers();
-    await call("Emulation.setDeviceMetricsOverride", {
-      width: 390,
-      height: 844,
-      deviceScaleFactor: 1,
-      mobile: true,
-    });
-    await call("Emulation.setVisibleSize", { width: 390, height: 844 });
-    await delay(160);
-    const { result: mobileResizeResult } = await call("Runtime.evaluate", {
-      expression: mapStateExpression,
-      returnByValue: true,
-    });
-    const mobileResize = JSON.parse(mobileResizeResult.value);
-    if (
-      Math.abs(mobileResize.worldRatio - 2) > 0.01 ||
-      !mobileResize.centersInside
-    )
-      throw new Error(
-        `overlapping mobile resize geometry failed: ${JSON.stringify(mobileResize)}`,
-      );
+      };
+      await assertOverlappingPointers();
+      await call("Runtime.evaluate", {
+        expression: `validatorMapController.update(${JSON.stringify([...overlappingEuropeanMarkers].reverse())})`,
+      });
+      await delay(80);
+      await assertOverlappingPointers();
+      await call("Emulation.setDeviceMetricsOverride", {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await call("Emulation.setVisibleSize", { width: 390, height: 844 });
+      await delay(160);
+      const { result: mobileResizeResult } = await call("Runtime.evaluate", {
+        expression: mapStateExpression,
+        returnByValue: true,
+      });
+      const mobileResize = JSON.parse(mobileResizeResult.value);
+      if (
+        Math.abs(mobileResize.worldRatio - 2) > 0.01 ||
+        !mobileResize.centersInside
+      )
+        throw new Error(
+          `overlapping mobile resize geometry failed: ${JSON.stringify(mobileResize)}`,
+        );
+    }
     await call("Emulation.setDeviceMetricsOverride", {
       width,
       height,
@@ -2533,15 +2545,7 @@ try {
         expression:
           'document.querySelector("#nodes")?.scrollIntoView({behavior:"instant",block:"start"})',
       });
-      await delay(80);
-      const hostRowScreenshot = await call("Page.captureScreenshot", {
-        format: "png",
-      });
-      await mkdir(evidenceDir, { recursive: true });
-      await writeFile(
-        join(evidenceDir, `host-row-${width}x${height}.png`),
-        Buffer.from(hostRowScreenshot.data, "base64"),
-      );
+      await saveScreenshot(`host-row-${width}x${height}.png`, 80);
       const { result: fiveHostInitialResult } = await call(
         "Runtime.evaluate",
         {
@@ -2560,14 +2564,7 @@ try {
         throw new Error(
           `five-Host initial accordion contract failed at ${width}x${height}: ${JSON.stringify(fiveHostInitial)}`,
         );
-      await delay(380);
-      const fiveHostScreenshot = await call("Page.captureScreenshot", {
-        format: "png",
-      });
-      await writeFile(
-        join(evidenceDir, `host-row-five-${width}x${height}.png`),
-        Buffer.from(fiveHostScreenshot.data, "base64"),
-      );
+      await saveScreenshot(`host-row-five-${width}x${height}.png`, 380);
       const { result: fiveHostActivatedResult } = await call(
         "Runtime.evaluate",
         {
@@ -2587,18 +2584,7 @@ try {
         throw new Error(
           `five-Host activation contract failed at ${width}x${height}: ${JSON.stringify(fiveHostActivated)}`,
         );
-      await delay(380);
-      const fiveHostActivatedScreenshot = await call(
-        "Page.captureScreenshot",
-        { format: "png" },
-      );
-      await writeFile(
-        join(
-          evidenceDir,
-          `host-row-five-selected-${width}x${height}.png`,
-        ),
-        Buffer.from(fiveHostActivatedScreenshot.data, "base64"),
-      );
+      await saveScreenshot(`host-row-five-selected-${width}x${height}.png`, 380);
       const { result: fourHostResult } = await call(
         "Runtime.evaluate",
         {
@@ -2631,33 +2617,18 @@ try {
       await waitForInitialMap();
       await delay(500);
     }
-    if ([1280, 390, 320].includes(width)) {
+    if (captureScreenshots && [1280, 390, 320].includes(width)) {
       await call("Runtime.evaluate", {
         expression:
           '(()=>{const details=document.querySelector(".join-requirements");if(details)details.open=true;document.querySelector("#join-node")?.scrollIntoView({behavior:"instant",block:"start"})})()',
       });
-      await delay(80);
-      const joinScreenshot = await call("Page.captureScreenshot", {
-        format: "png",
-      });
-      await mkdir(evidenceDir, { recursive: true });
-      await writeFile(
-        join(evidenceDir, `join-requirements-${width}x${height}.png`),
-        Buffer.from(joinScreenshot.data, "base64"),
-      );
+      await saveScreenshot(`join-requirements-${width}x${height}.png`, 80);
       if (width <= 390) {
         await call("Runtime.evaluate", {
           expression:
             'document.querySelector(".join-requirements-note")?.scrollIntoView({behavior:"instant",block:"end"})',
         });
-        await delay(80);
-        const joinNoteScreenshot = await call("Page.captureScreenshot", {
-          format: "png",
-        });
-        await writeFile(
-          join(evidenceDir, `join-requirements-note-${width}x${height}.png`),
-          Buffer.from(joinNoteScreenshot.data, "base64"),
-        );
+        await saveScreenshot(`join-requirements-note-${width}x${height}.png`, 80);
       }
     }
     if ([701, 700].includes(width)) {
@@ -2687,6 +2658,13 @@ try {
       await delay(380);
     }
     if ([1920, 1440, 1400, 1399, 1321, 1320, 1280, 1101, 1100, 844, 701, 700, 521, 390, 375, 360, 320].includes(width)) {
+      // Geometry includes the asynchronously loaded DevShard inventory. Bind
+      // it to a completed refresh instead of relying on pointer/screenshot
+      // work to outlast the initial details request or the periodic refresh.
+      await call("Runtime.evaluate", {
+        expression: "(async () => { await refresh(); await detailsInFlight; refreshDetails(); await detailsInFlight; })()",
+        awaitPromise: true,
+      });
       const { result: hostGeometryResult } = await call("Runtime.evaluate", {
         expression: hostGeometryExpression,
         returnByValue: true,
@@ -2718,18 +2696,16 @@ try {
           `account address copy contract failed: ${JSON.stringify(copiedAccount)}`,
         );
     }
-    await call("Runtime.evaluate", {
-      expression:
-        'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
-    });
-    await delay(80);
-    const screenshot = await call("Page.captureScreenshot", { format: "png" });
-    await mkdir(evidenceDir, { recursive: true });
-    await writeFile(
-      join(evidenceDir, `validator-map-${width}x${height}.png`),
-      Buffer.from(screenshot.data, "base64"),
-    );
-    reports.push({ width, height, ...state, hostGeometry, denseHostGeometry });
+    if (captureScreenshots) {
+      await call("Runtime.evaluate", {
+        expression:
+          'document.querySelector("#validator-map")?.scrollIntoView({behavior:"instant",block:"center"})',
+      });
+      await saveScreenshot(`validator-map-${width}x${height}.png`, 80);
+    }
+    const durationMs = Math.round(performance.now() - viewportStarted);
+    reports.push({ width, height, ...state, hostGeometry, denseHostGeometry, durationMs });
+    process.stdout.write(`PASS validator-map ${width}x${height} ${durationMs}ms\n`);
   }
   const forbidden = requests.filter((url) => forbiddenMapRequest.test(url));
   if (forbidden.length)
