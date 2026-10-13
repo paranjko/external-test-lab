@@ -3,6 +3,22 @@
   admin 127.0.0.1:2019
 }
 
+(canonical_gateway_health) {
+  @native_stable_health expression `"{$GDC_STABLE_HEALTH_MODE:legacy}" == "native_observation"`
+  handle @native_stable_health {
+    root * /edge/status
+    rewrite * /gateway-stable-health.json
+    header Cache-Control "no-store"
+    file_server
+  }
+  handle {
+    rewrite * /status/gateway-health
+    reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {
+      header_up Host {$GATEWAY_PUBLIC_HOST}
+    }
+  }
+}
+
 # The configured public edge is its Network Node endpoint. The public site and
 # API intentionally preserve the gateway host as their application origin while DNS and
 # TLS terminate here.
@@ -222,6 +238,17 @@ preview.{$SITE_HOST} {
   handle /status/gateway/v1/admission-status {
     rewrite * /v1/admission-status
     reverse_proxy {$GDC_STABLE_READINESS_UPSTREAM:127.0.0.1:18083}
+  }
+  handle /status/gateway-health {
+    route {
+      import canonical_gateway_health
+    }
+  }
+  @preview_gateway_health path_regexp preview_gateway_health ^/(?:preview/)?[1-9][0-9]*/status/gateway-health$
+  handle @preview_gateway_health {
+    route {
+      import canonical_gateway_health
+    }
   }
   # The traffic widget needs independent, read-only A/B observations. Keep
   # these exact routes narrow: neither admin nor accounting endpoints are

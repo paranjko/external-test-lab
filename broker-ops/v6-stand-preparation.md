@@ -151,6 +151,54 @@ The real Docker lending regression checks this isolation in flat and legacy
 layouts. Test workloads must not reclaim the monitoring ports by stopping
 these services.
 
+### Bounded stable-route observation
+
+`v6-stable-receipt.py` can collect one explicitly authorized inference
+observation through the stable credential adapter. It is not a rotation tool
+or a replacement for the legacy exact-once health receipt. First verify the
+running Bifrost provider and native route as described above. Create an
+operator-owned regular JSON file with mode0600 and exactly these fields:
+`completion_url`, `admission_url`, `accounting_url`, `key`, `model`, `gateway`.
+The key must be a current stable `sk-gdc-` credential; do not put it in shell
+arguments or public evidence. Gateway is the verified native target A or B.
+
+Use the canonical HTTPS `/v1/chat/completions` URL for completion. Admission
+must observe that same native target and model. Accounting must be its private
+`/api/v1/epochs/current/participants?model=URL_ENCODED_MODEL_ID` endpoint;
+never publish the accounting listener. Plain HTTP is accepted only on loopback.
+Run `python3 v6-stable-receipt.py --config PRIVATE.json --execute` only after
+funding/admission gates and applicable inference authority pass. Without the
+explicit flag the command refuses before reading the key. It never creates,
+settles or rotates an escrow, follows redirects, or retries a failed request.
+
+The sanitized result is OBSERVED only with matching native request/escrow
+identity, before/after admission, and one finished_used counter increment in
+the same epoch. It deliberately retains `exclusive_attribution_proven=false`:
+aggregate counters cannot prove exclusive attribution during concurrent traffic.
+Do not rename this result TRAFFIC_READY, use it as settlement proof, or overwrite
+the legacy gateway-health receipt with it. A failed observation exits nonzero.
+Run `make -C net-deployment-runbook test-v6-stable-receipt` from the repository
+root; the same target is included in the gateway CI group.
+
+To expose this limited observation on the site, run the authorized probe with
+`--health-output EDGE_DIRECTORY/status/gateway-stable-health.json`. Keep the
+private config outside that public status directory. The output parent must
+already exist; the probe atomically replaces a mode0644 sanitized file, including
+UNAVAILABLE results. It does not install or enable a timer. Use a single writer
+and retain the legacy probe's separate output unchanged.
+
+Set `GDC_STABLE_HEALTH_MODE=native_observation` in the edge inventory only after
+verifying the provider/readiness binding. The renderer and Compose pass both
+this selection and the selected readiness upstream to Caddy. After an explicit
+configuration deployment, canonical and preview `/status/gateway-health` read
+only the edge's stable file; a missing file returns404, never legacy fallback.
+The site requires fresh observations and matching current admission, and labels
+success STABLE_OBSERVED, not TRAFFIC_READY. Its normal traffic acceptance gate
+remains closed because aggregate accounting lacks exclusive attribution.
+Set the mode back to `legacy` and apply the retained configuration for rollback;
+neither selection changes inference routes or resumes rotation. A failed output
+write exits nonzero and leaves the old file to expire under the freshness check.
+
 ### Budget-bounded operator rotation
 
 `v6-budget-rotation.py` is an explicitly authorized operator workaround, not

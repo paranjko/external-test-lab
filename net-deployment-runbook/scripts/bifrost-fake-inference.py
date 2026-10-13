@@ -24,6 +24,8 @@ class Handler(BaseHTTPRequestHandler):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("X-Request-Id", "fixture-native-request")
+        self.send_header("X-Devshard-ID", "fixture-native-escrow")
         self.send_header("Content-Length", str(len(response))); self.end_headers(); self.wfile.write(response)
 
 

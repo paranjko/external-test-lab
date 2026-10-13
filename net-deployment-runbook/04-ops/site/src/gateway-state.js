@@ -32,6 +32,16 @@ type GatewayRecovery = {
 };
 
 type GatewayProbe = {
+  contract?: string,
+  schema_version?: number,
+  gateway?: string,
+  model?: string,
+  protocol?: string,
+  request_id?: string,
+  escrow_id?: string,
+  finished_ms?: number,
+  finished_used_delta?: number,
+  exclusive_attribution_proven?: boolean,
   state?: string,
   readiness?: string,
   reason?: string,
@@ -50,6 +60,9 @@ type GatewayProbe = {
 type GatewayAdmission = {
   available?: boolean,
   reason?: string,
+  gateway?: string,
+  model?: string,
+  protocol?: string,
 };
 
 type GatewayAvailability = {
@@ -214,6 +227,37 @@ type GatewayStateApi = {
           state: "UNAVAILABLE",
           available: false,
           message: `Gateway unavailable – ${reason}`,
+        };
+      }
+      if (
+        currentProbe.contract === "stable_native_observation"
+      ) {
+        const finished = currentProbe.finished_ms;
+        const observed =
+          probeIsFresh(currentProbe, nowMs, maxAgeMs) &&
+          currentProbe.schema_version === 1 &&
+          currentProbe.state === "OBSERVED" &&
+          currentProbe.readiness === "STABLE_OBSERVED" &&
+          currentProbe.reason === "stable_completion_with_native_accounting_increment" &&
+          currentProbe.exclusive_attribution_proven === false &&
+          currentProbe.finished_used_delta === 1 &&
+          typeof finished === "number" && Number.isInteger(finished) &&
+          finished > 0 && finished <= nowMs && nowMs - finished <= maxAgeMs &&
+          typeof currentProbe.request_id === "string" &&
+          /^[A-Za-z0-9._:-]{1,128}$/.test(currentProbe.request_id) &&
+          typeof currentProbe.escrow_id === "string" &&
+          /^[1-9][0-9]*$/.test(currentProbe.escrow_id) &&
+          ["A", "B"].includes(currentProbe.gateway) &&
+          typeof currentProbe.model === "string" && currentProbe.model.length > 0 &&
+          currentProbe.protocol === "v6" && admission?.available === true &&
+          admission.gateway === currentProbe.gateway &&
+          admission.model === currentProbe.model && admission.protocol === "v6";
+        return {
+          state: observed ? "STABLE_OBSERVED" : "UNAVAILABLE",
+          available: false,
+          message: observed
+            ? "Stable inference completed; native accounting increased – exclusive attribution is not verified"
+            : "Stable inference observation is stale, unavailable or does not match the current route",
         };
       }
       if (

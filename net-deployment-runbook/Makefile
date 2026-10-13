@@ -103,6 +103,12 @@ test-v6-budget-rotation:
 
 test-ci-gateways: test-v6-budget-rotation
 
+.PHONY: test-v6-stable-receipt
+test-v6-stable-receipt:
+	@$(MAKE) -C ../broker-ops test-v6-stable-receipt
+
+test-ci-gateways: test-v6-stable-receipt
+
 .PHONY: test-devshard-502-reader
 test-devshard-502-reader:
 	@python3 ./scripts/test-devshard-502-reader.py
@@ -190,6 +196,12 @@ test-browser-devtools:
 
 test-gateway-site-state: site-vendor site-js-check test-browser-devtools test-production-network-browser test-site-snapshot-acceptance
 	@node ./scripts/test-gateway-site-state.js
+
+.PHONY: test-stable-gateway-site
+test-stable-gateway-site: site-js-check
+	@node ./scripts/test-stable-gateway-site.js
+
+test-ci-site: test-stable-gateway-site
 
 .PHONY: test-production-network-browser test-site-snapshot-acceptance test-verify-network-observer verify-network-observer
 test-production-network-browser: site-vendor site-js

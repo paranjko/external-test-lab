@@ -14,11 +14,19 @@ trap 'docker rm -f "$name" "$upstream_name" "$admission_name" >/dev/null 2>&1 ||
 command -v docker >/dev/null || { echo 'docker is required for the public-edge integration test' >&2; exit 2; }
 docker info >/dev/null 2>&1 || { echo 'docker daemon is required for the public-edge integration test' >&2; exit 2; }
 
+# Verify Compose, not only a manually injected docker exec environment: the
+# renderer's selections must reach the actual Caddy container on deployment.
+COMPOSE_PROJECT_NAME=fixture PUBLIC_HOST=fixture.invalid GRAFANA_IMAGE=grafana/grafana \
+GDC_MONITORING_DOCKER_CIDR=172.21.0.0/16 MONITORING_DOCKER_CIDR=172.21.0.0/16 \
+GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:18186 GDC_STABLE_HEALTH_MODE=native_observation \
+  docker compose -f "$ROOT/04-ops/edge-node/compose.yaml" config --no-env-resolution --format json caddy \
+  | jq -e '.services.caddy.environment | .GDC_STABLE_READINESS_UPSTREAM == "127.0.0.1:18186" and .GDC_STABLE_HEALTH_MODE == "native_observation"' >/dev/null
+
 phase_ops="$ROOT/scripts/phase-ops.sh"
 grep -Fq "mkdir -p '\$REMOTE/scripts'" "$phase_ops"
 grep -Fq 'scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/04-ops/lib-lock.sh"' "$phase_ops"
 
-mkdir -p "$tmp/site/preview/172/status" "$tmp/bootstrap/gonka-devnet-community" "$tmp/upstream" "$tmp/admission"
+mkdir -p "$tmp/site/preview/172/status" "$tmp/bootstrap/gonka-devnet-community" "$tmp/upstream" "$tmp/admission" "$tmp/health"
 cp -R "$ROOT/04-ops/site/test" "$tmp/site/test"
 sed -e '/^[[:space:]]*email {\$ACME_EMAIL}[[:space:]]*$/d' \
   -e '/^www\.{$SITE_HOST} {/,/^}/d' \
@@ -142,6 +150,7 @@ docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 -p 127.0.0
   -v "$tmp/Caddyfile:/etc/caddy/Caddyfile:ro" \
   -v "$tmp/bootstrap:/edge/bootstrap/current:ro" \
   -v "$tmp/site:/srv/dai/edge/site:ro" \
+  -v "$tmp/health:/edge/status:ro" \
   caddy:2.11.4-alpine caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 
 docker run -d --name "$admission_name" --network "container:$name" \
@@ -217,6 +226,23 @@ docker exec -e GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:18189 "$name" \
 docker exec "$name" caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
 curl -fsS "http://127.0.0.1:$api_port/v1/admission-status" | grep -Fxq 'local admission'
 printf 'PASS explicit stable readiness selection preserves inference routes and fails closed on observer loss\n'
+for prefix in '' /preview/172; do
+  curl -fsS "http://127.0.0.1:$port$prefix/status/gateway-health" | grep -Fxq '/status/gateway-health'
+done
+docker exec -e GDC_STABLE_HEALTH_MODE=native_observation "$name" \
+  caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+for prefix in '' /preview/172; do
+  [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port$prefix/status/gateway-health")" == 404 ]]
+done
+printf '%s\n' '{"contract":"stable_native_observation","state":"UNAVAILABLE"}' >"$tmp/health/gateway-stable-health.json"
+for prefix in '' /preview/172; do
+  curl -fsS -D "$tmp/health.headers" "http://127.0.0.1:$port$prefix/status/gateway-health" | cmp - "$tmp/health/gateway-stable-health.json"
+  grep -Eiq '^Cache-Control: no-store' "$tmp/health.headers"
+done
+curl -fsS -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port/v1/chat/completions" | grep -Fxq 'stable adapter /v1/chat/completions'
+docker exec "$name" caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+curl -fsS "http://127.0.0.1:$port/status/gateway-health" | grep -Fxq '/status/gateway-health'
+printf 'PASS stable health selection serves only its file, refuses absence and preserves legacy rollback\n'
 invalid_preview="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/preview/0/status/participants" 2>/dev/null || true)"
 [[ "$invalid_preview" == 404 ]] || { echo "invalid preview namespace unexpectedly routed: $invalid_preview" >&2; exit 1; }
 
