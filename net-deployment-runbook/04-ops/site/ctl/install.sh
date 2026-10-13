@@ -7,7 +7,7 @@ main() {
     version=${GONKACTL_VERSION:-1.0.0-alpha.1}
     version=${version#v}
     case "$version" in ''|*[!0-9A-Za-z.-]*) die 'Invalid GONKACTL_VERSION';; esac
-    base="https://github.com/paranjko/external-test-lab/releases/download/v$version"
+    base="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v$version"
     base=${GONKACTL_RELEASE_BASE_URL:-$base}
     case "$base" in https://*) ;; *) die 'Release base URL must use HTTPS';; esac
     install_dir=${GONKACTL_INSTALL_DIR:-${HOME:?HOME is required}/.local/bin}

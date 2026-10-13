@@ -33,7 +33,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in --output) shift; out=$1;; https:*) url=$1;; esac
   shift
 done
-case "$url" in https://github.com/paranjko/external-test-lab/releases/download/v*/gonkactl_*|https://github.com/paranjko/external-test-lab/releases/download/v*/checksums.txt) ;; *) exit 71;; esac
+case "$url" in https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v*/gonkactl_*|https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v*/checksums.txt) ;; *) exit 71;; esac
 cp "$TEST_ASSETS/${url##*/}" "$out"
 ''')
 

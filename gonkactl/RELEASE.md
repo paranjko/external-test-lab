@@ -29,4 +29,4 @@ to an absolute directory to override it. It verifies the checksum and version
 before atomically replacing the installed binary; it never edits shell files.
 Windows users can extract the ZIP directly, or use the installer in Git Bash.
 
-Source: https://github.com/paranjko/external-test-lab/tree/v1.0.0-alpha.1/gonkactl
+Source: https://github.com/paranjko/external-test-lab/tree/gonkactl-v1.0.0-alpha.1/gonkactl

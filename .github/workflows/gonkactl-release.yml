@@ -2,15 +2,15 @@ name: Release gonkactl
 
 on:
   push:
-    tags: ['v*']
+    tags: ['gonkactl-v*']
   workflow_dispatch:
     inputs:
       tag:
         description: Existing alpha release tag
         required: true
         type: choice
-        options: [v1.0.0-alpha.1]
-        default: v1.0.0-alpha.1
+        options: [gonkactl-v1.0.0-alpha.1]
+        default: gonkactl-v1.0.0-alpha.1
 
 permissions:
   contents: read
