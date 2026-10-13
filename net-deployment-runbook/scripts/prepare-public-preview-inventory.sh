@@ -217,6 +217,9 @@ GDC_NODE_P2P_PORTS=$(printf '%q' "$node_ports")
 GDC_GENESIS_NODE=$(printf '%q' "$genesis_node")
 GDC_PUBLIC_EDGE_NODE=$(printf '%q' "$gateway_node")
 GDC_GATEWAY_NODE=$(printf '%q' "$gateway_node")
+# Render-only placeholder: preview never deploys or scrapes gateway targets.
+# The constrained backend returns unavailable for all gateway status routes.
+GDC_GATEWAY_METRICS_TARGETS=$(printf '%q' "[{\"id\":\"PREVIEW\",\"node\":\"$gateway_node\",\"port\":1}]")
 GDC_TELEGRAM_BOT_HOST=$(printf '%q' "$gateway_node")
 GDC_DEPLOYMENT_PROFILE=community-lab
 GDC_OPERATOR_SERVICES_PROFILE=gdc-lab
