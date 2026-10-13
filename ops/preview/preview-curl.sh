@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Restrict the source-bound collector to the preview's trusted egress routes.
-# The collector's only curl call supplies this exact option list and one URL.
+# Accept the bounded collector options, optionally with a pinned model height.
 
 preview_valid_validators_query() {
   local query="$1" height='' page='' per_page=''
@@ -29,6 +29,7 @@ preview_chain_api_path_allowed() {
     /chain-api/productscience/inference/inference/devshard_approved_versions|\
     /chain-api/productscience/inference/inference/models_all|\
     /chain-api/productscience/inference/inference/epoch_info|\
+    /chain-api/productscience/inference/inference/current_epoch_group_data|\
     /chain-api/productscience/inference/inference/active_confirmation_poc_event|\
     /chain-rpc/status|/chain-rpc/net_info)
       [[ -z "$query" ]]
@@ -54,6 +55,10 @@ preview_chain_api_path_allowed() {
   esac
   suffix="${path#/chain-api/productscience/inference/inference/}"
   [[ "$path" == "$suffix" ]] && return 1
+  if [[ "$suffix" =~ ^epoch_group_data/[1-9][0-9]{0,14}$ && -n "$query" ]]; then
+    [[ ${#query} -le 777 && "$query" =~ ^model_id=([A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+$ ]]
+    return
+  fi
   [[ -z "$query" && "$suffix" =~ ^(epoch_group_data|all_poc_v2_store_commits|poc_v2_validations_for_stage|confirmation_poc_events)/[1-9][0-9]{0,14}$ ]]
 }
 
@@ -136,17 +141,27 @@ preview_curl_target() {
 }
 
 main() {
-  [[ $# -eq 8 && "$1" == -fsS && "$2" == --connect-timeout && "$3" == 3 &&
+  [[ ( $# -eq 8 || $# -eq 10 ) && "$1" == -fsS && "$2" == --connect-timeout && "$3" == 3 &&
     "$4" == --max-time && "$5" == 5 && "$6" == --max-filesize && "$7" == 16777216 ]] || {
     echo 'preview collector request is outside the read-only transport contract' >&2
     return 2
   }
-  local target
-  target="$(preview_curl_target "$8")" || {
+  local target url="${*: -1}"
+  local -a headers=()
+  if [[ $# -eq 10 ]]; then
+    [[ "$8" == -H && "$9" =~ ^x-cosmos-block-height:\ [1-9][0-9]{0,14}$ &&
+      "$url" =~ ^https://api\.gonka-dev\.net/chain-api/productscience/inference/inference/(current_epoch_group_data|epoch_group_data/[1-9][0-9]{0,14}\?model_id=.+)$ ]] || {
+      echo 'preview collector height header is outside the model query contract' >&2
+      return 2
+    }
+    headers=(-H "$9")
+  fi
+  target="$(preview_curl_target "$url")" || {
     echo 'preview collector URL is outside the read-only transport contract' >&2
     return 2
   }
   exec /usr/bin/curl -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 \
+    "${headers[@]}" \
     "http://gdc-preview-egress:8080$target"
 }
 
