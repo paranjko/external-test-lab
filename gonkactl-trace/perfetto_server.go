@@ -308,8 +308,19 @@ func perfettoHandler(origin, id, dir string, a PFAnalysis, assets fs.FS) http.Ha
 		case "matrix":
 			_ = json.NewEncoder(w).Encode(matrix)
 		case "manifest", "analysis", "view":
+			// Resolve the route to a fixed artifact name; request text must never
+			// become a filesystem path, even after route validation.
+			var artifact string
+			switch name {
+			case "manifest":
+				artifact = "manifest.json"
+			case "analysis":
+				artifact = "analysis.json"
+			case "view":
+				artifact = "view.json"
+			}
 			mu.Lock()
-			b, e := os.ReadFile(filepath.Join(dir, name+".json"))
+			b, e := os.ReadFile(filepath.Join(dir, artifact))
 			mu.Unlock()
 			if e != nil {
 				http.Error(w, "artifact unavailable", 404)

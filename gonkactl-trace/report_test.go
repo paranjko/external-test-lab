@@ -106,7 +106,7 @@ func TestReportPipelineOfflineReproduction(t *testing.T) {
 }
 
 func TestStandaloneHTMLSafeAndDeterministic(t *testing.T) {
-	m := PFMatrix{Findings: []string{`</script><script>alert('x')</script>`}}
+	m := PFMatrix{Findings: []string{`</script><script>alert('x')</script>`, `"quoted" & <tag>`, "backslash\\\n\u2028\u2029"}}
 	a, err := standaloneHTML(m)
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +117,21 @@ func TestStandaloneHTMLSafeAndDeterministic(t *testing.T) {
 	}
 	if !bytes.Contains(a, []byte(`id="gonka-report-data"`)) {
 		t.Fatal("missing embedded source projection")
+	}
+	_, embedded, ok := bytes.Cut(a, []byte(`<script id="gonka-report-data" type="application/json">`))
+	if !ok {
+		t.Fatal("missing inert JSON element")
+	}
+	data, _, ok := bytes.Cut(embedded, []byte(`</script>`))
+	if !ok || bytes.Contains(data, []byte("<")) {
+		t.Fatal("source data can terminate its element")
+	}
+	var decoded PFMatrix
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(decoded.Findings, "\x00") != strings.Join(m.Findings, "\x00") {
+		t.Fatal("embedded source text changed")
 	}
 }
 

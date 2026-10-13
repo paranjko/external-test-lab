@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -68,10 +69,6 @@ func standaloneHTML(m PFMatrix) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(m)
-	if err != nil {
-		return nil, err
-	}
 	var modules []string
 	for _, name := range []string{"matrix-i18n.mjs", "causal.mjs", "matrix.mjs"} {
 		b, e := matrixAssets.ReadFile("ui/" + name)
@@ -90,8 +87,17 @@ func standaloneHTML(m PFMatrix) ([]byte, error) {
 	if strings.Contains(strings.ToLower(script), "</script") {
 		return nil, fmt.Errorf("unsafe inline module terminator")
 	}
-	replacement := `<script id="gonka-report-data" type="application/json">` + string(data) + `</script><script type="module">` + script + `</script>`
-	return []byte(strings.Replace(string(body), `<script type="module" src="/gonka/matrix.mjs"></script>`, replacement, 1)), nil
+	var replacement bytes.Buffer
+	replacement.WriteString(`<script id="gonka-report-data" type="application/json">`)
+	// Encode directly into the inert element, retaining the encoder's default
+	// HTML escaping so source data cannot introduce a closing script tag.
+	if err := json.NewEncoder(&replacement).Encode(m); err != nil {
+		return nil, err
+	}
+	replacement.WriteString(`</script><script type="module">`)
+	replacement.WriteString(script)
+	replacement.WriteString(`</script>`)
+	return bytes.Replace(body, []byte(`<script type="module" src="/gonka/matrix.mjs"></script>`), replacement.Bytes(), 1), nil
 }
 
 func writeHTMLReport(dir string, a PFAnalysis) error {
