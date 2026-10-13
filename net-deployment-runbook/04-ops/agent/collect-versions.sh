@@ -50,15 +50,33 @@ else
 fi
 
 for component in tmkms node api mlnode versiond explorer proxy; do
-  container_id="$(docker ps --filter "label=com.docker.compose.project=$GDC_MONITOR_HOST" --filter "label=com.docker.compose.service=$component" --format '{{.ID}}' | head -n1)"
+  if ! container_id="$(docker ps --filter "label=com.docker.compose.project=$GDC_MONITOR_HOST" --filter "label=com.docker.compose.service=$component" --format '{{.ID}}' | head -n1)"; then
+    continue
+  fi
   [[ -n "$container_id" ]] || continue
-  image="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
+  if ! image="$(docker inspect --format '{{.Config.Image}}' "$container_id")"; then
+    continue
+  fi
+  [[ -n "$image" ]] || continue
   reference="${image%@*}"
   leaf="${reference##*/}"
   version=unreported
   [[ "$leaf" == *:* ]] && version="${leaf##*:}"
   emit_component "$component" "$component" "$version" '' "$image" container
 done
+
+# Observe actual running Versiond children, never interpret the health slot or
+# supervisor image tag as a DevShard binary version. Failure removes old rows.
+if ! versiond_container="$(docker ps --filter "label=com.docker.compose.project=$GDC_MONITOR_HOST" --filter 'label=com.docker.compose.service=versiond' --format '{{.ID}}')"; then
+  versiond_container=''
+fi
+if [[ "$versiond_container" =~ ^[0-9a-f]{12,64}$ ]] && \
+   runtime_identity="$(timeout 45 python3 /usr/local/libexec/gdc-inspect-devshard-runtime \
+      --container "$versiond_container" --prometheus-host "$GDC_MONITOR_HOST" 2>/dev/null)"; then
+  printf '%s\n' "$runtime_identity" >>"$tmp"
+else
+  printf 'gdc_devshard_runtime_scrape_success{host="%s"} 0\n' "$(prom_escape "$GDC_MONITOR_HOST")" >>"$tmp"
+fi
 
 printf '# HELP gdc_component_inventory_scrape_success Whether the local runtime version endpoint was readable\n# TYPE gdc_component_inventory_scrape_success gauge\ngdc_component_inventory_scrape_success{host="%s"} %s\n' \
   "$(prom_escape "$GDC_MONITOR_HOST")" "$scrape_success" >>"$tmp"

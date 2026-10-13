@@ -2,6 +2,7 @@
 """Bounded public-edge admission with one and only one gateway dispatch."""
 import http.client
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import socket
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -27,6 +29,7 @@ EPOCH_URL = env("GDC_GATEWAY_ADMISSION_EPOCH_URL", "http://127.0.0.1:1317/produc
 EPOCH_INFO_URL = env("GDC_GATEWAY_ADMISSION_EPOCH_INFO_URL", EPOCH_URL.rsplit("/", 1)[0] + "/epoch_info")
 CHAIN_STATUS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL", "http://127.0.0.1:26657/status")
 CHAIN_PARAMS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL", "http://127.0.0.1:1317/productscience/inference/inference/params")
+APPROVED_VERSIONS_URL = env("GDC_GATEWAY_ADMISSION_APPROVED_VERSIONS_URL", "")
 SAFE_GUARD_BLOCKS = int(env("GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS", 10))
 MAX_QUEUE = int(env("GDC_GATEWAY_ADMISSION_MAX_QUEUE", 16))
 # Requests without an explicit deadline keep a short bounded default. Exact
@@ -51,10 +54,13 @@ DISPATCH_PERMIT = threading.BoundedSemaphore(1)
 STATUS_OBSERVATION_PERMIT = threading.BoundedSemaphore(1)
 DISPATCH_LOCK = threading.Lock()
 AUDIT_LOCK = threading.Lock()
+ROUTE_COUNTERS_LOCK = threading.Lock()
 DISPATCHES_BY_HEIGHT = {}
+ROUTE_COUNTERS = {}
 COMPLETION_PATH = re.compile(r"^/(?:v1/chat/completions|devshard/[0-9]+/v1/chat/completions)$")
 READ_ONLY_PATHS = {"/v1/models", "/v1/status"}
 ADMISSION_STATUS_PATH = "/v1/admission-status"
+READINESS_SUMMARY_PATH = "/v1/readiness-summary"
 ADMISSION_STATUS_MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_STATUS_MAX_WAIT_SECONDS", 5))
 UPSTREAM_CONTENT_TYPES = {
     "application/json": "application/json",
@@ -62,6 +68,29 @@ UPSTREAM_CONTENT_TYPES = {
     "text/plain": "text/plain",
 }
 PROTOCOL_CONTRACTS = {}
+SELECTED_GATEWAY_VERSION = env("GDC_GATEWAY_ADMISSION_SELECTED_VERSION", "")
+READINESS_ONLY = env("GDC_GATEWAY_READINESS_ONLY", "false") == "true"
+READINESS_MODEL = env("GDC_GATEWAY_READINESS_MODEL", "")
+READINESS_TOKEN = env("GDC_GATEWAY_READINESS_TOKEN", "")
+READINESS_TOKENS = json.loads(env("GDC_GATEWAY_READINESS_TOKENS_JSON", "[]"))
+if READINESS_TOKEN:
+    READINESS_TOKENS.append(READINESS_TOKEN)
+READINESS_ID = env("GDC_GATEWAY_READINESS_ID", "")
+
+
+def count_route(status):
+    """Count only stable public completion outcomes, never native gateway work."""
+    outcome = "%dxx" % (status // 100)
+    with ROUTE_COUNTERS_LOCK:
+        ROUTE_COUNTERS[outcome] = ROUTE_COUNTERS.get(outcome, 0) + 1
+
+
+def route_metrics():
+    with ROUTE_COUNTERS_LOCK:
+        rows = ["# TYPE gdc_gateway_route_requests_total counter"]
+        rows.extend('gdc_gateway_route_requests_total{route="S",outcome="%s"} %s' %
+                    (outcome, ROUTE_COUNTERS[outcome]) for outcome in sorted(ROUTE_COUNTERS))
+    return ("\n".join(rows) + "\n").encode()
 
 
 def load_protocol_contracts(value):
@@ -88,7 +117,7 @@ def load_protocol_contracts(value):
 
 
 def valid_approved_versions(versions):
-    """Require one structurally valid immutable tuple per protocol name."""
+    """Validate catalog tuples, including unrelated dotted release selectors."""
     if not isinstance(versions, list):
         return False
     names = set()
@@ -100,7 +129,7 @@ def valid_approved_versions(versions):
         digest = entry.get("sha256")
         parsed = urlsplit(binary) if isinstance(binary, str) else None
         if (not isinstance(name, str)
-                or not re.fullmatch(r"v[1-9][0-9]*", name)
+                or not re.fullmatch(r"v[1-9][0-9]*(?:\.[0-9]+)*", name)
                 or name in names
                 or parsed is None or parsed.scheme != "https" or not parsed.netloc
                 or not isinstance(digest, str)
@@ -211,7 +240,13 @@ def safe_generation(deadline=None):
     except Exception:
         return None, "epoch_unavailable"
     try:
-        height = get_json(CHAIN_STATUS_URL, deadline).get("result", {}).get("sync_info", {}).get("latest_block_height")
+        sync_info = get_json(CHAIN_STATUS_URL, deadline).get("result", {}).get("sync_info", {})
+        height = sync_info.get("latest_block_height")
+        if READINESS_ONLY:
+            stamp = datetime.fromisoformat(sync_info["latest_block_time"].replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - stamp).total_seconds()
+            if sync_info.get("catching_up") is not False or not -5 <= age <= 30:
+                return None, "chain_state_stale"
     except TimeoutError:
         return None, "deadline_elapsed"
     except Exception:
@@ -238,6 +273,17 @@ def safe_generation(deadline=None):
     if not isinstance(escrow_params, dict):
         return None, "protocol_approval_invalid"
     approved_versions = escrow_params.get("approved_versions")
+    # Protocol 0.2.16 keeps the live registry outside the legacy params field.
+    # An explicitly selected registry is authoritative: never fall back to a
+    # stale params tuple when that registry fails, is empty or is malformed.
+    if APPROVED_VERSIONS_URL:
+        try:
+            registry = get_json(APPROVED_VERSIONS_URL, deadline)
+        except TimeoutError:
+            return None, "deadline_elapsed"
+        except Exception:
+            return None, "protocol_approval_unavailable"
+        approved_versions = registry.get("versions") if isinstance(registry, dict) else None
     if not valid_approved_versions(approved_versions):
         return None, "protocol_approval_invalid"
     try:
@@ -266,17 +312,19 @@ def safe_generation(deadline=None):
         return None, "capacity_invalid"
     if any(not isinstance(item, dict) for item in models.values()):
         return None, "capacity_invalid"
-    weights = [capacity.get("total_weight"), capacity.get("effective_weight")]
-    weights.extend((item or {}).get("current_weight", (item or {}).get("total_weight"))
-                   for item in models.values())
-    try:
-        positive = any(float(weight) > 0 for weight in weights if weight is not None)
-    except (TypeError, ValueError):
-        return None, "capacity_invalid"
     devshards = status.get("devshards")
     if not isinstance(devshards, list):
         return None, "state_invalid"
     participants = []
+    runtime_versions = set()
+    contract = PROTOCOL_CONTRACTS.get(SELECTED_GATEWAY_VERSION)
+    if contract is None:
+        return None, "selected_protocol_not_configured"
+    named = [entry for entry in approved_versions
+             if isinstance(entry, dict) and entry.get("name") == SELECTED_GATEWAY_VERSION]
+    if (len(named) != 1 or named[0].get("binary") != contract["binary"]
+            or named[0].get("sha256") != contract["sha256"]):
+        return None, "selected_protocol_not_approved"
     for item in devshards:
         if not isinstance(item, dict):
             return None, "state_invalid"
@@ -292,17 +340,34 @@ def safe_generation(deadline=None):
             version = runtime_protocol_version(item, runtime)
             if version is None:
                 return None, "protocol_version_unavailable"
-            contract = PROTOCOL_CONTRACTS.get(version)
-            if contract is None:
-                return None, "protocol_not_configured"
-            named = [entry for entry in approved_versions
-                     if isinstance(entry, dict) and entry.get("name") == version]
-            if (len(named) != 1 or named[0].get("binary") != contract["binary"]
-                    or named[0].get("sha256") != contract["sha256"]):
-                return None, "protocol_not_approved"
+            if READINESS_ONLY and version != SELECTED_GATEWAY_VERSION:
+                return None, "runtime_protocol_mismatch"
+            if READINESS_ONLY and item.get("model") != READINESS_MODEL:
+                continue
+            # The official gateway's internal runtime protocol is not the
+            # release selector: pinned DevShard v3 currently reports `1`.
+            # The selected release is verified against governance above; all
+            # active runtimes must still report one unambiguous internal value.
+            runtime_versions.add(version)
             if item.get("id") is not None:
                 participants.append("%s:%s:%s" % (item["id"], version, chain_phase))
-    if not positive or not participants:
+    limiter = status.get("limiter")
+    if not isinstance(limiter, dict) or not isinstance(limiter.get("models"), dict):
+        return None, "limiter_unavailable"
+    try:
+        # The official gateway floors capacity-derived concurrency.  A positive
+        # weight alone can therefore enforce a zero request limit; do not
+        # publish READY unless a routable model has an actual slot.
+        positive = any(
+            float(model.get("current_weight", model.get("total_weight", 0))) > 0
+            and model.get("routable") is not False
+            and float(limiter["models"].get(name, {}).get("effective_max_concurrent_requests", 0)) > 0
+            for name, model in models.items()
+            if not READINESS_ONLY or name == READINESS_MODEL
+        )
+    except (TypeError, ValueError):
+        return None, "capacity_invalid"
+    if not positive or not participants or len(runtime_versions) != 1:
         return None, "runtime_unavailable"
     # Height proves this observation is fresh and fences the next transition,
     # but it is not itself a phase generation.  Including it would reject every
@@ -377,6 +442,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+        count_route(status)
 
     def deadline(self):
         client_deadline = self.headers.get("X-Request-Deadline-Ms")
@@ -438,7 +504,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Serve the local admission contract or proxy public gateway discovery."""
         path = self.path.split("?", 1)[0]
-        if path == ADMISSION_STATUS_PATH:
+        public_summary = READINESS_ONLY and self.path == READINESS_SUMMARY_PATH
+        if READINESS_ONLY:
+            if self.path not in {ADMISSION_STATUS_PATH, READINESS_SUMMARY_PATH}:
+                self.respond_error(404, "not_found")
+                return
+            # Only this fixed, sanitized loopback summary is public. Private
+            # admission and native status/admin endpoints retain their gates.
+            if not public_summary and not any(hmac.compare_digest(self.headers.get("Authorization", ""),
+                                           "Bearer " + token) for token in READINESS_TOKENS):
+                self.respond_error(401, "authentication_required")
+                return
+        if path == "/metrics":
+            payload = route_metrics()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if path == ADMISSION_STATUS_PATH or public_summary:
             # This is a read-only preflight, not a dispatch permit: one fresh
             # observation answers whether a user request should be attempted.
             # It deliberately shares safe_generation with POST admission so
@@ -452,11 +537,15 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     STATUS_OBSERVATION_PERMIT.release()
             available = reason is None
-            payload = json.dumps({
+            result = {
                 "state": "READY" if available else "UNAVAILABLE",
                 "available": available,
                 "reason": None if available else reason,
-            }).encode()
+            }
+            if READINESS_ONLY:
+                result.update({"gateway": READINESS_ID, "model": READINESS_MODEL,
+                               "protocol": SELECTED_GATEWAY_VERSION})
+            payload = json.dumps(result).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
@@ -500,6 +589,9 @@ class Handler(BaseHTTPRequestHandler):
             connection.close()
 
     def do_POST(self):
+        if READINESS_ONLY:
+            self.respond_error(405, "read_only")
+            return
         record = {
             "admission_id": uuid.uuid4().hex,
             "arrival_at_ms": now_ms(),
@@ -652,6 +744,7 @@ class Handler(BaseHTTPRequestHandler):
                 response.getheader("Content-Type", "")))
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
+            count_route(response.status)
             try:
                 self.wfile.write(payload)
             except (BrokenPipeError, ConnectionResetError):
@@ -670,8 +763,15 @@ if __name__ == "__main__":
     try:
         PROTOCOL_CONTRACTS = load_protocol_contracts(
             env("GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON", ""))
+        if SELECTED_GATEWAY_VERSION not in PROTOCOL_CONTRACTS:
+            raise ValueError("selected gateway protocol is not configured")
     except ValueError as error:
         raise SystemExit(str(error)) from error
     if not STATUS_BEARER_TOKEN:
         raise SystemExit("gateway admission status credential is not configured")
+    if READINESS_ONLY and (not READINESS_MODEL or not READINESS_TOKENS
+                           or not isinstance(READINESS_TOKENS, list)
+                           or not all(isinstance(token, str) and token for token in READINESS_TOKENS)
+                           or READINESS_ID not in {"A", "B"} or HOST != "127.0.0.1"):
+        raise SystemExit("private gateway readiness identity/model/credential is not configured")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

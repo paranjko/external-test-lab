@@ -95,7 +95,7 @@ const configObject = {
   ],
 };
 const makeConfig = (value) =>
-  `window.GDC_CONFIG = ${JSON.stringify(value)}; window.setInterval = (callback) => { window.__refresh = async () => { await callback(); await detailsInFlight; await activityInFlight; }; return 1; };`;
+  `window.GDC_CONFIG = ${JSON.stringify(value)}; window.setInterval = (callback, delay) => { if (delay === 15000) window.__refresh = async () => { await callback(); await detailsInFlight; await activityInFlight; }; return 1; };`;
 const config = makeConfig(configObject);
 const configForBase = (base, nodeCatalog = configObject.nodeCatalog) =>
   makeConfig({

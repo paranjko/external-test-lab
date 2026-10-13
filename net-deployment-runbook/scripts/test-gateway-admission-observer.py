@@ -27,6 +27,9 @@ def unused_port():
 class State:
     available = True
     authorization = None
+    model = "Qwen/Qwen3-0.6B"
+    access_enabled = True
+    runtime = True
 
 
 class Gateway(BaseHTTPRequestHandler):
@@ -47,17 +50,29 @@ class Gateway(BaseHTTPRequestHandler):
                         "current_weight": 17,
                         "total_weight": 23,
                         "routable": True,
+                        "access_enabled": State.access_enabled,
                         "private_metric": "drop-me",
                     }
                 },
                 "private_capacity": "drop-me",
             },
+            "limiter": {
+                "models": {
+                    "Qwen/Qwen3-0.6B": {
+                        "effective_max_concurrent_requests": 2,
+                        "private_limit": "drop-me",
+                    }
+                },
+                "private_limiter": "drop-me",
+            },
             "devshards": [{
                 "id": "41",
+                "model": State.model,
                 "active": True,
                 "protocol_version": "v5",
                 "chain_phase": "Inference",
                 "runtime": {
+                    "model": State.model,
                     "phase": "active",
                     "requests_blocked": False,
                     "session_version": "v5",
@@ -69,6 +84,8 @@ class Gateway(BaseHTTPRequestHandler):
             "settings": {"admin_key": "drop-me"},
             "private_key": "drop-me",
         }
+        if not State.runtime:
+            body["devshards"][0]["runtime"] = None
         encoded = json.dumps(body).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -127,16 +144,26 @@ try:
                 "Qwen/Qwen3-0.6B": {
                     "current_weight": 17,
                     "routable": True,
+                    "access_enabled": True,
                     "total_weight": 23,
                 }
             },
             "total_weight": 23,
         },
+        "limiter": {
+            "models": {
+                "Qwen/Qwen3-0.6B": {
+                    "effective_max_concurrent_requests": 2,
+                }
+            },
+        },
         "devshards": [{
             "active": True,
             "id": "41",
+            "model": "Qwen/Qwen3-0.6B",
             "protocol_version": "v5",
             "runtime": {
+                "model": "Qwen/Qwen3-0.6B",
                 "chain_phase": "Inference",
                 "phase": "active",
                 "requests_blocked": False,
@@ -147,6 +174,16 @@ try:
     serialized = json.dumps(payload, sort_keys=True)
     for forbidden in ("admin-secret", "private", "settings", "storage"):
         assert forbidden not in serialized
+
+    State.model = "OTHER-MODEL"
+    State.access_enabled = False
+    status, payload = request(observer_port, "observer-secret")
+    assert status == 200
+    assert payload["capacity"]["models"]["Qwen/Qwen3-0.6B"]["access_enabled"] is False
+    assert payload["devshards"][0]["model"] == "OTHER-MODEL"
+    assert payload["devshards"][0]["runtime"]["model"] == "OTHER-MODEL"
+    State.runtime = False
+    assert request(observer_port, "observer-secret") == (503, {"error": "gateway_state_unavailable"})
 
     State.available = False
     assert request(observer_port, "observer-secret") == (

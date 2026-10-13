@@ -42,7 +42,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Gateway scrape",
+      "title": "Gateway scrapes healthy",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -63,12 +63,30 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "noValue": "no gateway target is configured",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Target down",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "All up",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -84,11 +102,12 @@
       },
       "targets": [
         {
-          "expr": "max(up{job=\"gateway\"})",
+          "expr": "min(up{job=\"gateway\"})",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "One only when every configured gateway target answered its latest scrape. The minimum exposes a failed A/B target instead of letting a healthy peer hide it."
     },
     {
       "id": 52,
@@ -140,12 +159,12 @@
       },
       "targets": [
         {
-          "expr": "sum(devshard_gateway_requests_total)",
+          "expr": "sum by (gateway) (devshard_gateway_requests_total)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Chat requests the gateway has counted since it started, by user-visible outcome. A cache hit counts here without a routed completion."
+      "description": "Chat requests each gateway has counted since it started, by user-visible outcome. A cache hit counts here without a routed completion; separate A/B values must not be added by a proxy scrape."
     },
     {
       "id": 53,
@@ -197,12 +216,12 @@
       },
       "targets": [
         {
-          "expr": "sum(devshard_gateway_inflight_requests)",
+          "expr": "sum by (gateway) (devshard_gateway_inflight_requests)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "A zero here is a measured idle gateway. Empty means the gateway limiter was not scraped."
+      "description": "A zero is a measured idle gateway. Separate values preserve which limiter was scraped; empty means no gateway limiter was scraped."
     },
     {
       "id": 54,
@@ -311,12 +330,12 @@
       },
       "targets": [
         {
-          "expr": "max(devshard_gateway_capacity_scale) * 100",
+          "expr": "max by (gateway) (devshard_gateway_capacity_scale) * 100",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Share of baseline capacity the gateway can currently route to. Empty means the gateway was not scraped."
+      "description": "Share of baseline capacity each gateway can currently route to. Separate values preserve a degraded A/B target; empty means that gateway was not scraped."
     },
     {
       "id": 56,
@@ -395,7 +414,7 @@
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Request rate by outcome",
+      "title": "Request rate by gateway and outcome",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -466,12 +485,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome) (rate(devshard_gateway_requests_total[15m]))",
+          "expr": "sum by (gateway,outcome) (rate(devshard_gateway_requests_total[15m]))",
           "refId": "A",
-          "legendFormat": "{{outcome}}"
+          "legendFormat": "{{gateway}} · {{outcome}}"
         }
       ],
-      "description": "Requests per second by user-visible outcome. A flat zero is a measured idle gateway; a gap is a window with no counter to read."
+      "description": "Requests per second by gateway and user-visible outcome. Separate A/B series prevent an active gateway from hiding an idle or failed peer."
     },
     {
       "id": 62,
@@ -483,7 +502,7 @@
       "title": "Attempts started by role",
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 4,
         "x": 12,
         "y": 6
       },
@@ -559,13 +578,70 @@
       "description": "Attempts the gateway started per second, by the role it gave the executor. Averaged over an hour because attempts arrive in bursts."
     },
     {
+      "id": 57,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Public route entries",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no public route counter was scraped"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (route) (gdc_gateway_route_requests_total)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Requests accepted by the public stable, A and B entry routes. These edge counters prove entrypoint movement only and must not be added to native gateway request counters."
+    },
+    {
       "id": 63,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "type": "table",
-      "title": "Requests by model and outcome",
+      "title": "Requests by gateway, model and outcome",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -599,13 +675,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (model,outcome,reason) (devshard_gateway_requests_total)",
+          "expr": "sum by (gateway,model,outcome,reason) (devshard_gateway_requests_total)",
           "refId": "A",
           "format": "table",
           "instant": true
         }
       ],
-      "description": "Every request the gateway has counted, by model, user-visible outcome and the bounded reason behind it.",
+      "description": "Every request the gateway has counted, by A/B gateway, model, user-visible outcome and bounded reason.",
       "transformations": [
         {
           "id": "organize",
@@ -614,6 +690,7 @@
               "Time": true
             },
             "renameByName": {
+              "gateway": "Gateway",
               "model": "Model",
               "outcome": "Outcome",
               "reason": "Reason",
@@ -1596,7 +1673,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Gateway scrape age",
+      "title": "Oldest gateway scrape age",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -1626,7 +1703,7 @@
             ]
           },
           "unit": "s",
-          "noValue": "no successful gateway scrape in the last hour"
+          "noValue": "a gateway target is down or has no successful scrape"
         },
         "overrides": []
       },
@@ -1647,12 +1724,12 @@
       },
       "targets": [
         {
-          "expr": "time() - max((timestamp(up{job=\"gateway\"}) and up{job=\"gateway\"} == 1) or max_over_time((timestamp(up{job=\"gateway\"}) and up{job=\"gateway\"} == 1)[1h:15s]))",
+          "expr": "(time() - min(timestamp(up{job=\"gateway\"}) and up{job=\"gateway\"} == 1)) and on() (min(up{job=\"gateway\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Seconds since the last successful gateway scrape. A failed scrape still writes up, so only a successful one resets this."
+      "description": "Seconds since the oldest successful A/B gateway scrape. It is empty when any target is down, rather than letting a newer peer hide a failed scrape."
     },
     {
       "id": 92,

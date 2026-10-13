@@ -134,11 +134,22 @@ run_control() {
 
 run_case() {
   local layout="$1" root deploy project before_identity before_data inference_id
+  local monitor_project service id
+  local -a monitor_ids=()
   root="$tmp/$layout"
   deploy="$root/srv/dai/deploy"
   [[ "$layout" == flat ]] || deploy="$deploy/legacy-donor"
   project="gdc-lending-${layout}-${RANDOM}${RANDOM}"
   projects+=("$project")
+  monitor_project="${project}-monitoring"
+  projects+=("$monitor_project")
+  for service in node-exporter cadvisor; do
+    id="$(docker run -d --label "com.docker.compose.project=$monitor_project" \
+      --label "com.docker.compose.project.working_dir=$root/srv/dai/deploy/monitoring-agent" \
+      --label "com.docker.compose.service=$service" "$IMAGE" sleep 600)"
+    monitor_ids+=("$id")
+  done
+  monitor_before="$(docker inspect --format '{{.Id}} {{.State.StartedAt}}' "${monitor_ids[@]}")"
   mkdir -p "$root/srv/dai"
   printf 'identity-%s\n' "$layout" >"$root/srv/dai/identity-sentinel"
   printf 'chain-%s\n' "$layout" >"$root/srv/dai/data-sentinel"
@@ -153,9 +164,11 @@ run_case() {
 
   run_control "$root" "$deploy" stop
   assert_state "$deploy" stopped
+  [[ "$(docker inspect --format '{{.State.Running}}' "${monitor_ids[@]}" | sort -u)" == true ]]
   run_control "$root" "$deploy" lend parent.fixture 127.0.0.1 fixture-node
   container_running "$deploy" mlnode
   container_running "$deploy" inference
+  [[ "$(docker inspect --format '{{.State.Running}}' "${monitor_ids[@]}" | sort -u)" == true ]]
   if container_running "$deploy" node || container_running "$deploy" tmkms; then
     echo 'validator services remained running while its ML runtime was lent' >&2
     return 1
@@ -174,6 +187,9 @@ run_case() {
   [[ ! -e "$deploy/.node-control/lent-ml.json" && ! -e "$deploy/.node-control/lent-ml-port.yaml" ]]
   run_control "$root" "$deploy" start
   assert_state "$deploy" running
+  [[ "$(docker inspect --format '{{.State.Running}}' "${monitor_ids[@]}" | sort -u)" == true ]]
+  [[ "$(docker inspect --format '{{.Id}} {{.State.StartedAt}}' "${monitor_ids[@]}")" == "$monitor_before" ]]
+  printf 'PASS host monitoring is untouched by stop/lend/reclaim/start layout=%s\n' "$layout"
   [[ ! -e "$deploy/.node-control/stopped.json" ]]
   [[ "$(sha256sum "$root/srv/dai/identity-sentinel" | awk '{print $1}')" == "$before_identity" ]]
   [[ "$(sha256sum "$root/srv/dai/data-sentinel" | awk '{print $1}')" == "$before_data" ]]

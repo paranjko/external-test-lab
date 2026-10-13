@@ -100,6 +100,8 @@ only the credentials it actually needs
 | GATEWAY | [ROLE-GATEWAY.md](ROLE-GATEWAY.md) | gateway runtime, escrow creator and client-key pool | Host governance keys or public-observation administration |
 | DEVELOPER | [ROLE-DEVELOPER.md](ROLE-DEVELOPER.md) | an application and its client API key | any infrastructure or signer credential |
 
+For user funding through the existing private bot, see the [durable Telegram faucet guide](04-ops/faucet/README.md), it documents administrator controls, the default closed policy, `100 GNK` per user per rolling `24 hours`, state-preserving deployment and separate live settlement evidence
+
 `OPS` is an observation service, not a network controller, node collectors are
 installed by `GENESIS` or the relevant `JOIN` operator, `OPS` scrapes published
 endpoints and the website reads live chain participants, a down endpoint is

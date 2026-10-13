@@ -14,6 +14,10 @@ trap 'docker rm -f "$name" "$upstream_name" "$admission_name" >/dev/null 2>&1 ||
 command -v docker >/dev/null || { echo 'docker is required for the public-edge integration test' >&2; exit 2; }
 docker info >/dev/null 2>&1 || { echo 'docker daemon is required for the public-edge integration test' >&2; exit 2; }
 
+phase_ops="$ROOT/scripts/phase-ops.sh"
+grep -Fq "mkdir -p '\$REMOTE/scripts'" "$phase_ops"
+grep -Fq 'scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/04-ops/lib-lock.sh"' "$phase_ops"
+
 mkdir -p "$tmp/site/preview/172/status" "$tmp/bootstrap/gonka-devnet-community" "$tmp/upstream" "$tmp/admission"
 cp -R "$ROOT/04-ops/site/test" "$tmp/site/test"
 sed -e '/^[[:space:]]*email {\$ACME_EMAIL}[[:space:]]*$/d' \
@@ -54,6 +58,12 @@ cat >"$tmp/admission/Caddyfile" <<'CADDY'
 http://127.0.0.1:18083 {
   respond "local admission" 200
 }
+http://127.0.0.1:9466 {
+  respond "stable adapter {uri}" 200
+}
+http://127.0.0.1:18100 {
+  respond "independent A {uri}" 200
+}
 :8000 {
   respond "local participant {uri}" 200
 }
@@ -76,11 +86,13 @@ done
 docker run --rm \
   -e PUBLIC_HOST=:18082 \
   -e SITE_HOST=:18081 \
-  -e API_HOST=:18083 \
+  -e API_HOST=:18085 \
   -e GRAFANA_HOST=:18084 \
   -e GATEWAY_PUBLIC_HOST=gateway \
+  -e GDC_GATEWAY_METRICS_UPSTREAM=http://gateway:18087 \
   -e TELEGRAM_BOT_PUBLIC_HOST=gateway \
   -e MONITORING_CIDR=127.0.0.1/32 \
+  -e MONITORING_DOCKER_CIDR=172.21.0.0/16 \
   -e PUBLIC_EDGE_CIDR=127.0.0.1/32 \
   -v "$tmp/Caddyfile:/etc/caddy/Caddyfile:ro" \
   caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
@@ -91,20 +103,38 @@ grep -Fq 'reverse_proxy https://{$TELEGRAM_BOT_PUBLIC_HOST}' "$tmp/Caddyfile"
 grep -Fq 'preview.{$SITE_HOST} {' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'reverse_proxy 127.0.0.1:18090' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq '@preview_admission path_regexp preview_admission ^/(?:preview/)?[1-9][0-9]*/status/gateway/v1/admission-status$' "$tmp/Caddyfile"
+grep -Fq 'handle /status/gateways/a/v1/status {' "$tmp/Caddyfile"
+grep -Fq 'handle /status/gateways/a/v1/admission-status {' "$tmp/Caddyfile"
+grep -Fq 'handle /status/gateways/b/v1/status {' "$tmp/Caddyfile"
+grep -Fq 'handle /status/gateways/b/v1/admission-status {' "$tmp/Caddyfile"
+grep -Fq 'rewrite * /a/v1/status' "$tmp/Caddyfile"
+grep -Fq 'rewrite * /b/v1/status' "$tmp/Caddyfile"
+grep -Fq 'path /ops-gateway-metrics' "$tmp/Caddyfile"
+grep -Fq '{$MONITORING_DOCKER_CIDR}' "$tmp/Caddyfile"
+grep -Fq 'reverse_proxy {$GDC_GATEWAY_METRICS_UPSTREAM}' "$tmp/Caddyfile"
+grep -Fq '@ds502_a_completion {' "$tmp/Caddyfile"
+grep -Fq 'path /a/v1/chat/completions' "$tmp/Caddyfile"
+grep -Fq 'reverse_proxy 127.0.0.1:18100 {' "$tmp/Caddyfile"
+grep -Fq '@ds502_b_completion {' "$tmp/Caddyfile"
+grep -Fq 'path /b/v1/chat/completions' "$tmp/Caddyfile"
+grep -Fq 'rewrite * /gateway-b{uri}' "$tmp/Caddyfile"
+grep -Fq '@ds502_ab_closed path /a/* /b/* /v1/admin/* /admin/* /accounting/*' "$tmp/Caddyfile"
 grep -Fq '@preview_status path_regexp preview_status ^/(?:preview/)?[1-9][0-9]*/status/(.+)$' "$tmp/Caddyfile"
 grep -Fq '@dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info|validators))$' "$tmp/Caddyfile"
 grep -Fq 'reverse_proxy {re.dynamic_participant_status.1}:443' "$tmp/Caddyfile"
 
-docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 -p 127.0.0.1::18082 \
+docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 -p 127.0.0.1::18082 -p 127.0.0.1::18085 \
   -e SSL_CERT_FILE=/test-root.crt \
   -v "$tmp/root.crt:/test-root.crt:ro" \
   -e PUBLIC_HOST=:18082 \
   -e SITE_HOST=:18081 \
-  -e API_HOST=:18083 \
+  -e API_HOST=:18085 \
   -e GRAFANA_HOST=:18084 \
   -e GATEWAY_PUBLIC_HOST=gateway \
+  -e GDC_GATEWAY_METRICS_UPSTREAM=http://gateway:18087 \
   -e TELEGRAM_BOT_PUBLIC_HOST=gateway \
   -e MONITORING_CIDR=127.0.0.1/32 \
+  -e MONITORING_DOCKER_CIDR=172.21.0.0/16 \
   -e PUBLIC_EDGE_CIDR=127.0.0.1/32 \
   -v "$tmp/Caddyfile:/etc/caddy/Caddyfile:ro" \
   -v "$tmp/bootstrap:/edge/bootstrap/current:ro" \
@@ -148,6 +178,15 @@ curl -fsS "http://127.0.0.1:$port/" | grep -q 'EXTERNAL TEST LAB'
 docker exec "$name" caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
 curl -fsS "http://127.0.0.1:$port/" | grep -q 'EXTERNAL TEST LAB'
 participant_port="$(docker port "$name" 18082/tcp | awk -F: 'NR == 1 {print $NF}')"
+api_port="$(docker port "$name" 18085/tcp | awk -F: 'NR == 1 {print $NF}')"
+for endpoint in /v1/models /v1/chat/completions /anthropic/v1/messages /genai/v1beta/models/model:generateContent; do
+  curl -fsS -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port$endpoint" | grep -Fxq "stable adapter $endpoint"
+done
+curl -fsS -H 'Authorization: Bearer devnet_fixture' "http://127.0.0.1:$api_port/v1/chat/completions" | grep -Fxq 'local admission'
+curl -fsS -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port/v1/admission-status" | grep -Fxq 'local admission'
+curl -fsS -X POST -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port/a/v1/chat/completions" | grep -Fxq 'independent A /v1/chat/completions'
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port/v1/admin/settings")" == 404 ]]
+printf 'PASS public stable credentials reach the adapter; legacy, A and private routes retain their boundaries\n'
 curl -fsS "http://127.0.0.1:$participant_port/v1/models" | grep -Fxq 'local participant /v1/models'
 curl -fsS "http://127.0.0.1:$port/preview/172/status/participants" | grep -Fxq '/status/participants'
 curl -fsS "http://127.0.0.1:$port/preview/172/status/index.html" | grep -Fxq '<main>candidate OpenAPI documentation</main>'

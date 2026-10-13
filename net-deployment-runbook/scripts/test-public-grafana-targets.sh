@@ -4,6 +4,14 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GDC_GRAFANA_VERIFIER_LIBRARY=true source "$ROOT/scripts/verify-public-grafana.sh"
 
+# A single healthy gateway must not satisfy the A/B dashboard contract.
+grep -Fq 'min(up{job="gateway"})' "$ROOT/scripts/verify-public-grafana.sh"
+if grep -Fq 'max(up{job="gateway"})' "$ROOT/scripts/verify-public-grafana.sh"
+then
+  echo 'Grafana verifier accepts a healthy gateway while another target is down' >&2
+  exit 1
+fi
+
 if verify_expected_target_result gdc-node4-ml gdc-node4 <<'JSON' >/dev/null
 {"status":"success","data":{"result":[{"metric":{"host":"gdc-node0","validator":"gdc-node0"},"value":[0,"1"]}]}}
 JSON
@@ -173,7 +181,7 @@ SSH
 chmod +x "$fake_bin/ssh"
 checked=0
 while IFS= read -r _; do
-  (PATH="$fake_bin:$PATH"; GATEWAY_NODE=gdc-node4; prom_query 'up') >/dev/null
+  (PATH="$fake_bin:$PATH"; export GATEWAY_NODE=gdc-node4; prom_query 'up') >/dev/null
   checked=$((checked + 1))
 done <<'HOSTS'
 gdc-node0

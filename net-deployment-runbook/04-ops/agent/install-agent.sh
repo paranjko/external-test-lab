@@ -8,6 +8,7 @@ mkdir -p "$DEST" /var/lib/node_exporter/textfile_collector
 install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"; install -m 0600 "$ENV_FILE" "$DEST/.env"
 install -d -m 0755 /usr/local/libexec
 install -m 0755 "$HERE/collect-versions.sh" /usr/local/libexec/gdc-collect-versions
+install -m 0755 "$HERE/inspect-devshard-runtime.py" /usr/local/libexec/gdc-inspect-devshard-runtime
 install -m 0644 "$HERE/gdc-version-collector.service" "/etc/systemd/system/gdc-version-collector@$NODE.service"
 install -m 0644 "$HERE/gdc-version-collector.timer" "/etc/systemd/system/gdc-version-collector@$NODE.timer"
 if [[ "$GPU" == true ]]; then "$HERE/install-nvidia-metrics.sh"; fi

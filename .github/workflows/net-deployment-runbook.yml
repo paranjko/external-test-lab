@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'net-deployment-runbook/**'
+      - 'broker-ops/**'
       - 'schema/**'
       - 'bootstrap/**'
       - 'ops/chore/setup-bootstrap-publisher.sh'
@@ -22,6 +23,7 @@ on:
       - synchronize
     paths:
       - 'net-deployment-runbook/**'
+      - 'broker-ops/**'
       - 'schema/**'
       - 'bootstrap/**'
       - 'ops/chore/setup-bootstrap-publisher.sh'
@@ -60,9 +62,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [bootstrap, contracts, site, join]
+        group: [bootstrap, contracts, site, join, gateways]
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Install declared Python test dependencies
+        if: matrix.group == 'gateways'
+        run: make -C net-deployment-runbook install-python-test-dependencies
       - name: Verify CI group coverage
         run: make -C net-deployment-runbook test-ci-layout
       - name: Test runbook contracts

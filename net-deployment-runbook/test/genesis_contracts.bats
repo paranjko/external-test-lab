@@ -48,6 +48,10 @@ prepare_pinned_cli_fixture() {
 printf 'inferenced 0.2.14\n'
 EOF
   chmod +x "$bin_dir/inferenced"
+  # These tests exercise keyring behavior through the inferenced fixture,
+  # not public artifact download or installer readiness.
+  cp "$bin_dir/inferenced" "$isolated/scripts/ensure-inferenced-cli.sh"
+  sed -i 's/\[\[ "${1:-}" == version \]\] || exit 2/[[ $# == 0 ]] || exit 2/' "$isolated/scripts/ensure-inferenced-cli.sh"
   printf '%s\n' "$bin_dir"
 }
 
@@ -94,6 +98,13 @@ validator_identity_digest() {
     cd "$root"
     find . -xdev -type f -print0 | sort -z | xargs -0 -r sha256sum
   ) | sha256sum | awk '{print $1}'
+}
+
+install_flat_identity_fixture() {
+  local source="$1" state="$2"
+  install -d -m 0700 "$state/identity/p2p" "$state/identity/warm/keyring-file" "$state/signer"
+  install -m 0600 "$source/inference/config/node_key.json" "$state/identity/p2p/node_key.json"
+  cp -a "$source/tmkms" "$state/signer/tmkms"
 }
 
 @test "community-lab renders a reproducible PoC timing profile" {
@@ -198,15 +209,24 @@ validator_identity_digest() {
   [ "$(jq -r .address "$home_dir/accounts/gdc-node0-cold.json")" = "$GATEWAY" ]
 }
 
-@test "gateway renderer rejects the zero-capacity limits that make a READY runtime return 429" {
+@test "gateway renderer maps unlimited input to positive bounded capacity and rejects invalid limits" {
   renderer="$RUNBOOK/04-ops/create-gateway.sh"
-
-  run grep -F 'MAX_CONCURRENT_REQUESTS="${GDC_GATEWAY_MAX_CONCURRENT_REQUESTS:-4}"' "$renderer"
-  [ "$status" -eq 0 ]
-  run grep -F 'MAX_INPUT_TOKENS_IN_FLIGHT="${GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT:-4096}"' "$renderer"
-  [ "$status" -eq 0 ]
-  run grep -F 'must be a positive integer' "$renderer"
-  [ "$status" -eq 0 ]
+  limits="$BATS_TEST_TMPDIR/limits.sh"
+  sed -n '/^requested_max_concurrent_requests=/,/^CREATOR=/{ /^CREATOR=/!p; }' "$renderer" >"$limits"
+  [ -s "$limits" ]
+  for value in '' 0 7; do
+    run env GDC_GATEWAY_MAX_CONCURRENT_REQUESTS="$value" GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT="$value" \
+      bash -c 'source "$1"; printf "%s %s\n" "$MAX_CONCURRENT_REQUESTS" "$MAX_INPUT_TOKENS_IN_FLIGHT"' _ "$limits"
+    [ "$status" -eq 0 ]
+    if [[ "$value" == 7 ]]; then [ "$output" = '7 7' ]; else [ "$output" = '4 4096' ]; fi
+  done
+  for setting in GDC_GATEWAY_MAX_CONCURRENT_REQUESTS GDC_GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT; do
+    for value in -1 1.5 invalid; do
+      run env "$setting=$value" bash "$limits"
+      [ "$status" -ne 0 ]
+      [[ "$output" == *'must be a non-negative integer'* ]]
+    done
+  done
 }
 
 @test "gateway reconciliation uses public participant state rather than another Host account artifact" {
@@ -244,12 +264,14 @@ validator_identity_digest() {
   helper="$RUNBOOK/scripts/build-validator-identity-restore-command.sh"
   pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"
   deployment_env="$BATS_TEST_TMPDIR/deploy/.env"
-  prepare_validator_identity "$state" \
+  prepare_validator_identity "$candidate" \
     01234567890123456789012345678901 \
     abcdefghijklmnopqrstuvwxyzABCDEF \
     12345678901234567890123456789012
-  consensus_key="$("$pubkey_helper" "$state/tmkms/secrets/priv_validator_key.softsign")"
-  cp -a "$state" "$candidate"
+  consensus_key="$("$pubkey_helper" "$candidate/tmkms/secrets/priv_validator_key.softsign")"
+  install_flat_identity_fixture "$candidate" "$state"
+  pristine="$BATS_TEST_TMPDIR/pristine-archive"
+  cp -a "$candidate" "$pristine"
   chown -R root:root "$state"
   install -d -m 0700 "$(dirname "$deployment_env")"
   printf 'deployed=true\n' >"$deployment_env"
@@ -260,19 +282,19 @@ validator_identity_digest() {
     "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
 
   [ "$status" -eq 0 ]
-  [ "$output" = existing ]
+  [ "$output" = stable_existing ]
   [ "$(find "$state" -type f -print0 | sort -z | xargs -0 sha256sum)" = "$before" ]
 
   for state_case in float negative overflow wrong-type; do
     candidate="$BATS_TEST_TMPDIR/state-$state_case-candidate"
-    cp -a "$state" "$candidate"
+    cp -a "$pristine" "$candidate"
     case "$state_case" in
       float) mutation='.block_id.part_set_header.total = 1.5' ;;
       negative) mutation='.block_id.part_set_header.total = -1' ;;
       overflow) mutation='.block_id.part_set_header.total = 4294967296' ;;
       wrong-type) mutation='.block_id.part_set_header.total = "1"' ;;
     esac
-    jq "$mutation" "$state/tmkms/state/priv_validator_state.json" \
+    jq "$mutation" "$pristine/tmkms/state/priv_validator_state.json" \
       >"$BATS_TEST_TMPDIR/state-$state_case.json"
     mv "$BATS_TEST_TMPDIR/state-$state_case.json" \
       "$candidate/tmkms/state/priv_validator_state.json"
@@ -287,7 +309,7 @@ validator_identity_digest() {
   done
 
   candidate="$BATS_TEST_TMPDIR/wrong-consensus-candidate"
-  cp -a "$state" "$candidate"
+  cp -a "$pristine" "$candidate"
   printf '12345678901234567890123456789012' | base64 >"$BATS_TEST_TMPDIR/other.softsign"
   wrong_consensus_key="$("$pubkey_helper" "$BATS_TEST_TMPDIR/other.softsign")"
   bundle_sha256="$(validator_identity_digest "$candidate")"
@@ -310,18 +332,18 @@ validator_identity_digest() {
     "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *'running validator identity does not match the supplied backup'* ]]
+  [[ "$output" == *'stable validator identity conflicts with the supplied backup'* ]]
   [ "$(find "$state" -type f -print0 | sort -z | xargs -0 sha256sum)" = "$before" ]
 }
 
 @test "stable validator identity is recognized before legacy state and keeps its live signing height" {
   [[ "${GDC_BATS_CONTAINER:-}" == true ]] || skip 'requires make bats-docker'
   root="$BATS_TEST_TMPDIR/stable-layout"
-  state="$root/gdc-node1"
+  state="$root"
   candidate="$BATS_TEST_TMPDIR/stable-candidate"
-  identity="$root/identity/gdc-node1"
-  signer="$root/signer/gdc-node1"
-  deployment_env="$root/deploy/gdc-node1/.env"
+  identity="$root/identity"
+  signer="$root/signer"
+  deployment_env="$root/deploy/.env"
   helper="$RUNBOOK/scripts/build-validator-identity-restore-command.sh"
   pubkey_helper="$RUNBOOK/scripts/tmkms-softsign-public-key.sh"
   prepare_validator_identity "$candidate" \
@@ -343,7 +365,7 @@ validator_identity_digest() {
   [ "$status" -eq 0 ]
   [ "$output" = stable_existing ]
   [ "$(jq -r .height "$signer/tmkms/state/priv_validator_state.json")" = 999 ]
-  [ ! -e "$state" ]
+  [ ! -e "$state/.gdc-validator-identity-restore.sha256" ]
 
   candidate="$BATS_TEST_TMPDIR/conflicting-stable-candidate"
   prepare_validator_identity "$candidate" \
@@ -367,10 +389,10 @@ validator_identity_digest() {
   bundle_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
   run "$command_builder" \
-    /srv/dai/gdc-node1 \
+    /srv/dai \
     /tmp/gdc-gdc-node1-validator-restore-123 \
     "$consensus_key" \
-    /srv/dai/deploy/gdc-node1/.env \
+    /srv/dai/deploy/.env \
     "$bundle_sha256"
 
   [ "$status" -eq 0 ]
@@ -378,10 +400,10 @@ validator_identity_digest() {
 
   malicious_key="bad'; printf '%s\\n' ARCHIVE_COMMAND_EXECUTED; : '"
   run "$command_builder" \
-    /srv/dai/gdc-node1 \
+    /srv/dai \
     /tmp/gdc-gdc-node1-validator-restore-123 \
     "$malicious_key" \
-    /srv/dai/deploy/gdc-node1/.env \
+    /srv/dai/deploy/.env \
     "$bundle_sha256"
 
   [ "$status" -ne 0 ]
@@ -498,7 +520,8 @@ validator_identity_digest() {
     GDC_VALIDATOR_IDENTITY_TEST_INTERRUPT=before-activate \
     "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
   [ "$status" -ne 0 ]
-  [ ! -e "$state" ]
+  [ -d "$state" ]
+  [ -z "$(find "$state" -mindepth 1 -print -quit)" ]
 
   candidate="$BATS_TEST_TMPDIR/retry-candidate"
   prepare_validator_identity "$candidate" \
@@ -510,6 +533,8 @@ validator_identity_digest() {
     "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
   [ "$status" -eq 0 ]
   [ "$output" = installed ]
+  [ -s "$state/identity/p2p/node_key.json" ]
+  [ -s "$state/signer/tmkms/state/priv_validator_state.json" ]
   [ "$(<"$state/.gdc-validator-identity-restore.sha256")" = "$bundle_sha256" ]
 
   candidate="$BATS_TEST_TMPDIR/resume-candidate"
@@ -520,7 +545,7 @@ validator_identity_digest() {
   run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
     "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
   [ "$status" -eq 0 ]
-  [ "$output" = installed ]
+  [ "$output" = stable_existing ]
 
   install -d -m 0700 "$(dirname "$deployment_env")"
   printf 'deployed=true\n' >"$deployment_env"
@@ -532,7 +557,7 @@ validator_identity_digest() {
   run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
     "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
   [ "$status" -eq 0 ]
-  [ "$output" = existing ]
+  [ "$output" = stable_existing ]
 }
 
 @test "partial validator identity state is never accepted as resumable" {
@@ -548,27 +573,29 @@ validator_identity_digest() {
     12345678901234567890123456789012
   consensus_key="$("$pubkey_helper" "$candidate/tmkms/secrets/priv_validator_key.softsign")"
   bundle_sha256="$(validator_identity_digest "$candidate")"
-  install -d -m 0700 "$state/tmkms/secrets"
+  install -d -m 0700 "$state/signer/tmkms/secrets"
   cp "$candidate/tmkms/secrets/priv_validator_key.softsign" \
-    "$state/tmkms/secrets/priv_validator_key.softsign"
+    "$state/signer/tmkms/secrets/priv_validator_key.softsign"
 
   run env GDC_VALIDATOR_IDENTITY_TEST_MODE=true GDC_VALIDATOR_IDENTITY_REMOTE=true \
     "$helper" "$state" "$candidate" "$consensus_key" "$deployment_env" "$bundle_sha256"
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *'partial, mixed, or ambiguous'* ]]
+  [[ "$output" == *'partial or ambiguous'* ]]
+  [ ! -e "$state/identity" ]
+  [ ! -e "$state/.gdc-validator-identity-restore.sha256" ]
 }
 
 @test "container host mock restarts DAPI and colocated MLNode only after sync" {
   [[ "${GDC_BATS_CONTAINER:-}" == true ]] || skip 'requires make bats-docker'
   fake_bin="$BATS_TEST_TMPDIR/mock-bin"
   mock_log="$BATS_TEST_TMPDIR/docker.log"
-  install -d -m 0755 "$fake_bin" /srv/dai/deploy/gdc-node1
+  install -d -m 0755 "$fake_bin" /srv/dai/deploy
   cp "$RUNBOOK/test/fixtures/mock-host-bin/"* "$fake_bin/"
   chmod +x "$fake_bin/"*
-  : >/srv/dai/deploy/gdc-node1/compose.yaml
-  : >/srv/dai/deploy/gdc-node1/compose.ml-local.yaml
-  printf 'true\n' >/srv/dai/deploy/gdc-node1/.local-ml
+  : >/srv/dai/deploy/compose.yaml
+  : >/srv/dai/deploy/compose.ml-local.yaml
+  printf 'true\n' >/srv/dai/deploy/.local-ml
   python3 "$RUNBOOK/test/fixtures/mock-chain-server.py" >/dev/null 2>&1 &
   MOCK_CHAIN_PID=$!
   wait_for_mock_chain
@@ -585,14 +612,17 @@ validator_identity_digest() {
 @test "DinD Host runs the real Compose restart for DAPI and MLNode" {
   [[ "${GDC_BATS_DIND:-}" == true ]] || skip 'requires make bats-dind'
   fake_bin="$BATS_TEST_TMPDIR/transport-bin"
-  deploy_dir=/srv/dai/deploy/gdc-node1
+  deploy_dir=/srv/dai/deploy
   install -d -m 0755 "$fake_bin" "$deploy_dir"
   cp "$RUNBOOK/test/fixtures/mock-host-bin/ssh" "$fake_bin/"
   cp "$RUNBOOK/test/fixtures/mock-host-bin/sudo" "$fake_bin/"
   chmod +x "$fake_bin/"*
   install -d -m 0755 "$deploy_dir/mock-chain"
   printf '%s\n' '{"result":{"sync_info":{"catching_up":false}}}' >"$deploy_dir/mock-chain/status"
+  install -d -m 0755 "$deploy_dir/mock-dapi/v1"
+  printf '%s\n' '{"node_version":{"version":"fixture"}}' >"$deploy_dir/mock-dapi/v1/versions"
   cat >"$deploy_dir/compose.yaml" <<'YAML'
+name: gdc-bats-flat-host
 services:
   chain:
     image: busybox:1.36
@@ -602,7 +632,10 @@ services:
       - ./mock-chain:/www:ro
   api:
     image: busybox:1.36
-    command: ["sh", "-c", "sleep infinity"]
+    network_mode: host
+    command: ["httpd", "-f", "-p", "9000", "-h", "/www"]
+    volumes:
+      - ./mock-dapi:/www:ro
 YAML
   cat >"$deploy_dir/compose.ml-local.yaml" <<'YAML'
 services:
@@ -611,7 +644,7 @@ services:
     command: ["sh", "-c", "sleep infinity"]
 YAML
   printf 'true\n' >"$deploy_dir/.local-ml"
-  docker compose -f "$deploy_dir/compose.yaml" -f "$deploy_dir/compose.ml-local.yaml" -p gdc-node1 up -d
+  docker compose -f "$deploy_dir/compose.yaml" -f "$deploy_dir/compose.ml-local.yaml" up -d
   wait_for_mock_chain
 
   run env PATH="$fake_bin:$PATH" GDC_API_RESTART_WAIT_SECONDS=15 \
@@ -619,7 +652,7 @@ YAML
 
   [ "$status" -eq 0 ]
   [[ "$output" == *'READY post-sync services restarted: api mlnode'* ]]
-  run docker compose -f "$deploy_dir/compose.yaml" -f "$deploy_dir/compose.ml-local.yaml" -p gdc-node1 ps --format '{{.Service}} {{.State}}'
+  run docker compose -f "$deploy_dir/compose.yaml" -f "$deploy_dir/compose.ml-local.yaml" ps --format '{{.Service}} {{.State}}'
   [ "$status" -eq 0 ]
   [[ "$output" == *'api running'* ]]
   [[ "$output" == *'mlnode running'* ]]

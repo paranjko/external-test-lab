@@ -96,6 +96,24 @@ grep -Fq 'url: http://127.0.0.1:9099' "$dest/public-grafana/provisioning/datasou
 printf 'PASS edge install preserves existing site and preview owners across repeated applies\n'
 printf 'PASS edge install refreshes public Grafana files inside the bind-mounted directories\n'
 printf 'PASS edge install preserves legacy and managed bootstrap ownership layout=%s\n' "$dest"
+
+# Monitoring must not rewrite or re-own independently managed gateway routes.
+for file in Caddyfile .env compose.yaml gateway-route.env gateway-admission.env; do
+  printf 'retained-%s\n' "$file" >"$dest/$file"
+  chown "$site_owner" "$dest/$file"
+  chmod 0600 "$dest/$file"
+done
+before="$(sha256sum "$dest"/{Caddyfile,.env,compose.yaml,gateway-route.env,gateway-admission.env})"
+printf 'stale\n' >"$dest/public-grafana/dashboards/gdc-inference.json"
+SUDO_USER=root "$ROOT/04-ops/edge-node/install-edge.sh" "$env_file" "${layout_args[@]}" --monitoring-only
+[[ "$(sha256sum "$dest"/{Caddyfile,.env,compose.yaml,gateway-route.env,gateway-admission.env})" == "$before" ]]
+for file in Caddyfile .env compose.yaml gateway-route.env gateway-admission.env; do
+  [[ "$(stat -c '%u:%g' "$dest/$file")" == "$site_owner" ]]
+  [[ "$(stat -c '%a' "$dest/$file")" == 600 ]]
+done
+cmp -s "$ROOT/04-ops/edge-node/public-grafana/dashboards/gdc-inference.json" "$dest/public-grafana/dashboards/gdc-inference.json"
+[[ "$(stat -c '%i' "$dest/public-grafana/dashboards")" == "$dashboards_inode" ]]
+printf 'PASS monitoring-only preserves edge routes, environment, owners and modes layout=%s\n' "$dest"
 }
 
 test_layout /srv/dai/edge

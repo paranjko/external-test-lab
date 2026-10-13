@@ -1,0 +1,2 @@
+# Required by the durable Bifrost broker contract test.
+cryptography==41.0.7

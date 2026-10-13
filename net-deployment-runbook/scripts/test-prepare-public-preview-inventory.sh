@@ -27,8 +27,19 @@ EOF
   source "$tmp/inventory.env"
   [[ "$GDC_NODE_ALIASES" == 'node0 node4 node5 node7 node8' ]]
   [[ "$GDC_NODE_PUBLIC_HOSTS" == 'node0=node0.gonka-dev.net node4=node4.gonka-dev.net node5=node5.gonka-dev.net node7=node7.gonka-dev.net node8=node8.gonka-dev.net' ]]
+  [[ "$GDC_GATEWAY_METRICS_TARGETS" == '[{"id":"PREVIEW","node":"node4","port":1}]' ]]
 )
 jq -e '.gateway_node == "node4" and .participant_source == "file:participants.json" and .nodes == ["node0", "node4", "node5", "node7", "node8"] and (.bootstrap_sha256 | test("^[0-9a-f]{64}$"))' "$tmp/inventory.env.receipt.json" >/dev/null
+
+# Exercise the actual renderer contract, not only the inventory text. Its
+# synthetic metrics target must never become a route in the preview backend.
+"$ROOT/04-ops/render-ops.sh" --inventory "$tmp/inventory.env" --output-dir "$tmp/rendered"
+"$ROOT/../ops/preview/render-status-backend.sh" "$tmp/rendered/Caddyfile" "$tmp/rendered/config.js" 204 "$tmp/backend.Caddyfile"
+grep -Fq 'preview_gateway_status_unavailable' "$tmp/backend.Caddyfile"
+if grep -Fq 'PREVIEW' "$tmp/backend.Caddyfile"; then
+  echo 'render-only gateway target leaked into preview backend' >&2
+  exit 1
+fi
 
 rm "$tmp/net-info/node4.gonka-dev.net.json"
 # Fixture mode is intentionally strict: a missing fixture is a test setup

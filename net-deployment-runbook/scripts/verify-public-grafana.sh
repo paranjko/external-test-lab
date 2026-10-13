@@ -177,9 +177,9 @@ cat >"$RUN/required-panel-expressions.txt" <<'EOF'
 max(cometbft_consensus_height)
 sum(up{job="gonka-node"})
 100 - avg by(host)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100
-max(up{job="gateway"})
+min(up{job="gateway"})
 time() - max(gdc_gateway_readiness_observed_timestamp_seconds)
-max(devshard_gateway_capacity_scale) * 100
+max by (gateway) (devshard_gateway_capacity_scale) * 100
 EOF
 # A pinned expression that no longer appears on any board keeps this gate green
 # while measuring nothing. Prove the pin before trusting the value it returns.
