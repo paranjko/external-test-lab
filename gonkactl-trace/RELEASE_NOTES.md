@@ -1,6 +1,14 @@
-# gonkactl-trace 1.0.0-beta.1
+# gonkactl-trace 1.0.0-beta.2
 
-The first packaged beta of the read-only Gonka investigation CLI.
+Maintenance release of the read-only Gonka investigation CLI.
+
+## Changes since beta.1
+
+- Encode report JSON directly into the inert data element with HTML escaping enabled, preserving script terminators, quotes, backslashes and Unicode safely.
+- Resolve local viewer artifact routes to fixed filenames; reject traversal and unlisted-file requests.
+- Preserve existing offline report reproduction and all five platform packages.
+
+## Included capabilities
 
 - Collect bounded on-chain history from mainnet, devnet, testnet or an explicit RPC.
 - Inspect consensus membership, voting power, signatures and available application evidence in a standalone HTML report.

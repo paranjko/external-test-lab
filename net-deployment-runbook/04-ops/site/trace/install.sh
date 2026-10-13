@@ -3,7 +3,7 @@
 set -eu
 
 main() {
-    trace_version=1.0.0-beta.1
+    trace_version=1.0.0-beta.2
     trace_quiet=0
     trace_preview=0
     for trace_arg in "$@"; do
@@ -12,7 +12,7 @@ main() {
             --dry-run) trace_preview=1 ;;
             -h|--help)
                 # shellcheck disable=SC2016
-                printf '%s\n' 'Install gonkactl-trace 1.0.0-beta.1' \
+                printf '%s\n' 'Install gonkactl-trace 1.0.0-beta.2' \
                     'Usage: sh install.sh [-q|--quiet] [--dry-run]' \
                     'GONKACTL_INSTALL_DIR overrides $HOME/.local/bin. Shell profiles are never modified.'
                 return ;;
