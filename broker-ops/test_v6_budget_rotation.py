@@ -119,7 +119,11 @@ class BudgetTest(unittest.TestCase):
             return self.request(path, data)
         for _ in range(3):
             rotation.tick(self.path, 'a', request)
-        self.assertTrue(rotation.tick(self.path, 'a', request).startswith('halt:'))
+        self.assertTrue(rotation.tick(self.path, 'a', request).startswith('waiting:'))
+        with sqlite3.connect(self.path / 'ledger.sqlite') as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM settlement').fetchone()[0], 3)
+        self.epoch += 1
+        self.assertTrue(rotation.tick(self.path, 'a', request).startswith('created:'))
 
     def test_ambiguous_settlement_blocks_new_funding(self):
         self.tick()
@@ -132,6 +136,24 @@ class BudgetTest(unittest.TestCase):
             rotation.tick(self.path, 'a', request)
         self.assertTrue(self.tick().startswith('halt:'))
         self.assertEqual(self.creates, 1)
+
+    def test_failed_third_settlement_still_halts_after_restart(self):
+        self.tick()
+        self.epoch += 2
+        statuses = iter([409, 409, 502])
+        def request(path, data=None):
+            if path.endswith('/settle'):
+                self.assertIs(data['force'], False)
+                return {'status': next(statuses), 'result': 'fixture failure'}
+            return self.request(path, data)
+        for _ in range(3):
+            result = rotation.tick(self.path, 'a', request)
+        self.assertTrue(result.startswith('halt:'))
+        creates = self.creates
+        self.epoch += 1
+        self.assertTrue(self.tick().startswith('halt:'))
+        self.assertEqual(self.creates, creates)
+        self.assertEqual(self.settles, 0)
 
 
 if __name__ == '__main__':

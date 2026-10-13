@@ -22,6 +22,11 @@ def scripts(output):
 
 
 class RunbookCI(unittest.TestCase):
+    def test_operator_budget_checks_are_triggered_and_executed(self):
+        workflow = (ROOT.parent / ".github/workflows/net-deployment-runbook.yml").read_text()
+        self.assertEqual(2, workflow.count("      - 'broker-ops/**'"))
+        self.assertIn("test_v6_budget_rotation.py", dry_run("test-ci-gateways"))
+
     def test_ci_covers_local_suite_without_duplicate_tests(self):
         makefile = (ROOT / "Makefile").read_text()
         groups = re.search(r"^RUNBOOK_CI_GROUPS := (.+)$", makefile, re.M).group(1).split()

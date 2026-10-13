@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'net-deployment-runbook/**'
+      - 'broker-ops/**'
       - 'schema/**'
       - 'bootstrap/**'
       - 'ops/chore/setup-bootstrap-publisher.sh'
@@ -22,6 +23,7 @@ on:
       - synchronize
     paths:
       - 'net-deployment-runbook/**'
+      - 'broker-ops/**'
       - 'schema/**'
       - 'bootstrap/**'
       - 'ops/chore/setup-bootstrap-publisher.sh'

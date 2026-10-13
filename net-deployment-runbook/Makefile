@@ -97,6 +97,12 @@ test-devshard-runtime-monitoring:
 
 test-ci-gateways: test-devshard-runtime-monitoring
 
+.PHONY: test-v6-budget-rotation
+test-v6-budget-rotation:
+	@$(MAKE) -C ../broker-ops test-v6-budget-rotation
+
+test-ci-gateways: test-v6-budget-rotation
+
 .PHONY: test-devshard-502-reader
 test-devshard-502-reader:
 	@python3 ./scripts/test-devshard-502-reader.py

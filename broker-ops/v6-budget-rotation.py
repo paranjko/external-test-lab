@@ -56,10 +56,12 @@ def tick(path, instance, request):
                 if settled or old > epoch - 2:
                     continue
                 attempts = db.execute('SELECT result FROM settlement WHERE epoch=?', (old,)).fetchall()
-                if len(attempts) >= 3:
-                    return 'halt: settlement retry allowance exhausted'
                 if any(json.loads(r[0])['status'] != 409 for r in attempts):
                     return 'halt: settlement failure needs reconciliation'
+                if len(attempts) >= 3:
+                    # Known-busy escrows remain for manual reconciliation. They
+                    # must not interrupt funding of unrelated healthy epochs.
+                    continue
                 attempt = len(attempts) + 1
                 db.execute('INSERT INTO settlement VALUES (?,?,NULL)', (old, attempt))
                 db.commit()

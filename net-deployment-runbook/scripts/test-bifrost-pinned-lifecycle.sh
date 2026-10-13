@@ -128,12 +128,33 @@ done
 [[ "$(jq '.delta | length' <<<"$(run_provision --preview)")" == 0 ]]
 # An operator can change the existing provider transport and key in place:
 # stable user keys remain bound to the same provider/key IDs after migration.
+# The pinned release can report healthy while restart-time SQLite writers
+# still hold the config-store lock. Retry only that explicit transient error
+# for these idempotent fixture PUTs, not arbitrary 500s or funding operations.
+put_fixture_config() {
+  local route="$1" payload="$2" attempt code detail
+  for attempt in $(seq 1 10); do
+    code="$(curl -sS -o "$tmp/config-update.json" -w '%{http_code}' \
+      -u 'admin:Valid!Password1' -X PUT "http://127.0.0.1:$port$route" \
+      -H 'Content-Type: application/json' --data-binary "@$payload")"
+    [[ "$code" != 200 ]] || return 0
+    detail="$(jq -r '.error.message // .message // .error // "no structured error"' "$tmp/config-update.json")"
+    if [[ "$code" != 500 || "$detail" != *'database is locked'* || "$attempt" == 10 ]]; then
+      printf 'pinned config update failed HTTP %s: %s\n' "$code" "$detail" >&2
+      return 1
+    fi
+    printf 'WAIT pinned config store lock attempt=%s/10\n' "$attempt"
+    sleep 1
+  done
+}
 provider_before="$(curl -fsS -u 'admin:Valid!Password1' "http://127.0.0.1:$port/api/providers" | jq '.providers[] | select(.name == "gonka-s")')"
-jq -c --arg base "http://127.0.0.1:$upstream_port/" '{network_config:(.network_config + {base_url:$base}),concurrency_and_buffer_size,custom_provider_config,proxy_config}' <<<"$provider_before" \
-  | curl -fsS -u 'admin:Valid!Password1' -X PUT "http://127.0.0.1:$port/api/providers/gonka-s" -H 'Content-Type: application/json' --data-binary @- >/dev/null
+jq -c --arg base "http://127.0.0.1:$upstream_port/" '{network_config:(.network_config + {base_url:$base}),concurrency_and_buffer_size,custom_provider_config,proxy_config}' <<<"$provider_before" >"$tmp/provider-update.json"
+put_fixture_config /api/providers/gonka-s "$tmp/provider-update.json"
+curl -fsS -u 'admin:Valid!Password1' "http://127.0.0.1:$port/api/providers" \
+  | jq -e --arg base "http://127.0.0.1:$upstream_port/" '.providers[] | select(.name == "gonka-s") | .network_config.base_url == $base' >/dev/null
 curl -fsS -u 'admin:Valid!Password1' "http://127.0.0.1:$port/api/providers/gonka-s/keys" \
-  | jq -c '.keys[0] | .value={value:"provider-secret"} | del(.status)' \
-  | curl -fsS -u 'admin:Valid!Password1' -X PUT "http://127.0.0.1:$port/api/providers/gonka-s/keys/$provider_key_id" -H 'Content-Type: application/json' --data-binary @- >/dev/null
+  | jq -c '.keys[0] | .value={value:"provider-secret"} | del(.status)' >"$tmp/key-update.json"
+put_fixture_config "/api/providers/gonka-s/keys/$provider_key_id" "$tmp/key-update.json"
 [[ "$(curl -fsS -u 'admin:Valid!Password1' "http://127.0.0.1:$port/api/providers/gonka-s/keys" | jq -r '.keys[0].id')" == "$provider_key_id" ]]
 curl -fsS "http://127.0.0.1:$edge_port/v1/chat/completions" -H "Authorization: Bearer $rotated" -H 'Content-Type: application/json' \
   -d '{"model":"test-model","messages":[{"role":"user","content":"probe"}]}' | jq -e '.choices[0].message.content == "fixture-ok"' >/dev/null

@@ -96,6 +96,30 @@ permanent availability after that window expires.
 
 ## Readiness and remaining scenarios
 
+### Preserve monitoring independently of validator and gateway lifecycles
+
+Managed JOIN uses its retained `GDC_JOIN_MONITORING_REGISTRY_HOST` SSH alias
+to select the metrics firewall source, independently of the consensus seed.
+For an independent operator without the lab registry, set `GDC_MONITORING_HOST`
+to the collector's public hostname or IPv4 address before JOIN. That explicit
+value takes precedence. Legacy input without either value retains the gateway
+or seed fallback; it does not discover an unrelated collector automatically.
+The selected source must resolve to exactly one IPv4 address.
+
+`ops monitoring` refreshes public Grafana with `install-edge.sh
+--monitoring-only`. An existing edge deployment is required. This mode keeps
+Caddy, Compose, `.env`, gateway route/admission credentials and ownership
+unchanged; only public Grafana provisioning is refreshed. Explicit `ops edge`
+still owns a full route deployment. Do not deploy an older monitoring launcher
+that unconditionally reinstalls the public edge.
+
+Host `node-exporter` and `cAdvisor` remain active when a validator is stopped
+or lends its GPU. An intentionally stopped chain may have a down chain-metrics
+target, but that is not permission to stop host or container monitoring.
+The real Docker lending regression checks this isolation in flat and legacy
+layouts. Test workloads must not reclaim the monitoring ports by stopping
+these services.
+
 ### Budget-bounded operator rotation
 
 `v6-budget-rotation.py` is an explicitly authorized operator workaround, not
@@ -121,7 +145,10 @@ Re-enabling a timer never resets its ledger or restores its spending allowance.
 
 Creation occurs at most once per epoch, only in the normal funding phase with
 at least 15 blocks before the switch. Settlement starts two epochs later,
-never forces busy requests, and permits at most three known-busy retries.
+never forces busy requests, and permits at most three known-busy attempts.
+Escrows still busy after those attempts remain for manual reconciliation;
+they do not stop funding unrelated healthy epochs. Their reserved amounts
+remain charged to the gross cap. Ambiguous settlement outcomes still halt.
 The cap blocks all further creation; bounded settlement of existing records
 may continue. No readiness or PoC gate is bypassed. Do not promise continuous
 inference during protocol fences or claim a load result from this mechanism.
@@ -138,3 +165,24 @@ Run `make -C broker-ops test-v6-budget-rotation` before installing a change.
   evidence; they do not require polishing unrelated capabilities first.
 - Stable public admission recovery remains tracked by issue #211. Preparation
   of A/B does not close that issue or turn historical failed runs into passes.
+
+## Delivery boundary and next increment
+
+This increment delivers the pinned A/B stand configuration, authenticated
+public routing, fail-closed readiness, bounded operator funding and the
+monitoring safeguards above. It does not upgrade the frozen artifact whenever
+the upstream development branch moves. Record new artifact qualification as
+a separate baseline and preserve the original results.
+
+Continue the following work separately after integration:
+
+| Follow-up | Required evidence | Tracking |
+| --- | --- | --- |
+| Recover unattended A/B funding after settlement failures | Reconcile the chain outcome against the durable ledger before any retry; never reset the budget or force a busy settlement; repeat JSON/SSE smoke in an eligible window | [Stand preparation](https://github.com/paranjko/external-test-lab/issues/225) |
+| Stable public inference availability | Verify the bot credential path, approved tuple, positive capacity and runtime eligibility; report PoC fences truthfully | [Stable admission](https://github.com/paranjko/external-test-lab/issues/211) |
+| Finish monitoring rollout | Redeploy the integrated monitoring source without changing gateway routes; verify future managed JOIN collector selection and retain host metrics on an intentionally stopped validator | [Monitoring](https://github.com/paranjko/external-test-lab/issues/222) |
+| Complete the manual matrix | Prepare shared-Postgres H/HR replicas and run wrapping, catch-up, load and compatibility scenarios with separate verdicts | [Stand preparation](https://github.com/paranjko/external-test-lab/issues/225) |
+
+Merge readiness of this source change is not a continuous-availability or
+full-matrix PASS. A failed smoke remains a failed observation even if the
+configuration and local regression suite are ready to integrate.
