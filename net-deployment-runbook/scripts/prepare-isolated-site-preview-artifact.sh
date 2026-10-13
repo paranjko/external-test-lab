@@ -43,7 +43,13 @@ git -C "$source_repository" diff --name-only "$base_revision" "$revision" | LC_A
   --output "$tmp/preview-composition.json" \
   --repository-root "$root" \
   --endpoint-input "$root/04-ops/edge-node/PublicCaddyfile" \
-  --endpoint-input "$root/04-ops/render-ops.sh"
+  --endpoint-input "$root/04-ops/render-ops.sh" \
+  --endpoint-input "$root/04-ops/network-observer.sh" \
+  --endpoint-input "$root/04-ops/network-observer-http.py" \
+  --endpoint-input "$root/04-ops/gdc-network-observer.service" \
+  --endpoint-input "$root/04-ops/gdc-network-observer.socket" \
+  --endpoint-input "$root/04-ops/gdc-network-observer@.service" \
+  --endpoint-input "$root/04-ops/gdc-network-observer.timer"
 mode="$(jq -r .mode "$tmp/preview-composition.json")"
 if [[ "$mode" == none ]]; then
   printf 'SKIP no source-bound preview is required\n'

@@ -7,6 +7,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/runbook/scripts" "$tmp/payload" "$tmp/home" "$tmp/bin"
 cp "$ROOT/scripts/ensure-inferenced-cli.sh" "$tmp/runbook/scripts/ensure-inferenced-cli.sh"
 cp "$ROOT/scripts/inferenced.sh" "$tmp/runbook/scripts/inferenced.sh"
+cp "$ROOT/scripts/resolve-shared-inferenced-cli.sh" "$tmp/runbook/scripts/resolve-shared-inferenced-cli.sh"
 
 cp "$ROOT/scripts/lib.sh" "$tmp/runbook/scripts/lib.sh"
 cp "$ROOT/scripts/lib-lock.sh" "$tmp/runbook/scripts/lib-lock.sh"
@@ -86,6 +87,20 @@ GDC_INFERENCED_CLI_QUIET=true \
   "$tmp/runbook/scripts/ensure-inferenced-cli.sh" --join-profile "$tmp/join-profile.json" >"$tmp/profile.stdout" 2>"$tmp/profile.stderr"
 [[ -x "$tmp/gdc-home/bin/9.9.9/inferenced" ]]
 grep -Fq 'INSTALL pinned inferenced release=9.9.9 platform=LINUX_AMD64' "$tmp/profile.stderr"
+
+# Core release qualifiers do not alter the operator CLI's numeric version.
+# The digest still binds the exact archive selected by the profile.
+qualified_profile="$tmp/qualified-join-profile.json"
+jq '.spec.components.core.expected_runtime.version = "9.9.9-post1"' \
+  "$tmp/join-profile.json" >"$qualified_profile"
+qualified_root="$tmp/qualified-root"
+GDC_INTERNAL_DATA_ROOT="$qualified_root" \
+GDC_HOME="$qualified_root/node3" \
+GDC_INFERENCED_CLI_QUIET=true \
+  "$tmp/runbook/scripts/ensure-inferenced-cli.sh" --join-profile "$qualified_profile"
+[[ -x "$qualified_root/bin/9.9.9-post1/inferenced" ]]
+[[ "$(GDC_INTERNAL_DATA_ROOT="$qualified_root" GDC_HOME="$qualified_root/node3" \
+  "$tmp/runbook/scripts/resolve-shared-inferenced-cli.sh" "$qualified_profile")" == "$qualified_root/bin/9.9.9-post1/inferenced" ]]
 
 # A changed Join Profile for the same verified artifact reuses one shared
 # version-bound executable without downloading or installing it again.

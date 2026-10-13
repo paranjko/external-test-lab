@@ -5,7 +5,7 @@ load_project
 record_phase_profile verify
 CHAIN_BASE="${GDC_CHAIN_PUBLIC_BASE:-https://$PUBLIC_EDGE_HOST}"
 CHAIN_BASE="${CHAIN_BASE%/}"
-BOOTSTRAP_DESCRIPTOR="$ROOT/bootstrap/release/${CHAIN_ID}.json"
+BOOTSTRAP_DESCRIPTOR="$ROOT/../bootstrap/${CHAIN_ID}.json"
 RUN="$GDC_HOME/runs/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$RUN"
 VERDICT_WRITTEN=false

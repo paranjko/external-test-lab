@@ -102,7 +102,7 @@ assert_rc 'path escape rejected' 1 recovery_canonical_output_path "$TMP/out/../e
 mkdir -m 700 "$TMP/out"
 assert_rc 'new persistent output accepted' 0 recovery_canonical_output_path "$TMP/out/receipt.json"
 
-schema="$HERE/schemas/recovery-receipt-v1.schema.json"
+schema="$HERE/../schema/recovery-receipt-v1.schema.json"
 assert_rc 'strict schema rejects unknown field' 1 recovery_validate_json_schema "$schema" "$fixture"
 printf '{"schema_version":1,"kind":"gdc-network-recovery-receipt","receipt_type":"phase","receipt_id":"r","run_id":"run","attempt_id":"a","attempt_number":1,"sequence":1,"manifest_binding_kind":"none","manifest_sha256":null,"host":"node1","phase":"inspect","started_at":"2026-09-13T00:00:00Z","finished_at":"2026-09-13T00:00:01Z","command":{"selector":"inspect","redacted":true,"argv_sha256":"%064d"},"exit_status":0,"verdict":"OBSERVED","mutation_state":"none","observed_hashes":[],"evidence":[],"next_permitted_steps":[],"predecessor_receipts":[],"append_only":{"immutable":true,"attempt_directory":"/var/lib/gdc/runs/run/recovery/node1/inspect/attempt-1","prior_attempt_state":"none","raw_evidence_separate":true,"sanitized_receipt":true},"details":{"state":"INSPECTED","reason_code":"offline_test","message":"offline contract fixture"}}\n' 0 >"$TMP/receipt.json"
 assert_rc 'strict schema accepts complete receipt' 0 recovery_validate_json_schema "$schema" "$TMP/receipt.json"

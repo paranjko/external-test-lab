@@ -78,6 +78,8 @@ fi
 exit 0
 EOF
 chmod 0755 "$current_home/cosmovisor/upgrades/v0.2.16/bin/decentralized-api"
+mkdir -p "$current_home/cosmovisor/genesis/bin"
+cp "$current_home/cosmovisor/upgrades/v0.2.16/bin/decentralized-api" "$current_home/cosmovisor/genesis/bin/decentralized-api"
 ln -s upgrades/v0.2.16 "$current_home/cosmovisor/current"
 printf '%s\n' \
   'DAPI_VERSION=0.2.16' \
@@ -92,6 +94,30 @@ if (cd "$temporary/work" && PATH="$temporary/bin:$PATH" GDC_JOIN_DAPI_UPGRADE_UR
   exit 1
 fi
 grep -Fq 'ERROR generated JOIN DAPI runtime receipt does not match profile' "$temporary/dapi-mismatch.err"
+
+# Use actual hashes to reproduce a governance upgrade followed by a restart.
+# The genesis receipt remains unchanged while current selects a new payload.
+rm "$temporary/bin/sha256sum"
+genesis_digest="$(sha256sum "$current_home/cosmovisor/genesis/bin/decentralized-api" | awk '{print $1}')"
+sed -i "s/^DAPI_BINARY_SHA256=.*/DAPI_BINARY_SHA256=$genesis_digest/" "$current_home/gdc-join-dapi-runtime.env"
+printf '# upgraded payload\n' >>"$current_home/cosmovisor/upgrades/v0.2.16/bin/decentralized-api"
+restart_join() {
+  (cd "$temporary/work" && PATH="$temporary/bin:$PATH" \
+    GDC_JOIN_DAPI_UPGRADE_URL=https://github.com/gonka-ai/gonka/releases/download/release/v0.2.16/decentralized-api-amd64.zip \
+    GDC_JOIN_DAPI_UPGRADE_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    GDC_JOIN_DAPI_EXPECTED_VERSION=0.2.16 \
+    GDC_JOIN_DAPI_EXPECTED_COMMIT=18506d42c510e0cafe6acd748bcd8d83036cba40 \
+    sh "$ENTRYPOINT" "$current_home")
+}
+[[ "$(restart_join)" == 'COSMOVISOR run' ]]
+[[ "$(readlink "$current_home/cosmovisor/current")" == upgrades/v0.2.16 ]]
+printf '# corrupt genesis\n' >>"$current_home/cosmovisor/genesis/bin/decentralized-api"
+if restart_join >"$temporary/corrupt.out" 2>"$temporary/corrupt.err"; then
+  echo 'corrupted JOIN genesis binary was accepted' >&2
+  exit 1
+fi
+[[ ! -s "$temporary/corrupt.out" ]]
+grep -Fq 'binary does not match runtime receipt' "$temporary/corrupt.err"
 
 broken_home="$temporary/broken"
 mkdir -p "$broken_home/cosmovisor"

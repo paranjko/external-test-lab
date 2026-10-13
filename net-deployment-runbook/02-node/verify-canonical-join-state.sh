@@ -95,7 +95,11 @@ abci_info="$(curl -fsS --connect-timeout 5 --max-time 15 http://127.0.0.1:26657/
   || { echo 'canonical_core_unavailable: local Core abci_info endpoint is unavailable' >&2; exit 1; }
 # `status.node_info.version` is the embedded CometBFT version (for example
 # 0.38.19), not the Gonka Core version selected by the JOIN profile.
-actual_core_version="$(jq -er '.result.response.version' <<<"$abci_info")"
+# Core releases are reported by different official runtimes as either
+# `0.x.y` or `v0.x.y`; the JOIN profile stores the canonical form without the
+# presentation prefix.  Do not weaken the comparison beyond that one prefix.
+actual_core_version="$(jq -er '.result.response.version | strings | ltrimstr("v") | select(length > 0)' <<<"$abci_info")" \
+  || { echo 'canonical_core_unavailable: local Core abci_info endpoint lacks its version' >&2; exit 1; }
 [[ "$actual_chain_id" == "$expected_chain_id" ]] \
   || { echo 'canonical_chain_id_mismatch: local Core serves another chain' >&2; exit 1; }
 [[ "$actual_p2p_node_id" == "$expected_p2p_node_id" ]] \

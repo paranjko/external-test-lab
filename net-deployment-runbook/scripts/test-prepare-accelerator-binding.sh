@@ -121,6 +121,18 @@ set -Eeuo pipefail
 printf '%s\n' "$*" >>"${GDC_TEST_SSH_LOG:?}"
 if [[ " $* " == *' -G '* ]]; then printf 'hostname 192.0.2.8\nport 22\n';
 elif [[ " $* " == *' -T '* && "$*" == *'bash -s'* ]]; then printf 'fixture inspection\n'; fi
+if [[ "$*" =~ (^|[[:space:]])true$ ]]; then
+  echo 'unexpected standalone SSH readiness probe' >&2
+  exit 93
+fi
+if [[ "$*" == *'rm -rf /tmp/gdc-host-prep'* && -n "${GDC_TEST_TRANSFER_SSH_EXIT:-}" ]]; then
+  exit "$GDC_TEST_TRANSFER_SSH_EXIT"
+fi
+if [[ "${GDC_TEST_RETAINED_HOST_PREPARATION:-false}" == true ]]; then
+  case "$*" in
+    *'sudo test -s /etc/gonka/host.env'*|*'sudo test -L /etc/gonka/host.env'*) exit 1 ;;
+  esac
+fi
 exit 0
 EOF
 cat >"$tmp/runtime-bin/getent" <<'EOF'
@@ -145,6 +157,8 @@ GDC_JOIN_ROLE_INPUT=true
 GDC_JOIN_NETWORK_HOST=node8
 EOF
   phase_env=(env -u RUN -u GDC_RUN_ID PATH="$tmp/runtime-bin:$PATH" GDC_HOME="$home" GDC_DATA_ROOT="$home" GDC_ENV="$home/role.env" GDC_JOIN_PROFILE="$tmp/runtime-profile.json" GDC_PREPARE_HOSTS=node8 GDC_TEST_RECEIPT="$tmp/runtime-receipt.json" GDC_TEST_SSH_LOG="$home/ssh.log")
+  [[ "${GDC_TEST_RETAINED_HOST_PREPARATION:-false}" != true ]] \
+    || phase_env+=(GDC_TEST_RETAINED_HOST_PREPARATION=true)
   [[ -z "$run_id" ]] || phase_env+=(GDC_RUN_ID="$run_id")
   if ! "${phase_env[@]}" "$runtime_root/scripts/phase-prepare.sh" >"$home/out" 2>"$home/err"; then
     sed -n '1,20p' "$home/err" >&2
@@ -171,6 +185,69 @@ EOF
 run_phase_process managed-run fixture-run ''
 run_phase_process split-run fixture-split 'node8=gpu8'
 run_phase_process manual-run '' ''
+
+# Reset removes /srv/dai but retains the host firewall configuration. A JOIN
+# must re-run idempotent host preparation in that state instead of requiring
+# manual removal of /etc/gonka/host.env.
+GDC_TEST_RETAINED_HOST_PREPARATION=true run_phase_process retained-host-preparation fixture-retained ''
+case "$(<"$tmp/retained-host-preparation/ssh.log")" in
+  *prepare-host.sh*) ;;
+  *) fail 'retained Host preparation did not reach the idempotent preparer' ;;
+esac
+case "$(<"$tmp/retained-host-preparation/out")" in
+  *'READY  node8'*) ;;
+  *) fail 'retained Host preparation did not complete normally' ;;
+esac
+
+# The actual transfer is the only connection used to establish preparation
+# availability.  A transport refusal is classified for the requested Host;
+# no standalone readiness command may run first or a remote preparer execute.
+home="$tmp/transfer-unreachable"; mkdir -p "$home"
+cp "$tmp/managed-run/role.env" "$home/role.env"
+if env -u RUN PATH="$tmp/runtime-bin:$PATH" GDC_HOME="$home" GDC_DATA_ROOT="$home" \
+  GDC_ENV="$home/role.env" GDC_JOIN_PROFILE="$tmp/runtime-profile.json" \
+  GDC_PREPARE_HOSTS=node8 GDC_RUN_ID=fixture-transfer-unreachable \
+  GDC_TEST_RECEIPT="$tmp/runtime-receipt.json" GDC_TEST_SSH_LOG="$home/ssh.log" \
+  GDC_TEST_TRANSFER_SSH_EXIT=255 "$runtime_root/scripts/phase-prepare.sh" \
+  >"$home/out" 2>"$home/err"; then
+  fail 'production phase accepted an unreachable requested Host'
+fi
+grep -Fq 'FAILED  node8: SSH is unavailable; cannot prepare the requested Host' "$home/out" \
+  || fail 'transport refusal was not classified as requested-Host unavailability'
+! grep -Fq ' true' "$home/ssh.log" \
+  || fail 'phase preparation opened a standalone readiness connection'
+! grep -Fq 'prepare-host.sh' "$home/ssh.log" \
+  || fail 'unreachable transfer reached remote Host preparation'
+printf 'PASS preparation uses transfer as its SSH availability boundary\n'
+
+# Non-explicit preparation still permits a genuinely unreachable optional
+# Host, but a failed transfer must not be disguised as that skip condition.
+home="$tmp/optional-unreachable"; mkdir -p "$home"
+cp "$tmp/managed-run/role.env" "$home/role.env"
+if ! env -u RUN PATH="$tmp/runtime-bin:$PATH" GDC_HOME="$home" GDC_DATA_ROOT="$home" \
+  GDC_ENV="$home/role.env" GDC_JOIN_PROFILE="$tmp/runtime-profile.json" \
+  GDC_RUN_ID=fixture-optional-unreachable GDC_TEST_RECEIPT="$tmp/runtime-receipt.json" \
+  GDC_TEST_SSH_LOG="$home/ssh.log" GDC_TEST_TRANSFER_SSH_EXIT=255 \
+  "$runtime_root/scripts/phase-prepare.sh" >"$home/out" 2>"$home/err"; then
+  fail 'non-explicit preparation rejected an unreachable optional Host'
+fi
+grep -Fq 'SKIP  node8 is unreachable' "$home/out" \
+  || fail 'optional transport refusal was not recorded as a skip'
+
+home="$tmp/optional-transfer-failure"; mkdir -p "$home"
+cp "$tmp/managed-run/role.env" "$home/role.env"
+if env -u RUN PATH="$tmp/runtime-bin:$PATH" GDC_HOME="$home" GDC_DATA_ROOT="$home" \
+  GDC_ENV="$home/role.env" GDC_JOIN_PROFILE="$tmp/runtime-profile.json" \
+  GDC_RUN_ID=fixture-optional-transfer-failure GDC_TEST_RECEIPT="$tmp/runtime-receipt.json" \
+  GDC_TEST_SSH_LOG="$home/ssh.log" GDC_TEST_TRANSFER_SSH_EXIT=23 \
+  "$runtime_root/scripts/phase-prepare.sh" >"$home/out" 2>"$home/err"; then
+  fail 'non-explicit preparation accepted a failed Host-prep transfer'
+fi
+grep -Fq 'FAILED  node8: cannot transfer host-prep files' "$home/out" \
+  || fail 'non-transport transfer failure was not retained as preparation failure'
+! grep -Fq 'SKIP  node8 is unreachable' "$home/out" \
+  || fail 'non-transport transfer failure was incorrectly classified as unreachable'
+printf 'PASS optional Host skip is limited to SSH transport refusal\n'
 
 home="$tmp/drift-home"; mkdir -p "$home"
 cp "$tmp/managed-run/role.env" "$home/role.env"

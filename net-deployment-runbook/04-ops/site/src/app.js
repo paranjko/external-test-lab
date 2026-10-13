@@ -22,9 +22,13 @@ type GeoLocation = {
 
 type SiteNode = {
   name: string,
+  statusAlias?: string,
   address?: string,
   publicHost?: string,
+  dapiUrl?: string,
+  rpcIdentityVerified?: boolean,
   statusBase?: string,
+  validatorRpcBase?: string,
   ip?: string,
   geo?: ?GeoLocation,
   mode?: string,
@@ -33,9 +37,20 @@ type SiteNode = {
   participantState?: string,
   participantKnown?: boolean,
   validatorKnown?: boolean,
+  observationComplete?: boolean,
+  networkObserved?: boolean,
+  networkActive?: boolean,
   votingPower?: string,
+  validatorAddress?: string,
+  rpcHeight?: number,
+  rpcChainId?: string,
+  rpcBlockTimeMs?: number,
+  rpcObservedAt?: number,
+  chainDiagnostic?: string,
   endpointState?: string,
   endpointDiagnostic?: string,
+  peerCount?: ?number,
+  peerState?: string,
   catchingUp?: boolean,
   blocksBehind?: number,
   blockAgeSeconds?: number,
@@ -45,8 +60,16 @@ type SiteNode = {
   isOnline?: boolean,
   serverStatus?: string,
   softwareVersions?: ?any,
+  observedSoftwareVersions?: ?any,
+  observedModelRegistry?: ?any,
+  observedInferenceVersion?: string,
+  inferenceObservationRejected?: boolean,
   devShardHealth?: ?any,
   gpuHost?: ?string,
+  participantAddress?: ?string,
+  activity?: any,
+  bootstrapRpc?: string,
+  bootstrapNodeId?: string,
 };
 
 type SiteConfig = {
@@ -60,6 +83,8 @@ type SiteConfig = {
   grafanaNetwork?: string,
   grafanaInference: string,
   statusBase?: string,
+  bootstrapOrigin?: string,
+  publicBootstrap?: boolean,
   nodes: Array<SiteNode>,
   nodeCatalog?: Array<SiteNode>,
 };
@@ -85,7 +110,7 @@ type GatewayStateApi = {
 type HostStateApi = {
   isActiveParticipant: (status: mixed) => boolean,
   classify: (state: any) => {
-    state: "validating" | "active" | "inactive" | "unknown",
+    state: "validating" | "active" | "degraded" | "inactive" | "unknown",
     stateLabel: string,
     reason: string,
     primaryLabel: string,
@@ -99,10 +124,10 @@ type HostStateApi = {
 };
 
 type ValidatorMapController = {
-  update: (nodes: Array<SiteNode>) => void,
+  update: (nodes: Array<SiteNode>, validatorSet?: any) => void,
 };
 
-type MarkerState = "inactive" | "active" | "validating" | "unknown";
+type MarkerState = "waiting" | "unavailable" | "active" | "validating";
 
 type Participant = {
   address: string,
@@ -127,12 +152,18 @@ type ParticipantDiscoveryCache = {
   retryAt: number,
 };
 
-type GpuInventory = Map<string, Array<string>>;
+type GpuRecord = {
+  name: string,
+  memoryBytes: ?number,
+  memoryLabel?: string,
+};
+type GpuInventory = Map<string, Array<GpuRecord>>;
 type SoftwareInventory = Map<string, Array<any>>;
 type HardwareNode = {
   local_id?: string,
   version?: string,
   host?: string,
+  port?: string,
   hardware?: Array<{ type?: string, count?: number }>,
 };
 type HardwareInventoryEntry = {
@@ -151,16 +182,41 @@ type DevShardVersion = {
 type SoftwareVersionsApi = {
   displayVersion: (reported: string) => string,
   normalizeMlNodeVersion: (chain: string, reported: string) => string,
-  formatMlNodes: (chain: string, mlnodes: Array<{ version?: string, node_id?: string }>) => string,
+  formatMlNodes: (chain: string, mlnodes: Array<{ version?: string, node_id?: string, host?: string, port?: string }>) => string,
   describeMlNodes: (
     chain: string,
-    mlnodes: Array<{ version?: string, node_id?: string }>,
+    mlnodes: Array<{ version?: string, node_id?: string, host?: string, port?: string }>,
   ) => Array<string>,
-  selectLatestInventory: (samples: Array<any>) => Map<string, any>,
+  selectLatestInventory: (samples: Array<any>, nowSeconds?: number, maxAgeSeconds?: number) => Map<string, any>,
+  freshInventoryVersion: (reported: string, samples: Array<any>, component: string) => string,
+  freshPayloadVersion: (state: any, component: string) => string,
+  freshNetworkInferenceVersion: (inferenced: any, chainRpc: any, nodeId: string, chainId: string) => string,
+  selectMlNodes: (versions: any, hardware: any) => {observed: boolean, source: string, nodes: Array<{version?: string, node_id?: string, host?: string, port?: string}>},
+  emptyMlNodeLabel: (observation: {observed: boolean, source: string, nodes: Array<{version?: string, node_id?: string, host?: string, port?: string}>}) => string,
 };
 
 declare var GDC_SOFTWARE_VERSIONS: SoftwareVersionsApi;
+declare var GDC_NETWORK_OBSERVATION: {
+  nodeState: (observation: any) => ?any,
+  observeRpc: (base: string, nodeId: ?string, getJson: (url: string) => Promise<any>) => Promise<any>,
+  peerCount: (observation: any) => string,
+  loadCurrentValidatorSet: (reference: any, expectedChainId: string, getJson: (url: string) => Promise<any>) => Promise<any>,
+  loadParticipants: (apiOrigin: string, reference: any, expectedChainId: string, getJson: (url: string) => Promise<any>) => Promise<Array<any>>,
+  verifyChainApiReference: (apiOrigin: string, reference: any, expectedChainId: string, getJson: (url: string) => Promise<any>) => Promise<number>,
+  participantAddressForNode: (participants: Array<any>, node: any) => ?string,
+  currentVotingPower: (nodeAddress: any, validatorSet: any) => ?string,
+  applyCurrentVotingPower: (node: any, validatorSet: any) => ?string,
+  validatorSet: (response: any, referenceHeight: number, expectedChainId: string, observedChainId: string) => any,
+  referenceProgressed: (previous: any, height: number, chainId: string, nowMs: number, maxAgeMs?: number) => boolean,
+  selectProgressingReference: (samples: Array<any>, previousByNode: Map<string, any>, expectedChainId: string, nowMs: number) => ?any,
+  selectFreshReference: (samples: Array<any>, expectedChainId: string, nowMs: number) => ?any,
+  effectiveValidatorCount: (states: Array<any>) => number,
+  loadActivity: (base: string, getJson: (url: string) => Promise<any>) => Promise<any>,
+  activityState: (evidence: any, participant: ?string, nowMs?: number) => any,
+  inferenceState: (health: any) => any,
+};
 declare var L: any;
+declare var WebSocket: any;
 
 type Validator = {
   name: string,
@@ -170,6 +226,8 @@ type Validator = {
   online: boolean,
   markerState: MarkerState,
   stateReason: string,
+  currentValidator: ?boolean,
+  gpuCount: number,
   geo: {
     lat: number,
     lon: number,
@@ -200,8 +258,8 @@ type ValidatorGroup = {
 type MarkerStateCounts = {
   validating: number,
   active: number,
-  inactive: number,
-  unknown: number,
+  waiting: number,
+  unavailable: number,
 };
 
 type HTMLElement = any;
@@ -229,7 +287,11 @@ declare class AbortController {
 }
 declare class URL {
   constructor(url: string): void;
+  protocol: string;
   hostname: string;
+  username: string;
+  password: string;
+  origin: string;
 }
 
 const cfg: SiteConfig = (window: any).GDC_CONFIG;
@@ -237,6 +299,17 @@ const siteBuild: any = (window: any).GDC_SITE_BUILD || {};
 const gatewayStatus: GatewayStateApi = (window: any).GDC_GATEWAY_STATE;
 const hostState: HostStateApi = (window: any).GDC_HOST_STATE;
 const $ = (id: string): any => document.getElementById(id);
+
+function renderModelList(models: Array<string>, title: string = ""): void {
+  const target = $("model-id");
+  target.replaceChildren();
+  for (const model of models.length ? models : ["Not reported"]) {
+    const item = document.createElement("li");
+    item.textContent = model;
+    target.append(item);
+  }
+  target.title = title;
+}
 const previewMatch = String((window: any).location?.pathname || "").match(
   /^\/preview\/([1-9][0-9]*)(?:\/|$)/,
 );
@@ -249,22 +322,72 @@ const previewHostMatch =
     : null;
 const previewNumber = previewMatch?.[1] || previewHostMatch?.[1] || "";
 const previewPrefix = previewMatch ? `/preview/${previewMatch[1]}` : "";
-const statusBase = String(
-  previewPrefix ? `${previewPrefix}/status` : cfg.statusBase || "/status",
-).replace(/\/$/, "");
-const chainRpcHost =
-  cfg.chainRpcHost ||
-  cfg.nodes.find((node) => node.name === cfg.gatewayNode)?.publicHost ||
-  cfg.nodes[0]?.publicHost;
-const chainRpcNode =
-  cfg.gatewayNode || cfg.nodes.find((node) => node.publicHost === chainRpcHost)?.name;
-const chainRpcOrigin =
-  previewPrefix && chainRpcNode
-    ? `${statusBase}/${chainRpcNode}`
-    : cfg.chainRpcOrigin || (chainRpcHost ? `https://${chainRpcHost}` : "");
-const statusUrl = (path: string): string => `${statusBase}${path}`;
-$("chain-id").textContent = cfg.chainId;
-$("model-id").textContent = cfg.model;
+let statusBase = "";
+let chainRpcCatalog: Array<SiteNode> = [];
+let chainRpcHost = "";
+let chainRpcNodeMatches: Array<SiteNode> = [];
+let chainRpcNode = "";
+let chainRpcOrigin = "";
+let chainApiOrigin = "";
+
+function configureNetwork(): void {
+  statusBase = String(
+    previewPrefix ? `${previewPrefix}/status` : cfg.statusBase || "/status",
+  ).replace(/\/$/, "");
+  chainRpcCatalog = cfg.publicBootstrap === true ? [] : cfg.nodeCatalog || cfg.nodes || [];
+  chainRpcHost =
+    cfg.chainRpcHost ||
+    chainRpcCatalog.find((node) => node.name === cfg.gatewayNode)?.publicHost ||
+    chainRpcCatalog[0]?.publicHost || "";
+  chainRpcNodeMatches = chainRpcCatalog.filter(
+    (node) => node.publicHost === chainRpcHost,
+  );
+  chainRpcNode = chainRpcNodeMatches.length === 1
+    ? String(chainRpcNodeMatches[0].statusAlias || chainRpcNodeMatches[0].name)
+    : "";
+  chainRpcOrigin = cfg.publicBootstrap === true ? "" :
+    previewPrefix && chainRpcNode
+      ? `${statusBase}/${chainRpcNode}`
+      : cfg.chainRpcOrigin || (chainRpcHost ? `https://${chainRpcHost}` : "");
+  // A preview must use its selected status proxy for both RPC and chain API
+  // reads. Direct Host chain API requests are cross-origin and therefore can
+  // leave validator membership and MLNode inventory unavailable in browsers.
+  chainApiOrigin = cfg.publicBootstrap === true ? "" : chainRpcOrigin;
+  $("chain-id").textContent = cfg.chainId;
+  renderModelList([cfg.model]);
+  $("model-label").textContent = "Common model";
+  $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana || "#";
+  $("grafana-inference").href = cfg.grafanaInference || "#";
+  const source = $("network-source");
+  if (source) source.textContent = "LIVE NETWORK";
+  const networkHeading = document.querySelector("#network .section-title h2");
+  if (networkHeading) networkHeading.textContent = "Participant status";
+}
+
+function renderNetworkObservationStatus(status: "pending" | "unavailable" | "invalid"): void {
+  const source = $("network-source");
+  const updated = $("updated");
+  if (status === "pending") {
+    if (source) source.textContent = "NETWORK OBSERVATION PENDING";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Waiting for a fresh network observation";
+  } else if (status === "invalid") {
+    if (source) source.textContent = "NETWORK OBSERVATION INVALID";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Network observer returned an invalid snapshot";
+  } else {
+    if (source) source.textContent = "NETWORK OBSERVATION UNAVAILABLE";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Network observer unavailable";
+  }
+}
+
+const statusUrl = (path: string): string => {
+  const url = `${statusBase}${path}`;
+  return cfg.publicBootstrap === true && path === "/network"
+    ? `${url}?chainId=${encodeURIComponent(cfg.chainId)}`
+    : url;
+};
 async function refreshTelegramConsumer(): Promise<void> {
   const link = $("contact");
   link.hidden = true;
@@ -285,21 +408,23 @@ async function refreshTelegramConsumer(): Promise<void> {
     link.removeAttribute("title");
   } catch {}
 }
-$("grafana-network").href = cfg.grafanaNetwork || cfg.grafana;
-$("grafana-inference").href = cfg.grafanaInference;
 const cards: Map<string, HTMLElement> = new Map();
-let observedNodes: Array<SiteNode> = cfg.nodes.map((node) => ({
-  ...node,
-  statusBase:
-    previewPrefix && /^node[0-9]+\.gonka-dev\.net$/i.test(node.publicHost || "")
-      ? `${statusBase}/${node.publicHost || ""}`
-      : previewPrefix && node.name
-        ? `${statusBase}/${node.name}`
-        : node.statusBase,
-}));
+// Configuration supplies display fallbacks only. A card exists only for a
+// Host in the current bootstrap/P2P observation.
+let observedNodes: Array<SiteNode> = [];
 let cardGpuInventory: GpuInventory = new Map();
 let cardSoftwareInventory: SoftwareInventory = new Map();
 let cardHardwareInventory: HardwareInventory = new Map();
+let retainedValidatorSet: any = null;
+let validatorSetObservedAt = 0;
+let publicChainState: any = null;
+// Snapshot capability is independent of choosing another network. Production
+// keeps its gateway configuration while consuming the same evidence as local.
+let observerSnapshotMode = cfg.publicBootstrap === true;
+let networkSnapshot: any = null;
+let networkSocket: any = null;
+let networkSocketRetry: ?TimeoutID = null;
+let detailsInFlight: ?Promise<void> = null;
 let expandedCardKeys: Array<string> = [];
 let selectedCardKey = "";
 let cardSequence = 0;
@@ -309,13 +434,29 @@ function nodeKey(node: SiteNode): string {
   return node.address || node.name;
 }
 
+function chainApiReferenceNode(): ?SiteNode {
+  // The operator alias in the catalog (for example gdc-node0) is not the
+  // network's advertised node name (node0).  The public hostname is the
+  // common, externally observable identity used to select the chain API.
+  if (chainRpcNodeMatches.length !== 1) return null;
+  const expectedHost = String(chainRpcHost || "").toLowerCase();
+  const matches = observedNodes.filter(
+    (node) => String(node.publicHost || "").toLowerCase() === expectedHost,
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function hostCardCapacity(totalCards: number): number {
   const width = document.documentElement.clientWidth || window.innerWidth;
   if (width <= 900) return 1;
+  // A four-Host network is still a small enough inventory to keep every
+  // desktop card open. Preserve normal card width and horizontal reachability
+  // rather than turning the fourth Host into an unreadable vertical rail.
+  if (totalCards <= 4) return totalCards;
   let capacity = Math.min(width < 1200 ? 2 : 4, totalCards);
   const deckWidth = $("nodes")?.clientWidth || width;
   const collapsedWidth = 32;
-  const minimumExpandedWidth = 270;
+  const minimumExpandedWidth = 320;
   while (
     capacity > 1 &&
     (deckWidth - (totalCards - capacity) * collapsedWidth) / capacity <
@@ -417,6 +558,7 @@ function createCard(node: SiteNode): HTMLElement {
   const detailsId = `host-details-${++cardSequence}`;
   el.className = `node ${node.mode || "active"} is-collapsed`;
   el.dataset.nodeKey = key;
+  el.dataset.nodeName = node.name;
   el.setAttribute("role", "listitem");
   el.innerHTML = `
     <h3>
@@ -426,8 +568,23 @@ function createCard(node: SiteNode): HTMLElement {
       </button>
     </h3>
     <div class="node-details" id="${detailsId}" hidden>
-      <small data-k="status-reason"></small>
-      <small data-k="scope"></small>
+      <small class="node-identity" data-k-row="node-id" hidden>
+        <span>node id</span>
+        <div class="copy-field">
+          <code data-k="node-id"></code>
+          <button class="copy-value" type="button" data-copy-value="node-id" data-copy-label="Copy node ID" data-copy-success="Node ID copied" title="Copy node ID">
+            <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <rect x="9" y="9" width="10" height="10" rx="1"></rect>
+              <path d="M15 9V6a1 1 0 0 0-1-1H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h3"></path>
+            </svg>
+            <svg class="copy-success-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m5 12 4.2 4.2L19 6.5"></path>
+            </svg>
+            <span class="sr-only">Copy node ID</span>
+          </button>
+          <span class="sr-only" data-k="copy-status" aria-live="polite"></span>
+        </div>
+      </small>
       <div class="metric">
         <span>height</span>
         <b data-k="height"></b>
@@ -435,6 +592,23 @@ function createCard(node: SiteNode): HTMLElement {
       <div class="metric">
         <span>voting power</span>
         <b data-k="vp"></b>
+      </div>
+      <div class="metric account" data-k-row="account" hidden>
+        <span>account</span>
+        <div class="copy-field">
+          <code data-k="account"></code>
+          <button class="copy-value" type="button" data-copy-value="account" data-copy-label="Copy account address" data-copy-success="Account address copied" title="Copy account address">
+            <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <rect x="9" y="9" width="10" height="10" rx="1"></rect>
+              <path d="M15 9V6a1 1 0 0 0-1-1H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h3"></path>
+            </svg>
+            <svg class="copy-success-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m5 12 4.2 4.2L19 6.5"></path>
+            </svg>
+            <span class="sr-only">Copy account address</span>
+          </button>
+          <span class="sr-only" data-k="copy-status" aria-live="polite"></span>
+        </div>
       </div>
       <div class="metric">
         <span>chain sync</span>
@@ -448,6 +622,9 @@ function createCard(node: SiteNode): HTMLElement {
         <span>peers</span>
         <b data-k="peers"></b>
       </div>
+      <div class="metric"><span>PoC contribution</span><b data-k="poc">Checking…</b></div>
+      <div class="metric" data-k-row="cpoc"><span>cPoC contribution</span><b data-k="cpoc">Checking…</b></div>
+      <div class="metric"><span>inference traffic</span><b data-k="inference">Checking…</b></div>
       <div class="metric inferenced" data-k-row="inferenced">
         <span>inferenced</span>
         <b data-k="inferenced"></b>
@@ -460,28 +637,23 @@ function createCard(node: SiteNode): HTMLElement {
         <span>DevShard</span>
         <b data-k="devshard"></b>
       </div>
-      <div class="metric gpu" data-k-row="gpu" hidden>
-        <span>GPU</span>
-        <b data-k="gpu"></b>
-      </div>
-      <div class="metric mlnodes" data-k-row="mlnodes" hidden>
-        <span>MLNodes</span>
-        <b data-k="mlnodes"></b>
+      <div class="metric mlnode" data-k-row="mlnode" hidden>
+        <span>MLNode</span>
+        <ul class="mlnode-list" data-k="mlnode"></ul>
       </div>
     </div>
   `;
   set(el, "host", node.publicHost || node.name);
   set(el, "status", node.mode === "skip" ? "SKIP" : "checking…");
-  set(el, "scope", node.mode === "skip" ? node.reason : node.address);
   set(el, "height", node.mode === "skip" ? "–" : "…");
   set(el, "vp", node.mode === "skip" ? "Unavailable" : "Unavailable");
   set(el, "sync", node.mode === "skip" ? "Unknown" : "Unknown");
   set(el, "endpoint", node.mode === "skip" ? "Unknown" : "Unknown");
   set(el, "peers", node.mode === "skip" ? "–" : "…");
   updateSoftware(cardSoftwareInventory, node, el);
-  updateGpu(cardGpuInventory, cardHardwareInventory, node, el);
   updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, el);
   updateDevShards(node, el);
+  renderNodeIdentity(el, node);
   if (node.mode === "skip")
     el.querySelector('[data-k="status"]').className = "status skip";
   $("nodes").append(el);
@@ -492,8 +664,47 @@ function createCard(node: SiteNode): HTMLElement {
   el.querySelector(".node-toggle").addEventListener("keydown", (event) =>
     moveHostCardFocus(event, key),
   );
+  for (const button of el.querySelectorAll(".copy-value")) {
+    button.addEventListener("click", (event) => {
+      const target: any = event.currentTarget;
+      const key = String(target?.dataset.copyValue || "");
+      const value = String(el.querySelector('[data-k="' + key + '"]')?.textContent || "").trim();
+      const label = String(target?.dataset.copyLabel || "Copy value");
+      const success = String(target?.dataset.copySuccess || "Copied");
+      if (value) copyValue(value, target, label, success);
+    });
+  }
   updateCardToggleLabel(el);
   return el;
+}
+
+function copyValue(value: string, target: HTMLElement, label: string, success: string): void {
+  const copied = (): void => {
+    target.title = "Copied";
+    target.setAttribute("aria-label", success);
+    target.dataset.copied = "true";
+    const status = target.parentElement?.querySelector('[data-k="copy-status"]');
+    if (status) status.textContent = success;
+    window.setTimeout(() => {
+      target.title = label;
+      target.removeAttribute("data-copied");
+      target.setAttribute("aria-label", `${label} ${value}`);
+      if (status) status.textContent = "";
+    }, 1500);
+  };
+  const clipboard = (window: any).navigator?.clipboard;
+  if (clipboard?.writeText) {
+    clipboard.writeText(value).then(copied).catch(() => {});
+    return;
+  }
+  const input: any = document.createElement("textarea");
+  input.value = value;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.append(input);
+  input.select();
+  try { if (document.execCommand("copy")) copied(); } finally { input.remove(); }
 }
 
 function updateDevShardVersions(
@@ -501,8 +712,8 @@ function updateDevShardVersions(
 ): void {
   const target = $("devshard-versions");
   if (!versions.length) {
-    target.textContent = "Unavailable";
-    target.title = "Approved DevShard versions could not be read from chain state";
+    target.textContent = "None approved";
+    target.title = "Chain state reports no approved DevShard versions";
     return;
   }
   target.textContent = versions.map((version) => version.name).join(" · ");
@@ -511,97 +722,508 @@ function updateDevShardVersions(
     .join("\n");
 }
 
-function updateGpu(
-  inventory: GpuInventory,
-  hardwareInventory: HardwareInventory,
-  node: SiteNode,
-  card: HTMLElement,
-): void {
-  const row = card.querySelector('[data-k-row="gpu"]');
-  const gpuHost = node.gpuHost || node.name;
-  // A dynamically discovered participant has its public DNS name from the
-  // chain, whereas the exporter labels the same machine with its SSH alias.
-  // refreshGpuInventory indexes both labels, so prefer the explicit GPU host
-  // but also allow the stable public hostname to identify local hardware.
-  const inventoryKey = [gpuHost, node.publicHost, node.name].find((key) =>
-    inventory.has(key || ""),
-  );
-  const names = inventory.get(inventoryKey || "") || [];
-  const hardware = node.address ? hardwareInventory.get(node.address) : null;
-  // A split MLNode reports its own public endpoint in the chain inventory.
-  // Treat a distinct literal address as network-attached even if a stale site
-  // catalog has not yet learned the operator's ML SSH alias.
-  const networkAttached = (hardware?.nodes || []).some((runtime) => {
-    const host = String(runtime?.host || "").trim();
-    return Boolean(
-      node.ip &&
-        /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) &&
-        host !== node.ip,
-    );
-  });
-  const connection =
-    (node.gpuHost && node.gpuHost !== node.name) || networkAttached
-      ? "network"
-      : "local";
-  const countedNames: Map<string, number> = new Map();
-  const reportedHardware = (hardware?.nodes || []).flatMap((runtime) =>
-    (runtime.hardware || []).flatMap((item) => {
-      const name = String(item?.type || "").trim();
-      const count = Number(item?.count || 0);
-      return name && Number.isFinite(count) && count > 0
-        ? Array(count).fill(name)
-        : [];
-    }),
-  );
-  for (const name of reportedHardware.length ? reportedHardware : names) {
-    countedNames.set(name, (countedNames.get(name) || 0) + 1);
-  }
-  const inventoryLabel = [...countedNames.entries()]
-    .map(([name, count]) => {
-      const displayName = name.replace(/^NVIDIA\s+/i, "");
-      return count === 1 ? displayName : `${displayName} ×${count}`;
-    })
-    .join(" + ");
-  row.hidden = false;
-  if (!inventoryLabel) {
-    if (hardware?.state === "observed") {
-      set(card, "gpu", "Not assigned");
-      card.querySelector('[data-k="gpu"]').title =
-        "Chain runtime inventory reports no GPU for this participant";
-      return;
-    }
-    set(card, "gpu", "Unavailable");
-    card.querySelector('[data-k="gpu"]').title =
-      "Chain runtime inventory could not be read";
+function markDevShardVersionsUnavailable(): void {
+  const target = $("devshard-versions");
+  target.textContent = "Unavailable";
+  target.title = "Approved DevShard versions could not be read from verified chain state";
+}
+
+function formatEpochDuration(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.ceil((total % 3600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes} min`;
+  return "under 1 min";
+}
+
+function normalizedCpocEvents(cpoc: any): Array<any> {
+  if (cpoc?.state !== "observed" || !Array.isArray(cpoc.recent_events)) return [];
+  return cpoc.recent_events.map((event) => ({
+    epoch: String(event?.epoch_index || ""),
+    sequence: String(event?.event_sequence || ""),
+    trigger: String(event?.trigger_height || ""),
+    generation: String(event?.generation_start_height || ""),
+    phase: String(event?.phase || "").replace(/^CONFIRMATION_POC_/, "").replaceAll("_", " ").toLowerCase(),
+  })).filter((event) => /^[1-9]\d*$/.test(event.epoch) && /^\d+$/.test(event.sequence) &&
+    /^[1-9]\d*$/.test(event.trigger) && event.phase);
+}
+
+function renderEpochOverview(epoch: any, reference: any, cpoc: any): void {
+  const overview = $("epoch-overview");
+  if (!overview) return;
+  const index = String(epoch?.latest_epoch?.index || "");
+  const start = Number(epoch?.latest_epoch?.poc_start_block_height);
+  const end = Number(epoch?.latest_epoch?.end_height);
+  const height = Number(reference?.height);
+  const reportedRemaining = Number(epoch?.latest_epoch?.blocks_remaining);
+  if (!/^[1-9]\d*$/.test(index) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+    !Number.isSafeInteger(height) || start <= 0 || end <= start || height < start) {
+    overview.hidden = true;
     return;
   }
-  const fullGpuValue = `${inventoryLabel} – ${connection}`;
-  // The card has one line for GPU. Keep ordinary inventory names intact, but
-  // compact pathological multi-device labels instead of letting them overflow
-  // or make one Host card taller than the rest. The title retains the exact
-  // on-chain or monitoring value.
-  const gpuValue =
-    fullGpuValue.length > 42
-      ? `${inventoryLabel.slice(0, 30).trimEnd()}… – ${connection}`
-      : fullGpuValue;
-  set(card, "gpu", gpuValue);
-  card.querySelector('[data-k="gpu"]').title =
-    reportedHardware.length
-      ? `Current on-chain runtime inventory: ${fullGpuValue}`
-      : `GPU host: ${gpuHost}; most recent monitoring observation within 24 hours: ${fullGpuValue}`;
+  const remaining = Number.isSafeInteger(reportedRemaining) && reportedRemaining >= 0
+    ? reportedRemaining : Math.max(0, end - height);
+  const progress = Math.max(0, Math.min(100, ((height - start) / (end - start)) * 100));
+  const estimatedSeconds = Number(epoch?.estimated_remaining_seconds);
+  const blockInterval = Number(epoch?.block_interval_seconds);
+  const hasEstimate = Number.isFinite(estimatedSeconds) && estimatedSeconds >= 0;
+  const countdown = hasEstimate ? `≈ ${formatEpochDuration(estimatedSeconds)} left` : `${remaining.toLocaleString()} blocks left`;
+  const interval = Number.isFinite(blockInterval) && blockInterval > 0
+    ? ` · ~${blockInterval.toFixed(blockInterval % 1 ? 1 : 0)} s/block` : "";
+  $("epoch-label").textContent = `Epoch ${index}`;
+  $("epoch-progress-bar").style.width = `${progress.toFixed(1)}%`;
+  $("epoch-progress-track").setAttribute("aria-valuenow", String(Math.round(progress)));
+  $("epoch-progress-track").setAttribute("aria-valuetext", `${remaining.toLocaleString()} blocks left in epoch ${index}`);
+  $("epoch-progress-detail").textContent = `Height ${height.toLocaleString()} of ${end.toLocaleString()}`;
+  $("epoch-remaining").textContent = countdown;
+  $("epoch-remaining").title = hasEstimate
+    ? "Estimate from the observed interval between recent blocks"
+    : "Block timing is not available from the current chain observation";
+  $("epoch-end").textContent = `${remaining.toLocaleString()} blocks remaining${interval}`;
+  $("epoch-poc-state").textContent = `Current stage starts at height ${start.toLocaleString()}`;
+  const cpocState = $("epoch-cpoc-state");
+  const cpocDetail = $("epoch-cpoc-detail");
+  const events = normalizedCpocEvents(cpoc);
+  if (cpoc?.state !== "observed") {
+    cpocState.textContent = "Not reported";
+    cpocDetail.textContent = "The current chain observation did not include cPoC state.";
+  } else if (cpoc.active === true) {
+    const phase = String(cpoc?.event?.phase || "").replace(/^CONFIRMATION_POC_/, "").replaceAll("_", " ").toLowerCase();
+    const trigger = Number(cpoc?.event?.trigger_height);
+    const generation = Number(cpoc?.event?.generation_start_height);
+    cpocState.textContent = phase ? `Active · ${phase}` : "Active";
+    const eventDetail = Number.isSafeInteger(trigger) && trigger > 0
+      ? `Trigger height ${trigger.toLocaleString()}${Number.isSafeInteger(generation) && generation > 0 ? ` · generation starts at ${generation.toLocaleString()}` : ""}.`
+      : "The active event did not include its stage height.";
+    cpocDetail.textContent = events.length
+      ? `${eventDetail} Latest recorded: ${events.map((event) => `E${event.epoch} #${event.sequence} ${event.phase}`).join(" · ")}.`
+      : eventDetail;
+  } else {
+    cpocState.textContent = "No active event";
+    cpocDetail.textContent = events.length
+      ? `Latest recorded: ${events.map((event) => `E${event.epoch} #${event.sequence} ${event.phase}; trigger ${event.trigger}${/^[1-9]\d*$/.test(event.generation) ? `; generation ${event.generation}` : ""}`).join(" · ")}.`
+      : cpoc.recent_events_state === "observed"
+        ? "No cPoC events were recorded in the observed epoch window."
+        : "Recent cPoC events were not reported.";
+  }
+  overview.hidden = false;
+}
+
+function formatChainQuantity(value: any): string {
+  const raw = String(value ?? "");
+  return /^\d+$/.test(raw) ? raw.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "–";
+}
+
+function resultParticipantLabel(address: string): {label: string, title: string} {
+  return {label: address.length > 18 ? `${address.slice(0, 10)}…${address.slice(-6)}` : address, title: address};
+}
+
+function resultCommitments(result: any, address: string): {label: string, detail: string, state: string} {
+  if (!Array.isArray(result?.poc_commits))
+    return {label: "Unavailable", detail: "The finalized PoC commitment query was unavailable.", state: "unavailable"};
+  const commitments = result.poc_commits.filter((commit) => String(commit?.participant_address || "") === address);
+  if (!commitments.length)
+    return {label: "No commitment recorded", detail: "No commitment was recorded for this participant at the finalized epoch PoC stage.", state: "observed"};
+  const detail = commitments.map((commit) => `${String(commit?.model_id || "model not reported")}: ${formatChainQuantity(commit?.count)} artifacts`).join(" · ");
+  return {label: detail, detail: "Committed artifacts are evidence of submission, not a validation outcome.", state: "observed"};
+}
+
+function validationTally(submissions: Array<any>): {accepted: number, rejected: number, unavailable: number} {
+  let accepted = 0;
+  let rejected = 0;
+  let unavailable = 0;
+  for (const submission of submissions) {
+    const raw = String(submission?.validated_weight || "");
+    if (!/^-?\d+$/.test(raw)) unavailable += 1;
+    else if (BigInt(raw) > 0n) accepted += 1;
+    else rejected += 1;
+  }
+  return {accepted, rejected, unavailable};
+}
+
+function attestationsLabel(tally: {accepted: number, rejected: number, unavailable: number}): string {
+  return [
+    `${tally.accepted} accepted`,
+    `${tally.rejected} rejected`,
+    tally.unavailable ? `${tally.unavailable} unreadable` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function resultAttestations(result: any, address: string): {label: string, detail: string, state: string} {
+  if (!Array.isArray(result?.poc_votes))
+    return {label: "Unavailable", detail: "The finalized PoC validation query was unavailable.", state: "unavailable"};
+  const submissions = result.poc_votes.filter((vote) => String(vote?.participant_address || "") === address &&
+    String(vote?.poc_stage_start_block_height || "") === String(result?.poc_start_block_height || ""));
+  if (!submissions.length)
+    return {label: "No attestation recorded", detail: "No validator attestation was recorded for this participant at the finalized PoC stage.", state: "observed"};
+  return {
+    label: attestationsLabel(validationTally(submissions)),
+    detail: "Each attestation is a validator's vote on this participant's PoC work. It is not the complete epoch outcome.",
+    state: "observed",
+  };
+}
+
+function resultValidatorState(value: any): string {
+  if (value?.state === "observed") return formatChainQuantity(value.voting_power);
+  if (value?.state === "not_in_set") return "Not in set";
+  if (value?.state === "unmapped") return "Not mapped";
+  return "Unavailable";
+}
+
+function appendVerificationCell(row: HTMLElement, label: string, detail: string, state: string = "observed"): void {
+  const cell = document.createElement("td");
+  cell.textContent = label;
+  cell.title = detail;
+  cell.dataset.state = state;
+  row.append(cell);
+}
+
+function appendVerificationEmpty(body: HTMLElement, columns: number, message: string): void {
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = columns;
+  cell.textContent = message;
+  row.append(cell);
+  body.append(row);
+}
+
+function consensusSummary(rows: Array<any>): {label: string, detail: string, state: string} {
+  const observed = rows.filter((row) => row?.effective_validator?.state === "observed");
+  const comparable = rows.filter((row) => {
+    const previous = String(row?.previous_effective_validator?.state || "");
+    const effective = String(row?.effective_validator?.state || "");
+    return ["observed", "not_in_set"].includes(previous) && ["observed", "not_in_set"].includes(effective);
+  });
+  if (!comparable.length)
+    return {label: "Unavailable", detail: "The complete historical validator-set comparison was unavailable.", state: "unavailable"};
+  const membershipChanges = comparable.filter((row) =>
+    String(row.previous_effective_validator?.state) !== String(row.effective_validator?.state)).length;
+  const powerChanges = comparable.filter((row) => row.previous_effective_validator?.state === "observed" &&
+    row.effective_validator?.state === "observed" &&
+    String(row.previous_effective_validator?.voting_power) !== String(row.effective_validator?.voting_power)).length;
+  const detail = `${membershipChanges} membership change${membershipChanges === 1 ? "" : "s"} · ${powerChanges} power change${powerChanges === 1 ? "" : "s"}`;
+  return {label: `${observed.length} member${observed.length === 1 ? "" : "s"}`, detail, state: "observed"};
+}
+
+function pocSummary(result: any): {label: string, detail: string, state: string} {
+  if (!Array.isArray(result?.poc_commits) || !Array.isArray(result?.poc_votes))
+    return {label: "Unavailable", detail: "The finalized PoC commitment or validation query was unavailable.", state: "unavailable"};
+  const committers = new Set(result.poc_commits.map((commit) => String(commit?.participant_address || "")).filter(Boolean));
+  const votes = result.poc_votes.filter((vote) => String(vote?.poc_stage_start_block_height || "") === String(result?.poc_start_block_height || ""));
+  return {
+    label: `${committers.size} participant${committers.size === 1 ? "" : "s"} committed · ${votes.length} validator attestation${votes.length === 1 ? "" : "s"}`,
+    detail: attestationsLabel(validationTally(votes)),
+    state: "observed",
+  };
+}
+
+function cpocSummary(events: any, epoch: string): {label: string, detail: string, state: string} {
+  if (!Array.isArray(events))
+    return {label: "Unavailable", detail: "The cPoC event-history query was unavailable.", state: "unavailable"};
+  if (!events.length)
+    return {label: "No event", detail: `No cPoC event was recorded in epoch ${formatChainQuantity(epoch)}.`, state: "observed"};
+  const completed = events.filter((event) => String(event?.phase || "") === "CONFIRMATION_POC_COMPLETED").length;
+  const eventDetail = events.map((event) => `#${String(event?.event_sequence || "?")} ${String(event?.phase || "unknown").replace(/^CONFIRMATION_POC_/, "").replaceAll("_", " ").toLowerCase()} at trigger ${formatChainQuantity(event?.trigger_height)}`).join(" · ");
+  return {label: `${events.length} event${events.length === 1 ? "" : "s"}`, detail: `${completed} completed · ${eventDetail}`, state: "observed"};
+}
+
+function renderFinalizedEpochResults(result: any): void {
+  const section = $("verification-results");
+  if (!section) return;
+  const epoch = String(result?.epoch_index || "");
+  const stage = String(result?.poc_start_block_height || "");
+  const effectiveHeight = String(result?.effective_block_height || "");
+  const rows = Array.isArray(result?.participants) ? result.participants : null;
+  if (result?.state !== "observed" || !/^[1-9]\d*$/.test(epoch) || !/^[1-9]\d*$/.test(stage) ||
+    !/^[1-9]\d*$/.test(effectiveHeight) || rows === null) {
+    section.hidden = true;
+    return;
+  }
+  const previousEpoch = String(result?.previous_epoch_index || "");
+  const previousHeight = String(result?.previous_effective_block_height || "");
+  $("verification-epoch-label").textContent = `E${formatChainQuantity(epoch)}`;
+  $("verification-results-summary").textContent = /^[1-9]\d*$/.test(previousEpoch) && /^[1-9]\d*$/.test(previousHeight)
+    ? `PoC stage ${formatChainQuantity(stage)} · effective at ${formatChainQuantity(effectiveHeight)} · previous effective height ${formatChainQuantity(previousHeight)}`
+    : `PoC stage ${formatChainQuantity(stage)} · effective at ${formatChainQuantity(effectiveHeight)}`;
+  const poc = pocSummary(result);
+  $("verification-poc-state").textContent = poc.label;
+  $("verification-poc-detail").textContent = poc.detail;
+  $("verification-poc-state").dataset.state = poc.state;
+  const events = Array.isArray(result?.cpoc_events) ? result.cpoc_events : null;
+  const cpoc = cpocSummary(events, epoch);
+  $("verification-cpoc-events").textContent = cpoc.label;
+  $("verification-cpoc-detail").textContent = cpoc.detail;
+  $("verification-cpoc-events").dataset.state = cpoc.state;
+  const consensus = consensusSummary(rows);
+  $("verification-consensus-state").textContent = consensus.label;
+  $("verification-consensus-detail").textContent = consensus.detail;
+  $("verification-consensus-state").dataset.state = consensus.state;
+  const pocBody = $("verification-poc-result-rows");
+  const consensusBody = $("verification-consensus-result-rows");
+  pocBody.replaceChildren();
+  consensusBody.replaceChildren();
+  const ordered = rows.slice().sort((left, right) => String(left?.participant_address || "").localeCompare(String(right?.participant_address || "")));
+  if (!ordered.length) {
+    appendVerificationEmpty(pocBody, 3, "No participant weights were recorded for this finalized epoch.");
+    appendVerificationEmpty(consensusBody, 4, "No participant weights were recorded for this finalized epoch.");
+  }
+  for (const resultRow of ordered) {
+    const address = String(resultRow?.participant_address || "");
+    if (!/^gonka1[0-9a-z]+$/i.test(address)) continue;
+    const participant = resultParticipantLabel(address);
+    const pocRow = document.createElement("tr");
+    appendVerificationCell(pocRow, participant.label, participant.title);
+    const commitments = resultCommitments(result, address);
+    appendVerificationCell(pocRow, commitments.label, commitments.detail, commitments.state);
+    const attestations = resultAttestations(result, address);
+    appendVerificationCell(pocRow, attestations.label, attestations.detail, attestations.state);
+    pocBody.append(pocRow);
+    const consensusRow = document.createElement("tr");
+    appendVerificationCell(consensusRow, participant.label, participant.title);
+    const previous = resultValidatorState(resultRow?.previous_effective_validator);
+    const effective = resultValidatorState(resultRow?.effective_validator);
+    const currentState = String(resultRow?.effective_validator?.state || "unavailable");
+    appendVerificationCell(consensusRow, previous,
+      "Complete consensus validator set at the previous effective height.", String(resultRow?.previous_effective_validator?.state || "unavailable"));
+    appendVerificationCell(consensusRow, effective,
+      "Complete consensus validator set at this epoch's activation height.", currentState);
+    const change = previous === effective ? "Unchanged" : `${previous} → ${effective}`;
+    appendVerificationCell(consensusRow, change,
+      "Observed membership and power change between complete validator sets. This is not a causal diagnosis.", currentState);
+    consensusBody.append(consensusRow);
+  }
+  section.hidden = false;
+}
+
+function publicEndpointLabel(value: any): string {
+  try {
+    const parsed = new URL(String(value || ""));
+    return String(parsed.origin || "").replace(/^https?:\/\//, "") || String(value || "");
+  } catch { return String(value || ""); }
+}
+
+function devShardEndpointObservations(nodes: Array<SiteNode>): Array<any> {
+  const endpoints: Map<string, any> = new Map();
+  for (const node of nodes) {
+    const health = node.devShardHealth;
+    const endpoint = normalizedPublicOrigin(health?.source_endpoint || node.dapiUrl);
+    const previous = endpoints.get(endpoint);
+    if (endpoint && (!previous || (Date.parse(String(health?.observed_at || "")) || 0) >
+      (Date.parse(String(previous.health?.observed_at || "")) || 0))) endpoints.set(endpoint, {endpoint, health});
+  }
+  return [...endpoints.values()].sort((left, right) => left.endpoint.localeCompare(right.endpoint));
+}
+
+function runningDevShardRuntimes(health: any): Array<any> {
+  if (health?.state !== "observed" || !Array.isArray(health.runtimes)) return [];
+  return health.runtimes.filter((runtime) => String(runtime?.name || "").trim() &&
+    String(runtime?.status || "").toLowerCase() === "running")
+    .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, {numeric: true}));
+}
+
+function devShardRuntimeLabel(runtime: any): string {
+  const name = String(runtime?.name || "unknown").trim();
+  const binary = String(runtime?.binary_version || "").trim();
+  return binary && binary !== name ? `${name} (${binary})` : name;
+}
+
+function devShardObservationFresh(value: any): boolean {
+  const observedAt = Date.parse(String(value?.observed_at || ""));
+  return value?.state === "observed" && Number.isFinite(observedAt) &&
+    observedAt <= Date.now() && Date.now() - observedAt <= 90000;
+}
+
+function devShardSessionFresh(value: any): boolean {
+  if (!devShardObservationFresh(value) || !Array.isArray(value?.active_escrows)) return false;
+  const observedAt = Date.parse(String(value.observed_at)) / 1000;
+  const cachedAt = Number(value.cached_at);
+  const ttl = Number(value.cache_ttl_seconds);
+  return Number.isFinite(cachedAt) && cachedAt > 0 && Number.isFinite(ttl) && ttl >= 0 &&
+    cachedAt <= observedAt + 5 && observedAt - cachedAt <= ttl + 5;
+}
+
+function renderDevShardExecution(approvals: ?Array<any>, nodes: Array<SiteNode>): void {
+  const section = $("devshard-execution");
+  if (!section) return;
+  const endpoints = devShardEndpointObservations(nodes);
+  if (!endpoints.length) {
+    section.hidden = true;
+    return;
+  }
+  const observed = endpoints.filter((entry) => devShardObservationFresh(entry.health));
+  const runtimes = observed.flatMap((entry) => runningDevShardRuntimes(entry.health));
+  const approved = new Map(
+    (approvals || []).filter((entry) => String(entry?.name || "") && /^[0-9a-f]{64}$/i.test(String(entry?.sha256 || "")))
+      .map((entry) => [String(entry.name), String(entry.sha256).toLowerCase()]),
+  );
+  const matching = runtimes.filter((runtime) =>
+    approved.get(String(runtime?.name || "")) === String(runtime?.sha256 || "").toLowerCase());
+  const stats = observed.map((entry) => entry.health?.stats).filter(devShardSessionFresh);
+  const escrows = new Set(stats.flatMap((value) => Array.isArray(value?.active_escrows) ? value.active_escrows : []));
+  const endpointLabel = `${observed.length} / ${endpoints.length} observed`;
+  $("devshard-endpoint-state").textContent = endpointLabel;
+  $("devshard-endpoint-detail").textContent = "Health responses from distinct public endpoints in the peer observation.";
+  if (!observed.length) {
+    $("devshard-runtime-state").textContent = "Unavailable";
+    $("devshard-runtime-detail").textContent = "No fresh public health response is available.";
+  } else if (!runtimes.length) {
+    $("devshard-runtime-state").textContent = "No running runtime";
+    $("devshard-runtime-detail").textContent = "No running runtime was reported by the observed public health endpoints.";
+  } else if (!approvals) {
+    $("devshard-runtime-state").textContent = "Approval unavailable";
+    $("devshard-runtime-detail").textContent = `${runtimes.length} running runtime report${runtimes.length === 1 ? "" : "s"}; the chain-approved catalog could not be read.`;
+  } else if (!approved.size) {
+    $("devshard-runtime-state").textContent = "No approved runtime";
+    $("devshard-runtime-detail").textContent = `${runtimes.length} running runtime report${runtimes.length === 1 ? "" : "s"}; the chain-approved catalog is empty.`;
+  } else {
+    $("devshard-runtime-state").textContent = `${matching.length} / ${runtimes.length} SHA match`;
+    $("devshard-runtime-detail").textContent = "Running runtime hashes compared with the current chain-approved catalog.";
+  }
+  if (stats.length) {
+    $("devshard-session-state").textContent = `${escrows.size} reported escrow${escrows.size === 1 ? "" : "s"}`;
+    $("devshard-session-detail").textContent = `${stats.length} responding endpoint${stats.length === 1 ? "" : "s"} · primary runtime only · duplicate escrow IDs counted once.`;
+  } else {
+    $("devshard-session-state").textContent = "Not observed";
+    $("devshard-session-detail").textContent = "No fresh host-local session snapshot is available.";
+  }
+  const observedAt = Math.min(...observed.map((entry) => Date.parse(String(entry.health.observed_at))));
+  $("devshard-execution-summary").textContent = Number.isFinite(observedAt)
+    ? `Health observed ${new Date(observedAt).toISOString().slice(11, 19)} UTC`
+    : "Waiting for fresh health observations";
+  const body = $("devshard-execution-rows");
+  body.replaceChildren();
+  for (const entry of endpoints) {
+    const row = document.createElement("tr");
+    appendVerificationCell(row, publicEndpointLabel(entry.endpoint), "Public endpoint deduplicated from the current peer observation.", String(entry.health?.state || "unavailable"));
+    const fresh = devShardObservationFresh(entry.health);
+    const endpointRuntimes = fresh ? runningDevShardRuntimes(entry.health) : [];
+    const runtimeDetail = endpointRuntimes.length
+      ? endpointRuntimes.map((runtime) => {
+        const expected = approved.get(String(runtime?.name || ""));
+        const received = String(runtime?.sha256 || "").toLowerCase();
+        const hashState = !approvals ? "SHA unverified" : !expected ? "Not approved"
+          : !/^[0-9a-f]{64}$/.test(received) ? "SHA unavailable" : expected === received ? "SHA match" : "SHA differs";
+        return `${devShardRuntimeLabel(runtime)} · ${hashState}`;
+      }).join("\n")
+      : fresh ? "No running runtime" : entry.health?.state === "observed" ? "Stale health response" : "Unavailable";
+    appendVerificationCell(row,
+      runtimeDetail,
+      String(entry.health?.error || "Running binaries compared by protocol name and reported SHA with the chain-approved catalog."), fresh ? "observed" : "unavailable");
+    const session = entry.health?.stats;
+    if (fresh && devShardSessionFresh(session)) {
+      const active = [...new Set(session.active_escrows)];
+      const version = devShardRuntimeLabel({name: session.protocol_version, binary_version: session.binary_version});
+      const list = active.map((id) => {
+        const shard = Array.isArray(session.shards) ? session.shards.find((item) => item?.escrow_id === id) : null;
+        return `#${id}${shard ? ` · E${formatChainQuantity(shard.epoch_id)}` : ""}`;
+      });
+      appendVerificationCell(row, [`${active.length} active escrow${active.length === 1 ? "" : "s"}`, version, ...list].join("\n"),
+        `Snapshot ${new Date(Number(session.cached_at) * 1000).toISOString()} · cache TTL ${session.cache_ttl_seconds}s · host epoch ${formatChainQuantity(session.current_epoch_id)}.`, "observed");
+    } else if (session?.state === "observed") {
+      appendVerificationCell(row, "Stale snapshot", "The cached session list or its observation has expired.", "unavailable");
+    } else if (session?.state === "not_exposed") {
+      appendVerificationCell(row, "Not exposed", "A v4+ runtime was not reported, so this endpoint's host-local session list was not queried.", "not_exposed");
+    } else {
+      appendVerificationCell(row, "Unavailable", String(session?.error || "The host-local session snapshot was unavailable."), "unavailable");
+    }
+    body.append(row);
+  }
+  section.hidden = false;
+}
+
+function monitoredGpuRecords(inventory: GpuInventory, keys: Array<?string>): Array<GpuRecord> {
+  const key = keys.find((candidate) => inventory.has(String(candidate || "")));
+  return inventory.get(String(key || "")) || [];
+}
+
+function reportedGpuRecords(runtime: any): Array<GpuRecord> {
+  const records: Array<GpuRecord> = [];
+  if (!Array.isArray(runtime?.hardware)) return records;
+  for (const item of runtime.hardware) {
+    const [name, reportedMemory] = String(item?.type || "")
+      .split("|", 2)
+      .map((part) => part.trim());
+    const count = Number(item?.count || 0);
+    if (!name || !Number.isSafeInteger(count) || count <= 0) continue;
+    // Public inventory must not control unbounded browser allocations. Reject
+    // an oversized runtime report instead of truncating its apparent capacity.
+    if (count > 256 || records.length + count > 256) return [];
+    const memoryMatch = String(reportedMemory || "").match(/^(\d+(?:\.\d+)?)\s*(?:gi?b|gb)$/i);
+    const memoryLabel = memoryMatch ? `${memoryMatch[1]} GiB` : "";
+    records.push(...Array(count).fill({ name, memoryBytes: null, memoryLabel }));
+  }
+  return records;
+}
+
+function runtimeLocation(runtime: any): string {
+  const host = String(runtime?.host || "").trim().toLowerCase();
+  return !host || ["inference", "localhost", "127.0.0.1"].includes(host)
+    ? "local"
+    : "net";
+}
+
+function runtimeGpuRecords(node: SiteNode, runtime: any, inventory: GpuInventory): Array<GpuRecord> {
+  const host = String(runtime?.host || "").trim();
+  const local = runtimeLocation(runtime) === "local";
+  const monitored = monitoredGpuRecords(inventory, local
+    ? [node.gpuHost, node.publicHost, node.name]
+    : [host]);
+  return monitored.length ? monitored : reportedGpuRecords(runtime);
+}
+
+function gpuInventory(node: SiteNode, inventory: GpuInventory, hardwareInventory: HardwareInventory): {
+  gpus: Array<GpuRecord>,
+  hardwareObserved: boolean,
+} {
+  const hardware = node.address ? hardwareInventory.get(node.address) : null;
+  const gpus = hardware?.state === "observed" && hardware.nodes.length
+    ? hardware.nodes.flatMap((runtime) => runtimeGpuRecords(node, runtime, inventory))
+    : monitoredGpuRecords(inventory, [node.gpuHost, node.publicHost, node.name]);
+  return { gpus, hardwareObserved: hardware?.state === "observed" };
+}
+
+function gpuCount(node: SiteNode): number {
+  return gpuInventory(node, cardGpuInventory, cardHardwareInventory).gpus.length;
+}
+
+function formatGpuRecords(gpus: Array<GpuRecord>): string {
+  if (!gpus.length) return "GPU not reported";
+  const grouped: Map<string, number> = new Map();
+  for (const gpu of gpus) {
+    const name = String(gpu.name || "").replace(/^NVIDIA\s+/i, "").trim();
+    const gib = Number(gpu.memoryBytes) / (1024 ** 3);
+    const memory = gpu.memoryLabel
+      ? ` · ${gpu.memoryLabel}`
+      : Number.isFinite(gib) && gib > 0 ? ` · ${Math.round(gib)} GiB` : "";
+    const label = `${name || "GPU"}${memory}`;
+    grouped.set(label, (grouped.get(label) || 0) + 1);
+  }
+  return [...grouped.entries()].map(([label, count]) =>
+    count === 1 ? label : `${label} ×${count}`,
+  ).join(" + ");
 }
 
 function reportedSoftwareVersion(node: SiteNode, component: string): string {
   const state: any = node.softwareVersions;
-  if (component === "chain") return String(state?.node_version?.version || "");
-  if (component === "DAPI") return String(state?.api_version?.version || "");
+  if (component === "chain") {
+    if (node.observedInferenceVersion) return node.observedInferenceVersion;
+    if (node.inferenceObservationRejected) return "";
+    return GDC_SOFTWARE_VERSIONS.freshPayloadVersion(state, "chain");
+  }
+  if (component === "DAPI") return GDC_SOFTWARE_VERSIONS.freshPayloadVersion(state, "DAPI");
   return "";
 }
 
 function reportedSoftwareMetadata(node: SiteNode, component: string): boolean {
   const state: any = node.softwareVersions;
-  if (component === "chain") return Boolean(state?.node_version);
-  if (component === "DAPI") return Boolean(state?.api_version);
+  if (component === "chain") return Boolean(
+    node.observedInferenceVersion ||
+    (!node.inferenceObservationRejected && GDC_SOFTWARE_VERSIONS.freshPayloadVersion(state, "chain")),
+  );
+  if (component === "DAPI") return Boolean(GDC_SOFTWARE_VERSIONS.freshPayloadVersion(state, "DAPI"));
   return false;
 }
 
@@ -624,7 +1246,7 @@ function observedNetworkChainVersion(inventory: SoftwareInventory): string {
   const versions: Set<string> = new Set();
   for (const samples of inventory.values()) {
     const reported = String(
-      GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples).get("chain")?.version || "",
+      GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples, Date.now() / 1000, 300).get("chain")?.version || "",
     );
     const version = softwareDisplayValue(reported);
     if (version && version !== "unreported") versions.add(version);
@@ -641,11 +1263,11 @@ function updateSoftware(
     inventory.has(candidate || ""),
   );
   const samples = inventory.get(key || "") || [];
-  const components = GDC_SOFTWARE_VERSIONS.selectLatestInventory(samples);
   for (const [component, field] of [["chain", "inferenced"], ["DAPI", "dapi"]]) {
-    const metric = components.get(component);
     const reported = reportedSoftwareVersion(node, component);
-    const rawVersion = reported || String(metric?.version || "");
+    const rawVersion = reported || (component === "chain" && node.inferenceObservationRejected
+      ? ""
+      : GDC_SOFTWARE_VERSIONS.freshInventoryVersion("", samples, component));
     const version = rawVersion && rawVersion !== "unreported"
       ? softwareDisplayValue(rawVersion)
       : "";
@@ -658,7 +1280,7 @@ function updateSoftware(
     if (/^(?:sha256:)?[a-f0-9]{64}$/i.test(String(rawVersion))) {
       target.title = `${component}: container image digest ${rawVersion}`;
     } else if (version && version !== "unreported") {
-      target.title = "Runtime version when available, otherwise the most recent software inventory observed within 24 hours";
+      target.title = "Runtime version when available, otherwise the most recent software inventory observed within five minutes";
     } else if (reportedSoftwareMetadata(node, component)) {
       target.title = `${component} responds, but its version endpoint does not report a version and no current inventory version is available`;
     } else {
@@ -668,6 +1290,9 @@ function updateSoftware(
 }
 
 function updateDevShards(node: SiteNode, card: HTMLElement): void {
+  const inference = GDC_NETWORK_OBSERVATION.inferenceState(node.devShardHealth);
+  set(card, "inference", inference.label);
+  card.querySelector('[data-k="inference"]').title = inference.detail;
   const state: ?DevShardHealth = node.devShardHealth;
   const target = card.querySelector('[data-k="devshard"]');
   if (!state || state.state === "checking") {
@@ -713,34 +1338,36 @@ function updateMlNodes(
   node: SiteNode,
   card: HTMLElement,
 ): void {
-  const row = card.querySelector('[data-k-row="mlnodes"]');
+  const row = card.querySelector('[data-k-row="mlnode"]');
+  const target = card.querySelector('[data-k="mlnode"]');
   const hardware = node.address ? hardwareInventory.get(node.address) : null;
-  const key = [node.name, node.publicHost].find((candidate) =>
-    inventory.has(candidate || ""),
-  );
-  const observedChain = String(
-    GDC_SOFTWARE_VERSIONS.selectLatestInventory(inventory.get(key || "") || [])
-      .get("chain")?.version || "",
-  );
-  const chain = softwareDisplayValue(
-    reportedSoftwareVersion(node, "chain") || observedChain || observedNetworkChainVersion(inventory),
-  );
-  const runtimes: Array<{ node_id?: string, version?: string }> = (hardware?.nodes || []).map((runtime) => ({
-    node_id: String(runtime?.local_id || ""),
-    version: String(runtime?.version || ""),
-  }));
-  const value = GDC_SOFTWARE_VERSIONS.formatMlNodes(chain, runtimes);
+  const observation = GDC_SOFTWARE_VERSIONS.selectMlNodes(node.softwareVersions, hardware);
+  const runtimes = observation.nodes;
   row.hidden = false;
-  const target = card.querySelector('[data-k="mlnodes"]');
-  if (!value) {
-    target.textContent = hardware?.state === "observed" ? "Not assigned" : "Unavailable";
-    target.title = hardware?.state === "observed"
-      ? "Chain runtime inventory reports no MLNode for this participant"
-      : "Chain runtime inventory could not be read";
+  target.replaceChildren();
+  if (!runtimes.length) {
+    const item = document.createElement("li");
+    item.textContent = GDC_SOFTWARE_VERSIONS.emptyMlNodeLabel(observation);
+    target.append(item);
+    target.title = observation.source;
     return;
   }
-  target.textContent = value;
-  target.title = GDC_SOFTWARE_VERSIONS.describeMlNodes(chain, runtimes).join("\n");
+  for (const runtime of runtimes) {
+    const item = document.createElement("li");
+    const endpoint = runtimeLocation(runtime);
+    const reported = String(runtime?.version || "").trim();
+    const version = reported && reported !== "unreported"
+      ? GDC_SOFTWARE_VERSIONS.displayVersion(reported)
+      : "Version unavailable";
+    const reportedRuntime = (hardware?.nodes || []).find((candidate) =>
+      String(candidate?.local_id || "") === String(runtime?.node_id || "") ||
+      (String(candidate?.host || "") === String(runtime?.host || "") &&
+        String(candidate?.port || "") === String(runtime?.port || "")),
+    ) || runtime;
+    item.textContent = `${endpoint} · ${version} · ${formatGpuRecords(runtimeGpuRecords(node, reportedRuntime, cardGpuInventory))}`;
+    target.append(item);
+  }
+  target.title = observation.source;
 }
 
 async function refreshSoftwareInventory(): Promise<void> {
@@ -777,34 +1404,78 @@ async function refreshGpuInventory(): Promise<void> {
     if (!host || !name) continue;
     for (const key of new Set([host, instanceHost])) {
       if (!key) continue;
-      const names = next.get(key) || [];
-      names.push(name);
-      next.set(key, names);
+      const gpus = next.get(key) || [];
+      const memory = Number(sample?.value?.[1]);
+      gpus.push({ name, memoryBytes: Number.isFinite(memory) && memory > 0 ? memory : null });
+      next.set(key, gpus);
     }
   }
   cardGpuInventory = next;
   for (const node of observedNodes) {
     const card = cards.get(nodeKey(node));
-    if (card) updateGpu(cardGpuInventory, cardHardwareInventory, node, card);
+    if (card) updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
   }
+  validatorMapController?.update(observedNodes);
 }
 
 async function refreshHardwareInventory(): Promise<void> {
-  if (!chainRpcOrigin) return;
+  if (!chainApiOrigin) {
+    for (const node of observedNodes) renderActivity(node);
+    return;
+  }
   const next: HardwareInventory = new Map();
-  await Promise.all(observedNodes.map(async (node) => {
+  const referenceNode = chainApiReferenceNode();
+  let participants: Array<any>;
+  try {
+    if (!referenceNode?.address || !referenceNode.rpcIdentityVerified ||
+      referenceNode.rpcChainId !== cfg.chainId)
+      throw new Error("selected chain API peer identity is unavailable");
+    participants = await GDC_NETWORK_OBSERVATION.loadParticipants(
+      chainApiOrigin,
+      { nodeId: referenceNode.address, chainId: referenceNode.rpcChainId, identityVerified: true },
+      cfg.chainId,
+      json,
+    );
+  } catch {
+    for (const node of observedNodes) {
+      node.participantAddress = null;
+      renderActivity(node);
+    }
+    for (const node of observedNodes)
+      if (node.address) next.set(node.address, { state: "unavailable", nodes: [] });
+    cardHardwareInventory = next;
+    for (const node of observedNodes) {
+      const card = cards.get(nodeKey(node));
+      if (!card) continue;
+      updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
+      updateDevShards(node, card);
+    }
+    validatorMapController?.update(observedNodes);
+    return;
+  }
+  const mapped = observedNodes.map((node) => ({
+    node,
+    participant: GDC_NETWORK_OBSERVATION.participantAddressForNode(participants, node),
+  }));
+  for (const {node, participant} of mapped) {
+    node.participantAddress = participant;
+    renderActivity(node);
+  }
+  refreshActivity();
+  await Promise.all(mapped.map(async ({node, participant}) => {
     const address = node.address;
     if (!address) return;
+    if (!participant) {
+      next.set(address, { state: "unavailable", nodes: [] });
+      return;
+    }
     try {
       const state = await json(
-        `${chainRpcOrigin}/chain-api/productscience/inference/inference/hardware_nodes/${encodeURIComponent(address)}`,
+        `${chainApiOrigin}/chain-api/productscience/inference/inference/hardware_nodes/${encodeURIComponent(participant)}`,
       );
-      next.set(address, {
-        state: "observed",
-        nodes: Array.isArray(state?.nodes?.hardware_nodes)
-          ? state.nodes.hardware_nodes
-          : [],
-      });
+      if (state?.nodes?.participant !== participant || !Array.isArray(state?.nodes?.hardware_nodes))
+        throw new Error("hardware response identity or schema mismatch");
+      next.set(address, { state: "observed", nodes: state.nodes.hardware_nodes });
     } catch {
       next.set(address, { state: "unavailable", nodes: [] });
     }
@@ -813,25 +1484,88 @@ async function refreshHardwareInventory(): Promise<void> {
   for (const node of observedNodes) {
     const card = cards.get(nodeKey(node));
     if (!card) continue;
-    updateGpu(cardGpuInventory, cardHardwareInventory, node, card);
     updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
     updateDevShards(node, card);
   }
+  validatorMapController?.update(observedNodes);
+}
+
+let activityInFlight: ?Promise<void> = null;
+function renderActivity(node: SiteNode): void {
+  const card = cards.get(nodeKey(node));
+  if (!card) return;
+  const account = String(node.participantAddress || "").trim();
+  const accountRow = card.querySelector('[data-k-row="account"]');
+  accountRow.hidden = !account;
+  if (account) {
+    set(card, "account", account);
+    const target = card.querySelector('[data-copy-value="account"]');
+    target.title = "Copy account address";
+    target.setAttribute("aria-label", `Copy account address ${account}`);
+  }
+  const state = GDC_NETWORK_OBSERVATION.activityState(node.activity, node.participantAddress);
+  set(card, "poc", state.poc.label);
+  card.querySelector('[data-k="poc"]').title = state.poc.detail;
+  const cpocRow = card.querySelector('[data-k-row="cpoc"]');
+  cpocRow.hidden = state.cpoc.active !== true;
+  if (state.cpoc.active === true) {
+    set(card, "cpoc", state.cpoc.label);
+    card.querySelector('[data-k="cpoc"]').title = state.cpoc.detail;
+  }
+}
+
+function renderNodeIdentity(card: HTMLElement, node: SiteNode): void {
+  const nodeId = String(node.address || "").trim();
+  const row = card.querySelector('[data-k-row="node-id"]');
+  const valid = /^[0-9a-f]{40}$/i.test(nodeId);
+  row.hidden = !valid;
+  if (!valid) return;
+  set(card, "node-id", nodeId);
+  const target = row.querySelector('[data-copy-value="node-id"]');
+  target.title = "Copy node ID";
+  target.setAttribute("aria-label", `Copy node ID ${nodeId}`);
+}
+
+function refreshActivity(): void {
+  if (activityInFlight || !chainApiOrigin) return;
+  activityInFlight = GDC_NETWORK_OBSERVATION.loadActivity(chainApiOrigin, json)
+    .then((evidence) => {
+      for (const node of observedNodes) { node.activity = evidence; renderActivity(node); }
+    }).catch(() => {
+      for (const node of observedNodes) { node.activity = null; renderActivity(node); }
+    }).finally(() => { activityInFlight = null; });
+}
+
+async function refreshCurrentValidatorSet(reference: any): Promise<any> {
+  return GDC_NETWORK_OBSERVATION.loadCurrentValidatorSet(reference, cfg.chainId, json);
 }
 
 async function refreshDevShardVersions(): Promise<void> {
-  if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
-  const state = await json(
-    `${chainRpcOrigin}/chain-api/productscience/inference/inference/params`,
+  if (!chainApiOrigin) throw new Error("chain RPC origin is missing");
+  const referenceNode = chainApiReferenceNode();
+  if (!referenceNode?.address || !referenceNode.rpcIdentityVerified ||
+    referenceNode.rpcChainId !== cfg.chainId)
+    throw new Error("selected chain API peer identity is unavailable");
+  await GDC_NETWORK_OBSERVATION.verifyChainApiReference(
+    chainApiOrigin,
+    { nodeId: referenceNode.address, chainId: referenceNode.rpcChainId, identityVerified: true },
+    cfg.chainId,
+    json,
   );
+  const state = await json(
+    `${chainApiOrigin}/chain-api/productscience/inference/inference/devshard_approved_versions`,
+  );
+  const approved = state?.versions;
+  if (!Array.isArray(approved)) throw new Error("approved DevShard versions are missing or malformed");
   const seen: Set<string> = new Set();
   const versions: Array<DevShardVersion> = [];
-  for (const version of state?.params?.devshard_escrow_params?.approved_versions || []) {
+  for (const version of approved) {
     const name = String(version?.name || "").trim();
+    const binary = String(version?.binary || "").trim();
     const sha256 = String(version?.sha256 || "").trim().toLowerCase();
-    if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name)) continue;
-    if (!/^[0-9a-f]{64}$/.test(sha256)) continue;
-    if (seen.has(name)) continue;
+    if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name) || !binary ||
+      !/^[0-9a-f]{64}$/.test(sha256) || seen.has(name))
+      throw new Error("approved DevShard versions contain an invalid or duplicate entry");
     seen.add(name);
     versions.push({ name, sha256 });
   }
@@ -851,7 +1585,8 @@ window.addEventListener("resize", () => {
 async function response(
   url: string,
   options: RequestOptions = {},
-): Promise<Response> {
+  format: string = "json",
+): Promise<any> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
@@ -861,17 +1596,17 @@ async function response(
       signal: controller.signal,
     });
     if (!r.ok) throw new Error(`${r.status}`);
-    return r;
+    return await (format === "text" ? r.text() : r.json());
   } finally {
     clearTimeout(timer);
   }
 }
 async function json(url: string, options: ?RequestOptions): Promise<any> {
-  return (await response(url, options || {})).json();
+  return response(url, options || {});
 }
 
 async function text(url: string): Promise<string> {
-  return (await response(url)).text();
+  return response(url, {}, "text");
 }
 
 async function readSoftwareVersions(statusBase: string): Promise<any> {
@@ -975,33 +1710,37 @@ function markerStateLabel(state: MarkerState): string {
       return "Validating";
     case "active":
       return "Active";
-    case "unknown":
-      return "Unknown";
     default:
-      return "Inactive";
+      return "Wait";
   }
 }
 
 const MARKER_STATE_ORDER: Array<MarkerState> = [
   "validating",
   "active",
-  "inactive",
-  "unknown",
+  "waiting",
+  "unavailable",
 ];
 
 const MARKER_STATE_COLORS: { [MarkerState]: string } = {
-  validating: "#78b83d",
-  active: "#f5a623",
-  inactive: "#ef6c65",
-  unknown: "#9aa0ad",
+  validating: "var(--state-validating)",
+  active: "var(--state-active)",
+  waiting: "var(--state-waiting)",
+  unavailable: "var(--state-waiting)",
 };
+
+function markerStateForDisplay(state: string): MarkerState {
+  if (state === "validating") return "validating";
+  if (state === "active") return "active";
+  return "waiting";
+}
 
 function markerStateCounts(validators: Array<Validator>): MarkerStateCounts {
   const counts: MarkerStateCounts = {
     validating: 0,
     active: 0,
-    inactive: 0,
-    unknown: 0,
+    waiting: 0,
+    unavailable: 0,
   };
   for (const validator of validators) counts[validator.markerState] += 1;
   return counts;
@@ -1021,17 +1760,18 @@ function markerGroupState(counts: MarkerStateCounts): {
 } {
   const states = MARKER_STATE_ORDER.filter((state) => counts[state] > 0);
   return {
-    state: states[0] || "unknown",
-    label: states.length > 1 ? "Mixed" : markerStateLabel(states[0] || "unknown"),
+    state: states[0] || "waiting",
+    label: states.length > 1 ? "Mixed" : markerStateLabel(states[0] || "waiting"),
     mixed: states.length > 1,
   };
 }
 
-function markerRadius(count: number): number {
-  // Radius grows with sqrt(count), therefore visual area is proportional to
-  // the represented node count while multi-node locations stay distinct.
-  if (count <= 1) return 6;
-  return Math.min(7.5 * Math.sqrt(count), 18);
+function markerRadius(gpus: number): number {
+  // Radius grows with sqrt(GPU count), therefore visual area represents
+  // capacity rather than the number of Hosts at one location. A Host with
+  // unavailable inventory remains visible at the one-GPU minimum.
+  if (gpus <= 1) return 6;
+  return Math.min(7.5 * Math.sqrt(gpus), 18);
 }
 
 function maidenheadLocator(latitude: number, longitude: number, precision: number = 4): string {
@@ -1061,12 +1801,12 @@ function markerFill(counts: MarkerStateCounts, count: number): string {
   return `conic-gradient(${slices.join(", ")})`;
 }
 
-function markerIcon(count: number, counts: MarkerStateCounts): any {
-  const radius = markerRadius(count);
+function markerIcon(gpus: number, counts: MarkerStateCounts, nodes: number): any {
+  const radius = markerRadius(gpus);
   const diameter = radius * 2;
   return L.divIcon({
     className: "validator-marker",
-    html: `<span class="validator-marker-face" style="--validator-marker-fill: ${markerFill(counts, count)}"></span>`,
+    html: `<span class="validator-marker-face" style="--validator-marker-fill: ${markerFill(counts, nodes)}"></span>`,
     iconSize: [diameter, diameter],
     iconAnchor: [radius, radius],
   });
@@ -1075,16 +1815,39 @@ function markerIcon(count: number, counts: MarkerStateCounts): any {
 function renderHostState(card: HTMLElement, node: SiteNode): boolean {
   const display = displayHostState(node);
   set(card, "status", display.primaryLabel);
-  set(card, "status-reason", display.reason);
-  card.querySelector('[data-k="status"]').className = display.primaryClass;
+  const status = card.querySelector('[data-k="status"]');
+  status.className = display.primaryClass;
+  status.title = display.reason;
   updateCardToggleLabel(card);
   set(card, "vp", display.votingPower);
   set(card, "sync", display.syncLabel);
   set(card, "endpoint", display.endpointLabel);
+  renderNodeIdentity(card, node);
+  // Update both views in the same turn, including pending and failed reads.
+  // Previously cards changed throughout refresh while the map kept old data.
+  validatorMapController?.update(observedNodes);
   return display.validatorEffective;
 }
 
 function displayHostState(node: SiteNode): any {
+  if (node.networkObserved === true) {
+    return hostState.classify({
+      networkObserved: true,
+      networkActive: node.networkActive === true,
+      endpointState: node.endpointState,
+      endpointDiagnostic: node.endpointDiagnostic,
+      chainDiagnostic: node.chainDiagnostic,
+      validatorKnown: node.validatorKnown,
+      observationComplete: node.observationComplete,
+      votingPower: node.votingPower,
+      catchingUp: node.catchingUp,
+      blocksBehind: node.blocksBehind,
+      blockAgeSeconds: node.blockAgeSeconds,
+      progressing: node.progressing,
+      referenceKnown: node.referenceKnown,
+      referenceAgrees: node.referenceAgrees,
+    });
+  }
   return hostState.classify({
     // Map fixture and a temporarily cached participant may have the public
     // status before the validator query completes. Use that observed status as
@@ -1189,180 +1952,278 @@ async function discoverParticipant(
   }
 }
 
-async function participantNode(
-  participant: Participant,
-  validators: Map<string, ConsensusValidator>,
-  validatorKnown: boolean,
-): Promise<SiteNode> {
+function networkNode(observation: any): SiteNode {
+  const network = GDC_NETWORK_OBSERVATION.nodeState(observation);
+  if (!network) throw new Error("invalid network observation node");
+  const inferenceComponent = observation?.components?.inferenced;
+  const chainRpcComponent = observation?.components?.chain_rpc;
+  const peersComponent = observation?.components?.peers;
+  const peerCount = Number(peersComponent?.count);
+  const observedInferenceVersion = GDC_SOFTWARE_VERSIONS.freshNetworkInferenceVersion(
+    inferenceComponent, chainRpcComponent, network.nodeId, cfg.chainId,
+  );
+  const inferenceObservationRejected =
+    (inferenceComponent?.state === "observed" && !observedInferenceVersion) ||
+    (chainRpcComponent?.state === "observed" &&
+      (String(chainRpcComponent?.p2p_node_id || "").toLowerCase() !== network.nodeId ||
+        String(chainRpcComponent?.chain_id || "") !== cfg.chainId));
+  const dapiUrl = network.dapiUrl;
   let endpoint;
   try {
-    endpoint = new URL(participant.inference_url);
+    endpoint = new URL(dapiUrl);
   } catch {
     endpoint = null;
   }
   const host = endpoint?.hostname || "";
+  const bootstrapHost = String(observation?.public_host || "").toLowerCase();
   const catalogEntries = cfg.nodeCatalog || cfg.nodes;
-  const byAddress = catalogEntries.find((node) => node.address === participant.address);
-  const byHost = catalogEntries.filter((node) => node.publicHost === host);
-  const catalog = byAddress || (byHost.length === 1 ? byHost[0] : null);
+  const byHost = catalogEntries.filter((node) =>
+    node.publicHost === (bootstrapHost || host),
+  );
+  const byName = catalogEntries.filter((node) => node.name === network.nodeName);
+  const catalog =
+    byHost.length === 1 ? byHost[0] : byName.length === 1 ? byName[0] : null;
   // A public participant location is always a GeoIP observation of its
   // advertised endpoint.  The catalog is only a fallback for an unavailable
   // DNS or GeoIP lookup, so catalog and dynamically joined Hosts share one
   // grouping rule on the map.
-  const discovered =
-    DYNAMIC_STATUS_HOST.test(host) || !catalog || !catalog.ip || !catalog.geo
-      ? await discoverParticipant(host)
-      : {};
-  const participantStatus = participant.status || "UNKNOWN";
-  const validator = validators.get(String(participant.validator_key || ""));
-  // Public status only proxies the fixed local aliases and the Community
-  // DevNet nodeN hostnames.  A participant may advertise another hostname,
+  const previous = observedNodes.find((node) => node.address === network.nodeId && node.dapiUrl === dapiUrl);
+  // Public status only proxies the fixed catalog routes and the Community
+  // DevNet nodeN hostnames. A participant may advertise another hostname,
   // but it must not turn this origin into an open proxy merely to monitor it.
-  // A preview must use its own status overlay even for a Host already known
-  // to the static catalog. Otherwise catalog.statusBase points at the preview
-  // origin root, loses the numeric generation prefix and turns a healthy Host
-  // into a false Inactive card through 404 responses.
-  const participantStatusBase =
-    previewPrefix && DYNAMIC_STATUS_HOST.test(host)
-      ? `${statusBase}/${host}`
+  // A preview retains the catalog route alias through its own status overlay.
+  // The alias may differ from the network node name (gdc-node0 versus node0).
+  const catalogStatusAlias = String(catalog?.statusBase || "")
+    .match(/(?:^|\/)status\/([^/?#]+)\/?$/)?.[1] || catalog?.name;
+  const networkStatusBase = cfg.publicBootstrap === true
+    ? ""
+    : previewPrefix && catalogStatusAlias && DYNAMIC_STATUS_HOST.test(host)
+      ? `${statusBase}/${catalogStatusAlias}`
       : catalog?.statusBase ||
         (DYNAMIC_STATUS_HOST.test(host) ? `${statusBase}/${host}` : "");
+  // Validator queries stay on the status origin. A browser must not depend
+  // on a cross-origin RPC CORS policy to determine current membership.
+  const validatorRpcBase = networkStatusBase;
   return {
-    name: catalog?.name || host || `${participant.address.slice(0, 10)}…`,
-    address: participant.address,
-    publicHost: host || catalog?.publicHost,
-    statusBase: participantStatusBase,
-    ip: discovered.ip || catalog?.ip || "",
-    geo: discovered.geo || catalog?.geo || null,
+    ...previous,
+    name: network.nodeName || catalog?.name || host || network.nodeId,
+    address: network.nodeId,
+    publicHost: bootstrapHost || host || catalog?.publicHost,
+    dapiUrl: network.dapiUrl,
+    statusBase: networkStatusBase,
+    validatorRpcBase,
+    ip: observation?.geo?.resolvedIp || previous?.ip || catalog?.ip || "",
+    geo: observation?.geo || previous?.geo || catalog?.geo || null,
     mode: catalog?.mode,
     reason: catalog?.reason,
-    participantStatus: String(participantStatus),
-    participantState: String(participantStatus),
-    participantKnown: Boolean(participant.status),
-    validatorKnown,
-    votingPower: validator ? String(validator.voting_power || "") : "0",
-    endpointState: "unknown",
-    endpointDiagnostic: "Check endpoint",
-    isOnline: false,
-    serverStatus: String(participantStatus),
+    networkObserved: true,
+    networkActive: network.active,
+    endpointState: previous?.endpointState || network.endpointState,
+    endpointDiagnostic: previous?.endpointDiagnostic || network.endpointDiagnostic,
+    peerCount: peersComponent?.state === "observed" && Number.isSafeInteger(peerCount) && peerCount >= 0
+      ? peerCount : null,
+    peerState: String(peersComponent?.state || ""),
+    catchingUp: network.catchingUp,
+    softwareVersions:
+      observation?.components?.versions?.state === "observed"
+        ? observation.components.versions
+        : null,
+    observedSoftwareVersions:
+      observation?.components?.versions?.state === "observed"
+        ? observation.components.versions
+        : null,
+    observedModelRegistry:
+      observation?.components?.models?.state === "observed"
+        ? observation.components.models
+        : null,
+    observedInferenceVersion,
+    inferenceObservationRejected,
+    devShardHealth: observation?.components?.devshard || null,
+    isOnline: network.active,
+    serverStatus: network.active ? "active" : "inactive",
     gpuHost: catalog?.gpuHost,
   };
 }
 
-function topologyHost(listenAddress: mixed): string {
-  const match = String(listenAddress || "").match(
-    /^tcp:\/\/(node[0-9]+\.gonka-dev\.net):[0-9]+$/i,
+function updatePublicModelRegistry(nodes: Array<SiteNode>): void {
+  if (!observerSnapshotMode) return;
+  const registries: Array<Array<any>> = [];
+  for (const node of nodes) {
+    const models = node.observedModelRegistry?.models;
+    if (Array.isArray(models) && models.length > 0) registries.push(models);
+  }
+  $("model-label").textContent = "Models";
+  if (!registries.length) {
+    renderModelList([], "No observed Host returned a valid public model registry");
+    return;
+  }
+  const initial: Array<string> = registries[0]
+    .map((model) => String(model?.id || "").trim())
+    .filter(Boolean);
+  const common: Array<string> = registries.reduce((ids: Array<string>, models: Array<any>): Array<string> => {
+    const current = new Set(models.map((model) => String(model?.id || "").trim()));
+    return ids.filter((id) => current.has(id));
+  }, initial);
+  const models = [...new Set(common)].sort((left, right) =>
+    left.localeCompare(right, undefined, { numeric: true }),
   );
-  return match ? match[1].toLowerCase() : "";
+  renderModelList(
+    models,
+    models.length
+      ? "Models reported by every observed public registry endpoint"
+      : "Observed public registry endpoints do not agree on a model list",
+  );
 }
 
-// The participant registry represents identities, not physical Hosts. A Host
-// may retain an old participant record after recovery, so using its rows as
-// map markers duplicates one machine. Observe peers as additional Hosts,
-// but never use their absence to hide a registered participant.
-function topologyHosts(status: any, netInfo: any): Array<string> {
-  const hosts = [
-    topologyHost(status?.result?.node_info?.listen_addr),
-    ...(Array.isArray(netInfo?.result?.peers)
-      ? netInfo.result.peers.map((peer) => topologyHost(peer?.node_info?.listen_addr))
-      : []),
-  ].filter(Boolean);
-  return [...new Set(hosts)].sort((left, right) => left.localeCompare(right));
-}
-
-function participantHost(participant: Participant): string {
+function normalizedPublicOrigin(value: mixed): string {
   try {
-    const host = new URL(participant.inference_url).hostname.toLowerCase();
-    return DYNAMIC_STATUS_HOST.test(host) ? host : "";
-  } catch {
-    return "";
+    const parsed = new URL(String(value || ""));
+    return ["http:", "https:"].includes(parsed.protocol) &&
+      !parsed.username && !parsed.password ? parsed.origin : "";
+  } catch { return ""; }
+}
+
+function applyPublicChainState(chain: any): void {
+  if (!observerSnapshotMode && !publicChainState) return;
+  const age = Date.now() - Date.parse(String(chain?.observed_at || ""));
+  publicChainState = observerSnapshotMode && chain?.state === "observed" && Number.isFinite(age) && age >= 0 && age <= 90000 ? chain : null;
+  if (!publicChainState) {
+    retainedValidatorSet = null;
+    validatorSetObservedAt = 0;
+    markDevShardVersionsUnavailable();
+    renderEpochOverview(null, null, null);
+    renderFinalizedEpochResults(null);
+    renderDevShardExecution(null, observedNodes);
+    return;
   }
-}
-
-function observedParticipantHosts(
-  participants: Array<Participant>,
-  peers: Array<string>,
-): Array<string> {
-  return [...new Set([
-    ...participants.map(participantHost).filter(Boolean),
-    ...peers,
-  ])].sort((left, right) => left.localeCompare(right));
-}
-
-// Prefer the current consensus identity when a Host has historical registry
-// rows. The fallback is deterministic and never creates another map/card row.
-function participantForTopologyHost(
-  host: string,
-  participants: Array<Participant>,
-  validators: Map<string, ConsensusValidator>,
-): ?Participant {
-  const candidates = participants.filter(
-    (participant) => participantHost(participant) === host,
+  const validators = Array.isArray(chain.validators) ? chain.validators : [];
+  const validValidators = validators.length > 0 && validators.every((entry) =>
+    /^[0-9a-f]{40}$/i.test(String(entry?.address || "")) &&
+    /^\d+$/.test(String(entry?.voting_power || "")),
   );
-  return candidates.sort((left, right) => {
-    const leftCurrent = validators.has(String(left.validator_key || "")) ? 1 : 0;
-    const rightCurrent = validators.has(String(right.validator_key || "")) ? 1 : 0;
-    if (leftCurrent !== rightCurrent) return rightCurrent - leftCurrent;
-    const leftActive = hostState.isActiveParticipant(left.status) ? 1 : 0;
-    const rightActive = hostState.isActiveParticipant(right.status) ? 1 : 0;
-    if (leftActive !== rightActive) return rightActive - leftActive;
-    return String(left.address || "").localeCompare(String(right.address || ""));
-  })[0] || null;
-}
-
-async function reconcileParticipants(): Promise<number> {
-  if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
-  const [participantResult, validatorResult, topologyStatusResult, topologyResult] = await Promise.allSettled([
-    json(statusUrl("/participants")),
-    json(`${chainRpcOrigin}/chain-rpc/validators?per_page=100`),
-    json(`${chainRpcOrigin}/chain-rpc/status`),
-    json(`${chainRpcOrigin}/chain-rpc/net_info`),
-  ]);
-  if (participantResult.status !== "fulfilled") {
-    observedNodes = observedNodes.map((node) => ({
-      ...node,
-      participantKnown: false,
-      validatorKnown: false,
-      votingPower: "",
-    }));
-    for (const node of observedNodes) {
-      const card = cards.get(nodeKey(node));
-      if (card) renderHostState(card, node);
+  retainedValidatorSet = validValidators
+    ? {state: "observed", verified: true, complete: true, blockHeight: String(chain?.reference?.height || ""), validators}
+    : null;
+  validatorSetObservedAt = retainedValidatorSet ? Date.now() : 0;
+  const participants = Array.isArray(chain.participants) ? chain.participants : [];
+  const byOrigin: Map<string, any> = new Map();
+  for (const participant of participants) {
+    const origin = normalizedPublicOrigin(participant?.inference_url);
+    if (origin && !byOrigin.has(origin)) byOrigin.set(origin, participant);
+  }
+  const hardware: Map<string, Array<any>> = new Map();
+  for (const record of Array.isArray(chain.hardware_nodes) ? chain.hardware_nodes : []) {
+    const address = String(record?.address || "").trim();
+    if (/^gonka1[0-9a-z]+$/i.test(address) && Array.isArray(record?.nodes))
+      hardware.set(address, record.nodes);
+  }
+  const observedAt = Date.parse(String(chain.observed_at || ""));
+  const epoch = chain?.activity?.epoch;
+  const cpoc = chain?.activity?.cpoc;
+  renderEpochOverview(epoch, chain?.reference, cpoc);
+  renderFinalizedEpochResults(chain?.activity?.finalized_epoch);
+  const stage = String(epoch?.latest_epoch?.poc_start_block_height || "");
+  const activity = Number.isFinite(observedAt) && /^[1-9]\d*$/.test(stage)
+    ? {
+      observedAt,
+      epoch: String(epoch?.latest_epoch?.index || ""),
+      poc: {
+        height: stage,
+        commits: Array.isArray(chain?.activity?.commits?.commits) ? chain.activity.commits.commits : null,
+        votes: Array.isArray(chain?.activity?.votes?.poc_validation) ? chain.activity.votes.poc_validation : null,
+      },
+      cpoc: cpoc?.state === "observed" && cpoc.active === true && cpoc.event
+        ? {
+          height: String(cpoc.event.trigger_height || ""),
+          commits: Array.isArray(cpoc.commits?.commits) ? cpoc.commits.commits : null,
+          votes: Array.isArray(cpoc.votes?.poc_validation) ? cpoc.votes.poc_validation : null,
+        }
+        : null,
+      confirmationActive: cpoc?.state === "observed" ? cpoc.active : null,
+      confirmationPhase: String(cpoc?.event?.phase || "").replace(/^CONFIRMATION_POC_/, ""),
     }
-    return 0;
+    : null;
+  cardHardwareInventory = new Map();
+  for (const node of observedNodes) {
+    const participant = byOrigin.get(normalizedPublicOrigin(node.dapiUrl));
+    node.participantAddress = String(participant?.address || "") || null;
+    node.participantStatus = String(participant?.status || "") || undefined;
+    node.participantKnown = Boolean(participant);
+    node.activity = activity;
+    const nodeAddress = String(node.address || "");
+    if (nodeAddress) {
+      const nodes = hardware.get(String(node.participantAddress || ""));
+      cardHardwareInventory.set(nodeAddress, {
+        state: Array.isArray(nodes) ? "observed" : "unavailable",
+        nodes: Array.isArray(nodes) ? nodes : [],
+      });
+    }
+    applyRetainedMembership(node);
   }
-  const state = participantResult.value;
-  const validatorKnown =
-    validatorResult.status === "fulfilled" &&
-    Array.isArray(validatorResult.value?.result?.validators);
-  const validatorResponse = validatorKnown ? validatorResult.value : {};
-  const participants = Array.isArray(state.participant)
-    ? state.participant
-    : [];
-  const validators: Map<string, ConsensusValidator> = new Map(
-    (validatorResponse?.result?.validators || [])
-      .filter((validator) => validator?.pub_key?.value)
-      .map((validator) => [String(validator.pub_key.value), validator]),
-  );
-  const observedTopologyHosts =
-    topologyStatusResult.status === "fulfilled" && topologyResult.status === "fulfilled"
-      ? topologyHosts(topologyStatusResult.value, topologyResult.value)
-      : [];
-  const hosts = observedParticipantHosts(participants, observedTopologyHosts);
-  const next = (
-    await Promise.all(
-      hosts.map((host) =>
-        participantNode(
-          participantForTopologyHost(host, participants, validators) || {
-            address: "",
-            inference_url: `https://${host}`,
-          },
-          validators,
-          validatorKnown,
-        ),
-      ),
-    )
-  ).sort((left, right) => left.name.localeCompare(right.name));
+  const approvals = Array.isArray(chain.approved_devshards) ? chain.approved_devshards : [];
+  updateDevShardVersions(approvals);
+  renderDevShardExecution(approvals, observedNodes);
+}
+
+async function reconcileNetwork(): Promise<{status: "observed" | "pending", height: number}> {
+  const snapshotAge = Date.now() - Date.parse(String(networkSnapshot?.observed_at || ""));
+  let state: any;
+  try {
+    state = networkSnapshot && snapshotAge >= 0 && snapshotAge <= 90000
+      ? networkSnapshot : await json(statusUrl("/network"));
+  } catch (error) {
+    if (String(error?.name || "") === "SyntaxError")
+      throw new Error("network observation is malformed");
+    throw error;
+  }
+  if (state?.state === "observation_pending" && state?.chain_id === cfg.chainId)
+    return {status: "pending", height: 0};
+  const nodes = Array.isArray(state?.nodes) ? state.nodes : [];
+  if (state?.schema_version !== 1 || !Array.isArray(state?.nodes) || state?.chain_id !== cfg.chainId)
+    throw new Error("network observation is malformed");
+  if (!nodes.length) {
+    const chain = state?.chain;
+    const observedAt = Date.parse(String(chain?.observed_at || ""));
+    const age = Date.now() - observedAt;
+    const reference = chain?.reference || {};
+    if (chain?.state !== "observed" || !Number.isFinite(age) || age < 0 || age > 90000 ||
+      !/^[0-9a-f]{40}$/i.test(String(reference.node_id || "")) ||
+      !Number.isSafeInteger(Number(reference.height)) || Number(reference.height) <= 0)
+      throw new Error("network observation is malformed");
+  }
+  observerSnapshotMode = cfg.publicBootstrap === true || state.chain !== undefined;
+  const source = $("network-source");
+  if (source) source.textContent = observerSnapshotMode ? "LIVE NETWORK" : "NETWORK OBSERVER UPDATE REQUIRED";
+  if (!observerSnapshotMode) {
+    renderEpochOverview(null, null, null);
+    renderFinalizedEpochResults(null);
+  }
+  connectNetworkObservation();
+  const next = nodes.map((observation) => {
+    const candidate = networkNode(observation);
+    const previous = observedNodes.find((node) => node.address === candidate.address && node.dapiUrl === candidate.dapiUrl);
+    // Detail requests retain this object while discovery refreshes its fields.
+    if (previous) for (const key of Object.keys(candidate)) (previous: any)[key] = (candidate: any)[key];
+    const node = previous || candidate;
+    const rpc = observation?.components?.chain_rpc;
+    const observedAt = Date.parse(String(rpc?.observed_at || ""));
+    if (rpc?.state === "observed" && Date.now() - observedAt <= 90000 && observedAt <= Date.now() &&
+      rpc?.p2p_node_id === node.address && rpc?.chain_id === cfg.chainId &&
+      (!node.rpcObservedAt || observedAt > node.rpcObservedAt)) {
+      recordRpc(node, {result: {
+        node_info: {id: rpc.p2p_node_id, network: rpc.chain_id},
+        sync_info: rpc,
+        validator_info: {address: rpc.validator_address || node.validatorAddress},
+      }}, observedAt);
+      if (observerSnapshotMode && /^\d+$/.test(String(rpc?.validator_voting_power || ""))) {
+        node.validatorKnown = true;
+        node.votingPower = String(rpc.validator_voting_power);
+      }
+    } else if (!previous && rpc?.state !== "unavailable") {
+      node.endpointState = "unknown";
+    }
+    return node;
+  }).sort((left, right) => left.name.localeCompare(right.name));
   const liveKeys = new Set(next.map(nodeKey));
   for (const [key, card] of cards) {
     if (!liveKeys.has(key)) {
@@ -1370,16 +2231,33 @@ async function reconcileParticipants(): Promise<number> {
       cards.delete(key);
     }
   }
+  observedNodes = next;
+  applyPublicChainState(state.chain);
+  updatePublicModelRegistry(next);
   for (const node of next) {
     let card = cards.get(nodeKey(node));
     if (!card) card = createCard(node);
     set(card, "host", node.publicHost || node.name);
-    set(card, "scope", node.address);
     renderHostState(card, node);
+    renderActivity(node);
+    updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
+    if (node.rpcHeight) set(card, "height", node.rpcHeight.toLocaleString());
+    if (Number.isSafeInteger(node.peerCount) && Number(node.peerCount) >= 0)
+      set(card, "peers", String(node.peerCount));
+    else if (node.peerState === "unavailable" || node.peerState === "not_exposed")
+      set(card, "peers", "–");
+    if (!observerSnapshotMode && !node.geo) discoverParticipant(node.publicHost || "").then((discovered) => {
+      if (!observedNodes.includes(node)) return;
+      node.ip = discovered.ip || node.ip;
+      node.geo = discovered.geo || node.geo;
+      validatorMapController?.update(observedNodes);
+    }).catch(() => {});
   }
-  observedNodes = next;
   layoutHostCards();
-  return Number(state.block_height) || 0;
+  return {
+    status: "observed",
+    height: Math.max(0, ...nodes.map((node) => Number(node?.components?.chain_rpc?.latest_block_height) || 0)),
+  };
 }
 
 let validatorMapController: ?ValidatorMapController;
@@ -2096,12 +2974,14 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
   });
   observer.observe(container);
 
-  const update = (nodes: Array<SiteNode>): void => {
+  let latestValidatorSet: any = null;
+  const update = (nodes: Array<SiteNode>, validatorSet?: any): void => {
+    if (validatorSet !== undefined) latestValidatorSet = validatorSet;
     latestMapNodes = nodes;
     const retainedPopupKey = openMarkerKey || popupMarkerKey();
     const retainedPopupMode = popupMode;
     const validators: Array<Validator> = [];
-    let validatorCount = 0;
+    let currentValidatorCount = 0;
     for (const node of nodes) {
       const geo = node.geo;
       if (!geo) continue;
@@ -2111,14 +2991,21 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       const longitude = position.lon;
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
       const display = displayHostState(node);
+      // Use the same identity-checked membership as the card, never stale
+      // data from a previous map-only validator lookup.
+      const currentVotingPower = node.validatorKnown === true ? node.votingPower ?? null : null;
+      const currentValidator = currentVotingPower === null ? null : currentVotingPower !== "0";
+      if (currentValidator === true) currentValidatorCount += 1;
       const validator: Validator = {
         name: node.name || "",
         ownerAddress: node.address || "",
         ip: node.ip || "",
         licenseCount: 0,
         online: node.isOnline === true,
-        markerState: display.state,
+        markerState: markerStateForDisplay(display.state),
         stateReason: display.reason,
+        currentValidator,
+        gpuCount: gpuCount(node),
         geo: {
           lat: Math.max(-90, Math.min(90, latitude)),
           lon: Math.max(-180, Math.min(180, longitude)),
@@ -2138,7 +3025,6 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         },
       };
       validators.push(validator);
-      validatorCount += 1;
     }
     const groups = new Map(
       groupValidators(validators).map((group) => [group.key, group]),
@@ -2159,6 +3045,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     for (const [key, group] of groups) {
       const validators = group.validators;
       const count = validators.length;
+      const gpus = validators.reduce((total, validator) => total + validator.gpuCount, 0);
       const stateCounts = markerStateCounts(validators);
       const groupState = markerGroupState(stateCounts);
       const markerState = groupState.state;
@@ -2170,7 +3057,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       const rows = validators
         .map(
           (v) =>
-            `<li><span>${escapeHtml(v.name || v.ownerAddress.slice(0, 10) || "Node unavailable")}</span><span class="validator-map-member-state validator-map-status--${v.markerState}">${markerStateLabel(v.markerState)}</span></li>`,
+            `<li><span>${escapeHtml(v.name || v.ownerAddress.slice(0, 10) || "Node unavailable")}</span><span class="validator-map-member-state validator-map-status--${v.markerState}">${markerStateLabel(v.markerState)} · ${v.currentValidator === true ? "Current validator" : v.currentValidator === false ? "Not in current set" : "Membership unavailable"}</span></li>`,
         )
         .join("");
       const sources = [...new Set(validators.map((v) => v.geo.source))]
@@ -2204,18 +3091,19 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         ? "validator-map-status--mixed"
         : `validator-map-status--${markerState}`;
       const nodeLabel = `${count} node${count === 1 ? "" : "s"}`;
+      const gpuLabel = `${gpus} GPU${gpus === 1 ? "" : "s"}`;
       const popupNodeLabel = `${nodeLabel} at this location`;
       const locationEvidence = `<details class="validator-map-location-evidence"><summary>Location evidence</summary><dl><dt>Source</dt><dd>${escapeHtml(sources)}</dd><dt>Position</dt><dd>${escapeHtml(rawPositions.join("; "))}</dd><dt>Accuracy</dt><dd>${escapeHtml(accuracy || "unknown")}${observed ? `; observed ${escapeHtml(observed)}` : ""}</dd><dt>State evidence</dt><dd>${escapeHtml(stateReasons.join(" · "))}</dd></dl>${correction}</details>`;
       const popupHtml = `<strong>${escapeHtml(group.label)}</strong><p class="status ${statusClass}">${escapeHtml(
         stateLabel,
-      )}</p><p class="validator-map-summary"><span>${escapeHtml(popupNodeLabel)}</span><span>${escapeHtml(stateSummary)}</span></p><ul>${rows}</ul>${locationEvidence}`;
-      const ariaLabel = `${group.label}; ${nodeLabel}; ${stateSummary.replaceAll(" · ", ", ")}`;
+      )}</p><p class="validator-map-summary"><span>${escapeHtml(popupNodeLabel)}</span><span>${escapeHtml(gpuLabel)}</span><span>${escapeHtml(stateSummary)}</span></p><ul>${rows}</ul>${locationEvidence}`;
+      const ariaLabel = `${group.label}; ${nodeLabel}; ${gpuLabel}; ${stateSummary.replaceAll(" · ", ", ")}`;
       let marker: any = markerRegistry.get(key);
       if (!marker) {
         marker = L.marker([group.lat, group.lon], {
           pane: "validatorMarkers",
           interactive: false,
-          icon: markerIcon(count, stateCounts),
+          icon: markerIcon(gpus, stateCounts, count),
           autoPan: container.clientWidth >= 500,
           autoPanPadding: popupAutoPanPadding(),
         }).bindPopup(popupHtml, {
@@ -2243,7 +3131,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         markerRegistry.set(key, marker);
       } else {
         marker.setLatLng([group.lat, group.lon]);
-        marker.setIcon(markerIcon(count, stateCounts));
+        marker.setIcon(markerIcon(gpus, stateCounts, count));
         marker.__hitTarget?.setLatLng([group.lat, group.lon]);
         if (marker.__popupHtml !== popupHtml) {
           marker.setPopupContent(popupHtml);
@@ -2252,7 +3140,9 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
       }
       configureMarkerElement(marker, key, ariaLabel);
     }
-    container.dataset.validatorCount = String(validatorCount);
+    container.dataset.hostCount = String(validators.length);
+    container.dataset.currentValidatorCount = latestValidatorSet?.verified === true ? String(currentValidatorCount) : "unavailable";
+    container.dataset.validatorHeight = latestValidatorSet?.verified === true ? String(latestValidatorSet.blockHeight) : "";
     container.dataset.markerCount = String(groups.size);
     if (retainedPopupKey && markerRegistry.has(retainedPopupKey)) {
       openMarkerPopup(
@@ -2304,40 +3194,183 @@ initValidatorMap()
     $("validator-map").textContent = "Validator map is unavailable";
   });
 async function refresh(): Promise<void> {
+  // A slow endpoint must not let an older refresh overwrite newer evidence.
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = refreshNetwork().finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
+}
+
+function connectNetworkObservation(): void {
+  if (!observerSnapshotMode && cfg.publicBootstrap !== true) return;
+  if (networkSocket || typeof WebSocket !== "function") return;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const endpoint = `${protocol}//${window.location.host}${statusBase}/network/ws?chainId=${encodeURIComponent(cfg.chainId)}`;
+  try {
+    networkSocket = new WebSocket(endpoint);
+  } catch {
+    return;
+  }
+  networkSocket.onmessage = (event) => {
+    try {
+      const message = JSON.parse(String(event.data || ""));
+      const snapshot = message?.type === "network_snapshot" ? message.snapshot : null;
+      if (snapshot?.schema_version !== 1 || snapshot?.chain_id !== cfg.chainId || !Array.isArray(snapshot?.nodes)) return;
+      networkSnapshot = snapshot;
+      refresh();
+    } catch {}
+  };
+  networkSocket.onclose = () => {
+    networkSocket = null;
+    networkSnapshot = null;
+    if (networkSocketRetry === null)
+      networkSocketRetry = setTimeout(() => {
+        networkSocketRetry = null;
+        connectNetworkObservation();
+      }, 3000);
+  };
+  networkSocket.onerror = () => {};
+}
+let refreshInFlight: ?Promise<void> = null;
+function recordRpc(node: SiteNode, status: any, observedAt: number = Date.now()): void {
+  const result = status?.result;
+  if (result?.node_info?.id !== node.address || !result?.sync_info)
+    throw new Error("RPC node identity mismatch");
+  node.endpointState = "reachable";
+  node.endpointDiagnostic = "";
+  node.validatorAddress = String(result.validator_info?.address || "");
+  node.rpcHeight = Number(result.sync_info.latest_block_height);
+  node.rpcChainId = String(result.node_info.network || "");
+  node.rpcIdentityVerified = node.rpcChainId === cfg.chainId;
+  node.rpcObservedAt = observedAt;
+  node.rpcBlockTimeMs = Date.parse(String(result.sync_info.latest_block_time || ""));
+  node.blockAgeSeconds = (Date.now() - Number(node.rpcBlockTimeMs)) / 1000;
+  node.catchingUp = result.sync_info.catching_up;
+  node.progressing = Number.isFinite(node.blockAgeSeconds) && Number(node.blockAgeSeconds) <= 90;
+  node.chainDiagnostic = node.rpcIdentityVerified ? "" : `Configured chain mismatch: expected ${cfg.chainId}, observed ${node.rpcChainId || "unknown"}`;
+  applyRetainedMembership(node);
+}
+
+function freshReference(): any {
+  if (observerSnapshotMode) {
+    const reference = publicChainState?.reference;
+    const node = observedNodes.find((candidate) => candidate.address === reference?.node_id);
+    const height = Number(reference?.height);
+    const blockAge = Date.now() - Number(node?.rpcBlockTimeMs);
+    return node?.endpointState === "reachable" && node?.rpcIdentityVerified === true &&
+      node?.rpcChainId === cfg.chainId && node?.catchingUp === false &&
+      Number.isFinite(blockAge) && blockAge >= 0 && blockAge <= 90000 &&
+      Number.isSafeInteger(height) && height > 0
+      ? {nodeId: node.address, chainId: cfg.chainId, height}
+      : null;
+  }
+  return GDC_NETWORK_OBSERVATION.selectFreshReference(observedNodes
+    .filter((node) => node.endpointState === "reachable")
+    .map((node) => ({
+      nodeId: node.address, identityVerified: node.rpcIdentityVerified,
+      chainId: node.rpcChainId, height: node.rpcHeight,
+      catchingUp: node.catchingUp, blockTimeMs: node.rpcBlockTimeMs,
+      statusBase: node.statusBase, validatorRpcBase: node.validatorRpcBase,
+    })), cfg.chainId, Date.now());
+}
+
+function applyRetainedMembership(node: SiteNode): void {
+  const fresh = Date.now() - validatorSetObservedAt <= 45000 &&
+    node.endpointState === "reachable" && node.rpcIdentityVerified === true;
+  GDC_NETWORK_OBSERVATION.applyCurrentVotingPower(node, fresh ? retainedValidatorSet : null);
+}
+
+function refreshDetails(): void {
+  if (detailsInFlight) return;
+  const jobs = observedNodes.filter((node) => node.statusBase).map(async (node) => {
+    const base = String(node.statusBase);
+    await Promise.all([
+      readSoftwareVersions(base).then((versions) => { node.softwareVersions = versions; }).catch(() => {}),
+      json(`${base}/devshard/healthz`).then((runtimes) => {
+        if (!Array.isArray(runtimes)) throw new Error("Malformed DevShard health response");
+        node.devShardHealth = {state: "observed", runtimes};
+      }).catch((error) => {
+        node.devShardHealth = {state: String(error).includes("404") ? "not_exposed" : "unavailable", runtimes: []};
+      }),
+      json(`${base}/chain-rpc/net_info`).then((net) => {
+        const card = cards.get(nodeKey(node));
+        if (card) set(card, "peers", GDC_NETWORK_OBSERVATION.peerCount(net));
+      }).catch(() => {}),
+    ]);
+    const card = cards.get(nodeKey(node));
+    if (!card || !observedNodes.includes(node)) return;
+    updateSoftware(cardSoftwareInventory, node, card);
+    updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, card);
+    updateDevShards(node, card);
+  });
+  if (cfg.publicBootstrap !== true) jobs.push(refreshHardwareInventory());
+  if (cfg.publicBootstrap !== true)
+    jobs.push(refreshDevShardVersions().catch(markDevShardVersionsUnavailable));
+  detailsInFlight = Promise.all(jobs).then(() => {}).finally(() => { detailsInFlight = null; });
+}
+
+async function refreshNetwork(): Promise<void> {
   let healthy = 0;
+  const finalNodeStates: Array<any> = [];
   let best = 0;
   let referenceKnown = false;
   let referenceHeight = 0;
-  refreshTelegramConsumer();
-  refreshGpuInventory().catch(() => {});
-  refreshSoftwareInventory().catch(() => {});
-  refreshDevShardVersions().catch(() => {});
+  let reference: any = null;
+  if (observerSnapshotMode) applyPublicChainState(publicChainState);
+  for (const node of observedNodes) {
+    // Keep fresh observations visible while polling, but never indefinitely.
+    if (!node.rpcObservedAt || Date.now() - Number(node.rpcObservedAt) > 90000)
+      node.endpointState = "unknown";
+    applyRetainedMembership(node);
+    const card = cards.get(nodeKey(node));
+    if (card) renderHostState(card, node);
+  }
+  let reconciliation: {status: "observed" | "pending", height: number};
   try {
-    best = await reconcileParticipants();
-  } catch {}
-  await refreshHardwareInventory();
-  try {
-    if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
-    const reference = await json(`${chainRpcOrigin}/chain-rpc/status`);
-    referenceHeight = Number(reference.result.sync_info.latest_block_height);
-    if (Number.isFinite(referenceHeight) && referenceHeight > 0) {
-      best = Math.max(best, referenceHeight);
-      referenceKnown = true;
-    }
-  } catch {}
-  await Promise.all(
+    reconciliation = await reconcileNetwork();
+  } catch (error) {
+    renderNetworkObservationStatus(String(error?.message || error).includes("malformed") ? "invalid" : "unavailable");
+    return;
+  }
+  if (reconciliation.status === "pending") {
+    renderNetworkObservationStatus("pending");
+    return;
+  }
+  best = reconciliation.height;
+  if (cfg.publicBootstrap !== true) refreshTelegramConsumer();
+  if (!observerSnapshotMode) {
+    refreshGpuInventory().catch(() => {});
+    refreshSoftwareInventory().catch(() => {});
+  }
+  let membership: ?Promise<void> = null;
+  let membershipDiagnostic = "";
+  const startMembership = (): void => {
+    if (observerSnapshotMode) return;
+    if (membership) return;
+    reference = freshReference();
+    if (!reference) return;
+    membership = refreshCurrentValidatorSet(reference).then((set) => {
+      retainedValidatorSet = set;
+      validatorSetObservedAt = Date.now();
+      for (const node of observedNodes) {
+        applyRetainedMembership(node);
+        const card = cards.get(nodeKey(node));
+        if (card) renderHostState(card, node);
+      }
+      validatorMapController?.update(observedNodes, set);
+    }).catch((error) => {
+      membershipDiagnostic = `Validator membership could not be refreshed: ${String(error?.message || error)}`;
+    });
+  };
+  startMembership();
+  if (!observerSnapshotMode) await Promise.all(
     observedNodes
       .filter((n) => n.mode !== "skip")
       .map(async (n) => {
         const card = cards.get(nodeKey(n));
         if (!card) return;
         if (!n.statusBase) {
-          n.endpointState = "unknown";
-          n.endpointDiagnostic = "Check endpoint";
-          n.isOnline = false;
-          n.serverStatus = "endpoint unknown";
-          set(card, "height", best ? best.toLocaleString() : "–");
-          set(card, "peers", "–");
+          if (cfg.publicBootstrap !== true)
+            n.endpointDiagnostic = "Public status route is not configured";
           renderHostState(card, n);
           updateSoftware(cardSoftwareInventory, n, card);
           updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
@@ -2345,77 +3378,18 @@ async function refresh(): Promise<void> {
           return;
         }
         const statusBase = n.statusBase;
-        const versionsRequest = readSoftwareVersions(statusBase)
-          .then((versions) => {
-            n.softwareVersions = versions;
-          })
-          .catch(() => {
-            n.softwareVersions = null;
-          });
-        const devShardRequest = json(`${statusBase}/devshard/healthz`)
-          .then((runtimes) => {
-            n.devShardHealth = {
-              state: "observed",
-              runtimes: Array.isArray(runtimes) ? runtimes : [],
-            };
-          })
-          .catch((error) => {
-            n.devShardHealth = {
-              state: String(error).includes("404") ? "not_exposed" : "unavailable",
-              runtimes: [],
-            };
-          });
         try {
-          const [s, net] = await Promise.all([
-            json(`${statusBase}/chain-rpc/status`),
-            json(`${statusBase}/chain-rpc/net_info`),
-            text(`${statusBase}/health`),
-          ]);
-          await Promise.all([versionsRequest, devShardRequest]);
-          n.endpointState = "reachable";
-          n.endpointDiagnostic = "";
+          const s = await json(`${statusBase}/chain-rpc/status`);
+          recordRpc(n, s);
           const h = Number(s.result.sync_info.latest_block_height);
-          const peers = Number(net.result.n_peers);
-          n.catchingUp = Boolean(s.result.sync_info.catching_up);
-          n.blocksBehind = referenceKnown
-            ? Math.abs(referenceHeight - h)
-            : undefined;
-          const blockTime = Date.parse(
-            String(s.result.sync_info.latest_block_time || ""),
-          );
-          n.blockAgeSeconds = Number.isFinite(blockTime)
-            ? Math.max(0, (Date.now() - blockTime) / 1000)
-            : undefined;
-          n.progressing =
-            n.blockAgeSeconds !== undefined && n.blockAgeSeconds <= 90;
-          n.referenceKnown = referenceKnown;
-          n.referenceAgrees =
-            referenceKnown &&
-            n.blocksBehind !== undefined &&
-            n.blocksBehind <= 5;
-          best = Math.max(best, h);
-          const validatorEffective = renderHostState(card, n);
-          n.isOnline =
-            validatorEffective &&
-            hostState.classify({
-              endpointState: n.endpointState,
-              catchingUp: n.catchingUp,
-              blocksBehind: n.blocksBehind,
-              blockAgeSeconds: n.blockAgeSeconds,
-              progressing: n.progressing,
-              referenceKnown: n.referenceKnown,
-              referenceAgrees: n.referenceAgrees,
-            }).syncLabel === "Synced";
-          n.serverStatus = "endpoint reachable";
-          set(card, "height", h.toLocaleString());
-          set(card, "peers", peers);
-          if (validatorEffective) healthy++;
-          updateSoftware(cardSoftwareInventory, n, card);
-          updateMlNodes(cardSoftwareInventory, cardHardwareInventory, n, card);
-          updateDevShards(n, card);
+          if (Number.isSafeInteger(h)) best = Math.max(best, h);
+          renderHostState(card, n);
+          set(card, "height", Number.isSafeInteger(h) && h > 0 ? h.toLocaleString() : "–");
+          startMembership();
         } catch (e) {
-          await Promise.all([versionsRequest, devShardRequest]);
           n.endpointState = "unavailable";
+          n.validatorKnown = false;
+          n.votingPower = undefined;
           n.endpointDiagnostic = hostState.endpointDiagnostic(e);
           n.isOnline = false;
           n.serverStatus = "endpoint unavailable";
@@ -2428,15 +3402,59 @@ async function refresh(): Promise<void> {
         }
       }),
   );
-  validatorMapController?.update(observedNodes);
+  startMembership();
+  // Queue core RPC and membership requests before optional probes. Browsers
+  // cap same-origin connections; slow metadata must not occupy every slot.
+  if (!observerSnapshotMode) refreshDetails();
+  await membership;
+  reference = freshReference();
+  if (reference) {
+    referenceHeight = Number(reference.height);
+    referenceKnown = true;
+    best = Math.max(best, referenceHeight);
+  }
+  for (const node of observedNodes) {
+    const configuredChainMatch = node.networkObserved !== true || node.rpcChainId === cfg.chainId;
+    node.referenceKnown = referenceKnown && configuredChainMatch;
+    node.blocksBehind = referenceKnown && configuredChainMatch && Number.isFinite(node.rpcHeight)
+      ? Math.abs(referenceHeight - Number(node.rpcHeight))
+      : undefined;
+    node.referenceAgrees = referenceKnown && configuredChainMatch && node.blocksBehind !== undefined && node.blocksBehind <= 5;
+    if (!configuredChainMatch) node.chainDiagnostic = `Configured chain mismatch: expected ${cfg.chainId}, observed ${node.rpcChainId || "unknown"}`;
+  }
+  const currentValidatorSet = Date.now() - validatorSetObservedAt <= 45000 ? retainedValidatorSet : null;
+  for (const n of observedNodes) {
+    if (n.networkObserved) {
+      const configuredChainMatch = n.rpcChainId === cfg.chainId;
+      if (observerSnapshotMode && retainedValidatorSet?.verified !== true) {
+        if (!/^\d+$/.test(String(n.votingPower || ""))) {
+          n.validatorKnown = false;
+          n.votingPower = undefined;
+        }
+      } else {
+        const validatorSet = n.endpointState === "reachable" && configuredChainMatch
+          ? currentValidatorSet
+          : null;
+        GDC_NETWORK_OBSERVATION.applyCurrentVotingPower(n, validatorSet);
+      }
+      n.observationComplete = true;
+      if (configuredChainMatch && !n.validatorKnown) {
+        n.chainDiagnostic = membershipDiagnostic || "Current validator identity is unavailable";
+      }
+    }
+    const card = cards.get(nodeKey(n));
+    const display = displayHostState(n);
+    n.isOnline = display.validatorEffective;
+    finalNodeStates.push(display);
+    if (card) renderHostState(card, n);
+  }
+  healthy = GDC_NETWORK_OBSERVATION.effectiveValidatorCount(finalNodeStates);
+  validatorMapController?.update(observedNodes, currentValidatorSet);
   $("best-height").textContent = best ? best.toLocaleString() : "–";
   setUtcTime("updated", new Date(), "Updated");
   try {
-    if (!chainRpcOrigin) throw new Error("chain RPC origin is missing");
-    const v = await json(
-      `${chainRpcOrigin}/chain-rpc/validators?per_page=100`,
-    );
-    const vals = v.result.validators || [];
+    if (currentValidatorSet?.verified !== true) throw new Error("complete pinned validator set is unavailable");
+    const vals = currentValidatorSet.validators;
     const powers = vals.map((x) => BigInt(x.voting_power));
     const total = powers.reduce((a, b) => a + b, 0n);
     const max = powers.reduce((a, b) => (a > b ? a : b), 0n);
@@ -2446,6 +3464,20 @@ async function refresh(): Promise<void> {
     $("power-share").style.color = unsafe ? "var(--bad)" : "var(--ok)";
   } catch {
     $("power-share").textContent = "–";
+  }
+  if (cfg.publicBootstrap === true) {
+    $("quality-updated").textContent = "Not reported for the selected network";
+    [...$("quality-metrics").children].forEach((card) => {
+      card.querySelector("strong").textContent = "–";
+    });
+    $("quality-active").textContent = "–";
+    $("quality-accepted").textContent = "–";
+    $("quality-rejected").textContent = "–";
+    $("quality-health").dataset.state = "unknown";
+    $("quality-health-state").textContent = "NOT REPORTED";
+    $("quality-recovery").hidden = true;
+    $("gateway-access").hidden = true;
+    return;
   }
   let gatewayState: any = null;
   let gatewayProbe: any = null;
@@ -2543,6 +3575,11 @@ async function refresh(): Promise<void> {
       undefined,
       gatewayAdmission,
     );
+    [...$("quality-metrics").children].forEach((card) => {
+      card.querySelector("strong").textContent = "–";
+    });
+    for (const id of ["quality-active", "quality-accepted", "quality-rejected"])
+      $(id).textContent = "–";
     const recovery = $("quality-recovery");
     $("quality-health-state").textContent = availability.state;
     $("quality-health").dataset.state =
@@ -2562,5 +3599,18 @@ async function refresh(): Promise<void> {
         "Gateway health has not been checked yet";
   }
 }
-refresh();
-setInterval(refresh, 15000);
+Promise.resolve((window: any).GDC_SITE_CONFIG_READY)
+  .then(() => {
+    configureNetwork();
+    const selectionError = String((window: any).GDC_SITE_CONFIG_ERROR || "");
+    if (selectionError) {
+      $("updated").textContent = `Bootstrap unavailable: ${selectionError}`;
+      return;
+    }
+    connectNetworkObservation();
+    refresh();
+    setInterval(refresh, 15000);
+  })
+  .catch((error) => {
+    $("updated").textContent = `Bootstrap unavailable: ${String(error?.message || error)}`;
+  });

@@ -26,6 +26,7 @@ printf '%s\n' '{"chain_id":"gonka-devnet-community","fixture":"byte-equivalent"}
 printf '%s\n' 'CHAIN_ID=gonka-devnet-community' >"$tmp/bootstrap/gonka-devnet-community/bootstrap.env"
 schema_id='$id'
 printf '{"%s":"https://gonka-dev.net/v1.bootstrap.schema.json"}\n' "$schema_id" >"$tmp/bootstrap/v1.bootstrap.schema.json"
+cp "$ROOT/../schema/join-profile.v1.schema.json" "$tmp/bootstrap/join-profile.v1.schema.json"
 
 cat >"$tmp/upstream/Caddyfile" <<'CADDY'
 :8081 {
@@ -90,7 +91,7 @@ grep -Fq 'preview.{$SITE_HOST} {' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq 'reverse_proxy 127.0.0.1:18090' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 grep -Fq '@preview_admission path_regexp preview_admission ^/(?:preview/)?[1-9][0-9]*/status/gateway/v1/admission-status$' "$tmp/Caddyfile"
 grep -Fq '@preview_status path_regexp preview_status ^/(?:preview/)?[1-9][0-9]*/status/(.+)$' "$tmp/Caddyfile"
-grep -Fq '@dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info))$' "$tmp/Caddyfile"
+grep -Fq '@dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info|validators))$' "$tmp/Caddyfile"
 grep -Fq 'reverse_proxy {re.dynamic_participant_status.1}:443' "$tmp/Caddyfile"
 
 docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 -p 127.0.0.1::18082 \
@@ -130,7 +131,7 @@ curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/" | grep -q '
 curl -fsS "http://127.0.0.1:$port/status/participants" | grep -Fxq '/status/participants'
 for prefix in '' /preview/172; do
   for node in 5 6 7 8; do
-    for endpoint in health v1/versions chain-rpc/status chain-rpc/net_info; do
+    for endpoint in health v1/versions chain-rpc/status chain-rpc/net_info 'chain-rpc/validators?height=1&page=1&per_page=100'; do
       curl -fsS --max-time 5 "http://127.0.0.1:$port$prefix/status/node$node.gonka-dev.net/$endpoint" \
         | grep -Fxq "participant node$node.gonka-dev.net /$endpoint"
     done
@@ -165,5 +166,54 @@ alias_content_type="$(awk 'BEGIN { IGNORECASE=1 } /^Content-Type:/ { sub(/\r$/, 
 [[ "$alias_content_type" == "$json_content_type" ]] || { echo "bootstrap alias content type differs: $alias_content_type != $json_content_type" >&2; exit 1; }
 curl -fsS "http://127.0.0.1:$port/gonka-devnet-community/bootstrap.env" | cmp - "$tmp/bootstrap/gonka-devnet-community/bootstrap.env"
 curl -fsS "http://127.0.0.1:$port/v1.bootstrap.schema.json" | cmp - "$tmp/bootstrap/v1.bootstrap.schema.json"
+curl -fsS "http://127.0.0.1:$port/join-profile.v1.schema.json" | cmp - "$tmp/bootstrap/join-profile.v1.schema.json"
+missing_schema="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/missing.schema.json")"
+[[ "$missing_schema" == 404 ]] || { echo "missing schema must return 404, not the site homepage" >&2; exit 1; }
+
+# Run the actual publisher against the live, disposable Caddy bind mount.
+# Transport fixtures permit only the static directory/copy operations; any
+# attempt to call sudo, Docker, reload or another SSH target fails the test.
+mkdir -p "$tmp/bin" "$tmp/release/preview/protected"
+printf '%s\n' 'window.config = "retained";' >"$tmp/site/config.js"
+printf '%s\n' 'must not replace config' >"$tmp/release/config.js"
+printf '%s\n' 'must not publish preview' >"$tmp/release/preview/protected/index.html"
+printf '%s\n' '<main>NEW STATIC RELEASE</main>' >"$tmp/release/index.html"
+printf '%s\n' 'console.log("new static asset");' >"$tmp/release/app.js"
+cat >"$tmp/bin/ssh" <<'PY'
+#!/usr/bin/env python3
+import os, pathlib, sys
+expected = ["-o", "BatchMode=yes", "deployer@fixture.invalid",
+            "install -d -m 0755 /srv/dai/edge/site"]
+if sys.argv[1:] != expected:
+    sys.exit("unexpected SSH operation in static publisher fixture")
+pathlib.Path(os.environ["SITE_FIXTURE_ROOT"], "site").mkdir(exist_ok=True)
+PY
+cat >"$tmp/bin/rsync" <<'PY'
+#!/usr/bin/env python3
+import os, pathlib, shutil, sys
+root = pathlib.Path(os.environ["SITE_FIXTURE_ROOT"])
+expected = ["-a", "--delete", "--exclude", "config.js", "--exclude", "preview/",
+            "-e", "ssh -o BatchMode=yes ", str(root / "release") + "/",
+            "deployer@fixture.invalid:/srv/dai/edge/site/"]
+if sys.argv[1:] != expected:
+    sys.exit("unexpected rsync operation in static publisher fixture")
+shutil.copytree(root / "release", root / "site", dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("config.js", "preview"))
+PY
+chmod +x "$tmp/bin/ssh" "$tmp/bin/rsync"
+before="$(docker inspect "$name" --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}')"
+PATH="$tmp/bin:$PATH" SITE_FIXTURE_ROOT="$tmp" \
+  "$ROOT/scripts/site-release.sh" publish "$tmp/release" '' fixture.invalid deployer
+curl -fsS "http://127.0.0.1:$port/" | cmp - "$tmp/release/index.html"
+curl -fsS "http://127.0.0.1:$port/app.js" | cmp - "$tmp/release/app.js"
+curl -fsS "http://127.0.0.1:$port/config.js" | grep -Fxq 'window.config = "retained";'
+curl -fsS "http://127.0.0.1:$port/preview/172/status/openapi.json" | grep -Fxq '{"openapi":"3.2.0"}'
+[[ ! -e "$tmp/site/preview/protected" ]]
+for extension in json env; do
+  curl -fsS "http://127.0.0.1:$port/gonka-devnet-community/bootstrap.$extension" \
+    | cmp - "$tmp/bootstrap/gonka-devnet-community/bootstrap.$extension"
+done
+[[ "$(docker inspect "$name" --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}')" == "$before" ]]
+printf 'PASS static publication serves new bytes and preserves Caddy identity, bootstrap, config and preview files\n'
 
 printf 'PASS public edge validates the shared preview status overlay, local admission exception and bootstrap alias\n'

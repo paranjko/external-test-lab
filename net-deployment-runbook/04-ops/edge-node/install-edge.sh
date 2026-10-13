@@ -21,7 +21,7 @@ expected_remote_prometheus="https://${GATEWAY_PUBLIC_HOST:-}/ops-prometheus"
 
 mkdir -p "$DEST"
 install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"
-install -d -m 0755 "$DEST/bootstrap"
+[[ -d "$DEST/bootstrap" ]] || install -d -m 0755 "$DEST/bootstrap"
 # Compose validates env_file paths even when only Caddy is selected. Seed an
 # empty non-contract file once for participant edges; only gateway apply may
 # replace it with a routable protocol contract.
@@ -59,8 +59,7 @@ else
 fi
 edge_owner="${SUDO_USER:-root}:${SUDO_USER:-root}"
 chown "$edge_owner" "$DEST"
-# The site is provisioned by the OPS/site publisher and may include a
-# separately-owned preview tree. Preserve those owners while retaining the
-# installer ownership for every other edge file.
-find "$DEST" -mindepth 1 -maxdepth 1 ! -name site -exec chown -R "$edge_owner" {} +
+# Site and bootstrap releases are maintained by unprivileged publishers.
+# Preserve their owners while reconciling the other edge files.
+find "$DEST" -mindepth 1 -maxdepth 1 ! -name site ! -name bootstrap -exec chown -R "$edge_owner" {} +
 printf 'READY installed edge proxy in %s\n' "$DEST"

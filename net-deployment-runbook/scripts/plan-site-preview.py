@@ -19,6 +19,9 @@ ENDPOINT_PREFIXES = (
     "net-deployment-runbook/04-ops/Caddyfile",
     "net-deployment-runbook/04-ops/participants-proxy.sh",
     "net-deployment-runbook/04-ops/edge-node/",
+    "net-deployment-runbook/04-ops/network-observer.sh",
+    "net-deployment-runbook/04-ops/network-observer-http.py",
+    "net-deployment-runbook/04-ops/gdc-network-observer",
 )
 PLATFORM_PREFIXES = (
     "ops/preview/",
@@ -77,6 +80,7 @@ def main() -> None:
             )
         if not endpoint_sources:
             raise SystemExit("endpoint preview requires declared endpoint inputs")
+        endpoint_sources.sort(key=lambda source: source["path"])
     payload = {
         "schema_version": 1,
         "base_revision": args.base,

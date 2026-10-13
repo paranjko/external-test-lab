@@ -18,11 +18,9 @@ if [[ "$mode" == publish ]]; then
   run_sha="$(jq -r '.workflow_run.head_sha // empty' "$GITHUB_EVENT_PATH")"
 else
   number="$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")"
-  action="$(jq -r '.action // empty' "$GITHUB_EVENT_PATH")"
 fi
 [[ "$number" =~ ^[1-9][0-9]*$ ]] || { echo 'PR number is invalid' >&2; exit 2; }
 pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")"
-files="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100")"
 head_repo="$(jq -r '.head.repo.full_name // empty' <<<"$pr")"
 head_sha="$(jq -r '.head.sha // empty' <<<"$pr")"
 base_sha="$(jq -r '.base.sha // empty' <<<"$pr")"
@@ -32,6 +30,19 @@ base_sha="$(jq -r '.base.sha // empty' <<<"$pr")"
 }
 same_repository=false
 [[ "$head_repo" == "$GITHUB_REPOSITORY" ]] && same_repository=true
+state="$(jq -r '.state // empty' <<<"$pr")"
+draft="$(jq -r '.draft // false' <<<"$pr")"
+if [[ "$mode" == cleanup ]]; then
+  # Comments and the current diff are not a deployment inventory. Publication
+  # may succeed before its comment fails, or a later revision may remove the
+  # preview-relevant changes. The controller safely handles absent previews.
+  # Read current state rather than trusting an old close/draft event.
+  remove=false
+  [[ "$same_repository" == true && ( "$state" == closed || ( "$state" == open && "$draft" == true ) ) ]] && remove=true
+  printf 'remove=%s\nnumber=%s\nhead_sha=%s\n' "$remove" "$number" "$head_sha" >>"$GITHUB_OUTPUT"
+  exit 0
+fi
+files="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100")"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 jq -r '.[][] | .filename' <<<"$files" | LC_ALL=C sort -u >"$tmp/changed-files.txt"
@@ -42,26 +53,18 @@ jq -r '.[][] | .filename' <<<"$files" | LC_ALL=C sort -u >"$tmp/changed-files.tx
   --output "$tmp/preview-composition.json" \
   --repository-root "$(cd "$(dirname "$0")/.." && pwd)" \
   --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/edge-node/PublicCaddyfile" \
-  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/render-ops.sh"
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/render-ops.sh" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/network-observer.sh" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/network-observer-http.py" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/gdc-network-observer.service" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/gdc-network-observer.socket" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/gdc-network-observer@.service" \
+  --endpoint-input "$(cd "$(dirname "$0")/.." && pwd)/04-ops/gdc-network-observer.timer"
 preview_mode="$(jq -r '.mode // empty' "$tmp/preview-composition.json")"
 [[ "$preview_mode" =~ ^(none|static|endpoint|combined)$ ]] || { echo 'preview mode is invalid' >&2; exit 2; }
 has_preview=false
 [[ "$preview_mode" != none ]] && has_preview=true
 
-if [[ "$mode" == publish ]]; then
-  state="$(jq -r '.state // empty' <<<"$pr")"
-  draft="$(jq -r '.draft // false' <<<"$pr")"
-  publish=false
-  [[ "$state" == open && "$draft" == false && "$same_repository" == true && "$has_preview" == true && "$head_sha" == "$run_sha" ]] && publish=true
-  printf 'publish=%s\nnumber=%s\nhead_sha=%s\nbase_sha=%s\n' "$publish" "$number" "$head_sha" "$base_sha" >>"$GITHUB_OUTPUT"
-else
-  draft="$(jq -r '.draft // false' <<<"$pr")"
-  remove=false
-  # Cleanup requires a preview-relevant PR with a recorded preview.
-  if [[ "$same_repository" == true && "$has_preview" == true && ( "$action" == closed || "$draft" == true ) ]]; then
-    marker="<!-- gdc-preview:$number -->"
-    comments="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$number/comments?per_page=100")"
-    jq -e --arg marker "$marker" '[.[][] | select(.body | contains($marker))] | length > 0' <<<"$comments" >/dev/null && remove=true
-  fi
-  printf 'remove=%s\nnumber=%s\nhead_sha=%s\n' "$remove" "$number" "$head_sha" >>"$GITHUB_OUTPUT"
-fi
+publish=false
+[[ "$state" == open && "$draft" == false && "$same_repository" == true && "$has_preview" == true && "$head_sha" == "$run_sha" ]] && publish=true
+printf 'publish=%s\nnumber=%s\nhead_sha=%s\nbase_sha=%s\n' "$publish" "$number" "$head_sha" "$base_sha" >>"$GITHUB_OUTPUT"

@@ -46,27 +46,91 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
       </details>
     </section>
     <section class="summary" aria-label="Network summary">
-      <article><span>Chain ID</span><strong id="chain-id">–</strong><small>Shared ledger</small></article>
-      <article><span>Common model</span><strong id="model-id">–</strong><small>Active group</small></article>
+      <article><span>Chain ID</span><strong id="chain-id">–</strong></article>
+      <article><span id="model-label">Common model</span><ul id="model-id" class="model-list"><li>–</li></ul></article>
       <article><span>Approved DevShards</span><strong id="devshard-versions">–</strong><small>Chain-wide allowlist</small></article>
       <article><span>Latest height</span><strong id="best-height">–</strong><small>Advancing live</small></article>
       <article><span>Largest voting share</span><strong id="power-share">–</strong><small>Consensus distribution</small></article>
     </section>
+    <section id="epoch-overview" class="epoch-overview" aria-live="polite" hidden>
+      <div class="epoch-overview-title"><span>Current epoch</span><strong id="epoch-label">–</strong></div>
+      <div class="epoch-progress">
+        <div id="epoch-progress-track" class="epoch-progress-track" role="progressbar" aria-labelledby="epoch-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="epoch-progress-bar"></span></div>
+        <small id="epoch-progress-detail">Waiting for a chain observation</small>
+      </div>
+      <div class="epoch-countdown"><strong id="epoch-remaining">–</strong><small id="epoch-end">–</small></div>
+      <div class="epoch-protocol-state">
+        <div><span>PoC stage</span><strong id="epoch-poc-state">–</strong></div>
+        <div><span>cPoC</span><strong id="epoch-cpoc-state">–</strong><small id="epoch-cpoc-detail">Waiting for a chain observation</small></div>
+      </div>
+    </section>
+    <section id="verification-results" class="verification-results" aria-labelledby="verification-results-title" hidden>
+      <div class="verification-results-title">
+        <div><span class="eyebrow">CHAIN-RECORDED EPOCH TRANSITION</span><h2 id="verification-results-title">Previous epoch <strong id="verification-epoch-label">–</strong></h2></div>
+        <small id="verification-results-summary">Waiting for a finalized epoch</small>
+      </div>
+      <div class="verification-results-overview">
+        <div><span>PoC evidence</span><strong id="verification-poc-state">–</strong><small id="verification-poc-detail">Waiting for a chain observation</small></div>
+        <div><span>cPoC</span><strong id="verification-cpoc-events">–</strong><small id="verification-cpoc-detail">Waiting for a chain observation</small></div>
+        <div><span>Consensus transition</span><strong id="verification-consensus-state">–</strong><small id="verification-consensus-detail">Waiting for a validator-set observation</small></div>
+      </div>
+      <details class="verification-evidence">
+        <summary>Inspect chain evidence</summary>
+        <div class="verification-evidence-grid">
+          <section aria-labelledby="verification-poc-evidence-title">
+            <h3 id="verification-poc-evidence-title">PoC evidence</h3>
+            <div class="verification-results-table-shell">
+              <table class="verification-results-table">
+                <thead><tr><th scope="col">Participant</th><th scope="col">Committed artifacts</th><th scope="col">Validator attestations</th></tr></thead>
+                <tbody id="verification-poc-result-rows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section aria-labelledby="verification-consensus-evidence-title">
+            <h3 id="verification-consensus-evidence-title">Consensus set at activation</h3>
+            <div class="verification-results-table-shell">
+              <table class="verification-results-table">
+                <thead><tr><th scope="col">Participant</th><th scope="col">Previous power</th><th scope="col">Effective power</th><th scope="col">Observed change</th></tr></thead>
+                <tbody id="verification-consensus-result-rows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </details>
+    </section>
+    <section id="devshard-execution" class="devshard-execution" aria-labelledby="devshard-execution-title" hidden>
+      <div class="devshard-execution-title">
+        <div><span class="eyebrow">PUBLIC DEVSHARD OBSERVATIONS</span><h2 id="devshard-execution-title">DevShard execution</h2></div>
+        <small id="devshard-execution-summary">Waiting for a network observation</small>
+      </div>
+      <div class="devshard-execution-overview">
+        <div><span>Public endpoints</span><strong id="devshard-endpoint-state">–</strong><small id="devshard-endpoint-detail">Health and runtime inventory</small></div>
+        <div><span>Runtime inventory</span><strong id="devshard-runtime-state">–</strong><small id="devshard-runtime-detail">Compared with the chain-approved catalog</small></div>
+        <div><span>Host-local sessions</span><strong id="devshard-session-state">–</strong><small id="devshard-session-detail">Not a fleet or GPU-utilisation measure</small></div>
+      </div>
+      <details class="devshard-execution-evidence">
+        <summary>Inspect public endpoint observations</summary>
+        <div class="devshard-execution-table-shell">
+          <table class="devshard-execution-table">
+            <thead><tr><th scope="col">Public endpoint</th><th scope="col">Running runtimes</th><th scope="col">Host-local sessions</th></tr></thead>
+            <tbody id="devshard-execution-rows"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
     <section id="network" class="network-section">
-      <div class="section-title"><div><span class="eyebrow">LIVE DEVNET</span><h2>Participant status</h2></div><time id="updated">Waiting for status refresh</time></div>
+      <div class="section-title"><div><span id="network-source" class="eyebrow">LIVE DEVNET</span><h2>Participant status</h2></div><time id="updated">Waiting for status refresh</time></div>
       <div id="nodes" class="nodes compact" role="list" aria-label="Participant status Host accordion"></div>
     </section>
     <section class="network-map-section" aria-labelledby="network-map-title">
-      <div class="section-title"><div><span class="eyebrow">VALIDATOR MAP</span><h2 id="network-map-title">Validator locations</h2></div><p class="map-note">Approximate public IP locations</p></div>
+      <div class="section-title"><div><span class="eyebrow">OBSERVED NETWORK HOSTS</span><h2 id="network-map-title">Network node map</h2></div></div>
       <ul class="validator-map-legend" aria-label="Validator status legend">
         <li class="validator-map-legend--validating">Validating</li>
         <li class="validator-map-legend--active">Active</li>
-        <li class="validator-map-legend--inactive">Inactive</li>
-        <li class="validator-map-legend--unknown">Unknown</li>
+        <li class="validator-map-legend--waiting">Wait</li>
       </ul>
-      <p class="validator-map-encoding-note">Marker size = nodes at location · Marker slices = node states</p>
       <div id="validator-map-shell" class="validator-map-shell">
-        <div id="validator-map" class="validator-map" aria-label="Interactive map of validator status by approximate public IP location"></div>
+        <div id="validator-map" class="validator-map" aria-label="Interactive map of observed network hosts by approximate public IP location"></div>
         <button id="validator-map-fullscreen" class="validator-map-fullscreen" type="button" aria-label="Open validator map fullscreen" aria-pressed="false">Fullscreen</button>
       </div>
     </section>
@@ -118,6 +182,8 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
   <script src="config.js"></script>
   <script src="gateway-state.js"></script>
   <script src="host-state.js"></script>
+  <script src="network-selection.js"></script>
+  <script src="network-observation-state.js"></script>
   <script src="software-versions.js"></script>
   <script src="site-build.js"></script>
   <script src="vendor/leaflet/leaflet.js"></script>

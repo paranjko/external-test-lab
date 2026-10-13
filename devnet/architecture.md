@@ -1,96 +1,38 @@
-# Community DevNet – Architecture Note
+# Community DevNet architecture
 
-This note describes the **first-generation architecture** of
-`gonka-devnet-community`. Its topology, release profile and milestone account
-below are historical context. They are not a fresh assertion that every listed
-validator or service is currently active. Deployment mechanics and image pins
-live in the [net-deployment-runbook](../net-deployment-runbook/README.md).
+Hardware snapshot: **13 October 2026**. The stand has **10 machines and 9 NVIDIA GPUs** across five recorded providers.
 
-The [2026-10-07 hardware inventory](hardware.md) covers ten machines, including
-`node5`–`node8`, and separates physical capacity from running containers and
-model qualification. [Regional capacity](regions.md) preserves the M2 provider
-and location snapshot. Consult [live observations](https://gonka-dev.net) for
-current network state; machine counts are not validator counts.
+## Fleet at a glance
 
-## Purpose
-
-A small, always-on, geographically distributed Gonka network for protocol, node, DevShard, operational, integration, and distributed-behavior testing — separate from mainnet, cost-efficient to operate, and realistic enough to catch issues that local environments cannot: latency, synchronization, propagation, regional instability.
-
-## Architecture decisions
-
-- **Clean genesis.** The persistent Community DevNet starts from a clean genesis. Stateful network copies may be launched from application-state exports as temporary, isolated shadow environments for upgrade, migration, and regression testing.
-- **Long-lived network.** The network is intended to persist across routine protocol upgrades (the `0.2.14 → 0.2.15` governed upgrade is rehearsed on it). A new chain ID is introduced when the network must be relaunched from a new genesis; any such reset is announced in advance.
-- **Bootstrap profile first.** The first generation runs a fast rehearsal profile — 50-block epochs, short governance windows, one PoC validation slot — to make lifecycle testing practical. It is not a claim about production timing; realistic steady-state values come later.
-- **Key isolation.** All DevNet keys and credentials are unique to the DevNet; nothing is shared with mainnet.
-- **Independent validators.** Every node join is treated as onboarding an independent validator. Additional nodes can be operated by delegated operators via an encrypted handoff flow that never shares coordinator secrets (see runbook `handoff create` / `handoff approve`).
-- **Reproducible deployments.** All images and DevShard binaries are pinned by digest in release profiles; a reset preserves only the public observability runtimes and the network is rebuilt from `prepare` up.
-
-## First-generation topology (historical)
-
-```
-├── gonka-dev.net          static network/status site
-├── api.gonka-dev.net      authenticated OpenAI-compatible gateway
-├── grafana.gonka-dev.net  public dashboards
-│
-├── node0.gonka-dev.net ─┐ genesis dbsmart-a5000
-├── node1.gonka-dev.net ─┤ join    one-nelsinki
-├── node2.gonka-dev.net ─┤ join    leadergpu-4090
-├── node3.gonka-dev.net ─┤ join    gigagpu1
-└── node4.gonka-dev.net ─┘ join    one-net
-                                   │
-                                   ▼
-                                   dbsmart-rtx-2000 (dedicated MLNode host)
-```
-
-| Node | Chain role | Host | GPU profile | Extra services |
-|---|---|---|---|---|
-| node0 | genesis validator | dbsmart-a5000 | A5000 24 GB | DevShard gateway, Prometheus + authenticated Grafana + alerting, status site origin, G-Meter, `/gateway/*` bootstrap route |
-| node1 | join validator | one-nelsinki | T4 16 GB | — |
-| node2 | join validator | leadergpu-4090 | RTX 4090 24 GB | operator-handoff rehearsal target (440 GiB data disk) |
-| node3 | join validator | gigagpu1 | RTX 3090 24 GB | — |
-| node4 | join validator | one-net | Blackwell 16 GB (dedicated ML host) | public TLS edge (Caddy), anonymous public Grafana, explorer entry, Telegram key-issuer bot |
-
-- **node4's MLNode runs on a separate machine** (`node4-ml`, formerly
-  `dbsmart-rtx-2000`, RTX PRO 2000 Blackwell). The network machine has no
-  compute GPU. The ML endpoint is resolved from operator SSH inventory;
-  runtime selection must use the applicable pinned profile and GPU
-  qualification, rather than this historical topology table.
-- **node0 keeps its own TLS name** because DAPI peers use the configured node URL for PoC proof exchange and chain RPC; all other public application origins terminate on the node4 edge.
-
-## Public surfaces
-
-| Endpoint | What it serves | Where it terminates |
+| Machines | GPU per machine | Recorded location |
 |---|---|---|
-| `https://gonka-dev.net` | static network/status site (per-node status cards, participant list from committed chain state, gateway status) | TLS on node4 edge → site origin on node0 |
-| `https://api.gonka-dev.net/v1` | authenticated OpenAI-compatible inference via the chain-accounted DevShard v4 gateway | TLS on node4 edge → gateway on node0 |
-| `https://grafana.gonka-dev.net` | public dashboards: `gdc-network` (24 h chain/validator/host view), `gdc-inference` (7-day gateway/executor/latency/capacity), `gdc-overview` (triage) | anonymous Grafana copy on node4 |
-| `https://nodeN.gonka-dev.net` | per-node status/proxy endpoints (`node0` additionally exposes the one-participant bootstrap gateway route) | each node |
-| Telegram key bot | self-service issuance of gateway API keys from a finite pre-generated pool | node4 (node0 during bootstrap) |
+| node0, node5 | RTX A5000, 24 GB | North Kansas City, US |
+| node1, node7 | Tesla T4, 16 GB | Helsinki, Finland |
+| node2 | RTX 4090, 24 GB | Amsterdam, Netherlands |
+| node3, node8 | RTX 3090, 24 GB | London, UK |
+| node4 | No compute GPU | Portland, US |
+| node6 | RTX PRO 2000 Blackwell, 16 GB | Russia; city unconfirmed |
+| node9 | RTX PRO 2000 Blackwell, 16 GB | League City, US |
 
-Access model: API keys are issued through the Telegram bot and have no artificial request-count or lifetime quota — protocol phases, escrow state, ML capacity and the model context window are the only real service boundaries. The gateway rotates its escrow automatically before each short DevNet epoch transition (with auto-settlement), so issued keys survive epoch switches.
+Recorded distribution: **US 4, Finland 2, UK 2, Netherlands 1, Russia 1**. Locations come from the published provider inventory; SSH verifies hardware, not physical location. See [regional capacity](regions.md).
 
-## Network profile (first generation)
+## Machine roles
 
-| Parameter | Value |
+- **node0–node3, node5, node6 and node8:** Network Node and MLNode containers running on the same machine.
+- **node4 → node9:** separate Network Node/edge and GPU machines. node9 was formerly named **node4-ml**; existing containers still use that name.
+- **node7:** MLNode and test containers running; no Network Node container observed in this snapshot.
+- **node0 and node4:** shared gateway, monitoring and public edge services.
+
+The GPUs span Turing, Ampere, Ada and Blackwell, with 16–24 GB per device. All ten machines expose the CPU flags required by the published-image JOIN check. [Hardware inventory](hardware.md) lists CPU, RAM, storage, drivers and measured VRAM.
+
+## Public access and operation
+
+| Surface | Purpose |
 |---|---|
-| Chain ID | `gonka-devnet-community` |
-| Baseline release | `testnet-0.2.14` (pinned commit + image digests in `profiles/releases/`) |
-| Upgrade rehearsal | governed on-chain upgrade to `testnet-0.2.15` (state-preserving, not a new baseline) |
-| Epochs | 50 blocks, one PoC validation slot (must stay non-zero for a chain-accounted gateway) |
-| Model | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) on every MLNode |
-| Inference access | DevShard v4 gateway (v3/v4 approved via chain governance), escrow rotation + auto-settlement |
-| Optional overlays | DevShard v4 HA (versiond replica loss/recovery), Sepolia bridge |
-| Monitoring | Prometheus + Grafana + Alertmanager + blackbox probes on node0; anonymous public copy on node4; NVIDIA GPU metrics agents on ML hosts |
+| [gonka-dev.net](https://gonka-dev.net) | Live network and participant observations |
+| [api.gonka-dev.net/v1](https://api.gonka-dev.net/v1) | Authenticated OpenAI-compatible inference |
+| [grafana.gonka-dev.net](https://grafana.gonka-dev.net) | Public monitoring dashboards |
 
-## Milestone path (per proposal)
+The stand supports protocol, DevShard, inference, JOIN/recovery and distributed-system testing. DevNet credentials are isolated from mainnet. Machine and container counts do not establish validator membership or workload qualification; use live observations for network state.
 
-- **M1 — done:** architecture agreed; 5 nodes online across 5 providers; deployment reproducible via the runbook; public status site, gateway and dashboards live.
-- **M2 — in progress:** grow towards 9+ MLNodes across target regions; join guide published ([ROLE-JOIN.md](../net-deployment-runbook/ROLE-JOIN.md)) and operator-handoff flow rehearsed; monitoring polish.
-- **M3:** stable operation; incident log; onboarding guide for external participants.
-- **M4:** final infrastructure and cost report; handoff package.
-
-## Open questions being worked
-
-- Final region/provider mix within the monthly infrastructure cap (path to 9+ MLNodes).
-- When to open external joins: the handoff flow works; public join instructions gate on M2 stability.
-- Moving from the fast rehearsal profile (50-block epochs) to realistic steady-state chain parameters.
+Deployment commands, release profiles and operator roles are maintained in the [runbook](../net-deployment-runbook/README.md). Earlier topology and milestone results are recorded in the [monthly reports](../reports/monthly/).

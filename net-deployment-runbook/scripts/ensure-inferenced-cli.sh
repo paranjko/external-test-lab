@@ -51,22 +51,26 @@ platform_key() {
 }
 
 version_matches() {
-  local candidate="$1" output
+  local candidate="$1" output numeric_version
   [[ -x "$candidate" ]] || return 1
+  [[ "$GONKA_RELEASE" =~ ^([0-9]+\.[0-9]+\.[0-9]+) ]] || return 1
+  numeric_version="${BASH_REMATCH[1]}"
   output="$("$candidate" version 2>&1 || true)"
-  [[ "$output" =~ (^|[^0-9])v?${GONKA_RELEASE//./\\.}([^0-9]|$) ]]
+  [[ "$output" =~ (^|[^0-9])v?${numeric_version//./\\.}([^0-9]|$) ]]
 }
 
 profile_runtime_matches() {
-  local candidate="$1" output
+  local candidate="$1" output numeric_version
   [[ -x "$candidate" ]] || return 1
+  [[ "$GONKA_RELEASE" =~ ^([0-9]+\.[0-9]+\.[0-9]+) ]] || return 1
+  numeric_version="${BASH_REMATCH[1]}"
   output="$("$candidate" version 2>&1 || true)"
   # The official operator CLI exposes its release version, but not its source
   # commit. The immutable archive digest in the Join Profile is the binary
   # identity; the resolver has already bound that asset's release tag to the
   # observed commit through GitHub's tag metadata. Requiring an unavailable
   # commit string would reject the genuine official CLI.
-  [[ "$output" =~ (^|[^0-9])v?${GONKA_RELEASE//./\\.}([^0-9]|$) ]]
+  [[ "$output" =~ (^|[^0-9])v?${numeric_version//./\\.}([^0-9]|$) ]]
 }
 
 sha256_file() {

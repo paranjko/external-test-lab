@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 release_dir="${site_release_dir:-}"
 number="${preview_number:-}"
 revision="${preview_revision:-}"
@@ -24,5 +25,7 @@ page="$(curl --fail --silent --show-error --location --max-redirs 0 --connect-ti
 if [[ "$mode" != static ]]; then
   status="$(curl --fail --silent --show-error --location --max-redirs 0 --connect-timeout 10 --max-time 30 --proto '=https' --proto-redir '=https' "$base/status/gpus")" || die 'source-bound GPU status route is unavailable'
   [[ "$status" != *'<html'* && "$status" != *'<!doctype'* && -n "$status" ]] || die 'source-bound GPU status route returned HTML or an empty body'
+  node "$root/scripts/verify-network-observer.mjs" --base-url "$origin" --status-prefix "/$number/status" \
+    || die 'source-bound network observer HTTP/WebSocket routes are unavailable or invalid'
 fi
 printf 'PASS verified isolated public preview pr=%s revision=%s mode=%s\n' "$number" "$revision" "$mode"
