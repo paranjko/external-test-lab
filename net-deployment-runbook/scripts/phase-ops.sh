@@ -825,7 +825,9 @@ case "$COMPONENT" in
     # Prometheus and Grafana mount generated provisioning/configuration files.
     # `up -d` alone does not reload an already-running container, leaving a
     # newly rendered dashboard/scrape config silently stale.
-    START_COMMAND='docker compose up -d --force-recreate prometheus alertmanager blackbox grafana'
+    START_COMMAND='docker compose up -d --no-deps --force-recreate prometheus alertmanager blackbox grafana'
+    # Bootstrap an absent listener, but never recreate an existing route owner.
+    CADDY_START_COMMAND='docker compose up -d --no-deps --no-recreate caddy'
     ENDPOINT="http://$(node_public_host "$GATEWAY_NODE"):3000"
     ;;
   site)

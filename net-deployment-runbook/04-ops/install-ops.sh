@@ -28,6 +28,27 @@ GATEWAY_RESERVE_POLICY="$(ops_shared_asset gateway-reserve-policy.sh)"
 OPS_LIB_LOCK="$(ops_shared_asset lib-lock.sh)"
 service_user="${SUDO_USER:-root}"
 service_group="$(id -gn "$service_user")"
+if [[ "$COMPONENT" == monitoring && -e "$DEST/compose.yaml" ]]; then
+  # Existing OPS may contain independently managed routes and gateway state.
+  # Refresh monitoring assets only; do not reinstall shared files or services.
+  [[ -s "$DEST/compose.yaml" && -s "$DEST/.env" && -s "$DEST/Caddyfile" ]] || {
+    echo 'existing OPS configuration is incomplete; refusing monitoring refresh' >&2
+    exit 1
+  }
+  install -d -m 0755 "$DEST/prometheus/targets/join" "$DEST/grafana"
+  cp -a "$HERE/grafana/." "$DEST/grafana/"
+  for asset in alerts.yml alertmanager.yml blackbox.yml; do
+    install -m 0644 "$HERE/prometheus/$asset" "$DEST/prometheus/$asset"
+  done
+  install -m 0644 "$RENDER/prometheus.yml" "$DEST/prometheus/prometheus.yml"
+  if [[ -d "$RENDER/prometheus/targets/static" ]]; then
+    rm -rf "$DEST/prometheus/targets/static"
+    cp -a "$RENDER/prometheus/targets/static" "$DEST/prometheus/targets/static"
+  fi
+  chown -R "$service_user:$service_group" "$DEST/grafana" "$DEST/prometheus"
+  printf 'READY refreshed monitoring assets; shared OPS configuration and services retained\n'
+  exit 0
+fi
 mkdir -p "$DEST"; cp -a "$HERE"/. "$DEST"/
 mkdir -p "$DEST/status" "$DEST/prometheus" "$DEST/prometheus/targets/join"
 install -m 0600 "$RENDER/.env" "$DEST/.env"
