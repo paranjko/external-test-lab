@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -36,10 +35,10 @@ func PromoteHistory(historyPath, receiptPath, transactionPath string, point Hist
 		return err
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(lock); err != nil {
 		return err
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer unlockFile(lock)
 	if _, err := os.Stat(receiptPath); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {

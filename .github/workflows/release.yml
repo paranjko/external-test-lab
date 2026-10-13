@@ -1,0 +1,62 @@
+name: gonkactl-test release
+on:
+  push:
+    tags: ['gonkactl-test/v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing gonkactl-test release tag
+        required: true
+        default: gonkactl-test/v1.0.0-beta.1
+        type: choice
+        options: [gonkactl-test/v1.0.0-beta.1]
+permissions:
+  contents: read
+concurrency:
+  group: gonkactl-test-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: gonkactl-test/go.mod
+          cache-dependency-path: gonkactl-test/go.sum
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Verify the release candidate
+        run: make -C gonkactl-test release-check
+      - name: Build the five platform archives
+        run: make -C gonkactl-test release-build
+      - name: Verify installation in a clean container
+        run: make -C gonkactl-test release-container-smoke
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gonkactl-test-release
+          path: build/gonkactl-test-release/
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: gonkactl-test-release
+          path: build/gonkactl-test-release/
+      - name: Verify provenance and publish the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: make -C gonkactl-test release-publish

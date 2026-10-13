@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Run Gonka component tests, validate environments, and turn test runs into inspectable evidence.">
+  <title>gonkactl-test · Gonka Community DevNet</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./test.css">
+  <script src="./test.js" defer></script>
+</head>
+<body>
+  <main>
+    <nav><a href="/">Gonka Community DevNet</a><a href="https://github.com/paranjko/external-test-lab/tree/gonkactl-test%2Fv1.0.0-beta.1/gonkactl-test">Source ↗</a></nav>
+    <p class="eyebrow">COMPONENT TESTING / <span>1.0.0-beta.1</span></p>
+    <h1>gonkactl-test</h1>
+    <p class="intro">Run the test.<br>Keep the evidence.</p>
+    <p class="summary">A command-line tool for Gonka component E2E tests and test-run analysis. Validate the environment, run a fixture, and inspect what happened.</p>
+    <section aria-labelledby="install-heading">
+      <h2 id="install-heading">Install in one command</h2>
+      <div class="command"><code id="install-command">curl -LsSf https://gonka-dev.net/test/install.sh | sh</code><button type="button" id="copy-command">Copy</button></div>
+      <p id="copy-status" role="status" aria-live="polite"></p>
+      <p class="muted">Installs to ~/.local/bin and verifies SHA-256 before installation. <a href="./install.sh">Read the installer</a>.</p>
+    </section>
+    <section aria-label="Capabilities" class="features">
+      <article><h2>Run locally</h2><p>Launch an owned fixture with explicit inputs and cleanup receipts.</p></article>
+      <article><h2>Use a test stand</h2><p>Run profile-bound qualification on the stand host with an exclusive fixture lease.</p></article>
+      <article><h2>Validate first</h2><p>Check environment profiles and composition digests before launch.</p></article>
+      <article><h2>Inspect results</h2><p>Parse test events, retain JSON evidence, and render Allure reports.</p></article>
+    </section>
+    <section aria-labelledby="start-heading">
+      <h2 id="start-heading">Start here</h2>
+      <pre><code>gonkactl-test --version
+gonkactl-test --help
+gonkactl-test setup-report
+gonkactl-test run --help</code></pre>
+      <p class="muted">HTML reports require Node.js 24–26 and npm. DevShard release fixtures also require Docker with Compose, Go 1.27, Git, Bash and reviewed feature inputs. This beta includes DevShard v5 bindings; unsupported scenarios are reported as not run.</p>
+    </section>
+    <section aria-labelledby="downloads-heading">
+      <h2 id="downloads-heading">Direct downloads</h2>
+      <ul class="downloads">
+        <li><span>Linux <small>Intel / AMD 64-bit</small></span><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv1.0.0-beta.1/gonkactl-test_1.0.0-beta.1_linux_amd64.tar.gz">amd64 · tar.gz ↓</a></li>
+        <li><span>Linux <small>ARM 64-bit</small></span><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv1.0.0-beta.1/gonkactl-test_1.0.0-beta.1_linux_arm64.tar.gz">arm64 · tar.gz ↓</a></li>
+        <li><span>macOS <small>Intel</small></span><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv1.0.0-beta.1/gonkactl-test_1.0.0-beta.1_darwin_amd64.tar.gz">amd64 · tar.gz ↓</a></li>
+        <li><span>macOS <small>Apple silicon</small></span><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv1.0.0-beta.1/gonkactl-test_1.0.0-beta.1_darwin_arm64.tar.gz">arm64 · tar.gz ↓</a></li>
+        <li><span>Windows <small>64-bit · .exe</small></span><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv1.0.0-beta.1/gonkactl-test_1.0.0-beta.1_windows_amd64.zip">amd64 · zip ↓</a></li>
+      </ul>
+      <p class="links"><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-test%2Fv1.0.0-beta.1/checksums.txt">SHA-256 checksums</a><a href="https://github.com/paranjko/external-test-lab/releases/tag/gonkactl-test%2Fv1.0.0-beta.1">Release notes ↗</a></p>
+    </section>
+    <footer>Community test tooling. A test report is evidence for its declared scope, not a network-wide readiness claim.</footer>
+  </main>
+</body>
+</html>

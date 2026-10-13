@@ -1,5 +1,23 @@
 .PHONY: test-contracts test-bindings test-stand test-browser-probe test-report test-storage check-deadcode generate-cli-docs check qa install docker-image clean
 
+RELEASE_OUTPUT ?= $(abspath ../build/gonkactl-test-release)
+.PHONY: release-build release-verify release-publish release-check test-installer
+test-installer:
+	sh -n ../net-deployment-runbook/04-ops/site/test/install.sh
+	python3 -m unittest discover -s scripts -p 'test_*.py'
+release-check: test-installer qa
+release-build:
+	python3 scripts/release.py build --output "$(RELEASE_OUTPUT)"
+release-verify:
+	python3 scripts/release.py verify --output "$(RELEASE_OUTPUT)"
+release-publish:
+	python3 scripts/release.py publish --output "$(RELEASE_OUTPUT)"
+
+.PHONY: release-container-smoke
+release-container-smoke: release-verify
+	docker build -f scripts/smoke.Dockerfile -t gonkactl-test-install-smoke:local scripts
+	docker run --rm --network none --read-only --tmpfs /tmp:exec,mode=1777 --mount "type=bind,src=$(RELEASE_OUTPUT),dst=/release,readonly" --mount "type=bind,src=$(abspath ../net-deployment-runbook/04-ops/site/test),dst=/installer,readonly" gonkactl-test-install-smoke:local
+
 DATA_ROOT := $(abspath ../build/gonkactl-test)
 BROWSER_TEMP_ROOT := $(abspath ../build/gonkactl-test-browser-tmp)
 QUALIFICATION_RUN_ID := qualification-$(shell date -u +%Y%m%dT%H%M%SZ)-$(shell printf '%s' "$(MAKELEVEL)-$(PPID)" | sha256sum | cut -c1-8)

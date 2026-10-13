@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -126,7 +127,18 @@ func TestRunPersistsProfileBeforeRejectingDigest(t *testing.T) {
 }
 
 func TestRunReleasesLeaseWhenSIGTERMStopsFixture(t *testing.T) {
-	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGTERM fixture is Unix-specific")
+	}
+	root := filepath.Join("..", "build", "gonkactl-test", "signal-fixtures")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(root, "signal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	prepared := filepath.Join(dir, "prepared")
 	if err := os.MkdirAll(prepared, 0o700); err != nil {
 		t.Fatal(err)
@@ -143,9 +155,18 @@ func TestRunReleasesLeaseWhenSIGTERMStopsFixture(t *testing.T) {
 	}
 	receipt := filepath.Join(dir, "receipt", "decision.json")
 	fixtureReceipt := filepath.Join(dir, "fixture.json")
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		select {
+		case <-done:
+			return
+		case <-time.After(100 * time.Millisecond):
+			process, err := os.FindProcess(os.Getpid())
+			if err == nil {
+				_ = process.Signal(syscall.SIGTERM)
+			}
+		}
 	}()
 	err = run([]string{
 		"--prepared-workdir", prepared,

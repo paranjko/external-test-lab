@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -28,10 +27,12 @@ func toolDir() (string, error) {
 		return configured, nil
 	}
 	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", errors.New("locate report tools")
+	if ok && filepath.IsAbs(source) {
+		if _, err := os.Stat(filepath.Join(filepath.Dir(source), "package-lock.json")); err == nil {
+			return filepath.Dir(source), nil
+		}
 	}
-	return filepath.Dir(source), nil
+	return bundledToolDir()
 }
 
 // RenderAllure renders an existing Allure results directory without changing
@@ -45,7 +46,7 @@ func RenderAllure(ctx context.Context, results, output string) error {
 	if results == "" || output == "" {
 		return errors.New("Allure results and output paths are required")
 	}
-	cmd := exec.CommandContext(ctx, filepath.Join(dir, "node_modules", ".bin", "allure"), "generate", "--config", "allurerc.mjs", results)
+	cmd := exec.CommandContext(ctx, "node", filepath.Join(dir, "node_modules", "allure", "cli.js"), "generate", "--config", "allurerc.mjs", results)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GONKACTL_TEST_REPORT_OUTPUT="+output, "GONKACTL_TEST_APPEND_HISTORY=false")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -224,10 +225,10 @@ func RenderTransaction(ctx context.Context, dataRoot, runID string) error {
 		return err
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(lock); err != nil {
 		return err
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer unlockFile(lock)
 	if _, err := os.Stat(receipt); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -254,7 +255,7 @@ func RenderTransaction(ctx context.Context, dataRoot, runID string) error {
 		_ = atomicWriteText(transaction, "renderer_failed:97\n")
 		return errors.New("renderer failed: 97")
 	}
-	cmd := exec.CommandContext(ctx, filepath.Join(dir, "node_modules", ".bin", "allure"), "generate", "--config", "allurerc.mjs", filepath.Join(dataRoot, "report", "results", runID))
+	cmd := exec.CommandContext(ctx, "node", filepath.Join(dir, "node_modules", "allure", "cli.js"), "generate", "--config", "allurerc.mjs", filepath.Join(dataRoot, "report", "results", runID))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GONKACTL_TEST_REPORT_OUTPUT="+filepath.Join(dataRoot, "report", "render", runID), "GONKACTL_TEST_HISTORY_PATH="+staging, "GONKACTL_TEST_APPEND_HISTORY=false")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr

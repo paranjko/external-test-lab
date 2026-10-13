@@ -28,6 +28,7 @@ func newRootCmd() *cobra.Command {
 	var global globalOptions
 	root := &cobra.Command{
 		Use:          "gonkactl-test",
+		Version:      version,
 		Short:        "Run and verify Gonka test fixtures",
 		Long:         "gonkactl-test executes owned fixture qualification, report generation, browser checks, and evidence transactions.",
 		SilenceUsage: true,
@@ -47,6 +48,12 @@ func newRootCmd() *cobra.Command {
 		RunE:     func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 		PostRunE: func(_ *cobra.Command, _ []string) error { return nil },
 	}
+	root.SetVersionTemplate("{{.Version}}\n")
+	root.AddCommand(simpleCmd("setup-report", "Install the pinned report renderer", "Install report dependencies using Node.js 24–26 and npm. Run once before rendering reports.", cobra.NoArgs, func(ctx context.Context, _ []string) error { return report.SetupReport(ctx) }))
+	root.AddCommand(simpleCmd("build-info", "Print release build metadata", "Print version, source commit and build timestamp.", cobra.NoArgs, func(_ context.Context, _ []string) error {
+		fmt.Fprintf(root.OutOrStdout(), "version=%s\ncommit=%s\nbuild_time=%s\n", version, commit, buildTime)
+		return nil
+	}))
 	root.PersistentFlags().BoolVarP(&global.verbose, "verbose", "v", false, "enable verbose diagnostics")
 	root.PersistentFlags().StringVarP(&global.format, "format", "o", "text", "output format: text or json")
 	root.PersistentFlags().StringVarP(&global.config, "config", "c", os.Getenv("GONKACTL_TEST_CONFIG"), "optional configuration file")
