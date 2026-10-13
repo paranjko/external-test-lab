@@ -13,7 +13,7 @@ of the retained analysis, not the engine that renders the HTML report.
 
 ## Packaged beta
 
-Version `1.0.0-beta.1` provides Linux and macOS binaries for amd64/arm64 and a
+Version `1.0.0-beta.2` provides Linux and macOS binaries for amd64/arm64 and a
 Windows amd64 ZIP. The [trace page](https://gonka-dev.net/trace/) links the
 versioned assets and installer:
 
@@ -40,7 +40,7 @@ separate source build. A developer's generated viewer assets cause packaging
 to fail instead of silently changing the release.
 
 The release workflow triggers on component tags such as
-`gonkactl-trace-v1.0.0-beta.1`, or manual dispatch selecting
+`gonkactl-trace-v1.0.0-beta.2`, or manual dispatch selecting
 that existing tag. It runs source/installer checks, builds all targets, and
 publishes a prerelease with [release notes](RELEASE_NOTES.md). Publication
 requires the tag, checked-out commit and archive manifest to agree; it never
@@ -76,7 +76,7 @@ Install Go according to [the official Go installation guide](https://go.dev/doc/
 including its instruction to make Go-installed binaries available on `PATH`.
 
 ```sh
-git clone -b feat/gonkactl-trace https://github.com/paranjko/external-test-lab.git
+git clone -b gonkactl-trace-v1.0.0-beta.2 https://github.com/paranjko/external-test-lab.git
 cd external-test-lab
 make install
 

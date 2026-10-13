@@ -8,9 +8,9 @@ on:
       tag:
         description: Existing release tag to build and publish
         required: true
-        default: gonkactl-trace-v1.0.0-beta.1
+        default: gonkactl-trace-v1.0.0-beta.2
         type: choice
-        options: [gonkactl-trace-v1.0.0-beta.1]
+        options: [gonkactl-trace-v1.0.0-beta.2]
 
 permissions:
   contents: read

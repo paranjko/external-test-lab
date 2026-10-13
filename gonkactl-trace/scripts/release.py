@@ -16,7 +16,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ("linux_amd64", "linux_arm64", "darwin_amd64", "darwin_arm64", "windows_amd64")
-VERSION = "1.0.0-beta.1"
+VERSION = "1.0.0-beta.2"
 REPOSITORY = "paranjko/external-test-lab"
 
 
