@@ -215,9 +215,15 @@ def sha256_member(archive: tarfile.TarFile, member: tarfile.TarInfo) -> str:
 
 
 def registry_identity(reference: str, authfile: Path, home: Path) -> dict | None:
+    # Skopeo rejects tag+digest references; the digest remains authoritative.
+    transport_reference = reference
+    if "@" in reference:
+        name, digest = reference.rsplit("@", 1)
+        prefix, separator, image = name.rpartition("/")
+        transport_reference = f"{prefix}{separator}{image.split(':', 1)[0]}@{digest}"
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home)}
     result = subprocess.run(["skopeo", "inspect", "--raw", "--authfile", str(authfile),
-                             f"docker://{reference}"], text=True, stdout=subprocess.PIPE,
+                             f"docker://{transport_reference}"], text=True, stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, env=environment)
     if result.returncode:
         diagnostic = result.stderr.lower()
@@ -230,7 +236,7 @@ def registry_identity(reference: str, authfile: Path, home: Path) -> dict | None
         manifest = json.loads(raw)
         require(manifest.get("schemaVersion") == 2, "unexpected GHCR manifest schema")
         config = subprocess.run(["skopeo", "inspect", "--config", "--authfile", str(authfile),
-                                 f"docker://{reference}"], text=True, stdout=subprocess.PIPE,
+                                 f"docker://{transport_reference}"], text=True, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, env=environment, check=True)
         image_config = json.loads(config.stdout)
     except (json.JSONDecodeError, subprocess.CalledProcessError) as error:
