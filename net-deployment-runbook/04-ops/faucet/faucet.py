@@ -21,9 +21,11 @@ RPC_URL = os.environ["FAUCET_RPC_URL"]
 KEY_NAME = os.environ.get("FAUCET_KEY_NAME", "gdc-faucet-cold")
 PASSWORD = os.environ["FAUCET_KEYRING_PASSWORD"]
 AMOUNT = os.environ["FAUCET_AMOUNT_NGONKA"]
+GAS_PRICES = os.environ.get("FAUCET_GAS_PRICES", "1ngonka")
 STATE_DB = os.environ.get("FAUCET_STATE_DB", "/data/faucet.sqlite3")
 WINDOW_SECONDS = int(os.environ.get("FAUCET_WINDOW_SECONDS", "86400"))
 MAX_CLAIMS_PER_IP = int(os.environ.get("FAUCET_MAX_CLAIMS_PER_IP", "3"))
+CONFIRM_TIMEOUT_SECONDS = int(os.environ.get("FAUCET_CONFIRM_TIMEOUT_SECONDS", "45"))
 LISTEN_HOST = os.environ.get("FAUCET_LISTEN_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("FAUCET_LISTEN_PORT", "18081"))
 TELEGRAM_TOKEN = os.environ.get("FAUCET_TELEGRAM_TOKEN", "")
@@ -72,11 +74,11 @@ def database():
     recorded = db.execute("SELECT value FROM metadata WHERE key = 'genesis_sha256'").fetchone()
     lineage_version = db.execute("SELECT value FROM metadata WHERE key = 'claims_lineage_version'").fetchone()
     if lineage_version is None or lineage_version[0] != CLAIMS_LINEAGE_VERSION:
-        # Databases created before claims were scoped to a Genesis lineage may
-        # contain valid-looking limits that belong to an already reset chain.
-        # Clear that legacy state exactly once when adopting this schema.
-        db.execute("DELETE FROM claims")
-        db.execute("DELETE FROM telegram_claims")
+        # A schema upgrade is not a chain reset. Preserve claims when the
+        # recorded lineage matches (or is unknown), including pending intents.
+        if recorded is not None and recorded[0] != GENESIS_SHA256:
+            db.execute("DELETE FROM claims")
+            db.execute("DELETE FROM telegram_claims")
         db.execute(
             "INSERT INTO metadata(key, value) VALUES ('genesis_sha256', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -328,7 +330,7 @@ def submit(address, amount=AMOUNT, memo=None):
     result = subprocess.run(
         ["inferenced", "tx", "bank", "send", KEY_NAME, address, f"{amount}ngonka", "--from", KEY_NAME,
          "--keyring-backend", "file", "--chain-id", CHAIN_ID, "--node", RPC_URL, "--gas", "auto",
-         "--gas-adjustment", "1.5", "--gas-prices", "0ngonka", "--broadcast-mode", "sync", "--output", "json"]
+         "--gas-adjustment", "1.5", "--gas-prices", GAS_PRICES, "--broadcast-mode", "sync", "--output", "json"]
         + (["--memo", memo] if memo else []) + ["--yes"],
         input=f"{PASSWORD}\n", text=True, capture_output=True, env=env, timeout=45, check=False,
     )
@@ -341,7 +343,7 @@ def submit(address, amount=AMOUNT, memo=None):
         tx_response = payload.get("tx_response", {})
         if not isinstance(tx_response, dict):
             raise RuntimeError("inferenced returned malformed transaction output")
-        code = payload.get("code", tx_response.get("code"))
+        code = payload.get("code", tx_response.get("code", 0))
         if code is not None:
             if type(code) is not int or code < 0:
                 raise RuntimeError("inferenced returned malformed transaction code")
@@ -352,7 +354,36 @@ def submit(address, amount=AMOUNT, memo=None):
         raise RuntimeError("inferenced returned non-JSON transaction output") from error
     if not isinstance(txhash, str) or not re.fullmatch(r"[0-9A-Fa-f]{64}", txhash):
         raise RuntimeError("inferenced did not return a transaction hash")
+    if not isinstance(code, int) or code != 0:
+        raise RuntimeError("inferenced transaction was rejected by the mempool")
     return txhash
+
+
+def confirm(txhash):
+    """Wait for a successful DeliverTx before recording a public claim."""
+    deadline = time.monotonic() + CONFIRM_TIMEOUT_SECONDS
+    endpoint = f"{RPC_URL.rstrip('/')}/tx?hash=0x{txhash}"
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(endpoint, timeout=5) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as error:
+            if error.code != 500:
+                raise RuntimeError("faucet transaction lookup failed") from error
+            time.sleep(1)
+            continue
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("faucet transaction lookup failed") from error
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            time.sleep(1)
+            continue
+        tx_result = result.get("tx_result", {})
+        code = tx_result.get("code", result.get("code", 0))
+        if code in (0, "0"):
+            return
+        raise RuntimeError("faucet transaction failed in a block")
+    raise RuntimeError("faucet transaction was not included before confirmation timeout")
 
 
 def safe_transaction_error(error):
@@ -360,8 +391,16 @@ def safe_transaction_error(error):
     message = str(error).lower()
     if "insufficient funds" in message:
         return "gateway reserve funding account has insufficient funds"
+    if "insufficient fee" in message:
+        return "faucet fee configuration is below the chain minimum"
     if "account sequence mismatch" in message or "incorrect account sequence" in message:
         return "gateway reserve signer sequence conflict"
+    if "too many failed passphrase attempts" in message or "incorrect passphrase" in message:
+        return "faucet signer credential is unavailable"
+    if "not a valid name or address" in message or "key not found" in message:
+        return "faucet signing key is unavailable"
+    if "unknown flag" in message or "unsupported" in message:
+        return "faucet signer CLI is incompatible with the network"
     if "timed out" in message or "timeout" in message:
         return "gateway reserve transaction timed out"
     return "gateway reserve transaction was not accepted"
@@ -476,7 +515,10 @@ class FaucetHandler(BaseHTTPRequestHandler):
         with LOCK, database() as db:
             existing = db.execute("SELECT txhash, state FROM claims WHERE address = ?", (address,)).fetchone()
             if existing:
-                self.reply(409, {"error": "this address has already claimed faucet funds", "txhash": existing[0], "state": existing[1]})
+                if existing[1] == "confirmed":
+                    self.reply(200, {"address": address, "amount_ngonka": AMOUNT, "txhash": existing[0], "state": "confirmed"})
+                else:
+                    self.reply(409, {"error": "the earlier faucet claim needs operator recovery", "txhash": existing[0], "state": existing[1]})
                 return
             recent = db.execute("SELECT count(*) FROM claims WHERE ip = ? AND created_at > ?", (ip, now - WINDOW_SECONDS)).fetchone()[0]
             if recent >= MAX_CLAIMS_PER_IP:
@@ -486,6 +528,7 @@ class FaucetHandler(BaseHTTPRequestHandler):
             db.commit()
             try:
                 txhash = submit(address)
+                confirm(txhash)
             except (OSError, subprocess.TimeoutExpired, RuntimeError) as error:
                 # A broadcast timeout is ambiguous. Retain the pending intent
                 # so a delivery retry cannot create a second transaction.
@@ -493,9 +536,9 @@ class FaucetHandler(BaseHTTPRequestHandler):
                 db.commit()
                 self.reply(503, {"error": "faucet transaction is uncertain; retry will reconcile the existing request"})
                 return
-            db.execute("UPDATE claims SET txhash = ?, state = 'submitted' WHERE address = ?", (txhash, address))
+            db.execute("UPDATE claims SET txhash = ?, state = 'confirmed' WHERE address = ?", (txhash, address))
             db.commit()
-        self.reply(202, {"address": address, "amount_ngonka": AMOUNT, "txhash": txhash, "state": "submitted"})
+        self.reply(200, {"address": address, "amount_ngonka": AMOUNT, "txhash": txhash, "state": "confirmed"})
 
     def telegram_claim(self):
         """Authenticated repeatable faucet path for the existing Telegram bot."""

@@ -11,7 +11,7 @@
       "name": "Inventory",
       "description": "Observed Host hardware and software"
     },
-    { "name": "Network", "description": "Public chain participant registry" },
+    { "name": "Network", "description": "Public chain topology and diagnostic registry" },
     {
       "name": "Gateway",
       "description": "Inference gateway readiness and read-only state"
@@ -22,6 +22,45 @@
     }
   ],
   "paths": {
+    "/status/network": {
+      "get": {
+        "tags": ["Network"],
+        "summary": "Get a cached public network observation",
+        "description": "Without a query, returns the Community DevNet cache. chainId selects a bootstrap under https://gonka-dev.net/<chainId>/bootstrap.json. The observer records bootstrap seeds and public P2P peers, chain state, component versions, and DevShard health. It never infers model, GPU, PoC, voting power, participant, gateway, or location data for a selected network.",
+        "operationId": "getNetworkObservation",
+        "parameters": [
+          {
+            "name": "chainId",
+            "in": "query",
+            "required": false,
+            "description": "Public bootstrap network identifier",
+            "schema": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Network topology and component observation",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/NetworkObservation" }
+              }
+            }
+          },
+          "202": {
+            "description": "Observation queued; retry after the periodic worker refreshes the cache",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/NetworkObservationPending" }
+              }
+            }
+          },
+          "429": {
+            "description": "The bounded selected-network observation cache is full"
+          },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/status/gpus": {
       "get": {
         "tags": ["Inventory"],
@@ -260,6 +299,42 @@
             "maxItems": 2
           }
         }
+      },
+      "NetworkObservation": {
+        "type": "object",
+        "required": ["schema_version", "chain_id", "observed_at", "nodes"],
+        "properties": {
+          "schema_version": { "const": 1 },
+          "chain_id": { "type": "string" },
+          "observed_at": { "type": "string", "format": "date-time" },
+          "bootstrap_url": { "type": "string", "format": "uri" },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["node_id", "active", "components"],
+              "properties": {
+                "node_id": { "type": "string" },
+                "node_name": { "type": ["string", "null"] },
+                "dapi_url": { "type": ["string", "null"], "format": "uri" },
+                "active": { "type": "boolean" },
+                "error": { "type": "string" },
+                "components": { "type": "object" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "NetworkObservationPending": {
+        "type": "object",
+        "required": ["state", "chain_id"],
+        "properties": {
+          "state": { "const": "observation_pending" },
+          "chain_id": { "type": "string" }
+        },
+        "additionalProperties": false
       },
       "ParticipantRegistry": {
         "type": "object",

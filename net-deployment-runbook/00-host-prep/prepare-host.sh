@@ -124,9 +124,7 @@ ensure_packages() {
   apt-get install -y --no-install-recommends "${missing[@]}"
 }
 ensure_packages \
-  ca-certificates curl gnupg jq git rsync unzip zip zstd openssl age locales binutils \
-  python3 python3-yaml python3-requests python3-venv chrony fail2ban unattended-upgrades \
-  smartmontools nvme-cli pciutils lsof net-tools iptables conntrack socat \
+  ca-certificates curl gnupg jq rsync pciutils iptables \
   ubuntu-drivers-common mokutil
 
 # A reboot marker is a host boundary, not a reason to recreate identity.  We
@@ -160,32 +158,6 @@ install_amd_rocm() {
   usermod -aG render,video "$OPERATOR_USER"
   DRIVER_CHANGED=true
 }
-install -d -m 0755 /etc/fail2ban/jail.d
-cat >/etc/fail2ban/jail.d/gdc-sshd.local <<EOF
-[sshd]
-enabled = true
-backend = systemd
-port = $SSH_PORT
-banaction = iptables-multiport
-maxretry = 5
-findtime = 10m
-bantime = 1h
-EOF
-systemctl enable --now chrony fail2ban
-fail2ban-client -t
-systemctl restart fail2ban
-for _ in $(seq 1 30); do
-  fail2ban-client ping >/dev/null 2>&1 && break
-  sleep 1
-done
-fail2ban-client status sshd >/dev/null
-
-locale-gen en_US.UTF-8 >/dev/null
-update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
-if ! grep -Eq "^[^#]+[[:space:]]${HOSTNAME}([[:space:]]|$)" /etc/hosts; then
-  printf '127.0.1.1 %s\n' "$HOSTNAME" >> /etc/hosts
-fi
-
 # Docker CE official repository.
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg

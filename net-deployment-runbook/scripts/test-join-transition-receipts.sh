@@ -7,9 +7,9 @@ profile="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 observation="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 evidence="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
-jq -e '.additionalProperties == false and .properties.schema_version.const == 2 and .properties.kind.const == "gdc-host-join-receipt" and (.required | index("previous_receipt_sha256") | not)' "$ROOT/lineage/join-receipt.v2.schema.json" >/dev/null
-jq -e '.additionalProperties == false and .properties.schema_version.const == 1 and .properties.kind.const == "gdc-signer-fence-receipt" and .properties.old_signer_process_absent.const == true' "$ROOT/lineage/signer-fence-receipt.v1.schema.json" >/dev/null
-jq -e '.additionalProperties == false and .properties.schema_version.const == 1 and .properties.kind.const == "gdc-host-join-result"' "$ROOT/lineage/join-result.v1.schema.json" >/dev/null
+jq -e '.additionalProperties == false and .properties.schema_version.const == 2 and .properties.kind.const == "gdc-host-join-receipt" and (.required | index("previous_receipt_sha256") | not)' "$ROOT/../schema/join-receipt.v2.schema.json" >/dev/null
+jq -e '.additionalProperties == false and .properties.schema_version.const == 1 and .properties.kind.const == "gdc-signer-fence-receipt" and .properties.old_signer_process_absent.const == true' "$ROOT/../schema/signer-fence-receipt.v1.schema.json" >/dev/null
+jq -e '.additionalProperties == false and .properties.schema_version.const == 1 and .properties.kind.const == "gdc-host-join-result"' "$ROOT/../schema/join-result.v1.schema.json" >/dev/null
 
 input() {
   local state="$1" signer="$2"

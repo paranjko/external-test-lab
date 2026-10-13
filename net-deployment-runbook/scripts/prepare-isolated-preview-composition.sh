@@ -71,6 +71,12 @@ else
     (.source_digest | type == "string" and test("^[0-9a-f]{64}$")) and
     (.rendered_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
     (.backend_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.network_observer_http_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.network_observer_collector_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.network_observer_env_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.preview_curl_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.network_observer_runtime_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.start_status_backend_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
     (.image_id | type == "string" and test("^sha256:[0-9a-f]{64}$"))
   ' "$backend_manifest" >/dev/null || { echo 'backend build manifest is invalid' >&2; exit 1; }
   cp -p "$backend_manifest" "$release_dir/backend-build.json"
@@ -84,8 +90,9 @@ else
     --arg backend "$(jq -r .backend_caddy_sha256 "$backend_manifest")" \
     --arg image "$(jq -r .image_id "$backend_manifest")" \
     --arg source "$(jq -r .source_digest "$backend_manifest")" \
+    --arg backend_build "$(sha256sum "$backend_manifest" | awk '{print $1}')" \
     --arg archive "$backend_archive_digest" \
-    '{schema_version:1,head_revision:$head,mode:$mode,frontend_revision:$frontend_revision,backend_revision:$endpoint_revision,frontend_digest:$frontend,runtime_config_sha256:$config,backend_digest:$backend,backend_image_id:$image,backend_source_digest:$source,backend_archive_sha256:$archive,legacy_composition_sha256:$legacy_sha}' \
+    '{schema_version:1,head_revision:$head,mode:$mode,frontend_revision:$frontend_revision,backend_revision:$endpoint_revision,frontend_digest:$frontend,runtime_config_sha256:$config,backend_digest:$backend,backend_image_id:$image,backend_source_digest:$source,backend_build_manifest_sha256:$backend_build,backend_archive_sha256:$archive,legacy_composition_sha256:$legacy_sha}' \
     >"$candidate"
   jq -e --arg head "$expected_revision" '
     .schema_version == 1 and .head_revision == $head and (.mode == "backend" or .mode == "combined") and
@@ -95,6 +102,7 @@ else
     (.backend_digest | test("^[0-9a-f]{64}$")) and
     (.backend_image_id | test("^sha256:[0-9a-f]{64}$")) and
     (.backend_source_digest | test("^[0-9a-f]{64}$")) and
+    (.backend_build_manifest_sha256 | test("^[0-9a-f]{64}$")) and
     (.backend_archive_sha256 | test("^[0-9a-f]{64}$")) and
     (.legacy_composition_sha256 | test("^[0-9a-f]{64}$"))
   ' "$candidate" >/dev/null

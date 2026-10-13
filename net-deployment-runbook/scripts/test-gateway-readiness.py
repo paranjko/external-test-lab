@@ -101,6 +101,29 @@ print(json.dumps(dict(schema="gdc-gateway-readiness/1", gateway="B", applied=app
                     proxy.CHAIN_STATUS_URL: {"result": {"sync_info": sync}}, proxy.EPOCH_INFO_URL: {"latest_epoch": {"poc_start_block_height": 0}}, proxy.CHAIN_PARAMS_URL: params}[url]
         with patch.object(proxy, "get_json", get):
             self.assertIsNone(proxy.safe_generation()[1])
+            registry_url = "http://registry.invalid/devshard_approved_versions"
+            registry = {"versions": [dict(name="v5", **contract), dict(name="v4.1", **contract)]}
+            def registry_get(url, *args):
+                if url == registry_url:
+                    if isinstance(registry, Exception):
+                        raise registry
+                    return registry
+                return get(url, *args)
+            with patch.object(proxy, "APPROVED_VERSIONS_URL", registry_url), patch.object(proxy, "get_json", registry_get):
+                legacy = params["params"]["devshard_escrow_params"]["approved_versions"]
+                params["params"]["devshard_escrow_params"]["approved_versions"] = []
+                self.assertIsNone(proxy.safe_generation()[1])
+                params["params"]["devshard_escrow_params"]["approved_versions"] = legacy
+                registry = {"versions": []}
+                self.assertEqual(proxy.safe_generation()[1], "selected_protocol_not_approved")
+                registry = {"versions": [dict(name="v5", binary=contract["binary"], sha256="b" * 64)]}
+                self.assertEqual(proxy.safe_generation()[1], "selected_protocol_not_approved")
+                for registry in ({}, [], {"versions": "invalid"}):
+                    self.assertEqual(proxy.safe_generation()[1], "protocol_approval_invalid")
+                registry = OSError("registry unavailable")
+                self.assertEqual(proxy.safe_generation()[1], "protocol_approval_unavailable")
+                registry = TimeoutError("expired")
+                self.assertEqual(proxy.safe_generation()[1], "deadline_elapsed")
             status["limiter"]["models"]["selected-model"]["effective_max_concurrent_requests"] = 0
             self.assertEqual(proxy.safe_generation()[1], "runtime_unavailable")
             status["limiter"]["models"]["selected-model"]["effective_max_concurrent_requests"] = 1

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Compile the status-query subset of an exact renderer output into a small,
-# non-programmable Caddy backend.  The PR source controls neither the runtime
-# command nor egress destination; it can contribute only validated inventory
-# query expressions.
+# Compile the approved status routes from an exact renderer output. The PR
+# source-bound backend includes the observer collector/runtime, but has no
+# direct network route and cannot choose destinations: external reads go
+# through the trusted preview egress and its fixed node guard. Inventory may
+# contribute only validated query expressions and route catalog entries.
 
 input="${1:-}"
 renderer_config="${2:-}"
@@ -85,6 +86,20 @@ cat >"$output" <<EOF
   handle @participants {
     rewrite * /preview/$preview_number/node/$gateway_node/chain-api/productscience/inference/inference/participant?pagination.limit=100&pagination.count_total=true
     reverse_proxy http://gdc-preview-egress:8080
+  }
+  @network_observer {
+    method GET
+    path /status/network
+  }
+  handle @network_observer {
+    reverse_proxy 127.0.0.1:18094
+  }
+  @network_observer_ws {
+    method GET
+    path /status/network/ws
+  }
+  handle @network_observer_ws {
+    reverse_proxy 127.0.0.1:18094
   }
   handle /status/gpus {
     rewrite * /prometheus/api/v1/query?query=$gpu_query

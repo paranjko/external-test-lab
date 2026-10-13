@@ -29,6 +29,7 @@ class Backend(BaseHTTPRequestHandler):
     weight = 296
     limit = 1
     version = "v5"
+    registry_available = True
     def log_message(self, *_):
         pass
     def do_GET(self):
@@ -46,7 +47,12 @@ class Backend(BaseHTTPRequestHandler):
         elif self.path == "/chain":
             body = {"result": {"sync_info": {"latest_block_height": "50", "latest_block_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "catching_up": False}}}
         elif self.path == "/params":
-            body = {"params": {"epoch_params": {"epoch_length": 100, "poc_stage_duration": 2, "poc_exchange_duration": 2, "poc_validation_delay": 2, "poc_validation_duration": 2, "set_new_validators_delay": 2}, "devshard_escrow_params": {"approved_versions": [{"name": "v5", "binary": "https://example.invalid/v5.zip", "sha256": "a" * 64}]}}}
+            body = {"params": {"epoch_params": {"epoch_length": 100, "poc_stage_duration": 2, "poc_exchange_duration": 2, "poc_validation_delay": 2, "poc_validation_duration": 2, "set_new_validators_delay": 2}, "devshard_escrow_params": {"approved_versions": []}}}
+        elif self.path == "/registry":
+            if not self.registry_available:
+                self.send_error(503)
+                return
+            body = {"versions": [{"name": name, "binary": "https://example.invalid/v5.zip", "sha256": "a" * 64} for name in ("v5", "v4.1")]}
         elif self.path == "/v1/status":
             body = {"gateway": "native-B"}
         else:
@@ -87,7 +93,7 @@ try:
             target.write_bytes(content)
             target.chmod(mode)
         environment = manager.read_env(root / manager.SCOPE / "admission.env")
-        for variable, path in (("EPOCH_URL", "/epoch"), ("EPOCH_INFO_URL", "/epoch-info"), ("CHAIN_STATUS_URL", "/chain"), ("CHAIN_PARAMS_URL", "/params")):
+        for variable, path in (("EPOCH_URL", "/epoch"), ("EPOCH_INFO_URL", "/epoch-info"), ("CHAIN_STATUS_URL", "/chain"), ("CHAIN_PARAMS_URL", "/params"), ("APPROVED_VERSIONS_URL", "/registry")):
             environment["GDC_GATEWAY_ADMISSION_" + variable] = "http://127.0.0.1:%s%s" % (native_port, path)
         process = subprocess.Popen([sys.executable, str(root / manager.SCOPE / "gateway-admission-proxy.py")], env={**os.environ, **environment})
         for _ in range(100):
@@ -102,6 +108,12 @@ try:
         assert request(readiness_port, "/v1/admission-status", "devnet_A")[0] == 401
         assert request(readiness_port, "/v1/status")[0] == 404
         assert request(readiness_port, "/v1/admission-status", method="POST")[0] == 405
+        assert json.loads(request(readiness_port, "/v1/readiness-summary", None)[1])["state"] == "READY"
+        assert request(readiness_port, "/v1/readiness-summary?unexpected=1", None)[0] == 404
+        assert request(readiness_port, "/v1/readiness-summary", None, method="POST")[0] == 405
+        Backend.registry_available = False
+        assert json.loads(request(readiness_port, "/v1/readiness-summary", None)[1])["reason"] == "protocol_approval_unavailable"
+        Backend.registry_available = True
         for layout in ("srv/dai/edge", "srv/dai/deploy/edge"):
             edge = root / layout
             edge.mkdir(parents=True, exist_ok=True)
@@ -158,6 +170,23 @@ try:
                 print("PASS B private readiness process, auth/source/method gates and restart in " + layout)
             finally:
                 subprocess.run(["docker", "rm", "--force", name], check=True, stdout=subprocess.DEVNULL)
+        process.terminate()
+        process.wait(3)
+        environment["GDC_GATEWAY_READINESS_ID"] = "A"
+        process = subprocess.Popen([sys.executable, str(root / manager.SCOPE / "gateway-admission-proxy.py")], env={**os.environ, **environment})
+        for _ in range(100):
+            try:
+                summary = json.loads(request(readiness_port, "/v1/readiness-summary", None)[1])
+                if summary.get("gateway") == "A":
+                    break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            raise AssertionError("independent A readiness did not start")
+        assert summary["state"] == "READY"
+        assert request(readiness_port, "/v1/admission-status", None)[0] == 401
+        assert request(readiness_port, "/v1/admin/state", None)[0] == 404
+        print("PASS independent A public summary and private admin/admission gates")
 finally:
     if process is not None:
         process.terminate()

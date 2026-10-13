@@ -115,6 +115,21 @@ start() {
     || die 'preview Caddy container did not become ready'
   [[ "$(docker inspect --format '{{.State.Running}}' gdc-preview-node-guard 2>/dev/null || true)" == true ]] \
     || die 'preview node observation guard did not become ready'
+  # Compose recreates shared services on upgrades and drops their extra PR
+  # networks. Restore all registered backends, not just the PR being deployed.
+  local registry pr network container
+  for registry in "$REGISTRY"/*.json; do
+    [[ -f "$registry" ]] || continue
+    [[ "$(jq -r '.backend // empty' "$registry")" != '' ]] || continue
+    pr="$(jq -r '.pr // empty' "$registry")"
+    valid_pr "$pr" || die "invalid preview registry: $registry"
+    network="$(network_name "$pr")"
+    for container in gdc-preview-caddy gdc-preview-egress gdc-preview-node-guard; do
+      if ! docker inspect "$container" | jq -e --arg network "$network" '.[0].NetworkSettings.Networks | has($network)' >/dev/null; then
+        docker network connect "$network" "$container"
+      fi
+    done
+  done
   reconcile
 }
 
@@ -219,7 +234,7 @@ reconcile() {
 }
 
 assert_release() {
-  local pr="$1" revision="$2" source="$3" manifest config adapter runtime_config frontend_build config_digest adapter_digest frontend_revision
+  local pr="$1" revision="$2" source="$3" manifest config adapter runtime_config frontend_build config_digest adapter_digest frontend_revision backend_build
   valid_pr "$pr" || die 'preview number must be a positive integer'
   valid_revision "$revision" || die 'preview revision must be a full SHA-1'
   [[ -d "$source" && ! -L "$source" ]] || die 'preview artifact directory is unsafe or absent'
@@ -241,7 +256,7 @@ assert_release() {
     (.frontend_digest | type == "string" and test("^[0-9a-f]{64}$")) and
     (.runtime_config_sha256 | . == $config and test("^[0-9a-f]{64}$")) and
     (.backend_digest == null or (.backend_digest | type == "string" and test("^[0-9a-f]{64}$"))) and
-    (if (.mode == "static") then .backend_digest == null and .backend_revision == null else .backend_digest != null and .backend_revision == $revision end)
+    (if (.mode == "static") then .backend_digest == null and .backend_revision == null else .backend_digest != null and .backend_revision == $revision and (.backend_build_manifest_sha256 | type == "string" and test("^[0-9a-f]{64}$")) end)
   ' "$manifest" >/dev/null || die 'preview composition manifest is invalid'
   frontend_revision="$(jq -r .frontend_revision "$manifest")"
   jq -e --arg revision "$revision" --argjson pr "$pr" --arg config "$config_digest" --arg adapter "$adapter_digest" '
@@ -255,10 +270,25 @@ assert_release() {
     (.source_archive_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
     (.builder_image_id | type == "string" and test("^sha256:[0-9a-f]{64}$"))
   ' "$frontend_build" >/dev/null || die 'preview frontend build receipt is invalid'
+  if [[ "$(jq -r .mode "$manifest")" == backend || "$(jq -r .mode "$manifest")" == combined ]]; then
+    backend_build="$source/backend-build.json"
+    [[ -s "$backend_build" && ! -L "$backend_build" ]] || die 'preview backend runtime manifest is unsafe or absent'
+    [[ "$(sha256sum "$backend_build" | awk '{print $1}')" == "$(jq -r .backend_build_manifest_sha256 "$manifest")" ]] \
+      || die 'preview composition does not bind the backend runtime manifest'
+    jq -e --arg revision "$revision" '
+      .schema_version == 1 and .source_revision == $revision and
+      (.network_observer_http_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.network_observer_collector_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.network_observer_env_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.preview_curl_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.network_observer_runtime_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.start_status_backend_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+    ' "$backend_build" >/dev/null || die 'preview backend runtime manifest is invalid'
+  fi
 }
 
 assert_backend_image() {
-  local source="$1" revision="$2" image="$3" manifest composition observed_id observed_revision observed_managed backend_digest archive archive_digest extracted_caddy container
+  local source="$1" revision="$2" image="$3" manifest composition observed_id observed_revision observed_managed backend_digest archive archive_digest extracted_caddy extracted_dir container image_cmd image_entrypoint image_health image_env
   manifest="$source/backend-build.json"
   composition="$source/preview-composition.json"
   [[ "$image" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'preview backend image must be an immutable local image ID'
@@ -267,7 +297,13 @@ assert_backend_image() {
     .schema_version == 1 and .source_revision == $revision and
     (.source_digest | type == "string" and test("^[0-9a-f]{64}$")) and
     (.rendered_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
-    (.backend_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+    (.backend_caddy_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.network_observer_http_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.network_observer_collector_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.network_observer_env_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.preview_curl_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.network_observer_runtime_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.start_status_backend_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
   ' "$manifest" >/dev/null || die 'backend build manifest does not bind the requested source and image'
   backend_digest="$(jq -r .backend_caddy_sha256 "$manifest")"
   archive="$source/backend-image.tar"
@@ -280,16 +316,44 @@ assert_backend_image() {
   observed_id="$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || true)"
   observed_revision="$(docker image inspect --format '{{ index .Config.Labels "gdc.preview.source-revision" }}' "$image" 2>/dev/null || true)"
   observed_managed="$(docker image inspect --format '{{ index .Config.Labels "gdc.preview.managed" }}' "$image" 2>/dev/null || true)"
+  image_cmd="$(docker image inspect --format '{{json .Config.Cmd}}' "$image" 2>/dev/null || true)"
+  image_entrypoint="$(docker image inspect --format '{{json .Config.Entrypoint}}' "$image" 2>/dev/null || true)"
+  image_health="$(docker image inspect --format '{{json .Config.Healthcheck.Test}}' "$image" 2>/dev/null || true)"
+  image_env="$(docker image inspect --format '{{json .Config.Env}}' "$image" 2>/dev/null || true)"
   [[ "$observed_id" == "$image" && "$observed_revision" == "$revision" && "$observed_managed" == true ]] \
     || die 'local backend image does not have the expected trusted build identity'
+  [[ "$image_cmd" == '["/opt/gdc-preview/start-status-backend.sh"]' && "$image_entrypoint" == null &&
+     "$image_health" == '["CMD","/bin/sh","-c","/usr/bin/curl -fsS http://127.0.0.1:8080/health | grep -Fxq ready"]' ]] \
+    || die 'backend image runtime command or healthcheck differs from the fixed preview contract'
+  jq -e 'type == "array" and all(.[]; (startswith("GDC_NETWORK_OBSERVER_COLLECTOR=") | not))' \
+    <<<"$image_env" >/dev/null || die 'backend image must not override the source-bound collector path'
   container="$(docker create "$image")"
   extracted_caddy="$CONTROL/staging/backend-caddy-${revision:0:12}-$$"
-  trap 'docker rm -f "$container" >/dev/null 2>&1 || true; rm -f "$extracted_caddy"' RETURN
+  extracted_dir="$CONTROL/staging/backend-files-${revision:0:12}-$$"
+  mkdir -m 0700 "$extracted_dir"
+  trap 'docker rm -f "$container" >/dev/null 2>&1 || true; rm -f "$extracted_caddy"; rm -rf -- "$extracted_dir"' RETURN
   docker cp "$container:/etc/caddy/Caddyfile" "$extracted_caddy" >/dev/null
   [[ "$(sha256sum "$extracted_caddy" | awk '{print $1}')" == "$backend_digest" ]] \
     || die 'loaded backend image does not contain the source-bound Caddyfile'
+  local image_path manifest_key image_file expected_digest observed_digest
+  while IFS=$'\t' read -r image_path manifest_key; do
+    image_file="$extracted_dir/${manifest_key}.payload"
+    docker cp "$container:$image_path" "$image_file" >/dev/null
+    expected_digest="$(jq -r --arg key "$manifest_key" '.[$key]' "$manifest")"
+    observed_digest="$(sha256sum "$image_file" | awk '{print $1}')"
+    [[ "$observed_digest" == "$expected_digest" ]] \
+      || die "loaded backend image does not contain the source-bound $manifest_key payload"
+  done <<'EOF'
+/usr/local/lib/gonka-devnet/network-observer-http.py	network_observer_http_sha256
+/usr/local/lib/gonka-devnet/network-observer.sh	network_observer_collector_sha256
+/etc/gonka/gdc-network-observer.env	network_observer_env_sha256
+/usr/local/bin/curl	preview_curl_sha256
+/opt/gdc-preview/network-observer-runtime.py	network_observer_runtime_sha256
+/opt/gdc-preview/start-status-backend.sh	start_status_backend_sha256
+EOF
   docker rm -f "$container" >/dev/null
   rm -f "$extracted_caddy"
+  rm -rf -- "$extracted_dir"
   trap - RETURN
 }
 
@@ -382,21 +446,33 @@ deploy() {
 }
 
 remove_preview() {
-  local pr="$1" registry backend network
+  local pr="$1" registry backend network backends status
   valid_pr "$pr" || die 'preview number must be a positive integer'
   registry="$(registry_file "$pr")"
-  backend=""
-  [[ ! -f "$registry" ]] || backend="$(jq -r '.backend // empty' "$registry")"
-  rm -f "$registry"
-  start
-  reload_caddy
-  [[ -z "$backend" ]] || docker rm -f "$backend" >/dev/null 2>&1 || true
+  # Keep recovery evidence until the route reload succeeds. Cleanup must not
+  # install assets, rebuild images or recreate the shared preview services.
+  [[ ! -e "$registry" ]] || mv -f "$registry" "$registry.removing"
+  if ! (reconcile); then
+    [[ ! -f "$registry.removing" ]] || mv -f "$registry.removing" "$registry"
+    die 'preview route removal failed; resources retained for retry'
+  fi
+  status="$(curl --silent --show-error --max-time 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PREVIEW_CADDY_PORT/$pr/")"
+  [[ "$status" == 404 ]] || die "removed preview still returns HTTP $status; resources retained for retry"
+  # Labels also find a backend left by an interrupted cleanup after its
+  # registry entry was removed. Never select another PR or shared service.
+  backends="$(docker ps -aq --filter label=gdc.preview.managed=true --filter "label=gdc.preview.pr=$pr")"
+  for backend in $backends; do
+    docker rm -f "$backend" >/dev/null
+  done
   network="$(network_name "$pr")"
-  docker network disconnect "$network" gdc-preview-caddy >/dev/null 2>&1 || true
-  docker network disconnect "$network" gdc-preview-egress >/dev/null 2>&1 || true
-  docker network disconnect "$network" gdc-preview-node-guard >/dev/null 2>&1 || true
-  docker network rm "$network" >/dev/null 2>&1 || true
+  if docker network inspect "$network" >/dev/null 2>&1; then
+    docker network disconnect "$network" gdc-preview-caddy >/dev/null 2>&1 || true
+    docker network disconnect "$network" gdc-preview-egress >/dev/null 2>&1 || true
+    docker network disconnect "$network" gdc-preview-node-guard >/dev/null 2>&1 || true
+    docker network rm "$network" >/dev/null
+  fi
   rm -rf -- "${RELEASES:?}/$pr" "${PREVIEW_ROOT:?}/staging/$pr"
+  rm -f "$registry.removing"
   printf 'READY preview=%s removed\n' "$pr"
 }
 

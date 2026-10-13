@@ -19,6 +19,13 @@ init_gdc_paths() {
 
 init_gdc_paths
 
+network_bootstrap_url() {
+  local chain_id="${GDC_NETWORK_CHAIN_ID:-${CHAIN_ID:-gonka-devnet-community}}"
+  [[ "$chain_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || die 'cannot derive a Bootstrap URL from the configured chain ID'
+  printf '%s\n' "${GDC_NETWORK_BOOTSTRAP_URL:-https://gonka-dev.net/${chain_id}/bootstrap.json}"
+}
+
 is_safe_integer() {
   local value="$1" maximum=9223372036854775807 index value_digit maximum_digit
   [[ "$value" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
@@ -176,7 +183,7 @@ clear_join_lineage_context_for_acceptance() {
   unset GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH
   unset GDC_JOIN_SNAPSHOT_PEERS GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2
   unset GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
-  unset GDC_JOIN_LINEAGE_RECEIPT_SHA256 GDC_JOIN_GATEWAY_ADMISSION_PROTOCOLS_JSON
+  unset GDC_JOIN_LINEAGE_RECEIPT_SHA256
 }
 
 write_phase_lineage() {
@@ -298,7 +305,7 @@ inferenced_runs_path() {
 }
 
 evidence_exit_trap() {
-  local rc=$?
+  local rc="${1:-$?}"
   if (( rc != 0 )) && [[ -n "${RUN:-}" && -d "$RUN" && ! -s "$RUN/verdict.md" ]]; then
     cat >"$RUN/verdict.md" <<EOF
 # ${EVIDENCE_VERDICT_HEADING:-Lifecycle phase}: INCONCLUSIVE

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json, subprocess, tempfile, unittest
 from pathlib import Path
 from jsonschema import Draft202012Validator
-ROOT=Path(__file__).resolve().parent.parent; TOOL=ROOT/"scripts/network-bootstrap.py"; SCHEMA=ROOT/"bootstrap/v1.bootstrap.schema.json"; RELEASE=ROOT/"bootstrap/release"
+ROOT=Path(__file__).resolve().parent.parent; TOOL=ROOT/"scripts/network-bootstrap.py"; SCHEMA=ROOT.parent/"schema/v1.bootstrap.schema.json"; RELEASE=ROOT.parent/"bootstrap"
 def document():
  return {"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-fixture","genesis":{"sha256":"0"*64},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"http://one.example:8000/chain-rpc","p2p":"tcp://one.example:5000","api":"http://one.example:8000"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://two.example/chain-rpc","p2p":"tcp://two.example:5000"}],"brokers":[]}
 class TestBootstrap(unittest.TestCase):

@@ -400,6 +400,7 @@ case "$COMPONENT" in
       "FAUCET_TELEGRAM_TOKEN=$(<"$SECRETS/telegram.faucet-token")" \
       "FAUCET_TELEGRAM_MAX_CLAIMS_PER_USER=${GDC_FAUCET_TELEGRAM_MAX_CLAIMS_PER_USER:-1}" \
       "FAUCET_INITIAL_ADMINS_JSON=$faucet_initial_admins_json" \
+      'FAUCET_GAS_PRICES=1ngonka' \
       "FAUCET_MAX_CLAIMS_PER_IP=${GDC_FAUCET_MAX_CLAIMS_PER_IP:-3}" \
       "FAUCET_WINDOW_SECONDS=${GDC_FAUCET_WINDOW_SECONDS:-86400}"
     gateway_recipient="$(jq -er .address "$ACCOUNTS/gdc-gateway-cold.json")"
@@ -407,7 +408,7 @@ case "$COMPONENT" in
       "FAUCET_CHAIN_ID=$CHAIN_ID" "FAUCET_GENESIS_SHA256=$faucet_genesis_sha256" \
       'FAUCET_RPC_URL=http://127.0.0.1:26657' 'FAUCET_CHAIN_REST_URL=http://127.0.0.1:1317' \
       'FAUCET_KEY_NAME=gdc-faucet-cold' "FAUCET_KEYRING_PASSWORD=$(<"$SECRETS/operator.keyring")" \
-      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18085' \
+      'FAUCET_AMOUNT_NGONKA=1' 'FAUCET_GAS_PRICES=1ngonka' 'FAUCET_LISTEN_HOST=127.0.0.1' 'FAUCET_LISTEN_PORT=18085' \
       "FAUCET_GATEWAY_RESERVE_RECIPIENT=$gateway_recipient" "FAUCET_GATEWAY_RESERVE_TOKEN=$(<"$reserve_signer_token")" \
       "FAUCET_GATEWAY_RESERVE_MAX_NGONKA=${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
     FAUCET_OPTION="--faucet-env '$REMOTE/rendered/faucet.env' --gateway-reserve-env '$REMOTE/rendered/gateway-reserve-signer.env'"
@@ -850,7 +851,7 @@ esac
 step "Install $COMPONENT operations component on $GATEWAY_NODE"
 ssh "$GATEWAY_NODE" "rm -rf '$REMOTE' && mkdir -p '$REMOTE/scripts'"
 rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
-scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/scripts/lib-lock.sh"
+scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/04-ops/lib-lock.sh"
 scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"
 [[ -z "${SITE_ASSETS_RENDER:-}" ]] || rsync -a --delete "$SITE_ASSETS_RENDER/" "$GATEWAY_NODE:$REMOTE/04-ops/site/"
 rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"

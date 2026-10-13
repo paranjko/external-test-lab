@@ -29,7 +29,17 @@ done
 if [[ "$http_code" == 409 ]]; then
   # A retry after an interrupted join is safe: the faucet gives one claim per
   # Host address, and the balance check below determines whether it settled.
-  printf 'READY faucet claim already exists for %s\n' "$address"
+  claim_state="$(jq -r '.state // empty' <<<"$payload" 2>/dev/null || true)"
+  if [[ "$claim_state" == confirmed ]]; then
+    printf 'READY faucet claim already confirmed for %s\n' "$address"
+  else
+    die 'DevNet faucet retained an unconfirmed earlier claim; an operator must recover the faucet claim before JOIN can continue'
+  fi
+elif [[ "$http_code" == 200 ]]; then
+  txhash="$(jq -r .txhash <<<"$payload")"
+  [[ "$txhash" =~ ^[0-9A-Fa-f]{64}$ ]] || die 'faucet response lacks a transaction hash'
+  [[ "$(jq -r '.state // empty' <<<"$payload")" == confirmed ]] || die 'faucet response is not confirmed'
+  printf 'READY faucet confirmed funding for %s tx=%s\n' "$address" "$txhash"
 elif [[ "$http_code" == 202 ]]; then
   txhash="$(jq -r .txhash <<<"$payload")"
   [[ "$txhash" =~ ^[0-9A-Fa-f]{64}$ ]] || die 'faucet response lacks a transaction hash'
@@ -40,6 +50,7 @@ else
 fi
 
 deadline=$((SECONDS + ${GDC_FAUCET_SETTLEMENT_TIMEOUT_SECONDS:-180}))
+next_progress=$SECONDS
 while (( SECONDS < deadline )); do
   balance_endpoint="https://${GENESIS_PUBLIC_HOST}/chain-api/cosmos/bank/v1beta1/spendable_balances/$address"
   balance_body="$(mktemp)"
@@ -62,6 +73,11 @@ while (( SECONDS < deadline )); do
   if [[ "$balance" =~ ^[0-9]+$ ]] && (( balance >= amount )); then
     printf 'PASS DevNet faucet funded %s with at least %sngonka\n' "$address" "$amount"
     exit 0
+  fi
+  if (( SECONDS >= next_progress )); then
+    printf 'WAIT DevNet faucet funding elapsed=%ss remaining=%ss address=%s balance=%sngonka required=%sngonka\n' \
+      "$((SECONDS - (deadline - ${GDC_FAUCET_SETTLEMENT_TIMEOUT_SECONDS:-180})))" "$((deadline - SECONDS))" "$address" "$balance" "$amount"
+    next_progress=$((SECONDS + 15))
   fi
   sleep 3
 done

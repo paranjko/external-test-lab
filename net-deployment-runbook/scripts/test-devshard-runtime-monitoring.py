@@ -77,7 +77,7 @@ for layout in ['flat','legacy']:
     host.mkdir(parents=True,exist_ok=True)
     marker=host/'identity-retained';marker.write_bytes(b'retained Host state')
     (root/'scenario').write_text('running')
-    subprocess.run(['bash','/workspace/04-ops/agent/install-agent.sh','fixture',str(env)],check=True,env=environment)
+    subprocess.run(['bash','/workspace/net-deployment-runbook/04-ops/agent/install-agent.sh','fixture',str(env)],check=True,env=environment)
     before=metrics.read_text()
     assert 'version="v5.0.2"' in before and 'binary_sha256="'+'b'*64+'"' in before
     assert 'archive_sha256="unreported"' in before and 'source="process"' in before
@@ -95,7 +95,7 @@ print('PASS installed agent, flat/legacy Host retention, observed binary identit
 
 try:
     subprocess.run(["docker", "build", "--pull=false", "-f", str(ROOT / "test/Dockerfile"),
-                    "-t", IMAGE, str(ROOT)], check=True, stdout=subprocess.DEVNULL)
+                    "-t", IMAGE, str(ROOT.parent)], check=True, stdout=subprocess.DEVNULL)
     result = subprocess.run(["docker", "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
                     "--cap-add=CHOWN", "--cap-add=DAC_OVERRIDE", "--cap-add=FOWNER",
                     "--security-opt=no-new-privileges", "--user=0",

@@ -1,1 +1,4 @@
 /net-deployment-data/
+
+# Reviewed public endpoint projections, not operator secrets.
+!/bootstrap/*.env

@@ -23,13 +23,46 @@ printf '<!doctype html><title>backend preview</title>backend\n' >"$artifact_back
 printf '<!doctype html><title>combined preview</title>combined\n' >"$artifact_combined/index.html"
 mkdir -p "$test_root/backend-www/status"
 printf 'backend\n' >"$test_root/backend-www/status/test"
-printf ':8080 {\n  file_server\n}\n' >"$test_root/backend-caddyfile"
+cat >"$test_root/backend-caddyfile" <<'EOF'
+:8080 {
+  handle /health {
+    respond "ready"
+  }
+  handle /status/test {
+    respond "backend"
+  }
+  respond "not found" 404
+}
+EOF
+mkdir -p "$test_root/payload/usr/local/lib/gonka-devnet" "$test_root/payload/etc/gonka" \
+  "$test_root/payload/usr/local/bin" "$test_root/payload/opt/gdc-preview"
+install -m 0644 "$repository/net-deployment-runbook/04-ops/network-observer-http.py" \
+  "$test_root/payload/usr/local/lib/gonka-devnet/network-observer-http.py"
+install -m 0644 "$repository/net-deployment-runbook/04-ops/network-observer.sh" \
+  "$test_root/payload/usr/local/lib/gonka-devnet/network-observer.sh"
+install -m 0644 "$repository/ops/preview/status-renderer-inventory.env" \
+  "$test_root/payload/etc/gonka/gdc-network-observer.env"
+install -m 0755 "$repository/ops/preview/preview-curl.sh" "$test_root/payload/usr/local/bin/curl"
+install -m 0755 "$repository/ops/preview/network-observer-runtime.py" \
+  "$test_root/payload/opt/gdc-preview/network-observer-runtime.py"
+cat >"$test_root/payload/opt/gdc-preview/start-status-backend.sh" <<'EOF'
+#!/bin/sh
+exec /usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+EOF
+chmod 0755 "$test_root/payload/opt/gdc-preview/start-status-backend.sh"
 cat >"$test_root/backend.Dockerfile" <<'EOF'
-FROM busybox:1.36.1
-COPY backend-www /srv
+FROM caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+RUN setcap -r /usr/bin/caddy
 COPY backend-caddyfile /etc/caddy/Caddyfile
-HEALTHCHECK --interval=1s --timeout=1s --retries=10 CMD wget -q -O /dev/null http://127.0.0.1:8080/status/test || exit 1
-CMD ["httpd", "-f", "-p", "8080", "-h", "/srv"]
+COPY payload/usr/local/lib/gonka-devnet/network-observer-http.py /usr/local/lib/gonka-devnet/network-observer-http.py
+COPY payload/usr/local/lib/gonka-devnet/network-observer.sh /usr/local/lib/gonka-devnet/network-observer.sh
+COPY payload/etc/gonka/gdc-network-observer.env /etc/gonka/gdc-network-observer.env
+COPY payload/usr/local/bin/curl /usr/local/bin/curl
+COPY payload/opt/gdc-preview/network-observer-runtime.py /opt/gdc-preview/network-observer-runtime.py
+COPY payload/opt/gdc-preview/start-status-backend.sh /opt/gdc-preview/start-status-backend.sh
+RUN chmod 0755 /usr/local/lib/gonka-devnet/network-observer.sh /usr/local/bin/curl /opt/gdc-preview/start-status-backend.sh
+HEALTHCHECK --interval=10s --timeout=3s --retries=3 CMD ["/bin/sh", "-c", "/usr/bin/curl -fsS http://127.0.0.1:8080/health | grep -Fxq ready"]
+CMD ["/opt/gdc-preview/start-status-backend.sh"]
 EOF
 build_backend() {
   local revision="$1" tag="gdc-preview-lifecycle-$1-$$"
@@ -41,6 +74,9 @@ backend_image="$(build_backend "$revision_backend")"
 combined_backend_image="$(build_backend "$revision_combined")"
 backend_digest="$(sha256sum "$test_root/backend-caddyfile" | awk '{print $1}')"
 combined_backend_digest="$backend_digest"
+payload_digest() {
+  sha256sum "$test_root/payload/$1" | awk '{print $1}'
+}
 
 prepare_artifact() {
   local artifact="$1" pr="$2" revision="$3" mode="$4" frontend="$5" backend="${6:-}" image="${7:-}" config_digest adapter_digest backend_revision archive_digest=''
@@ -57,17 +93,34 @@ prepare_artifact() {
     archive_digest="$(sha256sum "$artifact/backend-image.tar" | awk '{print $1}')"
     printf '%s\n' "$archive_digest" >"$artifact/backend-image.tar.sha256"
   fi
-  jq -n --arg revision "$revision" --arg mode "$mode" --arg frontend "$frontend" --arg config "$config_digest" --arg backend "$backend" --arg image "$image" --arg backend_revision "$backend_revision" --arg archive "$archive_digest" \
-    '{schema_version:1,head_revision:$revision,mode:$mode,frontend_revision:$revision,backend_revision:(if $backend_revision == "null" then null else $backend_revision end),frontend_digest:$frontend,runtime_config_sha256:$config,backend_digest:(if $backend == "" then null else $backend end),backend_image_id:(if $image == "" then null else $image end),backend_archive_sha256:(if $archive == "" then null else $archive end)}' \
+  local backend_build_digest=''
+  if [[ "$mode" != static ]]; then
+    backend_build_digest="$(sha256sum "$artifact/backend-build.json" | awk '{print $1}')"
+  fi
+  jq -n --arg revision "$revision" --arg mode "$mode" --arg frontend "$frontend" --arg config "$config_digest" --arg backend "$backend" --arg image "$image" --arg backend_revision "$backend_revision" --arg archive "$archive_digest" --arg backend_build "$backend_build_digest" \
+    '{schema_version:1,head_revision:$revision,mode:$mode,frontend_revision:$revision,backend_revision:(if $backend_revision == "null" then null else $backend_revision end),frontend_digest:$frontend,runtime_config_sha256:$config,backend_digest:(if $backend == "" then null else $backend end),backend_image_id:(if $image == "" then null else $image end),backend_archive_sha256:(if $archive == "" then null else $archive end),backend_build_manifest_sha256:(if $backend_build == "" then null else $backend_build end)}' \
     >"$artifact/preview-composition.json"
 }
 
 prepare_artifact "$artifact_one" 172 "$revision_one" static aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 prepare_artifact "$artifact_two" 172 "$revision_two" static bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+write_backend_manifest() {
+  local artifact="$1" revision="$2" preview="$3" image="$4"
+  jq -n --arg revision "$revision" --argjson preview "$preview" --arg caddy "$backend_digest" \
+    --arg observer "$(payload_digest usr/local/lib/gonka-devnet/network-observer-http.py)" \
+    --arg collector "$(payload_digest usr/local/lib/gonka-devnet/network-observer.sh)" \
+    --arg env "$(payload_digest etc/gonka/gdc-network-observer.env)" \
+    --arg curl "$(payload_digest usr/local/bin/curl)" \
+    --arg runtime "$(payload_digest opt/gdc-preview/network-observer-runtime.py)" \
+    --arg launcher "$(payload_digest opt/gdc-preview/start-status-backend.sh)" \
+    --arg image "$image" \
+    '{schema_version:1,source_revision:$revision,preview_number:$preview,source_digest:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",rendered_caddy_sha256:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",backend_caddy_sha256:$caddy,network_observer_http_sha256:$observer,network_observer_collector_sha256:$collector,network_observer_env_sha256:$env,preview_curl_sha256:$curl,network_observer_runtime_sha256:$runtime,start_status_backend_sha256:$launcher,image_id:$image,status_renderer_image_id:"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}' \
+    >"$artifact/backend-build.json"
+}
+write_backend_manifest "$artifact_backend" "$revision_backend" 173 "$backend_image"
+write_backend_manifest "$artifact_combined" "$revision_combined" 174 "$combined_backend_image"
 prepare_artifact "$artifact_backend" 173 "$revision_backend" backend cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc "$backend_digest" "$backend_image"
 prepare_artifact "$artifact_combined" 174 "$revision_combined" combined eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee "$combined_backend_digest" "$combined_backend_image"
-printf '%s\n' '{"schema_version":1,"source_revision":"'"$revision_backend"'","preview_number":173,"source_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rendered_caddy_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","backend_caddy_sha256":"'"$backend_digest"'","image_id":"'"$backend_image"'"}' >"$artifact_backend/backend-build.json"
-printf '%s\n' '{"schema_version":1,"source_revision":"'"$revision_combined"'","preview_number":174,"source_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rendered_caddy_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","backend_caddy_sha256":"'"$combined_backend_digest"'","image_id":"'"$combined_backend_image"'"}' >"$artifact_combined/backend-build.json"
 
 run_controller() {
   PREVIEW_TEST_MODE=1 PREVIEW_USER="$(id -un)" \
@@ -137,22 +190,50 @@ run_controller deploy 174 "$revision_combined" "$artifact_combined" "$combined_b
 curl --fail --silent --show-error "http://127.0.0.1:$port/174/" | grep -Fq combined
 curl --fail --silent --show-error "http://127.0.0.1:$port/174/status/test" | grep -Fxq backend
 run_controller status 174 | jq -e --arg revision "$revision_combined" '.revision == $revision and .mode == "combined"' >/dev/null
+# Exercise a shared-service replacement while two independent previews exist.
+docker rm -f gdc-preview-node-guard >/dev/null
+if ! run_controller start; then
+  for container in gdc-preview-caddy gdc-preview-egress gdc-preview-node-guard \
+    "gdc-preview-pr-173-${revision_backend:0:12}" "gdc-preview-pr-174-${revision_combined:0:12}"; do
+    docker inspect "$container" --format '{{.Id}} {{.Name}} state={{.State.Status}} running={{.State.Running}} restart={{.RestartCount}} sandbox={{.NetworkSettings.SandboxID}} networks={{json .NetworkSettings.Networks}}' >&2 || true
+    docker logs "$container" >&2 || true
+  done
+  exit 1
+fi
+for network in gdc-preview-pr-173 gdc-preview-pr-174; do
+  docker inspect gdc-preview-node-guard | jq -e --arg network "$network" '.[0].NetworkSettings.Networks | has($network)' >/dev/null
+done
+curl --fail --silent --show-error "http://127.0.0.1:$port/173/status/test" | grep -Fxq backend
+curl --fail --silent --show-error "http://127.0.0.1:$port/174/status/test" | grep -Fxq backend
 for receipt in preview-composition.json backend-build.json preview-runtime-config.json; do
   status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/174/$receipt")"
   [[ "$status" == 404 ]] || { echo "preview receipt unexpectedly served: $receipt status=$status" >&2; exit 1; }
 done
 
+shared_before="$(docker inspect --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}' gdc-preview-caddy gdc-preview-egress gdc-preview-node-guard)"
+combined_before="$(docker inspect --format '{{.Id}} {{.State.StartedAt}}' "gdc-preview-pr-174-${revision_combined:0:12}")"
 run_controller remove 172
-if curl --fail --silent --show-error "http://127.0.0.1:$port/172/" >/dev/null 2>&1; then
-  echo 'removed preview route still responds successfully' >&2
-  exit 1
-fi
+run_controller remove 172 # Repeated removal is safe
+run_controller remove 999 # A closed PR that never had a preview is safe
+status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/172/")"
+[[ "$status" == 404 ]] || { echo "removed preview returned HTTP $status" >&2; exit 1; }
 [[ ! -e "$test_root/runtime/releases/172" && ! -e "$test_root/runtime/staging/172" ]] \
   || { echo 'removed preview retained release or staging state' >&2; exit 1; }
 run_controller deploy 172 "$revision_two" "$artifact_two"
 curl --fail --silent --show-error "http://127.0.0.1:$port/172/" | grep -Fq two
 run_controller remove 172
+# Reproduce interruption after deleting the registry: retry must still remove
+# the labelled backend, release and network without relying on that entry.
+rm "$test_root/runtime/control/registry/173.json"
 run_controller remove 173
+run_controller remove 173
+if docker inspect "gdc-preview-pr-173-${revision_backend:0:12}" >/dev/null 2>&1; then
+  echo 'interrupted cleanup retained its backend' >&2; exit 1
+fi
+curl --fail --silent --show-error "http://127.0.0.1:$port/174/" | grep -Fq combined
+curl --fail --silent --show-error "http://127.0.0.1:$port/174/status/test" | grep -Fxq backend
+[[ "$combined_before" == "$(docker inspect --format '{{.Id}} {{.State.StartedAt}}' "gdc-preview-pr-174-${revision_combined:0:12}")" ]]
+[[ "$shared_before" == "$(docker inspect --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}' gdc-preview-caddy gdc-preview-egress gdc-preview-node-guard)" ]]
 run_controller remove 174
 for network in gdc-preview-pr-172 gdc-preview-pr-173 gdc-preview-pr-174; do
   if docker network inspect "$network" >/dev/null 2>&1; then

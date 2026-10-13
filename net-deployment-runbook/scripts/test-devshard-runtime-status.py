@@ -70,7 +70,7 @@ def ready(origin, path):
 
 
 try:
-    run("docker", "build", "--pull=false", "-f", str(ROOT / "test/Dockerfile"), "-t", client_image, str(ROOT))
+    run("docker", "build", "--pull=false", "-f", str(ROOT / "test/Dockerfile"), "-t", client_image, str(REPOSITORY))
     rendered = evidence / "rendered"
     inventory = evidence / "inventory.env"
     inventory.write_text((REPOSITORY / "ops/preview/status-renderer-inventory.env").read_text())

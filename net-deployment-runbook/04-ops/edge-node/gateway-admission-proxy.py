@@ -29,6 +29,7 @@ EPOCH_URL = env("GDC_GATEWAY_ADMISSION_EPOCH_URL", "http://127.0.0.1:1317/produc
 EPOCH_INFO_URL = env("GDC_GATEWAY_ADMISSION_EPOCH_INFO_URL", EPOCH_URL.rsplit("/", 1)[0] + "/epoch_info")
 CHAIN_STATUS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL", "http://127.0.0.1:26657/status")
 CHAIN_PARAMS_URL = env("GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL", "http://127.0.0.1:1317/productscience/inference/inference/params")
+APPROVED_VERSIONS_URL = env("GDC_GATEWAY_ADMISSION_APPROVED_VERSIONS_URL", "")
 SAFE_GUARD_BLOCKS = int(env("GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS", 10))
 MAX_QUEUE = int(env("GDC_GATEWAY_ADMISSION_MAX_QUEUE", 16))
 # Requests without an explicit deadline keep a short bounded default. Exact
@@ -59,6 +60,7 @@ ROUTE_COUNTERS = {}
 COMPLETION_PATH = re.compile(r"^/(?:v1/chat/completions|devshard/[0-9]+/v1/chat/completions)$")
 READ_ONLY_PATHS = {"/v1/models", "/v1/status"}
 ADMISSION_STATUS_PATH = "/v1/admission-status"
+READINESS_SUMMARY_PATH = "/v1/readiness-summary"
 ADMISSION_STATUS_MAX_WAIT = float(env("GDC_GATEWAY_ADMISSION_STATUS_MAX_WAIT_SECONDS", 5))
 UPSTREAM_CONTENT_TYPES = {
     "application/json": "application/json",
@@ -115,7 +117,7 @@ def load_protocol_contracts(value):
 
 
 def valid_approved_versions(versions):
-    """Require one structurally valid immutable tuple per protocol name."""
+    """Validate catalog tuples, including unrelated dotted release selectors."""
     if not isinstance(versions, list):
         return False
     names = set()
@@ -127,7 +129,7 @@ def valid_approved_versions(versions):
         digest = entry.get("sha256")
         parsed = urlsplit(binary) if isinstance(binary, str) else None
         if (not isinstance(name, str)
-                or not re.fullmatch(r"v[1-9][0-9]*", name)
+                or not re.fullmatch(r"v[1-9][0-9]*(?:\.[0-9]+)*", name)
                 or name in names
                 or parsed is None or parsed.scheme != "https" or not parsed.netloc
                 or not isinstance(digest, str)
@@ -271,6 +273,17 @@ def safe_generation(deadline=None):
     if not isinstance(escrow_params, dict):
         return None, "protocol_approval_invalid"
     approved_versions = escrow_params.get("approved_versions")
+    # Protocol 0.2.16 keeps the live registry outside the legacy params field.
+    # An explicitly selected registry is authoritative: never fall back to a
+    # stale params tuple when that registry fails, is empty or is malformed.
+    if APPROVED_VERSIONS_URL:
+        try:
+            registry = get_json(APPROVED_VERSIONS_URL, deadline)
+        except TimeoutError:
+            return None, "deadline_elapsed"
+        except Exception:
+            return None, "protocol_approval_unavailable"
+        approved_versions = registry.get("versions") if isinstance(registry, dict) else None
     if not valid_approved_versions(approved_versions):
         return None, "protocol_approval_invalid"
     try:
@@ -491,11 +504,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Serve the local admission contract or proxy public gateway discovery."""
         path = self.path.split("?", 1)[0]
+        public_summary = READINESS_ONLY and self.path == READINESS_SUMMARY_PATH
         if READINESS_ONLY:
-            if self.path != ADMISSION_STATUS_PATH:
+            if self.path not in {ADMISSION_STATUS_PATH, READINESS_SUMMARY_PATH}:
                 self.respond_error(404, "not_found")
                 return
-            if not any(hmac.compare_digest(self.headers.get("Authorization", ""),
+            # Only this fixed, sanitized loopback summary is public. Private
+            # admission and native status/admin endpoints retain their gates.
+            if not public_summary and not any(hmac.compare_digest(self.headers.get("Authorization", ""),
                                            "Bearer " + token) for token in READINESS_TOKENS):
                 self.respond_error(401, "authentication_required")
                 return
@@ -507,7 +523,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        if path == ADMISSION_STATUS_PATH:
+        if path == ADMISSION_STATUS_PATH or public_summary:
             # This is a read-only preflight, not a dispatch permit: one fresh
             # observation answers whether a user request should be attempted.
             # It deliberately shares safe_generation with POST admission so
@@ -756,6 +772,6 @@ if __name__ == "__main__":
     if READINESS_ONLY and (not READINESS_MODEL or not READINESS_TOKENS
                            or not isinstance(READINESS_TOKENS, list)
                            or not all(isinstance(token, str) and token for token in READINESS_TOKENS)
-                           or READINESS_ID != "B" or HOST != "127.0.0.1"):
-        raise SystemExit("private B readiness identity/model/credential is not configured")
+                           or READINESS_ID not in {"A", "B"} or HOST != "127.0.0.1"):
+        raise SystemExit("private gateway readiness identity/model/credential is not configured")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

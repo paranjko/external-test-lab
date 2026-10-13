@@ -14,6 +14,6 @@ fi
 grep -Fq "'FAUCET_LISTEN_PORT=18085'" "$ROOT/scripts/phase-ops.sh"
 grep -Fq 'GDC_GATEWAY_RESERVE_SIGNER_URL=${GDC_GATEWAY_RESERVE_SIGNER_URL:-http://127.0.0.1:18085}' "$ROOT/04-ops/create-gateway.sh"
 ! test -e "$ROOT/04-ops/edge-node/bootstrap-nginx.conf"
-grep -Fq 'handle /v1.bootstrap.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq 'handle /*.schema.json' "$ROOT/04-ops/edge-node/PublicCaddyfile"
 ! grep -Fq "'FAUCET_LISTEN_PORT=18082'" "$ROOT/scripts/phase-ops.sh"
 printf 'PASS public faucet and v1 bootstrap Caddy route contract\n'

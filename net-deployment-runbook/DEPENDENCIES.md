@@ -30,6 +30,20 @@ retains newest-published-release selection. See
 `flock` is required by the preview lifecycle controller and is declared in the
 CI command baseline.
 
+Bootstrap publication uses Python 3 with `jsonschema==4.23.0`, OpenSSH, and
+`rsync` on the GitHub-hosted Ubuntu runner. The named
+`bootstrap-publication-dependencies` target installs the validator and checks
+the transport tools. The destination requires Python 3 (standard library only)
+and rsync. One-time root setup additionally uses the existing Docker Compose
+installation and the system's `getent` and `runuser`; delivery never uses sudo
+on the destination server.
+The publication tests replace SSH and rsync with local fixtures.
+The separate `test-bootstrap-publisher-ownership` target requires Linux root
+and the standard `nobody` account. GitHub-hosted CI invokes it with sudo; local
+checks can run in a disposable root container. It uses only Python's standard
+library, temporary directories, and a child process with a different UID/GID;
+it never writes to `/srv` or connects to a server.
+
 `make test-tmkms-recovery-boundary` builds an isolated test image from the pinned
 TMKMS image. Its extra packages are declared in
 [`scripts/tmkms-boundary-packages.txt`](scripts/tmkms-boundary-packages.txt).
@@ -43,6 +57,22 @@ The CI workflow provisions them through the named
 `install-python-test-dependencies` Make target before `make test`; local
 operators run the same target when their Python environment lacks a declared
 module.
+
+DevShard [archive builds](releases/README.md) require Python 3.11+, Docker
+Buildx, Go, binutils, `od` and `zipinfo`; publication also needs `gh`.
+`devshard-release.yml` installs Go/binutils and uses Ubuntu's unzip/GNU tools.
+`make test-devshard-release` mocks external commands; it neither builds nor
+publishes artifacts.
+
+The v6 OCI bundle contract tests also run with Python's standard library and
+mock all external operations. Actual image builds need Git, GNU tar, Docker
+Buildx with the `docker-container` driver, and public HTTPS access to the
+frozen Gonka commit and ZIP; they use an empty Docker config and never receive
+the publication token. The separate trusted publisher needs `gh`, `skopeo`,
+and contents-write/packages-write permissions. `skopeo` is declared in
+`dependencies/optional-commands.txt` and provisioned only in the publication
+job. It verifies existing archives and publishes their OCI bytes to GHCR
+without executing candidate source.
 
 Before adding an external executable to runbook shell code:
 
