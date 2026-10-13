@@ -50,6 +50,16 @@ Buildx, Go, binutils, `od` and `zipinfo`; publication also needs `gh`.
 `make test-devshard-release` mocks external commands; it neither builds nor
 publishes artifacts.
 
+The v6 OCI bundle contract tests also run with Python's standard library and
+mock all external operations. Actual image builds need Git, GNU tar, Docker
+Buildx with the `docker-container` driver, and public HTTPS access to the
+frozen Gonka commit and ZIP; they use an empty Docker config and never receive
+the publication token. The separate trusted publisher needs `gh`, `skopeo`,
+and contents-write/packages-write permissions. `skopeo` is declared in
+`dependencies/optional-commands.txt` and provisioned only in the publication
+job. It verifies existing archives and publishes their OCI bytes to GHCR
+without executing candidate source.
+
 Before adding an external executable to runbook shell code:
 
 1. Check both manifests and the `runbook-contracts` workflow job.

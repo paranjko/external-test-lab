@@ -17,6 +17,7 @@ od
 rsync
 scp
 shellcheck
+skopeo
 sqlite3
 ssh
 sudo
