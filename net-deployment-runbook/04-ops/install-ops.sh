@@ -48,6 +48,9 @@ if [[ "$COMPONENT" == monitoring && -e "$DEST/compose.yaml" ]]; then
     # needs to traverse these public discovery directories after installation.
     chmod -R a+rX "$DEST/prometheus/targets/static"
   fi
+  install -m 0644 "$HERE/compose.chain-poller.yaml" "$DEST/compose.chain-poller.yaml"
+  install -d -m 0755 "$DEST/chain-poller"
+  install -m 0644 "$HERE"/chain-poller/{Dockerfile,poller.py,requirements.txt} "$RENDER/chain-poller/config.yml" "$DEST/chain-poller/"
   chown -R "$service_user:$service_group" "$DEST/grafana" "$DEST/prometheus"
   printf 'READY refreshed monitoring assets; shared OPS configuration and services retained\n'
   exit 0
@@ -93,6 +96,7 @@ if [[ -d "$RENDER/prometheus/targets/static" ]]; then
   cp -a "$RENDER/prometheus/targets/static" "$DEST/prometheus/targets/static"
   chmod -R a+rX "$DEST/prometheus/targets/static"
 fi
+[[ -s "$RENDER/chain-poller/config.yml" ]] && install -D -m 0644 "$RENDER/chain-poller/config.yml" "$DEST/chain-poller/config.yml"
 [[ -s "$RENDER/Caddyfile" ]] && install -m 0644 "$RENDER/Caddyfile" "$DEST/Caddyfile"
 install -d -m 0755 "$DEST/bootstrap"
 # Copy the rendered public configuration on every component install.  The

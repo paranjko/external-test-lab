@@ -54,6 +54,8 @@ with tempfile.TemporaryDirectory(prefix="gdc-network-observer-install-") as temp
         "GDC_NETWORK_CHAIN_ID=fixture-chain\nGDC_NETWORK_BOOTSTRAP_URL=https://fixture.test/bootstrap.json\n"
     )
     (render / "prometheus.yml").write_text("global: {scrape_interval: 15s}\n")
+    (render / "chain-poller").mkdir()
+    (render / "chain-poller" / "config.yml").write_text("nodes: {}\n")
     systemctl = bindir / "systemctl"
     systemctl.write_text("#!/bin/sh\nexit 0\n")
     systemctl.chmod(0o755)

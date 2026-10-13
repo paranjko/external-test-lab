@@ -131,6 +131,8 @@ printf 'global: {}\nscrape_configs: []\n' >"$tmp/render/prometheus.yml"
 printf 'fixture routes\n' >"$tmp/render/Caddyfile"
 mkdir -p "$tmp/render/prometheus/targets/static/host"
 printf '[]\n' >"$tmp/render/prometheus/targets/static/host/fixture.json"
+mkdir -p "$tmp/render/chain-poller"
+printf 'nodes: {}\n' >"$tmp/render/chain-poller/config.yml"
 # Operators commonly stage configuration with umask 077. Public discovery
 # must become readable to the unprivileged Prometheus process on installation.
 chmod 0700 "$tmp/render/prometheus/targets/static" "$tmp/render/prometheus/targets/static/host"
@@ -174,6 +176,8 @@ for layout in flat legacy; do
       [[ "$(stat -c '%u:%g' "/srv/dai/ops/$file")" == "$site_owner" ]]
     done
     cmp "$tmp/render/prometheus.yml" /srv/dai/ops/prometheus/prometheus.yml
+    cmp "$tmp/render/chain-poller/config.yml" /srv/dai/ops/chain-poller/config.yml
+    test -s /srv/dai/ops/compose.chain-poller.yaml
     test -s /srv/dai/ops/prometheus/targets/join/retained.json
     grep -Fxq 'retained host' "$host_root/monitoring-test-marker"
   done
