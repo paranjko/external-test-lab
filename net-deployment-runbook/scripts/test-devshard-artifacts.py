@@ -579,6 +579,67 @@ class ArtifactTests(unittest.TestCase):
         uploaded = {Path(arg).name for arg in create if str(arg).startswith(str(output) + "/")}
         self.assertEqual(uploaded, {path.name for path in output.iterdir()})
 
+    def test_registry_identity_uses_digest_without_tag_for_both_inspections(self):
+        digest = "sha256:" + "a" * 64
+        coverage = json.loads(artifacts.COVERAGE.read_text())
+        gateway = coverage["artifact_status"]["gateway-v5"]["image"]
+        cases = [
+            (gateway, "ghcr.io/gonka-ai/devshard-gateway@" + gateway.split("@", 1)[1]),
+            (f"postgres:16.9-bookworm@{digest}", f"postgres@{digest}"),
+            (f"registry.example:5000/team/image:version@{digest}",
+             f"registry.example:5000/team/image@{digest}"),
+            (f"registry.example:5000/team/image@{digest}",
+             f"registry.example:5000/team/image@{digest}"),
+            ("ghcr.io/team/image:version", "ghcr.io/team/image:version"),
+        ]
+        raw = '{"schemaVersion":2}'
+        config = '{"os":"linux","architecture":"amd64"}'
+        authfile = self.root / "auth.json"
+        for reference, expected in cases:
+            with self.subTest(reference=reference), patch.object(artifacts.subprocess, "run", side_effect=[
+                    artifacts.subprocess.CompletedProcess([], 0, raw, ""),
+                    artifacts.subprocess.CompletedProcess([], 0, config, "")]) as external:
+                identity = artifacts.registry_identity(reference, authfile, self.root)
+                self.assertEqual(identity, {"oci_manifest_digest": blob(raw.encode())[0],
+                                            "platform": "linux/amd64"})
+                self.assertEqual([call.args[0] for call in external.call_args_list], [
+                    ["skopeo", "inspect", flag, "--authfile", str(authfile), f"docker://{expected}"]
+                    for flag in ("--raw", "--config")])
+                for call in external.call_args_list:
+                    self.assertEqual(set(call.kwargs["env"]), {"PATH", "HOME"})
+                    self.assertEqual(call.kwargs["env"]["HOME"], str(self.root))
+
+    def test_registry_identity_does_not_fall_back_after_lookup_failure(self):
+        reference = "ghcr.io/team/image:version@sha256:" + "a" * 64
+        for diagnostic, absent in (("manifest unknown", True), ("status code: 404", True),
+                                   ("unauthorized", False), ("connection timed out", False)):
+            with self.subTest(diagnostic=diagnostic), patch.object(artifacts.subprocess, "run",
+                    return_value=artifacts.subprocess.CompletedProcess([], 1, "", diagnostic)) as external:
+                if absent:
+                    self.assertIsNone(artifacts.registry_identity(reference, self.root / "auth.json", self.root))
+                else:
+                    with self.assertRaisesRegex(ValueError, "identity lookup failed"):
+                        artifacts.registry_identity(reference, self.root / "auth.json", self.root)
+                self.assertEqual(external.call_count, 1)
+                self.assertEqual(external.call_args.args[0][-1],
+                                 "docker://ghcr.io/team/image@sha256:" + "a" * 64)
+
+    def test_reused_image_digest_and_platform_mismatches_still_fail(self):
+        coverage = json.loads(artifacts.COVERAGE.read_text())
+        payload = b"legacy zip fixture"
+        for record in coverage["artifact_status"].values():
+            if "url" in record:
+                record["sha256"] = hashlib.sha256(payload).hexdigest()
+        for field, wrong in (("oci_manifest_digest", "sha256:" + "0" * 64), ("platform", "linux/arm64")):
+            def registry(reference, authfile, home):
+                identity = {"oci_manifest_digest": reference.rsplit("@", 1)[1], "platform": "linux/amd64"}
+                identity[field] = wrong
+                return identity
+            with self.subTest(field=field), patch.object(artifacts, "registry_identity", side_effect=registry), \
+                    patch.object(artifacts.urllib.request, "urlopen", side_effect=lambda *_a, **_k: io.BytesIO(payload)), \
+                    self.assertRaisesRegex(ValueError, "digest/platform mismatch"):
+                artifacts.verify_reused_inputs(coverage, self.definition)
+
     def test_registry_publisher_preflights_complete_set_and_detects_collision_before_copy(self):
         output, value, groups = self.bundle()
         manifest = artifacts.verify(output, value, groups)
