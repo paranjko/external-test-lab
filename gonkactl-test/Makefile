@@ -45,7 +45,7 @@ test-bindings:
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
 	@set +e; command='env $(PERSISTENT_ENV) GONKACTL_TEST_DATA_ROOT=$(DATA_ROOT) go test -race -count=1 ./execution'; log='$(DATA_ROOT)/terminal-receipts/test-bindings.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-bindings.receipt'; manifest='$(DATA_ROOT)/terminal-receipts/test-bindings-upstream.manifest'; env $(PERSISTENT_ENV) GONKACTL_TEST_DATA_ROOT=$(DATA_ROOT) go test -race -count=1 ./execution >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-bindings\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\nupstream_manifest=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log" "$$manifest"; } >"$$receipt"; { for f in $(DATA_ROOT)/process-receipts/*.json; do test -f "$$f" || continue; exit_code=$$(sed -n 's/^[[:space:]]*"exit_code": \(-\{0,1\}[0-9][0-9]*\).*/\1/p' "$$f"); interrupted=$$(sed -n 's/^[[:space:]]*"interrupted": \(true\|false\).*/\1/p' "$$f"); if test "$$interrupted" = true; then outcome=interruption; elif test "$$exit_code" = 0; then outcome=pass; else outcome=fail; fi; printf '%s outcome=%s exit_code=%s interrupted=%s\n' "$$f" "$$outcome" "$$exit_code" "$$interrupted"; done; for f in $(DATA_ROOT)/actual-child-env/child-environment-receipts/*.json $(DATA_ROOT)/runtime-path-receipts/*.json $(DATA_ROOT)/runner-archive/*/validation-receipt.json; do test -f "$$f" || continue; printf '%s\n' "$$f"; done; } >"$$manifest"; printf 'test-bindings receipt: %s\n' "$$receipt"; exit "$$status"
 
-test-stand:
+test-stand: report-deps
 	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
 	@set +e; command='env $(PERSISTENT_ENV) go test ./stand ./cmd'; log='$(DATA_ROOT)/terminal-receipts/test-stand.log'; receipt='$(DATA_ROOT)/terminal-receipts/test-stand.receipt'; env $(PERSISTENT_ENV) go test ./stand ./cmd >"$$log" 2>&1; status=$$?; cat "$$log"; { printf 'target=test-stand\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\nlog=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" "$$log"; } >"$$receipt"; printf 'test-stand receipt: %s\n' "$$receipt"; exit "$$status"
 
@@ -54,10 +54,15 @@ test-browser-probe:
 	chmod 700 $(DATA_ROOT)/child-home
 	@set +e; env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u TMP -u TEMP $(BROWSER_ENV) $(PERSISTENT_ENV) go run ./cmd browser-probe $(DATA_ROOT); status=$$?; cat $(DATA_ROOT)/report/browser-probe/receipt.txt; exit "$$status"
 
-test-report:
-	mkdir -p $(PERSISTENT_DIRS) $(BROWSER_TEMP_ROOT) $(QUALIFICATION_HISTORY_SCOPE)/receipts $(DATA_ROOT)/terminal-receipts
+.PHONY: report-deps
+report-deps:
+	mkdir -p $(PERSISTENT_DIRS) $(DATA_ROOT)/terminal-receipts
 	chmod 700 $(DATA_ROOT)/child-home
 	@set +e; cd report && env $(PERSISTENT_ENV) npm ci --ignore-scripts; status=$$?; cd ..; printf 'target=test-report\nstage=npm-ci\nexit_code=%s\nlog_dir=%s\n' "$$status" '$(DATA_ROOT)/npm-cache/_logs' >$(DATA_ROOT)/terminal-receipts/test-report-npm.receipt; exit "$$status"
+
+test-report: report-deps
+	mkdir -p $(PERSISTENT_DIRS) $(BROWSER_TEMP_ROOT) $(QUALIFICATION_HISTORY_SCOPE)/receipts $(DATA_ROOT)/terminal-receipts
+	chmod 700 $(DATA_ROOT)/child-home
 	@set +e; command='env $(PERSISTENT_ENV) go test -count=1 ./report'; env $(PERSISTENT_ENV) go test -count=1 ./report; status=$$?; printf 'target=test-report\nstage=go-test\ncommand=%s\nexit_code=%s\nhead=%s\ntree=%s\n' "$$command" "$$status" "$$(git rev-parse HEAD)" "$$(git rev-parse 'HEAD^{tree}')" >$(DATA_ROOT)/terminal-receipts/test-report-go.receipt; test $$status -eq 0
 	cd report && env $(PERSISTENT_ENV) node --test history-append.test.mjs
 	if test ! -f $(QUALIFICATION_HISTORY_SCOPE)/receipts/$(QUALIFICATION_RUN_ID); then env $(PERSISTENT_ENV) DATA_ROOT=$(DATA_ROOT)/report GONKACTL_TEST_RUN_ID=$(QUALIFICATION_RUN_ID) go run ./cmd report; env $(PERSISTENT_ENV) GONKACTL_TEST_HISTORY_SCOPE=$(QUALIFICATION_HISTORY_SCOPE) GONKACTL_TEST_PROTOCOL_HISTORY_ID=$(QUALIFICATION_RUN_ID)-protocol GONKACTL_TEST_EVIDENCE_HISTORY_ID=$(QUALIFICATION_RUN_ID)-evidence go run ./cmd render-transaction $(DATA_ROOT) $(QUALIFICATION_RUN_ID); fi
