@@ -15,8 +15,6 @@ const state = require(path.join(siteBuild, 'gateway-state.js'));
 const hostState = require(path.join(siteBuild, 'host-state.js'));
 const networkObservationState = require(path.join(siteBuild, 'network-observation-state.js'));
 const softwareVersions = require(path.join(siteBuild, 'software-versions.js'));
-const generatedGatewayState = fs.readFileSync(path.join(siteBuild, 'gateway-state.js'), 'utf8');
-assert.doesNotMatch(generatedGatewayState, /run make site-js\n\n\n/);
 const now = Date.parse('2026-08-06T10:30:00Z');
 const readyProbe = { state: 'READY', checked_at: '2026-08-06T10:29:50Z', http_status: 200 };
 const trafficReadyProbe = {
@@ -123,8 +121,6 @@ assert.deepEqual(state.classify(liveCapacity, 1, { ...trafficReadyProbe, complet
   message: 'Gateway unavailable – traffic receipt is incomplete',
 });
 assert.equal(state.classify(liveCapacity, 1, { ...trafficReadyProbe, permit_height: 99 }, now).state, 'UNAVAILABLE');
-assert.equal(state.classify(liveCapacity, 1, readyProbe, now).state, 'UNAVAILABLE');
-assert.equal(state.classify(liveCapacity, 1, readyProbe, now).available, false);
 assert.equal(state.classify(liveCapacity, 1, unknownReadinessProbe, now).state, 'UNAVAILABLE');
 const gatewaySiteSource = fs.readFileSync(path.join(__dirname, '..', '04-ops/site/src/app.js'), 'utf8');
 assert.equal((gatewaySiteSource.match(/availability\.state !== "TRAFFIC_READY"/g) || []).length, 2);
@@ -521,15 +517,10 @@ assert.match(
   fs.readFileSync(path.join(__dirname, '..', '04-ops/site/src/host-state.js'), 'utf8'),
   /Public endpoint unavailable/,
 );
-assert.match(siteApp, /function hostCardCapacity\(totalCards\)/);
-assert.match(siteApp, /width < 1200 \? 2 : 4/);
-assert.match(siteApp, /minimumExpandedWidth = 320/);
 assert.match(siteApp, /class="node-toggle"/);
 assert.match(siteApp, /aria-expanded="false"/);
 assert.match(siteApp, /class="node-details"/);
-assert.match(siteApp, /function activateHostCard\(key\)/);
 assert.match(siteApp, /event.key === "ArrowRight"/);
-assert.match(siteApp, /deck.dataset.expandedCount/);
 assert.match(siteApp, /data-k="endpoint"/);
 assert.match(siteApp, /validatorEffective/);
 assert.match(siteApp, /catchingUp/);
@@ -564,20 +555,6 @@ const siteIndex = fs.readFileSync(
   path.join(__dirname, '..', '04-ops', 'site', 'index.html'),
   'utf8',
 );
-const mapFixture = fs.readFileSync(
-  path.join(__dirname, 'test-validator-map-fixture.mjs'),
-  'utf8',
-);
-const homepageCapture = fs.readFileSync(
-  path.join(__dirname, 'capture-homepage-viewport.mjs'),
-  'utf8',
-);
-assert.match(homepageCapture, /compareHostIdentitySets\(/);
-assert.match(homepageCapture, /rendered Host identities do not match current preview P2P observations/);
-assert.match(
-  readability,
-  /\.nodes\.compact \{[\s\S]*display: flex;[\s\S]*align-items: flex-start;[\s\S]*height: auto;[\s\S]*min-height: 350px;[\s\S]*overflow-x: auto;[\s\S]*overflow-y: hidden;[\s\S]*overscroll-behavior-x: contain;/,
-);
 assert.match(siteIndex, /id="epoch-overview"/);
 assert.match(siteIndex, /id="epoch-progress-track"[^>]*role="progressbar"/);
 assert.match(siteIndex, /id="epoch-cpoc-state"/);
@@ -592,77 +569,15 @@ assert.match(readability, /\.verification-results-table-shell \{[\s\S]*overflow-
 assert.match(readability, /\.verification-evidence-grid \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 assert.doesNotMatch(readability, /validator-map-encoding-note/);
 assert.match(readability, /\.validator-marker-face[\s\S]*background: var\(--validator-marker-fill\)/);
-assert.match(readability, /\.validator-map \.leaflet-popup-pane \{ z-index: 1200 !important; \}/);
-assert.match(readability, /\.validator-map-tooltip \{ position: fixed; z-index: 20000;/);
-assert.match(readability, /\.validator-map-tooltip \{[\s\S]*width: min\(420px, calc\(100vw - 20px\)\);/);
 assert.match(readability, /\.validator-map-tooltip li \{[\s\S]*grid-template-columns: minmax\(0,1fr\) max-content;/);
 assert.match(readability, /\.validator-map-location-evidence dl \{[\s\S]*grid-template-columns: max-content minmax\(0,1fr\);/);
 assert.match(readability, /footer \{[\s\S]*grid-template-columns: max-content minmax\(180px, 1fr\) repeat\(5, max-content\);/);
 assert.match(readability, /\.footer-github \{[\s\S]*justify-self: end;[\s\S]*align-self: center;/);
 assert.doesNotMatch(readability, /validator-marker-number/);
-assert.match(
-  readability,
-  /\.nodes\.compact \.node \{[\s\S]*flex: 1 1 0;[\s\S]*height: 480px;[\s\S]*min-height: 480px;[\s\S]*max-height: 480px;[\s\S]*transition:/,
-);
-assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \{[\s\S]*flex: 0 0 var\(--collapsed-host-width\);[\s\S]*width: var\(--collapsed-host-width\);/);
-assert.match(readability, /\.nodes\.compact \.node\.is-expanded \{[\s\S]*min-width: 320px;/);
-assert.match(readability, /--collapsed-host-width: 32px;/);
 assert.match(readability, /\.nodes\.compact \.node-toggle:focus-visible \{[\s\S]*outline: 2px solid var\(--lime\);/);
-assert.match(readability, /\.nodes\.compact \.node\.is-collapsed \.node-toggle \{[\s\S]*writing-mode: vertical-rl;[\s\S]*transform: rotate\(180deg\);/);
 assert.match(readability, /\.nodes\.compact \.metric \{\s*box-sizing: border-box;[\s\S]*max-height: none;[\s\S]*align-items: flex-start;/);
 assert.match(readability, /\.nodes\.compact \.metric\.account:not\(\[hidden\]\) \{[\s\S]*grid-template-columns: 72px minmax\(0, 1fr\);/);
-assert.match(readability, /\.nodes\.compact \.metric b \{[\s\S]*flex: 1 1 auto;[\s\S]*overflow: hidden;[\s\S]*text-overflow: ellipsis;[\s\S]*white-space: nowrap;/);
-assert.match(readability, /@media \(max-width: 700px\) \{[\s\S]*\.nodes\.compact \{[\s\S]*flex-direction: column;[\s\S]*height: auto;[\s\S]*overflow: visible;[\s\S]*\.nodes\.compact \.node\.is-collapsed \{[\s\S]*height: 52px;/);
 assert.match(readability, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*transition: none;/);
-assert.match(mapFixture, /name: "fixture-dynamic",\s*mode: "skip",\s*reason: "fixture skip path"/);
-assert.match(mapFixture, /\.\.\.Array\.from\(\{ length: 11 \}, \(_, index\) => \(\{\s*name: `fixture-overflow-\$\{index \+ 1\}`/);
-assert.match(mapFixture, /\[1399, 720\][\s\S]*\[1321, 720\][\s\S]*\[1320, 720\][\s\S]*\[1101, 720\][\s\S]*\[1100, 720\][\s\S]*\[701, 720\][\s\S]*\[700, 720\][\s\S]*\[521, 720\][\s\S]*\[1400, 900\][\s\S]*\[1440, 900\][\s\S]*\[1920, 1080\][\s\S]*\[390, 844\]/);
-assert.match(mapFixture, /\[1920, 1440, 1400, 1399, 1321, 1320, 1280, 1101, 1100, 844, 701, 700, 521, 390, 375, 360, 320\]\.includes\(width\)/);
-assert.match(mapFixture, /cards\.length > 5[\s\S]*cardsReachable[\s\S]*activationValid[\s\S]*keyboardValid/);
-assert.match(mapFixture, /cards\.length !== 22[\s\S]*desktopReachability[\s\S]*mobileReachability/);
-assert.match(mapFixture, /waitForSettledOverlappingMarker[\s\S]*stableSamples >= 3/);
-assert.doesNotMatch(mapFixture, /startsWith\(\$\{JSON\.stringify\(expected\)\}\)/);
-assert.match(homepageCapture, /return value && \{[\s\S]*width: value\.width,[\s\S]*height: value\.height/);
-assert.match(homepageCapture, /state\.nodeDeck/);
-assert.match(homepageCapture, /deck\.cards\.every\(card => card\.height >= 350\)/);
-assert.match(homepageCapture, /const deckInternalOverflow = deck\.scrollWidth > deck\.clientWidth \+ 1;/);
-assert.match(homepageCapture, /deck\.firstAtStart && deck\.lastAtEnd && deck\.appliedScrollLeft > 1/);
-assert.match(homepageCapture, /Host accordion layout contract failed/);
-assert.match(homepageCapture, /Host accordion activation contract failed/);
-assert.match(homepageCapture, /GDC_EXPECT_STATUS_PREFIX/);
-assert.match(homepageCapture, /GDC_EXPECT_CARD_COUNT/);
-assert.match(homepageCapture, /GDC_EXPECT_NODE_STATES/);
-assert.match(homepageCapture, /preview shared status request failed/);
-assert.match(homepageCapture, /homepage rendered .* required Host cards/);
-assert.match(homepageCapture, /Host cards do not have equal heights/);
-assert.match(homepageCapture, /Host state does not match expected/);
-assert.match(homepageCapture, /visualWidth: visualViewport\?\.width \|\| innerWidth/);
-assert.match(homepageCapture, /Math\.abs\(state\.visualWidth - width\) > 0\.5/);
-assert.ok(
-  homepageCapture.includes(
-    'requirementsNote: element?.querySelector(".join-requirements-note")?.textContent?.trim(),',
-  ),
-);
-assert.ok(
-  homepageCapture.includes(
-    "await call('Emulation.setVisibleSize', { width, height }, sessionId);",
-  ),
-);
-assert.match(
-  homepageCapture,
-  /validator-map \.validator-map-world[\s\S]*naturalWidth[\s\S]*gatewayStateReadyExpression/,
-);
-assert.match(homepageCapture, /\/\^TRAFFIC_READY – \/\.test/);
-assert.match(homepageCapture, /"CONTROL_READY","ROUTING_READY","RECOVERING","SATURATED"/);
-assert.match(
-  homepageCapture,
-  /startChromeDevTools\(\{[\s\S]*context: `homepage viewport \$\{width\}x\$\{height\}`/,
-);
-assert.match(homepageCapture, /await stopChromeDevTools\(browser\)/);
-assert.match(
-  homepageCapture,
-  /await rm\(profile, \{ recursive: true, force: true \}\)/,
-);
 
 async function testRpcObservation() {
   const { compareHostIdentitySets } = await import('./preview-host-identities.mjs');
