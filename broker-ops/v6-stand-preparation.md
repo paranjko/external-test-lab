@@ -96,6 +96,38 @@ permanent availability after that window expires.
 
 ## Readiness and remaining scenarios
 
+### Budget-bounded operator rotation
+
+`v6-budget-rotation.py` is an explicitly authorized operator workaround, not
+qualification of the native rotator. Its fixed campaign binds A to node4 and
+B to node0, reserves 1 GNK before every create request, and caps each instance
+at 5,000 GNK gross funding. Refunds never replenish this allowance. Transaction
+fees are additional. There is no calendar deadline for this campaign.
+
+Keep native rotation disabled. Copy the script to each existing
+`/srv/dai/broker-tests/v6-INSTANCE/rotation-10000gnk.py`. Initialize exactly once
+with `python3 SCRIPT INSTANCE --initialize`, then run `python3 SCRIPT INSTANCE`
+from a single systemd oneshot timer every 30 seconds. A durable SQLite ledger
+under `rotation-10000gnk-20261013` holds reservations and responses. Never remove,
+replace or reinitialize it to recover from failure. Missing state fails closed;
+ambiguous transactions reserve budget and halt creation pending reconciliation.
+
+The operator timer is named `gdc-v6-budget-INSTANCE.timer`. Stop it with
+`systemctl disable --now gdc-v6-budget-INSTANCE.timer`, then wait for its active
+oneshot service to finish; stopping the timer cannot undo an in-flight request.
+The earlier bounded timers must remain disabled. A halted transaction stops
+the new timer; reconcile its receipt before an explicitly reviewed restart.
+Re-enabling a timer never resets its ledger or restores its spending allowance.
+
+Creation occurs at most once per epoch, only in the normal funding phase with
+at least 15 blocks before the switch. Settlement starts two epochs later,
+never forces busy requests, and permits at most three known-busy retries.
+The cap blocks all further creation; bounded settlement of existing records
+may continue. No readiness or PoC gate is bypassed. Do not promise continuous
+inference during protocol fences or claim a load result from this mechanism.
+
+Run `make -C broker-ops test-v6-budget-rotation` before installing a change.
+
 - Two independent usable gateways are the first test gate. A health response
   or a configured image alone does not establish inference readiness.
 - H/HR scenarios additionally require two `versiond` replicas sharing Postgres
