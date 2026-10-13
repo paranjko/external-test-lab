@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="gonkactl — an experimental native CLI for Gonka stands and nodes. Download the first alpha for Linux, macOS and Windows.">
+  <meta name="color-scheme" content="dark light">
+  <title>gonkactl — Gonka deployment CLI</title>
+  <style>
+    :root { color-scheme: dark; --bg: #101412; --panel: #19201c; --text: #edf4ed; --muted: #a6b5aa; --line: #35453a; --accent: #b8f397; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.6 system-ui, sans-serif; }
+    main { max-width: 980px; margin: auto; padding: 36px 28px 64px; }
+    nav, footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 14px; }
+    a { color: var(--accent); text-underline-offset: 4px; }
+    a:hover { text-decoration-thickness: 2px; }
+    .brand { color: var(--text); text-decoration: none; font-weight: 650; }
+    header { padding: 76px 0 34px; }
+    .eyebrow { color: var(--accent); font: 13px ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { font-size: clamp(56px, 12vw, 104px); line-height: 1; letter-spacing: -.07em; margin: 22px 0; }
+    .lead { max-width: 630px; color: var(--muted); font-size: 23px; line-height: 1.5; }
+    h2 { font-size: 22px; letter-spacing: -.02em; margin: 0 0 16px; }
+    section { margin: 30px 0 46px; }
+    .install { border: 1px solid var(--line); border-radius: 12px; padding: 20px; background: var(--panel); }
+    .command { display: flex; align-items: center; gap: 16px; }
+    code { font: 14px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    #install-command { flex: 1; overflow-wrap: anywhere; }
+    button { color: var(--bg); background: var(--accent); border: 0; border-radius: 6px; padding: 10px 16px; font: inherit; font-size: 14px; cursor: pointer; }
+    button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    .note { color: var(--muted); font-size: 14px; margin: 14px 0 0; }
+    .notice { border-left: 2px solid var(--accent); padding-left: 18px; max-width: 770px; }
+    .notice p { margin: 0; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .card { border-top: 1px solid var(--line); padding-top: 16px; min-width: 0; }
+    .card h3 { margin: 0 0 10px; font-size: 17px; }
+    .card a { display: block; padding: 4px 0; }
+    dl { display: grid; grid-template-columns: minmax(210px, 1fr) 2fr; gap: 16px 28px; }
+    dt, dd { margin: 0; }
+    dd { color: var(--muted); }
+    footer { border-top: 1px solid var(--line); padding-top: 24px; }
+    #copy-status { min-height: 22px; }
+    @media (max-width: 600px) {
+      main { padding: 24px 20px 40px; }
+      header { padding-top: 52px; }
+      .lead { font-size: 20px; }
+      .command { align-items: flex-start; flex-direction: column; }
+      .grid { grid-template-columns: 1fr; }
+      dl { grid-template-columns: 1fr; gap: 6px; }
+      dd { margin-bottom: 16px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <nav aria-label="Main"><a class="brand" href="/">Gonka Community DevNet</a><a href="https://github.com/paranjko/external-test-lab/tree/v1.0.0-alpha.1/gonkactl">Source ↗</a></nav>
+  <header>
+    <p class="eyebrow">Native CLI · 1.0.0-alpha.1</p>
+    <h1>gonkactl</h1>
+    <p class="lead">A CLI for Gonka stands and nodes.<br>The first step toward native deployment control.</p>
+  </header>
+  <section aria-labelledby="install-title">
+    <h2 id="install-title">Install the alpha</h2>
+    <div class="install">
+      <div class="command"><code id="install-command">curl -LsSf https://gonka-dev.net/ctl/install.sh | sh</code><button id="copy" type="button">Copy command</button></div>
+      <p class="note">Linux &amp; macOS · SHA-256 verified · Installs to <code>~/.local/bin</code></p>
+      <p class="note" id="copy-status" role="status" aria-live="polite">Prefer to inspect first? <a href="install.sh">Read the installer</a>.</p>
+    </div>
+  </section>
+  <section class="notice" aria-label="Alpha limitations">
+    <p><strong>An early distribution preview.</strong> This alpha exposes help, version information and shell completion. Host JOIN, reset, recovery and deployment commands are not available yet. Continue using the deployment runbook for node operations.</p>
+  </section>
+  <section aria-labelledby="commands-title">
+    <h2 id="commands-title">What you can run today</h2>
+    <dl>
+      <dt><code>gonkactl --help</code></dt><dd>Explore the available commands and flags.</dd>
+      <dt><code>gonkactl version</code></dt><dd>Check the release, source commit and build date.</dd>
+      <dt><code>gonkactl completion bash</code></dt><dd>Generate completion for Bash, Zsh, Fish or PowerShell.</dd>
+    </dl>
+  </section>
+  <section aria-labelledby="downloads-title">
+    <h2 id="downloads-title">Download a binary</h2>
+    <div class="grid">
+      <div class="card"><h3>Linux</h3>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/v1.0.0-alpha.1/gonkactl_1.0.0-alpha.1_linux_amd64.tar.gz">x86-64 / amd64 ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/v1.0.0-alpha.1/gonkactl_1.0.0-alpha.1_linux_arm64.tar.gz">ARM64 ↓</a>
+      </div>
+      <div class="card"><h3>macOS</h3>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/v1.0.0-alpha.1/gonkactl_1.0.0-alpha.1_darwin_arm64.tar.gz">Apple silicon ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/v1.0.0-alpha.1/gonkactl_1.0.0-alpha.1_darwin_amd64.tar.gz">Intel ↓</a>
+      </div>
+      <div class="card"><h3>Windows</h3>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/v1.0.0-alpha.1/gonkactl_1.0.0-alpha.1_windows_amd64.zip">x86-64 / amd64 ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/v1.0.0-alpha.1/gonkactl_1.0.0-alpha.1_windows_arm64.zip">ARM64 ↓</a>
+      </div>
+    </div>
+    <p class="note">No Go installation needed. Extract the archive and add the binary to your PATH.
+      <a href="https://github.com/paranjko/external-test-lab/releases/download/v1.0.0-alpha.1/checksums.txt">SHA-256 checksums</a></p>
+  </section>
+  <footer><span>Community tooling. Experimental by design.</span><a href="https://github.com/paranjko/external-test-lab/releases/tag/v1.0.0-alpha.1">Release notes ↗</a></footer>
+</main>
+<script>
+  const button = document.getElementById('copy');
+  const command = document.getElementById('install-command');
+  const status = document.getElementById('copy-status');
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(command.textContent);
+      status.textContent = 'Copied. Paste the command into your terminal.';
+    } catch {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(command);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      status.textContent = 'Select and copy the highlighted command with Ctrl+C or ⌘C.';
+    }
+  });
+</script>
+</body>
+</html>
