@@ -539,7 +539,51 @@ collect_finalized_epoch() {
 # seed.  It is kept in the same snapshot as endpoint observations so the
 # browser never needs a second, differently privileged data path for a
 # selected bootstrap network.
+collect_model_assignments() {
+  local api="$1" height="$2" current epoch model encoded group groups='[]'
+  # Query the effective group, not the latest PoC epoch or model registry.
+  # Pin every query to the reference height to avoid crossing an epoch boundary.
+  if ! current="$(curl -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 \
+    -H "x-cosmos-block-height: $height" "${api}/current_epoch_group_data" 2>/dev/null)" ||
+    ! current="$(jq -ce --argjson height "$height" '
+      .epoch_group_data |
+      select((.epoch_index | type) == "string" and (.epoch_index | test("^[0-9]+$"))) |
+      select((.effective_block_height | tonumber) > 0 and (.effective_block_height | tonumber) <= $height) |
+      select((.sub_group_models | type) == "array" and (.sub_group_models | length) <= 100) |
+      select(all(.sub_group_models[]; type == "string" and length > 0 and length <= 256)) |
+      select((.sub_group_models | unique | length) == (.sub_group_models | length)) |
+      {epoch_index,effective_block_height,sub_group_models}
+    ' <<<"$current" 2>/dev/null)"; then
+    printf '%s\n' '{"state":"unavailable","error":"effective_model_group_unavailable"}'
+    return
+  fi
+  epoch="$(jq -r .epoch_index <<<"$current")"
+  while IFS= read -r model; do
+    encoded="$(jq -rn --arg model "$model" '$model | @uri')"
+    if ! group="$(curl -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 \
+      -H "x-cosmos-block-height: $height" "${api}/epoch_group_data/${epoch}?model_id=${encoded}" 2>/dev/null)" ||
+      ! group="$(jq -ce --arg epoch "$epoch" --arg model "$model" '
+        .epoch_group_data | select(.epoch_index == $epoch and .model_id == $model) |
+        select((.validation_weights | type) == "array") |
+        select(all(.validation_weights[];
+          (.member_address | type) == "string" and (.member_address | test("^gonka1[0-9a-z]+$")) and
+          (.weight | type) == "string" and (.weight | test("^[0-9]+$")))) |
+        select((.validation_weights | map(.member_address) | unique | length) == (.validation_weights | length)) |
+        {model_id:$model,state:"observed",participants:[.validation_weights[] |
+          select(.weight | test("[1-9]")) | {address:.member_address,weight}]}
+      ' <<<"$group" 2>/dev/null)"; then
+      group="$(jq -cn --arg model "$model" '{model_id:$model,state:"unavailable"}')"
+    fi
+    groups="$(jq -cn --argjson groups "$groups" --argjson group "$group" '$groups + [$group]')"
+  done < <(jq -r '.sub_group_models[]' <<<"$current")
+  jq -cn --argjson current "$current" --argjson groups "$groups" --argjson height "$height" \
+    '{state:(if all($groups[]; .state == "observed") then "observed" else "partial" end),
+      epoch_index:$current.epoch_index,effective_block_height:$current.effective_block_height,
+      reference_height:$height,groups:$groups}'
+}
+
 collect_chain_state() {
+  local model_assignments
   local nodes="$1" reference dapi_url node_id height observed_at api api_origin rpc_origin status validators participants approvals epoch stage commits votes cpoc_active cpoc_stage cpoc_commits cpoc_votes cpoc hardware_dir hardware latest_block_time sample_height sampled_block block_interval epoch_index history_dir recent_events history_epoch offset history_response finalized_epoch
   local -a history_files
   observed_at="$(timestamp)"
@@ -599,7 +643,8 @@ collect_chain_state() {
         (.count | tonumber?) == (.total | tonumber?) and
         (.total | tonumber?) <= 100 and
         (.validators | type) == "array") |
-      .validators | map({address, voting_power}) |
+      .validators | map({address, voting_power} +
+        (if (.pub_key.value? | type) == "string" then {validator_key:.pub_key.value} else {} end)) |
       select(all(.[]; ((.address | type) == "string") and (.address | test("^[0-9A-Fa-f]{40}$")) and
         (.voting_power | tostring | test("^[0-9]+$"))))
     ' <<<"$validators" 2>/dev/null)"; then
@@ -737,13 +782,14 @@ collect_chain_state() {
   if [[ "$epoch_index" =~ ^[1-9][0-9]*$ ]]; then
     finalized_epoch="$(collect_finalized_epoch "$api" "$dapi_url" "$height" "$epoch_index" "$participants" 2>/dev/null || printf '%s' '{"state":"unavailable","error":"finalized_epoch_collection_failed"}')"
   fi
-  jq -cn --arg endpoint "$dapi_url" --arg api_endpoint "$api_origin" --arg observed_at "$observed_at" --arg node_id "$node_id" --argjson height "$height" \
+  model_assignments="$(collect_model_assignments "$api" "$height")"
+  jq -cn --argjson model_assignments "$model_assignments" --arg endpoint "$dapi_url" --arg api_endpoint "$api_origin" --arg observed_at "$observed_at" --arg node_id "$node_id" --argjson height "$height" \
     --argjson validators "$validators" --argjson participants "$participants" --argjson approvals "$approvals" \
     --argjson hardware "$hardware" --argjson epoch "${epoch:-null}" --argjson commits "$commits" --argjson votes "$votes" --argjson cpoc "$cpoc" --argjson finalized_epoch "$finalized_epoch" \
     '{state:"observed",source_endpoint:$endpoint,observed_at:$observed_at,
       api_source_endpoint:$api_endpoint,
       reference:{node_id:$node_id,height:$height},validators:$validators,participants:$participants,
-      hardware_nodes:$hardware,approved_devshards:$approvals,
+      hardware_nodes:$hardware,approved_devshards:$approvals,model_assignments:$model_assignments,
       activity:{epoch:$epoch,commits:$commits,votes:$votes,cpoc:$cpoc,finalized_epoch:$finalized_epoch}}'
 }
 

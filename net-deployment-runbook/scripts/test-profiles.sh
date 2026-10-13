@@ -386,9 +386,9 @@ grep -Fq '<summary><span class="join-requirements-toggle">Minimum Host requireme
 node "$ROOT/scripts/verify-devnet-hardware-profile.mjs" \
   "$ROOT/profiles/devnet-hadware.json" "$ROOT/04-ops/site/index.html"
 grep -Fq 'https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all' "$ROOT/04-ops/site/index.html"
-grep -Fq 'qualification loads the model, checks <code>/v1/models</code>, completes an inference request, and records VRAM evidence' "$ROOT/04-ops/site/index.html"
-grep -Fq 'is not a guaranteed supported configuration</p>' "$ROOT/04-ops/site/index.html"
-! grep -Fq 'is not a guaranteed supported configuration.</p>' "$ROOT/04-ops/site/index.html"
+grep -Fq 'qualification loads the selected model, checks <code>/v1/models</code>, completes an inference request, and records VRAM evidence' "$ROOT/04-ops/site/index.html"
+grep -Fq 'allocation alone does not prove current inference availability</p>' "$ROOT/04-ops/site/index.html"
+! grep -Fq 'Community DevNet currently runs' "$ROOT/04-ops/site/index.html"
 test_tmp="$(mktemp -d)"
 rendered_site_index="$test_tmp/site-index.html"
 "$ROOT/scripts/render-site-revision.sh" "$ROOT/04-ops/site/index.html" "$rendered_site_index"
