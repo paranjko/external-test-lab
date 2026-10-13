@@ -97,6 +97,9 @@ func TestStoragePrefixIntegration(t *testing.T) {
 		}
 		logs := exec.Command("docker", "logs", "--timestamps", containerName)
 		output, _ := logs.CombinedOutput()
+		if t.Failed() {
+			t.Logf("Storage container logs:\n%s", output)
+		}
 		if err := os.WriteFile(containerLog, output, 0o600); err != nil {
 			t.Errorf("persist Storage logs: %v", err)
 		}
@@ -126,7 +129,7 @@ func TestStoragePrefixIntegration(t *testing.T) {
 	bootstrapToken := "qualification-storage-bootstrap-only"
 	secret := "qualification-storage-secret-only"
 	if output, err := exec.Command(
-		"docker", "run", "--detach", "--rm", "--name", containerName,
+		"docker", "run", "--detach", "--name", containerName,
 		"--label", "gonkactl-test.owner=qualification-storage-prefix",
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"--env", "ACCESS_TOKEN="+bootstrapToken,
@@ -138,6 +141,7 @@ func TestStoragePrefixIntegration(t *testing.T) {
 		"--volume", storageRoot+":/data",
 		"--publish", "127.0.0.1::3000",
 		"allure/allure-report-storage:v1.0.1",
+		"node", "./dist/server.js",
 	).CombinedOutput(); err != nil {
 		t.Fatalf("start owned Storage fixture: %v: %s", err, output)
 	}
