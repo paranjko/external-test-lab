@@ -78,4 +78,7 @@ umask 077
   printf 'SEED_NODE_P2P_URL=%q\n' "$SEED_NODE_P2P_URL"
   printf 'GDC_JOIN_ROLE_INPUT=true\n'
   printf 'GDC_JOIN_MONITORING_REGISTRY_HOST=%q\n' "$MONITORING_REGISTRY_HOST"
+  if [[ -n "${GDC_MONITORING_HOST:-}" ]]; then
+    printf 'GDC_MONITORING_HOST=%q\n' "$GDC_MONITORING_HOST"
+  fi
 } >"$OUTPUT"

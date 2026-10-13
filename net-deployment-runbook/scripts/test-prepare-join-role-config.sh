@@ -101,3 +101,34 @@ INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" -
   [[ "$GDC_JOIN_NETWORK_HOST" == two.example && "$SEED_NODE_RPC_URL" == http://two.example:8000/chain-rpc && "$SEED_API_URL" == http://two.example:8000 ]]
 )
 printf 'PASS explicit JOIN source also selects the membership/API role, not the first seed\n'
+
+# Execute the generated role through load_project: a different seed must not
+# change the monitoring firewall source selected by the registry handoff.
+INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/collector.env" \
+  --ssh-alias mitch-demo --public-host host.example.net --bootstrap-file "$temporary/bootstrap.json" \
+  --source-rpc http://two.example:8000/chain-rpc --monitoring-registry-host collector-fixture
+(
+  export GDC_HOME="$temporary/collector-home" GDC_ENV="$temporary/collector.env"
+  unset GDC_MONITORING_HOST GDC_JOIN_RESUME
+  source "$ROOT/scripts/lib.sh"
+  ssh() {
+    [[ "$*" == '-G collector-fixture' ]] || return 99
+    printf 'hostname collector.example\n'
+  }
+  getent() {
+    case "$*" in
+      'ahostsv4 collector.example') printf '192.0.2.44 STREAM collector.example\n' ;;
+      'ahostsv4 two.example') printf '192.0.2.10 STREAM two.example\n' ;;
+      *) return 99 ;;
+    esac
+  }
+  load_project
+  [[ "$MONITORING_CIDR" == 192.0.2.44/32 && "$PUBLIC_EDGE_CIDR" == 192.0.2.10/32 ]]
+  grep -Fxq 'MONITORING_CIDR=192.0.2.44/32' "$INVENTORY"
+)
+printf 'PASS generated JOIN retains independent collector firewall source\n'
+GDC_MONITORING_HOST=explicit.example INFERENCED="$temporary/inferenced" \
+  "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/explicit-collector.env" \
+  --ssh-alias mitch-demo --public-host host.example.net --bootstrap-file "$temporary/bootstrap.json"
+grep -Fxq 'GDC_MONITORING_HOST=explicit.example' "$temporary/explicit-collector.env"
+printf 'PASS explicit collector survives generated JOIN role persistence\n'

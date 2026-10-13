@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ $# -eq 1 || ( $# -eq 3 && "${2:-}" == --node-name ) ]] && [[ $EUID -eq 0 ]] || { echo "Usage: sudo $0 rendered-node.env [--node-name SSH_ALIAS]" >&2; exit 2; }
+[[ $# -ge 1 && $EUID -eq 0 ]] || { echo "Usage: sudo $0 rendered-node.env [--node-name SSH_ALIAS] [--monitoring-only]" >&2; exit 2; }
 ENV_FILE="$1"
+shift
 DEST=/srv/dai/edge
-if [[ $# -eq 3 ]]; then
-  NODE="$3"
-  [[ "$NODE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'invalid edge SSH alias' >&2; exit 2; }
-  DEST=/srv/dai/deploy/edge
-fi
+monitoring_only=false
+while (($#)); do
+  case "$1" in
+    --node-name)
+      NODE="${2:-}"
+      [[ "$NODE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo 'invalid edge SSH alias' >&2; exit 2; }
+      DEST=/srv/dai/deploy/edge
+      shift 2 ;;
+    --monitoring-only) monitoring_only=true; shift ;;
+    *) echo "unknown edge install option: $1" >&2; exit 2 ;;
+  esac
+done
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -a
 # shellcheck disable=SC1090
@@ -19,6 +27,14 @@ expected_remote_prometheus="https://${GATEWAY_PUBLIC_HOST:-}/ops-prometheus"
   exit 2
 }
 
+if [[ "$monitoring_only" == true ]]; then
+  for required in compose.yaml .env Caddyfile; do
+    [[ -s "$DEST/$required" && ! -L "$DEST/$required" ]] || {
+      echo 'monitoring requires an existing edge deployment; deploy edge explicitly first' >&2
+      exit 1
+    }
+  done
+else
 mkdir -p "$DEST"
 install -m 0644 "$HERE/compose.yaml" "$DEST/compose.yaml"
 [[ -d "$DEST/bootstrap" ]] || install -d -m 0755 "$DEST/bootstrap"
@@ -34,9 +50,10 @@ fi
 if [[ -d "$DEST/gateway-route.env" ]]; then
   rm -rf "$DEST/gateway-route.env"
 fi
-install -m 0600 "$1" "$DEST/gateway-route.env"
+install -m 0600 "$ENV_FILE" "$DEST/gateway-route.env"
 install -m 0644 "$HERE/gateway-route-proxy.py" "$DEST/gateway-route-proxy.py"
-install -m 0600 "$1" "$DEST/.env"
+install -m 0600 "$ENV_FILE" "$DEST/.env"
+fi
 # A running public Grafana bind-mounts the dashboards and provisioning
 # directories. Replacing those directories would leave the container on the
 # deleted inodes, serving its last imported definitions while the files on
@@ -49,9 +66,13 @@ sed "s|__PUBLIC_GRAFANA_PROMETHEUS_URL__|$PUBLIC_GRAFANA_PROMETHEUS_URL|g" \
   "$HERE/public-grafana/provisioning/datasources/prometheus.yml" \
   >"$DEST/public-grafana/provisioning/datasources/prometheus.yml"
 chmod -R a+rX "$DEST/public-grafana"
+if [[ "$monitoring_only" == true ]]; then
+  printf 'READY refreshed public Grafana; edge routes and credentials preserved\n'
+  exit 0
+fi
 # Only the configured public edge owns the three public origins. All other participants retain a
 # narrowly-scoped per-node edge proxy and never contend for their certificates.
-if grep -qx 'PUBLIC_EDGE=true' "$1"; then
+if grep -qx 'PUBLIC_EDGE=true' "$ENV_FILE"; then
   caddy_source="$HERE/PublicCaddyfile"
 else
   caddy_source="$HERE/Caddyfile"

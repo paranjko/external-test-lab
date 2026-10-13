@@ -338,6 +338,21 @@ load_public_observability_hosts() {
   GRAFANA_HOST="${GDC_GRAFANA_HOST:-grafana.gonka-dev.net}"
 }
 
+monitoring_source_host() {
+  local host="${GDC_MONITORING_HOST:-}"
+  if [[ -z "$host" && -n "${GDC_JOIN_MONITORING_REGISTRY_HOST:-}" ]]; then
+    host="$(ssh -G "$GDC_JOIN_MONITORING_REGISTRY_HOST" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')" \
+      || die 'cannot resolve the monitoring registry SSH configuration'
+    [[ -n "$host" ]] || die 'monitoring registry has no hostname'
+  fi
+  if [[ -z "$host" ]]; then
+    host="$GENESIS_PUBLIC_HOST"
+    [[ -z "$GATEWAY_NODE" ]] || host="$(node_public_host "$GATEWAY_NODE")"
+  fi
+  [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || die 'invalid monitoring source host'
+  printf '%s\n' "$host"
+}
+
 # Every participant is identified by an operator-provided SSH alias.  Public
 # DNS, hardware profile and an optional separate ML host belong to that alias;
 # no lifecycle command may infer them from a particular lab host name.
@@ -661,11 +676,9 @@ load_project() {
     write_inventory
     return 0
   fi
-  # A host-recovery profile deliberately has no gateway role. Its local
-  # validation never deploys the central collector, so retain the Genesis
-  # source only for that isolated mode.
-  monitoring_host="$GENESIS_PUBLIC_HOST"
-  [[ -z "$GATEWAY_NODE" ]] || monitoring_host="$(node_public_host "$GATEWAY_NODE")"
+  # A managed JOIN already carries the collector's registry alias. It must
+  # not open metrics to its independently selected consensus seed instead.
+  monitoring_host="$(monitoring_source_host)"
   mapfile -t monitoring_addresses < <(getent ahostsv4 "$monitoring_host" | awk '{print $1}' | sort -u)
   (( ${#monitoring_addresses[@]} == 1 )) || die "$monitoring_host must resolve to exactly one IPv4 address"
   MONITORING_CIDR="${monitoring_addresses[0]}/32"

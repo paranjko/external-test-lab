@@ -88,6 +88,11 @@ step 'Render monitoring and public status configuration'
 
 reconcile_public_grafana() {
   local node="$PUBLIC_EDGE_NODE" edge_env edge_remote edge_start_log
+  local edge_install_mode='' edge_caddy_start='docker compose up -d --force-recreate caddy'
+  if [[ "$COMPONENT" == monitoring ]]; then
+    edge_install_mode=--monitoring-only
+    edge_caddy_start=true
+  fi
   edge_env="$GENERATED/edge/$node.env"
   edge_remote="${REMOTE}-edge"
   mkdir -p "$(dirname "$edge_env")"
@@ -96,7 +101,7 @@ reconcile_public_grafana() {
   rsync -a "$ROOT/04-ops/edge-node/" "$node:$edge_remote/edge/"
   scp -q "$edge_env" "$node:$edge_remote/edge.env"
   edge_start_log='/srv/dai/edge/start-public-grafana.log'
-  ssh -T "$node" "sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env'; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; docker compose up -d --force-recreate caddy"
+  ssh -T "$node" "set -Eeuo pipefail; sudo '$edge_remote/edge/install-edge.sh' '$edge_remote/edge.env' $edge_install_mode; rm -rf '$edge_remote'; cd /srv/dai/edge && docker compose --profile public-edge up -d --force-recreate public-grafana >'$edge_start_log' 2>&1; for attempt in \$(seq 1 60); do curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 && break; echo \"WAIT public Grafana local health attempt=\$attempt/60 reason=connection-or-health-not-ready\"; sleep 1; done; curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1 || { echo 'ERROR public Grafana did not become locally healthy; inspect /srv/dai/edge/start-public-grafana.log' >&2; exit 1; }; $edge_caddy_start"
 }
 
 deploy_gateway_admission() {
