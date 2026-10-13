@@ -58,6 +58,9 @@ cat >"$tmp/admission/Caddyfile" <<'CADDY'
 http://127.0.0.1:18083 {
   respond "local admission" 200
 }
+http://127.0.0.1:18186 {
+  respond "selected stable readiness {uri}" 200
+}
 http://127.0.0.1:9466 {
   respond "stable adapter {uri}" 200
 }
@@ -196,6 +199,24 @@ missing="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-tim
 [[ "$missing" == 404 ]] || { echo "expected preview upstream 404 to propagate, got $missing" >&2; exit 1; }
 admission="$(curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/preview/172/status/gateway/v1/admission-status")"
 [[ "$admission" == 'local admission' ]] || { docker logs "$name" >&2; echo "preview admission did not use the local handler: $admission" >&2; exit 1; }
+# Exercise the actual adapter/reload, not just text substitution. Only the
+# canonical read-only endpoints move; legacy admission and A remain unchanged.
+docker exec -e GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:18186 "$name" \
+  caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+for prefix in '' /preview/172; do
+  curl -fsS "http://127.0.0.1:$port$prefix/status/gateway/v1/admission-status" \
+    | grep -Fxq 'selected stable readiness /v1/admission-status'
+done
+curl -fsS "http://127.0.0.1:$api_port/v1/admission-status" | grep -Fxq 'selected stable readiness /v1/admission-status'
+curl -fsS "http://127.0.0.1:$api_port/a/v1/admission-status" | grep -Fxq 'local admission'
+curl -fsS -H 'Authorization: Bearer devnet_fixture' "http://127.0.0.1:$api_port/v1/chat/completions" | grep -Fxq 'local admission'
+curl -fsS -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port/v1/chat/completions" | grep -Fxq 'stable adapter /v1/chat/completions'
+docker exec -e GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:18189 "$name" \
+  caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$api_port/v1/admission-status")" == 502 ]]
+docker exec "$name" caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+curl -fsS "http://127.0.0.1:$api_port/v1/admission-status" | grep -Fxq 'local admission'
+printf 'PASS explicit stable readiness selection preserves inference routes and fails closed on observer loss\n'
 invalid_preview="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/preview/0/status/participants" 2>/dev/null || true)"
 [[ "$invalid_preview" == 404 ]] || { echo "invalid preview namespace unexpectedly routed: $invalid_preview" >&2; exit 1; }
 

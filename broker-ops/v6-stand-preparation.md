@@ -89,6 +89,27 @@ preimages and restart only the affected readiness/proxy services; changing a
 file does not update an already-running container's environment. Do not
 rebind the separate stable S admission service as a shortcut.
 
+For bot-issued stable keys, inspect the running Bifrost provider through its
+management API and trace that provider's upstream to the native gateway before
+selecting canonical readiness. Stored env alone is not proof of Bifrost's
+database configuration. If stable traffic uses an independent gateway, set
+`GDC_STABLE_READINESS_PORT` in the edge inventory to that gateway's existing
+read-only readiness listener on the public-edge host. Rendering produces
+`GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:PORT`. Its default remains18083 for
+legacy installations. This changes only the canonical API/site/preview
+admission-status endpoints, not inference, A/B admission or the legacy service.
+Recheck the provider binding whenever it changes; do not select an observer
+merely because another gateway is healthy. A remote gateway needs a separately
+verified local read-only handoff, not an arbitrary external URL in this setting.
+
+Validate and reload the exact candidate Caddy configuration with retained
+preimages; an already-running container does not inherit an edited env file.
+Compare canonical readiness with the selected listener and check that stable,
+legacy and A/B inference routing is unchanged. Observer failure must remain an
+HTTP error, never fall back to an unrelated healthy observer. This readiness
+selection alone is not an authenticated inference success or a replacement
+for the site's separate route-bound health/probe evidence.
+
 Verify the site's public readiness projection and fresh native counters after
 cutover. `UNAVAILABLE` remains correct during a PoC fence or when no usable
 funded runtime exists; never force a green display. A bounded operator-funded
