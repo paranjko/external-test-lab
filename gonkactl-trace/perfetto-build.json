@@ -1,0 +1,13 @@
+{
+  "schema": "gonka.perfetto.build.v1",
+  "repository": "https://github.com/google/perfetto.git",
+  "sha": "6f78923bd6e6f9bfd9078155226f76df8e0a007c",
+  "plugin": "net.gonka.Consensus",
+  "proto": "native TrackEvent subset encoded with google.golang.org/protobuf/encoding/protowire",
+  "assets": "ui/out/dist",
+  "embed": "all:ui-dist",
+  "offline": true,
+  "analytics": false,
+  "extension_server": false,
+  "service_worker": false
+}
