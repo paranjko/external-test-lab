@@ -1,0 +1,6 @@
+# Qualification calls MLNode through `docker compose exec`; it does not need
+# host-facing inference ports.  Reset the operational compose file's port
+# bindings so a qualification can run beside a deployed ML stack.
+services:
+  inference:
+    ports: !reset []

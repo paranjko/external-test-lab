@@ -3,8 +3,11 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 # A joining Host qualifies under the release profile it resolved from the
-# network bootstrap. The baseline gate belongs to network-owner role inputs.
-[[ "${GDC_JOIN_ROLE_INPUT:-false}" == true ]] || assert_baseline_release
+# network bootstrap. A qualification-only model overlay is also an isolated
+# runtime probe, not a network-owner baseline phase.
+if [[ "${GDC_JOIN_ROLE_INPUT:-false}" != true && "${GDC_MODEL_PROFILE_SCOPE:-}" != qualification-only ]]; then
+  assert_baseline_release
+fi
 record_phase_profile ml-qualification
 
 mkdir -p "$GDC_HOME/runs"

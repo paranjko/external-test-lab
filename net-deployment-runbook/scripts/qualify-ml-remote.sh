@@ -17,6 +17,7 @@ case "$BACKEND" in
     ;;
   *) echo "unsupported ML qualification backend: $BACKEND" >&2; exit 2 ;;
 esac
+compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f compose.ml-qualification.yaml)
 qualification_timeout="${ML_QUALIFICATION_TIMEOUT_SECONDS:-1800}"
 probe_timeout="${ML_QUALIFICATION_PROBE_TIMEOUT_SECONDS:-30}"
 poll_interval="${ML_QUALIFICATION_POLL_INTERVAL_SECONDS:-15}"
@@ -26,11 +27,11 @@ vllm_poll_interval="${ML_QUALIFICATION_VLLM_POLL_INTERVAL_SECONDS:-10}"
 [[ "$poll_interval" =~ ^[1-9][0-9]*$ ]] || { echo 'ML_QUALIFICATION_POLL_INTERVAL_SECONDS must be a positive integer' >&2; exit 2; }
 [[ "$vllm_poll_interval" =~ ^[1-9][0-9]*$ ]] || { echo 'ML_QUALIFICATION_VLLM_POLL_INTERVAL_SECONDS must be a positive integer' >&2; exit 2; }
 cleanup() {
-  timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --no-color >"$WORK/runtime.log" 2>&1 || true
-  timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down >"$WORK/stop.log" 2>&1 || true
+  timeout "$probe_timeout" "${compose[@]}" logs --no-color >"$WORK/runtime.log" 2>&1 || true
+  timeout "$probe_timeout" "${compose[@]}" down >"$WORK/stop.log" 2>&1 || true
 }
 trap cleanup EXIT
-timeout "$qualification_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d >"$WORK/start.log" 2>&1
+timeout "$qualification_timeout" "${compose[@]}" up -d >"$WORK/start.log" 2>&1
 deadline=$((SECONDS + qualification_timeout))
 case "$VLLM_ARGS" in
   '') extra_args='[]' ;;
@@ -45,14 +46,14 @@ body="$(jq -nc --arg source "$SOURCE_MODEL" --arg served "$MODEL" --arg dtype "$
 # calls go directly to the MLNode container so the /api/v1 prefix is preserved.
 ensure_inference_started() {
   local status_tmp="$WORK/status.json.tmp"
-  if ! timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T mlnode \
+  if ! timeout "$probe_timeout" "${compose[@]}" exec -T mlnode \
     curl -fsS http://127.0.0.1:8080/api/v1/inference/up/status >"$status_tmp" 2>>"$WORK/control.log"; then
     rm -f "$status_tmp"
     return 0
   fi
   mv "$status_tmp" "$WORK/status.json"
   if jq -e '.status == "not_started"' "$WORK/status.json" >/dev/null 2>&1; then
-    printf '%s' "$body" | timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T mlnode \
+    printf '%s' "$body" | timeout "$probe_timeout" "${compose[@]}" exec -T mlnode \
       curl -fsS -X POST http://127.0.0.1:8080/api/v1/inference/up/async -H 'Content-Type: application/json' \
       --data-binary @- >"$WORK/startup.json" 2>>"$WORK/control.log" || true
   fi
@@ -67,7 +68,7 @@ fail_on_terminal_status() {
 }
 fail_on_terminal_runtime() {
   local runtime_tmp="$WORK/startup-runtime.log.tmp"
-  if ! timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \
+  if ! timeout "$probe_timeout" "${compose[@]}" \
     logs --no-color mlnode >"$runtime_tmp" 2>>"$WORK/control.log"; then
     rm -f "$runtime_tmp"
     return 0
@@ -103,7 +104,7 @@ fi
 while (( SECONDS < deadline )); do
   ensure_inference_started
   fail_on_terminal_status || exit 1
-  if timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T mlnode \
+  if timeout "$probe_timeout" "${compose[@]}" exec -T mlnode \
     curl -fsS http://127.0.0.1:5000/v1/models >"$WORK/models.json" 2>>"$WORK/vllm.log" && \
     jq -e --arg model "$MODEL" '.data[] | select(.id == $model)' "$WORK/models.json" >/dev/null; then
     break
@@ -114,7 +115,7 @@ done
 jq -e --arg model "$MODEL" '.data[] | select(.id == $model)' "$WORK/models.json" >/dev/null
 chat="$(jq -nc --arg model "$MODEL" '{model:$model,messages:[{role:"user",content:"Reply exactly GDC_OK"}],max_tokens:16,temperature:0}')"
 while (( SECONDS < deadline )); do
-  if printf '%s' "$chat" | timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T mlnode \
+  if printf '%s' "$chat" | timeout "$probe_timeout" "${compose[@]}" exec -T mlnode \
     curl -fsS http://127.0.0.1:5000/v1/chat/completions -H 'Content-Type: application/json' --data-binary @- \
     >"$WORK/completion.json" 2>>"$WORK/vllm.log" && \
     jq -e '.choices[0].message.content | type == "string"' "$WORK/completion.json" >/dev/null; then
@@ -127,9 +128,9 @@ jq -e '.choices[0].message.content | type == "string"' "$WORK/completion.json" >
 if [[ "$BACKEND" == cuda ]]; then
   timeout "$probe_timeout" nvidia-smi --query-gpu=name,memory.total,memory.used,memory.free --format=csv,noheader >"$WORK/vram.csv"
 else
-  timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T mlnode \
+  timeout "$probe_timeout" "${compose[@]}" exec -T mlnode \
     rocminfo >"$WORK/rocm-info.txt"
-  timeout "$probe_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T mlnode \
+  timeout "$probe_timeout" "${compose[@]}" exec -T mlnode \
     python3 -c 'import torch; assert torch.version.hip; assert torch.cuda.is_available(); x=torch.ones(1024, device="cuda"); result=x.sum().item(); assert result == 1024; print(f"hip={torch.version.hip} device={torch.cuda.get_device_name(0)} sum={result}")' \
     >"$WORK/rocm-workload.txt"
 fi

@@ -602,6 +602,11 @@ load_project() {
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
+  # The launcher records an explicit --release selector separately so a
+  # Host-specific reload cannot replace it with the inventory default.
+  if [[ -n "${GDC_EXPLICIT_RELEASE_PROFILE:-}" ]]; then
+    GDC_RELEASE_PROFILE="$GDC_EXPLICIT_RELEASE_PROFILE"
+  fi
   # GDC_HOME locates .env itself, so it is a process-level input rather than a
   # value that can recursively relocate the file from inside that file.
   GDC_HOME="$runtime_home"

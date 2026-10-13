@@ -907,6 +907,7 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.07.23 host ml-attach <SSH_ALIAS>
+  ./gdc.sh --model <PROFILE> prefetch-ml <SSH_ALIAS>
   ./gdc.sh host stop|start|verify <SSH_ALIAS>
   ./gdc.sh host reset <SSH_ALIAS> [<SSH_ALIAS> ...]
   ./gdc.sh --composition <COMPOSITION> governance devshard submit [--protocols v3,v4,v5]
@@ -1007,14 +1008,17 @@ if [[ -n "$RELEASE" ]]; then
   [[ -r "$ROOT/profiles/releases/$RELEASE.lock" || -r "$ROOT/profiles/compositions/$RELEASE.json" || -r "$RELEASE" ]] || { echo "Unknown release: $RELEASE" >&2; exit 2; }
   [[ -z "$COMPOSITION" || "$RELEASE" == "$GDC_RELEASE_PROFILE" ]] \
     || { echo "Release profile $RELEASE conflicts with composition core profile $GDC_RELEASE_PROFILE" >&2; exit 2; }
-  export GDC_RELEASE_PROFILE="$RELEASE"
+  # Commands such as `qualify-ml <node>` load the selected Host's role input
+  # after parsing the CLI. Keep an explicit selector separate from the role
+  # input so that second load cannot silently replace it.
+  export GDC_RELEASE_PROFILE="$RELEASE" GDC_EXPLICIT_RELEASE_PROFILE="$RELEASE"
   export GDC_RELEASE_PROFILE_CLI_OVERRIDE=true
 fi
 [[ -z "$MODEL" || "$MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "Invalid model overlay: $MODEL" >&2; exit 2; }
 [[ -z "$MODEL" || -r "$ROOT/profiles/models/$MODEL.lock" ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
 if [[ -n "$MODEL" && "$MODEL" != qwen3-0.6b ]]; then
-  [[ "${1:-}" == qualify-ml ]] || {
-    echo "Model overlay $MODEL is qualification-only; JOIN, Genesis, and migration are not implemented" >&2
+  [[ "${1:-}" == qualify-ml || "${1:-}" == prefetch-ml ]] || {
+    echo "Model overlay $MODEL is qualification-only; only prefetch-ml and qualify-ml are implemented" >&2
     exit 2
   }
 fi
@@ -1447,6 +1451,19 @@ case "$COMMAND" in
     qualification_target="$(node_ml_host "$qualification_node" || printf '%s' "$qualification_node")"
     export GDC_QUALIFY_HOSTS="$qualification_target"
     run_phase qualify-ml "$ROOT/scripts/phase-qualify-ml.sh"
+    ;;
+  prefetch-ml)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    [[ -n "$MODEL" ]] || { echo 'prefetch-ml requires --model <profile>' >&2; exit 2; }
+    use_node_data_home "$1"
+    source "$ROOT/scripts/lib.sh"
+    load_project
+    topology_contains_node "$1" || { echo "prefetch-ml expects an alias from GDC_NODE_ALIASES, got: $1" >&2; exit 2; }
+    use_node_data_home "$1"
+    load_project
+    GDC_PREFETCH_HOST="$(node_ml_host "$1" || printf '%s' "$1")"
+    export GDC_PREFETCH_HOST
+    run_phase prefetch-ml "$ROOT/scripts/phase-prefetch-ml.sh"
     ;;
   genesis)
     genesis_alias='' genesis_time='' bootstrap_access=true skip_qualification=false

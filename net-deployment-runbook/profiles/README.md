@@ -17,10 +17,16 @@ identity of the network release under test.
 ## Qualification-only model overlays
 
 A model lock may set `GDC_MODEL_PROFILE_SCOPE=qualification-only`. Such an
-overlay is selectable only with `gdc.sh --model <profile> qualify-ml <host>`.
+overlay is selectable with `gdc.sh --model <profile> qualify-ml <host>` or
+`gdc.sh --model <profile> prefetch-ml <inventory-node>`.
 GDC rejects it for Genesis, JOIN, migration, and any other network lifecycle
 phase, so committing a qualified model does not claim that it is activated by
 the Community DevNet.
+
+`prefetch-ml` downloads the pinned revision into the deployed MLNode cache
+without starting inference or reserving GPU memory. Set `HF_API_KEY` optionally
+to authenticate the Hugging Face download. A snapshot receipt confirms only
+that weights were downloaded, not that the model can serve requests.
 
 The lock records the immutable Hugging Face source identity and MLNode runtime
 settings used for the qualification. `MODEL_ID` is the served identity;

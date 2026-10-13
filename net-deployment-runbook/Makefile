@@ -510,6 +510,7 @@ test-ci-contracts: test-command-dependency-contract test-devshard-release test-d
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-ml-qualification-evidence.sh
 	@bash ./scripts/test-ml-qualification-failure.sh
+	@python3 scripts/test-prefetch-ml.py
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/test-host-identity-layout-probe.sh
