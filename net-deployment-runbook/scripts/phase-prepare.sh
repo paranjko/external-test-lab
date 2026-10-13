@@ -73,7 +73,8 @@ if [[ -n "${GDC_PREPARE_HOSTS:-}" ]]; then
   explicit_hosts=true
   read -r -a prepare_nodes <<<"$GDC_PREPARE_HOSTS"
   for node in "${prepare_nodes[@]}"; do
-    topology_contains_node "$node" || die "prepare expects an alias from GDC_NODE_ALIASES, got: $node"
+    topology_contains_node "$node" || [[ "$node" == "${GDC_PREPARE_ML_ONLY_HOST:-}" ]] \
+      || die "prepare expects a validator alias or the requested ML-only Host, got: $node"
   done
 fi
 hosts=("${prepare_nodes[@]}")
@@ -82,19 +83,13 @@ for node in "${prepare_nodes[@]}"; do
   [[ -z "$ml_host" ]] || hosts+=("$ml_host")
 done
 for host in "${hosts[@]}"; do
-  if ! ssh_ready "$host"; then
-    if [[ "$explicit_hosts" == true ]]; then
-      echo "FAILED  $host: SSH is unavailable; cannot prepare the requested Host"
-      failed_hosts+=("$host")
-      continue
-    fi
-    echo "SKIP  $host is unreachable"
-    skipped_hosts+=("$host")
-    continue
-  fi
   network_node="$(node_for_ml_host "$host" || true)"
   role=network-gpu
-  if [[ -n "$network_node" ]]; then
+  if [[ "$host" == "${GDC_PREPARE_ML_ONLY_HOST:-}" ]]; then
+    network_node="${GDC_PREPARE_ML_ONLY_FOR:-}"
+    topology_contains_node "$network_node" || die 'ML-only preparation lacks a valid owning Network Node'
+    role=ml-only
+  elif [[ -n "$network_node" ]]; then
     role=ml-only
   elif [[ -n "$(node_ml_host "$host" || true)" ]]; then
     role=network-only
@@ -123,7 +118,30 @@ for host in "${hosts[@]}"; do
     continue
   fi
   step "Prepare $host"
-  if ! tar -C "$ROOT/00-host-prep" -cf - . | ssh "$host" 'rm -rf /tmp/gdc-host-prep && mkdir -p /tmp/gdc-host-prep && tar -C /tmp/gdc-host-prep -xf -'; then
+  # The transfer is the first preparation action that actually needs SSH. Do
+  # not probe it with a separate connection: JOIN preflight owns baseline Host
+  # readiness, while this action owns availability at mutation time. Retain
+  # the transport verdict so an unreachable optional Host can still be skipped
+  # without hiding another transfer failure.
+  set +e
+  tar -C "$ROOT/00-host-prep" -cf - . \
+    | ssh "$host" 'rm -rf /tmp/gdc-host-prep && mkdir -p /tmp/gdc-host-prep && tar -C /tmp/gdc-host-prep -xf -'
+  transfer_statuses=("${PIPESTATUS[@]}")
+  set -e
+  if (( transfer_statuses[0] == 0 && transfer_statuses[1] == 0 )); then
+    :
+  else
+    transfer_status="${transfer_statuses[1]}"
+    if (( transfer_status == 255 )); then
+      if [[ "$explicit_hosts" == true ]]; then
+        echo "FAILED  $host: SSH is unavailable; cannot prepare the requested Host"
+        failed_hosts+=("$host")
+        continue
+      fi
+      echo "SKIP  $host is unreachable"
+      skipped_hosts+=("$host")
+      continue
+    fi
     echo "FAILED  $host: cannot transfer host-prep files"
     failed_hosts+=("$host")
     continue
@@ -138,6 +156,15 @@ for host in "${hosts[@]}"; do
   if ssh "$host" "sudo test -s /etc/gonka/host.env && sudo grep -qx 'ROLE=$role' /etc/gonka/host.env && sudo grep -qx 'GATEWAY_SERVICES=$gateway_services' /etc/gonka/host.env && $callback_check && $firewall_check && sudo /tmp/gdc-host-prep/verify-host.sh $verify_host_args" >/dev/null 2>&1; then
     echo "READY  $host"
     ready_hosts+=("$host")
+    continue
+  fi
+  # Host preparation is durable host state, while reset deliberately removes
+  # /srv/dai. Re-run the idempotent preparation when its verification fails so
+  # JOIN can recreate that node root. A symbolic link is not GDC-managed
+  # configuration and must never be followed by the privileged writer.
+  if ssh "$host" 'sudo test -L /etc/gonka/host.env' >/dev/null 2>&1; then
+    echo "OPERATOR_ACTION_REQUIRED  $host: /etc/gonka/host.env is a symbolic link and cannot be prepared safely"
+    action_hosts+=("$host")
     continue
   fi
   remote_env=()

@@ -22,7 +22,9 @@ if [[ " $* " == *' -X POST '* ]]; then
   code="${codes[$((count - 1))]:-${codes[-1]}}"
   case "$code" in
     000) printf '\n000'; exit 7 ;;
+    200) printf '{"txhash":"%064d","state":"confirmed"}\n200' 1 ;;
     202) printf '{"txhash":"%064d"}\n202' 1 ;;
+    409) printf '{"txhash":"%064d","state":"confirmed"}\n409' 1 ;;
     429) printf '{"detail":"claim limit reached for this address or source"}\n429' ;;
     *) printf '{}\n%s' "$code" ;;
   esac
@@ -43,18 +45,18 @@ claim() {
     bash "$tmp/scripts/claim-devnet-faucet.sh" "$address" >"$tmp/$name/out" 2>"$tmp/$name/err"
 }
 
-claim flaky '502 000 202'
+claim flaky '502 000 200'
 [[ "$(cat "$tmp/flaky/posts")" == 3 ]]
 grep -Fq 'WAIT DevNet faucet unavailable http_status=502 attempt=1/6' "$tmp/flaky/out"
 grep -Fq 'WAIT DevNet faucet unavailable http_status=000 attempt=2/6' "$tmp/flaky/out"
-grep -Fq 'READY faucet submitted funding' "$tmp/flaky/out"
+grep -Fq 'READY faucet confirmed funding' "$tmp/flaky/out"
 grep -Fq 'PASS DevNet faucet funded' "$tmp/flaky/out"
 
 # The first POST was accepted but its answer was lost: the retry sees 409 and
 # the balance decides.
 claim lost-answer '504 409'
 [[ "$(cat "$tmp/lost-answer/posts")" == 2 ]]
-grep -Fq 'READY faucet claim already exists' "$tmp/lost-answer/out"
+grep -Fq 'READY faucet claim already confirmed' "$tmp/lost-answer/out"
 grep -Fq 'PASS DevNet faucet funded' "$tmp/lost-answer/out"
 
 # A refusal is an answer, not an outage.

@@ -22,14 +22,20 @@ printf '%s\n' \
   'set -Eeuo pipefail' \
   '[[ -z "${GDC_TEST_SSH_LOG:-}" ]] || printf "%s\\n" "$*" >>"$GDC_TEST_SSH_LOG"' \
   'if [[ "${1:-}" == -G && -n "${GDC_TEST_SSH_HOST:-}" ]]; then printf "hostname %s\\n" "$GDC_TEST_SSH_HOST"; exit 0; fi' \
+  'if [[ -n "${GDC_TEST_NODE_CONFIG:-}" && "$*" == *gdc-node0* && "$*" == *node-config.json* ]]; then printf "%s\\n" "$GDC_TEST_NODE_CONFIG"; exit 0; fi' \
   'if [[ -n "${GDC_TEST_EXTERNAL_ML_ENDPOINT:-}" && "$*" == *node-config.json* ]]; then printf "%s\\n" "$GDC_TEST_EXTERNAL_ML_ENDPOINT"; exit 0; fi' \
-  'if [[ -n "${GDC_TEST_LINK_RECORD:-}" && "$*" == *gdc-ml-link.json* ]]; then printf "%s\\n" "$GDC_TEST_LINK_RECORD"; exit 0; fi' \
+  'if [[ "${GDC_TEST_MISSING_REMOTE_LINK:-false}" == true && "$*" == *gdc-ml-link.json* ]]; then exit 1; fi' \
+  'if [[ -n "${GDC_TEST_LINK_RECORD:-}" && "${GDC_TEST_MISSING_REMOTE_LINK:-false}" != true && "$*" == *gdc-ml-link.json* ]]; then printf "%s\\n" "$GDC_TEST_LINK_RECORD"; exit 0; fi' \
+  'if [[ -n "${GDC_TEST_DAPI_NODES:-}" && "$*" == *admin/v1/nodes* ]]; then if [[ -n "${GDC_TEST_DAPI_DELETED_MARKER:-}" && -e "$GDC_TEST_DAPI_DELETED_MARKER" ]]; then printf "%s\\n" "${GDC_TEST_DAPI_NODES_AFTER:-$GDC_TEST_DAPI_NODES}"; else printf "%s\\n" "$GDC_TEST_DAPI_NODES"; fi; exit 0; fi' \
   'if [[ "$*" == *"--remote capture"* ]]; then cat >/dev/null; chain="${GDC_TEST_RESET_CHAIN-gonka-fixture}"; printf "%s\\n" "{\"schema_version\":1,\"kind\":\"gdc-reset-dai-backup\",\"identity_present\":true,\"signer_stopped\":true,\"chain_id\":\"$chain\",\"archive_path\":\"/srv/backup/reset-fixture-dai-backup.tar\",\"archive_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"; exit 0; fi' \
   'if [[ "$*" == *"gdc-identity-layout"* ]]; then cat >/dev/null; layout="${GDC_TEST_IDENTITY_LAYOUT:-none}"; case "$*" in *-ml*) layout="${GDC_TEST_ML_IDENTITY_LAYOUT:-none}" ;; esac; printf "gdc-identity-layout=%s\\n" "$layout"; exit 0; fi' \
   'if [[ "$*" == *"gdc-identity-discard"* ]]; then cat >/dev/null; exit 0; fi' \
   'if [[ "${GDC_TEST_EXEC_REMOTE:-false}" == true && "$*" == *"bash -s" ]]; then command="${!#}"; PATH="${GDC_TEST_REMOTE_BIN}:$PATH" bash -c "$command"; exit $?; fi' \
   'exit 0' >"$fake_bin/ssh"
 chmod +x "$fake_bin/ssh"
+
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fake_bin/scp"
+chmod +x "$fake_bin/scp"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -156,8 +162,10 @@ grep -Fq 'PASS gdc-node1 reset' "$tmp/profile-conflict-output"
 # A separately attached GPU is recorded in operator state. Host reset must
 # clear both machines without requiring a role input or a second command.
 paired_home="$tmp/gdc-paired-home"
-mkdir -p "$paired_home/gdc-node0/state/ml-attached"
+mkdir -p "$paired_home/gdc-node0/state/ml-attached" "$paired_home/gdc-node0-ml/state"
 printf '%s\n' gdc-node0-ml >"$paired_home/gdc-node0/state/ml-attached/gdc-node0"
+printf '%s\n' '{"schema_version":1,"kind":"gdc-ml-parent","network_alias":"gdc-node0","ml_alias":"gdc-node0-ml","endpoint":"203.0.113.11","node_id":"fixture--gdc-node0-ml"}' \
+  >"$paired_home/gdc-node0-ml/state/ml-parent.json"
 ssh_log="$tmp/paired-reset-ssh.log"
 env -u GDC_ENV -u GDC_NODE_ALIASES \
   GDC_HOME="$paired_home" GDC_TEST_SSH_LOG="$ssh_log" PATH="$fake_bin:$PATH" \
@@ -167,10 +175,52 @@ grep -Fq 'PASS gdc-node0-ml linked GPU reset' "$tmp/paired-output"
 grep -Fq 'PASS gdc-node0 reset' "$tmp/paired-output"
 grep -Fq 'gdc-node0-ml' "$ssh_log"
 [[ ! -e "$paired_home/gdc-node0/state/ml-attached/gdc-node0" ]]
+[[ ! -e "$paired_home/gdc-node0-ml/state/ml-parent.json" ]]
 # Without a local cold account there is no registration to read, but the Host
 # identity layout still decides whether reset may remove the deployment root:
 # a first-generation signer lives inside it.
 grep -Fq 'gdc-identity-layout' "$ssh_log"
+
+# Resetting an ML-only Host first detaches it from the running Network Node.
+# The parent stays running; only its DAPI endpoint list and the reciprocal
+# association records change before the ML-only deployment is removed.
+attached_ml_home="$tmp/gdc-attached-ml-home"
+mkdir -p "$attached_ml_home/gdc-node0/state/ml-attached"
+attached_ml_link='{"schema_version":2,"validator_alias":"gdc-node0","ml_hosts":[{"ssh_alias":"gdc-node5","endpoint":"203.0.113.10","node_id":"qwen3-0.6b:fixture--gdc-node5"}]}'
+attached_ml_config='[{"id":"local","host":"inference","inference_port":5000,"poc_port":5000},{"id":"qwen3-0.6b:fixture--gdc-node5","host":"203.0.113.10","inference_port":5000,"poc_port":5000}]'
+printf '%s\n' "$attached_ml_link" \
+  >"$attached_ml_home/gdc-node0/state/ml-attached/gdc-node0.json"
+attached_ml_ssh_log="$tmp/attached-ml-ssh.log"
+env -u GDC_ENV -u GDC_NODE_ALIASES \
+  GDC_HOME="$attached_ml_home" GDC_TEST_NODE_CONFIG="$attached_ml_config" \
+  GDC_TEST_LINK_RECORD="$attached_ml_link" GDC_TEST_MISSING_REMOTE_LINK=true \
+  GDC_TEST_DAPI_NODES='[{"node":{"id":"local"}},{"node":{"id":"qwen3-0.6b:fixture--gdc-node5","host":"203.0.113.10"}}]' \
+  GDC_TEST_DAPI_NODES_AFTER='[{"node":{"id":"local"}}]' GDC_TEST_SSH_LOG="$attached_ml_ssh_log" \
+  PATH="$fake_bin:$PATH" "$ROOT/gdc.sh" host reset gdc-node5 >"$tmp/attached-ml-output"
+attached_ml_output="$(<"$tmp/attached-ml-output")"
+[[ "$attached_ml_output" == *'READY removed ML endpoint node_id=qwen3-0.6b:fixture--gdc-node5 host=gdc-node5 from gdc-node0'* ]]
+[[ "$attached_ml_output" == *'PASS gdc-node5 reset'* ]]
+# Worker removal is owned by the staged bounded helper. Its dedicated fixture
+# executes DELETE/readback; this reset path proves the exact worker binding is
+# dispatched to that helper instead of recreating a second direct DELETE path.
+grep -Fq "wait-dapi-worker-removal.sh' --node-id 'qwen3-0.6b:fixture--gdc-node5'" "$attached_ml_ssh_log"
+[[ ! -e "$attached_ml_home/gdc-node0/state/ml-attached/gdc-node0.json" ]]
+[[ ! -e "$attached_ml_home/gdc-node5/state/ml-parent.json" ]]
+
+# The ML-only Host retains the inverse link, so reset still detaches safely
+# when the parent-side local record was lost.
+inverse_ml_home="$tmp/gdc-inverse-ml-home"
+mkdir -p "$inverse_ml_home/gdc-node5/state"
+printf '%s\n' '{"schema_version":1,"kind":"gdc-ml-parent","network_alias":"gdc-node0","ml_alias":"gdc-node5","endpoint":"203.0.113.10","node_id":"qwen3-0.6b:fixture--gdc-node5"}' \
+  >"$inverse_ml_home/gdc-node5/state/ml-parent.json"
+env -u GDC_ENV -u GDC_NODE_ALIASES \
+  GDC_HOME="$inverse_ml_home" GDC_TEST_NODE_CONFIG="$attached_ml_config" \
+  GDC_TEST_LINK_RECORD="$attached_ml_link" GDC_TEST_DAPI_NODES='[{"node":{"id":"local"}}]' \
+  PATH="$fake_bin:$PATH" "$ROOT/gdc.sh" host reset gdc-node5 >"$tmp/inverse-ml-output"
+inverse_ml_output="$(<"$tmp/inverse-ml-output")"
+[[ "$inverse_ml_output" == *'READY removed ML endpoint node_id=qwen3-0.6b:fixture--gdc-node5 host=gdc-node5 from gdc-node0'* ]]
+[[ "$inverse_ml_output" == *'PASS gdc-node5 reset'* ]]
+[[ ! -e "$inverse_ml_home/gdc-node5/state/ml-parent.json" ]]
 
 # A GPU Host holds no validator identity. If the linked alias does, the
 # association is wrong and reset must not remove that machine's state.
@@ -216,9 +266,16 @@ cleanroom_root="$tmp/workspace"
 cleanroom_home="$tmp/workspaces/.data"
 mkdir -p "$cleanroom_root"
 # The cleanroom validates checked-in operator tooling, not untracked runtime
-# evidence. git archive also prevents unreadable retained test artifacts from
-# contaminating this copy.
-git -C "$ROOT" archive HEAD | tar -xf - -C "$cleanroom_root"
+# evidence. ROOT can be a directory inside the product repository, while an
+# exported source snapshot has no tracked Git path at all.
+repo_root="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
+repo_prefix="$(git -C "$ROOT" rev-parse --show-prefix 2>/dev/null || true)"
+repo_path="${repo_prefix%/}"
+if [[ -n "$repo_root" ]] && git -C "$repo_root" cat-file -e "HEAD:${repo_path:+$repo_path/}gdc.sh" 2>/dev/null; then
+  git -C "$repo_root" archive "HEAD${repo_path:+:$repo_path}" | tar -xf - -C "$cleanroom_root"
+else
+  tar -C "$ROOT" --exclude=.data -cf - . | tar -xf - -C "$cleanroom_root"
+fi
 [[ ! -e "$cleanroom_root/.data" ]]
 env -u GDC_ENV -u GDC_NODE_ALIASES GDC_HOME="$cleanroom_home" \
   PATH="$fake_bin:$PATH" \
@@ -271,7 +328,7 @@ grep -Fq '"workspaceFolder": "/home/operator"' "$cleanroom_config"
 grep -Fq '"workspaceMount": "type=tmpfs,target=/tmp/empty-workspace"' "$cleanroom_config"
 grep -Fq 'target=/home/operator/.gdc-data,type=bind' "$cleanroom_config"
 grep -Fq 'exec --config $(CLEANROOM_DEVCONTAINER_CONFIG) --workspace-folder . $(cmd)' "$ROOT/Makefile"
-grep -Fq 'lock_file="$STATE/.lifecycle.lock"' "$ROOT/gdc.sh"
+grep -Fq 'lock_file="$state/.lifecycle.lock"' "$ROOT/gdc.sh"
 grep -Fq '.lifecycle.lock.d' "$ROOT/scripts/phase-reset.sh"
 ! grep -Fq '.gdc.lock' "$ROOT/gdc.sh"
 grep -Fq 'No resource found to remove for project' "$ROOT/scripts/phase-node.sh"

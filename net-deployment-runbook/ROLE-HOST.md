@@ -71,6 +71,46 @@ attachment:
 gdc host ml-attach <ssh-alias>
 ```
 
+### Lend an installed validator GPU
+
+To lend the GPU of an installed validator to another Network Node, use the
+donor alias directly. Setup stops the donor validator and exposes only its
+existing ML runtime; it does not reset, reinstall or change its identity.
+
+```bash
+gdc host setup <parent-ssh-alias> add mlnode <donor-ssh-alias>
+
+# Use this only when automatic endpoint discovery is ambiguous
+gdc host setup <parent-ssh-alias> add mlnode \
+  --mlnode-peer <mlnode-ip-or-domain> <donor-ssh-alias>
+
+gdc host start <donor-ssh-alias>
+```
+
+`start` removes only the donor endpoint from its recorded parent, waits for
+DAPI to release the worker, then restores the donor's existing services. If
+release is uncertain, the donor remains stopped; do not reset it. The parent
+validator and its other ML endpoints remain running.
+
+This restores runtime ownership, not validator membership or signatures. Check
+those separately before treating the donor as validating again.
+
+### Add a clean ML-only Host
+
+To add a second endpoint without changing validator identity or signer, use a
+clean ML-only Host. Give DAPI its explicit reachable address; the SSH alias is
+only used to install the MLNode:
+
+```bash
+gdc host setup <network-ssh-alias> add mlnode \
+  --mlnode-peer <mlnode-ip-or-domain> <ml-ssh-alias>
+gdc host setup <network-ssh-alias> status mlnode
+```
+
+The Network Node keeps its local ML endpoint. The API sends work to both
+endpoints. `host reset <network-ssh-alias>` also resets ML-only Hosts recorded
+by this command.
+
 ## Governance
 
 An active Host may vote with its current PoC-derived voting power. Query live

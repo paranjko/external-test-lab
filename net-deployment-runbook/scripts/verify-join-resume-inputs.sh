@@ -34,8 +34,12 @@ jq -e --arg run_id "$run_id" --arg node "$node_name" --arg host "$public_host" -
 ' "$profile" >/dev/null || { echo 'resume profile does not bind the requested run, Host, and observation' >&2; exit 1; }
 jq -e '.schema_version == 1 and .kind == "gdc-network-observation" and .result == {state:"ready",reason:"none"}' "$observation" >/dev/null \
   || { echo 'retained network observation is invalid' >&2; exit 1; }
-chain="$($ROOT/scripts/verify-join-receipt-chain.sh --receipt-dir "$receipts")"
+chain="$("$ROOT/scripts/verify-join-receipt-chain.sh" --receipt-dir "$receipts")"
 head="$(find "$receipts" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.json' -printf '%f\n' | LC_ALL=C sort | tail -n1)"
+operation="$(jq -er '.operation' "$receipts/$head")"
+[[ "$operation" == new || "$operation" == restore ]] || {
+  echo 'resume receipt has an unsupported JOIN operation' >&2; exit 1;
+}
 jq -e --arg run_id "$run_id" --arg node "$node_name" --arg profile "$profile_sha256" --arg observation "$observation_sha256" '
   .run_id == $run_id and .node_name == $node and .join_profile_sha256 == $profile and .network_observation_sha256 == $observation
 ' "$receipts/$head" >/dev/null || { echo 'resume receipt does not bind retained profile and observation' >&2; exit 1; }
@@ -51,5 +55,5 @@ if [[ "$(jq -r .last_state <<<"$chain")" == COMPLETE ]]; then
     and .resume == "not_applicable" and .join_profile_sha256 == $profile
   ' "$result" >/dev/null || { echo 'COMPLETE resume terminal result is invalid or not bound to its profile' >&2; exit 1; }
 fi
-jq -cn --arg profile_sha256 "$profile_sha256" --arg observation_sha256 "$observation_sha256" --argjson receipt_chain "$chain" \
-  '{resume_input_state:"verified",join_profile_sha256:$profile_sha256,network_observation_sha256:$observation_sha256,receipt_chain:$receipt_chain}'
+jq -cn --arg profile_sha256 "$profile_sha256" --arg observation_sha256 "$observation_sha256" --arg operation "$operation" --argjson receipt_chain "$chain" \
+  '{resume_input_state:"verified",join_profile_sha256:$profile_sha256,network_observation_sha256:$observation_sha256,operation:$operation,receipt_chain:$receipt_chain}'

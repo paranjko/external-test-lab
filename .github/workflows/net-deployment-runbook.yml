@@ -97,6 +97,14 @@ jobs:
         if: runner.name != 'external-test-lab-gdc-node4'
         run: sudo make -C net-deployment-runbook test-bootstrap-publisher-ownership
 
+  p0a-lifecycle:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Test isolated P0-A JOIN and ML lifecycle
+        run: make -C net-deployment-runbook test-gdc-p0a
+
   upstream-profiles:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
@@ -118,3 +126,5 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Test public edge routing in disposable containers
         run: make -C net-deployment-runbook edge-integration
+      - name: Test Bootstrap JOIN installation in a disposable root
+        run: make -C net-deployment-runbook test-bootstrap-install

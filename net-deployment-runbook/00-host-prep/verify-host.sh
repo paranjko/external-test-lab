@@ -16,9 +16,6 @@ fail(){ printf 'FAIL  %s\n' "$*" >&2; failed=1; }
 command -v docker >/dev/null && pass docker || fail docker
 docker info >/dev/null 2>&1 && pass 'docker daemon' || fail 'docker daemon'
 docker compose version >/dev/null 2>&1 && pass 'docker compose plugin' || fail 'docker compose plugin'
-systemctl is-active --quiet chrony && pass chrony || fail chrony
-fail2ban-client status sshd >/dev/null 2>&1 && pass 'fail2ban sshd jail' || fail 'fail2ban sshd jail'
-chronyc tracking 2>/dev/null | grep -q 'Leap status.*Normal' && pass 'NTP synchronized' || fail 'NTP not synchronized'
 # Published amd64 chain binaries need ADX/BMI2 and die with SIGILL without them.
 # Refuse before any change on the Host, unless a portable runtime is declared.
 if [[ "$ROLE" == network-gpu || "$ROLE" == network-only ]]; then

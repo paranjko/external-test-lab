@@ -2,13 +2,14 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 --inventory FILE --host HOST [--join-profile FILE] --output FILE" >&2
+  echo "Usage: $0 --inventory FILE --host HOST [--join-profile FILE] [--allow-ml-only-host HOST] --output FILE" >&2
 }
 
 INVENTORY=''
 HOST=''
 OUTPUT=''
 JOIN_PROFILE=''
+ALLOW_ML_ONLY_HOST=''
 
 while (($#)); do
   case "$1" in
@@ -26,6 +27,10 @@ while (($#)); do
       ;;
     --join-profile)
       JOIN_PROFILE="$2"
+      shift 2
+      ;;
+    --allow-ml-only-host)
+      ALLOW_ML_ONLY_HOST="$2"
       shift 2
       ;;
     *)
@@ -52,6 +57,7 @@ done
 for mapping in ${GDC_NODE_ML_HOSTS:-}; do
   [[ "$HOST" == "${mapping#*=}" && "$mapping" == *=* ]] && valid_host=true
 done
+[[ "$HOST" == "$ALLOW_ML_ONLY_HOST" && "$HOST" =~ ^[A-Za-z0-9._-]+$ ]] && valid_host=true
 [[ "$valid_host" == true && "$HOST" =~ ^[A-Za-z0-9._-]+$ ]] || {
   echo "host is not configured in inventory: $HOST" >&2
   exit 2

@@ -34,6 +34,18 @@ grafana_public_dashboard_uid="${GDC_GRAFANA_PUBLIC_DASHBOARD_UID:-gdc-overview}"
 grafana_public_dashboard_share_uid="${GDC_GRAFANA_PUBLIC_DASHBOARD_SHARE_UID:-5fd40e12-5334-4d32-aea2-dcfe85afb3f2}"
 grafana_public_dashboard_token="${GDC_GRAFANA_PUBLIC_DASHBOARD_TOKEN:-321a0d961e7f4b4ea6da843777c032eb}"
 mkdir -p "$OUTPUT"
+target_root="$OUTPUT/prometheus/targets/static"
+mkdir -p "$target_root/host" "$target_root/cadvisor" "$target_root/gonka-node"
+
+write_target() {
+  local job="$1" name="$2" address="$3" labels="$4" output
+  [[ "$job" =~ ^(host|cadvisor|gonka-node)$ ]] || die "invalid Prometheus target job: $job"
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid Prometheus target name: $name"
+  output="$target_root/$job/$name.json"
+  jq -cn --arg address "$address" --argjson labels "$labels" \
+    '[{targets:[$address],labels:$labels}]' >"$output"
+  chmod 0644 "$output"
+}
 
 gateway_public_host="$(node_public_host "$GATEWAY_NODE")"
 write_env "$OUTPUT/.env" \
@@ -121,6 +133,10 @@ jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$AP
   '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
   | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
 
+write_env "$OUTPUT/network-observer.env" \
+  "GDC_NETWORK_CHAIN_ID=$CHAIN_ID" \
+  "GDC_NETWORK_BOOTSTRAP_URL=https://$SITE_HOST/$CHAIN_ID/bootstrap.json"
+
 {
   printf '{\n'
   [[ -z "${ACME_EMAIL:-}" ]] || printf '  email {$ACME_EMAIL}\n'
@@ -135,6 +151,9 @@ http://:8082 {
 }
 http://:8081 {
   encode zstd gzip
+  handle /status/network {
+    reverse_proxy 127.0.0.1:18094
+  }
   handle /status/participants {
     reverse_proxy 127.0.0.1:18089
   }
@@ -216,7 +235,10 @@ alerting:
         - targets: [alertmanager:9093]
 scrape_configs:
   - job_name: host
-    static_configs:
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static/host/*.json
+          - /etc/prometheus/targets/join/host/*.json
 YAML
   for node in "${GDC_NODES[@]}"; do
     geo="${geo_by_node[$node]:-null}"
@@ -227,21 +249,24 @@ YAML
       latitude: (($geo.latitude // "") | tostring),
       longitude: (($geo.longitude // "") | tostring)
     }')"
-    printf "      - targets: ['%s:9101']\n        labels: %s\n" "$(node_public_host "$node")" "$geo_labels"
+    write_target host "$node" "$(node_public_host "$node"):9101" "$geo_labels"
   done
   for node in "${GDC_NODES[@]}"; do
     ml_host="$(node_ml_host "$node" || true)"
     [[ -n "$ml_host" ]] || continue
     ml_address="$(ssh -G "$ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
     [[ -n "$ml_address" ]] || die "cannot resolve monitoring address for GPU host $ml_host"
-    printf "      - targets: ['%s:9101']\n        labels: {host: '%s', validator: '%s'}\n" "$ml_address" "$ml_host" "$node"
+    write_target host "$ml_host" "$ml_address:9101" "$(jq -cn --arg host "$ml_host" --arg validator "$node" '{host:$host,validator:$validator}')"
   done
   cat <<'YAML'
   - job_name: cadvisor
-    static_configs:
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static/cadvisor/*.json
+          - /etc/prometheus/targets/join/cadvisor/*.json
 YAML
   for node in "${GDC_NODES[@]}"; do
-    printf "      - targets: ['%s:8088']\n        labels: {host: '%s'}\n" "$(node_public_host "$node")" "$node"
+    write_target cadvisor "$node" "$(node_public_host "$node"):8088" "$(jq -cn --arg host "$node" '{host:$host}')"
   done
   cat <<YAML
   - job_name: public-https
@@ -260,10 +285,13 @@ YAML
 YAML
   cat <<'YAML'
   - job_name: gonka-node
-    static_configs:
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static/gonka-node/*.json
+          - /etc/prometheus/targets/join/gonka-node/*.json
 YAML
   for node in "${GDC_NODES[@]}"; do
-    printf "      - targets: ['%s:26660']\n        labels: {host: '%s'}\n" "$(node_public_host "$node")" "$node"
+    write_target gonka-node "$node" "$(node_public_host "$node"):26660" "$(jq -cn --arg host "$node" '{host:$host}')"
   done
   cat <<YAML
   - job_name: gateway

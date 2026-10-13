@@ -11,7 +11,14 @@ if [[ "$ACTION" != reset ]]; then
   load_project
   topology_contains_node "$NODE" || die "expected an SSH alias from GDC_NODE_ALIASES, got: $NODE"
 fi
-ssh_ready "$NODE" || die "$NODE is unreachable"
+# Reset intentionally tolerates unavailable reads while it reconstructs the
+# retained ownership boundary, so it owns the one explicit SSH readiness
+# check. The ordinary stop/start/verify paths immediately perform their own
+# required remote action; probing first only opens a second SSH connection and
+# cannot make a later action safer.
+if [[ "$ACTION" == reset ]]; then
+  ssh_ready "$NODE" || die "$NODE is unreachable"
+fi
 
 verify_node() {
   local url peer peer_url own_height peer_height catching lag
@@ -116,11 +123,35 @@ discard_local_identity() {
   printf '%s\n' "$moved"
 }
 
+attached_network_nodes() {
+  local record relative parent aliases=()
+  [[ -d "${GDC_DATA_ROOT:-}" && ! -L "$GDC_DATA_ROOT" ]] || return 0
+  while IFS= read -r -d '' record; do
+    [[ ! -L "$record" ]] || continue
+    relative="${record#"$GDC_DATA_ROOT/"}"
+    parent="${relative%%/*}"
+    [[ "$parent" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$parent" != "$NODE" ]] || continue
+    case "$record" in
+      *.json)
+        jq -e --arg node "$NODE" '
+          .schema_version == 2 and (.ml_hosts | type == "array")
+          and any(.ml_hosts[]?; .ssh_alias == $node)
+        ' "$record" >/dev/null 2>&1 || continue
+        ;;
+      *)
+        [[ "$(<"$record")" == "$NODE" ]] || continue
+        ;;
+    esac
+    aliases+=("$parent")
+  done < <(find "$GDC_DATA_ROOT" -mindepth 4 -maxdepth 4 -type f -path '*/state/ml-attached/*' -print0)
+  ((${#aliases[@]} == 0)) || printf '%s\n' "${aliases[@]}" | LC_ALL=C sort -u
+}
+
 reset_node() {
-  local linked_ml_host source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias
+  local source endpoint candidate_host candidate_ip endpoint_ip link_record link_alias state_record ml_parent_record ml_parent_alias
   local local_identity local_account local_joined join_classification join_class active_run_id active_join_result
   local reset_metadata stamp discarded
-  linked_ml_host=''
+  local -a attached_nodes=() linked_ml_hosts=() configured_endpoints=()
   source=''
   local_identity="$(node_identity_file "$NODE")"
   local_account="$(node_account_file "$NODE")"
@@ -146,44 +177,89 @@ reset_node() {
     join_class=partial_identity
     printf 'READY %s retained identity belongs to an incomplete JOIN run; resetting it for fresh JOIN\n' "$NODE"
   fi
-  endpoint="$(ssh -T "$NODE" "jq -r '.[]?.host // empty' /srv/dai/deploy/node-config.json 2>/dev/null" 2>/dev/null | head -n 1 || true)"
+  mapfile -t attached_nodes < <(attached_network_nodes)
+  ml_parent_record="$STATE/ml-parent.json"
+  if [[ -e "$ml_parent_record" || -L "$ml_parent_record" ]]; then
+    [[ -f "$ml_parent_record" && ! -L "$ml_parent_record" ]] \
+      || die "$NODE has an unsafe ML attachment record"
+    ml_parent_alias="$(jq -er --arg node "$NODE" '
+      select(.schema_version == 1 and .kind == "gdc-ml-parent" and .ml_alias == $node)
+      | .network_alias
+    ' "$ml_parent_record" 2>/dev/null)" || die "$NODE has an invalid ML attachment record"
+    attached_nodes+=("$ml_parent_alias")
+    mapfile -t attached_nodes < <(printf '%s\n' "${attached_nodes[@]}" | LC_ALL=C sort -u)
+  fi
+  if ((${#attached_nodes[@]} > 0)); then
+    for ml_parent_alias in "${attached_nodes[@]}"; do
+      step "Detach $NODE from Network Node $ml_parent_alias before reset"
+      "$ROOT/scripts/detach-network-ml-host.sh" \
+        --network "$ml_parent_alias" --ml-host "$NODE" --data-root "$GDC_DATA_ROOT" \
+        --run-dir "$GDC_HOME/runs/${GDC_RUN_ID:-manual}/node-reset-$NODE/detach-$ml_parent_alias"
+    done
+  fi
+  mapfile -t configured_endpoints < <(ssh -T "$NODE" "jq -r '.[]?.host // empty' /srv/dai/deploy/node-config.json 2>/dev/null" 2>/dev/null || true)
 
   # `phase-ml-attach.sh` records this relationship in the operator state. It
   # is available even when a reset intentionally has no .env or role input.
-  if [[ -s "$STATE/ml-attached/$NODE" ]]; then
-    linked_ml_host="$(<"$STATE/ml-attached/$NODE")"
+  if [[ -s "$STATE/ml-attached/$NODE.json" ]]; then
+    state_record="$(<"$STATE/ml-attached/$NODE.json")"
+    mapfile -t linked_ml_hosts < <(jq -r --arg node "$NODE" '
+      select(.schema_version == 2 and .validator_alias == $node)
+      | .ml_hosts[]?.ssh_alias
+    ' <<<"$state_record" 2>/dev/null || true)
+    source='operator state'
+  elif [[ -s "$STATE/ml-attached/$NODE" ]]; then
+    linked_ml_hosts=("$(<"$STATE/ml-attached/$NODE")")
     source='operator state'
   fi
 
   # The deployment record is written by `host join` / `host ml-attach`. It is
   # an explicit operator decision, unlike a guessed naming convention.
-  if [[ -z "$linked_ml_host" && -n "$endpoint" && "$endpoint" != inference ]]; then
+  if (( ${#linked_ml_hosts[@]} == 0 )); then
     link_record="$(ssh -T "$NODE" "sudo cat /srv/dai/deploy/gdc-ml-link.json 2>/dev/null" 2>/dev/null || true)"
-    link_alias="$(jq -er --arg node "$NODE" --arg endpoint "$endpoint" '
-      select(.schema_version == 1 and .validator_alias == $node and .ml_endpoint == $endpoint)
-      | .ml_ssh_alias
-    ' <<<"$link_record" 2>/dev/null || true)"
-    [[ "$link_alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
-      || die "cannot safely reset external GPU for $NODE: missing a valid /srv/dai/deploy/gdc-ml-link.json; use the GDC_HOME created by host join or reset the GPU host explicitly"
-    linked_ml_host="$link_alias"
-    source='Network Node deployment record'
+    if jq -e --arg node "$NODE" '.schema_version == 2 and .validator_alias == $node' <<<"$link_record" >/dev/null 2>&1; then
+      mapfile -t linked_ml_hosts < <(jq -r '.ml_hosts[]?.ssh_alias' <<<"$link_record")
+    else
+      link_alias="$(jq -er --arg node "$NODE" '
+        select(.schema_version == 1 and .validator_alias == $node) | .ml_ssh_alias
+      ' <<<"$link_record" 2>/dev/null || true)"
+      [[ -z "$link_alias" ]] || linked_ml_hosts=("$link_alias")
+    fi
+    (( ${#linked_ml_hosts[@]} == 0 )) || source='Network Node deployment record'
   fi
 
-  if [[ -n "$linked_ml_host" && -n "$endpoint" && "$endpoint" != inference ]]; then
-    candidate_host="$(ssh -G "$linked_ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
-    candidate_ip="$(getent ahostsv4 "$candidate_host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
-    endpoint_ip="$(getent ahostsv4 "$endpoint" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
-    { [[ "$endpoint" == "$candidate_host" ]] || [[ -n "$endpoint_ip" && "$endpoint_ip" == "$candidate_ip" ]]; } \
-      || die "linked GPU host $linked_ml_host does not match $NODE ML endpoint $endpoint; no reset was performed"
+  if (( ${#linked_ml_hosts[@]} == 0 )); then
+    for endpoint in "${configured_endpoints[@]}"; do
+      [[ "$endpoint" == inference ]] || die "cannot safely reset external GPU for $NODE: missing a valid /srv/dai/deploy/gdc-ml-link.json; use the GDC_HOME created by host join or reset the GPU host explicitly"
+    done
   fi
 
-  if [[ -n "$linked_ml_host" ]]; then
+  for linked_ml_host in "${linked_ml_hosts[@]}"; do
     [[ "$linked_ml_host" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$linked_ml_host" != "$NODE" ]] \
       || die "refusing invalid linked GPU alias for $NODE: $linked_ml_host"
+    candidate_host="$(ssh -G "$linked_ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+    candidate_ip="$(getent ahostsv4 "$candidate_host" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+    if (( ${#configured_endpoints[@]} > 0 )); then
+      endpoint_matched=false
+      for endpoint in "${configured_endpoints[@]}"; do
+        [[ "$endpoint" == inference ]] && continue
+        endpoint_ip="$(getent ahostsv4 "$endpoint" 2>/dev/null | awk 'NR == 1 {print $1}' || true)"
+        if [[ "$endpoint" == "$candidate_host" || ( -n "$endpoint_ip" && "$endpoint_ip" == "$candidate_ip" ) ]]; then
+          endpoint_matched=true
+          break
+        fi
+      done
+      [[ "$endpoint_matched" == true ]] \
+        || die "linked GPU host $linked_ml_host does not match any $NODE ML endpoint; no reset was performed"
+    elif [[ -s "$STATE/ml-attached/$NODE" ]]; then
+      : # v1 operator state predates endpoint binding; preserve its reset contract.
+    else
+      die "linked GPU host $linked_ml_host cannot be verified without $NODE ML endpoint configuration; no reset was performed"
+    fi
     ssh_ready "$linked_ml_host" \
       || die "linked GPU host $linked_ml_host for $NODE is unreachable; no reset was performed"
     printf 'READY detected linked GPU host %s for %s (%s)\n' "$linked_ml_host" "$NODE" "$source"
-  fi
+  done
 
   reset_remote_host() {
     local host="$1"
@@ -318,7 +394,7 @@ REMOTE
   discarded="$(discard_local_identity "$NODE" "$stamp")"
   printf 'READY removed %s local identity record(s) for %s; external reset archive is retained for explicit recovery\n' \
     "$discarded" "$NODE"
-  if [[ -n "$linked_ml_host" ]]; then
+  for linked_ml_host in "${linked_ml_hosts[@]}"; do
     step "Reset linked GPU host $linked_ml_host for $NODE"
     # A GPU Host holds no validator identity. If this one does, the alias is
     # not what the operator state says it is: stop instead of removing it.
@@ -327,8 +403,11 @@ REMOTE
       *) die "$linked_ml_host holds validator identity material and is linked as the GPU Host of $NODE; no reset of the linked Host was performed" ;;
     esac
     reset_remote_host "$linked_ml_host"
-    rm -f "$STATE/ml-attached/$NODE"
+    rm -f -- "$GDC_DATA_ROOT/$linked_ml_host/state/ml-parent.json"
     printf 'PASS %s linked GPU reset\n' "$linked_ml_host"
+  done
+  if (( ${#linked_ml_hosts[@]} > 0 )); then
+    rm -f "$STATE/ml-attached/$NODE" "$STATE/ml-attached/$NODE.json"
   fi
   printf 'PASS %s reset\n' "$NODE"
 }
@@ -336,7 +415,11 @@ REMOTE
 case "$ACTION" in
   stop)
     step "Stop Network Node services on $NODE without deleting state"
-    ssh -T "$NODE" "cd /srv/dai/deploy && docker compose --env-file .env stop"
+    # Ordinary stop and GPU lending must capture and stop the same installed
+    # container set.  The controller owns that receipt and has the supported
+    # flat/legacy deployment discovery; Compose stop would create a second,
+    # incompatible lifecycle path.
+    bash "$ROOT/scripts/node-container-control.sh" stop "$NODE"
     printf 'PASS %s stopped; persistent data was retained\n' "$NODE"
     ;;
   start)

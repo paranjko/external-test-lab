@@ -10,9 +10,10 @@ cat >"$tmp/bin/ssh" <<'SH'
 set -Eeuo pipefail
 # The production script is executed unchanged except for its fixed Host paths.
 sed "s@/srv/dai/deploy@$CONTROL_TEST_ROOT/deploy@g; s@/srv/dai@$CONTROL_TEST_ROOT@g" >"$CONTROL_TEST_ROOT/remote.sh"
-case "${*: -1}" in
-  *"'stop'") bash "$CONTROL_TEST_ROOT/remote.sh" stop ;;
-  *"'start'") bash "$CONTROL_TEST_ROOT/remote.sh" start ;;
+case "$*" in
+  *gdc-lent-ml-record*) exit 0 ;;
+  *"'stop'"*) bash "$CONTROL_TEST_ROOT/remote.sh" stop ;;
+  *"'start'"*) bash "$CONTROL_TEST_ROOT/remote.sh" start ;;
   *) exit 99 ;;
 esac
 SH
@@ -67,7 +68,10 @@ jq -n --arg dir "$tmp/deploy" --arg node "$node_id" --arg signer "$signer_id" --
  {id:$signer,project:"fixture",service:"tmkms",running:true,status:"running"},
  {id:$unused,project:"fixture",service:"inference",running:false,status:"created"}
 ] | map(.working_dir=$dir)' >"$tmp/containers.json"
-run() { env -i HOME="$tmp/home" PATH="$PATH" CONTROL_TEST_ROOT="$tmp" GDC_HOME="$tmp/home" bash "$ROOT/gdc.sh" node "$1" fixture >"$tmp/$1.log" 2>&1; }
+# Exercise the operator-facing aliases. `host stop/start` must dispatch to the
+# same receipt-bound controller rather than retaining a second lifecycle path
+# behind the public CLI.
+run() { env -i HOME="$tmp/home" PATH="$PATH" CONTROL_TEST_ROOT="$tmp" GDC_HOME="$tmp/home" bash "$ROOT/gdc.sh" host "$1" fixture >"$tmp/$1.log" 2>&1; }
 run stop
 [[ "$(head -1 "$tmp/operations")" == "stop $signer_id" ]]
 jq -e 'all(.[]; .running == false)' "$tmp/containers.json" >/dev/null

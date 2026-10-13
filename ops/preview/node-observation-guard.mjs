@@ -23,11 +23,28 @@ export function validPath(url) {
   if (url.pathname === "/devshard/healthz" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/status" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/net_info" && url.search === "") return true;
-  if (url.pathname === "/chain-rpc/validators" && url.search === "?per_page=100") return true;
+  if (url.pathname === "/chain-rpc/validators" && validValidatorQuery(url)) return true;
   if (url.pathname === "/chain-api/productscience/inference/inference/params" && url.search === "") return true;
   if (/^\/chain-api\/productscience\/inference\/inference\/hardware_nodes\/gonka1[02-9ac-hj-np-z]{6,90}$/.test(url.pathname) && url.search === "") return true;
   return url.pathname === "/chain-api/productscience/inference/inference/participant" &&
     url.search === "?pagination.limit=100&pagination.count_total=true";
+}
+
+function validValidatorQuery(url) {
+  if (!url.search || url.search.startsWith("?&") || url.search.endsWith("&") || url.search.includes("&&")) return false;
+  const rawPairs = url.search.slice(1).split("&");
+  if (rawPairs.some((pair) => !/^(?:height|page|per_page)=\d+$/.test(pair))) return false;
+  const params = url.searchParams;
+  const keys = [...params.keys()];
+  if (keys.length === 1 && keys[0] === "per_page")
+    return params.getAll("per_page").length === 1 && params.get("per_page") === "100";
+  if (keys.length !== 3 || new Set(keys).size !== 3 ||
+    !["height", "page", "per_page"].every((key) => params.getAll(key).length === 1)) return false;
+  const height = params.get("height") || "";
+  const page = params.get("page") || "";
+  return /^(?:[1-9]\d*)$/.test(height) && Number.isSafeInteger(Number(height)) &&
+    /^(?:[1-9]\d*)$/.test(page) && Number.isSafeInteger(Number(page)) && Number(page) <= 100 &&
+    params.get("per_page") === "100";
 }
 
 function reject(response, code, reason) {

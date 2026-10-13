@@ -50,6 +50,12 @@ http://:8082 {
 http://:8081 {
   encode zstd gzip
 
+  # Network inventory is derived from bootstrap seeds and their P2P peers.
+  # A participant identity can be historical while the Host is current.
+  handle /status/network {
+    reverse_proxy 127.0.0.1:18094
+  }
+
   # Participant cards are derived from committed chain state.  Keeping this
   # read-only REST query on the status origin lets the page discover joins
   # without requiring an `ops site` redeploy after every new operator joins.

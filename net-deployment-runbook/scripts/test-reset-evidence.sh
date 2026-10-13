@@ -25,7 +25,7 @@ grep -Fq 'public observability was restored' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'GDC_PUBLIC_EDGE_VERIFY=false "$ROOT/scripts/phase-ops.sh" edge' "$ROOT/scripts/phase-reset.sh"
 grep -Fq '/srv/hf-cache' "$ROOT/scripts/phase-reset.sh"
 grep -Fq '!expectResetState && state.nodes.length < 1' "$ROOT/scripts/capture-homepage-viewport.mjs"
-grep -Fq 'state.mapValidators !== 0' "$ROOT/scripts/capture-homepage-viewport.mjs"
+grep -Fq 'state.mapHosts !== 0' "$ROOT/scripts/capture-homepage-viewport.mjs"
 capture_line="$(grep -n 'capture-homepage-viewport.mjs' "$ROOT/scripts/phase-reset.sh" | cut -d: -f1)"
 ready_line="$(grep -n 'public status site is unavailable after reset' "$ROOT/scripts/phase-reset.sh" | cut -d: -f1)"
 [[ "$capture_line" =~ ^[0-9]+$ && "$ready_line" =~ ^[0-9]+$ && "$capture_line" -gt "$ready_line" ]] || {

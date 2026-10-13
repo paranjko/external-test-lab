@@ -30,4 +30,9 @@ if PATH="$tmp/bin:$PATH" GDC_DOCKER_LOG="$tmp/docker.log" "$ROOT/02-node/verify-
 fi
 grep -Fq 'lineage_trust_expired:' "$tmp/expired.err"
 [[ ! -s "$tmp/docker.log" ]] || { echo 'expired trust reached Docker before rejection' >&2; exit 1; }
-printf 'PASS state-sync configuration rejects expired lineage trust before canary acceptance\n'
+: >"$tmp/docker.log"
+PATH="$tmp/bin:$PATH" GDC_DOCKER_LOG="$tmp/docker.log" "$ROOT/02-node/verify-state-sync-config.sh" \
+  "$deploy" "$tmp/receipt.json" --consumed-trust >"$tmp/consumed.out"
+grep -Fq 'PASS signerless canary config matches receipt trust and P2P providers' "$tmp/consumed.out"
+[[ -s "$tmp/docker.log" ]] || { echo 'consumed-trust verification did not inspect canary configuration' >&2; exit 1; }
+printf 'PASS state-sync configuration rejects expired trust before canary start and verifies it after a current-checkpoint proof\n'

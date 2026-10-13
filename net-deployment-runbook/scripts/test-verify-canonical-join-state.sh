@@ -45,7 +45,7 @@ url="${!#}"
 if [[ "${GDC_TEST_CATCHING_UP:-false}" == true ]]; then catching=true; else catching=false; fi
 case "$url" in
   */status) printf '%s\n' "{\"result\":{\"node_info\":{\"network\":\"gonka-devnet-community\",\"id\":\"0123456789abcdef0123456789abcdef01234567\",\"version\":\"0.38.19\"},\"sync_info\":{\"catching_up\":$catching,\"latest_block_height\":\"5000\"}}}" ;;
-  */abci_info) printf '%s\n' '{"result":{"response":{"version":"0.2.15"}}}' ;;
+  */abci_info) printf '{"result":{"response":{"version":"%s"}}}\n' "${GDC_TEST_CORE_VERSION:-0.2.15}" ;;
   */v1/versions) printf '{"api_version":{"version":"%s","commit":"%s"},"node_version":{"version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"}}\n' "${GDC_TEST_DAPI_VERSION:-}" "${GDC_TEST_DAPI_COMMIT:-}" ;;
   *) exit 22 ;;
 esac
@@ -58,6 +58,12 @@ fi
 grep -Fq 'command: executable not found' "$tmp/builtin.err"
 PATH="$tmp/bin:$PATH" "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 4d687ed6782bcea3931d2d9135bf322f84e190ab 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/pass.out"
 grep -Fq 'PASS canonical runtime verified signer=stopped' "$tmp/pass.out"
+GDC_TEST_CORE_VERSION=v0.2.15 PATH="$tmp/bin:$PATH" "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 4d687ed6782bcea3931d2d9135bf322f84e190ab 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/core-v-prefix.out"
+grep -Fq 'PASS canonical runtime verified signer=stopped' "$tmp/core-v-prefix.out"
+if GDC_TEST_CORE_VERSION=v0.2.14 PATH="$tmp/bin:$PATH" "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 4d687ed6782bcea3931d2d9135bf322f84e190ab 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/core-wrong-version.out" 2>"$tmp/core-wrong-version.err"; then
+  echo 'Core of another version unexpectedly verified after v-prefix normalization' >&2; exit 1
+fi
+grep -Fq 'canonical_core_version_mismatch:' "$tmp/core-wrong-version.err"
 if PATH="$tmp/bin:$PATH" GDC_TEST_TMKMS_RUNNING=true "$ROOT/02-node/verify-canonical-join-state.sh" "$deploy" gonka-devnet-community 0123456789abcdef0123456789abcdef01234567 0.2.15 4d687ed6782bcea3931d2d9135bf322f84e190ab 0.2.15-post3 5dbb53ddf3ddc42655fc04dc39d96003169bdbb0 >"$tmp/tmkms.out" 2>"$tmp/tmkms.err"; then
   echo 'running TMKMS unexpectedly verified canonical signerless Core' >&2; exit 1
 fi
