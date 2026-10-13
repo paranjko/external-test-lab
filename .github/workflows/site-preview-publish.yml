@@ -100,6 +100,11 @@ jobs:
           preview_backend_image: gdc-preview-backend-ci:${{ needs.publish-context.outputs.head_sha }}
         run: make -C trusted/net-deployment-runbook publish-isolated-preview-ci
 
+      - name: Set up Node.js for the observer capability check
+        uses: actions/setup-node@v5.0.0
+        with:
+          node-version: '22'
+
       - name: Verify the public source-bound preview before reporting it
         env:
           PREVIEW_ORIGIN: https://preview.gonka-dev.net

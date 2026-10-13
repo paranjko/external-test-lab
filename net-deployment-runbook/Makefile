@@ -37,8 +37,8 @@ preview_backend_dir ?= $(site_release_dir)-backend
 preview_base_revision ?=
 site_origin ?= https://gonka-dev.net
 preview_origin ?= https://preview.gonka-dev.net
-site_preview_expected_card_count ?= 9
-site_preview_expected_node_states ?= node3.gonka-dev.net=Inactive
+site_preview_expected_card_count ?= 0
+site_preview_expected_node_states ?=
 
 .PHONY: bats bats-docker bats-docker-image bats-dind test-join-cleanroom test-join-dind test-recovery-contract test-recovery-rehearsal cleanroom cleanroom-reset cleanroom-shell node-host node-host-reset node-host-authorize shellcheck site-vendor site-js site-js-check site-serve test-site-serve site-host-requirements-check test-browser-devtools test-gateway-site-state test-network-selection test-validator-map test-site-release-paths test-site-release-verifier test-site-publisher test-site-preview-context test-site-preview-live test-site-preview-plan test-site-preview-generation test-site-preview-endpoints test-site-preview-platform test-preview-isolation test-preview-lifecycle test-preview-provision test-preview-status-renderer test-preview-frontend-builder test-isolated-preview-ci test-isolated-preview-ci-artifact test-record-site-preview-deployment test-verify-isolated-site-preview-live test-isolated-preview-runtime-config test-isolated-preview-publish test-prepare-isolated-preview-composition test-prepare-isolated-site-preview-artifact test-prepare-public-preview-inventory test-node-observation-guard test-edge-install-ownership prepare-static-site prepare-site-preview-artifact prepare-isolated-site-preview-artifact prepare-isolated-preview-ci prepare-isolated-preview-ci-artifact write-isolated-preview-deploy-env publish-site-release publish-site-preview publish-isolated-site-preview publish-isolated-preview-ci rollback-site-preview remove-site-release remove-isolated-site-preview verify-site-release verify-site-preview-artifact verify-isolated-preview-ci-artifact verify-isolated-site-preview-live verify-site-preview-live verify-site-preview-endpoints smoke-site-preview record-site-preview-deployment site-preview-publish-context site-preview-cleanup-context test test-command-dependency-contract test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-network-ml-endpoints edge-integration verify-upstream-profiles verify-candidate-workflow install-git-hooks test-amd-mlnode-build test-amd-mlnode-trial test-amd-mlnode-ci-publish amd-mlnode-ci-publish
 
@@ -114,8 +114,21 @@ test-browser-devtools:
 	@node --check ./scripts/capture-homepage-viewport.mjs
 	@node ./scripts/test-chrome-devtools.mjs
 
-test-gateway-site-state: site-vendor site-js-check test-browser-devtools
+test-gateway-site-state: site-vendor site-js-check test-browser-devtools test-production-network-browser test-site-snapshot-acceptance
 	@node ./scripts/test-gateway-site-state.js
+
+.PHONY: test-production-network-browser test-site-snapshot-acceptance test-verify-network-observer verify-network-observer
+test-production-network-browser: site-vendor site-js
+	@node ./scripts/test-production-network-browser.mjs
+
+test-site-snapshot-acceptance: site-vendor site-js
+	@node ./scripts/test-site-snapshot-acceptance.mjs
+
+test-verify-network-observer:
+	@node ./scripts/test-verify-network-observer.mjs
+
+verify-network-observer:
+	@node ./scripts/verify-network-observer.mjs --base-url "$(site_origin)"
 
 test-network-selection: site-js-check
 	@node ./scripts/test-network-selection.js 04-ops/site
@@ -293,7 +306,7 @@ verify-site-preview-endpoints:
 .PHONY: smoke-site-preview-acceptance
 
 smoke-site-preview-acceptance:
-	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" GDC_EXPECT_STATUS_PREFIX="/$(preview_number)/status/" GDC_EXPECT_CARD_COUNT="$(site_preview_expected_card_count)" GDC_EXPECT_NODE_STATES="$(site_preview_expected_node_states)" node ./scripts/capture-homepage-viewport.mjs "$(preview_origin)/$(preview_number)/" 1280 900 "$(site_release_dir).png" 0
+	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" GDC_EXPECT_STATUS_PREFIX="/$(preview_number)/status/" GDC_EXPECT_NETWORK_SNAPSHOT=true GDC_EXPECT_GATEWAY_STATE=UNAVAILABLE GDC_EXPECT_CARD_COUNT="$(site_preview_expected_card_count)" GDC_EXPECT_NODE_STATES="$(site_preview_expected_node_states)" node ./scripts/capture-homepage-viewport.mjs "$(preview_origin)/$(preview_number)/" 1280 900 "$(site_release_dir).png" 0
 
 smoke-site-preview:
 	@app_digest="$$(sed -n 's/.*"appDigest":"\([0-9a-f]\{64\}\)".*/\1/p' "$(site_release_dir)/site-build.js")"; test -n "$$app_digest"; GDC_EXPECT_SITE_REVISION="$(preview_revision)" GDC_EXPECT_APP_DIGEST="$$app_digest" node ./scripts/capture-homepage-viewport.mjs "$(site_origin)/$(site_publish_prefix)/" 1280 900 "$(site_release_dir).png" 0
@@ -706,9 +719,19 @@ test-reconcile-proxy-ingress-remote:
 test-participants-proxy:
 	@node ./scripts/test-participants-proxy.mjs
 
-.PHONY: test-network-observer
-test-network-observer:
+.PHONY: test-network-observer test-network-observer-http test-network-observer-install
+test-network-observer: test-network-observer-http test-network-observer-install test-verify-network-observer
 	@node ./scripts/test-network-observer.mjs
+
+test-network-observer-http:
+	@node ./scripts/test-network-observer-http.mjs
+
+test-network-observer-install:
+	@docker build --file test/Dockerfile.bootstrap --tag gdc-network-observer-install-test ..
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec \
+		-e GDC_TEST_DISPOSABLE_ROOT=true --volume "$(CURDIR)/..:/source:ro" \
+		--entrypoint python3 gdc-network-observer-install-test \
+		/source/net-deployment-runbook/scripts/test-network-observer-install.py
 
 test-recover-incident:
 	@bash ./scripts/test-recover-incident.sh

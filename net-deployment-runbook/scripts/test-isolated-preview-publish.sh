@@ -64,8 +64,13 @@ printf '<!doctype html>backend\n' >"$tmp/backend-release/index.html"
 printf 'fixture backend archive\n' >"$tmp/backend-release/backend-image.tar"
 backend_archive_digest="$(sha256sum "$tmp/backend-release/backend-image.tar" | awk '{print $1}')"
 printf '%s\n' "$backend_archive_digest" >"$tmp/backend-release/backend-image.tar.sha256"
-printf '%s\n' '{"schema_version":1,"head_revision":"'"$revision"'","mode":"backend","frontend_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","backend_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","backend_archive_sha256":"'"$backend_archive_digest"'"}' >"$tmp/backend-release/preview-composition.json"
-printf '%s\n' '{"schema_version":1,"source_revision":"'"$revision"'","source_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rendered_caddy_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","backend_caddy_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","image_id":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' >"$tmp/backend-release/backend-build.json"
+jq -n --arg revision "$revision" \
+  '{schema_version:1,source_revision:$revision,source_digest:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",rendered_caddy_sha256:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",backend_caddy_sha256:"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",network_observer_http_sha256:"1111111111111111111111111111111111111111111111111111111111111111",network_observer_collector_sha256:"2222222222222222222222222222222222222222222222222222222222222222",network_observer_env_sha256:"3333333333333333333333333333333333333333333333333333333333333333",preview_curl_sha256:"4444444444444444444444444444444444444444444444444444444444444444",network_observer_runtime_sha256:"5555555555555555555555555555555555555555555555555555555555555555",start_status_backend_sha256:"6666666666666666666666666666666666666666666666666666666666666666",image_id:"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' \
+  >"$tmp/backend-release/backend-build.json"
+backend_manifest_digest="$(sha256sum "$tmp/backend-release/backend-build.json" | awk '{print $1}')"
+jq -n --arg revision "$revision" --arg archive "$backend_archive_digest" --arg manifest "$backend_manifest_digest" \
+  '{schema_version:1,head_revision:$revision,mode:"backend",frontend_revision:$revision,backend_revision:$revision,frontend_digest:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",backend_digest:"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",backend_build_manifest_sha256:$manifest,backend_archive_sha256:$archive}' \
+  >"$tmp/backend-release/preview-composition.json"
 : >"$tmp/commands"
 GDC_SITE_PREVIEW_ENV_FILE="$tmp/preview.env" "$ROOT/scripts/isolated-preview-publish.sh" publish "$tmp/backend-release" 173 "$revision" gdc-preview-backend:fixture
 grep -Fq 'docker image load -i' "$tmp/commands"

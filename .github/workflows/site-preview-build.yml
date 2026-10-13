@@ -6,6 +6,13 @@ on:
     paths:
       - 'net-deployment-runbook/04-ops/site/**'
       - 'net-deployment-runbook/04-ops/render-ops.sh'
+      - 'net-deployment-runbook/04-ops/network-observer.sh'
+      - 'net-deployment-runbook/04-ops/network-observer-http.py'
+      - 'net-deployment-runbook/04-ops/gdc-network-observer.service'
+      - 'net-deployment-runbook/04-ops/gdc-network-observer.socket'
+      - 'net-deployment-runbook/04-ops/gdc-network-observer@.service'
+      - 'net-deployment-runbook/04-ops/gdc-network-observer.timer'
+      - 'net-deployment-runbook/04-ops/Caddyfile'
       - 'net-deployment-runbook/04-ops/edge-node/PublicCaddyfile'
       - 'net-deployment-runbook/profiles/devnet-hadware.json'
       - 'net-deployment-runbook/scripts/**'

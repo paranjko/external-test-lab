@@ -364,6 +364,24 @@ function configureNetwork(): void {
   if (networkHeading) networkHeading.textContent = "Participant status";
 }
 
+function renderNetworkObservationStatus(status: "pending" | "unavailable" | "invalid"): void {
+  const source = $("network-source");
+  const updated = $("updated");
+  if (status === "pending") {
+    if (source) source.textContent = "NETWORK OBSERVATION PENDING";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Waiting for a fresh network observation";
+  } else if (status === "invalid") {
+    if (source) source.textContent = "NETWORK OBSERVATION INVALID";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Network observer returned an invalid snapshot";
+  } else {
+    if (source) source.textContent = "NETWORK OBSERVATION UNAVAILABLE";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Network observer unavailable";
+  }
+}
+
 const statusUrl = (path: string): string => {
   const url = `${statusBase}${path}`;
   return cfg.publicBootstrap === true && path === "/network"
@@ -400,6 +418,9 @@ let cardHardwareInventory: HardwareInventory = new Map();
 let retainedValidatorSet: any = null;
 let validatorSetObservedAt = 0;
 let publicChainState: any = null;
+// Snapshot capability is independent of choosing another network. Production
+// keeps its gateway configuration while consuming the same evidence as local.
+let observerSnapshotMode = cfg.publicBootstrap === true;
 let networkSnapshot: any = null;
 let networkSocket: any = null;
 let networkSocketRetry: ?TimeoutID = null;
@@ -2025,7 +2046,7 @@ function networkNode(observation: any): SiteNode {
 }
 
 function updatePublicModelRegistry(nodes: Array<SiteNode>): void {
-  if (cfg.publicBootstrap !== true) return;
+  if (!observerSnapshotMode) return;
   const registries: Array<Array<any>> = [];
   for (const node of nodes) {
     const models = node.observedModelRegistry?.models;
@@ -2063,8 +2084,9 @@ function normalizedPublicOrigin(value: mixed): string {
 }
 
 function applyPublicChainState(chain: any): void {
-  if (cfg.publicBootstrap !== true) return;
-  publicChainState = chain?.state === "observed" ? chain : null;
+  if (!observerSnapshotMode && !publicChainState) return;
+  const age = Date.now() - Date.parse(String(chain?.observed_at || ""));
+  publicChainState = observerSnapshotMode && chain?.state === "observed" && Number.isFinite(age) && age >= 0 && age <= 90000 ? chain : null;
   if (!publicChainState) {
     retainedValidatorSet = null;
     validatorSetObservedAt = 0;
@@ -2080,7 +2102,7 @@ function applyPublicChainState(chain: any): void {
     /^\d+$/.test(String(entry?.voting_power || "")),
   );
   retainedValidatorSet = validValidators
-    ? {state: "observed", verified: true, complete: true, validators}
+    ? {state: "observed", verified: true, complete: true, blockHeight: String(chain?.reference?.height || ""), validators}
     : null;
   validatorSetObservedAt = retainedValidatorSet ? Date.now() : 0;
   const participants = Array.isArray(chain.participants) ? chain.participants : [];
@@ -2143,13 +2165,40 @@ function applyPublicChainState(chain: any): void {
   renderDevShardExecution(approvals, observedNodes);
 }
 
-async function reconcileNetwork(): Promise<number> {
-  const state = networkSnapshot || await json(statusUrl("/network"));
+async function reconcileNetwork(): Promise<{status: "observed" | "pending", height: number}> {
+  const snapshotAge = Date.now() - Date.parse(String(networkSnapshot?.observed_at || ""));
+  let state: any;
+  try {
+    state = networkSnapshot && snapshotAge >= 0 && snapshotAge <= 90000
+      ? networkSnapshot : await json(statusUrl("/network"));
+  } catch (error) {
+    if (String(error?.name || "") === "SyntaxError")
+      throw new Error("network observation is malformed");
+    throw error;
+  }
   if (state?.state === "observation_pending" && state?.chain_id === cfg.chainId)
-    return 0;
+    return {status: "pending", height: 0};
   const nodes = Array.isArray(state?.nodes) ? state.nodes : [];
-  if (!Array.isArray(state?.nodes) || state?.chain_id !== cfg.chainId)
+  if (state?.schema_version !== 1 || !Array.isArray(state?.nodes) || state?.chain_id !== cfg.chainId)
     throw new Error("network observation is malformed");
+  if (!nodes.length) {
+    const chain = state?.chain;
+    const observedAt = Date.parse(String(chain?.observed_at || ""));
+    const age = Date.now() - observedAt;
+    const reference = chain?.reference || {};
+    if (chain?.state !== "observed" || !Number.isFinite(age) || age < 0 || age > 90000 ||
+      !/^[0-9a-f]{40}$/i.test(String(reference.node_id || "")) ||
+      !Number.isSafeInteger(Number(reference.height)) || Number(reference.height) <= 0)
+      throw new Error("network observation is malformed");
+  }
+  observerSnapshotMode = cfg.publicBootstrap === true || state.chain !== undefined;
+  const source = $("network-source");
+  if (source) source.textContent = observerSnapshotMode ? "LIVE NETWORK" : "NETWORK OBSERVER UPDATE REQUIRED";
+  if (!observerSnapshotMode) {
+    renderEpochOverview(null, null, null);
+    renderFinalizedEpochResults(null);
+  }
+  connectNetworkObservation();
   const next = nodes.map((observation) => {
     const candidate = networkNode(observation);
     const previous = observedNodes.find((node) => node.address === candidate.address && node.dapiUrl === candidate.dapiUrl);
@@ -2166,7 +2215,7 @@ async function reconcileNetwork(): Promise<number> {
         sync_info: rpc,
         validator_info: {address: rpc.validator_address || node.validatorAddress},
       }}, observedAt);
-      if (cfg.publicBootstrap === true && /^\d+$/.test(String(rpc?.validator_voting_power || ""))) {
+      if (observerSnapshotMode && /^\d+$/.test(String(rpc?.validator_voting_power || ""))) {
         node.validatorKnown = true;
         node.votingPower = String(rpc.validator_voting_power);
       }
@@ -2197,7 +2246,7 @@ async function reconcileNetwork(): Promise<number> {
       set(card, "peers", String(node.peerCount));
     else if (node.peerState === "unavailable" || node.peerState === "not_exposed")
       set(card, "peers", "–");
-    if (cfg.publicBootstrap !== true && !node.geo) discoverParticipant(node.publicHost || "").then((discovered) => {
+    if (!observerSnapshotMode && !node.geo) discoverParticipant(node.publicHost || "").then((discovered) => {
       if (!observedNodes.includes(node)) return;
       node.ip = discovered.ip || node.ip;
       node.geo = discovered.geo || node.geo;
@@ -2205,7 +2254,10 @@ async function reconcileNetwork(): Promise<number> {
     }).catch(() => {});
   }
   layoutHostCards();
-  return Math.max(0, ...nodes.map((node) => Number(node?.components?.chain_rpc?.latest_block_height) || 0));
+  return {
+    status: "observed",
+    height: Math.max(0, ...nodes.map((node) => Number(node?.components?.chain_rpc?.latest_block_height) || 0)),
+  };
 }
 
 let validatorMapController: ?ValidatorMapController;
@@ -3149,6 +3201,7 @@ async function refresh(): Promise<void> {
 }
 
 function connectNetworkObservation(): void {
+  if (!observerSnapshotMode && cfg.publicBootstrap !== true) return;
   if (networkSocket || typeof WebSocket !== "function") return;
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const endpoint = `${protocol}//${window.location.host}${statusBase}/network/ws?chainId=${encodeURIComponent(cfg.chainId)}`;
@@ -3168,6 +3221,7 @@ function connectNetworkObservation(): void {
   };
   networkSocket.onclose = () => {
     networkSocket = null;
+    networkSnapshot = null;
     if (networkSocketRetry === null)
       networkSocketRetry = setTimeout(() => {
         networkSocketRetry = null;
@@ -3197,6 +3251,18 @@ function recordRpc(node: SiteNode, status: any, observedAt: number = Date.now())
 }
 
 function freshReference(): any {
+  if (observerSnapshotMode) {
+    const reference = publicChainState?.reference;
+    const node = observedNodes.find((candidate) => candidate.address === reference?.node_id);
+    const height = Number(reference?.height);
+    const blockAge = Date.now() - Number(node?.rpcBlockTimeMs);
+    return node?.endpointState === "reachable" && node?.rpcIdentityVerified === true &&
+      node?.rpcChainId === cfg.chainId && node?.catchingUp === false &&
+      Number.isFinite(blockAge) && blockAge >= 0 && blockAge <= 90000 &&
+      Number.isSafeInteger(height) && height > 0
+      ? {nodeId: node.address, chainId: cfg.chainId, height}
+      : null;
+  }
   return GDC_NETWORK_OBSERVATION.selectFreshReference(observedNodes
     .filter((node) => node.endpointState === "reachable")
     .map((node) => ({
@@ -3249,6 +3315,7 @@ async function refreshNetwork(): Promise<void> {
   let referenceKnown = false;
   let referenceHeight = 0;
   let reference: any = null;
+  if (observerSnapshotMode) applyPublicChainState(publicChainState);
   for (const node of observedNodes) {
     // Keep fresh observations visible while polling, but never indefinitely.
     if (!node.rpcObservedAt || Date.now() - Number(node.rpcObservedAt) > 90000)
@@ -3257,18 +3324,27 @@ async function refreshNetwork(): Promise<void> {
     const card = cards.get(nodeKey(node));
     if (card) renderHostState(card, node);
   }
-  if (cfg.publicBootstrap !== true) {
-    refreshTelegramConsumer();
+  let reconciliation: {status: "observed" | "pending", height: number};
+  try {
+    reconciliation = await reconcileNetwork();
+  } catch (error) {
+    renderNetworkObservationStatus(String(error?.message || error).includes("malformed") ? "invalid" : "unavailable");
+    return;
+  }
+  if (reconciliation.status === "pending") {
+    renderNetworkObservationStatus("pending");
+    return;
+  }
+  best = reconciliation.height;
+  if (cfg.publicBootstrap !== true) refreshTelegramConsumer();
+  if (!observerSnapshotMode) {
     refreshGpuInventory().catch(() => {});
     refreshSoftwareInventory().catch(() => {});
   }
-  try {
-    best = await reconcileNetwork();
-  } catch {}
   let membership: ?Promise<void> = null;
   let membershipDiagnostic = "";
   const startMembership = (): void => {
-    if (cfg.publicBootstrap === true) return;
+    if (observerSnapshotMode) return;
     if (membership) return;
     reference = freshReference();
     if (!reference) return;
@@ -3286,7 +3362,7 @@ async function refreshNetwork(): Promise<void> {
     });
   };
   startMembership();
-  if (cfg.publicBootstrap !== true) await Promise.all(
+  if (!observerSnapshotMode) await Promise.all(
     observedNodes
       .filter((n) => n.mode !== "skip")
       .map(async (n) => {
@@ -3329,7 +3405,7 @@ async function refreshNetwork(): Promise<void> {
   startMembership();
   // Queue core RPC and membership requests before optional probes. Browsers
   // cap same-origin connections; slow metadata must not occupy every slot.
-  if (cfg.publicBootstrap !== true) refreshDetails();
+  if (!observerSnapshotMode) refreshDetails();
   await membership;
   reference = freshReference();
   if (reference) {
@@ -3350,7 +3426,7 @@ async function refreshNetwork(): Promise<void> {
   for (const n of observedNodes) {
     if (n.networkObserved) {
       const configuredChainMatch = n.rpcChainId === cfg.chainId;
-      if (cfg.publicBootstrap === true && retainedValidatorSet?.verified !== true) {
+      if (observerSnapshotMode && retainedValidatorSet?.verified !== true) {
         if (!/^\d+$/.test(String(n.votingPower || ""))) {
           n.validatorKnown = false;
           n.votingPower = undefined;
@@ -3499,6 +3575,11 @@ async function refreshNetwork(): Promise<void> {
       undefined,
       gatewayAdmission,
     );
+    [...$("quality-metrics").children].forEach((card) => {
+      card.querySelector("strong").textContent = "–";
+    });
+    for (const id of ["quality-active", "quality-accepted", "quality-rejected"])
+      $(id).textContent = "–";
     const recovery = $("quality-recovery");
     $("quality-health-state").textContent = availability.state;
     $("quality-health").dataset.state =

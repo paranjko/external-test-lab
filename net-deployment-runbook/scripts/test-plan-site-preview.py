@@ -21,6 +21,12 @@ def plan(files: list[str]) -> dict:
             "--repository-root", str(ROOT),
             "--endpoint-input", str(ROOT / "04-ops/edge-node/PublicCaddyfile"),
             "--endpoint-input", str(ROOT / "04-ops/render-ops.sh"),
+            "--endpoint-input", str(ROOT / "04-ops/network-observer.sh"),
+            "--endpoint-input", str(ROOT / "04-ops/network-observer-http.py"),
+            "--endpoint-input", str(ROOT / "04-ops/gdc-network-observer.service"),
+            "--endpoint-input", str(ROOT / "04-ops/gdc-network-observer.socket"),
+            "--endpoint-input", str(ROOT / "04-ops/gdc-network-observer@.service"),
+            "--endpoint-input", str(ROOT / "04-ops/gdc-network-observer.timer"),
         ], check=True)
         return json.loads(output.read_text())
 
@@ -30,6 +36,8 @@ assert plan(["ops/preview/previewctl.sh"])["mode"] == "static"
 assert plan([".github/workflows/site-preview-build.yml"])["mode"] == "static"
 assert plan(["net-deployment-runbook/04-ops/site/src/app.js"])["mode"] == "static"
 assert plan(["net-deployment-runbook/04-ops/render-ops.sh"])["mode"] == "endpoint"
+assert plan(["net-deployment-runbook/04-ops/network-observer.sh"])["mode"] == "endpoint"
+assert plan(["net-deployment-runbook/04-ops/network-observer-http.py"])["mode"] == "endpoint"
 both = plan(["net-deployment-runbook/04-ops/site/src/app.js", "net-deployment-runbook/04-ops/render-ops.sh"])
 assert both["mode"] == "combined"
 assert both["static_revision"] == "b" * 40 and both["endpoint_revision"] == "b" * 40
@@ -43,6 +51,12 @@ assert both["endpoint_handlers"] == [
 ]
 assert [source["path"] for source in both["endpoint_sources"]] == [
     "04-ops/edge-node/PublicCaddyfile",
+    "04-ops/gdc-network-observer.service",
+    "04-ops/gdc-network-observer.socket",
+    "04-ops/gdc-network-observer.timer",
+    "04-ops/gdc-network-observer@.service",
+    "04-ops/network-observer-http.py",
+    "04-ops/network-observer.sh",
     "04-ops/render-ops.sh",
 ]
 assert all(len(source["sha256"]) == 64 for source in both["endpoint_sources"])

@@ -18,6 +18,13 @@ if [[ "\${GDC_FIXTURE_HTTP_SEED:-false}" == true ]]; then
   url="$(printf '%s' "$url" | sed 's#http://node0.gonka-dev.net:8000#https://node0.gonka-dev.net#')"
 fi
 printf '%s\\n' "\$url" >>"\${GDC_FIXTURE_LOG}"
+if [[ "\$url" == https://api.fixture.test/chain-rpc/status ]]; then
+  printf '{"result":{"node_info":{"network":"%s"}}}\\n' "\${GDC_FIXTURE_API_CHAIN_ID:-fixture-chain}"
+  exit 0
+fi
+if [[ "\$url" == https://api.fixture.test/* ]]; then
+  url="https://node0.gonka-dev.net\${url#https://api.fixture.test}"
+fi
 case "\$url" in
   https://fixture.test/bootstrap.json|https://fixture.test/fixture-chain/bootstrap.json) if [[ "\${GDC_FIXTURE_HTTP_SEED:-false}" == true ]]; then printf '%s\\n' '{"chain_id":"fixture-chain","seeds":[{"node_id":"stale-bootstrap-id","rpc":"http://node0.gonka-dev.net:8000/chain-rpc"}]}'; else printf '%s\\n' '{"chain_id":"fixture-chain","seeds":[{"node_id":"stale-bootstrap-id","rpc":"https://node0.gonka-dev.net/chain-rpc"}]}'; fi ;;
   https://node0.gonka-dev.net/chain-rpc/net_info) printf '%s\\n' '{"result":{"n_peers":"1","peers":[{"node_info":{"id":"${livePeerId}","listen_addr":"tcp://node0.gonka-dev.net:26656"},"remote_ip":"203.0.113.11"}]}}' ;;
@@ -25,7 +32,7 @@ case "\$url" in
   https://node0.gonka-dev.net/v1/versions) printf '%s\\n' '{"api_version":{"application_name":"decentralized-api","version":"v1","commit":"a"},"node_version":{"application_name":"inference-chain","version":"v1","commit":"b"},"mlnodes":[{"node_id":"model:account","version":"3.0.16"}],"timestamp":"2026-10-07T00:00:00Z"}' ;;
   https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all) printf '%s\\n' '{"model":[{"id":"Qwen/Fixture","v_ram":"24"}]}' ;;
   https://node0.gonka-dev.net/chain-rpc/status) printf '%s\\n' '{"result":{"node_info":{"id":"${livePeerId}","network":"fixture-chain","version":"0.38.19"},"validator_info":{"address":"${'b'.repeat(40)}"},"sync_info":{"latest_block_height":"42","latest_block_time":"2026-10-07T00:00:00Z","catching_up":false}}}' ;;
-  'https://node0.gonka-dev.net/chain-rpc/block?height=22') printf '%s\\n' '{"result":{"block":{"header":{"height":"22","time":"2026-10-06T23:59:40Z"}}}}' ;;
+  'https://node0.gonka-dev.net/chain-rpc/block?height=22') printf '%s\\n' '{"result":{"block":{"header":{"chain_id":"fixture-chain","height":"22","time":"2026-10-06T23:59:40Z"}}}}' ;;
   'https://node0.gonka-dev.net/chain-rpc/validators?height=35&page=1&per_page=100') printf '%s\\n' '{"result":{"block_height":"35","count":"1","total":"1","validators":[{"address":"${'b'.repeat(40).toUpperCase()}","voting_power":"29","pub_key":{"value":"fixture"}}]}}' ;;
   'https://node0.gonka-dev.net/chain-rpc/validators?height=25&page=1&per_page=100') printf '%s\\n' '{"result":{"block_height":"25","count":"1","total":"1","validators":[{"address":"${'b'.repeat(40).toUpperCase()}","voting_power":"27","pub_key":{"value":"fixture"}}]}}' ;;
   'https://node0.gonka-dev.net/chain-rpc/validators?height=42&page=1&per_page=100') printf '%s\\n' '{"result":{"block_height":"42","count":"1","total":"1","validators":[{"address":"${'b'.repeat(40).toUpperCase()}","voting_power":"32"}]}}' ;;
@@ -45,7 +52,7 @@ case "\$url" in
   https://node0.gonka-dev.net/chain-api/productscience/inference/inference/poc_v2_validations_for_stage/40) printf '%s\\n' '{"poc_validation":[]}' ;;
   https://node0.gonka-dev.net/chain-api/productscience/inference/inference/poc_v2_validations_for_stage/30) printf '%s\\n' '{"poc_validation":[{"participant":"gonka1fixtureaccount","poc_validation":[{"participant_address":"gonka1fixtureaccount","validator_participant_address":"gonka1fixtureaccount","poc_stage_start_block_height":"30","validated_weight":"31","model_id":"fixture-model"},{"participant_address":"gonka1fixtureaccount","validator_participant_address":"gonka1fixtureaccount","poc_stage_start_block_height":"30","validated_weight":"-1","model_id":"fixture-model"}]}]}' ;;
   https://node0.gonka-dev.net/chain-api/productscience/inference/inference/poc_v2_validations_for_stage/41) printf '%s\\n' '{"poc_validation":[{"participant":"gonka1fixtureaccount","poc_validation":[{"participant_address":"gonka1fixtureaccount","validator_participant_address":"gonka1fixtureaccount","poc_stage_start_block_height":"41","validated_weight":"32","model_id":"cpoc-model"}]}]}' ;;
-  https://node0.gonka-dev.net/chain-api/cosmos/base/tendermint/v1beta1/node_info) printf '%s\\n' '{"application_version":{"name":"inference-chain","version":"v1","git_commit":"b"}}' ;;
+  https://node0.gonka-dev.net/chain-api/cosmos/base/tendermint/v1beta1/node_info) if [[ "\${GDC_FIXTURE_NODE_INFO_UNAVAILABLE:-false}" == true ]]; then printf '%s\\n' 'curl: (22) The requested URL returned error: 403' >&2; exit 22; else printf '%s\\n' '{"application_version":{"name":"inference-chain","version":"v1","git_commit":"b"}}'; fi ;;
   https://node0.gonka-dev.net/devshard/healthz)
     if [[ "\${GDC_FIXTURE_DEVSHARD:-}" == v3 ]]; then
       printf '%s\\n' '[{"name":"v3","status":"running","sha256":"${'d'.repeat(64)}"},{"name":"v4.1","status":"stopped"}]'
@@ -63,7 +70,7 @@ esac
 `);
 await chmod(path.join(bin, "curl"), 0o755);
 
-function invoke(argument, unavailable = false, request = "", cpocActive = false, httpSeed = false, devshard = "") {
+function invoke(argument, unavailable = false, request = "", cpocActive = false, httpSeed = false, devshard = "", options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn("/usr/bin/bash", [path.join(root, "04-ops/network-observer.sh"), argument], {
       env: {
@@ -73,11 +80,14 @@ function invoke(argument, unavailable = false, request = "", cpocActive = false,
         GDC_NETWORK_BOOTSTRAP_URL: "https://fixture.test/bootstrap.json",
         GDC_NETWORK_BOOTSTRAP_ORIGIN: "https://fixture.test",
         GDC_NETWORK_CHAIN_ID: "fixture-chain",
+        GDC_NETWORK_CHAIN_API_ORIGIN: options.chainApiOrigin ?? "",
         GDC_FIXTURE_LOG: path.join(state, "curl.log"),
         GDC_FIXTURE_UNAVAILABLE: String(unavailable),
         GDC_FIXTURE_CPOC_ACTIVE: String(cpocActive),
         GDC_FIXTURE_HTTP_SEED: String(httpSeed),
         GDC_FIXTURE_DEVSHARD: devshard,
+        GDC_FIXTURE_API_CHAIN_ID: options.apiChainId ?? "fixture-chain",
+        GDC_FIXTURE_NODE_INFO_UNAVAILABLE: String(options.nodeInfoUnavailable ?? false),
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -222,6 +232,53 @@ try {
   const httpSeed = await invoke("--collect", false, "", false, true);
   assert.equal(httpSeed.code, 0, httpSeed.stderr);
   assert.equal(JSON.parse(httpSeed.stdout).nodes[0].dapi_url, "http://node0.gonka-dev.net:8000");
+  const centralLogOffset = (await readFile(path.join(state, "curl.log"), "utf8")).length;
+  const central = await invoke("--collect", false, "", false, false, "", {
+    chainApiOrigin: "https://api.fixture.test",
+    nodeInfoUnavailable: true,
+  });
+  assert.equal(central.code, 0, central.stderr);
+  const centralSnapshot = JSON.parse(central.stdout);
+  assert.equal(centralSnapshot.chain.api_source_endpoint, "https://api.fixture.test");
+  assert.equal(centralSnapshot.chain.source_endpoint, "https://node0.gonka-dev.net",
+    "the chain reference and per-node RPC source must retain peer provenance");
+  assert.equal(centralSnapshot.nodes[0].components.models.source_endpoint,
+    "https://api.fixture.test/chain-api/productscience/inference/inference/models_all");
+  assert.deepEqual(centralSnapshot.nodes[0].components.inferenced, {
+    state: "observed",
+    source_endpoint: "https://node0.gonka-dev.net/v1/versions",
+    observed_at: centralSnapshot.nodes[0].components.inferenced.observed_at,
+    application_name: "inference-chain",
+    version: "v1",
+    commit: "b",
+    go_version: null,
+  }, "blocked node_info must fall back to that peer's own version response");
+  assert.equal(centralSnapshot.nodes[0].components.chain_rpc.source_endpoint,
+    "https://node0.gonka-dev.net/chain-rpc/status");
+  assert.equal(centralSnapshot.nodes[0].components.peers.source_endpoint,
+    "https://node0.gonka-dev.net/chain-rpc/net_info");
+  assert.deepEqual(centralSnapshot.chain.validators, snapshot.chain.validators,
+    "validator identity and power must continue to come from per-node RPC");
+  const centralRequests = (await readFile(path.join(state, "curl.log"), "utf8")).slice(centralLogOffset);
+  assert.match(centralRequests, /https:\/\/api\.fixture\.test\/chain-rpc\/status/,
+    "the central API chain must be validated before its data is used");
+  assert.match(centralRequests, /https:\/\/api\.fixture\.test\/chain-api\/productscience\/inference\/inference\/epoch_info/);
+  assert.match(centralRequests, /https:\/\/api\.fixture\.test\/chain-rpc\/block\?height=22/,
+    "block interval sampling must use the configured central RPC origin");
+  assert.match(centralRequests, /https:\/\/node0\.gonka-dev\.net\/chain-rpc\/validators\?height=42/,
+    "per-node validator snapshots must stay on the peer RPC origin");
+  assert.match(centralRequests, /https:\/\/node0\.gonka-dev\.net\/chain-api\/cosmos\/base\/tendermint\/v1beta1\/node_info/,
+    "node identity/version APIs must not be redirected to the central host");
+  const mismatchLogOffset = (await readFile(path.join(state, "curl.log"), "utf8")).length;
+  const mismatch = await invoke("--collect", false, "", false, false, "", {
+    chainApiOrigin: "https://api.fixture.test",
+    apiChainId: "other-chain",
+  });
+  assert.notEqual(mismatch.code, 0, "a central chain ID mismatch must reject collection");
+  const mismatchRequests = (await readFile(path.join(state, "curl.log"), "utf8")).slice(mismatchLogOffset);
+  assert.match(mismatchRequests, /https:\/\/api\.fixture\.test\/chain-rpc\/status/);
+  assert.doesNotMatch(mismatchRequests, /\/chain-api\/|\/chain-rpc\/block/,
+    "no global chain data may be accepted after a chain ID mismatch");
   assert.deepEqual(snapshot.nodes[0].geo, {
     latitude: 48.15,
     longitude: 17.11,
