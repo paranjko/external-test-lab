@@ -65,16 +65,27 @@ if "$ROOT/../ops/preview/render-status-backend.sh" "$tmp/unsafe.Caddyfile" "$tmp
   exit 1
 fi
 
+export GDC_PREVIEW_NUMBER=172 GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev.net
+# shellcheck disable=SC1091 # ROOT is resolved above.
 source "$ROOT/../ops/preview/preview-curl.sh"
-[[ "$(preview_curl_target https://gonka-dev.net/chain-1/bootstrap.json)" == '/observer/bootstrap/chain-1/bootstrap.json' ]]
+[[ "$(preview_curl_target https://gonka-dev.net/gonka-devnet-community/bootstrap.json)" == '/gonka-api/gonka-devnet-community/bootstrap.json' ]]
+[[ "$(preview_curl_target https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_info)" == '/gonka-api/chain-api/productscience/inference/inference/epoch_info' ]]
+[[ "$(preview_curl_target https://api.gonka-dev.net/chain-rpc/block?height=42)" == '/gonka-api/chain-rpc/block?height=42' ]]
+[[ "$(preview_curl_target https://node4.gonka-dev.net/chain-rpc/status)" == '/preview/172/node/node4/chain-rpc/status' ]]
+[[ "$(preview_curl_target https://node4.gonka-dev.net/chain-rpc/validators?height=42\&page=1\&per_page=100)" == '/preview/172/node/node4/chain-rpc/validators?height=42&page=1&per_page=100' ]]
 [[ "$(preview_curl_target https://node4.gonka-dev.net/chain-api/cosmos/base/tendermint/v1beta1/node_info)" == '/observer/node/node4/chain-api/cosmos/base/tendermint/v1beta1/node_info' ]]
-[[ "$(preview_curl_target https://node4.gonka-dev.net/chain-rpc/validators?height=42\&page=1\&per_page=100)" == '/observer/node/node4/chain-rpc/validators?height=42&page=1&per_page=100' ]]
+[[ "$(preview_curl_target https://node4.gonka-dev.net/devshard/stats/shards)" == '/observer/node/node4/devshard/stats/shards' ]]
 [[ "$(preview_curl_target https://ipwho.is/204.12.223.90)" == '/observer/geo/204.12.223.90' ]]
 [[ "$(preview_curl_target https://ipwho.is/192.2.0.1)" == '/observer/geo/192.2.0.1' ]]
 for url in \
   'https://example.org/' \
   'https://node4.gonka-dev.net:443/chain-rpc/status' \
   'https://node4.gonka-dev.net/chain-rpc/status?extra=1;curl=evil' \
+  'https://node4.gonka-dev.net/chain-rpc/block?height=42' \
+  'https://node4.gonka-dev.net/devshard/stats/shards?extra=1' \
+  'https://api.gonka-dev.net/chain-api/arbitrary/path' \
+  'https://api.gonka-dev.net/chain-rpc/block?height=42&extra=1' \
+  'https://evil.example/chain-api/productscience/inference/inference/epoch_info' \
   'http://127.0.0.1/chain-rpc/status' \
   'https://ipwho.is/127.0.0.1' \
   'https://ipwho.is/100.64.0.1' \
@@ -86,6 +97,14 @@ for url in \
     exit 1
   fi
 done
+if GDC_NETWORK_CHAIN_API_ORIGIN=https://evil.example preview_curl_target https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_info >/dev/null; then
+  echo 'preview curl shim ignored the source-bound chain API origin' >&2
+  exit 1
+fi
+if GDC_PREVIEW_NUMBER=invalid preview_curl_target https://node4.gonka-dev.net/chain-rpc/status >/dev/null; then
+  echo 'preview curl shim accepted an invalid preview number' >&2
+  exit 1
+fi
 if main -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 --output /tmp/out https://node4.gonka-dev.net/chain-rpc/status; then
   echo 'preview curl shim accepted unexpected curl options' >&2
   exit 1
@@ -118,6 +137,9 @@ cleanup() {
 }
 trap cleanup EXIT
 "$ROOT/../ops/preview/build-status-backend-image.sh" "$ROOT/.." "$inventory" "$revision" 172 "$tmp/build" "$image"
+grep -Fxq 'GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev.net' "$tmp/build/context/network-observer.env"
+grep -Fxq 'GDC_PREVIEW_NUMBER=172' "$tmp/build/context/network-observer.env"
+jq -e --arg digest "$(sha256sum "$tmp/build/context/network-observer.env" | awk '{print $1}')" '.network_observer_env_sha256 == $digest' "$tmp/build/backend-build.json" >/dev/null
 jq -e --arg revision "$revision" '
   .schema_version == 1 and .source_revision == $revision and .preview_number == 172 and
   (.source_digest | test("^[0-9a-f]{64}$")) and
@@ -152,6 +174,9 @@ cat >"$tmp/egress.Caddyfile" <<'EOF'
 }
 :8080 {
 	respond /network "network status" 200
+  handle_path /gonka-api/* {
+    respond "{http.request.uri}" 200
+  }
   respond /preview/172/node/node4/chain-rpc/status "node status" 200
   respond "not found" 404
 }
@@ -160,6 +185,17 @@ docker network create --internal "$network" >/dev/null
 docker run -d --rm --name "$egress" --network "$network" --network-alias gdc-preview-egress \
   -v "$tmp/egress.Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine \
   caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+# Exercise the real source-bound curl wrapper through the existing trusted
+# /gonka-api prefix-and-strip contract, without connecting to a public origin.
+api_response="$(docker run --rm --network "$network" \
+  -e GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev.net -e GDC_PREVIEW_NUMBER=172 \
+  --entrypoint /usr/local/bin/curl "$image" \
+  -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 \
+  https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_info)"
+[[ "$api_response" == '/chain-api/productscience/inference/inference/epoch_info' ]] || {
+  printf 'trusted /gonka-api fixture returned unexpected path: %s\n' "$api_response" >&2
+  exit 1
+}
 cat >"$tmp/preview-proxy.Caddyfile" <<EOF
 {
   admin off

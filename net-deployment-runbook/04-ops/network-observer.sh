@@ -18,6 +18,8 @@ BOOTSTRAP_URL="${GDC_NETWORK_BOOTSTRAP_URL:-https://gonka-dev.net/gonka-devnet-c
 CHAIN_ID="${GDC_NETWORK_CHAIN_ID:-gonka-devnet-community}"
 DEFAULT_CHAIN_ID="${GDC_NETWORK_DEFAULT_CHAIN_ID:-$CHAIN_ID}"
 BOOTSTRAP_ORIGIN="${GDC_NETWORK_BOOTSTRAP_ORIGIN:-https://gonka-dev.net}"
+CHAIN_API_ORIGIN="${GDC_NETWORK_CHAIN_API_ORIGIN:-}"
+CHAIN_API_ORIGIN="${CHAIN_API_ORIGIN%/}"
 
 die() { printf '%s\n' "$*" >&2; exit 1; }
 timestamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -60,6 +62,47 @@ node_name() {
 
 http_json() {
   curl -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 "$1"
+}
+
+validate_chain_api_origin() {
+  local port
+  [[ -n "$CHAIN_API_ORIGIN" ]] || return 0
+  if [[ ! "$CHAIN_API_ORIGIN" =~ ^https://[A-Za-z0-9][A-Za-z0-9.-]{0,253}(:([1-9][0-9]{0,4}))?$ ]]; then
+    die 'invalid_chain_api_origin'
+  fi
+  port="${BASH_REMATCH[3]:-}"
+  [[ -z "$port" || "$port" -le 65535 ]] || die 'invalid_chain_api_origin'
+}
+
+validate_chain_api_network() {
+  local status
+  [[ -n "$CHAIN_API_ORIGIN" ]] || return 0
+  status="$(http_json "$CHAIN_API_ORIGIN/chain-rpc/status" 2>/dev/null)" || {
+    printf 'central_chain_api_unavailable\n' >&2
+    return 1
+  }
+  jq -e --arg chain_id "$CHAIN_ID" '.result.node_info.network == $chain_id' <<<"$status" >/dev/null 2>&1 || {
+    printf 'central_chain_api_chain_id_mismatch\n' >&2
+    return 1
+  }
+}
+
+chain_api_base() {
+  local dapi_url="$1"
+  if [[ -n "$CHAIN_API_ORIGIN" ]]; then
+    printf '%s/chain-api/productscience/inference/inference\n' "$CHAIN_API_ORIGIN"
+  else
+    printf '%s/chain-api/productscience/inference/inference\n' "${dapi_url%/}"
+  fi
+}
+
+chain_rpc_origin() {
+  local dapi_url="$1"
+  if [[ -n "$CHAIN_API_ORIGIN" ]]; then
+    printf '%s\n' "$CHAIN_API_ORIGIN"
+  else
+    printf '%s\n' "${dapi_url%/}"
+  fi
 }
 
 ipv4_from_url() {
@@ -189,6 +232,19 @@ component() {
       endpoint="${dapi_url%/}/chain-api/cosmos/base/tendermint/v1beta1/node_info"
       if ! response="$(http_json "$endpoint" 2>&1)"; then
         error="$(network_error "$response")"
+        local versions_endpoint versions_response
+        versions_endpoint="${dapi_url%/}/v1/versions"
+        if versions_response="$(http_json "$versions_endpoint" 2>/dev/null)" &&
+          value="$(jq -cer '
+            .node_version | {
+              application_name:(.application_name // .name // .app_name),version,
+              commit:(.commit // .git_commit),go_version:(.go_version // null)
+            } | select((.application_name|type)=="string" and (.version|type)=="string" and (.commit|type)=="string")
+          ' <<<"$versions_response" 2>/dev/null)"; then
+          jq -cn --arg endpoint "$versions_endpoint" --arg observed_at "$observed_at" --argjson value "$value" \
+            '{state:"observed",source_endpoint:$endpoint,observed_at:$observed_at}+ $value'
+          return
+        fi
       elif ! value="$(jq -cer '
         .application_version | {application_name:(.name // .app_name),version,commit:.git_commit,go_version:(.go_version // null)} |
         select((.application_name|type)=="string" and (.version|type)=="string" and (.commit|type)=="string")
@@ -250,7 +306,7 @@ component() {
       fi
       ;;
     models)
-      endpoint="${dapi_url%/}/chain-api/productscience/inference/inference/models_all"
+      endpoint="$(chain_api_base "$dapi_url")/models_all"
       if ! response="$(http_json "$endpoint" 2>&1)"; then
         error="$(network_error "$response")"
       elif ! value="$(jq -cer '
@@ -484,7 +540,7 @@ collect_finalized_epoch() {
 # browser never needs a second, differently privileged data path for a
 # selected bootstrap network.
 collect_chain_state() {
-  local nodes="$1" reference dapi_url node_id height observed_at api status validators participants approvals epoch stage commits votes cpoc_active cpoc_stage cpoc_commits cpoc_votes cpoc hardware_dir hardware latest_block_time sample_height sampled_block block_interval epoch_index history_dir recent_events history_epoch offset history_response finalized_epoch
+  local nodes="$1" reference dapi_url node_id height observed_at api api_origin rpc_origin status validators participants approvals epoch stage commits votes cpoc_active cpoc_stage cpoc_commits cpoc_votes cpoc hardware_dir hardware latest_block_time sample_height sampled_block block_interval epoch_index history_dir recent_events history_epoch offset history_response finalized_epoch
   local -a history_files
   observed_at="$(timestamp)"
   reference="$(jq -cer --arg chain "$CHAIN_ID" '
@@ -504,7 +560,9 @@ collect_chain_state() {
   dapi_url="$(jq -r '.dapi_url' <<<"$reference")"
   node_id="$(jq -r '.components.chain_rpc.p2p_node_id' <<<"$reference")"
   height="$(jq -r '.components.chain_rpc.latest_block_height' <<<"$reference")"
-  api="${dapi_url%/}/chain-api/productscience/inference/inference"
+  api="$(chain_api_base "$dapi_url")"
+  api_origin="${CHAIN_API_ORIGIN:-${dapi_url%/}}"
+  rpc_origin="$(chain_rpc_origin "$dapi_url")"
 
   if ! status="$(http_json "${dapi_url%/}/chain-rpc/status" 2>&1)" ||
     ! jq -e --arg node_id "$node_id" --arg chain "$CHAIN_ID" --argjson height "$height" '
@@ -521,10 +579,11 @@ collect_chain_state() {
   block_interval='null'
   sample_height=$((height - 20))
   if (( sample_height > 0 )) && [[ -n "$latest_block_time" ]]; then
-    sampled_block="$(http_json "${dapi_url%/}/chain-rpc/block?height=${sample_height}" 2>/dev/null || true)"
-    block_interval="$(jq -cer --arg latest_block_time "$latest_block_time" --argjson height "$height" --argjson sample_height "$sample_height" '
+    sampled_block="$(http_json "${rpc_origin}/chain-rpc/block?height=${sample_height}" 2>/dev/null || true)"
+    block_interval="$(jq -cer --arg latest_block_time "$latest_block_time" --arg chain "$CHAIN_ID" --argjson height "$height" --argjson sample_height "$sample_height" '
       def unix_time: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?;
       ($latest_block_time | unix_time) as $latest |
+      select(.result.block.header.chain_id == $chain) |
       (.result.block.header.height | tonumber?) as $observed_height |
       (.result.block.header.time | unix_time) as $observed_time |
       select($observed_height == $sample_height and $latest > $observed_time and $height > $sample_height) |
@@ -678,10 +737,11 @@ collect_chain_state() {
   if [[ "$epoch_index" =~ ^[1-9][0-9]*$ ]]; then
     finalized_epoch="$(collect_finalized_epoch "$api" "$dapi_url" "$height" "$epoch_index" "$participants" 2>/dev/null || printf '%s' '{"state":"unavailable","error":"finalized_epoch_collection_failed"}')"
   fi
-  jq -cn --arg endpoint "$dapi_url" --arg observed_at "$observed_at" --arg node_id "$node_id" --argjson height "$height" \
+  jq -cn --arg endpoint "$dapi_url" --arg api_endpoint "$api_origin" --arg observed_at "$observed_at" --arg node_id "$node_id" --argjson height "$height" \
     --argjson validators "$validators" --argjson participants "$participants" --argjson approvals "$approvals" \
     --argjson hardware "$hardware" --argjson epoch "${epoch:-null}" --argjson commits "$commits" --argjson votes "$votes" --argjson cpoc "$cpoc" --argjson finalized_epoch "$finalized_epoch" \
     '{state:"observed",source_endpoint:$endpoint,observed_at:$observed_at,
+      api_source_endpoint:$api_endpoint,
       reference:{node_id:$node_id,height:$height},validators:$validators,participants:$participants,
       hardware_nodes:$hardware,approved_devshards:$approvals,
       activity:{epoch:$epoch,commits:$commits,votes:$votes,cpoc:$cpoc,finalized_epoch:$finalized_epoch}}'
@@ -735,6 +795,8 @@ collect_nodes() {
 
 collect() {
   local nodes dir geo_dir index node output observed_at geo_count=0 chain
+  validate_chain_api_origin
+  if ! validate_chain_api_network; then return 1; fi
   nodes="$(collect_nodes)" || return 1
   jq -e 'type == "array" and length > 0' <<<"$nodes" >/dev/null || return 1
   dir="$(mktemp -d)"
@@ -742,6 +804,10 @@ collect() {
   while IFS= read -r node; do
     enrich_node "$node" >"$dir/$index.json" &
     index=$((index + 1))
+    # Preview containers are constrained by a 128-task PID limit. Each node
+    # fans out several independent probes, so keep node-level concurrency to
+    # two while retaining that per-node parallelism.
+    if (( index % 2 == 0 )); then wait; fi
   done < <(jq -c '.[]' <<<"$nodes")
   wait
   output="$(jq -sc '
@@ -811,7 +877,7 @@ refresh_requested() {
     [[ "$chain_id" == "$CHAIN_ID" ]] && continue
     count=$((count + 1))
     (( count <= 8 )) || break
-    GDC_NETWORK_DEFAULT_CHAIN_ID="$DEFAULT_CHAIN_ID" GDC_NETWORK_CHAIN_ID="$chain_id" GDC_NETWORK_BOOTSTRAP_URL="$(bootstrap_url_for "$chain_id")" /usr/bin/bash "$0" --refresh || status=1
+    GDC_NETWORK_DEFAULT_CHAIN_ID="$DEFAULT_CHAIN_ID" GDC_NETWORK_CHAIN_ID="$chain_id" GDC_NETWORK_BOOTSTRAP_URL="$(bootstrap_url_for "$chain_id")" "$BASH" "$0" --refresh || status=1
   done
   return "$status"
 }

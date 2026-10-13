@@ -170,6 +170,7 @@ const server = createServer(async (request, response) => {
       Date.now() - (versionScenario === "stale" ? 600_000 : 1000),
     ).toISOString();
     jsonResponse(response, 200, {
+      schema_version: 1,
       chain_id: observedChainId,
       chain: observedChainId === "gonka-testnet-devshards" ? {
         state: "observed",

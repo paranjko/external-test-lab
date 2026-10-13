@@ -364,6 +364,24 @@ function configureNetwork(): void {
   if (networkHeading) networkHeading.textContent = "Participant status";
 }
 
+function renderNetworkObservationStatus(status: "pending" | "unavailable" | "invalid"): void {
+  const source = $("network-source");
+  const updated = $("updated");
+  if (status === "pending") {
+    if (source) source.textContent = "NETWORK OBSERVATION PENDING";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Waiting for a fresh network observation";
+  } else if (status === "invalid") {
+    if (source) source.textContent = "NETWORK OBSERVATION INVALID";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Network observer returned an invalid snapshot";
+  } else {
+    if (source) source.textContent = "NETWORK OBSERVATION UNAVAILABLE";
+    updated.removeAttribute("datetime");
+    updated.textContent = "Network observer unavailable";
+  }
+}
+
 const statusUrl = (path: string): string => {
   const url = `${statusBase}${path}`;
   return cfg.publicBootstrap === true && path === "/network"
@@ -2147,15 +2165,32 @@ function applyPublicChainState(chain: any): void {
   renderDevShardExecution(approvals, observedNodes);
 }
 
-async function reconcileNetwork(): Promise<number> {
+async function reconcileNetwork(): Promise<{status: "observed" | "pending", height: number}> {
   const snapshotAge = Date.now() - Date.parse(String(networkSnapshot?.observed_at || ""));
-  const state = networkSnapshot && snapshotAge >= 0 && snapshotAge <= 90000
-    ? networkSnapshot : await json(statusUrl("/network"));
+  let state: any;
+  try {
+    state = networkSnapshot && snapshotAge >= 0 && snapshotAge <= 90000
+      ? networkSnapshot : await json(statusUrl("/network"));
+  } catch (error) {
+    if (String(error?.name || "") === "SyntaxError")
+      throw new Error("network observation is malformed");
+    throw error;
+  }
   if (state?.state === "observation_pending" && state?.chain_id === cfg.chainId)
-    return 0;
+    return {status: "pending", height: 0};
   const nodes = Array.isArray(state?.nodes) ? state.nodes : [];
-  if (!Array.isArray(state?.nodes) || state?.chain_id !== cfg.chainId)
+  if (state?.schema_version !== 1 || !Array.isArray(state?.nodes) || state?.chain_id !== cfg.chainId)
     throw new Error("network observation is malformed");
+  if (!nodes.length) {
+    const chain = state?.chain;
+    const observedAt = Date.parse(String(chain?.observed_at || ""));
+    const age = Date.now() - observedAt;
+    const reference = chain?.reference || {};
+    if (chain?.state !== "observed" || !Number.isFinite(age) || age < 0 || age > 90000 ||
+      !/^[0-9a-f]{40}$/i.test(String(reference.node_id || "")) ||
+      !Number.isSafeInteger(Number(reference.height)) || Number(reference.height) <= 0)
+      throw new Error("network observation is malformed");
+  }
   observerSnapshotMode = cfg.publicBootstrap === true || state.chain !== undefined;
   const source = $("network-source");
   if (source) source.textContent = observerSnapshotMode ? "LIVE NETWORK" : "NETWORK OBSERVER UPDATE REQUIRED";
@@ -2219,7 +2254,10 @@ async function reconcileNetwork(): Promise<number> {
     }).catch(() => {});
   }
   layoutHostCards();
-  return Math.max(0, ...nodes.map((node) => Number(node?.components?.chain_rpc?.latest_block_height) || 0));
+  return {
+    status: "observed",
+    height: Math.max(0, ...nodes.map((node) => Number(node?.components?.chain_rpc?.latest_block_height) || 0)),
+  };
 }
 
 let validatorMapController: ?ValidatorMapController;
@@ -3286,9 +3324,18 @@ async function refreshNetwork(): Promise<void> {
     const card = cards.get(nodeKey(node));
     if (card) renderHostState(card, node);
   }
+  let reconciliation: {status: "observed" | "pending", height: number};
   try {
-    best = await reconcileNetwork();
-  } catch {}
+    reconciliation = await reconcileNetwork();
+  } catch (error) {
+    renderNetworkObservationStatus(String(error?.message || error).includes("malformed") ? "invalid" : "unavailable");
+    return;
+  }
+  if (reconciliation.status === "pending") {
+    renderNetworkObservationStatus("pending");
+    return;
+  }
+  best = reconciliation.height;
   if (cfg.publicBootstrap !== true) refreshTelegramConsumer();
   if (!observerSnapshotMode) {
     refreshGpuInventory().catch(() => {});

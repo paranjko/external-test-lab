@@ -52,10 +52,17 @@ if ! docker run --rm --network none --read-only --user "$(id -u):$(id -g)" --cap
   die 'disposable status renderer failed'
 fi
 [[ -s "$output/rendered/network-observer.env" ]] || die 'status renderer lacks the network observer configuration'
+if grep -Eq '^(GDC_NETWORK_CHAIN_API_ORIGIN|GDC_PREVIEW_NUMBER)=' "$output/rendered/network-observer.env"; then
+  die 'status renderer must not set preview-specific observer transport configuration'
+fi
 "$compiler" "$output/rendered/Caddyfile" "$output/rendered/config.js" "$preview_number" "$output/context/Caddyfile"
 install -m 0644 "$observer_http" "$output/context/network-observer-http.py"
 install -m 0644 "$observer" "$output/context/network-observer.sh"
-install -m 0644 "$output/rendered/network-observer.env" "$output/context/network-observer.env"
+{
+  cat "$output/rendered/network-observer.env"
+  printf 'GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev.net\nGDC_PREVIEW_NUMBER=%s\n' "$preview_number"
+} >"$output/context/network-observer.env"
+chmod 0644 "$output/context/network-observer.env"
 install -m 0755 "$root/ops/preview/network-observer-runtime.py" "$output/context/network-observer-runtime.py"
 install -m 0755 "$root/ops/preview/preview-curl.sh" "$output/context/preview-curl.sh"
 install -m 0755 "$root/ops/preview/start-status-backend.sh" "$output/context/start-status-backend.sh"
