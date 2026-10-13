@@ -8,6 +8,15 @@ EOF
 "$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
 {"mode":"gateway","capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":1}}},"devshards":[{"active":true,"runtime":{"phase":"active","requests_blocked":false}}]}
 EOF
+"$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
+{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"","requests_blocked":false}
+EOF
+"$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
+{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"CONFIRMATION_POC_COMPLETED","requests_blocked":false}
+EOF
+"$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
+{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"","requests_blocked":false,"height_seed":{"state":"ok","seeded":2,"slots":3}}
+EOF
 if "$ROOT/04-ops/gateway-status-routable.sh" <<'EOF'
 {"mode":"gateway","capacity":{"models":{"Qwen/Qwen3-0.6B":{"current_weight":0}}},"devshards":[{"active":true,"runtime":{"phase":"active","requests_blocked":false}}]}
 EOF
@@ -26,6 +35,23 @@ EOF
 then
   echo 'non-Inference lifecycle was routable' >&2; exit 1
 fi
+for status in \
+  '{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"CONFIRMATION_POC_GRACE_PERIOD","requests_blocked":false}' \
+  '{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"CONFIRMATION_POC_GENERATION","requests_blocked":false}' \
+  '{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"CONFIRMATION_POC_VALIDATION","requests_blocked":false}' \
+  '{"escrow_id":"7","phase":"active","chain_phase":"PoCGenerate","confirmation_poc_phase":"","requests_blocked":false}' \
+  '{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"","requests_blocked":true}' \
+  '{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"","requests_blocked":false,"height_seed":{"state":"catalog_pending","seeded":0,"slots":0}}' \
+  '{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"","requests_blocked":false,"height_seed":{"state":"pending","seeded":1,"slots":3}}' \
+  '{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"","requests_blocked":false,"height_seed":{"state":"missed","seeded":1,"slots":3}}' \
+  '{"escrow_id":"7","phase":"active","chain_phase":"Inference","confirmation_poc_phase":"","requests_blocked":false,"height_seed":{}}' \
+  '{"phase":"active","chain_phase":"Inference","confirmation_poc_phase":"","requests_blocked":false}'
+do
+  if printf '%s\n' "$status" | "$ROOT/04-ops/gateway-status-routable.sh"; then
+    echo "unroutable single-session v5 status was accepted: $status" >&2
+    exit 1
+  fi
+done
 tmp="$(mktemp -d)"
 server_pid=''
 trap '[[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true; rm -rf "$tmp"' EXIT
@@ -76,6 +102,15 @@ GDC_GATEWAY_HEALTH_URL="http://127.0.0.1:$port" \
   "$ROOT/04-ops/gateway-health-probe.sh"
 jq -e '.state == "READY" and .readiness == "TRAFFIC_READY" and .http_status == 200 and .reason == "completion_succeeded" and (.latency_ms >= 0) and .admission == "dispatched_once" and .admission_id == "0123456789abcdef0123456789abcdef" and .arrival_height == 100 and .permit_height == 101 and .dispatch_height == 101 and .response_height == 102 and (.safe_generation | test("^sha256:[a-f0-9]{64}$"))' "$tmp/ready.json" >/dev/null
 grep -Fxq 'gdc_gateway_readiness_state{state="TRAFFIC_READY"} 1' "$tmp/ready.prom"
+python3 - "$tmp/ready.json" <<'PY'
+import json
+import sys
+import time
+with open(sys.argv[1]) as source:
+    receipt = json.load(source)
+assert 0 <= time.time_ns() // 1000000 - receipt["completion_finished_ms"] < 30000
+assert 0 <= receipt["latency_ms"] < 30000
+PY
 
 : >"$tmp/unordered-heights"
 GDC_GATEWAY_ENV="$tmp/gateway.env" GDC_GATEWAY_HEALTH_FILE="$tmp/unordered.json" GDC_GATEWAY_RESERVE_FILE="$tmp/reserve.json" GDC_GATEWAY_HEALTH_URL="http://127.0.0.1:$port" "$ROOT/04-ops/gateway-health-probe.sh"

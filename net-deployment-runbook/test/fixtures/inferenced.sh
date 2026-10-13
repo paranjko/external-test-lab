@@ -6,7 +6,7 @@ set -Eeuo pipefail
 [[ "$1" == keys ]] || { echo "unexpected command: $*" >&2; exit 2; }
 action="$2"
 name="$3"
-state_dir="${GDC_OPERATOR_HOME:-$GDC_HOME/stub-keyring}"
+state_dir="${INFERENCED_HOME:-$GDC_HOME/stub-keyring}"
 marker="$state_dir/$name"
 address='gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
 pubkey='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'

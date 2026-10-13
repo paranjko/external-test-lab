@@ -215,4 +215,38 @@ grep -Fq "printf 'request_timeout_seconds=%s\\n'" "$ROOT/scripts/phase-gateway-c
 grep -Fq "printf 'post_success_target=%s\\n'" "$ROOT/scripts/phase-gateway-continuity.sh"
 grep -Fq 'use_operator_inventory' "$ROOT/gdc.sh"
 
+# The snapshot calls prom_query inside loops over lists. An ssh that reads stdin
+# would end each loop after its first line.
+# shellcheck source=/dev/null
+source <(sed -n '/^prom_query()/,/^}/p;/^expression_has_data()/,/^}/p' "$ROOT/scripts/capture-gateway-observability.sh")
+cat >"$WORK/ssh" <<'SSH'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '{"status":"success","data":{"result":[]}}\n'
+SSH
+chmod +x "$WORK/ssh"
+queried=0
+while IFS= read -r _; do
+  (export PATH="$WORK:$PATH" GATEWAY_NODE=gdc-node4; prom_query up) >/dev/null
+  queried=$((queried + 1))
+done <<'EXPRESSIONS'
+up
+max(up)
+sum(up)
+EXPRESSIONS
+[[ "$queried" == 3 ]] || { echo "snapshot prom_query consumed its loop input: $queried of 3 queried" >&2; exit 1; }
+
+# The snapshot counts an answer as data the way the deploy gate does.
+if expression_has_data <<<'{"status":"success","data":{"result":[{"metric":{},"value":[1,"NaN"]}]}}'; then
+  echo 'the snapshot counted an all-NaN answer as data' >&2; exit 1
+fi
+if expression_has_data <<<'{"status":"success","data":{"result":[{"metric":{},"values":[[1,"NaN"],[2,"NaN"]]}]}}'; then
+  echo 'the snapshot counted an all-NaN range as data' >&2; exit 1
+fi
+if expression_has_data <<<'{"status":"success","data":{"result":[]}}'; then
+  echo 'the snapshot counted an empty answer as data' >&2; exit 1
+fi
+expression_has_data <<<'{"status":"success","data":{"result":[{"metric":{},"value":[1,"NaN"]},{"metric":{"a":"b"},"value":[1,"0"]}]}}' \
+  || { echo 'the snapshot rejected an answer with a finite value' >&2; exit 1; }
+
 printf 'PASS gateway continuity verdict contract\n'

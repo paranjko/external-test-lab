@@ -172,7 +172,7 @@ scp -q "$GENERATED/edge/$NODE.env" "$NODE:$REMOTE/edge.env"
 scp -q "$GENERATED/agents/$NODE.env" "$NODE:$REMOTE/agent.env"
 scp -q "$GENESIS/genesis.json" "$NODE:$REMOTE/genesis.json"
 edge_install_args="--node-name '$NODE'"
-edge_start_path="/srv/dai/deploy/$NODE/edge"
+edge_start_path=/srv/dai/deploy/edge
 if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
   edge_install_args=''
   edge_start_path=/srv/dai/edge
@@ -181,8 +181,8 @@ ssh -T "$NODE" "sudo '$REMOTE/02-node/install-node.sh' --node-name '$NODE' --env
 
 step 'Start the Genesis participant'
 start_stack "$NODE" "$edge_start_path"
-start_stack "$NODE" "/srv/dai/deploy/$NODE/monitoring-agent"
-ssh "$NODE" "cd /srv/dai/deploy/$NODE && ./start-node.sh"
+start_stack "$NODE" /srv/dai/deploy/monitoring-agent
+ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh"
 
 step 'Activate Genesis ML operations'
 "$ROOT/03-join/wait-synced.sh" "https://$GENESIS_PUBLIC_HOST/chain-rpc" "https://$GENESIS_PUBLIC_HOST/chain-rpc"

@@ -20,8 +20,6 @@ while (($#)); do case "$1" in
   *) usage; exit 2 ;;
 esac; done
 [[ "$NODE" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { usage; exit 2; }
-[[ -z "$DATA_DIR_OVERRIDE" || "$DATA_DIR_OVERRIDE" =~ ^/srv/dai/data/${NODE}\.generations/[A-Za-z0-9._-]+$ ]] \
-  || { echo 'state-sync data directory must be the named Host generation under /srv/dai/data' >&2; exit 2; }
 [[ "$POC_CALLBACK_URL" =~ ^http://([0-9]{1,3}\.){3}[0-9]{1,3}:9100$|^http://api:9100$ ]] || { echo 'PoC callback URL must be http://api:9100 or an IPv4 address on port 9100' >&2; exit 2; }
 [[ "$ML_CALLBACK_BIND" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo 'ML callback bind must be an IPv4 address' >&2; exit 2; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,6 +33,8 @@ if [[ -n "$JOIN_PROFILE" ]]; then
 else
   load_profiles
 fi
+[[ -z "$DATA_DIR_OVERRIDE" || "$DATA_DIR_OVERRIDE" =~ ^/srv/dai/data\.generations/[A-Za-z0-9._-]+$ ]] \
+  || { echo 'state-sync data directory must be a run generation under /srv/dai/data.generations' >&2; exit 2; }
 topology_contains_node "$NODE" || { echo "node is not configured in inventory: $NODE" >&2; exit 2; }
 PUBLIC_HOST="$(node_public_host "$NODE")"
 P2P_PORT="$(node_p2p_port "$NODE")"
@@ -104,13 +104,19 @@ profile_vars=("GDC_PROFILE_KIND=generated_join" "GDC_JOIN_PROFILE_SHA256=${GDC_J
 if [[ -z "$JOIN_PROFILE" ]]; then
   profile_vars=("GDC_PROFILE_KIND=release" "GDC_RELEASE_PROFILE=$GDC_RELEASE_PROFILE" "GDC_PROFILE_HASH=$(profile_hash)")
 fi
+registration_endpoints="${GDC_JOIN_REGISTRATION_ENDPOINTS:-https://$GENESIS_PUBLIC_HOST}"
+[[ "$registration_endpoints" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?(,https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?)*$ ]] \
+  || { echo 'JOIN environment has invalid participant registration endpoints' >&2; exit 1; }
+registration_seed_api="${registration_endpoints%%,*}"
 write_env "$OUTPUT" \
   "COMPOSE_PROJECT_NAME=$NODE" "COMPOSE_PROFILES=$EDGE_API_COMPOSE_PROFILE" "NODE_NAME=$NODE" "CHAIN_ID=$CHAIN_ID" "BASE_DENOM=$BASE_DENOM" \
   "${profile_vars[@]}" "GONKA_COMMIT=$GONKA_COMMIT" \
+  "GDC_BOOTSTRAP_SOFTWARE=${GDC_BOOTSTRAP_SOFTWARE:-false}" \
+  "PROXY_POLICY_IMAGE=${PROXY_POLICY_IMAGE:-}" "VERSIOND_ROUTER_IMAGE=${VERSIOND_ROUTER_IMAGE:-}" "BRIDGE_IMAGE=${BRIDGE_IMAGE:-}" \
   "PUBLIC_HOST=$PUBLIC_HOST" "PUBLIC_URL=https://$PUBLIC_HOST" "P2P_PORT=$P2P_PORT" \
   "GDC_STOP_POC_AT_WINDDOWN=${GDC_STOP_POC_AT_WINDDOWN:-true}" \
   "P2P_EXTERNAL_ADDRESS=tcp://$PUBLIC_HOST:$P2P_PORT" "LOCAL_PROXY_PORT=8000" \
-  "DATA_DIR=${DATA_DIR_OVERRIDE:-${DATA_ROOT%/}/$NODE}" "IDENTITY_DIR=/srv/dai/identity/$NODE" "SIGNER_DIR=/srv/dai/signer/$NODE" "HF_HOME=$HF_CACHE_ROOT" "GENESIS_FILE=$GENESIS_INSTALL_PATH" \
+  "DATA_DIR=${DATA_DIR_OVERRIDE:-${DATA_ROOT%/}}" "IDENTITY_DIR=/srv/dai/identity" "SIGNER_DIR=/srv/dai/signer" "HF_HOME=$HF_CACHE_ROOT" "GENESIS_FILE=$GENESIS_INSTALL_PATH" \
   "PROXY_BIND_ADDRESS=$proxy_bind_address" \
   "NODE_CONFIG_FILE=./node-config.json" "ACCOUNT_ADDRESS=$ADDRESS" "ACCOUNT_PUBKEY=$PUBKEY" "CONSENSUS_PUBKEY=$CONSENSUS_PUBKEY" \
   "KEY_NAME=$NODE-warm" "KEYRING_PASSWORD=$KEYRING_PASSWORD" "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
@@ -121,13 +127,18 @@ write_env "$OUTPUT" \
   "GDC_JOIN_TRUST_HEIGHT=${GDC_JOIN_TRUST_HEIGHT:-0}" "GDC_JOIN_TRUST_HASH=${GDC_JOIN_TRUST_HASH:-}" \
   "GDC_JOIN_SNAPSHOT_PEERS=$snapshot_peers" "GDC_JOIN_PERSISTENT_PEERS=$persistent_peers" \
   "GDC_JOIN_PEX=$join_pex" "GDC_JOIN_SEEDS=$join_seeds" \
+  "GDC_JOIN_REGISTRATION_ENDPOINTS=$registration_endpoints" \
   "TRUSTED_BLOCK_PERIOD=${GDC_JOIN_TRUSTED_BLOCK_PERIOD:-2000}" \
-  "SEED_API_URL=https://$GENESIS_PUBLIC_HOST" "SEED_NODE_RPC_URL=${GDC_JOIN_RPC_SERVER_1:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}" \
+  "SEED_API_URL=$registration_seed_api" "SEED_NODE_RPC_URL=${GDC_JOIN_RPC_SERVER_1:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}" \
   "SEED_NODE_P2P_URL=tcp://$GENESIS_PUBLIC_HOST:$GENESIS_P2P_PORT" \
   "RPC_SERVER_URL_1=${GDC_JOIN_RPC_SERVER_1:-https://$GENESIS_PUBLIC_HOST/chain-rpc/}" "RPC_SERVER_URL_2=${GDC_JOIN_RPC_SERVER_2:-https://$PUBLIC_EDGE_HOST/chain-rpc/}" \
   "TMKMS_IMAGE=$TMKMS_IMAGE" "INFERENCED_IMAGE=$INFERENCED_IMAGE" "POSTGRES_IMAGE=$POSTGRES_IMAGE" \
   "DAPI_IMAGE=$DAPI_IMAGE" "DAPI_UPGRADE_URL=${DAPI_UPGRADE_URL:-}" "DAPI_UPGRADE_SHA256=${DAPI_UPGRADE_SHA256:-}" "DAPI_EXPECTED_VERSION=${DAPI_EXPECTED_VERSION:-}" "DAPI_EXPECTED_COMMIT=${DAPI_EXPECTED_COMMIT:-}" "EDGE_API_IMAGE=$EDGE_API_IMAGE" "EDGE_API_SERVICE_NAME=$EDGE_API_SERVICE_NAME" "VERSIOND_IMAGE=$VERSIOND_IMAGE" "PROXY_IMAGE=$PROXY_IMAGE" \
   "EXPLORER_IMAGE=$EXPLORER_IMAGE" "DASHBOARD_PORT=$DASHBOARD_PORT" \
   "MLNODE_IMAGE=$MLNODE_GENERIC_IMAGE" "MLNODE_PROXY_IMAGE=$MLNODE_PROXY_IMAGE" \
+  "ACCELERATOR_VENDOR=${ACCELERATOR_VENDOR:-nvidia}" "ACCELERATOR_QUALIFICATION_BACKEND=${ACCELERATOR_QUALIFICATION_BACKEND:-cuda}" \
+  "MLNODE_COMPOSE_VARIANT=${MLNODE_COMPOSE_VARIANT:-nvidia}" \
+  "AMD_KFD_DEVICE=${AMD_KFD_DEVICE:-}" "AMD_RENDER_DEVICE=${AMD_RENDER_DEVICE:-}" \
+  "AMD_KFD_GROUP_ID=${AMD_KFD_GROUP_ID:-}" "AMD_RENDER_GROUP_ID=${AMD_RENDER_GROUP_ID:-}" \
   "POC_BATCH_SIZE_DEFAULT=32"
 echo "$OUTPUT"

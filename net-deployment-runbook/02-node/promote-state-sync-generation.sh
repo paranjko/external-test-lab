@@ -12,17 +12,17 @@ if [[ "${GDC_PROMOTION_TEST_MODE:-false}" == true ]]; then
   [[ "$test_root" =~ ^/tmp/gdc-promotion-test\.[A-Za-z0-9._-]+$ ]] || { echo 'invalid promotion test root' >&2; exit 2; }
   data_root="$test_root/data"
   deploy_root="$test_root/deploy"
-  [[ -d "$data_root" && -d "$deploy_root" ]] || { echo 'invalid promotion test layout' >&2; exit 2; }
+  [[ -d "$(dirname "$data_root")" && -d "$deploy_root" ]] || { echo 'invalid promotion test layout' >&2; exit 2; }
 elif [[ $EUID -ne 0 ]]; then
   echo 'invalid promotion input' >&2
   exit 2
 fi
 [[ "$node" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo 'invalid promotion input' >&2; exit 2; }
-[[ "$generation" =~ ^${data_root//\//\\/}/${node}\.generations/[A-Za-z0-9._-]+$ && "$canonical" == "$data_root/$node" ]] \
+[[ "$generation" =~ ^${data_root//\//\\/}\.generations/[A-Za-z0-9._-]+$ && "$canonical" == "$data_root" ]] \
   || { echo 'invalid generation path' >&2; exit 2; }
 [[ -d "$generation/inference" ]] || { echo 'state-sync generation has no inference data' >&2; exit 1; }
 
-deploy="$deploy_root/$node"
+deploy="$deploy_root"
 next="${canonical}.next"
 receipt="$deploy/.promotion-receipt.json"
 data_parent="$(dirname "$canonical")"

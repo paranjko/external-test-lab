@@ -19,6 +19,13 @@ init_gdc_paths() {
 
 init_gdc_paths
 
+network_bootstrap_url() {
+  local chain_id="${GDC_NETWORK_CHAIN_ID:-${CHAIN_ID:-gonka-devnet-community}}"
+  [[ "$chain_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || die 'cannot derive a Bootstrap URL from the configured chain ID'
+  printf '%s\n' "${GDC_NETWORK_BOOTSTRAP_URL:-https://gonka-dev.net/${chain_id}/bootstrap.json}"
+}
+
 is_safe_integer() {
   local value="$1" maximum=9223372036854775807 index value_digit maximum_digit
   [[ "$value" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
@@ -167,6 +174,18 @@ ensure_run_manifest() {
   } >"$manifest"
 }
 
+# JOIN acceptance is a post-signer evidence phase. It remains bound to the
+# immutable Join Profile and run manifest, but it does not consume the
+# short-lived state-sync tuple that phase-join refreshes before its canary.
+# Remove that transient child-process context so record_phase_profile does not
+# compare a valid refreshed tuple with the run's original pre-mutation tuple.
+clear_join_lineage_context_for_acceptance() {
+  unset GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH
+  unset GDC_JOIN_SNAPSHOT_PEERS GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2
+  unset GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
+  unset GDC_JOIN_LINEAGE_RECEIPT_SHA256
+}
+
 write_phase_lineage() {
   local bundle="$1" chain_id="$2" hash="$3" manifest lineage release_hash profile_hash commit profile_kind join_profile_sha
   [[ -d "$bundle" ]] || die "phase bundle directory is absent: $bundle"
@@ -286,7 +305,7 @@ inferenced_runs_path() {
 }
 
 evidence_exit_trap() {
-  local rc=$?
+  local rc="${1:-$?}"
   if (( rc != 0 )) && [[ -n "${RUN:-}" && -d "$RUN" && ! -s "$RUN/verdict.md" ]]; then
     cat >"$RUN/verdict.md" <<EOF
 # ${EVIDENCE_VERDICT_HEADING:-Lifecycle phase}: INCONCLUSIVE
@@ -317,6 +336,21 @@ load_env() {
 load_public_observability_hosts() {
   SITE_HOST="${GDC_SITE_HOST:-gonka-dev.net}"
   GRAFANA_HOST="${GDC_GRAFANA_HOST:-grafana.gonka-dev.net}"
+}
+
+monitoring_source_host() {
+  local host="${GDC_MONITORING_HOST:-}"
+  if [[ -z "$host" && -n "${GDC_JOIN_MONITORING_REGISTRY_HOST:-}" ]]; then
+    host="$(ssh -G "$GDC_JOIN_MONITORING_REGISTRY_HOST" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')" \
+      || die 'cannot resolve the monitoring registry SSH configuration'
+    [[ -n "$host" ]] || die 'monitoring registry has no hostname'
+  fi
+  if [[ -z "$host" ]]; then
+    host="$GENESIS_PUBLIC_HOST"
+    [[ -z "$GATEWAY_NODE" ]] || host="$(node_public_host "$GATEWAY_NODE")"
+  fi
+  [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || die 'invalid monitoring source host'
+  printf '%s\n' "$host"
 }
 
 # Every participant is identified by an operator-provided SSH alias.  Public
@@ -551,8 +585,12 @@ load_project() {
     ENV_FILE="$GDC_DATA_ROOT/.env"
   fi
   [[ -s "$ENV_FILE" ]] || die 'no role input is available; GENESIS and JOIN create it automatically, while OPS requires .env'
-  local caller_genesis_node='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' caller_gateway_max_concurrent_requests='' caller_gateway_max_input_tokens_in_flight='' resolved_profile_key runtime_topology runtime_genesis_node runtime_public_edge_node runtime_gateway_node runtime_telegram_bot_host runtime_guardian_enabled runtime_home
-  local caller_genesis_node_set=false caller_public_edge_node_set=false caller_gateway_node_set=false caller_telegram_bot_host_set=false caller_guardian_enabled_set=false caller_gateway_max_concurrent_requests_set=false caller_gateway_max_input_tokens_in_flight_set=false
+  local caller_release_profile='' caller_genesis_node='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' caller_gateway_max_concurrent_requests='' caller_gateway_max_input_tokens_in_flight='' resolved_profile_key runtime_topology runtime_genesis_node runtime_public_edge_node runtime_gateway_node runtime_telegram_bot_host runtime_guardian_enabled runtime_home
+  local caller_release_profile_set=false caller_genesis_node_set=false caller_public_edge_node_set=false caller_gateway_node_set=false caller_telegram_bot_host_set=false caller_guardian_enabled_set=false caller_gateway_max_concurrent_requests_set=false caller_gateway_max_input_tokens_in_flight_set=false
+  if [[ "${GDC_RELEASE_PROFILE_CLI_OVERRIDE:-false}" == true && ${GDC_RELEASE_PROFILE+x} ]]; then
+    caller_release_profile="$GDC_RELEASE_PROFILE"
+    caller_release_profile_set=true
+  fi
   if [[ ${GDC_GENESIS_NODE+x} ]]; then caller_genesis_node="$GDC_GENESIS_NODE"; caller_genesis_node_set=true; fi
   if [[ ${GDC_PUBLIC_EDGE_NODE+x} ]]; then caller_public_edge_node="$GDC_PUBLIC_EDGE_NODE"; caller_public_edge_node_set=true; fi
   if [[ ${GDC_GATEWAY_NODE+x} ]]; then caller_gateway_node="$GDC_GATEWAY_NODE"; caller_gateway_node_set=true; fi
@@ -603,6 +641,7 @@ load_project() {
   fi
   set +a
   if [[ "$caller_genesis_node_set" == true ]]; then export GDC_GENESIS_NODE="$caller_genesis_node"; fi
+  if [[ "$caller_release_profile_set" == true ]]; then export GDC_RELEASE_PROFILE="$caller_release_profile"; fi
   if [[ "$caller_public_edge_node_set" == true ]]; then export GDC_PUBLIC_EDGE_NODE="$caller_public_edge_node"; fi
   if [[ "$caller_gateway_node_set" == true ]]; then export GDC_GATEWAY_NODE="$caller_gateway_node"; fi
   if [[ "$caller_telegram_bot_host_set" == true ]]; then export GDC_TELEGRAM_BOT_HOST="$caller_telegram_bot_host"; fi
@@ -620,7 +659,7 @@ load_project() {
   API_HOST=api.gonka-dev.net
   DATA_ROOT=/srv/dai
   GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
-  HF_CACHE_ROOT=/srv/dai/hf-cache
+  HF_CACHE_ROOT=/srv/hf-cache
   if [[ "$context" == host-recovery ]]; then
     initialize_project_state_paths
     return 0
@@ -637,11 +676,9 @@ load_project() {
     write_inventory
     return 0
   fi
-  # A host-recovery profile deliberately has no gateway role. Its local
-  # validation never deploys the central collector, so retain the Genesis
-  # source only for that isolated mode.
-  monitoring_host="$GENESIS_PUBLIC_HOST"
-  [[ -z "$GATEWAY_NODE" ]] || monitoring_host="$(node_public_host "$GATEWAY_NODE")"
+  # A managed JOIN already carries the collector's registry alias. It must
+  # not open metrics to its independently selected consensus seed instead.
+  monitoring_host="$(monitoring_source_host)"
   mapfile -t monitoring_addresses < <(getent ahostsv4 "$monitoring_host" | awk '{print $1}' | sort -u)
   (( ${#monitoring_addresses[@]} == 1 )) || die "$monitoring_host must resolve to exactly one IPv4 address"
   MONITORING_CIDR="${monitoring_addresses[0]}/32"
@@ -792,9 +829,51 @@ ensure_ml_qualification() {
 # the newest complete evidence bundle instead of letting an incomplete later
 # attempt hide a prior successful qualification for the same pinned model.
 latest_ml_qualification_report() {
-  local host="$1" report node node_runs
+  local host="$1" report node node_runs backend expected_image=''
+  if [[ -n "${GDC_JOIN_PROFILE:-}" ]]; then
+    if jq -e '.spec.target | has("accelerator")' "$GDC_JOIN_PROFILE" >/dev/null 2>&1; then
+      backend="$(jq -er '.spec.target.accelerator.qualification_backend' "$GDC_JOIN_PROFILE" 2>/dev/null)" \
+        || die 'generated JOIN profile lacks an accelerator qualification backend'
+      if [[ "$backend" == rocm ]]; then
+        expected_image="$(jq -er '.spec.target.accelerator.mlnode_image' "$GDC_JOIN_PROFILE" 2>/dev/null)" \
+          || die 'generated ROCm JOIN profile lacks its MLNode image binding'
+      else
+        expected_image="$(jq -er '.spec.deployment.host_envelope.mlnode_image' "$GDC_JOIN_PROFILE" 2>/dev/null)" \
+          || die 'generated CUDA JOIN profile lacks its MLNode image binding'
+      fi
+    else
+      # Validated historical v1 profiles predate accelerator receipts. Their
+      # loader binds the only supported legacy qualification path to CUDA.
+      backend="${ACCELERATOR_QUALIFICATION_BACKEND:-}"
+      [[ "$backend" == cuda ]] || die 'legacy generated JOIN profile lacks its CUDA qualification binding'
+      expected_image="$(jq -er '.spec.deployment.host_envelope.mlnode_image' "$GDC_JOIN_PROFILE" 2>/dev/null || true)"
+      [[ -n "$expected_image" ]] || expected_image="${MLNODE_GENERIC_IMAGE:-}"
+      [[ -n "$expected_image" ]] || die 'legacy generated JOIN profile lacks its MLNode image binding'
+    fi
+  else
+    backend="${ACCELERATOR_QUALIFICATION_BACKEND:-cuda}"
+    expected_image="${MLNODE_GENERIC_IMAGE:-}"
+  fi
+  [[ "$backend" == cuda || "$backend" == rocm ]] || die "unsupported ML qualification backend: $backend"
   while IFS= read -r report; do
-    [[ -s "$report/models.json" && -s "$report/completion.json" && -s "$report/vram.csv" ]] || continue
+    [[ -s "$report/models.json" && -s "$report/completion.json" ]] || continue
+    if [[ "$backend" == cuda ]]; then
+      [[ -s "$report/vram.csv" && ! -e "$report/rocm-info.txt" && ! -e "$report/rocm-workload.txt" ]] || continue
+    else
+      [[ -s "$report/rocm-info.txt" && -s "$report/rocm-workload.txt" && ! -e "$report/vram.csv" ]] || continue
+    fi
+    [[ -s "$report/start.log" && -s "$report/runtime.log" && -s "$report/stop.log" && -s "$report/status.json" ]] || continue
+    jq -e '.is_running == true and (.error == null or .error == "")' "$report/status.json" >/dev/null 2>&1 || continue
+    # ROCm support was introduced with immutable image-bound receipts. A
+    # marker-free ROCm bundle cannot prove which image actually ran.
+    [[ "$backend" != rocm || -e "$report/evidence-contract.txt" ]] || continue
+    if [[ -e "$report/evidence-contract.txt" ]]; then
+      grep -qx "backend=$backend" "$report/evidence-contract.txt" || continue
+      grep -qx "backend=$backend" "$report/qualification-success.txt" 2>/dev/null || continue
+      [[ -n "$expected_image" ]] || continue
+      grep -qxF "image=$expected_image" "$report/evidence-contract.txt" || continue
+      grep -qxF "image=$expected_image" "$report/qualification-success.txt" 2>/dev/null || continue
+    fi
     printf '%s\n' "$report"
     return 0
   done < <(
@@ -1280,10 +1359,10 @@ require_current_baseline_pass() {
     grep -qx "$node" <(printf '%s\n' "${evidence_nodes[@]}") || die "$node is absent from the baseline PASS bundle; run verify again"
     address="$(jq -er .address "$(node_account_file "$node")")"
     expected_addresses+=("$address")
-    marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-release 2>/dev/null || true")"
+    marker="$(ssh "$node" "cat /srv/dai/deploy/.gdc-release 2>/dev/null || true")"
     [[ "$marker" == "$profile $expected_profile_hash" ]] || die "$node does not have the verified $profile deployment marker"
 
-    binary_marker="$(ssh "$node" "cat /srv/dai/deploy/$node/.gdc-binary-upgrade 2>/dev/null || true")"
+    binary_marker="$(ssh "$node" "cat /srv/dai/deploy/.gdc-binary-upgrade 2>/dev/null || true")"
     if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
       read -r expected_runtime_version expected_runtime_commit \
         < <(candidate_runtime_identity_for_marker "$binary_marker" "$profile")
@@ -1304,7 +1383,7 @@ require_current_baseline_pass() {
     jq -e --arg version "$expected_runtime_version" --arg commit "$expected_runtime_commit" '
       (.node_version.version | ltrimstr("v")) == $version and .node_version.commit == $commit
     ' <<<"$node_versions" >/dev/null 2>&1 || die "$runtime_error"
-    ssh -T "$node" "cd /srv/dai/deploy/$node && docker compose --env-file .env ps node api proxy explorer --format '{{.Service}} {{.State}}'" \
+    ssh -T "$node" "cd /srv/dai/deploy && docker compose --env-file .env ps node api proxy explorer --format '{{.Service}} {{.State}}'" \
       | awk '
           $1 == "node" || $1 == "api" || $1 == "proxy" || $1 == "explorer" { seen[$1]=1; if ($2 != "running") bad=1 }
           END { exit bad || !(seen["node"] && seen["api"] && seen["proxy"] && seen["explorer"]) }
@@ -1329,10 +1408,16 @@ require_current_baseline_pass() {
   printf 'PASS current baseline evidence: %s (%s participants)\n' "$bundle" "${#indexes[@]}"
 }
 
+# Optional service names select what starts; none starts the whole project.
 start_stack() {
-  local host="$1" path="$2"
+  local host="$1" path="$2" service services=''
+  shift 2
+  for service in "$@"; do
+    [[ "$service" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "invalid Compose service name: $service"
+    services+=" $service"
+  done
   printf 'WAIT  start %s:%s\n' "$host" "$path"
-  if ssh "$host" "cd '$path' && docker compose up -d >start.log 2>&1"; then
+  if ssh "$host" "cd '$path' && docker compose up -d$services >start.log 2>&1"; then
     printf 'READY started %s:%s\n' "$host" "$path"
   else
     ssh "$host" "tail -100 '$path/start.log'" >&2 || true

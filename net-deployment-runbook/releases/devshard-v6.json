@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "classification": "lab-candidate",
+  "source_repository": "gonka-ai/gonka",
+  "source_commit": "e9d56e2a4e810788ec4be39725026cd892cf1080",
+  "source_tree": "8df9b176838294dcc5d26ecd07a5059935569821",
+  "protocol": "v6",
+  "release_tag": "lab-devshard-v6-e9d56e2a4e81",
+  "binary_version": "lab-devshard-v6-e9d56e2a4e81",
+  "platform": "linux/amd64",
+  "base_images": {
+    "golang:1.25.9-alpine3.23": "sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f",
+    "alpine:3.23": "sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
+  }
+}

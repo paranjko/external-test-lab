@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 SITE_HOST="${GDC_SITE_HOST:-gonka-dev.net}"
 GRAFANA_NETWORK_URL="${GDC_GRAFANA_NETWORK_URL:-https://grafana.gonka-dev.net/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk}"
-GRAFANA_INFERENCE_URL="${GDC_GRAFANA_INFERENCE_URL:-https://grafana.gonka-dev.net/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-7d&to=now&timezone=utc&kiosk}"
+GRAFANA_INFERENCE_URL="${GDC_GRAFANA_INFERENCE_URL:-https://grafana.gonka-dev.net/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-24h&to=now&timezone=utc&kiosk}"
 RUN_ID="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-homepage}"
 OUT="${GDC_HOMEPAGE_EVIDENCE_DIR:-$GDC_HOME/runs/$RUN_ID-homepage}"
 CHROME="${CHROME_BIN:-google-chrome}"
@@ -117,9 +117,48 @@ if [[ "$EXPECT_RESET_STATE" == true ]]; then
 else
   curl -fsS "https://$SITE_HOST/status/participants" >"$OUT/participants.json"
 fi
-live_participant_count="$(jq -er '[.participant[] | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")] | length' "$OUT/participants.json")"
+participant_hosts="$OUT/participant-hosts.json"
+jq -cer '
+  [
+    .participant[]
+    | select(.status == "ACTIVE" or .status == "PARTICIPANT_STATUS_ACTIVE" or .status == "1")
+    | .inference_url
+    | strings
+    | try capture("^https://(?<host>node[0-9]+\\.gonka-dev\\.net)(?::[0-9]+)?/?$").host catch empty
+  ]
+  | unique
+' "$OUT/participants.json" >"$participant_hosts"
+
+# The registry enumerates participant identities.  A Host can temporarily
+# retain more than one identity after recovery, so its row count is not the
+# number of status cards.  Mirror the homepage's source of truth: the seed
+# itself plus current P2P peers, falling back to advertised DevNet Hosts only
+# when chain RPC is unavailable.
+visible_node_count=''
 if [[ "$EXPECT_RESET_STATE" != true ]]; then
-  (( live_participant_count > 0 ))
+  chain_rpc_origin="$(jq -er '
+    if (.chainRpcOrigin? | type) == "string" and (.chainRpcOrigin | test("^https://node[0-9]+\\.gonka-dev\\.net$")) then .chainRpcOrigin
+    elif (.chainRpcHost? | type) == "string" and (.chainRpcHost | test("^node[0-9]+\\.gonka-dev\\.net$")) then "https://" + .chainRpcHost
+    else error("missing safe chain RPC origin")
+    end
+  ' "$OUT/config.json")"
+  if curl -fsS "$chain_rpc_origin/chain-rpc/status" >"$OUT/topology-status.json" &&
+    curl -fsS "$chain_rpc_origin/chain-rpc/net_info" >"$OUT/topology-net-info.json"; then
+    jq -s -cer '
+      [
+        .[0].result.node_info.listen_addr,
+        (.[1].result.peers[]?.node_info.listen_addr)
+        | strings
+        | try capture("^tcp://(?<host>node[0-9]+\\.gonka-dev\\.net):[0-9]+$").host catch empty
+      ]
+      | unique
+    ' "$OUT/topology-status.json" "$OUT/topology-net-info.json" >"$OUT/topology-hosts.json"
+    visible_node_count="$(jq -er 'length' "$OUT/topology-hosts.json")"
+  fi
+fi
+visible_node_count="${visible_node_count:-$(jq -er 'length' "$participant_hosts")}"
+if [[ "$EXPECT_RESET_STATE" != true ]]; then
+  (( visible_node_count > 0 ))
 fi
 curl -fsS "https://$SITE_HOST/fonts/JetBrainsMono-Regular.woff2" -o "$OUT/JetBrainsMono-Regular.woff2"
 test -s "$OUT/JetBrainsMono-Regular.woff2"
@@ -143,7 +182,7 @@ curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-inference' | jq 
 ! grep -Eqi 'token price|price comparison|real spend|cost per' "$OUT/homepage.html"
 
 GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
-  "https://$SITE_HOST/" 1440 900 "$OUT/homepage-1440x900.png" "$live_participant_count"
+  "https://$SITE_HOST/" 1440 900 "$OUT/homepage-1440x900.png" "$visible_node_count"
 GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" GDC_CHECK_MAP_FULLSCREEN=true CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
   "https://$SITE_HOST/" 390 844 "$OUT/homepage-390x844.png"
 

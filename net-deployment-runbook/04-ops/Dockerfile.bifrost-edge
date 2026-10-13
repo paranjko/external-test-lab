@@ -1,0 +1,5 @@
+FROM python:3.13.7-slim
+WORKDIR /srv/edge
+COPY bifrost-protocol-edge.py .
+USER 65532:65532
+ENTRYPOINT ["python3", "/srv/edge/bifrost-protocol-edge.py"]

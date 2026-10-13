@@ -2,18 +2,21 @@
 set -Eeuo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-tmp="$(mktemp -d)"
+tmp_root="${TMPDIR:-$root/../.data/preview-tmp}"
+mkdir -p "$tmp_root"
+tmp="$(mktemp -d "$tmp_root/gdc-site-preview-live.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
 release="$tmp/release"
 mkdir -p "$release" "$tmp/bin"
 
 grep -Fq 'site_origin ?= https://gonka-dev.net' "$root/Makefile"
-grep -Fq 'url: https://gonka-dev.net/preview/${{ needs.publish-context.outputs.number }}/' \
+grep -Fq 'url: https://preview.gonka-dev.net/${{ needs.publish-context.outputs.number }}/' \
   "$root/../.github/workflows/site-preview-publish.yml"
 
 printf '%s\n' '<main>preview</main>' >"$release/index.html"
-digest="$(bash "$root/scripts/site-static-digest.sh" "$release")"
 revision=0123456789012345678901234567890123456789
+printf '%s\n' '{"schema_version":1,"base_revision":"0123456789012345678901234567890123456789","head_revision":"0123456789012345678901234567890123456789","mode":"static","static_revision":"0123456789012345678901234567890123456789","endpoint_revision":"0123456789012345678901234567890123456789","runtime_dependencies":{"config":"/config.js","status_base":"/status"},"endpoint_handlers":[],"changed_files":["net-deployment-runbook/04-ops/site/index.html"],"digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}' >"$release/preview-composition.json"
+digest="$(bash "$root/scripts/site-static-digest.sh" "$release")"
 printf 'window.GDC_SITE_BUILD = {"revision":"%s","artifactDigest":"%s"};\n' "$revision" "$digest" >"$release/site-build.js"
 
 cat >"$tmp/bin/curl" <<'SH'

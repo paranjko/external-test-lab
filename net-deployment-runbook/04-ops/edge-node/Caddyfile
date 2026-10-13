@@ -8,7 +8,7 @@
   # fall through to the shared gateway: a gateway outage must not make one
   # Host impersonate every other Host, and a healthy gateway must not mask a
   # failed participant.
-  @participant_api_status path /health /status /v1/versions /v2/participants /v2/participants/*
+  @participant_api_status path /health /status /v1/versions /v1/models /v1/participants /v1/participants/* /v2/participants /v2/participants/*
   handle @participant_api_status {
     reverse_proxy 127.0.0.1:8000 {
       header_up Host {$PUBLIC_HOST}
@@ -48,7 +48,7 @@
   # Bootstrap documents are static release artifacts. This participant edge
   # serves no compatibility bundle and never exposes credentials or topology.
   route {
-    handle /v1.bootstrap.schema.json {
+    handle /*.schema.json {
       root * /edge/bootstrap/current
       file_server
     }
@@ -109,6 +109,66 @@
     handle /ops-telegram-metrics {
     respond 403
   }
+    @gateway_metrics_from_monitoring {
+    path /ops-gateway-metrics
+    remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+  }
+    handle @gateway_metrics_from_monitoring {
+    rewrite * /metrics
+    reverse_proxy {$GDC_GATEWAY_METRICS_UPSTREAM}
+  }
+    handle /ops-gateway-metrics {
+    respond 403
+  }
+    @gateway_route_metrics_from_monitoring {
+    path /ops-gateway-route-metrics
+    remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.1 ::1
+  }
+    handle @gateway_route_metrics_from_monitoring {
+    rewrite * /metrics
+    reverse_proxy 127.0.0.1:18100
+  }
+    handle /ops-gateway-route-metrics {
+    respond 403
+  }
+    @gateway_admission_metrics_from_monitoring {
+    path /ops-gateway-admission-metrics
+    remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.1 ::1
+  }
+    handle @gateway_admission_metrics_from_monitoring {
+    rewrite * /metrics
+    reverse_proxy 127.0.0.1:18083
+  }
+    handle /ops-gateway-admission-metrics {
+    respond 403
+  }
+    # DevShard 502's public edge is the only permitted caller for its B
+    # gateway handoff.  Keeping this private prefix on the B participant
+    # avoids the generic public-edge fallback loop while never exposing the
+    # gateway's loopback listener to arbitrary clients.
+    @gateway_b_readiness_from_public_edge {
+      path /gateway-b/v1/admission-status
+      method GET
+      remote_ip {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @gateway_b_readiness_from_public_edge {
+      rewrite * /v1/admission-status
+      reverse_proxy {$GDC_GATEWAY_B_READINESS_UPSTREAM:http://127.0.0.1:9}
+    }
+    handle /gateway-b/v1/admission-status {
+      respond 403
+    }
+    @gateway_b_from_public_edge {
+      path /gateway-b/*
+      remote_ip {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @gateway_b_from_public_edge {
+      uri strip_prefix /gateway-b
+      reverse_proxy 127.0.0.1:18100
+    }
+    handle /gateway-b/* {
+      respond 403
+    }
     # The Network Node proxy accepts its public edge as a trusted upstream.
   # All non-participant public traffic retains the public application origin.
     handle {

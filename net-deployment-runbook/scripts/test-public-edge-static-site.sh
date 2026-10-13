@@ -2,35 +2,147 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-tmp="$(mktemp -d)"
+tmp_root="${TMPDIR:-$ROOT/../.data/preview-tmp}"
+mkdir -p "$tmp_root"
+tmp="$(mktemp -d "$tmp_root/gdc-public-edge-site.XXXXXX")"
 name="gdc-public-edge-site-$$"
-trap 'docker rm -f "$name" >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
+upstream_name="gdc-public-edge-upstream-$$"
+admission_name="gdc-public-edge-admission-$$"
+network="gdc-public-edge-test-$$"
+trap 'docker rm -f "$name" "$upstream_name" "$admission_name" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
 
 command -v docker >/dev/null || { echo 'docker is required for the public-edge integration test' >&2; exit 2; }
 docker info >/dev/null 2>&1 || { echo 'docker daemon is required for the public-edge integration test' >&2; exit 2; }
 
-mkdir -p "$tmp/site" "$tmp/bootstrap/gonka-devnet-community"
+phase_ops="$ROOT/scripts/phase-ops.sh"
+grep -Fq "mkdir -p '\$REMOTE/scripts'" "$phase_ops"
+grep -Fq 'scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/04-ops/lib-lock.sh"' "$phase_ops"
+
+mkdir -p "$tmp/site/preview/172/status" "$tmp/bootstrap/gonka-devnet-community" "$tmp/upstream" "$tmp/admission"
+cp -R "$ROOT/04-ops/site/test" "$tmp/site/test"
 sed -e '/^[[:space:]]*email {\$ACME_EMAIL}[[:space:]]*$/d' \
   -e '/^www\.{$SITE_HOST} {/,/^}/d' \
+  -e '/^preview\.{$SITE_HOST} {/,/^}/d' \
   "$ROOT/04-ops/edge-node/PublicCaddyfile" >"$tmp/Caddyfile"
 printf '%s\n' '<!doctype html><title>edge-resilient</title><main>EXTERNAL TEST LAB</main>' >"$tmp/site/index.html"
+printf '%s\n' '<main>candidate OpenAPI documentation</main>' >"$tmp/site/preview/172/status/index.html"
+printf '%s\n' '{"openapi":"3.2.0"}' >"$tmp/site/preview/172/status/openapi.json"
 printf '%s\n' '{"chain_id":"gonka-devnet-community","fixture":"byte-equivalent"}' >"$tmp/bootstrap/gonka-devnet-community/bootstrap.json"
 printf '%s\n' 'CHAIN_ID=gonka-devnet-community' >"$tmp/bootstrap/gonka-devnet-community/bootstrap.env"
 schema_id='$id'
 printf '{"%s":"https://gonka-dev.net/v1.bootstrap.schema.json"}\n' "$schema_id" >"$tmp/bootstrap/v1.bootstrap.schema.json"
+cp "$ROOT/../schema/join-profile.v1.schema.json" "$tmp/bootstrap/join-profile.v1.schema.json"
 
-docker run -d --name "$name" -p 127.0.0.1::18081 \
+cat >"$tmp/upstream/Caddyfile" <<'CADDY'
+:8081 {
+  handle /status/missing {
+    respond "missing" 404
+  }
+  handle /status/gateway/v1/admission-status {
+    respond "wrong upstream" 200
+  }
+  handle /status/* {
+    respond "{http.request.uri}" 200
+  }
+}
+https://node5.gonka-dev.net, https://node6.gonka-dev.net, https://node7.gonka-dev.net, https://node8.gonka-dev.net {
+  tls internal
+  respond "participant {host} {uri}" 200
+}
+CADDY
+
+cat >"$tmp/admission/Caddyfile" <<'CADDY'
+{
+  admin 127.0.0.1:2020
+}
+http://127.0.0.1:18083 {
+  respond "local admission" 200
+}
+http://127.0.0.1:9466 {
+  respond "stable adapter {uri}" 200
+}
+http://127.0.0.1:18100 {
+  respond "independent A {uri}" 200
+}
+:8000 {
+  respond "local participant {uri}" 200
+}
+CADDY
+
+docker network create "$network" >/dev/null
+docker run -d --name "$upstream_name" --network "$network" --network-alias gateway \
+  --network-alias node5.gonka-dev.net --network-alias node6.gonka-dev.net \
+  --network-alias node7.gonka-dev.net --network-alias node8.gonka-dev.net \
+  -v "$tmp/upstream/Caddyfile:/etc/caddy/Caddyfile:ro" \
+  caddy:2.11.4-alpine caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+
+# Trust only the disposable upstream CA, preserving real TLS and SNI checks
+deadline=$((SECONDS + 20))
+until docker cp "$upstream_name:/data/caddy/pki/authorities/local/root.crt" "$tmp/root.crt" 2>/dev/null; do
+  (( SECONDS < deadline )) || { docker logs "$upstream_name" >&2; exit 1; }
+  sleep 1
+done
+
+docker run --rm \
   -e PUBLIC_HOST=:18082 \
   -e SITE_HOST=:18081 \
-  -e API_HOST=:18083 \
+  -e API_HOST=:18085 \
   -e GRAFANA_HOST=:18084 \
-  -e GATEWAY_PUBLIC_HOST=127.0.0.1 \
-  -e TELEGRAM_BOT_PUBLIC_HOST=127.0.0.1 \
+  -e GATEWAY_PUBLIC_HOST=gateway \
+  -e GDC_GATEWAY_METRICS_UPSTREAM=http://gateway:18087 \
+  -e TELEGRAM_BOT_PUBLIC_HOST=gateway \
   -e MONITORING_CIDR=127.0.0.1/32 \
+  -e MONITORING_DOCKER_CIDR=172.21.0.0/16 \
+  -e PUBLIC_EDGE_CIDR=127.0.0.1/32 \
+  -v "$tmp/Caddyfile:/etc/caddy/Caddyfile:ro" \
+  caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+
+grep -Fq 'path_regexp preview_telegram_consumer ^/(?:preview/)?[1-9][0-9]*/status/telegram-consumer$' "$tmp/Caddyfile"
+grep -Fq 'rewrite * /ops-telegram-consumer-health' "$tmp/Caddyfile"
+grep -Fq 'reverse_proxy https://{$TELEGRAM_BOT_PUBLIC_HOST}' "$tmp/Caddyfile"
+grep -Fq 'preview.{$SITE_HOST} {' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq 'reverse_proxy 127.0.0.1:18090' "$ROOT/04-ops/edge-node/PublicCaddyfile"
+grep -Fq '@preview_admission path_regexp preview_admission ^/(?:preview/)?[1-9][0-9]*/status/gateway/v1/admission-status$' "$tmp/Caddyfile"
+grep -Fq 'handle /status/gateways/a/v1/status {' "$tmp/Caddyfile"
+grep -Fq 'handle /status/gateways/a/v1/admission-status {' "$tmp/Caddyfile"
+grep -Fq 'handle /status/gateways/b/v1/status {' "$tmp/Caddyfile"
+grep -Fq 'handle /status/gateways/b/v1/admission-status {' "$tmp/Caddyfile"
+grep -Fq 'rewrite * /a/v1/status' "$tmp/Caddyfile"
+grep -Fq 'rewrite * /b/v1/status' "$tmp/Caddyfile"
+grep -Fq 'path /ops-gateway-metrics' "$tmp/Caddyfile"
+grep -Fq '{$MONITORING_DOCKER_CIDR}' "$tmp/Caddyfile"
+grep -Fq 'reverse_proxy {$GDC_GATEWAY_METRICS_UPSTREAM}' "$tmp/Caddyfile"
+grep -Fq '@ds502_a_completion {' "$tmp/Caddyfile"
+grep -Fq 'path /a/v1/chat/completions' "$tmp/Caddyfile"
+grep -Fq 'reverse_proxy 127.0.0.1:18100 {' "$tmp/Caddyfile"
+grep -Fq '@ds502_b_completion {' "$tmp/Caddyfile"
+grep -Fq 'path /b/v1/chat/completions' "$tmp/Caddyfile"
+grep -Fq 'rewrite * /gateway-b{uri}' "$tmp/Caddyfile"
+grep -Fq '@ds502_ab_closed path /a/* /b/* /v1/admin/* /admin/* /accounting/*' "$tmp/Caddyfile"
+grep -Fq '@preview_status path_regexp preview_status ^/(?:preview/)?[1-9][0-9]*/status/(.+)$' "$tmp/Caddyfile"
+grep -Fq '@dynamic_participant_status path_regexp dynamic_participant_status ^/(?:preview/[1-9][0-9]*/)?status/(node[0-9]+\.gonka-dev\.net)/(health|v1/versions|chain-rpc/(status|net_info|validators))$' "$tmp/Caddyfile"
+grep -Fq 'reverse_proxy {re.dynamic_participant_status.1}:443' "$tmp/Caddyfile"
+
+docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 -p 127.0.0.1::18082 -p 127.0.0.1::18085 \
+  -e SSL_CERT_FILE=/test-root.crt \
+  -v "$tmp/root.crt:/test-root.crt:ro" \
+  -e PUBLIC_HOST=:18082 \
+  -e SITE_HOST=:18081 \
+  -e API_HOST=:18085 \
+  -e GRAFANA_HOST=:18084 \
+  -e GATEWAY_PUBLIC_HOST=gateway \
+  -e GDC_GATEWAY_METRICS_UPSTREAM=http://gateway:18087 \
+  -e TELEGRAM_BOT_PUBLIC_HOST=gateway \
+  -e MONITORING_CIDR=127.0.0.1/32 \
+  -e MONITORING_DOCKER_CIDR=172.21.0.0/16 \
   -e PUBLIC_EDGE_CIDR=127.0.0.1/32 \
   -v "$tmp/Caddyfile:/etc/caddy/Caddyfile:ro" \
   -v "$tmp/bootstrap:/edge/bootstrap/current:ro" \
   -v "$tmp/site:/srv/dai/edge/site:ro" \
+  caddy:2.11.4-alpine caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+
+docker run -d --name "$admission_name" --network "container:$name" \
+  -v "$tmp/admission/Caddyfile:/etc/caddy/Caddyfile:ro" \
   caddy:2.11.4-alpine caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 
 port="$(docker port "$name" 18081/tcp | awk -F: 'NR == 1 {print $NF}')"
@@ -47,8 +159,45 @@ curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/" | grep -q '
   docker logs "$name" >&2
   exit 1
 }
-status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/status/participants" 2>/dev/null || true)"
-[[ "$status" == 502 ]] || { echo "expected unavailable dynamic status to return 502, got $status" >&2; exit 1; }
+curl -fsS "http://127.0.0.1:$port/status/participants" | grep -Fxq '/status/participants'
+curl -fsSL "http://127.0.0.1:$port/test" | cmp - "$tmp/site/test/index.html"
+curl -fsS -D "$tmp/test-installer.headers" -o "$tmp/test-installer.body" "http://127.0.0.1:$port/test/install.sh"
+cmp "$tmp/test-installer.body" "$tmp/site/test/install.sh"
+grep -Eiq '^Content-Type: (text/plain|application/x-sh)(;|\r?$)' "$tmp/test-installer.headers"
+for prefix in '' /preview/172; do
+  for node in 5 6 7 8; do
+    for endpoint in health v1/versions chain-rpc/status chain-rpc/net_info 'chain-rpc/validators?height=1&page=1&per_page=100'; do
+      curl -fsS --max-time 5 "http://127.0.0.1:$port$prefix/status/node$node.gonka-dev.net/$endpoint" \
+        | grep -Fxq "participant node$node.gonka-dev.net /$endpoint"
+    done
+  done
+done
+# Reload each Caddy in a shared network namespace without replacing the other
+docker exec "$admission_name" caddy reload --address 127.0.0.1:2020 --config /etc/caddy/Caddyfile >/dev/null
+curl -fsS "http://127.0.0.1:$port/" | grep -q 'EXTERNAL TEST LAB'
+docker exec "$name" caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+curl -fsS "http://127.0.0.1:$port/" | grep -q 'EXTERNAL TEST LAB'
+participant_port="$(docker port "$name" 18082/tcp | awk -F: 'NR == 1 {print $NF}')"
+api_port="$(docker port "$name" 18085/tcp | awk -F: 'NR == 1 {print $NF}')"
+for endpoint in /v1/models /v1/chat/completions /anthropic/v1/messages /genai/v1beta/models/model:generateContent; do
+  curl -fsS -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port$endpoint" | grep -Fxq "stable adapter $endpoint"
+done
+curl -fsS -H 'Authorization: Bearer devnet_fixture' "http://127.0.0.1:$api_port/v1/chat/completions" | grep -Fxq 'local admission'
+curl -fsS -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port/v1/admission-status" | grep -Fxq 'local admission'
+curl -fsS -X POST -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port/a/v1/chat/completions" | grep -Fxq 'independent A /v1/chat/completions'
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port/v1/admin/settings")" == 404 ]]
+printf 'PASS public stable credentials reach the adapter; legacy, A and private routes retain their boundaries\n'
+curl -fsS "http://127.0.0.1:$participant_port/v1/models" | grep -Fxq 'local participant /v1/models'
+curl -fsS "http://127.0.0.1:$port/preview/172/status/participants" | grep -Fxq '/status/participants'
+curl -fsS "http://127.0.0.1:$port/preview/172/status/index.html" | grep -Fxq '<main>candidate OpenAPI documentation</main>'
+curl -fsS "http://127.0.0.1:$port/preview/172/status/openapi.json" | grep -Fxq '{"openapi":"3.2.0"}'
+curl -fsS "http://127.0.0.1:$port/preview/172/status/gdc-node3/health" | grep -Fxq '/status/gdc-node3/health'
+missing="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/preview/172/status/missing" 2>/dev/null || true)"
+[[ "$missing" == 404 ]] || { echo "expected preview upstream 404 to propagate, got $missing" >&2; exit 1; }
+admission="$(curl -fsS --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/preview/172/status/gateway/v1/admission-status")"
+[[ "$admission" == 'local admission' ]] || { docker logs "$name" >&2; echo "preview admission did not use the local handler: $admission" >&2; exit 1; }
+invalid_preview="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 3 "http://127.0.0.1:$port/preview/0/status/participants" 2>/dev/null || true)"
+[[ "$invalid_preview" == 404 ]] || { echo "invalid preview namespace unexpectedly routed: $invalid_preview" >&2; exit 1; }
 
 curl -fsS -D "$tmp/bootstrap-json.headers" -o "$tmp/bootstrap-json.body" \
   "http://127.0.0.1:$port/gonka-devnet-community/bootstrap.json"
@@ -61,5 +210,54 @@ alias_content_type="$(awk 'BEGIN { IGNORECASE=1 } /^Content-Type:/ { sub(/\r$/, 
 [[ "$alias_content_type" == "$json_content_type" ]] || { echo "bootstrap alias content type differs: $alias_content_type != $json_content_type" >&2; exit 1; }
 curl -fsS "http://127.0.0.1:$port/gonka-devnet-community/bootstrap.env" | cmp - "$tmp/bootstrap/gonka-devnet-community/bootstrap.env"
 curl -fsS "http://127.0.0.1:$port/v1.bootstrap.schema.json" | cmp - "$tmp/bootstrap/v1.bootstrap.schema.json"
+curl -fsS "http://127.0.0.1:$port/join-profile.v1.schema.json" | cmp - "$tmp/bootstrap/join-profile.v1.schema.json"
+missing_schema="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/missing.schema.json")"
+[[ "$missing_schema" == 404 ]] || { echo "missing schema must return 404, not the site homepage" >&2; exit 1; }
 
-printf 'PASS public edge serves static site and byte-equivalent bootstrap alias while gateway status upstream is unavailable\n'
+# Run the actual publisher against the live, disposable Caddy bind mount.
+# Transport fixtures permit only the static directory/copy operations; any
+# attempt to call sudo, Docker, reload or another SSH target fails the test.
+mkdir -p "$tmp/bin" "$tmp/release/preview/protected"
+printf '%s\n' 'window.config = "retained";' >"$tmp/site/config.js"
+printf '%s\n' 'must not replace config' >"$tmp/release/config.js"
+printf '%s\n' 'must not publish preview' >"$tmp/release/preview/protected/index.html"
+printf '%s\n' '<main>NEW STATIC RELEASE</main>' >"$tmp/release/index.html"
+printf '%s\n' 'console.log("new static asset");' >"$tmp/release/app.js"
+cat >"$tmp/bin/ssh" <<'PY'
+#!/usr/bin/env python3
+import os, pathlib, sys
+expected = ["-o", "BatchMode=yes", "deployer@fixture.invalid",
+            "install -d -m 0755 /srv/dai/edge/site"]
+if sys.argv[1:] != expected:
+    sys.exit("unexpected SSH operation in static publisher fixture")
+pathlib.Path(os.environ["SITE_FIXTURE_ROOT"], "site").mkdir(exist_ok=True)
+PY
+cat >"$tmp/bin/rsync" <<'PY'
+#!/usr/bin/env python3
+import os, pathlib, shutil, sys
+root = pathlib.Path(os.environ["SITE_FIXTURE_ROOT"])
+expected = ["-a", "--delete", "--exclude", "config.js", "--exclude", "preview/",
+            "-e", "ssh -o BatchMode=yes ", str(root / "release") + "/",
+            "deployer@fixture.invalid:/srv/dai/edge/site/"]
+if sys.argv[1:] != expected:
+    sys.exit("unexpected rsync operation in static publisher fixture")
+shutil.copytree(root / "release", root / "site", dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("config.js", "preview"))
+PY
+chmod +x "$tmp/bin/ssh" "$tmp/bin/rsync"
+before="$(docker inspect "$name" --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}')"
+PATH="$tmp/bin:$PATH" SITE_FIXTURE_ROOT="$tmp" \
+  "$ROOT/scripts/site-release.sh" publish "$tmp/release" '' fixture.invalid deployer
+curl -fsS "http://127.0.0.1:$port/" | cmp - "$tmp/release/index.html"
+curl -fsS "http://127.0.0.1:$port/app.js" | cmp - "$tmp/release/app.js"
+curl -fsS "http://127.0.0.1:$port/config.js" | grep -Fxq 'window.config = "retained";'
+curl -fsS "http://127.0.0.1:$port/preview/172/status/openapi.json" | grep -Fxq '{"openapi":"3.2.0"}'
+[[ ! -e "$tmp/site/preview/protected" ]]
+for extension in json env; do
+  curl -fsS "http://127.0.0.1:$port/gonka-devnet-community/bootstrap.$extension" \
+    | cmp - "$tmp/bootstrap/gonka-devnet-community/bootstrap.$extension"
+done
+[[ "$(docker inspect "$name" --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}')" == "$before" ]]
+printf 'PASS static publication serves new bytes and preserves Caddy identity, bootstrap, config and preview files\n'
+
+printf 'PASS public edge validates the shared preview status overlay, local admission exception and bootstrap alias\n'

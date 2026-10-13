@@ -1,5 +1,11 @@
 GO ?= go
 export GOTOOLCHAIN := local
+export GOWORK := off
+VERSION ?= devel
+COMMIT ?= $(shell git rev-parse HEAD)
+BUILD_DATE ?= $(shell git show -s --format=%cI HEAD)
+VERSION_PACKAGE := github.com/paranjko/external-test-lab/gonkactl/internal/cli
+LDFLAGS := -X $(VERSION_PACKAGE).Version=$(VERSION) -X $(VERSION_PACKAGE).Commit=$(COMMIT) -X $(VERSION_PACKAGE).BuildDate=$(BUILD_DATE)
 
 .PHONY: all check toolchain portable-env fmt fmt-check test vet race build smoke
 
@@ -31,8 +37,27 @@ race: toolchain portable-env
 
 build: toolchain
 	mkdir -p build
-	$(GO) build -trimpath -o build/gonkactl ./cmd/gonkactl
+	$(GO) build -trimpath -buildvcs=false -ldflags '$(LDFLAGS)' -o build/gonkactl ./cmd/gonkactl
 
 smoke: build
 	./build/gonkactl --help
 	./build/gonkactl version
+
+.PHONY: test-release release-archives release-publish
+test-release:
+	python3 -m unittest discover -s scripts -p 'test_*.py'
+	sh -n ../net-deployment-runbook/04-ops/site/ctl/install.sh
+
+release-archives: toolchain
+	python3 scripts/release.py build
+
+release-publish:
+	python3 scripts/release.py publish
+
+.PHONY: test-release-native
+test-release-native:
+	python3 scripts/check_native_install.py
+
+.PHONY: qualify-page
+qualify-page:
+	node scripts/check_page.mjs

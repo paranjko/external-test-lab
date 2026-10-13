@@ -34,6 +34,7 @@ jq -e '.reason == "curl_timeout"' "$tmp/evidence/inference-verdict.json" >/dev/n
 jq -e '.admission == "not_observed" and .attempts == 1' "$tmp/evidence/inference-verdict.json" >/dev/null
 [[ "$(wc -l <"$tmp/evidence/inference-attempts.jsonl")" == 1 ]]
 jq -e '.completion_curl_exit == 28 and .completion_curl_status == "timeout" and .admission == "not_observed" and .completion_error_code == "not_observed" and .reason == "curl_timeout"' "$tmp/evidence/inference-attempts.jsonl" >/dev/null
+[[ -f "$tmp/evidence/status-1.json" && -f "$tmp/evidence/completion-1.curl.stderr" && -f "$tmp/evidence/completion-1.headers" ]]
 
 kill "$server_pid" 2>/dev/null || true
 wait "$server_pid" 2>/dev/null || true
@@ -67,6 +68,39 @@ jq -e '.choices[0].message.content == "GDC_OK"' "$tmp/proxy-completion.json" >/d
 kill "$server_pid" 2>/dev/null || true
 wait "$server_pid" 2>/dev/null || true
 server_pid=''
+port=19893
+node -e '
+  const http=require("node:http");
+  let completions=0;
+  http.createServer((request,response)=>{
+    if(request.url==="/v1/status"){response.writeHead(200,{"content-type":"application/json"});response.end(JSON.stringify({routable:true,devshards:[]}));return}
+    request.resume();
+    request.on("end",()=>{
+      completions++;
+      if(completions===1){
+        const deadline=Number(request.headers["x-request-deadline-ms"]);
+        const wait=Math.max(0,deadline-Date.now());
+        setTimeout(()=>{response.writeHead(503,{"content-type":"application/json","X-GDC-Admission":"pre_dispatch_rejected"});response.end(JSON.stringify({error:{code:"admission_poc_fence"}}));},wait);
+        return;
+      }
+      response.writeHead(200,{"content-type":"application/json","X-GDC-Admission":"dispatched_once"});response.end(JSON.stringify({choices:[{message:{content:"GDC_OK"}}]}));
+    });
+  }).listen(Number(process.argv[1]),"127.0.0.1");
+' "$port" &
+server_pid=$!
+for _ in $(seq 1 30); do
+  if curl -sS --max-time 1 "http://127.0.0.1:$port/v1/status" >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+GDC_INFERENCE_REQUEST_TIMEOUT_SECONDS=7 "$ROOT/04-ops/test-inference-until-ready.sh" \
+  "http://127.0.0.1:$port" test-key "$tmp/deadline-slack-evidence" "$tmp/deadline-slack-completion.json" 15 >"$tmp/deadline-slack.stdout" 2>"$tmp/deadline-slack.stderr"
+[[ "$(wc -l <"$tmp/deadline-slack-evidence/inference-attempts.jsonl")" == 2 ]]
+jq -e 'select(.attempt == 1 and .completion_curl_exit == 0 and .completion_http == 503 and .admission == "pre_dispatch_rejected" and .completion_error_code == "admission_poc_fence")' "$tmp/deadline-slack-evidence/inference-attempts.jsonl" >/dev/null
+jq -e 'select(.attempt == 2 and .completion_http == 200 and .admission == "dispatched_once" and .reason == "completion_succeeded")' "$tmp/deadline-slack-evidence/inference-attempts.jsonl" >/dev/null
+
+kill "$server_pid" 2>/dev/null || true
+wait "$server_pid" 2>/dev/null || true
+server_pid=''
 port=19891
 node -e '
   const http=require("node:http");
@@ -89,6 +123,40 @@ set -e
 [[ "$rc" == 1 ]]
 [[ "$(wc -l <"$tmp/dispatched-evidence/inference-attempts.jsonl")" == 1 ]]
 jq -e '.reason == "http_503" and .admission == "dispatched_once" and .attempts == 1' "$tmp/dispatched-evidence/inference-verdict.json" >/dev/null
+
+kill "$server_pid" 2>/dev/null || true
+wait "$server_pid" 2>/dev/null || true
+server_pid=''
+port=19892
+node -e '
+  const fs=require("node:fs"),http=require("node:http");
+  let statusRequests=0,completions=0;
+  http.createServer((request,response)=>{
+    if(request.url==="/ready"){response.writeHead(200);response.end();return}
+    if(request.url==="/v1/status"){
+      statusRequests++;
+      if(statusRequests===1){request.socket.destroy();return}
+      response.writeHead(200,{"content-type":"application/json"});response.end(JSON.stringify({escrow_id:"7",phase:"active",chain_phase:"Inference",confirmation_poc_phase:"",requests_blocked:false}));return;
+    }
+    request.resume();request.on("end",()=>{
+      completions++;
+      fs.writeFileSync(process.argv[2],String(completions));
+      response.writeHead(200,{"content-type":"application/json","X-GDC-Admission":"dispatched_once"});
+      response.end(JSON.stringify({choices:[{message:{content:"GDC_OK"}}]}));
+    });
+  }).listen(Number(process.argv[1]),"127.0.0.1");
+' "$port" "$tmp/status-recovery-completions" &
+server_pid=$!
+for _ in $(seq 1 30); do
+  if curl -sS --max-time 1 "http://127.0.0.1:$port/ready" >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+GDC_INFERENCE_REQUEST_TIMEOUT_SECONDS=1 "$ROOT/04-ops/test-inference-until-ready.sh" \
+  "http://127.0.0.1:$port" test-key "$tmp/status-recovery-evidence" "$tmp/status-recovery-completion.json" 10 >"$tmp/status-recovery.stdout" 2>"$tmp/status-recovery.stderr"
+[[ "$(wc -l <"$tmp/status-recovery-evidence/inference-attempts.jsonl")" == 2 ]]
+jq -e 'select(.attempt == 1 and .status_curl_exit != 0 and .completion_http == 0 and .completion_curl_exit == 0 and .admission == "not_sent_status_unavailable" and (.reason | startswith("status_")))' "$tmp/status-recovery-evidence/inference-attempts.jsonl" >/dev/null
+jq -e 'select(.attempt == 2 and .completion_http == 200 and .admission == "dispatched_once" and .reason == "completion_succeeded")' "$tmp/status-recovery-evidence/inference-attempts.jsonl" >/dev/null
+[[ "$(<"$tmp/status-recovery-completions")" == 1 ]]
 
 kill "$server_pid" 2>/dev/null || true
 wait "$server_pid" 2>/dev/null || true
@@ -119,5 +187,36 @@ set -e
 [[ ! -e "$tmp/non-inference-post" ]]
 jq -e '.reason == "runtime_not_routable"' "$tmp/non-inference-evidence/inference-verdict.json" >/dev/null
 jq -e '.status_ready == false and .completion_http == 0 and .completion_curl_exit == 0 and .admission == "not_sent_runtime_not_routable" and .reason == "runtime_not_routable"' "$tmp/non-inference-evidence/inference-attempts.jsonl" >/dev/null
+
+kill "$server_pid" 2>/dev/null || true
+wait "$server_pid" 2>/dev/null || true
+server_pid=''
+port=19894
+node -e '
+  const fs=require("node:fs"),http=require("node:http");
+  http.createServer((request,response)=>{
+    if(request.url==="/v1/status"){
+      const status={escrow_id:"22433",phase:"active",chain_phase:"Inference",requests_blocked:false,height_seed:{state:"missed",seeded:1,slots:3}};
+      response.writeHead(200,{"content-type":"application/json"});response.end(JSON.stringify(status));return;
+    }
+    fs.writeFileSync(process.argv[2],"unexpected POST");
+    request.resume();response.writeHead(503,{"content-type":"application/json","X-GDC-Admission":"dispatched_once"});response.end();
+  }).listen(Number(process.argv[1]),"127.0.0.1");
+' "$port" "$tmp/height-seed-post" &
+server_pid=$!
+for _ in $(seq 1 30); do
+  if curl -sS --max-time 1 "http://127.0.0.1:$port/v1/status" >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+set +e
+GDC_INFERENCE_REQUEST_TIMEOUT_SECONDS=1 "$ROOT/04-ops/test-inference-until-ready.sh" \
+  "http://127.0.0.1:$port" test-key "$tmp/height-seed-evidence" "$tmp/height-seed-completion.json" 1 >"$tmp/height-seed.stdout" 2>"$tmp/height-seed.stderr"
+rc=$?
+set -e
+[[ "$rc" == 1 ]]
+[[ ! -e "$tmp/height-seed-post" ]]
+grep -Fq 'reason=height_seed_missed status_ready=false completion=not_sent seeded=1/3' "$tmp/height-seed.stderr"
+jq -e '.reason == "height_seed_missed" and .status_ready == false and .completion_http == 0 and .admission == "not_sent_runtime_not_routable"' "$tmp/height-seed-evidence/inference-attempts.jsonl" >/dev/null
+jq -e '.reason == "height_seed_missed" and .attempts == 1' "$tmp/height-seed-evidence/inference-verdict.json" >/dev/null
 
 printf 'PASS inference retry diagnostics contract\n'

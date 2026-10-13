@@ -18,6 +18,12 @@ jq -e '.classification == "running_matched"' <<<"$result" >/dev/null
 rm "$tmp/account"
 result="$($classifier "$tmp/identity" "$tmp/account" "$tmp/joined" '')"
 jq -e '.classification == "partial_identity"' <<<"$result" >/dev/null
+# `host reset` keeps the identity record and the cold account and removes only
+# the joined marker: that triple is the state every reset Host starts from.
+printf '{}' >"$tmp/account"
+rm "$tmp/joined"
+result="$($classifier "$tmp/identity" "$tmp/account" "$tmp/joined" '')"
+jq -e '.classification == "partial_identity" and .identity_present and .account_present and (.joined_present | not)' <<<"$result" >/dev/null
 
 for expected in new running_matched restore_empty managed_drift partial_identity identity_conflict lineage_conflict unreachable; do
   case "$expected" in

@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCK_LIBRARY="$HERE/lib-lock.sh"
+[[ -r "$LOCK_LIBRARY" ]] || LOCK_LIBRARY="$HERE/../scripts/lib-lock.sh"
+# shellcheck disable=SC1090 # The installed and source layouts have different parents.
+source "$LOCK_LIBRARY"
 
 # Reconcile the *external* lifecycle of persistent gateway runtimes.  The
 # gateway itself already rotates healthy escrows around a PoC boundary.  This
@@ -22,8 +27,9 @@ transport_backoff_seconds="${GDC_GATEWAY_TRANSPORT_BACKOFF_SECONDS:-15}"
 transport_backoff_max_seconds="${GDC_GATEWAY_TRANSPORT_BACKOFF_MAX_SECONDS:-120}"
 
 mkdir -p "$(dirname "$status_file")"
-exec 9>"$lock_file"
-flock -n 9 || exit 0
+gdc_lock_acquire "$lock_file" 0 'gateway escrow reconciliation is already running' || exit 0
+lock_dir="$GDC_LOCK_DIR"
+trap 'gdc_lock_release "${lock_dir:-}"' EXIT
 
 write_status() {
   local state="$1" reason="$2" replacement="${3:-}"

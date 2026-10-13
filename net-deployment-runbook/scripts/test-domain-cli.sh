@@ -15,7 +15,7 @@ grep -Fq '  ./gdc.sh --release v2026.07.23 genesis' "$tmp/direct-help"
 
 for contract in \
   './gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>]' \
-  './gdc.sh host join [--plan] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
+  './gdc.sh host join [--preflight] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
   './gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
   './gdc.sh host backup <SSH_ALIAS>' \
   './gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>' \
@@ -47,6 +47,16 @@ grep -Fq 'invocation_command=%q' "$ROOT/scripts/lib.sh"
 grep -Fq 'prepare-join-role-config.sh' "$ROOT/gdc.sh"
 grep -Fq 'GDC_JOIN_SKIP_QUALIFICATION="$skip_qualification"' "$ROOT/gdc.sh"
 grep -Fq 'GDC_JOIN_VERIFICATION="$verification"' "$ROOT/gdc.sh"
+qualify_home="$tmp/qualify-independent"
+mkdir -p "$qualify_home/node8/state" "$qualify_home/node8/runs/retained/join-node8"
+printf 'retained\n' >"$qualify_home/node8/state/active-run-id"
+printf 'profile_kind=generated_join\njoin_profile_sha256=%064d\n' 0 >"$qualify_home/node8/runs/retained/manifest.env"
+printf '{}\n' >"$qualify_home/node8/runs/retained/join-node8/join-profile.v1.json"
+chmod 0600 "$qualify_home/node8/runs/retained/manifest.env" "$qualify_home/node8/runs/retained/join-node8/join-profile.v1.json"
+if GDC_HOME="$qualify_home" "$ROOT/gdc.sh" qualify-ml node8 >"$qualify_home/out" 2>"$qualify_home/err"; then
+  echo 'qualify-ml accepted a malformed retained JOIN profile' >&2; exit 1
+fi
+grep -Fq 'join_profile_invalid: document has an invalid closed v1 shape' "$qualify_home/err"
 grep -Fq "skip_qualification=false verification=false plan_only=false" "$ROOT/gdc.sh"
 grep -Fq 'host join does not accept an externally authored signer-fence receipt' "$ROOT/gdc.sh"
 grep -Fq 'verify-join-resume-inputs.sh' "$ROOT/gdc.sh"
@@ -149,6 +159,17 @@ cp "$CHAIN_PROBE_BOOTSTRAP" "$output"
 printf '200'
 EOF
 chmod 0755 "$chain_probe/bin/curl"
+cat >"$chain_probe/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cat >/dev/null
+case "${!#}" in
+  'sudo -n bash -s') printf 'READY Host readiness preflight\n' ;;
+  'bash -s') printf 'vendor=nvidia\n' ;;
+  *) echo 'unexpected SSH operation in Bootstrap chain test' >&2; exit 97 ;;
+esac
+EOF
+chmod 0755 "$chain_probe/bin/ssh"
 for requested_chain in gonka-devnet-community gonka-testnet; do
   args=(host join --chain-id "$requested_chain" --public-host node2.example.net gdc-node2)
   [[ "$requested_chain" == gonka-devnet-community ]] && args=(host join --public-host node2.example.net gdc-node2)

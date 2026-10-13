@@ -7,7 +7,7 @@ sha256_file() { sha256sum "$1" | awk '{print $1}'; }
 
 validate() {
   local file="$1" allow_expired="${2:-false}" expected_id actual_id operation identity_mode valid_until_epoch now_epoch
-  jq -e '
+  jq -e --argjson allow_legacy "$allow_expired" '
     type == "object" and (keys | sort) == ["created_at","decision","kind","observation","operation","profile_id","run_id","schema_version","spec","valid_until"] and
     .schema_version == 1 and .kind == "gdc-host-join-profile" and
     (.run_id | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")) and
@@ -16,6 +16,30 @@ validate() {
     (.observation | type == "object" and (keys | sort) == ["network_state_id","sha256"] and (.sha256 | test("^[a-f0-9]{64}$")) and (.network_state_id | test("^[a-f0-9]{64}$"))) and
     (.spec | type == "object" and (keys | sort) == ["activation_policy","components","deployment","identity","network","seeds","state_acquisition","target"]) and
     (.spec.target.node_name | test("^[a-z0-9][a-z0-9_-]*$")) and .spec.target.platform == "linux-amd64" and
+    (($allow_legacy and (.spec.target | has("accelerator") | not)) or
+    (.spec.target.accelerator | type == "object" and
+      ((keys | sort) == ["compose_variant","qualification_backend","schema_version","vendor"] and
+       .schema_version == 1 and .vendor == "nvidia" and .compose_variant == "nvidia" and .qualification_backend == "cuda" or
+       .schema_version == 1 and .vendor == "amd" and .architecture == "gfx1201" and .pci_device_id == "0x7550" and .compose_variant == "amd" and .qualification_backend == "rocm" and
+       (.profile_sha256 | test("^[a-f0-9]{64}$")) and
+       (.host_provisioning | type == "object" and (keys | sort) == ["installer_package_version","installer_sha256","installer_url","ubuntu_version_id","usecase"] and
+        .ubuntu_version_id == "24.04" and (.installer_url | test("^https://repo\\.radeon\\.com/")) and
+        (.installer_sha256 | test("^[a-f0-9]{64}$")) and
+        (.installer_package_version | test("^[0-9][A-Za-z0-9.+:~-]*$")) and .usecase == "graphics,rocm") and
+       (((keys | sort) == ["architecture","compose_variant","host_provisioning","pci_device_id","profile_sha256","qualification_backend","readiness","schema_version","vendor"] and .readiness == "provisioning") or
+        (.readiness == "ready" and .devices.kfd == "/dev/kfd" and (.devices.render | test("^/dev/dri/renderD[0-9]+$")) and
+         (.group_ids.kfd | type == "number" and floor == . and . >= 0) and (.group_ids.render | type == "number" and floor == . and . >= 0) and
+         (.mlnode_image | test("@sha256:[a-f0-9]{64}$")) and
+         (((keys | sort) == ["architecture","compose_variant","devices","group_ids","host_provisioning","installed_runtime","mlnode_image","pci_device_id","profile_sha256","qualification_backend","readiness","schema_version","vendor"] and
+          (.installed_runtime | type == "object" and (keys | sort) == ["admission_route","kernel_release","os_id","packages","requires_mlnode_qualification","ubuntu_version_id"] and
+          (.admission_route | IN("profile_provisioned","experimental_preinstalled")) and .requires_mlnode_qualification == true and .os_id == "ubuntu" and
+          (.ubuntu_version_id | test("^[0-9]{2}\\.04$")) and (.kernel_release | test("^[A-Za-z0-9._+-]+$")) and
+          (.packages | type == "object" and (keys | sort) == ["amdgpu-install","amdrocm","rocm-core"] and
+           ([.amdrocm,.["amdgpu-install"],.["rocm-core"]] | all(
+             type == "object" and (keys | sort) == ["status","version"] and
+             ((.status == "absent" and .version == "absent") or (.status == "install ok installed" and (.version | test("^[0-9][A-Za-z0-9.+:~-]*$"))))
+           )))) or
+          ($allow_legacy and (keys | sort) == ["architecture","compose_variant","devices","group_ids","host_provisioning","mlnode_image","pci_device_id","profile_sha256","qualification_backend","readiness","schema_version","vendor"])))))))) and
     .spec.deployment.data_layout == "gdc-data-layout/v2" and .spec.identity.stable_identity_layout == "gdc-identity-layout/v2" and
     (.spec.network.bootstrap_url | test("^https://")) and
     (.spec.seeds.usable | type == "array" and length >= 1) and (.spec.seeds.unavailable | type == "array") and
@@ -50,11 +74,30 @@ validate() {
      (.spec.state_acquisition.mode == "native_p2p_state_sync" and (.spec.state_acquisition.providers | length >= 2) and .spec.state_acquisition.minimum_providers >= 2)) and
     .spec.activation_policy.application_required_for_complete == true and .spec.activation_policy.signer_allowed_in_profile == false and
     (.spec.components.core | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
-    and (.spec.components.dapi | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.url | test("^https://github.com/")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
+    and (.spec.components.dapi | (.observed.commit | test("^[a-f0-9]{40}$")) and (.expected_runtime.commit | test("^[a-f0-9]{40}$")) and (.installation.image.digest | test("^sha256:[a-f0-9]{64}$")) and (.installation.binary.url | test("^https://")) and (.installation.binary.sha256 | test("^[a-f0-9]{64}$")))
   ' "$file" >/dev/null || die 'document has an invalid closed v1 shape'
   expected_id="$(jq -cS .spec "$file" | sha256sum | awk '{print $1}')"
   actual_id="$(jq -r .profile_id "$file")"
   [[ "$expected_id" == "$actual_id" ]] || die 'profile_id does not bind the canonical executable spec'
+  if jq -e '.spec.deployment | has("software")' "$file" >/dev/null; then
+    local scripts software_input software_components
+    scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    software_input="$(mktemp)"; software_components="$(mktemp)"
+    jq '{software:.spec.deployment.software,bootstrap:{document_sha256:.spec.network.bootstrap_sha256},runtime:{core:.spec.components.core.observed,dapi:.spec.components.dapi.observed}}' "$file" >"$software_input"
+    if ! jq -e -f "$scripts/bootstrap-software.jq" "$software_input" >/dev/null \
+      || ! bash "$scripts/resolve-bootstrap-software.sh" components "$software_input" "$software_components" >/dev/null \
+      || ! jq -e --slurpfile compiled "$software_components" '
+        .spec.components == ($compiled[0] | {core,dapi}) and
+        .spec.deployment.host_envelope == $compiled[0].host_envelope and
+        .spec.target.accelerator.qualification_backend == .spec.deployment.software.accelerator and
+        .spec.components.core.observed == (.spec.deployment.software.components.node | {version:(.version|ltrimstr("v")),commit}) and
+        .spec.components.dapi.observed == (.spec.deployment.software.components.api | {version:(.version|ltrimstr("v")),commit})
+      ' "$file" >/dev/null; then
+      rm -f -- "$software_input" "$software_components"
+      die 'executable profile differs from Bootstrap software declaration'
+    fi
+    rm -f -- "$software_input" "$software_components"
+  fi
   operation="$(jq -r .operation "$file")"; identity_mode="$(jq -r .spec.identity.mode "$file")"
   [[ "$operation" == new && "$identity_mode" == generate || "$operation" == restore && "$identity_mode" == restore ]] \
     || die 'operation and identity mode disagree'

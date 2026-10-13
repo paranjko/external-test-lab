@@ -20,7 +20,8 @@ SOURCE="$ROOT/02-node/node-config-qwen3-0.6B.source.json"
 mkdir -p "$(dirname "$OUTPUT")"
 jq --arg id "$RUNTIME_ID" --arg host "$ML_HOST" --argjson poc_port "$ML_POC_PORT" --arg model "$MODEL_ID" \
   --arg revision "$MODEL_REVISION" --argjson max "$MLNODE_MAX_NUM_SEQS" \
-  --arg util "$MLNODE_GPU_MEMORY_UTILIZATION" --argjson context "$MLNODE_CONTEXT_LENGTH" '
+  --arg util "$MLNODE_GPU_MEMORY_UTILIZATION" --argjson context "$MLNODE_CONTEXT_LENGTH" \
+  --arg dtype "$MLNODE_DTYPE" --argjson parallel "$MLNODE_TENSOR_PARALLEL_SIZE" '
   .[0].id = $id
   | .[0].host = $host
   | .[0].poc_port = $poc_port
@@ -34,5 +35,11 @@ jq --arg id "$RUNTIME_ID" --arg host "$ML_HOST" --argjson poc_port "$ML_POC_PORT
   | .[0].models[$model].args[$seq + 1] = ($max | tostring)
   | .[0].models[$model].args[$util_index + 1] = ($util | tostring)
   | .[0].models[$model].args[$context_index + 1] = ($context | tostring)
+  | (.[0].models[$model].args | index("--dtype")) as $dtype_index
+  | if $dtype_index == null then .[0].models[$model].args += ["--dtype",$dtype]
+    else .[0].models[$model].args[$dtype_index + 1] = $dtype end
+  | (.[0].models[$model].args | index("--tensor-parallel-size")) as $parallel_index
+  | if $parallel_index == null then .[0].models[$model].args += ["--tensor-parallel-size",($parallel|tostring)]
+    else .[0].models[$model].args[$parallel_index + 1] = ($parallel|tostring) end
 ' "$SOURCE" >"$OUTPUT"
 echo "$OUTPUT"

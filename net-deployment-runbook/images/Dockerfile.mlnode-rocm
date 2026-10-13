@@ -51,11 +51,13 @@ COPY packages/common/src /app/packages/common/src
 ENV PYTHONPATH="/app:/app/packages/api/src" \
     MLNODE_RELEASE_VERSION="${MLNODE_RELEASE_VERSION}" \
     VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
+    VLLM_ROCM_USE_AITER=0 \
     HSA_ENABLE_IPC_MODE_LEGACY=1 \
     VLLM_RUNNER_TIMEOUT=3600
 LABEL org.opencontainers.image.version="${MLNODE_RELEASE_VERSION}"
 
 COPY packages/api/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+COPY .gdc-build/check-mlnode-rocm-runner.py /usr/local/bin/check-mlnode-rocm-runner.py
+RUN chmod +x /app/entrypoint.sh /usr/local/bin/check-mlnode-rocm-runner.py
 WORKDIR /app
 ENTRYPOINT ["/app/entrypoint.sh"]

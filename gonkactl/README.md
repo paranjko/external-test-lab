@@ -1,5 +1,11 @@
 # gonkactl – implementation draft
 
+The alpha distribution, platform downloads and installation instructions are
+described in [RELEASE.md](RELEASE.md). Run `make -C gonkactl test-release`
+for installer and release-manifest tests; `release-archives` builds all six
+platform archives. The release workflow tests native installation on Linux
+and macOS before publishing an immutable `gonkactl-v1.0.0-alpha.1` prerelease.
+
 This directory preserves an unfinished native Go implementation of gonkactl.
 It is a source snapshot for continued development, not an operator-ready
 replacement for the existing deployment runbook. The executable currently

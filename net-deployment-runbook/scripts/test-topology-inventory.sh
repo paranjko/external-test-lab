@@ -58,13 +58,14 @@ MONITORING_CIDR=198.51.100.1/32
 PUBLIC_EDGE_CIDR=198.51.100.2/32
 DATA_ROOT=/srv/dai
 GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
-HF_CACHE_ROOT=/srv/dai/hf-cache
+HF_CACHE_ROOT=/srv/hf-cache
 INVENTORY="$tmp/inventory.env"
 write_inventory
 unset GDC_NODE_ALIASES GDC_NODE_PUBLIC_HOSTS GDC_NODE_P2P_PORTS GDC_NODE_ML_HOSTS
 load_env "$INVENTORY"
 [[ "$GDC_NODE_ALIASES" == 'validator-a validator-b validator-c' ]]
 [[ "$GDC_NODE_ML_HOSTS" == 'validator-c=operator-c-gpu' ]]
+[[ "$HF_CACHE_ROOT" == /srv/hf-cache ]]
 [[ "$GDC_GENESIS_NODE" == validator-a ]]
 [[ "$GDC_PUBLIC_EDGE_NODE" == validator-c ]]
 [[ "$GDC_GATEWAY_NODE" == validator-a ]]
@@ -80,3 +81,26 @@ if grep -Eq 'gdc-node\[0-4\]|gdc-nodeN' "$ROOT/01-identities-genesis/collect-ide
   exit 1
 fi
 printf 'PASS inventory accepts arbitrary validator and network-GPU SSH aliases\n'
+
+# A JOIN seed is not the Prometheus collector. Never contact SSH in this test.
+(
+  GENESIS_PUBLIC_HOST=seed.example
+  GATEWAY_NODE=''
+  unset GDC_MONITORING_HOST GDC_JOIN_MONITORING_REGISTRY_HOST
+  [[ "$(monitoring_source_host)" == seed.example ]]
+  ssh() {
+    [[ "$*" == '-G collector-fixture' ]] || return 99
+    printf 'hostname collector.example\n'
+  }
+  GDC_JOIN_MONITORING_REGISTRY_HOST=collector-fixture
+  [[ "$(monitoring_source_host)" == collector.example ]]
+  GDC_MONITORING_HOST=explicit.example
+  [[ "$(monitoring_source_host)" == explicit.example ]]
+  unset GDC_MONITORING_HOST
+  ssh() { return 1; }
+  if (monitoring_source_host) >/dev/null 2>&1; then
+    echo 'failed collector resolution fell back to the seed' >&2
+    exit 1
+  fi
+)
+printf 'PASS monitoring source follows the JOIN collector independently of the seed\n'

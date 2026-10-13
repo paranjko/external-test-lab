@@ -6,6 +6,11 @@ set -Eeuo pipefail
 #
 #   OPS_AUTHORIZED_KEY="$(<ops.pub)" sudo -E ./ops/chore/user-ops.sh
 
+if [[ "${1:-}" == preview ]]; then
+  shift
+  exec "$(dirname "${BASH_SOURCE[0]}")/user-preview.sh" "$@"
+fi
+
 OPS_USER=ops
 SITE_ROOT=/srv/dai/edge/site
 SUDOERS_FILE=/etc/sudoers.d/gonka-site-ops

@@ -1,0 +1,16 @@
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
+
+# The exact PR renderer is allowed to derive a static observation contract,
+# not to contact an operator host. The test inventory has no GPU SSH alias.
+# Reject every invocation, including
+# unexpected forwarding or mutating commands, instead of accepting a broad
+# SSH-shaped call that could conceal a live-host operation.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends jq \
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -m 0755 /sandbox-bin \
+    && printf '%s\n' '#!/bin/sh' 'exit 90' > /sandbox-bin/ssh \
+    && chmod 0755 /sandbox-bin/ssh
+
+USER node
+WORKDIR /workspace

@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {translate,chooseLanguage} from './matrix-i18n.mjs';
+assert.equal(chooseLanguage('?lang=ru','en','en'),'ru');
+assert.equal(chooseLanguage('?lang=en','ru','ru'),'en');
+assert.equal(chooseLanguage('?lang=xx','ru','en'),'ru');
+assert.equal(chooseLanguage('',undefined,'ru-RU'),'ru');
+assert.equal(chooseLanguage('',undefined,'de'),'en');
+assert.equal(translate('In set · power 54','ru'),'В наборе · вес 54');
+assert.equal(translate('In set · power 54','en'),'In set · power 54');
+assert.equal(translate('Total 135 · quorum 91','ru'),'Общий вес 135 · кворум 91');
+assert.equal(translate('node5-2','ru'),'node5-2');
+console.log('PASS: Russian/English strings, language precedence, stable identity');

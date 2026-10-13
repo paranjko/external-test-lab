@@ -3,6 +3,9 @@
 set +x
 set -Eeuo pipefail
 umask 077
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091 # ROOT is resolved above.
+source "$ROOT/scripts/lib-lock.sh"
 INCIDENT=GNK-LAB-2026-0001
 HALTED_HEIGHT=306552
 HALTED_HASH=50144a1fd8afcdd14b7085a3915e0503fc305583c0dec29ec8fde46468e4882d
@@ -37,6 +40,10 @@ bootstrap_group_messages() {
 valid_source_location() {
   local node="$1" source="$2" resolved="$3"
   valid_node "$node" || return 1
+  if [[ "$source" == /srv/dai/data/inference ]]; then
+    [[ "$source" == "$resolved" || "$resolved" =~ ^/srv/dai/data\.generations/[A-Za-z0-9._-]+/inference$ ]]
+    return
+  fi
   [[ "$source" == "/srv/dai/$node/inference" || "$source" == "/srv/dai/data/$node/inference" ]] || return 1
   [[ "$source" == "$resolved" || ( "$source" == "/srv/dai/data/$node/inference" \
     && "$resolved" =~ ^/srv/dai/data/$node\.generations/[A-Za-z0-9_-]+/inference$ ) ]]
@@ -54,7 +61,7 @@ discover_deployment() {
     map(select(.State.Running == true)
       | {container:.Id, deploy:.Config.Labels["com.docker.compose.project.working_dir"]}
       | select(.deploy | type == "string")
-      | select(.deploy | test("^/srv/dai/deploy/[A-Za-z0-9][A-Za-z0-9_-]*$")))
+      | select(.deploy | test("^/srv/dai/deploy$|^/srv/dai/deploy/[A-Za-z0-9][A-Za-z0-9_-]*$")))
     | if length == 1 then .[0] else error("expected one managed node deployment") end'
 }
 
@@ -466,7 +473,7 @@ reset_native_poc_cache() {
 if [[ "${1:-}" == --remote ]]; then
   operation="${2:-}"; node="${3:-}"; role="${4:-}"
   valid_node "$node" && [[ $EUID == 0 && ( "$role" == source || "$role" == returning ) ]] || fail 'invalid remote Host or missing sudo authority'
-  deploy="/srv/dai/deploy/$node"
+  deploy=/srv/dai/deploy
   saved="/srv/dai/recovery/$INCIDENT/$node"
   rpc() { curl -fsS --connect-timeout 3 --max-time 10 "http://127.0.0.1:26657/$1"; }
   start_services() {
@@ -488,14 +495,14 @@ if [[ "${1:-}" == --remote ]]; then
       discovered="$(discover_deployment)" || fail 'cannot identify the deployed node'
       container="$(jq -er .container <<<"$discovered")"
       deploy="$(jq -er .deploy <<<"$discovered")"
-      node="${deploy##*/}"
+      [[ "$deploy" == /srv/dai/deploy ]] || node="${deploy##*/}"
       [[ "$container" =~ ^[0-9a-f]{64}$ ]] || fail 'expected one running node container'
       source="$(docker inspect "$container" | jq -er '.[0].Mounts[] | select(.Destination == "/root/.inference" and .Type == "bind") | .Source')"
       signer="$(compose ps -a -q tmkms)"
       [[ "$signer" =~ ^[0-9a-f]{64}$ ]] || fail 'expected one TMKMS container'
       signer="$(docker inspect "$signer" | jq -er '.[0].Mounts[] | select(.Destination == "/root/.tmkms" and .Type == "bind") | .Source')"
-      [[ "$source" == "/srv/dai/$node/inference" || "$source" == "/srv/dai/data/$node/inference" ]] || fail 'unexpected node data path'
-      [[ "$signer" == "/srv/dai/$node/tmkms" || "$signer" == "/srv/dai/signer/$node/tmkms" ]] || fail 'unexpected signer path'
+      [[ "$source" == /srv/dai/data/inference || "$source" == "/srv/dai/$node/inference" || "$source" == "/srv/dai/data/$node/inference" ]] || fail 'unexpected node data path'
+      [[ "$signer" == /srv/dai/signer/tmkms || "$signer" == "/srv/dai/$node/tmkms" || "$signer" == "/srv/dai/signer/$node/tmkms" ]] || fail 'unexpected signer path'
       source_realpath="$(realpath -e "$source")"
       valid_source_location "$node" "$source" "$source_realpath" \
         && [[ "$signer" == "$(realpath -e "$signer")" ]] || fail 'unexpected linked state directory'
@@ -1633,8 +1640,8 @@ recovery_action="${1:-}"
 # Report the location, never the expanded command: it may contain key material.
 trap 'report_incident_error "$?" "$LINENO" "${FUNCNAME[0]:-main}"' ERR
 mkdir -p "$GDC_DATA_ROOT"
-exec 9>"$GDC_DATA_ROOT/.incident-recovery.lock"
-flock -n 9 || fail 'another incident recovery command is running'
+gdc_lock_acquire "$GDC_DATA_ROOT/.incident-recovery.lock" 0 'another incident recovery command is running' || fail 'another incident recovery command is running'
+incident_lock_dir="$GDC_LOCK_DIR"
 case "${1:-}" in
   bootstrap) [[ $# == 2 ]] || fail 'expected bootstrap SSH_ALIAS'; recover_source "$2" ;;
   handoff|check)
@@ -1649,6 +1656,7 @@ case "${1:-}" in
     ;;
   *) fail 'expected bootstrap, handoff, or check' ;;
 esac
+gdc_lock_release "$incident_lock_dir"
 }
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0

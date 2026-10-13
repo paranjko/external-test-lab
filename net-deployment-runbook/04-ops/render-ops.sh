@@ -34,8 +34,41 @@ grafana_public_dashboard_uid="${GDC_GRAFANA_PUBLIC_DASHBOARD_UID:-gdc-overview}"
 grafana_public_dashboard_share_uid="${GDC_GRAFANA_PUBLIC_DASHBOARD_SHARE_UID:-5fd40e12-5334-4d32-aea2-dcfe85afb3f2}"
 grafana_public_dashboard_token="${GDC_GRAFANA_PUBLIC_DASHBOARD_TOKEN:-321a0d961e7f4b4ea6da843777c032eb}"
 mkdir -p "$OUTPUT"
+target_root="$OUTPUT/prometheus/targets/static"
+mkdir -p "$target_root/host" "$target_root/cadvisor" "$target_root/gonka-node"
+
+write_target() {
+  local job="$1" name="$2" address="$3" labels="$4" output
+  [[ "$job" =~ ^(host|cadvisor|gonka-node)$ ]] || die "invalid Prometheus target job: $job"
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid Prometheus target name: $name"
+  output="$target_root/$job/$name.json"
+  jq -cn --arg address "$address" --argjson labels "$labels" \
+    '[{targets:[$address],labels:$labels}]' >"$output"
+  chmod 0644 "$output"
+}
 
 gateway_public_host="$(node_public_host "$GATEWAY_NODE")"
+gateway_metrics_targets="${GDC_GATEWAY_METRICS_TARGETS:-}"
+[[ -n "$gateway_metrics_targets" ]] || {
+  echo 'GDC_GATEWAY_METRICS_TARGETS is required: declare each gateway id, node, and loopback metrics port' >&2
+  exit 2
+}
+jq -e '
+  type == "array" and length > 0
+  and (length as $count
+  | all(.[];
+    (type == "object") and (keys | sort) == ["id", "node", "port"]
+    and (.id | type == "string" and test("^[A-Z][A-Z0-9_-]*$"))
+    and (.node | type == "string" and test("^[A-Za-z0-9._-]+$"))
+    and (.port | type == "number" and floor == . and . >= 1 and . <= 65535))
+  and ([.[].id] | unique | length == $count)
+  and ([.[].node] | unique | length == $count))
+' <<<"$gateway_metrics_targets" >/dev/null \
+  || { echo 'GDC_GATEWAY_METRICS_TARGETS must be a non-empty unique id/node/port JSON array' >&2; exit 2; }
+while IFS= read -r gateway_metrics_node; do
+  topology_contains_node "$gateway_metrics_node" \
+    || { echo "GDC_GATEWAY_METRICS_TARGETS names a node outside the inventory: $gateway_metrics_node" >&2; exit 2; }
+done < <(jq -r '.[].node' <<<"$gateway_metrics_targets")
 write_env "$OUTPUT/.env" \
   "SITE_HOST=$SITE_HOST" "API_HOST=$API_HOST" "GRAFANA_HOST=$GRAFANA_HOST" "ACME_EMAIL=${ACME_EMAIL:-}" \
   "TELEGRAM_BOT_URL=$telegram_bot_url" "GATEWAY_PUBLIC_HOST=$gateway_public_host" "PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR" \
@@ -53,20 +86,6 @@ nodes='[]'; validators='[]'; node_catalog='[]'
 # homepage verifier will reject a deployment that claims a map while active
 # nodes have no resolved positions.
 declare -A geo_by_ip=() geo_by_node=()
-operator_geo() {
-  # These are operator-approved regional display points for the current
-  # DevNet aliases. They intentionally describe an approximate region rather
-  # than a rack or street address; unknown and newly joined hosts still use
-  # the separately labelled GeoIP fallback below.
-  case "$1" in
-    node0.gonka-dev.net) printf '%s\n' '{"latitude":39.0997,"longitude":-94.5786,"rawLatitude":39.0997,"rawLongitude":-94.5786,"displayLatitude":39.0997,"displayLongitude":-94.5786,"city":"Kansas City","country":"United States","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node0-region","locationLabel":"Kansas City, United States"}' ;;
-    node1.gonka-dev.net) printf '%s\n' '{"latitude":60.1695,"longitude":24.9354,"rawLatitude":60.1695,"rawLongitude":24.9354,"displayLatitude":60.1695,"displayLongitude":24.9354,"city":"Helsinki","country":"Finland","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node1-region","locationLabel":"Helsinki, Finland"}' ;;
-    node2.gonka-dev.net) printf '%s\n' '{"latitude":52.3785,"longitude":4.9,"rawLatitude":52.3785,"rawLongitude":4.9,"displayLatitude":52.3785,"displayLongitude":4.9,"city":"Amsterdam","country":"Netherlands","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node2-region","locationLabel":"Amsterdam, Netherlands"}' ;;
-    node3.gonka-dev.net) printf '%s\n' '{"latitude":51.5074,"longitude":-0.1278,"rawLatitude":51.5074,"rawLongitude":-0.1278,"displayLatitude":51.5074,"displayLongitude":-0.1278,"city":"London","country":"United Kingdom","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node3-region","locationLabel":"London, United Kingdom"}' ;;
-    node4.gonka-dev.net) printf '%s\n' '{"latitude":45.4416,"longitude":-122.749,"rawLatitude":45.4416,"rawLongitude":-122.749,"displayLatitude":45.4416,"displayLongitude":-122.749,"city":"Portland metro","country":"United States","isp":"operator-provided","source":"operator","displaySource":"operator","adjustmentKm":0,"accuracy":"regional","locationId":"gdc-node4-region","locationLabel":"Portland metro, United States"}' ;;
-    *) printf 'null\n' ;;
-  esac
-}
 resolve_geo() {
   local ip="$1" response geo observed_at
   [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { printf 'null\n'; return 0; }
@@ -105,10 +124,8 @@ for node in "${GDC_NODES[@]}"; do
   gpu_host="$(node_ml_host "$node" || printf '%s' "$node")"
   mapfile -t ips < <(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u)
   ip="${ips[0]:-}"
-  geo="$(operator_geo "$host")"
-  if [[ "$geo" != null ]]; then
-    : # Known topology uses its approved coarse regional display location.
-  elif ((${#ips[@]} == 1)); then
+  geo='null'
+  if ((${#ips[@]} == 1)); then
     geo="$(resolve_geo "$ip")"
   elif ((${#ips[@]} > 1)); then
     locations='[]'
@@ -132,15 +149,20 @@ done
 jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$API_HOST/v1" \
   --arg direct "http://$gateway_public_host:8082/v1" --arg telegram "$telegram_bot_url" \
   --arg grafanaNetwork "https://$GRAFANA_HOST/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
-  --arg grafanaInference "https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-7d&to=now&timezone=utc&kiosk" \
+  --arg grafanaInference "https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
   --arg gatewayNode "$GATEWAY_NODE" --arg chainRpcHost "$(node_public_host "$GENESIS_NODE")" --argjson nodes "$nodes" --argjson validators "$validators" --argjson nodeCatalog "$node_catalog" \
   '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
   | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
 
+write_env "$OUTPUT/network-observer.env" \
+  "GDC_NETWORK_CHAIN_ID=$CHAIN_ID" \
+  "GDC_NETWORK_BOOTSTRAP_URL=https://$SITE_HOST/$CHAIN_ID/bootstrap.json"
+
 {
   printf '{\n'
   [[ -z "${ACME_EMAIL:-}" ]] || printf '  email {$ACME_EMAIL}\n'
-  printf '  admin 127.0.0.1:2019\n}\n'
+  # OPS and participant edge share the Host network, but not a reload endpoint
+  printf '  admin 127.0.0.1:2020\n}\n'
   cat <<'CADDY'
 # Public TLS belongs exclusively to the configured participant edge. This
 # internal status service intentionally exposes only its explicit HTTP ports.
@@ -150,6 +172,12 @@ http://:8082 {
 }
 http://:8081 {
   encode zstd gzip
+  handle /status/network {
+    reverse_proxy 127.0.0.1:18094
+  }
+  handle /status/network/ws {
+    reverse_proxy 127.0.0.1:18094
+  }
   handle /status/participants {
     reverse_proxy 127.0.0.1:18089
   }
@@ -187,18 +215,35 @@ CADDY
     header Content-Type "text/plain; version=0.0.4"
     file_server
   }
-  # Publish only the fixed GPU inventory query. Do not expose the general
-  # Prometheus query API through the public status origin. Exclude series whose
-  # latest exporter sample is older than the live-inventory freshness bound.
+  # Publish the latest inventory observed within the bounded retention window.
+  # Do not expose the general Prometheus query API through the public status
+  # origin. A temporarily failed scrape must not erase known hardware or
+  # software from the public operator view.
   handle /status/gpus {
-    rewrite * /api/v1/query?query=gdc_nvidia_memory_total_bytes%20unless%20(time()%20-%20timestamp(gdc_nvidia_memory_total_bytes)%20%3E%20120)
+    rewrite * /api/v1/query?query=last_over_time(gdc_nvidia_memory_total_bytes%5B24h%5D)
     reverse_proxy 127.0.0.1:9099
   }
   # The site consumes software information only from the monitoring inventory,
-  # never from a participant's public inference endpoint.
+  # never from a participant's public inference endpoint. Return the timestamp
+  # of each latest bounded observation, not the query evaluation time: version
+  # is a label, so upgrades and rollbacks retain distinct series for 24 hours.
   handle /status/software {
-    rewrite * /api/v1/query?query=gdc_component_info
+    rewrite * /api/v1/query?query=max_over_time(timestamp(gdc_component_info)%5B24h%3A15s%5D)
     reverse_proxy 127.0.0.1:9099
+  }
+  # Unlike retained software inventory, DevShard identity is a current process
+  # observation. Return its source time, discard failed/stale/future collectors.
+  handle /status/devshard-runtime {
+    route {
+      @runtime_identity_get method GET
+      handle @runtime_identity_get {
+        rewrite * /api/v1/query?query=(gdc_devshard_runtime_info%20*%20on(host)%20group_left()%20gdc_devshard_runtime_observed_at_seconds)%20and%20on(host)%20(gdc_devshard_runtime_scrape_success%20%3D%3D%201)%20and%20on(host)%20(time()%20-%20gdc_devshard_runtime_observed_at_seconds%20%3E%3D%200)%20and%20on(host)%20(time()%20-%20gdc_devshard_runtime_observed_at_seconds%20%3C%3D%2090)
+        reverse_proxy 127.0.0.1:9099
+      }
+      handle {
+        respond 405
+      }
+    }
   }
   root * /srv
   file_server
@@ -228,7 +273,10 @@ alerting:
         - targets: [alertmanager:9093]
 scrape_configs:
   - job_name: host
-    static_configs:
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static/host/*.json
+          - /etc/prometheus/targets/join/host/*.json
 YAML
   for node in "${GDC_NODES[@]}"; do
     geo="${geo_by_node[$node]:-null}"
@@ -239,21 +287,24 @@ YAML
       latitude: (($geo.latitude // "") | tostring),
       longitude: (($geo.longitude // "") | tostring)
     }')"
-    printf "      - targets: ['%s:9101']\n        labels: %s\n" "$(node_public_host "$node")" "$geo_labels"
+    write_target host "$node" "$(node_public_host "$node"):9101" "$geo_labels"
   done
   for node in "${GDC_NODES[@]}"; do
     ml_host="$(node_ml_host "$node" || true)"
     [[ -n "$ml_host" ]] || continue
     ml_address="$(ssh -G "$ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
     [[ -n "$ml_address" ]] || die "cannot resolve monitoring address for GPU host $ml_host"
-    printf "      - targets: ['%s:9101']\n        labels: {host: '%s', validator: '%s'}\n" "$ml_address" "$ml_host" "$node"
+    write_target host "$ml_host" "$ml_address:9101" "$(jq -cn --arg host "$ml_host" --arg validator "$node" '{host:$host,validator:$validator}')"
   done
   cat <<'YAML'
   - job_name: cadvisor
-    static_configs:
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static/cadvisor/*.json
+          - /etc/prometheus/targets/join/cadvisor/*.json
 YAML
   for node in "${GDC_NODES[@]}"; do
-    printf "      - targets: ['%s:8088']\n        labels: {host: '%s'}\n" "$(node_public_host "$node")" "$node"
+    write_target cadvisor "$node" "$(node_public_host "$node"):8088" "$(jq -cn --arg host "$node" '{host:$host}')"
   done
   cat <<YAML
   - job_name: public-https
@@ -272,18 +323,43 @@ YAML
 YAML
   cat <<'YAML'
   - job_name: gonka-node
-    static_configs:
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static/gonka-node/*.json
+          - /etc/prometheus/targets/join/gonka-node/*.json
 YAML
   for node in "${GDC_NODES[@]}"; do
-    printf "      - targets: ['%s:26660']\n        labels: {host: '%s'}\n" "$(node_public_host "$node")" "$node"
+    write_target gonka-node "$node" "$(node_public_host "$node"):26660" "$(jq -cn --arg host "$node" '{host:$host}')"
   done
   cat <<YAML
   - job_name: gateway
     scheme: https
-    metrics_path: /metrics
+    metrics_path: /ops-gateway-metrics
     static_configs:
-      - targets: ['$API_HOST:443']
-        labels: {host: '$GATEWAY_NODE'}
+YAML
+while IFS=$'\t' read -r gateway_id gateway_node; do
+  printf "      - targets: ['%s:443']\n        labels: {gateway: '%s', host: '%s'}\n" \
+    "$(node_public_host "$gateway_node")" "$gateway_id" "$gateway_node"
+done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$gateway_metrics_targets")
+cat <<YAML
+  - job_name: gateway-admission-route
+    scheme: https
+    metrics_path: /ops-gateway-admission-metrics
+    static_configs:
+      - targets: ['$(node_public_host "$PUBLIC_EDGE_NODE"):443']
+        labels: {route: 'S', host: '$PUBLIC_EDGE_NODE'}
+YAML
+cat <<YAML
+  - job_name: gateway-route
+    scheme: https
+    metrics_path: /ops-gateway-route-metrics
+    static_configs:
+YAML
+while IFS=$'\t' read -r gateway_id gateway_node; do
+  printf "      - targets: ['%s:443']\n        labels: {route: '%s', host: '%s'}\n" \
+    "$(node_public_host "$gateway_node")" "$gateway_id" "$gateway_node"
+done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$gateway_metrics_targets")
+cat <<YAML
   - job_name: gateway-readiness
     metrics_path: /status/gateway-health.prom
     static_configs:

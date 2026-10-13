@@ -12,6 +12,7 @@ chmod +x "$temporary/inferenced"
 INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/mitch-demo.env" --ssh-alias mitch-demo --public-host host.example.net --p2p-port 5200 --gpu-ssh-alias mitch-ml --bootstrap-file "$temporary/bootstrap.json"
 source "$temporary/mitch-demo.env"
 [[ "$GDC_NODE_ALIASES" == mitch-demo && "$GDC_NODE_ML_HOSTS" == mitch-demo=mitch-ml && "$SEED_API_URL" == http://one.example:8000 ]]
+[[ "$GDC_JOIN_REGISTRATION_ENDPOINTS" == http://one.example:8000 ]]
 cat >"$temporary/account.json" <<'EOF'
 {"address":"gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq","account_pubkey_b64":"YWJj"}
 EOF
@@ -23,10 +24,12 @@ CHAIN_ID=gonka-fixture
 BASE_DENOM=ngonka
 API_HOST=api.example.net
 MONITORING_CIDR=127.0.0.1/32
+GDC_MONITORING_DOCKER_CIDR=172.21.0.0/16
 PUBLIC_EDGE_CIDR=127.0.0.1/32
+GDC_GATEWAY_METRICS_TARGETS='[{"id":"A","node":"mitch-demo","port":18087},{"id":"B","node":"seed","port":18088}]'
 DATA_ROOT=/srv/dai
 GENESIS_INSTALL_PATH=/srv/dai/shared/genesis.json
-HF_CACHE_ROOT=/srv/dai/hf-cache
+HF_CACHE_ROOT=/srv/hf-cache
 GENESIS_P2P_PORT=5000
 EOF
 # Render against the actual JOIN role input: the local role configuration, not
@@ -34,6 +37,7 @@ EOF
 "$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --bootstrap --secrets-dir "$temporary" --output "$temporary/node.env" >/dev/null
 grep -Fxq 'PUBLIC_HOST=host.example.net' "$temporary/node.env"
 grep -Fxq 'PROXY_BIND_ADDRESS=127.0.0.1' "$temporary/node.env"
+grep -Fxq 'HF_HOME=/srv/hf-cache' "$temporary/node.env"
 printf '%s\n%s\n' 'first@one.example:5000' 'second@two.example:5000' >"$temporary/genesis-seeds.txt"
 "$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --output "$temporary/node-with-seeds.env" >/dev/null
 grep -Fxq 'GENESIS_SEEDS=first@one.example:5000,second@two.example:5000' "$temporary/node-with-seeds.env"
@@ -45,8 +49,8 @@ GDC_JOIN_RPC_SERVER_1=https://one.example/chain-rpc/
 GDC_JOIN_RPC_SERVER_2=https://two.example/chain-rpc/
 GDC_JOIN_SNAPSHOT_PEERS=0123456789abcdef0123456789abcdef01234567@tcp://one.example:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://two.example:5000
 EOF
-"$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --state-sync-env "$temporary/lineage.env" --data-dir /srv/dai/data/mitch-demo.generations/test-run --output "$temporary/node-state-sync.env" >/dev/null
-grep -Fxq 'DATA_DIR=/srv/dai/data/mitch-demo.generations/test-run' "$temporary/node-state-sync.env"
+"$ROOT/02-node/render-node-env.sh" --inventory "$temporary/inventory.env" --node-name mitch-demo --account-public "$temporary/account.json" --seeds-file "$temporary/genesis-seeds.txt" --secrets-dir "$temporary" --state-sync-env "$temporary/lineage.env" --data-dir /srv/dai/data.generations/test-run --output "$temporary/node-state-sync.env" >/dev/null
+grep -Fxq 'DATA_DIR=/srv/dai/data.generations/test-run' "$temporary/node-state-sync.env"
 grep -Fxq 'GDC_JOIN_SNAPSHOT_PEERS=0123456789abcdef0123456789abcdef01234567@tcp://one.example:5000,89abcdef0123456789abcdef0123456789abcdef@tcp://two.example:5000' "$temporary/node-state-sync.env"
 grep -Fxq 'GDC_JOIN_PERSISTENT_PEERS=0123456789abcdef0123456789abcdef01234567@one.example:5000,89abcdef0123456789abcdef0123456789abcdef@two.example:5000' "$temporary/node-state-sync.env"
 grep -Fxq 'GDC_JOIN_SEEDS=first@one.example:5000,second@two.example:5000' "$temporary/node-state-sync.env"
@@ -97,3 +101,34 @@ INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" -
   [[ "$GDC_JOIN_NETWORK_HOST" == two.example && "$SEED_NODE_RPC_URL" == http://two.example:8000/chain-rpc && "$SEED_API_URL" == http://two.example:8000 ]]
 )
 printf 'PASS explicit JOIN source also selects the membership/API role, not the first seed\n'
+
+# Execute the generated role through load_project: a different seed must not
+# change the monitoring firewall source selected by the registry handoff.
+INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/collector.env" \
+  --ssh-alias mitch-demo --public-host host.example.net --bootstrap-file "$temporary/bootstrap.json" \
+  --source-rpc http://two.example:8000/chain-rpc --monitoring-registry-host collector-fixture
+(
+  export GDC_HOME="$temporary/collector-home" GDC_ENV="$temporary/collector.env"
+  unset GDC_MONITORING_HOST GDC_JOIN_RESUME
+  source "$ROOT/scripts/lib.sh"
+  ssh() {
+    [[ "$*" == '-G collector-fixture' ]] || return 99
+    printf 'hostname collector.example\n'
+  }
+  getent() {
+    case "$*" in
+      'ahostsv4 collector.example') printf '192.0.2.44 STREAM collector.example\n' ;;
+      'ahostsv4 two.example') printf '192.0.2.10 STREAM two.example\n' ;;
+      *) return 99 ;;
+    esac
+  }
+  load_project
+  [[ "$MONITORING_CIDR" == 192.0.2.44/32 && "$PUBLIC_EDGE_CIDR" == 192.0.2.10/32 ]]
+  grep -Fxq 'MONITORING_CIDR=192.0.2.44/32' "$INVENTORY"
+)
+printf 'PASS generated JOIN retains independent collector firewall source\n'
+GDC_MONITORING_HOST=explicit.example INFERENCED="$temporary/inferenced" \
+  "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/explicit-collector.env" \
+  --ssh-alias mitch-demo --public-host host.example.net --bootstrap-file "$temporary/bootstrap.json"
+grep -Fxq 'GDC_MONITORING_HOST=explicit.example' "$temporary/explicit-collector.env"
+printf 'PASS explicit collector survives generated JOIN role persistence\n'

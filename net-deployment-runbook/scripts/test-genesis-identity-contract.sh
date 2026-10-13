@@ -7,6 +7,11 @@ trap 'rm -rf "$tmp"' EXIT
 "$ROOT/scripts/make-secrets.sh" "$tmp/secrets" gdc-node0 >/dev/null
 mapfile -t secret_files < <(find "$tmp/secrets" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
 expected=(
+  bifrost.admin-password
+  bifrost.broker-encryption-key
+  bifrost.broker-token
+  bifrost.edge-token
+  bifrost.setup-token
   bridge.jwt
   gateway.admin-key
   gateway.admission-observer-key
@@ -19,6 +24,7 @@ expected=(
   grafana.admin
   operator.keyring
   telegram.conversation-api-token
+  telegram.faucet-token
 )
 [[ "${secret_files[*]}" == "${expected[*]}" ]]
 ! find "$tmp/secrets" -maxdepth 1 -type f -name 'gdc-node[1-4].*' | grep -q .

@@ -44,6 +44,7 @@ case "$url" in
     ;;
   */chain-api/productscience/inference/inference/params)
     approvals='[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]'
+    [[ "${MODE:-good}" != empty_approvals ]] || approvals='[]'
     [[ "${MODE:-good}" != reordered || "$node" != 1 ]] || approvals='[{"name":"v5","binary":"https://example.test/devshard-v5.zip","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"v4","binary":"https://example.test/devshard-v4.zip","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]'
     [[ "${MODE:-good}" != conflicting_approvals || "$node" != 1 ]] || approvals='[{"name":"v3","binary":"https://example.test/devshard-v3.zip","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]'
     [[ "${MODE:-good}" != malformed_approval || "$node" != 1 ]] || approvals='[{"name":"v3","binary":"http://example.test/devshard-v3.zip","sha256":"not-a-sha"}]'
@@ -84,7 +85,7 @@ if run_case declared_api_conflict "$tmp/multiple-apis.json" >"$tmp/declared_api_
   exit 1
 fi
 
-for case_name in one_seed conflict wrong_chain incomplete unknown conflicting_approvals malformed_approval duplicate_approval api_mismatch declared_api_unavailable; do
+for case_name in one_seed conflict wrong_chain incomplete unknown empty_approvals conflicting_approvals malformed_approval duplicate_approval api_mismatch declared_api_unavailable; do
   if run_case "$case_name" >"$tmp/$case_name.out" 2>"$tmp/$case_name.err"; then
     echo "unsafe seed observation accepted: $case_name" >&2
     exit 1
@@ -95,6 +96,7 @@ grep -Fq 'software_ambiguous:' "$tmp/conflict.err"
 grep -Fq 'software_ambiguous:' "$tmp/wrong_chain.err"
 grep -Fq 'software_incomplete:' "$tmp/incomplete.err"
 grep -Fq 'software_unsupported:' "$tmp/unknown.err"
+grep -Fq 'software_incomplete:' "$tmp/empty_approvals.err"
 grep -Fq 'software_ambiguous:' "$tmp/conflicting_approvals.err"
 grep -Fq 'software_incomplete:' "$tmp/malformed_approval.err"
 grep -Fq 'software_incomplete:' "$tmp/duplicate_approval.err"

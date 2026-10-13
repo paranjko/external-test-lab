@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # Atomically persist the bounded terminal outcome of one JOIN invocation.
 set -Eeuo pipefail
-usage() { echo "Usage: $0 --output FILE --input FILE" >&2; }
-OUTPUT=''; INPUT=''
+usage() { echo "Usage: $0 --output FILE --input FILE | --validate FILE" >&2; }
+OUTPUT=''; INPUT=''; VALIDATE=''
 while (($#)); do case "$1" in
   --output) OUTPUT="${2:-}"; shift 2 ;;
   --input) INPUT="${2:-}"; shift 2 ;;
+  # --validate: readers hold a result to this schema instead of copying it.
+  --validate) VALIDATE="${2:-}"; shift 2 ;;
   *) usage; exit 2 ;;
 esac; done
-[[ -n "$OUTPUT" && -r "$INPUT" ]] || { usage; exit 2; }
+if [[ -n "$VALIDATE" ]]; then
+  [[ -z "$OUTPUT" && -z "$INPUT" && -r "$VALIDATE" ]] || { usage; exit 2; }
+  INPUT="$VALIDATE"
+else
+  [[ -n "$OUTPUT" && -r "$INPUT" ]] || { usage; exit 2; }
+fi
 command -v jq >/dev/null || { echo 'jq is required to record a JOIN result' >&2; exit 2; }
 jq -e '
   type == "object" and .schema_version == 1 and .kind == "gdc-host-join-result" and
@@ -24,6 +31,7 @@ jq -e '
   (.join_profile_sha256 == null or (.join_profile_sha256 | test("^[a-f0-9]{64}$"))) and
   (.evidence | type == "array" and length <= 16 and all(.[]; type == "object" and (keys | sort) == ["kind","sha256"] and (.kind | test("^[a-z][a-z0-9_-]{0,63}$")) and (.sha256 | test("^[a-f0-9]{64}$"))))
 ' "$INPUT" >/dev/null || { echo 'invalid JOIN terminal result input' >&2; exit 2; }
+[[ -z "$VALIDATE" ]] || exit 0
 umask 077
 mkdir -p "$(dirname "$OUTPUT")"
 temporary="$(mktemp "$(dirname "$OUTPUT")/.join-result.XXXXXX")"

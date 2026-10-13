@@ -51,6 +51,17 @@ if grep -Fq -- '--profile signer' "$tmp/start/log"; then
   echo 'generated JOIN unexpectedly started its signer by default' >&2; exit 1
 fi
 grep -Fq 'signerless_listener=set' "$tmp/start/log"
+
+# A local AMD MLNode must select its receipt-derived Compose fragment.  This
+# executes the startup boundary so an unset environment-file path cannot hide
+# behind a source-only assertion.
+printf '%s\n' 'GDC_PROFILE_KIND=generated_join' 'MLNODE_COMPOSE_VARIANT=amd' >"$tmp/start/.env"
+printf '%s\n' true >"$tmp/start/.local-ml"
+printf '%s\n' 'services: {}' >"$tmp/start/compose.ml-amd.yaml"
+: >"$tmp/start/log"
+PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" >"$tmp/start/join-amd.out"
+grep -Fq -- "-f $tmp/start/compose.ml-amd.yaml" "$tmp/start/log"
+printf '%s\n' false >"$tmp/start/.local-ml"
 PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" --enable-signer >"$tmp/start/join-signer.out"
 grep -Fq -- '--profile signer' "$tmp/start/log"
 grep -Fq 'CONFIG_priv_validator_laddr: ${CONFIG_PRIV_VALIDATOR_LADDR-tcp://0.0.0.0:26658}' "$ROOT/02-node/compose.yaml"
@@ -81,7 +92,12 @@ grep -Fq 'verify-signer-fence-receipt.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'signer-fence-receipt.v1.json' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'kind:"signer_fence"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'if [[ "$join_operation" == restore ]]; then' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'old_signer_fence_unprovable' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'restore_identity_mismatch' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'verify_restore_key_inactive before-restore' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'verify_restore_key_inactive before-enable' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'restore_fence_method=inactive_validator_key' "$ROOT/scripts/phase-join.sh"
+grep -Fq -- '--minimum "$RUN/restore-tmkms-signing-state.json"' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'kind:"inactive_validator_key"' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'controlled TMKMS stop failed' "$ROOT/02-node/fence-existing-signer.sh"
 grep -Fq 'cannot inspect TMKMS after controlled stop' "$ROOT/02-node/fence-existing-signer.sh"
 if grep -Fq 'stop tmkms >/dev/null 2>&1 || true' "$ROOT/02-node/fence-existing-signer.sh"; then
@@ -92,9 +108,27 @@ grep -Fq 'record_join_state "$NODE" SIGNER_ENABLED "$ADDRESS"' "$ROOT/scripts/ph
 grep -Fq 'record_signer_activation_guard' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify-active-signer-state.sh' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'verify-tmkms-signing-state.sh' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'TMKMS signing state did not advance after signer enablement' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'SIGNER_ARMED_PENDING_ELIGIBILITY' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'positive consensus eligibility remains pending accepted PoC evidence' "$ROOT/scripts/phase-join.sh"
+# --enable-signer recreates Core, so its RPC is away for some seconds: the
+# readback right after it has to be repeated, not taken once.
+for script in phase-join.sh phase-join-resume-canonical.sh; do
+  grep -Eq '^until ssh "\$NODE" "cd .*verify-active-signer-state\.sh' "$ROOT/scripts/$script" \
+    || { echo "$script takes the active signer readback once" >&2; exit 1; }
+done
+# A participant may remain outside the validator set pending accepted PoC.
+# This applies equally to restore: its archived key is deliberately absent
+# from the set before the signer is enabled, so no fixed long wait can prove
+# eligibility. JOIN observes briefly and reports pending eligibility.
+grep -Fq 'signing_wait_seconds=300' "$ROOT/scripts/phase-join.sh"
+if grep -Fq 'signing_wait_seconds=2400' "$ROOT/scripts/phase-join.sh"; then
+  echo 'JOIN still gives restore an unjustified 2400-second signature wait' >&2; exit 1
+fi
+if grep -Fq "die 'TMKMS signing state did not advance after signer enablement'" "$ROOT/scripts/phase-join.sh"; then
+  echo 'JOIN still treats an absent validator-set key as a restore failure' >&2; exit 1
+fi
+grep -Fq 'signing_deadline=$((SECONDS+signing_wait_seconds))' "$ROOT/scripts/phase-join.sh"
+grep -Fq 'deadline=%ss' "$ROOT/scripts/phase-join.sh"
 prepared_line="$(grep -n 'record_join_state "$NODE" PREPARED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 syncing_line="$(grep -n 'record_join_state "$NODE" SYNCING' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 lineage_line="$(grep -n 'record_join_state "$NODE" LINEAGE_VERIFIED' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
@@ -108,7 +142,7 @@ enable_line="$(grep -n './start-node.sh --enable-signer' "$ROOT/scripts/phase-jo
 (( prepared_line < syncing_line && syncing_line < lineage_line )) || { echo 'JOIN state machine is not monotonic before signer enablement' >&2; exit 1; }
 (( lineage_line < canonical_line && canonical_line < canonical_verified_line && canonical_verified_line < archive_ready_line && archive_ready_line < membership_line && membership_line < permissions_line && permissions_line < fenced_line && fenced_line < enable_line )) \
   || { echo 'signer can start before canonical verification, archived recovery identity, membership, permissions or technical fence verification' >&2; exit 1; }
-restore_refusal_line="$(grep -n 'old_signer_fence_unprovable:' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
+restore_refusal_line="$(grep -n 'restore_identity_mismatch' "$ROOT/scripts/phase-join.sh" | head -1 | cut -d: -f1)"
 (( restore_refusal_line < fenced_line && restore_refusal_line < enable_line )) \
   || { echo 'restore can reach local fence or signer enablement without an external previous-Host fence' >&2; exit 1; }
 observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

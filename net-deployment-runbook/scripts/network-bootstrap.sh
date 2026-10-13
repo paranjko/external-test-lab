@@ -4,7 +4,7 @@ set -Eeuo pipefail
 MAX_DOCUMENT_BYTES=262144
 
 die() { printf 'bootstrap validation failed stage=%s field=%s: %s\n' "$1" "$2" "$3" >&2; exit 1; }
-usage() { echo "Usage: $0 verify|env|stage|online FILE [DESTINATION]" >&2; }
+usage() { echo "Usage: $0 verify|env|software|stage|online FILE [DESTINATION]" >&2; }
 require_jq() { command -v jq >/dev/null 2>&1 || die dependency jq 'jq is required by the operator runbook'; }
 
 valid_http_url() {
@@ -31,7 +31,7 @@ validate() {
   jq -e . "$file" >/dev/null 2>&1 || die parse "$file" 'invalid JSON'
   jq --stream -e -s '[.[] | select(length == 2) | .[0] | @json] | length == (unique | length)' "$file" >/dev/null 2>&1 || die parse "$file" 'duplicate key'
   jq -e '
-    type == "object" and (keys | sort) == ["$schema","brokers","chain_id","genesis","seeds"] and
+    type == "object" and ((keys - ["software"]) | sort) == ["$schema","brokers","chain_id","genesis","seeds"] and
     .["$schema"] == "https://gonka-dev.net/v1.bootstrap.schema.json" and
     (.chain_id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")) and
     (.genesis | type == "object" and (keys | sort) == ["sha256"] and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))) and
@@ -44,16 +44,29 @@ validate() {
       (.api_urls | type == "array" and length >= 1 and all(.[]; type == "string")) and
       ((has("access_url") | not) or (.access_url | type == "string")))
   ' "$file" >/dev/null || die schema '$' 'does not match network bootstrap v1'
+  if jq -e 'has("software")' "$file" >/dev/null; then
+    jq -e -f "$(dirname "${BASH_SOURCE[0]}")/bootstrap-software.jq" "$file" >/dev/null ||
+      die schema software 'does not match software v1'
+    while IFS= read -r url; do valid_http_url "$url" software; done < <(
+      jq -r '.software | .deployment.repository, .operator_cli.artifact.url, (.components[] | .upgrade?.artifact.url? // empty)' "$file"
+    )
+  fi
   seed_count=$(jq '.seeds | length' "$file")
   api_count=0
-  declare -A ids=() rpcs=() p2ps=()
+  declare -A ids=() rpcs=() p2ps=() apis=()
   for ((i=0; i<seed_count; i++)); do
     node_id=$(jq -r ".seeds[$i].node_id" "$file"); rpc=$(jq -r ".seeds[$i].rpc" "$file"); p2p=$(jq -r ".seeds[$i].p2p" "$file")
     [[ -z "${ids[$node_id]:-}" && -z "${rpcs[$rpc]:-}" && -z "${p2ps[$p2p]:-}" ]] || die semantics "seeds[$i]" 'duplicate seed identity or endpoint'
     ids[$node_id]=1; rpcs[$rpc]=1; p2ps[$p2p]=1
     valid_http_url "$rpc" "seeds[$i].rpc"; valid_p2p_url "$p2p" "seeds[$i].p2p"
     [[ "$rpc" =~ ^https?://[A-Za-z0-9.-]+(:[1-9][0-9]{0,4})?/chain-rpc/?$ ]] || die semantics "seeds[$i].rpc" 'must use the supported /chain-rpc path'
-    if jq -e ".seeds[$i] | has(\"api\")" "$file" >/dev/null; then api=$(jq -r ".seeds[$i].api" "$file"); valid_http_url "$api" "seeds[$i].api"; ((api_count+=1)); fi
+    if jq -e ".seeds[$i] | has(\"api\")" "$file" >/dev/null; then
+      api=$(jq -r ".seeds[$i].api" "$file")
+      [[ -z "${apis[$api]:-}" ]] || die semantics "seeds[$i].api" 'duplicates a registration API endpoint'
+      apis[$api]=1
+      valid_http_url "$api" "seeds[$i].api"
+      ((api_count+=1))
+    fi
   done
   (( api_count > 0 )) || die semantics seeds 'at least one seed must provide api'
   broker_count=$(jq '.brokers | length' "$file")
@@ -66,17 +79,31 @@ validate() {
 }
 
 render_env() {
-  local file=$1 first_api rpc0 rpc1 p2p
+  local file=$1 first_api registration_apis rpc0 rpc1 p2p
   first_api=$(jq -r '[.seeds[] | select(has("api")) | .api][0]' "$file")
+  registration_apis=$(jq -r '[.seeds[] | select(has("api")) | .api] | join(",")' "$file")
+  [[ -n "$registration_apis" ]] || die env seeds 'at least one registration API is required'
   rpc0=$(jq -r '[.seeds[].rpc] | unique | .[0]' "$file"); rpc1=$(jq -r '[.seeds[].rpc] | unique | .[1]' "$file")
   [[ -n "$rpc0" && -n "$rpc1" && "$rpc1" != null ]] || die env seeds 'two distinct RPC URLs required'
   p2p=$(jq -r '.seeds[0].p2p' "$file")
-  printf "export SEED_API_URL=%q\nexport SEED_NODE_RPC_URL=%q\nexport SEED_NODE_P2P_URL=%q\nexport RPC_SERVER_URL_1=%q\nexport RPC_SERVER_URL_2=%q\n" "$first_api" "$rpc0" "$p2p" "$rpc0" "$rpc1"
+  printf "export SEED_API_URL=%q\nexport GDC_JOIN_REGISTRATION_ENDPOINTS=%q\nexport SEED_NODE_RPC_URL=%q\nexport SEED_NODE_P2P_URL=%q\nexport RPC_SERVER_URL_1=%q\nexport RPC_SERVER_URL_2=%q\n" "$first_api" "$registration_apis" "$rpc0" "$p2p" "$rpc0" "$rpc1"
+}
+
+# JOIN installs the CLI off PATH in the shared operator-root version cache.
+resolve_inferenced_cli() {
+  local resolver_root
+  if [[ -n "${INFERENCED:-}" ]]; then printf '%s' "$INFERENCED"; return; fi
+  if [[ -n "${GDC_JOIN_PROFILE:-}" && -n "${GDC_HOME:-}" && -r "${GDC_JOIN_PROFILE}" ]]; then
+    resolver_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    "$resolver_root/resolve-shared-inferenced-cli.sh" "$GDC_JOIN_PROFILE"
+    return
+  fi
+  printf 'inferenced'
 }
 
 download_genesis() {
   local file=$1 rpc=$2 output=$3 cli expected_sha expected_chain actual_sha actual_chain
-  cli="${INFERENCED:-inferenced}"
+  cli="$(resolve_inferenced_cli)"
   command -v "$cli" >/dev/null 2>&1 || die dependency inferenced 'a compatible inferenced CLI is required to download the exact Genesis'
   expected_sha=$(jq -r '.genesis.sha256' "$file"); expected_chain=$(jq -r '.chain_id' "$file")
   "$cli" download-genesis "$rpc" "$output" >/dev/null 2>&1 || return 1
@@ -124,6 +151,7 @@ command=${1:-}; shift || true
 case "$command" in
   verify) [[ $# -eq 1 ]] || { usage; exit 2; }; validate "$1"; printf 'PASS offline network bootstrap file=%s chain_id=%s genesis_sha256=%s seeds=%s\n' "$1" "$(jq -r .chain_id "$1")" "$(jq -r .genesis.sha256 "$1")" "$(jq '.seeds | length' "$1")"; printf 'Repository attestation and live RPC checks were not run.\n' ;;
   env) [[ $# -eq 1 ]] || { usage; exit 2; }; validate "$1"; render_env "$1" ;;
+  software) [[ $# -eq 1 ]] || { usage; exit 2; }; validate "$1"; jq -e 'has("software")' "$1" >/dev/null || die software software 'not declared by this bootstrap'; jq -S '.software' "$1" ;;
   stage) [[ $# -eq 2 ]] || { usage; exit 2; }; validate "$1"; stage "$1" "$2" ;;
   online) [[ $# -eq 1 ]] || { usage; exit 2; }; validate "$1"; online "$1" ;;
   *) usage; exit 2 ;;

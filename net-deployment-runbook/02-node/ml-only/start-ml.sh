@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCK_LIBRARY="$HERE/lib-lock.sh"
+[[ -r "$LOCK_LIBRARY" ]] || LOCK_LIBRARY="$HERE/../../scripts/lib-lock.sh"
+# shellcheck disable=SC1090 # The installed and source layouts have different parents.
+source "$LOCK_LIBRARY"
 # A second invocation can otherwise race the first one while it pulls images
 # or starts vLLM, yielding misleading readiness output from two operators.
 # This is a host-local lifecycle operation, so only one execution is valid.
 STACK_NAME="$(basename "$HERE")"
 LOCK_FILE="/var/lock/${STACK_NAME}-start.lock"
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
+if ! gdc_lock_acquire "$LOCK_FILE" 0 "FAILED ML start is already running on this host"; then
   echo "FAILED ML start is already running on this host" >&2
   exit 1
 fi
+lock_dir="$GDC_LOCK_DIR"
+trap 'gdc_lock_release "${lock_dir:-}"' EXIT
 ENV_FILE="${1:-$HERE/.env}"
 shift || true
 MODEL="${1:-}"

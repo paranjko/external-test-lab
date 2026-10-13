@@ -8,7 +8,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const Version = "devel"
+// Release metadata is supplied by the build, with useful source-build defaults.
+var Version = "devel"
+var Commit = "unknown"
+var BuildDate = "unknown"
 
 func NewRoot() *cobra.Command {
 	root := &cobra.Command{
@@ -18,12 +21,13 @@ func NewRoot() *cobra.Command {
 		SilenceErrors: true,
 		Version:       Version,
 	}
+	root.SetVersionTemplate("{{.Version}}\n")
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "print the gonkactl version",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Fprintln(cmd.OutOrStdout(), Version)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\ncommit: %s\nbuilt: %s\n", Version, Commit, BuildDate)
 		},
 	})
 	return root

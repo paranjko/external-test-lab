@@ -8,6 +8,30 @@ die() {
   exit 2
 }
 
+acquire_lock() {
+  local lock_dir="${1}.d" pid entries
+  while ! mkdir -m 0700 -- "$lock_dir" 2>/dev/null; do
+    [[ -d "$lock_dir" && ! -L "$lock_dir" && -f "$lock_dir/pid" && ! -L "$lock_dir/pid" ]] \
+      || die 'validator identity lock is unsafe'
+    pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null; then
+      die 'another validator identity operation is in progress'
+    fi
+    entries="$(find "$lock_dir" -mindepth 1 -maxdepth 1 -printf . 2>/dev/null || true)"
+    [[ "$entries" == . ]] || die 'validator identity lock is unsafe'
+    rm -f -- "$lock_dir/pid"; rmdir -- "$lock_dir" 2>/dev/null || continue
+  done
+  printf '%s\n' "$$" >"$lock_dir/pid" || die 'could not initialize validator identity lock'
+  GDC_VALIDATOR_LOCK_DIR="$lock_dir"
+}
+
+release_lock() {
+  local lock_dir="${GDC_VALIDATOR_LOCK_DIR:-}"
+  [[ -n "$lock_dir" && -f "$lock_dir/pid" && ! -L "$lock_dir/pid" ]] || return 0
+  [[ "$(cat "$lock_dir/pid" 2>/dev/null || true)" == "$$" ]] || return 0
+  rm -f -- "$lock_dir/pid"; rmdir -- "$lock_dir" 2>/dev/null || true
+}
+
 validate_paths() {
   local state="$1" candidate="$2" deployment_env="$3"
   if [[ "${GDC_VALIDATOR_IDENTITY_TEST_MODE:-false}" == true ]]; then
@@ -15,9 +39,9 @@ validate_paths() {
       && "$deployment_env" == /* && "$deployment_env" != / ]] \
       || die 'validator identity restore requires absolute bounded paths'
   else
-    [[ "$state" =~ ^/srv/dai/[A-Za-z0-9][A-Za-z0-9._-]*$ \
+    [[ "$state" == /srv/dai \
       && "$candidate" =~ ^/tmp/gdc-[A-Za-z0-9][A-Za-z0-9._-]*-validator-restore-[A-Za-z0-9]+$ \
-      && "$deployment_env" == "/srv/dai/deploy/${state##*/}/.env" ]] \
+      && "$deployment_env" == /srv/dai/deploy/.env ]] \
       || die 'validator identity restore paths are outside the managed Host scope'
   fi
 }
@@ -117,7 +141,7 @@ validate_candidate_shape() {
 }
 
 validate_tmkms_state() {
-  local state_file="$1"
+  local state_file="$1" subject="${2:-the validator identity}"
   jq -e '
     type == "object"
     and (keys | sort) == ["block_id","height","round","step"]
@@ -125,6 +149,13 @@ validate_tmkms_state() {
     and (.round | type == "string" and test("^[0-9]+$"))
     and (.step | type == "number" and . == floor and . >= -128 and . <= 127)
     and (.block_id == null or (
+      .height == "0" and .round == "0" and .step == 0
+      and (.block_id | type == "object")
+      and ((.block_id | keys | sort) == ["hash","part_set_header"] or (.block_id | keys | sort) == ["hash","parts"])
+      and .block_id.hash == ""
+      and ((.block_id.parts // .block_id.part_set_header) as $parts
+        | ($parts | keys | sort) == ["hash","total"] and $parts.total == 0 and $parts.hash == "")
+    ) or (
       (.block_id | type == "object")
       and (.block_id.hash | type == "string" and test("^[0-9A-Fa-f]{64}$"))
       and ((.block_id.parts // .block_id.part_set_header) as $parts
@@ -133,7 +164,19 @@ validate_tmkms_state() {
         and ($parts.hash | type == "string" and test("^[0-9A-Fa-f]{64}$")))
     ))
   ' "$state_file" >/dev/null 2>&1 \
-    || die 'validator identity contains malformed TMKMS signing state'
+    || die "validator identity contains malformed TMKMS signing state ($subject): $(tmkms_state_defect "$state_file")"
+}
+
+# Names the first failing clause; the verdict above decides.
+tmkms_state_defect() {
+  jq -r '
+    if type != "object" then "not an object"
+    elif (keys | sort) != ["block_id","height","round","step"] then "unexpected key set"
+    elif (.height | type != "string" or (test("^[0-9]+$") | not)) then "height"
+    elif (.round | type != "string" or (test("^[0-9]+$") | not)) then "round"
+    elif (.step | type != "number" or . != floor or . < -128 or . > 127) then "step"
+    else "block_id" end
+  ' "$1" 2>/dev/null || printf 'unreadable'
 }
 
 validate_node_key() (
@@ -159,7 +202,7 @@ validate_node_key() (
 )
 
 validate_candidate_material() {
-  local candidate="$1" expected_consensus_key="$2" work actual_consensus_key path
+  local candidate="$1" expected_consensus_key="$2" subject="${3:-the staged archive copy}" work actual_consensus_key path
   local softsign="$candidate/tmkms/secrets/priv_validator_key.softsign"
   local kms_identity="$candidate/tmkms/secrets/kms-identity.key"
   local signing_state="$candidate/tmkms/state/priv_validator_state.json"
@@ -175,7 +218,7 @@ validate_candidate_material() {
   work="$(mktemp -d)"
   trap 'rm -rf -- "$work"' RETURN
   decode_canonical_base64 "$kms_identity" "$work/kms-identity.raw" 32
-  validate_tmkms_state "$signing_state"
+  validate_tmkms_state "$signing_state" "$subject"
   validate_node_key "$node_key"
   if ! grep -Eq '^state_file[[:space:]]*=[[:space:]]*"/root/\.tmkms/state/priv_validator_state\.json"[[:space:]]*$' "$tmkms_config" \
     || ! grep -Eq '^path[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/priv_validator_key\.softsign"[[:space:]]*$' "$tmkms_config" \
@@ -187,7 +230,7 @@ validate_candidate_material() {
 }
 
 validate_stable_material() {
-  local identity="$1" signer="$2" expected_consensus_key="$3" work actual_consensus_key path
+  local identity="$1" signer="$2" expected_consensus_key="$3" subject="${4:-the stable signer on the Host}" work actual_consensus_key path
   local softsign="$signer/tmkms/secrets/priv_validator_key.softsign"
   local kms_identity="$signer/tmkms/secrets/kms-identity.key"
   local signing_state="$signer/tmkms/state/priv_validator_state.json"
@@ -211,7 +254,7 @@ validate_stable_material() {
   work="$(mktemp -d)"
   trap 'rm -rf -- "$work"' RETURN
   decode_canonical_base64 "$kms_identity" "$work/kms-identity.raw" 32
-  validate_tmkms_state "$signing_state"
+  validate_tmkms_state "$signing_state" "$subject"
   validate_node_key "$node_key"
   if ! grep -Eq '^state_file[[:space:]]*=[[:space:]]*"/root/\.tmkms/state/priv_validator_state\.json"[[:space:]]*$' "$tmkms_config" \
     || ! grep -Eq '^path[[:space:]]*=[[:space:]]*"/root/\.tmkms/secrets/priv_validator_key\.softsign"[[:space:]]*$' "$tmkms_config" \
@@ -224,22 +267,19 @@ validate_stable_material() {
 
 remote_restore() {
   local state="$1" candidate="$2" expected_consensus_key="$3" deployment_env="$4"
-  local expected_bundle_sha256="$5" lock marker transaction='' current_digest node stable_identity stable_signer
+  local expected_bundle_sha256="$5" lock marker transaction='' current_digest stable_identity stable_signer
   validate_paths "$state" "$candidate" "$deployment_env"
   validate_consensus_key "$expected_consensus_key"
   [[ "$expected_bundle_sha256" =~ ^[0-9a-f]{64}$ ]] \
     || die 'validator identity bundle digest is invalid'
-  command -v flock >/dev/null 2>&1 \
-    || die 'flock is required to protect validator identity restore'
-  if [[ ! -e "${state%/*}" ]]; then
-    install -d -m 0755 "${state%/*}"
+  if [[ ! -e "$state" ]]; then
+    install -d -m 0755 "$state"
   fi
-  [[ -d "${state%/*}" && ! -L "${state%/*}" ]] \
-    || die 'validator identity parent directory is invalid'
-  lock="${state%/*}/.gdc-validator-identity-$(basename "$state").lock"
-  exec 9>"$lock"
-  flock -n 9 || die 'another validator identity operation is in progress'
-  trap 'rm -rf -- "$candidate"; [[ -z "${transaction:-}" ]] || rm -rf -- "$transaction"' EXIT
+  [[ -d "$state" && ! -L "$state" ]] \
+    || die 'validator identity root is invalid'
+  lock="$state/.gdc-validator-identity.lock"
+  acquire_lock "$lock"
+  trap 'rm -rf -- "$candidate"; [[ -z "${transaction:-}" ]] || rm -rf -- "$transaction"; release_lock' EXIT
 
   # Close the unprivileged upload race before inspecting any descendant.
   [[ -d "$candidate" && ! -L "$candidate" ]] \
@@ -248,14 +288,13 @@ remote_restore() {
   chmod 0700 "$candidate"
   chown -R root:root "$candidate"
   validate_candidate_shape "$candidate"
-  validate_candidate_material "$candidate" "$expected_consensus_key"
+  validate_candidate_material "$candidate" "$expected_consensus_key" "the staged archive copy"
   current_digest="$(identity_tree_digest "$candidate")"
   [[ "$current_digest" == "$expected_bundle_sha256" ]] \
     || die 'staged validator identity does not match the validated backup bundle'
 
-  node="$(basename "$state")"
-  stable_identity="${state%/*}/identity/$node"
-  stable_signer="${state%/*}/signer/$node"
+  stable_identity="$state/identity"
+  stable_signer="$state/signer"
   if [[ -e "$stable_identity" || -e "$stable_signer" ]]; then
     validate_stable_material "$stable_identity" "$stable_signer" "$expected_consensus_key"
     if ! cmp -s "$candidate/inference/config/node_key.json" "$stable_identity/p2p/node_key.json" \
@@ -273,56 +312,36 @@ remote_restore() {
 
   marker="$state/.gdc-validator-identity-restore.sha256"
   if [[ -s "$deployment_env" ]]; then
-    [[ -d "$state" && ! -L "$state" ]] \
-      || die 'running validator identity state is inaccessible'
-    validate_candidate_material "$state" "$expected_consensus_key"
-    if ! cmp -s "$candidate/tmkms/secrets/priv_validator_key.softsign" \
-      "$state/tmkms/secrets/priv_validator_key.softsign" \
-      || ! cmp -s "$candidate/tmkms/secrets/kms-identity.key" \
-        "$state/tmkms/secrets/kms-identity.key" \
-      || ! cmp -s "$candidate/inference/config/node_key.json" \
-        "$state/inference/config/node_key.json"; then
-      die 'running validator identity does not match the supplied backup'
-    fi
-    printf 'existing\n'
+    die 'running validator deployment lacks a valid flat identity; refuse restore'
+  fi
+
+  if [[ -e "$marker" ]]; then
+    [[ -f "$marker" && ! -L "$marker" && "$(<"$marker")" == "$expected_bundle_sha256" ]] \
+      || die 'interrupted validator identity restore is inconsistent'
+    validate_stable_material "$stable_identity" "$stable_signer" "$expected_consensus_key"
+    printf 'installed\n'
     return 0
   fi
+  [[ ! -e "$stable_identity" && ! -e "$stable_signer" ]] \
+    || die 'validator identity state is partial, mixed, or ambiguous'
 
-  if [[ -e "$state" ]]; then
-    if [[ -f "$marker" && ! -L "$marker" \
-      && "$(<"$marker")" == "$expected_bundle_sha256" ]]; then
-      validate_candidate_material "$state" "$expected_consensus_key"
-      if ! diff -qr "$candidate/tmkms" "$state/tmkms" >/dev/null 2>&1 \
-        || ! cmp -s "$candidate/inference/config/node_key.json" \
-          "$state/inference/config/node_key.json"; then
-        die 'interrupted validator identity restore is inconsistent'
-      fi
-      printf 'installed\n'
-      return 0
-    fi
-    if [[ -d "$state" && ! -L "$state" \
-      && -z "$(find "$state" -xdev -mindepth 1 -print -quit 2>/dev/null)" ]]; then
-      rmdir "$state"
-    else
-      die 'validator identity state is partial, mixed, or ambiguous'
-    fi
-  fi
-
-  transaction="$(mktemp -d "${state%/*}/.$(basename "$state").validator-restore.XXXXXX")"
-  install -d -m 0700 "$transaction/inference/config"
-  cp -a "$candidate/tmkms" "$transaction/tmkms"
+  transaction="$(mktemp -d "$state/.validator-restore.XXXXXX")"
+  install -d -m 0700 "$transaction/identity/p2p" "$transaction/identity/warm/keyring-file" "$transaction/signer"
+  cp -a "$candidate/tmkms" "$transaction/signer/tmkms"
   install -m 0600 "$candidate/inference/config/node_key.json" \
-    "$transaction/inference/config/node_key.json"
-  printf '%s\n' "$expected_bundle_sha256" \
-    >"$transaction/.gdc-validator-identity-restore.sha256"
+    "$transaction/identity/p2p/node_key.json"
   chown -R root:root "$transaction"
   find "$transaction" -type d -exec chmod 0700 {} +
   find "$transaction" -type f -exec chmod 0600 {} +
-  validate_candidate_material "$transaction" "$expected_consensus_key"
+  validate_stable_material "$transaction/identity" "$transaction/signer" "$expected_consensus_key" "the restore transaction"
   if [[ "${GDC_VALIDATOR_IDENTITY_TEST_INTERRUPT:-}" == before-activate ]]; then
     die 'simulated validator identity interruption before atomic activation'
   fi
-  mv "$transaction" "$state"
+  mv "$transaction/identity" "$stable_identity"
+  mv "$transaction/signer" "$stable_signer"
+  printf '%s\n' "$expected_bundle_sha256" >"$marker"
+  chmod 0600 "$marker"
+  rmdir "$transaction"
   transaction=''
   printf 'installed\n'
 }

@@ -1,21 +1,35 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet --render-dir DIR [--gateway-env FILE] [--gateway-observer-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE]" >&2; }
-RENDER=""; GATEWAY=""; GATEWAY_OBSERVER=""; FAUCET=""; GATEWAY_RESERVE=""; COMPONENT=""
-while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--gateway-observer-env) GATEWAY_OBSERVER="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;*)usage;exit 2;;esac;done
+usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet|bifrost --render-dir DIR [--gateway-env FILE] [--gateway-observer-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE] [--bifrost-env FILE] [--bifrost-broker-env FILE] [--bifrost-edge-env FILE]" >&2; }
+RENDER=""; GATEWAY=""; GATEWAY_OBSERVER=""; FAUCET=""; GATEWAY_RESERVE=""; BIFROST=""; BIFROST_BROKER=""; BIFROST_EDGE=""; COMPONENT=""
+while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--gateway-observer-env) GATEWAY_OBSERVER="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;--bifrost-env) BIFROST="$2";shift 2;;--bifrost-broker-env) BIFROST_BROKER="$2";shift 2;;--bifrost-edge-env) BIFROST_EDGE="$2";shift 2;;*)usage;exit 2;;esac;done
 [[ $EUID -eq 0 && -s "$RENDER/.env" ]] || { usage; exit 2; }
 case "$COMPONENT" in
   gateway) [[ -s "$GATEWAY" && -s "$GATEWAY_OBSERVER" ]] || { usage; exit 2; } ;;
   faucet) [[ -s "$FAUCET" && -s "$GATEWAY_RESERVE" ]] || { usage; exit 2; } ;;
+  bifrost) [[ -s "$BIFROST" && -s "$BIFROST_BROKER" && -s "$BIFROST_EDGE" ]] || { usage; exit 2; } ;;
   monitoring) [[ -s "$RENDER/prometheus.yml" ]] || { usage; exit 2; } ;;
   site) [[ -s "$RENDER/config.js" ]] || { usage; exit 2; } ;;
   *) usage; exit 2 ;;
 esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST=/srv/dai/ops
+ops_shared_asset() {
+  local name="$1"
+  if [[ -s "$HERE/$name" ]]; then
+    printf '%s\n' "$HERE/$name"
+  elif [[ -s "$HERE/../scripts/$name" ]]; then
+    printf '%s\n' "$HERE/../scripts/$name"
+  else
+    echo "OPS shared asset is missing from staged files and repository scripts: $name" >&2
+    return 1
+  fi
+}
+GATEWAY_RESERVE_POLICY="$(ops_shared_asset gateway-reserve-policy.sh)"
+OPS_LIB_LOCK="$(ops_shared_asset lib-lock.sh)"
 service_user="${SUDO_USER:-root}"
 service_group="$(id -gn "$service_user")"
 mkdir -p "$DEST"; cp -a "$HERE"/. "$DEST"/
-mkdir -p "$DEST/status" "$DEST/prometheus"
+mkdir -p "$DEST/status" "$DEST/prometheus" "$DEST/prometheus/targets/join"
 install -m 0600 "$RENDER/.env" "$DEST/.env"
 if [[ "$COMPONENT" == gateway ]]; then
   # Close the old lifecycle controller before replacing its environment. It
@@ -32,6 +46,13 @@ if [[ "$COMPONENT" == faucet ]]; then
 elif [[ ! -e "$DEST/faucet.env" ]]; then
   install -m 0600 /dev/null "$DEST/faucet.env"
 fi
+if [[ "$COMPONENT" == bifrost ]]; then
+  # The broker gets a single read-only binding file, not the OPS secret tree.
+  install -d -m 0755 "$DEST/bifrost"
+  install -m 0600 "$BIFROST" "$DEST/bifrost.env"
+  install -m 0600 "$BIFROST_BROKER" "$DEST/bifrost-broker.env"
+  install -m 0600 "$BIFROST_EDGE" "$DEST/bifrost-edge.env"
+fi
 if [[ -s "$RENDER/prometheus.yml" ]]; then
   # Every OPS component uses the same rendered bundle. Keep the Prometheus
   # bind source valid even when SITE is deployed before MONITORING; otherwise
@@ -40,6 +61,13 @@ if [[ -s "$RENDER/prometheus.yml" ]]; then
   [[ ! -d "$DEST/prometheus/prometheus.yml" ]] || rm -rf "$DEST/prometheus/prometheus.yml"
   install -m 0644 "$RENDER/prometheus.yml" "$DEST/prometheus/prometheus.yml"
 fi
+if [[ -d "$RENDER/prometheus/targets/static" ]]; then
+  # Static inventory is an OPS render artifact.  JOIN-owned entries live in a
+  # separate directory and survive later monitoring renders unchanged.
+  rm -rf "$DEST/prometheus/targets/static"
+  install -d -m 0755 "$DEST/prometheus/targets"
+  cp -a "$RENDER/prometheus/targets/static" "$DEST/prometheus/targets/static"
+fi
 [[ -s "$RENDER/Caddyfile" ]] && install -m 0644 "$RENDER/Caddyfile" "$DEST/Caddyfile"
 install -d -m 0755 "$DEST/bootstrap"
 # Copy the rendered public configuration on every component install.  The
@@ -47,6 +75,7 @@ install -d -m 0755 "$DEST/bootstrap"
 # monitoring used to overwrite an already-rendered site config and leave the
 # public Grafana link as '#'.
 [[ -s "$RENDER/config.js" ]] && install -m 0644 "$RENDER/config.js" "$DEST/site/config.js"
+[[ -s "$RENDER/network-observer.env" ]] && install -D -m 0644 "$RENDER/network-observer.env" /etc/gonka/gdc-network-observer.env
 chown -R "${SUDO_USER:-root}:${SUDO_USER:-root}" "$DEST"
 install -m 0755 "$HERE/gateway-health-probe.sh" "$DEST/gateway-health-probe.sh"
 install -m 0644 "$HERE/gdc-gateway-health-probe.service" /etc/systemd/system/gdc-gateway-health-probe.service
@@ -60,8 +89,15 @@ install -d -o root -g root -m 0755 /usr/local/lib/gonka-devnet
 install -o root -g root -m 0755 "$HERE/participants-proxy.sh" /usr/local/lib/gonka-devnet/participants-proxy.sh
 install -m 0644 "$HERE/gdc-participants-proxy.socket" /etc/systemd/system/gdc-participants-proxy.socket
 install -m 0644 "$HERE/gdc-participants-proxy@.service" /etc/systemd/system/gdc-participants-proxy@.service
+install -o root -g root -m 0755 "$HERE/network-observer.sh" /usr/local/lib/gonka-devnet/network-observer.sh
+install -o root -g root -m 0755 "$HERE/network-observer-http.py" /usr/local/lib/gonka-devnet/network-observer-http.py
+install -m 0644 "$HERE/gdc-network-observer.service" /etc/systemd/system/gdc-network-observer.service
+install -m 0644 "$HERE/gdc-network-observer.timer" /etc/systemd/system/gdc-network-observer.timer
+install -m 0644 "$HERE/gdc-network-observer.socket" /etc/systemd/system/gdc-network-observer.socket
+install -m 0644 "$HERE/gdc-network-observer@.service" /etc/systemd/system/gdc-network-observer@.service
+install -m 0644 "$OPS_LIB_LOCK" /usr/local/lib/gonka-devnet/lib-lock.sh
 install -o root -g root -m 0755 "$HERE/gateway-reserve-controller.sh" /usr/local/lib/gonka-devnet/gateway-reserve-controller.sh
-install -o root -g root -m 0755 "$HERE/gateway-reserve-policy.sh" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
+install -o root -g root -m 0755 "$GATEWAY_RESERVE_POLICY" /usr/local/lib/gonka-devnet/gateway-reserve-policy.sh
 install -m 0755 "$HERE/gateway-status-routable.sh" "$DEST/gateway-status-routable.sh"
 install -m 0644 "$HERE/gdc-gateway-reserve-controller.service" /etc/systemd/system/gdc-gateway-reserve-controller.service
 sed -i -e "s/@GDC_SERVICE_USER@/$service_user/g" -e "s/@GDC_SERVICE_GROUP@/$service_group/g" \
@@ -83,6 +119,8 @@ if [[ "$COMPONENT" == gateway ]]; then
 fi
 systemctl daemon-reload
 systemctl enable --now gdc-participants-proxy.socket >/dev/null
+systemctl enable --now gdc-network-observer.timer gdc-network-observer.socket >/dev/null
+systemctl start gdc-network-observer.service || true
 systemctl enable --now gdc-gateway-health-probe.timer >/dev/null
 gateway_rotation_enabled="$(awk -F= '$1 == "DEVSHARD_ESCROW_ROTATION_ENABLED" { print $2; exit }' "$DEST/gateway.env" 2>/dev/null || true)"
 if [[ "$gateway_rotation_enabled" == false ]]; then

@@ -46,25 +46,91 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
       </details>
     </section>
     <section class="summary" aria-label="Network summary">
-      <article><span>Chain ID</span><strong id="chain-id">–</strong><small>Shared ledger</small></article>
-      <article><span>Common model</span><strong id="model-id">–</strong><small>Active group</small></article>
+      <article><span>Chain ID</span><strong id="chain-id">–</strong></article>
+      <article><span id="model-label">Common model</span><ul id="model-id" class="model-list"><li>–</li></ul></article>
+      <article><span>Approved DevShards</span><strong id="devshard-versions">–</strong><small>Chain-wide allowlist</small></article>
       <article><span>Latest height</span><strong id="best-height">–</strong><small>Advancing live</small></article>
       <article><span>Largest voting share</span><strong id="power-share">–</strong><small>Consensus distribution</small></article>
     </section>
+    <section id="epoch-overview" class="epoch-overview" aria-live="polite" hidden>
+      <div class="epoch-overview-title"><span>Current epoch</span><strong id="epoch-label">–</strong></div>
+      <div class="epoch-progress">
+        <div id="epoch-progress-track" class="epoch-progress-track" role="progressbar" aria-labelledby="epoch-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="epoch-progress-bar"></span></div>
+        <small id="epoch-progress-detail">Waiting for a chain observation</small>
+      </div>
+      <div class="epoch-countdown"><strong id="epoch-remaining">–</strong><small id="epoch-end">–</small></div>
+      <div class="epoch-protocol-state">
+        <div><span>PoC stage</span><strong id="epoch-poc-state">–</strong></div>
+        <div><span>cPoC</span><strong id="epoch-cpoc-state">–</strong><small id="epoch-cpoc-detail">Waiting for a chain observation</small></div>
+      </div>
+    </section>
+    <section id="verification-results" class="verification-results" aria-labelledby="verification-results-title" hidden>
+      <div class="verification-results-title">
+        <div><span class="eyebrow">CHAIN-RECORDED EPOCH TRANSITION</span><h2 id="verification-results-title">Previous epoch <strong id="verification-epoch-label">–</strong></h2></div>
+        <small id="verification-results-summary">Waiting for a finalized epoch</small>
+      </div>
+      <div class="verification-results-overview">
+        <div><span>PoC evidence</span><strong id="verification-poc-state">–</strong><small id="verification-poc-detail">Waiting for a chain observation</small></div>
+        <div><span>cPoC</span><strong id="verification-cpoc-events">–</strong><small id="verification-cpoc-detail">Waiting for a chain observation</small></div>
+        <div><span>Consensus transition</span><strong id="verification-consensus-state">–</strong><small id="verification-consensus-detail">Waiting for a validator-set observation</small></div>
+      </div>
+      <details class="verification-evidence">
+        <summary>Inspect chain evidence</summary>
+        <div class="verification-evidence-grid">
+          <section aria-labelledby="verification-poc-evidence-title">
+            <h3 id="verification-poc-evidence-title">PoC evidence</h3>
+            <div class="verification-results-table-shell">
+              <table class="verification-results-table">
+                <thead><tr><th scope="col">Participant</th><th scope="col">Committed artifacts</th><th scope="col">Validator attestations</th></tr></thead>
+                <tbody id="verification-poc-result-rows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section aria-labelledby="verification-consensus-evidence-title">
+            <h3 id="verification-consensus-evidence-title">Consensus set at activation</h3>
+            <div class="verification-results-table-shell">
+              <table class="verification-results-table">
+                <thead><tr><th scope="col">Participant</th><th scope="col">Previous power</th><th scope="col">Effective power</th><th scope="col">Observed change</th></tr></thead>
+                <tbody id="verification-consensus-result-rows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </details>
+    </section>
+    <section id="devshard-execution" class="devshard-execution" aria-labelledby="devshard-execution-title" hidden>
+      <div class="devshard-execution-title">
+        <div><span class="eyebrow">PUBLIC DEVSHARD OBSERVATIONS</span><h2 id="devshard-execution-title">DevShard execution</h2></div>
+        <small id="devshard-execution-summary">Waiting for a network observation</small>
+      </div>
+      <div class="devshard-execution-overview">
+        <div><span>Public endpoints</span><strong id="devshard-endpoint-state">–</strong><small id="devshard-endpoint-detail">Health and runtime inventory</small></div>
+        <div><span>Runtime inventory</span><strong id="devshard-runtime-state">–</strong><small id="devshard-runtime-detail">Compared with the chain-approved catalog</small></div>
+        <div><span>Host-local sessions</span><strong id="devshard-session-state">–</strong><small id="devshard-session-detail">Not a fleet or GPU-utilisation measure</small></div>
+      </div>
+      <details class="devshard-execution-evidence">
+        <summary>Inspect public endpoint observations</summary>
+        <div class="devshard-execution-table-shell">
+          <table class="devshard-execution-table">
+            <thead><tr><th scope="col">Public endpoint</th><th scope="col">Running runtimes</th><th scope="col">Host-local sessions</th></tr></thead>
+            <tbody id="devshard-execution-rows"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
     <section id="network" class="network-section">
-      <div class="section-title"><div><span class="eyebrow">LIVE DEVNET</span><h2>Participant status</h2></div><time id="updated">Waiting for status refresh</time></div>
+      <div class="section-title"><div><span id="network-source" class="eyebrow">LIVE DEVNET</span><h2>Participant status</h2></div><time id="updated">Waiting for status refresh</time></div>
       <div id="nodes" class="nodes compact" role="list" aria-label="Participant status Host accordion"></div>
     </section>
     <section class="network-map-section" aria-labelledby="network-map-title">
-      <div class="section-title"><div><span class="eyebrow">VALIDATOR MAP</span><h2 id="network-map-title">Validator locations</h2></div><p class="map-note">Approximate public IP locations</p></div>
+      <div class="section-title"><div><span class="eyebrow">OBSERVED NETWORK HOSTS</span><h2 id="network-map-title">Network node map</h2></div></div>
       <ul class="validator-map-legend" aria-label="Validator status legend">
         <li class="validator-map-legend--validating">Validating</li>
-        <li class="validator-map-legend--active">Active – not validating</li>
-        <li class="validator-map-legend--inactive">Inactive</li>
-        <li class="validator-map-legend--unknown">Unknown – status unavailable</li>
+        <li class="validator-map-legend--active">Active</li>
+        <li class="validator-map-legend--waiting">Wait</li>
       </ul>
       <div id="validator-map-shell" class="validator-map-shell">
-        <div id="validator-map" class="validator-map" aria-label="Interactive map of validator status by approximate public IP location"></div>
+        <div id="validator-map" class="validator-map" aria-label="Interactive map of observed network hosts by approximate public IP location"></div>
         <button id="validator-map-fullscreen" class="validator-map-fullscreen" type="button" aria-label="Open validator map fullscreen" aria-pressed="false">Fullscreen</button>
       </div>
     </section>
@@ -77,9 +143,13 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
         <article><span>Rate-limited requests</span><strong>–</strong><small>rejected since gateway restart</small></article>
         <article><span>Network capacity</span><strong>–</strong><small>available model weight</small></article>
       </div>
+      <div id="gateway-routes" class="quality-metrics">
+        <article><span>Gateway A</span><strong id="gateway-a-state">CHECKING</strong><small id="gateway-a-detail">waiting for read-only route status</small></article>
+        <article><span>Gateway B</span><strong id="gateway-b-state">CHECKING</strong><small id="gateway-b-detail">waiting for read-only route status</small></article>
+      </div>
       <div id="quality-health" class="quality-health" aria-label="Gateway traffic state">
         <span>Gateway traffic</span><strong id="quality-health-state">CHECKING</strong>
-        <div class="quality-health-counts"><span><b id="quality-active">0</b> active now</span><span><b id="quality-accepted">0</b> successful since restart</span><span><b id="quality-rejected">0</b> rate-limited since restart</span></div>
+        <div class="quality-health-counts"><span><b id="quality-active">–</b> active now</span><span><b id="quality-accepted">–</b> successful since restart</span><span><b id="quality-rejected">–</b> <span id="quality-failure-label">rate-limited since restart</span></span></div>
       </div>
       <p id="quality-recovery" class="quality-recovery" hidden></p>
     </section>
@@ -107,14 +177,17 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
     <a href="https://github.com/users/paranjko/projects/1" target="_blank" rel="noopener">Task board ↗</a>
     <a href="https://github.com/gonka-ai/gonka/discussions/1388" target="_blank" rel="noopener">Why this test lab exists ↗</a>
     <a href="https://github.com/paranjko/external-test-lab/tree/main/reports/monthly" target="_blank" rel="noopener">Monthly reports ↗</a>
-    <a class="footer-github" href="https://github.com/paranjko/external-test-lab" target="_blank" rel="noopener" aria-label="External Test Lab repository">
+    <a href="/status/">Status API</a>
+    <a id="footer-github" class="footer-github" href="https://github.com/paranjko/external-test-lab" target="_blank" rel="noopener" aria-label="External Test Lab repository">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-1.08-2.7-1.08-.36-.93-.89-1.18-.89-1.18-.73-.5.06-.49.06-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.51-1.08-1.78-.2-3.65-.89-3.65-3.96 0-.88.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.13 0 0 .68-.22 2.2.82A7.63 7.63 0 0 1 8 4.8c.68 0 1.36.09 2 .27 1.52-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.52.56.83 1.27.83 2.15 0 3.08-1.87 3.76-3.65 3.96.29.25.54.73.54 1.48v2.2c0 .21.14.46.55.38A8 8 0 0 0 8 0Z"/></svg>
     </a>
   </footer>
   </main>
-  <script src="/config.js"></script>
+  <script src="config.js"></script>
   <script src="gateway-state.js"></script>
   <script src="host-state.js"></script>
+  <script src="network-selection.js"></script>
+  <script src="network-observation-state.js"></script>
   <script src="software-versions.js"></script>
   <script src="site-build.js"></script>
   <script src="vendor/leaflet/leaflet.js"></script>

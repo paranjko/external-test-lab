@@ -39,7 +39,7 @@ verify_registration() {
 verify_runtime() {
   step "Verify the Sepolia observer on $node"
   ssh -T "$node" "set -Eeuo pipefail
-    cd /srv/dai/deploy/$node
+    cd /srv/dai/deploy
     docker compose --env-file .env --env-file .bridge.env -f compose.yaml -f compose.bridge-sepolia.yaml ps --status running --services \
       | grep -qx bridge
     docker compose --env-file .env --env-file .bridge.env -f compose.yaml -f compose.bridge-sepolia.yaml logs --no-color --tail=300 bridge" \
@@ -81,11 +81,11 @@ if [[ "$action" == apply ]]; then
   scp -q "$bridge_env" "$node:$remote/bridge.env"
   scp -q "$SECRETS/bridge.jwt" "$node:$remote/bridge.jwt"
   ssh -T "$node" "set -Eeuo pipefail
-    dest=/srv/dai/deploy/$node
+    dest=/srv/dai/deploy
     sudo install -m 0644 '$remote/compose.bridge-sepolia.yaml' \"\$dest/compose.bridge-sepolia.yaml\"
     sudo install -m 0600 '$remote/bridge.env' \"\$dest/.bridge.env\"
-    sudo install -d -m 0700 /srv/dai/$node/bridge/{geth,prysm,jwt,logs,persistent-db}
-    sudo install -m 0600 '$remote/bridge.jwt' /srv/dai/$node/bridge/jwt/jwt.hex
+    sudo install -d -m 0700 /srv/dai/data/bridge/{geth,prysm,jwt,logs,persistent-db}
+    sudo install -m 0600 '$remote/bridge.jwt' /srv/dai/data/bridge/jwt/jwt.hex
     rm -rf '$remote'
     cd \"\$dest\"
     docker compose --env-file .env --env-file .bridge.env -f compose.yaml -f compose.bridge-sepolia.yaml pull bridge

@@ -30,9 +30,14 @@ gdc host join [--preflight-deadline <duration>] [--public-host <dns-name>] <ssh-
 `--preflight-deadline` bounds the complete no-mutation preparation, including
 runtime confirmation and a first download of a missing pinned CLI. It accepts
 positive seconds or `s`, `m`, and `h` durations up to 24 hours. The default is
-`30m`. Existing verified CLI archives are reused by SHA-256. If preparation requests a reboot after
-installing an NVIDIA driver, reboot the named Host and rerun the same JOIN
-command; no reset is required.
+`30m`. Existing verified CLI archives are reused by SHA-256. If preparation
+installs an accelerator runtime, reboot the named Host, preserve any required
+local keys and evidence, and remove `$GDC_HOME/<ssh-alias>` before a new JOIN;
+no remote reset is required.
+
+Fresh JOIN refuses an existing `$GDC_HOME/<ssh-alias>` path, including with
+`--plan`, `--restore` or mnemonic input. Only `--resume <RUN_ID>` accepts retained
+local state. GDC prints the exact path and does not remove it automatically.
 
 For JOIN, use a lowercase SSH alias beginning with a letter or digit and
 containing only lowercase letters, digits, `_`, or `-`.
@@ -44,8 +49,37 @@ gdc --release v2026.07.23 genesis gdc-node0 --public-edge gdc-node4
 gdc host join gdc-node1
 gdc host join gdc-node2
 gdc host join gdc-node3
-gdc host join gdc-node4 gdc-node4-ml # node net only + gpu net
+gdc host join gdc-node4 gdc-node9 # Network Node + separate ML machine (formerly node4-ml)
 ```
+
+## Operator CLI paths
+
+`INFERENCED_HOME` selects the CLI configuration and keyring directory, defaulting
+to `$STATE/operator-home` inside the current GDC data scope. Set it only when a
+separate signing keyring is required; the former operator-home override is no
+longer supported. This does not move GDC logs, secrets or run evidence.
+
+The wrapper resolves `INFERENCED_BIN` from the verified JOIN profile or release
+and builds `INFERENCED_CMD` as a Bash array. These two values are derived, not
+environment overrides. It sets `HOME` only for that CLI process to isolate the
+early configuration read, and passes `INFERENCED_HOME` through `--home`. The
+parent shell's `HOME` and the user's configuration remain unchanged.
+
+## Stop and restart an installed node
+
+```bash
+gdc node stop <ssh-alias>
+gdc node start <ssh-alias>
+```
+
+Only SSH access with passwordless sudo is required; local JOIN files and keys
+are not needed. GDC discovers both flat and legacy deployments automatically;
+no path option or migration is required. Stop retains state. Start restarts the
+same previously running containers without pulling images or enabling a
+previously stopped signer.
+An interrupted JOIN or changed containers require JOIN recovery instead.
+Edge and monitoring services remain running. Restart success is not proof of
+synchronization or consensus participation.
 
 ## Overview
 
@@ -65,6 +99,8 @@ only the credentials it actually needs
 | UPGRADE | [ROLE-UPGRADE.md](ROLE-UPGRADE.md) | one Host's immutable target preflight and activation watch | another Host's SSH or keyring |
 | GATEWAY | [ROLE-GATEWAY.md](ROLE-GATEWAY.md) | gateway runtime, escrow creator and client-key pool | Host governance keys or public-observation administration |
 | DEVELOPER | [ROLE-DEVELOPER.md](ROLE-DEVELOPER.md) | an application and its client API key | any infrastructure or signer credential |
+
+For user funding through the existing private bot, see the [durable Telegram faucet guide](04-ops/faucet/README.md), it documents administrator controls, the default closed policy, `100 GNK` per user per rolling `24 hours`, state-preserving deployment and separate live settlement evidence
 
 `OPS` is an observation service, not a network controller, node collectors are
 installed by `GENESIS` or the relevant `JOIN` operator, `OPS` scrapes published

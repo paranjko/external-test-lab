@@ -24,23 +24,23 @@ def load(path):
  try:return json.loads(data.decode("utf-8","strict"),object_pairs_hook=duplicates)
  except UnicodeDecodeError as error:raise BootstrapError("parse",str(path),"invalid UTF-8") from error
  except json.JSONDecodeError as error:raise BootstrapError("parse",str(path),f"invalid JSON at line {error.lineno}") from error
-def schema_path():return Path(__file__).resolve().parent.parent/"bootstrap"/"v1.bootstrap.schema.json"
+def schema_path():return Path(__file__).resolve().parents[2]/"schema"/"v1.bootstrap.schema.json"
 def valid_url(value,field,schemes):
  p=urlsplit(value)
  try: port=p.port
  except ValueError as error:raise BootstrapError("semantics",field,"has an invalid port") from error
  if p.scheme not in schemes or not p.netloc or p.username or p.password or p.fragment or p.query or port==0:raise BootstrapError("semantics",field,"has an unsupported scheme or unsafe URL component")
  return p
-def validate(doc):
+def validate(doc,schema=None):
  if not isinstance(doc,dict):raise BootstrapError("schema","$","must be an object")
- schema=load(schema_path())
+ if schema is None:schema=load(schema_path())
  try:
   jsonschema.Draft202012Validator.check_schema(schema); errors=sorted(jsonschema.Draft202012Validator(schema).iter_errors(doc),key=lambda x:list(x.path))
  except jsonschema.SchemaError as error:raise BootstrapError("schema","schema","repository schema is invalid") from error
  if errors:
   e=errors[0];raise BootstrapError("schema",".".join(map(str,e.absolute_path)) or "$",e.message)
  if not CHAIN_ID_RE.fullmatch(doc["chain_id"]):raise BootstrapError("semantics","chain_id","contains unsafe characters")
- ids=set();rpcs=set();p2ps=set();apis=0
+ ids=set();rpcs=set();p2ps=set();apis=set()
  for i,seed in enumerate(doc["seeds"]):
   pre=f"seeds[{i}]"
   if not NODE_ID_RE.fullmatch(seed["node_id"]):raise BootstrapError("semantics",pre+".node_id","must be 40 lowercase hexadecimal characters")
@@ -50,20 +50,32 @@ def validate(doc):
   if p.port is None:raise BootstrapError("semantics",pre+".p2p","must have an explicit port")
   if seed["node_id"] in ids or seed["rpc"] in rpcs or seed["p2p"] in p2ps:raise BootstrapError("semantics",pre,"duplicate seed identity or endpoint")
   ids.add(seed["node_id"]);rpcs.add(seed["rpc"]);p2ps.add(seed["p2p"])
-  if "api" in seed:valid_url(seed["api"],pre+".api",{"http","https"});apis+=1
+  if "api" in seed:
+   valid_url(seed["api"],pre+".api",{"http","https"})
+   if seed["api"] in apis:raise BootstrapError("semantics",pre+".api","duplicates a registration API endpoint")
+   apis.add(seed["api"])
  if not apis:raise BootstrapError("semantics","seeds","at least one seed must provide api")
  for i,b in enumerate(doc["brokers"]):
   if len(set(b["api_urls"])) != len(b["api_urls"]):raise BootstrapError("semantics",f"brokers[{i}].api_urls","contains duplicate endpoint")
   for j,v in enumerate(b["api_urls"]):valid_url(v,f"brokers[{i}].api_urls[{j}]",{"https"})
   if "access_url" in b:valid_url(b["access_url"],f"brokers[{i}].access_url",{"https"})
+ if "software" in doc:
+  software=doc["software"]
+  paths=[item["path"] for item in software["deployment"]["compose_files"]]
+  if len(set(paths))!=len(paths):raise BootstrapError("semantics","software.deployment.compose_files","duplicate compose path")
+  if software["operator_cli"]["version"]!=software["components"]["node"]["version"]:raise BootstrapError("semantics","software.operator_cli.version","must match the node runtime version")
+  urls=[software["deployment"]["repository"],software["operator_cli"]["artifact"]["url"]]
+  urls.extend(c["upgrade"]["artifact"]["url"] for c in software["components"].values() if "upgrade" in c)
+  for url in urls:valid_url(url,"software",{"https"})
  return doc
 def env(doc):
- first=next(seed for seed in doc["seeds"] if "api" in seed);rpcs=[]
+ first=next(seed for seed in doc["seeds"] if "api" in seed);registration_endpoints=[];rpcs=[]
  for seed in doc["seeds"]:
+  if "api" in seed:registration_endpoints.append(seed["api"])
   if seed["rpc"] not in rpcs:rpcs.append(seed["rpc"])
  if len(rpcs)<2:raise BootstrapError("env","seeds","two distinct RPC URLs required")
  def quote(v):return "'"+v.replace("'","'\\\"'\\\"'")+"'"
- return "".join(f"export {k}={quote(v)}\n" for k,v in (("SEED_API_URL",first["api"]),("SEED_NODE_RPC_URL",first["rpc"]),("SEED_NODE_P2P_URL",first["p2p"]),("RPC_SERVER_URL_1",rpcs[0]),("RPC_SERVER_URL_2",rpcs[1]))).encode()
+ return "".join(f"export {k}={quote(v)}\n" for k,v in (("SEED_API_URL",first["api"]),("GDC_JOIN_REGISTRATION_ENDPOINTS",",".join(registration_endpoints)),("SEED_NODE_RPC_URL",first["rpc"]),("SEED_NODE_P2P_URL",first["p2p"]),("RPC_SERVER_URL_1",rpcs[0]),("RPC_SERVER_URL_2",rpcs[1]))).encode()
 def broker_urls(doc):
  values=[]
  for i,broker in enumerate(doc["brokers"]):
@@ -106,7 +118,7 @@ def online(doc):
  print(f"PASS online network bootstrap chain_id={doc['chain_id']} seeds={len(doc['seeds'])}")
 def main(argv):
  parser=argparse.ArgumentParser();sub=parser.add_subparsers(dest="command",required=True)
- for name in ("verify","online","env","broker-urls"):p=sub.add_parser(name);p.add_argument("file",type=Path)
+ for name in ("verify","online","env","software","broker-urls"):p=sub.add_parser(name);p.add_argument("file",type=Path)
  p=sub.add_parser("stage");p.add_argument("file",type=Path);p.add_argument("destination",type=Path)
  p=sub.add_parser("render");p.add_argument("input",type=Path);p.add_argument("output",type=Path)
  a=parser.parse_args(argv)
@@ -115,6 +127,9 @@ def main(argv):
   if a.command=="verify":print(f"PASS offline network bootstrap file={a.file} chain_id={doc['chain_id']} genesis_sha256={doc['genesis']['sha256']} seeds={len(doc['seeds'])}");print("Repository attestation and live RPC checks were not run.")
   elif a.command=="online":online(doc)
   elif a.command=="env":sys.stdout.buffer.write(env(doc))
+  elif a.command=="software":
+   if "software" not in doc:raise BootstrapError("software","software","not declared by this bootstrap")
+   print(json.dumps(doc["software"],sort_keys=True,indent=2))
   elif a.command=="broker-urls":print(*broker_urls(doc),sep="\n")
   elif a.command=="render":a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_bytes((json.dumps(doc,sort_keys=True,separators=(",",":"))+"\n").encode())
   elif a.command=="stage":

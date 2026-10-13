@@ -103,7 +103,10 @@ if [[ "$url" == http://127.0.0.1:18085/* && -e "$GDC_TEST_CANARY_STOPPED" ]]; th
 fi
 case "$url" in
   http://127.0.0.1:26657/status)
-    payload='{"result":{"sync_info":{"latest_block_height":"40"}}}'
+    payload="{\"result\":{\"sync_info\":{\"latest_block_height\":\"${GDC_TEST_WINDOW_HEIGHT:-40}\"}}}"
+    ;;
+  http://127.0.0.1:1317/productscience/inference/inference/epoch_info)
+    payload="{\"latest_epoch\":{\"poc_start_block_height\":\"${GDC_TEST_POC_START:-0}\"}}"
     ;;
   http://127.0.0.1:1317/productscience/inference/inference/params)
     payload='{"params":{"epoch_params":{"epoch_length":"100","epoch_shift":"0","poc_stage_duration":"2","poc_exchange_duration":"2","poc_validation_delay":"2","poc_validation_duration":"2","set_new_validators_delay":"2"}}}'
@@ -246,6 +249,16 @@ export GDC_GATEWAY_OPS_ROOT="$ops"
 helper="$ROOT/04-ops/gateway-migration-remote.sh"
 
 "$helper" preflight-window 1
+
+# A shifted anchor changes admission, not the configured epoch length.
+GDC_TEST_POC_START=260 GDC_TEST_WINDOW_HEIGHT=300 "$helper" preflight-window 1
+for height in 259 270 341 360; do
+  if GDC_TEST_POC_START=260 GDC_TEST_WINDOW_HEIGHT="$height" \
+    "$helper" preflight-window 1 >"$tmp/window-$height.out" 2>&1; then
+    echo "migration accepted unsafe or inconsistent epoch height=$height" >&2
+    exit 1
+  fi
+done
 
 freeze_failure="$ops/gateway-migrations/freeze-failure"
 mkdir -p "$freeze_failure/04-ops"

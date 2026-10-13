@@ -40,7 +40,7 @@ EOF
 
 @test "receipt schema is strict and unknown fields are refused" {
   printf '{}' >"$TMP/bad.json"; chmod 600 "$TMP/bad.json"
-  run bash -c 'source "$1"; recovery_validate_json_schema "$2" "$3"' _ "$LIB" "$RUNBOOK/schemas/recovery-receipt-v1.schema.json" "$TMP/bad.json"
+  run bash -c 'source "$1"; recovery_validate_json_schema "$2" "$3"' _ "$LIB" "$RUNBOOK/../schema/recovery-receipt-v1.schema.json" "$TMP/bad.json"
   [ "$status" -ne 0 ]
 }
 

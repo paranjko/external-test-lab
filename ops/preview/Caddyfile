@@ -1,0 +1,10 @@
+{
+	admin unix//run/gdc-preview/admin.sock
+	auto_https off
+}
+
+:8080 {
+	respond /health "ready" 200
+	header Content-Security-Policy "worker-src 'none'"
+	respond "not found" 404
+}
