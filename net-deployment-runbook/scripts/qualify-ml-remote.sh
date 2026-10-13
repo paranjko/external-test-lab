@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ $# -eq 10 ]] || { echo "Usage: $0 work-dir env-file backend model dtype revision tensor-parallel max-seqs gpu-util context" >&2; exit 2; }
-WORK="$1"; ENV_FILE="$2"; BACKEND="$3"; MODEL="$4"; DTYPE="$5"; REVISION="$6"; TENSOR="$7"; MAX_SEQS="$8"; GPU_UTIL="$9"; CONTEXT="${10}"
+[[ $# -eq 12 ]] || { echo "Usage: $0 work-dir env-file backend source-model served-model dtype revision tensor-parallel max-seqs gpu-util context vllm-args" >&2; exit 2; }
+WORK="$1"; ENV_FILE="$2"; BACKEND="$3"; SOURCE_MODEL="$4"; MODEL="$5"; DTYPE="$6"; REVISION="$7"; TENSOR="$8"; MAX_SEQS="$9"; GPU_UTIL="${10}"; CONTEXT="${11}"; VLLM_ARGS="${12}"
 NODE_DIR="$WORK/02-node"
 cd "$NODE_DIR"
 case "$BACKEND" in
@@ -32,7 +32,15 @@ cleanup() {
 trap cleanup EXIT
 timeout "$qualification_timeout" docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d >"$WORK/start.log" 2>&1
 deadline=$((SECONDS + qualification_timeout))
-body="$(jq -nc --arg model "$MODEL" --arg dtype "$DTYPE" --arg revision "$REVISION" --arg tensor "$TENSOR" --arg max "$MAX_SEQS" --arg util "$GPU_UTIL" --arg context "$CONTEXT" '{model:$model,dtype:$dtype,additional_args:["--revision",$revision,"--tensor-parallel-size",$tensor,"--max-num-seqs",$max,"--gpu-memory-utilization",$util,"--max-model-len",$context]}')"
+case "$VLLM_ARGS" in
+  '') extra_args='[]' ;;
+  --enforce-eager) extra_args='["--enforce-eager"]' ;;
+  '--enable-auto-tool-choice --tool-call-parser hermes')
+    extra_args='["--enable-auto-tool-choice","--tool-call-parser","hermes"]'
+    ;;
+  *) echo 'unsupported MLNode vLLM arguments' >&2; exit 2 ;;
+esac
+body="$(jq -nc --arg source "$SOURCE_MODEL" --arg served "$MODEL" --arg dtype "$DTYPE" --arg revision "$REVISION" --arg tensor "$TENSOR" --arg max "$MAX_SEQS" --arg util "$GPU_UTIL" --arg context "$CONTEXT" --argjson extra "$extra_args" '{model:$source,dtype:$dtype,additional_args:(["--revision",$revision,"--tensor-parallel-size",$tensor,"--max-num-seqs",$max,"--gpu-memory-utilization",$util,"--max-model-len",$context,"--served-model-name",$served] + $extra)}')"
 # The nginx inference proxy is intentionally for OpenAI traffic. Control-plane
 # calls go directly to the MLNode container so the /api/v1 prefix is preserved.
 ensure_inference_started() {

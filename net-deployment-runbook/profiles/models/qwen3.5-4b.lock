@@ -1,0 +1,15 @@
+# Qualification-only public Qwen3.5-4B baseline. It is not a network
+# activation profile and cannot be used for JOIN, Genesis, or migration.
+GDC_MODEL_PROFILE_SCOPE=qualification-only
+
+# Public weights and revision tested on gdc-node3.
+MODEL_ID=Qwen/Qwen3.5-4B
+MODEL_REVISION=851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+
+# Node3-tested BF16 direct-admission parameters.
+MLNODE_DTYPE=bfloat16
+MLNODE_CONTEXT_LENGTH=32768
+MLNODE_MAX_NUM_SEQS=1
+MLNODE_GPU_MEMORY_UTILIZATION=0.85
+MLNODE_TENSOR_PARALLEL_SIZE=1
+MLNODE_VLLM_ARGS=--enforce-eager

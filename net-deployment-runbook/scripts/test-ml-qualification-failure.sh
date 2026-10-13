@@ -72,7 +72,7 @@ run_remote() {
   env PATH="$tmp/bin:$PATH" GDC_TEST_ML_MODE="$mode" GDC_TEST_ML_COUNT="$work/count" \
     ML_QUALIFICATION_TIMEOUT_SECONDS=3 ML_QUALIFICATION_PROBE_TIMEOUT_SECONDS=1 \
     ML_QUALIFICATION_POLL_INTERVAL_SECONDS=1 ML_QUALIFICATION_VLLM_POLL_INTERVAL_SECONDS=1 \
-    "$ROOT/scripts/qualify-ml-remote.sh" "$work" "$work/.env" rocm test/model bfloat16 revision 1 1 0.8 2048
+    "$ROOT/scripts/qualify-ml-remote.sh" "$work" "$work/.env" rocm test/source test/model bfloat16 revision 1 1 0.8 2048 ''
 }
 
 start=$SECONDS
@@ -110,6 +110,7 @@ collection_harness="$tmp/phase-qualification-collection.sh"
     'host=fixture-host' 'remote=/tmp/fixture-qualification' 'qualification_backend=rocm' \
     'MLNODE_GENERIC_IMAGE=example.invalid/mlnode@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
     'MODEL_ID=test/model' 'MLNODE_DTYPE=bfloat16' 'MODEL_REVISION=revision' \
+    'MODEL_SOURCE_ID=test/source' 'MODEL_SOURCE_REVISION=revision' 'MLNODE_VLLM_ARGS=' \
     'MLNODE_TENSOR_PARALLEL_SIZE=1' 'MLNODE_MAX_NUM_SEQS=1' \
     'MLNODE_GPU_MEMORY_UTILIZATION=0.8' 'MLNODE_CONTEXT_LENGTH=2048' \
     'mkdir -p "$report"' \

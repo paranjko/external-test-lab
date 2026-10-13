@@ -1,0 +1,16 @@
+# Qualification candidate derived from the public Testnet model contract. It
+# is not a Community DevNet activation profile.
+GDC_MODEL_PROFILE_SCOPE=qualification-only
+
+# Both Testnet and Testnet DevShards pin this immutable upstream revision.
+MODEL_ID=Qwen/Qwen2.5-7B-Instruct
+MODEL_REVISION=a09a35458c702b33eeacc393d103063234e8bc28
+
+# The regular Testnet contract uses BF16-compatible defaults, 4,096 context
+# tokens and 0.92 GPU utilisation. One sequence bounds the qualification run.
+MLNODE_DTYPE=bfloat16
+MLNODE_CONTEXT_LENGTH=4096
+MLNODE_MAX_NUM_SEQS=1
+MLNODE_GPU_MEMORY_UTILIZATION=0.92
+MLNODE_TENSOR_PARALLEL_SIZE=1
+MLNODE_VLLM_ARGS='--enable-auto-tool-choice --tool-call-parser hermes'

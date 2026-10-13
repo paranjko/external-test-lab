@@ -45,7 +45,7 @@ for host in "${hosts[@]}"; do
     "POC_BATCH_SIZE_DEFAULT=32"
   scp -q "$env_file" "$host:$remote/.env"
   set +e
-  ssh -T "$host" "bash '$remote/qualify-ml-remote.sh' '$remote' '$remote/.env' '$qualification_backend' '$MODEL_ID' '$MLNODE_DTYPE' '$MODEL_REVISION' '$MLNODE_TENSOR_PARALLEL_SIZE' '$MLNODE_MAX_NUM_SEQS' '$MLNODE_GPU_MEMORY_UTILIZATION' '$MLNODE_CONTEXT_LENGTH'"
+  ssh -T "$host" "bash '$remote/qualify-ml-remote.sh' '$remote' '$remote/.env' '$qualification_backend' '$MODEL_SOURCE_ID' '$MODEL_ID' '$MLNODE_DTYPE' '$MODEL_SOURCE_REVISION' '$MLNODE_TENSOR_PARALLEL_SIZE' '$MLNODE_MAX_NUM_SEQS' '$MLNODE_GPU_MEMORY_UTILIZATION' '$MLNODE_CONTEXT_LENGTH' '$MLNODE_VLLM_ARGS'"
   qualification_status=$?
   set -e
 

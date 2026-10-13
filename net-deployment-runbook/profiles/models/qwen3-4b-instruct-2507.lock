@@ -1,0 +1,17 @@
+# Qualification candidate derived from the public Testnet model contract. It
+# is not a Community DevNet activation profile.
+GDC_MODEL_PROFILE_SCOPE=qualification-only
+
+# Both Testnet and Testnet DevShards pin this immutable upstream revision.
+MODEL_ID=Qwen/Qwen3-4B-Instruct-2507
+MODEL_REVISION=cdbee75f17c01a7cc42f958dc650907174af0554
+
+# Testnet serves this model at 25,000 tokens with the Hermes tool-call tuple.
+# BF16 and one sequence are conservative qualification settings; no host
+# qualification result is implied by this lock.
+MLNODE_DTYPE=bfloat16
+MLNODE_CONTEXT_LENGTH=25000
+MLNODE_MAX_NUM_SEQS=1
+MLNODE_GPU_MEMORY_UTILIZATION=0.85
+MLNODE_TENSOR_PARALLEL_SIZE=1
+MLNODE_VLLM_ARGS='--enable-auto-tool-choice --tool-call-parser hermes'

@@ -524,6 +524,47 @@ for release in v2026.07.23 v2026.08.06; do
   grep -qx "operator_services_profile_hash=$expected_operator_hash" <<<"$summary"
 done
 
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3.5-4b load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen3.5-4B ]]
+[[ "$MODEL_REVISION" == 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a ]]
+[[ "$MODEL_SOURCE_ID" == Qwen/Qwen3.5-4B ]]
+[[ "$MODEL_SOURCE_REVISION" == 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a ]]
+[[ "$MLNODE_VLLM_ARGS" == --enforce-eager ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
+grep -Fq 'MLNODE_VLLM_ARGS' "$ROOT/scripts/phase-qualify-ml.sh"
+grep -Fq -- '--enforce-eager' "$ROOT/scripts/qualify-ml-remote.sh"
+grep -Fq 'qualification-only' "$ROOT/gdc.sh"
+scope_tmp="$(mktemp -d)"
+if GDC_HOME="$scope_tmp" "$ROOT/gdc.sh" --model qwen3.5-4b host join >"$scope_tmp/stdout" 2>"$scope_tmp/stderr"; then
+  echo 'qualification-only model overlay unexpectedly allowed host join' >&2
+  rm -rf -- "$scope_tmp"
+  exit 1
+fi
+grep -Fq 'qualification-only' "$scope_tmp/stderr"
+rm -rf -- "$scope_tmp"
+
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3-4b-instruct-2507 load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen3-4B-Instruct-2507 ]]
+[[ "$MODEL_REVISION" == cdbee75f17c01a7cc42f958dc650907174af0554 ]]
+[[ "$MLNODE_CONTEXT_LENGTH" == 25000 ]]
+[[ "$MLNODE_VLLM_ARGS" == '--enable-auto-tool-choice --tool-call-parser hermes' ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
+
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen2.5-7b-instruct load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen2.5-7B-Instruct ]]
+[[ "$MODEL_REVISION" == a09a35458c702b33eeacc393d103063234e8bc28 ]]
+[[ "$MLNODE_CONTEXT_LENGTH" == 4096 ]]
+[[ "$MLNODE_GPU_MEMORY_UTILIZATION" == 0.92 ]]
+[[ "$MLNODE_VLLM_ARGS" == '--enable-auto-tool-choice --tool-call-parser hermes' ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
+
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3.8-27b load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen3.8-27B ]]
+[[ "$MODEL_REVISION" == 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0 ]]
+[[ "$MLNODE_CONTEXT_LENGTH" == 32768 ]]
+[[ -z "$MLNODE_VLLM_ARGS" ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
+
 [[ -r "$ROOT/profiles/releases/v2026.08.13.lock" ]]
 [[ -r "$ROOT/profiles/releases/v2026.08.13.retired" ]]
 grep -Fxq 'unset GDC_ALLOW_RETIRED_PROFILE_RECOVERY' "$ROOT/gdc.sh"
