@@ -11,7 +11,44 @@ voting power, signatures, validator updates, and available PoC decision evidence
 English and Russian are selectable. Perfetto and OTLP are separate projections
 of the retained analysis, not the engine that renders the HTML report.
 
-## Build and try locally
+## Packaged beta
+
+Version `1.0.0-beta.1` provides Linux and macOS binaries for amd64/arm64 and a
+Windows amd64 ZIP. The [trace page](https://gonka-dev.net/trace/) links the
+versioned assets and installer:
+
+```sh
+curl -LsSf https://gonka-dev.net/trace/install.sh | sh
+gonkactl-trace --version
+gonkactl-trace report mainnet HEAD~10
+```
+
+The POSIX installer requires curl or wget, tar (unzip for Windows POSIX shells),
+and one of sha256sum, shasum or openssl. It verifies the selected archive before
+installing, defaults to `$HOME/.local/bin`, and prints PATH guidance without
+editing profiles. Set `GONKACTL_INSTALL_DIR` to an absolute directory, or save
+the script and run `sh install.sh --dry-run` / `sh install.sh --quiet`.
+Native Windows users extract the ZIP and add its directory to PATH.
+
+`make release-archives` builds all five archives plus `SHA256SUMS` and
+`build.json` in an empty `.cache/release/`. Set `TRACE_RELEASE_DIR` to retain a
+second build. Release tooling uses Python 3's standard library and Go 1.27.2
+in CI; archives are reproducible with the same source and toolchain. Build
+time is the source commit timestamp. The standard archives include the HTML
+report and native trace exporter; the optional full Perfetto viewer remains a
+separate source build. A developer's generated viewer assets cause packaging
+to fail instead of silently changing the release.
+
+The release workflow triggers on component tags such as
+`gonkactl-trace-v1.0.0-beta.1`, or manual dispatch selecting
+that existing tag. It runs source/installer checks, builds all targets, and
+publishes a prerelease with [release notes](RELEASE_NOTES.md). Publication
+requires the tag, checked-out commit and archive manifest to agree; it never
+overwrites an existing release. The separate site pipeline publishes `/trace/`
+after integration into main. Publish the release before promoting the page so
+the versioned download links resolve. Local builds do not publish either.
+
+## Build from source
 
 Requirements: Go 1.26 or later, a C compiler for race tests, Node.js 22 or later,
 Python 3, and Make. Dependency installation needs network access; report

@@ -5,7 +5,12 @@ export GOCACHE := $(CURDIR)/.cache/go-build
 export GOTMPDIR := $(CURDIR)/.cache/go-tmp
 export TMPDIR := $(GOTMPDIR)
 
-all: test vet build qualify-ui
+VERSION ?= dev
+COMMIT ?= $(shell git rev-parse HEAD)
+BUILD_DATE ?= $(shell git show -s --format=%cI HEAD)
+LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)
+
+all: test vet build qualify-ui test-release
 
 ui-deps:
 	npm ci --ignore-scripts --no-audit --no-fund
@@ -16,11 +21,11 @@ demo: build
 
 build:
 	mkdir -p $(GOCACHE) $(GOTMPDIR)
-	go build -o gonkactl-trace .
+	go build -trimpath -buildvcs=false -ldflags '$(LDFLAGS)' -o gonkactl-trace .
 
 install:
 	mkdir -p $(GOCACHE) $(GOTMPDIR)
-	go install .
+	go install -trimpath -buildvcs=false -ldflags '$(LDFLAGS)' .
 
 test:
 	mkdir -p $(GOCACHE) $(GOTMPDIR)
@@ -38,6 +43,21 @@ perfetto-ui:
 	python3 ui/build_perfetto.py
 
 release: perfetto-ui all
+
+.PHONY: release-archives release-publish test-release qualify-page
+qualify-page:
+	node scripts/check_page.mjs
+
+release-archives:
+	mkdir -p $(GOCACHE) $(GOTMPDIR)
+	python3 scripts/release.py build
+
+release-publish:
+	python3 scripts/release.py publish
+
+test-release:
+	python3 -m unittest discover -s scripts -p 'test_*.py'
+	sh -n ../net-deployment-runbook/04-ops/site/trace/install.sh
 
 qualify-perfetto:
 	mkdir -p $(GOCACHE) $(GOTMPDIR)

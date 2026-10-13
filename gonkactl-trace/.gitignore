@@ -9,3 +9,4 @@
 /node_modules/
 /gonkactl-trace.json
 /incident*.json
+/scripts/__pycache__/
