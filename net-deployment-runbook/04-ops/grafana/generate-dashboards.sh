@@ -99,6 +99,51 @@ render() {
 
         textpanel(49;"Data contract";"Every panel here either shows a measured value or says in its body why it has none. Emptiness has four causes on this board: a metric this build never exports, a collector that stopped writing its file, a Host that is not in the monitoring inventory, and a scrape that is failing. The **Collection** row names the last three. The board measures only what is scraped: a validator that is not a scrape target appears in no host, CPU, memory, disk or GPU panel, and **Validators beyond the monitored set** counts how many are missing. Prometheus keeps up to 30 days of samples, so a window longer than the stored history shows only what is kept, not a fault. Archive-only epoch economics, rewards and historical transaction decoding are not collected and are not invented here.";65)
       ])
+    elif $kind == "chain" then
+      def phases: [{type:"value",options:{"0":{text:"PoC generation",color:"purple",index:0},"1":{text:"batch exchange and wait",color:"blue",index:1},"2":{text:"PoC validation",color:"orange",index:2},"3":{text:"validator set switch",color:"yellow",index:3},"4":{text:"inference",color:"green",index:4}}}];
+      def phasedesc: "Cycle counted from the PoC start P read from epoch_info: PoC generation, batch exchange and wait, PoC validation, validator set switch (group written at P+19, the new set signs from P+23), then inference until the next PoC.";
+      def bar($id;$title;$expr;$legend;$unit;$x;$y;$w;$h;$desc;$fc):
+        {id:$id,datasource:ds,type:"bargauge",title:$title,description:$desc,gridPos:{h:$h,w:$w,x:$x,y:$y},
+         fieldConfig:{defaults:({color:{mode:"thresholds"},thresholds:{mode:"absolute",steps:[{color:"green",value:null}]}} + (if $unit == "" then {} else {unit:$unit} end) + $fc),overrides:[]},
+         options:{displayMode:"gradient",orientation:"horizontal",showUnfilled:true,valueMode:"color",namePlacement:"left",reduceOptions:{calcs:["lastNotNull"],fields:"",values:false}},
+         targets:[target($expr;$legend) + {instant:true}]};
+      def timeline($id;$title;$expr;$legend;$y;$h;$desc;$fc):
+        {id:$id,datasource:ds,type:"state-timeline",title:$title,description:$desc,gridPos:{h:$h,w:24,x:0,y:$y},
+         fieldConfig:{defaults:({color:{mode:"thresholds"},thresholds:{mode:"absolute",steps:[{color:"green",value:null}]}} + $fc),overrides:[]},
+         options:{showValue:"never",mergeValues:true,rowHeight:0.85,legend:{showLegend:false}},targets:[target($expr;$legend)]};
+      base("gdc-chain";"Gonka DevNet Chain";"now-6h";[
+        row(100;"Epoch and consensus";0),
+        stat(1;"Epoch";"max(gdc_chain_epoch_index)";"none";0;1;3;"Latest epoch index from epoch_info, read from public LCD.";{noValue:"the chain poller is not scraped"};{}),
+        stat(2;"Current phase";"max(gdc_chain_epoch_phase_code)";"none";3;1;6;phasedesc;{noValue:"the chain poller is not scraped",mappings:phases};{colorMode:"background"}),
+        stat(3;"Until next PoC";"max(gdc_chain_epoch_blocks_to_next_poc)";"none";9;1;3;"Blocks from the current height to the next PoC start.";{noValue:"the chain poller is not scraped",unit:"suffix: blocks"};{}),
+        stat(4;"Confirmation PoC";"max(gdc_chain_cpoc_active)";"none";12;1;3;"is_confirmation_poc_active from epoch_info.";{noValue:"the chain poller is not scraped",mappings:[{type:"value",options:{"0":{text:"not running",color:"green",index:0},"1":{text:"running",color:"orange",index:1}}}]};{colorMode:"value"}),
+        stat(5;"Guardian enhancement";"max(gdc_chain_guardian_enhancement_active)";"none";15;1;3;"On when a guardian has staking tokens different from its epoch group weight.";{noValue:"the chain poller is not scraped",mappings:[{type:"value",options:{"0":{text:"off",color:"green",index:0},"1":{text:"on",color:"orange",index:1}}}]};{colorMode:"value"}),
+        stat(6;"Signed previous block";"max(gdc_chain_block_signed_power_ratio)";"percentunit";18;1;3;"Share of voting power in last_commit of the latest block. A block commits with strictly more than 2/3.";{noValue:"the chain poller is not scraped",thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"orange",value:0.6667},{color:"green",value:0.8}]}};{colorMode:"value"}),
+        stat(7;"Validators";"max(gdc_chain_validators_count)";"none";21;1;3;"Validators in the CometBFT set at the latest block.";{noValue:"the chain poller is not scraped"};{}),
+        timeline(8;"Cycle phases over time";"max(gdc_chain_epoch_phase_code)";"phase";5;4;phasedesc;{noValue:"the chain poller is not scraped",mappings:phases,thresholds:{mode:"absolute",steps:[{color:"purple",value:null},{color:"blue",value:1},{color:"orange",value:2},{color:"yellow",value:3},{color:"green",value:4}]}}),
+        timeline(9;"Confirmation PoC over time";"max(gdc_chain_cpoc_active)";"confirmation PoC";9;3;"When a confirmation PoC event was running.";{noValue:"the chain poller is not scraped",mappings:[{type:"value",options:{"0":{text:"not running",color:"transparent",index:0},"1":{text:"running",color:"orange",index:1}}}],thresholds:{mode:"absolute",steps:[{color:"transparent",value:null},{color:"orange",value:1}]}}),
+
+        row(110;"Voting power";12),
+        bar(11;"Consensus voting power";"gdc_chain_validator_power";"{{host}}";"none";0;13;8;9;"Voting power per validator in CometBFT, labelled with the inventory alias.";{noValue:"the chain poller is not scraped"}),
+        bar(12;"Voting power share";"gdc_chain_validator_power / scalar(sum(gdc_chain_validator_power))";"{{host}}";"percentunit";8;13;8;9;"Red: more than one third. If this host goes offline, blocks stop.";{noValue:"the chain poller is not scraped",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:0.3},{color:"red",value:0.3334}]}}),
+        bar(13;"Epoch group weight";"gdc_chain_participant_weight";"{{host}} {{participant}}";"none";16;13;8;9;"validation_weights of the current epoch group.";{noValue:"the chain poller is not scraped"}),
+        ts(14;"Voting power by host";"sum by (host) (gdc_chain_validator_power)";"{{host}}";"none";0;22;24;8;"The set changes at P+23 and when slashing jails a silent validator.";{noValue:"the chain poller is not scraped",custom:{stacking:{group:"A",mode:"normal"},fillOpacity:40}};["lastNotNull"]),
+
+        row(120;"Validator reliability";30),
+        bar(21;"Missed blocks in slashing window";"gdc_chain_validator_missed_in_window";"{{host}} {{validator}}";"none";0;31;8;9;"missed_blocks_counter from slashing signing_infos for bonded or jailed validators. More than 50 in the 100-block window means jail.";{noValue:"the chain poller is not scraped",min:0,max:100,thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:20},{color:"red",value:50}]}}),
+        ts(22;"Missed signatures (15m)";"sum by (host) (increase(gdc_chain_validator_missed_blocks_total[15m]))";"{{host}}";"none";8;31;8;9;"Blocks a validator did not sign, counted by the poller from last_commit.";{noValue:"the chain poller is not scraped"};["lastNotNull"]),
+        (table(23;"Staking validators";"gdc_chain_validator_staking";16;31;8;9;"Only bonded or jailed validators; old identities that left the set are hidden.";{noValue:"the chain poller is not scraped"})
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",operator:"Operator",status:"Status",jailed:"Jail",guardian:"Guardian",Value:"Tokens"}}}]),
+
+        row(130;"Gateways";40),
+        (table(31;"Gateways now";"max by (gateway) (gdc_chain_gateway_available_percent)";0;41;12;6;"Available capacity per configured gateway status URL.";{noValue:"no gateway status URL answers"})
+          | .targets=[target("max by (gateway) (gdc_chain_gateway_working)";"") + {refId:"A",format:"table",instant:true}, target("max by (gateway) (gdc_chain_gateway_available_percent)";"") + {refId:"B",format:"table",instant:true}, target("max by (gateway) (gdc_chain_gateway_hosts{state=\"available\"})";"") + {refId:"C",format:"table",instant:true}, target("max by (gateway) (gdc_chain_gateway_in_flight_requests)";"") + {refId:"D",format:"table",instant:true}]
+          | .transformations=[{id:"merge",options:{}},{id:"organize",options:{excludeByName:{Time:true},renameByName:{gateway:"Gateway","Value #A":"Active devshard","Value #B":"Available capacity, %","Value #C":"Hosts available","Value #D":"Requests in flight"}}}]),
+        ts(32;"Gateway available capacity";"gdc_chain_gateway_available_percent";"{{gateway}}";"percent";12;41;12;6;"capacity.available_percent from the gateway status.";{noValue:"no gateway status URL answers"};["lastNotNull"]),
+
+        row(140;"Public node endpoints";47),
+        timeline(41;"External probes";"probe_success{job=\"public-node-endpoints\"}";"{{host}} {{kind}}";48;9;"blackbox HTTPS probes of every node public RPC and LCD, the way a client reaches them.";{noValue:"no public node endpoint is probed",mappings:[{type:"value",options:{"0":{text:"down",color:"red",index:0},"1":{text:"ok",color:"green",index:1}}}],thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"green",value:1}]}})
+      ])
     elif $kind == "overview" then
       base("gdc-overview";"Gonka DevNet Community Overview";"now-24h";[
         stat(1;"Healthy targets";"sum(up)";"none";0;0;6;
@@ -209,10 +254,12 @@ mkdir -p "$HERE/dashboards" "$PUBLIC"
 render network "$HERE/dashboards/gdc-network.json"
 render inference "$HERE/dashboards/gdc-inference.json"
 render overview "$HERE/dashboards/gdc-overview.json"
-for board in gdc-network gdc-inference gdc-overview; do
+render chain "$HERE/dashboards/gdc-chain.json"
+for board in gdc-network gdc-inference gdc-overview gdc-chain; do
   install -m 0644 "$HERE/dashboards/$board.json" "$PUBLIC/$board.json"
 done
 jq -e '.uid == "gdc-network" and (.panels | length >= 20)' "$HERE/dashboards/gdc-network.json" >/dev/null
 jq -e '.uid == "gdc-inference" and (.panels | length >= 20)' "$HERE/dashboards/gdc-inference.json" >/dev/null
 jq -e '.uid == "gdc-overview" and (.panels | length >= 14)' "$HERE/dashboards/gdc-overview.json" >/dev/null
-printf 'READY generated gdc-network, gdc-inference and gdc-overview dashboards\n'
+jq -e '.uid == "gdc-chain" and (.panels | length >= 20)' "$HERE/dashboards/gdc-chain.json" >/dev/null
+printf 'READY generated gdc-network, gdc-inference, gdc-overview and gdc-chain dashboards\n'

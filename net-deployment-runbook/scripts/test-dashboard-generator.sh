@@ -20,7 +20,7 @@ probe() { jq -ne "$helpers $1"; }
 mkdir -p "$tmp/tree/04-ops/edge-node/public-grafana/dashboards"
 cp -R "$ROOT/04-ops/grafana" "$tmp/tree/04-ops/grafana"
 bash "$tmp/tree/04-ops/grafana/generate-dashboards.sh" >/dev/null
-for board in gdc-network gdc-inference gdc-overview; do
+for board in gdc-network gdc-inference gdc-overview gdc-chain; do
   cmp -s "$ROOT/04-ops/grafana/dashboards/$board.json" "$tmp/tree/04-ops/grafana/dashboards/$board.json" \
     || { echo "the committed monitoring definition of $board is not what the generator produces" >&2; exit 1; }
   cmp -s "$ROOT/04-ops/edge-node/public-grafana/dashboards/$board.json" "$tmp/tree/04-ops/edge-node/public-grafana/dashboards/$board.json" \
