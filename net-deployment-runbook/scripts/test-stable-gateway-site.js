@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 const assert = require('node:assert/strict');
-const state = require('../04-ops/site/gateway-state.js');
+const childProcess = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const siteBuild = fs.mkdtempSync(path.join(os.tmpdir(), 'gdc-stable-site-test-'));
+process.on('exit', () => fs.rmSync(siteBuild, {recursive: true, force: true}));
+childProcess.execFileSync(
+  path.join(__dirname, 'build-site-js.sh'),
+  ['--output', siteBuild],
+  {cwd: siteBuild, stdio: 'inherit'},
+);
+const state = require(path.join(siteBuild, 'gateway-state.js'));
 const now = 200000;
 const admission = {available: true, gateway: 'A', model: 'model', protocol: 'v6'};
 const probe = {
