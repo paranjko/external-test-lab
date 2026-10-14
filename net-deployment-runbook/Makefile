@@ -470,7 +470,7 @@ test-ci-layout:
 
 test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 
-test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-host-models test-host-upgrade test-host-upgrade-lifecycle
+test-ci-contracts: test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-host-models test-host-upgrade test-host-upgrade-lifecycle
 	@bash ./scripts/test-node-container-lending.sh
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
@@ -953,6 +953,14 @@ devshard-artifacts-publish:
 	@python3 ./scripts/devshard-artifacts.py publish $(DEVSHARD_ARTIFACT_GROUP_ARGS)
 
 .PHONY: test-gonka-pr-unified-release gonka-pr-unified-release-prepare gonka-pr-unified-release-fetch gonka-pr-unified-release-build gonka-pr-unified-release-verify gonka-pr-unified-release-publish
+.PHONY: test-ci-route ci-route
+test-ci-route:
+	@python3 ./scripts/test-ci-route.py
+
+ci-route:
+	@test -n "$(changed_files)" && test -r "$(changed_files)" || { echo 'set changed_files to a JSON list of changed paths' >&2; exit 2; }
+	@python3 ./scripts/ci-route.py --changed-files "$(changed_files)" --github-output "$$GITHUB_OUTPUT"
+
 test-gonka-pr-unified-release:
 	@python3 ./scripts/test-gonka-pr-unified-release.py
 
