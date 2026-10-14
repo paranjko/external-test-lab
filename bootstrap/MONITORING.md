@@ -76,7 +76,7 @@ and `2` for invalid inputs or local execution errors.
 
 The local composite Action `.github/actions/gonkactl-bootstrap` accepts a
 `chain-id`, `inventory`, `report`, `timeout` and `origin`. It downloads the public
-installer, selects immutable alpha.2 and verifies the installed source commit.
+installer, selects immutable alpha.3 and verifies the installed source commit.
 Its Make targets only install, invoke the CLI and transport reports/notifications;
 they do not implement network validation. The existing Go bootstrap and installed
 CLI tests cover schema, raw Genesis, endpoints, image manifests and publication.
