@@ -87,10 +87,10 @@ class ArtifactTests(unittest.TestCase):
 
     def test_manifest_freezes_source_zip_base_images_groups_and_mapping(self):
         value = artifacts.load_definition()
-        self.assertEqual(value["source_commit"], "e9d56e2a4e810788ec4be39725026cd892cf1080")
-        self.assertEqual(value["source_tree"], "8df9b176838294dcc5d26ecd07a5059935569821")
+        self.assertEqual(value["source_commit"], "f2c6b03a53bda5999c6c5a23dc9a85cb0f957278")
+        self.assertEqual(value["source_tree"], "f474dad6203cc46a84534aff46f066e0c28a9f88")
         self.assertEqual(value["devshard_zip"]["sha256"],
-                         "7732479a265a3bd6b76e06c738f5ae1d32ddf6e20f07afa444e06416feb0d876")
+                         "049692d3bfdf55d9d8f7feb24091362908c05c063043420cca089817de0101aa")
         self.assertEqual(artifacts.selected_components(value, ["manual-matrix"]),
                          ["devshard-gateway", "gateway-v4.2", "versiond", "versiond-router", "proxy-router", "proxy-policy"])
         self.assertEqual(artifacts.selected_components(value, ["dapi-edge"]), ["decentralized-api", "edge-api"])
@@ -101,8 +101,26 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(value["components"]["devshard-gateway"]["target"], "devshardctl-runtime")
         dapi_args = value["components"]["decentralized-api"]["build_args"]
         self.assertEqual((dapi_args["GOOS"], dapi_args["GOARCH"]), ("linux", "amd64"))
-        self.assertIn("version.Version=lab-e9d56e2a4e810788ec4be39725026cd892cf1080", dapi_args["LDFLAGS"])
-        self.assertIn("version.Commit=e9d56e2a4e810788ec4be39725026cd892cf1080", dapi_args["LDFLAGS"])
+        self.assertIn("version.Version=lab-f2c6b03a53bda5999c6c5a23dc9a85cb0f957278", dapi_args["LDFLAGS"])
+        self.assertIn("version.Commit=f2c6b03a53bda5999c6c5a23dc9a85cb0f957278", dapi_args["LDFLAGS"])
+
+    def test_refreshed_bundle_rejects_previous_zip_url_and_checksum(self):
+        value = artifacts.load_definition()
+        self.assertEqual(value["devshard_zip"]["url"],
+                         f"https://github.com/{artifacts.REPOSITORY}/releases/download/"
+                         f"lab-devshard-v6-{value['source_commit'][:12]}/devshardd.zip")
+        old_binding = {
+            "url": "https://github.com/paranjko/external-test-lab/releases/download/lab-devshard-v6-e9d56e2a4e81/devshardd.zip",
+            "sha256": "7732479a265a3bd6b76e06c738f5ae1d32ddf6e20f07afa444e06416feb0d876",
+        }
+        for fields in (("url",), ("sha256",), ("url", "sha256")):
+            changed = copy.deepcopy(value)
+            for field in fields:
+                changed["devshard_zip"][field] = old_binding[field]
+            path = self.root / "stale-zip.json"
+            path.write_text(json.dumps(changed))
+            with self.subTest(fields=fields), self.assertRaisesRegex(ValueError, "published ZIP binding changed"):
+                artifacts.load_definition(path)
 
     def test_source_bound_coverage_map_resolves_all_42_expanded_cases(self):
         coverage = json.loads((artifacts.ROOT / "releases/devshard-v6-coverage.json").read_text())

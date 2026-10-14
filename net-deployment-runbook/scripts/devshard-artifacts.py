@@ -78,8 +78,8 @@ def load_definition(path: Path = DEFINITION) -> dict:
     require(value["ghcr_namespace"] == "ghcr.io/paranjko/external-test-lab", "unreviewed GHCR namespace")
     zip_binding = value["devshard_zip"]
     require(zip_binding == {
-        "url": "https://github.com/paranjko/external-test-lab/releases/download/lab-devshard-v6-e9d56e2a4e81/devshardd.zip",
-        "sha256": "7732479a265a3bd6b76e06c738f5ae1d32ddf6e20f07afa444e06416feb0d876",
+        "url": "https://github.com/paranjko/external-test-lab/releases/download/lab-devshard-v6-f2c6b03a53bd/devshardd.zip",
+        "sha256": "049692d3bfdf55d9d8f7feb24091362908c05c063043420cca089817de0101aa",
     }, "published ZIP binding changed")
     groups, components = value["groups"], value["components"]
     require(set(groups) == {"manual-matrix", "dapi-edge"}, "group set changed")
