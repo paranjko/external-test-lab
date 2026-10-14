@@ -1,14 +1,24 @@
 # Runbook command dependencies
 
 `make test` is supported on the GitHub-hosted `ubuntu-latest` runner used by
-`runbook-contracts`. Its required executable baseline is
+`runbook-checks`. Its required executable baseline is
 [`dependencies/ci-test-commands.txt`](dependencies/ci-test-commands.txt).
 `scripts/test-command-dependency-contract.sh` verifies that baseline before
 the rest of the contract suite.
 
-CI runs `test-ci-bootstrap`, `test-ci-contracts`, `test-ci-site` and
-`test-ci-join` in independent checkouts, plus the existing `test-gdc-p0a`
-job. Tests within each group remain sequential: some fixtures use fixed
+CI selects checks from the changed paths on both pull requests and pushes.
+Release-only changes run release checks; static site changes run bootstrap,
+core and site groups plus edge integration, because those tests also consume
+site assets. Documentation retains its test coverage but skips ShellCheck and
+Host upgrade containers. Unrelated paths do not expand a narrow route. Shared
+or unknown runbook inputs run the full suite; manual dispatch always runs it.
+Renames include both paths. Missing push history falls back to the full suite;
+a failed PR file lookup fails the required gate. The routing step summarizes
+the selected jobs and groups. Draft PRs use the same selection as ready PRs.
+
+CI runs `test-ci-bootstrap`, `test-ci-core`, `test-ci-site`,
+`test-ci-join` and `test-ci-gateways` in independent checkouts, plus `test-gdc-p0a`
+and a separate Host upgrade matrix. Tests within each group remain sequential: some fixtures use fixed
 loopback ports or write generated site files. Do not run groups concurrently
 in the same checkout. `make test` still runs the complete original local
 suite, including the shared P0-A tests, and `make test test-gdc-p0a` adds the
@@ -19,8 +29,10 @@ not duplicate test entrypoints (apart from each group's dependency check).
 ShellCheck runs once across two CI shards, retaining the pinned version and
 external-source analysis. `make shellcheck` checks every script locally;
 `make shellcheck shellcheck_shard=0 shellcheck_shards=2` reproduces one shard.
-The `runbook-contracts` result requires all test, lint, ownership, upstream
-and edge jobs to succeed; failed, cancelled or skipped jobs fail the gate.
+The `runbook-checks` result requires all test, lint, ownership, upstream
+and edge jobs selected by routing to succeed; failed, cancelled, missing or
+unexpectedly skipped required jobs fail the gate. A failed routing job cannot
+produce a successful aggregate.
 
 Ordinary tests and the site do not require Gonka sources. Release auditing is
 separate: `make verify-upstream-profiles upstream_source=/path/to/gonka`
@@ -43,6 +55,10 @@ call and rejects unexpected destinations. `test-host-upgrade-lifecycle` uses a
 fresh privileged Docker-in-Docker container with no host socket, keys or data
 mounts; it pulls digest-pinned BusyBox and Alpine fixtures from Docker Hub and
 tests actual container replacement and rollback in three deployment layouts.
+CI runs flat, legacy and nested layouts in separate disposable containers with
+`host_upgrade_layout=flat|legacy|nested`; the local default remains `all`.
+The synthetic sleep services use a one-second stop grace period, avoiding
+Docker's default ten-second waits without changing production shutdown policy.
 
 The standalone `install_inferenced.sh` requires `curl`, `unzip`, `awk`, `jq`,
 and either `sha256sum` or `shasum`. `jq` validates the selected official
@@ -105,7 +121,7 @@ without executing candidate source.
 
 Before adding an external executable to runbook shell code:
 
-1. Check both manifests and the `runbook-contracts` workflow job.
+1. Check both manifests and the `runbook-checks` workflow job.
 2. Prefer an existing required command or a Bash builtin.
 3. If a new tool is indispensable, declare it in the appropriate manifest,
    provision it in every CI path that executes it, and add a contract test.

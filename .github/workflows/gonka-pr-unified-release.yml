@@ -25,7 +25,7 @@ jobs:
           cache: false
       - name: Install archive inspection tools
         run: sudo apt-get update && sudo apt-get install -y binutils
-      - name: Test release contracts
+      - name: Run release checks
         run: make -C net-deployment-runbook test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release
       - name: Fetch frozen public source
         env:

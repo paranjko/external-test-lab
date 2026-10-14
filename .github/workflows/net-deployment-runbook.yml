@@ -8,6 +8,8 @@ on:
       - 'net-deployment-runbook/**'
       - 'model/**'
       - 'broker-ops/**'
+      - 'install_inferenced.sh'
+      - 'ops/preview/**'
       - 'schema/**'
       - 'bootstrap/**'
       - 'ops/chore/setup-bootstrap-publisher.sh'
@@ -27,6 +29,8 @@ on:
       - 'net-deployment-runbook/**'
       - 'model/**'
       - 'broker-ops/**'
+      - 'install_inferenced.sh'
+      - 'ops/preview/**'
       - 'schema/**'
       - 'bootstrap/**'
       - 'ops/chore/setup-bootstrap-publisher.sh'
@@ -48,15 +52,24 @@ permissions:
 
 jobs:
   route:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     outputs:
-      release_only: ${{ steps.route.outputs.release_only }}
-      site_only: ${{ steps.route.outputs.site_only }}
-      full: ${{ steps.route.outputs.full }}
+      groups: ${{ steps.route.outputs.groups }}
+      required: ${{ steps.route.outputs.required }}
+      release_checks: ${{ steps.route.outputs.release_checks }}
+      shellcheck: ${{ steps.route.outputs.shellcheck }}
+      runbook_tests: ${{ steps.route.outputs.runbook_tests }}
+      p0a_lifecycle: ${{ steps.route.outputs.p0a_lifecycle }}
+      public_edge_integration: ${{ steps.route.outputs.public_edge_integration }}
+      ownership: ${{ steps.route.outputs.ownership }}
+      upstream_profiles: ${{ steps.route.outputs.upstream_profiles }}
+      host_upgrade_lifecycle: ${{ steps.route.outputs.host_upgrade_lifecycle }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
       - id: files
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v9.0.0
         with:
           script: |
@@ -68,22 +81,30 @@ jobs:
             });
             await require('fs').promises.writeFile(
               `${process.env.RUNNER_TEMP}/changed-files.json`,
-              JSON.stringify(files.map(file => file.filename)));
+              // The API caps PR file lists at 3000. An empty list requests
+              // the full suite instead of trusting potentially truncated data.
+              JSON.stringify(files.length >= 3000 ? [] : files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean))));
       - id: route
-        run: make -C net-deployment-runbook ci-route changed_files="$RUNNER_TEMP/changed-files.json"
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_BASE: ${{ github.event.before }}
+          CI_HEAD: ${{ github.sha }}
+          CI_CHANGED_FILES: ${{ runner.temp }}/changed-files.json
+        run: make -C net-deployment-runbook ci-route
 
-  release-contracts:
+  release-checks:
+    name: Release checks
     needs: route
-    if: github.event_name == 'pull_request' && needs.route.outputs.release_only == 'true'
+    if: needs.route.outputs.release_checks == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Test release contracts and declared dependencies
-        run: make -C net-deployment-runbook test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release
+      - name: Check release tooling and declared dependencies
+        run: make -C net-deployment-runbook test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-ci-release-helpers
 
   shellcheck:
     needs: route
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.route.outputs.full == 'true')
+    if: needs.route.outputs.shellcheck == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -94,15 +115,16 @@ jobs:
       - name: Check runbook shell scripts
         run: make -C net-deployment-runbook shellcheck shellcheck_shard=${{ matrix.shard }} shellcheck_shards=2
 
-  runbook-contract-tests:
+  runbook-tests:
+    name: Runbook tests (${{ matrix.group }})
     needs: route
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.route.outputs.full == 'true')
+    if: needs.route.outputs.runbook_tests == 'true'
     runs-on: ${{ vars.GDC_NODE4_RUNNER_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && fromJSON('["self-hosted", "linux", "x64", "gdc-node4"]') || 'ubuntu-latest' }}
     environment: ${{ github.event_name == 'workflow_dispatch' && 'gdc-node4-runner' || '' }}
     strategy:
       fail-fast: false
       matrix:
-        group: [bootstrap, contracts, site, join, gateways]
+        group: ${{ fromJSON(needs.route.outputs.groups) }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install declared Python test dependencies
@@ -110,36 +132,39 @@ jobs:
         run: make -C net-deployment-runbook install-python-test-dependencies
       - name: Verify CI group coverage
         run: make -C net-deployment-runbook test-ci-layout
-      - name: Test runbook contracts
+      - name: Run runbook tests
         run: make -C net-deployment-runbook test-ci-${{ matrix.group }}
 
-  # Preserve the stable required-check name. Skipped/cancelled shards must
-  # never turn a partially executed suite green.
-  runbook-contracts:
-    needs: [route, release-contracts, shellcheck, runbook-contract-tests, p0a-lifecycle, public-edge-integration, ownership, upstream-profiles]
-    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+  # Every selected job must succeed, including on pushes and manual runs.
+  runbook-checks:
+    name: Runbook checks
+    needs: [route, release-checks, shellcheck, runbook-tests, p0a-lifecycle, public-edge-integration, ownership, upstream-profiles, host-upgrade-lifecycle]
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v9.0.0
+      - uses: actions/checkout@v7.0.1
+      - name: Verify selected checks completed
         env:
-          NEEDS: ${{ toJSON(needs) }}
-        with:
-          script: |
-            const releaseOnly = '${{ needs.route.outputs.release_only }}' === 'true';
-            const full = '${{ needs.route.outputs.full }}' === 'true';
-            const failed = Object.entries(JSON.parse(process.env.NEEDS))
-              .filter(([name, job]) => {
-                if (name === 'route' || job.result === 'success') return false;
-                if (job.result !== 'skipped') return true;
-                if (full) return name !== 'release-contracts';
-                if (releaseOnly) return name === 'release-contracts';
-                return false;
-              });
-            if (failed.length) core.setFailed(`Required jobs did not pass: ${failed.map(([name]) => name).join(', ')}`);
+          CI_NEEDS: ${{ toJSON(needs) }}
+          CI_REQUIRED: ${{ needs.route.outputs.required }}
+        run: make -C net-deployment-runbook ci-result
+
+  host-upgrade-lifecycle:
+    needs: route
+    if: needs.route.outputs.host_upgrade_lifecycle == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        layout: [flat, legacy, nested]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Test isolated Host upgrade and rollback
+        run: make -C net-deployment-runbook test-host-upgrade-lifecycle host_upgrade_layout=${{ matrix.layout }}
 
   ownership:
     needs: route
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.route.outputs.full == 'true')
+    if: needs.route.outputs.ownership == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -150,7 +175,7 @@ jobs:
 
   p0a-lifecycle:
     needs: route
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.route.outputs.full == 'true')
+    if: needs.route.outputs.p0a_lifecycle == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -159,7 +184,7 @@ jobs:
 
   upstream-profiles:
     needs: route
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.route.outputs.full == 'true')
+    if: needs.route.outputs.upstream_profiles == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -174,7 +199,7 @@ jobs:
 
   public-edge-integration:
     needs: route
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.route.outputs.full == 'true')
+    if: needs.route.outputs.public_edge_integration == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1

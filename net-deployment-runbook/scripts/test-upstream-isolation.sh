@@ -12,7 +12,7 @@ if awk '/^test:/{printing=1} printing && /^test-command-dependency-contract:/{ex
   echo 'ordinary tests must not fetch or audit a Gonka checkout' >&2
   exit 1
 fi
-if sed -n '/^  runbook-contracts:/,/^  upstream-profiles:/p' "$ROOT/../.github/workflows/net-deployment-runbook.yml" \
+if sed -n '/^  runbook-checks:/,/^  upstream-profiles:/p' "$ROOT/../.github/workflows/net-deployment-runbook.yml" \
   | grep -q 'repository: gonka-ai/gonka'; then
   echo 'ordinary CI contracts must not check out Gonka' >&2
   exit 1

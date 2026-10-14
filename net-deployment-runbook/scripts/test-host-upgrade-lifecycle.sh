@@ -6,6 +6,11 @@ set -Eeuo pipefail
   exit 1
 }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+case "${GDC_TEST_UPGRADE_LAYOUT:-all}" in
+  all) layouts=(flat legacy nested) ;;
+  flat|legacy|nested) layouts=("$GDC_TEST_UPGRADE_LAYOUT") ;;
+  *) echo 'invalid GDC_TEST_UPGRADE_LAYOUT' >&2; exit 2 ;;
+esac
 dockerd-entrypoint.sh dockerd >/tmp/upgrade-dockerd.log 2>&1 &
 daemon=$!
 trap 'kill "$daemon" 2>/dev/null || true' EXIT
@@ -23,7 +28,7 @@ sha="$(printf '%064d' 1)"
 mkdir -p /fixture /srv/dai
 printf '#!/bin/sh\nprintf '\''{"node_info":{"network":"fixture-chain"}}\\n'\''\n' >/fixture/inferenced
 chmod 0755 /fixture/inferenced
-for layout in flat legacy nested; do
+for layout in "${layouts[@]}"; do
   case "$layout" in
     flat) deploy=/srv/dai/deploy ;;
     legacy) deploy=/srv/dai/node ;;
@@ -37,7 +42,8 @@ for layout in flat legacy nested; do
     "if [ -f /data/reject ] && [ -f /etc/alpine-release ]; then exit 42; fi; exec sleep 3600"],
     volumes:[$data+":/data"],env_file:["runtime.env"],environment:{LITERAL:"keep$$value"}},
     node:{image:$old,command:["sleep","3600"],volumes:["/fixture/inferenced:/usr/local/bin/inferenced:ro"]},
-    api:{image:$old,command:["sleep","3600"]},tmkms:{image:$old,command:["sleep","3600"]}}}' >"$deploy/compose.yaml"
+    api:{image:$old,command:["sleep","3600"]},tmkms:{image:$old,command:["sleep","3600"]}}}
+    | .services |= with_entries(.value.stop_grace_period = "1s")' >"$deploy/compose.yaml"
   files=(-f "$deploy/compose.yaml")
   if [[ "$layout" == flat ]]; then
     printf '{"services":{"versiond":{"environment":{"OVERLAY":"keep"}}}}\n' >"$deploy/overlay.yaml"

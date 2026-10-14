@@ -23,7 +23,7 @@ jobs:
         env:
           DEVSHARD_SOURCE: ${{ runner.temp }}/gonka-v6-artifact-source
         run: make -C net-deployment-runbook devshard-artifacts-fetch
-      - name: Test artifact release contracts
+      - name: Run artifact release checks
         env:
           DEVSHARD_SOURCE: ${{ runner.temp }}/gonka-v6-artifact-source
         run: make -C net-deployment-runbook test-devshard-artifacts

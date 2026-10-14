@@ -460,22 +460,20 @@ test-ci-gateways: test-command-dependency-contract test-devshard-two-gateways te
 
 # Each CI group runs sequentially in its own checkout. In particular, site
 # builders and fixed-port HTTP fixtures must not share a parallel checkout.
-RUNBOOK_CI_GROUPS := bootstrap contracts site join gateways
+RUNBOOK_CI_GROUPS := bootstrap core site join gateways
 P0A_SHARED_TESTS := test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-phase-ml-add-ownership test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-host-layouts test-detach-network-ml-host test-validator-ml-lifecycle
 .PHONY: $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) test-ci-layout
-test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(P0A_SHARED_TESTS)
+test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(P0A_SHARED_TESTS) test-host-upgrade-lifecycle
 
 test-ci-layout:
 	@python3 ./scripts/test-runbook-ci.py
 
 test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 
-test-ci-contracts: test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-host-models test-host-upgrade test-host-upgrade-lifecycle
+test-ci-core: test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-ci-release-helpers test-host-models test-host-upgrade
 	@bash ./scripts/test-node-container-lending.sh
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
-	@python3 ./scripts/test-pin-candidate-dockerfile.py
-	@python3 ./scripts/test-patch-candidate-go-mod-download.py
 	@python3 ./scripts/test-patch-candidate-dapi-dockerfile.py
 	@./scripts/test-package-candidate-binary.sh
 	@./scripts/test-generate-candidate-binary-sbom.sh
@@ -491,7 +489,6 @@ test-ci-contracts: test-command-dependency-contract test-ci-route test-devshard-
 	@./scripts/test-fetch-governance-proposals.sh
 	@./scripts/test-governance-vote-evidence.sh
 	@./scripts/test-validate-devshard-governance-protocols.sh
-	@./scripts/test-verify-devshard-archive.sh
 	@./scripts/test-verify-approved-devshard-version.sh
 	@./scripts/test-candidate-gateway-compose.sh
 	@./scripts/test-build-gateway-image.sh
@@ -668,9 +665,11 @@ test-install-inferenced:
 test-host-upgrade:
 	@bash ./scripts/test-host-upgrade.sh
 
+host_upgrade_layout ?= all
 test-host-upgrade-lifecycle:
+	@case "$(host_upgrade_layout)" in all|flat|legacy|nested) ;; *) echo 'invalid host_upgrade_layout' >&2; exit 2;; esac
 	@docker build --file test/Dockerfile.host-upgrade --tag gdc-host-upgrade-test:local ..
-	@docker run --rm --privileged -e GDC_HOST_UPGRADE_DIND=true --entrypoint bash gdc-host-upgrade-test:local scripts/test-host-upgrade-lifecycle.sh
+	@docker run --rm --privileged -e GDC_HOST_UPGRADE_DIND=true -e GDC_TEST_UPGRADE_LAYOUT="$(host_upgrade_layout)" --entrypoint bash gdc-host-upgrade-test:local scripts/test-host-upgrade-lifecycle.sh
 
 test-host-models: bats-docker-image
 	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_HOST_MODELS_FIXTURE=true --entrypoint python3 $(BATS_DOCKER_IMAGE) scripts/test-host-models.py
@@ -953,13 +952,25 @@ devshard-artifacts-publish:
 	@python3 ./scripts/devshard-artifacts.py publish $(DEVSHARD_ARTIFACT_GROUP_ARGS)
 
 .PHONY: test-gonka-pr-unified-release gonka-pr-unified-release-prepare gonka-pr-unified-release-fetch gonka-pr-unified-release-build gonka-pr-unified-release-verify gonka-pr-unified-release-publish
-.PHONY: test-ci-route ci-route
+.PHONY: test-ci-route ci-route ci-result
+.PHONY: test-ci-release-helpers
+test-ci-release-helpers:
+	@./scripts/test-verify-devshard-archive.sh
+	@python3 ./scripts/test-pin-candidate-dockerfile.py
+	@python3 ./scripts/test-patch-candidate-go-mod-download.py
+
 test-ci-route:
 	@python3 ./scripts/test-ci-route.py
 
 ci-route:
-	@test -n "$(changed_files)" && test -r "$(changed_files)" || { echo 'set changed_files to a JSON list of changed paths' >&2; exit 2; }
-	@python3 ./scripts/ci-route.py --changed-files "$(changed_files)" --github-output "$$GITHUB_OUTPUT"
+	@case "$${CI_EVENT:-}" in \
+	  pull_request) python3 ./scripts/ci-route.py --changed-files "$$CI_CHANGED_FILES" --github-output "$$GITHUB_OUTPUT" ;; \
+	  push) python3 ./scripts/ci-route.py --base "$$CI_BASE" --head "$$CI_HEAD" --github-output "$$GITHUB_OUTPUT" ;; \
+	  *) python3 ./scripts/ci-route.py --full --github-output "$$GITHUB_OUTPUT" ;; \
+	esac
+
+ci-result:
+	@python3 ./scripts/ci-result.py
 
 test-gonka-pr-unified-release:
 	@python3 ./scripts/test-gonka-pr-unified-release.py
