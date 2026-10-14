@@ -10,6 +10,59 @@ There are **ten machines, nine with NVIDIA compute GPUs** detected and respondin
 the separate `node9` machine. These counts are not a validator count.
 Provider and regional information is in [regions.md](regions.md).
 
+## Revalidation — 14 October 2026
+
+Read-only SSH probes on all ten machines confirmed the GPU models, total
+VRAM, drivers, logical CPU counts, CPU names and OS-visible RAM below.
+Filesystem sizes for `/` and `/srv` also match the earlier snapshot.
+The earlier OS-version and CPU-instruction observations retain their original
+13 October date; they were not rechecked in this pass.
+
+The current DAPI MLNode registrations confirm **node1 → local GPU + node7**
+and **node4 → node9**. node7 has a running MLNode but no running Network Node
+container. It contributes GPU capacity to node1, not a second independent
+participant for the model group's `v_min` requirement. Remote GPUs do not
+automatically combine their VRAM or form a tensor-parallel worker.
+
+The old AMD description of node8 does not describe this inventory: node8 is
+an RTX 3090. Consult this file before using historical rollout notes or
+qualification instructions as hardware evidence.
+
+### Model placement assessment
+
+This is a hardware/runtime preflight, **not a completed model-load or PoC
+qualification**. No model was stopped, switched or loaded during these probes.
+The checked model contracts are [Qwen3-4B](../model/qwen3-4b-instruct-2507.lock)
+and [Qwen2.5-7B](../model/qwen2.5-7b-instruct.lock): BF16, single GPU,
+respectively 25,000 and 4,096 context tokens. These locks are qualification-only.
+
+| Machine | CUDA capability | Qwen3-4B-Instruct-2507 | Qwen2.5-7B-Instruct |
+|---|---|---|---|
+| node1 | 7.5, T4 | Candidate only with a separately qualified FP16 runtime; the BF16 lock is incompatible | Do not select the current BF16 profile; FP16 also leaves very little memory for cache and execution |
+| node7 | 7.5, T4 | Same FP16 qualification requirement; currently a remote worker of node1 | Same limitations as node1 |
+| node8 | 8.6, RTX 3090 | Suitable hardware candidate; load and PoC qualification pending on this host | Preferred candidate for this host; load and PoC qualification pending |
+
+T4 cannot run the current BF16 profile. Changing to FP16 is not proof of
+numerical agreement with the BF16 validators. Before moving either T4, test
+the exact model revision, full configured context, cache/backend settings,
+completion and cross-validator PoC acceptance. For 7B, fitting weights alone
+does not establish enough memory for the full workload; quantization would
+be a separate numerical compatibility experiment, not an approved shortcut.
+
+The 24 GB hosts node0/node2/node3/node5/node8 are the hardware candidates for
+either model. The 16 GB Blackwell hosts node6/node9 must retain their separately
+verified runtime/cache configuration; do not infer that a generic BF16 lock
+has the same memory requirements. Node4 itself is not a GPU placement target.
+
+### Maintenance rule
+
+Use this inventory as the baseline instead of rediscovering stable hardware
+on every task. Refresh the affected row after host replacement, GPU or driver
+changes, SSH alias reassignment, or MLNode reassignment. Keep the observation
+date and distinguish hardware facts from workload qualification. Check free
+VRAM, disk space and current workload ownership immediately before a real
+deployment: those transient values cannot be guaranteed by this document.
+
 ## Accelerators
 
 VRAM below is the total reported by `nvidia-smi`, in MiB. Marketing capacities
