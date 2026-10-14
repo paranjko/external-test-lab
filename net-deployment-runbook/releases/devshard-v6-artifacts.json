@@ -2,15 +2,15 @@
   "schema_version": 1,
   "classification": "lab-candidate-artifacts",
   "source_repository": "gonka-ai/gonka",
-  "source_commit": "e9d56e2a4e810788ec4be39725026cd892cf1080",
-  "source_tree": "8df9b176838294dcc5d26ecd07a5059935569821",
+  "source_commit": "f2c6b03a53bda5999c6c5a23dc9a85cb0f957278",
+  "source_tree": "f474dad6203cc46a84534aff46f066e0c28a9f88",
   "platform": "linux/amd64",
-  "release_tag": "lab-devshard-v6-artifacts-e9d56e2a4e81",
+  "release_tag": "lab-devshard-v6-artifacts-f2c6b03a53bd",
   "buildkit_image": "moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea",
   "ghcr_namespace": "ghcr.io/paranjko/external-test-lab",
   "devshard_zip": {
-    "url": "https://github.com/paranjko/external-test-lab/releases/download/lab-devshard-v6-e9d56e2a4e81/devshardd.zip",
-    "sha256": "7732479a265a3bd6b76e06c738f5ae1d32ddf6e20f07afa444e06416feb0d876"
+    "url": "https://github.com/paranjko/external-test-lab/releases/download/lab-devshard-v6-f2c6b03a53bd/devshardd.zip",
+    "sha256": "049692d3bfdf55d9d8f7feb24091362908c05c063043420cca089817de0101aa"
   },
   "groups": {
     "manual-matrix": ["devshard-gateway", "gateway-v4.2", "versiond", "versiond-router", "proxy-router", "proxy-policy"],
@@ -23,7 +23,7 @@
     "versiond-router": {"dockerfile": "versiond-router/Dockerfile", "context": ".", "base_images": {"haproxy:3.2-alpine": "sha256:5d97434a423c2533cfeb42874d45cf6d69a840b60334582dfbfd5008e94c80be"}},
     "proxy-router": {"dockerfile": "proxy-router/Dockerfile", "context": ".", "base_images": {"haproxy:3.2-alpine": "sha256:5d97434a423c2533cfeb42874d45cf6d69a840b60334582dfbfd5008e94c80be"}},
     "proxy-policy": {"dockerfile": "proxy/Dockerfile", "context": "proxy", "base_images": {"golang:1.24.2-alpine3.21": "sha256:7772cb5322baa875edd74705556d08f0eeca7b9c4b5367754ce3f2f00041ccee", "nginx:1.28-alpine3.21": "sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284"}},
-    "decentralized-api": {"dockerfile": "decentralized-api/Dockerfile", "context": ".", "target": "final", "build_args": {"GOOS": "linux", "GOARCH": "amd64", "LDFLAGS": "-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api -X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api -X github.com/cosmos/cosmos-sdk/version.Version=lab-e9d56e2a4e810788ec4be39725026cd892cf1080 -X github.com/cosmos/cosmos-sdk/version.Commit=e9d56e2a4e810788ec4be39725026cd892cf1080"}, "base_images": {"golang:1.25.9-alpine3.23": "sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f", "alpine:3.21": "sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507"}},
+    "decentralized-api": {"dockerfile": "decentralized-api/Dockerfile", "context": ".", "target": "final", "build_args": {"GOOS": "linux", "GOARCH": "amd64", "LDFLAGS": "-X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api -X github.com/cosmos/cosmos-sdk/version.AppName=decentralized-api -X github.com/cosmos/cosmos-sdk/version.Version=lab-f2c6b03a53bda5999c6c5a23dc9a85cb0f957278 -X github.com/cosmos/cosmos-sdk/version.Commit=f2c6b03a53bda5999c6c5a23dc9a85cb0f957278"}, "base_images": {"golang:1.25.9-alpine3.23": "sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f", "alpine:3.21": "sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507"}},
     "edge-api": {"dockerfile": "edge-api/Dockerfile", "context": ".", "base_images": {"golang:1.25.9-alpine3.23": "sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f", "alpine:3.23": "sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"}}
   }
 }
