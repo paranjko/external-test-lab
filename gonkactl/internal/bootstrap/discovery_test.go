@@ -77,10 +77,16 @@ func (f *discoveryFixture) RoundTrip(request *http.Request) (*http.Response, err
 			id = strings.Repeat("4", 40)
 		}
 		key := "key-" + host
-		if f.mode == "wrong-validator-key" && host == "b" {
+		if f.mode == "full-node-rpc" && host == "b" {
 			key = "wrong"
 		}
+		if f.mode == "no-validator-key" {
+			key = ""
+		}
 		body = fmt.Sprintf(`{"result":{"node_info":{"id":%q,"network":"gonka-devnet-community","listen_addr":%q},"sync_info":{"catching_up":false,"latest_block_height":"100"},"validator_info":{"pub_key":{"value":%q}}}}`, id, "tcp://"+host+".test:5000", key)
+		if f.mode == "wrong-chain" && host == "b" {
+			body = strings.ReplaceAll(body, "gonka-devnet-community", "another-chain")
+		}
 	case path == "/chain-rpc/genesis":
 		body = `{"result":{"genesis":{"chain_id":"gonka-devnet-community"}}}`
 	case path == chainAPI+"params":
@@ -133,7 +139,7 @@ func discoveryDocument(t *testing.T) Document {
 }
 
 func TestGuardianAndHistoricalDiscovery(t *testing.T) {
-	for _, mode := range []string{"guardians", "changed-node-id", "empty-guardians", "missing-guardians", "missing-history", "disagreement", "wrong-validator-key"} {
+	for _, mode := range []string{"guardians", "changed-node-id", "empty-guardians", "missing-guardians", "missing-history", "disagreement", "full-node-rpc", "no-validator-key", "wrong-chain"} {
 		t.Run(mode, func(t *testing.T) {
 			transport := NewTransport()
 			fixture := &discoveryFixture{mode: mode}
@@ -141,7 +147,7 @@ func TestGuardianAndHistoricalDiscovery(t *testing.T) {
 			transport.RetryDelay = 0
 			doc := discoveryDocument(t)
 			seeds, err := transport.DiscoverSeeds(context.Background(), doc)
-			wantSuccess := mode == "guardians" || mode == "changed-node-id" || mode == "empty-guardians"
+			wantSuccess := mode == "guardians" || mode == "changed-node-id" || mode == "empty-guardians" || mode == "full-node-rpc" || mode == "no-validator-key"
 			if (err == nil) != wantSuccess {
 				t.Fatalf("seeds=%+v err=%v", seeds, err)
 			}

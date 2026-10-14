@@ -286,8 +286,10 @@ func (t *Transport) candidateSeed(ctx context.Context, p participant, chain stri
 	if err := t.query(ctx, seed.RPC+"/status", &status); err != nil {
 		return seed, err
 	}
-	if status.Result.NodeInfo.Network != chain || p.ValidatorKey == "" || status.Result.ValidatorInfo.PubKey.Value != p.ValidatorKey {
-		return seed, fmt.Errorf("participant RPC does not attest its registered validator key and chain: %s", seed.RPC)
+	// A participant may serve its public API through a non-validator full node.
+	// Chain identity is checked here; Genesis and online checks still precede writes.
+	if status.Result.NodeInfo.Network != chain {
+		return seed, fmt.Errorf("participant RPC reports a different chain: %s", seed.RPC)
 	}
 	seed.NodeID = status.Result.NodeInfo.ID
 	peer, err := endpoint(status.Result.NodeInfo.ListenAddr, "tcp")

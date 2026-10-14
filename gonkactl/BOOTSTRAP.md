@@ -17,7 +17,9 @@ flags have the same meanings as for validation below.
 
 Two independent existing seed sources must agree on complete discovery
 inputs. DevNet uses all current on-chain guardians, mapped through staking
-consensus keys to participants and their RPC keys. An unavailable guardian
+consensus keys to participants and their registered API origins. The public
+RPC may be a separate non-validator full node; its consensus key need not
+match the participant's key. An unavailable guardian
 is an error, not permission to omit it. There is no hard-coded guardian count.
 Only a confirmed empty list permits historical selection; missing parameters
 do not. Other networks use historical selection directly.
@@ -87,6 +89,18 @@ checks a local pair against the embedded schema and cannot be combined with
 `--compare-published`. None of these modes writes bootstrap files.
 
 ## Monitor compatibility boundary
+
+### Trust boundary
+
+Chain ID and the pinned Genesis digest are consistency checks, not proof that
+an RPC serves the canonical chain history. An RPC can claim a chain ID and
+return a known Genesis without following that chain. Agreement between two
+distinct discovery endpoints reduces single-source errors but does not prove
+independent ownership or protect against colluding sources. Validation does
+not verify signed chain history or implement a light client. Bootstrap lineage
+remains an operator-approved trust anchor; mismatches are refused, not replaced.
+
+### Compatibility
 
 Compatibility means preserving checks and a small report contract, not
 embedding the existing Python monitor or its CI environment in the executable.
