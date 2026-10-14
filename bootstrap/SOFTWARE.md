@@ -140,3 +140,19 @@ The declaration selects Qwen3-0.6B, CUDA and `linux/amd64`. It includes
 Compose hashes, Core/DAPI upgrade archives and their hashes, the operator CLI,
 and the supporting proxy/versiond images. It does not change on-chain approved
 DevShard versions or automatically upgrade existing Hosts.
+
+## GDC adapter boundary
+
+GDC requires the full source commits for Core/DAPI runtime readback. Its
+adapter supports the declared Qwen3-0.6B CUDA `linux/amd64` recipe and verifies
+the Compose hashes before provisioning. Unsupported recipes, platforms,
+accelerators and component roles fail rather than fall back to polling.
+Portable-image overrides are not accepted for this declaration.
+
+The adapter stages verified runtime bundles with their libraries and configures
+the single-Host proxy-router, two policy workers and versiond-router topology.
+On restart it preserves a later Cosmovisor `current` selection. DevShard
+approval remains on-chain. `--preflight` (also `--plan`) compiles the local
+profile without downloading runtime archives or changing a Host; ordinary
+JOIN still requires chain trust, a clean Host, signerless synchronization and
+runtime readback. Preflight is not validator-admission evidence.

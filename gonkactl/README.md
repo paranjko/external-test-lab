@@ -15,7 +15,9 @@ Recovery and JOIN handlers are not wired into the CLI.
 
 ## Local checks
 
-Use Go 1.27.x, a C compiler for the race detector, and Make on Linux:
+Use Go 1.27.x, a C compiler for the race detector, Make, Bash and jq on Linux.
+The latter tools exercise the repository-local GitHub Action's transport;
+they are not dependencies of the installed CLI:
 
 ```bash
 make -C gonkactl check

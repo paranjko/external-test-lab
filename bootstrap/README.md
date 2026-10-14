@@ -12,12 +12,13 @@ Publication does not install these components or establish validator admission.
 
 ## Change a bootstrap
 
-Edit its JSON in a PR, then regenerate the ENV projection:
+Use the installed CLI to refresh the pair, then review its diff in a PR:
 
 ```bash
-python3 net-deployment-runbook/scripts/network-bootstrap.py env \
-  bootstrap/gonka-devnet-community.json > bootstrap/gonka-devnet-community.env
-make -C net-deployment-runbook test-network-bootstrap test-bootstrap-publication test-bootstrap-monitor
+gonkactl bootstrap update gonka-devnet-community bootstrap \
+  net-deployment-runbook/profiles/releases/v2026.10.06.lock
+gonkactl bootstrap validate gonka-devnet-community --path bootstrap --json
+make -C net-deployment-runbook test-network-bootstrap test-bootstrap-publication
 ```
 
 Keep the filename equal to `chain_id`. A stale or missing ENV, invalid schema,
