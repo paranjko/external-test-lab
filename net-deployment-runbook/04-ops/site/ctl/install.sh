@@ -4,7 +4,7 @@
 set -eu
 
 main() {
-    version=${GONKACTL_VERSION:-1.0.0-alpha.1}
+    version=${GONKACTL_VERSION:-1.0.0-alpha.2}
     version=${version#v}
     case "$version" in ''|*[!0-9A-Za-z.-]*) die 'Invalid GONKACTL_VERSION';; esac
     base="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v$version"
@@ -87,7 +87,7 @@ main() {
             printf "  export PATH='%s':\"\$PATH\"\n" "$quoted"
             ;;
     esac
-    say 'Run gonkactl --help. This alpha exposes help, completion and version only; host operations are not available.'
+    say 'Run gonkactl --help for the commands supported by your version. Host deployment operations are not available.'
 }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"; }

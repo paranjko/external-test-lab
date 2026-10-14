@@ -26,7 +26,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 case "$url" in
-  https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.1/*) ;;
+  https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.2/*) ;;
   *) exit 71;;
 esac
 cp "$TEST_ASSETS/${url##*/}" "$out"
@@ -48,6 +48,8 @@ cp "$TEST_ASSETS/${url##*/}" "$out"
         if result != expected:
             raise ValueError("installed binary metadata does not match release")
         subprocess.run([str(binary), "--help"], check=True)
+        for command in ("update", "validate"):
+            subprocess.run([str(binary), "bootstrap", command, "--help"], check=True)
         print("Native archive installed through piped POSIX installer in an empty HOME")
 
 

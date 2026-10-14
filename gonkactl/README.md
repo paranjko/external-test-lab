@@ -4,14 +4,14 @@ The alpha distribution, platform downloads and installation instructions are
 described in [RELEASE.md](RELEASE.md). Run `make -C gonkactl test-release`
 for installer and release-manifest tests; `release-archives` builds all six
 platform archives. The release workflow tests native installation on Linux
-and macOS before publishing an immutable `gonkactl-v1.0.0-alpha.1` prerelease.
+and macOS before publishing an immutable `gonkactl-v1.0.0-alpha.2` prerelease.
 
 This directory preserves an unfinished native Go implementation of gonkactl.
 It is a source snapshot for continued development, not an operator-ready
 replacement for the existing deployment runbook. The executable currently
 exposes help, shell completion, version and native
-[bootstrap maintenance](BOOTSTRAP.md). The published alpha archive predates
-bootstrap maintenance. Recovery and JOIN handlers are not wired into the CLI.
+[bootstrap maintenance](BOOTSTRAP.md), included starting with alpha.2.
+Recovery and JOIN handlers are not wired into the CLI.
 
 ## Local checks
 
