@@ -44,6 +44,9 @@ if [[ "$COMPONENT" == monitoring && -e "$DEST/compose.yaml" ]]; then
   if [[ -d "$RENDER/prometheus/targets/static" ]]; then
     rm -rf "$DEST/prometheus/targets/static"
     cp -a "$RENDER/prometheus/targets/static" "$DEST/prometheus/targets/static"
+    # Render staging may use umask 077. Prometheus runs unprivileged and
+    # needs to traverse these public discovery directories after installation.
+    chmod -R a+rX "$DEST/prometheus/targets/static"
   fi
   chown -R "$service_user:$service_group" "$DEST/grafana" "$DEST/prometheus"
   printf 'READY refreshed monitoring assets; shared OPS configuration and services retained\n'
@@ -88,6 +91,7 @@ if [[ -d "$RENDER/prometheus/targets/static" ]]; then
   rm -rf "$DEST/prometheus/targets/static"
   install -d -m 0755 "$DEST/prometheus/targets"
   cp -a "$RENDER/prometheus/targets/static" "$DEST/prometheus/targets/static"
+  chmod -R a+rX "$DEST/prometheus/targets/static"
 fi
 [[ -s "$RENDER/Caddyfile" ]] && install -m 0644 "$RENDER/Caddyfile" "$DEST/Caddyfile"
 install -d -m 0755 "$DEST/bootstrap"

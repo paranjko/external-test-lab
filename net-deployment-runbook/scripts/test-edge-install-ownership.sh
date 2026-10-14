@@ -129,14 +129,32 @@ export PATH="$tmp/bin:$PATH" SYSTEMCTL_LOG="$tmp/systemctl.log"
 printf 'GRAFANA_ADMIN_PASSWORD=fixture-only\n' >"$tmp/render/.env"
 printf 'global: {}\nscrape_configs: []\n' >"$tmp/render/prometheus.yml"
 printf 'fixture routes\n' >"$tmp/render/Caddyfile"
-mkdir -p "$tmp/render/prometheus/targets/static"
-printf '[]\n' >"$tmp/render/prometheus/targets/static/fixture.json"
+mkdir -p "$tmp/render/prometheus/targets/static/host"
+printf '[]\n' >"$tmp/render/prometheus/targets/static/host/fixture.json"
+# Operators commonly stage configuration with umask 077. Public discovery
+# must become readable to the unprivileged Prometheus process on installation.
+chmod 0700 "$tmp/render/prometheus/targets/static" "$tmp/render/prometheus/targets/static/host"
+chmod 0600 "$tmp/render/prometheus/targets/static/host/fixture.json"
+check_public_discovery() {
+  python3 - <<'PY'
+import json
+import os
+# Compose bind-mounts this directory, not its private host-side ancestors.
+os.chdir('/srv/dai/ops/prometheus/targets')
+os.setgroups([])
+os.setgid(65534)
+os.setuid(65534)
+with open('static/host/fixture.json') as source:
+    assert json.load(source) == []
+PY
+}
 for layout in flat legacy; do
   host_root=/srv/dai/deploy
   [[ "$layout" == flat ]] || host_root=/srv/dai/deploy/fixture
   mkdir -p "$host_root"
   printf 'retained host\n' >"$host_root/monitoring-test-marker"
   SUDO_USER=root bash "$ROOT/04-ops/install-ops.sh" --component monitoring --render-dir "$tmp/render"
+  check_public_discovery
   for file in .env compose.yaml Caddyfile gateway.env; do
     printf 'custom retained %s\n' "$file" >"/srv/dai/ops/$file"
     chmod 0600 "/srv/dai/ops/$file"
@@ -148,6 +166,7 @@ for layout in flat legacy; do
   for repetition in 1 2; do
     printf 'global: {}\nscrape_configs: []\n# revision %s\n' "$repetition" >"$tmp/render/prometheus.yml"
     SUDO_USER=root bash "$ROOT/04-ops/install-ops.sh" --component monitoring --render-dir "$tmp/render"
+    check_public_discovery
     [[ "$(sha256sum /srv/dai/ops/{.env,compose.yaml,Caddyfile,gateway.env})" == "$before" ]]
     [[ "$(wc -l <"$SYSTEMCTL_LOG")" == "$calls" ]]
     for file in .env compose.yaml Caddyfile gateway.env; do
