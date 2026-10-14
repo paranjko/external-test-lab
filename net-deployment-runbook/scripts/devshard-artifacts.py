@@ -637,6 +637,65 @@ def smoke(output: Path, value: dict, groups: list[str]) -> None:
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
+def unified_release_presentation(value: dict, manifest: dict, release_tag: str) -> tuple[str, str]:
+    """Render the operator-facing release catalogue from frozen metadata only."""
+    binary = value["unified_binary_definition"]
+    source = binary["source_repository"]
+    commit = binary["source_commit"]
+    source_pr = value["source_pr"]
+    require(isinstance(source_pr, int) and source_pr > 0, "unified candidate is missing upstream PR")
+    base = f"https://github.com/{REPOSITORY}/releases/download/{release_tag}"
+    asset = lambda name: f"[{name}]({base}/{name})"
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    require(bool(re.fullmatch(r"[1-9][0-9]*", run_id)), "missing build run identity")
+    run_url = f"https://github.com/{REPOSITORY}/actions/runs/{run_id}"
+    title = f"DevShard v6 lab candidate · {commit[:12]}"
+    downloads = "\n".join((
+        "| Asset | Purpose |",
+        "|---|---|",
+        f"| {asset('devshardd.zip')} | Linux amd64 DevShard executable (`devshardd`) for protocol v6. |",
+        f"| {asset('approved-version.json')} | Candidate registry entry for this release ZIP; not on-chain approval. |",
+        f"| {asset('artifacts.json')} | Full immutable image pull references, platforms and sources. |",
+        f"| {asset('coverage.json')} | Scenario artifact-dependency mapping, not executed scenario results. |",
+        f"| {asset('source.json')} | Frozen binary source and build inputs. |",
+        f"| {asset('build-info.txt')} | Embedded DevShard build metadata. |",
+        f"| {asset('SHA256SUMS')} | Checksums for the downloadable bundle files; not a signature. |",
+    ))
+    roles = {
+        "devshard-gateway": "DevShard gateway",
+        "gateway-v4.2": "v4.2 compatibility gateway (independently pinned)",
+        "versiond": "Version service",
+        "versiond-router": "Version service router",
+        "proxy-router": "Protocol proxy router",
+        "proxy-policy": "Protocol proxy policy",
+        "decentralized-api": "Decentralized API",
+        "edge-api": "Edge API",
+    }
+    images = ["| Component | Purpose | OCI archive |", "|---|---|---|"]
+    for name in manifest["artifacts"]:
+        package = f"https://github.com/{REPOSITORY}/pkgs/container/external-test-lab%2F{name}"
+        images.append(f"| [{name}]({package}) | {roles[name]} | {asset(name + '.oci.tar')} |")
+    legacy = value["components"]["gateway-v4.2"]["source"]
+    body = (
+        "This is an External Test Lab candidate, not an official Gonka release or network qualification result.\n\n"
+        f"Built from [Gonka PR #{source_pr}](https://github.com/{source}/pull/{source_pr}) at "
+        f"[snapshot {commit[:12]}](https://github.com/{source}/pull/{source_pr}/changes/{commit}) · "
+        f"[source commit {commit[:12]}](https://github.com/{source}/commit/{commit})\n\n"
+        f"Protocol `v6` on `{value['platform']}`. [Build run]({run_url}).\n\n"
+        "## Downloads\n\n" + downloads + "\n\n"
+        "## Container images\n\n"
+        f"Shared registry tag: `{value['release_tag']}` on `{value['platform']}`. Package links are navigation; "
+        f"use {asset('artifacts.json')} for immutable digest pull references. The v4.2 gateway is pinned to "
+        f"[its independent source](https://github.com/{legacy['repository']}/commit/{legacy['commit']}).\n\n" +
+        "\n".join(images) + "\n\n"
+        "## Verification and compatibility\n\n"
+        f"Verify downloaded files against {asset('SHA256SUMS')}; verify registry pulls against {asset('artifacts.json')}. "
+        "The hosted build performed binary and image identity smoke checks. This candidate requires musl, "
+        "`libgcc_s.so.1`, and a CPU compatible with upstream `BLST_PORTABLE=0`; artifact smoke does not qualify a deployment or network.\n"
+    )
+    return title, body
+
+
 def publish(output: Path, value: dict, groups: list[str]) -> None:
     require(os.environ.get("GITHUB_REPOSITORY") == REPOSITORY and
             os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" and
@@ -668,29 +727,13 @@ def publish(output: Path, value: dict, groups: list[str]) -> None:
         component_paths = {name: output / f"{name}.oci.tar" for name in manifest["artifacts"]}
         publish_registry(manifest, component_paths, value, authfile, home, token, actor)
         notes = temporary / "notes.md"
-        legacy = value["components"]["gateway-v4.2"]["source"]
-        image_links = "\n".join(
-            f"- [{name}:{value['release_tag']}](https://github.com/{REPOSITORY}/pkgs/container/"
-            f"external-test-lab%2F{name})"
-            for name in manifest["artifacts"]
-        )
-        notes.write_text(("Lab candidate, not an official Gonka release or qualification result\n\n"
-                          if unified else "Lab candidate artifacts, not an official Gonka release or qualification result\n\n") +
-                         f"[v6 source](https://github.com/{value['source_repository']}/tree/{value['source_commit']}) "
-                         f"and [v4.2 gateway source](https://github.com/{legacy['repository']}/tree/{legacy['commit']})\n\n"
-                         f"Platform: `{value['platform']}`\n\n"
-                         f"[DevShard ZIP]({value['devshard_zip']['url']})\n\n"
-                         f"SHA256: `{value['devshard_zip']['sha256']}`\n\n"
-                         "Images:\n\n" + image_links + "\n\n"
-                         "Content-addressed GHCR image references:\n\n" +
-                         "\n".join(f"- `{item['ghcr_digest_reference']}`"
-                                  for item in manifest["artifacts"].values()) + "\n\n"
-                         "See `artifacts.json`, `coverage.json` and `SHA256SUMS` for identities and scenario dependencies\n\n"
-                         "Deployment and manual scenario qualification remain separate\n")
+        title, body = (unified_release_presentation(value, manifest, release_tag) if unified else
+                       (release_tag, "Lab candidate artifacts, not an official Gonka release or qualification result\n"))
+        notes.write_text(body)
         paths = sorted(output.iterdir()) if unified else [output / CHECKSUMS_ASSET, output / MANIFEST_ASSET,
                                                            output / COVERAGE_ASSET, output / ZIP_ASSET,
                                                            *(output / f"{name}.oci.tar" for name in manifest["artifacts"])]
-        run("gh", "release", "create", release_tag, "--repo", REPOSITORY, "--target", revision, "--title", release_tag,
+        run("gh", "release", "create", release_tag, "--repo", REPOSITORY, "--target", revision, "--title", title,
             "--draft", "--prerelease", "--latest=false", "--notes-file", str(notes), *(str(path) for path in paths))
         downloaded = temporary / "download"
         run("gh", "release", "download", release_tag, "--repo", REPOSITORY, "--dir", str(downloaded))
@@ -702,8 +745,11 @@ def publish(output: Path, value: dict, groups: list[str]) -> None:
                 "uploaded release bytes differ from verified bundle; draft retained")
         run("gh", "release", "edit", release_tag, "--repo", REPOSITORY, "--draft=false", "--prerelease", "--latest=false")
         readback = json.loads(run("gh", "release", "view", release_tag, "--repo", REPOSITORY,
-                                  "--json", "isDraft,isPrerelease,url"))
+                                  "--json", "isDraft,isPrerelease,url,name,body"))
         require(not readback["isDraft"] and readback["isPrerelease"], "release publication readback failed")
+        if unified:
+            require(readback["name"] == title and readback["body"] == body,
+                    "published unified release presentation differs from generated catalogue")
         print(readback["url"])
 
 
