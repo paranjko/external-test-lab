@@ -21,7 +21,6 @@ VRAM: total reported by `nvidia-smi`, not free memory. CC: CUDA compute capabili
 | node8 | RTX 3090 | 24,576 | 8.6 | 615.71.09 | node8 |
 | node9 | RTX PRO 2000 Blackwell | 16,311 | 12.0 | 595.91.07 | node4, remote MLNode |
 
-node9 was named `node4-ml`; container names retain that prefix.
 node7 has no running Network Node. Its GPU does not add an independent
 participant for `v_min`. Each GPU has separate memory.
 
