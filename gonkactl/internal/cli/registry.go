@@ -30,5 +30,6 @@ func NewRoot() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\ncommit: %s\nbuilt: %s\n", Version, Commit, BuildDate)
 		},
 	})
+	root.AddCommand(newBootstrapCommand())
 	return root
 }
