@@ -123,7 +123,8 @@ case "$action" in
   publish)
     [[ -d "$site_release_dir" ]] || { echo 'run prepare-static-site first' >&2; exit 2; }
     ssh "${ssh_options[@]}" "$remote" "install -d -m 0755 $destination"
-    rsync -a --delete --exclude config.js --exclude preview/ -e "$ssh_transport" \
+    # /ctl is published independently; never overwrite or delete its artifacts.
+    rsync -a --delete --exclude config.js --exclude preview/ --exclude /ctl/ -e "$ssh_transport" \
       "$site_release_dir/" "$remote:$destination/"
     # Caddy serves these bind-mounted files directly. Static publication must
     # not recreate the shared HTTPS listener or apply pending Compose changes.

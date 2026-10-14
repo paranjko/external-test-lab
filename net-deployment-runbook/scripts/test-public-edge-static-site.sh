@@ -217,7 +217,11 @@ missing_schema="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$por
 # Run the actual publisher against the live, disposable Caddy bind mount.
 # Transport fixtures permit only the static directory/copy operations; any
 # attempt to call sudo, Docker, reload or another SSH target fails the test.
-mkdir -p "$tmp/bin" "$tmp/release/preview/protected"
+mkdir -p "$tmp/bin" "$tmp/release/preview/protected" "$tmp/site/ctl" "$tmp/release/ctl"
+printf '%s\n' 'retained installer' >"$tmp/site/ctl/install.sh"
+printf '%s\n' 'retained landing page' >"$tmp/site/ctl/index.html"
+printf '%s\n' 'must not replace installer' >"$tmp/release/ctl/install.sh"
+printf '%s\n' 'must not add ctl artifact' >"$tmp/release/ctl/unwanted"
 printf '%s\n' 'window.config = "retained";' >"$tmp/site/config.js"
 printf '%s\n' 'must not replace config' >"$tmp/release/config.js"
 printf '%s\n' 'must not publish preview' >"$tmp/release/preview/protected/index.html"
@@ -236,13 +240,13 @@ cat >"$tmp/bin/rsync" <<'PY'
 #!/usr/bin/env python3
 import os, pathlib, shutil, sys
 root = pathlib.Path(os.environ["SITE_FIXTURE_ROOT"])
-expected = ["-a", "--delete", "--exclude", "config.js", "--exclude", "preview/",
+expected = ["-a", "--delete", "--exclude", "config.js", "--exclude", "preview/", "--exclude", "/ctl/",
             "-e", "ssh -o BatchMode=yes ", str(root / "release") + "/",
             "deployer@fixture.invalid:/srv/dai/edge/site/"]
 if sys.argv[1:] != expected:
     sys.exit("unexpected rsync operation in static publisher fixture")
 shutil.copytree(root / "release", root / "site", dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("config.js", "preview"))
+                ignore=shutil.ignore_patterns("config.js", "preview", "ctl"))
 PY
 chmod +x "$tmp/bin/ssh" "$tmp/bin/rsync"
 before="$(docker inspect "$name" --format '{{.Id}} {{.State.StartedAt}} {{.RestartCount}}')"
@@ -253,6 +257,9 @@ curl -fsS "http://127.0.0.1:$port/app.js" | cmp - "$tmp/release/app.js"
 curl -fsS "http://127.0.0.1:$port/config.js" | grep -Fxq 'window.config = "retained";'
 curl -fsS "http://127.0.0.1:$port/preview/172/status/openapi.json" | grep -Fxq '{"openapi":"3.2.0"}'
 [[ ! -e "$tmp/site/preview/protected" ]]
+grep -Fxq 'retained installer' "$tmp/site/ctl/install.sh"
+grep -Fxq 'retained landing page' "$tmp/site/ctl/index.html"
+[[ ! -e "$tmp/site/ctl/unwanted" ]]
 for extension in json env; do
   curl -fsS "http://127.0.0.1:$port/gonka-devnet-community/bootstrap.$extension" \
     | cmp - "$tmp/bootstrap/gonka-devnet-community/bootstrap.$extension"

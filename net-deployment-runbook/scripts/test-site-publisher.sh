@@ -28,6 +28,7 @@ grep -Fq -- '--exclude preview/' "$SITE_RELEASE_TEST_LOG"
 [[ "$(wc -l <"$SITE_RELEASE_TEST_LOG")" -eq 2 ]]
 grep -Fxq -- '-o BatchMode=yes deployer@edge.example install -d -m 0755 /srv/dai/edge/site' "$SITE_RELEASE_TEST_LOG"
 grep -Fq -- '--exclude config.js' "$SITE_RELEASE_TEST_LOG"
+grep -Fq -- '--exclude /ctl/' "$SITE_RELEASE_TEST_LOG"
 
 : >"$SITE_RELEASE_TEST_LOG"
 make -C "$ROOT" publish-site-release \
