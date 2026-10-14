@@ -438,10 +438,13 @@ def verify_reused_inputs(coverage: dict, value: dict) -> None:
                 require(digest.hexdigest() == expected_hash,
                         f"anonymous legacy ZIP checksum mismatch: {artifact_id}")
             checked.add(artifact_id)
-        require({"devshard-v6-zip", "devshard-v4-zip", "devshard-v4.1-zip", "devshard-v4.2-zip", "devshard-v5-zip",
-                 "gateway-v4", "gateway-v5", "versiond-v4", "versiond-v5",
-                 "versiond-router-v4", "versiond-router-v5", "proxy-router-v5",
-                 "proxy-policy-v4", "proxy-policy-current", "postgres-shared"} <= checked,
+        required_reuse = {"devshard-v6-zip", "devshard-v4-zip", "devshard-v4.1-zip", "devshard-v4.2-zip", "devshard-v5-zip",
+                          "gateway-v4", "gateway-v5", "versiond-v4", "versiond-v5",
+                          "versiond-router-v4", "versiond-router-v5", "proxy-router-v5",
+                          "proxy-policy-v4", "proxy-policy-current", "postgres-shared"}
+        if value.get("unified_binary_definition"):
+            required_reuse.remove("devshard-v6-zip")
+        require(required_reuse <= checked,
                 "required legacy/current-lock immutable references were not anonymously verified")
 
 
@@ -449,10 +452,22 @@ def verify(output: Path, value: dict, groups: list[str]) -> dict:
     required_components = selected_components(value, groups)
     required = {f"{name}.oci.tar" for name in required_components} | {
         ZIP_ASSET, MANIFEST_ASSET, CHECKSUMS_ASSET, COVERAGE_ASSET}
+    if value.get("unified_binary_definition"):
+        required.update({"source.json", "approved-version.json", "build-info.txt"})
     require(output.is_dir() and {path.name for path in output.iterdir()} == required,
             "bundle file set does not exactly match selected component groups")
     require(all(path.is_file() and not path.is_symlink() for path in output.iterdir()), "bundle contains non-regular files")
     require(sha256(output / ZIP_ASSET) == value["devshard_zip"]["sha256"], "published ZIP input mismatch")
+    if value.get("unified_binary_definition"):
+        binary = value["unified_binary_definition"]
+        require(json.loads((output / "source.json").read_text()) == binary,
+                "unified binary source definition mismatch")
+        require(json.loads((output / "approved-version.json").read_text()) == {
+            "name": binary["protocol"],
+            "binary": value["devshard_zip"]["url"],
+            "sha256": value["devshard_zip"]["sha256"],
+        }, "unified approved version does not bind this ZIP")
+        require((output / "build-info.txt").is_file(), "unified binary build information is missing")
     manifest = json.loads((output / MANIFEST_ASSET).read_text(encoding="utf-8"))
     require(manifest.get("schema_version") == 1 and manifest.get("definition") == value,
             "artifact manifest definition mismatch")
@@ -472,10 +487,21 @@ def verify(output: Path, value: dict, groups: list[str]) -> dict:
     return manifest
 
 
-def build(source: Path, output: Path, value: dict, groups: list[str]) -> None:
+def build(source: Path, output: Path, value: dict, groups: list[str], binary_assets: Path | None = None) -> None:
     source_identity(source, value)
-    require(not output.exists() or not any(output.iterdir()), "artifact output must be empty; never overwrite")
+    binary_names = {ZIP_ASSET, "source.json", "approved-version.json", "build-info.txt"}
+    if binary_assets is None:
+        require(not output.exists() or not any(output.iterdir()), "artifact output must be empty; never overwrite")
+    else:
+        require(binary_assets.is_dir() and {path.name for path in binary_assets.iterdir()} >= binary_names,
+                "unified binary assets are incomplete")
+        if output.exists() and any(output.iterdir()):
+            require({path.name for path in output.iterdir()} == binary_names,
+                    "unified artifact output contains unexpected pre-existing files")
     output.mkdir(parents=True, exist_ok=True)
+    if binary_assets is not None and not any(output.iterdir()):
+        for name in binary_names:
+            shutil.copy2(binary_assets / name, output / name)
     runtime_output = output.with_name(output.name + "-runtime")
     require(not runtime_output.exists(), "runtime smoke output already exists; never overwrite")
     runtime_output.mkdir(parents=True)
@@ -493,7 +519,11 @@ def build(source: Path, output: Path, value: dict, groups: list[str]) -> None:
         run("git", "-C", str(source), "archive", "--format=tar", f"--output={archive}", value["source_commit"])
         # Preserve Git's executable/read permissions even under restrictive operator umasks.
         run("tar", "--same-permissions", "-xf", str(archive), "-C", str(context_root))
-        fetch_zip(output / ZIP_ASSET, value)
+        if binary_assets is None:
+            fetch_zip(output / ZIP_ASSET, value)
+        else:
+            require(sha256(output / ZIP_ASSET) == value["devshard_zip"]["sha256"],
+                    "unified ZIP checksum mismatch")
         coverage = json.loads(COVERAGE.read_text(encoding="utf-8"))
         coverage["artifact_status"]["devshard-v6-zip"]["sha256"] = value["devshard_zip"]["sha256"]
         (output / COVERAGE_ASSET).write_text(json.dumps(coverage, sort_keys=True, indent=2) + "\n")
@@ -620,7 +650,8 @@ def publish(output: Path, value: dict, groups: list[str]) -> None:
             "full publication requires manual-matrix and dapi-edge groups")
     coverage = json.loads((output / COVERAGE_ASSET).read_text(encoding="utf-8"))
     validate_coverage(coverage, value, groups, manifest)
-    release_tag = f"{value['release_tag']}-{'-'.join(groups)}"
+    unified = bool(value.get("unified_binary_definition"))
+    release_tag = value["release_tag"] if unified else f"{value['release_tag']}-{'-'.join(groups)}"
     releases = json.loads(run("gh", "release", "list", "--repo", REPOSITORY, "--limit", "1000", "--json", "tagName"))
     require(all(item["tagName"] != release_tag for item in releases), "release already exists; never overwrite")
     refs = json.loads(run("gh", "api", f"repos/{REPOSITORY}/git/matching-refs/tags/{release_tag}"))
@@ -638,19 +669,27 @@ def publish(output: Path, value: dict, groups: list[str]) -> None:
         publish_registry(manifest, component_paths, value, authfile, home, token, actor)
         notes = temporary / "notes.md"
         legacy = value["components"]["gateway-v4.2"]["source"]
-        notes.write_text("Lab candidate artifacts, not an official Gonka release or qualification result\n\n"
+        image_links = "\n".join(
+            f"- [{name}:{value['release_tag']}](https://github.com/{REPOSITORY}/pkgs/container/"
+            f"external-test-lab%2F{name})"
+            for name in manifest["artifacts"]
+        )
+        notes.write_text(("Lab candidate, not an official Gonka release or qualification result\n\n"
+                          if unified else "Lab candidate artifacts, not an official Gonka release or qualification result\n\n") +
                          f"[v6 source](https://github.com/{value['source_repository']}/tree/{value['source_commit']}) "
                          f"and [v4.2 gateway source](https://github.com/{legacy['repository']}/tree/{legacy['commit']})\n\n"
                          f"Platform: `{value['platform']}`\n\n"
-                         f"The [published DevShard ZIP]({value['devshard_zip']['url']}) is unchanged\n\n"
+                         f"[DevShard ZIP]({value['devshard_zip']['url']})\n\n"
                          f"SHA256: `{value['devshard_zip']['sha256']}`\n\n"
+                         "Images:\n\n" + image_links + "\n\n"
                          "Content-addressed GHCR image references:\n\n" +
                          "\n".join(f"- `{item['ghcr_digest_reference']}`"
                                   for item in manifest["artifacts"].values()) + "\n\n"
                          "See `artifacts.json`, `coverage.json` and `SHA256SUMS` for identities and scenario dependencies\n\n"
                          "Deployment and manual scenario qualification remain separate\n")
-        paths = [output / CHECKSUMS_ASSET, output / MANIFEST_ASSET, output / COVERAGE_ASSET, output / ZIP_ASSET]
-        paths.extend(output / f"{name}.oci.tar" for name in manifest["artifacts"])
+        paths = sorted(output.iterdir()) if unified else [output / CHECKSUMS_ASSET, output / MANIFEST_ASSET,
+                                                           output / COVERAGE_ASSET, output / ZIP_ASSET,
+                                                           *(output / f"{name}.oci.tar" for name in manifest["artifacts"])]
         run("gh", "release", "create", release_tag, "--repo", REPOSITORY, "--target", revision, "--title", release_tag,
             "--draft", "--prerelease", "--latest=false", "--notes-file", str(notes), *(str(path) for path in paths))
         downloaded = temporary / "download"

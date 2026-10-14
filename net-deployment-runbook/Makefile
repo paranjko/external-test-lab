@@ -470,7 +470,7 @@ test-ci-layout:
 
 test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 
-test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts test-host-models
+test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-host-models
 	@bash ./scripts/test-node-container-lending.sh
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
@@ -943,3 +943,22 @@ devshard-artifacts-verify-reuse:
 
 devshard-artifacts-publish:
 	@python3 ./scripts/devshard-artifacts.py publish $(DEVSHARD_ARTIFACT_GROUP_ARGS)
+
+.PHONY: test-gonka-pr-unified-release gonka-pr-unified-release-prepare gonka-pr-unified-release-fetch gonka-pr-unified-release-build gonka-pr-unified-release-verify gonka-pr-unified-release-publish
+test-gonka-pr-unified-release:
+	@python3 ./scripts/test-gonka-pr-unified-release.py
+
+gonka-pr-unified-release-prepare:
+	@python3 ./scripts/gonka-pr-unified-release.py prepare
+
+gonka-pr-unified-release-fetch:
+	@python3 ./scripts/gonka-pr-unified-release.py fetch
+
+gonka-pr-unified-release-build:
+	@python3 ./scripts/gonka-pr-unified-release.py build
+
+gonka-pr-unified-release-verify:
+	@python3 ./scripts/gonka-pr-unified-release.py verify
+
+gonka-pr-unified-release-publish:
+	@python3 ./scripts/gonka-pr-unified-release.py publish
