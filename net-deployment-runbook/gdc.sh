@@ -905,6 +905,7 @@ See the role guides for required input, then run:
   ./gdc.sh network recover verify --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --scope consensus|epochs
   ./gdc.sh network recover verify --host <SSH_ALIAS> --run-id <RUN_ID> --manifest <ABSOLUTE_PATH> --scope service --approval <ABSOLUTE_PATH>
   ./gdc.sh network reset --yes [--hosts <SSH_ALIAS[,SSH_ALIAS...]>]
+  ./gdc.sh host upgrade <ssh-alias> [--bootstrap-url <HTTPS_URL>]
   ./gdc.sh --release v2026.08.06 host upgrade prepare <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.08.06 host upgrade watch <ssh-alias> <proposal-id>
   ./gdc.sh --release v2026.07.23 host ml-attach <SSH_ALIAS>
@@ -1232,9 +1233,12 @@ case "$COMMAND" in
       peers) COMMAND='host-peers' ;;
       models) COMMAND='host-models' ;;
       upgrade)
-        upgrade_action="${1:-}"; shift || true
-        [[ "$upgrade_action" =~ ^(prepare|watch)$ ]] || { usage; exit 2; }
-        COMMAND="host-upgrade-$upgrade_action"
+        if [[ "${1:-}" =~ ^(prepare|watch)$ ]]; then
+          upgrade_action="$1"; shift
+          COMMAND="host-upgrade-$upgrade_action"
+        else
+          COMMAND='host-upgrade-versiond'
+        fi
         ;;
       ml-attach) COMMAND=ml; set -- attach "$@" ;;
       setup)
@@ -1297,6 +1301,15 @@ case "$COMMAND" in
     ;;
 esac
 case "$COMMAND" in
+  host-upgrade-versiond)
+    [[ $# -ge 1 && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { usage; exit 2; }
+    [[ "$RELEASE_OPTION_SEEN" == false && "$COMPOSITION_OPTION_SEEN" == false && "$MODEL_OPTION_SEEN" == false ]] \
+      || { echo 'host upgrade selects versiond from bootstrap software, not a release or model profile' >&2; exit 2; }
+    use_node_data_home "$1"
+    acquire_operator_lock
+    GDC_END_COMMAND='host upgrade'
+    bash "$ROOT/scripts/host-upgrade.sh" "$@"
+    ;;
   host-models)
     [[ $# -ge 2 && "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { usage; exit 2; }
     [[ "$RELEASE_OPTION_SEEN" == false && "$COMPOSITION_OPTION_SEEN" == false && "$MODEL_OPTION_SEEN" == false ]] \

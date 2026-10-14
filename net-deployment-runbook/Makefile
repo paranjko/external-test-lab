@@ -470,7 +470,7 @@ test-ci-layout:
 
 test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 
-test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-host-models
+test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-host-models test-host-upgrade test-host-upgrade-lifecycle
 	@bash ./scripts/test-node-container-lending.sh
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
@@ -664,6 +664,14 @@ test-install-inferenced:
 	@./scripts/test-install-inferenced.sh
 
 .PHONY: test-host-models
+.PHONY: test-host-upgrade test-host-upgrade-lifecycle
+test-host-upgrade:
+	@bash ./scripts/test-host-upgrade.sh
+
+test-host-upgrade-lifecycle:
+	@docker build --file test/Dockerfile.host-upgrade --tag gdc-host-upgrade-test:local ..
+	@docker run --rm --privileged -e GDC_HOST_UPGRADE_DIND=true --entrypoint bash gdc-host-upgrade-test:local scripts/test-host-upgrade-lifecycle.sh
+
 test-host-models: bats-docker-image
 	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_HOST_MODELS_FIXTURE=true --entrypoint python3 $(BATS_DOCKER_IMAGE) scripts/test-host-models.py
 

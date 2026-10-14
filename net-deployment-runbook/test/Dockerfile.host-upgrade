@@ -1,0 +1,5 @@
+FROM docker:29-dind
+RUN apk add --no-cache bash coreutils curl findutils jq
+COPY net-deployment-runbook /workspace/net-deployment-runbook
+WORKDIR /workspace/net-deployment-runbook
+ENTRYPOINT ["bash", "scripts/test-host-upgrade-lifecycle.sh"]

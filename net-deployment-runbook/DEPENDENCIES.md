@@ -36,6 +36,14 @@ operator diagnostic.
 `rg` is deliberately not a runbook dependency. Shell code must use `grep`
 when the portable baseline is sufficient.
 
+`host upgrade` and its tests are Bash-based. The operator path uses the existing
+curl/jq bootstrap validator and SSH; the Host needs Bash, jq, GNU coreutils,
+Docker and Compose, but no Python. `test-host-upgrade` mocks every SSH and curl
+call and rejects unexpected destinations. `test-host-upgrade-lifecycle` uses a
+fresh privileged Docker-in-Docker container with no host socket, keys or data
+mounts; it pulls digest-pinned BusyBox and Alpine fixtures from Docker Hub and
+tests actual container replacement and rollback in three deployment layouts.
+
 The standalone `install_inferenced.sh` requires `curl`, `unzip`, `awk`, `jq`,
 and either `sha256sum` or `shasum`. `jq` validates the selected official
 release and its asset digest; it is already in the CI baseline. DevNet callers

@@ -1,4 +1,38 @@
-# HOST UPGRADE: independent 0.2.14 to 0.2.15 operation
+# HOST UPGRADE
+
+## Update the DevShard supervisor from bootstrap
+
+```bash
+gdc host upgrade <ssh-alias>
+```
+
+This command downloads and validates
+`https://gonka-dev.net/gonka-devnet-community/bootstrap.json`, selects
+`software.components.versiond.image`, pulls its pinned digest for
+`software.platform`, and recreates only the existing `versiond` Compose service.
+Use `--bootstrap-url <HTTPS_URL>` to explicitly select another descriptor.
+The target's running chain ID must match the descriptor. No release, model,
+governance proposal, operator inventory or keyring is required.
+
+All DevShard processes managed by this supervisor may briefly stop. The command
+does not change approved versions, upgrade `inferenced`, DAPI, the router or ML
+services, or send governance transactions. It does not test inference readiness.
+
+The SSH account needs passwordless sudo; the Host needs Bash, jq, GNU coreutils,
+Docker and Docker Compose supporting `config --no-env-resolution`. Older Compose
+versions are refused before changing the deployment. Current `/srv/dai/deploy`, legacy `/srv/dai/node`,
+and `/srv/dai/deploy/<host>` layouts are discovered from the running container's
+Compose labels. Multiple running `versiond` services are refused as ambiguous.
+
+The command retains a private receipt under the deployment's
+`.gdc-versiond-upgrades/` directory, including the previous Compose layer. It
+checks that the effective configuration changes only `versiond.image`, keeps
+data mounts intact and verifies that the selected image stays running. An
+already matching stable service is not restarted. Failed activation attempts
+restore the previous local image and Compose file; a failed recovery is reported
+with its receipt path and requires inspection before retrying.
+
+## Core 0.2.14 to 0.2.15 governance upgrade
 
 Each Host operator prepares and watches only the Host they own. The operator
 uses their existing `GDC_HOME`, private keyring, and SSH alias; no central
