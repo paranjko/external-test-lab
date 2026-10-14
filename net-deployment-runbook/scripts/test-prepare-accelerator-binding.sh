@@ -96,6 +96,7 @@ phase_source="${GDC_TEST_PHASE_PREPARE_ROOT:-$PROJECT_ROOT}"
 mkdir -p "$runtime_root"
 cp -a "$phase_source/scripts" "$phase_source/profiles" \
   "$phase_source/00-host-prep" "$phase_source/gdc.sh" "$runtime_root/"
+cp -a "$phase_source/../model" "$runtime_root/../model"
 exporter="$tmp/export-amd-profile.sh"
 awk -v root="$PROJECT_ROOT" -v output="$tmp/runtime-profile.json" '
   /^ROOT=/ { print "ROOT=\"" root "\""; next }

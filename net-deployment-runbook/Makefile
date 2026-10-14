@@ -458,7 +458,7 @@ test-ci-layout:
 
 test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 
-test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts
+test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts test-host-models
 	@bash ./scripts/test-node-container-lending.sh
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
@@ -510,6 +510,7 @@ test-ci-contracts: test-command-dependency-contract test-devshard-release test-d
 	@./scripts/test-join-ml-qualification.sh
 	@bash ./scripts/test-ml-qualification-evidence.sh
 	@bash ./scripts/test-ml-qualification-failure.sh
+	@python3 scripts/test-prefetch-ml.py
 	@bash ./scripts/test-host-join-profile-resolution.sh
 	@./scripts/test-host-reset-no-env.sh
 	@./scripts/test-host-identity-layout-probe.sh
@@ -649,6 +650,10 @@ test-monitoring-firewall-deployment:
 
 test-install-inferenced:
 	@./scripts/test-install-inferenced.sh
+
+.PHONY: test-host-models
+test-host-models: bats-docker-image
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_HOST_MODELS_FIXTURE=true --entrypoint python3 $(BATS_DOCKER_IMAGE) scripts/test-host-models.py
 
 test-verify-post-sync-join-state:
 	@./scripts/test-verify-post-sync-join-state.sh

@@ -6,10 +6,15 @@ trap 'rm -rf "$tmp"' EXIT
 
 fail() { echo "$*" >&2; exit 1; }
 
-# Contract: a JOIN role input qualifies under its resolved release; Genesis
-# keeps the baseline gate in its own phase.
-grep -Fq '[[ "${GDC_JOIN_ROLE_INPUT:-false}" == true ]] || assert_baseline_release' "$ROOT/scripts/phase-qualify-ml.sh"
+# Contract: JOIN and qualification-only profiles qualify under their resolved
+# release; Genesis keeps the baseline gate in its own phase.
+grep -Fq 'GDC_MODEL_PROFILE_SCOPE:-}" != qualification-only' "$ROOT/scripts/phase-qualify-ml.sh"
 grep -Fxq 'assert_baseline_release' "$ROOT/scripts/phase-genesis.sh"
+grep -Fq 'HF_HOME=/root/.cache' "$ROOT/scripts/prefetch-ml-remote.sh"
+grep -Fq 'HF_TOKEN=$api_key' "$ROOT/scripts/prefetch-ml-remote.sh"
+grep -Fq 'snapshot_download(repo_id=model, revision=revision)' "$ROOT/scripts/prefetch-ml-remote.sh"
+grep -Fq 'prefetch-ml requires --model <profile>' "$ROOT/gdc.sh"
+grep -Fq '"${1:-}" == qualify-ml || "${1:-}" == prefetch-ml' "$ROOT/gdc.sh"
 
 # The first current, non-baseline core release profile.
 release=''
@@ -61,6 +66,8 @@ ROLE
 
 qualify() {
   env PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-home" GDC_ENV="$1" \
+    GDC_MODEL_PROFILE="${2:-qwen3-0.6b}" \
+    GDC_RUN_ID="qualify-${2:-qwen3-0.6b}" \
     GDC_RELEASE_PROFILE="$release" GDC_QUALIFY_HOSTS="$alias" \
     "$ROOT/scripts/phase-qualify-ml.sh"
 }
@@ -121,4 +128,11 @@ mkdir -p "$success_run"
   || fail 'successful qualification retained a false failure marker'
 [[ -f "$tmp/success-identity-reached" ]] \
   || fail 'successful qualification did not continue to identity creation'
+output="$(qualify "$genesis_role" qwen3-4b-instruct-2507 2>&1)" \
+  || fail "qualification-only model profile failed: $output"
+if grep -Fq 'baseline phases require' <<<"$output"; then
+  fail "qualification-only model profile still hit the baseline gate: $output"
+fi
+grep -Fq "SKIP  $alias unreachable; no ML qualification claim" <<<"$output" \
+  || fail "qualification-only output lacks the SKIP record: $output"
 printf 'PASS JOIN qualifies its target under the resolved release profile\n'

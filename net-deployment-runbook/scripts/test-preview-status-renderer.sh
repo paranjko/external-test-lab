@@ -70,6 +70,8 @@ export GDC_PREVIEW_NUMBER=172 GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev
 source "$ROOT/../ops/preview/preview-curl.sh"
 [[ "$(preview_curl_target https://gonka-dev.net/gonka-devnet-community/bootstrap.json)" == '/gonka-api/gonka-devnet-community/bootstrap.json' ]]
 [[ "$(preview_curl_target https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_info)" == '/gonka-api/chain-api/productscience/inference/inference/epoch_info' ]]
+[[ "$(preview_curl_target https://api.gonka-dev.net/chain-api/productscience/inference/inference/current_epoch_group_data)" == '/gonka-api/chain-api/productscience/inference/inference/current_epoch_group_data' ]]
+[[ "$(preview_curl_target 'https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=Qwen%2FQwen3-4B-Instruct-2507')" == '/gonka-api/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=Qwen%2FQwen3-4B-Instruct-2507' ]]
 [[ "$(preview_curl_target https://api.gonka-dev.net/chain-rpc/block?height=42)" == '/gonka-api/chain-rpc/block?height=42' ]]
 [[ "$(preview_curl_target https://node4.gonka-dev.net/chain-rpc/status)" == '/preview/172/node/node4/chain-rpc/status' ]]
 [[ "$(preview_curl_target https://node4.gonka-dev.net/chain-rpc/validators?height=42\&page=1\&per_page=100)" == '/preview/172/node/node4/chain-rpc/validators?height=42&page=1&per_page=100' ]]
@@ -84,6 +86,11 @@ for url in \
   'https://node4.gonka-dev.net/chain-rpc/block?height=42' \
   'https://node4.gonka-dev.net/devshard/stats/shards?extra=1' \
   'https://api.gonka-dev.net/chain-api/arbitrary/path' \
+  'https://api.gonka-dev.net/chain-api/productscience/inference/inference/current_epoch_group_data?extra=1' \
+  'https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=' \
+  'https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=a&model_id=b' \
+  'https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=a&extra=1' \
+  'https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=%ZZ' \
   'https://api.gonka-dev.net/chain-rpc/block?height=42&extra=1' \
   'https://evil.example/chain-api/productscience/inference/inference/epoch_info' \
   'http://127.0.0.1/chain-rpc/status' \
@@ -107,6 +114,16 @@ if GDC_PREVIEW_NUMBER=invalid preview_curl_target https://node4.gonka-dev.net/ch
 fi
 if main -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 --output /tmp/out https://node4.gonka-dev.net/chain-rpc/status; then
   echo 'preview curl shim accepted unexpected curl options' >&2
+  exit 1
+fi
+for header in 'Authorization: secret' 'x-cosmos-block-height: 0' 'x-cosmos-block-height: -1' $'x-cosmos-block-height: 42\r\nAuthorization: secret'; do
+  if (main -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 -H "$header" https://api.gonka-dev.net/chain-api/productscience/inference/inference/current_epoch_group_data); then
+    echo 'preview curl shim accepted an out-of-contract header' >&2
+    exit 1
+  fi
+done
+if (main -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 -H 'x-cosmos-block-height: 42' https://api.gonka-dev.net/chain-api/productscience/inference/inference/params); then
+  echo 'preview curl shim accepted a height header outside model queries' >&2
   exit 1
 fi
 
@@ -175,6 +192,21 @@ cat >"$tmp/egress.Caddyfile" <<'EOF'
 :8080 {
 	respond /network "network status" 200
   handle_path /gonka-api/* {
+    @model_current {
+      path /chain-api/productscience/inference/inference/current_epoch_group_data
+      header x-cosmos-block-height 42
+    }
+    handle @model_current {
+      respond `{"epoch_group_data":{"epoch_index":"7","effective_block_height":"40","sub_group_models":["Qwen/Qwen3-4B-Instruct-2507"]}}` 200
+    }
+    @model_group {
+      path /chain-api/productscience/inference/inference/epoch_group_data/7
+      query model_id=Qwen/Qwen3-4B-Instruct-2507
+      header x-cosmos-block-height 42
+    }
+    handle @model_group {
+      respond `{"epoch_group_data":{"epoch_index":"7","model_id":"Qwen/Qwen3-4B-Instruct-2507","validation_weights":[{"member_address":"gonka1fixture","weight":"31"},{"member_address":"gonka1zero","weight":"0"}]}}` 200
+    }
     respond "{http.request.uri}" 200
   }
   respond /preview/172/node/node4/chain-rpc/status "node status" 200
@@ -196,6 +228,20 @@ api_response="$(docker run --rm --network "$network" \
   printf 'trusted /gonka-api fixture returned unexpected path: %s\n' "$api_response" >&2
   exit 1
 }
+# Run the actual collector function through the shipped curl shim and Caddy
+# egress, so mocks cannot hide a missing endpoint, query or height header.
+model_response="$(docker run --rm --network "$network" \
+  -e GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev.net -e GDC_PREVIEW_NUMBER=172 \
+  --entrypoint /bin/bash "$image" -c '
+    source <(sed -n "/^collect_model_assignments() {/,/^}/p" /usr/local/lib/gonka-devnet/network-observer.sh)
+    collect_model_assignments https://api.gonka-dev.net/chain-api/productscience/inference/inference 42
+  ')"
+jq -e '.state == "observed" and .reference_height == 42 and .epoch_index == "7" and
+  .groups == [{model_id:"Qwen/Qwen3-4B-Instruct-2507",state:"observed",participants:[{address:"gonka1fixture",weight:"31"}]}]' <<<"$model_response" >/dev/null || {
+  printf 'unexpected preview model collection: %s\n' "$model_response" >&2
+  exit 1
+}
+printf 'PASS effective model collector crosses preview transport with pinned height and encoded model ID\n'
 cat >"$tmp/preview-proxy.Caddyfile" <<EOF
 {
   admin off

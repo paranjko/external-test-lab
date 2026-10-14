@@ -194,13 +194,13 @@ proxy_image="$(registry_image product-science/proxy "$core_version")"
 # shellcheck disable=SC1090
 source "$ROOT/profiles/deployments/community-lab.lock"
 # shellcheck disable=SC1090
-source "$ROOT/profiles/models/qwen3-0.6b.lock"
+source "$ROOT/../model/qwen3-0.6b.lock"
 # shellcheck disable=SC1090
 source "$ROOT/profiles/operator-services/gdc-lab.lock"
 for value in GDC_JOIN_HOST_STACK_REPOSITORY GDC_JOIN_HOST_STACK_COMMIT GDC_JOIN_HOST_STACK_COMPOSE_SHA256 MLNODE_GENERIC_IMAGE MLNODE_PROXY_IMAGE GDC_JOIN_EFFECTIVE_EPOCHS GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS POSTGRES_IMAGE EXPLORER_IMAGE CADDY_IMAGE GRAFANA_IMAGE NODE_EXPORTER_IMAGE CADVISOR_IMAGE; do
   [[ -n "${!value:-}" ]] || die artifact_unavailable "Host template lacks ${value}"
 done
-template_sha="$(cat "$ROOT/profiles/join-host-defaults.lock" "$ROOT/profiles/deployments/community-lab.lock" "$ROOT/profiles/models/qwen3-0.6b.lock" "$ROOT/profiles/operator-services/gdc-lab.lock" | sha256sum | awk '{print $1}')"
+template_sha="$(cat "$ROOT/profiles/join-host-defaults.lock" "$ROOT/profiles/deployments/community-lab.lock" "$ROOT/../model/qwen3-0.6b.lock" "$ROOT/profiles/operator-services/gdc-lab.lock" | sha256sum | awk '{print $1}')"
 host_basis="$(jq -cn --arg core_version "$core_version" --arg core_commit "$core_commit" --arg tmkms "$tmkms_image" --arg edge "$edge_api_image" --arg versiond "$versiond_image" --arg proxy "$proxy_image" --arg stack_repository "$GDC_JOIN_HOST_STACK_REPOSITORY" --arg stack_commit "$GDC_JOIN_HOST_STACK_COMMIT" --arg stack_compose_sha256 "$GDC_JOIN_HOST_STACK_COMPOSE_SHA256" --arg stack_api_image "$dapi_image" --arg defaults "$template_sha" '{core:{version:$core_version,commit:$core_commit},host_stack:{repository:$stack_repository,commit:$stack_commit,compose_sha256:$stack_compose_sha256,api_image:$stack_api_image},runtime_images:{tmkms:$tmkms,edge_api:$edge,versiond:$versiond,proxy:$proxy},template_sha256:$defaults}')"
 host_sha="$(sha256_text "$host_basis")"
 core="$(component "$core_runtime" "$core_image" image_plus_cosmovisor "$core_metadata")"

@@ -178,6 +178,8 @@ const server = createServer(async (request, response) => {
         validators: [{address: NODE0.toUpperCase(), voting_power: "63"}],
         participants: [{address: ACCOUNT0, inference_url: "https://node0.gonka-dev.net", status: "ACTIVE"}],
         reference: {height: 120},
+        model_assignments: {state: "observed", epoch_index: "6", effective_block_height: "95", reference_height: 120,
+          groups: [{model_id: `model/${observedChainId}`, state: "observed", participants: [{address: ACCOUNT0, weight: "63"}]}]},
         hardware_nodes: [{address: ACCOUNT0, nodes: [{
           local_id: "model:account", host: "inference", port: "8080", version: "3.0.16",
           hardware: [{type: "Fixture GPU | 24GB", count: 1}],

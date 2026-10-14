@@ -26,6 +26,18 @@ if [[ "\$url" == https://api.fixture.test/* ]]; then
   url="https://node0.gonka-dev.net\${url#https://api.fixture.test}"
 fi
 case "\$url" in
+  */current_epoch_group_data)
+    [[ "$*" == *'x-cosmos-block-height: 42'* ]] || exit 96
+    if [[ "\${GDC_FIXTURE_MODELS:-}" == unavailable ]]; then exit 22; fi
+    printf '%s\\n' '{"epoch_group_data":{"epoch_index":"6","effective_block_height":"35","sub_group_models":["Qwen/Fixture","Qwen/Empty"]}}' ;;
+  *'/epoch_group_data/6?model_id=Qwen%2FFixture')
+    [[ "$*" == *'x-cosmos-block-height: 42'* ]] || exit 96
+    case "\${GDC_FIXTURE_MODELS:-}" in
+      partial) exit 22 ;;
+      mismatch) printf '%s\\n' '{"epoch_group_data":{"epoch_index":"7","model_id":"Wrong","validation_weights":[]}}' ;;
+      *) printf '%s\\n' '{"epoch_group_data":{"epoch_index":"6","model_id":"Qwen/Fixture","effective_block_height":"0","validation_weights":[{"member_address":"gonka1fixtureaccount","weight":"31"},{"member_address":"gonka1zero","weight":"0"}]}}' ;;
+    esac ;;
+  *'/epoch_group_data/6?model_id=Qwen%2FEmpty') printf '%s\\n' '{"epoch_group_data":{"epoch_index":"6","model_id":"Qwen/Empty","validation_weights":[]}}' ;;
   https://fixture.test/bootstrap.json|https://fixture.test/fixture-chain/bootstrap.json) if [[ "\${GDC_FIXTURE_HTTP_SEED:-false}" == true ]]; then printf '%s\\n' '{"chain_id":"fixture-chain","seeds":[{"node_id":"stale-bootstrap-id","rpc":"http://node0.gonka-dev.net:8000/chain-rpc"}]}'; else printf '%s\\n' '{"chain_id":"fixture-chain","seeds":[{"node_id":"stale-bootstrap-id","rpc":"https://node0.gonka-dev.net/chain-rpc"}]}'; fi ;;
   https://node0.gonka-dev.net/chain-rpc/net_info) printf '%s\\n' '{"result":{"n_peers":"1","peers":[{"node_info":{"id":"${livePeerId}","listen_addr":"tcp://node0.gonka-dev.net:26656"},"remote_ip":"203.0.113.11"}]}}' ;;
   https://ipwho.is/203.0.113.11) printf '%s\\n' '{"success":true,"city":"Fixture City","country":"Fixtureland","latitude":48.15,"longitude":17.11,"connection":{"isp":"Fixture ISP"}}' ;;
@@ -82,6 +94,7 @@ function invoke(argument, unavailable = false, request = "", cpocActive = false,
         GDC_NETWORK_CHAIN_ID: "fixture-chain",
         GDC_NETWORK_CHAIN_API_ORIGIN: options.chainApiOrigin ?? "",
         GDC_FIXTURE_LOG: path.join(state, "curl.log"),
+        GDC_FIXTURE_MODELS: options.models ?? "",
         GDC_FIXTURE_UNAVAILABLE: String(unavailable),
         GDC_FIXTURE_CPOC_ACTIVE: String(cpocActive),
         GDC_FIXTURE_HTTP_SEED: String(httpSeed),
@@ -164,6 +177,23 @@ try {
     }
   }
   assert.deepEqual(snapshot.chain.validators, [{address: 'b'.repeat(40).toUpperCase(), voting_power: "32"}]);
+  assert.deepEqual(snapshot.chain.model_assignments, {
+    state: "observed", epoch_index: "6", effective_block_height: "35", reference_height: 42,
+    groups: [
+      {model_id: "Qwen/Fixture", state: "observed", participants: [{address: "gonka1fixtureaccount", weight: "31"}]},
+      {model_id: "Qwen/Empty", state: "observed", participants: []},
+    ],
+  }, "effective allocations must exclude zero weight and not use the latest PoC epoch");
+  for (const models of ["partial", "mismatch", "unavailable"]) {
+    const result = await invoke("--collect", false, "", false, false, "", {models});
+    assert.equal(result.code, 0, result.stderr);
+    const allocation = JSON.parse(result.stdout).chain.model_assignments;
+    assert.equal(allocation.state, models === "unavailable" ? "unavailable" : "partial");
+    if (models !== "unavailable") {
+      assert.deepEqual(allocation.groups[0], {model_id: "Qwen/Fixture", state: "unavailable"});
+      assert.deepEqual(allocation.groups[1].participants, []);
+    }
+  }
   assert.deepEqual(snapshot.chain.approved_devshards, [{name: "v3", sha256: 'd'.repeat(64)}]);
   assert.deepEqual(snapshot.chain.hardware_nodes, [{
     address: "gonka1fixtureaccount",

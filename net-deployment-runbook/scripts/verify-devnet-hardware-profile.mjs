@@ -148,10 +148,10 @@ assert(
 
 const model = profile.model_context;
 assert(isObject(model), "model context is missing");
-assert(model.active_model === "Qwen/Qwen3-0.6B", "active model is invalid");
+assert(model.assignment_source === "current_epoch_group_data" && !("active_model" in model),
+  "model context must use effective network assignments, not a fixed active model");
 assert(
-  model.on_chain_profile?.v_ram_gb === 16 &&
-    model.on_chain_profile?.registry_url ===
+  model.on_chain_profile?.registry_url ===
       "https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all",
   "on-chain model profile is invalid",
 );
@@ -165,13 +165,6 @@ assert(
       "vram_evidence",
     ]),
   "runtime qualification description is invalid",
-);
-assert(
-  model.experimental_example?.gpu === "NVIDIA GeForce RTX 3070" &&
-    model.experimental_example?.vram_gb === 8 &&
-    model.experimental_example?.may_run_experimentally === true &&
-    model.experimental_example?.guaranteed_supported === false,
-  "experimental GPU example is invalid",
 );
 assert(
   typeof model.description === "string" &&

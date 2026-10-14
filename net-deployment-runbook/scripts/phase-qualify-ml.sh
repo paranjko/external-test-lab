@@ -3,8 +3,11 @@ set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
 # A joining Host qualifies under the release profile it resolved from the
-# network bootstrap. The baseline gate belongs to network-owner role inputs.
-[[ "${GDC_JOIN_ROLE_INPUT:-false}" == true ]] || assert_baseline_release
+# network bootstrap. A qualification-only model overlay is also an isolated
+# runtime probe, not a network-owner baseline phase.
+if [[ "${GDC_JOIN_ROLE_INPUT:-false}" != true && "${GDC_MODEL_PROFILE_SCOPE:-}" != qualification-only ]]; then
+  assert_baseline_release
+fi
 record_phase_profile ml-qualification
 
 mkdir -p "$GDC_HOME/runs"
@@ -45,7 +48,7 @@ for host in "${hosts[@]}"; do
     "POC_BATCH_SIZE_DEFAULT=32"
   scp -q "$env_file" "$host:$remote/.env"
   set +e
-  ssh -T "$host" "bash '$remote/qualify-ml-remote.sh' '$remote' '$remote/.env' '$qualification_backend' '$MODEL_ID' '$MLNODE_DTYPE' '$MODEL_REVISION' '$MLNODE_TENSOR_PARALLEL_SIZE' '$MLNODE_MAX_NUM_SEQS' '$MLNODE_GPU_MEMORY_UTILIZATION' '$MLNODE_CONTEXT_LENGTH'"
+  ssh -T "$host" "bash '$remote/qualify-ml-remote.sh' '$remote' '$remote/.env' '$qualification_backend' '$MODEL_SOURCE_ID' '$MODEL_ID' '$MLNODE_DTYPE' '$MODEL_SOURCE_REVISION' '$MLNODE_TENSOR_PARALLEL_SIZE' '$MLNODE_MAX_NUM_SEQS' '$MLNODE_GPU_MEMORY_UTILIZATION' '$MLNODE_CONTEXT_LENGTH' '$MLNODE_VLLM_ARGS'"
   qualification_status=$?
   set -e
 

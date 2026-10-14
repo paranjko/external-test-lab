@@ -1,0 +1,18 @@
+# Qualification candidate only. Qwen3.8-27B is absent from Mainnet, Testnet
+# and Testnet DevShards model/PoC configurations as checked on 2026-10-13.
+GDC_MODEL_PROFILE_SCOPE=qualification-only
+
+# Immutable upstream Qwen3.8-27B revision, not a Gonka network registration.
+MODEL_ID=Qwen/Qwen3.8-27B
+MODEL_REVISION=1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+
+# Qwen publishes this as a 27B vision-language model with 262,144-token native
+# context. 32,768 is a bounded text-only qualification envelope inherited from
+# the verified Qwen3.5-4B procedure, not a capacity or compatibility claim.
+# A successful run still requires the selected MLNode/vLLM image to support the
+# Qwen3.8 architecture and a GPU with sufficient BF16 VRAM.
+MLNODE_DTYPE=bfloat16
+MLNODE_CONTEXT_LENGTH=32768
+MLNODE_MAX_NUM_SEQS=1
+MLNODE_GPU_MEMORY_UTILIZATION=0.85
+MLNODE_TENSOR_PARALLEL_SIZE=1

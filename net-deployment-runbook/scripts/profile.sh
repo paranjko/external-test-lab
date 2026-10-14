@@ -148,7 +148,7 @@ load_profiles() {
     }
   fi
   [[ -r "$root/profiles/deployments/$deployment.lock" ]] || { echo "unknown deployment profile: $deployment" >&2; return 2; }
-  [[ -r "$root/profiles/models/$model.lock" ]] || { echo "unknown model profile: $model" >&2; return 2; }
+  [[ -r "$root/../model/$model.lock" ]] || { echo "unknown model profile: $model" >&2; return 2; }
   [[ -r "$root/profiles/operator-services/$operator.lock" ]] || { echo "unknown operator-services profile: $operator" >&2; return 2; }
   unset GONKA_HOST_STACK_COMMIT GONKA_HOST_STACK_DOC_SHA256 GONKA_HOST_STACK_COMPOSE_SHA256
   unset DAPI_SOURCE_REF DAPI_COMMIT
@@ -182,8 +182,20 @@ load_profiles() {
   fi
   # shellcheck disable=SC1090
   source "$root/profiles/deployments/$deployment.lock"
+  unset MODEL_SOURCE_ID MODEL_SOURCE_REVISION MLNODE_VLLM_ARGS GDC_MODEL_PROFILE_SCOPE
   # shellcheck disable=SC1090
-  source "$root/profiles/models/$model.lock"
+  source "$root/../model/$model.lock"
+  MODEL_SOURCE_ID="${MODEL_SOURCE_ID:-$MODEL_ID}"
+  MODEL_SOURCE_REVISION="${MODEL_SOURCE_REVISION:-$MODEL_REVISION}"
+  MLNODE_VLLM_ARGS="${MLNODE_VLLM_ARGS:-}"
+  GDC_MODEL_PROFILE_SCOPE="${GDC_MODEL_PROFILE_SCOPE:-network}"
+  [[ "$MODEL_SOURCE_ID" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo 'invalid model source id' >&2; return 2; }
+  [[ "$MODEL_SOURCE_REVISION" =~ ^[a-f0-9]{40}$ ]] || { echo 'invalid model source revision' >&2; return 2; }
+  case "$MLNODE_VLLM_ARGS" in
+    ''|--enforce-eager|'--enable-auto-tool-choice --tool-call-parser hermes') ;;
+    *) echo 'unsupported MLNode vLLM arguments' >&2; return 2 ;;
+  esac
+  [[ "$GDC_MODEL_PROFILE_SCOPE" == network || "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]] || { echo 'invalid model profile scope' >&2; return 2; }
   # shellcheck disable=SC1090
   source "$root/profiles/operator-services/$operator.lock"
   if [[ "${LAB_CANDIDATE:-false}" == true ]]; then
@@ -248,6 +260,8 @@ load_profiles() {
   export GDC_RELEASE_PROFILE="$release" GDC_DEPLOYMENT_PROFILE="$deployment"
   export GDC_MODEL_PROFILE="$model" GDC_OPERATOR_SERVICES_PROFILE="$operator"
   export GONKA_REPOSITORY GONKA_SOURCE_REF GONKA_COMMIT MODEL_ID MODEL_REVISION
+  export MODEL_SOURCE_ID MODEL_SOURCE_REVISION
+  export MLNODE_VLLM_ARGS GDC_MODEL_PROFILE_SCOPE
   export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
 }
 
@@ -408,13 +422,13 @@ profile_hash() {
     {
       printf '%s\n' "$GDC_COMPOSITION_HASH"
       sha256sum "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-        "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}'
+        "$root/../model/$GDC_MODEL_PROFILE.lock" | awk '{print $1}'
     } | sha256sum | awk '{print $1}'
     return
   fi
   sha256sum "$root/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
     "$root/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$root/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}'
+    "$root/../model/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}'
 }
 
 operator_profile_hash() {

@@ -7,6 +7,7 @@ COPY --from=bats /opt/bats /opt/bats
 
 ENV PATH="/opt/bats/bin:${PATH}"
 COPY net-deployment-runbook /workspace/net-deployment-runbook
+COPY model /workspace/model
 COPY schema /workspace/schema
 COPY bootstrap /workspace/bootstrap
 WORKDIR /workspace/net-deployment-runbook

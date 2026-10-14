@@ -47,7 +47,7 @@ load_profiles
 expected_network_hash="$({
   sha256sum "$ROOT/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
     "$ROOT/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$ROOT/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}'
+    "$ROOT/../model/$GDC_MODEL_PROFILE.lock" | awk '{print $1}'
 } | sha256sum | awk '{print $1}')"
 expected_operator_hash="$(sha256sum "$ROOT/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
 [[ "$(profile_hash)" == "$expected_network_hash" ]]
@@ -71,6 +71,8 @@ grep -Fq 'site_ready=true' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'grafana_ready=true' "$ROOT/scripts/phase-reset.sh"
 grep -Fq 'status.json.tmp' "$ROOT/scripts/qualify-ml-remote.sh"
 grep -Fq '2>>"$WORK/control.log"' "$ROOT/scripts/qualify-ml-remote.sh"
+grep -Fq 'compose.ml-qualification.yaml' "$ROOT/scripts/qualify-ml-remote.sh"
+grep -Fq 'ports: !reset []' "$ROOT/02-node/compose.ml-qualification.yaml"
 grep -Fq 'phase-bootstrap-access.sh' "$ROOT/gdc.sh"
 grep -Fq 'GDC_CHAIN_RPC_URL' "$ROOT/scripts/phase-bootstrap-access.sh"
 grep -Fq 'GDC_GATEWAY_PUBLIC_URL="https://${API_HOST}"' "$ROOT/scripts/phase-bootstrap-access.sh"
@@ -384,9 +386,9 @@ grep -Fq '<summary><span class="join-requirements-toggle">Minimum Host requireme
 node "$ROOT/scripts/verify-devnet-hardware-profile.mjs" \
   "$ROOT/profiles/devnet-hadware.json" "$ROOT/04-ops/site/index.html"
 grep -Fq 'https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all' "$ROOT/04-ops/site/index.html"
-grep -Fq 'qualification loads the model, checks <code>/v1/models</code>, completes an inference request, and records VRAM evidence' "$ROOT/04-ops/site/index.html"
-grep -Fq 'is not a guaranteed supported configuration</p>' "$ROOT/04-ops/site/index.html"
-! grep -Fq 'is not a guaranteed supported configuration.</p>' "$ROOT/04-ops/site/index.html"
+grep -Fq 'qualification loads the selected model, checks <code>/v1/models</code>, completes an inference request, and records VRAM evidence' "$ROOT/04-ops/site/index.html"
+grep -Fq 'allocation alone does not prove current inference availability</p>' "$ROOT/04-ops/site/index.html"
+! grep -Fq 'Community DevNet currently runs' "$ROOT/04-ops/site/index.html"
 test_tmp="$(mktemp -d)"
 rendered_site_index="$test_tmp/site-index.html"
 "$ROOT/scripts/render-site-revision.sh" "$ROOT/04-ops/site/index.html" "$rendered_site_index"
@@ -488,7 +490,7 @@ for release in v2026.07.23 v2026.08.06; do
   expected_network_hash="$(sha256sum \
     "$ROOT/profiles/releases/$GDC_RELEASE_PROFILE.lock" \
     "$ROOT/profiles/deployments/$GDC_DEPLOYMENT_PROFILE.lock" \
-    "$ROOT/profiles/models/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
+    "$ROOT/../model/$GDC_MODEL_PROFILE.lock" | awk '{print $1}' | sha256sum | awk '{print $1}')"
   expected_operator_hash="$(sha256sum \
     "$ROOT/profiles/operator-services/$GDC_OPERATOR_SERVICES_PROFILE.lock" \
     | awk '{print $1}' | sha256sum | awk '{print $1}')"
@@ -523,6 +525,47 @@ for release in v2026.07.23 v2026.08.06; do
   grep -qx "network_profile_hash=$expected_network_hash" <<<"$summary"
   grep -qx "operator_services_profile_hash=$expected_operator_hash" <<<"$summary"
 done
+
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3.5-4b load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen3.5-4B ]]
+[[ "$MODEL_REVISION" == 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a ]]
+[[ "$MODEL_SOURCE_ID" == Qwen/Qwen3.5-4B ]]
+[[ "$MODEL_SOURCE_REVISION" == 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a ]]
+[[ "$MLNODE_VLLM_ARGS" == --enforce-eager ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
+grep -Fq 'MLNODE_VLLM_ARGS' "$ROOT/scripts/phase-qualify-ml.sh"
+grep -Fq -- '--enforce-eager' "$ROOT/scripts/qualify-ml-remote.sh"
+grep -Fq 'qualification-only' "$ROOT/gdc.sh"
+scope_tmp="$(mktemp -d)"
+if GDC_HOME="$scope_tmp" "$ROOT/gdc.sh" --model qwen3.5-4b host join >"$scope_tmp/stdout" 2>"$scope_tmp/stderr"; then
+  echo 'qualification-only model overlay unexpectedly allowed host join' >&2
+  rm -rf -- "$scope_tmp"
+  exit 1
+fi
+grep -Fq 'qualification-only' "$scope_tmp/stderr"
+rm -rf -- "$scope_tmp"
+
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3-4b-instruct-2507 load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen3-4B-Instruct-2507 ]]
+[[ "$MODEL_REVISION" == cdbee75f17c01a7cc42f958dc650907174af0554 ]]
+[[ "$MLNODE_CONTEXT_LENGTH" == 25000 ]]
+[[ "$MLNODE_VLLM_ARGS" == '--enable-auto-tool-choice --tool-call-parser hermes' ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
+
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen2.5-7b-instruct load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen2.5-7B-Instruct ]]
+[[ "$MODEL_REVISION" == a09a35458c702b33eeacc393d103063234e8bc28 ]]
+[[ "$MLNODE_CONTEXT_LENGTH" == 4096 ]]
+[[ "$MLNODE_GPU_MEMORY_UTILIZATION" == 0.92 ]]
+[[ "$MLNODE_VLLM_ARGS" == '--enable-auto-tool-choice --tool-call-parser hermes' ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
+
+GDC_RELEASE_PROFILE=v2026.07.23 GDC_MODEL_PROFILE=qwen3.8-27b load_profiles
+[[ "$MODEL_ID" == Qwen/Qwen3.8-27B ]]
+[[ "$MODEL_REVISION" == 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0 ]]
+[[ "$MLNODE_CONTEXT_LENGTH" == 32768 ]]
+[[ -z "$MLNODE_VLLM_ARGS" ]]
+[[ "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]]
 
 [[ -r "$ROOT/profiles/releases/v2026.08.13.lock" ]]
 [[ -r "$ROOT/profiles/releases/v2026.08.13.retired" ]]

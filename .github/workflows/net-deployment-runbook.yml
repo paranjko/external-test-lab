@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'net-deployment-runbook/**'
+      - 'model/**'
       - 'broker-ops/**'
       - 'schema/**'
       - 'bootstrap/**'
@@ -23,6 +24,7 @@ on:
       - synchronize
     paths:
       - 'net-deployment-runbook/**'
+      - 'model/**'
       - 'broker-ops/**'
       - 'schema/**'
       - 'bootstrap/**'

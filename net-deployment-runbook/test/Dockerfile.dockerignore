@@ -1,6 +1,8 @@
 **
 !net-deployment-runbook/
 !net-deployment-runbook/**
+!model/
+!model/*.lock
 !schema/
 !schema/*.schema.json
 !bootstrap/

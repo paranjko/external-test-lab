@@ -301,10 +301,10 @@ const gatewayStatus: GatewayStateApi = (window: any).GDC_GATEWAY_STATE;
 const hostState: HostStateApi = (window: any).GDC_HOST_STATE;
 const $ = (id: string): any => document.getElementById(id);
 
-function renderModelList(models: Array<string>, title: string = ""): void {
+function renderModelList(models: Array<string>, title: string = "", emptyLabel: string = "Not reported"): void {
   const target = $("model-id");
   target.replaceChildren();
-  for (const model of models.length ? models : ["Not reported"]) {
+  for (const model of models.length ? models : [emptyLabel]) {
     const item = document.createElement("li");
     item.textContent = model;
     target.append(item);
@@ -355,8 +355,8 @@ function configureNetwork(): void {
   // leave validator membership and MLNode inventory unavailable in browsers.
   chainApiOrigin = cfg.publicBootstrap === true ? "" : chainRpcOrigin;
   $("chain-id").textContent = cfg.chainId;
-  renderModelList([cfg.model]);
-  $("model-label").textContent = "Common model";
+  renderModelList([], "Waiting for effective network model assignments");
+  $("model-label").textContent = "Allocated models";
   $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana || "#";
   $("grafana-inference").href = cfg.grafanaInference || "#";
   const source = $("network-source");
@@ -731,6 +731,10 @@ function createCard(node: SiteNode): HTMLElement {
         <span>MLNode</span>
         <ul class="mlnode-list" data-k="mlnode"></ul>
       </div>
+      <div class="metric models" data-k-row="models">
+        <span>Models</span>
+        <ul class="mlnode-list" data-k="models"></ul>
+      </div>
     </div>
   `;
   set(el, "host", node.publicHost || node.name);
@@ -742,6 +746,7 @@ function createCard(node: SiteNode): HTMLElement {
   set(el, "peers", node.mode === "skip" ? "–" : "…");
   updateSoftware(cardSoftwareInventory, node, el);
   updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, el);
+  updateNodeModels(node, el);
   updateDevShards(node, el);
   renderNodeIdentity(el, node);
   if (node.mode === "skip")
@@ -2181,34 +2186,45 @@ function networkNode(observation: any): SiteNode {
   };
 }
 
-function updatePublicModelRegistry(nodes: Array<SiteNode>): void {
-  if (!observerSnapshotMode) return;
-  const registries: Array<Array<any>> = [];
-  for (const node of nodes) {
-    const models = node.observedModelRegistry?.models;
-    if (Array.isArray(models) && models.length > 0) registries.push(models);
+function updateNodeModels(node: SiteNode, card: HTMLElement): void {
+  const target = card.querySelector('[data-k="models"]');
+  const assignment = publicChainState?.model_assignments;
+  const available = observerSnapshotMode && ["observed", "partial"].includes(assignment?.state) && Array.isArray(assignment?.groups);
+  const models = available && node.participantAddress
+    ? assignment.groups.filter((group) => group.state === "observed" &&
+      Array.isArray(group.participants) && group.participants.some((member) => member.address === node.participantAddress))
+      .map((group) => `${String(group.model_id)} ${String(group.participants.find((member) => member.address === node.participantAddress).weight)}PW`)
+    : [];
+  target.replaceChildren();
+  for (const model of models.length ? models : [available && node.participantAddress && assignment.state === "observed" ? "No allocated models" : "Not reported"]) {
+    const item = document.createElement("li");
+    item.textContent = model;
+    target.append(item);
   }
-  $("model-label").textContent = "Models";
-  if (!registries.length) {
-    renderModelList([], "No observed Host returned a valid public model registry");
+  target.title = available ? `Effective epoch ${String(assignment.epoch_index)} · PW: participant PoC weight for this model, not a serving-health check` : "Model assignments unavailable";
+}
+
+function updatePublicModelRegistry(nodes: Array<SiteNode>): void {
+  $("model-label").textContent = "Allocated models";
+  const assignment = publicChainState?.model_assignments;
+  for (const node of nodes) {
+    const card = cards.get(nodeKey(node));
+    if (card) updateNodeModels(node, card);
+  }
+  if (!observerSnapshotMode || !["observed", "partial"].includes(assignment?.state) || !Array.isArray(assignment?.groups)) {
+    renderModelList([], "Effective network model assignments unavailable");
     return;
   }
-  const initial: Array<string> = registries[0]
-    .map((model) => String(model?.id || "").trim())
-    .filter(Boolean);
-  const common: Array<string> = registries.reduce((ids: Array<string>, models: Array<any>): Array<string> => {
-    const current = new Set(models.map((model) => String(model?.id || "").trim()));
-    return ids.filter((id) => current.has(id));
-  }, initial);
-  const models = [...new Set(common)].sort((left, right) =>
-    left.localeCompare(right, undefined, { numeric: true }),
-  );
-  renderModelList(
-    models,
-    models.length
-      ? "Models reported by every observed public registry endpoint"
-      : "Observed public registry endpoints do not agree on a model list",
-  );
+  const context = `Effective epoch ${String(assignment.epoch_index)} · ${assignment.state === "partial" ? "partial data" : "observed"}`;
+  const allocated: Array<string> = [];
+  for (const group of assignment.groups) {
+    const members = group.state === "observed" && Array.isArray(group.participants) ? group.participants : null;
+    const model = String(group.model_id || "Unknown model");
+    if (members && members.length) {
+      allocated.push(model);
+    }
+  }
+  renderModelList(allocated, context, assignment.state === "partial" ? "Not reported" : "No allocated models");
 }
 
 function normalizedPublicOrigin(value: mixed): string {
@@ -2224,6 +2240,7 @@ function applyPublicChainState(chain: any): void {
   const age = Date.now() - Date.parse(String(chain?.observed_at || ""));
   publicChainState = observerSnapshotMode && chain?.state === "observed" && Number.isFinite(age) && age >= 0 && age <= 90000 ? chain : null;
   if (!publicChainState) {
+    updatePublicModelRegistry(observedNodes);
     retainedValidatorSet = null;
     validatorSetObservedAt = 0;
     markDevShardVersionsUnavailable();
@@ -2245,7 +2262,9 @@ function applyPublicChainState(chain: any): void {
   const byOrigin: Map<string, any> = new Map();
   for (const participant of participants) {
     const origin = normalizedPublicOrigin(participant?.inference_url);
-    if (origin && !byOrigin.has(origin)) byOrigin.set(origin, participant);
+    // A public URL can belong to multiple historical accounts. Never label
+    // their allocations with an arbitrary first matching Host identity.
+    if (origin) byOrigin.set(origin, byOrigin.has(origin) ? null : participant);
   }
   const hardware: Map<string, Array<any>> = new Map();
   for (const record of Array.isArray(chain.hardware_nodes) ? chain.hardware_nodes : []) {
@@ -2281,7 +2300,12 @@ function applyPublicChainState(chain: any): void {
     : null;
   cardHardwareInventory = new Map();
   for (const node of observedNodes) {
-    const participant = byOrigin.get(normalizedPublicOrigin(node.dapiUrl));
+    const validatorAddress = String(node.validatorAddress || "").toUpperCase();
+    const validator = validators.find((entry) => String(entry.address).toUpperCase() === validatorAddress);
+    const keyMatches = validator?.validator_key
+      ? participants.filter((entry) => entry.validator_key === validator.validator_key)
+      : [];
+    const participant = keyMatches.length === 1 ? keyMatches[0] : byOrigin.get(normalizedPublicOrigin(node.dapiUrl));
     node.participantAddress = String(participant?.address || "") || null;
     node.participantStatus = String(participant?.status || "") || undefined;
     node.participantKnown = Boolean(participant);
@@ -2298,6 +2322,7 @@ function applyPublicChainState(chain: any): void {
   }
   const approvals = Array.isArray(chain.approved_devshards) ? chain.approved_devshards : [];
   updateDevShardVersions(approvals);
+  updatePublicModelRegistry(observedNodes);
   renderDevShardExecution(approvals, observedNodes);
 }
 
