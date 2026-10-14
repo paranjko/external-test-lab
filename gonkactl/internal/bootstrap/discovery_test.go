@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,56 @@ type discoveryFixture struct {
 	historyReads int
 }
 
+type paginatedDiscoveryFixture struct {
+	pages int
+	calls int
+}
+
+func (f *paginatedDiscoveryFixture) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Path != chainAPI+"participant" || request.URL.Query().Get("pagination.limit") != "100" {
+		return nil, fmt.Errorf("unexpected inventory request")
+	}
+	page := 0
+	if key := request.URL.Query().Get("pagination.key"); key != "" {
+		var err error
+		page, err = strconv.Atoi(key)
+		if err != nil {
+			return nil, err
+		}
+	}
+	f.calls++
+	next := ""
+	if page+1 < f.pages {
+		next = strconv.Itoa(page + 1)
+	}
+	entries := make([]participant, 100)
+	for index := range entries {
+		entries[index] = participant{Address: fmt.Sprintf("account-%05d", page*100+index)}
+	}
+	raw, _ := json.Marshal(map[string]any{"participant": entries, "pagination": map[string]string{"next_key": next}})
+	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+}
+
+func TestDiscoveryInventoryBeyondTwoThousandRemainsBounded(t *testing.T) {
+	for _, pages := range []int{71, maxParticipantPages, maxParticipantPages + 1} {
+		fixture := &paginatedDiscoveryFixture{pages: pages}
+		transport := NewTransport()
+		transport.Client.Transport = fixture
+		view, err := transport.discoveryView(context.Background(), "https://source.test", false)
+		if pages <= maxParticipantPages {
+			if err != nil || len(view.Participants) != pages*100 || fixture.calls != pages {
+				t.Fatalf("pages=%d participants=%d calls=%d err=%v", pages, len(view.Participants), fixture.calls, err)
+			}
+		} else if err == nil || fixture.calls != maxParticipantPages {
+			t.Fatalf("unbounded or partial inventory accepted: calls=%d err=%v", fixture.calls, err)
+		}
+	}
+}
+
 func (f *discoveryFixture) RoundTrip(request *http.Request) (*http.Response, error) {
+	if f.mode == "missing-real-guardian" && strings.Contains(request.URL.Path, "/validators/gonkavaloper1") {
+		return &http.Response{StatusCode: 404, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("missing"))}, nil
+	}
 	host := strings.TrimSuffix(request.URL.Hostname(), ".test")
 	index := map[string]string{"a": "1", "b": "2", "c": "3"}[host]
 	if index == "" {
@@ -30,14 +80,23 @@ func (f *discoveryFixture) RoundTrip(request *http.Request) (*http.Response, err
 			id = strings.Repeat("4", 40)
 		}
 		key := "key-" + host
-		if f.mode == "wrong-validator-key" && host == "b" {
+		if f.mode == "full-node-rpc" && host == "b" {
 			key = "wrong"
 		}
+		if f.mode == "no-validator-key" {
+			key = ""
+		}
 		body = fmt.Sprintf(`{"result":{"node_info":{"id":%q,"network":"gonka-devnet-community","listen_addr":%q},"sync_info":{"catching_up":false,"latest_block_height":"100"},"validator_info":{"pub_key":{"value":%q}}}}`, id, "tcp://"+host+".test:5000", key)
+		if f.mode == "wrong-chain" && host == "b" {
+			body = strings.ReplaceAll(body, "gonka-devnet-community", "another-chain")
+		}
 	case path == "/chain-rpc/genesis":
 		body = `{"result":{"genesis":{"chain_id":"gonka-devnet-community"}}}`
 	case path == chainAPI+"params":
 		body = `{"params":{"genesis_guardian_params":{"guardian_addresses":["guardian-a","guardian-b"]}}}`
+		if f.mode == "three-guardians" || f.mode == "missing-staking" {
+			body = `{"params":{"genesis_guardian_params":{"guardian_addresses":["guardian-a","guardian-b","guardian-c"]}}}`
+		}
 		if f.mode == "empty-guardians" || f.mode == "missing-history" {
 			body = `{"params":{"genesis_guardian_params":{"guardian_addresses":[]}}}`
 		}
@@ -49,6 +108,9 @@ func (f *discoveryFixture) RoundTrip(request *http.Request) (*http.Response, err
 		}
 	case strings.HasPrefix(path, "/chain-api/cosmos/staking/v1beta1/validators/guardian-"):
 		guardian := strings.TrimPrefix(path, "/chain-api/cosmos/staking/v1beta1/validators/")
+		if f.mode == "missing-staking" && guardian == "guardian-c" {
+			return &http.Response{StatusCode: 404, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("missing"))}, nil
+		}
 		body = fmt.Sprintf(`{"validator":{"operator_address":%q,"consensus_pubkey":{"key":%q}}}`, guardian, "key-"+strings.TrimPrefix(guardian, "guardian-"))
 	case path == chainAPI+"participant":
 		body = `{"participant":[{"address":"account-a","inference_url":"https://a.test","validator_key":"key-a","status":"ACTIVE"},{"address":"account-b","inference_url":"https://b.test","validator_key":"key-b","status":"ACTIVE"},{"address":"account-c","inference_url":"https://c.test","validator_key":"key-c","status":"ACTIVE"}],"pagination":{"next_key":null}}`
@@ -68,6 +130,10 @@ func (f *discoveryFixture) RoundTrip(request *http.Request) (*http.Response, err
 	default:
 		return nil, fmt.Errorf("unexpected fixture path %s", path)
 	}
+	if f.mode == "missing-real-guardian" {
+		body = strings.ReplaceAll(body, "guardian-b", "gonkavaloper1vy9jt83ya7wxk8yctmfmsfmc3tpddnmk04j0jg")
+		body = strings.ReplaceAll(body, "account-b", "gonka1vy9jt83ya7wxk8yctmfmsfmc3tpddnmkn4rg99")
+	}
 	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
@@ -86,7 +152,7 @@ func discoveryDocument(t *testing.T) Document {
 }
 
 func TestGuardianAndHistoricalDiscovery(t *testing.T) {
-	for _, mode := range []string{"guardians", "changed-node-id", "empty-guardians", "missing-guardians", "missing-history", "disagreement", "wrong-validator-key"} {
+	for _, mode := range []string{"guardians", "changed-node-id", "empty-guardians", "missing-guardians", "missing-history", "disagreement", "full-node-rpc", "no-validator-key", "wrong-chain"} {
 		t.Run(mode, func(t *testing.T) {
 			transport := NewTransport()
 			fixture := &discoveryFixture{mode: mode}
@@ -94,7 +160,7 @@ func TestGuardianAndHistoricalDiscovery(t *testing.T) {
 			transport.RetryDelay = 0
 			doc := discoveryDocument(t)
 			seeds, err := transport.DiscoverSeeds(context.Background(), doc)
-			wantSuccess := mode == "guardians" || mode == "changed-node-id" || mode == "empty-guardians"
+			wantSuccess := mode == "guardians" || mode == "changed-node-id" || mode == "empty-guardians" || mode == "full-node-rpc" || mode == "no-validator-key"
 			if (err == nil) != wantSuccess {
 				t.Fatalf("seeds=%+v err=%v", seeds, err)
 			}

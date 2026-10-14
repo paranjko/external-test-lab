@@ -468,7 +468,7 @@ test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(P0A_SHARED_TES
 test-ci-layout:
 	@python3 ./scripts/test-runbook-ci.py
 
-test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-bootstrap-monitor test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
+test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 
 test-ci-contracts: test-command-dependency-contract test-devshard-release test-devshard-artifacts test-host-models
 	@bash ./scripts/test-node-container-lending.sh
@@ -725,29 +725,16 @@ test-recovery-contract: test-recover-incident
 	@./scripts/test-network-recovery-contract.sh
 
 .PHONY: test-recover-incident
-.PHONY: bootstrap-monitor-dependencies bootstrap-monitor bootstrap-monitor-notify test-bootstrap-monitor
+.PHONY: bootstrap-schema-dependencies
 
-bootstrap_monitor_report ?= $(CURDIR)/.data/bootstrap-monitor/report.json
-bootstrap_monitor_base_url ?= https://gonka-dev.net
-bootstrap_monitor_release_dir ?= $(CURDIR)/../bootstrap
-
-bootstrap-monitor-dependencies:
+bootstrap-schema-dependencies:
 	@python3 -m pip install --disable-pip-version-check jsonschema==4.23.0
-
-bootstrap-monitor:
-	@python3 ./scripts/monitor-network-bootstrap.py check --report "$(bootstrap_monitor_report)" --base-url "$(bootstrap_monitor_base_url)" --release-dir "$(bootstrap_monitor_release_dir)"
-
-bootstrap-monitor-notify:
-	@python3 ./scripts/monitor-network-bootstrap.py notify --report "$(bootstrap_monitor_report)"
-
-test-bootstrap-monitor:
-	@python3 ./scripts/test-monitor-network-bootstrap.py
 
 .PHONY: bootstrap-publication-dependencies test-bootstrap-publication test-network-bootstrap test-core-release-profile prepare-bootstrap-release publish-bootstrap-release
 bootstrap_release_dir ?= $(CURDIR)/.data/bootstrap-release
 bootstrap_revision ?= $(shell git rev-parse HEAD)
 
-bootstrap-publication-dependencies: bootstrap-monitor-dependencies
+bootstrap-publication-dependencies: bootstrap-schema-dependencies
 	@command -v ssh >/dev/null && command -v rsync >/dev/null || { echo 'Install openssh-client and rsync on the publication runner' >&2; exit 2; }
 
 test-network-bootstrap:

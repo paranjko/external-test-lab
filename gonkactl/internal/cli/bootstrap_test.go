@@ -23,6 +23,8 @@ func TestBootstrapCLIInvalidInputsAndJSONFailure(t *testing.T) {
 		report bool
 	}{
 		{[]string{"bootstrap", "validate"}, 2, false},
+		{[]string{"bootstrap", "validate", "fixture", "--policy", "typo"}, 2, false},
+		{[]string{"bootstrap", "update", "fixture", directory, "--policy", "typo"}, 2, false},
 		{[]string{"bootstrap", "validate", "../escape", "--path", directory}, 2, false},
 		{[]string{"bootstrap", "validate", "fixture", "--path", directory, "--compare-published", directory}, 2, false},
 		{[]string{"bootstrap", "validate", "fixture", "--path", directory, "--timeout", "0s"}, 2, false},

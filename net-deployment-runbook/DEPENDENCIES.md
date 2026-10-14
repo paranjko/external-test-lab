@@ -54,6 +54,11 @@ and rsync. One-time root setup additionally uses the existing Docker Compose
 installation and the system's `getent` and `runuser`; delivery never uses sudo
 on the destination server.
 The publication tests replace SSH and rsync with local fixtures.
+The bootstrap monitor uses the public gonkactl installer and the installed
+Go CLI, not Python/jsonschema. Its Ubuntu composite Action uses the existing
+Bash, Make, curl, jq, tar and SHA-256 command baseline for installation and
+GitHub/Telegram transport. Native Go tests cover validation; Action transport
+tests mock external writes and are part of `make -C gonkactl check`.
 The separate `test-bootstrap-publisher-ownership` target requires Linux root
 and the standard `nobody` account. GitHub-hosted CI invokes it with sudo; local
 checks can run in a disposable root container. It uses only Python's standard

@@ -1,0 +1,44 @@
+name: Validate network bootstraps
+description: Install gonkactl through the public user path and validate one network
+inputs:
+  chain-id:
+    description: Network chain ID
+    required: true
+  inventory:
+    description: Canonical network descriptor directory, relative to the checkout
+    default: bootstrap
+  report:
+    description: Native CLI report path, relative to the checkout
+    default: net-deployment-runbook/.data/bootstrap-monitor/report.json
+  timeout:
+    description: Native CLI per-request timeout (at most 1m)
+    default: '10s'
+  origin:
+    description: Bootstrap publication origin
+    default: https://gonka-dev.net
+outputs:
+  failed:
+    description: Whether any network or execution check failed
+    value: ${{ steps.check.outputs.failed }}
+  report-path:
+    description: Native report path supplied by the caller
+    value: ${{ steps.check.outputs.report-path }}
+runs:
+  using: composite
+  steps:
+    - name: Install verified pinned gonkactl
+      id: install
+      shell: bash
+      run: make -f .github/actions/gonkactl-bootstrap/Makefile install
+    - name: Validate network and retain the native report
+      id: check
+      if: ${{ always() }}
+      shell: bash
+      env:
+        BOOTSTRAP_BINARY: ${{ steps.install.outputs.binary-path || '/nonexistent/gonkactl' }}
+        BOOTSTRAP_CHAIN_ID: ${{ inputs.chain-id }}
+        BOOTSTRAP_INVENTORY: ${{ inputs.inventory }}
+        BOOTSTRAP_REPORT: ${{ inputs.report }}
+        BOOTSTRAP_TIMEOUT: ${{ inputs.timeout }}
+        BOOTSTRAP_ORIGIN: ${{ inputs.origin }}
+      run: make -f .github/actions/gonkactl-bootstrap/Makefile validate

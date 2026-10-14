@@ -54,6 +54,7 @@ func TestValidateLocalPublishedAndStalePublication(t *testing.T) {
 				}
 				fmt.Fprint(w, `{"result":{"genesis":`+genesis+`}}`)
 			case "/v1/participants":
+				t.Error("validation must not query application health")
 				if failure == "api" {
 					fmt.Fprint(w, `{"participants":null}`)
 					return
@@ -99,7 +100,7 @@ func TestValidateLocalPublishedAndStalePublication(t *testing.T) {
 				t.Fatalf("report=%+v error=%v", report, err)
 			}
 			result := report.Results[0]
-			wantOK := mode == "local" || mode == "published" || mode == "compare"
+			wantOK := mode == "local" || mode == "published" || mode == "compare" || mode == "api"
 			if result.OK != wantOK {
 				t.Fatalf("result=%+v", result)
 			}
@@ -114,12 +115,15 @@ func TestValidateLocalPublishedAndStalePublication(t *testing.T) {
 					failedStages[check.Stage]++
 				}
 			}
-			for _, stage := range []string{"rpc", "genesis", "p2p", "api"} {
+			for _, stage := range []string{"rpc", "genesis", "p2p"} {
 				if stages[stage] != 2 {
 					t.Fatalf("failure skipped independent %s checks: %+v", stage, result)
 				}
 			}
-			if mode == "rpc" || mode == "genesis" || mode == "api" {
+			if stages["api"] != 0 || stages["block-progress"] != 0 {
+				t.Fatal("network health leaked into bootstrap validation")
+			}
+			if mode == "rpc" || mode == "genesis" {
 				if failedStages[mode] != 2 || len(failedStages) != 1 {
 					t.Fatalf("incorrect failure aggregation: %+v", result)
 				}

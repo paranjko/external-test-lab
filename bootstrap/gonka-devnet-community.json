@@ -12,7 +12,7 @@
       "api": "https://node0.gonka-dev.net"
     },
     {
-      "node_id": "0f955d2e5ff3bdeabf04d91b5d590dc902aae4d0",
+      "node_id": "0c1a80e2505c3415586429d66a05f637dc91faa5",
       "rpc": "https://node1.gonka-dev.net/chain-rpc",
       "p2p": "tcp://node1.gonka-dev.net:5000",
       "api": "https://node1.gonka-dev.net"
@@ -24,10 +24,22 @@
       "api": "https://node4.gonka-dev.net"
     },
     {
-      "node_id": "7326a7861d5430ff11d6e76e643e7acfabe6e9c4",
-      "rpc": "https://node7.gonka-dev.net/chain-rpc",
-      "p2p": "tcp://node7.gonka-dev.net:5000",
-      "api": "https://node7.gonka-dev.net"
+      "node_id": "bf02a1d152e42778fdc2d73a1d6e7437da9a3db3",
+      "rpc": "https://node5.gonka-dev.net/chain-rpc",
+      "p2p": "tcp://node5.gonka-dev.net:5000",
+      "api": "https://node5.gonka-dev.net"
+    },
+    {
+      "node_id": "b8be91be35b7396ec09aed41ab599c52721e1a42",
+      "rpc": "https://node6.gonka-dev.net/chain-rpc",
+      "p2p": "tcp://node6.gonka-dev.net:5000",
+      "api": "https://node6.gonka-dev.net"
+    },
+    {
+      "node_id": "d38fe39dc01371b4b8f870d2747bb3547e1fd7d6",
+      "rpc": "https://node8.gonka-dev.net/chain-rpc",
+      "p2p": "tcp://node8.gonka-dev.net:5000",
+      "api": "https://node8.gonka-dev.net"
     }
   ],
   "brokers": [
@@ -57,20 +69,6 @@
       ]
     },
     "components": {
-      "node": {
-        "version": "0.2.16-post1",
-        "image": "ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112",
-        "commit": "136041c81ea8ff38e7620d76af66a7c7fe7eec50",
-        "upgrade": {
-          "name": "v0.2.16",
-          "artifact": {
-            "url": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/inferenced-amd64.zip",
-            "sha256": "d2ef13374fb15518a02ae5fac83d139d66fb79a8c93d97f4e78b43ce30e14f98",
-            "format": "zip",
-            "executable": "inferenced"
-          }
-        }
-      },
       "api": {
         "version": "0.2.16-post1",
         "image": "ghcr.io/product-science/api:0.2.15-post3@sha256:3f81b7a9dfac66690e4a934a916662b248f20838dd8f7b47f1863fd3c5c5cd9c",
@@ -85,29 +83,59 @@
           }
         }
       },
-      "tmkms": {
+      "bridge": {
         "version": "0.2.15",
-        "image": "ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21"
+        "image": "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d"
       },
-      "mlnode": {
-        "version": "3.0.16",
-        "image": "ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1"
+      "caddy": {
+        "version": "2.11.4-alpine",
+        "image": "caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
       },
-      "payload-postgres": {
-        "version": "16.9-bookworm",
-        "image": "postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94"
+      "cadvisor": {
+        "version": "v0.54.1",
+        "image": "gcr.io/cadvisor/cadvisor:v0.54.1@sha256:bc8acf1ad463294f25f3ad34262bc524cb9ec8401d1442953045d59fb8e9119a"
       },
       "edge-api": {
         "version": "0.2.15",
         "image": "ghcr.io/product-science/edge-api:0.2.15@sha256:4f98b337ea837d711bdd7e0d0e3172a0034f37a5f7fb9764251b7155bb727025"
       },
-      "versiond": {
-        "version": "0.2.15-devshard-v5",
-        "image": "ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5@sha256:d772b89046d794eed8f00e6630777911779b0650e436fae190171eef273b050c"
+      "explorer": {
+        "version": "11a6fca78c0de8acd58f6cb88ca9bc17704d83c4b9b25d7c8470520a1062a003",
+        "image": "ghcr.io/product-science/explorer@sha256:11a6fca78c0de8acd58f6cb88ca9bc17704d83c4b9b25d7c8470520a1062a003"
       },
-      "versiond-router": {
-        "version": "0.2.15-devshard-v5",
-        "image": "ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5@sha256:b90ccca4c4c4c9979a282755e69a2f4ebac93e312b0bc4ea7f86d11f08021092"
+      "grafana": {
+        "version": "13.1.0",
+        "image": "grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63"
+      },
+      "inference-proxy": {
+        "version": "1.28.0",
+        "image": "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609"
+      },
+      "mlnode": {
+        "version": "3.0.16",
+        "image": "ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1"
+      },
+      "node": {
+        "version": "0.2.16-post1",
+        "image": "ghcr.io/product-science/inferenced:0.2.15@sha256:b9ef3af7b89cae7c5c5dd28dc207e5cdff9db6cfeb2cb33cd7bd2d73893bb112",
+        "commit": "136041c81ea8ff38e7620d76af66a7c7fe7eec50",
+        "upgrade": {
+          "name": "v0.2.16",
+          "artifact": {
+            "url": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/inferenced-amd64.zip",
+            "sha256": "d2ef13374fb15518a02ae5fac83d139d66fb79a8c93d97f4e78b43ce30e14f98",
+            "format": "zip",
+            "executable": "inferenced"
+          }
+        }
+      },
+      "node-exporter": {
+        "version": "v1.9.1",
+        "image": "quay.io/prometheus/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a"
+      },
+      "payload-postgres": {
+        "version": "16.9-bookworm",
+        "image": "postgres:16.9-bookworm@sha256:253815cf7579ffa05e1673d92e78d37273e61be0e4414e9a1449337d7925be94"
       },
       "proxy": {
         "version": "0.2.15-devshard-v5",
@@ -117,33 +145,17 @@
         "version": "0.2.15-devshard-v5",
         "image": "ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5@sha256:59e374aee755964a8c79447ad5ed076b98a352204170488493327cf37a7232af"
       },
-      "explorer": {
-        "version": "11a6fca78c0de8acd58f6cb88ca9bc17704d83c4b9b25d7c8470520a1062a003",
-        "image": "ghcr.io/product-science/explorer@sha256:11a6fca78c0de8acd58f6cb88ca9bc17704d83c4b9b25d7c8470520a1062a003"
-      },
-      "inference-proxy": {
-        "version": "1.28.0",
-        "image": "nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609"
-      },
-      "caddy": {
-        "version": "2.11.4-alpine",
-        "image": "caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
-      },
-      "grafana": {
-        "version": "13.1.0",
-        "image": "grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63"
-      },
-      "node-exporter": {
-        "version": "v1.9.1",
-        "image": "quay.io/prometheus/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a"
-      },
-      "cadvisor": {
-        "version": "v0.54.1",
-        "image": "gcr.io/cadvisor/cadvisor:v0.54.1@sha256:bc8acf1ad463294f25f3ad34262bc524cb9ec8401d1442953045d59fb8e9119a"
-      },
-      "bridge": {
+      "tmkms": {
         "version": "0.2.15",
-        "image": "ghcr.io/product-science/bridge:0.2.15@sha256:ac01165eb8eb60dbafe5d1e060a11b474efb44146b12f308bef6153b55a2c22d"
+        "image": "ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15@sha256:c3b6c4aaa73e93944dda4f08db8edd1a48544ad35d740cfca2dd8f3d9835aa21"
+      },
+      "versiond": {
+        "version": "0.2.15-devshard-v5",
+        "image": "ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5@sha256:d772b89046d794eed8f00e6630777911779b0650e436fae190171eef273b050c"
+      },
+      "versiond-router": {
+        "version": "0.2.15-devshard-v5",
+        "image": "ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5@sha256:b90ccca4c4c4c9979a282755e69a2f4ebac93e312b0bc4ea7f86d11f08021092"
       }
     },
     "operator_cli": {
