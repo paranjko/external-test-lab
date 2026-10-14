@@ -1,8 +1,14 @@
-# gonkactl 1.0.0-alpha.3
+# gonkactl 1.0.0-alpha.4
 
-This alpha adds native bootstrap maintenance to the standalone CLI.
+Alpha.4 adds explicit bootstrap policies: `--policy auto|strict|testnet|devnet`.
+Auto chooses by chain name. Testnet update accepts a reset only after distinct
+RPC endpoints agree on the requested chain ID and Genesis, and testnet validation
+allows stationary heights. Devnet update excludes unavailable guardians with
+warnings and fills a shortfall to two healthy seeds using corroborated historical
+participation. Healthy guardians keep priority. Failed final checks preserve the
+existing files. Validation remains read-only and does not hide declared seed failures.
 
-Alpha.3 fixes discovery on networks with more than 2,000 participants. The
+The previous alpha.3 expanded discovery on networks with more than 2,000 participants. The
 inventory now accepts up to 100 pages of 100 entries and still refuses an
 incomplete inventory. Candidate identity errors identify the affected public
 RPC. Public RPC endpoints may be separate non-validator full nodes; their

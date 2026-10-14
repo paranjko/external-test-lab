@@ -12,6 +12,7 @@ import (
 )
 
 type UpdateOptions struct {
+	Policy                               string
 	ChainID, Directory, Profile, BaseURL string
 	ProgressInterval                     time.Duration
 }
@@ -79,6 +80,10 @@ func (t *Transport) Update(ctx context.Context, options UpdateOptions) (Report, 
 	if !chainName.MatchString(options.ChainID) || options.Directory == "" {
 		return report, fmt.Errorf("invalid bootstrap output target")
 	}
+	policy, err := ResolvePolicy(options.Policy, options.ChainID)
+	if err != nil {
+		return report, err
+	}
 	if options.ProgressInterval < 0 || options.ProgressInterval > time.Minute {
 		return report, fmt.Errorf("invalid observation interval")
 	}
@@ -105,7 +110,7 @@ func (t *Transport) Update(ctx context.Context, options UpdateOptions) (Report, 
 	}
 	defer store.Close()
 	address := strings.TrimRight(options.BaseURL, "/") + "/" + options.ChainID + "/bootstrap.json"
-	result := Result{ChainID: options.ChainID, BootstrapURL: filepath.Join(options.Directory, options.ChainID+".json"), Checks: []Check{}}
+	result := Result{Policy: policy, ChainID: options.ChainID, BootstrapURL: filepath.Join(options.Directory, options.ChainID+".json"), Checks: []Check{}}
 	finish := func() (Report, error) {
 		result.complete()
 		report.Results = append(report.Results, result)
@@ -164,7 +169,14 @@ func (t *Transport) Update(ctx context.Context, options UpdateOptions) (Report, 
 		if base.ChainID == "gonka-devnet-community" && !declared {
 			return fmt.Errorf("DevNet update requires a complete software recipe")
 		}
-		seeds, err := t.DiscoverSeeds(ctx, base)
+		if policy == "testnet" {
+			refreshed, err := t.refreshTestnet(ctx, base)
+			if err == nil {
+				base = refreshed
+			}
+			return err
+		}
+		seeds, err := t.discoverSeeds(ctx, base, policy == "devnet", options.ProgressInterval, &result)
 		if err == nil {
 			base.Seeds = seeds
 		}
@@ -173,7 +185,7 @@ func (t *Transport) Update(ctx context.Context, options UpdateOptions) (Report, 
 	if !result.Checks[len(result.Checks)-1].OK {
 		return finish()
 	}
-	t.CheckSeeds(ctx, base, options.ProgressInterval, &result)
+	t.checkSeeds(ctx, base, options.ProgressInterval, policy == "testnet", &result)
 	t.CheckRuntimeSoftware(ctx, base, &result)
 	t.CheckImages(ctx, base, &result)
 	result.complete()

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const chainAPI = "/chain-api/productscience/inference/inference/"
@@ -65,6 +66,10 @@ func (t *Transport) matchingGenesis(ctx context.Context, rpc string, doc Documen
 }
 
 func (t *Transport) discoveryView(ctx context.Context, origin string, guardians bool) (discoveryView, error) {
+	return t.discoveryViewPolicy(ctx, origin, guardians, false)
+}
+
+func (t *Transport) discoveryViewPolicy(ctx context.Context, origin string, guardians, omitUnavailable bool) (discoveryView, error) {
 	view := discoveryView{Guardians: []string{}, Participants: []participant{}, GuardianKeys: map[string]string{}}
 	if guardians {
 		var state struct {
@@ -92,7 +97,14 @@ func (t *Transport) discoveryView(ctx context.Context, origin string, guardians 
 					ConsensusPubkey struct{ Key string } `json:"consensus_pubkey"`
 				}
 			}
-			if err := t.query(ctx, origin+"/chain-api/cosmos/staking/v1beta1/validators/"+url.PathEscape(address), &response); err != nil {
+			raw, err := t.Get(ctx, origin+"/chain-api/cosmos/staking/v1beta1/validators/"+url.PathEscape(address), GenesisLimit)
+			if err != nil {
+				if omitUnavailable && ctx.Err() == nil {
+					continue
+				}
+				return view, err
+			}
+			if err := DecodeJSON(raw, &response); err != nil {
 				return view, err
 			}
 			if response.Validator.OperatorAddress != address || response.Validator.ConsensusPubkey.Key == "" {
@@ -145,6 +157,10 @@ func (t *Transport) discoveryView(ctx context.Context, origin string, guardians 
 // agree on chain identity and the complete selection inputs. An unavailable
 // guardian response never turns into an empty-guardian fallback.
 func (t *Transport) discoverySources(ctx context.Context, doc Document) ([]string, discoveryView, error) {
+	return t.discoverySourcesPolicy(ctx, doc, false)
+}
+
+func (t *Transport) discoverySourcesPolicy(ctx context.Context, doc Document, omitUnavailable bool) ([]string, discoveryView, error) {
 	origins := []string{}
 	seenHosts := map[string]bool{}
 	seenIDs := map[string]bool{}
@@ -164,7 +180,7 @@ func (t *Transport) discoverySources(ctx context.Context, doc Document) ([]strin
 			continue
 		}
 		origin := parsed.Scheme + "://" + parsed.Host
-		view, err := t.discoveryView(ctx, origin, doc.ChainID == "gonka-devnet-community")
+		view, err := t.discoveryViewPolicy(ctx, origin, omitUnavailable || doc.ChainID == "gonka-devnet-community", omitUnavailable)
 		if err != nil {
 			continue
 		}
@@ -220,9 +236,6 @@ func rankHistory(participants []participant, epochs [][]weightedParticipant, ret
 		}
 		return a.Address < b.Address
 	})
-	if len(candidates) < 2 {
-		return nil, fmt.Errorf("fewer than two participants qualified in at least six of eight completed epochs")
-	}
 	return candidates, nil
 }
 
@@ -307,13 +320,21 @@ func (t *Transport) candidateSeed(ctx context.Context, p participant, chain stri
 // on-chain participation, not account age or a one-off HTTP success. Winners
 // still require the complete online validation before any filesystem write.
 func (t *Transport) DiscoverSeeds(ctx context.Context, doc Document) ([]Seed, error) {
-	origins, view, err := t.discoverySources(ctx, doc)
+	return t.discoverSeeds(ctx, doc, false, 0, &Result{})
+}
+
+func (t *Transport) discoverSeeds(ctx context.Context, doc Document, omitUnavailable bool, interval time.Duration, result *Result) ([]Seed, error) {
+	origins, view, err := t.discoverySourcesPolicy(ctx, doc, omitUnavailable)
 	if err != nil {
 		return nil, err
 	}
 	candidates := []participant{}
 	if len(view.Guardians) > 0 {
 		for _, guardian := range view.Guardians {
+			if omitUnavailable && view.GuardianKeys[guardian] == "" {
+				result.Warnings = append(result.Warnings, "excluded guardian "+guardian+": staking identity unavailable on agreed sources")
+				continue
+			}
 			matches := []participant{}
 			for _, p := range view.Participants {
 				if p.ValidatorKey == view.GuardianKeys[guardian] {
@@ -321,6 +342,10 @@ func (t *Transport) DiscoverSeeds(ctx context.Context, doc Document) ([]Seed, er
 				}
 			}
 			if len(matches) != 1 {
+				if omitUnavailable && len(matches) == 0 {
+					result.Warnings = append(result.Warnings, "excluded guardian "+guardian+": registered participant unavailable")
+					continue
+				}
 				return nil, fmt.Errorf("guardian has no unique registered participant identity")
 			}
 			candidates = append(candidates, matches[0])
@@ -330,18 +355,112 @@ func (t *Transport) DiscoverSeeds(ctx context.Context, doc Document) ([]Seed, er
 		if err != nil {
 			return nil, err
 		}
+		if len(candidates) < 2 {
+			return nil, fmt.Errorf("fewer than two participants qualified in at least six of eight completed epochs")
+		}
 		candidates = candidates[:2]
 	}
-	if len(candidates) < 2 {
+	if len(candidates) < 2 && !omitUnavailable {
 		return nil, fmt.Errorf("guardian selection contains fewer than two participants")
 	}
 	seeds := []Seed{}
 	for _, p := range candidates {
 		seed, err := t.candidateSeed(ctx, p, doc.ChainID)
 		if err != nil {
+			if omitUnavailable && len(view.Guardians) > 0 && ctx.Err() == nil {
+				result.Warnings = append(result.Warnings, "excluded guardian participant "+p.Address+": "+err.Error())
+				continue
+			}
 			return nil, err
 		}
+		if omitUnavailable && len(view.Guardians) > 0 {
+			probe := doc
+			probe.Seeds = []Seed{seed}
+			health := Result{}
+			t.CheckSeeds(ctx, probe, interval, &health)
+			health.complete()
+			if !health.OK {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				for _, check := range health.Checks {
+					if !check.OK {
+						result.Warnings = append(result.Warnings, "excluded guardian participant "+p.Address+": "+check.Stage+": "+check.Error)
+					}
+				}
+				continue
+			}
+		}
 		seeds = append(seeds, seed)
+	}
+	if omitUnavailable && len(view.Guardians) > 0 && len(seeds) < 2 {
+		ranked, err := t.historicalCandidates(ctx, origins, view, doc)
+		if err != nil {
+			return nil, err
+		}
+		guardianKeys := map[string]bool{}
+		for _, key := range view.GuardianKeys {
+			guardianKeys[key] = true
+		}
+		for _, p := range ranked {
+			if guardianKeys[p.ValidatorKey] {
+				continue
+			}
+			// Cosmos account/operator addresses share the Bech32 payload. An
+			// unavailable staking lookup must not re-admit that guardian as a
+			// historical non-guardian. This comparison only excludes candidates;
+			// it is not an identity or checksum attestation.
+			guardianAccount := false
+			for _, guardian := range view.Guardians {
+				if strings.HasPrefix(guardian, "gonkavaloper1") && strings.HasPrefix(p.Address, "gonka1") {
+					operator := strings.TrimPrefix(guardian, "gonkavaloper1")
+					account := strings.TrimPrefix(p.Address, "gonka1")
+					if len(operator) > 6 && len(operator) == len(account) && operator[:len(operator)-6] == account[:len(account)-6] {
+						guardianAccount = true
+					}
+				}
+			}
+			if guardianAccount {
+				continue
+			}
+			seed, err := t.candidateSeed(ctx, p, doc.ChainID)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				result.Warnings = append(result.Warnings, "skipped historical participant "+p.Address+": "+err.Error())
+				continue
+			}
+			duplicate := false
+			for _, retained := range seeds {
+				if seed.NodeID == retained.NodeID || seed.RPC == retained.RPC || seed.P2P == retained.P2P {
+					duplicate = true
+				}
+			}
+			if duplicate {
+				continue
+			}
+			probe := doc
+			probe.Seeds = []Seed{seed}
+			health := Result{}
+			t.CheckSeeds(ctx, probe, interval, &health)
+			health.complete()
+			if !health.OK {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				result.Warnings = append(result.Warnings, "skipped historical participant "+p.Address+": online validation failed")
+				continue
+			}
+			seeds = append(seeds, seed)
+			result.Warnings = append(result.Warnings, "added historical participant "+p.Address+" to maintain two healthy seeds")
+			if len(seeds) == 2 {
+				break
+			}
+		}
+	}
+	if len(seeds) < 2 {
+		return nil, fmt.Errorf("fewer than two healthy seeds remain under update policy")
 	}
 	// Preserve retained endpoint order; new identities are ordered by RPC. This
 	// avoids changing first-choice ENV endpoints merely due to API enumeration.

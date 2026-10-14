@@ -21,11 +21,13 @@ type Check struct {
 }
 
 type Result struct {
-	SoftwareDeclared *bool   `json:"software_declared,omitempty"`
-	ChainID          string  `json:"chain_id"`
-	BootstrapURL     string  `json:"bootstrap_url"`
-	OK               bool    `json:"ok"`
-	Checks           []Check `json:"checks"`
+	Policy           string   `json:"policy,omitempty"`
+	Warnings         []string `json:"warnings,omitempty"`
+	SoftwareDeclared *bool    `json:"software_declared,omitempty"`
+	ChainID          string   `json:"chain_id"`
+	BootstrapURL     string   `json:"bootstrap_url"`
+	OK               bool     `json:"ok"`
+	Checks           []Check  `json:"checks"`
 }
 
 func (r *Result) check(stage, address string, operation func() error) {
@@ -109,6 +111,10 @@ func (t *Transport) status(ctx context.Context, seed Seed, chain string) (int64,
 // suppress diagnostics for the remaining seeds. It is not a whole-bootstrap
 // verdict: schema, publication and optional software checks are separate.
 func (t *Transport) CheckSeeds(ctx context.Context, doc Document, progressInterval time.Duration, result *Result) {
+	t.checkSeeds(ctx, doc, progressInterval, false, result)
+}
+
+func (t *Transport) checkSeeds(ctx context.Context, doc Document, progressInterval time.Duration, allowStationary bool, result *Result) {
 	heights := make(map[int]int64)
 	for index, seed := range doc.Seeds {
 		rpc := strings.TrimRight(seed.RPC, "/")
@@ -180,7 +186,7 @@ func (t *Transport) CheckSeeds(ctx context.Context, doc Document, progressInterv
 			if err != nil {
 				return err
 			}
-			if after <= before {
+			if after < before || (after == before && !allowStationary) {
 				return fmt.Errorf("block height did not advance")
 			}
 			return nil

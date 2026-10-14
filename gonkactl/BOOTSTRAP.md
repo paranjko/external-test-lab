@@ -2,13 +2,44 @@
 
 ## Update
 
+### Network policies
+
+Both commands accept `--policy auto|strict|testnet|devnet` (default `auto`).
+Auto matches the chain ID case-insensitively: `testnet` takes precedence over
+`devnet`; other names use strict. The effective policy is included in JSON and
+text output. Explicit strict preserves the original behavior described below.
+
+- Testnet update refreshes the identities and exact Genesis hash of the existing
+  seeds, treating a changed Genesis as a network reset. At least two distinct
+  RPC endpoints and node identities must agree on Genesis and the requested
+  chain ID. It does not require historical participation after reset. All
+  retained endpoints must pass checks. Unchanged block height is allowed;
+  height regression, catching-up and transport errors are still failures.
+- Devnet update discovers guardians and excludes those whose staking identity,
+  participant registration or current seed endpoint checks are unavailable.
+  Exclusions are reported as warnings, never silent. At least two healthy
+  seeds must remain: if fewer than two guardians pass, supplement them with
+  the highest-ranked healthy historical participants, stopping at two total
+  seeds. Unavailable historical candidates are reported and skipped. A malformed
+  staking response or ambiguous participant identity is not treated as an
+  unavailable guardian. Genesis stays pinned.
+- Strict refuses lineage changes, unavailable guardians and stationary chains.
+
+Validation never refreshes identities/Genesis or drops declared seeds. Testnet
+validation only relaxes the block-progress requirement; drift against the
+stored bootstrap still fails. Distinct endpoints may share a host on different
+ports; neither endpoint count nor agreement proves independent ownership.
+
+### Usage
+
 ```sh
 gonkactl bootstrap update gonka-devnet-community bootstrap
 gonkactl bootstrap update gonka-devnet-community bootstrap net-deployment-runbook/profiles/releases/v2026.10.06.lock --json
 ```
 
 Update creates or replaces `<chain_id>.json` and `<chain_id>.env` in the
-chosen directory. An existing JSON supplies network lineage and the software
+chosen directory. An existing JSON supplies network lineage (subject to the
+explicit testnet reset policy above) and the software
 recipe; otherwise the published bootstrap supplies them. An invalid existing
 JSON is refused, not overwritten with a guessed replacement. A missing or
 stale ENV is repaired only after the complete candidate passes validation.
@@ -19,17 +50,22 @@ Two independent existing seed sources must agree on complete discovery
 inputs. DevNet uses all current on-chain guardians, mapped through staking
 consensus keys to participants and their registered API origins. The public
 RPC may be a separate non-validator full node; its consensus key need not
-match the participant's key. An unavailable guardian
-is an error, not permission to omit it. There is no hard-coded guardian count.
-Only a confirmed empty list permits historical selection; missing parameters
-do not. Other networks use historical selection directly.
+match the participant's key. Under strict policy an unavailable guardian
+is an error; devnet policy reports and excludes unavailable guardians.
+There is no hard-coded guardian count.
+Under strict policy only a confirmed empty list permits historical selection;
+devnet also permits supplementation when fewer than two guardians are healthy.
+Missing parameters never permit fallback. Other networks use historical
+selection directly, except for the testnet reset policy described above.
 
 Historical ranking uses eight completed epoch groups, independently read
 from both sources. A participant must be ACTIVE and have positive validation
 weight in at least six groups. Rank by qualifying group count, then retained
 seed API, then account address. This measures historical participation, not
-uptime. The top two must pass current checks; a failed winner is not silently
-replaced by a lower-ranked participant. All selected seeds pass the checks
+uptime. Under strict policy the top two must pass current checks; a failed winner
+is not replaced by a lower-ranked participant. Devnet supplementation checks
+candidates in rank order and reports unavailable candidates before trying the next.
+All selected seeds pass the checks
 described below before writing.
 
 The optional profile is a **local literal lock file**, never shell code.
@@ -98,7 +134,8 @@ return a known Genesis without following that chain. Agreement between two
 distinct discovery endpoints reduces single-source errors but does not prove
 independent ownership or protect against colluding sources. Validation does
 not verify signed chain history or implement a light client. Bootstrap lineage
-remains an operator-approved trust anchor; mismatches are refused, not replaced.
+remains an operator-approved trust anchor. Strict/devnet refuse lineage changes;
+testnet update explicitly permits a reset using agreeing endpoint observations.
 
 ### Compatibility
 
@@ -115,7 +152,7 @@ embedding the existing Python monitor or its CI environment in the executable.
 | Machine-readable verdict | JSON is emitted for validation failures as well as successes |
 
 Native validation additionally checks deterministic ENV projection, sync
-status, advancing block height and every declared software image's pinned
+status, advancing block height (stationary is allowed for testnet) and every declared software image's pinned
 digest and platform. An absent software section is explicitly not applicable;
 an invalid descriptor leaves software presence unknown. Image checks read
 registry manifests and small config blobs, not image layers, and never run
@@ -129,11 +166,12 @@ additional fields and check stages. Exit codes are 0 for success, 1 for a
 failed validation report, and 2 for input or execution errors. Exit 2 need
 not produce a report and must not be interpreted as a healthy network.
 
-The future CI wrapper owns inventory traversal, per-network invocation,
-report aggregation/retention, `GITHUB_OUTPUT` and Telegram notification. It
-must continue across failed networks, handle exit 2 explicitly and notify
-once per failed network. The current workflow is unchanged in this feature;
-the new command is not a drop-in replacement for its `check`/`notify` syntax.
+The repository-local GitHub Action owns installation through the public
+`https://gonka-dev.net/ctl/` user path and per-network invocation. The workflow
+owns inventory traversal, report retention and Telegram notification. It
+continues across failed networks, handles exit 2 explicitly and notifies
+once per failed network. Validation itself is entirely in the native command;
+the deleted Python monitor's `check`/`notify` interface is not retained.
 No Python, SSH, Docker daemon or GDC environment is required by validation.
 
 `--timeout` defaults to 10 seconds per request; `--observation-window`

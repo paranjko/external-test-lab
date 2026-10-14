@@ -4,7 +4,7 @@
 set -eu
 
 main() {
-    version=${GONKACTL_VERSION:-1.0.0-alpha.3}
+    version=${GONKACTL_VERSION:-1.0.0-alpha.4}
     version=${version#v}
     case "$version" in ''|*[!0-9A-Za-z.-]*) die 'Invalid GONKACTL_VERSION';; esac
     base="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v$version"

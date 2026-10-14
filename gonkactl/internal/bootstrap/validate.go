@@ -16,6 +16,7 @@ import (
 var chainName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type ValidateOptions struct {
+	Policy            string
 	ChainID           string
 	Directory         string
 	ExpectedDirectory string
@@ -96,6 +97,10 @@ func (t *Transport) Validate(ctx context.Context, options ValidateOptions) (Repo
 	if !chainName.MatchString(options.ChainID) {
 		return report, fmt.Errorf("invalid chain ID")
 	}
+	policy, policyErr := ResolvePolicy(options.Policy, options.ChainID)
+	if policyErr != nil {
+		return report, policyErr
+	}
 	if options.Directory != "" && options.ExpectedDirectory != "" {
 		return report, fmt.Errorf("--path and --compare-published are mutually exclusive")
 	}
@@ -109,7 +114,7 @@ func (t *Transport) Validate(ctx context.Context, options ValidateOptions) (Repo
 		return report, fmt.Errorf("invalid publication origin")
 	}
 	address := strings.TrimRight(options.BaseURL, "/") + "/" + options.ChainID + "/bootstrap.json"
-	result := Result{ChainID: options.ChainID, BootstrapURL: address, Checks: []Check{}}
+	result := Result{Policy: policy, ChainID: options.ChainID, BootstrapURL: address, Checks: []Check{}}
 	var raw, env, schema, expectedJSON, expectedENV []byte
 	var err error
 	if options.ExpectedDirectory != "" {
@@ -175,7 +180,7 @@ func (t *Transport) Validate(ctx context.Context, options ValidateOptions) (Repo
 		}
 		return nil
 	})
-	t.CheckSeeds(ctx, doc, options.ProgressInterval, &result)
+	t.checkSeeds(ctx, doc, options.ProgressInterval, policy == "testnet", &result)
 	t.CheckImages(ctx, doc, &result)
 	result.complete()
 	report.Results = append(report.Results, result)
