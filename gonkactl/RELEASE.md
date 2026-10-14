@@ -1,4 +1,4 @@
-# gonkactl 1.0.0-alpha.2
+# gonkactl 1.0.0-alpha.3
 
 An experimental native CLI for Gonka deployment control.
 
@@ -13,7 +13,7 @@ This alpha adds native bootstrap maintenance. Available commands:
 - `gonkactl bootstrap validate <chain_id>`: check published bootstrap data,
   seed endpoints and pinned software images without modifying the network.
 
-See [bootstrap maintenance](https://github.com/paranjko/external-test-lab/blob/gonkactl-v1.0.0-alpha.2/gonkactl/BOOTSTRAP.md)
+See [bootstrap maintenance](https://github.com/paranjko/external-test-lab/blob/gonkactl-v1.0.0-alpha.3/gonkactl/BOOTSTRAP.md)
 for local validation, publication comparison, trust boundaries and failure reports.
 
 Host JOIN, reset, recovery and other deployment operations are not exposed.
@@ -36,4 +36,4 @@ to an absolute directory to override it. It verifies the checksum and version
 before atomically replacing the installed binary; it never edits shell files.
 Windows users can extract the ZIP directly, or use the installer in Git Bash.
 
-Source: https://github.com/paranjko/external-test-lab/tree/gonkactl-v1.0.0-alpha.2/gonkactl
+Source: https://github.com/paranjko/external-test-lab/tree/gonkactl-v1.0.0-alpha.3/gonkactl

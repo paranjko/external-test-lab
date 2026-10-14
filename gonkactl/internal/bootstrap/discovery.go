@@ -17,6 +17,10 @@ import (
 const chainAPI = "/chain-api/productscience/inference/inference/"
 const historyEpochs = 8
 
+// Mainnet already has over 7,000 participants. Keep discovery bounded while
+// allowing a complete inventory, rather than truncating trust inputs at 2,000.
+const maxParticipantPages = 100
+
 type participant struct {
 	Address      string `json:"address"`
 	API          string `json:"inference_url"`
@@ -100,7 +104,7 @@ func (t *Transport) discoveryView(ctx context.Context, origin string, guardians 
 	next := ""
 	seenPages := map[string]bool{}
 	seenAccounts := map[string]bool{}
-	for page := 0; page < 20; page++ {
+	for page := 0; page < maxParticipantPages; page++ {
 		query := url.Values{"pagination.limit": {"100"}}
 		if next != "" {
 			query.Set("pagination.key", next)
@@ -283,7 +287,7 @@ func (t *Transport) candidateSeed(ctx context.Context, p participant, chain stri
 		return seed, err
 	}
 	if status.Result.NodeInfo.Network != chain || p.ValidatorKey == "" || status.Result.ValidatorInfo.PubKey.Value != p.ValidatorKey {
-		return seed, fmt.Errorf("participant RPC does not attest its registered validator key and chain")
+		return seed, fmt.Errorf("participant RPC does not attest its registered validator key and chain: %s", seed.RPC)
 	}
 	seed.NodeID = status.Result.NodeInfo.ID
 	peer, err := endpoint(status.Result.NodeInfo.ListenAddr, "tcp")

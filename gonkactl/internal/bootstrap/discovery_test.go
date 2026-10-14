@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -14,6 +15,52 @@ import (
 type discoveryFixture struct {
 	mode         string
 	historyReads int
+}
+
+type paginatedDiscoveryFixture struct {
+	pages int
+	calls int
+}
+
+func (f *paginatedDiscoveryFixture) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Path != chainAPI+"participant" || request.URL.Query().Get("pagination.limit") != "100" {
+		return nil, fmt.Errorf("unexpected inventory request")
+	}
+	page := 0
+	if key := request.URL.Query().Get("pagination.key"); key != "" {
+		var err error
+		page, err = strconv.Atoi(key)
+		if err != nil {
+			return nil, err
+		}
+	}
+	f.calls++
+	next := ""
+	if page+1 < f.pages {
+		next = strconv.Itoa(page + 1)
+	}
+	entries := make([]participant, 100)
+	for index := range entries {
+		entries[index] = participant{Address: fmt.Sprintf("account-%05d", page*100+index)}
+	}
+	raw, _ := json.Marshal(map[string]any{"participant": entries, "pagination": map[string]string{"next_key": next}})
+	return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+}
+
+func TestDiscoveryInventoryBeyondTwoThousandRemainsBounded(t *testing.T) {
+	for _, pages := range []int{71, maxParticipantPages, maxParticipantPages + 1} {
+		fixture := &paginatedDiscoveryFixture{pages: pages}
+		transport := NewTransport()
+		transport.Client.Transport = fixture
+		view, err := transport.discoveryView(context.Background(), "https://source.test", false)
+		if pages <= maxParticipantPages {
+			if err != nil || len(view.Participants) != pages*100 || fixture.calls != pages {
+				t.Fatalf("pages=%d participants=%d calls=%d err=%v", pages, len(view.Participants), fixture.calls, err)
+			}
+		} else if err == nil || fixture.calls != maxParticipantPages {
+			t.Fatalf("unbounded or partial inventory accepted: calls=%d err=%v", fixture.calls, err)
+		}
+	}
 }
 
 func (f *discoveryFixture) RoundTrip(request *http.Request) (*http.Response, error) {

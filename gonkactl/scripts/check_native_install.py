@@ -26,7 +26,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 case "$url" in
-  https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.2/*) ;;
+  https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.3/*) ;;
   *) exit 71;;
 esac
 cp "$TEST_ASSETS/${url##*/}" "$out"

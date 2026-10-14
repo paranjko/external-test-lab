@@ -11,7 +11,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT.parent / "net-deployment-runbook/04-ops/site/ctl/install.sh"
-VERSION = "1.0.0-alpha.2"
+VERSION = "1.0.0-alpha.3"
 
 
 class InstallerTests(unittest.TestCase):

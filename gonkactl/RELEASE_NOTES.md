@@ -1,6 +1,11 @@
-# gonkactl 1.0.0-alpha.2
+# gonkactl 1.0.0-alpha.3
 
 This alpha adds native bootstrap maintenance to the standalone CLI.
+
+Alpha.3 fixes discovery on networks with more than 2,000 participants. The
+inventory now accepts up to 100 pages of 100 entries and still refuses an
+incomplete inventory. Candidate identity errors identify the affected public
+RPC. Selection, guardian and Genesis trust requirements remain unchanged.
 
 ## Available capabilities
 
