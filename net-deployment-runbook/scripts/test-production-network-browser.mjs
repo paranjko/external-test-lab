@@ -125,21 +125,27 @@ try {
   assert.match(current.node,/VALIDATING/);
   assert.match(current.node,/Fixture GPU/);
   assert.equal(current.chain,"observed");
-  const modelText = () => evaluate("document.querySelector('#model-assignment-rows').textContent");
+  const modelText = () => evaluate("document.querySelector('#nodes [data-k=\"models\"]').textContent");
+  assert.equal(await evaluate("document.querySelector('#model-assignments')"), null);
   assert.equal(await evaluate("document.querySelector('#model-id').textContent"), "Qwen/Allocated");
-  assert.match(await modelText(), /Qwen\/Allocatednode0: gonka1fixtureaccount72/);
-  assert.match(await modelText(), /Qwen\/EmptyNo allocated participants/);
-  assert.match(await modelText(), /Qwen\/UnavailableAllocation unavailable/);
+  assert.equal(await modelText(), "Qwen/Allocated");
+  await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{...publicChainState.model_assignments,
+    groups:[...publicChainState.model_assignments.groups,{model_id:"Qwen/Second",state:"observed",participants:[{address:"gonka1fixtureaccount",weight:"1"}]}]}})`);
+  assert.equal(await evaluate("document.querySelectorAll('#nodes [data-k=\"models\"] li').length"), 2, "one participant can have multiple models");
+  assert.equal(await modelText(), "Qwen/AllocatedQwen/Second");
   assert.doesNotMatch(await modelText(), /old-model|fixture-model/, "configured and registered models must not replace effective allocations");
   await evaluate(`applyPublicChainState({...publicChainState,participants:[...publicChainState.participants,
     {address:"gonka1historical",inference_url:"https://node0.gonka-dev.net",status:"INACTIVE"}]})`);
-  assert.doesNotMatch(await modelText(), /node0:/, "ambiguous historical Host URLs must not invent an account mapping");
-  assert.match(await modelText(), /gonka1fixtureaccount/, "allocation remains visible by authoritative account address");
+  assert.equal(await modelText(), "Not reported", "unknown participant identity must not invent a model assignment");
   await evaluate(`applyPublicChainState({...publicChainState,
     validators:[{address:"${validator}",voting_power:"72",validator_key:"current-key"}],
     participants:[{address:"gonka1historical",inference_url:"https://node0.gonka-dev.net",status:"INACTIVE",validator_key:"old-key"},
       {address:"gonka1fixtureaccount",inference_url:"https://node0.gonka-dev.net",status:"ACTIVE",validator_key:"current-key"}]})`);
-  assert.match(await modelText(), /node0: gonka1fixtureaccount/, "current consensus key must disambiguate historical Host URLs");
+  assert.equal(await modelText(), "Qwen/AllocatedQwen/Second", "current consensus key must disambiguate historical Host URLs");
+  await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{state:"observed",epoch_index:"6",groups:[]}})`);
+  assert.equal(await modelText(), "No allocated models");
+  await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{state:"partial",epoch_index:"6",groups:[]}})`);
+  assert.equal(await modelText(), "Not reported");
   await evaluate("networkSnapshot=null; refresh()");
   assert.match(current.node,/Synced/,"chain snapshot supplies the sync reference without browser RPC routes");
   assert(requests.includes("/status/gateway/v1/status"),"production gateway must remain enabled");
@@ -166,7 +172,7 @@ try {
   await evaluate("refresh()");
   current=JSON.parse(await state());
   assert.equal(current.chain,undefined,"stale chain observations must not retain effective membership");
-  assert.equal(await modelText(), "", "stale allocations must disappear");
+  assert.equal(await modelText(), "Not reported", "stale allocations must disappear");
   assert.equal(current.hidden,true);
   observation="current";
   await evaluate("refresh()");
@@ -176,7 +182,7 @@ try {
   current=JSON.parse(await state());
   assert.equal(current.source,"NETWORK OBSERVER UPDATE REQUIRED");
   assert.equal(current.chain,undefined,"legacy observations cannot retain prior chain evidence");
-  assert.equal(await modelText(), "", "legacy snapshots cannot fall back to model catalogs");
+  assert.equal(await modelText(), "Not reported", "legacy snapshots cannot fall back to model catalogs");
   observation="current";
   await evaluate("cfg.publicBootstrap=true; configureNetwork(); refresh()");
   current=JSON.parse(await state());

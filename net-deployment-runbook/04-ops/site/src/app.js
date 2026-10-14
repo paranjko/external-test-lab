@@ -731,6 +731,10 @@ function createCard(node: SiteNode): HTMLElement {
         <span>MLNode</span>
         <ul class="mlnode-list" data-k="mlnode"></ul>
       </div>
+      <div class="metric models" data-k-row="models">
+        <span>Models</span>
+        <ul class="mlnode-list" data-k="models"></ul>
+      </div>
     </div>
   `;
   set(el, "host", node.publicHost || node.name);
@@ -742,6 +746,7 @@ function createCard(node: SiteNode): HTMLElement {
   set(el, "peers", node.mode === "skip" ? "–" : "…");
   updateSoftware(cardSoftwareInventory, node, el);
   updateMlNodes(cardSoftwareInventory, cardHardwareInventory, node, el);
+  updateNodeModels(node, el);
   updateDevShards(node, el);
   renderNodeIdentity(el, node);
   if (node.mode === "skip")
@@ -2181,43 +2186,42 @@ function networkNode(observation: any): SiteNode {
   };
 }
 
+function updateNodeModels(node: SiteNode, card: HTMLElement): void {
+  const target = card.querySelector('[data-k="models"]');
+  const assignment = publicChainState?.model_assignments;
+  const available = observerSnapshotMode && ["observed", "partial"].includes(assignment?.state) && Array.isArray(assignment?.groups);
+  const models = available && node.participantAddress
+    ? assignment.groups.filter((group) => group.state === "observed" &&
+      Array.isArray(group.participants) && group.participants.some((member) => member.address === node.participantAddress))
+      .map((group) => String(group.model_id))
+    : [];
+  target.replaceChildren();
+  for (const model of models.length ? models : [available && node.participantAddress && assignment.state === "observed" ? "No allocated models" : "Not reported"]) {
+    const item = document.createElement("li");
+    item.textContent = model;
+    target.append(item);
+  }
+  target.title = available ? `Effective epoch ${String(assignment.epoch_index)} · network allocation, not a serving-health check` : "Model assignments unavailable";
+}
+
 function updatePublicModelRegistry(nodes: Array<SiteNode>): void {
   $("model-label").textContent = "Allocated models";
   const assignment = publicChainState?.model_assignments;
-  const rows = $("model-assignment-rows");
-  rows.replaceChildren();
+  for (const node of nodes) {
+    const card = cards.get(nodeKey(node));
+    if (card) updateNodeModels(node, card);
+  }
   if (!observerSnapshotMode || !["observed", "partial"].includes(assignment?.state) || !Array.isArray(assignment?.groups)) {
-    $("model-assignments-summary").textContent = "Allocation unavailable";
     renderModelList([], "Effective network model assignments unavailable");
     return;
   }
   const context = `Effective epoch ${String(assignment.epoch_index)} · ${assignment.state === "partial" ? "partial data" : "observed"}`;
-  $("model-assignments-summary").textContent = context;
   const allocated: Array<string> = [];
   for (const group of assignment.groups) {
     const members = group.state === "observed" && Array.isArray(group.participants) ? group.participants : null;
     const model = String(group.model_id || "Unknown model");
-    if (!members || !members.length) {
-      const row = document.createElement("tr");
-      for (const value of [model, members ? "No allocated participants" : "Allocation unavailable", "–"]) {
-        const cell = document.createElement("td");
-        cell.textContent = value;
-        row.append(cell);
-      }
-      rows.append(row);
-    } else {
+    if (members && members.length) {
       allocated.push(model);
-      for (const member of members) {
-        const row = document.createElement("tr");
-        const address = String(member.address || "");
-        const node = nodes.find((candidate) => candidate.participantAddress === address);
-        for (const value of [model, `${node ? `${node.name}: ` : ""}${address}`, String(member.weight)]) {
-          const cell = document.createElement("td");
-          cell.textContent = value;
-          row.append(cell);
-        }
-        rows.append(row);
-      }
     }
   }
   renderModelList(allocated, context, assignment.state === "partial" ? "Not reported" : "No allocated models");
