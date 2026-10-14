@@ -1,97 +1,34 @@
-# Community DevNet hardware inventory
+# Community DevNet hardware
 
-Snapshot: **2026-10-13, 15:21 UTC**, collected through read-only SSH
-checks of the ten operator inventory entries. All ten hosts were reachable.
-This inventory records hardware visible to the operating system and running
-containers at that time. It does not establish validator membership, working
-inference, model qualification, or capacity reserved for a new experiment.
+Verified: **2026-10-14** — GPU, driver, CPU, RAM, filesystem capacity and MLNode mapping.
+OS versions and CPU flags: **2026-10-13**.
+10 hosts, 9 NVIDIA GPUs. [Regions](regions.md).
 
-There are **ten machines, nine with NVIDIA compute GPUs** detected and responding through NVIDIA drivers. `node4` is the network/edge machine; its MLNode runs on
-the separate `node9` machine. These counts are not a validator count.
-Provider and regional information is in [regions.md](regions.md).
+## GPU and MLNode mapping
 
-## Revalidation — 14 October 2026
+VRAM: total reported by `nvidia-smi`, not free memory. CC: CUDA compute capability.
 
-Read-only SSH probes on all ten machines confirmed the GPU models, total
-VRAM, drivers, logical CPU counts, CPU names and OS-visible RAM below.
-Filesystem sizes for `/` and `/srv` also match the earlier snapshot.
-The earlier OS-version and CPU-instruction observations retain their original
-13 October date; they were not rechecked in this pass.
+| Host | GPU | VRAM, MiB | CC | Driver | ML participant |
+|---|---|---:|---|---|---|
+| node0 | RTX A5000 | 24,564 | 8.6 | 595.71.05 | node0 |
+| node1 | Tesla T4 | 15,360 | 7.5 | 580.178.04 | node1 |
+| node2 | RTX 4090 | 24,564 | 8.9 | 580.178.04 | node2 |
+| node3 | RTX 3090 | 24,576 | 8.6 | 580.178.04 | node3 |
+| node4 | None; Cirrus Logic display only | — | — | — | Uses node9 |
+| node5 | RTX A5000 | 24,564 | 8.6 | 615.71.09 | node5 |
+| node6 | RTX PRO 2000 Blackwell | 16,311 | 12.0 | 595.91.07 | node6 |
+| node7 | Tesla T4 | 15,360 | 7.5 | 610.57.04 | node1, remote MLNode |
+| node8 | RTX 3090 | 24,576 | 8.6 | 615.71.09 | node8 |
+| node9 | RTX PRO 2000 Blackwell | 16,311 | 12.0 | 595.91.07 | node4, remote MLNode |
 
-The current DAPI MLNode registrations confirm **node1 → local GPU + node7**
-and **node4 → node9**. node7 has a running MLNode but no running Network Node
-container. It contributes GPU capacity to node1, not a second independent
-participant for the model group's `v_min` requirement. Remote GPUs do not
-automatically combine their VRAM or form a tensor-parallel worker.
+node9 was named `node4-ml`; container names retain that prefix.
+node7 has no running Network Node. Its GPU does not add an independent
+participant for `v_min`. Each GPU has separate memory.
 
-The old AMD description of node8 does not describe this inventory: node8 is
-an RTX 3090. Consult this file before using historical rollout notes or
-qualification instructions as hardware evidence.
+## CPU, RAM and storage
 
-### Model placement assessment
-
-This is a hardware/runtime preflight, **not a completed model-load or PoC
-qualification**. No model was stopped, switched or loaded during these probes.
-The checked model contracts are [Qwen3-4B](../model/qwen3-4b-instruct-2507.lock)
-and [Qwen2.5-7B](../model/qwen2.5-7b-instruct.lock): BF16, single GPU,
-respectively 25,000 and 4,096 context tokens. These locks are qualification-only.
-
-| Machine | CUDA capability | Qwen3-4B-Instruct-2507 | Qwen2.5-7B-Instruct |
-|---|---|---|---|
-| node1 | 7.5, T4 | Candidate only with a separately qualified FP16 runtime; the BF16 lock is incompatible | Do not select the current BF16 profile; FP16 also leaves very little memory for cache and execution |
-| node7 | 7.5, T4 | Same FP16 qualification requirement; currently a remote worker of node1 | Same limitations as node1 |
-| node8 | 8.6, RTX 3090 | Suitable hardware candidate; load and PoC qualification pending on this host | Preferred candidate for this host; load and PoC qualification pending |
-
-T4 cannot run the current BF16 profile. Changing to FP16 is not proof of
-numerical agreement with the BF16 validators. Before moving either T4, test
-the exact model revision, full configured context, cache/backend settings,
-completion and cross-validator PoC acceptance. For 7B, fitting weights alone
-does not establish enough memory for the full workload; quantization would
-be a separate numerical compatibility experiment, not an approved shortcut.
-
-The 24 GB hosts node0/node2/node3/node5/node8 are the hardware candidates for
-either model. The 16 GB Blackwell hosts node6/node9 must retain their separately
-verified runtime/cache configuration; do not infer that a generic BF16 lock
-has the same memory requirements. Node4 itself is not a GPU placement target.
-
-### Maintenance rule
-
-Use this inventory as the baseline instead of rediscovering stable hardware
-on every task. Refresh the affected row after host replacement, GPU or driver
-changes, SSH alias reassignment, or MLNode reassignment. Keep the observation
-date and distinguish hardware facts from workload qualification. Check free
-VRAM, disk space and current workload ownership immediately before a real
-deployment: those transient values cannot be guaranteed by this document.
-
-## Accelerators
-
-VRAM below is the total reported by `nvidia-smi`, in MiB. Marketing capacities
-such as “16 GB” differ from the memory exposed to the runtime. An unavailable
-driver leaves runtime VRAM unverified, even when PCI identifies the GPU.
-
-| Host | Observed GPU | Reported VRAM, MiB | NVIDIA driver | Container observation |
-|---|---|---:|---|---|
-| `node0` | NVIDIA RTX A5000 | 24,564 | 595.71.05 | Network and MLNode containers running |
-| `node1` | Tesla T4 | 15,360 | 580.178.04 | Network and MLNode containers running |
-| `node2` | NVIDIA GeForce RTX 4090 | 24,564 | 580.178.04 | Network and MLNode containers running |
-| `node3` | NVIDIA GeForce RTX 3090 | 24,576 | 580.178.04 | Network and MLNode containers running |
-| `node4` | No compute GPU observed; virtual display controller only | n/a | n/a | Network and edge containers running; ML is on `node9` |
-| `node9` | NVIDIA RTX PRO 2000 Blackwell | 16,311 | 595.91.07 | MLNode and monitoring containers running |
-| `node5` | NVIDIA RTX A5000 | 24,564 | 615.71.09 | Network and MLNode containers running |
-| `node6` | NVIDIA RTX PRO 2000 Blackwell | 16,311 | 595.91.07 | Network and MLNode containers running |
-| `node7` | Tesla T4 | 15,360 | 610.57.04 | MLNode and test containers running; no Network Node container observed |
-| `node8` | NVIDIA GeForce RTX 3090 | 24,576 | 615.71.09 | Network and MLNode containers running |
-
-`node8` now reports RTX 3090 memory through its working NVIDIA driver.
-`node5` now has an RTX A5000 and Xeon E5-2690 v4.
-`node9` was formerly named `node4-ml`; existing container names retain the old name.
-
-## CPU, memory and storage
-
-CPU names and logical CPU counts are reported by `lscpu`; virtual machines may
-expose only a subset of the named processor. RAM is OS-visible `MemTotal`,
-rounded to 0.1 GiB. Storage is the size of the filesystem containing
-`/srv/dai`, rounded to whole GiB, not raw drive capacity or free space.
+CPU counts are logical; node4/node9 expose virtual CPUs.
+RAM: OS-visible GiB. Storage: capacity of the filesystem containing `/srv/dai`, not free space.
 
 | Host | CPU exposed to OS | Logical CPUs | RAM, GiB | Data filesystem, GiB | Mount | Ubuntu |
 |---|---|---:|---:|---:|---|---|
@@ -106,40 +43,38 @@ rounded to 0.1 GiB. Storage is the size of the filesystem containing
 | `node7` | Xeon E5-2630L v4 | 20 | 62.7 | 914 | `/` | 22.04 |
 | `node8` | Ryzen 7 3700X | 16 | 60.7 | 910 | `/` | 26.04 |
 
-### CPU compatibility
+CPU flags: `adx`, `bmi1`, `bmi2` present on all ten hosts.
+node9 RAM: 26.9 GiB, below the [32 GB practical baseline](../net-deployment-runbook/ROLE-JOIN.md).
 
-All ten machines expose `adx`, `bmi1` and `bmi2`, required by the
-[published-image JOIN check](../net-deployment-runbook/ROLE-JOIN.md).
-The replacement node5 CPU passes this instruction check; the earlier
-missing-instruction exception no longer describes this machine.
+## Model constraints
 
-This is not full workload qualification. node4 and node9 expose virtual CPUs;
-logical CPU counts are not physical core counts.
+Qualification locks: single GPU, BF16.
+[Qwen3-4B-Instruct-2507](../model/qwen3-4b-instruct-2507.lock): 25,000-token context.
+[Qwen2.5-7B-Instruct](../model/qwen2.5-7b-instruct.lock): 4,096-token context.
 
-## Using this inventory
+| Hosts | 4B | 7B |
+|---|---|---|
+| node0, node2, node3, node5, node8 | 24 GB hardware candidates | 24 GB hardware candidates |
+| node1, node7 | BF16 unsupported; FP16 load and PoC qualification pending | BF16 unsupported; FP16 memory headroom unverified |
+| node6, node9 | Requires host-specific runtime/cache configuration | Not qualified by this inventory |
+| node4 | No local GPU | No local GPU |
 
-- Check current **free** GPU memory before assigning a workload. Total VRAM is not spare
-  capacity, even when the served model has relatively few parameters.
-- The 24 GB class is the largest single-GPU tier in this fleet. GPUs on
-  geographically separate hosts do not automatically form one shared memory
-  pool for a larger model.
-- T4, Ampere, Ada and Blackwell require compatible runtime builds and
-  kernels. A model fitting in memory is not enough to qualify it for Gonka.
-- `node9` exposes 26.9 GiB RAM, below the published practical 32 GB baseline.
-  An existing machine's observed configuration does not redefine JOIN
-  requirements or prove that a new Host with those resources is supported.
-- [The Host requirements profile](../net-deployment-runbook/profiles/devnet-hadware.json)
-  describes admission guidance, not this fleet. The model registry's `v_ram`
-  is also a separate configuration value, not measured model memory usage.
+node8: target-model load and PoC qualification pending.
+node1/node7: FP16 compatibility with BF16 validators unverified.
+No model-load or PoC tests were executed during this hardware check.
 
-## Refresh method
+## Verification commands
 
-Use the corresponding authorized operator SSH entries and read `lscpu -J` (including `Flags` for `adx`, `bmi1`, `bmi2`),
-`free -b`, `/etc/os-release`, `df -B1 / /srv/dai`, `lspci -nn`,
-`nvidia-smi --query-gpu=name,memory.total,memory.used,driver_version --format=csv,noheader`
-and `docker ps`. For AMD, inspect the compute device's vendor/device IDs and
-`mem_info_vram_total` under `/sys/class/drm/cardN/device/`.
+```sh
+lscpu -J
+free -b
+cat /etc/os-release
+df -B1 / /srv/dai
+lspci -nn
+nvidia-smi --query-gpu=name,memory.total,memory.used,compute_cap,driver_version --format=csv,noheader
+docker ps --format '{{.Names}} {{.Image}}'
+```
 
-Record observation time, missing commands and inaccessible hosts explicitly.
-These probes do not start, stop or qualify workloads. Publish only the
-hardware summary; keep operator access details and raw diagnostics private.
+MLNode mapping: DAPI `GET /admin/v1/nodes` on each parent.
+Refresh affected rows after hardware, driver or mapping changes.
+Check free VRAM and disk space before deployment.
