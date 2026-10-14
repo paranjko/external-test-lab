@@ -7,10 +7,10 @@ SHELL := /bin/bash
 install:
 	@directory=$$(mktemp -d "$${RUNNER_TEMP:-/tmp}/gonkactl-user.XXXXXXXX")
 	curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error --connect-timeout 15 --max-time 60 https://gonka-dev.net/ctl/install.sh -o "$$directory/install.sh"
-	env -i HOME="$$directory" PATH="$$PATH" GONKACTL_VERSION=1.0.0-alpha.3 sh "$$directory/install.sh"
+	env -i HOME="$$directory" PATH="$$PATH" GONKACTL_VERSION=1.0.0-alpha.4 sh "$$directory/install.sh"
 	binary="$$directory/.local/bin/gonkactl"
-	test "$$("$$binary" --version)" = 1.0.0-alpha.3
-	"$$binary" version | grep -Fx 'commit: 5a707321163d21c7607264f7bf41afd01732b2f7'
+	test "$$("$$binary" --version)" = 1.0.0-alpha.4
+	"$$binary" version | grep -Fx 'commit: efcf2fb5fff179076b7ec0060e2ad70f013239b8'
 	printf 'binary-path=%s\n' "$$binary" >> "$$GITHUB_OUTPUT"
 
 validate:
