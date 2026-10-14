@@ -16,6 +16,7 @@ on:
       - '.github/workflows/net-deployment-runbook.yml'
       - '.github/workflows/devshard-release.yml'
       - '.github/workflows/devshard-artifacts-release.yml'
+      - '.github/workflows/gonka-pr-unified-release.yml'
   pull_request:
     types:
       - opened
@@ -34,6 +35,7 @@ on:
       - '.github/workflows/net-deployment-runbook.yml'
       - '.github/workflows/devshard-release.yml'
       - '.github/workflows/devshard-artifacts-release.yml'
+      - '.github/workflows/gonka-pr-unified-release.yml'
   workflow_dispatch:
 
 concurrency:
