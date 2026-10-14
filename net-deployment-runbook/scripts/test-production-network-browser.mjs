@@ -128,11 +128,11 @@ try {
   const modelText = () => evaluate("document.querySelector('#nodes [data-k=\"models\"]').textContent");
   assert.equal(await evaluate("document.querySelector('#model-assignments')"), null);
   assert.equal(await evaluate("document.querySelector('#model-id').textContent"), "Qwen/Allocated");
-  assert.equal(await modelText(), "Qwen/Allocated");
+  assert.equal(await modelText(), "Qwen/Allocated 72PW");
   await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{...publicChainState.model_assignments,
     groups:[...publicChainState.model_assignments.groups,{model_id:"Qwen/Second",state:"observed",participants:[{address:"gonka1fixtureaccount",weight:"1"}]}]}})`);
   assert.equal(await evaluate("document.querySelectorAll('#nodes [data-k=\"models\"] li').length"), 2, "one participant can have multiple models");
-  assert.equal(await modelText(), "Qwen/AllocatedQwen/Second");
+  assert.equal(await modelText(), "Qwen/Allocated 72PWQwen/Second 1PW");
   assert.doesNotMatch(await modelText(), /old-model|fixture-model/, "configured and registered models must not replace effective allocations");
   await evaluate(`applyPublicChainState({...publicChainState,participants:[...publicChainState.participants,
     {address:"gonka1historical",inference_url:"https://node0.gonka-dev.net",status:"INACTIVE"}]})`);
@@ -141,7 +141,7 @@ try {
     validators:[{address:"${validator}",voting_power:"72",validator_key:"current-key"}],
     participants:[{address:"gonka1historical",inference_url:"https://node0.gonka-dev.net",status:"INACTIVE",validator_key:"old-key"},
       {address:"gonka1fixtureaccount",inference_url:"https://node0.gonka-dev.net",status:"ACTIVE",validator_key:"current-key"}]})`);
-  assert.equal(await modelText(), "Qwen/AllocatedQwen/Second", "current consensus key must disambiguate historical Host URLs");
+  assert.equal(await modelText(), "Qwen/Allocated 72PWQwen/Second 1PW", "current consensus key must disambiguate historical Host URLs");
   await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{state:"observed",epoch_index:"6",groups:[]}})`);
   assert.equal(await modelText(), "No allocated models");
   await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{state:"partial",epoch_index:"6",groups:[]}})`);

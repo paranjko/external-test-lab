@@ -2193,7 +2193,7 @@ function updateNodeModels(node: SiteNode, card: HTMLElement): void {
   const models = available && node.participantAddress
     ? assignment.groups.filter((group) => group.state === "observed" &&
       Array.isArray(group.participants) && group.participants.some((member) => member.address === node.participantAddress))
-      .map((group) => String(group.model_id))
+      .map((group) => `${String(group.model_id)} ${String(group.participants.find((member) => member.address === node.participantAddress).weight)}PW`)
     : [];
   target.replaceChildren();
   for (const model of models.length ? models : [available && node.participantAddress && assignment.state === "observed" ? "No allocated models" : "Not reported"]) {
@@ -2201,7 +2201,7 @@ function updateNodeModels(node: SiteNode, card: HTMLElement): void {
     item.textContent = model;
     target.append(item);
   }
-  target.title = available ? `Effective epoch ${String(assignment.epoch_index)} · network allocation, not a serving-health check` : "Model assignments unavailable";
+  target.title = available ? `Effective epoch ${String(assignment.epoch_index)} · PW: participant PoC weight for this model, not a serving-health check` : "Model assignments unavailable";
 }
 
 function updatePublicModelRegistry(nodes: Array<SiteNode>): void {
