@@ -45,6 +45,7 @@ func TestInstalledBootstrapLifecycle(t *testing.T) {
 	var publication []byte
 	var participants []map[string]string
 	var unhealthy atomic.Bool
+	var disconnected atomic.Bool
 	ready := make(chan struct{})
 	const chainAPI = "/chain-api/productscience/inference/inference/"
 	for index := 0; index < 2; index++ {
@@ -57,6 +58,14 @@ func TestInstalledBootstrapLifecycle(t *testing.T) {
 			case path == "/fixture/bootstrap.json":
 				w.Write(publication)
 			case path == "/chain-rpc/status":
+				if disconnected.Load() {
+					http.Error(w, "unavailable", 503)
+					return
+				}
+				if unhealthy.Load() {
+					fmt.Fprintf(w, `{"result":{"node_info":{"id":%q,"network":"fixture","listen_addr":%q},"sync_info":{"catching_up":true,"latest_block_height":"0"}}}`, id, peer)
+					return
+				}
 				fmt.Fprintf(w, `{"result":{"node_info":{"id":%q,"network":"fixture","listen_addr":%q},"sync_info":{"catching_up":false,"latest_block_height":%q},"validator_info":{"pub_key":{"value":%q}}}}`, id, peer, fmt.Sprint(100+height.Add(1)), key)
 			case path == "/chain-rpc/genesis":
 				fmt.Fprint(w, `{"result":{"genesis":`+genesis+`}}`)
@@ -118,7 +127,7 @@ func TestInstalledBootstrapLifecycle(t *testing.T) {
 		}
 		return report
 	}
-	update := []string{"bootstrap", "update", "fixture", outputDir, "--base-url", doc.Seeds[0].API, "--observation-window", "1ms", "--json"}
+	update := []string{"bootstrap", "update", "fixture", outputDir, "--base-url", doc.Seeds[0].API, "--json"}
 	if report := run(0, update...); !report.Changed || !report.Results[0].OK {
 		t.Fatalf("creation report: %+v", report)
 	}
@@ -133,9 +142,14 @@ func TestInstalledBootstrapLifecycle(t *testing.T) {
 	if report := run(0, update...); report.Changed {
 		t.Fatal("repeat changed files")
 	}
-	validate := []string{"bootstrap", "validate", "fixture", "--path", outputDir, "--observation-window", "1ms", "--json"}
+	validate := []string{"bootstrap", "validate", "fixture", "--path", outputDir, "--json"}
 	run(0, validate...)
 	unhealthy.Store(true)
+	run(0, validate...)
+	if report := run(0, update...); report.Changed {
+		t.Fatal("network health changed bootstrap")
+	}
+	disconnected.Store(true)
 	run(1, validate...)
 	if report := run(1, update...); report.Changed {
 		t.Fatal("failed update wrote files")

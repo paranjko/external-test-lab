@@ -27,9 +27,9 @@ func TestGenesisRawBytes(t *testing.T) {
 }
 
 func TestAllSeedChecksAndFailureAggregation(t *testing.T) {
-	for _, mode := range []string{"healthy", "wrong-id", "wrong-chain", "syncing", "stalled"} {
+	for _, mode := range []string{"healthy", "wrong-id", "wrong-chain", "wrong-genesis", "rpc-offline", "p2p-offline", "syncing", "stalled", "zero-height", "missing-sync", "api-offline"} {
 		t.Run(mode, func(t *testing.T) {
-			broken := mode != "healthy"
+			broken := mode == "wrong-id" || mode == "wrong-chain" || mode == "wrong-genesis" || mode == "rpc-offline" || mode == "p2p-offline"
 			doc := Document{ChainID: "fixture"}
 			genesis := `{"chain_id":"fixture"}`
 			digest := sha256.Sum256([]byte(genesis))
@@ -40,6 +40,10 @@ func TestAllSeedChecksAndFailureAggregation(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					switch r.URL.Path {
 					case "/chain-rpc/status":
+						if mode == "rpc-offline" && index == 0 {
+							http.Error(w, "offline", 503)
+							return
+						}
 						observed := id
 						network := "fixture"
 						catchingUp := mode == "syncing" && index == 0
@@ -53,27 +57,41 @@ func TestAllSeedChecksAndFailureAggregation(t *testing.T) {
 						if mode == "stalled" && index == 0 {
 							height = 1
 						}
+						if mode == "zero-height" {
+							height = 0
+						}
+						if mode == "missing-sync" {
+							fmt.Fprintf(w, `{"result":{"node_info":{"id":%q,"network":%q}}}`, observed, network)
+							return
+						}
 						fmt.Fprintf(w, `{"result":{"node_info":{"id":%q,"network":%q},"sync_info":{"catching_up":%t,"latest_block_height":%q}}}`, observed, network, catchingUp, fmt.Sprint(height))
 					case "/chain-rpc/genesis":
+						if mode == "wrong-genesis" && index == 0 {
+							fmt.Fprint(w, `{"result":{"genesis":{"chain_id":"other"}}}`)
+							return
+						}
 						fmt.Fprint(w, `{"result":{"genesis":`+genesis+`}}`)
 					case "/v1/participants":
-						fmt.Fprint(w, `{"participants":[]}`)
+						t.Error("bootstrap must not query participant health API")
+						http.Error(w, "unhealthy application", 503)
 					default:
 						http.NotFound(w, r)
 					}
 				}))
 				defer server.Close()
 				doc.Seeds = append(doc.Seeds, Seed{NodeID: id, RPC: server.URL + "/chain-rpc", API: server.URL, P2P: "tcp://" + server.Listener.Addr().String()})
+				if mode == "p2p-offline" && index == 0 {
+					closed := httptest.NewServer(http.NotFoundHandler())
+					doc.Seeds[index].P2P = "tcp://" + closed.Listener.Addr().String()
+					closed.Close()
+				}
 			}
 			transport := NewTransport()
 			transport.RetryDelay = 0
 			result := Result{ChainID: doc.ChainID}
-			transport.CheckSeeds(context.Background(), doc, 0, &result)
+			transport.CheckSeeds(context.Background(), doc, &result)
 			result.complete()
-			want := 10
-			if broken && mode != "stalled" {
-				want = 9
-			}
+			want := 6
 			if len(result.Checks) != want || result.OK == broken {
 				t.Fatalf("result: %+v", result)
 			}

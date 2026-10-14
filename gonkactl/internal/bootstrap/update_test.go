@@ -22,6 +22,8 @@ type updateFixture struct {
 	p2p              map[string]string
 	height           int
 	badRuntime       bool
+	badImages        bool
+	runtimeReads     int
 }
 
 func (f *updateFixture) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -30,12 +32,17 @@ func (f *updateFixture) RoundTrip(request *http.Request) (*http.Response, error)
 	case path == "/gonka-devnet-community/bootstrap.json":
 		body = string(f.published)
 	case path == "/v2/test/manifests/"+digestOf(f.manifest):
+		if f.badImages {
+			return &http.Response{StatusCode: 404, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("missing image"))}, nil
+		}
 		body = f.manifest
 	case path == "/v2/test/blobs/"+digestOf(f.config):
 		body = f.config
 	case path == "/v1/participants":
-		body = `{"participants":[]}`
+		f.runtimeReads++
+		return &http.Response{StatusCode: 503, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("unhealthy application"))}, nil
 	case path == "/v1/versions":
+		f.runtimeReads++
 		node, api := f.software.Components["node"], f.software.Components["api"]
 		if f.badRuntime && request.URL.Hostname() == "b.test" {
 			api.Commit = strings.Repeat("0", 40)
@@ -43,6 +50,7 @@ func (f *updateFixture) RoundTrip(request *http.Request) (*http.Response, error)
 		raw, _ := json.Marshal(map[string]Component{"node_version": node, "api_version": api})
 		body = string(raw)
 	case path == "/chain-rpc/abci_info":
+		f.runtimeReads++
 		body = fmt.Sprintf(`{"result":{"response":{"version":%q}}}`, f.software.Components["node"].Version)
 	default:
 		response, err := f.discovery.RoundTrip(request)
@@ -88,33 +96,43 @@ func TestUpdateCreatesRefreshesAndPreservesPair(t *testing.T) {
 	transport.Client.Transport = f
 	transport.RetryDelay = 0
 	options := UpdateOptions{ChainID: doc.ChainID, Directory: directory, BaseURL: "https://publication.test"}
-	for _, mode := range []string{"create", "noop", "repair-env", "runtime-failure"} {
+	for _, mode := range []string{"create", "noop", "repair-env", "runtime-drift", "image-failure", "no-software"} {
 		t.Run(mode, func(t *testing.T) {
+			if mode == "no-software" {
+				doc.Software = nil
+				f.published, _ = json.Marshal(doc)
+				directory = t.TempDir()
+				options.Directory = directory
+			}
 			if mode == "repair-env" {
 				if err := os.WriteFile(filepath.Join(directory, doc.ChainID+".env"), []byte("stale"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			f.badRuntime = mode == "runtime-failure"
+			f.badRuntime = mode == "runtime-drift"
+			f.badImages = mode == "image-failure"
 			beforeJSON, _ := os.ReadFile(filepath.Join(directory, doc.ChainID+".json"))
 			beforeENV, _ := os.ReadFile(filepath.Join(directory, doc.ChainID+".env"))
 			report, err := transport.Update(context.Background(), options)
-			if err != nil || len(report.Results) != 1 || report.Results[0].OK == f.badRuntime {
+			if err != nil || len(report.Results) != 1 || report.Results[0].OK == f.badImages {
 				t.Fatalf("report=%+v err=%v", report, err)
 			}
-			if report.Changed != (mode == "create" || mode == "repair-env") {
+			if report.Changed != (mode == "create" || mode == "repair-env" || mode == "no-software") {
 				t.Fatalf("wrong changed flag: %+v", report)
 			}
 			raw, env, err := readPair(directory, doc.ChainID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if mode == "noop" || mode == "runtime-failure" {
+			if mode == "noop" || mode == "runtime-drift" || mode == "image-failure" {
 				if !bytes.Equal(raw, beforeJSON) || !bytes.Equal(env, beforeENV) {
 					t.Fatal("unchanged/failed update changed output bytes")
 				}
 			}
 			parsed, err := Parse(raw, nil)
+			if f.runtimeReads != 0 {
+				t.Fatal("bootstrap update queried runtime versions")
+			}
 			if err != nil || len(parsed.Seeds) != 2 || !bytes.Equal(env, parsed.ENV()) {
 				t.Fatalf("invalid output: %v", err)
 			}

@@ -21,7 +21,6 @@ type ValidateOptions struct {
 	Directory         string
 	ExpectedDirectory string
 	BaseURL           string
-	ProgressInterval  time.Duration
 }
 
 type Report struct {
@@ -104,9 +103,6 @@ func (t *Transport) Validate(ctx context.Context, options ValidateOptions) (Repo
 	if options.Directory != "" && options.ExpectedDirectory != "" {
 		return report, fmt.Errorf("--path and --compare-published are mutually exclusive")
 	}
-	if options.ProgressInterval < 0 || options.ProgressInterval > time.Minute {
-		return report, fmt.Errorf("invalid observation interval")
-	}
 	if options.BaseURL == "" {
 		options.BaseURL = "https://gonka-dev.net"
 	}
@@ -180,7 +176,7 @@ func (t *Transport) Validate(ctx context.Context, options ValidateOptions) (Repo
 		}
 		return nil
 	})
-	t.checkSeeds(ctx, doc, options.ProgressInterval, policy == "testnet", &result)
+	t.CheckSeeds(ctx, doc, &result)
 	t.CheckImages(ctx, doc, &result)
 	result.complete()
 	report.Results = append(report.Results, result)

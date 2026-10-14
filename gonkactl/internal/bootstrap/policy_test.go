@@ -28,14 +28,14 @@ func (f guardianPolicyFixture) RoundTrip(r *http.Request) (*http.Response, error
 	if strings.HasPrefix(r.URL.Path, "/chain-api/cosmos/staking/") {
 		return f.base.discovery.RoundTrip(r)
 	}
-	if r.URL.Path == "/v1/participants" && f.unavailable[r.URL.Hostname()] {
+	if r.URL.Path == "/chain-rpc/status" && f.unavailable[r.URL.Hostname()] {
 		return &http.Response{StatusCode: 503, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("offline"))}, nil
 	}
 	return f.base.RoundTrip(r)
 }
 
 func TestDevnetGuardianExclusionPolicy(t *testing.T) {
-	for _, mode := range []string{"missing-staking", "unavailable-api", "too-few", "strict", "historical-fill", "missing-history", "historical-offline", "all-guardians", "missing-real-guardian"} {
+	for _, mode := range []string{"missing-staking", "unavailable-rpc", "too-few", "strict", "historical-fill", "missing-history", "historical-offline", "all-guardians", "missing-real-guardian"} {
 		t.Run(mode, func(t *testing.T) {
 			doc := discoveryDocument(t)
 			f := &updateFixture{discovery: discoveryFixture{mode: "three-guardians"}, p2p: map[string]string{}}
@@ -55,7 +55,7 @@ func TestDevnetGuardianExclusionPolicy(t *testing.T) {
 				doc.Seeds[i].P2P = f.p2p[host]
 			}
 			offline := map[string]bool{}
-			if mode == "unavailable-api" || mode == "too-few" {
+			if mode == "unavailable-rpc" || mode == "too-few" {
 				offline["c.test"] = true
 			}
 			if mode == "too-few" || mode == "historical-fill" || mode == "missing-history" || mode == "historical-offline" {
@@ -68,8 +68,8 @@ func TestDevnetGuardianExclusionPolicy(t *testing.T) {
 			transport.Client.Transport = guardianPolicyFixture{base: f, unavailable: offline, missingHistory: mode == "missing-history"}
 			transport.RetryDelay = 0
 			result := Result{}
-			seeds, err := transport.discoverSeeds(context.Background(), doc, mode != "strict", 0, &result)
-			want := mode == "missing-staking" || mode == "unavailable-api" || mode == "historical-fill" || mode == "all-guardians"
+			seeds, err := transport.discoverSeeds(context.Background(), doc, mode != "strict", &result)
+			want := mode == "missing-staking" || mode == "unavailable-rpc" || mode == "historical-fill" || mode == "all-guardians"
 			if (err == nil) != want {
 				t.Fatalf("seeds=%+v warnings=%v err=%v", seeds, result.Warnings, err)
 			}
@@ -133,7 +133,7 @@ func TestTestnetResetPolicyAndReadOnlyValidation(t *testing.T) {
 							chain = "other"
 						}
 						height := 100
-						if calls.Add(1) >= 4 && mode == "regression" {
+						if calls.Add(1) >= 2 && mode == "regression" {
 							height = 99
 						}
 						fmt.Fprintf(w, `{"result":{"node_info":{"id":%q,"network":%q},"sync_info":{"catching_up":false,"latest_block_height":%q}}}`, id, chain, fmt.Sprint(height))
@@ -176,7 +176,7 @@ func TestTestnetResetPolicyAndReadOnlyValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := mode == "auto"
+			want := mode == "auto" || mode == "regression"
 			if len(report.Results) != 1 || report.Results[0].OK != want || report.Changed != want {
 				t.Fatalf("%+v", report)
 			}

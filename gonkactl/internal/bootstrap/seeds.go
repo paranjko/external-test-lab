@@ -6,9 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 )
 
 const GenesisLimit = 64 * 1024 * 1024
@@ -77,53 +75,33 @@ type publicStatus struct {
 		ValidatorInfo struct {
 			PubKey struct{ Value string } `json:"pub_key"`
 		} `json:"validator_info"`
-		SyncInfo struct {
-			Height     string `json:"latest_block_height"`
-			CatchingUp *bool  `json:"catching_up"`
-		} `json:"sync_info"`
 	} `json:"result"`
 }
 
-func (t *Transport) status(ctx context.Context, seed Seed, chain string) (int64, error) {
+func (t *Transport) status(ctx context.Context, seed Seed, chain string) error {
 	raw, err := t.Get(ctx, strings.TrimRight(seed.RPC, "/")+"/status", DocumentLimit)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	var response publicStatus
 	if err := DecodeJSON(raw, &response); err != nil {
-		return 0, err
+		return err
 	}
 	s := response.Result
 	if s.NodeInfo.ID != seed.NodeID || s.NodeInfo.Network != chain {
-		return 0, fmt.Errorf("RPC identity differs from bootstrap")
+		return fmt.Errorf("RPC identity differs from bootstrap")
 	}
-	if s.SyncInfo.CatchingUp == nil || *s.SyncInfo.CatchingUp {
-		return 0, fmt.Errorf("seed is syncing or sync status is missing")
-	}
-	height, err := strconv.ParseInt(s.SyncInfo.Height, 10, 64)
-	if err != nil || height <= 0 {
-		return 0, fmt.Errorf("invalid block height")
-	}
-	return height, nil
+	return nil
 }
 
 // CheckSeeds retains all independent failures; one broken endpoint must not
 // suppress diagnostics for the remaining seeds. It is not a whole-bootstrap
 // verdict: schema, publication and optional software checks are separate.
-func (t *Transport) CheckSeeds(ctx context.Context, doc Document, progressInterval time.Duration, result *Result) {
-	t.checkSeeds(ctx, doc, progressInterval, false, result)
-}
-
-func (t *Transport) checkSeeds(ctx context.Context, doc Document, progressInterval time.Duration, allowStationary bool, result *Result) {
-	heights := make(map[int]int64)
-	for index, seed := range doc.Seeds {
+func (t *Transport) CheckSeeds(ctx context.Context, doc Document, result *Result) {
+	for _, seed := range doc.Seeds {
 		rpc := strings.TrimRight(seed.RPC, "/")
 		result.check("rpc", rpc+"/status", func() error {
-			height, err := t.status(ctx, seed, doc.ChainID)
-			if err == nil {
-				heights[index] = height
-			}
-			return err
+			return t.status(ctx, seed, doc.ChainID)
 		})
 		result.check("genesis", rpc+"/genesis", func() error {
 			raw, err := t.Get(ctx, rpc+"/genesis", GenesisLimit)
@@ -150,46 +128,5 @@ func (t *Transport) checkSeeds(ctx context.Context, doc Document, progressInterv
 			return nil
 		})
 		result.check("p2p", seed.P2P, func() error { return t.TCP(ctx, seed.P2P) })
-		if seed.API != "" {
-			address := strings.TrimRight(seed.API, "/") + "/v1/participants"
-			result.check("api", address, func() error {
-				raw, err := t.Get(ctx, address, GenesisLimit)
-				if err != nil {
-					return err
-				}
-				var body map[string]json.RawMessage
-				if err := DecodeJSON(raw, &body); err != nil {
-					return err
-				}
-				participants := body["participants"]
-				if len(participants) == 0 || participants[0] != '[' {
-					return fmt.Errorf("participant API has no participants array")
-				}
-				return nil
-			})
-		}
-	}
-	if len(heights) == 0 {
-		return
-	}
-	waitErr := wait(ctx, progressInterval)
-	for index, seed := range doc.Seeds {
-		before, exists := heights[index]
-		if !exists {
-			continue
-		}
-		result.check("block-progress", strings.TrimRight(seed.RPC, "/")+"/status", func() error {
-			if waitErr != nil {
-				return waitErr
-			}
-			after, err := t.status(ctx, seed, doc.ChainID)
-			if err != nil {
-				return err
-			}
-			if after < before || (after == before && !allowStationary) {
-				return fmt.Errorf("block height did not advance")
-			}
-			return nil
-		})
 	}
 }

@@ -90,7 +90,6 @@ func newBootstrapCommand() *cobra.Command {
 	validate.Flags().StringVar(&options.Directory, "path", "", "validate a local JSON/ENV pair instead of publication")
 	validate.Flags().StringVar(&options.ExpectedDirectory, "compare-published", "", "compare published JSON/ENV bytes with this directory")
 	validate.Flags().StringVar(&options.BaseURL, "base-url", "https://gonka-dev.net", "bootstrap publication origin")
-	validate.Flags().DurationVar(&options.ProgressInterval, "observation-window", 10*time.Second, "block-progress observation interval (maximum 1m)")
 	validate.Flags().DurationVar(&timeout, "timeout", 10*time.Second, "per-request timeout (maximum 1m)")
 	validate.Flags().BoolVar(&asJSON, "json", false, "emit a structured report, including failed checks")
 	command.AddCommand(validate)
@@ -159,7 +158,6 @@ func newBootstrapUpdateCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&options.Policy, "policy", "auto", "update policy: auto, strict, testnet or devnet")
 	command.Flags().StringVar(&options.BaseURL, "base-url", "https://gonka-dev.net", "bootstrap publication origin used when creating files")
-	command.Flags().DurationVar(&options.ProgressInterval, "observation-window", 10*time.Second, "block-progress observation interval (maximum 1m)")
 	command.Flags().DurationVar(&timeout, "timeout", 10*time.Second, "per-request timeout (maximum 1m)")
 	command.Flags().BoolVar(&asJSON, "json", false, "emit a structured report, including failed checks")
 	return command

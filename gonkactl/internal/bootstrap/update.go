@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,60 +13,6 @@ import (
 type UpdateOptions struct {
 	Policy                               string
 	ChainID, Directory, Profile, BaseURL string
-	ProgressInterval                     time.Duration
-}
-
-// Runtime observations attest node/API release identity, not the runtime
-// digests of every auxiliary service. Those come from the approved recipe.
-func (t *Transport) CheckRuntimeSoftware(ctx context.Context, doc Document, result *Result) {
-	if len(doc.Software) == 0 {
-		return
-	}
-	var software Software
-	if err := DecodeJSON(doc.Software, &software); err != nil {
-		result.check("software-runtime", "", func() error { return err })
-		return
-	}
-	verified := map[string]bool{}
-	for _, seed := range doc.Seeds {
-		if seed.API == "" {
-			continue
-		}
-		address := strings.TrimRight(seed.API, "/") + "/v1/versions"
-		result.check("software-runtime", address, func() error {
-			var observed struct {
-				Node Component `json:"node_version"`
-				API  Component `json:"api_version"`
-			}
-			if err := t.query(ctx, address, &observed); err != nil {
-				return err
-			}
-			for role, actual := range map[string]Component{"node": observed.Node, "api": observed.API} {
-				wanted := software.Components[role]
-				if !commitID.MatchString(wanted.Commit) || actual.Commit != wanted.Commit || strings.TrimPrefix(actual.Version, "v") != strings.TrimPrefix(wanted.Version, "v") {
-					return fmt.Errorf("observed %s version/commit differs from software", role)
-				}
-			}
-			var abci struct {
-				Result struct{ Response struct{ Version string } }
-			}
-			if err := t.query(ctx, strings.TrimRight(seed.RPC, "/")+"/abci_info", &abci); err != nil {
-				return err
-			}
-			if strings.TrimPrefix(abci.Result.Response.Version, "v") != strings.TrimPrefix(software.Components["node"].Version, "v") {
-				return fmt.Errorf("RPC application version differs from software")
-			}
-			origin, _ := url.Parse(seed.RPC)
-			verified[origin.Hostname()] = true
-			return nil
-		})
-	}
-	result.check("software-quorum", "", func() error {
-		if len(verified) < 2 {
-			return fmt.Errorf("software requires matching runtime observations from two independent seeds")
-		}
-		return nil
-	})
 }
 
 func equivalentJSON(a, b []byte) bool {
@@ -83,9 +28,6 @@ func (t *Transport) Update(ctx context.Context, options UpdateOptions) (Report, 
 	policy, err := ResolvePolicy(options.Policy, options.ChainID)
 	if err != nil {
 		return report, err
-	}
-	if options.ProgressInterval < 0 || options.ProgressInterval > time.Minute {
-		return report, fmt.Errorf("invalid observation interval")
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = "https://gonka-dev.net"
@@ -166,9 +108,6 @@ func (t *Transport) Update(ctx context.Context, options UpdateOptions) (Report, 
 	declared := len(base.Software) > 0
 	result.SoftwareDeclared = &declared
 	result.check("seed-selection", address, func() error {
-		if base.ChainID == "gonka-devnet-community" && !declared {
-			return fmt.Errorf("DevNet update requires a complete software recipe")
-		}
 		if policy == "testnet" {
 			refreshed, err := t.refreshTestnet(ctx, base)
 			if err == nil {
@@ -176,7 +115,7 @@ func (t *Transport) Update(ctx context.Context, options UpdateOptions) (Report, 
 			}
 			return err
 		}
-		seeds, err := t.discoverSeeds(ctx, base, policy == "devnet", options.ProgressInterval, &result)
+		seeds, err := t.discoverSeeds(ctx, base, policy == "devnet", &result)
 		if err == nil {
 			base.Seeds = seeds
 		}
@@ -185,8 +124,7 @@ func (t *Transport) Update(ctx context.Context, options UpdateOptions) (Report, 
 	if !result.Checks[len(result.Checks)-1].OK {
 		return finish()
 	}
-	t.checkSeeds(ctx, base, options.ProgressInterval, policy == "testnet", &result)
-	t.CheckRuntimeSoftware(ctx, base, &result)
+	t.CheckSeeds(ctx, base, &result)
 	t.CheckImages(ctx, base, &result)
 	result.complete()
 	if !result.OK {

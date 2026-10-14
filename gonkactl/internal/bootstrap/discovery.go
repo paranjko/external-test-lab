@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const chainAPI = "/chain-api/productscience/inference/inference/"
@@ -173,7 +172,7 @@ func (t *Transport) discoverySourcesPolicy(ctx context.Context, doc Document, om
 		if seenHosts[parsed.Hostname()] || seenIDs[seed.NodeID] {
 			continue
 		}
-		if _, err := t.status(ctx, seed, doc.ChainID); err != nil {
+		if err := t.status(ctx, seed, doc.ChainID); err != nil {
 			continue
 		}
 		if err := t.matchingGenesis(ctx, seed.RPC, doc); err != nil {
@@ -320,10 +319,10 @@ func (t *Transport) candidateSeed(ctx context.Context, p participant, chain stri
 // on-chain participation, not account age or a one-off HTTP success. Winners
 // still require the complete online validation before any filesystem write.
 func (t *Transport) DiscoverSeeds(ctx context.Context, doc Document) ([]Seed, error) {
-	return t.discoverSeeds(ctx, doc, false, 0, &Result{})
+	return t.discoverSeeds(ctx, doc, false, &Result{})
 }
 
-func (t *Transport) discoverSeeds(ctx context.Context, doc Document, omitUnavailable bool, interval time.Duration, result *Result) ([]Seed, error) {
+func (t *Transport) discoverSeeds(ctx context.Context, doc Document, omitUnavailable bool, result *Result) ([]Seed, error) {
 	origins, view, err := t.discoverySourcesPolicy(ctx, doc, omitUnavailable)
 	if err != nil {
 		return nil, err
@@ -377,7 +376,7 @@ func (t *Transport) discoverSeeds(ctx context.Context, doc Document, omitUnavail
 			probe := doc
 			probe.Seeds = []Seed{seed}
 			health := Result{}
-			t.CheckSeeds(ctx, probe, interval, &health)
+			t.CheckSeeds(ctx, probe, &health)
 			health.complete()
 			if !health.OK {
 				if ctx.Err() != nil {
@@ -443,7 +442,7 @@ func (t *Transport) discoverSeeds(ctx context.Context, doc Document, omitUnavail
 			probe := doc
 			probe.Seeds = []Seed{seed}
 			health := Result{}
-			t.CheckSeeds(ctx, probe, interval, &health)
+			t.CheckSeeds(ctx, probe, &health)
 			health.complete()
 			if !health.OK {
 				if ctx.Err() != nil {
@@ -453,14 +452,14 @@ func (t *Transport) discoverSeeds(ctx context.Context, doc Document, omitUnavail
 				continue
 			}
 			seeds = append(seeds, seed)
-			result.Warnings = append(result.Warnings, "added historical participant "+p.Address+" to maintain two healthy seeds")
+			result.Warnings = append(result.Warnings, "added historical participant "+p.Address+" to maintain two reachable seeds")
 			if len(seeds) == 2 {
 				break
 			}
 		}
 	}
 	if len(seeds) < 2 {
-		return nil, fmt.Errorf("fewer than two healthy seeds remain under update policy")
+		return nil, fmt.Errorf("fewer than two reachable seeds remain under update policy")
 	}
 	// Preserve retained endpoint order; new identities are ordered by RPC. This
 	// avoids changing first-choice ENV endpoints merely due to API enumeration.

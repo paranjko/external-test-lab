@@ -20,8 +20,6 @@ undelivered update fails the check. Examples in subdirectories are not networks.
 - Every seed's RPC reports the declared node ID and chain ID
 - Every seed serves a genesis with the declared SHA-256 and chain ID
 - Every seed's P2P TCP port accepts a connection
-- Every declared seed API serves a JSON participants array
-- Block progression and synchronization state for each seed
 - Pinned software image digests and supported platform manifests, when declared
 
 The genesis hash uses the exact `result.genesis` JSON bytes returned by RPC,
@@ -30,9 +28,10 @@ The check does not require an installed `inferenced` binary. HTTP requests and
 TCP connections have timeouts and at most two attempts. Redirects are refused.
 One failing seed does not skip the remaining checks or networks.
 
-This checks bootstrap correctness, current block progression, endpoint and
-image-manifest availability, not validator membership, inference, broker health
-or successful deployment. A failure may be a temporary outage rather than a stale file;
+This checks bootstrap correctness, connection-point and image-manifest availability,
+not block progression, synchronization, application API health, running versions,
+validator membership, inference or successful deployment. An unhealthy network
+can have a valid bootstrap. A failure may be a temporary outage rather than a stale file;
 inspect the report before changing the bootstrap. The monitor never changes
 nodes, bootstraps or network parameters.
 
@@ -49,7 +48,7 @@ without required-reviewer approval. Removing that protection is a repository
 administrator decision; adding this workflow does not change the protection.
 
 On failure, Telegram receives one HTML message per failed network, with links
-to its bootstrap and the GitHub Actions run. Healthy networks produce no
+to its bootstrap and the GitHub Actions run. Valid bootstraps produce no
 messages. JSON serialization and HTML escaping preserve chat IDs and links.
 The token is available only to the notification step and is not written to the
 report or logs. Telegram errors fail the notification job. A POST is not retried
@@ -76,7 +75,7 @@ and `2` for invalid inputs or local execution errors.
 
 The local composite Action `.github/actions/gonkactl-bootstrap` accepts a
 `chain-id`, `inventory`, `report`, `timeout` and `origin`. It downloads the public
-installer, selects immutable alpha.3 and verifies the installed source commit.
+installer, selects an immutable release and verifies the installed source commit.
 Its Make targets only install, invoke the CLI and transport reports/notifications;
 they do not implement network validation. The existing Go bootstrap and installed
 CLI tests cover schema, raw Genesis, endpoints, image manifests and publication.

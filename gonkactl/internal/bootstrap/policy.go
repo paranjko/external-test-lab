@@ -43,7 +43,7 @@ func (t *Transport) refreshTestnet(ctx context.Context, doc Document) (Document,
 			return doc, err
 		}
 		seed.NodeID = status.Result.NodeInfo.ID
-		if _, err := t.status(ctx, seed, doc.ChainID); err != nil {
+		if err := t.status(ctx, seed, doc.ChainID); err != nil {
 			return doc, err
 		}
 		raw, err := t.Get(ctx, rpc+"/genesis", GenesisLimit)
