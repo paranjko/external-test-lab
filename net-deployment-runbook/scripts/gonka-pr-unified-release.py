@@ -90,6 +90,7 @@ def artifact_definition(candidate: dict, binary: dict, zip_hash: str) -> dict:
     value = replace_source(copy.deepcopy(artifacts.load_definition()), candidate["legacy_current_source_commit"],
                            candidate["source_commit"])
     value["source_repository"] = candidate["source_repository"]
+    value["source_pr"] = candidate["source_pr"]
     value["source_commit"] = candidate["source_commit"]
     value["source_tree"] = candidate["source_tree"]
     value["release_tag"] = candidate["release_tag"]
