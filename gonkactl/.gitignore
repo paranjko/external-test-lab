@@ -1,0 +1,6 @@
+/build/
+/scripts/__pycache__/
+
+# This is a source package, not generated build output.
+!/internal/release/build/
+!/internal/release/build/*.go

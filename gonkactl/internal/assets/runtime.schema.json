@@ -1,0 +1,8404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gonka-dev.net/gonkactl/contracts/v1/runtime.schema.json",
+  "title": "gonkactl v1 runtime contracts",
+  "description": "Validate an individual contract through its $defs fragment. Duplicate keys, semantic URL/crypto/state checks, ownership and ordering are enforced by code as specified in contracts.md.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/config"
+    },
+    {
+      "$ref": "#/$defs/journal"
+    },
+    {
+      "$ref": "#/$defs/guard"
+    },
+    {
+      "$ref": "#/$defs/active_record"
+    },
+    {
+      "$ref": "#/$defs/network_plan"
+    },
+    {
+      "$ref": "#/$defs/operation_receipt"
+    },
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/event"
+    },
+    {
+      "$ref": "#/$defs/fence"
+    },
+    {
+      "$ref": "#/$defs/isolation"
+    },
+    {
+      "$ref": "#/$defs/handoff_bundle"
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "git_sha": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 40,
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "decimal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(0|[1-9][0-9]*)$"
+    },
+    "positive_decimal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "native_decimal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8388608,
+      "pattern": "^[0-9]+$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 25,
+      "maxLength": 25,
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "instance_id": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "chain_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "node_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"
+    },
+    "archive_node_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "node_id": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 40,
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "gonka_address": {
+      "type": "string",
+      "minLength": 44,
+      "maxLength": 44,
+      "pattern": "^gonka1[023456789acdefghjklmnpqrstuvwxyz]{38}$"
+    },
+    "consensus_pubkey": {
+      "type": "string",
+      "minLength": 44,
+      "maxLength": 44,
+      "pattern": "^[A-Za-z0-9+/]{43}=$"
+    },
+    "warm_pubkey": {
+      "type": "string",
+      "minLength": 44,
+      "maxLength": 44,
+      "pattern": "^[A-Za-z0-9+/]{44}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "legacy_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "absolute_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/[^\\u0000-\\u001f\\u007f]*$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "https_url": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 2048,
+      "pattern": "^https://[^/@?#\\s]+(?::[0-9]{1,5})?(?:/[^?#\\s]*)?$"
+    },
+    "http_url": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 2048,
+      "pattern": "^https?://[^/@?#\\s]+(?::[0-9]{1,5})?(?:/[^?#\\s]*)?$"
+    },
+    "public_host": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+    },
+    "ipv4_cidr": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 18,
+      "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "version": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 128,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "image": {
+      "type": "string",
+      "minLength": 73,
+      "maxLength": 1024,
+      "pattern": "^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$"
+    },
+    "machine_id": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 32,
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[a-z][a-z0-9_]{0,95}$"
+    },
+    "operator_reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^<>\\u0000-\\u001f\\u007f]+$"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "network_node",
+        "genesis",
+        "ml",
+        "gateway",
+        "edge_public",
+        "edge_participant",
+        "faucet",
+        "monitoring",
+        "site",
+        "explorer",
+        "telegram",
+        "bridge_observer",
+        "gateway_replica"
+      ]
+    },
+    "service": {
+      "type": "string",
+      "enum": [
+        "core",
+        "tmkms",
+        "dapi",
+        "postgres",
+        "versiond",
+        "proxy",
+        "explorer",
+        "edge_api",
+        "ml",
+        "ml_proxy",
+        "caddy",
+        "grafana",
+        "prometheus",
+        "blackbox",
+        "node_exporter",
+        "ml_collector",
+        "faucet",
+        "gateway",
+        "gateway_observer",
+        "gateway_reconciler",
+        "gateway_replica",
+        "telegram",
+        "bridge_observer",
+        "upgrade_worker",
+        "upgrade_watch",
+        "advance_after_upgrade"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "planned",
+        "waiting",
+        "blocked",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "mutation": {
+      "type": "string",
+      "enum": [
+        "none",
+        "staged",
+        "committed",
+        "partial",
+        "unknown"
+      ]
+    },
+    "signer_state": {
+      "type": "string",
+      "enum": [
+        "absent",
+        "disabled",
+        "authorized",
+        "active",
+        "stopped",
+        "retiring",
+        "retired",
+        "unknown"
+      ]
+    },
+    "guard_state": {
+      "type": "string",
+      "enum": [
+        "DISABLED",
+        "RETIRING",
+        "RETIRED",
+        "ACTIVATION_AUTHORIZED",
+        "ACTIVE"
+      ]
+    },
+    "join_phase": {
+      "type": "string",
+      "enum": [
+        "J00",
+        "J01",
+        "J02",
+        "J03",
+        "J04",
+        "J05",
+        "J06",
+        "J07",
+        "J08",
+        "J09",
+        "J10",
+        "J11",
+        "J12",
+        "J13",
+        "J14"
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "J00",
+        "J01",
+        "J02",
+        "J03",
+        "J04",
+        "J05",
+        "J06",
+        "J07",
+        "J08",
+        "J09",
+        "J10",
+        "J11",
+        "J12",
+        "J13",
+        "J14",
+        "parse",
+        "inspect",
+        "prepare",
+        "plan",
+        "observe",
+        "download",
+        "qualify",
+        "identity",
+        "stage",
+        "trust",
+        "sync",
+        "lineage",
+        "promote",
+        "application",
+        "awaiting_fence",
+        "activation",
+        "verify",
+        "backup",
+        "retire",
+        "reset",
+        "handoff",
+        "submit",
+        "reconcile",
+        "watch",
+        "settle",
+        "publish",
+        "complete",
+        "failed",
+        "cancelled",
+        "freeze",
+        "status",
+        "activate",
+        "checkpoint",
+        "rejoin",
+        "resume",
+        "abort"
+      ]
+    },
+    "assurance": {
+      "type": "string",
+      "enum": [
+        "local_verified",
+        "operator_attested",
+        "operator_trusted_local_controls",
+        "integrity_only",
+        "public_observation",
+        "none"
+      ]
+    },
+    "protocol": {
+      "type": "string",
+      "enum": [
+        "v3",
+        "v4",
+        "v5"
+      ]
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chain_id": {
+          "$ref": "#/$defs/chain_id"
+        },
+        "genesis_raw_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "genesis_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "chain_id",
+        "genesis_raw_sha256",
+        "genesis_identity_sha256"
+      ]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "node_name": {
+          "$ref": "#/$defs/archive_node_name"
+        },
+        "participant_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "warm_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "warm_pubkey_b64": {
+          "$ref": "#/$defs/warm_pubkey"
+        },
+        "consensus_pubkey": {
+          "$ref": "#/$defs/consensus_pubkey"
+        },
+        "node_id": {
+          "$ref": "#/$defs/node_id"
+        }
+      },
+      "required": [
+        "instance_id",
+        "node_name",
+        "participant_address",
+        "warm_address",
+        "warm_pubkey_b64",
+        "consensus_pubkey",
+        "node_id"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1099511627776
+        }
+      },
+      "required": [
+        "name",
+        "url",
+        "sha256",
+        "size"
+      ]
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1099511627776
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "public",
+            "sanitized"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size",
+        "classification"
+      ]
+    },
+    "output_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1099511627776
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "public",
+            "sanitized",
+            "secret"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size",
+        "classification"
+      ]
+    },
+    "binary_pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^/usr/local/lib/gonkactl/[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?/gonkactl$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "guard_abi": {
+          "const": 1
+        },
+        "service_abi": {
+          "const": 1
+        },
+        "assets_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "version",
+        "path",
+        "sha256",
+        "guard_abi",
+        "service_abi",
+        "assets_sha256"
+      ]
+    },
+    "generation_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data_generation_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "data_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "deployment_generation_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "deployment_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "data_generation_id",
+        "data_sha256",
+        "deployment_generation_id",
+        "deployment_sha256"
+      ]
+    },
+    "part_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "hash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "total",
+        "hash"
+      ]
+    },
+    "block_id": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        "parts": {
+          "$ref": "#/$defs/part_set"
+        }
+      },
+      "required": [
+        "hash",
+        "parts"
+      ]
+    },
+    "native_block_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/block_id"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hash": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64,
+              "pattern": "^[A-Fa-f0-9]{64}$"
+            },
+            "part_set_header": {
+              "$ref": "#/$defs/part_set"
+            }
+          },
+          "required": [
+            "hash",
+            "part_set_header"
+          ]
+        }
+      ]
+    },
+    "native_signer_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "$ref": "#/$defs/native_decimal"
+        },
+        "round": {
+          "$ref": "#/$defs/native_decimal"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": -128,
+          "maximum": 127
+        },
+        "block_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/native_block_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "height",
+        "round",
+        "step",
+        "block_id"
+      ]
+    },
+    "signer_witness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "state": {
+          "$ref": "#/$defs/native_signer_state"
+        },
+        "recorded_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "imported_archive",
+            "authoritative_final",
+            "local_readback"
+          ]
+        }
+      },
+      "required": [
+        "state_sha256",
+        "state",
+        "recorded_at",
+        "source"
+      ]
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "block_id_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "app_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "observed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "committed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "independent_node_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node_id"
+          },
+          "minItems": 2,
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "independent_root_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "minItems": 2,
+          "maxItems": 128,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "height",
+        "block_id_sha256",
+        "app_hash",
+        "observed_at",
+        "committed_at",
+        "independent_node_ids",
+        "independent_root_ids"
+      ]
+    },
+    "trust_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/checkpoint"
+        },
+        "issued_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "ttl_seconds": {
+          "const": 600
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "id",
+        "lineage",
+        "checkpoint",
+        "issued_at",
+        "expires_at",
+        "ttl_seconds",
+        "sha256"
+      ]
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "const": "qwen3-0.6b"
+        },
+        "model_id": {
+          "const": "Qwen/Qwen3-0.6B"
+        },
+        "revision": {
+          "const": "c1899de289a04d12100db370d81485cdf75e47ca"
+        },
+        "artifact_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "dtype": {
+          "const": "auto"
+        },
+        "context_length": {
+          "const": 2048
+        },
+        "max_sequences": {
+          "const": 64
+        },
+        "gpu_memory_utilization": {
+          "const": 0.85
+        },
+        "tensor_parallel_size": {
+          "const": 1
+        }
+      },
+      "required": [
+        "profile",
+        "model_id",
+        "revision",
+        "artifact_sha256",
+        "dtype",
+        "context_length",
+        "max_sequences",
+        "gpu_memory_utilization",
+        "tensor_parallel_size"
+      ]
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "binary": {
+          "$ref": "#/$defs/artifact"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "commit": {
+          "$ref": "#/$defs/git_sha"
+        }
+      },
+      "required": [
+        "image",
+        "binary",
+        "version",
+        "commit"
+      ]
+    },
+    "service_image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service": {
+          "$ref": "#/$defs/service"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "config_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "service",
+        "image",
+        "config_sha256"
+      ]
+    },
+    "gateway_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "verify_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "completion_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 180
+        },
+        "continuity_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "continuity_poll_milliseconds": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "drain_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "max_inflight": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "max_queued_requests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "minimum_reserve_ngonka": {
+          "$ref": "#/$defs/decimal"
+        },
+        "settlement_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "verify_timeout_seconds",
+        "completion_timeout_seconds",
+        "continuity_timeout_seconds",
+        "continuity_poll_milliseconds",
+        "drain_timeout_seconds",
+        "max_inflight",
+        "max_queued_requests",
+        "minimum_reserve_ngonka",
+        "settlement_timeout_seconds"
+      ]
+    },
+    "runtime_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "profile_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "profile_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source_commit": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "source_document_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "os": {
+          "const": "linux"
+        },
+        "architecture": {
+          "const": "amd64"
+        },
+        "core": {
+          "$ref": "#/$defs/component"
+        },
+        "dapi": {
+          "$ref": "#/$defs/component"
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service_image"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "governance_protocols": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/protocol"
+          },
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "post_upgrade_v3_v4": {
+          "type": "boolean"
+        },
+        "gateway_limits": {
+          "$ref": "#/$defs/gateway_limits"
+        }
+      },
+      "required": [
+        "schema_version",
+        "profile_id",
+        "profile_sha256",
+        "source_commit",
+        "source_document_sha256",
+        "os",
+        "architecture",
+        "core",
+        "dapi",
+        "services",
+        "model",
+        "governance_protocols",
+        "post_upgrade_v3_v4",
+        "gateway_limits"
+      ]
+    },
+    "host_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "network-gpu",
+            "network-only",
+            "ml-only",
+            "services"
+          ]
+        },
+        "node_name": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/node_name"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "public_host": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/public_host"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "p2p_port": {
+          "$ref": "#/$defs/port"
+        },
+        "start_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "max_lag_blocks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "prepare_reboot_policy": {
+          "type": "string",
+          "enum": [
+            "return_waiting"
+          ]
+        }
+      },
+      "required": []
+    },
+    "network_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chain_id": {
+          "$ref": "#/$defs/chain_id"
+        },
+        "bootstrap_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network_plan_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "discovery_concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "read_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "observation_ttl_seconds": {
+          "const": 600
+        },
+        "trust_ttl_seconds": {
+          "const": 600
+        },
+        "state_sync_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "full_verification": {
+          "type": "boolean"
+        },
+        "lifecycle_window_seconds": {
+          "const": 7200
+        },
+        "effective_epochs": {
+          "const": 4
+        },
+        "onboarding_epochs": {
+          "const": 2
+        },
+        "isolation_wait_seconds": {
+          "const": 3600
+        },
+        "isolation_poll_seconds": {
+          "const": 5
+        }
+      },
+      "required": []
+    },
+    "ml_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "external"
+          ]
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/http_url"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "callback_url": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/http_url"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "callback_peer_allowlist": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ipv4_cidr"
+          },
+          "minItems": 0,
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "qualification_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "skip_qualification": {
+          "type": "boolean"
+        },
+        "model_profile": {
+          "const": "qwen3-0.6b"
+        }
+      },
+      "required": [],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "external"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "endpoint"
+            ],
+            "properties": {
+              "endpoint": {
+                "$ref": "#/$defs/http_url"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "role_owner_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "public_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "chain_rpc": {
+          "$ref": "#/$defs/http_url"
+        },
+        "chain_api": {
+          "$ref": "#/$defs/http_url"
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "public_url",
+        "chain_rpc",
+        "chain_api"
+      ]
+    },
+    "gateway_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "public_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "chain_rpc": {
+          "$ref": "#/$defs/http_url"
+        },
+        "chain_api": {
+          "$ref": "#/$defs/http_url"
+        },
+        "model_id": {
+          "const": "Qwen/Qwen3-0.6B"
+        },
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        },
+        "owner_account": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/gonka_address"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "admin_key_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "client_key_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assurance_key_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limits": {
+          "$ref": "#/$defs/gateway_limits"
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "public_url",
+        "chain_rpc",
+        "chain_api",
+        "model_id",
+        "protocol",
+        "owner_account",
+        "admin_key_file",
+        "client_key_file",
+        "limits"
+      ]
+    },
+    "faucet_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "public_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "chain_rpc": {
+          "$ref": "#/$defs/http_url"
+        },
+        "chain_api": {
+          "$ref": "#/$defs/http_url"
+        },
+        "signer_keyring_name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "signer_password_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "funding_account": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "initial_ngonka": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "reserve_ngonka": {
+          "$ref": "#/$defs/decimal"
+        },
+        "claim_ngonka": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "claims_per_ip": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "public_url",
+        "chain_rpc",
+        "chain_api",
+        "signer_keyring_name",
+        "signer_password_file",
+        "funding_account",
+        "initial_ngonka",
+        "reserve_ngonka",
+        "claim_ngonka",
+        "claims_per_ip",
+        "window_seconds"
+      ]
+    },
+    "monitor_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "role": {
+          "$ref": "#/$defs/role"
+        },
+        "metrics_url": {
+          "$ref": "#/$defs/http_url"
+        },
+        "health_url": {
+          "$ref": "#/$defs/http_url"
+        }
+      },
+      "required": [
+        "instance_id",
+        "role",
+        "metrics_url",
+        "health_url"
+      ]
+    },
+    "monitoring_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "grafana_public_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "grafana_admin_user": {
+          "$ref": "#/$defs/identifier"
+        },
+        "grafana_password_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "prometheus_bind": {
+          "const": "127.0.0.1"
+        },
+        "grafana_bind": {
+          "const": "127.0.0.1"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/monitor_target"
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "grafana_public_url",
+        "grafana_admin_user",
+        "grafana_password_file",
+        "prometheus_bind",
+        "grafana_bind",
+        "targets"
+      ]
+    },
+    "site_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "public_origin": {
+          "$ref": "#/$defs/https_url"
+        },
+        "assets_manifest_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "assets_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bootstrap_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "network_plan_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "status_receipt_file": {
+          "$ref": "#/$defs/absolute_path"
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "public_origin",
+        "assets_manifest_file",
+        "assets_sha256",
+        "bootstrap_file",
+        "network_plan_file",
+        "status_receipt_file"
+      ]
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "route": {
+          "type": "string",
+          "enum": [
+            "site",
+            "api",
+            "rpc",
+            "rest",
+            "grafana",
+            "dashboard",
+            "metrics",
+            "gateway",
+            "install",
+            "gonkactl_distribution"
+          ]
+        },
+        "path_prefix": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^/[^?#\\s]*$"
+        },
+        "upstream": {
+          "$ref": "#/$defs/http_url"
+        },
+        "host": {
+          "$ref": "#/$defs/public_host"
+        }
+      },
+      "required": [
+        "route",
+        "path_prefix",
+        "upstream",
+        "host"
+      ]
+    },
+    "edge_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "public",
+            "participant"
+          ]
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_host"
+          },
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "acme_email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/route"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "participant_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "role",
+        "domains",
+        "acme_email",
+        "routes",
+        "participant_instance_id"
+      ]
+    },
+    "explorer_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "dashboard_port": {
+          "$ref": "#/$defs/port"
+        },
+        "participant_origin": {
+          "$ref": "#/$defs/https_url"
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "image",
+        "dashboard_port",
+        "participant_origin"
+      ]
+    },
+    "telegram_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "model_id": {
+          "const": "Qwen/Qwen3-0.6B"
+        },
+        "conversations_api_base": {
+          "$ref": "#/$defs/https_url"
+        },
+        "public_conversation_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "token_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "client_key_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "verify_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "image",
+        "model_id",
+        "conversations_api_base",
+        "public_conversation_url",
+        "token_file",
+        "client_key_file",
+        "verify_timeout_seconds"
+      ]
+    },
+    "ops_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "faucet": {
+          "$ref": "#/$defs/faucet_config"
+        },
+        "monitoring": {
+          "$ref": "#/$defs/monitoring_config"
+        },
+        "site": {
+          "$ref": "#/$defs/site_config"
+        },
+        "edge": {
+          "$ref": "#/$defs/edge_config"
+        },
+        "explorer": {
+          "$ref": "#/$defs/explorer_config"
+        },
+        "telegram": {
+          "$ref": "#/$defs/telegram_config"
+        }
+      },
+      "required": []
+    },
+    "bridge_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "const": "sepolia"
+        },
+        "rpc_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "private_key_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "contract_address": {
+          "type": "string",
+          "minLength": 42,
+          "maxLength": 42,
+          "pattern": "^0x[0-9a-fA-F]{40}$"
+        },
+        "deployment_receipt_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "beacon_state_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "jwt_file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "observer_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "minimum_free_ram_bytes": {
+          "const": 8589934592
+        },
+        "minimum_free_disk_bytes": {
+          "const": 107374182400
+        }
+      },
+      "required": [
+        "network"
+      ]
+    },
+    "release_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "release_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "composition_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workspace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_profile": {
+          "const": "qwen3-0.6b"
+        },
+        "github_repository": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "github_token_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "not": {
+        "required": [
+          "release_file",
+          "composition_file"
+        ],
+        "properties": {
+          "release_file": {
+            "$ref": "#/$defs/absolute_path"
+          },
+          "composition_file": {
+            "$ref": "#/$defs/absolute_path"
+          }
+        }
+      }
+    },
+    "report_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "output_directory": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostics_max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "log_tail_max_lines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        }
+      },
+      "required": []
+    },
+    "logging_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "TRACE",
+            "DEBUG",
+            "INFO",
+            "WARN",
+            "ERROR",
+            "FATAL"
+          ]
+        },
+        "file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "no_color": {
+          "type": "boolean"
+        },
+        "rotate_bytes": {
+          "const": 20971520
+        },
+        "retained_files": {
+          "const": 5
+        },
+        "run_event_max_bytes": {
+          "const": 104857600
+        },
+        "line_max_bytes": {
+          "const": 1048576
+        }
+      },
+      "required": []
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "host": {
+          "$ref": "#/$defs/host_config"
+        },
+        "network": {
+          "$ref": "#/$defs/network_config"
+        },
+        "ml": {
+          "$ref": "#/$defs/ml_config"
+        },
+        "gateway": {
+          "$ref": "#/$defs/gateway_config"
+        },
+        "ops": {
+          "$ref": "#/$defs/ops_config"
+        },
+        "bridge": {
+          "$ref": "#/$defs/bridge_config"
+        },
+        "release": {
+          "$ref": "#/$defs/release_config"
+        },
+        "report": {
+          "$ref": "#/$defs/report_config"
+        },
+        "logging": {
+          "$ref": "#/$defs/logging_config"
+        }
+      },
+      "required": [
+        "schema_version"
+      ]
+    },
+    "active_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation_binding"
+        },
+        "runtime_profile_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "binary_pin": {
+          "$ref": "#/$defs/binary_pin"
+        },
+        "created_by_run_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "committed_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      },
+      "required": [
+        "schema_version",
+        "instance_id",
+        "lineage",
+        "generation",
+        "runtime_profile_sha256",
+        "binary_pin",
+        "created_by_run_id",
+        "committed_at"
+      ]
+    },
+    "guard_authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "authorization_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "new_join",
+            "restore",
+            "new_genesis"
+          ]
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation_binding"
+        },
+        "binary_pin": {
+          "$ref": "#/$defs/binary_pin"
+        },
+        "runtime_profile_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "archive_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_operation_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "fencing_assurance": {
+          "$ref": "#/$defs/assurance"
+        },
+        "fence_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "isolation_record_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_signerless_receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verified_checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkpoint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activation_floor": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "imported_state_witness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/signer_witness"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authoritative_final_state_witness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/signer_witness"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "new_key_created_by_run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/run_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "authorization_id",
+        "mode",
+        "created_at",
+        "instance_id",
+        "lineage",
+        "identity",
+        "generation",
+        "binary_pin",
+        "runtime_profile_sha256",
+        "archive_sha256",
+        "source_operation_id",
+        "fencing_assurance",
+        "fence_sha256",
+        "isolation_record_sha256",
+        "initial_signerless_receipt_sha256",
+        "verified_checkpoint",
+        "activation_floor",
+        "imported_state_witness",
+        "authoritative_final_state_witness",
+        "new_key_created_by_run_id"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "restore"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "archive_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "imported_state_witness": {
+                "$ref": "#/$defs/signer_witness"
+              },
+              "initial_signerless_receipt_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "verified_checkpoint": {
+                "$ref": "#/$defs/checkpoint"
+              },
+              "fencing_assurance": {
+                "type": "string",
+                "enum": [
+                  "operator_attested",
+                  "operator_trusted_local_controls"
+                ]
+              },
+              "new_key_created_by_run_id": {
+                "type": "null"
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "fence_sha256": {
+                    "$ref": "#/$defs/sha256"
+                  },
+                  "isolation_record_sha256": {
+                    "type": "null"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "fence_sha256": {
+                    "type": "null"
+                  },
+                  "isolation_record_sha256": {
+                    "$ref": "#/$defs/sha256"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "new_join"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "archive_sha256": {
+                "type": "null"
+              },
+              "fence_sha256": {
+                "type": "null"
+              },
+              "isolation_record_sha256": {
+                "type": "null"
+              },
+              "imported_state_witness": {
+                "type": "null"
+              },
+              "authoritative_final_state_witness": {
+                "type": "null"
+              },
+              "new_key_created_by_run_id": {
+                "$ref": "#/$defs/run_id"
+              },
+              "fencing_assurance": {
+                "const": "local_verified"
+              },
+              "initial_signerless_receipt_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "verified_checkpoint": {
+                "$ref": "#/$defs/checkpoint"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "new_genesis"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "archive_sha256": {
+                "type": "null"
+              },
+              "fence_sha256": {
+                "type": "null"
+              },
+              "isolation_record_sha256": {
+                "type": "null"
+              },
+              "imported_state_witness": {
+                "type": "null"
+              },
+              "authoritative_final_state_witness": {
+                "type": "null"
+              },
+              "new_key_created_by_run_id": {
+                "$ref": "#/$defs/run_id"
+              },
+              "fencing_assurance": {
+                "const": "local_verified"
+              },
+              "verified_checkpoint": {
+                "type": "null"
+              },
+              "activation_floor": {
+                "const": "1"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "guard_abi": {
+          "const": 1
+        },
+        "revision": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "state": {
+          "$ref": "#/$defs/guard_state"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "new_join",
+            "restore",
+            "new_genesis"
+          ]
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "source_operation_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "signer_may_be_on": {
+          "type": "boolean"
+        },
+        "authorization": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/guard_authorization"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lower_bounds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/signer_witness"
+          },
+          "minItems": 0,
+          "maxItems": 32
+        },
+        "retirement_run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/run_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retirement_fence_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_observed_signer_state": {
+          "$ref": "#/$defs/signer_state"
+        }
+      },
+      "required": [
+        "schema_version",
+        "guard_abi",
+        "revision",
+        "instance_id",
+        "identity",
+        "lineage",
+        "state",
+        "mode",
+        "updated_at",
+        "source_operation_id",
+        "signer_may_be_on",
+        "authorization",
+        "lower_bounds",
+        "retirement_run_id",
+        "retirement_fence_sha256",
+        "last_observed_signer_state"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "ACTIVATION_AUTHORIZED",
+                  "ACTIVE"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "authorization": {
+                "$ref": "#/$defs/guard_authorization"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "ACTIVE"
+              }
+            }
+          },
+          "then": {
+            "oneOf": [
+              {
+                "properties": {
+                  "signer_may_be_on": {
+                    "const": true
+                  },
+                  "last_observed_signer_state": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "unknown"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "signer_may_be_on": {
+                    "const": false
+                  },
+                  "last_observed_signer_state": {
+                    "const": "stopped"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "DISABLED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "signer_may_be_on": {
+                "const": false
+              },
+              "authorization": {
+                "type": "null"
+              },
+              "retirement_run_id": {
+                "type": "null"
+              },
+              "retirement_fence_sha256": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "RETIRING",
+                  "RETIRED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "retirement_run_id": {
+                "$ref": "#/$defs/run_id"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "RETIRED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "signer_may_be_on": {
+                "const": false
+              },
+              "last_observed_signer_state": {
+                "const": "retired"
+              },
+              "retirement_fence_sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "operator-signer-isolation"
+        },
+        "archive_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "chain_id": {
+          "$ref": "#/$defs/chain_id"
+        },
+        "genesis_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "participant_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "consensus_pubkey": {
+          "$ref": "#/$defs/consensus_pubkey"
+        },
+        "node_id": {
+          "$ref": "#/$defs/node_id"
+        },
+        "source_identity": {
+          "$ref": "#/$defs/operator_reference"
+        },
+        "isolated_at": {
+          "$ref": "#/$defs/legacy_timestamp"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "host_powered_off_restart_disabled",
+            "host_stopped_key_disk_detached_restart_disabled",
+            "all_signers_stopped_restart_disabled"
+          ]
+        },
+        "evidence_reference": {
+          "$ref": "#/$defs/operator_reference"
+        },
+        "attested_by": {
+          "$ref": "#/$defs/operator_reference"
+        },
+        "exclusive_key_control_asserted": {
+          "const": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "archive_sha256",
+        "chain_id",
+        "genesis_identity_sha256",
+        "participant_address",
+        "consensus_pubkey",
+        "node_id",
+        "source_identity",
+        "isolated_at",
+        "method",
+        "evidence_reference",
+        "attested_by",
+        "exclusive_key_control_asserted"
+      ]
+    },
+    "retirement_controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "guard_retiring_fsynced": {
+          "const": true
+        },
+        "core_stopped_readback": {
+          "const": true
+        },
+        "tmkms_stopped_readback": {
+          "const": true
+        },
+        "restart_policies_disabled": {
+          "const": true
+        },
+        "owned_timers_disabled": {
+          "const": true
+        },
+        "owned_watchers_disabled": {
+          "const": true
+        },
+        "final_state_copied_after_stop": {
+          "const": true
+        },
+        "archive_fully_verified": {
+          "const": true
+        }
+      },
+      "required": [
+        "guard_retiring_fsynced",
+        "core_stopped_readback",
+        "tmkms_stopped_readback",
+        "restart_policies_disabled",
+        "owned_timers_disabled",
+        "owned_watchers_disabled",
+        "final_state_copied_after_stop",
+        "archive_fully_verified"
+      ]
+    },
+    "fence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "gonkactl-signer-fence"
+        },
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_operation_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "source_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "source_machine_id": {
+          "$ref": "#/$defs/machine_id"
+        },
+        "destination_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "archive_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "archive_size": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 69206016
+        },
+        "final_state": {
+          "$ref": "#/$defs/signer_witness"
+        },
+        "controls": {
+          "$ref": "#/$defs/retirement_controls"
+        },
+        "fencing_assurance": {
+          "const": "operator_trusted_local_controls"
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "id",
+        "source_operation_id",
+        "created_at",
+        "source_instance_id",
+        "source_machine_id",
+        "destination_instance_id",
+        "lineage",
+        "identity",
+        "archive_sha256",
+        "archive_size",
+        "final_state",
+        "controls",
+        "fencing_assurance"
+      ]
+    },
+    "planned_endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "rpc",
+            "api",
+            "p2p",
+            "ml",
+            "callback",
+            "gateway",
+            "grafana",
+            "site",
+            "faucet",
+            "metrics",
+            "explorer",
+            "conversations"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "peer_allowlist": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ipv4_cidr"
+          },
+          "minItems": 0,
+          "maxItems": 128,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kind",
+        "url",
+        "peer_allowlist"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "p2p"
+            },
+            "url": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 2048,
+              "pattern": "^tcp://[^/:@?#\\s]+:[0-9]{1,5}$"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rpc",
+                "api",
+                "ml",
+                "callback",
+                "gateway",
+                "grafana",
+                "site",
+                "faucet",
+                "metrics",
+                "explorer",
+                "conversations"
+              ]
+            },
+            "url": {
+              "$ref": "#/$defs/http_url"
+            }
+          }
+        }
+      ]
+    },
+    "network_instance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "node_name": {
+          "$ref": "#/$defs/archive_node_name"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/role"
+          },
+          "minItems": 1,
+          "maxItems": 14,
+          "uniqueItems": true
+        },
+        "public_host": {
+          "$ref": "#/$defs/public_host"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/planned_endpoint"
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "participant_address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/gonka_address"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "consensus_pubkey": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/consensus_pubkey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/node_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assigned_network_node_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_active_participant": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "instance_id",
+        "node_name",
+        "roles",
+        "public_host",
+        "endpoints",
+        "participant_address",
+        "consensus_pubkey",
+        "node_id",
+        "assigned_network_node_instance_id",
+        "expected_active_participant"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "expected_active_participant": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "participant_address": {
+                "$ref": "#/$defs/gonka_address"
+              },
+              "consensus_pubkey": {
+                "$ref": "#/$defs/consensus_pubkey"
+              },
+              "node_id": {
+                "$ref": "#/$defs/node_id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "network_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "gonkactl-network-plan"
+        },
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_operation_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lineage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/lineage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_profile_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/network_instance"
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        },
+        "required_receipt_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "join",
+              "ml",
+              "ops",
+              "gateway",
+              "bridge",
+              "upgrade",
+              "governance",
+              "reset",
+              "network"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 9,
+          "uniqueItems": true
+        },
+        "verification_scope": {
+          "type": "string",
+          "enum": [
+            "network",
+            "gate_b",
+            "bootstrap",
+            "reset",
+            "upgrade",
+            "audit"
+          ]
+        },
+        "inputs_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "binding_state": {
+          "type": "string",
+          "enum": [
+            "topology_only",
+            "bound"
+          ]
+        },
+        "chain_id": {
+          "$ref": "#/$defs/chain_id"
+        },
+        "genesis_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "id",
+        "source_operation_id",
+        "created_at",
+        "expires_at",
+        "lineage",
+        "runtime_profile_sha256",
+        "model",
+        "instances",
+        "required_receipt_kinds",
+        "verification_scope",
+        "inputs_sha256",
+        "binding_state",
+        "chain_id",
+        "genesis_instance_id"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "binding_state": {
+                "const": "bound"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lineage": {
+                "$ref": "#/$defs/lineage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "binding_state": {
+                "const": "topology_only"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lineage": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "directory": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "directory_mode": {
+          "const": "0700"
+        },
+        "file_mode": {
+          "const": "0600"
+        },
+        "owner_policy": {
+          "type": "string",
+          "enum": [
+            "current_euid",
+            "root"
+          ]
+        },
+        "owner_uid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 69206016
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "offline_verify",
+            "full_verify",
+            "join_import"
+          ]
+        },
+        "retention": {
+          "const": "ephemeral"
+        },
+        "source_reopened": {
+          "const": false
+        },
+        "marker_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "owner_process_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "owner_process_start_ticks": {
+          "$ref": "#/$defs/decimal"
+        },
+        "source_invocation_id": {
+          "$ref": "#/$defs/run_id"
+        }
+      },
+      "required": [
+        "id",
+        "directory",
+        "file",
+        "directory_mode",
+        "file_mode",
+        "owner_policy",
+        "owner_uid",
+        "sha256",
+        "size",
+        "purpose",
+        "retention",
+        "source_reopened",
+        "marker_id",
+        "owner_process_id",
+        "owner_process_start_ticks",
+        "source_invocation_id"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "type": "string",
+                "enum": [
+                  "join_import",
+                  "full_verify"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "owner_policy": {
+                "const": "root"
+              },
+              "owner_uid": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "purpose": {
+                "const": "offline_verify"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "owner_policy": {
+                "const": "current_euid"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "journal_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "home": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "machine_id": {
+          "$ref": "#/$defs/machine_id"
+        },
+        "lineage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/lineage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/identity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "binary_pin": {
+          "$ref": "#/$defs/binary_pin"
+        },
+        "inputs_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "archive_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_profile_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network_plan_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_active_record_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "home",
+        "instance_id",
+        "machine_id",
+        "lineage",
+        "identity",
+        "binary_pin",
+        "inputs_sha256",
+        "archive_sha256",
+        "runtime_profile_sha256",
+        "network_plan_sha256",
+        "initial_active_record_sha256"
+      ]
+    },
+    "transaction_intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "participant_register",
+            "warm_grant",
+            "faucet_claim",
+            "upgrade_proposal",
+            "devshard_proposal",
+            "governance_vote",
+            "gateway_funding",
+            "gateway_settlement",
+            "bridge_deploy",
+            "bridge_bootstrap",
+            "bridge_enable",
+            "bridge_register"
+          ]
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "account_address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "account_sequence": {
+          "$ref": "#/$defs/decimal"
+        },
+        "unsigned_bytes_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "signed_bytes_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tx_hash": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 66,
+              "pattern": "^(0x)?[A-Fa-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "prepared",
+            "signed",
+            "broadcast_unknown",
+            "broadcast_accepted",
+            "committed",
+            "effect_verified",
+            "rejected"
+          ]
+        },
+        "prepared_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "last_readback_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "committed_height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positive_decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effect_receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "lineage",
+        "account_address",
+        "account_sequence",
+        "unsigned_bytes_sha256",
+        "signed_bytes_sha256",
+        "tx_hash",
+        "state",
+        "prepared_at",
+        "last_readback_at",
+        "committed_height",
+        "effect_receipt_sha256"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "committed",
+                  "effect_verified"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tx_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 66,
+                "pattern": "^(0x)?[A-Fa-f0-9]{64}$"
+              },
+              "committed_height": {
+                "$ref": "#/$defs/positive_decimal"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "effect_verified"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "effect_receipt_sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "journal_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "event": {
+          "$ref": "#/$defs/code"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "intent",
+            "committed",
+            "verified",
+            "waiting",
+            "blocked",
+            "failed",
+            "cancelled",
+            "reconciled"
+          ]
+        },
+        "inputs_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/generation_binding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "required": [
+        "seq",
+        "timestamp",
+        "phase",
+        "event",
+        "state",
+        "inputs_sha256",
+        "receipt_sha256",
+        "generation",
+        "code"
+      ]
+    },
+    "journal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "parent_run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/run_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "join_new",
+            "join_restore",
+            "genesis",
+            "host_prepare",
+            "host_start",
+            "host_stop",
+            "host_verify",
+            "host_backup",
+            "host_retire",
+            "host_activate",
+            "host_reset",
+            "ml",
+            "network",
+            "upgrade",
+            "governance",
+            "ops",
+            "gateway",
+            "bridge",
+            "release",
+            "report",
+            "archive_verify"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z -]+$"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "binding": {
+          "$ref": "#/$defs/journal_binding"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "join_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/join_phase"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_classification": {
+          "type": "string",
+          "enum": [
+            "fresh",
+            "resumable_new",
+            "resumable_restore",
+            "complete",
+            "conflict",
+            "not_applicable"
+          ]
+        },
+        "signer_may_be_on": {
+          "type": "boolean"
+        },
+        "current_generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/generation_binding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completed_phases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/join_phase"
+          },
+          "minItems": 0,
+          "maxItems": 15,
+          "uniqueItems": true
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/journal_entry"
+          },
+          "minItems": 1,
+          "maxItems": 10000
+        },
+        "transaction_intents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/transaction_intent"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "snapshots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/snapshot"
+          },
+          "minItems": 0,
+          "maxItems": 8
+        },
+        "initial_trust_evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/trust_evidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "post_sync_evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/trust_evidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "isolation_h0": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkpoint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "isolation_h1": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkpoint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activation_floor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positive_decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle_started_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle_deadline_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/code"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_result_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "run_id",
+        "parent_run_id",
+        "operation",
+        "command",
+        "created_at",
+        "updated_at",
+        "binding",
+        "status",
+        "phase",
+        "join_state",
+        "initial_classification",
+        "signer_may_be_on",
+        "current_generation",
+        "completed_phases",
+        "entries",
+        "transaction_intents",
+        "evidence",
+        "snapshots",
+        "initial_trust_evidence",
+        "post_sync_evidence",
+        "isolation_h0",
+        "isolation_h1",
+        "activation_floor",
+        "lifecycle_started_at",
+        "lifecycle_deadline_at",
+        "next_action",
+        "terminal_result_sha256"
+      ]
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/code"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unavailable",
+            "pending"
+          ]
+        },
+        "observed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "evidence_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "required": [
+        "name",
+        "verdict",
+        "observed_at",
+        "evidence_sha256",
+        "code"
+      ]
+    },
+    "service_readback": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service": {
+          "$ref": "#/$defs/service"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "absent",
+            "running",
+            "healthy",
+            "unhealthy",
+            "stopped",
+            "unknown"
+          ]
+        },
+        "owned": {
+          "type": "boolean"
+        },
+        "generation_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "service",
+        "state",
+        "owned",
+        "generation_id"
+      ]
+    },
+    "join_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "join_complete": {
+          "type": "boolean"
+        },
+        "lifecycle_verified": {
+          "type": "boolean"
+        },
+        "completed_phase": {
+          "$ref": "#/$defs/join_phase"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation_binding"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "canary_stopped": {
+          "type": "boolean"
+        },
+        "signer_state": {
+          "$ref": "#/$defs/signer_state"
+        },
+        "application_ready": {
+          "type": "boolean"
+        },
+        "membership_verified": {
+          "type": "boolean"
+        },
+        "grants_verified": {
+          "type": "boolean"
+        },
+        "ml_mode": {
+          "type": "string",
+          "enum": [
+            "local",
+            "external"
+          ]
+        },
+        "ml_ready": {
+          "type": "boolean"
+        },
+        "activation_receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "final_backup_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "join_complete",
+        "lifecycle_verified",
+        "completed_phase",
+        "generation",
+        "identity",
+        "canary_stopped",
+        "signer_state",
+        "application_ready",
+        "membership_verified",
+        "grants_verified",
+        "ml_mode",
+        "ml_ready",
+        "activation_receipt_sha256",
+        "final_backup_sha256",
+        "checks"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "join_complete": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "completed_phase": {
+                "const": "J14"
+              },
+              "canary_stopped": {
+                "const": true
+              },
+              "signer_state": {
+                "const": "active"
+              },
+              "application_ready": {
+                "const": true
+              },
+              "membership_verified": {
+                "const": true
+              },
+              "grants_verified": {
+                "const": true
+              },
+              "ml_ready": {
+                "const": true
+              },
+              "activation_receipt_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "final_backup_sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "lifecycle_verified": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "join_complete": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "host_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "prepare",
+            "status",
+            "start",
+            "stop",
+            "verify"
+          ]
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "needs_reboot": {
+          "type": "boolean"
+        },
+        "guard_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/guard_state"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "signer_state": {
+          "$ref": "#/$defs/signer_state"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "catching_up": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lag_blocks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service_readback"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "action",
+        "ready",
+        "needs_reboot",
+        "guard_state",
+        "signer_state",
+        "height",
+        "catching_up",
+        "lag_blocks",
+        "services",
+        "checks"
+      ]
+    },
+    "archive_verification_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "archive_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "archive_size": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 69206016
+        },
+        "archive_schema_version": {
+          "const": 1
+        },
+        "archive_node_name": {
+          "$ref": "#/$defs/archive_node_name"
+        },
+        "verification_level": {
+          "type": "string",
+          "enum": [
+            "integrity_and_ed25519",
+            "full"
+          ]
+        },
+        "account_derivation": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "verified"
+          ]
+        },
+        "fully_verified": {
+          "type": "boolean"
+        },
+        "runtime_image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/image"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_owner_policy": {
+          "type": "string",
+          "enum": [
+            "current_euid",
+            "root"
+          ]
+        },
+        "signer_state": {
+          "$ref": "#/$defs/native_signer_state"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "chain_id": {
+          "$ref": "#/$defs/archive_chain_id"
+        },
+        "genesis_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "participant_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "identity": {
+          "$ref": "#/$defs/archive_identity"
+        }
+      },
+      "required": [
+        "archive_sha256",
+        "archive_size",
+        "archive_schema_version",
+        "archive_node_name",
+        "verification_level",
+        "account_derivation",
+        "fully_verified",
+        "runtime_image",
+        "snapshot_owner_policy",
+        "signer_state",
+        "checks",
+        "chain_id",
+        "genesis_identity_sha256",
+        "participant_address",
+        "identity"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "verification_level": {
+              "const": "integrity_and_ed25519"
+            },
+            "account_derivation": {
+              "const": "pending"
+            },
+            "fully_verified": {
+              "const": false
+            },
+            "runtime_image": {
+              "type": "null"
+            },
+            "snapshot_owner_policy": {
+              "const": "current_euid"
+            }
+          }
+        },
+        {
+          "properties": {
+            "verification_level": {
+              "const": "full"
+            },
+            "account_derivation": {
+              "const": "verified"
+            },
+            "fully_verified": {
+              "const": true
+            },
+            "runtime_image": {
+              "$ref": "#/$defs/image"
+            },
+            "snapshot_owner_policy": {
+              "const": "root"
+            }
+          }
+        }
+      ]
+    },
+    "backup_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "archive": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/output_file"
+            },
+            {
+              "properties": {
+                "classification": {
+                  "const": "secret"
+                }
+              }
+            }
+          ]
+        },
+        "archive_schema_version": {
+          "const": 1
+        },
+        "fully_verified": {
+          "const": true
+        },
+        "final_state": {
+          "$ref": "#/$defs/signer_witness"
+        },
+        "initial_signer_state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "stopped",
+            "disabled"
+          ]
+        },
+        "final_signer_state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "stopped",
+            "disabled",
+            "unknown"
+          ]
+        },
+        "restart_attempted": {
+          "type": "boolean"
+        },
+        "restart_verified": {
+          "type": "boolean"
+        },
+        "is_retirement": {
+          "const": false
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "archive",
+        "archive_schema_version",
+        "fully_verified",
+        "final_state",
+        "initial_signer_state",
+        "final_signer_state",
+        "restart_attempted",
+        "restart_verified",
+        "is_retirement",
+        "checks"
+      ]
+    },
+    "retirement_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fence": {
+          "$ref": "#/$defs/fence"
+        },
+        "archive": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/output_file"
+            },
+            {
+              "properties": {
+                "classification": {
+                  "const": "secret"
+                }
+              }
+            }
+          ]
+        },
+        "guard_state": {
+          "const": "RETIRED"
+        },
+        "signer_state": {
+          "const": "retired"
+        },
+        "automatic_unretire_allowed": {
+          "const": false
+        }
+      },
+      "required": [
+        "fence",
+        "archive",
+        "guard_state",
+        "signer_state",
+        "automatic_unretire_allowed"
+      ]
+    },
+    "activation_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "authorization": {
+          "$ref": "#/$defs/guard_authorization"
+        },
+        "guard_state": {
+          "type": "string",
+          "enum": [
+            "ACTIVATION_AUTHORIZED",
+            "ACTIVE"
+          ]
+        },
+        "signer_may_be_on": {
+          "type": "boolean"
+        },
+        "signer_readback_verified": {
+          "type": "boolean"
+        },
+        "mount_verified": {
+          "type": "boolean"
+        },
+        "native_state_advanced": {
+          "type": "boolean"
+        },
+        "observed_state": {
+          "$ref": "#/$defs/signer_witness"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "authorization",
+        "guard_state",
+        "signer_may_be_on",
+        "signer_readback_verified",
+        "mount_verified",
+        "native_state_advanced",
+        "observed_state",
+        "checks"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "guard_state": {
+                "const": "ACTIVE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "signer_may_be_on": {
+                "const": true
+              },
+              "signer_readback_verified": {
+                "const": true
+              },
+              "mount_verified": {
+                "const": true
+              },
+              "native_state_advanced": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ml_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "qualify",
+            "apply",
+            "attach_prepare",
+            "attach_complete"
+          ]
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "ml_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "network_node_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ml_identity": {
+          "$ref": "#/$defs/identifier"
+        },
+        "participant_address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/gonka_address"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ml_url": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/http_url"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "callback_url": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/http_url"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "callback_peer_allowlist": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ipv4_cidr"
+          },
+          "minItems": 0,
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "bundle_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "models_verified": {
+          "type": "boolean"
+        },
+        "completion_verified": {
+          "type": "boolean"
+        },
+        "node_to_ml_verified": {
+          "type": "boolean"
+        },
+        "ml_to_node_verified": {
+          "type": "boolean"
+        },
+        "chain_hardware_entry_verified": {
+          "type": "boolean"
+        },
+        "vram_peak_bytes": {
+          "$ref": "#/$defs/decimal"
+        },
+        "temporary_runtime_cleaned": {
+          "type": "boolean"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "action",
+        "model",
+        "image",
+        "ml_instance_id",
+        "network_node_instance_id",
+        "ml_identity",
+        "participant_address",
+        "ml_url",
+        "callback_url",
+        "callback_peer_allowlist",
+        "bundle_sha256",
+        "models_verified",
+        "completion_verified",
+        "node_to_ml_verified",
+        "ml_to_node_verified",
+        "chain_hardware_entry_verified",
+        "vram_peak_bytes",
+        "temporary_runtime_cleaned",
+        "checks"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "apply",
+                  "attach_prepare",
+                  "attach_complete"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "network_node_instance_id": {
+                "$ref": "#/$defs/instance_id"
+              },
+              "participant_address": {
+                "$ref": "#/$defs/gonka_address"
+              },
+              "ml_url": {
+                "$ref": "#/$defs/http_url"
+              },
+              "callback_url": {
+                "$ref": "#/$defs/http_url"
+              },
+              "callback_peer_allowlist": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/ipv4_cidr"
+                },
+                "minItems": 1,
+                "maxItems": 128,
+                "uniqueItems": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "qualify"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "network_node_instance_id": {
+                "type": "null"
+              },
+              "participant_address": {
+                "type": "null"
+              },
+              "callback_url": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "member_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "participant_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "consensus_pubkey": {
+          "$ref": "#/$defs/consensus_pubkey"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "consensus_power": {
+          "$ref": "#/$defs/decimal"
+        },
+        "height": {
+          "$ref": "#/$defs/decimal"
+        },
+        "receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "instance_id",
+        "participant_address",
+        "consensus_pubkey",
+        "active",
+        "consensus_power",
+        "height",
+        "receipt_sha256"
+      ]
+    },
+    "pending_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "target_role": {
+          "$ref": "#/$defs/role"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z -]+$"
+        },
+        "required_input": {
+          "type": "string",
+          "enum": [
+            "bundle",
+            "receipt",
+            "isolation_record",
+            "fence",
+            "final_signer_state",
+            "credential_file",
+            "reboot",
+            "network_progress",
+            "artifact",
+            "qualification"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "bundle_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "target_instance_id",
+        "target_role",
+        "command",
+        "required_input",
+        "code",
+        "bundle_sha256"
+      ]
+    },
+    "network_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "genesis",
+            "bootstrap_access",
+            "bootstrap_verify",
+            "verify",
+            "gate_b_verify",
+            "confirmation_poc_verify",
+            "audit",
+            "advance_after_upgrade"
+          ]
+        },
+        "genesis_created": {
+          "type": "boolean"
+        },
+        "network_bootstrap_complete": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "genesis",
+            "bootstrap",
+            "network",
+            "gate_b",
+            "confirmation_poc",
+            "audit",
+            "post_upgrade"
+          ]
+        },
+        "expected_instance_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/instance_id"
+          },
+          "minItems": 0,
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/member_evidence"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "common_checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/checkpoint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effective_epochs_observed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "onboarding_epochs_observed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "confirmation_poc_verified": {
+          "type": "boolean"
+        },
+        "authenticated_completions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "pending_actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pending_action"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "action",
+        "genesis_created",
+        "network_bootstrap_complete",
+        "scope",
+        "expected_instance_ids",
+        "members",
+        "common_checkpoint",
+        "effective_epochs_observed",
+        "onboarding_epochs_observed",
+        "confirmation_poc_verified",
+        "authenticated_completions",
+        "pending_actions",
+        "checks"
+      ]
+    },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "identity",
+            "signer",
+            "backups",
+            "logs",
+            "evidence",
+            "image_cache",
+            "model_cache",
+            "telegram_db",
+            "public_listener",
+            "site",
+            "grafana"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "preserved": {
+          "type": "boolean"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "path",
+        "preserved",
+        "sha256"
+      ]
+    },
+    "reset_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/role"
+          },
+          "minItems": 1,
+          "maxItems": 14,
+          "uniqueItems": true
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "pending",
+            "refused"
+          ]
+        },
+        "receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "instance_id",
+        "roles",
+        "status",
+        "receipt_sha256"
+      ]
+    },
+    "reset_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "apply",
+            "verify"
+          ]
+        },
+        "reset_plan_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reset_target"
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        },
+        "preservations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/preservation"
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        },
+        "identity_deleted": {
+          "type": "boolean"
+        },
+        "confirmed_consensus_pubkey": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/consensus_pubkey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "old_genesis_authority_invalidated": {
+          "type": "boolean"
+        },
+        "site_reachable": {
+          "type": "boolean"
+        },
+        "grafana_reachable": {
+          "type": "boolean"
+        },
+        "pending_actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pending_action"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        }
+      },
+      "required": [
+        "action",
+        "reset_plan_sha256",
+        "targets",
+        "preservations",
+        "identity_deleted",
+        "confirmed_consensus_pubkey",
+        "old_genesis_authority_invalidated",
+        "site_reachable",
+        "grafana_reachable",
+        "pending_actions"
+      ]
+    },
+    "upgrade_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "proposal_prepare",
+            "proposal_submit",
+            "prepare",
+            "apply",
+            "watch",
+            "verify",
+            "advance"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "PROPOSED",
+            "PASSED",
+            "PREPARED",
+            "ACTIVATED",
+            "SYNCED",
+            "VALIDATOR_EFFECTIVE",
+            "VERIFIED",
+            "WAITING"
+          ]
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positive_decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "proposal_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "activation_height": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "target_name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "core": {
+          "$ref": "#/$defs/component"
+        },
+        "dapi": {
+          "$ref": "#/$defs/component"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "baseline_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "full_release",
+            "binary_only"
+          ]
+        },
+        "transaction_intent_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "background": {
+          "type": "boolean"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "action",
+        "state",
+        "proposal_id",
+        "proposal_sha256",
+        "activation_height",
+        "target_name",
+        "core",
+        "dapi",
+        "model",
+        "baseline_sha256",
+        "scope",
+        "transaction_intent_id",
+        "background",
+        "checks"
+      ]
+    },
+    "governance_tuple": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        },
+        "creator": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "archive_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtime_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "prestate_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "message_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "protected_fields_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "protocol",
+        "creator",
+        "archive_sha256",
+        "runtime_sha256",
+        "prestate_sha256",
+        "message_sha256",
+        "protected_fields_sha256"
+      ]
+    },
+    "governance_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "prepare",
+            "submit",
+            "verify",
+            "vote"
+          ]
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positive_decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "proposal_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocols": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/protocol"
+          },
+          "minItems": 0,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "tuples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/governance_tuple"
+          },
+          "minItems": 0,
+          "maxItems": 3
+        },
+        "local_signing_account": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/gonka_address"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vote_option": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no",
+                "abstain",
+                "no_with_veto"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "individual_vote_submitted": {
+          "type": "boolean"
+        },
+        "proposal_status": {
+          "type": "string",
+          "enum": [
+            "prepared",
+            "submitted",
+            "voting",
+            "passed",
+            "rejected",
+            "failed",
+            "unknown"
+          ]
+        },
+        "deposit_ngonka": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positive_decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transaction_intent_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "before_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "action",
+        "proposal_id",
+        "proposal_sha256",
+        "protocols",
+        "tuples",
+        "local_signing_account",
+        "vote_option",
+        "individual_vote_submitted",
+        "proposal_status",
+        "deposit_ngonka",
+        "transaction_intent_id",
+        "before_sha256",
+        "after_sha256",
+        "checks"
+      ]
+    },
+    "ops_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "apply",
+            "status",
+            "verify"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "faucet",
+            "monitoring",
+            "site",
+            "explorer",
+            "edge_public",
+            "edge_participant",
+            "telegram"
+          ]
+        },
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "bundle_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "config_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "public_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service_readback"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/route"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "preservations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/preservation"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "inference_ready": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "action",
+        "role",
+        "owner_instance_id",
+        "bundle_sha256",
+        "config_sha256",
+        "public_url",
+        "services",
+        "routes",
+        "preservations",
+        "inference_ready",
+        "checks"
+      ]
+    },
+    "gateway_runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        },
+        "runtime_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "archive_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "participant_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "escrow_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "port": {
+          "$ref": "#/$defs/port"
+        },
+        "state_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "protocol",
+        "runtime_sha256",
+        "archive_sha256",
+        "owner_instance_id",
+        "participant_address",
+        "escrow_id",
+        "port",
+        "state_sha256"
+      ]
+    },
+    "access_key_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "telegram",
+            "assurance"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "revoked"
+          ]
+        },
+        "credential_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "purpose",
+        "status",
+        "credential_sha256",
+        "created_at",
+        "revoked_at"
+      ]
+    },
+    "gateway_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "apply",
+            "reconcile",
+            "status",
+            "verify",
+            "continuity",
+            "access_key_ensure",
+            "access_key_revoke",
+            "access_key_list",
+            "migration_prepare",
+            "migration_status",
+            "migration_cutover",
+            "migration_drain",
+            "migration_rollback",
+            "migration_complete",
+            "canary_prepare",
+            "canary_status",
+            "canary_stop",
+            "settle",
+            "ha_v4"
+          ]
+        },
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "preparing",
+            "prepared",
+            "cutover_pending",
+            "cutover",
+            "drained",
+            "promoting",
+            "completed",
+            "failed",
+            "rolled_back",
+            "READY",
+            "TRANSITION",
+            "stopped",
+            "settled",
+            "verified"
+          ]
+        },
+        "active": {
+          "$ref": "#/$defs/gateway_runtime"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/gateway_runtime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/gateway_runtime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "route_receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settlement_receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_drained": {
+          "type": "boolean"
+        },
+        "queued_requests": {
+          "$ref": "#/$defs/decimal"
+        },
+        "authenticated_completions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "chain_accounting_verified": {
+          "type": "boolean"
+        },
+        "settlement_verified": {
+          "type": "boolean"
+        },
+        "replicas_tested": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "access_keys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/access_key_metadata"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "pending_actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pending_action"
+          },
+          "minItems": 0,
+          "maxItems": 128
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "action",
+        "protocol",
+        "state",
+        "active",
+        "source",
+        "target",
+        "route_receipt_sha256",
+        "settlement_receipt_sha256",
+        "source_drained",
+        "queued_requests",
+        "authenticated_completions",
+        "chain_accounting_verified",
+        "settlement_verified",
+        "replicas_tested",
+        "access_keys",
+        "pending_actions",
+        "checks"
+      ]
+    },
+    "bridge_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "contract_deploy",
+            "contract_register",
+            "observer_apply",
+            "observer_status",
+            "observer_verify"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "contract",
+            "registration",
+            "observer"
+          ]
+        },
+        "network": {
+          "const": "sepolia"
+        },
+        "evm_chain_id": {
+          "const": "11155111"
+        },
+        "contract_address": {
+          "type": "string",
+          "minLength": 42,
+          "maxLength": 42,
+          "pattern": "^0x[0-9a-fA-F]{40}$"
+        },
+        "owner_address": {
+          "type": "string",
+          "minLength": 42,
+          "maxLength": 42,
+          "pattern": "^0x[0-9a-fA-F]{40}$"
+        },
+        "bytecode_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "abi_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bls_epoch": {
+          "$ref": "#/$defs/decimal"
+        },
+        "domain_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "normal_operation": {
+          "type": "boolean"
+        },
+        "deployment_receipt_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transaction_intent_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "minItems": 0,
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "finalized_cursor_chain_id": {
+          "anyOf": [
+            {
+              "const": "sepolia"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finalized_cursor_block_number": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positive_decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending_blocks": {
+          "$ref": "#/$defs/decimal"
+        },
+        "pending_receipts": {
+          "$ref": "#/$defs/decimal"
+        },
+        "block_count_by_number": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "block_number": {
+                "$ref": "#/$defs/decimal"
+              },
+              "count": {
+                "$ref": "#/$defs/decimal"
+              }
+            },
+            "required": [
+              "block_number",
+              "count"
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 4096
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "action",
+        "scope",
+        "network",
+        "evm_chain_id",
+        "contract_address",
+        "owner_address",
+        "bytecode_sha256",
+        "abi_sha256",
+        "bls_epoch",
+        "domain_sha256",
+        "normal_operation",
+        "deployment_receipt_sha256",
+        "transaction_intent_ids",
+        "finalized_cursor_chain_id",
+        "finalized_cursor_block_number",
+        "pending_blocks",
+        "pending_receipts",
+        "block_count_by_number",
+        "checks"
+      ]
+    },
+    "matrix_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository_key": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_sha": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "os": {
+          "const": "linux"
+        },
+        "architecture": {
+          "const": "amd64"
+        },
+        "layer": {
+          "type": "string",
+          "enum": [
+            "core",
+            "devshard"
+          ]
+        },
+        "profile": {
+          "$ref": "#/$defs/identifier"
+        },
+        "definition_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "repository_key",
+        "source_sha",
+        "os",
+        "architecture",
+        "layer",
+        "profile",
+        "definition_sha256"
+      ]
+    },
+    "workflow_matrix": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/matrix_entry"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "include"
+      ]
+    },
+    "release_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "candidate_prepare",
+            "candidate_build",
+            "candidate_profile",
+            "candidate_verify",
+            "candidate_source_verify",
+            "candidate_workflow_matrix",
+            "composition_create",
+            "composition_verify",
+            "composition_materialize",
+            "composition_show"
+          ]
+        },
+        "profile_name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_commit": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "definition_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "build_manifest_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "composition_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "core_layer_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "devshard_layer_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workflow_run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positive_decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dispatch_state": {
+          "type": "string",
+          "enum": [
+            "not_requested",
+            "planned",
+            "dispatching",
+            "unknown",
+            "discovered",
+            "complete",
+            "failed"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "matrix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/workflow_matrix"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/runtime_profile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          },
+          "minItems": 1,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "action",
+        "profile_name",
+        "source_commit",
+        "definition_sha256",
+        "build_manifest_sha256",
+        "composition_sha256",
+        "core_layer_sha256",
+        "devshard_layer_sha256",
+        "workflow_run_id",
+        "dispatch_state",
+        "artifacts",
+        "matrix",
+        "profile",
+        "checks"
+      ]
+    },
+    "report_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "report_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_run_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "draft_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "body_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "diagnostics_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "publication_state": {
+          "type": "string",
+          "enum": [
+            "not_published",
+            "publishing",
+            "unknown",
+            "verified",
+            "failed"
+          ]
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "issue_number": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positive_decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authenticated_account": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "publication_url": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/https_url"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "marker": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^gonkactl-report-id:[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+        },
+        "sanitization_verified": {
+          "const": true
+        },
+        "publication_readback_verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "report_id",
+        "source_run_id",
+        "draft_sha256",
+        "body_sha256",
+        "diagnostics_sha256",
+        "publication_state",
+        "repository",
+        "issue_number",
+        "authenticated_account",
+        "publication_url",
+        "marker",
+        "sanitization_verified",
+        "publication_readback_verified"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "publication_state": {
+                "const": "verified"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "repository": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 256,
+                "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+              },
+              "issue_number": {
+                "$ref": "#/$defs/positive_decimal"
+              },
+              "authenticated_account": {
+                "$ref": "#/$defs/identifier"
+              },
+              "publication_url": {
+                "$ref": "#/$defs/https_url"
+              },
+              "publication_readback_verified": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "handoff_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundle_kind": {
+          "type": "string",
+          "enum": [
+            "ml_attach",
+            "genesis_access",
+            "faucet",
+            "monitoring",
+            "site",
+            "explorer",
+            "edge_routes",
+            "telegram",
+            "gateway",
+            "gateway_route",
+            "bridge_observer",
+            "reset"
+          ]
+        },
+        "bundle_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "bundle_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "target_role": {
+          "$ref": "#/$defs/role"
+        },
+        "target_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "pending_actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pending_action"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "trust_model": {
+          "type": "string",
+          "enum": [
+            "operator_transferred_integrity_only",
+            "operator_trusted_receipts_plus_live_readback"
+          ]
+        }
+      },
+      "required": [
+        "bundle_kind",
+        "bundle_id",
+        "bundle_sha256",
+        "target_role",
+        "target_instance_id",
+        "files",
+        "pending_actions",
+        "trust_model"
+      ]
+    },
+    "receipt_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_operation_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "parent_operation_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/run_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_machine_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/machine_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lineage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/lineage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "identity_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inputs_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "archive_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_profile_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network_plan_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/generation_binding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "binary_pin": {
+          "$ref": "#/$defs/binary_pin"
+        }
+      },
+      "required": [
+        "source_operation_id",
+        "parent_operation_id",
+        "source_instance_id",
+        "target_instance_id",
+        "source_machine_id",
+        "lineage",
+        "identity_sha256",
+        "inputs_sha256",
+        "archive_sha256",
+        "runtime_profile_sha256",
+        "network_plan_sha256",
+        "generation",
+        "binary_pin"
+      ]
+    },
+    "operation_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "join",
+            "host",
+            "archive_verification",
+            "backup",
+            "retirement",
+            "activation",
+            "ml",
+            "network",
+            "reset",
+            "upgrade",
+            "governance",
+            "ops",
+            "gateway",
+            "bridge",
+            "release",
+            "report",
+            "handoff",
+            "recovery"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "binding": {
+          "$ref": "#/$defs/receipt_binding"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "assurance": {
+          "$ref": "#/$defs/assurance"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "payload": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/join_payload"
+            },
+            {
+              "$ref": "#/$defs/host_payload"
+            },
+            {
+              "$ref": "#/$defs/archive_verification_payload"
+            },
+            {
+              "$ref": "#/$defs/backup_payload"
+            },
+            {
+              "$ref": "#/$defs/retirement_payload"
+            },
+            {
+              "$ref": "#/$defs/activation_payload"
+            },
+            {
+              "$ref": "#/$defs/ml_payload"
+            },
+            {
+              "$ref": "#/$defs/network_payload"
+            },
+            {
+              "$ref": "#/$defs/reset_payload"
+            },
+            {
+              "$ref": "#/$defs/upgrade_payload"
+            },
+            {
+              "$ref": "#/$defs/governance_payload"
+            },
+            {
+              "$ref": "#/$defs/ops_payload"
+            },
+            {
+              "$ref": "#/$defs/gateway_payload"
+            },
+            {
+              "$ref": "#/$defs/bridge_payload"
+            },
+            {
+              "$ref": "#/$defs/release_payload"
+            },
+            {
+              "$ref": "#/$defs/report_payload"
+            },
+            {
+              "$ref": "#/$defs/handoff_payload"
+            },
+            {
+              "$ref": "#/$defs/recovery_payload"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "id",
+        "created_at",
+        "expires_at",
+        "binding",
+        "status",
+        "code",
+        "assurance",
+        "files",
+        "payload"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "join"
+            },
+            "payload": {
+              "$ref": "#/$defs/join_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "host"
+            },
+            "payload": {
+              "$ref": "#/$defs/host_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "archive_verification"
+            },
+            "payload": {
+              "$ref": "#/$defs/archive_verification_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "backup"
+            },
+            "payload": {
+              "$ref": "#/$defs/backup_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "retirement"
+            },
+            "payload": {
+              "$ref": "#/$defs/retirement_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "activation"
+            },
+            "payload": {
+              "$ref": "#/$defs/activation_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "ml"
+            },
+            "payload": {
+              "$ref": "#/$defs/ml_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "network"
+            },
+            "payload": {
+              "$ref": "#/$defs/network_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "reset"
+            },
+            "payload": {
+              "$ref": "#/$defs/reset_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "upgrade"
+            },
+            "payload": {
+              "$ref": "#/$defs/upgrade_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "governance"
+            },
+            "payload": {
+              "$ref": "#/$defs/governance_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "ops"
+            },
+            "payload": {
+              "$ref": "#/$defs/ops_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "gateway"
+            },
+            "payload": {
+              "$ref": "#/$defs/gateway_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "bridge"
+            },
+            "payload": {
+              "$ref": "#/$defs/bridge_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "release"
+            },
+            "payload": {
+              "$ref": "#/$defs/release_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "report"
+            },
+            "payload": {
+              "$ref": "#/$defs/report_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "handoff"
+            },
+            "payload": {
+              "$ref": "#/$defs/handoff_payload"
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "recovery"
+            },
+            "payload": {
+              "$ref": "#/$defs/recovery_payload"
+            }
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "join",
+                  "backup",
+                  "retirement",
+                  "activation",
+                  "ml",
+                  "network",
+                  "reset",
+                  "upgrade",
+                  "governance",
+                  "ops",
+                  "gateway",
+                  "bridge",
+                  "handoff",
+                  "recovery"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "binding": {
+                "properties": {
+                  "lineage": {
+                    "$ref": "#/$defs/lineage"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "version_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "commit": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "go_version": {
+          "const": "go1.26.8"
+        },
+        "assets_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "guard_abi": {
+          "const": 1
+        },
+        "service_abi": {
+          "const": 1
+        }
+      },
+      "required": [
+        "version",
+        "commit",
+        "go_version",
+        "assets_sha256",
+        "guard_abi",
+        "service_abi"
+      ]
+    },
+    "result_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operation_receipt"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/output_file"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "pending_actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pending_action"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "join_complete": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle_verified": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "genesis_created": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "network_bootstrap_complete": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verification_level": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "integrity_and_ed25519",
+                "full"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "account_derivation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "pending",
+                "verified"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fully_verified": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fencing_assurance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/assurance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requires_qualification": {
+          "type": "boolean"
+        },
+        "healthy": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "matrix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/workflow_matrix"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/runtime_profile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/version_result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "help": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/help_result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "receipts",
+        "outputs",
+        "pending_actions",
+        "join_complete",
+        "lifecycle_verified",
+        "genesis_created",
+        "network_bootstrap_complete",
+        "verification_level",
+        "account_derivation",
+        "fully_verified",
+        "fencing_assurance",
+        "requires_qualification",
+        "healthy",
+        "matrix",
+        "profile",
+        "version",
+        "help"
+      ]
+    },
+    "resume": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z -]+$"
+        },
+        "run_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "required_input": {
+          "type": "string",
+          "enum": [
+            "none",
+            "isolation-record",
+            "fence",
+            "final-signer-state",
+            "receipt",
+            "bundle",
+            "reboot",
+            "network-progress",
+            "artifact",
+            "qualification",
+            "credential-file"
+          ]
+        },
+        "required_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/absolute_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "command",
+        "run_id",
+        "required_input",
+        "required_path"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "cause": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/code"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "cause"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9 -]+$"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/run_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "mutation": {
+          "$ref": "#/$defs/mutation"
+        },
+        "signer_state": {
+          "$ref": "#/$defs/signer_state"
+        },
+        "result": {
+          "$ref": "#/$defs/result_data"
+        },
+        "resume": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resume"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/error"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exit_code": {
+          "type": "integer",
+          "enum": [
+            0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            130,
+            143
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "command",
+        "run_id",
+        "status",
+        "phase",
+        "code",
+        "mutation",
+        "signer_state",
+        "result",
+        "resume",
+        "error",
+        "exit_code"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "planned"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exit_code": {
+                "const": 0
+              },
+              "error": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "waiting",
+                  "blocked"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exit_code": {
+                "const": 6
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exit_code": {
+                "enum": [
+                  2,
+                  3,
+                  4,
+                  5,
+                  7,
+                  8
+                ]
+              },
+              "error": {
+                "$ref": "#/$defs/error"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "cancelled"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exit_code": {
+                "enum": [
+                  130,
+                  143
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "version"
+              },
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "command",
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "run_id": {
+                "type": "null"
+              },
+              "phase": {
+                "const": "complete"
+              },
+              "mutation": {
+                "const": "none"
+              },
+              "signer_state": {
+                "const": "unknown"
+              },
+              "resume": {
+                "type": "null"
+              },
+              "result": {
+                "properties": {
+                  "receipts": {
+                    "maxItems": 0
+                  },
+                  "version": {
+                    "$ref": "#/$defs/version_result"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "help"
+              },
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "command",
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "run_id": {
+                "type": "null"
+              },
+              "phase": {
+                "const": "complete"
+              },
+              "mutation": {
+                "const": "none"
+              },
+              "signer_state": {
+                "const": "unknown"
+              },
+              "resume": {
+                "type": "null"
+              },
+              "result": {
+                "properties": {
+                  "receipts": {
+                    "maxItems": 0
+                  },
+                  "help": {
+                    "$ref": "#/$defs/help_result"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "event_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z -]+$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "service": {
+          "$ref": "#/$defs/service"
+        },
+        "generation": {
+          "$ref": "#/$defs/generation_binding"
+        },
+        "height": {
+          "$ref": "#/$defs/decimal"
+        },
+        "round": {
+          "$ref": "#/$defs/decimal"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": -128,
+          "maximum": 127
+        },
+        "catching_up": {
+          "type": "boolean"
+        },
+        "lag_blocks": {
+          "$ref": "#/$defs/decimal"
+        },
+        "signer_state": {
+          "$ref": "#/$defs/signer_state"
+        },
+        "guard_state": {
+          "$ref": "#/$defs/guard_state"
+        },
+        "inputs_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "archive_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtime_profile_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "receipt_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tx_hash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 66,
+          "pattern": "^(0x)?[A-Fa-f0-9]{64}$"
+        },
+        "proposal_id": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "elapsed_milliseconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 864000000
+        },
+        "source_node_id": {
+          "$ref": "#/$defs/node_id"
+        },
+        "http_status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "bytes": {
+          "$ref": "#/$defs/decimal"
+        },
+        "output_path": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "check_name": {
+          "$ref": "#/$defs/code"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unavailable",
+            "pending"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": []
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timestamp": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "run_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "seq": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "TRACE",
+            "DEBUG",
+            "INFO",
+            "WARN",
+            "ERROR",
+            "FATAL"
+          ]
+        },
+        "event": {
+          "type": "string",
+          "enum": [
+            "operation_started",
+            "phase_intent",
+            "phase_completed",
+            "checkpoint",
+            "observation",
+            "source_rejected",
+            "download_verified",
+            "identity_staged",
+            "generation_promoted",
+            "signer_authorized",
+            "signer_start_intent",
+            "signer_readback",
+            "transaction_prepared",
+            "transaction_broadcast",
+            "transaction_readback",
+            "receipt_written",
+            "waiting",
+            "blocked",
+            "warning",
+            "operation_completed",
+            "operation_failed",
+            "operation_cancelled",
+            "reconciled",
+            "audit_write_failed"
+          ]
+        },
+        "context": {
+          "$ref": "#/$defs/event_context"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/error"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "timestamp",
+        "run_id",
+        "seq",
+        "level",
+        "event",
+        "context",
+        "error"
+      ]
+    },
+    "archive_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node_name": {
+          "$ref": "#/$defs/archive_node_name"
+        },
+        "node_id": {
+          "$ref": "#/$defs/node_id"
+        },
+        "consensus_pubkey": {
+          "$ref": "#/$defs/consensus_pubkey"
+        },
+        "warm_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "warm_pubkey_b64": {
+          "$ref": "#/$defs/warm_pubkey"
+        }
+      },
+      "required": [
+        "node_name",
+        "node_id",
+        "consensus_pubkey",
+        "warm_address",
+        "warm_pubkey_b64"
+      ]
+    },
+    "ml_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "network_node_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "participant_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "ml_identity": {
+          "$ref": "#/$defs/identifier"
+        },
+        "ml_url": {
+          "$ref": "#/$defs/http_url"
+        },
+        "callback_url": {
+          "$ref": "#/$defs/http_url"
+        },
+        "callback_peer_allowlist": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ipv4_cidr"
+          },
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "network_node_instance_id",
+        "participant_address",
+        "model",
+        "image",
+        "ml_identity",
+        "ml_url",
+        "callback_url",
+        "callback_peer_allowlist"
+      ]
+    },
+    "genesis_access_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "genesis_owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "network_plan_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "guardian_address": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "chain_rpc": {
+          "$ref": "#/$defs/http_url"
+        },
+        "chain_api": {
+          "$ref": "#/$defs/http_url"
+        },
+        "requested_roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/role"
+          },
+          "minItems": 1,
+          "maxItems": 14,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "genesis_owner_instance_id",
+        "network_plan_sha256",
+        "guardian_address",
+        "model",
+        "chain_rpc",
+        "chain_api",
+        "requested_roles"
+      ]
+    },
+    "faucet_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "public_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "chain_rpc": {
+          "$ref": "#/$defs/http_url"
+        },
+        "chain_api": {
+          "$ref": "#/$defs/http_url"
+        },
+        "signer_keyring_name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "funding_account": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "initial_ngonka": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "reserve_ngonka": {
+          "$ref": "#/$defs/decimal"
+        },
+        "claim_ngonka": {
+          "$ref": "#/$defs/positive_decimal"
+        },
+        "claims_per_ip": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "window_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "public_url",
+        "chain_rpc",
+        "chain_api",
+        "signer_keyring_name",
+        "funding_account",
+        "initial_ngonka",
+        "reserve_ngonka",
+        "claim_ngonka",
+        "claims_per_ip",
+        "window_seconds"
+      ]
+    },
+    "monitoring_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "grafana_public_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "grafana_admin_user": {
+          "$ref": "#/$defs/identifier"
+        },
+        "prometheus_bind": {
+          "const": "127.0.0.1"
+        },
+        "grafana_bind": {
+          "const": "127.0.0.1"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/monitor_target"
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "grafana_public_url",
+        "grafana_admin_user",
+        "prometheus_bind",
+        "grafana_bind",
+        "targets"
+      ]
+    },
+    "site_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "public_origin": {
+          "$ref": "#/$defs/https_url"
+        },
+        "assets_manifest": {
+          "$ref": "#/$defs/file"
+        },
+        "assets_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bootstrap": {
+          "$ref": "#/$defs/file"
+        },
+        "network_plan": {
+          "$ref": "#/$defs/file"
+        },
+        "status_receipt": {
+          "$ref": "#/$defs/file"
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "public_origin",
+        "assets_manifest",
+        "assets_sha256",
+        "bootstrap",
+        "network_plan",
+        "status_receipt"
+      ]
+    },
+    "explorer_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "dashboard_port": {
+          "$ref": "#/$defs/port"
+        },
+        "participant_origin": {
+          "$ref": "#/$defs/https_url"
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "image",
+        "dashboard_port",
+        "participant_origin"
+      ]
+    },
+    "edge_routes_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "public",
+            "participant"
+          ]
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_host"
+          },
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        "acme_email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/route"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "participant_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "role",
+        "domains",
+        "acme_email",
+        "routes",
+        "participant_instance_id"
+      ]
+    },
+    "telegram_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "image": {
+          "$ref": "#/$defs/image"
+        },
+        "model_id": {
+          "const": "Qwen/Qwen3-0.6B"
+        },
+        "conversations_api_base": {
+          "$ref": "#/$defs/https_url"
+        },
+        "public_conversation_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "verify_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "image",
+        "model_id",
+        "conversations_api_base",
+        "public_conversation_url",
+        "verify_timeout_seconds"
+      ]
+    },
+    "gateway_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "public_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "chain_rpc": {
+          "$ref": "#/$defs/http_url"
+        },
+        "chain_api": {
+          "$ref": "#/$defs/http_url"
+        },
+        "model_id": {
+          "const": "Qwen/Qwen3-0.6B"
+        },
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        },
+        "owner_account": {
+          "$ref": "#/$defs/gonka_address"
+        },
+        "limits": {
+          "$ref": "#/$defs/gateway_limits"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/service_image"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "approved_tuple": {
+          "$ref": "#/$defs/governance_tuple"
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "public_url",
+        "chain_rpc",
+        "chain_api",
+        "model_id",
+        "protocol",
+        "owner_account",
+        "limits",
+        "images",
+        "approved_tuple"
+      ]
+    },
+    "gateway_route_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "gateway_owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "migration_operation_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "cutover",
+            "rollback"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/gateway_runtime"
+        },
+        "target": {
+          "$ref": "#/$defs/gateway_runtime"
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/route"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "gateway_owner_instance_id",
+        "migration_operation_id",
+        "action",
+        "source",
+        "target",
+        "routes"
+      ]
+    },
+    "bridge_observer_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "network": {
+          "const": "sepolia"
+        },
+        "contract_address": {
+          "type": "string",
+          "minLength": 42,
+          "maxLength": 42,
+          "pattern": "^0x[0-9a-fA-F]{40}$"
+        },
+        "deployment_receipt_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "beacon_state_url": {
+          "$ref": "#/$defs/https_url"
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/file"
+        },
+        "observer_image": {
+          "$ref": "#/$defs/image"
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "network",
+        "contract_address",
+        "deployment_receipt_sha256",
+        "beacon_state_url",
+        "checkpoint",
+        "observer_image"
+      ]
+    },
+    "reset_bundle_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_instance_id": {
+          "$ref": "#/$defs/instance_id"
+        },
+        "reset_plan": {
+          "$ref": "#/$defs/file"
+        },
+        "reset_plan_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/role"
+          },
+          "minItems": 1,
+          "maxItems": 14,
+          "uniqueItems": true
+        },
+        "delete_identity": {
+          "type": "boolean"
+        },
+        "confirm_consensus_pubkey": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/consensus_pubkey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "owner_instance_id",
+        "reset_plan",
+        "reset_plan_sha256",
+        "roles",
+        "delete_identity",
+        "confirm_consensus_pubkey"
+      ]
+    },
+    "handoff_bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "ml_attach",
+            "genesis_access",
+            "faucet",
+            "monitoring",
+            "site",
+            "explorer",
+            "edge_routes",
+            "telegram",
+            "gateway",
+            "gateway_route",
+            "bridge_observer",
+            "reset"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lineage": {
+          "$ref": "#/$defs/lineage"
+        },
+        "target_role": {
+          "$ref": "#/$defs/role"
+        },
+        "target_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instance_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_operation_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "inputs_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          },
+          "minItems": 0,
+          "maxItems": 1024
+        },
+        "inputs": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ml_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/genesis_access_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/faucet_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/monitoring_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/site_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/explorer_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/edge_routes_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/telegram_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/gateway_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/gateway_route_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/bridge_observer_bundle_inputs"
+            },
+            {
+              "$ref": "#/$defs/reset_bundle_inputs"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "id",
+        "created_at",
+        "expires_at",
+        "lineage",
+        "target_role",
+        "target_instance_id",
+        "source_operation_id",
+        "inputs_sha256",
+        "files",
+        "inputs"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "ml_attach"
+            },
+            "inputs": {
+              "$ref": "#/$defs/ml_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "ml"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "genesis_access"
+            },
+            "inputs": {
+              "$ref": "#/$defs/genesis_access_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "gateway",
+                "faucet",
+                "monitoring",
+                "site",
+                "edge_public"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "faucet"
+            },
+            "inputs": {
+              "$ref": "#/$defs/faucet_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "faucet"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "monitoring"
+            },
+            "inputs": {
+              "$ref": "#/$defs/monitoring_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "monitoring"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "site"
+            },
+            "inputs": {
+              "$ref": "#/$defs/site_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "site"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "explorer"
+            },
+            "inputs": {
+              "$ref": "#/$defs/explorer_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "explorer"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "edge_routes"
+            },
+            "inputs": {
+              "$ref": "#/$defs/edge_routes_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "edge_public",
+                "edge_participant"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "telegram"
+            },
+            "inputs": {
+              "$ref": "#/$defs/telegram_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "telegram"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "gateway"
+            },
+            "inputs": {
+              "$ref": "#/$defs/gateway_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "gateway"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "gateway_route"
+            },
+            "inputs": {
+              "$ref": "#/$defs/gateway_route_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "edge_public"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "bridge_observer"
+            },
+            "inputs": {
+              "$ref": "#/$defs/bridge_observer_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "bridge_observer"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "reset"
+            },
+            "inputs": {
+              "$ref": "#/$defs/reset_bundle_inputs"
+            },
+            "target_role": {
+              "type": "string",
+              "enum": [
+                "network_node",
+                "genesis",
+                "ml",
+                "gateway",
+                "edge_public",
+                "edge_participant",
+                "faucet",
+                "monitoring",
+                "site",
+                "explorer",
+                "telegram",
+                "bridge_observer",
+                "gateway_replica"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "archive_chain_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8388608,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "gateway_observer_config": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/gateway_config"
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "client_key_file"
+              ],
+              "properties": {
+                "client_key_file": {
+                  "$ref": "#/$defs/absolute_path"
+                }
+              }
+            },
+            {
+              "required": [
+                "assurance_key_file"
+              ],
+              "properties": {
+                "assurance_key_file": {
+                  "$ref": "#/$defs/absolute_path"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "gateway_admin_config": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/gateway_config"
+        },
+        {
+          "properties": {
+            "admin_key_file": {
+              "$ref": "#/$defs/absolute_path"
+            }
+          }
+        }
+      ]
+    },
+    "gateway_owner_config": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/gateway_admin_config"
+        },
+        {
+          "properties": {
+            "owner_instance_id": {
+              "$ref": "#/$defs/instance_id"
+            },
+            "owner_account": {
+              "$ref": "#/$defs/gonka_address"
+            }
+          }
+        }
+      ]
+    },
+    "help_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1048576
+        }
+      },
+      "required": [
+        "command",
+        "text"
+      ]
+    },
+    "recovery_payload": {
+      "$ref": "recovery.schema.json#/$defs/payload"
+    }
+  }
+}
