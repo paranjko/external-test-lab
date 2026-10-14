@@ -22,6 +22,30 @@ stable_contract="$(sed -n 's/^GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=//p' "$tmp/st
 jq -e 'keys == ["v3"]' <<<"$stable_contract" >/dev/null
 grep -Fxq 'GDC_GATEWAY_ADMISSION_STATUS_URL=https://validator-a.example.net/ops-gateway-admission-state' "$tmp/stable.env"
 grep -Fxq 'GDC_GATEWAY_ADMISSION_UPSTREAM=http://validator-a.example.net:18080' "$tmp/stable.env"
+grep -Fxq 'GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:18083' "$tmp/stable.env"
+grep -Fxq 'GDC_STABLE_HEALTH_MODE=legacy' "$tmp/stable.env"
+# Selecting canonical readiness must not rebind legacy admission or A/B traffic.
+GDC_RELEASE_PROFILE=v2026.08.06 GDC_STABLE_READINESS_PORT=18186 GDC_STABLE_HEALTH_MODE=native_observation \
+  "$ROOT/04-ops/edge-node/render-env.sh" \
+    --inventory "$tmp/inventory.env" --node-name validator-e --output "$tmp/stable-selected.env"
+grep -Fxq 'GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:18186' "$tmp/stable-selected.env"
+grep -Fxq 'GDC_STABLE_HEALTH_MODE=native_observation' "$tmp/stable-selected.env"
+if GDC_RELEASE_PROFILE=v2026.08.06 GDC_STABLE_HEALTH_MODE=invalid \
+  "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$tmp/inventory.env" \
+  --node-name validator-e --output "$tmp/invalid-health.env" >"$tmp/invalid-health.out" 2>&1; then
+  echo 'invalid stable health mode accepted' >&2; exit 1
+fi
+grep -Fxq 'GDC_GATEWAY_ADMISSION_UPSTREAM=http://validator-a.example.net:18080' "$tmp/stable-selected.env"
+for invalid in 0 80 65536 -1 '18186/path' '18186 18083'; do
+  if GDC_RELEASE_PROFILE=v2026.08.06 GDC_STABLE_READINESS_PORT="$invalid" \
+    "$ROOT/04-ops/edge-node/render-env.sh" \
+      --inventory "$tmp/inventory.env" --node-name validator-e --output "$tmp/invalid.env" \
+      >"$tmp/invalid.out" 2>"$tmp/invalid.err"; then
+    echo 'invalid stable readiness port accepted' >&2
+    exit 1
+  fi
+  grep -Fq 'GDC_STABLE_READINESS_PORT must be a private TCP port' "$tmp/invalid.err"
+done
 if grep -Fq 'GDC_GATEWAY_ADMISSION_STATUS_BEARER_TOKEN=' "$tmp/stable.env"; then
   echo 'rendered public edge environment contains an observer credential' >&2
   exit 1

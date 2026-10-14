@@ -93,9 +93,15 @@ for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$broker_port/v1/keys" -o /d
 stable="$(curl -fsS -X POST "http://127.0.0.1:$broker_port/v1/keys" -H 'Authorization: Bearer bbbbbbbbbbbbbbbbbbbbbbbb' -H 'Content-Type: application/json' -d '{"telegram_id":99,"update_id":1}' | jq -r .key)"
 [[ "$stable" == sk-gdc-* ]]
 edge_openai_body="$tmp/edge-openai.json"
-edge_openai_code="$(curl -sS -o "$edge_openai_body" -w '%{http_code}' "http://127.0.0.1:$edge_port/v1/chat/completions" -H "Authorization: Bearer $stable" -H 'Content-Type: application/json' -d '{"model":"test-model","messages":[{"role":"user","content":"probe"}]}')"
+edge_openai_code="$(curl -sS -D "$tmp/edge-openai.headers" -o "$edge_openai_body" -w '%{http_code}' "http://127.0.0.1:$edge_port/v1/chat/completions" -H "Authorization: Bearer $stable" -H 'Content-Type: application/json' -d '{"model":"test-model","messages":[{"role":"user","content":"probe"}]}')"
 [[ "$edge_openai_code" == 200 ]] || { echo "pinned edge OpenAI request returned $edge_openai_code: $(<"$edge_openai_body")" >&2; exit 1; }
 jq -e '.choices[0].message.content == "fixture-ok"' "$edge_openai_body" >/dev/null
+# Stable readiness must correlate the actual native request and escrow, not
+# Bifrost's own request identifier or an unrelated successful gateway probe.
+tr -d '\r' <"$tmp/edge-openai.headers" >"$tmp/edge-openai-normalized.headers"
+grep -Fixq 'X-Request-Id: fixture-native-request' "$tmp/edge-openai-normalized.headers"
+grep -Fixq 'X-Devshard-ID: fixture-native-escrow' "$tmp/edge-openai-normalized.headers"
+printf 'PASS pinned stable adapter preserves native request and escrow response identities\n'
 edge_anthropic_body="$tmp/edge-anthropic.json"
 edge_anthropic_code="$(curl -sS -o "$edge_anthropic_body" -w '%{http_code}' "http://127.0.0.1:$edge_port/anthropic/v1/messages" -H "x-api-key: $stable" -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' -d '{"model":"test-model","max_tokens":8,"messages":[{"role":"user","content":"probe"}]}')"
 [[ "$edge_anthropic_code" == 200 ]] || { echo "pinned edge Anthropic request returned $edge_anthropic_code: $(<"$edge_anthropic_body")" >&2; exit 1; }

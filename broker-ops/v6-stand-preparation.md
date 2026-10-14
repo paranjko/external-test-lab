@@ -60,8 +60,9 @@ The v6 runtime retention window is three epochs, including the current one.
 On this short-epoch DevNet, a successful one-off escrow is not a lasting
 readiness guarantee. Continued testing needs explicitly authorized rotation
 and settlement with a bounded amount and operating window. Verify the chain's
-escrow amount limits first: the observed minimum is **1 GNK** (1,000,000,000
-ngonka); 0.001 GNK is rejected. Bound gross new funding, not just net spend
+escrow amount limits first: the model-rollout parameter change raised the
+minimum to **5 GNK** (5,000,000,000 ngonka), with a 10 GNK maximum. Query current
+chain parameters instead of relying on this dated observation. Bound gross new funding, not just net spend
 after refunds. Count uncertain creation attempts against that budget and
 reconcile them before any retry. A timer alone does not enforce a funding cap.
 Do not infer funding authority from permission to edit gateway configuration,
@@ -88,6 +89,27 @@ preimages and restart only the affected readiness/proxy services; changing a
 file does not update an already-running container's environment. Do not
 rebind the separate stable S admission service as a shortcut.
 
+For bot-issued stable keys, inspect the running Bifrost provider through its
+management API and trace that provider's upstream to the native gateway before
+selecting canonical readiness. Stored env alone is not proof of Bifrost's
+database configuration. If stable traffic uses an independent gateway, set
+`GDC_STABLE_READINESS_PORT` in the edge inventory to that gateway's existing
+read-only readiness listener on the public-edge host. Rendering produces
+`GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:PORT`. Its default remains18083 for
+legacy installations. This changes only the canonical API/site/preview
+admission-status endpoints, not inference, A/B admission or the legacy service.
+Recheck the provider binding whenever it changes; do not select an observer
+merely because another gateway is healthy. A remote gateway needs a separately
+verified local read-only handoff, not an arbitrary external URL in this setting.
+
+Validate and reload the exact candidate Caddy configuration with retained
+preimages; an already-running container does not inherit an edited env file.
+Compare canonical readiness with the selected listener and check that stable,
+legacy and A/B inference routing is unchanged. Observer failure must remain an
+HTTP error, never fall back to an unrelated healthy observer. This readiness
+selection alone is not an authenticated inference success or a replacement
+for the site's separate route-bound health/probe evidence.
+
 Verify the site's public readiness projection and fresh native counters after
 cutover. `UNAVAILABLE` remains correct during a PoC fence or when no usable
 funded runtime exists; never force a green display. A bounded operator-funded
@@ -113,6 +135,15 @@ unchanged; only public Grafana provisioning is refreshed. Explicit `ops edge`
 still owns a full route deployment. Do not deploy an older monitoring launcher
 that unconditionally reinstalls the public edge.
 
+On an existing OPS installation, monitoring refresh also preserves OPS Compose,
+`.env`, Caddyfile, gateway credentials and non-monitoring systemd services. It
+updates Grafana provisioning and Prometheus configuration/targets only, retaining
+JOIN-owned targets. Existing image selections and Grafana credentials therefore
+remain in effect; changing those shared settings is a separate deployment.
+An incomplete existing OPS configuration refuses refresh. Fresh installation
+still provisions the initial OPS stack. The launcher recreates only monitoring
+containers and starts an absent Caddy without recreating an existing listener.
+
 Host `node-exporter` and `cAdvisor` remain active when a validator is stopped
 or lends its GPU. An intentionally stopped chain may have a down chain-metrics
 target, but that is not permission to stop host or container monitoring.
@@ -120,21 +151,85 @@ The real Docker lending regression checks this isolation in flat and legacy
 layouts. Test workloads must not reclaim the monitoring ports by stopping
 these services.
 
+### Bounded stable-route observation
+
+`v6-stable-receipt.py` can collect one explicitly authorized inference
+observation through the stable credential adapter. It is not a rotation tool
+or a replacement for the legacy exact-once health receipt. First verify the
+running Bifrost provider and native route as described above. Create an
+operator-owned regular JSON file with mode0600 and exactly these fields:
+`completion_url`, `admission_url`, `accounting_url`, `key`, `model`, `gateway`.
+The key must be a current stable `sk-gdc-` credential; do not put it in shell
+arguments or public evidence. Gateway is the verified native target A or B.
+
+Use the canonical HTTPS `/v1/chat/completions` URL for completion. Admission
+must observe that same native target and model. Accounting must be its private
+`/api/v1/epochs/current/participants?model=URL_ENCODED_MODEL_ID` endpoint;
+never publish the accounting listener. Plain HTTP is accepted only on loopback.
+Run `python3 v6-stable-receipt.py --config PRIVATE.json --execute` only after
+funding/admission gates and applicable inference authority pass. Without the
+explicit flag the command refuses before reading the key. It never creates,
+settles or rotates an escrow, follows redirects, or retries a failed request.
+
+The sanitized result is OBSERVED only with matching native request/escrow
+identity, before/after admission, and one finished_used counter increment in
+the same epoch. It deliberately retains `exclusive_attribution_proven=false`:
+aggregate counters cannot prove exclusive attribution during concurrent traffic.
+Do not rename this result TRAFFIC_READY, use it as settlement proof, or overwrite
+the legacy gateway-health receipt with it. A failed observation exits nonzero.
+Run `make -C net-deployment-runbook test-v6-stable-receipt` from the repository
+root; the same target is included in the gateway CI group.
+
+To expose this limited observation on the site, run the authorized probe with
+`--health-output EDGE_DIRECTORY/status/gateway-stable-health.json`. Keep the
+private config outside that public status directory. The output parent must
+already exist; the probe atomically replaces a mode0644 sanitized file, including
+UNAVAILABLE results. It does not install or enable a timer. Use a single writer
+and retain the legacy probe's separate output unchanged.
+
+Set `GDC_STABLE_HEALTH_MODE=native_observation` in the edge inventory only after
+verifying the provider/readiness binding. The renderer and Compose pass both
+this selection and the selected readiness upstream to Caddy. After an explicit
+configuration deployment, canonical and preview `/status/gateway-health` read
+only the edge's stable file; a missing file returns404, never legacy fallback.
+The site requires fresh observations and matching current admission, and labels
+success STABLE_OBSERVED, not TRAFFIC_READY. Its normal traffic acceptance gate
+remains closed because aggregate accounting lacks exclusive attribution.
+Set the mode back to `legacy` and apply the retained configuration for rollback;
+neither selection changes inference routes or resumes rotation. A failed output
+write exits nonzero and leaves the old file to expire under the freshness check.
+
 ### Budget-bounded operator rotation
 
 `v6-budget-rotation.py` is an explicitly authorized operator workaround, not
 qualification of the native rotator. Its fixed campaign binds A to node4 and
-B to node0, reserves 1 GNK before every create request, and caps each instance
+B to node0, reserves the explicit requested amount before every create request, and caps each instance
 at 5,000 GNK gross funding. Refunds never replenish this allowance. Transaction
 fees are additional. There is no calendar deadline for this campaign.
 
 Keep native rotation disabled. Copy the script to each existing
 `/srv/dai/broker-tests/v6-INSTANCE/rotation-10000gnk.py`. Initialize exactly once
-with `python3 SCRIPT INSTANCE --initialize`, then run `python3 SCRIPT INSTANCE`
+with `python3 SCRIPT INSTANCE --initialize`, then run
+`python3 SCRIPT INSTANCE --amount AMOUNT_IN_NGONKA --model ADMITTED_MODEL_ID`
 from a single systemd oneshot timer every 30 seconds. A durable SQLite ledger
 under `rotation-10000gnk-20261013` holds reservations and responses. Never remove,
 replace or reinitialize it to recover from failure. Missing state fails closed;
 ambiguous transactions reserve budget and halt creation pending reconciliation.
+
+The legacy binding cap is denominated in GNK; historical funding amounts are
+already in ngonka. The script sums every recorded amount, including settled
+and uncertain reservations, against the unchanged per-instance allowance.
+There is no ledger rewrite or conversion. Mixed historical 1 GNK and new 5 GNK
+rows therefore consume their actual amounts. An insufficient remainder stops
+creation; it never rounds down the requested amount or borrows from the other
+instance. Each tick reads min/max from the local chain REST API without sending
+the gateway credential there. Missing or invalid parameters fail closed.
+
+The former command without explicit amount/model refuses to run. Update the
+oneshot command only after reconciling the existing ledger and confirming model
+admission. Keep timers paused during the model rollout. Installing this script
+is not approval to resume funding, and a model-list entry alone is not proof
+that the new model group can serve requests.
 
 The operator timer is named `gdc-v6-budget-INSTANCE.timer`. Stop it with
 `systemctl disable --now gdc-v6-budget-INSTANCE.timer`, then wait for its active
@@ -142,6 +237,16 @@ oneshot service to finish; stopping the timer cannot undo an in-flight request.
 The earlier bounded timers must remain disabled. A halted transaction stops
 the new timer; reconcile its receipt before an explicitly reviewed restart.
 Re-enabling a timer never resets its ledger or restores its spending allowance.
+
+For an escrow whose settlement failed locally but is now demonstrably settled,
+run `python3 SCRIPT INSTANCE --reconcile-settled ESCROW_ID` while the timer is
+stopped. This submits no chain or gateway transaction. It requires a currently
+found, settled chain record with the ledger's ID, amount and epoch, plus an
+explicitly inactive gateway record. It appends a reconciliation observation;
+the original funding row, settlement failure and gross reservation remain.
+Repeated successful reconciliation retains the first observation unchanged.
+Missing/pruned chain records are refused: absence is not settlement proof.
+Do not manufacture a settled receipt or reset the ledger to bypass this guard.
 
 Creation occurs at most once per epoch, only in the normal funding phase with
 at least 15 blocks before the switch. Settlement starts two epochs later,

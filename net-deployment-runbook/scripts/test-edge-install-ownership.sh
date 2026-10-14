@@ -118,3 +118,65 @@ printf 'PASS monitoring-only preserves edge routes, environment, owners and mode
 
 test_layout /srv/dai/edge
 test_layout /srv/dai/deploy/edge --node-name fixture-node
+
+# OPS uses one fixed root across flat and legacy Host layouts. Exercise a
+# real fresh install followed by repeated refresh, isolated from host systemd.
+[[ ! -e /srv/dai/ops ]] || { echo 'use a disposable OPS fixture' >&2; exit 2; }
+mkdir -p "$tmp/bin" "$tmp/render" /etc/systemd/system
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$SYSTEMCTL_LOG"\n' >"$tmp/bin/systemctl"
+chmod +x "$tmp/bin/systemctl"
+export PATH="$tmp/bin:$PATH" SYSTEMCTL_LOG="$tmp/systemctl.log"
+printf 'GRAFANA_ADMIN_PASSWORD=fixture-only\n' >"$tmp/render/.env"
+printf 'global: {}\nscrape_configs: []\n' >"$tmp/render/prometheus.yml"
+printf 'fixture routes\n' >"$tmp/render/Caddyfile"
+mkdir -p "$tmp/render/prometheus/targets/static/host"
+printf '[]\n' >"$tmp/render/prometheus/targets/static/host/fixture.json"
+# Operators commonly stage configuration with umask 077. Public discovery
+# must become readable to the unprivileged Prometheus process on installation.
+chmod 0700 "$tmp/render/prometheus/targets/static" "$tmp/render/prometheus/targets/static/host"
+chmod 0600 "$tmp/render/prometheus/targets/static/host/fixture.json"
+check_public_discovery() {
+  python3 - <<'PY'
+import json
+import os
+# Compose bind-mounts this directory, not its private host-side ancestors.
+os.chdir('/srv/dai/ops/prometheus/targets')
+os.setgroups([])
+os.setgid(65534)
+os.setuid(65534)
+with open('static/host/fixture.json') as source:
+    assert json.load(source) == []
+PY
+}
+for layout in flat legacy; do
+  host_root=/srv/dai/deploy
+  [[ "$layout" == flat ]] || host_root=/srv/dai/deploy/fixture
+  mkdir -p "$host_root"
+  printf 'retained host\n' >"$host_root/monitoring-test-marker"
+  SUDO_USER=root bash "$ROOT/04-ops/install-ops.sh" --component monitoring --render-dir "$tmp/render"
+  check_public_discovery
+  for file in .env compose.yaml Caddyfile gateway.env; do
+    printf 'custom retained %s\n' "$file" >"/srv/dai/ops/$file"
+    chmod 0600 "/srv/dai/ops/$file"
+    chown "$site_owner" "/srv/dai/ops/$file"
+  done
+  printf '[]\n' >/srv/dai/ops/prometheus/targets/join/retained.json
+  before="$(sha256sum /srv/dai/ops/{.env,compose.yaml,Caddyfile,gateway.env})"
+  calls="$(wc -l <"$SYSTEMCTL_LOG")"
+  for repetition in 1 2; do
+    printf 'global: {}\nscrape_configs: []\n# revision %s\n' "$repetition" >"$tmp/render/prometheus.yml"
+    SUDO_USER=root bash "$ROOT/04-ops/install-ops.sh" --component monitoring --render-dir "$tmp/render"
+    check_public_discovery
+    [[ "$(sha256sum /srv/dai/ops/{.env,compose.yaml,Caddyfile,gateway.env})" == "$before" ]]
+    [[ "$(wc -l <"$SYSTEMCTL_LOG")" == "$calls" ]]
+    for file in .env compose.yaml Caddyfile gateway.env; do
+      [[ "$(stat -c '%a' "/srv/dai/ops/$file")" == 600 ]]
+      [[ "$(stat -c '%u:%g' "/srv/dai/ops/$file")" == "$site_owner" ]]
+    done
+    cmp "$tmp/render/prometheus.yml" /srv/dai/ops/prometheus/prometheus.yml
+    test -s /srv/dai/ops/prometheus/targets/join/retained.json
+    grep -Fxq 'retained host' "$host_root/monitoring-test-marker"
+  done
+  mv /srv/dai/ops "$tmp/retained-ops-$layout"
+  printf 'PASS OPS fresh install and repeated monitoring refresh preserve shared state layout=%s\n' "$layout"
+done

@@ -103,7 +103,19 @@ gateway_upstream_port="${GDC_GATEWAY_ADMISSION_UPSTREAM_PORT:-18080}"
 [[ "$gateway_upstream_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( gateway_upstream_port <= 65535 )) \
   || { echo 'GDC_GATEWAY_ADMISSION_UPSTREAM_PORT must be a valid TCP port' >&2; exit 2; }
 gateway_metrics_upstream="http://127.0.0.1:$gateway_upstream_port"
+# Canonical stable credentials can be served by Bifrost through a different
+# gateway than the legacy admission service. Select its read-only observer
+# explicitly after verifying the provider's actual upstream; never infer it
+# from the A/B label or change the inference route here.
+stable_readiness_port="${GDC_STABLE_READINESS_PORT:-18083}"
+[[ "$stable_readiness_port" =~ ^[1-9][0-9]{3,4}$ ]] && (( stable_readiness_port >= 1024 && stable_readiness_port <= 65535 )) \
+  || { echo 'GDC_STABLE_READINESS_PORT must be a private TCP port' >&2; exit 2; }
 gateway_route_id=''
+stable_health_mode="${GDC_STABLE_HEALTH_MODE:-legacy}"
+case "$stable_health_mode" in
+  legacy|native_observation) ;;
+  *) echo 'GDC_STABLE_HEALTH_MODE must be legacy or native_observation' >&2; exit 2 ;;
+esac
 # This sink is deliberately unreachable unless this participant is the B
 # gateway selected by the A/B topology.  Caddy still parses one common
 # participant configuration, while only node B may accept the public edge's
@@ -168,6 +180,8 @@ values=(
   "GATEWAY_DAPI_UPSTREAM=$gateway_dapi_upstream"
   "GDC_GATEWAY_ADMISSION_UPSTREAM=$gateway_admission_upstream"
   "GDC_GATEWAY_METRICS_UPSTREAM=$gateway_metrics_upstream"
+  "GDC_STABLE_READINESS_UPSTREAM=127.0.0.1:$stable_readiness_port"
+  "GDC_STABLE_HEALTH_MODE=$stable_health_mode"
   "GDC_GATEWAY_B_UPSTREAM=$gateway_b_upstream"
   "GDC_GATEWAY_B_READINESS_UPSTREAM=$gateway_b_readiness_upstream"
   "GDC_GATEWAY_ROUTE_PROXY_HOST=127.0.0.1"

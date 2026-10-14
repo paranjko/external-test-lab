@@ -3,6 +3,22 @@
   admin 127.0.0.1:2019
 }
 
+(canonical_gateway_health) {
+  @native_stable_health expression `"{$GDC_STABLE_HEALTH_MODE:legacy}" == "native_observation"`
+  handle @native_stable_health {
+    root * /edge/status
+    rewrite * /gateway-stable-health.json
+    header Cache-Control "no-store"
+    file_server
+  }
+  handle {
+    rewrite * /status/gateway-health
+    reverse_proxy http://{$GATEWAY_PUBLIC_HOST}:8081 {
+      header_up Host {$GATEWAY_PUBLIC_HOST}
+    }
+  }
+}
+
 # The configured public edge is its Network Node endpoint. The public site and
 # API intentionally preserve the gateway host as their application origin while DNS and
 # TLS terminate here.
@@ -215,12 +231,24 @@ preview.{$SITE_HOST} {
   # Dynamic status data is fetched from the gateway Host.  The page itself is
   # served locally below, so a reset of that Host leaves a visible, honest
   # OFFLINE state instead of taking the public site down.
-  # Admission readiness is produced by the public-edge proxy itself. It must
+  # Stable readiness follows the explicitly selected serving-path observer.
+  # The default retains the legacy admission service. This exact route must
   # stay ahead of the generic status route, which otherwise forwards it to the
   # DevShard runtime where this local contract does not exist.
   handle /status/gateway/v1/admission-status {
     rewrite * /v1/admission-status
-    reverse_proxy 127.0.0.1:18083
+    reverse_proxy {$GDC_STABLE_READINESS_UPSTREAM:127.0.0.1:18083}
+  }
+  handle /status/gateway-health {
+    route {
+      import canonical_gateway_health
+    }
+  }
+  @preview_gateway_health path_regexp preview_gateway_health ^/(?:preview/)?[1-9][0-9]*/status/gateway-health$
+  handle @preview_gateway_health {
+    route {
+      import canonical_gateway_health
+    }
   }
   # The traffic widget needs independent, read-only A/B observations. Keep
   # these exact routes narrow: neither admin nor accounting endpoints are
@@ -267,7 +295,7 @@ preview.{$SITE_HOST} {
   @preview_admission path_regexp preview_admission ^/(?:preview/)?[1-9][0-9]*/status/gateway/v1/admission-status$
   handle @preview_admission {
     rewrite * /v1/admission-status
-    reverse_proxy 127.0.0.1:18083
+    reverse_proxy {$GDC_STABLE_READINESS_UPSTREAM:127.0.0.1:18083}
   }
   # Telegram consumer health is another non-gateway status exception. Preserve
   # the production upstream and rewritten path instead of letting the generic
@@ -464,9 +492,16 @@ preview.{$SITE_HOST} {
   handle @governed_completion {
     reverse_proxy 127.0.0.1:18083
   }
+  @stable_readiness {
+    method GET
+    path /v1/admission-status
+  }
+  handle @stable_readiness {
+    reverse_proxy {$GDC_STABLE_READINESS_UPSTREAM:127.0.0.1:18083}
+  }
   @gateway_readonly {
     method GET
-    path /v1/status /v1/models /v1/admission-status
+    path /v1/status /v1/models
   }
   handle @gateway_readonly {
     reverse_proxy 127.0.0.1:18083
