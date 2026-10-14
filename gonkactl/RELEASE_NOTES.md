@@ -5,7 +5,10 @@ This alpha adds native bootstrap maintenance to the standalone CLI.
 Alpha.3 fixes discovery on networks with more than 2,000 participants. The
 inventory now accepts up to 100 pages of 100 entries and still refuses an
 incomplete inventory. Candidate identity errors identify the affected public
-RPC. Selection, guardian and Genesis trust requirements remain unchanged.
+RPC. Public RPC endpoints may be separate non-validator full nodes; their
+consensus keys need not match participant validator keys. Guardian-to-participant
+mapping, selection and pinned Genesis checks remain required. These checks
+establish consistency, not cryptographic proof of canonical chain history.
 
 ## Available capabilities
 
