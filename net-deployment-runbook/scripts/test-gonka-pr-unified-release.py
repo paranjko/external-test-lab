@@ -24,9 +24,9 @@ class UnifiedReleaseTests(unittest.TestCase):
 
     def test_candidate_is_exact_source_bound_and_not_a_legacy_tag(self):
         self.assertEqual(self.candidate["source_pr"], 1792)
-        self.assertEqual(self.candidate["source_commit"], "bce2388c4df1f1934c05da319a04970fb77df4c3")
-        self.assertEqual(self.candidate["source_tree"], "88572681270adc4f1a6f96bfd4d953a055faf7da")
-        self.assertEqual(self.candidate["release_tag"], "lab-gonka-pr-1792-bce2388c4df1")
+        self.assertEqual(self.candidate["source_commit"], "d1b9df2413062a3bd3ea009a5745aff8b4d7f90e")
+        self.assertEqual(self.candidate["source_tree"], "6fc14fce864e35b3540a630ba6b7c242bbf4cedd")
+        self.assertEqual(self.candidate["release_tag"], "lab-gonka-pr-1792-d1b9df241306")
         self.assertEqual(self.binary["release_tag"], self.candidate["release_tag"])
         self.assertNotIn("lab-devshard-v6", self.candidate["release_tag"])
 
@@ -38,7 +38,7 @@ class UnifiedReleaseTests(unittest.TestCase):
         self.assertEqual(recipe["release_tag"], self.candidate["release_tag"])
         self.assertEqual(recipe["devshard_zip"], {
             "url": "https://github.com/paranjko/external-test-lab/releases/download/"
-                   "lab-gonka-pr-1792-bce2388c4df1/devshardd.zip",
+                   "lab-gonka-pr-1792-d1b9df241306/devshardd.zip",
             "sha256": digest,
         })
         self.assertEqual(recipe["components"]["gateway-v4.2"]["source"]["commit"],
@@ -77,10 +77,10 @@ class UnifiedReleaseTests(unittest.TestCase):
         manifest = {"artifacts": {name: {} for name in unified.artifacts.selected_components(recipe, unified.GROUPS)}}
         with patch.dict(os.environ, {"GITHUB_RUN_ID": "123"}, clear=False):
             title, body = unified.artifacts.unified_release_presentation(recipe, manifest, self.candidate["release_tag"])
-        self.assertEqual(title, "DevShard v6 lab candidate · bce2388c4df1")
+        self.assertEqual(title, "DevShard v6 lab candidate · d1b9df241306")
         self.assertIn("[Gonka PR #1792](https://github.com/gonka-ai/gonka/pull/1792)", body)
-        self.assertIn("[source commit bce2388c4df1](https://github.com/gonka-ai/gonka/commit/"
-                      "bce2388c4df1f1934c05da319a04970fb77df4c3)", body)
+        self.assertIn("[source commit d1b9df241306](https://github.com/gonka-ai/gonka/commit/"
+                      "d1b9df2413062a3bd3ea009a5745aff8b4d7f90e)", body)
         for asset in ("devshardd.zip", "approved-version.json", "artifacts.json", "coverage.json", "source.json", "build-info.txt", "SHA256SUMS"):
             self.assertIn(f"](https://github.com/paranjko/external-test-lab/releases/download/{self.candidate['release_tag']}/{asset})", body)
 
