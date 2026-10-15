@@ -7,6 +7,7 @@ type SiteConfig = {
   contact: string,
   grafanaNetwork: string,
   grafanaInference: string,
+  grafanaChain: string,
   nodes: Array<mixed>,
 };
 declare var window: any;
@@ -18,5 +19,6 @@ declare var window: any;
   contact: "render-required",
   grafanaNetwork: "/",
   grafanaInference: "/",
+  grafanaChain: "/",
   nodes: [],
 }: SiteConfig);
