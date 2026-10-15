@@ -151,6 +151,32 @@ class BudgetTest(unittest.TestCase):
                     self.tick()
         self.assertEqual(self.creates, 0)
 
+    def test_devnet_amount_boundaries_before_reservation_or_dispatch(self):
+        self.minimum = 5_000_000_000
+        self.maximum = 10_000_000_000
+        for amount, accepted in ((1_000_000, False),
+                                 (self.minimum - 1, False),
+                                 (self.minimum, True),
+                                 (self.maximum, True),
+                                 (self.maximum + 1, False)):
+            with self.subTest(amount=amount):
+                self.amount = amount
+                with sqlite3.connect(self.path / 'ledger.sqlite') as db:
+                    before = db.execute('SELECT * FROM funding ORDER BY epoch').fetchall()
+                creates, settles = self.creates, self.settles
+                result = self.tick()
+                with sqlite3.connect(self.path / 'ledger.sqlite') as db:
+                    after = db.execute('SELECT * FROM funding ORDER BY epoch').fetchall()
+                if accepted:
+                    self.assertTrue(result.startswith('created:'), result)
+                    self.assertEqual(self.creates, creates + 1)
+                    self.assertEqual(after[-1][1], amount)
+                    self.epoch += 1
+                else:
+                    self.assertEqual(result, 'halt: requested amount outside current chain limits')
+                    self.assertEqual(after, before)
+                    self.assertEqual((self.creates, self.settles), (creates, settles))
+
     def test_concurrent_tick_cannot_reserve(self):
         with (self.path / 'lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -209,6 +235,7 @@ class BudgetTest(unittest.TestCase):
         def tick(path, instance, request, amount, model):
             self.assertEqual((instance, amount, model), ('a', 5000000000, 'fixture-model'))
             request(rotation.PARAMS_ROUTE)
+            request(rotation.EFFECTIVE_EPOCH_ROUTE)
             request('/v1/admin/settings')
             return 'waiting: fixture'
         with mock.patch('sys.argv', ['rotation', 'a', '--amount', '5000000000', '--model', 'fixture-model']), \
@@ -220,7 +247,9 @@ class BudgetTest(unittest.TestCase):
             rotation.main()
         self.assertEqual(requests[0].full_url, 'http://127.0.0.1:1317' + rotation.PARAMS_ROUTE)
         self.assertIsNone(requests[0].get_header('Authorization'))
-        self.assertEqual(requests[1].get_header('Authorization'), 'Bearer fixture-secret')
+        self.assertEqual(requests[1].full_url, 'http://127.0.0.1:1317' + rotation.EFFECTIVE_EPOCH_ROUTE)
+        self.assertIsNone(requests[1].get_header('Authorization'))
+        self.assertEqual(requests[2].get_header('Authorization'), 'Bearer fixture-secret')
 
     def reconcile_request(self, path, data=None):
         self.assertIsNone(data, 'reconciliation must never POST')
@@ -281,6 +310,44 @@ class BudgetTest(unittest.TestCase):
             self.assertTrue(rotation.tick(self.path, 'a', request).startswith('halt:'))
             self.epoch += 1
             self.assertTrue(self.tick().startswith('halt:'))
+
+    def pruned_request(self, path, data=None):
+        self.assertIsNone(data)
+        if path == rotation.ESCROW_ROUTE + '10':
+            return {'status': 200, 'result': {'found': False}}
+        if path == '/v1/debug/rotation':
+            return self.request(path)
+        return self.reconcile_request(path, data)
+
+    def test_deferred_pruned_retains_debit_and_failures_without_retry(self):
+        self.tick()
+        self.epoch += 2
+        with sqlite3.connect(self.path / 'ledger.sqlite') as db:
+            db.execute('INSERT INTO settlement VALUES (10,1,NULL)')
+            before = db.execute('SELECT * FROM funding').fetchall()
+        result = rotation.reconcile_settled(self.path, 'a', self.pruned_request, 10, defer_pruned=True)
+        self.assertTrue(result.startswith('deferred:'))
+        with sqlite3.connect(self.path / 'ledger.sqlite') as db:
+            self.assertEqual(db.execute('SELECT * FROM funding').fetchall(), before)
+            self.assertEqual(db.execute('SELECT result FROM settlement').fetchall(), [(None,)])
+            self.assertIn('settlement unknown', db.execute('SELECT proof FROM deferred_pruned').fetchone()[0])
+        self.assertEqual(self.tick(), 'created: reserved_units=2000000000')
+        self.assertEqual(self.settles, 0)
+
+    def test_deferred_pruned_refuses_current_present_active_and_unknown_creation(self):
+        self.tick()
+        self.assertTrue(rotation.reconcile_settled(self.path, 'a', self.pruned_request, 10, True).startswith('halt:'))
+        self.epoch += 2
+        self.assertTrue(rotation.reconcile_settled(self.path, 'a', self.reconcile_request, 10, True).startswith('halt:'))
+        def active(path, data=None):
+            result = self.pruned_request(path, data)
+            if path == '/v1/admin/state':
+                result['result']['devshards'][0]['active'] = True
+            return result
+        self.assertTrue(rotation.reconcile_settled(self.path, 'a', active, 10, True).startswith('halt:'))
+        with sqlite3.connect(self.path / 'ledger.sqlite') as db:
+            db.execute('UPDATE funding SET result=NULL')
+        self.assertTrue(rotation.reconcile_settled(self.path, 'a', self.pruned_request, 10, True).startswith('halt:'))
 
     def test_busy_settlement_is_bounded_and_never_forced(self):
         self.tick()
