@@ -89,6 +89,19 @@ class UnifiedReleaseTests(unittest.TestCase):
         self.assertEqual(previous["source_pr"], 1792)
         self.assertEqual(previous["release_tag"], "lab-gonka-pr-1792-d1b9df241306")
 
+    def test_dispatch_can_select_the_new_immutable_1792_snapshot(self):
+        with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "gonka-pr-1792-faab10864ba5-unified.json"}):
+            candidate = unified.definition()
+        self.assertEqual(candidate["source_pr"], 1792)
+        self.assertEqual(candidate["source_commit"], "faab10864ba53274a3d07cbb100a698a0cdd782f")
+        self.assertEqual(candidate["source_tree"], "4c44d2e4dfcae182c0312ebe1b0fe0255b120767")
+        self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-faab10864ba5")
+
+    def test_dispatch_cannot_escape_reviewed_candidate_definitions(self):
+        with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "../outside.json"}):
+            with self.assertRaises(ValueError):
+                unified.definition()
+
     def test_unreviewed_source_pr_and_mismatched_tag_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "candidate.json"

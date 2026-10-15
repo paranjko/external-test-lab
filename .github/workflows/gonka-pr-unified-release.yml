@@ -2,6 +2,15 @@ name: Gonka PR unified lab release
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate_definition:
+        description: Reviewed frozen candidate definition
+        required: true
+        default: gonka-pr-2008-unified.json
+        type: choice
+        options:
+          - gonka-pr-2008-unified.json
+          - gonka-pr-1792-faab10864ba5-unified.json
 
 permissions:
   contents: read
@@ -29,10 +38,12 @@ jobs:
         run: make -C net-deployment-runbook test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release
       - name: Fetch frozen public source
         env:
+          GONKA_PR_UNIFIED_DEFINITION: ${{ inputs.candidate_definition }}
           DEVSHARD_SOURCE: ${{ runner.temp }}/gonka-pr-1792-source
         run: make -C net-deployment-runbook gonka-pr-unified-release-fetch
       - name: Build, verify and smoke complete candidate
         env:
+          GONKA_PR_UNIFIED_DEFINITION: ${{ inputs.candidate_definition }}
           DEVSHARD_SOURCE: ${{ runner.temp }}/gonka-pr-1792-source
           DEVSHARD_UNIFIED_RELEASE_DIR: ${{ runner.temp }}/gonka-pr-1792-unified
         run: make -C net-deployment-runbook gonka-pr-unified-release-build
@@ -64,6 +75,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y skopeo
       - name: Verify and publish the complete candidate
         env:
+          GONKA_PR_UNIFIED_DEFINITION: ${{ inputs.candidate_definition }}
           GH_TOKEN: ${{ github.token }}
           DEVSHARD_UNIFIED_RELEASE_DIR: ${{ runner.temp }}/gonka-pr-1792-unified
         run: make -C net-deployment-runbook gonka-pr-unified-release-publish
