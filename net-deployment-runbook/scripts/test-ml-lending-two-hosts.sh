@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Exercise the real lend and return phases against two isolated Hosts.  The
-# fake transport accepts only the fixture-selected aliases; its fake Docker
-# state models the installed donor deployment in both supported layouts.
+# Exercise lend and return between isolated Host aliases with mocked transport and canonical donor container state
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -215,7 +213,6 @@ run_case() {
   work="$tmp/$layout-$label"; operator="$work/operator"; donor_root="$work/donor"
   donor_deploy="$donor_root/srv/dai/deploy"
   donor_config="$work/donor-node-config.json"
-  [[ "$layout" == flat ]] || donor_deploy="$donor_deploy/legacy-$label"
   parent_config="$work/node-config.json"; parent_link="$work/gdc-ml-link.json"; parent_dapi="$work/dapi.json"; parent_stage="$work/parent-stage"
   events="$work/events"; ssh_log="$work/ssh.log"; scp_log="$work/scp.log"
   mkdir -p "$operator" "$donor_root/srv/dai" "$parent_stage"
@@ -255,8 +252,6 @@ run_case() {
   [[ -z "$explicit" ]] || ! has_text "$ssh_log" '-G '
 }
 
-for layout in flat legacy; do
-  run_case "$layout" alpha controller.alpha accelerator-west_2 gpu-west.alpha.test gpu-west.alpha.test ''
-  run_case "$layout" beta validator-z9 gpu-borrower 198.51.100.37 ignored.test 198.51.100.37
-done
-printf 'PASS two-Host ML lending and return preserve validator identity/data across flat and legacy donor layouts\n'
+run_case flat alpha controller.alpha accelerator-west_2 gpu-west.alpha.test gpu-west.alpha.test ''
+run_case flat beta validator-z9 gpu-borrower 198.51.100.37 ignored.test 198.51.100.37
+printf 'PASS two-Host ML lending and return preserve validator identity/data in the canonical directory\n'

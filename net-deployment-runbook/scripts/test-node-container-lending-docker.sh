@@ -138,7 +138,6 @@ run_case() {
   local -a monitor_ids=()
   root="$tmp/$layout"
   deploy="$root/srv/dai/deploy"
-  [[ "$layout" == flat ]] || deploy="$deploy/legacy-donor"
   project="gdc-lending-${layout}-${RANDOM}${RANDOM}"
   projects+=("$project")
   monitor_project="${project}-monitoring"
@@ -194,18 +193,29 @@ run_case() {
   [[ "$(sha256sum "$root/srv/dai/identity-sentinel" | awk '{print $1}')" == "$before_identity" ]]
   [[ "$(sha256sum "$root/srv/dai/data-sentinel" | awk '{print $1}')" == "$before_data" ]]
   docker_compose --env-file "$deploy/.env" -f "$deploy/compose.yaml" -f "$deploy/compose.ml-local.yaml" down --volumes --remove-orphans
+  # These are refusal probes, not supported deployment scenarios
+  local rejected probe probe_before action
+  local -a action_args=()
+  for rejected in "$root/srv/dai/node" "$deploy/retired"; do
+    probe="$(docker run -d --label "com.docker.compose.project=$project" \
+      --label "com.docker.compose.project.working_dir=$rejected" \
+      --label com.docker.compose.service=node "$IMAGE" sleep 600)"
+    probe_before="$(docker inspect --format '{{.Id}} {{.State.StartedAt}} {{.State.Running}}' "$probe")"
+    for action in stop start reclaim lend; do
+      action_args=()
+      [[ "$action" != lend ]] || action_args=(parent.fixture 127.0.0.1 fixture-node)
+      if run_control "$root" "$deploy" "$action" "${action_args[@]}" >"$tmp/refusal.log" 2>&1; then
+        echo "unsupported directory accepted for $action" >&2; exit 1
+      fi
+      grep -Fq 'no containers changed' "$tmp/refusal.log"
+      [[ "$(docker inspect --format '{{.Id}} {{.State.StartedAt}} {{.State.Running}}' "$probe")" == "$probe_before" ]]
+      [[ ! -e "$rejected" ]]
+    done
+    docker rm -f "$probe" >/dev/null
+  done
+  printf 'PASS unsupported validator directories refused without container changes\n'
 }
 
-case "${1:-all}" in
-  all)
-    run_case flat
-    run_case legacy
-    coverage='flat and legacy'
-    ;;
-  flat|legacy)
-    run_case "$1"
-    coverage="$1"
-    ;;
-  *) echo "Usage: $0 [flat|legacy]" >&2; exit 2 ;;
-esac
-printf 'PASS real local Docker Compose lending lifecycle preserves %s validator state\n' "$coverage"
+[[ $# == 0 ]] || { echo 'This fixture supports only the canonical deployment directory' >&2; exit 2; }
+run_case flat
+printf 'PASS real local Docker Compose lending lifecycle preserves canonical validator state\n'

@@ -189,19 +189,21 @@ control start fixture
 jq -e 'all(.[]; .running)' "$tmp/containers.json" >/dev/null
 [[ ! -e "$tmp/deploy/.node-control/stopped.json" && ! -e "$tmp/deploy/.node-control/lent-ml.json" ]]
 
-# The retained legacy deployment directory is a supported layout too. Lending
-# must discover it from Compose labels rather than the SSH alias or flat path.
-legacy="$tmp/deploy/legacy-node"
-mkdir -p "$legacy"
-cp "$tmp/deploy/.local-ml" "$tmp/deploy/.env" "$tmp/deploy/compose.yaml" "$tmp/deploy/compose.ml-local.yaml" "$legacy/"
-jq --arg dir "$legacy" 'map(.working_dir = $dir)' "$tmp/initial-containers.json" >"$tmp/containers.json.next"
-mv "$tmp/containers.json.next" "$tmp/containers.json"
-export CONTROL_TEST_DEPLOY="$legacy"
-: >"$tmp/operations"
-control lend fixture parent-alias gpu.example.test fixture-node
-jq -e '.deployment == $deploy' --arg deploy "$legacy" "$legacy/.node-control/lent-ml.json" >/dev/null
-control reclaim fixture
-control start fixture
-jq -e 'all(.[]; .running)' "$tmp/containers.json" >/dev/null
-[[ ! -e "$legacy/.node-control/stopped.json" ]]
+# Unsupported layouts must be refused for every action without mutating state
+cp "$tmp/operations" "$tmp/operations-before"
+for rejected in "$tmp/node" "$tmp/deploy/old-validator"; do
+  jq --arg dir "$rejected" 'map(.working_dir = $dir)' "$tmp/initial-containers.json" >"$tmp/containers.json"
+  cp "$tmp/containers.json" "$tmp/containers-before"
+  for action in stop start reclaim lend; do
+    args=("$action" fixture)
+    [[ "$action" != lend ]] || args+=(parent-alias gpu.example.test fixture-node)
+    if control "${args[@]}"; then
+      echo "unsupported layout accepted for $action" >&2; exit 1
+    fi
+    grep -Fq 'no containers changed' "$tmp/$action.log"
+    cmp "$tmp/operations-before" "$tmp/operations"
+    cmp "$tmp/containers-before" "$tmp/containers.json"
+    [[ ! -e "$rejected" ]]
+  done
+done
 printf 'PASS installed validator ML lending retains the stopped validator receipt and requires reclaim before restart\n'

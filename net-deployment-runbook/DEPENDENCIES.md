@@ -17,12 +17,14 @@ a failed PR file lookup fails the required gate. The routing step summarizes
 the selected jobs and groups. Draft PRs use the same selection as ready PRs.
 
 CI runs `test-ci-bootstrap`, `test-ci-core`, `test-ci-site`,
-`test-ci-join` and `test-ci-gateways` in independent checkouts, plus `test-gdc-p0a`
+`test-ci-join` and `test-ci-gateways` in independent checkouts, plus `test-host-lifecycle`
 and a separate Host upgrade job. Tests within each group remain sequential: some fixtures use fixed
 loopback ports or write generated site files. Do not run groups concurrently
 in the same checkout. `make test` still runs the complete original local
-suite, including the shared P0-A tests, and `make test test-gdc-p0a` adds the
-remaining P0-A checks without rerunning shared targets.
+suite, including the shared Host tests, and `make test test-host-lifecycle` adds the
+remaining Host checks without rerunning shared targets.
+
+The `host-lifecycle` job checks JOIN, stop/start, ML lending/reclaim and safe refusal of retired deployment and identity layouts without changing ML record schema compatibility
 
 `make test-ci-layout` checks that the CI groups cover the local suite and do
 not duplicate test entrypoints (apart from each group's dependency check).

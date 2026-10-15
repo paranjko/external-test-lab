@@ -50,7 +50,7 @@ def release(path: str) -> bool:
 
 GROUPS = ["bootstrap", "core", "site", "join", "gateways"]
 JOBS = ["release-checks", "shellcheck", "runbook-tests",
-        "p0a-lifecycle", "public-edge-integration", "ownership", "upstream-profiles",
+        "host-lifecycle", "public-edge-integration", "ownership", "upstream-profiles",
         "host-upgrade-lifecycle"]
 
 

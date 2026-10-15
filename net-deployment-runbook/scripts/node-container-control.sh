@@ -38,16 +38,17 @@ read_containers() {
 }
 discover_deployment() {
 read_containers
-# The SSH alias need not equal the original Compose project or directory name.
-# Discover the single Core deployment, accepting both supported layouts without
-# migrating files. Never guess between two installed validator deployments.
+# Refuse retired validators, including those alongside a canonical deployment, before selecting or changing containers
+jq -e --arg root /srv/dai/deploy '[.[] | select(.service == "node") |
+  select(.working_dir | type == "string") |
+  select(.working_dir == "/srv/dai/node" or (.working_dir | startswith($root + "/")))] | length == 0' \
+  <<<"$inventory" >/dev/null || fail 'unsupported validator deployment directory; only /srv/dai/deploy is supported; no containers changed'
+# Discover exactly one Core deployment at /srv/dai/deploy independently of its SSH alias, without migration or ambiguous selection
 candidates="$(jq -c --arg root /srv/dai/deploy '[.[] | select(.service == "node") |
   select(.working_dir | type == "string") |
-  select(.working_dir == $root or
-    (.working_dir | startswith($root + "/") and
-      (ltrimstr($root + "/") | test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))))]' <<<"$inventory")"
+  select(.working_dir == $root)]' <<<"$inventory")"
 [[ "$(jq length <<<"$candidates")" == 1 ]] \
-  || fail 'expected one installed node deployment in the supported layouts; none or multiple found; no containers changed'
+  || fail 'expected one installed node deployment at /srv/dai/deploy; none or multiple found; no containers changed'
 discovered="$(jq -er '.[0].working_dir' <<<"$candidates")"
 [[ -z "${deploy:-}" || "$deploy" == "$discovered" ]] || fail 'deployment changed during discovery; no containers changed'
 deploy="$discovered"

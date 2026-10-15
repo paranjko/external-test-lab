@@ -79,7 +79,7 @@ class RunbookCI(unittest.TestCase):
         self.assertNotIn("GDC_TEST_UPGRADE_LAYOUT", makefile)
         local = set(scripts(dry_run("test"))) - {"test-runbook-ci.py"}
         counts = collections.Counter()
-        for target in [*("test-ci-" + group for group in groups), "test-gdc-p0a", "test-host-upgrade-lifecycle"]:
+        for target in [*("test-ci-" + group for group in groups), "test-host-lifecycle", "test-host-upgrade-lifecycle"]:
             counts.update(scripts(dry_run(target)))
         self.assertFalse(local - counts.keys(), f"Missing from CI: {local - counts.keys()}")
         # Each independently runnable group verifies its command baseline.

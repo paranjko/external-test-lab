@@ -473,32 +473,14 @@ create_backup() (
   install -m 0600 "$cold" "$stage/mnemonics/$node-cold.mnemonic"
   install -m 0600 "$warm" "$stage/mnemonics/$node-warm.mnemonic"
   install -m 0600 "$identity" "$stage/identity.json"
-  # Older deployed Hosts may predate the stable split identity roots. Bring
-  # them through the existing idempotent migration first, then read only the
-  # current layout below. The migration retains the source tree and refuses
-  # partial or conflicting destinations.
+  # Backup creation reads only canonical identity roots, never migrates a Host
   if ! ssh -T "$node" "sudo test -s '/srv/dai/identity/p2p/node_key.json' && sudo test -d '/srv/dai/identity/warm/keyring-file' && sudo test -d '/srv/dai/signer/tmkms'"; then
-    ssh -T "$node" "sudo bash -s -- '$node'" <"$ROOT/02-node/migrate-v1-validator-identity.sh" \
-      || die "cannot create validator backup for $node: stable identity migration failed"
+    die "cannot create validator backup for $node: canonical identity roots are required; legacy layouts are unsupported"
   fi
   if ! ssh -T "$node" "set +x
     set -Eeuo pipefail
     identity='/srv/dai/identity'
-    deploy='/srv/dai/deploy'
-    # A new JOIN must archive its signer before it registers on-chain.  TMKMS
-    # is intentionally stopped then, so prefer the stable identity layout.
-    # The container-mount probe remains only for legacy deployments.
     signer='/srv/dai/signer'
-    if ! sudo test -d \"\$signer/tmkms\"; then
-      container=\$(sudo docker compose --env-file \"\$deploy/.env\" -f \"\$deploy/compose.yaml\" ps -aq tmkms | head -n 1)
-      test -n \"\$container\"
-      signer_source=\$(sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination \"/root/.tmkms\"}}{{.Source}}{{end}}{{end}}' \"\$container\")
-      case \"\$signer_source\" in
-        /srv/dai/signer/tmkms) signer='/srv/dai/signer' ;;
-        /srv/dai/$node/tmkms) signer='/srv/dai/$node' ;;
-        *) exit 1 ;;
-      esac
-    fi
     sudo test -d \"\$signer/tmkms\"
     sudo test -s \"\$identity/p2p/node_key.json\"
     stage=\$(mktemp -d)

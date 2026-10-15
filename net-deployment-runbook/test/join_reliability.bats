@@ -10,7 +10,7 @@ run_contract() {
 }
 
 @test "JOIN reliability contracts preserve stable identity and reject unsafe promotion" {
-  run_contract test-migrate-v1-validator-identity.sh
+  run_contract test-validator-backup-layout.sh
   run_contract test-promote-state-sync-generation.sh
 }
 
