@@ -6,11 +6,6 @@ set -Eeuo pipefail
   exit 1
 }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-case "${GDC_TEST_UPGRADE_LAYOUT:-all}" in
-  all) layouts=(flat legacy nested) ;;
-  flat|legacy|nested) layouts=("$GDC_TEST_UPGRADE_LAYOUT") ;;
-  *) echo 'invalid GDC_TEST_UPGRADE_LAYOUT' >&2; exit 2 ;;
-esac
 dockerd-entrypoint.sh dockerd >/tmp/upgrade-dockerd.log 2>&1 &
 daemon=$!
 trap 'kill "$daemon" 2>/dev/null || true' EXIT
@@ -28,60 +23,70 @@ sha="$(printf '%064d' 1)"
 mkdir -p /fixture /srv/dai
 printf '#!/bin/sh\nprintf '\''{"node_info":{"network":"fixture-chain"}}\\n'\''\n' >/fixture/inferenced
 chmod 0755 /fixture/inferenced
-for layout in "${layouts[@]}"; do
-  case "$layout" in
-    flat) deploy=/srv/dai/deploy ;;
-    legacy) deploy=/srv/dai/node ;;
-    nested) deploy=/srv/dai/deploy/fixture ;;
-  esac
-  mkdir -p "$deploy/data"
-  printf 'FILE_VALUE=original\n' >"$deploy/runtime.env"
-  printf 'preserved-state\n' >"$deploy/data/state"
-  jq -n --arg old "$old" --arg data "$deploy/data" --arg name "fixture-$layout" '
-    {name:$name,services:{versiond:{image:$old,command:["sh","-c",
-    "if [ -f /data/reject ] && [ -f /etc/alpine-release ]; then exit 42; fi; exec sleep 3600"],
-    volumes:[$data+":/data"],env_file:["runtime.env"],environment:{LITERAL:"keep$$value"}},
-    node:{image:$old,command:["sleep","3600"],volumes:["/fixture/inferenced:/usr/local/bin/inferenced:ro"]},
-    api:{image:$old,command:["sleep","3600"]},tmkms:{image:$old,command:["sleep","3600"]}}}
-    | .services |= with_entries(.value.stop_grace_period = "1s")' >"$deploy/compose.yaml"
-  files=(-f "$deploy/compose.yaml")
-  if [[ "$layout" == flat ]]; then
-    printf '{"services":{"versiond":{"environment":{"OVERLAY":"keep"}}}}\n' >"$deploy/overlay.yaml"
-    files+=(-f "$deploy/overlay.yaml")
+deploy=/srv/dai/deploy
+mkdir -p "$deploy/data"
+printf 'FILE_VALUE=original\n' >"$deploy/runtime.env"
+printf 'preserved-state\n' >"$deploy/data/state"
+jq -n --arg old "$old" --arg data "$deploy/data" --arg name "fixture-flat" '
+  {name:$name,services:{versiond:{image:$old,command:["sh","-c",
+  "if [ -f /data/reject ] && [ -f /etc/alpine-release ]; then exit 42; fi; exec sleep 3600"],
+  volumes:[$data+":/data"],env_file:["runtime.env"],environment:{LITERAL:"keep$$value"}},
+  node:{image:$old,command:["sleep","3600"],volumes:["/fixture/inferenced:/usr/local/bin/inferenced:ro"]},
+  api:{image:$old,command:["sleep","3600"]},tmkms:{image:$old,command:["sleep","3600"]}}}
+  | .services |= with_entries(.value.stop_grace_period = "1s")' >"$deploy/compose.yaml"
+files=(-f "$deploy/compose.yaml")
+printf '{"services":{"versiond":{"environment":{"OVERLAY":"keep"}}}}\n' >"$deploy/overlay.yaml"
+files+=(-f "$deploy/overlay.yaml")
+dc=(docker compose --project-directory "$deploy" "${files[@]}")
+"${dc[@]}" up -d
+unchanged="$("${dc[@]}" ps -q node api tmkms | sort)"
+invoke() {
+  { cat "$ROOT/scripts/lib-lock.sh"; cat "$ROOT/scripts/host-upgrade.sh"; } |
+    bash -s -- --remote "$next" "$platform" fixture-chain "$sha"
+}
+# Refuse another network without restarting anything.
+initial="$("${dc[@]}" ps -q versiond)"
+if { cat "$ROOT/scripts/lib-lock.sh"; cat "$ROOT/scripts/host-upgrade.sh"; } |
+  bash -s -- --remote "$next" "$platform" wrong-chain "$sha"; then
+  echo 'wrong chain accepted' >&2; exit 1
+fi
+[[ "$("${dc[@]}" ps -q versiond)" == "$initial" ]]
+# A candidate that exits must roll back the real container and exact file.
+destination="${files[${#files[@]}-1]}"
+cp "$destination" /fixture/original-compose
+touch "$deploy/data/reject"
+if invoke; then echo 'failed candidate reported success' >&2; exit 1; fi
+cmp /fixture/original-compose "$destination"
+[[ "$(docker inspect "$("${dc[@]}" ps -q versiond)" --format '{{.Image}}')" == "$(docker image inspect "$old" --format '{{.Id}}')" ]]
+rm "$deploy/data/reject"
+invoke
+running="$("${dc[@]}" ps -q versiond)"
+[[ "$(docker inspect "$running" --format '{{.Image}}')" == "$(docker image inspect "$next" --format '{{.Id}}')" ]]
+[[ "$(docker exec "$running" printenv LITERAL)" == "keep\$value" ]]
+invoke
+[[ "$("${dc[@]}" ps -q versiond)" == "$running" ]]
+[[ "$("${dc[@]}" ps -q node api tmkms | sort)" == "$unchanged" ]]
+[[ "$(cat "$deploy/data/state")" == preserved-state ]]
+"${dc[@]}" config --format json | jq -e --arg image "$next" '.services.versiond.image==$image' >/dev/null
+printf 'FILE_VALUE=future\n' >"$deploy/runtime.env"
+"${dc[@]}" config --format json | jq -e '.services.versiond.environment.FILE_VALUE=="future"' >/dev/null
+"${dc[@]}" down
+printf 'PASS flat: wrong-chain refusal, rollback, upgrade, idempotence, unrelated containers and data preserved\n'
+
+# Unsupported working-directory labels must fail before any filesystem mutation.
+for rejected in /srv/dai/node /srv/dai/deploy/fixture; do
+  probe="$(docker run -d --label com.docker.compose.service=versiond \
+    --label com.docker.compose.project=refusal \
+    --label "com.docker.compose.project.working_dir=$rejected" \
+    --label "com.docker.compose.project.config_files=$rejected/compose.yaml" \
+    "$old" sleep 3600)"
+  before="$(docker inspect "$probe")"
+  if invoke >/fixture/refusal.log 2>&1; then
+    echo 'unsupported deployment directory accepted' >&2; exit 1
   fi
-  dc=(docker compose --project-directory "$deploy" "${files[@]}")
-  "${dc[@]}" up -d
-  unchanged="$("${dc[@]}" ps -q node api tmkms | sort)"
-  invoke() {
-    { cat "$ROOT/scripts/lib-lock.sh"; cat "$ROOT/scripts/host-upgrade.sh"; } |
-      bash -s -- --remote "$next" "$platform" fixture-chain "$sha"
-  }
-  # Refuse another network without restarting anything.
-  initial="$("${dc[@]}" ps -q versiond)"
-  if { cat "$ROOT/scripts/lib-lock.sh"; cat "$ROOT/scripts/host-upgrade.sh"; } |
-    bash -s -- --remote "$next" "$platform" wrong-chain "$sha"; then
-    echo 'wrong chain accepted' >&2; exit 1
-  fi
-  [[ "$("${dc[@]}" ps -q versiond)" == "$initial" ]]
-  # A candidate that exits must roll back the real container and exact file.
-  destination="${files[${#files[@]}-1]}"
-  cp "$destination" /fixture/original-compose
-  touch "$deploy/data/reject"
-  if invoke; then echo 'failed candidate reported success' >&2; exit 1; fi
-  cmp /fixture/original-compose "$destination"
-  [[ "$(docker inspect "$("${dc[@]}" ps -q versiond)" --format '{{.Image}}')" == "$(docker image inspect "$old" --format '{{.Id}}')" ]]
-  rm "$deploy/data/reject"
-  invoke
-  running="$("${dc[@]}" ps -q versiond)"
-  [[ "$(docker inspect "$running" --format '{{.Image}}')" == "$(docker image inspect "$next" --format '{{.Id}}')" ]]
-  [[ "$(docker exec "$running" printenv LITERAL)" == "keep\$value" ]]
-  invoke
-  [[ "$("${dc[@]}" ps -q versiond)" == "$running" ]]
-  [[ "$("${dc[@]}" ps -q node api tmkms | sort)" == "$unchanged" ]]
-  [[ "$(cat "$deploy/data/state")" == preserved-state ]]
-  "${dc[@]}" config --format json | jq -e --arg image "$next" '.services.versiond.image==$image' >/dev/null
-  printf 'FILE_VALUE=future\n' >"$deploy/runtime.env"
-  "${dc[@]}" config --format json | jq -e '.services.versiond.environment.FILE_VALUE=="future"' >/dev/null
-  "${dc[@]}" down
-  printf 'PASS %s: wrong-chain refusal, rollback, upgrade, idempotence, unrelated containers and data preserved\n' "$layout"
+  grep -Fq 'host upgrade requires /srv/dai/deploy' /fixture/refusal.log
+  [[ "$(docker inspect "$probe")" == "$before" ]]
+  [[ ! -e "$rejected" ]]
+  docker rm -f "$probe" >/dev/null
 done
+printf 'PASS unsupported deployment directories refused without mutation\n'

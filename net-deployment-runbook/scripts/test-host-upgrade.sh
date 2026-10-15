@@ -10,7 +10,7 @@ valid_image "$image"
 if valid_image 'ghcr.io/example/versiond:latest'; then exit 1; fi
 if valid_alias '-oProxyCommand=unsafe'; then exit 1; fi
 if valid_alias 'node;command'; then exit 1; fi
-for layout in flat legacy layered; do
+for layout in flat layered; do
   mkdir "$tmp/$layout"
   jq -n '{name:"upgrade-fixture",services:{versiond:{image:"old:fixture",
     environment:{PASSWORD:"keep$$dollar",UNCHANGED:"yes"},

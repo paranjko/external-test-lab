@@ -20,9 +20,11 @@ services, or send governance transactions. It does not test inference readiness.
 
 The SSH account needs passwordless sudo; the Host needs Bash, jq, GNU coreutils,
 Docker and Docker Compose supporting `config --no-env-resolution`. Older Compose
-versions are refused before changing the deployment. Current `/srv/dai/deploy`, legacy `/srv/dai/node`,
-and `/srv/dai/deploy/<host>` layouts are discovered from the running container's
-Compose labels. Multiple running `versiond` services are refused as ambiguous.
+versions are refused before changing the deployment. Only `/srv/dai/deploy`
+is supported, discovered from the running container's Compose labels.
+Legacy `/srv/dai/node`, nested `/srv/dai/deploy/<host>` and all other paths
+are refused before any deployment changes; this command does not migrate them.
+Multiple running `versiond` services are refused as ambiguous.
 
 The command retains a private receipt under the deployment's
 `.gdc-versiond-upgrades/` directory, including the previous Compose layer. It

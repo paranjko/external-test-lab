@@ -18,7 +18,7 @@ the selected jobs and groups. Draft PRs use the same selection as ready PRs.
 
 CI runs `test-ci-bootstrap`, `test-ci-core`, `test-ci-site`,
 `test-ci-join` and `test-ci-gateways` in independent checkouts, plus `test-gdc-p0a`
-and a separate Host upgrade matrix. Tests within each group remain sequential: some fixtures use fixed
+and a separate Host upgrade job. Tests within each group remain sequential: some fixtures use fixed
 loopback ports or write generated site files. Do not run groups concurrently
 in the same checkout. `make test` still runs the complete original local
 suite, including the shared P0-A tests, and `make test test-gdc-p0a` adds the
@@ -54,9 +54,12 @@ Docker and Compose, but no Python. `test-host-upgrade` mocks every SSH and curl
 call and rejects unexpected destinations. `test-host-upgrade-lifecycle` uses a
 fresh privileged Docker-in-Docker container with no host socket, keys or data
 mounts; it pulls digest-pinned BusyBox and Alpine fixtures from Docker Hub and
-tests actual container replacement and rollback in three deployment layouts.
-CI runs flat, legacy and nested layouts in separate disposable containers with
-`host_upgrade_layout=flat|legacy|nested`; the local default remains `all`.
+tests actual container replacement and rollback only in `/srv/dai/deploy`.
+`host upgrade` rejects every other deployment directory before acquiring a
+lock, writing receipts, pulling an image or changing containers. Legacy
+`/srv/dai/node` and nested deployment directories are not supported or migrated.
+CI and local tests run the same single lifecycle scenario, with rejection
+checks for unsupported paths rather than upgrade scenarios for those layouts.
 The synthetic sleep services use a one-second stop grace period, avoiding
 Docker's default ten-second waits without changing production shutdown policy.
 

@@ -72,7 +72,11 @@ class RunbookCI(unittest.TestCase):
         spec.loader.exec_module(route)
         self.assertEqual(groups, route.GROUPS)
         self.assertIn("group: ${{ fromJSON(needs.route.outputs.groups) }}", workflow)
-        self.assertIn("layout: [flat, legacy, nested]", workflow)
+        lifecycle = workflow.split("  host-upgrade-lifecycle:\n")[1].split("  ownership:\n")[0]
+        self.assertNotIn("matrix:", lifecycle)
+        self.assertIn("run: make -C net-deployment-runbook test-host-upgrade-lifecycle\n", lifecycle)
+        self.assertNotIn("host_upgrade_layout", makefile)
+        self.assertNotIn("GDC_TEST_UPGRADE_LAYOUT", makefile)
         local = set(scripts(dry_run("test"))) - {"test-runbook-ci.py"}
         counts = collections.Counter()
         for target in [*("test-ci-" + group for group in groups), "test-gdc-p0a", "test-host-upgrade-lifecycle"]:

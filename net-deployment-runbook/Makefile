@@ -665,11 +665,9 @@ test-install-inferenced:
 test-host-upgrade:
 	@bash ./scripts/test-host-upgrade.sh
 
-host_upgrade_layout ?= all
 test-host-upgrade-lifecycle:
-	@case "$(host_upgrade_layout)" in all|flat|legacy|nested) ;; *) echo 'invalid host_upgrade_layout' >&2; exit 2;; esac
 	@docker build --file test/Dockerfile.host-upgrade --tag gdc-host-upgrade-test:local ..
-	@docker run --rm --privileged -e GDC_HOST_UPGRADE_DIND=true -e GDC_TEST_UPGRADE_LAYOUT="$(host_upgrade_layout)" --entrypoint bash gdc-host-upgrade-test:local scripts/test-host-upgrade-lifecycle.sh
+	@docker run --rm --privileged -e GDC_HOST_UPGRADE_DIND=true --entrypoint bash gdc-host-upgrade-test:local scripts/test-host-upgrade-lifecycle.sh
 
 test-host-models: bats-docker-image
 	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_HOST_MODELS_FIXTURE=true --entrypoint python3 $(BATS_DOCKER_IMAGE) scripts/test-host-models.py

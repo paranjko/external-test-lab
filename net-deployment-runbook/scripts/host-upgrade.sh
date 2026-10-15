@@ -76,8 +76,7 @@ remote_upgrade() {
   project="$(jq -er '.[0].Config.Labels["com.docker.compose.project"]' <<<"$info")"
   config_files="$(jq -er '.[0].Config.Labels["com.docker.compose.project.config_files"]' <<<"$info")"
   [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ && "$old_image" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid runtime identity'
-  [[ "$deploy" == /srv/dai/deploy || "$deploy" == /srv/dai/node ||
-    "$deploy" =~ ^/srv/dai/deploy/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die 'unsupported managed layout'
+  [[ "$deploy" == /srv/dai/deploy ]] || die 'unsupported managed layout: host upgrade requires /srv/dai/deploy'
   [[ "$(realpath -e "$deploy")" == "$deploy" ]] || die 'noncanonical deployment directory'
   IFS=',' read -r -a files <<<"$config_files"
   ((${#files[@]} > 0)) || die 'no Compose files'

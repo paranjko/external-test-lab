@@ -153,14 +153,10 @@ jobs:
     needs: route
     if: needs.route.outputs.host_upgrade_lifecycle == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        layout: [flat, legacy, nested]
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Test isolated Host upgrade and rollback
-        run: make -C net-deployment-runbook test-host-upgrade-lifecycle host_upgrade_layout=${{ matrix.layout }}
+        run: make -C net-deployment-runbook test-host-upgrade-lifecycle
 
   ownership:
     needs: route
