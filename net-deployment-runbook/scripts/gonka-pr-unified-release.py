@@ -16,7 +16,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFINITION = ROOT / "releases/gonka-pr-1792-unified.json"
+DEFINITION = ROOT / "releases/gonka-pr-2008-unified.json"
 GROUPS = ["manual-matrix", "dapi-edge"]
 
 
@@ -51,7 +51,7 @@ def definition(path: Path = DEFINITION) -> dict:
     }, "unexpected unified candidate definition fields")
     require(value["schema_version"] == 1 and value["classification"] == "lab-candidate-unified",
             "unsupported unified candidate definition")
-    require(value["source_repository"] == "gonka-ai/gonka" and value["source_pr"] == 1792,
+    require(value["source_repository"] == "gonka-ai/gonka" and value["source_pr"] in (1792, 2008),
             "unexpected unified candidate source")
     require(all(re.fullmatch(r"[0-9a-f]{40}", value[field]) for field in
                 ("source_commit", "source_tree", "legacy_current_source_commit")), "invalid immutable source identity")

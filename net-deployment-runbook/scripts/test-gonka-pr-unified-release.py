@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline contract tests for the PR #1792 unified lab-release recipe."""
+"""Offline contract tests for the reviewed v6 unified lab-release recipes."""
 
 import hashlib
 import importlib.util
@@ -23,10 +23,10 @@ class UnifiedReleaseTests(unittest.TestCase):
         self.binary = unified.binary_definition(self.candidate)
 
     def test_candidate_is_exact_source_bound_and_not_a_legacy_tag(self):
-        self.assertEqual(self.candidate["source_pr"], 1792)
-        self.assertEqual(self.candidate["source_commit"], "d1b9df2413062a3bd3ea009a5745aff8b4d7f90e")
-        self.assertEqual(self.candidate["source_tree"], "6fc14fce864e35b3540a630ba6b7c242bbf4cedd")
-        self.assertEqual(self.candidate["release_tag"], "lab-gonka-pr-1792-d1b9df241306")
+        self.assertEqual(self.candidate["source_pr"], 2008)
+        self.assertEqual(self.candidate["source_commit"], "d657ca0628a32d1e754e4c498d95cb1ca7b41221")
+        self.assertEqual(self.candidate["source_tree"], "8c85dc7a21c9f8e16fcc6f2acbb18b7cd180e294")
+        self.assertEqual(self.candidate["release_tag"], "lab-gonka-pr-2008-d657ca0628a3")
         self.assertEqual(self.binary["release_tag"], self.candidate["release_tag"])
         self.assertNotIn("lab-devshard-v6", self.candidate["release_tag"])
 
@@ -38,7 +38,7 @@ class UnifiedReleaseTests(unittest.TestCase):
         self.assertEqual(recipe["release_tag"], self.candidate["release_tag"])
         self.assertEqual(recipe["devshard_zip"], {
             "url": "https://github.com/paranjko/external-test-lab/releases/download/"
-                   "lab-gonka-pr-1792-d1b9df241306/devshardd.zip",
+                   "lab-gonka-pr-2008-d657ca0628a3/devshardd.zip",
             "sha256": digest,
         })
         self.assertEqual(recipe["components"]["gateway-v4.2"]["source"]["commit"],
@@ -77,12 +77,27 @@ class UnifiedReleaseTests(unittest.TestCase):
         manifest = {"artifacts": {name: {} for name in unified.artifacts.selected_components(recipe, unified.GROUPS)}}
         with patch.dict(os.environ, {"GITHUB_RUN_ID": "123"}, clear=False):
             title, body = unified.artifacts.unified_release_presentation(recipe, manifest, self.candidate["release_tag"])
-        self.assertEqual(title, "DevShard v6 lab candidate · d1b9df241306")
-        self.assertIn("[Gonka PR #1792](https://github.com/gonka-ai/gonka/pull/1792)", body)
-        self.assertIn("[source commit d1b9df241306](https://github.com/gonka-ai/gonka/commit/"
-                      "d1b9df2413062a3bd3ea009a5745aff8b4d7f90e)", body)
+        self.assertEqual(title, "DevShard v6 lab candidate · d657ca0628a3")
+        self.assertIn("[Gonka PR #2008](https://github.com/gonka-ai/gonka/pull/2008)", body)
+        self.assertIn("[source commit d657ca0628a3](https://github.com/gonka-ai/gonka/commit/"
+                      "d657ca0628a32d1e754e4c498d95cb1ca7b41221)", body)
         for asset in ("devshardd.zip", "approved-version.json", "artifacts.json", "coverage.json", "source.json", "build-info.txt", "SHA256SUMS"):
             self.assertIn(f"](https://github.com/paranjko/external-test-lab/releases/download/{self.candidate['release_tag']}/{asset})", body)
+
+    def test_previous_recipe_remains_verifiable_without_retargeting(self):
+        previous = unified.definition(unified.ROOT / "releases/gonka-pr-1792-unified.json")
+        self.assertEqual(previous["source_pr"], 1792)
+        self.assertEqual(previous["release_tag"], "lab-gonka-pr-1792-d1b9df241306")
+
+    def test_unreviewed_source_pr_and_mismatched_tag_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "candidate.json"
+            for changes in ({"source_pr": 2009}, {"source_repository": "other/gonka"},
+                            {"release_tag": "lab-gonka-pr-1792-d657ca0628a3"}):
+                with self.subTest(changes=changes):
+                    path.write_text(json.dumps({**self.candidate, **changes}))
+                    with self.assertRaises(ValueError):
+                        unified.definition(path)
 
 
 if __name__ == "__main__":
