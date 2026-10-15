@@ -16,6 +16,7 @@ class Fake:
     def __init__(self): self.n = 0
     def create(self, user): self.n += 1; return {"id": f"vk-{self.n}", "value": f"sk-bf-native-{self.n}"}
     def rotate(self, key): self.n += 1; return {"id": key, "value": f"sk-bf-native-{self.n}"}
+    def create_health_key(self): return self.create('health')
 
 class ManagementHandler(BaseHTTPRequestHandler):
     requests = []
@@ -89,4 +90,39 @@ with tempfile.TemporaryDirectory() as d:
     key = module.Fernet.generate_key()
     module.Broker(str(db_path), Fake(), key)
     assert b"sk-bf-legacy" not in db_path.read_bytes()
-print("PASS Bifrost external-key mapping issues, rotates, and revokes without storing external plaintext")
+with tempfile.TemporaryDirectory() as d:
+    path = Path(d) / 'service.sqlite3'
+    encryption = module.Fernet.generate_key()
+    fake = Fake()
+    broker = module.Broker(str(path), fake, encryption)
+    user = broker.issue(77)
+    health = broker.ensure_health_key()
+    assert health != user and broker.resolve(health) == 'sk-bf-native-2'
+    assert broker.ensure_health_key() == health and fake.n == 2
+    broker.rotate(77)
+    assert broker.resolve(user) is None and broker.resolve(health) == 'sk-bf-native-2'
+    broker.db.close()
+    broker = module.Broker(str(path), fake, encryption)
+    assert broker.ensure_health_key() == health and fake.n == 3
+    broker.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    assert health.encode() not in path.read_bytes() and b'sk-bf-native-2' not in path.read_bytes()
+    broker.db.close()
+
+with tempfile.TemporaryDirectory() as d:
+    class Uncertain(Fake):
+        def create_health_key(self):
+            self.n += 1
+            raise OSError('uncertain transport')
+    fake = Uncertain()
+    path = str(Path(d) / 'pending.sqlite3')
+    encryption = module.Fernet.generate_key()
+    broker = module.Broker(path, fake, encryption)
+    try: broker.ensure_health_key(); raise AssertionError('uncertain create accepted')
+    except OSError: pass
+    broker.db.close()
+    broker = module.Broker(path, fake, encryption)
+    try: broker.ensure_health_key(); raise AssertionError('pending create retried')
+    except RuntimeError: pass
+    assert fake.n == 1
+    broker.db.close()
+print("PASS Bifrost user rotation, independent encrypted health credential and uncertain-create refusal")

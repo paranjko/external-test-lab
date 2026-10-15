@@ -49,6 +49,11 @@ class State:
     protocol_sha256 = "a" * 64
     status_override = None
     params_override = None
+    response_headers = []
+    received_identity_headers = {}
+    stream = False
+    stream_tail = b'data: [DONE]\n\n'
+    stream_release = threading.Event()
     lock = threading.Lock()
 
 
@@ -123,6 +128,10 @@ class Backend(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers["Content-Length"])
         self.rfile.read(length)
+        State.received_identity_headers = {
+            key.lower(): value for key, value in self.headers.items()
+            if key.lower().startswith("x-gdc-")
+            or key.lower() in {"x-request-id", "x-devshard-id"}}
         with State.lock:
             State.dispatches += 1
             State.in_flight += 1
@@ -133,11 +142,26 @@ class Backend(BaseHTTPRequestHandler):
             self.send_response(401)
             self.send_header("Content-Length", "0")
             self.end_headers()
+        elif State.stream:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("X-Request-Id", "stream-request")
+            self.end_headers()
+            try:
+                self.wfile.write(b'data: {"part":1}\n\n')
+                self.wfile.flush()
+                State.stream_release.wait(3)
+                self.wfile.write(State.stream_tail)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
         else:
             # A gateway failure is an accounting outcome, not permission to replay.
             body = b'{"error":"single outcome"}'
             self.send_response(429)
             self.send_header("Content-Type", "application/json")
+            for name, value in State.response_headers:
+                self.send_header(name, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -229,6 +253,94 @@ try:
     assert proxy_module.upstream_timeout(time.monotonic() + 31.5) > 30
     assert proxy_module.safe_upstream_content_type("application/json; charset=utf-8") == "application/json"
     assert proxy_module.safe_upstream_content_type("text/plain\\r\\nX-Injected: yes") == "application/octet-stream"
+    for invalid in ("", "a" * 129, "bad value", "bad\r\nX-Injected: yes", "non-ascii-\u00e9"):
+        assert proxy_module.native_identity_headers([("X-Request-Id", invalid)]) == {}
+    assert proxy_module.native_identity_headers([
+        ("X-Request-Id", "one"), ("x-request-id", "two")]) == {}
+
+    State.ready = True
+    State.response_headers = [("X-Request-Id", "native-request-1"),
+                              ("X-Devshard-ID", "41"),
+                              ("X-GDC-Admission-ID", "upstream-forgery")]
+    process, proxy_port = start_proxy(backend_port); processes.append(process)
+    connection = http.client.HTTPConnection("127.0.0.1", proxy_port, timeout=3)
+    connection.request("POST", "/v1/chat/completions", b'{"model":"model"}', {
+        "Authorization": "Bearer test", "X-Request-Id": "client-forgery",
+        "X-Devshard-ID": "client-forgery", "X-GDC-Admission-ID": "client-forgery"})
+    response = connection.getresponse()
+    response.read()
+    assert response.status == 429
+    assert response.getheader("X-Request-Id") == "native-request-1"
+    assert response.getheader("X-Devshard-ID") == "41"
+    assert re.fullmatch(r"[a-f0-9]{32}", response.getheader("X-GDC-Admission-ID"))
+    assert len([key for key, _ in response.getheaders() if key.lower() == "x-gdc-admission-id"]) == 1
+    assert State.received_identity_headers == {}, "client identity/receipt leaked to upstream"
+    assert audit_records(proxy_port)[0]["admission_id"] == response.getheader("X-GDC-Admission-ID")
+    connection.close()
+    State.response_headers = []
+    process.terminate(); process.wait(2); processes.remove(process)
+
+    # The first event must arrive while the backend deliberately withholds EOF.
+    # Header receipt proves dispatch, not completed streaming inference.
+    State.stream = True
+    State.stream_release.clear()
+    before_dispatch = State.dispatches
+    process, proxy_port = start_proxy(backend_port, wait=2); processes.append(process)
+    connection = http.client.HTTPConnection("127.0.0.1", proxy_port, timeout=1)
+    connection.request("POST", "/v1/chat/completions", b'{"model":"model","stream":true}',
+                       {"Authorization": "Bearer test", "Content-Type": "application/json"})
+    response = connection.getresponse()
+    assert response.status == 200
+    assert response.getheader("X-Request-Id") == "stream-request"
+    assert response.getheader("X-GDC-Response-Height") is None
+    assert response.readline() == b'data: {"part":1}\n'
+    assert not State.stream_release.is_set()
+    assert audit_records(proxy_port) == [], "dispatch headers falsely recorded completion"
+    State.stream_release.set()
+    assert response.read() == b'\ndata: [DONE]\n\n'
+    for _ in range(50):
+        records = audit_records(proxy_port)
+        if records:
+            break
+        time.sleep(0.01)
+    assert len(records) == 1 and records[0]["error_class"] == ""
+    assert records[0]["admission_id"] == response.getheader("X-GDC-Admission-ID")
+    assert State.dispatches == before_dispatch + 1
+    connection.close()
+    process.terminate(); process.wait(2); processes.remove(process)
+    State.stream_release.clear()
+    before_dispatch = State.dispatches
+    process, proxy_port = start_proxy(backend_port, wait=0.5); processes.append(process)
+    connection = http.client.HTTPConnection("127.0.0.1", proxy_port, timeout=2)
+    connection.request("POST", "/v1/chat/completions", b'{"model":"model","stream":true}',
+                       {"Authorization": "Bearer test", "Content-Type": "application/json"})
+    response = connection.getresponse()
+    assert response.status == 200
+    assert response.read() == b'data: {"part":1}\n\n', "stream failure appended another HTTP response"
+    records = audit_records(proxy_port)
+    assert len(records) == 1 and records[0]["admission"] == "dispatch_attempt_failed"
+    assert records[0]["error_class"] == "gateway_dispatch_timeout"
+    assert State.dispatches == before_dispatch + 1, "stream timeout replayed upstream"
+    State.stream_release.set()
+    connection.close()
+    process.terminate(); process.wait(2); processes.remove(process)
+    # Clean EOF without the OpenAI terminal event is still incomplete inference.
+    State.stream_tail = b""
+    before_dispatch = State.dispatches
+    process, proxy_port = start_proxy(backend_port, wait=2); processes.append(process)
+    connection = http.client.HTTPConnection("127.0.0.1", proxy_port, timeout=2)
+    connection.request("POST", "/v1/chat/completions", b'{"model":"model","stream":true}',
+                       {"Authorization": "Bearer test", "Content-Type": "application/json"})
+    response = connection.getresponse()
+    assert response.read() == b'data: {"part":1}\n\n'
+    records = audit_records(proxy_port)
+    assert len(records) == 1 and records[0]["admission"] == "dispatch_attempt_failed"
+    assert records[0]["error_class"] == "gateway_dispatch_protocol_failed"
+    assert State.dispatches == before_dispatch + 1
+    connection.close()
+    process.terminate(); process.wait(2); processes.remove(process)
+    State.stream_tail = b'data: [DONE]\n\n'
+    State.stream = False
     valid_approval = {"name": "v3", "binary": "https://example.invalid/devshardd-v3.zip", "sha256": "a" * 64}
     assert proxy_module.valid_approved_versions([valid_approval])
     assert not proxy_module.valid_approved_versions([valid_approval, "invalid"])

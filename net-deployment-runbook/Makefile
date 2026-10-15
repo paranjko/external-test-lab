@@ -109,6 +109,21 @@ test-v6-stable-receipt:
 
 test-ci-gateways: test-v6-stable-receipt
 
+.PHONY: test-v6-admission-deployment
+.PHONY: test-dapi-version-policy
+test-dapi-version-policy:
+	@python3 scripts/test-dapi-version-policy.py
+
+test-v6-admission-deployment: bats-docker-image
+	@python3 scripts/test-v6-observer-binding.py
+	@python3 scripts/test-v6-provider-rebind.py
+	@python3 scripts/test-v6-model-migration.py
+	@python3 scripts/test-serving-observation-model.py
+	@python3 ./scripts/test-render-v6-admission.py
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_TEST_DISPOSABLE_ROOT=true --volume "$(CURDIR):/source:ro" --entrypoint python3 $(BATS_DOCKER_IMAGE) /source/scripts/test-v6-admission-install.py
+
+test-ci-gateways: test-v6-admission-deployment
+
 .PHONY: test-devshard-502-reader
 test-devshard-502-reader:
 	@python3 ./scripts/test-devshard-502-reader.py

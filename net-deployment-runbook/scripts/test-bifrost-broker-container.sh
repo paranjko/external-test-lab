@@ -5,7 +5,17 @@ cid=''; management_pid=''
 project="gdc-bifrost-broker-test-$$"
 cleanup() { [[ -z "$cid" ]] || docker rm -f "$cid" >/dev/null 2>&1 || true; docker compose -p "$project" -f "$tmp/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true; [[ -z "$management_pid" ]] || kill "$management_pid" >/dev/null 2>&1 || true; docker volume rm -f "$volume" >/dev/null 2>&1 || true; rm -rf "$tmp"; }; trap cleanup EXIT
 printf 'BIFROST_GONKA_PROVIDER=gonka-s\nBIFROST_GONKA_MODEL=test\nBIFROST_GONKA_KEY_ID=id\n' >"$tmp/broker-binding.env"; chmod 0444 "$tmp/broker-binding.env"
-docker build -q -t "$image" -f "$ROOT/04-ops/Dockerfile.bifrost-broker" "$ROOT/04-ops" >/dev/null
+# Model a checkout created under umask077 explicitly, even on permissive CI.
+# Both non-root images must be able to read their own shipped program files.
+mkdir "$tmp/context"
+for file in bifrost-key-broker.py bifrost-broker-service.py bifrost-protocol-edge.py; do
+  cp "$ROOT/04-ops/$file" "$tmp/context/$file"
+  chmod 0600 "$tmp/context/$file"
+done
+docker build -q -t "$image" -f "$ROOT/04-ops/Dockerfile.bifrost-broker" "$tmp/context" >/dev/null
+edge_image="$(docker build -q -f "$ROOT/04-ops/Dockerfile.bifrost-edge" "$tmp/context")"
+docker run --rm --network none --read-only --entrypoint python3 "$edge_image" \
+  -c 'import os, runpy; assert os.getuid() == 65532; runpy.run_path("/srv/edge/bifrost-protocol-edge.py")'
 docker volume create "$volume" >/dev/null
 docker run --rm --user 0:0 -v "$volume:/var/lib/bifrost-broker" --entrypoint sh "$image" -c 'install -d -o 65532 -g 65532 -m 0700 /var/lib/bifrost-broker'
 docker run --rm --user 65532:65532 -v "$volume:/var/lib/bifrost-broker" -v "$tmp/broker-binding.env:/run/bifrost/broker-binding.env:ro" --entrypoint sh "$image" -c 'test -r /run/bifrost/broker-binding.env && touch /var/lib/bifrost-broker/keys.sqlite3'
@@ -45,7 +55,7 @@ services:
     user: "0:0"
     entrypoint: ["sh", "-c", "install -d -o 65532 -g 65532 -m 0700 /var/lib/bifrost-broker"]
     volumes: ["broker-data:/var/lib/bifrost-broker"]
-  broker:
+  bifrost-broker:
     image: $image
     network_mode: host
     env_file: [$env_file]
@@ -58,14 +68,42 @@ volumes: {broker-data: {}}
 EOF
 docker compose -p "$project" -f "$tmp/compose.yaml" up -d --wait
 compose_key_one="$(curl -fsS -X POST "http://127.0.0.1:$broker_port/v1/keys" -H 'Authorization: Bearer xxxxxxxxxxxxxxxxxxxxxxxx' -H 'Content-Type: application/json' -d '{"telegram_id":8,"update_id":2}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')"
-docker compose -p "$project" -f "$tmp/compose.yaml" up -d --force-recreate broker
+docker compose -p "$project" -f "$tmp/compose.yaml" up -d --force-recreate bifrost-broker
 compose_ready=false
 for _ in $(seq 1 20); do
-  if docker compose -p "$project" -f "$tmp/compose.yaml" ps --status running -q broker | grep -Eq '.' \
+  if docker compose -p "$project" -f "$tmp/compose.yaml" ps --status running -q bifrost-broker | grep -Eq '.' \
     && curl -sS --connect-timeout 1 "http://127.0.0.1:$broker_port/nope" >/dev/null 2>&1; then compose_ready=true; break; fi
   sleep 1
 done
-[[ "$compose_ready" == true ]] || { docker compose -p "$project" -f "$tmp/compose.yaml" logs broker >&2; exit 1; }
+[[ "$compose_ready" == true ]] || { docker compose -p "$project" -f "$tmp/compose.yaml" logs bifrost-broker >&2; exit 1; }
 compose_key_two="$(curl -fsS -X POST "http://127.0.0.1:$broker_port/v1/keys" -H 'Authorization: Bearer xxxxxxxxxxxxxxxxxxxxxxxx' -H 'Content-Type: application/json' -d '{"telegram_id":8,"update_id":2}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')"
 [[ "$compose_key_one" == "$compose_key_two" && "$(<"$tmp/upstream-count")" == 2 ]]
 printf 'PASS Compose broker/init lifecycle preserves idempotent SQLite state\n'
+
+# Exercise the shipped offline entrypoint, not an imported approximation.
+docker compose -p "$project" -f "$tmp/compose.yaml" exec -T bifrost-broker python3 /srv/broker/bifrost-broker-service.py --write-health-env /var/lib/bifrost-broker/health.env
+[[ "$(<"$tmp/upstream-count")" == 3 ]]
+if docker compose -p "$project" -f "$tmp/compose.yaml" exec -T bifrost-broker python3 /srv/broker/bifrost-broker-service.py --write-health-env /var/lib/bifrost-broker/health.env >/dev/null 2>&1; then
+  echo 'FAIL health output overwrite was accepted' >&2; exit 1
+fi
+export BIFROST_BROKER_MAINTENANCE_IMAGE="$image"
+export BIFROST_BROKER_MAINTENANCE_ENV="$env_file"
+export BIFROST_BROKER_MAINTENANCE_BINDING="$tmp/broker-binding.env"
+export BIFROST_BROKER_MAINTENANCE_VOLUME="${project}_broker-data"
+# Replace only the broker through the shipped maintenance composition. Its
+# external volume and existing Compose identity must preserve all keys.
+docker compose -p "$project" -f "$ROOT/04-ops/compose.bifrost-broker-maintenance.yaml" up -d --no-deps --force-recreate bifrost-broker
+docker compose -p "$project" -f "$tmp/compose.yaml" exec -T bifrost-broker python3 /srv/broker/bifrost-broker-service.py --write-health-env /var/lib/bifrost-broker/health-restarted.env
+docker compose -p "$project" -f "$tmp/compose.yaml" exec -T bifrost-broker python3 -c '
+from pathlib import Path
+import stat
+a = Path("/var/lib/bifrost-broker/health.env")
+b = Path("/var/lib/bifrost-broker/health-restarted.env")
+assert stat.S_IMODE(a.stat().st_mode) == 0o600
+assert stat.S_IMODE(b.stat().st_mode) == 0o600
+assert a.read_bytes() == b.read_bytes()
+assert a.read_text().startswith("DEVSHARD_API_KEYS=sk-gdc-")
+assert a.read_text().endswith("\nDEVSHARD_MODEL=test\n")
+'
+[[ "$(<"$tmp/upstream-count")" == 3 ]]
+printf 'PASS offline health identity persists privately without duplicate issuance\n'

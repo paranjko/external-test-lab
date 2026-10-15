@@ -65,6 +65,13 @@ class BifrostClient:
             raise ValueError("Bifrost virtual key ID must be non-empty")
         return self._request(f"/api/governance/virtual-keys/{bifrost_id}/rotate", {})
 
+    def create_health_key(self):
+        return self._request("/api/governance/virtual-keys", {
+            "name": "gdc-gateway-health", "description": "Operator-owned stable route health probe",
+            "is_active": True, "disable_content_logging": True,
+            "provider_configs": [{"provider": self.provider, "allowed_models": [self.model], "key_ids": [self.key_id]}],
+        })
+
 
 class Broker:
     def __init__(self, path, bifrost, encryption_key):
@@ -86,6 +93,9 @@ class Broker:
         self.db.execute("""CREATE TABLE IF NOT EXISTS key_updates (
           update_id INTEGER PRIMARY KEY, telegram_id INTEGER NOT NULL,
           external_ciphertext BLOB NOT NULL, created_at INTEGER NOT NULL)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS service_keys (
+          name TEXT PRIMARY KEY, state TEXT NOT NULL, external_hash TEXT UNIQUE,
+          external_ciphertext BLOB, bifrost_id TEXT UNIQUE, bifrost_value_ciphertext BLOB)""")
         self.db.commit()
         self.bifrost = bifrost
         self.lock = threading.Lock()
@@ -144,11 +154,40 @@ class Broker:
             return None
         row = self.db.execute("SELECT bifrost_value_ciphertext FROM keys WHERE external_hash=?", (_digest(external),)).fetchone()
         if not row:
+            row = self.db.execute("SELECT bifrost_value_ciphertext FROM service_keys WHERE external_hash=? AND state='ready'",
+                                  (_digest(external),)).fetchone()
+        if not row:
             return None
         try:
             return self.box.decrypt(row[0]).decode()
         except (InvalidToken, UnicodeDecodeError) as error:
             raise RuntimeError("stored Bifrost key cannot be decrypted") from error
+
+    def ensure_health_key(self):
+        """Offline operator operation only; no public or Telegram issuance route.
+
+        Persist intent before management dispatch. An uncertain create remains
+        pending and must be reconciled explicitly, never retried automatically.
+        """
+        with self.lock:
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                row = self.db.execute("SELECT state, external_ciphertext FROM service_keys WHERE name='gateway-health'").fetchone()
+                if row:
+                    if row[0] != 'ready':
+                        raise RuntimeError('health key creation requires reconciliation')
+                    return self.box.decrypt(row[1]).decode()
+                self.db.execute("INSERT INTO service_keys(name,state) VALUES ('gateway-health','pending')")
+            native = self.bifrost.create_health_key()
+            if (not isinstance(native, dict) or not isinstance(native.get('id'), str) or not native['id']
+                    or not isinstance(native.get('value'), str) or not native['value'].startswith('sk-bf-')):
+                raise RuntimeError('invalid health key response; reconcile pending intent')
+            external = self._external()
+            with self.db:
+                self.db.execute("""UPDATE service_keys SET state='ready',external_hash=?,external_ciphertext=?,
+                    bifrost_id=?,bifrost_value_ciphertext=? WHERE name='gateway-health' AND state='pending'""",
+                    (_digest(external), self.box.encrypt(external.encode()), native['id'], self.box.encrypt(native['value'].encode())))
+            return external
 
     def issue_for_update(self, telegram_id, update_id):
         """Serialize a Telegram update so retries never trigger another rotation."""

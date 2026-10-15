@@ -76,5 +76,23 @@ with tempfile.TemporaryDirectory() as directory:
     module.main(["--apply", "--expected-sha256", converged["before_sha256"]])
     assert Handler.puts == Handler.posted_provider == Handler.posted_key == 1
     assert oct(binding.stat().st_mode & 0o777) == "0o444"
+    binding_before = binding.read_bytes()
+    for retries in (1, -1, None, "0", False, 0.0):
+        Handler.providers[0]["network_config"]["max_retries"] = retries
+        drift = module.preview_state(module.client_from_environment())
+        assert drift["delta"] == ["provider.max_retries"]
+        assert drift["before_sha256"] != converged["before_sha256"]
+        for arguments in ([], ["--apply", "--expected-sha256", drift["before_sha256"]]):
+            try:
+                module.main(arguments)
+                raise AssertionError("unsafe or ambiguous retry policy was accepted")
+            except module.ProvisionError as error:
+                assert "explicitly disable retries" in str(error)
+        assert binding.read_bytes() == binding_before
+        assert Handler.puts == Handler.posted_provider == Handler.posted_key == 1
+    del Handler.providers[0]["network_config"]["max_retries"]
+    assert module.preview_state(module.client_from_environment())["delta"] == ["provider.max_retries"]
+    Handler.providers[0]["network_config"]["max_retries"] = 0
+    assert module.preview_state(module.client_from_environment())["delta"] == []
 server.shutdown(); server.server_close()
 print("PASS Bifrost provision bootstraps only empty state and retains provider/key binding on reapply")

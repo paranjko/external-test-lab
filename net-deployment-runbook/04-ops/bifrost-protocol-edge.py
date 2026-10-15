@@ -3,6 +3,7 @@
 import http.client
 import json
 import os
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -80,8 +81,19 @@ class EdgeHandler(BaseHTTPRequestHandler):
         if length < 0 or length > self.server.max_body:
             raise ValueError("invalid request size")
         body = self.rfile.read(length)
+        deadlines = self.headers.get_all("X-Request-Deadline-Ms", [])
+        if len(deadlines) > 1 or (deadlines and (not deadlines[0].isascii()
+                or not deadlines[0].isdigit() or len(deadlines[0]) > 16)):
+            raise ValueError("invalid request deadline")
         headers = {name: value for name, value in self.headers.items()
-                   if name.lower() not in HOP_BY_HOP | SECRET_HEADERS | {"host", "content-length"}}
+                   if name.lower() not in HOP_BY_HOP | SECRET_HEADERS | {
+                       "host", "content-length", "x-request-deadline-ms", "x-bf-eh-x-request-deadline-ms"}}
+        # Bifrost forwards dynamic provider headers only through this prefix.
+        # Derive it from the public contract, never from a caller's adapter alias.
+        # Ordinary clients do not supply a deadline. Bound their admission
+        # wait below common 45s client timeouts instead of inheriting 300s.
+        headers["x-bf-eh-x-request-deadline-ms"] = (
+            deadlines[0] if deadlines else str(time.time_ns() // 1000000 + 20000))
         headers.update({"Host": self.server.upstream.netloc, "Content-Length": str(len(body)), "x-bf-vk": native})
         connection = http.client.HTTPConnection(self.server.upstream.hostname, self.server.upstream.port, timeout=60)
         try:
