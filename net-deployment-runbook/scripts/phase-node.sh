@@ -84,11 +84,7 @@ wait_for_node_sync() {
   die "$NODE did not catch up within ${GDC_NODE_START_WAIT_SECONDS:-300}s"
 }
 
-# Whether a linked GPU Host has no validator identity. A linked GPU Host is
-# never migrated by this path, so it needs only a strict flat-layout or
-# nonempty verdict: legacy and interrupted layouts are deliberately unknown.
-# The exact legacy reader belongs to same-host-restore.sh, immediately before
-# the owning validator Host is reset.
+# Classify linked GPU Host identity without migration, leaving legacy and interrupted layouts unknown for safe refusal before reset
 host_identity_layout() {
   local node="$1" layout output
   output="$(ssh -T "$node" "sudo -n bash -s gdc-identity-layout '$node'" <<'REMOTE' 2>/dev/null || true
@@ -415,10 +411,7 @@ REMOTE
 case "$ACTION" in
   stop)
     step "Stop Network Node services on $NODE without deleting state"
-    # Ordinary stop and GPU lending must capture and stop the same installed
-    # container set.  The controller owns that receipt and has the supported
-    # flat/legacy deployment discovery; Compose stop would create a second,
-    # incompatible lifecycle path.
+    # Use the controller's canonical deployment discovery and shared receipt for ordinary stop and GPU lending
     bash "$ROOT/scripts/node-container-control.sh" stop "$NODE"
     printf 'PASS %s stopped; persistent data was retained\n' "$NODE"
     ;;

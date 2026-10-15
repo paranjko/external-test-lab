@@ -71,26 +71,24 @@ for name in ['systemctl','curl','docker','ssh','scp','rsync']:
 environment=dict(os.environ,PATH=str(tools)+':/usr/local/bin:/usr/bin:/bin',PYTHONDONTWRITEBYTECODE='1')
 env=root/'agent.env';env.write_text('GDC_MONITOR_HOST=fixture\n')
 metrics=pathlib.Path('/var/lib/node_exporter/textfile_collector/gdc-component-versions.prom')
-for layout in ['flat','legacy']:
-    host=pathlib.Path('/srv/dai/deploy')
-    if layout=='legacy':host=host/'fixture'
-    host.mkdir(parents=True,exist_ok=True)
-    marker=host/'identity-retained';marker.write_bytes(b'retained Host state')
-    (root/'scenario').write_text('running')
-    subprocess.run(['bash','/workspace/net-deployment-runbook/04-ops/agent/install-agent.sh','fixture',str(env)],check=True,env=environment)
-    before=metrics.read_text()
-    assert 'version="v5.0.2"' in before and 'binary_sha256="'+'b'*64+'"' in before
-    assert 'archive_sha256="unreported"' in before and 'source="process"' in before
-    assert '/opt/' not in before and 'start_ticks' not in before
-    for scenario in ['running','docker-unavailable','running','docker-partial','running','ambiguous','running','failed','running','stopped','running']:
-        (root/'scenario').write_text(scenario)
-        subprocess.run(['/usr/local/libexec/gdc-collect-versions','fixture'],check=True,env=environment)
-        observed=metrics.read_text()
-        assert ('gdc_devshard_runtime_info' in observed)==(scenario=='running')
-        assert ('gdc_devshard_runtime_scrape_success{host="fixture"} 0' in observed)==(scenario in ['failed','docker-unavailable','docker-partial','ambiguous'])
-        assert marker.read_bytes()==b'retained Host state'
-        assert not (root/'unexpected').exists(), (root/'unexpected').read_text()
-print('PASS installed agent, flat/legacy Host retention, observed binary identity and failed/stopped/recovery collection, synthetic Docker transport')
+host=pathlib.Path('/srv/dai/deploy')
+host.mkdir(parents=True,exist_ok=True)
+marker=host/'identity-retained';marker.write_bytes(b'retained Host state')
+(root/'scenario').write_text('running')
+subprocess.run(['bash','/workspace/net-deployment-runbook/04-ops/agent/install-agent.sh','fixture',str(env)],check=True,env=environment)
+before=metrics.read_text()
+assert 'version="v5.0.2"' in before and 'binary_sha256="'+'b'*64+'"' in before
+assert 'archive_sha256="unreported"' in before and 'source="process"' in before
+assert '/opt/' not in before and 'start_ticks' not in before
+for scenario in ['running','docker-unavailable','running','docker-partial','running','ambiguous','running','failed','running','stopped','running']:
+    (root/'scenario').write_text(scenario)
+    subprocess.run(['/usr/local/libexec/gdc-collect-versions','fixture'],check=True,env=environment)
+    observed=metrics.read_text()
+    assert ('gdc_devshard_runtime_info' in observed)==(scenario=='running')
+    assert ('gdc_devshard_runtime_scrape_success{host="fixture"} 0' in observed)==(scenario in ['failed','docker-unavailable','docker-partial','ambiguous'])
+    assert marker.read_bytes()==b'retained Host state'
+    assert not (root/'unexpected').exists(), (root/'unexpected').read_text()
+print('PASS installed agent, canonical Host retention, observed binary identity and failed/stopped/recovery collection, synthetic Docker transport')
 '''
 
 try:

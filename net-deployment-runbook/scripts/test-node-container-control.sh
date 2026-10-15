@@ -100,22 +100,29 @@ jq -e 'all(.[]; if .service == "node" then .running else .running == false end)'
 cp "$tmp/operations" "$tmp/before"
 if run start; then echo 'missing restart authority unexpectedly accepted' >&2; exit 1; fi
 cmp "$tmp/before" "$tmp/operations"
-# Flat and legacy deployments work with an unrelated operator SSH alias.
+# Canonical deployments work with an unrelated operator SSH alias
 # Shared edge/monitoring projects must never enter the restart receipt.
-for deploy in "$tmp/deploy" "$tmp/deploy/old-validator-name"; do
-  mkdir -p "$deploy"
-  jq -n --arg dir "$deploy" --arg node "$node_id" --arg signer "$signer_id" --arg foreign "$unused_id" '[
-    {id:$node,project:"original-project",working_dir:$dir,service:"node",running:true,status:"running"},
-    {id:$signer,project:"original-project",working_dir:$dir,service:"tmkms",running:true,status:"running"},
-    {id:$foreign,project:"edge",working_dir:($dir+"/edge"),service:"caddy",running:true,status:"running"}
-  ]' >"$tmp/containers.json"
-  : >"$tmp/operations"
-  run stop
-  jq -e --arg id "$unused_id" '.[] | select(.id==$id) | .running' "$tmp/containers.json" >/dev/null
-  run start
-  ! grep -q "$unused_id" "$tmp/operations"
-  jq -e 'all(.[]; .running)' "$tmp/containers.json" >/dev/null
-done
+deploy="$tmp/deploy"
+mkdir -p "$deploy"
+jq -n --arg dir "$deploy" --arg node "$node_id" --arg signer "$signer_id" --arg foreign "$unused_id" '[
+  {id:$node,project:"original-project",working_dir:$dir,service:"node",running:true,status:"running"},
+  {id:$signer,project:"original-project",working_dir:$dir,service:"tmkms",running:true,status:"running"},
+  {id:$foreign,project:"edge",working_dir:($dir+"/edge"),service:"caddy",running:true,status:"running"}
+]' >"$tmp/containers.json"
+: >"$tmp/operations"
+run stop
+jq -e --arg id "$unused_id" '.[] | select(.id==$id) | .running' "$tmp/containers.json" >/dev/null
+run start
+! grep -q "$unused_id" "$tmp/operations"
+jq -e 'all(.[]; .running)' "$tmp/containers.json" >/dev/null
+# A retired validator must also be refused alongside a canonical deployment
+cp "$tmp/containers.json" "$tmp/canonical.json"
+cp "$tmp/operations" "$tmp/before"
+jq --arg dir "$tmp/deploy/retired" '. + [.[0] | .id=("d"*64) | .working_dir=$dir | .project="retired"]' "$tmp/canonical.json" >"$tmp/containers.json"
+if run stop; then echo 'mixed layouts unexpectedly stopped' >&2; exit 1; fi
+cmp "$tmp/before" "$tmp/operations"
+grep -Fq 'unsupported validator deployment directory' "$tmp/stop.log"
+cp "$tmp/canonical.json" "$tmp/containers.json"
 # Two Core deployments are ambiguous even when the alias matches one of them.
 jq --arg dir "$tmp/deploy" '. + [.[0] | .id=("b"*64) | .working_dir=$dir | .project="fixture"]' "$tmp/containers.json" >"$tmp/changed"
 mv "$tmp/changed" "$tmp/containers.json"
@@ -124,18 +131,18 @@ if run stop; then echo 'ambiguous deployments unexpectedly stopped' >&2; exit 1;
 cmp "$tmp/before" "$tmp/operations"
 grep -q 'none or multiple found' "$tmp/stop.log"
 cp "$tmp/containers.json" "$tmp/ambiguous.json"
-ln -s "$tmp/deploy/old-validator-name" "$tmp/deploy/link"
-for unsafe in "$tmp/outside" "$tmp/deploy/../other" "$tmp/deploy/link"; do
+ln -s "$tmp/deploy" "$tmp/deploy/link"
+for unsafe in "$tmp/node" "$tmp/deploy/old-validator-name" "$tmp/outside" "$tmp/deploy/../other" "$tmp/deploy/link"; do
   jq --arg dir "$unsafe" 'map(select(.project!="fixture")) | map(if .project=="original-project" then .working_dir=$dir else . end)' "$tmp/ambiguous.json" >"$tmp/containers.json"
   if run stop; then echo 'unsafe deployment path unexpectedly accepted' >&2; exit 1; fi
   cmp "$tmp/before" "$tmp/operations"
 done
 # Re-read runtime state after acquiring the lock, not before a concurrent start.
-jq --arg dir "$tmp/deploy/old-validator-name" 'map(select(.project=="original-project")) | map(.working_dir=$dir | .running=false | .status="exited")' "$tmp/ambiguous.json" >"$tmp/containers.json"
+jq --arg dir "$tmp/deploy" 'map(select(.project=="original-project")) | map(.working_dir=$dir | .running=false | .status="exited")' "$tmp/ambiguous.json" >"$tmp/containers.json"
 : >"$tmp/concurrent-start"
 run stop
 jq -e 'all(.[]; .running == false)' "$tmp/containers.json" >/dev/null
-jq -e 'length == 2' "$tmp/deploy/old-validator-name/.node-control/stopped.json" >/dev/null
+jq -e 'length == 2' "$tmp/deploy/.node-control/stopped.json" >/dev/null
 run start
 cp "$tmp/containers.json" "$tmp/baseline.json"
 # Refuse an additional signer, stopped or running, including one created after
@@ -145,7 +152,7 @@ for timing in before-lock under-lock; do
   for extra in running-signer stopped-signer application; do
     cp "$tmp/baseline.json" "$tmp/containers.json"
     run stop
-    cp "$tmp/deploy/old-validator-name/.node-control/stopped.json" "$tmp/receipt-before"
+    cp "$tmp/deploy/.node-control/stopped.json" "$tmp/receipt-before"
     jq --arg extra "$extra" '.[0] | .id=("c"*64) |
       .service=(if $extra=="application" then "api" else "tmkms" end) |
       .running=($extra!="stopped-signer") |
@@ -159,9 +166,9 @@ for timing in before-lock under-lock; do
     cp "$tmp/operations" "$tmp/before"
     if run start; then echo "additional container accepted: $timing $extra" >&2; exit 1; fi
     cmp "$tmp/before" "$tmp/operations"
-    cmp "$tmp/receipt-before" "$tmp/deploy/old-validator-name/.node-control/stopped.json"
-    [[ ! -d "$tmp/deploy/old-validator-name/.node-control/lock" ]]
-    rm "$tmp/deploy/old-validator-name/.node-control/stopped.json"
+    cmp "$tmp/receipt-before" "$tmp/deploy/.node-control/stopped.json"
+    [[ ! -d "$tmp/deploy/.node-control/lock" ]]
+    rm "$tmp/deploy/.node-control/stopped.json"
   done
 done
 printf 'PASS SSH-only stop/start preserves exact containers and refuses signer replacement\n'

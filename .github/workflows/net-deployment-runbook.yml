@@ -59,7 +59,7 @@ jobs:
       release_checks: ${{ steps.route.outputs.release_checks }}
       shellcheck: ${{ steps.route.outputs.shellcheck }}
       runbook_tests: ${{ steps.route.outputs.runbook_tests }}
-      p0a_lifecycle: ${{ steps.route.outputs.p0a_lifecycle }}
+      host_lifecycle: ${{ steps.route.outputs.host_lifecycle }}
       public_edge_integration: ${{ steps.route.outputs.public_edge_integration }}
       ownership: ${{ steps.route.outputs.ownership }}
       upstream_profiles: ${{ steps.route.outputs.upstream_profiles }}
@@ -138,7 +138,7 @@ jobs:
   # Every selected job must succeed, including on pushes and manual runs.
   runbook-checks:
     name: Runbook checks
-    needs: [route, release-checks, shellcheck, runbook-tests, p0a-lifecycle, public-edge-integration, ownership, upstream-profiles, host-upgrade-lifecycle]
+    needs: [route, release-checks, shellcheck, runbook-tests, host-lifecycle, public-edge-integration, ownership, upstream-profiles, host-upgrade-lifecycle]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -169,14 +169,14 @@ jobs:
       - name: Test bootstrap publication with separate directory owners
         run: sudo make -C net-deployment-runbook test-bootstrap-publisher-ownership
 
-  p0a-lifecycle:
+  host-lifecycle:
     needs: route
-    if: needs.route.outputs.p0a_lifecycle == 'true'
+    if: needs.route.outputs.host_lifecycle == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Test isolated P0-A JOIN and ML lifecycle
-        run: make -C net-deployment-runbook test-gdc-p0a
+      - name: Test isolated Host JOIN and ML lifecycle
+        run: make -C net-deployment-runbook test-host-lifecycle
 
   upstream-profiles:
     needs: route

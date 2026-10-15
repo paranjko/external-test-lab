@@ -21,6 +21,10 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("CI_BASE: ${{ github.event.before }}", route_job)
         self.assertIn("    if: always()", workflow)
         self.assertNotIn("github.event.pull_request.draft", workflow)
+        self.assertIn("host_lifecycle: ${{ steps.route.outputs.host_lifecycle }}", workflow)
+        self.assertIn("  host-lifecycle:\n", workflow)
+        self.assertIn("run: make -C net-deployment-runbook test-host-lifecycle", workflow)
+        self.assertNotIn("p0a", workflow.lower())
 
     def test_selected_jobs_for_independent_changes(self):
         result = route.plan(["net-deployment-runbook/releases/a.json", "README.md"])

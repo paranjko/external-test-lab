@@ -147,7 +147,7 @@ class BootstrapJoin(unittest.TestCase):
         result = self.run_command("bash", ROOT / "scripts/join-profile.sh", "validate", self.profile, success=False)
         self.assertIn("differs from Bootstrap", result.stderr)
 
-    def test_runtime_installation_flat_legacy_restart_upgrade_and_corruption(self):
+    def test_runtime_installation_restart_upgrade_and_corruption(self):
         profile = self.compile()
         archives = self.tmp / "archives"
         archives.mkdir()
@@ -170,30 +170,30 @@ class BootstrapJoin(unittest.TestCase):
         staged = self.tmp / "staged"
         staged.mkdir()
         self.run_command("bash", ROOT / "02-node/prepare-bootstrap-runtime.sh", self.profile, staged)
-        for layout in ("data.generations/fixture", "gdc-node9"):
-            for role, folder, binary in (("node", "inference", "inferenced"), ("api", "dapi", "decentralized-api")):
-                with self.subTest(layout=layout, role=role):
-                    state = self.tmp / layout / folder
-                    package = staged / "bootstrap-runtime" / role
-                    command = ["sh", ROOT / "02-node/bootstrap-runtime.sh", state, package, binary]
-                    self.run_command(*command)
-                    self.assertEqual((state / "cosmovisor/current/bin/libgcc_s.so.1").read_bytes(), b"fixture library")
-                    self.assertEqual(self.run_command(state / "cosmovisor/current/bin" / binary).stdout, "runtime fixture\n")
-                    if role == "api":
-                        self.assertEqual(self.run_command(state / "cosmovisor/current/bin/inferenced").stdout,
-                                         "co-packaged runtime fixture\n")
-                    self.run_command(*command)
-                    current = state / "cosmovisor/current"
-                    upgraded = state / "cosmovisor/upgrades/next/bin"
-                    upgraded.mkdir(parents=True)
-                    shutil.copy2(package / "bin" / binary, upgraded / binary)
-                    current.unlink()
-                    current.symlink_to("upgrades/next")
-                    self.run_command(*command)
-                    self.assertEqual(os.readlink(current), "upgrades/next")
-                    (state / "cosmovisor/genesis/bin/libgcc_s.so.1").write_text("corrupt")
-                    self.run_command(*command, success=False)
-                    self.assertEqual(os.readlink(current), "upgrades/next")
+        layout = "data.generations/fixture"
+        for role, folder, binary in (("node", "inference", "inferenced"), ("api", "dapi", "decentralized-api")):
+            with self.subTest(layout=layout, role=role):
+                state = self.tmp / layout / folder
+                package = staged / "bootstrap-runtime" / role
+                command = ["sh", ROOT / "02-node/bootstrap-runtime.sh", state, package, binary]
+                self.run_command(*command)
+                self.assertEqual((state / "cosmovisor/current/bin/libgcc_s.so.1").read_bytes(), b"fixture library")
+                self.assertEqual(self.run_command(state / "cosmovisor/current/bin" / binary).stdout, "runtime fixture\n")
+                if role == "api":
+                    self.assertEqual(self.run_command(state / "cosmovisor/current/bin/inferenced").stdout,
+                                     "co-packaged runtime fixture\n")
+                self.run_command(*command)
+                current = state / "cosmovisor/current"
+                upgraded = state / "cosmovisor/upgrades/next/bin"
+                upgraded.mkdir(parents=True)
+                shutil.copy2(package / "bin" / binary, upgraded / binary)
+                current.unlink()
+                current.symlink_to("upgrades/next")
+                self.run_command(*command)
+                self.assertEqual(os.readlink(current), "upgrades/next")
+                (state / "cosmovisor/genesis/bin/libgcc_s.so.1").write_text("corrupt")
+                self.run_command(*command, success=False)
+                self.assertEqual(os.readlink(current), "upgrades/next")
 
     def test_archive_digest_and_paths_are_checked_before_installation(self):
         profile = self.compile()
@@ -228,28 +228,28 @@ class BootstrapJoin(unittest.TestCase):
         self.prepare_compose_env()
         empty_env = self.tmp / "empty.env"
         empty_env.touch()
-        for layout in ("data.generations/fixture", "gdc-node9"):
-            self.env.update(DATA_DIR="/srv/dai/" + layout, IDENTITY_DIR="/srv/dai/identity", SIGNER_DIR="/srv/dai/signer")
-            adapted = self.run_command("bash", ROOT / "02-node/render-bootstrap-compose.sh", ROOT / "02-node/compose.yaml", empty_env)
-            compose = self.tmp / "compose.json"
-            compose.write_text(adapted.stdout)
-            actual = json.loads(self.run_command("docker", "compose", "--profile", "*", "-f", compose,
-                                                "config", "--format", "json").stdout)
-            services = actual["services"]
-            pins = self.document["software"]["components"]
-            for role in ("node", "api", "tmkms", "proxy", "proxy-policy", "versiond-router", "versiond"):
-                self.assertEqual(services[role]["image"], pins[role]["image"])
-            self.assertEqual(services["proxy-policy2"]["image"], pins["proxy-policy"]["image"])
-            self.assertEqual(services["versiond-router"]["environment"]["VERSIOND_ROUTER_POOL_SLOTS"], "1")
-            self.assertIsNone(services["proxy"].get("command"))
-            self.assertIsNone(services["proxy"].get("entrypoint"))
-            self.assertNotIn("ports", services["proxy-policy"])
-            self.assertEqual(services["tmkms"]["profiles"], ["signer"])
-            node_mounts = {v["target"]: v["source"] for v in services["node"]["volumes"]}
-            self.assertEqual(node_mounts["/root/.inference"], "/srv/dai/" + layout + "/inference")
-            self.assertEqual(node_mounts["/gdc-identity"], "/srv/dai/identity")
-            self.assertTrue(services["node"]["depends_on"]["tmkms"]["required"] is False)
-            self.assertEqual(services["node"]["environment"]["GDC_BOOTSTRAP_SOFTWARE"], "true")
+        layout = "data.generations/fixture"
+        self.env.update(DATA_DIR="/srv/dai/" + layout, IDENTITY_DIR="/srv/dai/identity", SIGNER_DIR="/srv/dai/signer")
+        adapted = self.run_command("bash", ROOT / "02-node/render-bootstrap-compose.sh", ROOT / "02-node/compose.yaml", empty_env)
+        compose = self.tmp / "compose.json"
+        compose.write_text(adapted.stdout)
+        actual = json.loads(self.run_command("docker", "compose", "--profile", "*", "-f", compose,
+                                            "config", "--format", "json").stdout)
+        services = actual["services"]
+        pins = self.document["software"]["components"]
+        for role in ("node", "api", "tmkms", "proxy", "proxy-policy", "versiond-router", "versiond"):
+            self.assertEqual(services[role]["image"], pins[role]["image"])
+        self.assertEqual(services["proxy-policy2"]["image"], pins["proxy-policy"]["image"])
+        self.assertEqual(services["versiond-router"]["environment"]["VERSIOND_ROUTER_POOL_SLOTS"], "1")
+        self.assertIsNone(services["proxy"].get("command"))
+        self.assertIsNone(services["proxy"].get("entrypoint"))
+        self.assertNotIn("ports", services["proxy-policy"])
+        self.assertEqual(services["tmkms"]["profiles"], ["signer"])
+        node_mounts = {v["target"]: v["source"] for v in services["node"]["volumes"]}
+        self.assertEqual(node_mounts["/root/.inference"], "/srv/dai/" + layout + "/inference")
+        self.assertEqual(node_mounts["/gdc-identity"], "/srv/dai/identity")
+        self.assertTrue(services["node"]["depends_on"]["tmkms"]["required"] is False)
+        self.assertEqual(services["node"]["environment"]["GDC_BOOTSTRAP_SOFTWARE"], "true")
 
 
 if __name__ == "__main__":

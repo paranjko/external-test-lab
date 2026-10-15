@@ -73,8 +73,9 @@ gdc node start <ssh-alias>
 ```
 
 Only SSH access with passwordless sudo is required; local JOIN files and keys
-are not needed. GDC discovers both flat and legacy deployments automatically;
-no path option or migration is required. Stop retains state. Start restarts the
+are not needed. GDC supports only deployments at `/srv/dai/deploy`; retired
+legacy and nested deployment layouts are refused without migration.
+Stop retains state. Start restarts the
 same previously running containers without pulling images or enabling a
 previously stopped signer.
 An interrupted JOIN or changed containers require JOIN recovery instead.

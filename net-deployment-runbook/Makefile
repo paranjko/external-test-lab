@@ -461,9 +461,9 @@ test-ci-gateways: test-command-dependency-contract test-devshard-two-gateways te
 # Each CI group runs sequentially in its own checkout. In particular, site
 # builders and fixed-port HTTP fixtures must not share a parallel checkout.
 RUNBOOK_CI_GROUPS := bootstrap core site join gateways
-P0A_SHARED_TESTS := test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-phase-ml-add-ownership test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-host-layouts test-detach-network-ml-host test-validator-ml-lifecycle
+HOST_LIFECYCLE_SHARED_TESTS := test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-phase-ml-add-ownership test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-hosts test-detach-network-ml-host test-validator-ml-lifecycle
 .PHONY: $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) test-ci-layout
-test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(P0A_SHARED_TESTS) test-host-upgrade-lifecycle
+test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(HOST_LIFECYCLE_SHARED_TESTS) test-host-upgrade-lifecycle
 
 test-ci-layout:
 	@python3 ./scripts/test-runbook-ci.py
@@ -604,7 +604,7 @@ test-ci-join: test-command-dependency-contract
 	@./scripts/test-join-lineage-preflight.sh
 	@./scripts/test-join-lineage-quorum-adversarial.sh
 	@./scripts/test-host-join-state-sync.sh
-	@./scripts/test-migrate-v1-validator-identity.sh
+	@bash ./scripts/test-validator-backup-layout.sh
 	@./scripts/test-verify-canonical-join-state.sh
 	@./scripts/test-host-join-resume-canonical.sh
 	@./scripts/test-recover-incident-flat-layout.sh
@@ -763,7 +763,7 @@ prepare-bootstrap-release:
 publish-bootstrap-release:
 	@bash ./scripts/publish-bootstrap-release.sh "$(bootstrap_release_dir)" "$(deploy_host)" "$(deploy_user)"
 
-.PHONY: test-command-results test-post-sync-join-helper test-phase-ml-add-ownership test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-node-container-control test-node-container-lending-docker test-prepare-accelerator-binding test-reset-then-join-entry test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-ml-lend-generic-pairs test-ml-lending-two-host-layouts test-detach-network-ml-host test-wait-dapi-worker-removal test-validator-ml-lifecycle test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal test-gdc-p0a
+.PHONY: test-command-results test-post-sync-join-helper test-phase-ml-add-ownership test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-node-container-control test-node-container-lending-docker test-prepare-accelerator-binding test-reset-then-join-entry test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-ml-lend-generic-pairs test-ml-lending-two-hosts test-detach-network-ml-host test-wait-dapi-worker-removal test-validator-ml-lifecycle test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal test-host-lifecycle
 test-command-results:
 	@bash ./scripts/test-command-results.sh
 
@@ -794,8 +794,8 @@ test-prepare-accelerator-binding:
 test-ml-lend-generic-pairs:
 	@bash ./scripts/test-ml-lend-generic-pairs.sh
 
-test-ml-lending-two-host-layouts:
-	@bash ./scripts/test-ml-lending-two-host-layouts.sh
+test-ml-lending-two-hosts:
+	@bash ./scripts/test-ml-lending-two-hosts.sh
 
 test-detach-network-ml-host:
 	@bash ./scripts/test-detach-network-ml-host.sh
@@ -815,7 +815,7 @@ test-two-host-lifecycle-locks:
 test-pinned-dapi-worker-removal: bats-docker-image
 	@bash ./scripts/test-pinned-dapi-worker-removal.sh
 
-test-gdc-p0a: $(P0A_SHARED_TESTS) test-join-resume-caught-up-canary test-phase-join-caught-up-lineage test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-wait-dapi-worker-removal test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal
+test-host-lifecycle: $(HOST_LIFECYCLE_SHARED_TESTS) test-join-resume-caught-up-canary test-phase-join-caught-up-lineage test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-wait-dapi-worker-removal test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal
 
 test-reset-then-join-entry:
 	@bash ./scripts/test-reset-then-join-entry.sh

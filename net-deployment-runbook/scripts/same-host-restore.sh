@@ -102,6 +102,10 @@ if [[ "${1:-}" == --remote ]]; then
       run_id="${4:-}"
       [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'invalid reset run ID'
       [[ ! -e "$root" || ( -d "$root" && ! -L "$root" ) ]] || die 'validator root is unsafe'
+      # Refuse retired per-Host identity roots before stopping containers or writing an archive
+      for retired in "$root/identity/$node" "$root/signer/$node"; do
+        [[ ! -e "$retired" && ! -L "$retired" ]] || die 'legacy validator identity layout is unsupported; no reset performed'
+      done
       install -d -m 0700 "$backup_root"
       [[ -d "$backup_root" && ! -L "$backup_root" && "$(stat -c %u "$backup_root")" == 0 ]] || die 'reset backup root is unsafe'
       archive="$backup_root/reset-$run_id-dai-backup.tar"
@@ -114,28 +118,10 @@ if [[ "${1:-}" == --remote ]]; then
         docker inspect "${managed[@]}" | jq -e 'all(.[]; .State.Running == false)' >/dev/null || die 'signer stop not confirmed'
       fi
 
-      flat_identity="$root/identity"; flat_signer="$root/signer"
-      legacy_identity="$root/identity/$node"; legacy_signer="$root/signer/$node"
-      flat_present=false; legacy_present=false
-      # Legacy roots are children of these parent directories, so merely
-      # finding /srv/dai/identity or /srv/dai/signer is not a flat-layout
-      # signal. Detect a direct flat member instead.
-      [[ -e "$flat_identity/p2p" || -e "$flat_identity/warm" || -e "$flat_signer/tmkms" ]] && flat_present=true
-      [[ -e "$legacy_identity" || -e "$legacy_signer" ]] && legacy_present=true
-      if [[ "$flat_present" == true && "$legacy_present" == true ]]; then
-        die 'validator identity layout is mixed or ambiguous'
-      fi
-      if [[ "$flat_present" == true ]]; then
-        identity="$flat_identity"; signer="$flat_signer"; deploy="$root/deploy/.env"
-        genesis="$root/data/config/genesis.json"
-      elif [[ "$legacy_present" == true ]]; then
-        # The pre-flat deployment layout kept per-Host identity roots. Archive
-        # only its exact identity pair and normalize the recovery payload to
-        # the flat paths expected by a later restore.
-        identity="$legacy_identity"; signer="$legacy_signer"; deploy="$root/$node/.env"
-        genesis="$root/$node/inference/config/genesis.json"
-      else
-        identity=''; signer=''; deploy=''; genesis=''
+      identity="$root/identity"; signer="$root/signer"
+      deploy="$root/deploy/.env"; genesis="$root/data/config/genesis.json"
+      if [[ ! -e "$identity" && ! -e "$signer" ]]; then
+        identity=''; signer=''
       fi
       stage="$(mktemp -d "$backup_root/.reset-$run_id.XXXXXX")"
       trap 'rm -rf -- "$stage"' EXIT
