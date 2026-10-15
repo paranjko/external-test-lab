@@ -2,7 +2,9 @@
 # Lend the already installed local ML runtime of a stopped validator. This is
 # deliberately separate from phase-ml-add's clean ML-only provisioning path.
 set -Eeuo pipefail
-source "$(dirname "$0")/lib.sh"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib.sh
+source "$ROOT/scripts/lib.sh"
 load_project
 
 PARENT="${1:-}"
@@ -98,14 +100,21 @@ jq -er '
 ' "$donor_runtime.json" >"$donor_runtime" \
   || die "$DONOR has no unambiguous local ML runtime configuration"
 IFS=$'\t' read -r DONOR_MODEL DONOR_REVISION DONOR_DTYPE DONOR_TENSOR DONOR_MAX_SEQS DONOR_GPU_UTILIZATION DONOR_CONTEXT_LENGTH <"$donor_runtime"
+DONOR_ARGS_JSON="$(jq -cer '
+  [ .[] | select(.host == "inference") | .models | to_entries[] | .value.args ]
+  | if length == 1 and (.[0] | type) == "array" and all(.[0][]; type == "string")
+    then .[0] else error("expected exactly one donor model argument list") end
+' "$donor_runtime.json")" || die "$DONOR has no valid local ML argument list"
 
 start_donor_backend() {
   step "Start $DONOR local ML backend before lending it to $PARENT"
   "$ROOT/03-join/start-local-ml.sh" "$DONOR" "$DONOR_MODEL" "$DONOR_REVISION" \
-    "$DONOR_DTYPE" "$DONOR_TENSOR" "$DONOR_MAX_SEQS" "$DONOR_GPU_UTILIZATION" "$DONOR_CONTEXT_LENGTH"
+    "$DONOR_DTYPE" "$DONOR_TENSOR" "$DONOR_MAX_SEQS" "$DONOR_GPU_UTILIZATION" "$DONOR_CONTEXT_LENGTH" \
+    "$DONOR_ARGS_JSON"
 }
 
 donor_record="$RUN/donor-lent-ml.json"
+resume_interrupted_lend=false
 record_rc=0
 ssh -T "$DONOR" 'set -Eeuo pipefail
   record=/srv/dai/deploy/.node-control/lent-ml.json
@@ -144,24 +153,41 @@ if [[ -s "$donor_record" ]]; then
     printf 'OPERATOR ACTION REQUIRED %s is already lent to %s with a different ML endpoint; run gdc host start %s before changing the endpoint\n' "$DONOR" "$PARENT" "$DONOR" >&2
     exit 195
   fi
-  jq -e --arg id "$recorded_node_id" --arg host "$ENDPOINT" 'any(.[]; .id == $id and .host == $host)' "$current_config" >/dev/null \
-    || {
-      printf 'OPERATOR ACTION REQUIRED cannot verify the retained ML endpoint for %s on %s; leave the donor stopped and inspect the parent before retrying\n' "$DONOR" "$PARENT" >&2
-      exit 195
-    }
-  start_donor_backend
-  ssh -T "$PARENT" "curl -fsS --connect-timeout 5 --max-time 15 'http://$ENDPOINT:5000/v1/models' | jq -e '.data | type == \"array\"' >/dev/null" \
-    || die "$DONOR remains lent but $PARENT cannot reach its ML endpoint; the donor stays stopped for inspection"
-  printf 'PASS %s already uses the retained ML runtime of %s\n' "$PARENT" "$DONOR"
-  exit 0
+  if jq -e --arg id "$recorded_node_id" --arg host "$ENDPOINT" '
+    [ .[] | select(.id == $id or .host == $host) ] as $matches
+    | ($matches | length) == 1 and $matches[0].id == $id and $matches[0].host == $host
+  ' "$current_config" >/dev/null; then
+    # The endpoint is already registered. Preserve the established idempotent
+    # path: do not re-apply the parent configuration or replace its metadata.
+    start_donor_backend
+    bash "$ROOT/scripts/ensure-ml-callback.sh" "$PARENT" "$DONOR" "$ENDPOINT"
+    ssh -T "$PARENT" "curl -fsS --connect-timeout 5 --max-time 15 'http://$ENDPOINT:5000/v1/models' | jq -e '.data | type == \"array\"' >/dev/null" \
+      || die "$DONOR remains lent but $PARENT cannot reach its ML endpoint; the donor stays stopped for inspection"
+    printf 'PASS %s already uses the retained ML runtime of %s\n' "$PARENT" "$DONOR"
+    exit 0
+  fi
+  if ! jq -e --arg id "$recorded_node_id" --arg host "$ENDPOINT" \
+    'all(.[]; .id != $id and .host != $host)' "$current_config" >/dev/null; then
+    printf 'OPERATOR ACTION REQUIRED cannot verify the retained ML endpoint for %s on %s; its node id or endpoint conflicts with the parent configuration; leave the donor stopped and inspect before retrying\n' "$DONOR" "$PARENT" >&2
+    exit 195
+  fi
+  # The donor was already stopped and the same lend recorded, but the parent
+  # configuration step did not complete. Continue only after the normal ID
+  # derivation below proves this retry would register that exact recorded ID.
+  resume_interrupted_lend=true
 fi
 
 next_config="$RUN/node-config.next.json"
 node_id_file="$RUN/external-node-id"
 "$ROOT/scripts/add-network-ml-endpoint.sh" \
   --input "$current_config" --ml-host "$ENDPOINT" --ml-alias "$DONOR" \
+  --models-config "$donor_runtime.json" \
   --output "$next_config" --id-output "$node_id_file"
 EXTERNAL_NODE_ID="$(<"$node_id_file")"
+if [[ "$resume_interrupted_lend" == true && "$EXTERNAL_NODE_ID" != "$recorded_node_id" ]]; then
+  printf 'OPERATOR ACTION REQUIRED computed ML node id for %s does not match its retained lending record; leave the donor stopped and inspect before retrying\n' "$DONOR" >&2
+  exit 195
+fi
 
 step "Stop $DONOR validator and lend its existing ML runtime to $PARENT"
 # `lend` owns both the pre-stop ML-runtime proof and the controlled stop.  Do
@@ -173,6 +199,8 @@ bash "$ROOT/scripts/node-container-control.sh" lend "$DONOR" "$PARENT" "$ENDPOIN
 # model backend is started separately and must be ready before DAPI is told
 # about this endpoint.
 start_donor_backend
+
+bash "$ROOT/scripts/ensure-ml-callback.sh" "$PARENT" "$DONOR" "$ENDPOINT"
 
 # This request is made from the parent, rather than from the operator or the
 # donor. It proves the actual route that DAPI will use before parent config is

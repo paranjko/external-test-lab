@@ -7,6 +7,16 @@ set -Eeuo pipefail
 # shellcheck disable=SC1090,SC1091
 source "${GONKA_HOST_ENV:-/etc/gonka/host.env}"
 
+# Additional runtime attachments are independent of the original JOIN peer.
+# Keep them across firewall restarts and later host preparation.
+callback_peers=()
+if [[ -f /etc/gonka/ml-callback-peers ]]; then
+  while IFS= read -r peer; do
+    [[ "$peer" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] || { echo 'Invalid callback peer' >&2; exit 1; }
+    callback_peers+=("$peer")
+  done </etc/gonka/ml-callback-peers
+fi
+
 CHAIN=GONKA_INGRESS
 EXTERNAL_IF="$(ip -4 route show default | awk 'NR == 1 { print $5 }')"
 [[ -n "$EXTERNAL_IF" ]] || { echo 'Cannot determine the external interface' >&2; exit 1; }
@@ -45,6 +55,9 @@ install_ipv4() {
   if [[ -n "${ML_CALLBACK_CIDR:-}" ]]; then
     iptables -w -t mangle -A "$CHAIN" -s "$ML_CALLBACK_CIDR" -p tcp --dport 9100 -j ACCEPT
   fi
+  for peer in "${callback_peers[@]}"; do
+    iptables -w -t mangle -A "$CHAIN" -s "$peer" -p tcp --dport 9100 -j ACCEPT
+  done
   if [[ "$ROLE" == ml-only ]]; then
     iptables -w -t mangle -A "$CHAIN" -s "$ML_CLIENT_CIDR" -p tcp \
       -m multiport --dports 5000,8080 -j ACCEPT

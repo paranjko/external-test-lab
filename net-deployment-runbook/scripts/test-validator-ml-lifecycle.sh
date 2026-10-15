@@ -21,6 +21,13 @@ cp "$ROOT/scripts/read-lent-ml-record.sh" "$kit/scripts/"
 cp "$ROOT/scripts/add-network-ml-endpoint.sh" "$kit/scripts/"
 cp "$ROOT/scripts/remove-network-ml-endpoint.sh" "$kit/scripts/"
 
+cat >"$kit/scripts/ensure-ml-callback.sh" <<'CALLBACK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$#" == 3 && -n "$1" && -n "$2" && -n "$3" ]]
+# The real callback transport and remote apply are exercised separately in
+# test-ml-callback; this fixture isolates the lending/return state machine.
+CALLBACK
 cat >"$kit/scripts/lib.sh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -49,7 +56,7 @@ set -Eeuo pipefail
 printf '%s\n' "$*" >>"$GDC_TEST_EVENTS"
 case "$1" in
   stop) [[ "$#" == 2 && "$2" == donor ]] ;;
-  lend) [[ "$#" == 5 && "$2" == donor && "$3" == parent && "$4" == gpu.example.test && "$5" == qwen:parent--donor ]] ;;
+  lend) [[ "$#" == 5 && "$2" == donor && "$3" == parent && "$4" == gpu.example.test && "$5" == qwen3-0.6b:parent--donor ]] ;;
   reclaim) [[ "$#" == 2 && "$2" == donor ]] ;;
   start) [[ "$#" == 2 && "$2" == donor ]] ;;
   *) exit 97 ;;
@@ -59,13 +66,13 @@ cat >"$kit/scripts/detach-network-ml-host.sh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 [[ "$1" == --network && "$2" == parent && "$3" == --ml-host && "$4" == donor && "$5" == --data-root && "$6" == "$GDC_TEST_OPERATOR" && "$7" == --run-dir && "$8" == /* ]]
-[[ "$9" == --expected-endpoint && "${10}" == gpu.example.test && "${11}" == --expected-node-id && "${12}" == qwen:parent--donor ]]
+[[ "$9" == --expected-endpoint && "${10}" == gpu.example.test && "${11}" == --expected-node-id && "${12}" == qwen3-0.6b:parent--donor ]]
 printf 'detach:parent:donor\n' >>"$GDC_TEST_EVENTS"
 EOF
 cat >"$kit/03-join/start-local-ml.sh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ "$#" == 8 && "$1" == donor && "$2" == Qwen/Qwen3-0.6B && "$3" == c1899de289a04d12100db370d81485cdf75e47ca ]]
+[[ "$#" == 9 && "$1" == donor && "$2" == Qwen/Qwen3-0.6B && "$3" == c1899de289a04d12100db370d81485cdf75e47ca ]]
 printf 'start-local-ml:%s\n' "$*" >>"$GDC_TEST_EVENTS"
 [[ "${GDC_TEST_ML_START_FAIL:-false}" != true ]]
 EOF
@@ -120,7 +127,7 @@ case "$host:$args" in
     exit 0
     ;;
   parent:*'rm -rf'*'gdc-ml-lend-'*) exit 0 ;;
-  parent:*'admin/v1/nodes'*) printf '[{"node":{"id":"qwen:parent--donor","host":"gpu.example.test","inference_port":5000,"poc_port":5000}}]' ;;
+  parent:*'admin/v1/nodes'*) printf '[{"node":{"id":"qwen3-0.6b:parent--donor","host":"gpu.example.test","inference_port":5000,"poc_port":5000}}]' ;;
   parent:*'install_path=/srv/dai/deploy/gdc-ml-link.json'*) cat >"$GDC_TEST_WRITTEN_LINK" ;;
   parent:*'gdc-ml-link.json'*) cat "$GDC_TEST_LINK" ;;
   donor:*'lent-ml.json'*) exit 1 ;;
@@ -144,9 +151,9 @@ link="$tmp/gdc-ml-link.json"
 record="$tmp/lent-ml.json"
 written_link="$tmp/written-link.json"
 printf '%s\n' '[{"id":"qwen:parent","host":"inference","inference_port":5000,"poc_port":5000},{"id":"qwen:parent--other","host":"other.example.test","inference_port":5000,"poc_port":5000}]' >"$config"
-printf '%s\n' '{"id":"qwen:donor","host":"inference","models":{"Qwen/Qwen3-0.6B":{"args":["--revision","c1899de289a04d12100db370d81485cdf75e47ca","--dtype","auto","--tensor-parallel-size","1","--max-num-seqs","64","--gpu-memory-utilization","0.85","--max-model-len","2048"]}}}' | jq -s . >"$donor_config"
+printf '%s\n' '{"id":"qwen3-0.6b:donor","host":"inference","models":{"Qwen/Qwen3-0.6B":{"args":["--revision","c1899de289a04d12100db370d81485cdf75e47ca","--dtype","auto","--tensor-parallel-size","1","--max-num-seqs","64","--gpu-memory-utilization","0.85","--max-model-len","2048"]}}}' | jq -s . >"$donor_config"
 printf '%s\n' '{"schema_version":2,"validator_alias":"parent","ml_hosts":[{"ssh_alias":"other","endpoint":"other.example.test","node_id":"qwen:parent--other"}]}' >"$link"
-printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"gpu.example.test","node_id":"qwen:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
+printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"gpu.example.test","node_id":"qwen3-0.6b:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
 
 run_lend() {
   local endpoint="${1:-}" reachable="${2:-true}" sync_fail="${3:-false}"
@@ -228,7 +235,7 @@ GDC_TEST_DONOR_RECORD=exact run_lend gpu.example.test >"$tmp/lend-record-malform
 has_text "$tmp/lend-record-malformed.out" 'OPERATOR ACTION REQUIRED cannot determine whether donor is already lent; leave it unchanged and repair its retained lending record before retrying'
 [[ "$(<"$tmp/events")" == $'network-ready:parent\nparent-resolved:gpu.example.test' ]]
 [[ ! -s "$tmp/scp.log" ]]
-printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"gpu.example.test","node_id":"qwen:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
+printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"gpu.example.test","node_id":"qwen3-0.6b:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
 
 # A valid record for another parent or endpoint is a durable ownership
 # conflict. It must not stop, reclaim or reconfigure the donor merely because
@@ -241,7 +248,7 @@ GDC_TEST_DONOR_RECORD=exact run_lend gpu.example.test >"$tmp/lend-other-parent.o
 has_text "$tmp/lend-other-parent.out" 'OPERATOR ACTION REQUIRED donor is already lent to other-parent; run gdc host start donor before lending it elsewhere'
 [[ "$(<"$tmp/events")" == $'network-ready:parent\nparent-resolved:gpu.example.test' ]]
 [[ ! -s "$tmp/scp.log" ]]
-printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"other.example.test","node_id":"qwen:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
+printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"other.example.test","node_id":"qwen3-0.6b:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
 : >"$tmp/events"; : >"$tmp/ssh.log"; : >"$tmp/scp.log"
 other_endpoint_rc=0
 GDC_TEST_DONOR_RECORD=exact run_lend gpu.example.test >"$tmp/lend-other-endpoint.out" 2>&1 || other_endpoint_rc=$?
@@ -249,13 +256,13 @@ GDC_TEST_DONOR_RECORD=exact run_lend gpu.example.test >"$tmp/lend-other-endpoint
 has_text "$tmp/lend-other-endpoint.out" 'OPERATOR ACTION REQUIRED donor is already lent to parent with a different ML endpoint; run gdc host start donor before changing the endpoint'
 [[ "$(<"$tmp/events")" == $'network-ready:parent\nparent-resolved:gpu.example.test' ]]
 [[ ! -s "$tmp/scp.log" ]]
-printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"gpu.example.test","node_id":"qwen:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
+printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"gpu.example.test","node_id":"qwen3-0.6b:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
 
 : >"$tmp/events"; : >"$tmp/ssh.log"; : >"$tmp/scp.log"
 run_lend >"$tmp/lend.out"
-[[ "$(<"$tmp/events")" == *$'lend donor parent gpu.example.test qwen:parent--donor'* ]]
+[[ "$(<"$tmp/events")" == *$'lend donor parent gpu.example.test qwen3-0.6b:parent--donor'* ]]
 resolve_line="$(first_text_line "$tmp/events" 'parent-resolved:gpu.example.test')"
-lend_line="$(first_text_line "$tmp/events" 'lend donor parent gpu.example.test qwen:parent--donor')"
+lend_line="$(first_text_line "$tmp/events" 'lend donor parent gpu.example.test qwen3-0.6b:parent--donor')"
 [[ "$resolve_line" =~ ^[1-9][0-9]*$ && "$lend_line" =~ ^[1-9][0-9]*$ && "$resolve_line" -lt "$lend_line" ]]
 backend_line="$(first_text_line "$tmp/events" 'start-local-ml:donor Qwen/Qwen3-0.6B')"
 [[ "$backend_line" =~ ^[1-9][0-9]*$ && "$lend_line" -lt "$backend_line" ]]
@@ -267,9 +274,9 @@ jq -e '
 jq -e '
   .schema_version == 1 and .kind == "gdc-ml-parent" and
   .network_alias == "parent" and .ml_alias == "donor" and
-  .endpoint == "gpu.example.test" and .node_id == "qwen:parent--donor"
+  .endpoint == "gpu.example.test" and .node_id == "qwen3-0.6b:parent--donor"
 ' "$tmp/operator/donor/state/ml-parent.json" >/dev/null
-jq '. + [{id:"qwen:parent--donor",host:"gpu.example.test",inference_port:5000,poc_port:5000}]' "$config" >"$tmp/config.next"
+jq '. + [{id:"qwen3-0.6b:parent--donor",host:"gpu.example.test",inference_port:5000,poc_port:5000}]' "$config" >"$tmp/config.next"
 mv "$tmp/config.next" "$config"
 
 # An exact retained donor record makes repetition a no-op. No new controlled
@@ -288,7 +295,7 @@ if GDC_TEST_ML_START_FAIL=true run_lend gpu.example.test >"$tmp/backend-failure.
   echo 'backend startup failure unexpectedly changed the parent' >&2
   exit 1
 fi
-[[ "$(<"$tmp/events")" == *$'lend donor parent gpu.example.test qwen:parent--donor'* ]]
+[[ "$(<"$tmp/events")" == *$'lend donor parent gpu.example.test qwen3-0.6b:parent--donor'* ]]
 [[ "$(<"$tmp/events")" == *$'start-local-ml:donor Qwen/Qwen3-0.6B'* ]]
 [[ ! -s "$tmp/scp.log" ]]
 
@@ -302,7 +309,7 @@ if run_lend gpu.example.test false >"$tmp/unreachable.out" 2>&1; then
   exit 1
 fi
 has_text "$tmp/unreachable.out" 'no parent endpoint was added'
-[[ "$(<"$tmp/events")" == *$'lend donor parent gpu.example.test qwen:parent--donor'* ]]
+[[ "$(<"$tmp/events")" == *$'lend donor parent gpu.example.test qwen3-0.6b:parent--donor'* ]]
 [[ ! -s "$tmp/scp.log" ]]
 
 # Failure to resolve the selected endpoint on the parent is an early refusal:
@@ -339,7 +346,7 @@ if run_lend gpu.example.test true true >"$tmp/sync-failure.out" 2>&1; then
   exit 1
 fi
 has_text "$tmp/sync-failure.out" 'prior configuration was restored and donor remains stopped'
-[[ "$(<"$tmp/events")" == *$'lend donor parent gpu.example.test qwen:parent--donor'* ]]
+[[ "$(<"$tmp/events")" == *$'lend donor parent gpu.example.test qwen3-0.6b:parent--donor'* ]]
 [[ ! -s "$written_link" ]]
 
 # Start consults the donor record, never derives a parent, and refuses a
@@ -365,7 +372,7 @@ fi
 # A failed record read is not evidence that lending never happened. Refuse
 # before detach, reclaim or local start rather than converting it to an empty
 # record and risking concurrent ML controllers.
-printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"gpu.example.test","node_id":"qwen:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
+printf '%s\n' '{"schema_version":1,"kind":"gdc-lent-validator-ml","parent_alias":"parent","endpoint":"gpu.example.test","node_id":"qwen3-0.6b:parent--donor","deployment":"/srv/dai/deploy"}' >"$record"
 : >"$tmp/events"
 if GDC_TEST_RECORD_READ_FAIL=true run_start >"$tmp/record-read-failure.out" 2>&1; then
   echo 'unreadable donor lending record unexpectedly started a validator' >&2

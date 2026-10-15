@@ -489,7 +489,7 @@ test-ci-layout:
 
 test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 
-test-ci-core: test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-ci-release-helpers test-host-models test-host-upgrade
+test-ci-core: test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-ci-release-helpers test-host-models test-host-upgrade test-ml-callback test-start-ml-transport
 	@bash ./scripts/test-node-container-lending.sh
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
@@ -816,6 +816,14 @@ test-ml-lend-generic-pairs:
 
 test-ml-lending-two-hosts:
 	@bash ./scripts/test-ml-lending-two-hosts.sh
+
+.PHONY: test-ml-callback
+test-ml-callback:
+	@bash ./scripts/test-ml-callback.sh
+
+.PHONY: test-start-ml-transport
+test-start-ml-transport:
+	@bash ./scripts/test-start-ml-transport.sh
 
 test-detach-network-ml-host:
 	@bash ./scripts/test-detach-network-ml-host.sh

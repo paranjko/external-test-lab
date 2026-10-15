@@ -23,11 +23,18 @@ cp "$ROOT/02-node/sync-node-config.sh" "$kit/02-node/"
 cat >"$kit/03-join/start-local-ml.sh" <<'SH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ "$#" == 8 && "$1" == "${GDC_CASE_DONOR:?}" ]]
+[[ "$#" == 9 && "$1" == "${GDC_CASE_DONOR:?}" ]]
 printf 'start-local-ml:%s\n' "$*" >>"$GDC_TEST_EVENTS"
 SH
 chmod 0755 "$kit/03-join/start-local-ml.sh"
 
+cat >"$kit/scripts/ensure-ml-callback.sh" <<'CALLBACK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$#" == 3 && -n "$1" && -n "$2" && -n "$3" ]]
+# The real callback transport and remote apply are exercised separately in
+# test-ml-callback; this fixture isolates the lending/return state machine.
+CALLBACK
 cat >"$kit/scripts/lib.sh" <<'SH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -217,11 +224,11 @@ run_case() {
   events="$work/events"; ssh_log="$work/ssh.log"; scp_log="$work/scp.log"
   mkdir -p "$operator" "$donor_root/srv/dai" "$parent_stage"
   setup_donor "$donor_root" "$donor_deploy" "project-$layout-$label"
-  printf '%s\n' '{"id":"local","host":"inference","models":{"Qwen/Qwen3-0.6B":{"args":["--revision","c1899de289a04d12100db370d81485cdf75e47ca","--dtype","auto","--tensor-parallel-size","1","--max-num-seqs","64","--gpu-memory-utilization","0.85","--max-model-len","2048"]}}}' | jq -s . >"$donor_config"
+  printf '%s\n' '{"id":"qwen3-0.6b:donor","host":"inference","models":{"Qwen/Qwen3-0.6B":{"args":["--tensor-parallel-size","1","--dtype","float16","--revision","c1899de289a04d12100db370d81485cdf75e47ca","--max-num-seqs","32","--gpu-memory-utilization","0.45","--max-model-len","2048","--kv-cache-dtype","auto","--kv-cache-memory-bytes","4294967296","--enforce-eager"]}}}' | jq -s . >"$donor_config"
   before_identity="$(sha256sum "$donor_root/srv/dai/identity-sentinel" | awk '{print $1}')"
   before_data="$(sha256sum "$donor_root/srv/dai/data-sentinel" | awk '{print $1}')"
-  base="model:$layout-$label"; node_id="$base--$donor"
-  printf '%s\n' "[{\"id\":\"$base\",\"host\":\"inference\",\"inference_port\":5000,\"poc_port\":5000},{\"id\":\"$base--baseline\",\"host\":\"baseline.$label.test\",\"inference_port\":5000,\"poc_port\":5000}]" >"$parent_config"
+  base="qwen3-4b:gonka-$layout-$label"; node_id="qwen3-0.6b:gonka-$layout-$label--$donor"
+  printf '%s\n' "[{\"id\":\"$base\",\"host\":\"inference\",\"inference_port\":5000,\"poc_port\":5000,\"max_concurrent\":32,\"models\":{\"Qwen/Qwen3-4B-Instruct-2507\":{\"args\":[\"--revision\",\"4b-parent-revision\",\"--dtype\",\"half\",\"--max-num-seqs\",\"8\"]}}},{\"id\":\"$base--baseline\",\"host\":\"baseline.$label.test\",\"inference_port\":5000,\"poc_port\":5000}]" >"$parent_config"
   cp "$parent_config" "$parent_dapi"
   printf '%s\n' "{\"schema_version\":2,\"validator_alias\":\"$parent\",\"ml_hosts\":[{\"ssh_alias\":\"baseline-$label\",\"endpoint\":\"baseline.$label.test\",\"node_id\":\"$base--baseline\"}]}" >"$parent_link"
   : >"$events"; : >"$ssh_log"; : >"$scp_log"
@@ -230,7 +237,12 @@ run_case() {
     GDC_CASE_PARENT="$parent" GDC_CASE_DONOR="$donor" GDC_CASE_ENDPOINT="$endpoint" GDC_CASE_NODE_ID="$node_id" GDC_CASE_DISCOVERED_ENDPOINT="$discovered" GDC_CASE_DISCOVERY_ALLOWED="$([[ -z "$explicit" ]] && printf true || printf false)" GDC_RUN_ID="fixture-$layout-$label" \
     bash "$kit/scripts/phase-ml-lend.sh" "$parent" "$explicit" "$donor" >"$work/lend.out"
   jq -e --arg id "$node_id" --arg host "$endpoint" 'any(.[]; .id == $id and .host == $host)' "$parent_dapi" >/dev/null
-  has_text "$events" "start-local-ml:$donor Qwen/Qwen3-0.6B c1899de289a04d12100db370d81485cdf75e47ca auto 1 64 0.85 2048"
+  jq -e --arg id "$node_id" --arg host "$endpoint" --slurpfile donor "$donor_config" '
+    any(.[]; .id == $id and .host == $host and .models == $donor[0][0].models and .max_concurrent == 32)
+    and any(.[]; .id | startswith("qwen3-4b:"))
+    and any(.[]; .host | startswith("baseline."))
+  ' "$parent_config" >/dev/null
+  has_text "$events" "start-local-ml:$donor Qwen/Qwen3-0.6B c1899de289a04d12100db370d81485cdf75e47ca float16 1 32 0.45 2048 [\"--tensor-parallel-size\",\"1\",\"--dtype\",\"float16\",\"--revision\",\"c1899de289a04d12100db370d81485cdf75e47ca\",\"--max-num-seqs\",\"32\",\"--gpu-memory-utilization\",\"0.45\",\"--max-model-len\",\"2048\",\"--kv-cache-dtype\",\"auto\",\"--kv-cache-memory-bytes\",\"4294967296\",\"--enforce-eager\"]"
   jq -e 'all(.[]; if .service == "mlnode" or .service == "inference" then .running else (.running | not) end)' "$donor_root/containers.json" >/dev/null
   [[ -f "$donor_deploy/.node-control/lent-ml.json" ]]
   # Operator-side association files are caches only. The remote donor record
