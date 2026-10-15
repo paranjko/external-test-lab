@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# A successful query containing up=0 is data, but not a working collector.
+# Inspect actual scrape health before panel absence/zero classification. Optional
+# exporters need not exist; once configured they must not silently fail scraping.
+verify_gateway_scrape_targets() {
+  jq -e '
+    .status == "success" and (.data.activeTargets | type == "array")
+    and (.data.activeTargets
+      | map(select(.labels.job == "gateway" or .labels.job == "gateway-route"
+          or .labels.job == "gateway-admission-route" or .labels.job == "telegram-consumer"))
+      | any(.labels.job == "gateway")
+        and all(.health == "up" and .lastError == ""))
+  ' >/dev/null
+}
+
 verify_expected_target_result() {
   local host="$1" validator="$2"
   jq -e --arg host "$host" --arg validator "$validator" '
@@ -124,6 +138,11 @@ while (( SECONDS < deadline )); do
   sleep 3
 done
 test -s "$RUN/health.json" || die 'public Grafana did not become healthy'
+
+ssh -T "$GATEWAY_NODE" 'curl -fsS --connect-timeout 5 --max-time 20 http://127.0.0.1:9099/api/v1/targets' \
+  </dev/null >"$RUN/gateway-scrape-targets.json"
+verify_gateway_scrape_targets <"$RUN/gateway-scrape-targets.json" \
+  || die 'configured gateway or consumer scrape target is missing, down or failing; inspect gateway-scrape-targets.json'
 
 expected_targets="$RUN/expected-targets.tsv"
 : >"$expected_targets"

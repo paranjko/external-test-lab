@@ -223,7 +223,10 @@ services:
       # Participants are a control-plane route used by every joining node.  It
       # must not share the intentionally low public API budget, otherwise the
       # normal epoch polling performed during join can prevent registration.
-      GONKA_API_EXEMPT_ROUTES: chat inference poc/proofs subnet devshard participants
+      # Version polling is also control-plane traffic. Public-edge aggregation
+      # must not exhaust the ordinary 10/minute application API quota.
+      # This route retains the existing bounded exempt-zone protections.
+      GONKA_API_EXEMPT_ROUTES: chat inference poc/proofs subnet devshard participants versions
       EXEMPT_CONN_LIMIT: "200"
       GONKA_API_BLOCKED_ROUTES: poc-batches training
       CHAIN_RPC_PORT: "26657"
