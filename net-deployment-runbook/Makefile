@@ -461,7 +461,11 @@ test-bifrost-provision:
 test-bifrost-broker-container:
 	@./scripts/test-bifrost-broker-container.sh
 
-test-bifrost-pinned-lifecycle:
+.PHONY: test-bifrost-fake-inference
+test-bifrost-fake-inference:
+	@python3 ./scripts/test-bifrost-fake-inference.py
+
+test-bifrost-pinned-lifecycle: test-bifrost-fake-inference
 	@./scripts/test-bifrost-pinned-lifecycle.sh
 
 test-bifrost-deployment-contract:

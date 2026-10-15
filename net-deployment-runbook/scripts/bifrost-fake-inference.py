@@ -9,6 +9,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 REQUESTS = []
 REQUEST_LOCK = threading.Lock()
+REQUEST_IDS = {
+    "receipt-one": "fixture-native-receipt-one",
+    "receipt-two": "fixture-native-receipt-two",
+    "receipt-fenced": "fixture-native-receipt-fenced",
+}
 V6 = json.loads(os.environ.get("GDC_TEST_APPROVED_V6", json.dumps(
     {"name": "v6", "binary": "https://example.invalid/v6.zip", "sha256": "a" * 64})))
 
@@ -68,7 +73,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(400, "Bifrost provider request must be JSON")
             return
         marker = body.get("messages", [{}])[-1].get("content", "")
-        tracked = marker in {"receipt-one", "receipt-two", "receipt-fenced"}
+        request_id = REQUEST_IDS.get(marker, "fixture-native-request")
+        tracked = marker in REQUEST_IDS
         if tracked:
             with REQUEST_LOCK:
                 REQUESTS.append(marker)
@@ -95,9 +101,10 @@ class Handler(BaseHTTPRequestHandler):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json")
-        self.send_header("X-Request-Id", "fixture-native-" + marker if tracked else "fixture-native-request")
+        self.send_header("X-Request-Id", request_id)
         self.send_header("X-Devshard-ID", "fixture-native-escrow")
         self.send_header("Content-Length", str(len(response))); self.end_headers(); self.wfile.write(response)
 
 
-ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+if __name__ == "__main__":
+    ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
