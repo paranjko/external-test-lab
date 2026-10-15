@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -61,5 +62,17 @@ denied("/v1/chat/completions", {"Authorization": "Bearer sk-bf-private", "Conten
 denied("/v1/chat/completions", {"Authorization": "Bearer sk-gdc-valid", "x-api-key": "sk-gdc-valid", "Content-Type": "application/json"}, 400)
 denied("/genai/v1beta/models", {"x-goog-api-key": "sk-gdc-valid", "x-bf-vk": "sk-bf-private", "Content-Type": "application/json"}, 400)
 assert len(UpstreamHandler.requests) == 3
+request("/v1/chat/completions", {"Authorization": "Bearer sk-gdc-valid",
+    "X-Request-Deadline-Ms": "1791984722000", "x-bf-eh-x-request-deadline-ms": "forged"})
+headers = {k.lower(): v for k, v in UpstreamHandler.requests[-1][1].items()}
+assert headers["x-bf-eh-x-request-deadline-ms"] == "1791984722000"
+assert "x-request-deadline-ms" not in headers
+started_ms = time.time_ns() // 1000000
+request("/v1/chat/completions", {"Authorization": "Bearer sk-gdc-valid",
+    "x-bf-eh-x-request-deadline-ms": "forged"})
+headers = {k.lower(): v for k, v in UpstreamHandler.requests[-1][1].items()}
+assert started_ms + 20000 <= int(headers["x-bf-eh-x-request-deadline-ms"]) <= time.time_ns() // 1000000 + 20000
+denied("/v1/chat/completions", {"Authorization": "Bearer sk-gdc-valid", "X-Request-Deadline-Ms": "invalid"}, 400)
+assert len(UpstreamHandler.requests) == 5
 for service in (server, broker, upstream): service.shutdown(); service.server_close()
 print("PASS stable protocol edge maps only sk-gdc credentials and strips native-key bypass headers")

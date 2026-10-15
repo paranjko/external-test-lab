@@ -1,0 +1,8 @@
+{
+  "upstream": "http://127.0.0.1:18187",
+  "observer": "http://127.0.0.1:18084/v1/status",
+  "chain_api": "http://127.0.0.1:1317",
+  "chain_rpc": "http://127.0.0.1:26657",
+  "approved_versions": "http://127.0.0.1:1317/productscience/inference/inference/devshard_approved_versions",
+  "port": 18083
+}

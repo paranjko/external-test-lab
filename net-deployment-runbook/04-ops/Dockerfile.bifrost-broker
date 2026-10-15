@@ -3,5 +3,6 @@ RUN pip install --no-cache-dir cryptography==46.0.3
 WORKDIR /srv/broker
 COPY bifrost-key-broker.py bifrost_key_broker.py
 COPY bifrost-broker-service.py .
+RUN chmod 0644 /srv/broker/bifrost_key_broker.py /srv/broker/bifrost-broker-service.py
 USER 65532:65532
 ENTRYPOINT ["python3", "/srv/broker/bifrost-broker-service.py"]

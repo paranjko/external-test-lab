@@ -4,6 +4,33 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GDC_GRAFANA_VERIFIER_LIBRARY=true source "$ROOT/scripts/verify-public-grafana.sh"
 
+healthy_scrapes='{"status":"success","data":{"activeTargets":[{"labels":{"job":"gateway","gateway":"A"},"health":"up","lastError":""},{"labels":{"job":"gateway","gateway":"B"},"health":"up","lastError":""}]}}'
+verify_gateway_scrape_targets <<<"$healthy_scrapes"
+for broken in \
+  '{"status":"success","data":{"activeTargets":[]}}' \
+  '{"status":"error","data":{"activeTargets":[]}}' \
+  '{"status":"success","data":{}}'; do
+  if verify_gateway_scrape_targets <<<"$broken"; then
+    echo 'missing or failed scrape inventory was accepted' >&2
+    exit 1
+  fi
+done
+for job in gateway gateway-route gateway-admission-route telegram-consumer; do
+  broken="$(jq --arg job "$job" '.data.activeTargets += [{labels:{job:$job},health:"down",lastError:"unsupported Content-Type text/html"}]' <<<"$healthy_scrapes")"
+  if verify_gateway_scrape_targets <<<"$broken"; then
+    echo "a failed $job scrape was hidden by healthy gateways" >&2
+    exit 1
+  fi
+done
+# An intentionally absent optional exporter is valid; an unrelated failed job
+# is handled by the verifier for its own scope, not by the gateway predicate.
+jq '.data.activeTargets += [{labels:{job:"unrelated"},health:"down",lastError:"offline"}]' <<<"$healthy_scrapes" \
+  | verify_gateway_scrape_targets
+if jq '.data.activeTargets[0].lastError = "parse failure"' <<<"$healthy_scrapes" | verify_gateway_scrape_targets; then
+  echo 'contradictory scrape health was accepted' >&2
+  exit 1
+fi
+
 # A single healthy gateway must not satisfy the A/B dashboard contract.
 grep -Fq 'min(up{job="gateway"})' "$ROOT/scripts/verify-public-grafana.sh"
 if grep -Fq 'max(up{job="gateway"})' "$ROOT/scripts/verify-public-grafana.sh"

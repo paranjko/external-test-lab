@@ -5,6 +5,9 @@ gateway_env="${GDC_GATEWAY_ENV:-/srv/dai/ops/gateway.env}"
 output="${GDC_GATEWAY_HEALTH_FILE:-/srv/dai/ops/status/gateway-health.json}"
 prom_output="${GDC_GATEWAY_HEALTH_PROM_FILE:-${output%.json}.prom}"
 gateway_url="${GDC_GATEWAY_HEALTH_URL:-}"
+health_route="${GDC_GATEWAY_HEALTH_ROUTE:-native}"
+status_url="${GDC_GATEWAY_STATUS_URL:-}"
+status_env="${GDC_GATEWAY_STATUS_ENV:-}"
 # Public health runs every ten seconds. Keep its acknowledgement within the
 # same small, bounded response budget as gateway verification so it observes
 # a constrained one-model PoC without consuming the participant's window.
@@ -81,7 +84,7 @@ fi
 
 if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$gateway_env" ]]; then
   # Readiness uses the gateway-owned assurance credential. Consumer services
-  # such as Telegram must not control or mask the gateway state.
+  # must not control or mask the gateway state.
   client_key="$(awk -F= '$1 == "DEVSHARD_API_KEYS" {print $2; exit}' "$gateway_env" | cut -d, -f1)"
   model="$(awk -F= '$1 == "DEVSHARD_MODEL" {print substr($0, index($0, "=") + 1); exit}' "$gateway_env")"
   if [[ -z "$gateway_url" ]]; then
@@ -91,7 +94,29 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
     api_host="$(awk -F= '$1 == "API_HOST" {print substr($0, index($0, "=") + 1); exit}' "$(dirname "$gateway_env")/.env" 2>/dev/null || true)"
     [[ "$api_host" =~ ^[A-Za-z0-9.-]+$ ]] && gateway_url="https://$api_host"
   fi
-  if [[ -n "$client_key" && -n "$model" && "$gateway_url" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+  status_key="$client_key"
+  status_config_valid=true
+  case "$health_route" in
+    native)
+      # Legacy deployments retain the same route and credential for status.
+      [[ -z "$status_url" && -z "$status_env" ]] || status_config_valid=false
+      status_url="$gateway_url"
+      ;;
+    stable)
+      # Stable keys authenticate only to the public protocol edge. Read the
+      # admission status with a separate operator credential, never that key.
+      status_key=''
+      if [[ -s "$status_env" ]]; then
+        status_key="$(awk -F= '$1 == "DEVSHARD_API_KEYS" {print $2; exit}' "$status_env" | cut -d, -f1)"
+      fi
+      [[ -n "$status_key" && "$status_key" != "$client_key" ]] || status_config_valid=false
+      [[ "$status_url" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ || "$status_url" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] || status_config_valid=false
+      ;;
+    *) status_config_valid=false ;;
+  esac
+  if [[ "$status_config_valid" != true ]]; then
+    reason=status_configuration_invalid
+  elif [[ -n "$client_key" && -n "$model" && "$gateway_url" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
     # READY must prove a bounded completion without consuming capacity needed
     # by interactive requests during a one-model PoC.
     canary_nonce="${started_ms}-$$-${RANDOM}"
@@ -102,7 +127,9 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
     canary_prompt="Reply with OK [readiness-canary:${canary_nonce}]"
     payload="$(jq -cn --arg model "$model" --arg prompt "$canary_prompt" --argjson max_tokens "$max_output_tokens" '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:$max_tokens}')"
     set +e
-    request_deadline_ms="$(( $(now_ms) + 20000 ))"
+    # Leave five seconds for the admission refusal to cross the stable adapter
+    # before curl's overall deadline; identical deadlines race the response.
+    request_deadline_ms="$(( $(now_ms) + 15000 ))"
     http_code="$(curl -sS --connect-timeout 3 --max-time 20 -D "$response_headers" -o "$response" -w '%{http_code}' \
       "$gateway_url/v1/chat/completions?gdc_canary=$canary_nonce" \
       -H "Authorization: Bearer $client_key" \
@@ -123,6 +150,13 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
     candidate_dispatch_height="$(header_value X-GDC-Dispatch-Height)"
     candidate_response_height="$(header_value X-GDC-Response-Height)"
     candidate_safe_generation="$(header_value X-GDC-Safe-Generation)"
+    stable_identity_valid=true
+    if [[ "$health_route" == stable ]]; then
+      native_request="$(header_value X-Request-ID)"
+      native_escrow="$(header_value X-Devshard-ID)"
+      [[ "$native_request" =~ ^[A-Za-z0-9_-]+$ && "$native_escrow" =~ ^[0-9]+$ ]] || stable_identity_valid=false
+      jq -e --arg model "$model" '.model == $model' "$response" >/dev/null 2>&1 || stable_identity_valid=false
+    fi
     [[ "$candidate_admission" =~ ^(dispatched_once|pre_dispatch_rejected|dispatch_attempt_failed)$ ]] && admission="$candidate_admission"
     [[ "$candidate_admission_id" =~ ^[a-f0-9]{32}$ ]] && admission_id="$candidate_admission_id"
     [[ "$candidate_arrival_height" =~ ^[0-9]+$ ]] && arrival_height="$candidate_arrival_height"
@@ -131,6 +165,7 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
     [[ "$candidate_response_height" =~ ^[0-9]+$ ]] && response_height="$candidate_response_height"
     [[ "$candidate_safe_generation" =~ ^sha256:[a-f0-9]{64}$ ]] && safe_generation="$candidate_safe_generation"
     if [[ "$curl_rc" == 0 && "$http_code" == 200 ]] \
+      && [[ "$stable_identity_valid" == true ]] \
       && [[ "$admission" == dispatched_once ]] \
       && [[ "$admission_id" =~ ^[a-f0-9]{32}$ ]] \
       && [[ -n "$safe_generation" ]] \
@@ -141,7 +176,7 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
       # follow-up status read. Consumers can therefore distinguish an old
       # completion from one executed during their verification window.
       completion_finished_ms="$(now_ms)"
-      gateway_status="$(curl -fsS --connect-timeout 3 --max-time 10 "$gateway_url/v1/status" -H "Authorization: Bearer $client_key" 2>/dev/null || true)"
+      gateway_status="$(curl -fsS --connect-timeout 3 --max-time 10 "$status_url/v1/status" -H "Authorization: Bearer $status_key" 2>/dev/null || true)"
       if ! jq -e '
         def valid_flags:
           type == "object"
@@ -162,6 +197,10 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
              else true end)
         and (
           (.routable | type == "boolean")
+          or (
+            valid_flags
+            and (.escrow_id | type == "string" and test("^[0-9]+$"))
+          )
           or (
             (.mode | type == "string")
             and (.capacity | type == "object")
@@ -188,6 +227,18 @@ if [[ "$state" == UNAVAILABLE && "$reason" == credentials_unavailable && -s "$ga
       reason=request_failed
     elif [[ "$http_code" != 200 ]]; then
       reason="http_${http_code}"
+      # Publish only bounded, known admission reasons from this request's
+      # rejection receipt; never copy arbitrary upstream messages to status.
+      if [[ "$http_code" == 503 && "$admission" == pre_dispatch_rejected \
+        && -n "$admission_id" && ( -z "$candidate_dispatch_height" || "$candidate_dispatch_height" == 0 ) ]]; then
+        # Native rejection receipts omit dispatch height when dispatch is null.
+        rejection_code="$(jq -er '.error.code | strings' "$response" 2>/dev/null || true)"
+        case "$rejection_code" in
+          admission_poc_fence|admission_runtime_unavailable)
+            reason="$rejection_code"
+            ;;
+        esac
+      fi
     else
       reason=invalid_completion
     fi

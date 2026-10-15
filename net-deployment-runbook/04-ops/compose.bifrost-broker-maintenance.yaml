@@ -1,0 +1,17 @@
+# Scoped maintenance for an existing broker. Never use --remove-orphans:
+# the remaining OPS services are intentionally absent from this file.
+services:
+  bifrost-broker:
+    image: ${BIFROST_BROKER_MAINTENANCE_IMAGE:?existing tested image ID required}
+    user: "65532:65532"
+    network_mode: host
+    restart: unless-stopped
+    env_file:
+      - ${BIFROST_BROKER_MAINTENANCE_ENV:?existing private broker env required}
+    volumes:
+      - broker-data:/var/lib/bifrost-broker
+      - ${BIFROST_BROKER_MAINTENANCE_BINDING:?existing binding file required}:/run/bifrost/broker-binding.env:ro
+volumes:
+  broker-data:
+    external: true
+    name: ${BIFROST_BROKER_MAINTENANCE_VOLUME:?existing broker volume required}

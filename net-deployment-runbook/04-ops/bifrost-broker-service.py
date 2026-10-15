@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Start the private Telegram-to-Bifrost key broker from managed environment."""
 import os
+import argparse
 from pathlib import Path
 
 from bifrost_key_broker import BifrostClient, Broker, serve
@@ -29,7 +30,25 @@ client = BifrostClient(
     binding["BIFROST_GONKA_PROVIDER"], binding["BIFROST_GONKA_MODEL"], binding["BIFROST_GONKA_KEY_ID"],
 )
 broker = Broker(required("BIFROST_BROKER_DB"), client, required("BIFROST_BROKER_ENCRYPTION_KEY").encode())
-serve(
-    broker, required("BIFROST_BROKER_TOKEN"), required("BIFROST_BROKER_HOST"), int(required("BIFROST_BROKER_PORT")),
-    required("BIFROST_EDGE_TOKEN"),
-).serve_forever()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--write-health-env', type=Path, help='offline operator action; create a private probe env without serving HTTP')
+args = parser.parse_args()
+if args.write_health_env:
+    model = binding['BIFROST_GONKA_MODEL']
+    if '\n' in model or '\r' in model:
+        raise ValueError('invalid health model')
+    # Never expose the key through stdout, process arguments or a public API.
+    # Refuse an existing destination before issuing any new management request.
+    fd = os.open(args.write_health_env, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'w') as output:
+        key = broker.ensure_health_key()
+        output.write('DEVSHARD_API_KEYS=' + key + '\nDEVSHARD_MODEL=' + model + '\n')
+        output.flush()
+        os.fsync(output.fileno())
+    broker.db.close()
+    print('Private operator health configuration created')
+else:
+    serve(
+        broker, required("BIFROST_BROKER_TOKEN"), required("BIFROST_BROKER_HOST"), int(required("BIFROST_BROKER_PORT")),
+        required("BIFROST_EDGE_TOKEN"),
+    ).serve_forever()

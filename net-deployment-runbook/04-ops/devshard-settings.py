@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 
 SPEC = importlib.util.spec_from_file_location("instances", Path(__file__).with_name("devshard-instances.py"))
@@ -47,6 +48,30 @@ class Gateway:
         self.secret_file = instances.private_file(secret_file)
         instances.secrets(self.secret_file)
 
+    def admitted_model(self, model):
+        # The runtime catalog cannot bootstrap a model with no escrow yet.
+        # Query the local chain without forwarding any gateway credential.
+        prefix = "http://127.0.0.1:1317/productscience/inference/inference/"
+
+        def group(suffix):
+            result = subprocess.run([
+                "curl", "--silent", "--show-error", "--fail", "--noproxy", "*",
+                "--connect-timeout", "5", "--max-time", "15", prefix + suffix,
+            ], capture_output=True, text=True, timeout=20)
+            require(result.returncode == 0, "local chain group query failed")
+            return json.loads(result.stdout)["epoch_group_data"]
+
+        current = group("current_epoch_group_data")
+        epoch = str(current["epoch_index"])
+        require(epoch.isdigit() and int(epoch) > 0, "invalid current group epoch")
+        selected = group("epoch_group_data/" + epoch + "?model_id=" + quote(model, safe=""))
+        require(str(selected.get("epoch_index")) == epoch and selected.get("model_id") == model
+                and int(selected.get("total_weight", 0)) > 0
+                and bool(selected.get("validation_weights")), "model has no admitted chain weight")
+        require(str(group("current_epoch_group_data")["epoch_index"]) == epoch,
+                "chain epoch changed during model check")
+        return {"epoch_index": epoch, "model_id": model, "total_weight": selected["total_weight"]}
+
     def request(self, method, path, payload=None):
         require(method in ("GET", "POST") and path in ("/v1/admin/settings", "/v1/models"),
                 "unsupported gateway settings operation")
@@ -76,12 +101,28 @@ class Gateway:
             raise ValueError("gateway returned invalid JSON") from None
 
 
-def configure(gateway, journal, model, expected=None, apply=False):
+def configure(gateway, journal, model, expected=None, apply=False, model_only=False, chain_model=False):
     before = gateway.request("GET", "/v1/admin/settings")
     catalog = gateway.request("GET", "/v1/models")
     require(isinstance(catalog, dict) and isinstance(catalog.get("data"), list), "invalid model catalog")
     models = [row.get("id") for row in catalog["data"] if isinstance(row, dict)]
+    require(not chain_model or model_only, "chain model selection requires model-only mode")
+    if chain_model:
+        journal.record("chain-admission", gateway.admitted_model(model))
+        models.append(model)
+    if model_only:
+        # /v1/models reflects runtime availability, not the chain registry.
+        # A configured but unavailable model must be selectable for recovery.
+        # This changes access policy only; it is not proof of chain admission.
+        models += [row.get("model_id") for row in before.get("model_limits", [])
+                   if isinstance(row, dict)]
     desired = instances.settings(before, model, models)
+    if model_only:
+        # Model recovery must not also retune the participant budget or start a
+        # second funding owner alongside the journalled budget operator.
+        require(before["escrow_rotation"].get("enabled") is False,
+                "model-only recovery requires native rotation disabled")
+        desired["participant_throttle"] = before["participant_throttle"]
     preimage = instances.preview.digest(before)
     receipt = {"schema": "gdc-devshard-settings/1", "before_sha256": preimage,
                "desired_sha256": instances.preview.digest(desired),
@@ -94,6 +135,8 @@ def configure(gateway, journal, model, expected=None, apply=False):
     require(expected == preimage, "settings preimage changed; review a fresh preview")
     # A stale read must not overwrite another operator's policy update.
     require(gateway.request("GET", "/v1/admin/settings") == before, "settings drift before POST")
+    if chain_model:
+        journal.record("chain-admission-before-post", gateway.admitted_model(model))
     journal.record("dispatch", {"method": "POST", "path": "/v1/admin/settings", "time_unix": time.time()})
     try:
         gateway.request("POST", "/v1/admin/settings", desired)
@@ -116,6 +159,10 @@ def main():
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--expected-sha256")
+    parser.add_argument("--model-only", action="store_true",
+                        help="select an existing configured/catalog model without retuning throttle; require native rotation disabled")
+    parser.add_argument("--chain-model", action="store_true",
+                        help="allow model bootstrap after a fresh positive local-chain subgroup check")
     args = parser.parse_args()
     try:
         gateway = Gateway(args.port, args.secret_file)
@@ -125,9 +172,9 @@ def main():
         with os.fdopen(descriptor, "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             receipt = configure(gateway, Journal(args.evidence), args.model,
-                                args.expected_sha256, args.apply)
+                                args.expected_sha256, args.apply, args.model_only, args.chain_model)
         print(json.dumps(receipt, sort_keys=True))
-    except (ValueError, OSError, TypeError, KeyError) as error:
+    except (ValueError, OSError, TypeError, KeyError, subprocess.TimeoutExpired) as error:
         print(f"BLOCKED: settings operation failed ({type(error).__name__}); retained evidence requires inspection", file=sys.stderr)
         return 2
     return 0

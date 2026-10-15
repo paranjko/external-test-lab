@@ -78,6 +78,14 @@ http://127.0.0.1:18186 {
 http://127.0.0.1:9466 {
   respond "stable adapter {uri}" 200
 }
+:9464 {
+  bind 127.0.0.1
+  handle /metrics {
+    header Content-Type "text/plain; version=0.0.4"
+    respond "gdc_telegram_bot_up 1" 200
+  }
+  respond "unexpected telegram path" 404
+}
 http://127.0.0.1:18100 {
   respond "independent A {uri}" 200
 }
@@ -109,7 +117,7 @@ docker run --rm \
   -e GDC_GATEWAY_METRICS_UPSTREAM=http://gateway:18087 \
   -e TELEGRAM_BOT_PUBLIC_HOST=gateway \
   -e MONITORING_CIDR=127.0.0.1/32 \
-  -e MONITORING_DOCKER_CIDR=172.21.0.0/16 \
+  -e MONITORING_DOCKER_CIDR=192.0.2.1/32 \
   -e PUBLIC_EDGE_CIDR=127.0.0.1/32 \
   -v "$tmp/Caddyfile:/etc/caddy/Caddyfile:ro" \
   caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
@@ -151,7 +159,7 @@ docker run -d --name "$name" --network "$network" -p 127.0.0.1::18081 -p 127.0.0
   -e GDC_GATEWAY_METRICS_UPSTREAM=http://gateway:18087 \
   -e TELEGRAM_BOT_PUBLIC_HOST=gateway \
   -e MONITORING_CIDR=127.0.0.1/32 \
-  -e MONITORING_DOCKER_CIDR=172.21.0.0/16 \
+  -e MONITORING_DOCKER_CIDR=192.0.2.1/32 \
   -e PUBLIC_EDGE_CIDR=127.0.0.1/32 \
   -v "$tmp/Caddyfile:/etc/caddy/Caddyfile:ro" \
   -v "$tmp/bootstrap:/edge/bootstrap/current:ro" \
@@ -197,6 +205,36 @@ docker exec "$name" caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Ca
 curl -fsS "http://127.0.0.1:$port/" | grep -q 'EXTERNAL TEST LAB'
 participant_port="$(docker port "$name" 18082/tcp | awk -F: 'NR == 1 {print $NF}')"
 api_port="$(docker port "$name" 18085/tcp | awk -F: 'NR == 1 {print $NF}')"
+# A colocated collector reaches the metric handler, not the generic DAPI
+# fallback. A separate network peer cannot bypass the source ACL via XFF.
+docker exec "$name" wget -qO- http://127.0.0.1:18082/ops-telegram-metrics \
+  | grep -Fxq 'gdc_telegram_bot_up 1'
+if docker exec "$upstream_name" wget -S -O /dev/null \
+  --header='X-Forwarded-For: 127.0.0.1' \
+  "http://$name:18082/ops-telegram-metrics" >"$tmp/telegram-denied" 2>&1; then
+  echo 'untrusted peer reached Telegram metrics' >&2
+  exit 1
+fi
+grep -q '403 Forbidden' "$tmp/telegram-denied"
+# Explicitly admit only this fixture peer as the monitoring container, then
+# remove that grant again. Do not depend on Docker's chosen network subnet.
+collector_ip="$(docker inspect "$upstream_name" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')"
+docker exec -e MONITORING_DOCKER_CIDR="$collector_ip/32" "$name" \
+  caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+docker exec "$upstream_name" wget -SO- "http://$name:18082/ops-telegram-metrics" \
+  >"$tmp/telegram-allowed" 2>"$tmp/telegram-allowed.headers"
+grep -Fxq 'gdc_telegram_bot_up 1' "$tmp/telegram-allowed" || {
+  cat "$tmp/telegram-allowed.headers" "$tmp/telegram-allowed" >&2
+  exit 1
+}
+docker exec "$name" caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null
+if docker exec "$upstream_name" wget -S -O /dev/null \
+  "http://$name:18082/ops-telegram-metrics" >"$tmp/telegram-revoked" 2>&1; then
+  echo 'removed collector grant remained active' >&2
+  exit 1
+fi
+grep -q '403 Forbidden' "$tmp/telegram-revoked"
+printf 'PASS public edge Telegram metrics reach the exporter and reject untrusted peers\n'
 for endpoint in /v1/models /v1/chat/completions /anthropic/v1/messages /genai/v1beta/models/model:generateContent; do
   curl -fsS -H 'Authorization: Bearer sk-gdc-fixture' "http://127.0.0.1:$api_port$endpoint" | grep -Fxq "stable adapter $endpoint"
 done

@@ -105,6 +105,9 @@ class ApplyContracts(unittest.TestCase):
             self.execute()
         lock.unlink()
         lock.touch(mode=0o644)
+        # Creation mode is filtered by umask; explicitly construct the unsafe
+        # fixture so the refusal is exercised under both 022 and 077.
+        lock.chmod(0o644)
         with self.assertRaises(ValueError):
             self.execute()
         self.assertEqual(target.read_text(), 'retained bytes')

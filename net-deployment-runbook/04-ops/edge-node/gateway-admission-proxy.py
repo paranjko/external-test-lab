@@ -205,6 +205,17 @@ def safe_upstream_content_type(value):
     return UPSTREAM_CONTENT_TYPES.get(media_type, "application/octet-stream")
 
 
+def native_identity_headers(headers):
+    """Retain only unambiguous, bounded native correlation IDs, never receipts."""
+    result = {}
+    for name in ("X-Request-Id", "X-Devshard-ID"):
+        values = [value for key, value in headers if key.lower() == name.lower()]
+        if (len(values) == 1 and isinstance(values[0], str)
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", values[0])):
+            result[name] = values[0]
+    return result
+
+
 def get_json(url, deadline=None, bearer_token=None):
     timeout = 3
     if deadline is not None:
@@ -706,7 +717,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reject(408, "admission_deadline_elapsed", record, deadline=deadline)
             return
         headers = {key: value for key, value in self.headers.items()
-                   if key.lower() not in {"host", "connection", "content-length"}}
+                   if key.lower() not in {"host", "connection", "content-length",
+                                          "x-request-id", "x-devshard-id"}
+                   and not key.lower().startswith("x-gdc-")}
         headers["Host"] = UPSTREAM.netloc
         headers["Content-Length"] = str(len(body))
         headers["X-Request-Deadline-Ms"] = str(deadline_ms)
@@ -726,7 +739,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             # No code path retries after this connection is requested.
             connection.request("POST", self.path, body=body, headers=headers)
+            upstream_socket = connection.sock
             response = connection.getresponse()
+            if safe_upstream_content_type(response.getheader("Content-Type", "")).split(";", 1)[0] == "text/event-stream":
+                self.stream_response(response, upstream_socket, record, deadline)
+                return
             payload = response.read()
             record.update({
                 "admission": "dispatched_once",
@@ -738,6 +755,8 @@ class Handler(BaseHTTPRequestHandler):
             record_audit(record)
             self.send_response(response.status, response.reason)
             self.response_headers(record, "dispatched_once")
+            for name, value in native_identity_headers(response.getheaders()).items():
+                self.send_header(name, value)
             # Upstream headers are not a trusted response-header source.  The
             # proxy owns framing and exposes only an allowlisted media type.
             self.send_header("Content-Type", safe_upstream_content_type(
@@ -757,6 +776,56 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             connection.close()
             DISPATCH_PERMIT.release()
+
+    def stream_response(self, response, upstream_socket, record, deadline):
+        # Dispatch headers are not a completion receipt. Only the final audit
+        # can record the response height after an incremental stream finishes.
+        self.close_connection = True
+        record.update({"admission": "dispatched_once",
+                       "upstream_http_status": response.status,
+                       "error_class": "" if 200 <= response.status < 300
+                       else "upstream_http_%s" % response.status})
+        outcome_status = response.status
+        terminal_seen = False
+        terminal_tail = b"\n"
+        try:
+            self.send_response(response.status, response.reason)
+            self.response_headers(record, "dispatched_once")
+            for name, value in native_identity_headers(response.getheaders()).items():
+                self.send_header(name, value)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            while not response.isclosed():
+                timeout = upstream_timeout(deadline)
+                # Keep the socket captured before getresponse: HTTPConnection
+                # detaches close-delimited responses while their reader lives.
+                upstream_socket.settimeout(timeout)
+                chunk = response.read1(65536)
+                if not chunk:
+                    if response.length:
+                        raise http.client.IncompleteRead(b"", response.length)
+                    break
+                terminal_probe = terminal_tail + chunk
+                terminal_seen = terminal_seen or bool(re.search(
+                    rb"\ndata: ?\[DONE\]\r?\n\r?\n", terminal_probe))
+                terminal_tail = terminal_probe[-32:]
+                self.connection.settimeout(upstream_timeout(deadline))
+                self.wfile.write(chunk)
+                self.wfile.flush()
+            if 200 <= response.status < 300 and not terminal_seen:
+                raise http.client.IncompleteRead(b"", None)
+        except Exception as error:
+            # Headers may already be visible. Never append a second HTTP
+            # response or replay a dispatched request after stream failure.
+            outcome_status, record["error_class"] = dispatch_failure(error)
+            record["admission"] = "dispatch_attempt_failed"
+        finally:
+            record["response_at_ms"] = now_ms()
+            record["response_height"] = self.current_height(deadline)
+            record_audit(record)
+            count_route(outcome_status)
 
 
 if __name__ == "__main__":

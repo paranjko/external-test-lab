@@ -129,6 +129,17 @@
     handle /ops-telegram-consumer-health {
       respond 403
     }
+    @telegram_metrics_from_monitoring {
+      path /ops-telegram-metrics
+      remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1
+    }
+    handle @telegram_metrics_from_monitoring {
+      rewrite * /metrics
+      reverse_proxy 127.0.0.1:9464
+    }
+    handle /ops-telegram-metrics {
+      respond 403
+    }
     @gateway_metrics_from_monitoring {
       path /ops-gateway-metrics
       remote_ip {$MONITORING_CIDR} {$MONITORING_DOCKER_CIDR} {$PUBLIC_EDGE_CIDR} 127.0.0.0/8 ::1

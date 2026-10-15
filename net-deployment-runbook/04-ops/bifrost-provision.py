@@ -121,6 +121,12 @@ def canonical_sha256(value):
     return hashlib.sha256(encoded).hexdigest()
 
 
+def retries_disabled(value):
+    # bool, string, null and floating-point readbacks are not the managed
+    # integer transport policy, even when Python would compare them to zero.
+    return type(value) is int and value == 0
+
+
 def desired_state():
     """Return the non-secret Bifrost state GDC is allowed to reconcile."""
     port = os.environ.get("BIFROST_PORT", "9467")
@@ -131,6 +137,7 @@ def desired_state():
         "provider": required("BIFROST_GONKA_PROVIDER"),
         "model": required("BIFROST_GONKA_MODEL"),
         "upstream": loopback_url("BIFROST_GONKA_BASE_URL"),
+        "max_retries": 0,
         "port": int(port),
     }
 
@@ -164,6 +171,7 @@ def current_state(client, provider):
         "bootstrap": "configured",
         "provider": {
             "base_url": network.get("base_url"),
+            "max_retries": network.get("max_retries"),
             "base_provider_type": custom.get("base_provider_type"),
             "key_count": len(key_rows),
             "models": sorted({model for row in key_rows if isinstance(row, dict) for model in row.get("models", []) if isinstance(model, str)}),
@@ -186,6 +194,8 @@ def preview_state(client):
             delta.append("provider.base_url")
         if existing["base_provider_type"] != "openai":
             delta.append("provider.base_provider_type")
+        if not retries_disabled(existing["max_retries"]):
+            delta.append("provider.max_retries")
         if existing["key_count"] != 1:
             delta.append("provider_key.count")
         if desired["model"] not in existing["models"]:
@@ -225,6 +235,8 @@ def provision():
         custom = existing.get("custom_provider_config") or {}
         if network.get("base_url") != upstream or custom.get("base_provider_type") != "openai":
             raise ProvisionError("existing Bifrost provider does not match the managed stable Gonka target")
+        if not retries_disabled(network.get("max_retries")):
+            raise ProvisionError("existing Bifrost provider must explicitly disable retries before managed use")
 
     keys = expect(client, "GET", f"/api/providers/{provider}/keys")
     key_rows = keys.get("keys", []) if isinstance(keys, dict) else []

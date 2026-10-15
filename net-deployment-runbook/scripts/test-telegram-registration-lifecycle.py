@@ -41,6 +41,9 @@ def open_request(request, timeout):
 urllib.request.urlopen = open_request
 runpy.run_path("/app/register-commands.py", run_name="__main__")
 ''')
+    # The container runs as the bot UID, not the invoking operator. Keep this
+    # synthetic transport fixture readable even under an operator umask of 077.
+    (fixture / "run.py").chmod(0o644)
     (tools / "docker").write_text('''#!/bin/sh
 set -eu
 case "$*" in

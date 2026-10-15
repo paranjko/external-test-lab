@@ -1,0 +1,10 @@
+# Replace only the existing edge; keep the same project and private env.
+# Never use --remove-orphans or down against the shared OPS project.
+services:
+  bifrost-edge:
+    image: ${BIFROST_EDGE_MAINTENANCE_IMAGE:?tested edge image ID required}
+    user: "65532:65532"
+    network_mode: host
+    restart: unless-stopped
+    env_file:
+      - ${BIFROST_EDGE_MAINTENANCE_ENV:?existing private edge env required}

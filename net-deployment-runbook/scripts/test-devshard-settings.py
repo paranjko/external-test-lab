@@ -9,6 +9,7 @@ import subprocess
 import threading
 import tempfile
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -132,6 +133,67 @@ class HTTPSettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "drift"):
             settings.configure(self.gateway, self.journal("drift"), MODEL,
                                settings.instances.preview.digest(self.initial), True)
+        self.assertEqual(self.posts, 0)
+
+    def test_model_only_preserves_all_unrelated_policy(self):
+        self.value["escrow_rotation"]["enabled"] = False
+        self.models = []  # Runtime catalog is empty during recovery.
+        before = copy.deepcopy(self.value)
+        result = settings.configure(self.gateway, self.journal("model-only"), MODEL,
+                                    settings.instances.preview.digest(before), True, True)
+        expected = copy.deepcopy(before)
+        expected["default_model"] = MODEL
+        expected["model_limits"][0]["access_mode"] = "api_key"
+        self.assertEqual(self.value, expected)
+        self.assertEqual(result["outcome"], "PASS")
+
+    def test_model_only_rejects_unknown_model(self):
+        self.value["escrow_rotation"]["enabled"] = False
+        with self.assertRaisesRegex(ValueError, "catalog"):
+            settings.configure(self.gateway, self.journal("unknown-model"), "unknown",
+                               settings.instances.preview.digest(self.value), True, True)
+        self.assertEqual(self.posts, 0)
+
+    def test_chain_model_bootstrap_checks_twice_before_post(self):
+        self.value["escrow_rotation"]["enabled"] = False
+        self.value.update(max_concurrent_requests=4, max_input_tokens_in_flight=0)
+        proof = {"epoch_index": "10", "model_id": "new-model", "total_weight": "20"}
+        with patch.object(self.gateway, "admitted_model", return_value=proof) as check:
+            result = settings.configure(self.gateway, self.journal("bootstrap"), "new-model",
+                settings.instances.preview.digest(self.value), True, True, True)
+        self.assertEqual(check.call_count, 2)
+        self.assertEqual(result["outcome"], "PASS")
+        self.assertEqual(self.value["default_model"], "new-model")
+        self.assertEqual(self.value["model_limits"][-1]["access_mode"], "api_key")
+
+    def test_chain_model_loss_before_dispatch_refuses_post(self):
+        self.value["escrow_rotation"]["enabled"] = False
+        with patch.object(self.gateway, "admitted_model", side_effect=[{}, ValueError("lost weight")]):
+            with self.assertRaisesRegex(ValueError, "lost weight"):
+                settings.configure(self.gateway, self.journal("lost-weight"), MODEL,
+                    settings.instances.preview.digest(self.value), True, True, True)
+        self.assertEqual(self.posts, 0)
+
+    def test_chain_query_checks_model_weight_epoch_without_credentials(self):
+        for weight, epoch, model, accepted in [("20", "10", MODEL, True),
+                ("0", "10", MODEL, False), ("20", "11", MODEL, False),
+                ("20", "10", "different", False)]:
+            bodies = [{"epoch_index": "10"}, {"epoch_index": "10", "model_id": model,
+                       "total_weight": weight, "validation_weights": [{}]}, {"epoch_index": epoch}]
+            results = [subprocess.CompletedProcess([], 0, json.dumps({"epoch_group_data": b})) for b in bodies]
+            with patch.object(settings.subprocess, "run", side_effect=results) as run:
+                if accepted:
+                    self.assertEqual(self.gateway.admitted_model(MODEL)["total_weight"], "20")
+                else:
+                    with self.assertRaises(ValueError):
+                        self.gateway.admitted_model(MODEL)
+            self.assertNotIn("synthetic-admin-key", str(run.call_args_list))
+            self.assertTrue(all("127.0.0.1:1317" in call.args[0][-1] for call in run.call_args_list))
+
+    def test_model_only_rejects_native_funding_owner(self):
+        with self.assertRaisesRegex(ValueError, "native rotation disabled"):
+            settings.configure(self.gateway, self.journal("native-owner"), MODEL,
+                               settings.instances.preview.digest(self.value), True, True)
         self.assertEqual(self.posts, 0)
 
     def test_uncertain_post_is_never_retried_or_restored(self):
