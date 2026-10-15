@@ -42,7 +42,16 @@ def sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def definition(path: Path = DEFINITION) -> dict:
+def configured_definition() -> Path:
+    name = os.environ.get("GONKA_PR_UNIFIED_DEFINITION", DEFINITION.name)
+    path = (ROOT / "releases" / name).resolve()
+    require(path.parent == (ROOT / "releases").resolve() and path.is_file(),
+            "configured unified candidate definition is not a reviewed release file")
+    return path
+
+
+def definition(path: Path | None = None) -> dict:
+    path = path or configured_definition()
     value = json.loads(path.read_text())
     require(set(value) == {
         "schema_version", "classification", "source_repository", "source_pr", "source_commit", "source_tree",
