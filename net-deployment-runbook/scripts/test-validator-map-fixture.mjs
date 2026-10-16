@@ -924,7 +924,7 @@ try {
     ) && longIdentityContract && inactiveCpocHidden;
     const devshardValue = document.querySelector('#devshard-versions');
     const devshardContract =
-      devshardValue?.textContent?.trim() === "v3 · v4 · v5" &&
+      JSON.stringify([...devshardValue.querySelectorAll('li')].map(item => item.textContent.trim())) === JSON.stringify(["v3 333333", "v4 444444", "v5 555555"]) &&
       devshardValue.title.includes("v3: " + "3".repeat(64)) &&
       devshardValue.title.includes("v4: " + "4".repeat(64)) &&
       devshardValue.title.includes("v5: " + "5".repeat(64));
@@ -1917,7 +1917,7 @@ try {
       });
       const overlappingState = JSON.parse(overlappingResult.value);
       const singleton = overlappingState.markers.find((marker) =>
-        marker.label?.startsWith("JN98; 1 node;"),
+        marker.label?.startsWith("JN88; 1 node;"),
       );
       const prague = overlappingState.markers.find((marker) =>
         marker.label?.startsWith("JO70; 4 nodes;"),
@@ -1974,7 +1974,7 @@ try {
         );
       };
       const assertOverlappingPointers = async () => {
-        for (const expected of ["JN98", "JO70"]) {
+        for (const expected of ["JN88", "JO70"]) {
           await call("Runtime.evaluate", {
             expression:
               'document.querySelector(".validator-map-tooltip-close")?.click()',

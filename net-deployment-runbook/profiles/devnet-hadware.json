@@ -130,6 +130,6 @@
       "models_endpoint": "/v1/models",
       "checks": ["model_load", "models_endpoint", "completion", "vram_evidence"]
     },
-    "description": "Model assignments below come from the effective network epoch, check the live model registry for registered model requirements, the hardware baseline is not a guarantee for every model, gdc qualification loads the selected model, checks /v1/models, completes an inference request, and records VRAM evidence, allocation alone does not prove current inference availability"
+    "description": "Choose MODEL_ID from the live model registry, JOIN rejects an ID absent from the registry before Host preparation"
   }
 }

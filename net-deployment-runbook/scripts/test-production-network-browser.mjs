@@ -125,14 +125,45 @@ try {
   assert.match(current.node,/VALIDATING/);
   assert.match(current.node,/Fixture GPU/);
   assert.equal(current.chain,"observed");
+  const qthGroups = await evaluate(`(() => {
+    const nodes = [
+      {ownerAddress:"node0",gpuCount:1,geo:{lat:39.0997282,lon:-94.5785689}},
+      {ownerAddress:"node5",gpuCount:1,geo:{lat:39.0997282,lon:-94.5785689,locationId:"provider-a"}},
+      {ownerAddress:"node11",gpuCount:2,geo:{lat:39.1141718,lon:-94.6274601,locationId:"provider-b"}},
+      {ownerAddress:"neighbor",gpuCount:1,geo:{lat:39.1,lon:-96.01}},
+    ];
+    const groups = groupValidators(nodes);
+    const em29 = groups.find(group => group.label === "EM29");
+    const retained = groupValidators([nodes[2]]).find(group => group.label === "EM29");
+    return {groups:groups.length,key:em29.key,members:em29.validators.map(node => node.ownerAddress).sort(),
+      gpus:em29.validators.reduce((sum,node) => sum + node.gpuCount,0),
+      stable:em29.lat === retained.lat && em29.lon === retained.lon};
+  })()`);
+  assert.deepEqual(qthGroups, {groups:2,key:"qth:EM29",members:["node0","node11","node5"],gpus:4,stable:true});
+  const qthMarker = await evaluate(`(() => {
+    const nodes = [["node0",39.0997282,-94.5785689,1],["node5",39.0997282,-94.5785689,1],["node11",39.1141718,-94.6274601,2]]
+      .map(([name,latitude,longitude,count]) => {
+        cardHardwareInventory.set(name,{state:"observed",nodes:[{host:"inference",hardware:[{type:"Fixture GPU | 24GB",count}]}]});
+        return {name,address:name,isOnline:true,participantState:"ACTIVE",geo:{latitude,longitude}};
+      });
+    validatorMapController.update(nodes);
+    const markers = [...document.querySelectorAll('.validator-marker')];
+    const result = markers.map(marker => marker.getAttribute('aria-label'));
+    validatorMapController.update(observedNodes);
+    for (const node of nodes) cardHardwareInventory.delete(node.address);
+    return result;
+  })()`);
+  assert.equal(qthMarker.length,1);
+  assert.match(qthMarker[0],/^EM29; 3 nodes; 4 GPUs;/);
+  assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('#devshard-versions li'), item => item.textContent)"), ["v6 cccccc"]);
   const modelText = () => evaluate("document.querySelector('#nodes [data-k=\"models\"]').textContent");
   assert.equal(await evaluate("document.querySelector('#model-assignments')"), null);
   assert.equal(await evaluate("document.querySelector('#model-id').textContent"), "Qwen/Allocated");
-  assert.equal(await modelText(), "Qwen/Allocated 72PW");
+  assert.equal(await modelText(), "Allocated");
   await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{...publicChainState.model_assignments,
     groups:[...publicChainState.model_assignments.groups,{model_id:"Qwen/Second",state:"observed",participants:[{address:"gonka1fixtureaccount",weight:"1"}]}]}})`);
   assert.equal(await evaluate("document.querySelectorAll('#nodes [data-k=\"models\"] li').length"), 2, "one participant can have multiple models");
-  assert.equal(await modelText(), "Qwen/Allocated 72PWQwen/Second 1PW");
+  assert.equal(await modelText(), "AllocatedSecond");
   assert.doesNotMatch(await modelText(), /old-model|fixture-model/, "configured and registered models must not replace effective allocations");
   await evaluate(`applyPublicChainState({...publicChainState,participants:[...publicChainState.participants,
     {address:"gonka1historical",inference_url:"https://node0.gonka-dev.net",status:"INACTIVE"}]})`);
@@ -141,7 +172,7 @@ try {
     validators:[{address:"${validator}",voting_power:"72",validator_key:"current-key"}],
     participants:[{address:"gonka1historical",inference_url:"https://node0.gonka-dev.net",status:"INACTIVE",validator_key:"old-key"},
       {address:"gonka1fixtureaccount",inference_url:"https://node0.gonka-dev.net",status:"ACTIVE",validator_key:"current-key"}]})`);
-  assert.equal(await modelText(), "Qwen/Allocated 72PWQwen/Second 1PW", "current consensus key must disambiguate historical Host URLs");
+  assert.equal(await modelText(), "AllocatedSecond", "current consensus key must disambiguate historical Host URLs");
   await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{state:"observed",epoch_index:"6",groups:[]}})`);
   assert.equal(await modelText(), "No allocated models");
   await evaluate(`applyPublicChainState({...publicChainState,model_assignments:{state:"partial",epoch_index:"6",groups:[]}})`);

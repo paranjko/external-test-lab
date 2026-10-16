@@ -75,6 +75,22 @@ If this capability check fails, the static release is not published
 
 Updating the observer adapter and its Caddy and systemd wiring requires a separate, explicitly scoped operator upgrade
 
+## Preview participant inventory
+
+Preview identifies participants by their registry account address, not by an IP, domain name or operator alias, so multiple accounts may share an endpoint
+
+The inventory receipt retains each registered endpoint and its policy result, public IPv4 addresses and domains resolving only to public IPv4 addresses are eligible, while invalid, private, unresolved or unsupported endpoints retain an exclusion reason without failing the complete build
+
+Eligibility is not a serving-health check or permission to open a proxy route, the build never requests participant endpoints and the trusted proxy retains its separate fixed service routes and connection-time DNS checks
+
+The preview observer reads participant identities and hardware from the chain registry independently of the service-route inventory
+
+The trusted inventory builder collects GeoIP into a separate location catalog for all eligible participant endpoints, including IP addresses, without adding proxy routes
+
+The map uses this catalog when a live observation has no coordinates, location lookup failures remain recorded as `geo_error` in the inventory receipt
+
+The observation guard accepts multiple public IPv4 answers for the GeoIP provider, checks every address and pins the connection to one validated address, this guard change requires a separate trusted preview-platform rollout
+
 ## Preview cleanup
 
 Closing or merging a same-repository PR, or converting it to draft, removes its isolated preview using the current GitHub PR state

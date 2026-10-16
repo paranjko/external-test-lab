@@ -379,15 +379,15 @@ hero_end_line="$(grep -n '</header>' "$ROOT/04-ops/site/index.html" | head -n1 |
 [[ "$join_section_line" -gt "$hero_end_line" ]]
 grep -Fq 'How to Join node' "$ROOT/04-ops/site/index.html"
 grep -Fq 'alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"' "$ROOT/04-ops/site/index.html"
-grep -Fq 'gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;' "$ROOT/04-ops/site/index.html"
+grep -Fq 'gdc host join --model=&lt;MODEL_ID&gt; --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;' "$ROOT/04-ops/site/index.html"
 grep -Fq 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host' "$ROOT/04-ops/site/index.html"
 grep -Fq '<summary><span class="join-requirements-toggle">Minimum Host requirements</span> <span class="join-requirements-guide">For more details, read <a href="https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host"' "$ROOT/04-ops/site/index.html"
 ! grep -Fq '<p>For more details, read' "$ROOT/04-ops/site/index.html"
 node "$ROOT/scripts/verify-devnet-hardware-profile.mjs" \
   "$ROOT/profiles/devnet-hadware.json" "$ROOT/04-ops/site/index.html"
 grep -Fq 'https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all' "$ROOT/04-ops/site/index.html"
-grep -Fq 'qualification loads the selected model, checks <code>/v1/models</code>, completes an inference request, and records VRAM evidence' "$ROOT/04-ops/site/index.html"
-grep -Fq 'allocation alone does not prove current inference availability</p>' "$ROOT/04-ops/site/index.html"
+grep -Fq 'JOIN rejects an ID absent from the registry before Host preparation' "$ROOT/04-ops/site/index.html"
+grep -Fq '<span id="model-label">Allocated models</span><ul id="model-id" class="model-list">' "$ROOT/04-ops/site/index.html"
 ! grep -Fq 'Community DevNet currently runs' "$ROOT/04-ops/site/index.html"
 test_tmp="$(mktemp -d)"
 rendered_site_index="$test_tmp/site-index.html"

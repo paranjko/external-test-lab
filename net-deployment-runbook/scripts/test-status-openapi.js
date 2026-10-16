@@ -42,6 +42,14 @@ assert.ok(
   'the transparent Host proxy is not a public status API contract',
 );
 assert.match(docs, /SwaggerUIBundle/);
+assert.deepEqual(
+  [...docs.matchAll(/<link\b[^>]*rel="stylesheet"[^>]*href="([^"]+)"/g)].map((match) => match[1]),
+  ['/vendor/swagger-ui/swagger-ui.css'],
+  'status documentation must not load the main site theme',
+);
+assert.match(docs, /color-scheme:\s*light/);
+assert.match(docs, /body\s*\{[^}]*background:\s*#fff\s*;/);
+assert.doesNotMatch(docs, /class="topbar"/);
 assert.match(docs, /\/status\/openapi\.json/);
 assert.match(docs, /supportedSubmitMethods: \["get"\]/);
 assert.equal(packageJson.devDependencies['swagger-ui-dist'], '5.32.0');

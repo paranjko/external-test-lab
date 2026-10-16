@@ -23,9 +23,18 @@ input_json="$(sed -n 's/^window\.GDC_CONFIG = //; s/;$//; p' "$renderer_config")
 [[ -n "$input_json" ]] || die 'renderer configuration does not contain window.GDC_CONFIG'
 
 inventory_catalog='[]'
+location_catalog='[]'
 inventory_receipt_sha256=''
 if [[ -n "$inventory_receipt" ]]; then
   inventory_receipt_sha256="$(sha256sum "$inventory_receipt" | awk '{print $1}')"
+  location_catalog="$(jq -ce '
+    .location_catalog // [] |
+    if type == "array" and all(.[];
+      (.publicHost | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9.-]{0,253}$")) and
+      (.geo == null or ((.geo.latitude | type == "number" and . >= -90 and . <= 90) and
+        (.geo.longitude | type == "number" and . >= -180 and . <= 180))))
+    then map({publicHost,geo,geo_error}) else error("invalid location catalog") end
+  ' "$inventory_receipt")" || die 'inventory receipt has an unsafe location catalog'
   inventory_catalog="$(jq -ce '
     .node_catalog as $catalog |
     if (
@@ -40,7 +49,7 @@ if [[ -n "$inventory_receipt" ]]; then
   ' "$inventory_receipt")" || die 'inventory receipt has an unsafe node catalog'
 fi
 
-config_json="$(jq -ce --arg prefix "/$preview_number/status" --argjson inventory "$inventory_catalog" '
+config_json="$(jq -ce --arg prefix "/$preview_number/status" --argjson inventory "$inventory_catalog" --argjson locations "$location_catalog" '
   if (
     (.chainId | (type == "string") and (length > 0)) and
     (.model | (type == "string" or type == "number")) and
@@ -58,6 +67,7 @@ config_json="$(jq -ce --arg prefix "/$preview_number/status" --argjson inventory
     (($inventory | length) == 0 or (([.nodeCatalog[].name] | sort) == ([$inventory[].name] | sort)))
   ) then
     .statusBase = $prefix |
+    .locationCatalog = $locations |
     .nodeCatalog |= map(
       if ($inventory | length) > 0 then
         . as $node |

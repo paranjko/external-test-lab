@@ -14,7 +14,7 @@ cat >"$tmp/rendered.js" <<'JS'
 window.GDC_CONFIG = {"chainId":"gonka-devnet-community","model":"Qwen","gatewayNode":"node4","chainRpcHost":"node4.gonka-dev.net","nodes":[{"name":"node4","publicHost":"node4.gonka-dev.net"}],"nodeCatalog":[{"name":"node4","publicHost":"node4.gonka-dev.net","statusBase":"/status/node4"}]};
 JS
 cat >"$tmp/inventory.json" <<'JSON'
-{"node_catalog":[{"name":"node4","publicHost":"node4.gonka-dev.net","geo":{"latitude":45.5234482,"longitude":-122.6762071}}]}
+{"node_catalog":[{"name":"node4","publicHost":"node4.gonka-dev.net","geo":{"latitude":45.5234482,"longitude":-122.6762071}}],"location_catalog":[{"publicHost":"node11.gonka-dev.net","geo":{"latitude":39.1141718,"longitude":-94.6274601}},{"publicHost":"31.192.105.46","geo":{"latitude":55.75,"longitude":37.61}}]}
 JSON
 
 "$ROOT/scripts/prepare-isolated-preview-runtime-config.sh" "$tmp/release" "$tmp/rendered.js" 172 "$revision" "$tmp/inventory.json"
@@ -28,6 +28,8 @@ jq -e '
   .chainRpcOrigin == "/172/status/node4" and
   .nodeCatalog[0].statusBase == "/172/status/node4" and
   .nodeCatalog[0].geo.latitude == 45.5234482
+  and (.nodeCatalog | length) == 1
+  and [.locationCatalog[].publicHost] == ["node11.gonka-dev.net", "31.192.105.46"]
 ' < <(sed -n 's/^window\.GDC_CONFIG = //; s/;$//; p' "$tmp/release/config.js") >/dev/null
 jq -e --arg revision "$revision" '
   .schema_version == 1 and .source_revision == $revision and .preview_number == 172 and
