@@ -1,0 +1,43 @@
+services:
+  mlnode4b:
+    image: ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1
+    restart: unless-stopped
+    mem_limit: 24g
+    cpus: 8
+    shm_size: 1g
+    environment:
+      HF_HOME: /root/.cache
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      MLNODE_VLLM_MODULE: gonka_poc.entrypoint.api_router
+      PYTHONPATH: /app:/app/packages/api/src
+    volumes:
+      - type: bind
+        source: ${HF_CACHE_ROOT:?set the existing Host cache root}/hub
+        target: /root/.cache/hub
+        read_only: true
+    command: [uvicorn, api.app:app, --host=0.0.0.0, --port=8080]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    networks:
+      host:
+        aliases: [gdc-dual-4b-ml]
+  router4b:
+    image: nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 1
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      host:
+        aliases: [gdc-dual-4b-router]
+networks:
+  host:
+    external: true
+    name: ${HOST_DOCKER_NETWORK:?set the existing Host Docker network}
