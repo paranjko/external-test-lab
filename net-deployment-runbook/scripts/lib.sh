@@ -910,6 +910,7 @@ write_inventory() {
     inventory_value GRAFANA_HOST "$GRAFANA_HOST"
     inventory_value ACME_EMAIL "$ACME_EMAIL"
     inventory_value MONITORING_CIDR "$MONITORING_CIDR"
+    inventory_value GDC_MONITORING_DOCKER_CIDR "${GDC_MONITORING_DOCKER_CIDR:-}"
     inventory_value PUBLIC_EDGE_CIDR "$PUBLIC_EDGE_CIDR"
     inventory_value GDC_NODE_ALIASES "$GDC_NODE_ALIASES"
     inventory_value GDC_NODE_PUBLIC_HOSTS "$GDC_NODE_PUBLIC_HOSTS"

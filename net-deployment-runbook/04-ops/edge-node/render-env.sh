@@ -124,9 +124,11 @@ esac
 # private /gateway-b handoff.
 gateway_b_upstream='http://127.0.0.1:9'
 gateway_b_readiness_upstream='http://127.0.0.1:9'
-monitoring_docker_cidr="${GDC_MONITORING_DOCKER_CIDR:-}"
-[[ "$monitoring_docker_cidr" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$ ]] \
-  || { echo 'GDC_MONITORING_DOCKER_CIDR must be the explicit Prometheus Docker IPv4 CIDR' >&2; exit 2; }
+if [[ "${GDC_JOIN_ROLE_INPUT:-false}" != true && -z "${GDC_MONITORING_DOCKER_CIDR:-}" ]]; then
+  echo 'GDC_MONITORING_DOCKER_CIDR must be the explicit Prometheus Docker IPv4 CIDR' >&2
+  exit 2
+fi
+monitoring_docker_cidr="$(bash "$ROOT/scripts/join-monitoring-cidr.sh")"
 if [[ -n "${GDC_GATEWAY_METRICS_TARGETS:-}" ]]; then
   gateway_metrics_port="$(jq -er --arg node "$NODE" '
     if type != "array" or length == 0 then error("must be a non-empty array") else . end

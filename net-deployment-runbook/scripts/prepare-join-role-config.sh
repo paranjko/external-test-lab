@@ -34,6 +34,10 @@ if [[ -n "$GPU_SSH_ALIAS" ]]; then
   [[ "$GPU_SSH_ALIAS" =~ ^[a-z0-9][a-z0-9_-]*$ && "$GPU_SSH_ALIAS" != "$SSH_ALIAS" ]] || { echo 'invalid JOIN GPU SSH alias' >&2; exit 2; }
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -n "$MONITORING_REGISTRY_HOST" ]]; then
+  bash "$ROOT/scripts/register-join-monitoring-targets.sh" --registry-host "$MONITORING_REGISTRY_HOST" --check
+fi
+monitoring_docker_cidr="$(bash "$ROOT/scripts/join-monitoring-cidr.sh" "$MONITORING_REGISTRY_HOST")"
 "$ROOT/scripts/network-bootstrap.sh" verify "$BOOTSTRAP_FILE" >/dev/null
 if [[ -z "$PUBLIC_HOST" ]]; then
   PUBLIC_HOST="$("$ROOT/scripts/detect-public-host.sh" "$SSH_ALIAS")"
@@ -78,6 +82,7 @@ umask 077
   printf 'SEED_NODE_P2P_URL=%q\n' "$SEED_NODE_P2P_URL"
   printf 'GDC_JOIN_ROLE_INPUT=true\n'
   printf 'GDC_JOIN_MONITORING_REGISTRY_HOST=%q\n' "$MONITORING_REGISTRY_HOST"
+  printf 'GDC_MONITORING_DOCKER_CIDR=%q\n' "$monitoring_docker_cidr"
   if [[ -n "${GDC_MONITORING_HOST:-}" ]]; then
     printf 'GDC_MONITORING_HOST=%q\n' "$GDC_MONITORING_HOST"
   fi

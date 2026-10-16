@@ -600,7 +600,7 @@ test-ci-site: test-command-dependency-contract test-isolated-preview-ci-artifact
 	@./scripts/test-telegram-consumer-probe-loop.sh
 	@$(MAKE) test-telegram-delivery
 
-test-ci-join: test-command-dependency-contract
+test-ci-join: test-command-dependency-contract test-register-join-monitoring-targets test-join-monitoring-runtime
 	@bash ./scripts/test-join-model-selection.sh
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
@@ -869,6 +869,10 @@ test-join-resume-caught-up-canary:
 
 test-register-join-monitoring-targets:
 	@bash ./scripts/test-register-join-monitoring-targets.sh
+
+.PHONY: test-join-monitoring-runtime
+test-join-monitoring-runtime: bats-docker-image
+	@bash ./scripts/test-join-monitoring-runtime.sh
 
 .PHONY: test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 test-registration-failover:
