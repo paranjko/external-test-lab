@@ -60,7 +60,9 @@ alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
 # export GDC_HOME=/absolute/path
 
 gdc network bootstrap verify gonka-devnet-community.bootstrap.json
-gdc host join --bootstrap-file gonka-devnet-community.bootstrap.json --public-host <IP_or_DOMAIN> <ssh-alias>
+gdc host join --model=<MODEL_ID> --bootstrap-file gonka-devnet-community.bootstrap.json --public-host <IP_or_DOMAIN> <ssh-alias>
+# Select a registered model by its exact chain ID
+gdc host join --model=Qwen/Qwen2.5-7B-Instruct --bootstrap-file gonka-devnet-community.bootstrap.json --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
 `gdc network bootstrap verify --online <file>` is an optional live check: it
@@ -79,7 +81,7 @@ execute shell content directly from a URL.
 For Community DevNet, the simple form downloads the same bootstrap document:
 
 ```bash
-gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>
+gdc host join --model=<MODEL_ID> --public-host <IP_or_DOMAIN> <ssh-alias>
 ```
 
 ## Restore a cold account
@@ -135,6 +137,8 @@ observations and confirms them again immediately before preparation. The
 default deadline is 30 minutes; use `--preflight-deadline 60m` deliberately.
 `--release` and `--composition` are intentionally not accepted by JOIN. A
 runtime change restarts preflight without touching the Host.
+
+JOIN requires `--model=<model_id>`, verifies the ID in `/models_all`, then selects its matching local profile only when its immutable source matches the registry and `MODEL_MIN_VRAM_MIB` fits the detected GPU
 
 If driver installation needs a reboot, JOIN stops with exit 194. Reboot the Host
 listed under `REBOOT`, preserve required local evidence and keys, then remove

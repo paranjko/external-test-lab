@@ -16,9 +16,18 @@ const nodeId = 'a'.repeat(40);
 const validator = 'B'.repeat(40);
 const requests = [];
 const websocketClients = new Set();
+const locations = [
+  ['node0.gonka-dev.net', 39.0997282, -94.5785689],
+  ['node5.gonka-dev.net', 39.0997282, -94.5785689],
+  ['node11.gonka-dev.net', 39.1141718, -94.6274601],
+  ['node2.gonka-dev.net', 52.374028, 4.8896881],
+  ['node3.gonka-dev.net', 51.5127883, -0.0918432],
+  ['31.192.105.46', 55.7520384, 37.6178147],
+].map(([publicHost, latitude, longitude]) => ({publicHost,
+  geo: {latitude, longitude, source: 'ip-geolocation', accuracy: 'city'}}));
 const snapshot = () => {
   const now = new Date().toISOString();
-  return {
+  const result = {
     schema_version: 1,
     chain_id: 'fixture-chain',
     observed_at: now,
@@ -56,6 +65,23 @@ const snapshot = () => {
       },
     },
   };
+  const template = result.nodes[0];
+  for (const [index, location] of locations.entries()) {
+    if (index === 0) continue;
+    const node = structuredClone(template);
+    node.node_id = String(index).repeat(40);
+    node.node_name = location.publicHost.split('.')[0];
+    node.dapi_url = `https://${location.publicHost}`;
+    node.components.chain_rpc.p2p_node_id = node.node_id;
+    node.components.chain_rpc.validator_address = String(index).repeat(40);
+    result.nodes.push(node);
+    result.chain.validators.push({address: node.components.chain_rpc.validator_address, voting_power: '72'});
+    const address = `gonka1fixture${index}`;
+    result.chain.participants.push({address, inference_url: node.dapi_url, status: 'ACTIVE'});
+    result.chain.hardware_nodes.push({address, nodes: [{local_id:'fixture', host:'inference', port:'8080',
+      version:'3.0.16', hardware:[{type:'Fixture GPU | 24GB', count:index === 2 ? 2 : 1}]}]});
+  }
+  return result;
 };
 const gatewayUnavailable = JSON.stringify({ error: 'preview_gateway_status_unavailable' });
 const server = createServer(async (request, response) => {
@@ -70,6 +96,7 @@ const server = createServer(async (request, response) => {
       grafanaInference: 'https://grafana.gonka-dev.net/d/gdc-inference/?kiosk',
       publicBootstrap: false, nodes: [],
       nodeCatalog: [{ name: 'node0', statusAlias: 'node0', publicHost: 'node0.gonka-dev.net' }],
+      locationCatalog: locations,
     })}`);
   } else if (pathname === '/status/network') {
     response.setHeader('Content-Type', 'application/json');
@@ -145,6 +172,10 @@ try {
   });
   assert.equal(exitCode, 0, `capture helper rejected the expected preview contract\nstdout:\n${stdout}\nstderr:\n${stderr}`);
   const report = JSON.parse(await readFile(`${output}.json`, 'utf8'));
+  assert.equal(report.map.hosts, locations.length, 'all observed nodes need map locations independently of service routes');
+  assert.equal(report.map.groups, 4, 'Kansas City nodes must share one displayed square');
+  assert(report.map.markers.some(marker => marker.count === 3 && marker.gpuCount === 4), 'EM29 must include node0, node5 and node11 with four GPUs');
+  assert(report.nodes.some(node => node.name === '31.192.105.46'), 'IPv4 must not be truncated to its first octet');
   assert.deepEqual(report.screenshot_scroll, { x: 0, y: 0 }, 'capture helper did not honor top-of-page screenshot position');
   assert(requests.includes('/status/network/ws'), 'fixture did not exercise the live network WebSocket');
   for (const path of ['/status/gateway/v1/status', '/status/gateway-health', '/status/gateway/v1/admission-status']) {

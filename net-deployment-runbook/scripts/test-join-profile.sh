@@ -108,3 +108,30 @@ grep -Fq 'invalid closed v1 shape' "$tmp/missing-envelope.err"
 if "$TOOL" create --observation "$tmp/observation.json" --spec "$tmp/spec.json" --operation restore --run-id fixture-run --output "$tmp/restore.json" >"$tmp/restore.out" 2>"$tmp/restore.err"; then echo 'restore accepted generate identity' >&2; exit 1; fi
 grep -Fq 'not bound exactly' "$tmp/restore.err"
 printf 'PASS Join Profile is observation-bound, deterministic and tamper-evident\n'
+
+# Generated participant profiles do not select a gateway protocol
+cat >"$tmp/edge-inventory.env" <<'EOF'
+GDC_NODE_ALIASES=gdc-node9
+GDC_NODE_PUBLIC_HOSTS=gdc-node9=node9.example.test
+GDC_NODE_P2P_PORTS=gdc-node9=5000
+GDC_NODE_ML_HOSTS=
+GDC_JOIN_ROLE_INPUT=true
+GDC_JOIN_NETWORK_HOST=seed.example.test
+MONITORING_CIDR=192.0.2.44/32
+GDC_MONITORING_DOCKER_CIDR=172.21.0.0/16
+PUBLIC_EDGE_CIDR=192.0.2.10/32
+EOF
+mkdir -p "$tmp/edge-home"
+for profile in profile legacy; do
+  for inherited in absent present; do
+    args=()
+    [[ "$inherited" == absent ]] || args+=(GDC_GATEWAY_VERSION=v6 DEVSHARD_PROTOCOL_VERSION=v4)
+    env -i HOME="$tmp/edge-home" PATH="$PATH" "${args[@]}" \
+      "$ROOT/04-ops/edge-node/render-env.sh" --inventory "$tmp/edge-inventory.env" \
+      --join-profile "$tmp/$profile.json" --node-name gdc-node9 --output "$tmp/edge-$profile-$inherited.env"
+    grep -Fxq 'GDC_GATEWAY_ADMISSION_SELECTED_VERSION=' "$tmp/edge-$profile-$inherited.env"
+    grep -Fxq 'GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON={}' "$tmp/edge-$profile-$inherited.env"
+    grep -Fxq 'PUBLIC_EDGE=false' "$tmp/edge-$profile-$inherited.env"
+  done
+done
+printf 'PASS current and historical JOIN edge renders are independent of gateway protocol settings\n'

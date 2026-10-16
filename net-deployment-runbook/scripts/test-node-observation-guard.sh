@@ -5,7 +5,14 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 guard="$root/ops/preview/node-observation-guard.mjs"
 
 NODE_GUARD_NO_LISTEN=1 node --input-type=module -e '
-  const { publicIpv4, validPath, validBootstrapPath, validGeoPath } = await import(process.argv[1]);
+  const { publicIpv4, validPath, validBootstrapPath, validGeoPath, resolvedPublicIpv4 } = await import(process.argv[1]);
+  const publicRecords = async () => [{address:"172.66.175.107"}, {address:"104.20.44.133"}];
+  if (await resolvedPublicIpv4("ipwho.is", publicRecords) !== "172.66.175.107") throw new Error("public CDN DNS rejected");
+  for (const records of [[], [{address:"8.8.8.8"}, {address:"127.0.0.1"}]]) {
+    let rejected = false;
+    try { await resolvedPublicIpv4("fixture", async () => records); } catch { rejected = true; }
+    if (!rejected) throw new Error("unsafe DNS accepted");
+  }
   const expected = [
     ["204.12.223.90", true], ["10.0.0.1", false], ["127.0.0.1", false],
     ["169.254.1.1", false], ["172.16.0.1", false], ["192.168.1.1", false],

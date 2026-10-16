@@ -20,6 +20,8 @@ validate() {
     (.spec.target.accelerator | type == "object" and
       ((keys | sort) == ["compose_variant","qualification_backend","schema_version","vendor"] and
        .schema_version == 1 and .vendor == "nvidia" and .compose_variant == "nvidia" and .qualification_backend == "cuda" or
+       (keys | sort) == ["compose_variant","qualification_backend","schema_version","vendor","vram_mib"] and
+       .schema_version == 1 and .vendor == "nvidia" and .compose_variant == "nvidia" and .qualification_backend == "cuda" and (.vram_mib | type == "number" and floor == . and . > 0) or
        .schema_version == 1 and .vendor == "amd" and .architecture == "gfx1201" and .pci_device_id == "0x7550" and .compose_variant == "amd" and .qualification_backend == "rocm" and
        (.profile_sha256 | test("^[a-f0-9]{64}$")) and
        (.host_provisioning | type == "object" and (keys | sort) == ["installer_package_version","installer_sha256","installer_url","ubuntu_version_id","usecase"] and
@@ -88,7 +90,8 @@ validate() {
       || ! bash "$scripts/resolve-bootstrap-software.sh" components "$software_input" "$software_components" >/dev/null \
       || ! jq -e --slurpfile compiled "$software_components" '
         .spec.components == ($compiled[0] | {core,dapi}) and
-        .spec.deployment.host_envelope == $compiled[0].host_envelope and
+        (.spec.deployment.host_envelope | del(.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size)) ==
+          ($compiled[0].host_envelope | del(.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size)) and
         .spec.target.accelerator.qualification_backend == .spec.deployment.software.accelerator and
         .spec.components.core.observed == (.spec.deployment.software.components.node | {version:(.version|ltrimstr("v")),commit}) and
         .spec.components.dapi.observed == (.spec.deployment.software.components.api | {version:(.version|ltrimstr("v")),commit})

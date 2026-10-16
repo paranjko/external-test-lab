@@ -195,6 +195,44 @@ class BootstrapJoin(unittest.TestCase):
                 self.run_command(*command, success=False)
                 self.assertEqual(os.readlink(current), "upgrades/next")
 
+    def test_host_preparation_installs_missing_unzip_and_keeps_installed_package(self):
+        prepare = (ROOT / "00-host-prep/prepare-host.sh").read_text()
+        start = prepare.index("ensure_packages() {")
+        end = prepare.index("\n# A reboot marker", start)
+        script = r'''
+set -Eeuo pipefail
+installed=false
+status() { :; }
+dpkg-query() {
+  if [[ "${!#}" == unzip && "$installed" == false ]]; then return 1; fi
+  printf 'installed\n'
+}
+apt-get() {
+  printf '%s\n' "$*" >>"$HOME/apt.log"
+  case "$*" in
+    update) ;;
+    'install -y --no-install-recommends unzip') installed=true ;;
+    *) echo "unexpected apt-get: $*" >&2; return 99 ;;
+  esac
+}
+'''
+        block = prepare[start:end]
+        self.run_command("bash", "-c", script + block + "\n" + block)
+        self.assertEqual((self.tmp / "apt.log").read_text().splitlines(),
+                         ["update", "install -y --no-install-recommends unzip"])
+
+    def test_missing_unzip_fails_before_download_or_staging(self):
+        self.profile.write_text("{}")
+        destination = self.tmp / "staged"
+        destination.mkdir()
+        self.env["PATH"] = str(self.bin)
+        result = self.run_command("/bin/bash", ROOT / "02-node/prepare-bootstrap-runtime.sh",
+                                  self.profile, destination, success=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Bootstrap runtime requires unzip on the target Host", result.stderr)
+        self.assertNotIn("unexpected external call", result.stderr)
+        self.assertEqual(list(destination.iterdir()), [])
+
     def test_archive_digest_and_paths_are_checked_before_installation(self):
         profile = self.compile()
         archive = self.tmp / "malicious.zip"

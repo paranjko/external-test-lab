@@ -15,7 +15,7 @@ grep -Fq '  ./gdc.sh --release v2026.07.23 genesis' "$tmp/direct-help"
 
 for contract in \
   './gdc.sh --release v2026.07.23 genesis <SSH_ALIAS> [--public-host <DNS>]' \
-  './gdc.sh host join [--preflight] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
+  './gdc.sh host join --model <MODEL_ID> [--preflight] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
   './gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>' \
   './gdc.sh host backup <SSH_ALIAS>' \
   './gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>' \
@@ -101,7 +101,7 @@ grep -Fq 'GDC_NODE_ML_HOSTS=%q' "$ROOT/scripts/prepare-join-role-config.sh"
 grep -Fq 'GDC_JOIN_SKIP_QUALIFICATION:-false' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'GDC_JOIN_VERIFICATION:-false' "$ROOT/scripts/phase-join.sh"
 grep -Fq 'ML qualification explicitly disabled by the joining Host operator' "$ROOT/scripts/phase-join.sh"
-grep -Fq 'gdc host join --public-host <IP_or_DOMAIN> <ssh-alias>' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'gdc host join --model=<MODEL_ID> --public-host <IP_or_DOMAIN> <ssh-alias>' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'gdc host join --restore <validator-backup.tar> --public-host <IP_or_DOMAIN> <ssh-alias>' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'gdc host join --verification --public-host <IP_or_DOMAIN> <ssh-alias>' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'must not create a second' "$ROOT/ROLE-JOIN.md"
@@ -121,20 +121,20 @@ grep -Fq 'https://gonka-dev.net/gonka-testnet/bootstrap.json' "$ROOT/ROLE-JOIN.m
 grep -Fq 'inspect it before applying it to an operator-owned local environment.' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'gh attestation verify v1.bootstrap.schema.json -R paranjko/external-test-lab' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'gdc network bootstrap verify gonka-devnet-community.bootstrap.json' "$ROOT/ROLE-JOIN.md"
-grep -Fq 'gdc host join --bootstrap-file gonka-devnet-community.bootstrap.json' "$ROOT/ROLE-JOIN.md"
+grep -Fq 'gdc host join --model=<MODEL_ID> --bootstrap-file gonka-devnet-community.bootstrap.json' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'JOIN_PASS' "$ROOT/ROLE-JOIN.md"
 ! grep -Fq 'evidence bundle' "$ROOT/ROLE-JOIN.md"
 grep -Fq 'GDC_JOIN_BOOTSTRAP_SHA256' "$ROOT/scripts/prepare-join-role-config.sh"
 grep -Fq 'network-bootstrap.sh" verify' "$ROOT/scripts/fetch-network-bootstrap.sh"
 ! grep -Fq 'test-join-role-refresh.sh' "$ROOT/Makefile"
 grep -Fq '^[a-z0-9][a-z0-9_-]*$' "$ROOT/gdc.sh"
-if GDC_HOME="$tmp" "$ROOT/gdc.sh" host join --chain-id ../unsafe --public-host node2.example.net gdc-node2 >"$tmp/unsafe-chain.stdout" 2>"$tmp/unsafe-chain.stderr"; then
+if GDC_HOME="$tmp" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --chain-id ../unsafe --public-host node2.example.net gdc-node2 >"$tmp/unsafe-chain.stdout" 2>"$tmp/unsafe-chain.stderr"; then
   echo 'JOIN CLI accepted an unsafe chain ID' >&2
   exit 1
 fi
 grep -Fq 'host join --chain-id requires a safe chain identifier' "$tmp/unsafe-chain.stderr"
 [[ ! -e "$tmp/gdc-node2/state/network-bootstrap.json" ]]
-if GDC_HOME="$tmp" "$ROOT/gdc.sh" host join --chain-id=../unsafe --public-host node2.example.net gdc-node2 >"$tmp/unsafe-chain-equals.stdout" 2>"$tmp/unsafe-chain-equals.stderr"; then
+if GDC_HOME="$tmp" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --chain-id=../unsafe --public-host node2.example.net gdc-node2 >"$tmp/unsafe-chain-equals.stdout" 2>"$tmp/unsafe-chain-equals.stderr"; then
   echo 'JOIN CLI accepted an unsafe --chain-id= value' >&2
   exit 1
 fi
@@ -171,8 +171,8 @@ esac
 EOF
 chmod 0755 "$chain_probe/bin/ssh"
 for requested_chain in gonka-devnet-community gonka-testnet; do
-  args=(host join --chain-id "$requested_chain" --public-host node2.example.net gdc-node2)
-  [[ "$requested_chain" == gonka-devnet-community ]] && args=(host join --public-host node2.example.net gdc-node2)
+  args=(host join --model=Qwen/Qwen3-0.6B --chain-id "$requested_chain" --public-host node2.example.net gdc-node2)
+  [[ "$requested_chain" == gonka-devnet-community ]] && args=(host join --model=Qwen/Qwen3-0.6B --public-host node2.example.net gdc-node2)
   if PATH="$chain_probe/bin:$PATH" CHAIN_PROBE_LOG="$chain_probe/$requested_chain.log" CHAIN_PROBE_BOOTSTRAP="$chain_probe/bootstrap.json" GDC_HOME="$chain_probe/$requested_chain" "$ROOT/gdc.sh" "${args[@]}" >"$chain_probe/$requested_chain.out" 2>"$chain_probe/$requested_chain.err"; then
     echo "JOIN unexpectedly accepted Bootstrap with wrong chain ID for $requested_chain" >&2
     exit 1
@@ -199,7 +199,7 @@ grep -Fq '^[a-z0-9][a-z0-9_-]*$' "$ROOT/02-node/install-node.sh"
 grep -Fq '^[a-z0-9][a-z0-9_-]*$' "$ROOT/02-node/render-node-env.sh"
 ! grep -Fq '^gdc-node[0-4]$' "$ROOT/02-node/init-identity.sh"
 ! grep -Fq '^gdc-node[0-4]$' "$ROOT/02-node/install-node.sh"
-if GDC_HOME="$tmp" "$ROOT/gdc.sh" host join --public-host node2.example.net Validator.West >"$tmp/invalid-alias.stdout" 2>"$tmp/invalid-alias.stderr"; then
+if GDC_HOME="$tmp" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --public-host node2.example.net Validator.West >"$tmp/invalid-alias.stdout" 2>"$tmp/invalid-alias.stderr"; then
   echo 'JOIN CLI accepted a Compose-unsafe SSH alias' >&2
   exit 1
 fi

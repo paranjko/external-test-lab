@@ -87,6 +87,7 @@ type SiteConfig = {
   publicBootstrap?: boolean,
   nodes: Array<SiteNode>,
   nodeCatalog?: Array<SiteNode>,
+  locationCatalog?: Array<SiteNode>,
 };
 
 type GatewayAvailability = {
@@ -806,12 +807,19 @@ function updateDevShardVersions(
   versions: Array<DevShardVersion>,
 ): void {
   const target = $("devshard-versions");
+  target.replaceChildren();
   if (!versions.length) {
-    target.textContent = "None approved";
+    const item = document.createElement("li");
+    item.textContent = "None approved";
+    target.append(item);
     target.title = "Chain state reports no approved DevShard versions";
     return;
   }
-  target.textContent = versions.map((version) => version.name).join(" · ");
+  for (const version of versions) {
+    const item = document.createElement("li");
+    item.textContent = `${version.name} ${version.sha256.slice(0, 6)}`;
+    target.append(item);
+  }
   target.title = versions
     .map((version) => `${version.name}: ${version.sha256}`)
     .join("\n");
@@ -819,7 +827,10 @@ function updateDevShardVersions(
 
 function markDevShardVersionsUnavailable(): void {
   const target = $("devshard-versions");
-  target.textContent = "Unavailable";
+  target.replaceChildren();
+  const item = document.createElement("li");
+  item.textContent = "Unavailable";
+  target.append(item);
   target.title = "Approved DevShard versions could not be read from verified chain state";
 }
 
@@ -2124,6 +2135,7 @@ function networkNode(observation: any): SiteNode {
   const byName = catalogEntries.filter((node) => node.name === network.nodeName);
   const catalog =
     byHost.length === 1 ? byHost[0] : byName.length === 1 ? byName[0] : null;
+  const location = (cfg.locationCatalog || []).find((entry) => entry.publicHost === (bootstrapHost || host));
   // A public participant location is always a GeoIP observation of its
   // advertised endpoint.  The catalog is only a fallback for an unavailable
   // DNS or GeoIP lookup, so catalog and dynamically joined Hosts share one
@@ -2147,14 +2159,14 @@ function networkNode(observation: any): SiteNode {
   const validatorRpcBase = networkStatusBase;
   return {
     ...previous,
-    name: network.nodeName || catalog?.name || host || network.nodeId,
+    name: /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host) ? host : network.nodeName || catalog?.name || host || network.nodeId,
     address: network.nodeId,
     publicHost: bootstrapHost || host || catalog?.publicHost,
     dapiUrl: network.dapiUrl,
     statusBase: networkStatusBase,
     validatorRpcBase,
     ip: observation?.geo?.resolvedIp || previous?.ip || catalog?.ip || "",
-    geo: observation?.geo || previous?.geo || catalog?.geo || null,
+    geo: observation?.geo || previous?.geo || location?.geo || catalog?.geo || null,
     mode: catalog?.mode,
     reason: catalog?.reason,
     networkObserved: true,
@@ -2193,7 +2205,7 @@ function updateNodeModels(node: SiteNode, card: HTMLElement): void {
   const models = available && node.participantAddress
     ? assignment.groups.filter((group) => group.state === "observed" &&
       Array.isArray(group.participants) && group.participants.some((member) => member.address === node.participantAddress))
-      .map((group) => `${String(group.model_id)} ${String(group.participants.find((member) => member.address === node.participantAddress).weight)}PW`)
+      .map((group) => String(group.model_id).split("/").pop() || "Unknown model")
     : [];
   target.replaceChildren();
   for (const model of models.length ? models : [available && node.participantAddress && assignment.state === "observed" ? "No allocated models" : "Not reported"]) {
@@ -2428,7 +2440,6 @@ const WORLD_BOUNDS = [
   [90, 180],
 ];
 
-const DYNAMIC_LOCATION_CELLS_PER_DEGREE = 4;
 const initialZoomOffset = 0.7;
 const initialVerticalOffset = 80;
 const dynamicLocationCenters: Map<string, MapCoordinate> = new Map();
@@ -2470,86 +2481,29 @@ function centroid(validators: Array<Validator>): MapCoordinate {
 }
 
 function groupValidators(validators: Array<Validator>): Array<ValidatorGroup> {
-  const groups: Array<ValidatorGroup> = [];
-  const dynamic: Map<string, ValidatorGroup> = new Map();
-  const sorted = validators.slice().sort((left, right) =>
-    `${left.geo.lat}\u0000${left.geo.lon}\u0000${left.ownerAddress}`.localeCompare(
-      `${right.geo.lat}\u0000${right.geo.lon}\u0000${right.ownerAddress}`,
-    ),
-  );
-  for (const validator of sorted) {
-    const locationId = validator.geo.locationId;
-    if (locationId) {
-      let group = groups.find(
-        (candidate) => candidate.key === `location:${locationId}`,
-      );
-      if (!group) {
-        group = {
-          key: `location:${locationId}`,
-          lat: validator.geo.lat,
-          lon: validator.geo.lon,
-          label: validator.geo.locationLabel || locationId,
-          validators: [],
-        };
-        groups.push(group);
-      }
-      group.validators.push(validator);
-      continue;
-    }
-    const latCell = Math.floor(
-      (validator.geo.lat + 90) * DYNAMIC_LOCATION_CELLS_PER_DEGREE,
-    );
-    const lonCell = Math.floor(
-      (validator.geo.lon + 180) * DYNAMIC_LOCATION_CELLS_PER_DEGREE,
-    );
-    const key = `dynamic:${latCell}:${lonCell}`;
-    let group = dynamic.get(key);
+  const groups: Map<string, ValidatorGroup> = new Map();
+  for (const validator of validators) {
+    const label = maidenheadLocator(validator.geo.lat, validator.geo.lon);
+    const key = `qth:${label}`;
+    let group = groups.get(key);
     if (!group) {
-      group = { key, lat: validator.geo.lat, lon: validator.geo.lon, label: "", validators: [] };
-      dynamic.set(key, group);
+      group = { key, label, lat: validator.geo.lat, lon: validator.geo.lon, validators: [] };
+      groups.set(key, group);
     }
     group.validators.push(validator);
-    const center = centroid(group.validators);
+  }
+  for (const group of groups.values()) {
+    group.validators.sort((left, right) => left.ownerAddress.localeCompare(right.ownerAddress));
+    // Keep one stable display position per QTH square as its members change
+    let center = dynamicLocationCenters.get(group.key);
+    if (!center) {
+      center = centroid(group.validators);
+      dynamicLocationCenters.set(group.key, center);
+    }
     group.lat = center.lat;
     group.lon = center.lon;
   }
-  for (const group of dynamic.values()) {
-    // Dynamic GeoIP is city-level evidence. A fixed tenth-degree display cell
-    // keeps the QTH marker and its keyboard/popup identity stable while
-    // members enter or leave that observed location.
-    group.lat = Math.round(group.lat * 10) / 10;
-    group.lon = Math.round(group.lon * 10) / 10;
-    group.label = maidenheadLocator(group.lat, group.lon);
-    const retainedCenter = dynamicLocationCenters.get(group.key);
-    if (retainedCenter) {
-      group.lat = retainedCenter.lat;
-      group.lon = retainedCenter.lon;
-    } else {
-      dynamicLocationCenters.set(group.key, { lat: group.lat, lon: group.lon });
-    }
-    groups.push(group);
-  }
-  const coincident: Map<string, ValidatorGroup> = new Map();
-  for (const group of groups) {
-    const coordinate = `${group.lat.toFixed(6)},${group.lon.toFixed(6)}`;
-    // A shared city label is not evidence of co-location: unrelated cloud
-    // addresses often resolve to the same metro area. Group only an explicit
-    // operator location ID or the exact display coordinate shown on this map.
-    const location = group.key.startsWith("location:")
-      ? group.key
-      : `coordinate:${coordinate}`;
-    const existing = coincident.get(location);
-    if (!existing) {
-      coincident.set(location, group);
-      continue;
-    }
-    existing.validators.push(...group.validators);
-    existing.label = [...new Set([existing.label, group.label])].join(" · ");
-    existing.key = `coincident:${[existing.key, group.key].sort().join("|")}`;
-  }
-  for (const group of coincident.values())
-    group.label = maidenheadLocator(group.lat, group.lon);
-  return [...coincident.values()];
+  return [...groups.values()];
 }
 
 async function initValidatorMap(): Promise<?ValidatorMapController> {

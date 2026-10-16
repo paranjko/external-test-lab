@@ -19,8 +19,9 @@ vendor="$(awk -F= '$1 == "vendor" {print $2}' "$inspection")"
 
 case "$vendor" in
   nvidia)
-    [[ "$(wc -l <"$inspection" | tr -d ' ')" == 1 ]] || die inspection 'NVIDIA inspection contains unexpected fields'
-    receipt='{"schema_version":1,"vendor":"nvidia","compose_variant":"nvidia","qualification_backend":"cuda"}'
+    vram_mib="$(awk -F= '$1 == "vram_mib" {print $2}' "$inspection")"
+    [[ "$(wc -l <"$inspection" | tr -d ' ')" == 2 && "$vram_mib" =~ ^[1-9][0-9]*$ ]] || die inspection 'NVIDIA inspection must report VRAM'
+    receipt="$(jq -cn --argjson vram "$vram_mib" '{schema_version:1,vendor:"nvidia",compose_variant:"nvidia",qualification_backend:"cuda",vram_mib:$vram}')"
     ;;
   amd)
     pci_device_id="$(awk -F= '$1 == "pci_device_id" {print $2}' "$inspection")"

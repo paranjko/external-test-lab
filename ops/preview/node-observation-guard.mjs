@@ -91,10 +91,10 @@ function reject(response, code, reason) {
   response.end(JSON.stringify({ error: reason }));
 }
 
-export async function resolvedPublicIpv4(host) {
-  const records = await dns.promises.lookup(host, { all: true, family: 4, verbatim: true });
+export async function resolvedPublicIpv4(host, lookup = dns.promises.lookup) {
+  const records = await lookup(host, { all: true, family: 4, verbatim: true });
   const addresses = records.map((record) => record.address);
-  if (addresses.length !== 1 || !publicIpv4(addresses[0])) throw new Error("unsafe_dns_result");
+  if (!addresses.length || !addresses.every(publicIpv4)) throw new Error("unsafe_dns_result");
   return addresses[0];
 }
 

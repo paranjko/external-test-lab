@@ -164,7 +164,7 @@ ssh_calls="$tmp/ssh.calls"
 set +e
 BLOCKLIST_PARAMS_JSON="$(params "[\"$blocked_addr\"]")" FAKE_DERIVED_ADDRESS="$blocked_addr" \
   GDC_BLOCKLIST_INFERENCED_BIN="$tmp/bin/fake-inferenced" PATH="$tmp/bin:$PATH" SSH_CALLS="$ssh_calls" \
-  GDC_HOME="$launcher_home" "$ROOT/gdc.sh" host join --mnemonic-file "$tmp/cold.mnemonic" \
+  GDC_HOME="$launcher_home" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --mnemonic-file "$tmp/cold.mnemonic" \
     --bootstrap-file "$tmp/bootstrap.json" --public-host node-c.example.test node-c \
     >"$tmp/launcher.out" 2>"$tmp/launcher.err"
 launcher_rc=$?
@@ -189,7 +189,7 @@ unreadable_ssh_calls="$tmp/unreadable-ssh.calls"
 set +e
 BLOCKLIST_PARAMS_JSON='' FAKE_DERIVED_ADDRESS="$healthy_addr" \
   GDC_BLOCKLIST_INFERENCED_BIN="$tmp/bin/fake-inferenced" PATH="$tmp/bin:$PATH" SSH_CALLS="$unreadable_ssh_calls" \
-  GDC_HOME="$unreadable_home" "$ROOT/gdc.sh" host join --mnemonic-file "$tmp/cold.mnemonic" \
+  GDC_HOME="$unreadable_home" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --mnemonic-file "$tmp/cold.mnemonic" \
     --bootstrap-file "$tmp/bootstrap.json" --public-host node-unreadable.example.test node-unreadable \
     >"$tmp/unreadable-launcher.out" 2>"$tmp/unreadable-launcher.err"
 unreadable_rc=$?
@@ -218,7 +218,7 @@ BLOCKLIST_PARAMS_JSON="$(params "[\"$blocked_addr\"]")" FAKE_DERIVED_ADDRESS="$b
   GDC_BLOCKLIST_INFERENCED_BIN="$tmp/bin/fake-inferenced" PATH="$tmp/bin:$PATH" SSH_CALLS="$prompt_ssh_calls" \
   GDC_HOME="$prompt_home" FIXTURE_MNEMONIC='word one two three four five six seven eight nine ten eleven' \
   run_prompt_join "$tmp/prompt.out" "$tmp/prompt.err" \
-    host join --mnemonic-prompt --bootstrap-file "$tmp/bootstrap.json" \
+    host join --model=Qwen/Qwen3-0.6B --mnemonic-prompt --bootstrap-file "$tmp/bootstrap.json" \
     --public-host node-prompt.example.test node-prompt
 prompt_rc=$?
 set -e
@@ -249,7 +249,7 @@ BLOCKLIST_PARAMS_JSON="$(params "[\"$blocked_addr\"]")" FAKE_DERIVED_ADDRESS="$h
   GDC_BLOCKLIST_INFERENCED_BIN="$tmp/bin/fake-inferenced" PATH="$tmp/bin:$PATH" SSH_CALLS="$prompt_allowed_ssh_calls" \
   GDC_HOME="$prompt_allowed_home" FIXTURE_MNEMONIC='word one two three four five six seven eight nine ten eleven' \
   run_prompt_join "$tmp/prompt-allowed.out" "$tmp/prompt-allowed.err" \
-    host join --mnemonic-prompt --bootstrap-file "$tmp/bootstrap.json" \
+    host join --model=Qwen/Qwen3-0.6B --mnemonic-prompt --bootstrap-file "$tmp/bootstrap.json" \
     --public-host node-prompt-allowed.example.test node-prompt-allowed
 prompt_allowed_rc=$?
 set -e

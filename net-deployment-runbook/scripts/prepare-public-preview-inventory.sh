@@ -169,18 +169,9 @@ else
   done < <(jq -r '.seeds[] | .rpc as $rpc | ($rpc | capture("^https://(?<host>node(?<number>[0-9]+)\\.gonka-dev\\.net)/chain-rpc/?$")) | ["node" + .number, .host, $rpc] | @tsv' <<<"$bootstrap")
 fi
 [[ -n "$participant_source" && -n "$participant_response" ]] || die 'could not read the public participant inventory from any canonical seed'
-jq -e '
-  .participant | type == "array" and length > 0 and
-  all(.[]?;
-    (.inference_url | type == "string" and test("^https://node[0-9]+\\.gonka-dev\\.net/?$")) and
-    (.address | type == "string" and length > 0) and
-    (.status | type == "string")
-  )
-' <<<"$participant_response" >/dev/null || die 'participant API response contains an unsafe public endpoint'
-while IFS=$'\t' read -r participant_node participant_host; do
-  [[ "$participant_node" =~ ^node[0-9]+$ && "$participant_host" == "$participant_node.gonka-dev.net" ]] || die 'participant endpoint identity is inconsistent'
-  hosts["$participant_node"]="$participant_host"
-done < <(jq -r '.participant[] | (.inference_url | capture("^https://(?<host>node(?<number>[0-9]+)\\.gonka-dev\\.net)/?$") | ["node" + .number, .host] | @tsv)' <<<"$participant_response")
+# Registry participants are identities, not additional trusted preview proxy destinations
+participant_catalog="$(node "$(dirname "$0")/preview-participant-catalog.mjs" <<<"$participant_response")" \
+  || die 'participant API response is not a complete registry with unique account identities'
 
 [[ -n "${hosts[$gateway_node]:-}" ]] || die "configured gateway node $gateway_node was not discovered"
 mapfile -t nodes < <(printf '%s\n' "${!hosts[@]}" | sort -V)
@@ -209,6 +200,19 @@ for node in "${nodes[@]}"; do
 done
 
 install -d -m 0750 "$(dirname "$output")"
+location_catalog="$node_catalog"
+while IFS= read -r host; do
+  if [[ "$geo_enabled" == true ]]; then
+    geo_record="$(resolve_geo "$host")"
+  else
+    geo_record='{"geo":null,"geo_error":"geo_disabled"}'
+  fi
+  location_catalog="$(jq -c --arg host "$host" --argjson geo_record "$geo_record" '. + [{publicHost:$host} + $geo_record]' <<<"$location_catalog")"
+done < <(jq -r --argjson services "$node_catalog" '
+  [.[] | select(.endpoint.state == "eligible") | .endpoint.origin |
+    capture("^https?://(?<host>[^/:]+)").host] | unique[] |
+  select(. as $host | all($services[]; .publicHost != $host))
+' <<<"$participant_catalog")
 umask 077
 cat >"$output" <<EOF
 GDC_NODE_ALIASES=$(printf '%q' "$node_aliases")
@@ -238,7 +242,9 @@ jq -n \
   --arg release "$release" --arg gateway "$gateway_node" --arg api_host "$api_host" --arg participant_source "$participant_source" \
   --argjson nodes "$(printf '%s\n' "${nodes[@]}" | jq -R . | jq -sc .)" \
   --argjson node_catalog "$node_catalog" \
+  --argjson participant_catalog "$participant_catalog" \
+  --argjson location_catalog "$location_catalog" \
   --argjson seed_errors "$seed_errors" \
-  '{schema_version:1,bootstrap_origin:$origin,bootstrap_sha256:$sha256,observed_at:$observed_at,release_profile:$release,gateway_node:$gateway,api_host:$api_host,participant_source:$participant_source,nodes:$nodes,node_catalog:$node_catalog,seed_errors:$seed_errors}' \
+  '{schema_version:1,bootstrap_origin:$origin,bootstrap_sha256:$sha256,observed_at:$observed_at,release_profile:$release,gateway_node:$gateway,api_host:$api_host,participant_source:$participant_source,participant_catalog:$participant_catalog,location_catalog:$location_catalog,nodes:$nodes,node_catalog:$node_catalog,seed_errors:$seed_errors}' \
   >"$output.receipt.json"
 printf 'PASS prepared public preview inventory nodes=%s bootstrap_sha256=%s\n' "${#nodes[@]}" "$bootstrap_sha256"

@@ -23,7 +23,7 @@
       <div class="section-title"><div><span class="eyebrow">OPERATE A HOST</span><h2 id="join-node-title">How to Join node</h2></div></div>
       <pre><code>git clone https://github.com/paranjko/external-test-lab.git
 alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
-gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
+gdc host join --model=&lt;MODEL_ID&gt; --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
       <details class="join-requirements">
         <summary><span class="join-requirements-toggle">Minimum Host requirements</span> <span class="join-requirements-guide">For more details, read <a href="https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host" target="_blank" rel="noopener">Community DevNet runbook/JOIN: add a Host</a></span></summary>
         <table class="join-requirements-table">
@@ -42,15 +42,15 @@ gdc host join --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
             <tr><th scope="row">Uptime</th><td>Always on with sleep and address changes disabled</td></tr>
           </tbody>
         </table>
-        <p class="join-requirements-note">Model assignments below come from the effective network epoch, check the <a href="https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all" target="_blank" rel="noopener">live model registry</a> for registered model requirements, the hardware baseline is not a guarantee for every model, <code>gdc</code> qualification loads the selected model, checks <code>/v1/models</code>, completes an inference request, and records VRAM evidence, allocation alone does not prove current inference availability</p>
+        <p class="join-requirements-note">Choose <code>MODEL_ID</code> from the <a href="https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all" target="_blank" rel="noopener">live model registry</a>, JOIN rejects an ID absent from the registry before Host preparation</p>
       </details>
     </section>
     <section class="summary" aria-label="Network summary">
       <article><span>Chain ID</span><strong id="chain-id">–</strong></article>
-      <article><span id="model-label">Allocated models</span><ul id="model-id" class="model-list"><li>–</li></ul><small>Effective epoch participants, not a serving-health check</small></article>
-      <article><span>Approved DevShards</span><strong id="devshard-versions">–</strong><small>Chain-wide allowlist</small></article>
-      <article><span>Latest height</span><strong id="best-height">–</strong><small>Advancing live</small></article>
-      <article><span>Largest voting share</span><strong id="power-share">–</strong><small>Consensus distribution</small></article>
+      <article><span id="model-label">Allocated models</span><ul id="model-id" class="model-list"><li>–</li></ul></article>
+      <article><span>Approved DevShards</span><ul id="devshard-versions" class="model-list"><li>–</li></ul></article>
+      <article><span>Latest height</span><strong id="best-height">–</strong></article>
+      <article><span>Largest voting share</span><strong id="power-share">–</strong></article>
     </section>
     <section id="epoch-overview" class="epoch-overview" aria-live="polite" hidden>
       <div class="epoch-overview-title"><span>Current epoch</span><strong id="epoch-label">–</strong></div>

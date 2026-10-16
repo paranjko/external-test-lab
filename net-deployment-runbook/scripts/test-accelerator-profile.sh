@@ -38,9 +38,9 @@ if "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$tmp/drift.env" -
 fi
 grep -Fq 'accelerator_profile_unsupported:' "$tmp/drift.err"
 
-printf 'vendor=nvidia\n' >"$tmp/nvidia.env"
+printf 'vendor=nvidia\nvram_mib=24564\n' >"$tmp/nvidia.env"
 "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$tmp/nvidia.env" --output "$tmp/nvidia.json"
-jq -e '. == {compose_variant:"nvidia",qualification_backend:"cuda",schema_version:1,vendor:"nvidia"}' "$tmp/nvidia.json" >/dev/null
+jq -e '. == {compose_variant:"nvidia",qualification_backend:"cuda",schema_version:1,vendor:"nvidia",vram_mib:24564}' "$tmp/nvidia.json" >/dev/null
 
 sed 's/gfx1201/gfx9999/' "$tmp/amd.env" >"$tmp/unknown.env"
 if "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$tmp/unknown.env" --output "$tmp/unknown.json" 2>"$tmp/unknown.err"; then

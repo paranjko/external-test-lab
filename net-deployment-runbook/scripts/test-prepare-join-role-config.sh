@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; temporary="$(mktemp -d)"; trap 'rm -rf -- "$temporary"' EXIT
+export GDC_MONITORING_DOCKER_CIDR=172.21.0.0/16
+ssh() {
+  if [[ "$*" == *'collector-fixture test -d /srv/dai/ops/prometheus/targets'* ]]; then return 0; fi
+  [[ "$*" == '-G mitch-ml' ]] || { echo "unexpected SSH: $*" >&2; return 99; }
+  printf 'hostname 192.0.2.45\n'
+}
+export -f ssh
 cat >"$temporary/bootstrap.json" <<'EOF'
 {"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-fixture","genesis":{"sha256":"dd6dc738e3856745253925b77596e1cfc1680a2eefc44fd2d7879e0f879fbce5"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"http://one.example:8000/chain-rpc","p2p":"tcp://one.example:5000","api":"http://one.example:8000"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"http://two.example:8000/chain-rpc","p2p":"tcp://two.example:5000"}],"brokers":[]}
 EOF
@@ -24,7 +31,6 @@ CHAIN_ID=gonka-fixture
 BASE_DENOM=ngonka
 API_HOST=api.example.net
 MONITORING_CIDR=127.0.0.1/32
-GDC_MONITORING_DOCKER_CIDR=172.21.0.0/16
 PUBLIC_EDGE_CIDR=127.0.0.1/32
 GDC_GATEWAY_METRICS_TARGETS='[{"id":"A","node":"mitch-demo","port":18087},{"id":"B","node":"seed","port":18088}]'
 DATA_ROOT=/srv/dai
@@ -125,6 +131,7 @@ INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" -
   load_project
   [[ "$MONITORING_CIDR" == 192.0.2.44/32 && "$PUBLIC_EDGE_CIDR" == 192.0.2.10/32 ]]
   grep -Fxq 'MONITORING_CIDR=192.0.2.44/32' "$INVENTORY"
+  grep -Fxq 'GDC_MONITORING_DOCKER_CIDR=172.21.0.0/16' "$INVENTORY"
 )
 printf 'PASS generated JOIN retains independent collector firewall source\n'
 GDC_MONITORING_HOST=explicit.example INFERENCED="$temporary/inferenced" \
@@ -132,3 +139,51 @@ GDC_MONITORING_HOST=explicit.example INFERENCED="$temporary/inferenced" \
   --ssh-alias mitch-demo --public-host host.example.net --bootstrap-file "$temporary/bootstrap.json"
 grep -Fxq 'GDC_MONITORING_HOST=explicit.example' "$temporary/explicit-collector.env"
 printf 'PASS explicit collector survives generated JOIN role persistence\n'
+
+[[ "$(GDC_MONITORING_DOCKER_CIDR='' bash "$ROOT/scripts/join-monitoring-cidr.sh")" == 127.0.0.1/32 ]]
+for invalid in 999.21.0.0/16 172.21.0.0/33 '172.21.0.0/16 0.0.0.0/0'; do
+  if GDC_MONITORING_DOCKER_CIDR="$invalid" INFERENCED="$temporary/inferenced" \
+    "$ROOT/scripts/prepare-join-role-config.sh" --output "$temporary/rejected.env" \
+    --ssh-alias mitch-demo --public-host host.example.net --bootstrap-file "$temporary/bootstrap.json" \
+    >"$temporary/rejected.log" 2>&1; then
+    echo 'invalid monitoring CIDR was accepted' >&2
+    exit 1
+  fi
+  [[ ! -e "$temporary/rejected.env" ]]
+  grep -q '^JOIN ' "$temporary/rejected.log"
+done
+(
+  unset GDC_MONITORING_DOCKER_CIDR
+  ssh() {
+    case "$*" in
+      *'collector-fixture test -d /srv/dai/ops/prometheus/targets'*) return 0 ;;
+      "-o BatchMode=yes -o ConnectTimeout=10 collector-fixture sudo -n docker ps --filter label=com.docker.compose.service=prometheus --format '{{.ID}}'")
+        printf '%s\n' abcdef012345 ;;
+      "-o BatchMode=yes -o ConnectTimeout=10 collector-fixture sudo -n docker inspect 'abcdef012345' --format '{{json .NetworkSettings.Networks}}'")
+        printf '%s\n' '{"gdc-ops_default":{"IPAddress":"172.21.0.2"}}' ;;
+      "-o BatchMode=yes -o ConnectTimeout=10 collector-fixture sudo -n docker network inspect 'gdc-ops_default' --format '{{json .IPAM.Config}}'")
+        printf '%s\n' '[{"Subnet":"172.21.0.0/16"}]' ;;
+      *) echo "unexpected SSH: $*" >&2; return 99 ;;
+    esac
+  }
+  export -f ssh
+  INFERENCED="$temporary/inferenced" "$ROOT/scripts/prepare-join-role-config.sh" \
+    --output "$temporary/discovered.env" --ssh-alias mitch-demo --public-host host.example.net \
+    --bootstrap-file "$temporary/bootstrap.json" --monitoring-registry-host collector-fixture
+  grep -Fxq 'GDC_MONITORING_DOCKER_CIDR=172.21.0.0/16' "$temporary/discovered.env"
+  ssh() {
+    case "$*" in
+      *'docker ps '*) printf '%s\n' abcdef012345 ;;
+      *"docker inspect 'abcdef012345'"*) printf '%s\n' '{"first":{},"second":{}}' ;;
+      *) return 99 ;;
+    esac
+  }
+  export -f ssh
+  if bash "$ROOT/scripts/join-monitoring-cidr.sh" collector-fixture >"$temporary/ambiguous.log" 2>&1; then exit 1; fi
+  grep -q 'requires one Prometheus Docker network' "$temporary/ambiguous.log"
+  ssh() { return 255; }
+  export -f ssh
+  if bash "$ROOT/scripts/join-monitoring-cidr.sh" collector-fixture >"$temporary/unreachable.log" 2>&1; then exit 1; fi
+  grep -q 'cannot inspect Prometheus' "$temporary/unreachable.log"
+)
+printf 'PASS monitoring configuration fails early and discovers only an unambiguous collector subnet\n'

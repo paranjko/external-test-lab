@@ -36,7 +36,7 @@ run_case() {
   local name="$1" expected_rc="$2" expected_message="$3" operator rc result
   operator="$tmp/$name-operator"
   if READINESS_RESULT="$name" JOIN_SSH_LOG="$tmp/$name.ssh" PATH="$tmp/bin:$PATH" GDC_HOME="$operator" \
-    "$ROOT/gdc.sh" host join --public-host validator.example.test validator-a >"$tmp/$name.out" 2>"$tmp/$name.err"; then
+    "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --public-host validator.example.test validator-a >"$tmp/$name.out" 2>"$tmp/$name.err"; then
     echo "$name readiness check unexpectedly continued JOIN" >&2
     exit 1
   else
@@ -64,7 +64,7 @@ run_case action 195 'JOIN cannot continue because the Host package manager needs
 operator="$tmp/retained-host-preparation-operator"
 if READINESS_RESULT=target_not_clean RETAIN_HOST_PREPARATION=true JOIN_SSH_LOG="$tmp/retained-host-preparation.ssh" \
   JOIN_CURL_LOG="$tmp/retained-host-preparation.curl" PATH="$tmp/bin:$PATH" GDC_HOME="$operator" \
-  "$ROOT/gdc.sh" host join --public-host validator.example.test validator-a >"$tmp/retained-host-preparation.out" 2>"$tmp/retained-host-preparation.err"; then
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --public-host validator.example.test validator-a >"$tmp/retained-host-preparation.out" 2>"$tmp/retained-host-preparation.err"; then
   echo 'retained Host preparation unexpectedly completed JOIN' >&2
   exit 1
 else
@@ -76,7 +76,7 @@ grep -Fq 'PASS JOIN target clean host=validator-a' "$tmp/retained-host-preparati
 
 operator="$tmp/target-not-clean-operator"
 if READINESS_RESULT=target_not_clean JOIN_SSH_LOG="$tmp/target-not-clean.ssh" PATH="$tmp/bin:$PATH" GDC_HOME="$operator" \
-  "$ROOT/gdc.sh" host join --public-host validator.example.test validator-a >"$tmp/target-not-clean.out" 2>"$tmp/target-not-clean.err"; then
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --public-host validator.example.test validator-a >"$tmp/target-not-clean.out" 2>"$tmp/target-not-clean.err"; then
   echo 'non-clean target unexpectedly continued JOIN' >&2
   exit 1
 else

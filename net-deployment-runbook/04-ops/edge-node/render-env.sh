@@ -67,7 +67,9 @@ if [[ "$NODE" != "${GATEWAY_NODE:-}" ]]; then
 fi
 
 gateway_admission_protocols_json='{}'
+gateway_admission_selected_version=''
 if [[ -z "$JOIN_PROFILE" ]]; then
+  gateway_admission_selected_version="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
   gateway_protocol_contract="$(selected_gateway_protocol_contract)" || exit 2
   read -r -a gateway_supported_protocols <<<"$gateway_protocol_contract"
   (( ${#gateway_supported_protocols[@]} > 0 )) || {
@@ -122,9 +124,11 @@ esac
 # private /gateway-b handoff.
 gateway_b_upstream='http://127.0.0.1:9'
 gateway_b_readiness_upstream='http://127.0.0.1:9'
-monitoring_docker_cidr="${GDC_MONITORING_DOCKER_CIDR:-}"
-[[ "$monitoring_docker_cidr" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$ ]] \
-  || { echo 'GDC_MONITORING_DOCKER_CIDR must be the explicit Prometheus Docker IPv4 CIDR' >&2; exit 2; }
+if [[ "${GDC_JOIN_ROLE_INPUT:-false}" != true && -z "${GDC_MONITORING_DOCKER_CIDR:-}" ]]; then
+  echo 'GDC_MONITORING_DOCKER_CIDR must be the explicit Prometheus Docker IPv4 CIDR' >&2
+  exit 2
+fi
+monitoring_docker_cidr="$(bash "$ROOT/scripts/join-monitoring-cidr.sh")"
 if [[ -n "${GDC_GATEWAY_METRICS_TARGETS:-}" ]]; then
   gateway_metrics_port="$(jq -er --arg node "$NODE" '
     if type != "array" or length == 0 then error("must be a non-empty array") else . end
@@ -198,7 +202,7 @@ values=(
   "GDC_GATEWAY_ADMISSION_CHAIN_STATUS_URL=https://${PUBLIC_EDGE_HOST}/chain-rpc/status"
   "GDC_GATEWAY_ADMISSION_CHAIN_PARAMS_URL=https://${PUBLIC_EDGE_HOST}/chain-api/productscience/inference/inference/params"
   "GDC_GATEWAY_ADMISSION_PROTOCOLS_JSON=$gateway_admission_protocols_json"
-  "GDC_GATEWAY_ADMISSION_SELECTED_VERSION=${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
+  "GDC_GATEWAY_ADMISSION_SELECTED_VERSION=$gateway_admission_selected_version"
   "GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS=${GDC_GATEWAY_ADMISSION_SAFE_GUARD_BLOCKS:-10}"
   "GDC_GATEWAY_ADMISSION_MAX_QUEUE=${GDC_GATEWAY_ADMISSION_MAX_QUEUE:-16}"
   "GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS=${GDC_GATEWAY_ADMISSION_MAX_WAIT_SECONDS:-300}"

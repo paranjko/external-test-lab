@@ -124,7 +124,7 @@ ensure_packages() {
   apt-get install -y --no-install-recommends "${missing[@]}"
 }
 ensure_packages \
-  ca-certificates curl gnupg jq rsync pciutils iptables \
+  ca-certificates curl gnupg jq rsync pciutils iptables unzip \
   ubuntu-drivers-common mokutil
 
 # A reboot marker is a host boundary, not a reason to recreate identity.  We

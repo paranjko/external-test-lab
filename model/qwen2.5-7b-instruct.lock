@@ -5,6 +5,7 @@ GDC_MODEL_PROFILE_SCOPE=qualification-only
 # Both Testnet and Testnet DevShards pin this immutable upstream revision.
 MODEL_ID=Qwen/Qwen2.5-7B-Instruct
 MODEL_REVISION=a09a35458c702b33eeacc393d103063234e8bc28
+MODEL_MIN_VRAM_MIB=24564
 
 # The regular Testnet contract uses BF16-compatible defaults, 4,096 context
 # tokens and 0.92 GPU utilisation. One sequence bounds the qualification run.

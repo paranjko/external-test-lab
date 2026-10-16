@@ -69,6 +69,7 @@ case "$url" in
       remote_ip=8.8.4.2
     fi
     case "$url" in
+      */chain-api/productscience/inference/inference/models_all) emit '{"model":[{"id":"Qwen/Qwen3-0.6B","hf_repo":"Qwen/Qwen3-0.6B","hf_commit":"c1899de289a04d12100db370d81485cdf75e47ca"}]}' ;;
       */status) emit "{\"result\":{\"node_info\":{\"id\":\"$id\",\"network\":\"gonka-devnet-community\",\"version\":\"0.2.15\"},\"sync_info\":{\"catching_up\":false}}}" ;;
       */abci_info) emit '{"result":{"response":{"version":"0.2.15"}}}' ;;
       */net_info) emit '{"result":{"peers":[]}}' ;;
@@ -120,7 +121,7 @@ reset_metadata=("$home/fixture-node/state/reset/fixture-node/reset-"*-dai-backup
 [[ ${#reset_metadata[@]} -eq 1 ]]
 [[ -f "${reset_metadata[0]}" && "$(stat -c %a "${reset_metadata[0]}")" == 600 ]]
 
-run_gdc host join --plan \
+run_gdc host join --model=Qwen/Qwen3-0.6B --plan \
   --bootstrap-file "$tmp/bootstrap.json" --public-host fixture.example.test fixture-node >"$tmp/join.out"
 join_output="$(<"$tmp/join.out")"
 [[ "$join_output" == *'PASS JOIN preflight completed without Host mutation'* ]]

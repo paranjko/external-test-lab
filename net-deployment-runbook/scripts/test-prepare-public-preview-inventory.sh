@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+node "$ROOT/scripts/test-preview-participant-catalog.mjs"
+curl() { echo 'unexpected HTTP request in preview inventory fixture' >&2; return 99; }
+export -f curl
 tmp_root="$ROOT/.data/public-preview-inventory-tests"
 mkdir -p "$tmp_root"
 tmp="$(mktemp -d "$tmp_root/run.XXXXXX")"
@@ -11,7 +14,7 @@ cat >"$tmp/bootstrap.json" <<'EOF'
 {"chain_id":"gonka-devnet-community","seeds":[{"rpc":"https://node0.gonka-dev.net/chain-rpc","p2p":"tcp://node0.gonka-dev.net:5000"},{"rpc":"https://node4.gonka-dev.net/chain-rpc","p2p":"tcp://node4.gonka-dev.net:5000"}],"brokers":[{"api_urls":["https://api.gonka-dev.net"]}]}
 EOF
 cat >"$tmp/participants.json" <<'EOF'
-{"participant":[{"address":"gonka1one","status":"ACTIVE","inference_url":"https://node7.gonka-dev.net"},{"address":"gonka1two","status":"ACTIVE","inference_url":"https://node8.gonka-dev.net"}]}
+{"participant":[{"address":"gonka1one","status":"ACTIVE","inference_url":"https://31.192.105.46"},{"address":"gonka1two","status":"ACTIVE","inference_url":"http://31.192.105.46:8000"},{"address":"gonka1three","status":"ACTIVE","inference_url":"https://127.0.0.1"}]}
 EOF
 mkdir "$tmp/net-info"
 cat >"$tmp/net-info/node0.gonka-dev.net.json" <<'EOF'
@@ -25,11 +28,14 @@ EOF
 (
   # shellcheck disable=SC1090
   source "$tmp/inventory.env"
-  [[ "$GDC_NODE_ALIASES" == 'node0 node4 node5 node7 node8' ]]
-  [[ "$GDC_NODE_PUBLIC_HOSTS" == 'node0=node0.gonka-dev.net node4=node4.gonka-dev.net node5=node5.gonka-dev.net node7=node7.gonka-dev.net node8=node8.gonka-dev.net' ]]
+  [[ "$GDC_NODE_ALIASES" == 'node0 node4 node5 node8' ]]
+  [[ "$GDC_NODE_PUBLIC_HOSTS" == 'node0=node0.gonka-dev.net node4=node4.gonka-dev.net node5=node5.gonka-dev.net node8=node8.gonka-dev.net' ]]
   [[ "$GDC_GATEWAY_METRICS_TARGETS" == '[{"id":"PREVIEW","node":"node4","port":1}]' ]]
 )
-jq -e '.gateway_node == "node4" and .participant_source == "file:participants.json" and .nodes == ["node0", "node4", "node5", "node7", "node8"] and (.bootstrap_sha256 | test("^[0-9a-f]{64}$"))' "$tmp/inventory.env.receipt.json" >/dev/null
+jq -e '.gateway_node == "node4" and .participant_source == "file:participants.json" and .nodes == ["node0", "node4", "node5", "node8"] and (.bootstrap_sha256 | test("^[0-9a-f]{64}$")) and
+  [.participant_catalog[].address] == ["gonka1one", "gonka1two", "gonka1three"] and
+  [.participant_catalog[].endpoint.state] == ["eligible", "eligible", "excluded"]' "$tmp/inventory.env.receipt.json" >/dev/null
+jq -e '[.location_catalog[].publicHost] | sort == ["31.192.105.46","node0.gonka-dev.net","node4.gonka-dev.net","node5.gonka-dev.net","node8.gonka-dev.net"]' "$tmp/inventory.env.receipt.json" >/dev/null
 
 # Exercise the actual renderer contract, not only the inventory text. Its
 # synthetic metrics target must never become a route in the preview backend.
@@ -59,4 +65,4 @@ if "$ROOT/scripts/prepare-public-preview-inventory.sh" --output "$tmp/invalid.en
   exit 1
 fi
 
-printf 'PASS public preview inventory derives only canonical public nodes\n'
+printf 'PASS preview keeps account-based participants separate from trusted service routes\n'

@@ -40,6 +40,7 @@ case "$url" in
       remote_ip=8.8.4.2
     fi
     case "$url" in
+      */chain-api/productscience/inference/inference/models_all) emit '{"model":[{"id":"Qwen/Qwen3-0.6B","hf_repo":"Qwen/Qwen3-0.6B","hf_commit":"c1899de289a04d12100db370d81485cdf75e47ca"}]}' ;;
       */status) emit "{\"result\":{\"node_info\":{\"id\":\"$id\",\"network\":\"gonka-devnet-community\",\"version\":\"0.2.15\"},\"sync_info\":{\"catching_up\":false}}}" ;;
       */abci_info) emit '{"result":{"response":{"version":"0.2.15"}}}' ;;
       */net_info) emit '{"result":{"peers":[]}}' ;;
@@ -112,7 +113,7 @@ assert_existing_state_refused() {
   shift
   : >"$tmp/guard-remote-effects.log"
   if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/guard-remote-effects.log" GDC_HOME="$guard_operator" \
-    "$ROOT/gdc.sh" host join "$@" >"$tmp/guard-$label.out" 2>"$tmp/guard-$label.err"; then
+    "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B "$@" >"$tmp/guard-$label.out" 2>"$tmp/guard-$label.err"; then
     echo "existing state unexpectedly accepted: $label" >&2; exit 1
   else
     rc=$?
@@ -153,7 +154,7 @@ chmod 600 "$reset_guard_home/state/reset/validator-reset/reset-fixture-dai-backu
 reset_guard_hash="$(sha256sum "$reset_guard_home/state/reset/validator-reset/reset-fixture-dai-backup.json")"
 : >"$tmp/reset-guard-remote-effects.log"
 PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/reset-guard-remote-effects.log" GDC_HOME="$reset_guard_operator" \
-  "$ROOT/gdc.sh" host join --plan --bootstrap-file "$tmp/bootstrap.json" --public-host existing.example.test validator-reset >"$tmp/reset-guard.out" 2>"$tmp/reset-guard.err"
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --plan --bootstrap-file "$tmp/bootstrap.json" --public-host existing.example.test validator-reset >"$tmp/reset-guard.out" 2>"$tmp/reset-guard.err" || { cat "$tmp/reset-guard.err" >&2; exit 1; }
 ! grep -Fq 'retained local state requires explicit recovery or removal' "$tmp/reset-guard.err"
 grep -Fq 'PASS JOIN preflight completed without Host mutation' "$tmp/reset-guard.out"
 [[ ! -s "$tmp/reset-guard-remote-effects.log" && ! -e "$reset_guard_home/state/active-run-id" ]]
@@ -187,7 +188,7 @@ touch "$incident/confirmed"
 printf '{}\n' >"$incident/hosts/fixture-unrelated.json"
 : >"$tmp/remote-effects.log"
 PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --plan --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --plan --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
     --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/out" 2>"$tmp/err"
 
 [[ ! -s "$tmp/remote-effects.log" ]]
@@ -236,7 +237,7 @@ EOF
 chmod 0755 "$tmp/bin/ssh"
 plan_reentry_ssh_log="$tmp/plan-reentry-ssh.log"
 if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$plan_reentry_ssh_log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
     --skip-qualification --public-host validator-a.example.test validator-a \
     >"$tmp/plan-reentry.out" 2>"$tmp/plan-reentry.err"; then
   echo 'ordinary JOIN unexpectedly passed the unsupported accelerator fixture' >&2; exit 1
@@ -291,7 +292,7 @@ chmod 0755 "$tmp/bin/ssh"
 # A receipt-chain COMPLETE is not enough to resume.  It must be paired with
 # the exact successful terminal result emitted by a completed JOIN.
 if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --plan --resume "$completed_id" --public-host validator-a.example.test validator-a >"$tmp/complete-resume-invalid.out" 2>"$tmp/complete-resume-invalid.err"; then
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --plan --resume "$completed_id" --public-host validator-a.example.test validator-a >"$tmp/complete-resume-invalid.out" 2>"$tmp/complete-resume-invalid.err"; then
   echo 'COMPLETE resume accepted a terminal result with the wrong resume policy' >&2; exit 1
 fi
 grep -Fq 'COMPLETE resume terminal result is invalid or not bound to its profile' "$tmp/complete-resume-invalid.err" || {
@@ -301,10 +302,10 @@ grep -Fq 'COMPLETE resume terminal result is invalid or not bound to its profile
 jq '.resume = "not_applicable"' "$completed_run/join-result.v1.json" >"$tmp/completed-result-fixed.json"
 install -m 0600 "$tmp/completed-result-fixed.json" "$completed_run/join-result.v1.json"
 PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --plan --resume "$completed_id" --public-host validator-a.example.test validator-a >"$tmp/complete-resume-valid.out" 2>"$tmp/complete-resume-valid.err"
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --plan --resume "$completed_id" --public-host validator-a.example.test validator-a >"$tmp/complete-resume-valid.out" 2>"$tmp/complete-resume-valid.err"
 grep -Fq "PASS Host JOIN resume plan verified run_id=$completed_id; no Host action was performed" "$tmp/complete-resume-valid.out"
 if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
     --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/reentry.out" 2>"$tmp/reentry.err"; then
   echo 'completed local state accepted a fresh JOIN' >&2; exit 1
 fi
@@ -317,7 +318,7 @@ jq -cn --arg run_id "$run_id" --arg profile "$profile_sha256" --arg observation 
   {schema_version:2,kind:"gdc-host-join-receipt",run_id:$run_id,operation:"restore",node_name:"validator-a",state:"CANDIDATE_RENDERED",join_profile_sha256:$profile,network_observation_sha256:$observation,generation_id:$run_id,identity_fingerprints:{participant_address:"",consensus_pubkey:"",p2p_node_id:"",warm_address:""},signer_ever_started:false,tmkms_state:{height:0,round:0,step:0,block_id:""},evidence:[{kind:"join_profile",sha256:$profile},{kind:"network_observation",sha256:$observation}],outcome:"in_progress",resume_policy:"resume_same_run"}' >"$tmp/resume-receipt.json"
 "$ROOT/scripts/record-join-receipt.sh" --receipt-dir "$run_dir/receipts" --input "$tmp/resume-receipt.json" >/dev/null
 PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --plan --resume "$run_id" --public-host validator-a.example.test validator-a >"$tmp/resume.out" 2>"$tmp/resume.err"
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --plan --resume "$run_id" --public-host validator-a.example.test validator-a >"$tmp/resume.out" 2>"$tmp/resume.err"
 [[ ! -s "$tmp/remote-effects.log" ]]
 grep -Fq "PASS Host JOIN resume plan verified run_id=$run_id; no Host action was performed" "$tmp/resume.out"
 
@@ -329,7 +330,7 @@ printf 'GDC_JOIN_ROLE_INPUT=true\n' >"$tmp/operator/validator-a/state/role-input
 printf '%s\n' "$tmp/operator/validator-a/state/role-inputs/join-validator-a" >"$tmp/operator/validator-a/state/active-role-config"
 : >"$tmp/remote-effects.log"
 if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --resume "$run_id" --public-host validator-a.example.test validator-a >"$tmp/unsupported-resume.out" 2>"$tmp/unsupported-resume.err"; then
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --resume "$run_id" --public-host validator-a.example.test validator-a >"$tmp/unsupported-resume.out" 2>"$tmp/unsupported-resume.err"; then
   echo 'unsupported partial JOIN unexpectedly dispatched a mutating resume' >&2; exit 1
 fi
 grep -Fq 'has no safe dispatcher for retained state=CANDIDATE_RENDERED' "$tmp/unsupported-resume.err"
@@ -339,7 +340,7 @@ jq '.spec.target.public_host = "tampered.example.test"' "$profile" >"$tmp/tamper
 chmod 600 "$tmp/tampered-profile.json"
 mv "$tmp/tampered-profile.json" "$profile"
 if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --plan --resume "$run_id" --public-host validator-a.example.test validator-a >"$tmp/tampered-resume.out" 2>"$tmp/tampered-resume.err"; then
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --plan --resume "$run_id" --public-host validator-a.example.test validator-a >"$tmp/tampered-resume.out" 2>"$tmp/tampered-resume.err"; then
   echo 'resume accepted a tampered retained profile' >&2; exit 1
 fi
 grep -Fq 'profile_id does not bind' "$tmp/tampered-resume.err"
@@ -363,7 +364,7 @@ jq -cn --arg profile "$completed_profile_sha256" '
 printf '%s\n' "$refused_id" >"$tmp/operator/validator-a/state/active-run-id"
 : >"$tmp/remote-effects.log"
 PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$tmp/remote-effects.log" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --bootstrap-file "$tmp/bootstrap.json" --restore "$tmp/validator-backup.tar" \
     --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/refused-reentry.out" 2>"$tmp/refused-reentry.err" || true
 grep -Fq 'JOIN stopped because retained local state requires explicit recovery or removal before a new JOIN' "$tmp/refused-reentry.err"
 [[ "$(cat "$tmp/operator/validator-a/state/active-run-id")" == "$refused_id" ]]

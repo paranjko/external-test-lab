@@ -2,6 +2,7 @@
 # the manual rehearsal and are intentionally not tuned per host.
 MODEL_ID=Qwen/Qwen3-0.6B
 MODEL_REVISION=c1899de289a04d12100db370d81485cdf75e47ca
+MODEL_MIN_VRAM_MIB=16384
 MLNODE_DTYPE=auto
 MLNODE_CONTEXT_LENGTH=2048
 MLNODE_MAX_NUM_SEQS=64

@@ -1,6 +1,8 @@
 # Community DevNet architecture
 
-Hardware snapshot: **13 October 2026**. The stand has **10 machines and 9 NVIDIA GPUs** across five recorded providers.
+Hardware reference: [16 October 2026 GPU report](hardware.md), 12 inventoried hosts and 11 reported NVIDIA GPU hosts, node3 is reachable again
+
+Five providers are recorded for node0–node9, providers for node10 and node11 are not recorded in this inventory
 
 ## Fleet at a glance
 
@@ -9,21 +11,32 @@ Hardware snapshot: **13 October 2026**. The stand has **10 machines and 9 NVIDIA
 | node0, node5 | RTX A5000, 24 GB | North Kansas City, US |
 | node1, node7 | Tesla T4, 16 GB | Helsinki, Finland |
 | node2 | RTX 4090, 24 GB | Amsterdam, Netherlands |
-| node3, node8 | RTX 3090, 24 GB | London, UK |
+| node3 | RTX 3090, 24 GB | London, UK |
+| node8 | RTX 3090, 24 GB | London, UK |
 | node4 | No compute GPU | Portland, US |
 | node6 | RTX PRO 2000 Blackwell, 16 GB | Russia; city unconfirmed |
 | node9 | RTX PRO 2000 Blackwell, 16 GB | League City, US |
+| node10 | RTX 4090, 24 GB | Russia; city unconfirmed |
+| node11 | RTX 5090, 32 GB | Irvine, United States |
 
-Recorded distribution: **US 4, Finland 2, UK 2, Netherlands 1, Russia 1**. Locations come from the published provider inventory; SSH verifies hardware, not physical location. See [regional capacity](regions.md).
+Recorded distribution: US 5, Finland 2, UK 2, Netherlands 1, Russia 2, these are inventory counts, not qualified serving capacity
+
+Locations come from the published provider inventory and operator confirmation for node10 and node11, SSH verifies hardware rather than physical location, see [regional capacity](regions.md)
 
 ## Machine roles
 
-- **node0–node3, node5, node6 and node8:** Network Node and MLNode containers running on the same machine.
-- **node4 → node9:** separate Network Node/edge and GPU machines. node9 was formerly named **node4-ml**; existing containers still use that name.
-- **node7:** MLNode and test containers running; no Network Node container observed in this snapshot.
-- **node0 and node4:** shared gateway, monitoring and public edge services.
+Roles below reflect earlier checks, the 16 October GPU report does not reverify running services or MLNode mappings
 
-The GPUs span Turing, Ampere, Ada and Blackwell, with 16–24 GB per device. All ten machines expose the CPU flags required by the published-image JOIN check. [Hardware inventory](hardware.md) lists CPU, RAM, storage, drivers and measured VRAM.
+- node0–node3, node5, node6 and node8: Network Node and MLNode containers were recorded on the same machine
+- node4 → node9: separate Network Node and edge host with a remote GPU host, node9 was formerly named node4-ml and that name was retained in containers at the previous check
+- node1 → node7: node7 was recorded as a remote MLNode for node1 with no running Network Node of its own
+- node0 and node4: shared gateway, monitoring and public edge services were recorded
+- node10: hardware verified, current deployment role not established by the hardware check
+- node11: hardware verified on 15 October, Docker command unavailable and `/srv/dai` absent, no deployment role established
+
+The GPUs span Turing, Ampere, Ada and Blackwell, with 16–32 GB per device, all 11 GPU hosts report driver 615.71.09 with CUDA 13.4 support
+
+[Hardware inventory](hardware.md) lists per-field verification dates, CPU, RAM, storage, drivers and measured VRAM
 
 ## Public access and operation
 

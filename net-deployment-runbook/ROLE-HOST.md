@@ -111,6 +111,34 @@ The Network Node keeps its local ML endpoint. The API sends work to both
 endpoints. `host reset <network-ssh-alias>` also resets ML-only Hosts recorded
 by this command.
 
+## JOIN monitoring
+
+When the local operator inventory sets `GDC_PUBLIC_EDGE_NODE`, JOIN uses that
+SSH alias as the monitoring collector and checks its Prometheus and discovery
+directory before preparing the Host or creating its identity
+
+`MONITORING_CIDR` is the collector's resolved public IPv4 address with `/32`,
+not a Grafana URL, while `GDC_MONITORING_DOCKER_CIDR` is its private Docker
+subnet, discovered from the running Compose `prometheus` service when no
+explicit override is exported and retained in the generated Host inventory
+
+After JOIN, GDC registers the Host, cAdvisor and chain endpoints and waits for
+all three to report `up=1`, a monitoring failure does not undo a completed
+JOIN or reset its identity
+
+Retry registration and verification from the runbook directory without
+repeating JOIN:
+
+```bash
+bash scripts/register-join-monitoring-targets.sh \
+  --registry-host <collector-ssh-alias> \
+  --node <host-ssh-alias> --public-host <host-ip-or-domain>
+```
+
+Without the operator's collector inventory, independent JOIN does not
+register targets automatically and grants no additional Docker subnet access,
+the network operator must arrange monitoring separately
+
 ## Governance
 
 An active Host may vote with its current PoC-derived voting power. Query live

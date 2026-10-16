@@ -28,6 +28,10 @@ elif [[ "$mode" == wait_recovery && -r "${OBSERVATION_ATTEMPT_FILE:-}" ]]; then
   attempt="$(<"$OBSERVATION_ATTEMPT_FILE")"
 fi
 case "$url" in
+  */chain-api/productscience/inference/inference/models_all)
+    printf '%s\n' '{"model":[{"id":"Qwen/Qwen3-0.6B","hf_repo":"Qwen/Qwen3-0.6B","hf_commit":"c1899de289a04d12100db370d81485cdf75e47ca"}]}'
+    exit 0
+    ;;
   *'/releases/tags/release%2Fv0.2.15')
     printf '%s\n' '{"tag_name":"release/v0.2.15","assets":[{"name":"inferenced-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-amd64.zip","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]}'
     exit 0
@@ -103,7 +107,7 @@ render_group_id=109
 INSPECTION
     exit 0
   fi
-  printf 'vendor=nvidia\n'
+  printf 'vendor=nvidia\nvram_mib=24564\n'
   exit 0
 fi
 echo "unexpected fixture SSH invocation: $*" >&2
@@ -111,7 +115,7 @@ exit 1
 EOF
 chmod 0755 "$tmp/bin/ssh"
 
-if GDC_JOIN_PREFLIGHT_DEADLINE=5 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc.sh" host join \
+if GDC_JOIN_PREFLIGHT_DEADLINE=5 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/out" 2>"$tmp/err"; then
   echo 'unsafe mixed seed observation unexpectedly entered JOIN' >&2
   exit 1
@@ -148,7 +152,7 @@ jq -e '
   .join_profile_sha256 == null
 ' "$result" >/dev/null
 
-if ACCELERATOR_PROFILE_UNSUPPORTED=true PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/unsupported-accelerator" "$ROOT/gdc.sh" host join \
+if ACCELERATOR_PROFILE_UNSUPPORTED=true PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/unsupported-accelerator" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/unsupported.out" 2>"$tmp/unsupported.err"; then
   echo 'unsupported accelerator unexpectedly entered JOIN' >&2
   exit 1
@@ -166,7 +170,7 @@ jq -e '
 attempt_counter="$tmp/observation-attempt-counter"
 if MODE=wait_recovery OBSERVATION_ATTEMPT_FILE="$attempt_counter" \
   GDC_JOIN_PREFLIGHT_DEADLINE=30 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
-  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/recovered-operator" "$ROOT/gdc.sh" host join \
+  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/recovered-operator" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-b.example.test validator-b >"$tmp/recovered.out" 2>"$tmp/recovered.err"; then
   echo 'recovered observation unexpectedly resolved unavailable component metadata' >&2
   exit 1
@@ -182,7 +186,7 @@ recovered_attempts="$(awk -F= '$1 == "software_observation_attempts_dir" { print
 [[ -f "$recovered_attempts/attempt-1.stderr" && -f "$recovered_attempts/attempt-2.json" && -f "$recovered_attempts/attempt-3.json" ]]
 
 if MODE=component_failure GDC_JOIN_PREFLIGHT_DEADLINE=30 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
-  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/component-operator" "$ROOT/gdc.sh" host join \
+  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/component-operator" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification --public-host validator-a.example.test validator-a >"$tmp/component.out" 2>"$tmp/component.err"; then
   echo 'missing official artifact unexpectedly entered JOIN' >&2
   exit 1
