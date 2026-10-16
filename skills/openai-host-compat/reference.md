@@ -8,6 +8,43 @@ or change a field that is already in the target shape.
 
 ## Apply order (log names)
 
+Authenticate the caller first. Before JSON parsing enforce an 8 MiB request
+body limit and depth 64 with a bounded parser. Across the entire request and
+all transformations, share ceilings of 4,096 messages/input items, 256 tools,
+1,024 tool calls, 4 MiB UTF-8 content, 1 MiB tool arguments, 16 MiB allocated
+output and 100 ms monotonic transformation time. Count before copying or
+concatenating; do not reset budgets for each shim, tool, item or adapter pass.
+Use stack-safe traversal and stricter deployment limits where needed. The
+schema-specific limits below also apply. Reject exhaustion with HTTP 413
+`request_budget_exceeded`, no partial body and no upstream request. These
+guards remain active when compatibility rewrites are disabled.
+
+Before the first client body read, start a non-resetting 30-second absolute
+deadline and a 5-second inbound-idle deadline; cover headers/body acquisition,
+decompression and parsing, including authentication middleware reads. Enforce
+them even when no bytes arrive. On expiry stop reads, release the connection,
+timers and buffers, return HTTP 408 `request_timeout` when writable, and never
+forward upstream. Client disconnect cancels all request work immediately.
+Use stricter configured limits; retries and adapter passes never reset clocks.
+
+Incrementally cap wire and decompressed request bytes at 8 MiB each, aggregate
+JSON values at 65,536, object members at 32,768, aggregate UTF-8 key bytes at
+256 KiB, and aggregate decoded string bytes at 4 MiB. Cap total live request
+parsing plus transformation memory at 16 MiB, including input buffers and
+intermediate copies. Charge all fields before allocation, including fields
+later stripped or ignored; depth and semantic limits also apply. Exhaustion
+returns HTTP 413 `request_budget_exceeded` with cleanup and no upstream call.
+Consumer tests must exercise slow/drip/silent bodies with a fake clock,
+compressed expansion, shallow many-member objects, ignored-field floods,
+long keys, allocation ceilings and disconnects; assert bounded memory, prompt
+cleanup and zero forwarding. These are required consumer tests, not executed
+runtime results claimed by this catalog.
+
+Canonicalize before model/tenant/route/tool authorization and quota decisions.
+If earlier middleware already made such decisions, repeat them on the exact
+final body immediately before forwarding. No later rewrite may add unchecked
+fields. Authentication alone does not establish authorization of nested data.
+
 `unwrap_extra_body` → `drop_unknown_knobs` → `drop_null_parallel_tool_calls` →
 `max_completion_tokens` → `reasoning_effort` → `legacy_functions` →
 `developer_role` → `flatten_content` → `blank_tool_content` →
@@ -49,6 +86,25 @@ Also: `stringify_arguments` (object → JSON string) **before** hashing ids;
 Walk `tools[].function.parameters` and `response_format.json_schema.schema`
 (or `.json_schema`):
 
+Before expansion, enforce bounded input parsing and stack-safe graph traversal.
+Use these default per-request ceilings across all schemas, not fresh budgets
+per tool: 1 MiB schema input, depth 64 (root depth 0), 1,024 resolved references,
+10,000 expanded JSON values, 1 MiB expanded UTF-8 JSON, and 100 ms monotonic
+elapsed time. Operators may choose stricter limits. Never disable limits;
+larger production limits require explicit capacity testing. Count work and
+output before allocating/copying, including repeated cached-reference copies;
+check the deadline during traversal. Bound request parsing before constructing
+deep objects, and use an explicit stack rather than language call recursion.
+
+Track canonical JSON-Pointer targets on the active expansion path: reject a
+self or mutual cycle, but allow repeated acyclic references within the shared
+budgets. Reject unresolved/unsupported local references. On a cycle return
+HTTP 400 with `error.code: schema_reference_cycle`; on any budget exhaustion
+return HTTP 400 with `error.code: schema_budget_exceeded` (malformed references:
+`schema_reference_invalid`). Do not forward a partial body, weaken the schema,
+retry without sanitization, or expose schema contents in the error/log. Apply
+the same protections to both schema surfaces and irrespective of shim toggles.
+
 1. Resolve local `$ref` (`#/$defs/Foo`, `#/definitions/Foo`) by inlining.
 2. Delete keys: `$defs`, `definitions`, `$ref`, `$dynamicRef`, `$dynamicAnchor`,
    `$anchor` (after inlining).
@@ -58,6 +114,11 @@ Walk `tools[].function.parameters` and `response_format.json_schema.schema`
 If a `$ref` is external (`http://…`) and cannot be inlined, strip that subtree
 or replace with `"type":"object"` — better a weaker schema than a 400. Do not
 fetch remote refs.
+
+The rejection cases in `golden/schema_rejections.json` are an implementation
+contract, not proof that a broker enforces these limits. Run each against both
+schema surfaces in the consuming proxy, assert the exact 400 code and zero
+upstream requests, and use an injected monotonic clock for deadline tests.
 
 ## 4. RE2 `pattern` repeats (same sanitizers)
 
@@ -105,8 +166,17 @@ is a regression.
 
 - `max_completion_tokens`: copy → `max_tokens` if `max_tokens` absent; delete
   `max_completion_tokens`.
-- `unwrap_extra_body`: copy nested keys onto the top level if absent, then
-  delete the envelope. Then `drop_unknown_knobs`.
+- `unwrap_extra_body`: accept one object envelope (`extra_body` or `extraBody`,
+  not both). Only allow `reasoning_split`, `reasoning_effort`,
+  `max_completion_tokens`, `parallel_tool_calls`, `thinking`,
+  `chat_template_kwargs` and `reasoning_details`. Reject every other nested
+  key, particularly model, tenant, user, route, endpoint, credentials,
+  messages, instructions and tools. Reject duplicate JSON keys at parsing
+  and any envelope key also present at top level, even with the same value.
+  Return HTTP 400 `invalid_extra_body`, without forwarding. Lift the allowed
+  fields, delete the envelope, then run `drop_unknown_knobs`. All lifted fields,
+  including token limits and template settings, remain subject to final
+  authorization and quota policy; an allowlist is not an authorization grant.
 - Drop: `extra_headers`, `think`, `cache_key`, `prompt_cache_key`, `tags`,
   `routing_mode`, `json_mode`, `output_config`, `fallback`,
   `allowed_token_ids`, `ignore_eos`, `use_beam_search`,
@@ -122,6 +192,13 @@ is a regression.
   `function_call` → `tool_choice`.
 
 ## Golden 400 substrings (host)
+
+Consumer security probes (run on both chat and Responses entrypoints): a
+nested `model`/tenant/route must fail before forwarding; a nested token limit
+must still pass final quota policy; duplicate top-level/envelope fields must
+fail. Exercise each whole-request ceiling individually and aggregate many
+small items to cross it; assert bounded termination and zero upstream calls.
+The catalog specifies these tests, not a deployed implementation result.
 
 - `schema reference keyword is forbidden`
 - `"$defs" is not allowed` / `"$ref" is not allowed`

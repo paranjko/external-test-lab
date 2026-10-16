@@ -22,6 +22,7 @@
     .lead { font-size: 1.25rem; max-width: 650px; }
     .install, pre { background: #1a231d; border: 1px solid #354739; border-radius: 10px; padding: 20px; }
     code { font-family: ui-monospace, monospace; font-size: .9rem; overflow-wrap: anywhere; }
+    .install code { white-space: pre-wrap; }
     pre { white-space: pre-wrap; line-height: 1.8; }
     button { flex-shrink: 0; border: 0; border-radius: 6px; padding: 10px 16px; background: #b4ecc4; color: #102817; cursor: pointer; font: inherit; }
     button:hover { background: #d4f9df; }
@@ -37,26 +38,66 @@
 </head>
 <body>
 <main>
-  <nav aria-label="Main"><a href="/">Gonka Community DevNet</a><a href="https://github.com/paranjko/external-test-lab/tree/gonkactl-trace-v1.0.0-beta.2/gonkactl-trace">Source &amp; docs ↗</a></nav>
+  <nav aria-label="Main"><a href="/">Gonka Community DevNet</a><a href="https://github.com/paranjko/external-test-lab/tree/gonka-validator-diagnosis-v1.0.0/gonkactl-trace">Source &amp; docs ↗</a></nav>
   <span class="badge">v1.0.0-beta.2 · experimental</span>
   <h1>gonkactl-trace</h1>
   <p class="lead">Fast on-chain event tracing &amp; triage for Gonka network nodes and testbeds.</p>
   <p>Turn a range of blocks into a local, interactive report. Follow consensus evidence, inspect anomalies, and keep the sources behind every finding.</p>
-  <h2>Install in one command</h2>
-  <div class="install"><code id="install-command">curl -LsSf https://gonka-dev.net/trace/install.sh | sh</code><button type="button" id="copy">Copy command</button></div>
+  <h2>Download and verify the installer</h2>
+  <p class="note">Use a trusted operating-system shell (<code>/bin/sh</code>) on Linux/macOS. These commands use only administrator-managed <code>/usr/bin</code> and <code>/bin</code>; stop if either directory or its tools can be modified by untrusted users. Do not source the installer or use a shell with untrusted startup configuration.</p>
+  <div class="install"><code id="install-command">(
+  set -eu
+  PATH=/usr/bin:/bin
+  export PATH
+  trace_dir=$(mktemp -d /tmp/gonka-trace.XXXXXXXX)
+  curl -fLsS https://gonka-dev.net/trace/install.sh -o "$trace_dir/install.sh"
+  (
+    cd "$trace_dir"
+    printf '%s  %s\n' '2d46a7a4ade3491e5f8ff65bdfccf458155074d8c3f54f8d9c1cfe03b39c899f' install.sh | { if command -v sha256sum >/dev/null 2>&amp;1; then sha256sum -c -; else shasum -a 256 -c -; fi; }
+  )
+  printf 'Verified installer: %s\n' "$trace_dir/install.sh"
+)</code><button type="button" id="copy">Copy command</button></div>
   <p id="copy-status" role="status" aria-live="polite"></p>
-  <p class="note">Linux &amp; macOS. Verifies SHA256 before installing into <code>~/.local/bin</code>. No sudo or profile edits. <a href="install.sh">Inspect the installer</a>; use <code>sh install.sh --dry-run</code> to preview, or set <code>GONKACTL_INSTALL_DIR</code> to choose a directory. Windows: download the ZIP below.</p>
+  <p class="note">Temporary files use the OS-managed, root-owned sticky <code>/tmp</code> (including its resolved parent on macOS), never inherited <code>TMPDIR</code>. Stop if that root is not trusted. Keep the private temporary directory intact and recheck the digest immediately before executing the installer or copying the skill files.</p>
+  <p class="note">Linux &amp; macOS. Inspect the verified file at the printed absolute path. Run <code>/bin/sh /printed/path/install.sh --dry-run</code> to preview, then <code>/bin/sh /printed/path/install.sh</code> only after approving the destination. The installer binds the release manifest to a reviewed digest and verifies the archive before installing into <code>~/.local/bin</code>. No sudo or profile edits. Set <code>GONKACTL_INSTALL_DIR</code> to choose a directory. Installer SHA-256: <code id="installer-sha256">2d46a7a4ade3491e5f8ff65bdfccf458155074d8c3f54f8d9c1cfe03b39c899f</code>. Windows: download the ZIP below.</p>
   <section class="features" aria-label="Features">
     <article><h3>Trace on-chain evidence</h3><p>Collect recent or historical blocks and inspect events, signatures, validator membership and available application responses. Bounded snapshots, not continuous real-time monitoring.</p></article>
     <article><h3>Investigate the unexpected</h3><p>Analyze emergency states and anomalies across distributed testbeds. Provenance and explicit gaps separate observed evidence from unknown causes.</p></article>
     <article><h3>Check your test runs</h3><p>Inspect on-chain outcomes from E2E runs, compare retained evidence, and rebuild reports offline for diagnostics. Test pass/fail remains your harness's decision.</p></article>
   </section>
   <h2>From blocks to a report</h2>
-  <pre><code>gonkactl-trace --version
-gonkactl-trace --help
-gonkactl-trace report mainnet HEAD~10
-# Or: gonkactl-trace report devnet HEAD~10</code></pre>
+  <p class="note">Replace the placeholder below with the approved absolute path of the installed binary. Before execution, verify its digest against the binary extracted from the verified official archive and check file/parent ownership and permissions; reject untrusted-writable paths. Do not select the binary through PATH or trust its own version text as provenance.</p>
+  <pre><code id="trace-example">/approved/absolute/path/gonkactl-trace --version
+/approved/absolute/path/gonkactl-trace --help
+/approved/absolute/path/gonkactl-trace report mainnet HEAD~10
+# Or: /approved/absolute/path/gonkactl-trace report devnet HEAD~10</code></pre>
   <p class="note">Open the printed HTML path in your browser. Collection reads public endpoints; reports and retained data stay local. Review evidence before sharing. Signature fields are not cryptographically verified.</p>
+  <section id="agent" aria-labelledby="agent-heading">
+    <h2 id="agent-heading">Investigate with your agent</h2>
+    <p>Use the <code>gonka-validator-diagnosis</code> skill to investigate why a participant lost validator membership or failed PoC admission. The agent correlates a completed stage, votes and the effective validator set, and separates the chain decision from an underlying cause that may still be unknown.</p>
+    <p>Prepare skill v1.0.0 from its verified release archive, then copy the reviewed folder into your agent's configured skill directory. No registry installer or Node.js/npm is required. Linux/macOS verification uses curl, unzip and sha256sum or shasum:</p>
+    <pre><code id="skill-install-command">(
+  set -eu
+  PATH=/usr/bin:/bin
+  export PATH
+  skill_dir=$(mktemp -d /tmp/gonka-skill.XXXXXXXX)
+  curl -fLsS https://github.com/paranjko/external-test-lab/releases/download/gonka-validator-diagnosis-v1.0.0/gonka-validator-diagnosis_1.0.0.zip -o "$skill_dir/skill.zip"
+  (
+    cd "$skill_dir"
+    printf '%s  %s\n' 'b3f4166858f3795bd22c4b6d96473b102b7e65d957c2d73bd789d4f9e09a083a' skill.zip | { if command -v sha256sum >/dev/null 2>&amp;1; then sha256sum -c -; else shasum -a 256 -c -; fi; }
+    unzip -q skill.zip
+  )
+  printf 'Verified skill folder: %s\n' "$skill_dir/gonka-validator-diagnosis"
+)</code></pre>
+    <p class="note">The archive is checked before extraction. Review the printed folder, then manually copy it into your agent's skill directory; do not overwrite an existing skill without approval. The temporary source folder is retained for inspection. This does not install the trace binary; use the official installer above when you authorize local installation. <a id="skill-release" href="https://github.com/paranjko/external-test-lab/releases/tag/gonka-validator-diagnosis-v1.0.0">Release, archive and usage guide ↗</a></p>
+    <p class="note">Windows or manual setup: download the ZIP from that release, verify its SHA-256 is <code id="skill-sha256">b3f4166858f3795bd22c4b6d96473b102b7e65d957c2d73bd789d4f9e09a083a</code> (PowerShell: <code>Get-FileHash -Algorithm SHA256</code>), then extract into a new directory and follow the included README. The archive includes a per-file SHA256SUMS manifest. A checksum binds these reviewed bytes; it is not a publisher signature.</p>
+    <p>Then ask your agent, replacing the placeholders with your incident:</p>
+    <pre><code id="agent-prompt">Use gonka-validator-diagnosis to explain why participant ADDRESS stopped
+validating on NETWORK around HEIGHT or UTC TIME. Start with public evidence;
+do not change the node. Separate the membership decision from its underlying
+cause, cite the evidence, and identify any missing records.</code></pre>
+    <p class="note">Read-only diagnosis, not repair or a guaranteed root cause. No node restart, governance action or automatic upload. Reports stay local during public CLI collection, but a hosted agent sends context to its provider: use only public or approved, scrubbed evidence. Never attach credentials or unrestricted logs.</p>
+  </section>
   <h2>Download v1.0.0-beta.2</h2>
   <p>Latest trace beta. Choose your operating system and CPU.</p>
   <table>
@@ -69,7 +110,7 @@ gonkactl-trace report mainnet HEAD~10
       <tr><td>Windows</td><td>x86-64</td><td><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.2/gonkactl-trace_1.0.0-beta.2_windows_amd64.zip">ZIP</a></td></tr>
     </tbody>
   </table>
-  <p class="note"><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.2/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/paranjko/external-test-lab/releases/tag/gonkactl-trace-v1.0.0-beta.2">Release notes</a>. Checksums detect corruption; they are not publisher signatures. Binaries are unsigned. The optional full Perfetto viewer is a separate source build.</p>
+  <p class="note"><a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-trace-v1.0.0-beta.2/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/paranjko/external-test-lab/releases/tag/gonkactl-trace-v1.0.0-beta.2">Release notes</a>. Before using this manifest for manual or Windows verification, check its SHA-256 is <code>115eecd486f26e6720cca82d4852b96accdd8bda618877e647e5591f96ffa9b8</code>; then verify the selected archive. These pins bind reviewed bytes, not a publisher signature. Binaries are unsigned. The optional full Perfetto viewer is a separate source build.</p>
   <footer>Built for the Gonka External Test Lab. An independent experimental tool.</footer>
 </main>
 <script>

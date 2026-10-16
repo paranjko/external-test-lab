@@ -1,9 +1,17 @@
 #!/bin/sh
 # POSIX installer. No profile edits, elevated privileges, or unchecked execution.
 set -eu
+# Trust only the operating system's administrator-managed helper directories.
+# Invoke this file with /bin/sh on a trusted OS; never source it into a shell.
+trace_original_path=${PATH:-}
+PATH=/usr/bin:/bin
+export PATH
 
 main() {
     trace_version=1.0.0-beta.2
+    # Reviewed beta.2 release manifest; do not trust a replacement from the
+    # download origin. A new release requires a separately reviewed new pin.
+    trace_manifest_sha256=115eecd486f26e6720cca82d4852b96accdd8bda618877e647e5591f96ffa9b8
     trace_quiet=0
     trace_preview=0
     for trace_arg in "$@"; do
@@ -59,13 +67,15 @@ main() {
         command -v tar >/dev/null 2>&1 || fail 'tar is required'
     fi
     umask 077
-    trace_tmp=$(mktemp -d "${TMPDIR:-/tmp}/gonkactl-trace.XXXXXXXX")
+    # Require the OS-managed sticky /tmp root; ignore caller-owned TMPDIR.
+    trace_tmp=$(mktemp -d /tmp/gonkactl-trace.XXXXXXXX)
     trace_stage=
     trap 'cleanup' 0
     trap 'exit 1' HUP INT TERM
     say "Downloading gonkactl-trace $trace_version ($trace_os/$trace_arch)"
     download "$trace_url/$trace_asset" "$trace_tmp/archive"
     download "$trace_url/SHA256SUMS" "$trace_tmp/SHA256SUMS"
+    [ "$(file_sha256 "$trace_tmp/SHA256SUMS")" = "$trace_manifest_sha256" ] || fail 'release manifest SHA256 mismatch; nothing installed'
     trace_expected=
     while read -r trace_sum trace_name trace_extra; do
         if [ "$trace_name" = "$trace_asset" ]; then
@@ -75,11 +85,7 @@ main() {
     done < "$trace_tmp/SHA256SUMS"
     [ "${#trace_expected}" = 64 ] || fail 'missing or invalid SHA256 entry'
     case "$trace_expected" in *[!0-9a-f]*) fail 'invalid SHA256 entry' ;; esac
-    case "$trace_hash" in
-        sha256sum) trace_actual=$(sha256sum "$trace_tmp/archive"); trace_actual=${trace_actual%% *} ;;
-        shasum) trace_actual=$(shasum -a 256 "$trace_tmp/archive"); trace_actual=${trace_actual%% *} ;;
-        openssl) trace_actual=$(openssl dgst -sha256 "$trace_tmp/archive"); trace_actual=${trace_actual##* } ;;
-    esac
+    trace_actual=$(file_sha256 "$trace_tmp/archive")
     [ "$trace_expected" = "$trace_actual" ] || fail 'SHA256 mismatch; nothing installed'
     # Extract only the expected member to a file we control, never archive paths.
     if [ "$trace_extension" = zip ]; then
@@ -97,7 +103,7 @@ main() {
     mv -f "$trace_stage" "$trace_dir/$trace_binary"
     trace_stage=
     say "Installed $trace_dir/$trace_binary"
-    case ":${PATH:-}:" in
+    case ":${trace_original_path}:" in
         *":$trace_dir:"*) ;;
         *)
             if [ "$trace_quiet" = 0 ]; then
@@ -109,6 +115,14 @@ main() {
 }
 
 fail() { printf 'gonkactl-trace: %s\n' "$*" >&2; exit 1; }
+file_sha256() {
+    case "$trace_hash" in
+        sha256sum) trace_digest=$(sha256sum "$1"); trace_digest=${trace_digest%% *} ;;
+        shasum) trace_digest=$(shasum -a 256 "$1"); trace_digest=${trace_digest%% *} ;;
+        openssl) trace_digest=$(openssl dgst -sha256 "$1"); trace_digest=${trace_digest##* } ;;
+    esac
+    printf '%s\n' "$trace_digest"
+}
 say() { if [ "$trace_quiet" = 0 ]; then printf '%s\n' "$*"; fi; }
 download() {
     if [ "$trace_downloader" = curl ]; then

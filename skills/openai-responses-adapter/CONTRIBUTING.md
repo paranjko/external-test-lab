@@ -41,8 +41,9 @@ There is no `golden/` runner in this folder yet. A before/after sketch in
 `reference.md` is enough for a first PR. Toy payloads only.
 
 Chat-body rewrites belong in the host-compat skill
-(`npx skills add paranjko/external-test-lab --skill openai-host-compat`).
-https://github.com/paranjko/external-test-lab/tree/main/skills/openai-host-compat
+[openai-host-compat](../openai-host-compat/SKILL.md). Use reviewed local folders
+from the same approved immutable commit and the documented manual-copy
+installation boundary, not a registry installer or moving branch.
 
 ## Do not
 

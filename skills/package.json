@@ -1,0 +1,8 @@
+{
+  "name": "gonka-skill-catalog-checks",
+  "private": true,
+  "version": "1.0.0",
+  "devDependencies": {
+    "skills": "1.5.23"
+  }
+}

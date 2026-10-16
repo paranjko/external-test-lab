@@ -23,13 +23,25 @@ Agent → broker proxy (shims) → gateway → host validator → model
 ```
 
 **Port:** this is a spec, not a library. Find the existing
-`POST /v1/chat/completions` handler; rewrite the JSON body after auth,
-before the gateway. Any language. Do not start a new process.
+`POST /v1/chat/completions` handler; authenticate the caller, apply bounded
+parsing/canonicalization, then authorize and meter the exact final body before
+the gateway. Authentication is not field-dependent authorization: model,
+tenant, route, tool and quota policy must see every rewritten field. Any
+language. Do not start a new process.
 
 **Before coding:** read [reference.md](reference.md).
+Obtain this folder and any companion skill from one explicitly approved full
+immutable repository commit, verify that revision before copying, and manually
+copy the reviewed folders into the agent's configured skill directory. Do not
+execute a registry installer or install from a moving branch; review the
+destination and do not overwrite an existing skill without approval.
 **Done when:** each [golden/](golden/) file matches `in` → `out`
 (JSON equality; opaque `call_*` ids may differ if pairing holds and a
 second pass does not change them). See [CONTRIBUTING.md](CONTRIBUTING.md).
+The schema rejection suite must also return its specified 400 codes with no
+upstream call. Enforce cycle detection and shared resource limits from the
+reference before any schema expansion; compatibility is not a reason to bypass
+these guards.
 
 Log one line per rewrite: which shim fired (no prompts, no API keys).
 
@@ -43,7 +55,7 @@ new id or flatten twice).
 
 | Log name | Rewrite |
 |----------|---------|
-| `unwrap_extra_body` | Lift `extra_body` / `extraBody` keys onto the top level if absent; delete the envelope |
+| `unwrap_extra_body` | Lift only allowlisted compatibility fields; reject duplicates/protected keys; authorize the final body (see reference) |
 | `drop_unknown_knobs` | Drop SDK/host-unknown knobs (see list). **Keep** `thinking`, `chat_template_kwargs`, `reasoning_details` |
 | `drop_null_parallel_tool_calls` | Delete `parallel_tool_calls` when it is `null` (leave `true`/`false`) |
 | `max_completion_tokens` | Copy to `max_tokens` if missing; delete `max_completion_tokens` (never send both) |
@@ -127,5 +139,6 @@ See [reference.md](reference.md) for rewrite sketches and golden JSON.
 ## Related
 
 `POST /v1/responses` is a separate adapter (ToChat → these shims → FromChat).
-Install: `npx skills add paranjko/external-test-lab --skill openai-responses-adapter`
-https://github.com/paranjko/external-test-lab/tree/main/skills/openai-responses-adapter
+Use the companion [Responses adapter](../openai-responses-adapter/SKILL.md)
+from the same approved immutable source snapshot, following the manual-copy
+boundary above; the link does not authorize fetching or installing new content.

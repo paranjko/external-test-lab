@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'skills/**'
+      - 'gonkactl-trace/README.md'
+      - 'net-deployment-runbook/04-ops/site/trace/**'
       - '.github/workflows/skills-ref.yml'
   pull_request:
     types:
@@ -15,6 +17,8 @@ on:
       - synchronize
     paths:
       - 'skills/**'
+      - 'gonkactl-trace/README.md'
+      - 'net-deployment-runbook/04-ops/site/trace/**'
       - '.github/workflows/skills-ref.yml'
   workflow_dispatch:
 
@@ -30,45 +34,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@v5.0.0
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
         with:
           python-version: '3.12'
       - name: Set up Node
-        uses: actions/setup-node@v5.0.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '22'
+      - name: Install Agent Skills validator
+        run: python -m pip install 'git+https://github.com/agentskills/agentskills.git@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref'
+      - name: Install integrity-locked catalog CLI
+        run: make -C skills dependencies
       - name: Validate Agent Skills
         env:
           CI: 'true'
-          # Official reference lib: https://github.com/agentskills/agentskills/tree/main/skills-ref
-          SKILLS_REF_GIT: git+https://github.com/agentskills/agentskills.git@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref
-          SKILLS_CLI: skills@1.5.23
-        run: |
-          set -Eeuo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install "$SKILLS_REF_GIT"
-          shopt -s nullglob
-          found=0
-          for skill_md in skills/*/SKILL.md; do
-            skills-ref validate "$(dirname "$skill_md")"
-            found=$((found + 1))
-          done
-          test "$found" -ge 1
-
-          list_out="$(npx --yes "$SKILLS_CLI" add . --list -y)"
-          printf '%s\n' "$list_out"
-          # Name rows only. Descriptions mention the companion skill, so
-          # substring grep would stay green if one package disappeared.
-          printf '%s\n' "$list_out" | sed $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' | awk '
-          {
-            line = $0
-            sub(/^[^A-Za-z0-9_-]+/, "", line)
-            if (line == "openai-host-compat") host = 1
-            if (line == "openai-responses-adapter") resp = 1
-          }
-          END { if (!host || !resp) exit 1 }
-          '
+        run: make -C skills validate

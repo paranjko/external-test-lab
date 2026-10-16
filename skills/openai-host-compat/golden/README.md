@@ -11,6 +11,7 @@ prompts). Schema and comparison rules: [`../CONTRIBUTING.md`](../CONTRIBUTING.md
 | `stringify_arguments.json` | Arguments object → JSON string; missing `type` → `function` |
 | `sanitize_tool_schemas.json` | Inline `$ref`, strip `$defs`, clamp `pattern` `{1,4096}` → `{1,1000}` |
 | `sanitize_json_schema.json` | Same sanitizer on `response_format.json_schema` |
+| `schema_rejections.json` | Both schema surfaces reject cycles, excessive depth, fanout, input/output size, reference count and elapsed work; separate negative-suite format |
 | `unwrap_extra_body.json` | Lift `extra_body`, drop unknown knobs, `max_completion_tokens` → `max_tokens` |
 | `blank_tool_content.json` | Assistant `content: ""` next to `tool_calls` → `null` |
 | `fill_blank_user_system.json` | Empty user/system → `"."`; assistant/tool stay empty |
