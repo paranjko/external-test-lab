@@ -23,18 +23,31 @@
   "liveNow": true,
   "panels": [
     {
+      "id": 100,
+      "type": "row",
+      "title": "Network now",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Healthy targets",
+      "title": "Chain nodes online",
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 3,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -51,7 +64,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "no target is configured"
+          "noValue": "no chain node is configured"
         },
         "overrides": []
       },
@@ -72,12 +85,12 @@
       },
       "targets": [
         {
-          "expr": "sum(up)",
+          "expr": "sum(max by (host) (up{job=\"gonka-node\"}))",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Scrape targets that answered their last attempt, across every job."
+      "description": "Chain nodes of the monitoring inventory that answered their last scrape, counted once per host. A validator outside the inventory is not counted."
     },
     {
       "id": 2,
@@ -86,12 +99,387 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Failed targets",
+      "title": "Validators",
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 3,
+        "x": 3,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "the chain poller is not scraped"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "max(gdc_chain_validators_count)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Validators in the CometBFT set at the latest block, read by the chain poller from public RPC."
+    },
+    {
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Epoch",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
         "x": 6,
-        "y": 0
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "the chain poller is not scraped"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "max(gdc_chain_epoch_index)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Latest epoch index from epoch_info."
+    },
+    {
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Current phase",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 9,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "the chain poller is not scraped",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "PoC generation",
+                  "color": "purple",
+                  "index": 0
+                },
+                "1": {
+                  "text": "batch exchange and wait",
+                  "color": "blue",
+                  "index": 1
+                },
+                "2": {
+                  "text": "PoC validation",
+                  "color": "orange",
+                  "index": 2
+                },
+                "3": {
+                  "text": "validator set switch",
+                  "color": "yellow",
+                  "index": 3
+                },
+                "4": {
+                  "text": "inference",
+                  "color": "green",
+                  "index": 4
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "max(gdc_chain_epoch_phase_code)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Cycle counted from the PoC start P read from epoch_info: PoC generation, batch exchange and wait, PoC validation, validator set switch (group written at P+19, the new set signs from P+23), then inference until the next PoC."
+    },
+    {
+      "id": 5,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Until next PoC",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 13,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix: blocks",
+          "noValue": "the chain poller is not scraped"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "max(gdc_chain_epoch_blocks_to_next_poc)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Blocks from the current height to the next PoC start."
+    },
+    {
+      "id": 6,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Block time",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 16,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s",
+          "noValue": "no block-interval histogram in the window",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(cometbft_consensus_block_interval_seconds_bucket[10m])))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Median block interval over the last ten minutes."
+    },
+    {
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Gateways working",
+      "gridPos": {
+        "h": 4,
+        "w": 2,
+        "x": 19,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no gateway status URL answers"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum(gdc_chain_gateway_working)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Gateways whose public status reports an active DevShard."
+    },
+    {
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Endpoints failing",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -112,7 +500,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "no target is configured"
+          "noValue": "no public endpoint is probed"
         },
         "overrides": []
       },
@@ -133,212 +521,491 @@
       },
       "targets": [
         {
-          "expr": "sum(up == bool 0)",
+          "expr": "sum(1 - probe_success{job=~\"public-https|public-node-endpoints\"})",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Scrape targets that failed their last attempt. Counting the targets, not summing their values: a sum of zeros can only ever be zero."
+      "description": "Public site, API, Grafana, node RPC and LCD probes that failed their last attempt. Zero is measured; empty means nothing is probed."
     },
     {
-      "id": 3,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "type": "stat",
-      "title": "Public endpoints up",
+      "id": 110,
+      "type": "row",
+      "title": "Nodes",
+      "collapsed": false,
       "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 0
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none",
-          "noValue": "no public endpoint is probed"
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "expr": "sum(probe_success{job=\"public-https\"})",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "description": "Public URLs answering the blackbox probe. This counts successes, so compare it with the number of probes configured."
-    },
-    {
-      "id": 4,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "type": "stat",
-      "title": "GPUs available",
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 0
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none",
-          "noValue": "no accelerator is reporting"
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "expr": "count(gdc_nvidia_utilization_percent)",
-          "refId": "A",
-          "instant": true
-        }
-      ],
-      "description": "Accelerators reporting utilization. Counts cards, not hosts: a host answers once, each of its cards reports separately."
-    },
-    {
-      "id": 5,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "type": "timeseries",
-      "title": "Consensus height",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
+        "h": 1,
+        "w": 24,
         "x": 0,
-        "y": 4
+        "y": 5
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "table",
+      "title": "Nodes",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 6
       },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
           "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 12,
-            "gradientMode": "opacity",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
             },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "inspect": false
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "noValue": "no host matches the filter"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Host"
+            },
+            "properties": [
               {
-                "color": "green",
-                "value": null
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "down",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "up",
+                        "color": "green",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
               }
             ]
           },
-          "unit": "none"
-        },
-        "overrides": []
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Chain"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "down",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "up",
+                        "color": "green",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Blocks behind"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 3
+                    },
+                    {
+                      "color": "red",
+                      "value": 20
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "red",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "red",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU busy"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "red",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Disk free"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 8
+                    },
+                    {
+                      "color": "green",
+                      "value": 15
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
           ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
+          "show": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "showHeader": true
       },
       "targets": [
         {
-          "expr": "cometbft_consensus_height",
+          "expr": "max by (host) (up{job=\"host\",host=~\"$host\"})",
           "refId": "A",
-          "legendFormat": "{{host}}"
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host) (up{job=\"gonka-node\",host=~\"$host\"})",
+          "refId": "B",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "scalar(max(cometbft_consensus_height)) - max by (host) (cometbft_consensus_height{host=~\"$host\"})",
+          "refId": "C",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host) (cometbft_p2p_peers{host=~\"$host\"})",
+          "refId": "D",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "100 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\",host=~\"$host\"}[5m])) * 100",
+          "refId": "E",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host) ((1 - node_memory_MemAvailable_bytes{host=~\"$host\"} / node_memory_MemTotal_bytes{host=~\"$host\"}) * 100)",
+          "refId": "F",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\",host=~\"$host\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\",host=~\"$host\"} * 100)",
+          "refId": "G",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host, gpu_name) (gdc_nvidia_utilization_percent{host=~\"$host\",gpu_name=~\"$gpu\"})",
+          "refId": "H",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host, version) (gdc_component_info{component=\"inference-chain\",source=\"runtime\",host=~\"$host\"})",
+          "refId": "I",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "topk by (host) (1, max by (host, city, country) (up{job=\"host\",city!=\"\",host=~\"$host\"}))",
+          "refId": "J",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "description": "One row per monitored host. GPU columns follow the GPU model filter; a host without a matching GPU keeps its row with those cells empty. A separate ML host of a validator is its own row.",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value #I": true,
+              "Value #J": true
+            },
+            "indexByName": {
+              "host": 0,
+              "city": 1,
+              "country": 2,
+              "Value #A": 4,
+              "Value #B": 5,
+              "Value #C": 6,
+              "Value #D": 7,
+              "Value #E": 8,
+              "Value #F": 9,
+              "Value #G": 10,
+              "gpu_name": 11,
+              "Value #H": 12,
+              "version": 13
+            },
+            "renameByName": {
+              "host": "Node",
+              "city": "City",
+              "country": "Country",
+              "Value #A": "Host",
+              "Value #B": "Chain",
+              "Value #C": "Blocks behind",
+              "Value #D": "Peers",
+              "Value #E": "CPU",
+              "Value #F": "Memory",
+              "Value #G": "Disk free",
+              "gpu_name": "GPU",
+              "Value #H": "GPU busy",
+              "version": "Chain version"
+            }
+          }
         }
       ]
     },
     {
-      "id": 6,
+      "id": 120,
+      "type": "row",
+      "title": "Resources",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "panels": []
+    },
+    {
+      "id": 21,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -347,175 +1014,9 @@
       "title": "CPU busy",
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 4
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 12,
-            "gradientMode": "opacity",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "100 - avg by(host)(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100",
-          "refId": "A",
-          "legendFormat": "{{host}}"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "type": "timeseries",
-      "title": "Memory used",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
-        "y": 12
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 12,
-            "gradientMode": "opacity",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "expr": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100",
-          "refId": "A",
-          "legendFormat": "{{host}}"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "type": "timeseries",
-      "title": "GPU utilization",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 12
+        "y": 17
       },
       "fieldConfig": {
         "defaults": {
@@ -561,14 +1062,17 @@
             ]
           },
           "unit": "percent",
-          "noValue": "no accelerator host is reporting"
+          "noValue": "no host matches the filter",
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
         "legend": {
           "calcs": [
-            "lastNotNull"
+            "lastNotNull",
+            "max"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -581,26 +1085,26 @@
       },
       "targets": [
         {
-          "expr": "gdc_nvidia_utilization_percent",
+          "expr": "100 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\",host=~\"$host\"}[5m])) * 100",
           "refId": "A",
-          "legendFormat": "{{host}} · {{gpu_name}}"
+          "legendFormat": "{{host}}"
         }
       ],
-      "description": "Empty when no accelerator host reports to the collector."
+      "description": "Share of CPU time not idle, averaged over cores."
     },
     {
-      "id": 9,
+      "id": 22,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "GPU memory used",
+      "title": "Memory used",
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 20
+        "w": 8,
+        "x": 8,
+        "y": 17
       },
       "fieldConfig": {
         "defaults": {
@@ -645,15 +1149,18 @@
               }
             ]
           },
-          "unit": "bytes",
-          "noValue": "no accelerator host is reporting"
+          "unit": "percent",
+          "noValue": "no host matches the filter",
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
         "legend": {
           "calcs": [
-            "lastNotNull"
+            "lastNotNull",
+            "max"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -666,15 +1173,15 @@
       },
       "targets": [
         {
-          "expr": "gdc_nvidia_memory_used_bytes",
+          "expr": "max by (host) ((1 - node_memory_MemAvailable_bytes{host=~\"$host\"} / node_memory_MemTotal_bytes{host=~\"$host\"}) * 100)",
           "refId": "A",
-          "legendFormat": "{{host}} · {{gpu_name}}"
+          "legendFormat": "{{host}}"
         }
       ],
-      "description": "Empty when no accelerator host reports to the collector."
+      "description": "Memory in use, excluding reclaimable cache."
     },
     {
-      "id": 10,
+      "id": 23,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -683,9 +1190,9 @@
       "title": "Operational disk free",
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 20
+        "w": 8,
+        "x": 16,
+        "y": 17
       },
       "fieldConfig": {
         "defaults": {
@@ -739,7 +1246,7 @@
             ]
           },
           "unit": "percent",
-          "noValue": "no matching filesystem on any scraped host",
+          "noValue": "no host matches the filter",
           "min": 0,
           "max": 100
         },
@@ -748,7 +1255,8 @@
       "options": {
         "legend": {
           "calcs": [
-            "lastNotNull"
+            "lastNotNull",
+            "min"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -761,26 +1269,26 @@
       },
       "targets": [
         {
-          "expr": "min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} * 100)",
+          "expr": "min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\",host=~\"$host\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\",host=~\"$host\"} * 100)",
           "refId": "A",
           "legendFormat": "{{host}}"
         }
       ],
-      "description": "Free space on the fullest real volume of each host. The dashed lines are the 15% and 8% disk alert levels; the alerts also watch /boot volumes, which this panel leaves out."
+      "description": "Free space on the fullest real volume of each host. The dashed lines are the 15% and 8% disk alert levels."
     },
     {
-      "id": 11,
+      "id": 24,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "P2P peers",
+      "title": "GPU utilization",
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
-        "y": 28
+        "y": 25
       },
       "fieldConfig": {
         "defaults": {
@@ -825,14 +1333,18 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "percent",
+          "noValue": "no GPU matches the filters",
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
         "legend": {
           "calcs": [
-            "lastNotNull"
+            "lastNotNull",
+            "max"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -845,25 +1357,434 @@
       },
       "targets": [
         {
-          "expr": "cometbft_p2p_peers",
+          "expr": "max by (host, gpu, gpu_name) (gdc_nvidia_utilization_percent{host=~\"$host\",gpu_name=~\"$gpu\"})",
           "refId": "A",
-          "legendFormat": "{{host}}"
+          "legendFormat": "{{host}}/{{gpu}} · {{gpu_name}}"
         }
-      ]
+      ],
+      "description": "Per card. Empty when no card matches the node and GPU model filters."
     },
     {
-      "id": 12,
+      "id": 25,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Consensus height spread",
+      "title": "GPU memory used",
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 28
+        "w": 8,
+        "x": 8,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent",
+          "noValue": "no GPU matches the filters",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 * max by (host, gpu, gpu_name) (gdc_nvidia_memory_used_bytes{host=~\"$host\",gpu_name=~\"$gpu\"}) / max by (host, gpu, gpu_name) (gdc_nvidia_memory_total_bytes{host=~\"$host\",gpu_name=~\"$gpu\"})",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{gpu}} · {{gpu_name}}"
+        }
+      ],
+      "description": "Share of card memory in use. A loaded model holds its memory while idle."
+    },
+    {
+      "id": 26,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "GPU temperature",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "celsius",
+          "noValue": "no GPU matches the filters"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (host, gpu, gpu_name) (gdc_nvidia_temperature_celsius{host=~\"$host\",gpu_name=~\"$gpu\"})",
+          "refId": "A",
+          "legendFormat": "{{host}}/{{gpu}} · {{gpu_name}}"
+        }
+      ],
+      "description": "Card temperature."
+    },
+    {
+      "id": 130,
+      "type": "row",
+      "title": "GPUs",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "panels": []
+    },
+    {
+      "id": 31,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "table",
+      "title": "GPU cards",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "noValue": "no GPU matches the filters"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Busy"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 70
+                    },
+                    {
+                      "color": "red",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory used"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Memory total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Temperature"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "celsius"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Power"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "watt"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "max by (host, gpu, gpu_name) (gdc_nvidia_utilization_percent{host=~\"$host\",gpu_name=~\"$gpu\"})",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host, gpu, gpu_name) (gdc_nvidia_memory_used_bytes{host=~\"$host\",gpu_name=~\"$gpu\"})",
+          "refId": "B",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host, gpu, gpu_name) (gdc_nvidia_memory_total_bytes{host=~\"$host\",gpu_name=~\"$gpu\"})",
+          "refId": "C",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host, gpu, gpu_name) (gdc_nvidia_temperature_celsius{host=~\"$host\",gpu_name=~\"$gpu\"})",
+          "refId": "D",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (host, gpu, gpu_name) (gdc_nvidia_power_watts{host=~\"$host\",gpu_name=~\"$gpu\"})",
+          "refId": "E",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "description": "One row per card on the hosts that report NVIDIA telemetry.",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "host": 0,
+              "gpu": 1,
+              "gpu_name": 2,
+              "Value #A": 3,
+              "Value #B": 4,
+              "Value #C": 5,
+              "Value #D": 6,
+              "Value #E": 7
+            },
+            "renameByName": {
+              "host": "Node",
+              "gpu": "Card",
+              "gpu_name": "Model",
+              "Value #A": "Busy",
+              "Value #B": "Memory used",
+              "Value #C": "Memory total",
+              "Value #D": "Temperature",
+              "Value #E": "Power"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 140,
+      "type": "row",
+      "title": "Consensus",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "panels": []
+    },
+    {
+      "id": 41,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "Height spread",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 42
       },
       "fieldConfig": {
         "defaults": {
@@ -916,7 +1837,8 @@
       "options": {
         "legend": {
           "calcs": [
-            "lastNotNull"
+            "lastNotNull",
+            "max"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -934,150 +1856,179 @@
           "legendFormat": "spread"
         }
       ],
-      "description": "Difference between the highest and lowest scraped node. It only compares nodes that are scraped."
+      "description": "Blocks between the highest and the lowest scraped chain node. It ignores the node filter: it compares the whole monitored set."
     },
     {
-      "id": 13,
+      "id": 42,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "type": "table",
-      "title": "Scrape targets and locations",
+      "type": "timeseries",
+      "title": "Blocks behind",
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 36
+        "w": 8,
+        "x": 8,
+        "y": 42
       },
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
+          "color": {
+            "mode": "palette-classic"
           },
-          "noValue": "no host target is configured"
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no chain node matches the filter"
         },
         "overrides": []
       },
       "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
           ],
-          "show": false
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "showHeader": true
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
-          "expr": "up{job=\"host\"}",
+          "expr": "scalar(max(cometbft_consensus_height)) - max by (host) (cometbft_consensus_height{host=~\"$host\"})",
           "refId": "A",
-          "format": "table",
-          "instant": true
+          "legendFormat": "{{host}}"
         }
       ],
-      "description": "Every configured host target, with its location when one was resolved. A Host absent from the monitoring inventory does not appear here at all.",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "job": true,
-              "instance": true
-            },
-            "renameByName": {
-              "host": "Host",
-              "validator": "Validator",
-              "city": "City",
-              "country": "Country",
-              "latitude": "Lat",
-              "longitude": "Lon",
-              "Value": "Scrape"
-            }
-          }
-        }
-      ]
+      "description": "How far each chain node is behind the highest scraped node."
     },
     {
-      "id": 14,
+      "id": 43,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "type": "table",
-      "title": "Software inventory",
+      "type": "timeseries",
+      "title": "P2P peers",
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 36
+        "w": 8,
+        "x": 16,
+        "y": 42
       },
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
+          "color": {
+            "mode": "palette-classic"
           },
-          "noValue": "no Host has reported its software inventory"
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no chain node matches the filter"
         },
         "overrides": []
       },
       "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min"
           ],
-          "show": false
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "showHeader": true
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
-          "expr": "gdc_component_info",
+          "expr": "max by (host) (cometbft_p2p_peers{host=~\"$host\"})",
           "refId": "A",
-          "format": "table",
-          "instant": true
+          "legendFormat": "{{host}}"
         }
       ],
-      "description": "Rows appear once the version collector has written its first inventory on a Host.",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "Value": true,
-              "__name__": true,
-              "job": true,
-              "instance": true
-            },
-            "renameByName": {
-              "host": "Host",
-              "component": "Component",
-              "component_instance": "Instance",
-              "version": "Version",
-              "commit": "Commit",
-              "image": "Image",
-              "source": "Source"
-            }
-          }
-        }
-      ]
+      "description": "Peer connections per chain node."
     }
   ],
   "refresh": "15s",
@@ -1087,7 +2038,70 @@
     "gdc"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "host",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(up{job=\"host\"},host)",
+        "query": {
+          "query": "label_values(up{job=\"host\"},host)",
+          "refId": "host"
+        },
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "hide": 0
+      },
+      {
+        "name": "gpu",
+        "label": "GPU model",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(gdc_nvidia_utilization_percent{host=~\"$host\"},gpu_name)",
+        "query": {
+          "query": "label_values(gdc_nvidia_utilization_percent{host=~\"$host\"},gpu_name)",
+          "refId": "gpu"
+        },
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "hide": 0
+      }
+    ]
   },
   "time": {
     "from": "now-24h",
