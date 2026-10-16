@@ -6,8 +6,10 @@ router; do not publish their ports or create another validator identity.
 
 Both models use pinned BF16 weights, eager execution, four sequences and an
 explicit 2 GiB KV cache. Primary 7B retains a 4096-token context; secondary 4B
-retains 25000. Fractions 0.58/0.38 prevent both engines from requesting nearly
-all GPU memory at startup; explicit KV budgets do not cap every CUDA allocation.
+retains 25000. Startup free-memory checks use fractions 0.58/0.32. The explicit
+KV budgets replace automatic KV sizing, but do not cap every CUDA allocation.
+Secondary prefill is chunked into at most 512 tokens to reduce activation peaks;
+this does not reduce its 25000-token context limit.
 Measure loading and concurrent PoC peaks before accepting this layout.
 
 `bash render.sh PARTICIPANT NEW_DIRECTORY` renders the primary model map and
@@ -18,6 +20,12 @@ Set `HF_CACHE_ROOT` to the existing cache bind and `HOST_DOCKER_NETWORK` to
 the existing Host network when rendering Compose. Prefetch both exact revisions
 before setting offline mode. Only one instance of this layout may share a
 Host network because its internal DNS aliases are fixed.
+
+Only the Hugging Face `hub` directory is mounted read-only. The container's
+remaining cache stays writable for FlashInfer JIT compilation and logs.
+Mounting all of `/root/.cache` read-only prevents the inference engine starting.
+The secondary explicitly preserves its network model name because offline
+vLLM resolution otherwise substitutes a local snapshot path as the served name.
 
 Deployment requires an inference window, no ML locks or preserved work, fresh
 empty version-bound DevShard obligations and coordination with traffic owners.
