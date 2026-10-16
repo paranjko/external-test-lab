@@ -583,7 +583,7 @@ class ArtifactTests(unittest.TestCase):
                     shutil.copy2(asset, directory / asset.name)
                 return ""
             if args[:3] == ("gh", "release", "view"):
-                return json.dumps({"id": 42, "isDraft": False, "isPrerelease": False,
+                return json.dumps({"databaseId": 42, "isDraft": False, "isPrerelease": False,
                                    "url": "https://example.test/release"})
             if args[:3] in {("gh", "release", "create"), ("gh", "release", "edit")}:
                 return ""

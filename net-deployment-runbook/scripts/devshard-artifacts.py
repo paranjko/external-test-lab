@@ -745,10 +745,10 @@ def publish(output: Path, value: dict, groups: list[str]) -> None:
                 "uploaded release bytes differ from verified bundle; draft retained")
         run("gh", "release", "edit", release_tag, "--repo", REPOSITORY, "--draft=false", "--latest")
         readback = json.loads(run("gh", "release", "view", release_tag, "--repo", REPOSITORY,
-                                  "--json", "id,isDraft,isPrerelease,url,name,body"))
+                                  "--json", "databaseId,isDraft,isPrerelease,url,name,body"))
         require(not readback["isDraft"] and not readback["isPrerelease"], "release publication readback failed")
         latest = json.loads(run("gh", "api", f"repos/{REPOSITORY}/releases/latest"))
-        require(latest.get("id") == readback["id"] and latest.get("tag_name") == release_tag,
+        require(latest.get("id") == readback["databaseId"] and latest.get("tag_name") == release_tag,
                 "release Latest readback failed")
         if unified:
             require(readback["name"] == title and readback["body"] == body,
