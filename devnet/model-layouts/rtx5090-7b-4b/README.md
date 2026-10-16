@@ -4,6 +4,13 @@ Candidate layout, not a general hardware qualification claim. Keep the existing
 Host participant and consensus services. Add one separate ML API and internal
 router; do not publish their ports or create another validator identity.
 
+Do not deploy this dual layout while the effective 7B epoch arguments contain
+`--gpu-memory-utilization 0.92`. DAPI gives epoch arguments priority over local
+arguments: 7B then cannot restart while 4B occupies the GPU. A successful
+7B-first cold start does not qualify recovery. Resolve this network-level
+prerequisite explicitly or deploy only one model; this layout does not change
+governance or bypass argument precedence.
+
 Both models use pinned BF16 weights, eager execution, four sequences and an
 explicit 2 GiB KV cache. Primary 7B retains a 4096-token context; secondary 4B
 retains 25000. Startup free-memory checks use fractions 0.58/0.32. The explicit
