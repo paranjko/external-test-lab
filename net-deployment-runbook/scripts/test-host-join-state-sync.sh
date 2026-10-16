@@ -74,6 +74,15 @@ cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 url="${!#}"
+if [[ -n "${GDC_TEST_TIMEOUT_FILE:-}" && "$url" == *rpc-b.example.test*/status ]]; then
+  count=0
+  [[ ! -f "$GDC_TEST_TIMEOUT_FILE" ]] || count="$(<"$GDC_TEST_TIMEOUT_FILE")"
+  printf '%s\n' "$((count + 1))" >"$GDC_TEST_TIMEOUT_FILE"
+  if (( count < ${GDC_TEST_TIMEOUT_COUNT:-1} )); then
+    printf 'partial response'
+    exit 28
+  fi
+fi
 if [[ "$url" == */status || "$url" == *height=* ]]; then
   found=''
   for ((i=1; i<=$#; i++)); do [[ "${!i}" == --resolve ]] && { j=$((i+1)); found="${!j}"; break; }; done
@@ -94,6 +103,16 @@ EOF
 chmod 0755 "$tmp/bin/curl"
 PATH="$tmp/bin:$PATH" "$ROOT/scripts/verify-join-lineage-state.sh" https://join.example.test/chain-rpc "$tmp/receipt.json" >"$tmp/out"
 grep -Fq 'PASS JOIN fresh post-sync checkpoint matches' "$tmp/out"
+PATH="$tmp/bin:$PATH" GDC_TEST_TIMEOUT_FILE="$tmp/transient-count" \
+  "$ROOT/scripts/verify-join-lineage-state.sh" https://join.example.test/chain-rpc "$tmp/receipt.json" >"$tmp/transient.out"
+[[ "$(<"$tmp/transient-count")" == 2 ]]
+grep -Fq 'PASS JOIN fresh post-sync checkpoint matches' "$tmp/transient.out"
+if PATH="$tmp/bin:$PATH" GDC_TEST_TIMEOUT_FILE="$tmp/permanent-count" GDC_TEST_TIMEOUT_COUNT=9 \
+  "$ROOT/scripts/verify-join-lineage-state.sh" https://join.example.test/chain-rpc "$tmp/receipt.json" >"$tmp/permanent.out" 2>"$tmp/permanent.err"; then
+  echo 'unavailable trusted origin unexpectedly verified' >&2; exit 1
+fi
+[[ "$(<"$tmp/permanent-count")" == 3 ]]
+grep -Fq 'cannot read trusted RPC height' "$tmp/permanent.err"
 if PATH="$tmp/bin:$PATH" GDC_TEST_BAD_APPHASH=true "$ROOT/scripts/verify-join-lineage-state.sh" https://join.example.test/chain-rpc "$tmp/receipt.json" >"$tmp/divergence.out" 2>"$tmp/divergence.err"; then
   echo 'fresh AppHash divergence unexpectedly verified' >&2; exit 1
 fi

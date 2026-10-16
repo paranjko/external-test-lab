@@ -16,18 +16,34 @@ if [[ "$resume_current" != --resume-current ]]; then
   }
 fi
 
+rpc_response() {
+  local attempt body rc
+  for attempt in 1 2 3; do
+    if body="$(curl -fsS --connect-timeout 5 --max-time 15 "$@")"; then
+      printf '%s\n' "$body"
+      return 0
+    else
+      rc=$?
+    fi
+    case "$rc" in 5|6|7|28|52|56) ;; *) return "$rc" ;; esac
+    (( attempt < 3 )) || return "$rc"
+    printf 'WAIT lineage RPC transport retry attempt=%s/3\n' "$((attempt + 1))" >&2
+    sleep 1
+  done
+}
+
 status_height() {
   local endpoint="$1" host="${2:-}" port="${3:-}" ip="${4:-}"; shift 4 || true
   local -a resolve=()
   [[ -z "$host" ]] || resolve=(--resolve "${host}:${port}:${ip}")
-  curl -fsS --connect-timeout 5 --max-time 15 "${resolve[@]}" "${endpoint%/}/status" |
+  rpc_response "${resolve[@]}" "${endpoint%/}/status" |
     jq -er '.result.sync_info.latest_block_height | tonumber'
 }
 block_record() {
   local endpoint="$1" height="$2" host="${3:-}" port="${4:-}" ip="${5:-}"; shift 5 || true
   local -a resolve=()
   [[ -z "$host" ]] || resolve=(--resolve "${host}:${port}:${ip}")
-  curl -fsS --connect-timeout 5 --max-time 15 "${resolve[@]}" "${endpoint%/}/block?height=$height" |
+  rpc_response "${resolve[@]}" "${endpoint%/}/block?height=$height" |
     jq -cer '{height:(.result.block.header.height|tonumber),block_id:(.result.block_id.hash|ascii_downcase),app_hash:(.result.block.header.app_hash|ascii_downcase)}'
 }
 
