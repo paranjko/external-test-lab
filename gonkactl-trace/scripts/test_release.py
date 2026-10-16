@@ -1,6 +1,7 @@
 import hashlib
 import io
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -61,9 +62,21 @@ class InstallerTests(unittest.TestCase):
         release.archive(self.root / self.asset, binary, self.payload, 1700000000)
         self.sums = self.root / "SHA256SUMS"
         self.sums.write_text(hashlib.sha256((self.root / self.asset).read_bytes()).hexdigest() + "  " + self.asset + "\n")
+        # Bind this isolated fixture's installer to its known manifest, without
+        # adding a production override that could bypass release provenance.
+        self.installer = self.root / "install.sh"
+        source, count = re.subn(r"trace_manifest_sha256=[a-f0-9]{64}",
+                               "trace_manifest_sha256=" + hashlib.sha256(self.sums.read_bytes()).hexdigest(),
+                               INSTALLER.read_text())
+        self.assertEqual(count, 1)
+        # Only this fixture uses mocked system helpers; the production script
+        # has no environment override for its trusted helper path.
+        self.assertEqual(source.count("PATH=/usr/bin:/bin\n"), 1)
+        source = source.replace("PATH=/usr/bin:/bin\n", f"PATH='{self.bin}'\n")
+        self.installer.write_text(source)
 
     def invoke(self, *args, success=True):
-        result = subprocess.run(["/bin/sh", str(INSTALLER), *args], env=self.env, text=True, capture_output=True)
+        result = subprocess.run(["/bin/sh", str(self.installer), *args], env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
         return result
 
@@ -98,6 +111,16 @@ class InstallerTests(unittest.TestCase):
             self.invoke(success=False)
             self.assertFalse(self.dest.exists())
 
+    def test_replaced_archive_and_matching_manifest_are_rejected(self):
+        self.dest.mkdir()
+        installed = self.dest / "gonkactl-trace"
+        installed.write_bytes(b"previous version")
+        replacement = b"attacker-controlled archive"
+        (self.root / self.asset).write_bytes(replacement)
+        self.sums.write_text(hashlib.sha256(replacement).hexdigest() + "  " + self.asset + "\n")
+        self.assertIn("release manifest SHA256 mismatch", self.invoke(success=False).stderr)
+        self.assertEqual(installed.read_bytes(), b"previous version")
+
     def test_no_verifier_fails_before_install(self):
         self.hash_tool(None)
         self.invoke(success=False)
@@ -107,6 +130,24 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("linux_amd64", self.invoke("--dry-run").stdout)
         self.assertFalse(self.dest.exists())
         self.assertFalse(list(self.root.glob("gonkactl-trace.*")))
+
+    def test_install_ignores_inherited_temporary_parent(self):
+        self.env["TMPDIR"] = str(self.root / "untrusted-parent-does-not-exist")
+        self.invoke("--quiet")
+        self.assertEqual((self.dest / "gonkactl-trace").read_bytes(), self.payload)
+        self.assertFalse(Path(self.env["TMPDIR"]).exists())
+
+    def test_production_installer_ignores_inherited_helper_path(self):
+        marker = self.root / "untrusted-helper-ran"
+        for name in ("uname", "mktemp", "curl", "wget", "sha256sum", "shasum",
+                     "openssl", "tar", "unzip", "mkdir", "cat", "chmod", "mv", "rm", "sed"):
+            (self.bin / name).unlink(missing_ok=True)
+            self.script(name, f"#!/bin/sh\nprintf unsafe > '{marker}'\nexit 99\n")
+        result = subprocess.run(["/bin/sh", str(INSTALLER), "--dry-run"],
+                                env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(marker.exists())
+        self.assertFalse(self.dest.exists())
 
     def test_platform_mapping(self):
         for system, arch, target in (("Linux", "aarch64", "linux_arm64"), ("Darwin", "arm64", "darwin_arm64"),

@@ -22,7 +22,10 @@ Agent → broker proxy (this catalog) → gateway → host validator → model
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add a shim |
 
 Codex / Agents SDK (`POST /v1/responses`) is a separate skill.
-Install: `npx skills add paranjko/external-test-lab --skill openai-responses-adapter`
-https://github.com/paranjko/external-test-lab/tree/main/skills/openai-responses-adapter
+Use the companion [Responses adapter](../openai-responses-adapter/SKILL.md).
+Obtain both folders from one explicitly approved full immutable repository
+commit and verify it before manually copying reviewed folders into your
+agent's configured skill directory. Do not install a moving branch or execute
+a registry installer, and do not overwrite an existing skill without approval.
 After `ToChat`, that adapter needs a host-compat layer — this catalog or the
 equivalent already on the proxy.

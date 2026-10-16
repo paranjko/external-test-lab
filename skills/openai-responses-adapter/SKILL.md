@@ -35,13 +35,19 @@ Codex / Agents SDK
 
 **Port:** spec, not a library. Same process as `POST /v1/chat/completions`.
 After ToChat, run a host-compat layer on that chat body — install
-`openai-host-compat` (`npx skills add paranjko/external-test-lab --skill openai-host-compat`)
-or use the equivalent already on the proxy.
-https://github.com/paranjko/external-test-lab/tree/main/skills/openai-host-compat
+[openai-host-compat](../openai-host-compat/SKILL.md) or use the equivalent
+already on the proxy. Obtain both skill folders from one explicitly approved
+full immutable repository commit and verify it before manually copying the
+reviewed folders into the agent's configured skill directory. Do not execute
+a registry installer or install from a moving branch; review the destination
+and do not overwrite an existing skill without approval.
 Do not flatten Responses `input` inside host-compat. Any language.
 Do not start a new process.
 
 **Before coding:** read [reference.md](reference.md) (SSE order).
+Enforce its shared request budgets and bounded stream/idle timers. Authenticate
+first, but authorize and meter the exact final canonical body after ToChat and
+host-compat; never forward fields that bypassed policy before normalization.
 **Done when:** the probes below pass: `object=response`, stream has
 `response.created` + `response.completed` and no `[DONE]`,
 `previous_response_id` → 400, `/v1/chat/completions` still works.
@@ -122,7 +128,7 @@ See [reference.md](reference.md) for field maps, SSE order, and error codes.
 
 ## Related
 
-Host-compat shims (chat-body rewrites): install `openai-host-compat`
-(`npx skills add paranjko/external-test-lab --skill openai-host-compat`)
-or use the equivalent already on the proxy.
-https://github.com/paranjko/external-test-lab/tree/main/skills/openai-host-compat
+Host-compat shims (chat-body rewrites): use the reviewed local
+[openai-host-compat](../openai-host-compat/SKILL.md) folder from the same approved
+immutable snapshot, or the equivalent already on the proxy. This link does
+not authorize fetching or installing new content.

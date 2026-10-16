@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gonka validator diagnosis"
+  short_description: "Trace validator exclusion to a specific PoC decision"
+  default_prompt: "Use $gonka-validator-diagnosis to explain why this node stopped validating, with a pinned PoC stage and chain evidence."

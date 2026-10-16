@@ -15,20 +15,28 @@ of the retained analysis, not the engine that renders the HTML report.
 
 Version `1.0.0-beta.2` provides Linux and macOS binaries for amd64/arm64 and a
 Windows amd64 ZIP. The [trace page](https://gonka-dev.net/trace/) links the
-versioned assets and installer:
+versioned assets and the download → verify → inspect → execute installer flow.
+Use that page's pinned checksums and trusted-system-shell instructions; do not
+pipe downloaded text to a shell. Approve the installation destination first.
+Before any execution, verify the installed binary against the binary extracted
+from the verified archive and check file/parent ownership and permissions.
+Reject untrusted-writable paths. Replace the absolute placeholder below only
+with that approved executable path; neither PATH lookup nor version output
+establishes provenance. All executable examples in this guide use this rule.
 
 ```sh
-curl -LsSf https://gonka-dev.net/trace/install.sh | sh
-gonkactl-trace --version
-gonkactl-trace report mainnet HEAD~10
+/approved/absolute/path/gonkactl-trace --version
+/approved/absolute/path/gonkactl-trace report mainnet HEAD~10
 ```
 
 The POSIX installer requires curl or wget, tar (unzip for Windows POSIX shells),
 and one of sha256sum, shasum or openssl. It verifies the selected archive before
 installing, defaults to `$HOME/.local/bin`, and prints PATH guidance without
 editing profiles. Set `GONKACTL_INSTALL_DIR` to an absolute directory, or save
-the script and run `sh install.sh --dry-run` / `sh install.sh --quiet`.
-Native Windows users extract the ZIP and add its directory to PATH.
+the verified script and run `/bin/sh /verified/path/install.sh --dry-run` /
+`/bin/sh /verified/path/install.sh --quiet` after inspection. Native Windows
+users verify the pinned manifest and ZIP and use the approved absolute binary
+path; adding a directory to PATH is not a provenance check.
 
 `make release-archives` builds all five archives plus `SHA256SUMS` and
 `build.json` in an empty `.cache/release/`. Set `TRACE_RELEASE_DIR` to retain a
@@ -72,16 +80,13 @@ those inputs are absent; their separate qualification commands are below.
 
 ## How to use gonkactl-trace
 
-Install Go according to [the official Go installation guide](https://go.dev/doc/install),
-including its instruction to make Go-installed binaries available on `PATH`.
+Install the packaged binary using the official trace page as described above.
+Go and a repository checkout are not prerequisites for ordinary use. Source
+builds are an explicit developer workflow, not an installation fallback.
 
 ```sh
-git clone -b gonkactl-trace-v1.0.0-beta.2 https://github.com/paranjko/external-test-lab.git
-cd external-test-lab
-make install
-
 # Collect and write an HTML report for the latest 101 inclusive heights.
-gonkactl-trace report mainnet HEAD~100
+/approved/absolute/path/gonkactl-trace report mainnet HEAD~100
 ```
 
 The aliases `mainnet`, `devnet`, and `testnet` resolve to `gonka-mainnet`,
@@ -105,9 +110,9 @@ your incident label, chain ID, RPC/REST URLs, and authorized log sources. The
 example uses loopback URLs and contains no Lab inventory or SSH credentials.
 
 ```bash
-./gonkactl-trace report --config gonkactl-trace.json 100 120
-./gonkactl-trace collect 100 120
-./gonkactl-trace report --input .gonkactl-trace/sample-<id>/dataset.json
+/approved/absolute/path/gonkactl-trace report --config gonkactl-trace.json 100 120
+/approved/absolute/path/gonkactl-trace collect 100 120
+/approved/absolute/path/gonkactl-trace report --input .gonkactl-trace/sample-<id>/dataset.json
 ```
 
 `report <from> [to]` performs the same collection as `collect`, discovers
@@ -202,9 +207,9 @@ does not replace their required original inputs.
 ## Optional exports and qualification
 
 ```bash
-./gonkactl-trace otlp > incident.otlp.json
-./gonkactl-trace otlp-consensus > incident-consensus.json
-./gonkactl-trace perfetto --input .gonkactl-trace/sample-<id> --export-only
+/approved/absolute/path/gonkactl-trace otlp > incident.otlp.json
+/approved/absolute/path/gonkactl-trace otlp-consensus > incident-consensus.json
+/approved/absolute/path/gonkactl-trace perfetto --input .gonkactl-trace/sample-<id> --export-only
 ```
 
 OTLP commands use the last collection. `run` and `run-consensus` are explicitly

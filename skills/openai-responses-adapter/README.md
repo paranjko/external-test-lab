@@ -30,7 +30,9 @@ for clients that **hard-call** Responses (Codex CLI, Agents SDK
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add a mapping / 400-vs-strip / probe |
 
 After `ToChat`, run a host-compat layer on the chat body — install
-`openai-host-compat`
-(`npx skills add paranjko/external-test-lab --skill openai-host-compat`)
-or use the equivalent already on the proxy.
-https://github.com/paranjko/external-test-lab/tree/main/skills/openai-host-compat
+[openai-host-compat](../openai-host-compat/SKILL.md) or use the equivalent
+already on the proxy. Obtain both folders from one explicitly approved full
+immutable repository commit and verify it before manually copying reviewed
+folders into your agent's configured skill directory. Do not install a moving
+branch or execute a registry installer; do not overwrite an existing skill
+without approval.

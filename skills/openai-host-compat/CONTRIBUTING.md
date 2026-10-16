@@ -5,8 +5,9 @@ rewrite on their own OpenAI HTTP proxy (`POST /v1/chat/completions`), before
 the inference gateway.
 
 `/v1/responses` belongs in the Responses adapter skill, not here:
-`npx skills add paranjko/external-test-lab --skill openai-responses-adapter`
-https://github.com/paranjko/external-test-lab/tree/main/skills/openai-responses-adapter
+[Responses adapter](../openai-responses-adapter/SKILL.md). Use reviewed local
+folders from the same approved immutable commit; see the skill's manual-copy
+installation boundary, not a registry installer or moving branch.
 
 ## Add a shim
 
@@ -48,3 +49,16 @@ values may differ across ports if they stay non-empty, use a `call_` prefix,
 match the paired `tool_call_id`, and do not change on a second pass.
 
 One request that fires several shims → one file listing all of them in `shims`.
+
+### Schema rejection suite
+
+`golden/schema_rejections.json` is a separate negative-test format. Each case
+has a schema, optional stricter test limits, and an expected HTTP status/error
+code. Wrap every schema as both `tools[0].function.parameters` and
+`response_format.json_schema.schema` in separate requests. Limits override
+only the named default for the test; all other reference limits still apply.
+Assert no upstream request, no partial output and bounded termination. The
+deadline case injects an already-expired monotonic deadline. Also send multiple
+individually valid tools whose aggregate exceeds a budget to verify that
+budgets are shared. This catalog does not contain an executable sanitizer;
+fixture parsing alone is not runtime security verification.
