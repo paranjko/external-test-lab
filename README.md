@@ -83,7 +83,7 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | M2 | Smoke & regression checklists, live task board | [`testing/smoke-checklist.md`](testing/smoke-checklist.md), [`testing/regression-checklist.md`](testing/regression-checklist.md), [task board](https://github.com/users/paranjko/projects/1) | published — task board **live** |
 | M2 | Broker OpenAI host-compat + Responses adapter | [`broker-compat/`](broker-compat/) | published |
 | M2 | DevShard gateway 4.1.1 broker setup guide | [`broker-ops/`](broker-ops/) | published |
-| M2→M3 | External Host JOIN and recovery | [`net-deployment-runbook/ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md) | JOIN, backup and same-Host retained-key restore tested; full verification and Host-loss recovery are not established by those runs |
+| M2→M3 | External Host JOIN and recovery | [`net-deployment-runbook/ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md) | JOIN, backup and restore verified for tested flows; further validation continues |
 | M3 | Monthly public report #3 | [`reports/monthly/2026-10-month-3.md`](reports/monthly/2026-10-month-3.md) | published |
 | M3 | Test automation scripts (smoke-level) | [`testing/gonka-check/`](testing/gonka-check/), [`testing/e2e.md`](testing/e2e.md) | published — scheduled execution in progress |
 | M3 | Incident log, participant onboarding guide | [`net-deployment-runbook/RECOVER-INCIDENT.md`](net-deployment-runbook/RECOVER-INCIDENT.md), [`ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md) | recovery and onboarding guides published; incident-log consolidation in progress |
