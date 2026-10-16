@@ -6,6 +6,7 @@ set -Eeuo pipefail
   exit 2
 }
 here=$(cd "$(dirname "$0")" && pwd)
+bash "$here/validate-profiles.sh" "$here/profiles.json"
 umask 077
 mkdir "$2"
 jq '.primary' "$here/profiles.json" > "$2/primary-models.json"

@@ -3,6 +3,16 @@ set -Eeuo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
+bash "$here/validate-profiles.sh" "$here/profiles.json"
+for flag in --max-num-seqs --max-num-batched-tokens; do
+  jq --arg flag "$flag" 'walk(if type=="object" and has("args") then
+    .args |= (index($flag) as $i | .[$i+1]="4") else . end)' \
+    "$here/profiles.json" > "$fixture/undersized.json"
+  if bash "$here/validate-profiles.sh" "$fixture/undersized.json"; then
+    echo "Undersized $flag was accepted" >&2
+    exit 1
+  fi
+done
 bash "$here/render.sh" gonka1hw92ev7r3u3uw6s0kx5ed9t9faptjwmfwzw774 "$fixture/output"
 jq -e 'keys==["Qwen/Qwen2.5-7B-Instruct"]' "$fixture/output/primary-models.json" >/dev/null
 jq -e '.id=="qwen3-4b:gonka1hw92ev7r3u3uw6s0kx5ed9t9faptjwmfwzw774--local-second" and
@@ -15,7 +25,9 @@ jq -e 'all(.[][];.args as $a|
 before=$(sha256sum "$fixture/output/primary-models.json")
 jq -e '.[][] | .args as $a |
  ($a|index("--max-num-batched-tokens")) as $i |
- $i!=null and $a[$i+1]=="512"' "$here/profiles.json" >/dev/null
+ $i!=null and ($a[$i+1]|tonumber)>=8192 and
+ (($a|index("--max-num-seqs")) as $s |
+  $s!=null and ($a[$s+1]|tonumber)>=32)' "$here/profiles.json" >/dev/null
 jq -e '.secondary|to_entries[]|. as $m|.value.args as $a|
  ($a|index("--served-model-name")) as $i|
  $i!=null and $a[$i+1]==$m.key' "$here/profiles.json" >/dev/null

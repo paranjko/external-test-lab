@@ -11,12 +11,16 @@ arguments: 7B then cannot restart while 4B occupies the GPU. A successful
 prerequisite explicitly or deploy only one model; this layout does not change
 governance or bypass argument precedence.
 
-Both models use pinned BF16 weights, eager execution, four sequences and an
+Both models use pinned BF16 weights, eager execution, 32 sequences and an
 explicit 2 GiB KV cache. Primary 7B retains a 4096-token context; secondary 4B
 retains 25000. Startup free-memory checks use fractions 0.58/0.32. The explicit
 KV budgets replace automatic KV sizing, but do not cap every CUDA allocation.
-Both workers chunk prefill into at most 512 tokens to reduce activation peaks;
-this does not reduce their context limits.
+Both workers allow 8192 batched tokens, matching the observed PoC batch of
+32 sequences of 256 tokens. Do not shrink scheduler buffers to fit a second
+model: PoC reuses the live attention metadata builder and bypasses ordinary
+inference scheduling. Four sequences can answer a completion but fail PoC
+inside FlashInfer's cumulative-index buffer. Requalify memory with these
+PoC-compatible sizes; earlier low-batch dual-model measurements do not apply.
 Measure loading and concurrent PoC peaks before accepting this layout.
 
 `bash render.sh PARTICIPANT NEW_DIRECTORY` renders the primary model map and
@@ -58,3 +62,12 @@ Healthy local ML cannot compensate for unreachable public PoC proof endpoints.
 
 Run `make test` here for offline renderer and Compose checks. These checks do
 not start containers or prove runtime acceptance.
+
+## Verification boundary
+
+The corrected 7B profile was loaded alone on an RTX 5090 with MLNode 3.0.16.
+A bounded 32-nonce PoC request at sequence length 256 completed with 32 artifacts;
+rechecking 20 of them produced zero mismatches and no fraud flag. These local
+requests had no callback URL and did not submit a network PoC commitment.
+This verifies the observed buffer failure, not admission, cross-validator
+agreement, sustained load or the corrected simultaneous 7B/4B layout.
