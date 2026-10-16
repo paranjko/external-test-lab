@@ -227,8 +227,9 @@ def poll_node(node):
 
 
 def task_nodes():
-    with ThreadPoolExecutor(max_workers=len(NODES)) as ex:
-        list(ex.map(poll_node, NODES))
+    if NODES:
+        with ThreadPoolExecutor(max_workers=len(NODES)) as ex:
+            list(ex.map(poll_node, NODES))
     mark("nodes")
 
 
@@ -238,8 +239,9 @@ MISSED_SEEN = set()
 
 def process_block(src, h):
     blk = rpc(src, "block", height=h)["block"]
-    hdr = blk["header"]
-    bt = parse_ts(hdr["time"])
+    commit_h = int(blk["last_commit"]["height"])
+    vset = rpc(src, "validators", height=commit_h, per_page=100)["validators"]
+    bt = parse_ts(blk["header"]["time"])
     if LAST["time"] is not None and LAST["height"] == h - 1:
         dt = max(bt - LAST["time"], 0)
         block_interval.observe(dt)
@@ -248,8 +250,6 @@ def process_block(src, h):
     block_txs.set(len(blk["data"].get("txs") or []))
     blocks_total.inc()
     sigs = blk["last_commit"]["signatures"]
-    commit_h = int(blk["last_commit"]["height"])
-    vset = rpc(src, "validators", height=commit_h, per_page=100)["validators"]
     powers = {v["address"]: int(v["voting_power"]) for v in vset}
     if any(a not in BOOK["hex"] for a in powers) and time.time() - BOOK["at"] > 60:
         refresh_book(src)
@@ -284,6 +284,9 @@ def task_blocks():
     src = chain_node()
     top = int(rpc(src, "status")["sync_info"]["latest_block_height"])
     chain_height.set(top)
+    if LAST["height"] is not None and top < LAST["height"]:
+        # the chain was reset below the last processed block
+        LAST["height"] = LAST["time"] = None
     start = top if LAST["height"] is None else LAST["height"] + 1
     start = max(start, top - CFG.get("max_block_catchup", 30) + 1)
     for h in range(start, top + 1):
@@ -356,6 +359,14 @@ def poll_gateway(name, url):
     except Exception:
         gw_up.labels(name).set(0)
         return
+    try:
+        apply_gateway_status(name, st)
+    except Exception as e:
+        gw_up.labels(name).set(0)
+        log.debug("gateway %s: %s", name, e)
+
+
+def apply_gateway_status(name, st):
     gw_up.labels(name).set(1)
     for g in (gw_devshards, gw_error):
         for labels in [m for m in list(g._metrics) if m[0] == name]:
@@ -367,8 +378,10 @@ def poll_gateway(name, url):
     for ph, n in phases.items():
         gw_devshards.labels(name, ph).set(n)
     gw_working.labels(name).set(1 if phases.get("active") else 0)
-    if st.get("error"):
-        gw_error.labels(name, str(st["error"].get("type") or "error")).set(1)
+    err = st.get("error")
+    if err:
+        kind = err.get("type") if isinstance(err, dict) else err
+        gw_error.labels(name, str(kind or "error")).set(1)
     cap, lim = st.get("capacity") or {}, st.get("limiter") or {}
     gw_avail.labels(name).set(float(cap.get("available_percent", 0) or 0))
     gw_hosts.labels(name, "available").set(int(cap.get("available_host_count", 0) or 0))
