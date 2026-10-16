@@ -94,6 +94,7 @@ const server = createServer(async (request, response) => {
       chainId: 'fixture-chain', model: 'old-model', gatewayNode: 'node0', statusBase: '/status',
       grafanaNetwork: 'https://grafana.gonka-dev.net/d/gdc-network/?kiosk',
       grafanaInference: 'https://grafana.gonka-dev.net/d/gdc-inference/?kiosk',
+      grafanaChain: 'https://grafana.gonka-dev.net/d/gdc-chain/?kiosk',
       publicBootstrap: false, nodes: [],
       nodeCatalog: [{ name: 'node0', statusAlias: 'node0', publicHost: 'node0.gonka-dev.net' }],
       locationCatalog: locations,

@@ -1,0 +1,7 @@
+# Monitoring refresh keeps the shared compose.yaml; the poller ships as an overlay.
+services:
+  chain-poller:
+    build: ./chain-poller
+    restart: unless-stopped
+    volumes:
+      - ./chain-poller/config.yml:/app/config.yml:ro

@@ -82,6 +82,7 @@ type SiteConfig = {
   grafana?: string,
   grafanaNetwork?: string,
   grafanaInference: string,
+  grafanaChain?: string,
   statusBase?: string,
   bootstrapOrigin?: string,
   publicBootstrap?: boolean,
@@ -360,6 +361,7 @@ function configureNetwork(): void {
   $("model-label").textContent = "Allocated models";
   $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana || "#";
   $("grafana-inference").href = cfg.grafanaInference || "#";
+  $("grafana-chain").href = cfg.grafanaChain || "#";
   const source = $("network-source");
   if (source) source.textContent = "LIVE NETWORK";
   const networkHeading = document.querySelector("#network .section-title h2");

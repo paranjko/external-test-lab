@@ -35,11 +35,11 @@ grafana_public_dashboard_share_uid="${GDC_GRAFANA_PUBLIC_DASHBOARD_SHARE_UID:-5f
 grafana_public_dashboard_token="${GDC_GRAFANA_PUBLIC_DASHBOARD_TOKEN:-321a0d961e7f4b4ea6da843777c032eb}"
 mkdir -p "$OUTPUT"
 target_root="$OUTPUT/prometheus/targets/static"
-mkdir -p "$target_root/host" "$target_root/cadvisor" "$target_root/gonka-node"
+mkdir -p "$target_root/host" "$target_root/cadvisor" "$target_root/gonka-node" "$target_root/public-node-endpoints"
 
 write_target() {
   local job="$1" name="$2" address="$3" labels="$4" output
-  [[ "$job" =~ ^(host|cadvisor|gonka-node)$ ]] || die "invalid Prometheus target job: $job"
+  [[ "$job" =~ ^(host|cadvisor|gonka-node|public-node-endpoints)$ ]] || die "invalid Prometheus target job: $job"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid Prometheus target name: $name"
   output="$target_root/$job/$name.json"
   jq -cn --arg address "$address" --argjson labels "$labels" \
@@ -150,8 +150,9 @@ jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$AP
   --arg direct "http://$gateway_public_host:8082/v1" --arg telegram "$telegram_bot_url" \
   --arg grafanaNetwork "https://$GRAFANA_HOST/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
   --arg grafanaInference "https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
+  --arg grafanaChain "https://$GRAFANA_HOST/d/gdc-chain/gonka-devnet-chain?orgId=1&from=now-6h&to=now&timezone=utc&kiosk" \
   --arg gatewayNode "$GATEWAY_NODE" --arg chainRpcHost "$(node_public_host "$GENESIS_NODE")" --argjson nodes "$nodes" --argjson validators "$validators" --argjson nodeCatalog "$node_catalog" \
-  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
+  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,grafanaChain:$grafanaChain,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
   | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
 
 write_env "$OUTPUT/network-observer.env" \
@@ -331,6 +332,32 @@ YAML
   for node in "${GDC_NODES[@]}"; do
     write_target gonka-node "$node" "$(node_public_host "$node"):26660" "$(jq -cn --arg host "$node" '{host:$host}')"
   done
+  cat <<'YAML'
+  - job_name: chain-poller
+    static_configs:
+      - targets: ['chain-poller:9800']
+  - job_name: public-node-endpoints
+    scrape_interval: 30s
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static/public-node-endpoints/*.json
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+YAML
+  for node in "${GDC_NODES[@]}"; do
+    # node_url can point the genesis node at the public edge; probe the node itself.
+    url="https://$(node_public_host "$node")"
+    write_target public-node-endpoints "$node-rpc" "$url/chain-rpc/status" "$(jq -cn --arg host "$node" '{host:$host,kind:"rpc"}')"
+    write_target public-node-endpoints "$node-lcd" "$url/chain-api/cosmos/base/tendermint/v1beta1/node_info" "$(jq -cn --arg host "$node" '{host:$host,kind:"lcd"}')"
+  done
   cat <<YAML
   - job_name: gateway
     scheme: https
@@ -373,5 +400,20 @@ cat <<YAML
         labels: {host: '$TELEGRAM_BOT_HOST'}
 YAML
 } >"$OUTPUT/prometheus.yml"
+
+# The chain poller reads only published endpoints. Gateways default to the
+# public API status; GDC_OPS_GATEWAY_STATUS_URLS lists "name=url" pairs.
+mkdir -p "$OUTPUT/chain-poller"
+{
+  printf 'nodes:\n'
+  for node in "${GDC_NODES[@]}"; do printf '  %s: https://%s\n' "$node" "$(node_public_host "$node")"; done
+  printf 'chain_sources: [%s]\n' "$(IFS=,; echo "${GDC_NODES[*]}")"
+  printf 'gateways:\n'
+  for pair in ${GDC_OPS_GATEWAY_STATUS_URLS:-default=https://$API_HOST/v1/status}; do
+    [[ "$pair" =~ ^[A-Za-z0-9_-]+=https://[^[:space:]]+$ ]] || die "invalid GDC_OPS_GATEWAY_STATUS_URLS entry: $pair"
+    printf '  %s: %s\n' "${pair%%=*}" "${pair#*=}"
+  done
+  printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300}\ntimeout: 8\nmax_block_catchup: 30\n'
+} >"$OUTPUT/chain-poller/config.yml"
 
 echo "$OUTPUT"
