@@ -8,8 +8,8 @@ Both models use pinned BF16 weights, eager execution, four sequences and an
 explicit 2 GiB KV cache. Primary 7B retains a 4096-token context; secondary 4B
 retains 25000. Startup free-memory checks use fractions 0.58/0.32. The explicit
 KV budgets replace automatic KV sizing, but do not cap every CUDA allocation.
-Secondary prefill is chunked into at most 512 tokens to reduce activation peaks;
-this does not reduce its 25000-token context limit.
+Both workers chunk prefill into at most 512 tokens to reduce activation peaks;
+this does not reduce their context limits.
 Measure loading and concurrent PoC peaks before accepting this layout.
 
 `bash render.sh PARTICIPANT NEW_DIRECTORY` renders the primary model map and

@@ -1,7 +1,7 @@
 {
   "primary": {
     "Qwen/Qwen2.5-7B-Instruct": {
-      "args": ["--tensor-parallel-size", "1", "--dtype", "bfloat16", "--revision", "a09a35458c702b33eeacc393d103063234e8bc28", "--max-num-seqs", "4", "--gpu-memory-utilization", "0.58", "--max-model-len", "4096", "--kv-cache-dtype", "fp8", "--kv-cache-memory-bytes", "2147483648", "--enforce-eager", "--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
+      "args": ["--tensor-parallel-size", "1", "--dtype", "bfloat16", "--revision", "a09a35458c702b33eeacc393d103063234e8bc28", "--max-num-seqs", "4", "--max-num-batched-tokens", "512", "--gpu-memory-utilization", "0.58", "--max-model-len", "4096", "--kv-cache-dtype", "fp8", "--kv-cache-memory-bytes", "2147483648", "--enforce-eager", "--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
     }
   },
   "secondary": {

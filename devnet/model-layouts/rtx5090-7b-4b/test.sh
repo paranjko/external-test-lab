@@ -13,7 +13,7 @@ jq -e 'all(.[][];.args as $a|
  $i!=null and $a[$i+1]=="2147483648" and
  ($a|index("--enforce-eager"))!=null)' "$here/profiles.json" >/dev/null
 before=$(sha256sum "$fixture/output/primary-models.json")
-jq -e '.secondary[] | .args as $a |
+jq -e '.[][] | .args as $a |
  ($a|index("--max-num-batched-tokens")) as $i |
  $i!=null and $a[$i+1]=="512"' "$here/profiles.json" >/dev/null
 jq -e '.secondary|to_entries[]|. as $m|.value.args as $a|
