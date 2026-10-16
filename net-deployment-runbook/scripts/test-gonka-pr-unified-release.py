@@ -97,6 +97,14 @@ class UnifiedReleaseTests(unittest.TestCase):
         self.assertEqual(candidate["source_tree"], "4c44d2e4dfcae182c0312ebe1b0fe0255b120767")
         self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-faab10864ba5")
 
+    def test_dispatch_can_select_the_current_immutable_1792_snapshot(self):
+        with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "gonka-pr-1792-6f5c80d57142-unified.json"}):
+            candidate = unified.definition()
+        self.assertEqual(candidate["source_pr"], 1792)
+        self.assertEqual(candidate["source_commit"], "6f5c80d571420b071bd3546e1865d5acc21ec7a8")
+        self.assertEqual(candidate["source_tree"], "3dc1103989ce3ae122c3936acd05599371025b9a")
+        self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-6f5c80d57142")
+
     def test_dispatch_cannot_escape_reviewed_candidate_definitions(self):
         with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "../outside.json"}):
             with self.assertRaises(ValueError):
