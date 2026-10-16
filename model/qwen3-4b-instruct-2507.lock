@@ -5,6 +5,7 @@ GDC_MODEL_PROFILE_SCOPE=qualification-only
 # Both Testnet and Testnet DevShards pin this immutable upstream revision.
 MODEL_ID=Qwen/Qwen3-4B-Instruct-2507
 MODEL_REVISION=cdbee75f17c01a7cc42f958dc650907174af0554
+MODEL_MIN_VRAM_MIB=15360
 
 # Testnet serves this model at 25,000 tokens with the Hermes tool-call tuple.
 # BF16 and one sequence are conservative qualification settings; no host

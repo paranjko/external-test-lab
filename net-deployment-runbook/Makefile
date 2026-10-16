@@ -601,6 +601,7 @@ test-ci-site: test-command-dependency-contract test-isolated-preview-ci-artifact
 	@$(MAKE) test-telegram-delivery
 
 test-ci-join: test-command-dependency-contract
+	@bash ./scripts/test-join-model-selection.sh
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
 	@./scripts/test-inspect-accelerator.sh

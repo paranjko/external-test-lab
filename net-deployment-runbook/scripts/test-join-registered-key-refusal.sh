@@ -107,6 +107,10 @@ block() {
     "$1" "$1" "$(( $1 + 1000000 ))")"
 }
 case "$url" in
+  */chain-api/productscience/inference/inference/models_all)
+    printf '%s\n' '{"model":[{"id":"Qwen/Qwen3-0.6B","hf_repo":"Qwen/Qwen3-0.6B","hf_commit":"c1899de289a04d12100db370d81485cdf75e47ca"}]}'
+    exit 0
+    ;;
   */inference/participant/*)
     if [[ -n "${GDC_TEST_PARTICIPANT_BODY:-}" ]]; then
       emit "$GDC_TEST_PARTICIPANT_BODY"
@@ -170,7 +174,7 @@ case "$*" in
   # not Host preparation; consume the script and identify a supported GPU.
   *'bash -s'*)
     cat >/dev/null
-    printf 'vendor=nvidia\n'
+    printf 'vendor=nvidia\nvram_mib=24564\n'
     exit 0
     ;;
 esac
@@ -240,7 +244,7 @@ run_join() {
     GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
     GDC_JOIN_FAULT_DOMAIN_MAP='node0.example.test=domain-a,node1.example.test=domain-b' \
     GDC_JOIN_RPC_IP_MAP='node0.example.test=8.8.4.1,node1.example.test=8.8.4.2' \
-    "$ROOT/gdc.sh" host join "$ALIAS" --public-host "$PUBLIC_HOST" --skip-qualification \
+    "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B "$ALIAS" --public-host "$PUBLIC_HOST" --skip-qualification \
       --bootstrap-file "$tmp/bootstrap.json" >"$log" 2>&1
 }
 

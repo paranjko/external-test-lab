@@ -108,7 +108,7 @@ printf 'PASS recovery phase requires VALIDATING and readback never repeats insta
 # Invalid CLI combinations fail before any role loading or network operation.
 touch "$temporary/archive.tar"
 for variant in missing-inputs missing-authority authority-alone plan; do
-  args=(host join --public-host node5.example node5)
+  args=(host join --model=Qwen/Qwen3-0.6B --public-host node5.example node5)
   case "$variant" in
     missing-inputs) args+=(--recover-consensus-signer) ;;
     missing-authority) args+=(--recover-consensus-signer --resume parent --restore "$temporary/archive.tar") ;;

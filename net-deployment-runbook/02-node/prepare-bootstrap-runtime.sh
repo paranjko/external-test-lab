@@ -3,6 +3,7 @@
 # Never execute Alpine/musl artifacts on the operator or Ubuntu Host.
 set -Eeuo pipefail
 [[ $# -eq 2 && -r "$1" && -d "$2" ]] || exit 2
+command -v unzip >/dev/null 2>&1 || { echo 'Bootstrap runtime requires unzip on the target Host; run Host preparation before deployment' >&2; exit 2; }
 profile=$1 destination=$2
 for role in node api; do
   package="$destination/bootstrap-runtime/$role"

@@ -845,7 +845,7 @@ See the role guides for required input, then run:
   ./gdc.sh report github
   ./gdc.sh --release v2026.07.23 bootstrap-access
   ./gdc.sh --release v2026.07.23 gateway-continuity
-  ./gdc.sh host join [--preflight] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
+  ./gdc.sh host join --model <MODEL_ID> [--preflight] [--chain-id <CHAIN_ID>] [--preflight-deadline <duration>] [--mnemonic-prompt | --mnemonic-file <PATH>] --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host join --resume <RUN_ID> --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host join --resume <COMPLETE_RUN_ID> --restore <ARCHIVE> --recover-consensus-signer --exclusive-signer --public-host <IP_OR_DOMAIN> <SSH_ALIAS>
   ./gdc.sh host backup <SSH_ALIAS>
@@ -1868,7 +1868,7 @@ case "$COMMAND" in
     join_source_rpc='' join_pex=''
     join_source_args=()
     join_recover_consensus=false join_exclusive_signer=false join_recovery_start=false
-    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_mnemonic_file='' join_mnemonic_prompt=false join_chain_id=gonka-devnet-community join_preflight_deadline="${GDC_JOIN_PREFLIGHT_DEADLINE:-30m}" skip_qualification=false verification=false plan_only=false
+    join_alias='' join_gpu_alias='' join_public_host='' join_restore_archive='' join_bootstrap_file='' join_p2p_port='' join_resume_run='' join_old_signer_fence='' join_mnemonic_file='' join_mnemonic_prompt=false join_model_id='' join_chain_id=gonka-devnet-community join_preflight_deadline="${GDC_JOIN_PREFLIGHT_DEADLINE:-30m}" skip_qualification=false verification=false plan_only=false
     # JOIN derives its exact compatible runtime from the first healthy
     # Bootstrap seed. An operator-selected release or composition could
     # otherwise turn retained evidence into a software authority.
@@ -1876,6 +1876,12 @@ case "$COMMAND" in
     [[ -z "$COMPOSITION" ]] || { echo 'host join does not accept --composition; composition is selected from verified seed observations' >&2; exit 2; }
     while [[ $# -gt 0 ]]; do
       case "$1" in
+        --model)
+          [[ -z "$join_model_id" && -n "${2:-}" ]] || { echo 'host join --model expects one model ID' >&2; exit 2; }
+          join_model_id="$2"; shift ;;
+        --model=*)
+          [[ -z "$join_model_id" && -n "${1#--model=}" ]] || { echo 'host join --model expects one model ID' >&2; exit 2; }
+          join_model_id="${1#--model=}" ;;
         --release|--release=*|--composition|--composition=*)
           echo 'host join does not accept release or composition selectors; composition is selected from verified seed observations' >&2
           exit 2
@@ -1963,6 +1969,7 @@ case "$COMMAND" in
       shift
     done
     [[ -n "$join_alias" ]] || { echo 'host join requires an SSH alias' >&2; usage; exit 2; }
+    [[ -n "$join_resume_run" || -n "$join_model_id" ]] || { echo 'host join requires --model <model_id>' >&2; exit 2; }
     join_preflight_deadline_seconds="$(parse_join_preflight_wait_seconds "$join_preflight_deadline")" || {
       echo 'host join --preflight-deadline requires a positive duration up to 24h, for example 30m or 1800' >&2; exit 2;
     }
@@ -2346,15 +2353,17 @@ case "$COMMAND" in
     join_accelerator_receipt="$join_run/accelerator-profile.v1.json"
     join_accelerator_alias="${join_gpu_alias:-$join_alias}"
     if [[ "$plan_only" == true ]]; then
-      printf 'vendor=nvidia\n' >"$join_accelerator_inspection"
+      jq -cn '{schema_version:1,vendor:"nvidia",compose_variant:"nvidia",qualification_backend:"cuda"}' >"$join_accelerator_receipt"
     elif ! ssh -T "$join_accelerator_alias" 'bash -s' <"$ROOT/00-host-prep/inspect-accelerator.sh" >"$join_accelerator_inspection"; then
       record_join_terminal_result refused profile host accelerator_inspection_failed 1 none absent new_profile
       printf 'host join could not establish a supported accelerator profile on effective ML Host %s before network observation\n' "$join_accelerator_alias" >&2
       exit 1
     fi
-    run_join_preflight accelerator-profile unavailable configuration accelerator-profile \
-      'The inspected accelerator does not match a supported immutable Host profile.' \
-      "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$join_accelerator_inspection" --output "$join_accelerator_receipt"
+    if [[ "$plan_only" != true ]]; then
+      run_join_preflight accelerator-profile unavailable configuration accelerator-profile \
+        'The inspected accelerator does not match a supported immutable Host profile.' \
+        "$ROOT/scripts/select-accelerator-profile.sh" --inspection "$join_accelerator_inspection" --output "$join_accelerator_receipt"
+    fi
     # A first stable observation identifies the candidate runtime.  Local
     # downloads can take minutes, so a second stable observation is required
     # before the Host is touched.  Both gates share one operator-visible
@@ -2362,6 +2371,8 @@ case "$COMMAND" in
     join_candidate_observation="$STATE/network-observation.candidate.v1.json"
     join_final_observation="$STATE/network-observation.v1.json"
     join_candidate_components="$STATE/join-components.candidate.v1.json"
+    join_candidate_model_selection="$STATE/join-model-selection.candidate.v1.json"
+    join_final_model_selection="$STATE/join-model-selection.v1.json"
     join_candidate_profile="$STATE/join-profile.candidate.v1.json"
     join_observation="$join_final_observation"
     join_profile="$STATE/join-profile.v1.json"
@@ -2377,9 +2388,16 @@ case "$COMMAND" in
       GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$join_candidate_observation")"
       GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$join_candidate_observation")"
       export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
+      join_model_args=(--bootstrap-file "$join_bootstrap_file" --output "$join_candidate_model_selection")
+      join_model_args+=(--model-id "$join_model_id")
+      join_model_args+=(--accelerator-receipt "$join_accelerator_receipt")
+      [[ "$plan_only" != true ]] || join_model_args+=(--plan)
+      run_join_preflight model-selection unavailable chain model-registry \
+        'JOIN model selection failed: no matching registry profile fits the Host' \
+        "$ROOT/scripts/select-join-model-profile.sh" "${join_model_args[@]}"
       run_join_preflight component-resolution unavailable dependency official-artifact-resolver \
         'Official immutable artifacts could not be resolved, for the selected Core and DAPI runtime bytes.' \
-        "$ROOT/scripts/resolve-join-components.sh" --observation "$join_candidate_observation" --output "$join_candidate_components"
+        "$ROOT/scripts/resolve-join-components.sh" --observation "$join_candidate_observation" --model-selection "$join_candidate_model_selection" --output "$join_candidate_components"
       join_profile_args=(--observation "$join_candidate_observation" --components "$join_candidate_components" --accelerator-receipt "$join_accelerator_receipt" --node-name "$join_alias" --public-host "$join_public_host" --operation "$join_operation" --run-id "$GDC_RUN_ID" --output "$join_candidate_profile")
       [[ -z "$join_p2p_port" ]] || join_profile_args+=(--p2p-port "$join_p2p_port")
       join_profile_args+=(--pex "$join_pex")
@@ -2406,10 +2424,18 @@ case "$COMMAND" in
       run_join_preflight software-observation unavailable network seed-observer \
         'The runtime changed, or could not be confirmed, immediately before Host preparation.' \
         wait_for_join_software_observation "confirm-$join_preflight_cycle" "$join_final_observation" "$join_preflight_deadline_at" "$join_preflight_retry_seconds"
-      if [[ "$(join_observation_identity "$join_candidate_observation")" == "$(join_observation_identity "$join_final_observation")" ]]; then
+      join_model_args=(--bootstrap-file "$join_bootstrap_file" --output "$join_final_model_selection")
+      join_model_args+=(--model-id "$join_model_id")
+      join_model_args+=(--accelerator-receipt "$join_accelerator_receipt")
+      [[ "$plan_only" != true ]] || join_model_args+=(--plan)
+      run_join_preflight model-selection unavailable chain model-registry \
+        'JOIN model confirmation failed: no matching registry profile fits the Host' \
+        "$ROOT/scripts/select-join-model-profile.sh" "${join_model_args[@]}"
+      if [[ "$(join_observation_identity "$join_candidate_observation")" == "$(join_observation_identity "$join_final_observation")" \
+        && "$(jq -r .selection_id "$join_candidate_model_selection")" == "$(jq -r .selection_id "$join_final_model_selection")" ]]; then
         break
       fi
-      printf 'WAIT JOIN runtime changed during preflight cycle=%s; retrying without Host mutation\n' "$join_preflight_cycle"
+      printf 'WAIT JOIN runtime or model registry changed during preflight cycle=%s; retrying without Host mutation\n' "$join_preflight_cycle"
     done
     GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$join_observation")"
     GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$join_observation")"
@@ -2441,9 +2467,9 @@ case "$COMMAND" in
         'The pinned operator CLI was not available, and the JOIN preflight deadline passed.' \
         "$ROOT/scripts/ensure-inferenced-cli.sh" --join-profile "$join_profile"
     fi
-    # The state directory is mutable across invocations. Keep the exact
-    # inputs for this run under its private evidence directory.
+    # Keep immutable JOIN evidence in the per-run directory
     install -m 0600 "$join_observation" "$join_run/network-observation.v1.json"
+    install -m 0600 "$join_final_model_selection" "$join_run/join-model-selection.v1.json"
     install -m 0600 "$join_profile" "$join_run/join-profile.v1.json"
     GDC_JOIN_PROFILE="$join_run/join-profile.v1.json"
     GDC_JOIN_OBSERVATION="$join_run/network-observation.v1.json"

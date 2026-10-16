@@ -74,7 +74,7 @@ set +e
 BLOCKLIST_PARAMS_JSON="$params" FIXTURE_BLOCKED_ADDRESS="$blocked_address" \
   GDC_BLOCKLIST_INFERENCED_BIN="$tmp/bin/fake-inferenced" PATH="$tmp/bin:$PATH" \
   SSH_CALLS="$ssh_calls" GDC_HOME="$launcher_home" \
-  "$ROOT/gdc.sh" host join --mnemonic-file "$tmp/cold.mnemonic" \
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --mnemonic-file "$tmp/cold.mnemonic" \
     --bootstrap-file "$tmp/bootstrap.json" --public-host node-c.example.test node-c \
     >"$tmp/join.out" 2>"$tmp/join.err"
 rc=$?
@@ -115,7 +115,7 @@ BLOCKLIST_PARAMS_JSON="$params" FIXTURE_BLOCKED_ADDRESS="$blocked_address" \
   SSH_CALLS="$prompt_ssh_calls" GDC_HOME="$prompt_home" \
   FIXTURE_MNEMONIC='word one two three four five six seven eight nine ten eleven' \
   python3 - "$ROOT/gdc.sh" "$tmp/prompt.out" "$tmp/prompt.err" \
-    --mnemonic-prompt --bootstrap-file "$tmp/bootstrap.json" \
+    --model=Qwen/Qwen3-0.6B --mnemonic-prompt --bootstrap-file "$tmp/bootstrap.json" \
     --public-host node-prompt.example.test node-prompt <<'PY'
 import os
 import pty

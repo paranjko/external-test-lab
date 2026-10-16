@@ -46,6 +46,10 @@ for ((index = 1; index <= $#; index++)); do
 done
 [[ "$mode" == component_failure || "$mode" == profile_failure ]] || exit 2
 case "$url" in
+  */chain-api/productscience/inference/inference/models_all)
+    printf '%s\n' '{"model":[{"id":"Qwen/Qwen3-0.6B","hf_repo":"Qwen/Qwen3-0.6B","hf_commit":"c1899de289a04d12100db370d81485cdf75e47ca"}]}'
+    exit 0
+    ;;
   *'/releases/tags/release%2Fv0.2.15')
     printf '{"tag_name":"release/v0.2.15","assets":[{"name":"inferenced-linux-amd64.zip","browser_download_url":"https://github.com/gonka-ai/gonka/releases/download/release/v0.2.15/inferenced-linux-amd64.zip","digest":"sha256:%s"}]}\n' "$FIXTURE_INFERENCED_SHA256"
     exit 0
@@ -146,7 +150,7 @@ render_group_id=109
 INSPECTION
     exit 0
   fi
-  printf 'vendor=nvidia\n'
+  printf 'vendor=nvidia\nvram_mib=24564\n'
   exit 0
 fi
 echo "unexpected fixture SSH invocation: $*" >&2
@@ -161,7 +165,7 @@ latest_failure() { cat "$1/reporting/failures/latest-failure"; }
 # lifecycle markers plus the preflight status output.
 rc=0
 if GDC_JOIN_PREFLIGHT_DEADLINE=5 PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator" \
-  "$ROOT/gdc.sh" host join --bootstrap-file "$tmp/bootstrap.json" \
+  "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --bootstrap-file "$tmp/bootstrap.json" \
   --public-host validator-a.example.test validator-a >"$tmp/a.out" 2>"$tmp/a.err"; then
   echo 'a failing Host readiness preflight unexpectedly succeeded' >&2
   exit 1
@@ -184,7 +188,7 @@ awk -F= -v expected_path="$run_log" '$1 == "run_log" && $2 == expected_path { fo
 # path. A transport failure after readiness must still bind one local run log
 # to the reportable failure; it must not report run_log=unavailable.
 if READINESS_MODE=ok GDC_JOIN_PREFLIGHT_DEADLINE=5 \
-  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-bootstrap" "$ROOT/gdc.sh" host join \
+  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-bootstrap" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B \
   --public-host validator-bootstrap.example.test validator-bootstrap \
   >"$tmp/bootstrap.out" 2>"$tmp/bootstrap.err"; then
   echo 'a failing Bootstrap fetch unexpectedly succeeded' >&2
@@ -202,7 +206,7 @@ awk '$0 ~ /^END phase=join-preflight status=[1-9][0-9]* timestamp=/ { found=1 } 
 # Scenario C: readiness passes and a later software-observation checkpoint
 # fails. The same single log keeps accumulating; no second run log is created.
 if BLOCKLIST_CURL_MODE=bootstrap_failure READINESS_MODE=ok GDC_JOIN_PREFLIGHT_DEADLINE=5 \
-  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-b" "$ROOT/gdc.sh" host join \
+  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-b" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B \
   --bootstrap-file "$tmp/bootstrap.json" --public-host validator-b.example.test validator-b \
   >"$tmp/b.out" 2>"$tmp/b.err"; then
   echo 'a failing software observation unexpectedly succeeded' >&2
@@ -221,7 +225,7 @@ awk 'index($0, "network_observation_timeout:") { found=1 } END { exit !found }' 
 # failure or an unavailable log.
 if BLOCKLIST_CURL_MODE=component_failure READINESS_MODE=ok \
   GDC_JOIN_PREFLIGHT_DEADLINE=30 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
-  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-component" "$ROOT/gdc.sh" host join \
+  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-component" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification \
   --public-host validator-component.example.test validator-component \
   >"$tmp/component.out" 2>"$tmp/component.err"; then
@@ -246,7 +250,7 @@ awk -F= '$1 == "result" && $2 == "failed" { found=1 } END { exit !found }' "$com
 # refusal with no deployment transport, and has the same one-log binding.
 if BLOCKLIST_CURL_MODE=profile_failure READINESS_MODE=ok ACCELERATOR_MODE=unsupported_profile \
   GDC_JOIN_PREFLIGHT_DEADLINE=30 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
-  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-profile" "$ROOT/gdc.sh" host join \
+  PATH="$tmp/bin:$PATH" GDC_HOME="$tmp/operator-profile" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B \
   --bootstrap-file "$tmp/bootstrap.json" --skip-qualification \
   --public-host validator-profile.example.test validator-profile \
   >"$tmp/profile.out" 2>"$tmp/profile.err"; then
@@ -268,7 +272,7 @@ awk -F= '$1 == "result" && $2 == "failed" { found=1 } END { exit !found }' "$pro
 
 if BLOCKLIST_CURL_MODE=profile_failure INFERENCED_CURL_MODE=unavailable READINESS_MODE=ok \
   GDC_JOIN_PREFLIGHT_DEADLINE=30 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/bin:$PATH" \
-  GDC_HOME="$tmp/operator-cli" "$ROOT/gdc.sh" host join --skip-qualification \
+  GDC_HOME="$tmp/operator-cli" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --skip-qualification \
   --bootstrap-file "$tmp/bootstrap.json" --public-host validator-cli.example.test validator-cli \
   >"$tmp/cli.out" 2>"$tmp/cli.err"; then
   echo 'an unavailable pinned CLI unexpectedly entered JOIN' >&2
@@ -288,7 +292,7 @@ awk -F= '$1 == "result" && $2 == "failed" { found=1 } END { exit !found }' "$cli
 
 if BLOCKLIST_CURL_MODE=profile_failure READINESS_MODE=ok GDC_JOIN_PREFLIGHT_DEADLINE=30 \
   GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/bin:$PATH" \
-  GDC_HOME="$tmp/operator-lineage" "$ROOT/gdc.sh" host join --skip-qualification \
+  GDC_HOME="$tmp/operator-lineage" "$ROOT/gdc.sh" host join --model=Qwen/Qwen3-0.6B --skip-qualification \
   --bootstrap-file "$tmp/bootstrap.json" --public-host validator-lineage.example.test validator-lineage \
   >"$tmp/lineage.out" 2>"$tmp/lineage.err"; then
   echo 'a failing lineage preflight unexpectedly entered JOIN' >&2

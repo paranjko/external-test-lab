@@ -53,7 +53,10 @@ if [[ "$nvidia" == true && "$amd" == true ]]; then
   exit 1
 fi
 if [[ "$nvidia" == true ]]; then
-  printf 'vendor=nvidia\n'
+  nvidia_smi="${GDC_NVIDIA_SMI:-nvidia-smi}"
+  vram_mib="$($nvidia_smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d '[:space:]')" || true
+  [[ "$vram_mib" =~ ^[1-9][0-9]*$ ]] || { echo 'NVIDIA GPU is visible but nvidia-smi did not report VRAM' >&2; exit 1; }
+  printf 'vendor=nvidia\nvram_mib=%s\n' "$vram_mib"
   exit 0
 fi
 if [[ "$amd" != true ]]; then

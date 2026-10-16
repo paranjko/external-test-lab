@@ -3,14 +3,15 @@
 # Runtime bytes never come from the local release-profile catalogue.
 set -Eeuo pipefail
 
-usage() { echo "Usage: $0 --observation FILE --output FILE" >&2; }
+usage() { echo "Usage: $0 --observation FILE --output FILE [--model-selection FILE]" >&2; }
 die() { printf 'runtime_%s: %s\n' "$1" "$2" >&2; exit 1; }
 sha256_text() { printf '%s\n' "$1" | sha256sum | awk '{print $1}'; }
 
-observation=''; output=''
+observation=''; output=''; model_selection=''
 while (($#)); do case "$1" in
   --observation) observation="${2:-}"; shift 2 ;;
   --output) output="${2:-}"; shift 2 ;;
+  --model-selection) model_selection="${2:-}"; shift 2 ;;
   *) usage; exit 2 ;;
 esac; done
 [[ -r "$observation" && -n "$output" ]] || { usage; exit 2; }
@@ -23,6 +24,32 @@ tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$observation" >/dev/null; then
   bash "$ROOT/scripts/resolve-bootstrap-software.sh" components "$observation" "$output"
+  if [[ -n "$model_selection" ]]; then
+    jq -e '.kind == "gdc-join-model-selection" and (.selected.profile | type == "string" and test("^[a-z0-9][a-z0-9._-]*$"))' "$model_selection" >/dev/null \
+      || die artifact_unavailable 'model selection receipt is invalid'
+    profile="$(jq -r .selected.profile "$model_selection")"
+    lock="$ROOT/../model/${profile}.lock"
+    [[ -r "$lock" ]] || die artifact_unavailable 'selected model profile is unavailable'
+    selected="$(bash -c '
+      set -Eeuo pipefail
+      source "$1"
+      jq -cn --arg id "$MODEL_ID" --arg revision "${MODEL_SOURCE_REVISION:-$MODEL_REVISION}" \
+        --arg dtype "$MLNODE_DTYPE" --argjson context "$MLNODE_CONTEXT_LENGTH" --argjson seqs "$MLNODE_MAX_NUM_SEQS" \
+        --arg utilization "$MLNODE_GPU_MEMORY_UTILIZATION" --argjson parallel "$MLNODE_TENSOR_PARALLEL_SIZE" \
+        "{model_id:\$id,model_source_revision:\$revision,mlnode_dtype:\$dtype,mlnode_context_length:\$context,mlnode_max_num_seqs:\$seqs,mlnode_gpu_memory_utilization:\$utilization,mlnode_tensor_parallel_size:\$parallel}"
+    ' _ "$lock")"
+    temporary="$(mktemp "$(dirname "$output")/.join-components-model.XXXXXX")"
+    jq --argjson selected "$selected" '
+      .host_envelope.model_id=$selected.model_id |
+      .host_envelope.model_revision=$selected.model_source_revision |
+      .host_envelope.mlnode_context_length=$selected.mlnode_context_length |
+      .host_envelope.mlnode_max_num_seqs=$selected.mlnode_max_num_seqs |
+      .host_envelope.mlnode_gpu_memory_utilization=$selected.mlnode_gpu_memory_utilization |
+      .host_envelope.mlnode_dtype=$selected.mlnode_dtype |
+      .host_envelope.mlnode_tensor_parallel_size=$selected.mlnode_tensor_parallel_size
+    ' "$output" >"$temporary"
+    chmod 0600 "$temporary"; mv -f "$temporary" "$output"
+  fi
   exit 0
 fi
 
