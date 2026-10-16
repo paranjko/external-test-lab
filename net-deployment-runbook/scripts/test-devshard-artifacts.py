@@ -563,6 +563,7 @@ class ArtifactTests(unittest.TestCase):
     def test_draft_release_upload_includes_machine_readable_coverage_asset(self):
         output, value, groups = self.bundle(("manual-matrix", "dapi-edge"))
         revision = "a" * 40
+        release_tag = f"{value['release_tag']}-manual-matrix-dapi-edge"
         calls = []
 
         def external(*args, **kwargs):
@@ -571,6 +572,8 @@ class ArtifactTests(unittest.TestCase):
                 return revision
             if args[:3] == ("gh", "release", "list"):
                 return "[]"
+            if args[:2] == ("gh", "api") and args[2].endswith("/releases/latest"):
+                return json.dumps({"id": 42, "tag_name": release_tag})
             if args[:2] == ("gh", "api"):
                 return "[]"
             if args[:3] == ("gh", "release", "download"):
@@ -580,7 +583,7 @@ class ArtifactTests(unittest.TestCase):
                     shutil.copy2(asset, directory / asset.name)
                 return ""
             if args[:3] == ("gh", "release", "view"):
-                return json.dumps({"isDraft": False, "isPrerelease": True,
+                return json.dumps({"id": 42, "isDraft": False, "isPrerelease": False,
                                    "url": "https://example.test/release"})
             if args[:3] in {("gh", "release", "create"), ("gh", "release", "edit")}:
                 return ""
@@ -593,6 +596,10 @@ class ArtifactTests(unittest.TestCase):
                 patch.object(artifacts, "verify_reused_inputs"), patch.object(artifacts, "publish_registry"):
             artifacts.publish(output, value, groups)
         create = next(args for args in calls if args[:3] == ("gh", "release", "create"))
+        edit = next(args for args in calls if args[:3] == ("gh", "release", "edit"))
+        self.assertNotIn("--prerelease", create)
+        self.assertIn("--latest", edit)
+        self.assertNotIn("--latest=false", edit)
         self.assertIn(str(output / artifacts.COVERAGE_ASSET), create)
         uploaded = {Path(arg).name for arg in create if str(arg).startswith(str(output) + "/")}
         self.assertEqual(uploaded, {path.name for path in output.iterdir()})

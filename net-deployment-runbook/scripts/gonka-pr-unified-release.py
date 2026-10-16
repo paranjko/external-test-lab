@@ -53,11 +53,14 @@ def configured_definition() -> Path:
 def definition(path: Path | None = None) -> dict:
     path = path or configured_definition()
     value = json.loads(path.read_text())
-    require(set(value) == {
+    required_fields = {
         "schema_version", "classification", "source_repository", "source_pr", "source_commit", "source_tree",
         "protocol", "release_tag", "binary_version", "platform", "coverage_template", "artifact_recipe",
         "legacy_current_source_commit",
-    }, "unexpected unified candidate definition fields")
+    }
+    optional_fields = {"recipe_revision"}
+    require(required_fields <= set(value) <= required_fields | optional_fields,
+            "unexpected unified candidate definition fields")
     require(value["schema_version"] == 1 and value["classification"] == "lab-candidate-unified",
             "unsupported unified candidate definition")
     require(value["source_repository"] == "gonka-ai/gonka" and value["source_pr"] in (1792, 2008),
@@ -66,6 +69,10 @@ def definition(path: Path | None = None) -> dict:
                 ("source_commit", "source_tree", "legacy_current_source_commit")), "invalid immutable source identity")
     require(value["protocol"] == "v6" and value["platform"] == "linux/amd64", "unsupported candidate platform")
     expected_tag = f"lab-gonka-pr-{value['source_pr']}-{value['source_commit'][:12]}"
+    if "recipe_revision" in value:
+        require(bool(re.fullmatch(r"r[1-9][0-9]*", value["recipe_revision"])),
+                "invalid candidate recipe revision")
+        expected_tag = f"{expected_tag}-{value['recipe_revision']}"
     require(value["release_tag"] == expected_tag and value["binary_version"] == expected_tag,
             "candidate tag or binary stamp is not source-bound")
     for field in ("coverage_template", "artifact_recipe"):

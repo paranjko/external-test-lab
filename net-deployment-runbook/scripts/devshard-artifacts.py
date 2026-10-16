@@ -734,7 +734,7 @@ def publish(output: Path, value: dict, groups: list[str]) -> None:
                                                            output / COVERAGE_ASSET, output / ZIP_ASSET,
                                                            *(output / f"{name}.oci.tar" for name in manifest["artifacts"])]
         run("gh", "release", "create", release_tag, "--repo", REPOSITORY, "--target", revision, "--title", title,
-            "--draft", "--prerelease", "--latest=false", "--notes-file", str(notes), *(str(path) for path in paths))
+            "--draft", "--latest=false", "--notes-file", str(notes), *(str(path) for path in paths))
         downloaded = temporary / "download"
         run("gh", "release", "download", release_tag, "--repo", REPOSITORY, "--dir", str(downloaded))
         verify(downloaded, value, groups)
@@ -743,10 +743,13 @@ def publish(output: Path, value: dict, groups: list[str]) -> None:
                 "uploaded release asset set differs from verified bundle")
         require(all(sha256(output / name) == sha256(downloaded / name) for name in local_names),
                 "uploaded release bytes differ from verified bundle; draft retained")
-        run("gh", "release", "edit", release_tag, "--repo", REPOSITORY, "--draft=false", "--prerelease", "--latest=false")
+        run("gh", "release", "edit", release_tag, "--repo", REPOSITORY, "--draft=false", "--latest")
         readback = json.loads(run("gh", "release", "view", release_tag, "--repo", REPOSITORY,
-                                  "--json", "isDraft,isPrerelease,url,name,body"))
-        require(not readback["isDraft"] and readback["isPrerelease"], "release publication readback failed")
+                                  "--json", "id,isDraft,isPrerelease,url,name,body"))
+        require(not readback["isDraft"] and not readback["isPrerelease"], "release publication readback failed")
+        latest = json.loads(run("gh", "api", f"repos/{REPOSITORY}/releases/latest"))
+        require(latest.get("id") == readback["id"] and latest.get("tag_name") == release_tag,
+                "release Latest readback failed")
         if unified:
             require(readback["name"] == title and readback["body"] == body,
                     "published unified release presentation differs from generated catalogue")
