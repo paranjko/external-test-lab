@@ -68,10 +68,12 @@ dashboard_panel_inventory() {
     | ($panel.fieldConfig.defaults.noValue // "") as $novalue
     | $panel.targets[]?
     | select((.expr // "") != "")
+    # Board filters default to All, which Grafana sends as the regex .*
+    | (.expr | gsub("\\$[A-Za-z_][A-Za-z0-9_]*"; ".*")) as $expr
     | [$dashboard, ($panel.id | tostring), ($panel.title + " [" + (.refId // "A") + "]"),
        (if $novalue != "" then "explained" else "unexplained" end),
-       .expr,
-       (.expr | @base64)]
+       $expr,
+       ($expr | @base64)]
     | @tsv'
 }
 
