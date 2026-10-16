@@ -138,10 +138,11 @@ jq -e '[.panels[].targets[]?.expr | select(test("cometbft_consensus_total_txs"))
   "$ROOT/04-ops/grafana/dashboards/gdc-network.json" >/dev/null \
   || { echo 'gdc-network sums the per-node transaction rate across nodes' >&2; exit 1; }
 
-# A table renames the labels its query groups by. A key the query never returns
-# renames nothing, and a label left out keeps its raw name beside the renamed ones.
+# A single-query table renames the labels its query groups by. A key the query never
+# returns renames nothing, and a label left out keeps its raw name beside the renamed
+# ones. A merged multi-query table names the union of its queries instead.
 for board in gdc-network gdc-inference gdc-overview; do
-  mismatched="$(jq -r '.panels[] | select(.type == "table")
+  mismatched="$(jq -r '.panels[] | select(.type == "table" and (.targets | length) == 1)
     | select(.targets[0].expr | test("^[a-z_]+ by \\("))
     | (.targets[0].expr | capture("^[a-z_]+ by \\((?<labels>[^)]*)\\)").labels | split(",") | map(gsub(" "; ""))) as $grouped
     | ([.transformations[]?.options.renameByName // {} | keys[]] - ["Value"]) as $renamed
