@@ -11,9 +11,18 @@ Scenarios for the load harness of `gonka-ai/gonka` (`devshard/testenv/loadtest`,
 | `host-flapping.yaml` | Does a host that pauses every minute get back to work? |
 | `long-pause.yaml` | Does a host catch up after a 25-minute pause? |
 | `slow-hosts.yaml` | Do slow but alive hosts get penalized? |
+| `version-removal.sh` | Does the gateway stop sending requests to a version removed from the approved list? |
 
 Run from `devshard/testenv` of a `gonka-ai/gonka` checkout that has the harness:
 
 ```bash
 go run ./cmd/loadtest -scenario <path to this directory>/<name>.yaml -profiles-dir loadtest/profiles -output <dir>
 ```
+
+`version-removal.sh` drives the base testenv stack itself, without the harness:
+
+```bash
+GONKA_DIR=<gonka-ai/gonka checkout> ./version-removal.sh <output dir>
+```
+
+It removes `v2` through mock-dapi, restarts the gateway, advances three epochs and writes request counts per phase to `summary.txt`.
