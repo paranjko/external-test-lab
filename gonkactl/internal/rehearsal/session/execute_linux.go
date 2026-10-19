@@ -89,6 +89,10 @@ func executePhase(ctx context.Context, root, runID string, predecessors []phaseS
 	if !sameBinding(binding, lockedBinding) || lockedState != state || lockedRevision != revision || !sameReceipts(receipts, lockedReceipts) || lockedState != contract.Running {
 		return contract.Receipt{}, fmt.Errorf("%w: journal changed before preflight", ErrPhasePrecondition)
 	}
+	producerState, err := verifyPhaseProducerEvidence(ctx, lockedBinding)
+	if err != nil {
+		return contract.Receipt{}, fmt.Errorf("%w: pinned raw producer evidence: %v", ErrPhasePrecondition, err)
+	}
 	preflightBinding, err := cloneSnapshotBinding(binding)
 	if err != nil {
 		return contract.Receipt{}, fmt.Errorf("%w: cannot isolate adapter binding", ErrPhasePrecondition)
@@ -111,6 +115,12 @@ func executePhase(ctx context.Context, root, runID string, predecessors []phaseS
 	if err := requireAbsentEvidenceFiles(root, targetNames); err != nil {
 		return contract.Receipt{}, fmt.Errorf("%w: phase output already exists or is unsafe", ErrPhasePrecondition)
 	}
+	// Revalidate the producer proofs as the final gate immediately before the
+	// durable intent. This catches a preflight callback substituting raw inputs.
+	currentProducerState, err := verifyPhaseProducerEvidence(ctx, lockedBinding)
+	if err != nil || !samePhaseProducerState(producerState, currentProducerState) {
+		return contract.Receipt{}, fmt.Errorf("%w: pinned producer evidence changed during preflight", ErrPhasePrecondition)
+	}
 	_, executeErr := journal.Execute(ctx, operation, contract.Receipt{Phase: phase}, phaseMutationAdapter{
 		phase: phase, operation: operation, mutate: mutation, predecessors: predecessors, predecessorReceipts: lockedReceipts,
 	})
@@ -129,6 +139,39 @@ func executePhase(ctx context.Context, root, runID string, predecessors []phaseS
 		return contract.Receipt{}, fmt.Errorf("%w: successful phase receipt missing", ErrPhaseExecutionUnknown)
 	}
 	return currentReceipts[len(currentReceipts)-1], nil
+}
+
+type phaseProducerState struct {
+	enabled bool
+	digest  string
+}
+
+func verifyPhaseProducerEvidence(ctx context.Context, binding contract.RunBinding) (phaseProducerState, error) {
+	opted, err := hasProducerOptIn(binding)
+	if err != nil {
+		return phaseProducerState{}, err
+	}
+	if !opted {
+		return phaseProducerState{}, nil
+	}
+	digest, producerOptIn, err := verifyBoundProducerEvidence(ctx, binding.Workspace, "main", binding)
+	if err != nil {
+		return phaseProducerState{}, err
+	}
+	if !producerOptIn || !contract.IsDigest(digest) {
+		return phaseProducerState{}, errors.New("producer evidence pair is incomplete")
+	}
+	return phaseProducerState{enabled: true, digest: digest}, nil
+}
+
+func samePhaseProducerState(before, after phaseProducerState) bool {
+	if before.enabled != after.enabled || before.digest != after.digest {
+		return false
+	}
+	if !before.enabled {
+		return true
+	}
+	return before.digest == after.digest
 }
 
 func validatePhasePredecessors(receipts []contract.Receipt, want []phaseStep) error {

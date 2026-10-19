@@ -91,6 +91,29 @@ func TestRehearsalPhaseRoutingRequiresApplyAndNeverClaimsRuntimePass(t *testing.
 	}
 }
 
+func TestRehearsalUsesComposedRuntimeAdapterForBothPhases(t *testing.T) {
+	f := newSignedCaptureCLI(t)
+	a := &phaseCLIAdapter{}
+	f.dependencies.CaptureSnapshotReader = phaseCLIReader{}
+	f.dependencies.RuntimeAdapter = a
+	if _, err := executePhaseCLI(t, f.dependencies, f.args); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"stage", "run"} {
+		args := []string{contract.Scenario, phase, "--apply", "--workspace", f.binding.Workspace, "--run-id", f.binding.RunID}
+		if phase == "run" {
+			args = append(args, "--resume", f.binding.RunID)
+		}
+		out, err := executePhaseCLI(t, f.dependencies, args)
+		if err != nil || out.Code != phase+"_succeeded" || out.Qualification != "not_verified" {
+			t.Fatalf("composed %s route: %+v %v", phase, out, err)
+		}
+	}
+	if a.calls != 2 {
+		t.Fatalf("composed adapter calls = %d, want 2", a.calls)
+	}
+}
+
 func TestRehearsalPhaseRefusesUnavailableAdapterAndMismatchedResumeWithoutWrites(t *testing.T) {
 	f := newSignedCaptureCLI(t)
 	f.dependencies.CaptureSnapshotReader = phaseCLIReader{}

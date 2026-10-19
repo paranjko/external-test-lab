@@ -51,7 +51,22 @@ func captureTopologySnapshot(ctx context.Context, binding contract.RunBinding, m
 	if err != nil {
 		return "", err
 	}
-	snapshot, err := reader.ReadSnapshot(ctx, readerBinding)
+	var snapshot contract.Snapshot
+	if manifestReader, ok := reader.(ManifestSnapshotReader); ok {
+		// Deep-copy the authenticated inventory: a reader must not be able to
+		// change the manifest used for the post-inspection source check.
+		manifestRaw, marshalErr := json.Marshal(manifest)
+		if marshalErr != nil {
+			return "", marshalErr
+		}
+		var readerManifest contract.SourceManifest
+		if err := contract.DecodeStrict(manifestRaw, &readerManifest); err != nil {
+			return "", err
+		}
+		snapshot, err = manifestReader.ReadManifestSnapshot(ctx, readerBinding, readerManifest)
+	} else {
+		snapshot, err = reader.ReadSnapshot(ctx, readerBinding)
+	}
 	if err != nil {
 		return "", fmt.Errorf("read logical snapshot from bound copied source: %w", err)
 	}

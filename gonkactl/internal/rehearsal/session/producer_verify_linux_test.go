@@ -218,6 +218,8 @@ func newProducerVerifyFixture(t *testing.T) freshVerifyFixture {
 	writeSnapshots(t, peerRoot, map[string]contract.Snapshot{"topology.before": snapshot})
 	seedCaptureReceipt(t, main, snapshot)
 	seedCaptureReceipt(t, peer, snapshot)
+	writeSessionProducerEvidence(t, mainRoot, mainBytes)
+	writeSessionProducerEvidence(t, peerRoot, peerBytes)
 	for _, binding := range []contract.RunBinding{main, peer} {
 		stage := &testStageAdapter{after: snapshot}
 		if _, err := ExecuteStage(context.Background(), binding.Workspace, binding.RunID, stage); err != nil {
@@ -228,8 +230,6 @@ func newProducerVerifyFixture(t *testing.T) freshVerifyFixture {
 			t.Fatal(err)
 		}
 	}
-	writeSessionProducerEvidence(t, mainRoot, mainBytes)
-	writeSessionProducerEvidence(t, peerRoot, peerBytes)
 	return freshVerifyFixture{main: main, peer: peer, mainCatalog: mainCatalog, mainArtifact: mainArtifact, peerCatalog: peerCatalog, peerArtifact: peerArtifact, roots: roots, revocations: revocations, now: now}
 }
 

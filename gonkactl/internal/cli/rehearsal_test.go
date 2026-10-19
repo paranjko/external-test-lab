@@ -320,6 +320,75 @@ func TestRehearsalCaptureDispatchesSignedFrozenCopyAndKeepsRuntimePhasesClosed(t
 	}
 }
 
+func TestRehearsalCaptureLoadsExplicitTrustPolicyAndRequiresTrustMaterial(t *testing.T) {
+	fixture := newSignedCaptureCLI(t)
+	deps := fixture.dependencies
+	deps.TrustRoots = nil
+	deps.Revocations = input.RevocationSnapshot{}
+	command := newRehearsalCommand(deps)
+	command.SetArgs(fixture.args)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	err := command.Execute()
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 2 {
+		t.Fatalf("capture without trust policy must refuse, got %v", err)
+	}
+	var outcome contract.Outcome
+	if err := json.Unmarshal(output.Bytes(), &outcome); err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Code != "capture_trust_policy_required" || outcome.Mutation != "none" {
+		t.Fatalf("unexpected missing-trust outcome: %+v", outcome)
+	}
+
+	type trustRoot struct {
+		KeyID        string   `json:"key_id"`
+		Role         string   `json:"role"`
+		Scopes       []string `json:"scopes"`
+		PublicKeyHex string   `json:"public_key_hex"`
+	}
+	roots := make([]trustRoot, 0, len(fixture.dependencies.TrustRoots))
+	for _, root := range fixture.dependencies.TrustRoots {
+		scopes := make([]string, 0, len(root.Scopes))
+		for scope := range root.Scopes {
+			scopes = append(scopes, scope)
+		}
+		roots = append(roots, trustRoot{KeyID: root.KeyID, Role: root.Role, Scopes: scopes, PublicKeyHex: hex.EncodeToString(root.PublicKey)})
+	}
+	policyBytes, err := json.Marshal(struct {
+		SchemaVersion string      `json:"schema_version"`
+		Roots         []trustRoot `json:"roots"`
+		Revocations   struct {
+			ValidUntil string   `json:"valid_until"`
+			Revoked    []string `json:"revoked"`
+		} `json:"revocations"`
+	}{SchemaVersion: rehearsalTrustSchema, Roots: roots, Revocations: struct {
+		ValidUntil string   `json:"valid_until"`
+		Revoked    []string `json:"revoked"`
+	}{ValidUntil: "2026-10-20T00:00:00Z", Revoked: []string{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustPath := filepath.Join(t.TempDir(), "trust.json")
+	if err := os.WriteFile(trustPath, policyBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command = newRehearsalCommand(deps)
+	command.SetArgs(append(append([]string{}, fixture.args...), "--trust-policy", trustPath))
+	output.Reset()
+	command.SetOut(&output)
+	if err := command.Execute(); err != nil {
+		t.Fatalf("capture with explicit trust policy failed: %v\n%s", err, output.String())
+	}
+	if err := json.Unmarshal(output.Bytes(), &outcome); err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Code != "capture_succeeded" || outcome.Qualification != "not_run" {
+		t.Fatalf("unexpected policy-backed capture outcome: %+v", outcome)
+	}
+}
+
 func TestRehearsalCaptureFailsClosedWithoutProductionProofVerifier(t *testing.T) {
 	fixture := newSignedCaptureCLI(t)
 	fixture.dependencies.CaptureProofVerifier = nil

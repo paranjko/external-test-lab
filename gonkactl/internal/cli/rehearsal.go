@@ -27,6 +27,13 @@ type RehearsalDependencies struct {
 	CaptureSnapshotReader session.SnapshotReader
 	StageAdapter          session.StageAdapter
 	RunAdapter            session.RunAdapter
+	// RuntimeAdapter is the production-shaped composition of the durable
+	// control/recovery/standard driver. Individual stage or run adapters, when
+	// explicitly supplied, retain precedence for narrow compatibility callers.
+	RuntimeAdapter interface {
+		session.StageAdapter
+		session.RunAdapter
+	}
 }
 
 type rehearsalOptions struct {
@@ -42,6 +49,8 @@ type rehearsalOptions struct {
 	peerArtifactPath string
 	approvalPath     string
 	proofsPath       string
+	inspectorPath    string
+	trustPolicyPath  string
 	resume           string
 }
 
@@ -54,6 +63,14 @@ type captureEvidencePaths struct {
 }
 
 func newRehearsalCommand(dependencies RehearsalDependencies) *cobra.Command {
+	if dependencies.RuntimeAdapter != nil {
+		if dependencies.StageAdapter == nil {
+			dependencies.StageAdapter = dependencies.RuntimeAdapter
+		}
+		if dependencies.RunAdapter == nil {
+			dependencies.RunAdapter = dependencies.RuntimeAdapter
+		}
+	}
 	options := rehearsalOptions{}
 	command := &cobra.Command{
 		Use:           "recover <scenario> [phase]",
@@ -83,6 +100,23 @@ func newRehearsalCommand(dependencies RehearsalDependencies) *cobra.Command {
 			if !contract.ValidPhase(phase) {
 				outcome.Status, outcome.Code, outcome.ExitCode = "blocked", "unsupported_phase", 2
 				return renderRehearsal(cmd.OutOrStdout(), outcome, options.asJSON)
+			}
+			if options.trustPolicyPath != "" {
+				if dependencies.Clock == nil {
+					outcome.Status, outcome.Code, outcome.ExitCode = "blocked", "trust_policy_clock_unavailable", 2
+					return renderRehearsal(cmd.OutOrStdout(), outcome, options.asJSON)
+				}
+				policy, err := loadRehearsalTrustPolicy(options.trustPolicyPath, dependencies.Clock())
+				if err != nil {
+					outcome.Status, outcome.Code, outcome.ExitCode = "blocked", "trust_policy_invalid", 2
+					return renderRehearsal(cmd.OutOrStdout(), outcome, options.asJSON)
+				}
+				if dependencies.TrustRoots == nil {
+					dependencies.TrustRoots = policy.Roots
+				}
+				if dependencies.Revocations.ValidUntil.IsZero() && dependencies.Revocations.Revoked == nil {
+					dependencies.Revocations = policy.Revocations
+				}
 			}
 			if phase == contract.Verify || phase == contract.Report {
 				if options.apply {
@@ -192,6 +226,10 @@ func newRehearsalCommand(dependencies RehearsalDependencies) *cobra.Command {
 				outcome.Status, outcome.Code, outcome.ExitCode = "blocked", "capture_inputs_incomplete", 2
 				return renderRehearsal(cmd.OutOrStdout(), outcome, options.asJSON)
 			}
+			if len(dependencies.TrustRoots) == 0 || dependencies.Revocations.ValidUntil.IsZero() || dependencies.Revocations.Revoked == nil || dependencies.Clock == nil {
+				outcome.Status, outcome.Code, outcome.ExitCode = "blocked", "capture_trust_policy_required", 2
+				return renderRehearsal(cmd.OutOrStdout(), outcome, options.asJSON)
+			}
 			if dependencies.CaptureProofVerifier == nil {
 				outcome.Status, outcome.Code, outcome.ExitCode = "blocked", "capture_proof_verifier_unavailable", 2
 				return renderRehearsal(cmd.OutOrStdout(), outcome, options.asJSON)
@@ -250,6 +288,8 @@ func newRehearsalCommand(dependencies RehearsalDependencies) *cobra.Command {
 	command.Flags().StringVar(&options.peerArtifactPath, "peer-recovery-artifact", "", "signed independent recovery artifact envelope for first verification")
 	command.Flags().StringVar(&options.approvalPath, "capture-approval", "", "operator-signed capture approval envelope")
 	command.Flags().StringVar(&options.proofsPath, "capture-evidence", "", "JSON file naming frozen snapshot, witness and offline-reader proof files")
+	command.Flags().StringVar(&options.inspectorPath, "inspector-config", "", "pinned local offline inspector configuration for capture")
+	command.Flags().StringVar(&options.trustPolicyPath, "trust-policy", "", "explicit local trust roots and current revocation snapshot")
 	command.Flags().StringVar(&options.resume, "resume", "", "resume only the matching immutable run ID")
 	return command
 }
@@ -408,6 +448,10 @@ func validateCaptureInputs(options rehearsalOptions, dependencies RehearsalDepen
 	}
 	approvalPolicy := verificationPolicy("approval", "capture", "operator", binding, dependencies)
 	approvalPolicy.Binding = binding
+	snapshotReader, err := selectInspectorReader(options.inspectorPath, binding, dependencies.CaptureSnapshotReader)
+	if err != nil {
+		return request, err
+	}
 	request = session.CaptureRequest{Binding: binding, CatalogDocument: catalogDocument, CatalogPolicy: catalogPolicy,
 		ArtifactDocument: artifactDocument, ArtifactPolicy: artifactPolicy, SourceDocument: document,
 		SourcePolicy: verificationPolicy("source_manifest", "capture", "archive_owner", binding, dependencies),
@@ -415,7 +459,7 @@ func validateCaptureInputs(options rehearsalOptions, dependencies RehearsalDepen
 		Manifest: manifest, FreezePayload: proofPayloads["snapshot_freeze"], LayoutPayload: proofPayloads["layout_proof"],
 		InventoryPayload: proofPayloads["inventory_receipt"], WitnessPayloads: witnessPayloads,
 		OfflineReader: proofPayloads["offline_reader"], Verifier: dependencies.CaptureProofVerifier,
-		SnapshotReader: dependencies.CaptureSnapshotReader,
+		SnapshotReader: snapshotReader,
 		MaxBytes:       maxBytes, ReserveBytes: dependencies.CaptureReserveBytes}
 	return request, nil
 }

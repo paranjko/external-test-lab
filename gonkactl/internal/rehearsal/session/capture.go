@@ -15,6 +15,13 @@ type SnapshotReader interface {
 	ReadSnapshot(context.Context, contract.RunBinding) (contract.Snapshot, error)
 }
 
+// ManifestSnapshotReader requires the source inventory already authenticated
+// by Capture. A process-backed reader must verify its disposable copy against
+// this inventory before opening any copied database.
+type ManifestSnapshotReader interface {
+	ReadManifestSnapshot(context.Context, contract.RunBinding, contract.SourceManifest) (contract.Snapshot, error)
+}
+
 var (
 	ErrCaptureJournalRequired     = errors.New("matching untouched planned run journal is required before capture")
 	ErrCaptureVerifierUnavailable = errors.New("capture proof verifier is unavailable")
