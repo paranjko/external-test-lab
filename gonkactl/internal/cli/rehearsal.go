@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/paranjko/external-test-lab/gonkactl/internal/rehearsal/capture"
 	"github.com/paranjko/external-test-lab/gonkactl/internal/rehearsal/catalog"
 	"github.com/paranjko/external-test-lab/gonkactl/internal/rehearsal/contract"
 	"github.com/paranjko/external-test-lab/gonkactl/internal/rehearsal/evidence"
@@ -231,8 +232,7 @@ func newRehearsalCommand(dependencies RehearsalDependencies) *cobra.Command {
 				return renderRehearsal(cmd.OutOrStdout(), outcome, options.asJSON)
 			}
 			if dependencies.CaptureProofVerifier == nil {
-				outcome.Status, outcome.Code, outcome.ExitCode = "blocked", "capture_proof_verifier_unavailable", 2
-				return renderRehearsal(cmd.OutOrStdout(), outcome, options.asJSON)
+				dependencies.CaptureProofVerifier = capture.SignedProofVerifier{Roots: dependencies.TrustRoots, Revocations: dependencies.Revocations, Clock: dependencies.Clock}
 			}
 			request, err := validateCaptureInputs(options, dependencies)
 			if err != nil {

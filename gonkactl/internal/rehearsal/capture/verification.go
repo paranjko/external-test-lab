@@ -36,6 +36,7 @@ type SnapshotVerification struct {
 type WitnessVerification struct {
 	VerificationBinding
 	SourceIdentity       string
+	SignerKeyID          string
 	BlockID              string
 	BlockHeight          int64
 	AppHash              string
@@ -113,6 +114,7 @@ func verifyWitnesses(v ProofVerifier, ctx context.Context, b contract.RunBinding
 		return errors.New("exactly two witness proof payloads are required")
 	}
 	sources := map[string]bool{}
+	signerKeys := map[string]bool{}
 	var validatorSet string
 	var totalVotingPower uint64
 	for _, raw := range docs {
@@ -130,6 +132,10 @@ func verifyWitnesses(v ProofVerifier, ctx context.Context, b contract.RunBinding
 			return errors.New("witness source identities are missing or not independent")
 		}
 		sources[got.SourceIdentity] = true
+		if got.SignerKeyID == "" || signerKeys[got.SignerKeyID] {
+			return errors.New("witness signer keys are missing or not independent")
+		}
+		signerKeys[got.SignerKeyID] = true
 		if got.BlockID != b.BlockID || got.BlockHeight != b.Heights.Blockstore || got.AppHash != b.AppHash || got.AppHashHeight != b.Heights.App {
 			return errors.New("verified witness does not match H and H-1 run binding")
 		}

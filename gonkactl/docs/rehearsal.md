@@ -16,14 +16,40 @@ Block H; report renders the result. Default runtime adapters and cleanup
 composition are still unavailable. None of these local checks constitutes a
 successful runtime rehearsal.
 
-The input library verifies exact signed payloads with caller-injected pinned
-Ed25519 trust roots, distinct roles/scopes, time bounds and a current local
-revocation snapshot. The CLI contains no production trust roots and therefore
-does not accept production capture requests. With explicit trusted dependencies,
-capture verifies and copies the declared frozen export before inspecting its
-logical stores. Synthetic fixture results are not capture or runtime
-qualification. Signed metadata-only artifact envelopes do not
-qualify a Core binary.
+The capture verifier checks versioned signed envelopes for snapshot freeze,
+layout, inventory, witness and offline-reader evidence. When a trust policy is
+loaded, the CLI composes this verifier from its pinned Ed25519 roots,
+revocation snapshot and clock; callers do not inject a separate proof
+verifier. The checks bind envelope signatures, roles, scopes, validity windows
+and payloads to the immutable run context. Witness verification also checks
+the raw Comet commit and validator set.
+
+The envelope contract and verifier are implemented. A fresh synthetic CLI
+capture uses the shipped command, an explicit local trust policy, real signed
+envelopes and raw Comet witness material; it proves only the frozen-copy
+capture prefix. It is not producer-issued incident evidence and does not
+qualify a runtime. The CLI has no production trust roots, and signed
+metadata-only artifact envelopes do not qualify a Core binary.
+
+For an approved future snapshot, the operator invokes capture only with every
+bound input explicitly named:
+
+```sh
+gonkactl recover epoch-length-live-update capture --apply \
+  --run-id "$RUN_ID" --workspace "$WORKSPACE" --binding "$BINDING" \
+  --source-manifest "$SOURCE_MANIFEST" --catalog "$CATALOG" \
+  --recovery-artifact "$RECOVERY_ARTIFACT" \
+  --capture-approval "$CAPTURE_APPROVAL" \
+  --capture-evidence "$CAPTURE_EVIDENCE" \
+  --trust-policy "$TRUST_POLICY"
+```
+
+All paths above must already be part of the immutable run binding or its
+approved local policy. The command creates only the owned frozen copy and
+capture receipt. It refuses missing, expired, revoked, malformed, mismatched
+or unsigned inputs before copying; it does not start control, recovery or
+standard runtime. Do not use this command against DevNet without the separate
+snapshot authorization and the matching Core producer packet.
 
 ## Concrete offline inspector
 

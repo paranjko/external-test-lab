@@ -75,6 +75,30 @@ func TestRehearsalExplicitlyRefusesUnqualifiedEffects(t *testing.T) {
 	}
 }
 
+func TestCaptureUsesSignedProofVerifierWhenTrustPolicyIsPresent(t *testing.T) {
+	fixture := newSignedCaptureCLI(t)
+	fixture.dependencies.CaptureProofVerifier = nil
+	command := newRehearsalCommand(fixture.dependencies)
+	command.SetArgs(fixture.args)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	err := command.Execute()
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 2 {
+		t.Fatalf("expected invalid fixture proof refusal, got %v", err)
+	}
+	var outcome contract.Outcome
+	if err := json.Unmarshal(output.Bytes(), &outcome); err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Code == "capture_proof_verifier_unavailable" {
+		t.Fatalf("trusted CLI did not compose signed verifier: %+v", outcome)
+	}
+	if outcome.Code != "capture_dispatch_refused" || outcome.Mutation != "none" {
+		t.Fatalf("synthetic proof did not fail closed before capture: %+v", outcome)
+	}
+}
+
 func TestRehearsalResumeUnknownIsReadOnly(t *testing.T) {
 	root := t.TempDir()
 	height := int64(2)
@@ -389,7 +413,7 @@ func TestRehearsalCaptureLoadsExplicitTrustPolicyAndRequiresTrustMaterial(t *tes
 	}
 }
 
-func TestRehearsalCaptureFailsClosedWithoutProductionProofVerifier(t *testing.T) {
+func TestRehearsalCaptureFailsClosedWithoutInjectedProofVerifier(t *testing.T) {
 	fixture := newSignedCaptureCLI(t)
 	fixture.dependencies.CaptureProofVerifier = nil
 	command := newRehearsalCommand(fixture.dependencies)
@@ -399,14 +423,14 @@ func TestRehearsalCaptureFailsClosedWithoutProductionProofVerifier(t *testing.T)
 	err := command.Execute()
 	var exit *ExitError
 	if !errors.As(err, &exit) || exit.Code != 2 {
-		t.Fatalf("expected missing verifier refusal, got %v", err)
+		t.Fatalf("expected synthetic proof refusal, got %v", err)
 	}
 	var outcome contract.Outcome
 	if err := json.Unmarshal(output.Bytes(), &outcome); err != nil {
 		t.Fatal(err)
 	}
-	if outcome.Code != "capture_proof_verifier_unavailable" || outcome.Mutation != "none" {
-		t.Fatalf("unexpected missing-verifier result: %+v", outcome)
+	if outcome.Code != "capture_dispatch_refused" || outcome.Mutation != "none" {
+		t.Fatalf("automatic signed verifier did not fail closed: %+v", outcome)
 	}
 	if _, err := os.Stat(fixture.binding.Paths["source"]); !os.IsNotExist(err) {
 		t.Fatalf("missing verifier mutated capture destination: %v", err)
@@ -599,7 +623,7 @@ func (v cliFixtureProofVerifier) VerifySnapshotInputs(_ context.Context, b contr
 }
 
 func (v cliFixtureProofVerifier) VerifyWitness(_ context.Context, b contract.RunBinding, raw []byte) (capture.WitnessVerification, error) {
-	return capture.WitnessVerification{VerificationBinding: v.binding(b, raw), SourceIdentity: string(raw), BlockID: b.BlockID, BlockHeight: b.Heights.Blockstore, AppHash: b.AppHash, AppHashHeight: b.Heights.App,
+	return capture.WitnessVerification{VerificationBinding: v.binding(b, raw), SourceIdentity: string(raw), SignerKeyID: string(raw), BlockID: b.BlockID, BlockHeight: b.Heights.Blockstore, AppHash: b.AppHash, AppHashHeight: b.Heights.App,
 		ValidatorSetSHA256: strings.Repeat("e", 64), ValidatorSetComplete: true, SignerIDs: []string{"fixture-v1", "fixture-v2", "fixture-v3"}, SignedVotingPower: 7, TotalVotingPower: 9}, nil
 }
 

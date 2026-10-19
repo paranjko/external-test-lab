@@ -44,6 +44,7 @@ func (integrationProofVerifier) VerifyWitness(_ context.Context, binding contrac
 	return capture.WitnessVerification{
 		VerificationBinding:  ctx,
 		SourceIdentity:       string(raw),
+		SignerKeyID:          string(raw),
 		BlockID:              binding.BlockID,
 		BlockHeight:          binding.Heights.Blockstore,
 		AppHash:              binding.AppHash,

@@ -26,7 +26,7 @@ func (v testProofVerifier) VerifySnapshotInputs(_ context.Context, b contract.Ru
 }
 func (v testProofVerifier) VerifyWitness(_ context.Context, b contract.RunBinding, raw []byte) (WitnessVerification, error) {
 	ctx, _ := verificationBinding(b, raw)
-	return WitnessVerification{VerificationBinding: ctx, SourceIdentity: string(raw), BlockID: b.BlockID, BlockHeight: b.Heights.Blockstore, AppHash: b.AppHash, AppHashHeight: b.Heights.App, ValidatorSetSHA256: strings.Repeat("e", 64), ValidatorSetComplete: true, SignerIDs: []string{"validator-1", "validator-2", "validator-3"}, SignedVotingPower: 7, TotalVotingPower: 9}, nil
+	return WitnessVerification{VerificationBinding: ctx, SourceIdentity: string(raw), SignerKeyID: string(raw), BlockID: b.BlockID, BlockHeight: b.Heights.Blockstore, AppHash: b.AppHash, AppHashHeight: b.Heights.App, ValidatorSetSHA256: strings.Repeat("e", 64), ValidatorSetComplete: true, SignerIDs: []string{"validator-1", "validator-2", "validator-3"}, SignedVotingPower: 7, TotalVotingPower: 9}, nil
 }
 func (v testProofVerifier) VerifyOfflineReader(_ context.Context, b contract.RunBinding, raw []byte) (OfflineReaderVerification, error) {
 	ctx, _ := verificationBinding(b, raw)
