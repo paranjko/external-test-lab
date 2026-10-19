@@ -18,10 +18,12 @@ CHAIN=http://127.0.0.1:9191
 OUT="${1:-version-removal-$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$OUT" && OUT="$(cd "$OUT" && pwd)"
 TESTENV="$GONKA_DIR/devshard/testenv"
+TAG="vr-$(git -C "$GONKA_DIR" rev-parse --short HEAD)"
+PROJECT="$TAG-$(date -u +%H%M%S)"
 SUMMARY="$OUT/summary.txt"
 
 log() { echo "$(date -u +%H:%M:%S) $*" | tee -a "$OUT/progress.log"; }
-compose() { (cd "$TESTENV" && docker compose "$@"); }
+compose() { (cd "$TESTENV" && docker compose -p "$PROJECT" "$@"); }
 
 wait_until() {
   local what=$1 timeout=$2; shift 2
@@ -94,12 +96,14 @@ done
 
 {
   echo "gonka: $(git -C "$GONKA_DIR" rev-parse --short HEAD) $(git -C "$GONKA_DIR" describe --tags --always 2>/dev/null)"
-  echo "started: $(date -u +%FT%TZ) observe=${OBSERVE_SECONDS}s epochs=$EPOCH_STEPS router_allow_removals=$ROUTER_ALLOW_REMOVALS"
+  echo "started: $(date -u +%FT%TZ) project=$PROJECT observe=${OBSERVE_SECONDS}s epochs=$EPOCH_STEPS router_allow_removals=$ROUTER_ALLOW_REMOVALS"
 } | tee "$SUMMARY"
 
 trap cleanup EXIT
 log "build stack"
 (cd "$TESTENV" && make gen-compose && make build-devshardd) >>"$OUT/build.log" 2>&1
+# Own image tags and project keep a parallel harness run on :latest untouched.
+sed -i -E "s#(image: devshard-[a-z-]+):latest#\1:$TAG#" "$TESTENV/docker-compose.yml"
 sed -i '/^\s*VERSIOND_FORCE:/d' "$TESTENV/docker-compose.yml"
 if [[ "$ROUTER_ALLOW_REMOVALS" == 1 ]]; then
   sed -i '/VERSIOND_ROUTING_CATALOG_POLL_SECONDS:/a\      VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS: "true"' "$TESTENV/docker-compose.yml"
