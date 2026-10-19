@@ -31,5 +31,6 @@ func NewRoot() *cobra.Command {
 		},
 	})
 	root.AddCommand(newBootstrapCommand())
+	root.AddCommand(newRehearsalCommand(RehearsalDependencies{}))
 	return root
 }
