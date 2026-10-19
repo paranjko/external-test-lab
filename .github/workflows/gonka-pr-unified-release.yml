@@ -14,6 +14,7 @@ on:
           - gonka-pr-1792-6f5c80d57142-unified.json
           - gonka-pr-1792-6f5c80d57142-r2-unified.json
           - gonka-pr-1792-95b95d2a03a1-unified.json
+          - gonka-pr-1792-3c924cbf6fd9-unified.json
 
 permissions:
   contents: read

@@ -120,6 +120,14 @@ class UnifiedReleaseTests(unittest.TestCase):
         self.assertEqual(candidate["source_tree"], "cdebf6c0f9e44f95158cfaf326ca93c7e628c58a")
         self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-95b95d2a03a1")
 
+    def test_dispatch_can_select_the_peer_rpc_snapshot(self):
+        with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "gonka-pr-1792-3c924cbf6fd9-unified.json"}):
+            candidate = unified.definition()
+        self.assertEqual(candidate["source_pr"], 1792)
+        self.assertEqual(candidate["source_commit"], "3c924cbf6fd965d85463c1011d4261ad08882e40")
+        self.assertEqual(candidate["source_tree"], "0a9ad5ad0d6ca2a9fb04d890ed3ea04fd69de7d6")
+        self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-3c924cbf6fd9")
+
     def test_dispatch_cannot_escape_reviewed_candidate_definitions(self):
         with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "../outside.json"}):
             with self.assertRaises(ValueError):
