@@ -235,6 +235,9 @@ func validatePlan(p Plan) error {
 	if p.Control.ValidateBinding(p.Binding) != nil || p.Recovery.ValidateBinding(p.Binding) != nil || p.Standard.ValidateBinding(p.Binding) != nil {
 		return ErrPlan
 	}
+	if p.Barrier.Height != p.Binding.Heights.FirstRepaired || p.Barrier.BlockHash != p.Binding.BlockID {
+		return ErrPlan
+	}
 	if p.Control.SelectedBinaryRole != isolation.BinaryOriginal || p.Recovery.SelectedBinaryRole != isolation.BinaryRecovery || p.Standard.SelectedBinaryRole != isolation.BinaryOriginal {
 		return ErrPlan
 	}
@@ -250,7 +253,7 @@ func validatePlan(p Plan) error {
 	if p.Control.Network != nil || p.Recovery.Network != nil || p.Standard.Network != nil {
 		return ErrPlan
 	}
-	if !contract.IsDigest(p.Barrier.AppHash) || !contract.IsDigest(p.Barrier.BlockHash) || !contract.IsDigest(p.Barrier.PartSetHash) || p.Barrier.PartSetTotal == 0 || !contract.IsDigest(p.HPlusOne.BlockID) || !contract.IsDigest(p.HPlusOne.PartSetHash) || p.HPlusOne.PartSetTotal == 0 || p.HPlusOne.PreviousBlockID != p.Barrier.BlockHash || p.HPlusOne.PreviousPartSetHash != p.Barrier.PartSetHash || p.HPlusOne.PreviousPartSetTotal != p.Barrier.PartSetTotal || p.HPlusOne.HeaderAppHash != p.Barrier.AppHash {
+	if !contract.IsDigest(p.Barrier.AppHash) || !contract.IsDigest(p.Barrier.BlockHash) || !contract.IsDigest(p.Barrier.PartSetHash) || p.Barrier.PartSetTotal == 0 || p.HPlusOne.Validate() != nil || p.HPlusOne.PreviousBlockID != p.Barrier.BlockHash || p.HPlusOne.PreviousPartSetHash != p.Barrier.PartSetHash || p.HPlusOne.PreviousPartSetTotal != p.Barrier.PartSetTotal || p.HPlusOne.HeaderAppHash != p.Barrier.AppHash {
 		return ErrPlan
 	}
 	return nil
@@ -457,7 +460,10 @@ func (c *Coordinator) executeStep(ctx context.Context, step Step, ledger Ledger)
 		if err != nil {
 			return err
 		}
-		return c.mutate(ctx, step, pin, func() (any, error) { return nil, c.runtime.Start(ctx, pin) })
+		launch := standardStartReceipt{Pin: pin, Continuity: c.plan.HPlusOne, BlockPartSize: c.plan.BlockPartSize}
+		return c.mutate(ctx, step, launch, func() (any, error) {
+			return launch, c.runtime.Start(ctx, pin)
+		})
 	case StandardHandoffValidated:
 		recovery, err := findPin[isolation.PinnedResource](ledger, RecoveryCreate)
 		if err != nil {
@@ -512,6 +518,11 @@ func (c *Coordinator) executeStep(ctx context.Context, step Step, ledger Ledger)
 type startReceipt struct {
 	Pin       isolation.PinnedResource `json:"pin"`
 	StartedAt time.Time                `json:"started_at"`
+}
+type standardStartReceipt struct {
+	Pin           isolation.PinnedResource     `json:"pin"`
+	Continuity    coregate.HPlusOneExpectation `json:"continuity"`
+	BlockPartSize uint32                       `json:"block_part_size"`
 }
 type barrierPreparedReceipt struct {
 	ForkKey    string    `json:"fork_key"`
@@ -767,8 +778,41 @@ func (c *Coordinator) readLedger(ctx context.Context) (Ledger, error) {
 				return Ledger{}, ErrPrecondition
 			}
 		}
+		if record.Step == HPlusOneCollected {
+			if err := c.validatePinnedHPlusOne(ctx, ledger); err != nil {
+				return Ledger{}, err
+			}
+		}
+		if record.Step == StandardStart {
+			launch, err := findEvidence[standardStartReceipt](ledger, StandardStart)
+			standard, pinErr := findPin[isolation.PinnedResource](ledger, StandardCreate)
+			if err != nil || pinErr != nil || !reflect.DeepEqual(launch.Pin, standard) || launch.Continuity != c.plan.HPlusOne || launch.BlockPartSize != c.plan.BlockPartSize {
+				return Ledger{}, fmt.Errorf("%w: standard launch continuity changed or is absent", ErrPrecondition)
+			}
+		}
 	}
 	return ledger, nil
+}
+
+// Resume uses the durable observation, never a replacement from the hook.
+func (c *Coordinator) validatePinnedHPlusOne(ctx context.Context, ledger Ledger) error {
+	standard, err := findPin[isolation.PinnedResource](ledger, StandardCreate)
+	if err != nil {
+		return err
+	}
+	stored, err := findEvidence[hplusReceipt](ledger, HPlusOneCollected)
+	if err != nil {
+		return err
+	}
+	out := stored.Evidence
+	if out.RunID != c.binding.RunID || out.BindingDigest != c.bindingDigest || out.RuntimeID != standard.ID || out.RawSHA256 != contract.PayloadDigest(out.Raw) {
+		return ErrPrecondition
+	}
+	verified, err := coregate.VerifyPostStandardHPlusOne(ctx, out.Raw, coregate.CometBFT03821BlockDecoder{BlockPartSize: c.plan.BlockPartSize}, c.plan.HPlusOne)
+	if err != nil || verified != stored.Verification {
+		return fmt.Errorf("%w: persisted H+1 observation differs from verified bytes or continuity", ErrPrecondition)
+	}
+	return nil
 }
 
 func (c *Coordinator) validPinnedForStep(step Step, pin isolation.PinnedResource) bool {

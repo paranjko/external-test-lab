@@ -232,9 +232,11 @@ type HPlusOneExpectation struct {
 	PreviousPartSetHash  string `json:"previous_part_set_hash"`
 	PreviousPartSetTotal uint32 `json:"previous_part_set_total"`
 	HeaderAppHash        string `json:"header_app_hash"`
-	BlockID              string `json:"block_id"`
-	PartSetHash          string `json:"part_set_hash"`
-	PartSetTotal         uint32 `json:"part_set_total"`
+	// The H+1 identity is unknown before launch. Supply all three fields only
+	// when checking an already observed, pinned block.
+	BlockID      string `json:"block_id"`
+	PartSetHash  string `json:"part_set_hash"`
+	PartSetTotal uint32 `json:"part_set_total"`
 }
 
 type HPlusOneVerification struct {
@@ -242,6 +244,22 @@ type HPlusOneVerification struct {
 	SHA256 string              `json:"sha256"`
 	Size   int64               `json:"size"`
 	Phase  string              `json:"phase"`
+}
+
+// Validate binds continuity to recovered H without requiring a future block.
+func (want HPlusOneExpectation) Validate() error {
+	if strings.TrimSpace(want.RunID) == "" || strings.TrimSpace(want.NodeID) == "" ||
+		strings.TrimSpace(want.ChainID) == "" || want.Height <= 0 || want.Height == int64(^uint64(0)>>1) ||
+		!validDigest(want.PreviousBlockID) || !validDigest(want.PreviousPartSetHash) ||
+		want.PreviousPartSetTotal == 0 || !validDigest(want.HeaderAppHash) {
+		return fmt.Errorf("%w: recovered H continuity expectation is incomplete", ErrProducerContract)
+	}
+	if want.BlockID != "" || want.PartSetHash != "" || want.PartSetTotal != 0 {
+		if !validDigest(want.BlockID) || !validDigest(want.PartSetHash) || want.PartSetTotal == 0 {
+			return fmt.Errorf("%w: observed H+1 identity must be complete or absent", ErrProducerContract)
+		}
+	}
+	return nil
 }
 
 // VerifyPostStandardHPlusOne independently verifies a saved H+1 block after
@@ -255,10 +273,7 @@ func VerifyPostStandardHPlusOne(ctx context.Context, raw []byte, decoder HPlusOn
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
-	if decoder == nil || len(raw) == 0 || len(raw) > maxCometBlockBytes || strings.TrimSpace(want.RunID) == "" || strings.TrimSpace(want.NodeID) == "" ||
-		want.ChainID == "" || want.Height <= 0 || !validDigest(want.PreviousBlockID) || !validDigest(want.PreviousPartSetHash) ||
-		want.PreviousPartSetTotal == 0 || !validDigest(want.HeaderAppHash) || !validDigest(want.BlockID) ||
-		!validDigest(want.PartSetHash) || want.PartSetTotal == 0 {
+	if decoder == nil || len(raw) == 0 || len(raw) > maxCometBlockBytes || want.Validate() != nil {
 		return out, fmt.Errorf("%w: post-standard H+1 expectation or bytes are incomplete", ErrProducerContract)
 	}
 	block, err := decoder.DecodeHPlusOneBlock(ctx, raw)
@@ -267,9 +282,11 @@ func VerifyPostStandardHPlusOne(ctx context.Context, raw []byte, decoder HPlusOn
 	}
 	if block.Height != want.Height+1 || block.ChainID != want.ChainID || block.PreviousBlockID != want.PreviousBlockID ||
 		block.PreviousPartSetHash != want.PreviousPartSetHash || block.PreviousPartSetTotal != want.PreviousPartSetTotal ||
-		block.HeaderAppHash != want.HeaderAppHash || block.BlockID != want.BlockID || block.PartSetHash != want.PartSetHash ||
-		block.PartSetTotal != want.PartSetTotal {
+		block.HeaderAppHash != want.HeaderAppHash || !validDigest(block.BlockID) || !validDigest(block.PartSetHash) || block.PartSetTotal == 0 {
 		return out, fmt.Errorf("%w: post-standard H+1 block does not link to H expectation", ErrProducerContract)
+	}
+	if want.BlockID != "" && (block.BlockID != want.BlockID || block.PartSetHash != want.PartSetHash || block.PartSetTotal != want.PartSetTotal) {
+		return out, fmt.Errorf("%w: post-standard H+1 block differs from pinned identity", ErrProducerContract)
 	}
 	sum := sha256.Sum256(raw)
 	return HPlusOneVerification{Block: block, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(raw)), Phase: "post-standard"}, nil
