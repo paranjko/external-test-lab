@@ -2,20 +2,20 @@
   "$schema": "https://gonka-dev.net/v1.bootstrap.schema.json",
   "chain_id": "gonka-devnet-community",
   "genesis": {
-    "sha256": "93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6"
+    "sha256": "30a1bb1732543d54ba418ed50e5bd47bd36c2e162fa44217c323c53eb8399bb2"
   },
   "seeds": [
     {
-      "node_id": "a78baa4988a9be991685080df4c232b1fdbe60ac",
+      "node_id": "7d6d21cb94c069e595a7b940a2a0c5221c6c8387",
       "rpc": "https://node0.gonka-dev.net/chain-rpc",
       "p2p": "tcp://node0.gonka-dev.net:5000",
       "api": "https://node0.gonka-dev.net"
     },
     {
-      "node_id": "d38fe39dc01371b4b8f870d2747bb3547e1fd7d6",
-      "rpc": "https://node8.gonka-dev.net/chain-rpc",
-      "p2p": "tcp://node8.gonka-dev.net:5000",
-      "api": "https://node8.gonka-dev.net"
+      "node_id": "a7b63dfdf4ff16fa09c9dd74356f6accd753c135",
+      "rpc": "https://node11.gonka-dev.net/chain-rpc",
+      "p2p": "tcp://node11.gonka-dev.net:5000",
+      "api": "https://node11.gonka-dev.net"
     }
   ],
   "brokers": [
