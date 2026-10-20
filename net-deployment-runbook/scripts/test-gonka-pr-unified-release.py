@@ -84,6 +84,27 @@ class UnifiedReleaseTests(unittest.TestCase):
         for asset in ("devshardd.zip", "approved-version.json", "artifacts.json", "coverage.json", "source.json", "build-info.txt", "SHA256SUMS"):
             self.assertIn(f"](https://github.com/paranjko/external-test-lab/releases/download/{self.candidate['release_tag']}/{asset})", body)
 
+    def test_presentation_uses_the_exact_six_character_binary_source_slug(self):
+        candidates = (
+            self.candidate,
+            unified.definition(unified.ROOT / "releases/gonka-pr-1792-3c924cbf6fd9-unified.json"),
+        )
+        for candidate in candidates:
+            with self.subTest(commit=candidate["source_commit"]):
+                binary = unified.binary_definition(candidate)
+                recipe = unified.artifact_definition(candidate, binary, hashlib.sha256(b"zip").hexdigest())
+                manifest = {"artifacts": {name: {} for name in unified.artifacts.selected_components(recipe, unified.GROUPS)}}
+                with patch.dict(os.environ, {"GITHUB_RUN_ID": "123"}, clear=False):
+                    _, body = unified.artifacts.unified_release_presentation(recipe, manifest, candidate["release_tag"])
+                purpose = next(line for line in body.splitlines() if "devshardd.zip" in line)
+                self.assertEqual(
+                    purpose,
+                    f"| [devshardd.zip](https://github.com/paranjko/external-test-lab/releases/download/"
+                    f"{candidate['release_tag']}/devshardd.zip) | Linux amd64 DevShard executable for protocol v6 "
+                    f"`{candidate['source_commit'][:6]}`. |",
+                )
+                self.assertNotIn("(`devshardd`)", purpose)
+
     def test_previous_recipe_remains_verifiable_without_retargeting(self):
         previous = unified.definition(unified.ROOT / "releases/gonka-pr-1792-unified.json")
         self.assertEqual(previous["source_pr"], 1792)
@@ -127,6 +148,14 @@ class UnifiedReleaseTests(unittest.TestCase):
         self.assertEqual(candidate["source_commit"], "3c924cbf6fd965d85463c1011d4261ad08882e40")
         self.assertEqual(candidate["source_tree"], "0a9ad5ad0d6ca2a9fb04d890ed3ea04fd69de7d6")
         self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-3c924cbf6fd9")
+
+    def test_dispatch_can_select_the_current_frozen_1792_snapshot(self):
+        with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "gonka-pr-1792-67230e4dcc0a-unified.json"}):
+            candidate = unified.definition()
+        self.assertEqual(candidate["source_pr"], 1792)
+        self.assertEqual(candidate["source_commit"], "67230e4dcc0afb70b9fe94f76663f2498cffb332")
+        self.assertEqual(candidate["source_tree"], "23a89a386a96d254de0f67b1785420c11f0b2832")
+        self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-67230e4dcc0a")
 
     def test_dispatch_cannot_escape_reviewed_candidate_definitions(self):
         with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "../outside.json"}):
