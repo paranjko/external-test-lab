@@ -2,17 +2,17 @@
   "$schema": "https://gonka-dev.net/v1.bootstrap.schema.json",
   "chain_id": "gonka-testnet-4",
   "genesis": {
-    "sha256": "36e8433b7688945c9dfe0671e5db06e62c94005307c2e1f5017e88701135b82c"
+    "sha256": "6c78e1290eaee900c52d7484226a5f81c84199f5735970d4ca3df6995bf68dc4"
   },
   "seeds": [
     {
-      "node_id": "4d66c09b4f21689980ad3407fbb5adaa41b01c41",
+      "node_id": "85d29c4d2ffc5c474df9fc32a8444b6defa0b453",
       "rpc": "http://xj7-5.s.filfox.io:19242/chain-rpc",
       "p2p": "tcp://xj7-5.s.filfox.io:19241",
       "api": "http://xj7-5.s.filfox.io:19242"
     },
     {
-      "node_id": "46cbe142d1f63a522526e3d7380911630f9a650a",
+      "node_id": "061fd37343144eb703ac3eb88054b99ffabb76a9",
       "rpc": "http://xj7-5.s.filfox.io:19246/chain-rpc",
       "p2p": "tcp://xj7-5.s.filfox.io:19245",
       "api": "http://xj7-5.s.filfox.io:19246"
