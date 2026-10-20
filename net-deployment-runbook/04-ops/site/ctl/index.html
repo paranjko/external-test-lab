@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="gonkactl — an experimental native CLI for Gonka stands and nodes. Download the bootstrap-capable alpha for Linux, macOS and Windows.">
+  <meta name="description" content="gonkactl — an experimental CLI for Gonka bootstrap maintenance and local recovery rehearsal. Download for Linux, macOS or Windows.">
   <meta name="color-scheme" content="dark light">
-  <title>gonkactl — Gonka deployment CLI</title>
+  <title>gonkactl — Gonka CLI</title>
   <style>
     :root { color-scheme: dark; --bg: #101412; --panel: #19201c; --text: #edf4ed; --muted: #a6b5aa; --line: #35453a; --accent: #b8f397; }
     * { box-sizing: border-box; }
@@ -52,11 +52,11 @@
 </head>
 <body>
 <main>
-  <nav aria-label="Main"><a class="brand" href="/">Gonka Community DevNet</a><a href="https://github.com/paranjko/external-test-lab/tree/gonkactl-v1.0.0-alpha.5/gonkactl">Source ↗</a></nav>
+  <nav aria-label="Main"><a class="brand" href="/">Gonka Community DevNet</a><a href="https://github.com/paranjko/external-test-lab/tree/gonkactl-v1.0.0-alpha.6/gonkactl">Source ↗</a></nav>
   <header>
-    <p class="eyebrow">Native CLI · 1.0.0-alpha.5</p>
+    <p class="eyebrow">Native CLI · 1.0.0-alpha.6</p>
     <h1>gonkactl</h1>
-    <p class="lead">A CLI for Gonka stands and nodes.<br>The first step toward native deployment control.</p>
+    <p class="lead">A CLI for Gonka bootstrap maintenance and local recovery rehearsal.<br>It is not a general deployment or live recovery tool.</p>
   </header>
   <section aria-labelledby="install-title">
     <h2 id="install-title">Install the alpha</h2>
@@ -67,13 +67,14 @@
     </div>
   </section>
   <section class="notice" aria-label="Alpha limitations">
-    <p><strong>An early distribution preview.</strong> This alpha supports bootstrap maintenance, version information and shell completion. Host JOIN, reset, recovery and deployment commands are not available yet. Continue using the deployment runbook for node operations.</p>
+    <p><strong>An early distribution preview.</strong> It adds a local recovery rehearsal protocol to bootstrap maintenance. Linux supports persisted evidence and capture, stage and run operations, but the runtime adapters are incomplete and this does not qualify a live recovery. macOS supports offline rehearsal inspection and input validation only. Recovery rehearsal commands are unsupported on Windows. The incident-specific host agent requires a separate build tag and installation and is excluded from release binaries. Host JOIN, reset, general live recovery and deployment operations are not available. Continue using the deployment runbook for node operations.</p>
   </section>
   <section aria-labelledby="commands-title">
     <h2 id="commands-title">What you can run today</h2>
     <dl>
       <dt><code>gonkactl --help</code></dt><dd>Explore the available commands and flags.</dd>
       <dt><code>gonkactl bootstrap --help</code></dt><dd>Update local bootstrap files and validate network endpoints and pinned software images. No deployment or chain writes.</dd>
+      <dt><code>gonkactl recover epoch-length-live-update</code></dt><dd>Show an offline rehearsal preview. It does not query RPC, start processes or modify a network.</dd>
       <dt><code>gonkactl version</code></dt><dd>Check the release, source commit and build date.</dd>
       <dt><code>gonkactl completion bash</code></dt><dd>Generate completion for Bash, Zsh, Fish or PowerShell.</dd>
     </dl>
@@ -82,22 +83,22 @@
     <h2 id="downloads-title">Download a binary</h2>
     <div class="grid">
       <div class="card"><h3>Linux</h3>
-        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.5/gonkactl_1.0.0-alpha.5_linux_amd64.tar.gz">x86-64 / amd64 ↓</a>
-        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.5/gonkactl_1.0.0-alpha.5_linux_arm64.tar.gz">ARM64 ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.6/gonkactl_1.0.0-alpha.6_linux_amd64.tar.gz">x86-64 / amd64 ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.6/gonkactl_1.0.0-alpha.6_linux_arm64.tar.gz">ARM64 ↓</a>
       </div>
       <div class="card"><h3>macOS</h3>
-        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.5/gonkactl_1.0.0-alpha.5_darwin_arm64.tar.gz">Apple silicon ↓</a>
-        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.5/gonkactl_1.0.0-alpha.5_darwin_amd64.tar.gz">Intel ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.6/gonkactl_1.0.0-alpha.6_darwin_arm64.tar.gz">Apple silicon ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.6/gonkactl_1.0.0-alpha.6_darwin_amd64.tar.gz">Intel ↓</a>
       </div>
       <div class="card"><h3>Windows</h3>
-        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.5/gonkactl_1.0.0-alpha.5_windows_amd64.zip">x86-64 / amd64 ↓</a>
-        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.5/gonkactl_1.0.0-alpha.5_windows_arm64.zip">ARM64 ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.6/gonkactl_1.0.0-alpha.6_windows_amd64.zip">x86-64 / amd64 ↓</a>
+        <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.6/gonkactl_1.0.0-alpha.6_windows_arm64.zip">ARM64 ↓</a>
       </div>
     </div>
     <p class="note">No Go installation needed. Extract the archive and add the binary to your PATH.
-      <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.5/checksums.txt">SHA-256 checksums</a></p>
+      <a href="https://github.com/paranjko/external-test-lab/releases/download/gonkactl-v1.0.0-alpha.6/checksums.txt">SHA-256 checksums</a></p>
   </section>
-  <footer><span>Community tooling. Experimental by design.</span><a href="https://github.com/paranjko/external-test-lab/releases/tag/gonkactl-v1.0.0-alpha.5">Release notes ↗</a></footer>
+  <footer><span>Community tooling. Experimental by design.</span><a href="https://github.com/paranjko/external-test-lab/releases/tag/gonkactl-v1.0.0-alpha.6">Release notes ↗</a></footer>
 </main>
 <script>
   const button = document.getElementById('copy');
