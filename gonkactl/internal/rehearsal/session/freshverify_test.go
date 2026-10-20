@@ -93,7 +93,7 @@ func TestVerifyFreshRejectsChangedSnapshotOrSignedPolicyWithoutRetry(t *testing.
 }
 
 func TestVerifyFreshRefusesInterruptedProducerWithoutJournalMutation(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	binding := testBinding(root, "run-interrupted")
 	binding.InputDigests["catalog"] = strings.Repeat("c", 64)
 	binding.InputDigests["recovery_artifact"] = strings.Repeat("d", 64)

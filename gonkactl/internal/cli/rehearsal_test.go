@@ -1,3 +1,5 @@
+//go:build !windows
+
 package cli
 
 import (
@@ -100,7 +102,7 @@ func TestCaptureUsesSignedProofVerifierWhenTrustPolicyIsPresent(t *testing.T) {
 }
 
 func TestRehearsalResumeUnknownIsReadOnly(t *testing.T) {
-	root := t.TempDir()
+	root := privateTestDir(t)
 	height := int64(2)
 	binding := contract.RunBinding{SchemaVersion: contract.Version, RunID: "resume-unknown", Scenario: contract.Scenario,
 		Workspace: root, OwnershipMarker: "owner", ChainID: "fixture", GenesisSHA256: strings.Repeat("a", 64),
@@ -175,7 +177,7 @@ func TestRehearsalResumeNeverReplaysStageOrRun(t *testing.T) {
 }
 
 func TestRehearsalVerifyRejectsRepeatedManifestWithChangedFrozenDigest(t *testing.T) {
-	root := t.TempDir()
+	root := privateTestDir(t)
 	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 	seed := sha256.Sum256([]byte("core"))
 	private := ed25519.NewKeyFromSeed(seed[:])
@@ -477,6 +479,15 @@ func TestRehearsalCaptureRefusesInterruptedOrStaleJournalWithoutRepair(t *testin
 	if _, err := os.Stat(fixture.binding.Paths["source"]); !os.IsNotExist(err) {
 		t.Fatalf("stale-journal refusal copied files: %v", err)
 	}
+}
+
+func privateTestDir(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 type signedCaptureFixture struct {

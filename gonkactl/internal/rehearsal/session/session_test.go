@@ -16,7 +16,7 @@ import (
 )
 
 func TestReadOnlyLoadRejectsUnknownWithoutRewritingJournal(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	binding := testBinding(root, "run-unknown")
 	journal, err := lifecycle.Open(root, binding)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestReadOnlyLoadRejectsUnknownWithoutRewritingJournal(t *testing.T) {
 }
 
 func TestLoadRejectsRunIDMismatchEscapeAndSymlink(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	binding := testBinding(root, "run-safe")
 	createJournal(t, binding)
 	if _, err := Load(root, "run-other"); err == nil {
@@ -55,7 +55,7 @@ func TestLoadRejectsRunIDMismatchEscapeAndSymlink(t *testing.T) {
 	if _, err := Load(filepath.Join(root, "..", "escape"), binding.RunID); err == nil {
 		t.Fatal("non-clean escaped root accepted")
 	}
-	link := filepath.Join(t.TempDir(), "run-link")
+	link := filepath.Join(privateWorkspace(t), "run-link")
 	if err := os.Symlink(root, link); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestLoadRejectsRunIDMismatchEscapeAndSymlink(t *testing.T) {
 }
 
 func TestLoadMissingRunDoesNotCreateWorkspace(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "missing-run")
+	root := filepath.Join(privateWorkspace(t), "missing-run")
 	if _, err := Load(root, "missing-run"); err == nil {
 		t.Fatal("missing run accepted")
 	}
@@ -75,7 +75,7 @@ func TestLoadMissingRunDoesNotCreateWorkspace(t *testing.T) {
 }
 
 func TestVerifyRejectsOracleChangedAfterJournalDigestWasRecorded(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	binding := testBinding(root, "run-main")
 	createJournal(t, binding)
 	if err := os.Mkdir(filepath.Join(root, "evidence"), 0700); err != nil {
@@ -124,7 +124,7 @@ func TestVerifyRejectsOracleChangedAfterJournalDigestWasRecorded(t *testing.T) {
 }
 
 func TestVerifyRejectsOracleBoundToDifferentRun(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	binding := testBinding(root, "run-expected")
 	createJournal(t, binding)
 	oracle := evidence.Oracle{SchemaVersion: evidence.Version, Binding: testBinding(root, "run-forged")}
@@ -139,7 +139,7 @@ func TestVerifyRejectsOracleBoundToDifferentRun(t *testing.T) {
 }
 
 func TestVerifyUsesPersistedPeerJournalInsteadOfOracleReceipts(t *testing.T) {
-	mainRoot := t.TempDir()
+	mainRoot := privateWorkspace(t)
 	peerRoot := filepath.Join(mainRoot, "peer-run")
 	mainBinding := testBinding(mainRoot, "peer-main")
 	mainBinding.Paths["peer_workspace"] = peerRoot
@@ -188,8 +188,8 @@ func TestVerifyUsesPersistedPeerJournalInsteadOfOracleReceipts(t *testing.T) {
 }
 
 func TestVerifyRejectsPeerWorkspaceOutsideMainBinding(t *testing.T) {
-	mainRoot := t.TempDir()
-	peerRoot := t.TempDir()
+	mainRoot := privateWorkspace(t)
+	peerRoot := privateWorkspace(t)
 	mainBinding := testBinding(mainRoot, "peer-path-main")
 	peerBinding := testBinding(peerRoot, "peer-path-run")
 	peerBinding.OwnershipMarker = "independent-owner"
@@ -205,7 +205,7 @@ func TestVerifyRejectsPeerWorkspaceOutsideMainBinding(t *testing.T) {
 }
 
 func TestLoadRejectsStaleJournalRevisionWithoutRepair(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	binding := testBinding(root, "stale-run")
 	createJournal(t, binding)
 	path := filepath.Join(root, "lifecycle.json")
@@ -235,7 +235,7 @@ func TestLoadRejectsStaleJournalRevisionWithoutRepair(t *testing.T) {
 }
 
 func TestEvidenceReadsRejectSymlinkAndWritesDoNotFollowIt(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	if err := os.Mkdir(filepath.Join(root, "evidence"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestEvidenceReadsRejectSymlinkAndWritesDoNotFollowIt(t *testing.T) {
 }
 
 func TestOracleReadEnforcesFileSizeBound(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	if err := os.Mkdir(filepath.Join(root, "evidence"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -287,8 +287,8 @@ func TestOracleReadEnforcesFileSizeBound(t *testing.T) {
 }
 
 func TestVerificationWriterRejectsUnsafeDirectoryBeforeOutput(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
+	root := privateWorkspace(t)
+	outside := privateWorkspace(t)
 	if err := os.Symlink(outside, filepath.Join(root, "evidence")); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestVerificationWriterRejectsUnsafeDirectoryBeforeOutput(t *testing.T) {
 }
 
 func TestMultiFileEvidenceWriteValidatesAllTargetsBeforeWriting(t *testing.T) {
-	root := t.TempDir()
+	root := privateWorkspace(t)
 	if err := os.Mkdir(filepath.Join(root, "evidence"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestMultiFileEvidenceWriteValidatesAllTargetsBeforeWriting(t *testing.T) {
 }
 
 func TestWriteReportUsesPersistedRunsAndStoresOnlyRedactedSummaries(t *testing.T) {
-	mainRoot := t.TempDir()
+	mainRoot := privateWorkspace(t)
 	peerRoot := filepath.Join(mainRoot, "peer-run")
 	mainBinding := testBinding(mainRoot, "report-main")
 	mainBinding.Paths["peer_workspace"] = peerRoot

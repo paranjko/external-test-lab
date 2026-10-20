@@ -638,7 +638,7 @@ func availableBytes(p string) (int64, error) {
 	if stat.Bavail > max/uint64(stat.Bsize) {
 		return int64(max), nil
 	}
-	return int64(stat.Bavail) * stat.Bsize, nil
+	return int64(stat.Bavail * uint64(stat.Bsize)), nil
 }
 func sameParentPath(r *os.Root, p string) error {
 	pathInfo, e := os.Lstat(p)
@@ -826,7 +826,7 @@ func (a Adapter) verifyAuthorization(ctx context.Context, b contract.RunBinding,
 	return nil
 }
 func cloneInputDigests(src map[string]string) map[string]string {
-	out := make(map[string]string, len(src)+1)
+	out := make(map[string]string, len(src))
 	for k, v := range src {
 		out[k] = v
 	}

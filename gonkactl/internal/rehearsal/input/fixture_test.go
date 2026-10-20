@@ -58,6 +58,9 @@ func TestDecodeSourceManifestRejectsNullOrAliasedRequiredFields(t *testing.T) {
 
 func TestLocalFixtureAdapterValidatesFrozenExport(t *testing.T) {
 	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	binding := testBinding()
 	data := []byte("frozen public chain data")
 	if err := os.WriteFile(filepath.Join(root, "blockstore.db"), data, 0600); err != nil {
@@ -107,6 +110,9 @@ func TestLocalFixtureAdapterRejectsUnsafeAndChangedFiles(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
+			if err := os.Chmod(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
 			binding := testBinding()
 			data := []byte("frozen public chain data")
 			filePath := filepath.Join(root, "blockstore.db")

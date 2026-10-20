@@ -14,7 +14,7 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.0.0-alpha.5"
+VERSION = "1.0.0-alpha.6"
 TAG = "gonkactl-v" + VERSION
 TARGETS = ("linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64")
 

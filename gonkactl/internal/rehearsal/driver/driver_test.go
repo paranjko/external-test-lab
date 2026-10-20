@@ -300,6 +300,9 @@ func (h *fakeHooks) ReadHPlusOne(_ context.Context, b contract.RunBinding, p iso
 func driverFixture(t *testing.T, writeMarker bool) (*Coordinator, *fakeDocker, *fakeHooks, *memoryJournal, Plan, contract.RunBinding) {
 	t.Helper()
 	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	for _, d := range []string{"source", "control", "evidence", "fork-a", "fork-b"} {
 		if err := os.Mkdir(filepath.Join(root, d), 0o700); err != nil {
 			t.Fatal(err)

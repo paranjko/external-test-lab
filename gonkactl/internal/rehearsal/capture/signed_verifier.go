@@ -225,10 +225,7 @@ func verifySignedProof[T any](v SignedProofVerifier, b contract.RunBinding, raw 
 	// confirms the envelope digest before calling this verifier. InputBindingDigest
 	// excludes InputDigests, so the signed run context remains unchanged.
 	policyBinding := b
-	policyBinding.InputDigests = make(map[string]string, len(b.InputDigests)+1)
-	for key, digest := range b.InputDigests {
-		policyBinding.InputDigests[key] = digest
-	}
+	policyBinding.InputDigests = cloneInputDigests(b.InputDigests)
 	policyBinding.InputDigests[kind] = contract.PayloadDigest(document.Payload)
 	policy := input.VerificationPolicy{Kind: kind, Scope: "capture", Role: role, Binding: policyBinding, Roots: v.Roots, Revocations: v.Revocations, Now: v.Clock}
 	metadata, err := input.VerifyTypedDocument(document, policy, func(payload []byte) error { return contract.DecodeStrict(payload, &proof) })

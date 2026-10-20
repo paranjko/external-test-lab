@@ -4,14 +4,20 @@ The alpha distribution, platform downloads and installation instructions are
 described in [RELEASE.md](RELEASE.md). Run `make -C gonkactl test-release`
 for installer and release-manifest tests; `release-archives` builds all six
 platform archives. The release workflow tests native installation on Linux
-and macOS before publishing an immutable `gonkactl-v1.0.0-alpha.5` prerelease.
+and macOS before publishing an immutable `gonkactl-v1.0.0-alpha.6` prerelease.
 
 This directory preserves an unfinished native Go implementation of gonkactl.
 It is a source snapshot for continued development, not an operator-ready
 replacement for the existing deployment runbook. The executable currently
 exposes help, shell completion, version and native
 [bootstrap maintenance](BOOTSTRAP.md), included starting with alpha.2.
-Recovery and JOIN handlers are not wired into the CLI.
+The local recovery rehearsal protocol is exposed through `recover epoch-length-live-update`, see [the rehearsal contract](docs/rehearsal.md) for its explicit prerequisites and limits
+
+Default live recovery and JOIN handlers are not wired into the ordinary release
+
+Recovery rehearsal commands require Unix filesystem protections and are unavailable on Windows, Windows builds retain bootstrap maintenance, help and version commands
+
+Darwin supports offline rehearsal inspection and input validation, persisted evidence, capture, stage and run operations require Linux
 
 ## Local checks
 
