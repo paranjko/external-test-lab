@@ -108,3 +108,21 @@ make -C gonkactl check
 `recovery-acceptance` remain non-passing until qualified Core artifacts and
 isolated runtime adapters exist. Missing qualification is reported as BLOCKED,
 never as a skipped successful acceptance test.
+
+## Native execution boundary
+
+Rehearsal containers execute the digest-pinned selected `inferenced` directly as PID 1, the selected binary is mounted read-only and checked again during runtime inspection
+
+Bindings containing the former wrapper entrypoint are rejected, create a fresh binding rather than changing an existing journal or its evidence
+
+The incident-only command is excluded from ordinary release builds and requires the `gnklab0002_live` build tag
+
+Its controller uses a Go SSH client with explicit `--ssh-identity` and `--ssh-known-hosts` files, the inspected host and port are fixed by the node inventory
+
+Each host must already have the native Linux Go agent installed at `/usr/local/libexec/gonkactl-incident`, its SHA256 must be supplied through `--agent-sha256`
+
+The controller sends only a fixed agent executable and allowlisted tokens, the agent hashes its running executable before any operation and uses Docker HTTP API and native filesystem operations instead of shell scripts or Python
+
+Agent installation is an explicit prerequisite, this command does not upload itself, install dependencies, reset signing state or provision a host
+
+The native agent is a new implementation of the incident operations, earlier live recovery receipts belong to the earlier implementation and do not qualify this native revision on a live network

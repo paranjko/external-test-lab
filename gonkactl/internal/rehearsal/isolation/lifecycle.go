@@ -757,8 +757,7 @@ func (a *RuntimeAdapter) mountsMatch(got []dockerMount, forkKey, forkTarget stri
 		forkTarget = "/data"
 	}
 	expected[bindingPath(a.binding, forkKey)+"\x00"+forkTarget+"\x00rw"] = true
-	if len(a.binding.Paths["entrypoint"]) > 0 {
-		expected[a.binding.Paths["entrypoint"]+"\x00/root/gnklab0002/recovery-entrypoint.sh\x00ro"] = true
+	if len(a.binding.Paths["recovery-binary"]) > 0 {
 		binaryKey := selectedBinaryPathKey(binaryRole)
 		if binaryKey == "" {
 			return false

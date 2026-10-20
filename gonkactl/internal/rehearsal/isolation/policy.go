@@ -93,19 +93,16 @@ func (s ContainerSpec) ValidateBinding(binding contract.RunBinding) error {
 		return ErrUnsafeSpec
 	}
 	if len(s.Entrypoint) > 0 {
-		hasEntrypoint, hasBinary := false, false
+		hasBinary := false
 		for _, m := range s.Mounts {
-			if m.PathKey == "entrypoint" && m.Target == expectedTarget("entrypoint") {
-				hasEntrypoint = true
-			}
 			if m.PathKey == selectedBinaryPathKey(s.SelectedBinaryRole) && m.Target == expectedTarget(m.PathKey) {
 				hasBinary = true
 			}
-			if (m.PathKey == "entrypoint" || m.PathKey == "recovery-binary" || m.PathKey == "original-binary") && !m.ReadOnly {
+			if (m.PathKey == "recovery-binary" || m.PathKey == "original-binary") && !m.ReadOnly {
 				return ErrUnsafeSpec
 			}
 		}
-		if !hasEntrypoint || !hasBinary {
+		if !hasBinary {
 			return ErrUnsafeSpec
 		}
 	}
@@ -121,7 +118,7 @@ func (s ContainerSpec) ValidateBinding(binding contract.RunBinding) error {
 	}
 	for _, m := range s.Mounts {
 		source, ok := binding.Paths[m.PathKey]
-		allowedKey := m.PathKey == "source" || m.PathKey == "control" || m.PathKey == "evidence" || m.PathKey == "fork-a" || m.PathKey == "fork-b" || m.PathKey == "entrypoint" || m.PathKey == "recovery-binary" || m.PathKey == "original-binary"
+		allowedKey := m.PathKey == "source" || m.PathKey == "control" || m.PathKey == "evidence" || m.PathKey == "fork-a" || m.PathKey == "fork-b" || m.PathKey == "recovery-binary" || m.PathKey == "original-binary"
 		expected := expectedTarget(m.PathKey)
 		if (m.PathKey == "fork-a" || m.PathKey == "fork-b") && s.ForkTarget != "" {
 			expected = s.ForkTarget
@@ -307,8 +304,6 @@ func expectedTarget(key string) string {
 		return "/control"
 	case "fork-a", "fork-b":
 		return "/data"
-	case "entrypoint":
-		return "/root/gnklab0002/recovery-entrypoint.sh"
 	case "recovery-binary", "original-binary":
 		return "/root/gnklab0002/selected/inferenced"
 	case "evidence":
@@ -334,8 +329,7 @@ func validMountSet(mounts []Mount) bool {
 	if seenKey["original-binary"] {
 		binaryCount++
 	}
-	entry := seenKey["entrypoint"] && binaryCount == 1
-	return base && (seenKey["entrypoint"] == (binaryCount == 1)) && (entry || !seenKey["entrypoint"] && binaryCount == 0)
+	return base && !seenKey["entrypoint"] && binaryCount <= 1
 }
 
 func validateRecoveryFields(s ContainerSpec, b contract.RunBinding) error {
@@ -343,12 +337,23 @@ func validateRecoveryFields(s ContainerSpec, b contract.RunBinding) error {
 		if s.SelectedBinaryRole != "" {
 			return ErrUnsafeSpec
 		}
+		for _, mount := range s.Mounts {
+			if mount.PathKey == "recovery-binary" || mount.PathKey == "original-binary" {
+				return ErrUnsafeSpec
+			}
+		}
 		return nil
 	}
-	if len(s.Entrypoint) != 2 || s.Entrypoint[0] != "sh" || s.Entrypoint[1] != "/root/gnklab0002/recovery-entrypoint.sh" || len(s.Argv) != 3 || s.Argv[0] != "start" || s.Argv[1] != "--home" || s.Argv[2] != "/root/.inference" {
+	if len(s.Entrypoint) != 1 || s.Entrypoint[0] != "/root/gnklab0002/selected/inferenced" || len(s.Argv) != 3 || s.Argv[0] != "start" || s.Argv[1] != "--home" || s.Argv[2] != "/root/.inference" {
 		return ErrUnsafeSpec
 	}
-	if b.Paths["entrypoint"] == "" || b.Paths["recovery-binary"] == "" || b.Paths["original-binary"] == "" || !contract.IsDigest(b.InputDigests["recovery-entrypoint"]) || !contract.IsDigest(b.InputDigests["recovery-binary"]) || !contract.IsDigest(b.InputDigests["original-binary"]) || (s.SelectedBinaryRole != "recovery" && s.SelectedBinaryRole != "original") {
+	if _, legacyEntrypoint := b.Paths["entrypoint"]; legacyEntrypoint {
+		return ErrUnsafeSpec
+	}
+	if _, legacyDigest := b.InputDigests["recovery-entrypoint"]; legacyDigest {
+		return ErrUnsafeSpec
+	}
+	if b.Paths["recovery-binary"] == "" || b.Paths["original-binary"] == "" || !contract.IsDigest(b.InputDigests["recovery-binary"]) || !contract.IsDigest(b.InputDigests["original-binary"]) || (s.SelectedBinaryRole != "recovery" && s.SelectedBinaryRole != "original") {
 		return ErrUnsafeSpec
 	}
 	if s.Environment["GNK_LAB_SELECTED_BINARY_ROLE"] != string(s.SelectedBinaryRole) {
@@ -388,17 +393,15 @@ func boundRecoveryFilesMatch(b contract.RunBinding, role BinaryRole) error {
 	if selected == "" {
 		return ErrUnsafeSpec
 	}
-	for _, entry := range []struct{ pathKey, digestKey string }{{"entrypoint", "recovery-entrypoint"}, {selected, selected}} {
-		f, err := os.Open(b.Paths[entry.pathKey])
-		if err != nil {
-			return ErrUnsafeSpec
-		}
-		h := sha256.New()
-		_, copyErr := io.Copy(h, f)
-		closeErr := f.Close()
-		if copyErr != nil || closeErr != nil || hex.EncodeToString(h.Sum(nil)) != b.InputDigests[entry.digestKey] {
-			return ErrUnsafeSpec
-		}
+	f, err := os.Open(b.Paths[selected])
+	if err != nil {
+		return ErrUnsafeSpec
+	}
+	h := sha256.New()
+	_, copyErr := io.Copy(h, f)
+	closeErr := f.Close()
+	if copyErr != nil || closeErr != nil || hex.EncodeToString(h.Sum(nil)) != b.InputDigests[selected] {
+		return ErrUnsafeSpec
 	}
 	return nil
 }
@@ -462,14 +465,13 @@ func validRolePaths(paths map[string]string) bool {
 			}
 		}
 	}
-	entry, hasEntry := paths["entrypoint"]
 	recovery, hasRecovery := paths["recovery-binary"]
 	original, hasOriginal := paths["original-binary"]
-	if hasEntry != (hasRecovery && hasOriginal) || hasRecovery != hasOriginal {
+	if _, hasLegacyEntrypoint := paths["entrypoint"]; hasLegacyEntrypoint || hasRecovery != hasOriginal {
 		return false
 	}
-	if hasEntry {
-		for _, p := range []string{entry, recovery, original} {
+	if hasRecovery {
+		for _, p := range []string{recovery, original} {
 			info, err := os.Stat(p)
 			if !safeAbsolutePath(p) || err != nil || !info.Mode().IsRegular() {
 				return false
@@ -480,7 +482,7 @@ func validRolePaths(paths map[string]string) bool {
 				}
 			}
 		}
-		if overlaps(entry, recovery) || overlaps(entry, original) || overlaps(recovery, original) {
+		if overlaps(recovery, original) {
 			return false
 		}
 	}

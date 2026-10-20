@@ -376,7 +376,7 @@ func (f *fakeRuntimeProcess) inspectJSON(c fakeRuntimeContainer) string {
 		}
 		data.Mounts = append(data.Mounts, mount{Type: "bind", Source: f.binding.Paths[key], Destination: target, Mode: mode, RW: rw})
 	}
-	for _, key := range []string{"entrypoint", c.SelectedBinaryRole + "-binary"} {
+	for _, key := range []string{c.SelectedBinaryRole + "-binary"} {
 		if source := f.binding.Paths[key]; source != "" {
 			data.Mounts = append(data.Mounts, mount{Type: "bind", Source: source, Destination: expectedTarget(key), Mode: "ro", RW: false})
 		}
@@ -638,25 +638,18 @@ func TestInternalNetworkInterruptedCreateIsUnknownAndNotRepeated(t *testing.T) {
 func recoveryRuntimeFixture(t *testing.T) (*RuntimeAdapter, *fakeRuntimeProcess, ContainerSpec, contract.RunBinding, *fakeAdoptionAuthorizer) {
 	t.Helper()
 	_, process, auth, b, s := runtimeFixture(t)
-	entry := filepath.Join(b.Workspace, "recovery-entrypoint.sh")
 	recoveryBinary := filepath.Join(b.Workspace, "recovery-inferenced")
 	originalBinary := filepath.Join(b.Workspace, "original-inferenced")
-	if err := os.WriteFile(entry, []byte("#!/bin/sh\nexec /root/gnklab0002/selected/inferenced \"$@\"\n"), 0500); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(recoveryBinary, []byte("recovery binary"), 0500); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(originalBinary, []byte("original binary"), 0500); err != nil {
 		t.Fatal(err)
 	}
-	entryData, _ := os.ReadFile(entry)
 	recoveryData, _ := os.ReadFile(recoveryBinary)
 	originalData, _ := os.ReadFile(originalBinary)
-	b.Paths["entrypoint"] = entry
 	b.Paths["recovery-binary"] = recoveryBinary
 	b.Paths["original-binary"] = originalBinary
-	b.InputDigests["recovery-entrypoint"] = contract.PayloadDigest(entryData)
 	b.InputDigests["recovery-binary"] = contract.PayloadDigest(recoveryData)
 	b.InputDigests["original-binary"] = contract.PayloadDigest(originalData)
 	process.binding = cloneRunBinding(b)
@@ -674,11 +667,11 @@ func recoveryRuntimeFixture(t *testing.T) (*RuntimeAdapter, *fakeRuntimeProcess,
 			s.Mounts[i].Target = "/root/.inference"
 		}
 	}
-	s.Entrypoint = []string{"sh", "/root/gnklab0002/recovery-entrypoint.sh"}
+	s.Entrypoint = []string{"/root/gnklab0002/selected/inferenced"}
 	s.SelectedBinaryRole = "recovery"
 	s.Argv = []string{"start", "--home", "/root/.inference"}
 	s.Environment = map[string]string{"GNK_LAB_SELECTED_BINARY_ROLE": "recovery", "GNK_LAB_RECOVERY_BINARY_SHA256": b.InputDigests["recovery-binary"], "GNK_LAB_ORIGINAL_BINARY_SHA256": b.InputDigests["original-binary"], "GNK_LAB_RECOVERY_BARRIER_CHAIN_ID": b.ChainID, "GNK_LAB_RECOVERY_BARRIER_DIR": "/root/.inference/gnklab0002-recovery-barrier"}
-	s.Mounts = append(s.Mounts, Mount{PathKey: "entrypoint", Target: "/root/gnklab0002/recovery-entrypoint.sh", ReadOnly: true}, Mount{PathKey: "recovery-binary", Target: "/root/gnklab0002/selected/inferenced", ReadOnly: true})
+	s.Mounts = append(s.Mounts, Mount{PathKey: "recovery-binary", Target: "/root/gnklab0002/selected/inferenced", ReadOnly: true})
 	s.Labels = map[string]string{"gonka.rehearsal.run": b.RunID, "gonka.rehearsal.owner": b.OwnershipMarker, "gonka.rehearsal.binding": digest}
 	return a, process, s, b, auth
 }
@@ -696,16 +689,19 @@ func TestRecoveryContainerUsesBoundCommandEnvMountAndAliases(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := strings.Join(command.Args(), " ")
-	for _, want := range []string{"--entrypoint sh", "--env GNK_LAB_SELECTED_BINARY_ROLE=recovery", "--network-alias gnk2-genesis-node", "dst=/root/.inference,rw", "dst=/root/gnklab0002/recovery-entrypoint.sh,readonly", "dst=/root/gnklab0002/selected/inferenced,readonly"} {
+	for _, want := range []string{"--entrypoint /root/gnklab0002/selected/inferenced", "--env GNK_LAB_SELECTED_BINARY_ROLE=recovery", "--network-alias gnk2-genesis-node", "dst=/root/.inference,rw", "dst=/root/gnklab0002/selected/inferenced,readonly"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("missing %q from argv %q", want, args)
 		}
+	}
+	if strings.Contains(args, "--entrypoint sh") || strings.Contains(args, "recovery-entrypoint.sh") {
+		t.Fatalf("shell wrapper remained in direct-entrypoint argv %q", args)
 	}
 	pin, err := a.Create(context.Background(), s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pin.ForkTarget != "/root/.inference" || len(pin.DNSAliases) != 1 || pin.Environment["GNK_LAB_SELECTED_BINARY_ROLE"] != "recovery" {
+	if pin.ForkTarget != "/root/.inference" || len(pin.DNSAliases) != 1 || pin.Environment["GNK_LAB_SELECTED_BINARY_ROLE"] != "recovery" || !reflect.DeepEqual(pin.Entrypoint, []string{"/root/gnklab0002/selected/inferenced"}) {
 		t.Fatalf("runtime policy not durably pinned: %+v", pin)
 	}
 	if _, err := a.Inspect(context.Background(), pin); err != nil {
@@ -835,6 +831,7 @@ func TestRecoveryInspectRejectsEntrypointEnvironmentAliasAndMountSubstitutions(t
 		mutate func(*fakeRuntimeContainer)
 	}{
 		{"entrypoint", func(c *fakeRuntimeContainer) { c.Entrypoint = []string{"/bin/sh"} }},
+		{"shell wrapper", func(c *fakeRuntimeContainer) { c.Entrypoint = []string{"sh", "/root/recovery-entrypoint.sh"} }},
 		{"command", func(c *fakeRuntimeContainer) { c.Cmd = []string{"start", "--home", "/tmp"} }},
 		{"environment", func(c *fakeRuntimeContainer) {
 			c.Environment["GNK_LAB_RECOVERY_BINARY_SHA256"] = strings.Repeat("f", 64)
@@ -878,6 +875,12 @@ func TestRecoveryPolicyRejectsUnapprovedEnvShellAndUnownedAliases(t *testing.T) 
 		{"unknown env", func(s *ContainerSpec) { s.Environment["AWS_SECRET_ACCESS_KEY"] = "must-not-be-accepted" }},
 		{"unbound selected binary", func(s *ContainerSpec) { s.Environment["GNK_LAB_SELECTED_BINARY_ROLE"] = "other" }},
 		{"shell command parsing", func(s *ContainerSpec) { s.Entrypoint = []string{"sh", "-c", "/bin/true"} }},
+		{"shell wrapper", func(s *ContainerSpec) { s.Entrypoint = []string{"sh", "/root/recovery-entrypoint.sh"} }},
+		{"binary mount without direct entrypoint", func(s *ContainerSpec) {
+			s.Entrypoint = nil
+			s.Environment = nil
+			s.SelectedBinaryRole = ""
+		}},
 		{"wrong target", func(s *ContainerSpec) {
 			s.ForkTarget = "/root"
 			for i := range s.Mounts {
@@ -903,18 +906,32 @@ func TestRecoveryPolicyRejectsUnapprovedEnvShellAndUnownedAliases(t *testing.T) 
 }
 
 func TestRecoveryFilesMustMatchBoundHostDigestsBeforeCreate(t *testing.T) {
-	a, p, s, _, _ := recoveryRuntimeFixture(t)
-	if err := os.Chmod(p.binding.Paths["recovery-binary"], 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p.binding.Paths["recovery-binary"], []byte("substituted binary"), 0500); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.Create(context.Background(), s); !errors.Is(err, ErrUnsafeSpec) {
-		t.Fatalf("changed host binary accepted: %v", err)
-	}
-	if p.count(OperationCreateContainer) != 0 {
-		t.Fatal("container create occurred before host file digest verification")
+	for _, tc := range []struct {
+		key  string
+		role BinaryRole
+	}{{"recovery-binary", BinaryRecovery}, {"original-binary", BinaryOriginal}} {
+		t.Run(tc.key, func(t *testing.T) {
+			a, p, s, _, _ := recoveryRuntimeFixture(t)
+			s.SelectedBinaryRole = tc.role
+			s.Environment["GNK_LAB_SELECTED_BINARY_ROLE"] = string(tc.role)
+			for i := range s.Mounts {
+				if s.Mounts[i].PathKey == "recovery-binary" {
+					s.Mounts[i].PathKey = string(tc.role) + "-binary"
+				}
+			}
+			if err := os.Chmod(p.binding.Paths[tc.key], 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p.binding.Paths[tc.key], []byte("substituted binary"), 0500); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.Create(context.Background(), s); !errors.Is(err, ErrUnsafeSpec) {
+				t.Fatalf("changed host binary accepted: %v", err)
+			}
+			if p.count(OperationCreateContainer) != 0 {
+				t.Fatal("container create occurred before host file digest verification")
+			}
+		})
 	}
 }
 

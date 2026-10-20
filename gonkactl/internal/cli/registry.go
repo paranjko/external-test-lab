@@ -33,5 +33,6 @@ func NewRoot() *cobra.Command {
 	})
 	root.AddCommand(newBootstrapCommand())
 	root.AddCommand(newRehearsalCommand(RehearsalDependencies{Clock: time.Now}))
+	registerIncidentRecovery(root)
 	return root
 }
