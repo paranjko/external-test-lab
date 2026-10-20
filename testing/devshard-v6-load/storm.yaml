@@ -87,6 +87,8 @@ workload:
     - {id: storm-epoch, case: storm-epoch, action: epoch_advance, at: 5m30s, until: 6m30s}
     - {id: storm-host-paused, case: storm-host-paused, action: pause, target: versiond-5, at: 5m40s, until: 7m10s}
     - {id: storm-host-slow, case: storm-host-slow, action: throttle, target: versiond-3, at: 5m50s, until: 7m50s, params: {cpus: 0.2}}
+    # The harness lifts a throttle with docker update --cpus 0, which keeps the limit; cpus 48 (all threads) lifts it.
+    - {id: lift-versiond-3, action: throttle, target: versiond-3, at: 7m51s, until: 7m52s, params: {cpus: 48}}
     - {id: storm-empty-stream, case: storm-empty-stream, action: ml_fault, target: mock-openai-2, at: 6m, until: 7m, params: {patch: {empty_stream: true}}}
     # After the paused host resumes: compose starts the gateway only when every host is healthy.
     - {id: storm-gateway-kill, case: storm-gateway-kill, action: gateway_restart, at: 7m20s, params: {signal: KILL}}

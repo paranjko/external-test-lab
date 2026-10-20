@@ -79,6 +79,8 @@ workload:
       models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
   events:
     - {id: slow-versiond-5, case: slow-hosts, action: throttle, target: versiond-5, at: 3m, until: 6m, params: {cpus: 0.2}}
+    # The harness lifts a throttle with docker update --cpus 0, which keeps the limit; cpus 48 (all threads) lifts it.
+    - {id: lift-versiond-5, action: throttle, target: versiond-5, at: 6m1s, until: 6m2s, params: {cpus: 48}}
 
 gateway:
   redundancy:
