@@ -9,8 +9,8 @@ on:
         description: Existing alpha release tag
         required: true
         type: choice
-        options: [gonkactl-v1.0.0-alpha.5]
-        default: gonkactl-v1.0.0-alpha.5
+        options: [gonkactl-v1.0.0-alpha.6, gonkactl-v1.0.0-alpha.5]
+        default: gonkactl-v1.0.0-alpha.6
 
 permissions:
   contents: read

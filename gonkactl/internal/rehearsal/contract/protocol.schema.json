@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gonka-dev.net/ctl/schemas/rehearsal-v1.json",
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "digests": {"type": "object", "additionalProperties": {"$ref": "#/$defs/digest"}},
+    "phase": {"enum": ["inspect", "capture", "stage", "run", "verify", "report", "cleanup"]},
+    "state": {"enum": ["planned", "running", "succeeded", "failed", "blocked", "unknown"]},
+    "heights": {
+      "type": "object", "additionalProperties": false,
+      "required": ["blockstore", "app", "consensus", "first_repaired"],
+      "properties": {
+        "blockstore": {"type": "integer", "minimum": 0},
+        "app": {"type": "integer", "minimum": 0},
+        "consensus": {"type": ["integer", "null"], "minimum": 0},
+        "first_repaired": {"type": "integer", "minimum": 0}
+      }
+    },
+    "binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "run_id", "scenario", "workspace", "ownership_marker", "chain_id", "genesis_sha256", "heights", "block_id", "app_hash", "app_hash_height", "tool_version", "catalog_version", "input_digests", "runtime_identities", "paths"],
+      "properties": {
+        "schema_version": {"const": "rehearsal/v1"},
+        "run_id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"},
+        "scenario": {"const": "epoch-length-live-update"},
+        "workspace": {"type": "string", "minLength": 2},
+        "ownership_marker": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"},
+        "chain_id": {"type": "string", "minLength": 1},
+        "genesis_sha256": {"$ref": "#/$defs/digest"},
+        "heights": {"$ref": "#/$defs/heights"},
+        "block_id": {"type": "string", "minLength": 1},
+        "app_hash": {"type": "string", "minLength": 1},
+        "app_hash_height": {"type": "integer", "minimum": 0},
+        "tool_version": {"type": "string", "minLength": 1},
+        "catalog_version": {"type": "string", "minLength": 1},
+        "input_digests": {"$ref": "#/$defs/digests", "minProperties": 1},
+        "runtime_identities": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "minLength": 1}},
+        "paths": {"type": ["object", "null"], "additionalProperties": {"type": "string"}}
+      }
+    },
+    "receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "run_id", "binding_digest", "phase", "operation", "state", "sequence", "predecessor", "evidence_digests", "exit_code", "reason"],
+      "properties": {
+        "schema_version": {"const": "rehearsal/v1"},
+        "run_id": {"type": "string", "minLength": 1},
+        "binding_digest": {"$ref": "#/$defs/digest"},
+        "phase": {"$ref": "#/$defs/phase"},
+        "operation": {"type": "string", "minLength": 1},
+        "state": {"$ref": "#/$defs/state"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "predecessor": {"anyOf": [{"const": ""}, {"$ref": "#/$defs/digest"}]},
+        "evidence_digests": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/digests"}]},
+        "exit_code": {"type": ["integer", "null"]},
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

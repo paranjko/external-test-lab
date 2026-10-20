@@ -4,6 +4,7 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -31,5 +32,7 @@ func NewRoot() *cobra.Command {
 		},
 	})
 	root.AddCommand(newBootstrapCommand())
+	root.AddCommand(newRehearsalCommand(RehearsalDependencies{Clock: time.Now}))
+	registerIncidentRecovery(root)
 	return root
 }

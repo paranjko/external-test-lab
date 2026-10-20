@@ -71,6 +71,9 @@ func validateSpec(spec contracts.ProcessSpec) error {
 		return errors.New("executable must be a local command name or absolute path")
 	}
 	base := filepath.Base(spec.Executable)
+	if strings.HasPrefix(base, "python") || strings.HasSuffix(base, ".sh") || strings.HasSuffix(base, ".py") {
+		return fmt.Errorf("forbidden interpreted executable: %s", base)
+	}
 	switch base {
 	case "sh", "bash", "zsh", "fish", "ssh", "scp", "sftp":
 		return fmt.Errorf("forbidden executable: %s", base)

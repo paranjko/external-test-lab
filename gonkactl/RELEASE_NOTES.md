@@ -1,4 +1,16 @@
-# gonkactl 1.0.0-alpha.5
+# gonkactl 1.0.0-alpha.6
+
+Alpha.6 adds a local recovery rehearsal protocol with immutable run bindings, signed capture evidence, pinned trust policy, durable operation receipts and independent verification
+
+Recovery containers execute their pinned binary directly, H+1 is collected after standard-runtime startup and checked for chain, height, previous full BlockID, part-set linkage and AppHash before its observed identity is saved
+
+Ordinary binaries expose the rehearsal protocol, not an automatic live-network repair command, matching Core artifacts, native runtime adapters and explicit authorization remain prerequisites
+
+Incident-specific host operations use a Go SSH controller and a separately installed, digest-pinned Go host agent with Docker API and filesystem operations, this command is excluded from ordinary release builds
+
+Windows builds retain bootstrap maintenance but reject recovery operations as unsupported, recovery filesystem protections are not replaced with permissive compatibility checks
+
+Merging these changes does not restart a node, change genesis, reset signer state, publish release assets or replace installed binaries
 
 Alpha.5 limits bootstrap validation to connection points, network identity and
 optional installation software. Syncing or stalled networks can have usable
@@ -44,7 +56,7 @@ Live network failures are reported, not repaired or hidden. A successful release
 build does not establish the health of a network or prove a live bootstrap refresh.
 
 This is an early distribution preview. Host JOIN, reset, recovery and deployment
-commands are not wired into the executable. Internal implementation packages
+commands are not generally wired into the executable, the local rehearsal protocol is not a qualified live recovery service. Internal implementation packages
 are unfinished and do not establish node-operation or migration readiness.
 
 Install instructions and downloads: https://gonka-dev.net/ctl/

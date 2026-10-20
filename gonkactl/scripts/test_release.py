@@ -25,7 +25,7 @@ class InstallerTests(unittest.TestCase):
         self.assets.mkdir()
         self.home = self.root / "home with ' quote"
         self.home.mkdir()
-        self.env = dict(os.environ, HOME=str(self.home), PATH=f"{self.mock}:/usr/bin:/bin", NO_COLOR="", TEST_ASSETS=str(self.assets))
+        self.env = dict(os.environ, GONKACTL_INSTALL_DIR=str(self.home / ".local/bin"), PATH=f"{self.mock}:/usr/bin:/bin", NO_COLOR="", TEST_ASSETS=str(self.assets))
         self.script("curl", '''#!/bin/sh
 set -eu
 out=
