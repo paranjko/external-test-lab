@@ -14,6 +14,7 @@ Scenarios for the load harness of `gonka-ai/gonka` (`devshard/testenv/loadtest`,
 | `long-pause.yaml` | Does a host catch up after a 25-minute pause? |
 | `slow-hosts.yaml` | Do slow but alive hosts get penalized? |
 | `slow-host-1.yaml` | Does one slow host recover once its CPU limit is lifted? |
+| `slow-host-1-pool16.yaml`, `slow-hosts-pool16.yaml` | The same with 16 Postgres connections per host instead of 4 |
 
 Run from `devshard/testenv` of a `gonka-ai/gonka` checkout that has the harness:
 
