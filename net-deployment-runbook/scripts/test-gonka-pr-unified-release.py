@@ -84,7 +84,7 @@ class UnifiedReleaseTests(unittest.TestCase):
         for asset in ("devshardd.zip", "approved-version.json", "artifacts.json", "coverage.json", "source.json", "build-info.txt", "SHA256SUMS"):
             self.assertIn(f"](https://github.com/paranjko/external-test-lab/releases/download/{self.candidate['release_tag']}/{asset})", body)
 
-    def test_presentation_uses_the_exact_six_character_binary_source_slug(self):
+    def test_presentation_uses_the_exact_six_character_zip_sha256_slug(self):
         candidates = (
             self.candidate,
             unified.definition(unified.ROOT / "releases/gonka-pr-1792-3c924cbf6fd9-unified.json"),
@@ -101,7 +101,7 @@ class UnifiedReleaseTests(unittest.TestCase):
                     purpose,
                     f"| [devshardd.zip](https://github.com/paranjko/external-test-lab/releases/download/"
                     f"{candidate['release_tag']}/devshardd.zip) | Linux amd64 DevShard executable for protocol v6 "
-                    f"`{candidate['source_commit'][:6]}`. |",
+                    f"`{recipe['devshard_zip']['sha256'][:6]}`. |",
                 )
                 self.assertNotIn("(`devshardd`)", purpose)
 

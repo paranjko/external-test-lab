@@ -653,7 +653,7 @@ def unified_release_presentation(value: dict, manifest: dict, release_tag: str) 
     downloads = "\n".join((
         "| Asset | Purpose |",
         "|---|---|",
-        f"| {asset('devshardd.zip')} | Linux amd64 DevShard executable for protocol v6 `{commit[:6]}`. |",
+        f"| {asset('devshardd.zip')} | Linux amd64 DevShard executable for protocol v6 `{value['devshard_zip']['sha256'][:6]}`. |",
         f"| {asset('approved-version.json')} | Candidate registry entry for this release ZIP; not on-chain approval. |",
         f"| {asset('artifacts.json')} | Full immutable image pull references, platforms and sources. |",
         f"| {asset('coverage.json')} | Scenario artifact-dependency mapping, not executed scenario results. |",
