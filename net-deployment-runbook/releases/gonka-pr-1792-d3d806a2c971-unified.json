@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "classification": "lab-candidate-unified",
+  "source_repository": "gonka-ai/gonka",
+  "source_pr": 1792,
+  "source_commit": "d3d806a2c97181bad7be36d8eb3f7d7eabca003d",
+  "source_tree": "ddd6fa5604b6f356d90b7616b8a8b6a831969580",
+  "protocol": "v6",
+  "release_tag": "lab-gonka-pr-1792-d3d806a2c971",
+  "binary_version": "lab-gonka-pr-1792-d3d806a2c971",
+  "platform": "linux/amd64",
+  "coverage_template": "devshard-v6-coverage.json",
+  "artifact_recipe": "devshard-v6-artifacts.json",
+  "legacy_current_source_commit": "f2c6b03a53bda5999c6c5a23dc9a85cb0f957278"
+}

@@ -157,6 +157,14 @@ class UnifiedReleaseTests(unittest.TestCase):
         self.assertEqual(candidate["source_tree"], "23a89a386a96d254de0f67b1785420c11f0b2832")
         self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-67230e4dcc0a")
 
+    def test_dispatch_can_select_the_latest_frozen_1792_snapshot(self):
+        with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "gonka-pr-1792-d3d806a2c971-unified.json"}):
+            candidate = unified.definition()
+        self.assertEqual(candidate["source_pr"], 1792)
+        self.assertEqual(candidate["source_commit"], "d3d806a2c97181bad7be36d8eb3f7d7eabca003d")
+        self.assertEqual(candidate["source_tree"], "ddd6fa5604b6f356d90b7616b8a8b6a831969580")
+        self.assertEqual(candidate["release_tag"], "lab-gonka-pr-1792-d3d806a2c971")
+
     def test_dispatch_cannot_escape_reviewed_candidate_definitions(self):
         with patch.dict(os.environ, {"GONKA_PR_UNIFIED_DEFINITION": "../outside.json"}):
             with self.assertRaises(ValueError):
