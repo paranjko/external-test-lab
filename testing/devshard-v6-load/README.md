@@ -7,6 +7,7 @@ Scenarios for the load harness of `gonka-ai/gonka` (`devshard/testenv/loadtest`,
 | `ladder-high.yaml` | Where does the gateway break between 32 and 100 rps? |
 | `ladder-high-n20k.yaml` | The same with the DevNet `max_nonce` of 20,000 |
 | `ladder-high-w400.yaml` | The same with mock model servers of 400 workers; run with `-profiles-dir <this directory>/profiles` |
+| `ladder-200.yaml` | Where does the gateway itself degrade up to 200 rps? Mock model servers of 800 workers; run with `-profiles-dir <this directory>/profiles` |
 | `soak-60m.yaml` | Do memory, goroutines and rotation errors grow over one hour? |
 | `group-16.yaml` | Does a group of 16 participants hold 24 rps? |
 | `storm.yaml` | Does the end state stay correct after several faults at a peak? |
