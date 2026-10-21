@@ -16,9 +16,17 @@ Scenarios for the load harness of `gonka-ai/gonka` (`devshard/testenv/loadtest`,
 | `slow-hosts.yaml` | Do slow but alive hosts get penalized? |
 | `slow-host-1.yaml` | Does one slow host recover once its CPU limit is lifted? |
 | `slow-host-1-pool16.yaml`, `slow-hosts-pool16.yaml` | The same with 16 Postgres connections per host instead of 4 |
+| `faults-host-prod.yaml` | `faults-host` without its two trip-file faults, for a release build of devshardd |
 
 Run from `devshard/testenv` of a `gonka-ai/gonka` checkout that has the harness:
 
 ```bash
 go run ./cmd/loadtest -scenario <path to this directory>/<name>.yaml -profiles-dir loadtest/profiles -output <dir>
+```
+
+To run a prebuilt build instead of building from the checkout (needs the `-build` option of the harness):
+
+```bash
+./fetch-build.sh lab-gonka-pr-1792-67230e4dcc0a /path/to/empty/dir
+go run ./cmd/loadtest -build /path/to/empty/dir/build.yaml -scenario <path to this directory>/<name>.yaml -profiles-dir loadtest/profiles -output <dir>
 ```
