@@ -54,6 +54,9 @@ write build-baseline.yaml compat-v42-baseline "$gateway_v42"
 write build-all.yaml compat-v42-all "$gateway_v6_rc1"
 printf 'gateway:\n  route_prefix: /devshard/v4.2\n  escrow_route_prefix: /devshard/v4.2\n' >> build-all.yaml
 printf "$peer_rpc" >> build-all.yaml
+# The same with the gateway's height-seed gate off: does only the gate stop v4.2 escrows?
+awk '{ sub(/^name: compat-v42-all$/, "name: compat-v42-all-noseed"); print }
+  /^  escrow_route_prefix:/ { print "  env:"; print "    DEVSHARD_REQUIRE_HEIGHT_SEED: \"false\"" }' build-all.yaml > build-all-noseed.yaml
 # Rollout: hosts also run v6; starting escrows stay on v4.2, the gateway creates new ones on v6.
 write build-rollover.yaml compat-v42-rollover "$gateway_v6_rc1"
 printf 'versions:\n  - {name: v6, devshardd: v6/devshardd}\ngateway:\n  route_prefix: /devshard/v6\n  escrow_route_prefix: /devshard/v4.2\n' >> build-rollover.yaml
