@@ -16,6 +16,7 @@ Scenarios for the load harness of `gonka-ai/gonka` (`devshard/testenv/loadtest`,
 | `slow-hosts.yaml` | Do slow but alive hosts get penalized? |
 | `slow-host-1.yaml` | Does one slow host recover once its CPU limit is lifted? |
 | `slow-host-1-pool16.yaml`, `slow-hosts-pool16.yaml` | The same with 16 Postgres connections per host instead of 4 |
+| `remote-512.yaml` | `remote-long-load` of gonka-ai/gonka#2009 for a live gateway, with 512 output tokens (DevNet models have a 4096-token context); run with `cmd/remote-loadtest` |
 | `faults-host-prod.yaml` | `faults-host` without its two trip-file faults, for a release build of devshardd |
 | `fetch-compat-build.sh` | Builds for `load-ladder` on the official 0.2.16 host stack: `build-baseline.yaml` (v4.2 gateway, v4.2 hosts: mainnet today), `build-coexist.yaml` (v6 rc1 gateway, hosts run v6 next to v4.2: mainnet once v6 is approved) |
 
