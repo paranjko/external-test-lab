@@ -1930,16 +1930,16 @@
               },
               {
                 "color": "orange",
-                "value": 900
+                "value": 60
               },
               {
                 "color": "red",
-                "value": 3600
+                "value": 300
               }
             ]
           },
           "unit": "s",
-          "noValue": "the consumer exporter is not present"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -1960,12 +1960,12 @@
       },
       "targets": [
         {
-          "expr": "max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"})",
+          "expr": "time() - max(timestamp(gdc_telegram_bot_up{job=\"telegram-consumer\"}))",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Seconds since the consumer last wrote its metrics file. The whole Telegram row below is gated on this."
+      "description": "Seconds since Prometheus last scraped the bot exporter. The whole Telegram row below is gated on that scrape."
     },
     {
       "id": 96,
@@ -2074,7 +2074,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2095,12 +2095,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_unique_users) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_unique_users{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 102,
@@ -2131,7 +2131,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2152,12 +2152,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_unique_users{premium=\"true\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_unique_users{job=\"telegram-consumer\",premium=\"true\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 103,
@@ -2188,7 +2188,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2209,12 +2209,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_conversations) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_conversations{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 104,
@@ -2245,7 +2245,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2266,12 +2266,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_interactions_total) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_interactions_total{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 105,
@@ -2302,7 +2302,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2323,12 +2323,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_tokens_total{direction=\"input\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_tokens_total{job=\"telegram-consumer\",direction=\"input\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 106,
@@ -2359,7 +2359,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2380,12 +2380,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_tokens_total{direction=\"output\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_tokens_total{job=\"telegram-consumer\",direction=\"output\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 111,
@@ -2445,7 +2445,7 @@
             ]
           },
           "unit": "reqps",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2465,12 +2465,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total[15m])) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total{job=\"telegram-consumer\"}[15m])) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "legendFormat": "{{outcome}} · premium={{premium}}"
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 112,
@@ -2530,7 +2530,7 @@
             ]
           },
           "unit": "reqps",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2550,12 +2550,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total[15m])) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total{job=\"telegram-consumer\"}[15m])) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "legendFormat": "{{outcome}}"
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 113,
@@ -2586,7 +2586,7 @@
             ]
           },
           "unit": "s",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2607,12 +2607,12 @@
       },
       "targets": [
         {
-          "expr": "(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "(time() - max(gdc_telegram_bot_last_success_timestamp_seconds{job=\"telegram-consumer\"})) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Zero would have read as a success just now, the most reassuring possible value for a consumer that never answered. Empty now means the exporter is stale."
+      "description": "Zero would have read as a success just now, the most reassuring possible value for a consumer that never answered. Empty now means the bot exporter is not scraped."
     },
     {
       "id": 114,
@@ -2643,7 +2643,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2664,12 +2664,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_usage_missing_total) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_usage_missing_total{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 115,
@@ -2700,7 +2700,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; the state of the bot is unknown",
+          "noValue": "the bot exporter is not scraped; the state of the bot is unknown",
           "mappings": [
             {
               "type": "value",
@@ -2738,12 +2738,12 @@
       },
       "targets": [
         {
-          "expr": "max(gdc_telegram_bot_up) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "max(gdc_telegram_bot_up{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "The value comes from a file the consumer writes, which node-exporter republishes on every scrape. Without the freshness gate a stopped consumer reads as running."
+      "description": "Running only while Prometheus scrapes the bot exporter. A stopped bot drops out of the scrape instead of keeping its last state."
     },
     {
       "id": 99,
@@ -2756,7 +2756,7 @@
         "y": 76
       },
       "options": {
-        "content": "**Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even when the gateway metrics scrape succeeds. That tile is gated on the age of the readiness observation, shown by **Readiness observation age**: past thirty seconds it stops showing a number instead of freezing on its last one. The gateway began exporting its per-routing request, attempt, win, hidden-failure and first-content counters on 2026-09-22, so a window that reaches further back is empty for them rather than idle. It does export an HTTP-level request counter, but that counts every request the listener sees, including probes and scanner traffic, so it is not a measure of inference. The one counter still missing is the gateway-wide rejection total, so the rejection panels read the participant-scoped one instead. Any panel that can return nothing says so in its body rather than drawing a zero. Most counted requests are cache hits, which are served without a routed completion, so **Requests served** runs well ahead of the routed ones. Every Telegram panel is gated on the age of the file the consumer writes: node-exporter republishes the contents of that file on every scrape, so without the gate a stopped consumer would keep reporting its last numbers as current. **Telegram exporter age** in the Data passport row shows that age. Telegram panels carry aggregate activity and API-reported token counts, with no user identifiers and no message content. Counters start when the gateway process starts, and Prometheus keeps up to 30 days of samples, so a longer window shows only what is stored rather than an empty result. GNK notional value and archive-node SQL are not available, so this board does not fabricate those panels.",
+        "content": "**Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even when the gateway metrics scrape succeeds. That tile is gated on the age of the readiness observation, shown by **Readiness observation age**: past thirty seconds it stops showing a number instead of freezing on its last one. The gateway began exporting its per-routing request, attempt, win, hidden-failure and first-content counters on 2026-09-22, so a window that reaches further back is empty for them rather than idle. It does export an HTTP-level request counter, but that counts every request the listener sees, including probes and scanner traffic, so it is not a measure of inference. The one counter still missing is the gateway-wide rejection total, so the rejection panels read the participant-scoped one instead. Any panel that can return nothing says so in its body rather than drawing a zero. Most counted requests are cache hits, which are served without a routed completion, so **Requests served** runs well ahead of the routed ones. Every Telegram panel reads the bot exporter and is shown only while Prometheus scrapes it; the metrics file the bot also writes changes only on activity, so its age says nothing about the bot. **Telegram exporter age** in the Data passport row shows how fresh that scrape is. Telegram panels carry aggregate activity and API-reported token counts, with no user identifiers and no message content. Counters start when the gateway process starts, and Prometheus keeps up to 30 days of samples, so a longer window shows only what is stored rather than an empty result. GNK notional value and archive-node SQL are not available, so this board does not fabricate those panels.",
         "mode": "markdown"
       }
     }
