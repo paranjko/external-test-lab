@@ -24,7 +24,7 @@ cat >"$tmp/net-info/node4.gonka-dev.net.json" <<'EOF'
 {"result":{"peers":[{"node_info":{"listen_addr":"tcp://node8.gonka-dev.net:5000"}},{"node_info":{"listen_addr":"tcp://node0.gonka-dev.net:5000"}}]}}
 EOF
 
-"$ROOT/scripts/prepare-public-preview-inventory.sh" --output "$tmp/inventory.env" --bootstrap-file "$tmp/bootstrap.json" --net-info-dir "$tmp/net-info" --participants-file "$tmp/participants.json" --no-geo
+"$ROOT/scripts/prepare-public-preview-inventory.sh" --output "$tmp/inventory.env" --bootstrap-file "$tmp/bootstrap.json" --net-info-dir "$tmp/net-info" --participants-file "$tmp/participants.json" --gateway-node node4 --no-geo
 (
   # shellcheck disable=SC1090
   source "$tmp/inventory.env"
@@ -44,6 +44,18 @@ jq -e '[.location_catalog[].publicHost] | sort == ["31.192.105.46","node0.gonka-
 grep -Fq 'preview_gateway_status_unavailable' "$tmp/backend.Caddyfile"
 if grep -Fq 'PREVIEW' "$tmp/backend.Caddyfile"; then
   echo 'render-only gateway target leaked into preview backend' >&2
+  exit 1
+fi
+
+# A non-validator gateway need not appear in the discovered peer inventory.
+mkdir "$tmp/current-net-info"
+jq '.seeds = [.seeds[0]]' "$tmp/bootstrap.json" >"$tmp/current-bootstrap.json"
+jq '.result.peers |= map(select(.node_info.listen_addr != "tcp://node4.gonka-dev.net:5000"))' \
+  "$tmp/net-info/node0.gonka-dev.net.json" >"$tmp/current-net-info/node0.gonka-dev.net.json"
+"$ROOT/scripts/prepare-public-preview-inventory.sh" --output "$tmp/current.env" --bootstrap-file "$tmp/current-bootstrap.json" --net-info-dir "$tmp/current-net-info" --participants-file "$tmp/participants.json" --no-geo
+jq -e '.gateway_node == "node0" and .nodes == ["node0", "node5"]' "$tmp/current.env.receipt.json" >/dev/null
+if "$ROOT/scripts/prepare-public-preview-inventory.sh" --output "$tmp/absent-gateway.env" --bootstrap-file "$tmp/current-bootstrap.json" --net-info-dir "$tmp/current-net-info" --participants-file "$tmp/participants.json" --gateway-node node4 --no-geo; then
+  echo 'explicit undiscovered gateway was accepted' >&2
   exit 1
 fi
 

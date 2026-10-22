@@ -68,12 +68,18 @@ fi
 export GDC_PREVIEW_NUMBER=172 GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev.net
 # shellcheck disable=SC1091 # ROOT is resolved above.
 source "$ROOT/../ops/preview/preview-curl.sh"
-[[ "$(preview_curl_target https://gonka-dev.net/gonka-devnet-community/bootstrap.json)" == '/gonka-api/gonka-devnet-community/bootstrap.json' ]]
+[[ "$(preview_curl_target https://gonka-dev.net/gonka-devnet-community/bootstrap.json)" == '/observer/bootstrap/gonka-devnet-community/bootstrap.json' ]]
 [[ "$(preview_curl_target https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_info)" == '/gonka-api/chain-api/productscience/inference/inference/epoch_info' ]]
 [[ "$(preview_curl_target https://api.gonka-dev.net/chain-api/productscience/inference/inference/current_epoch_group_data)" == '/gonka-api/chain-api/productscience/inference/inference/current_epoch_group_data' ]]
 [[ "$(preview_curl_target 'https://api.gonka-dev.net/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=Qwen%2FQwen3-4B-Instruct-2507')" == '/gonka-api/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=Qwen%2FQwen3-4B-Instruct-2507' ]]
 [[ "$(preview_curl_target https://api.gonka-dev.net/chain-rpc/block?height=42)" == '/gonka-api/chain-rpc/block?height=42' ]]
 [[ "$(preview_curl_target https://node4.gonka-dev.net/chain-rpc/status)" == '/preview/172/node/node4/chain-rpc/status' ]]
+[[ "$(preview_curl_target https://node4.gonka-dev.net/chain-rpc/block?height=42)" == '/preview/172/node/node4/chain-rpc/block?height=42' ]]
+[[ "$(preview_curl_target https://node4.gonka-dev.net/devshard/metrics)" == '/preview/172/node/node4/devshard/metrics' ]]
+[[ "$(preview_curl_target https://node4.gonka-dev.net/chain-api/productscience/inference/inference/epoch_info)" == '/preview/172/node/node4/chain-api/productscience/inference/inference/epoch_info' ]]
+for query in 'pagination.limit=100' 'pagination.limit=100&pagination.count_total=true'; do
+  [[ "$(preview_curl_target "https://node4.gonka-dev.net/chain-api/productscience/inference/inference/participant?$query")" == "/preview/172/node/node4/chain-api/productscience/inference/inference/participant?$query" ]]
+done
 [[ "$(preview_curl_target https://node4.gonka-dev.net/chain-rpc/validators?height=42\&page=1\&per_page=100)" == '/preview/172/node/node4/chain-rpc/validators?height=42&page=1&per_page=100' ]]
 [[ "$(preview_curl_target https://node4.gonka-dev.net/chain-api/cosmos/base/tendermint/v1beta1/node_info)" == '/observer/node/node4/chain-api/cosmos/base/tendermint/v1beta1/node_info' ]]
 [[ "$(preview_curl_target https://node4.gonka-dev.net/devshard/stats/shards)" == '/observer/node/node4/devshard/stats/shards' ]]
@@ -83,7 +89,9 @@ for url in \
   'https://example.org/' \
   'https://node4.gonka-dev.net:443/chain-rpc/status' \
   'https://node4.gonka-dev.net/chain-rpc/status?extra=1;curl=evil' \
-  'https://node4.gonka-dev.net/chain-rpc/block?height=42' \
+  'https://node4.gonka-dev.net/chain-rpc/block?height=42&extra=1' \
+  'https://node4.gonka-dev.net/devshard/metrics?extra=1' \
+  'https://node4.gonka-dev.net/chain-api/productscience/inference/inference/participant?pagination.limit=101' \
   'https://node4.gonka-dev.net/devshard/stats/shards?extra=1' \
   'https://api.gonka-dev.net/chain-api/arbitrary/path' \
   'https://api.gonka-dev.net/chain-api/productscience/inference/inference/current_epoch_group_data?extra=1' \
@@ -154,7 +162,10 @@ cleanup() {
 }
 trap cleanup EXIT
 "$ROOT/../ops/preview/build-status-backend-image.sh" "$ROOT/.." "$inventory" "$revision" 172 "$tmp/build" "$image"
-grep -Fxq 'GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev.net' "$tmp/build/context/network-observer.env"
+if grep -q '^GDC_NETWORK_CHAIN_API_ORIGIN=' "$tmp/build/context/network-observer.env"; then
+  echo 'preview depends on a separate central chain API' >&2
+  exit 1
+fi
 grep -Fxq 'GDC_PREVIEW_NUMBER=172' "$tmp/build/context/network-observer.env"
 jq -e --arg digest "$(sha256sum "$tmp/build/context/network-observer.env" | awk '{print $1}')" '.network_observer_env_sha256 == $digest' "$tmp/build/backend-build.json" >/dev/null
 jq -e --arg revision "$revision" '
@@ -210,6 +221,13 @@ cat >"$tmp/egress.Caddyfile" <<'EOF'
     respond "{http.request.uri}" 200
   }
   respond /preview/172/node/node4/chain-rpc/status "node status" 200
+  handle_path /preview/172/node/node2/* {
+    @pinned_model header x-cosmos-block-height 42
+    handle @pinned_model {
+      respond `{"height":"42"}` 200
+    }
+    respond /devshard/metrics "devshard_request_terminal_total 12" 200
+  }
   respond "not found" 404
 }
 EOF
@@ -242,6 +260,18 @@ jq -e '.state == "observed" and .reference_height == 42 and .epoch_index == "7" 
   exit 1
 }
 printf 'PASS effective model collector crosses preview transport with pinned height and encoded model ID\n'
+node_response="$(docker run --rm --network "$network" -e GDC_PREVIEW_NUMBER=172 \
+  --entrypoint /usr/local/bin/curl "$image" \
+  -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 \
+  -H 'x-cosmos-block-height: 42' \
+  'https://node2.gonka-dev.net/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=Qwen%2FQwen3-4B-Instruct-2507')"
+jq -e '.height == "42"' <<<"$node_response" >/dev/null
+traffic_response="$(docker run --rm --network "$network" -e GDC_PREVIEW_NUMBER=172 \
+  --entrypoint /usr/local/bin/curl "$image" \
+  -fsS --connect-timeout 3 --max-time 5 --max-filesize 16777216 \
+  https://node2.gonka-dev.net/devshard/metrics)"
+[[ "$traffic_response" == 'devshard_request_terminal_total 12' ]]
+printf 'PASS participant model and traffic requests cross preview transport without a central API\n'
 cat >"$tmp/preview-proxy.Caddyfile" <<EOF
 {
   admin off

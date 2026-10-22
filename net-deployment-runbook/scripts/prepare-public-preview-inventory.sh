@@ -12,7 +12,7 @@ bootstrap_file=''
 net_info_dir=''
 participants_file=''
 release='v2026.08.06'
-gateway_node='node4'
+gateway_node='auto'
 geo_enabled=true
 
 usage() {
@@ -25,7 +25,7 @@ Options:
   --net-info-dir DIR   fixture directory containing <host>.json responses
   --participants-file FILE  fixture participant API response
   --release PROFILE    existing runbook release profile (default v2026.08.06)
-  --gateway-node NODE  public gateway participant (default node4)
+  --gateway-node NODE  render-only gateway placeholder (default first discovered node)
   --no-geo            omit GeoIP enrichment (test/offline only)
 EOF
 }
@@ -91,7 +91,7 @@ done
 
 [[ "$output" = /* && "$output" != / && "$output" != *..* && ! -e "$output" ]] || die 'output must be a new absolute safe path'
 [[ "$release" =~ ^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}(-rc\.[0-9]+)?$ ]] || die 'release profile is invalid'
-[[ "$gateway_node" =~ ^node[0-9]+$ ]] || die 'gateway node must be node<decimal>'
+[[ "$gateway_node" == auto || "$gateway_node" =~ ^node[0-9]+$ ]] || die 'gateway node must be auto or node<decimal>'
 [[ -z "$bootstrap_file" || ( -f "$bootstrap_file" && ! -L "$bootstrap_file" ) ]] || die 'bootstrap file is unsafe'
 [[ -z "$net_info_dir" || ( -d "$net_info_dir" && ! -L "$net_info_dir" ) ]] || die 'net-info fixture directory is unsafe'
 [[ -z "$participants_file" || ( -f "$participants_file" && ! -L "$participants_file" ) ]] || die 'participant fixture is unsafe'
@@ -173,9 +173,12 @@ fi
 participant_catalog="$(node "$(dirname "$0")/preview-participant-catalog.mjs" <<<"$participant_response")" \
   || die 'participant API response is not a complete registry with unique account identities'
 
-[[ -n "${hosts[$gateway_node]:-}" ]] || die "configured gateway node $gateway_node was not discovered"
 mapfile -t nodes < <(printf '%s\n' "${!hosts[@]}" | sort -V)
 (( ${#nodes[@]} > 0 )) || die 'no public nodes were discovered'
+# Preview does not proxy gateway traffic. Its renderer requires an inventory
+# member as a placeholder, not the historical gateway's validator membership.
+if [[ "$gateway_node" == auto ]]; then gateway_node="${nodes[0]}"; fi
+[[ -n "${hosts[$gateway_node]:-}" ]] || die "configured gateway node $gateway_node was not discovered"
 
 node_aliases="${nodes[*]}"
 node_hosts=''

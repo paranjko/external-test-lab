@@ -71,6 +71,14 @@ case "\$url" in
     else
       printf '%s\\n' '[{"name":"v3","status":"running","sha256":"${'d'.repeat(64)}","binary_version":"v3"},{"name":"v4.1","status":"running","sha256":"${'e'.repeat(64)}","binary_version":"v4.1.3"}]'
     fi ;;
+  https://node0.gonka-dev.net/devshard/metrics)
+    case "\${GDC_FIXTURE_METRICS:-}" in
+      unavailable) exit 22 ;;
+      missing) printf 'go_goroutines 5\\n' ;;
+      invalid) printf 'devshard_request_terminal_total{terminal="finish_published"} NaN\\n' ;;
+      zero) printf 'devshard_request_terminal_total{terminal="finish_published"} 0\\n' ;;
+      *) printf '%s\\n' 'devshard_request_terminal_total{reason="ok",terminal="finish_published"} 2e1' 'devshard_request_terminal_total{reason="error",terminal="execution_no_finish"} 3' 'devshardd_request_active_operations{model="fixture",operation="devshardd.inference"} 2' 'devshardd_request_active_operations{operation="devshardd.request"} 99' ;;
+    esac ;;
   https://node0.gonka-dev.net/devshard/stats/shards)
     case "\${GDC_FIXTURE_DEVSHARD:-}" in
       unavailable) printf '%s\\n' 'curl: (22) The requested URL returned error: 404' >&2; exit 22 ;;
@@ -84,7 +92,7 @@ await chmod(path.join(bin, "curl"), 0o755);
 
 function invoke(argument, unavailable = false, request = "", cpocActive = false, httpSeed = false, devshard = "", options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn("/usr/bin/bash", [path.join(root, "04-ops/network-observer.sh"), argument], {
+    const child = spawn("bash", [path.join(root, "04-ops/network-observer.sh"), argument], {
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
@@ -95,6 +103,7 @@ function invoke(argument, unavailable = false, request = "", cpocActive = false,
         GDC_NETWORK_CHAIN_API_ORIGIN: options.chainApiOrigin ?? "",
         GDC_FIXTURE_LOG: path.join(state, "curl.log"),
         GDC_FIXTURE_MODELS: options.models ?? "",
+        GDC_FIXTURE_METRICS: options.metrics ?? "",
         GDC_FIXTURE_UNAVAILABLE: String(unavailable),
         GDC_FIXTURE_CPOC_ACTIVE: String(cpocActive),
         GDC_FIXTURE_HTTP_SEED: String(httpSeed),
@@ -146,6 +155,11 @@ try {
   assert.deepEqual(snapshot.nodes[0].components.devshard, {
     state: "observed", source_endpoint: "https://node0.gonka-dev.net/devshard/healthz",
     observed_at: snapshot.nodes[0].components.devshard.observed_at,
+    traffic: {
+      state:"observed", scope:"primary_runtime", handled:23, finished:20, active:2,
+      source_endpoint:"https://node0.gonka-dev.net/devshard/metrics",
+      observed_at:snapshot.nodes[0].components.devshard.traffic.observed_at,
+    },
     runtimes: [
       {name: "v3", status: "running", sha256: 'd'.repeat(64), binary_version: "v3"},
       {name: "v4.1", status: "running", sha256: 'e'.repeat(64), binary_version: "v4.1.3"},
@@ -158,6 +172,16 @@ try {
       shards: [{escrow_id: "52", epoch_id: 7}],
     },
   });
+  for (const metrics of ["unavailable", "missing", "invalid", "zero"]) {
+    const result = await invoke("--collect", false, "", false, false, "", {metrics});
+    assert.equal(result.code, 0, result.stderr);
+    const traffic = JSON.parse(result.stdout).nodes[0].components.devshard.traffic;
+    assert.equal(traffic.state, metrics === "zero" ? "observed" : "unavailable");
+    if (metrics === "zero") {
+      assert.equal(traffic.handled, 0);
+      assert.equal(traffic.active, null, "missing active gauge is not zero");
+    } else assert.equal(traffic.handled, undefined);
+  }
   for (const [scenario, statsState, error] of [
     ["v3", "not_exposed", "stats_requires_v4_or_newer_runtime"],
     ["unavailable", "unavailable", "HTTP 404"],

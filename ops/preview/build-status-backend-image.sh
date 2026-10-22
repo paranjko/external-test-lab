@@ -60,7 +60,9 @@ install -m 0644 "$observer_http" "$output/context/network-observer-http.py"
 install -m 0644 "$observer" "$output/context/network-observer.sh"
 {
   cat "$output/rendered/network-observer.env"
-  printf 'GDC_NETWORK_CHAIN_API_ORIGIN=https://api.gonka-dev.net\nGDC_PREVIEW_NUMBER=%s\n' "$preview_number"
+  # Use chain-identity-checked participants discovered from bootstrap. A
+  # separate central API must not be a single point of failure for previews.
+  printf 'GDC_PREVIEW_NUMBER=%s\n' "$preview_number"
 } >"$output/context/network-observer.env"
 chmod 0644 "$output/context/network-observer.env"
 install -m 0755 "$root/ops/preview/network-observer-runtime.py" "$output/context/network-observer-runtime.py"
