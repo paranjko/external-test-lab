@@ -18,16 +18,25 @@ else
   # shellcheck disable=SC1091
   source "$ROOT/scripts/profile.sh"
   load_profiles
-  inferenced_bin_dir="${GDC_INFERENCED_BIN_DIR:-${GDC_INTERNAL_DATA_ROOT:-${GDC_HOME:-$HOME/.local}}/bin/$GONKA_RELEASE}"
+  inferenced_bin_dir="${GDC_INFERENCED_BIN_DIR:-${GDC_INTERNAL_DATA_ROOT:-$GDC_HOME}/bin/$GONKA_RELEASE}"
   GDC_INFERENCED_CLI_QUIET=true "$ROOT/scripts/ensure-inferenced-cli.sh"
 fi
 INFERENCED_BIN="$inferenced_bin_dir/inferenced"
 mkdir -p "$INFERENCED_HOME"
 chmod 700 "$INFERENCED_HOME"
 [[ -x "$INFERENCED_BIN" ]] || { echo "inferenced CLI was not installed at $INFERENCED_BIN" >&2; exit 1; }
-# Gonka initializes its client context from $HOME/.inference before Cobra
-# applies --home. Isolate that early read at INFERENCED_HOME/.inference;
-# --home selects INFERENCED_HOME itself for CLI configuration and keyring.
-# Set HOME only for the CLI process, never for the wrapper's setup commands.
-INFERENCED_CMD=(env "HOME=$INFERENCED_HOME" "$INFERENCED_BIN" --home "$INFERENCED_HOME")
+for arg in "$@"; do
+  case "$arg" in
+    --home|--home=*|--keyring-dir|--keyring-dir=*)
+      echo 'inferenced home and keyring directory are bound to INFERENCED_HOME' >&2
+      exit 2
+      ;;
+  esac
+done
+# Keep the caller's process environment intact. Bind both the client config
+# directory and file-keyring directory to this operator's explicit state.
+# Gonka constructs an initial client context before Cobra parses --home; an
+# absent default client config may therefore be initialized under the caller's
+# normal home. The later command context uses these explicit paths.
+INFERENCED_CMD=("$INFERENCED_BIN" --home "$INFERENCED_HOME" --keyring-dir "$INFERENCED_HOME")
 exec "${INFERENCED_CMD[@]}" "$@"

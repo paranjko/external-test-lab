@@ -5,7 +5,21 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 guard="$root/ops/preview/node-observation-guard.mjs"
 
 NODE_GUARD_NO_LISTEN=1 node --input-type=module -e '
-  const { publicIpv4, validPath, validBootstrapPath, validGeoPath, resolvedPublicIpv4 } = await import(process.argv[1]);
+  const { publicIpv4, validPath, validBootstrapPath, validGeoPath, resolvedPublicIpv4, modelHeightHeaders } = await import(process.argv[1]);
+  const modelUrl = new URL("https://node2.gonka-dev.net/chain-api/productscience/inference/inference/epoch_group_data/7?model_id=Qwen%2FQwen3-4B-Instruct-2507");
+  for (const path of ["/devshard/metrics", "/chain-api/productscience/inference/inference/current_epoch_group_data", modelUrl.pathname + modelUrl.search]) {
+    if (!validPath(new URL(`https://node2.gonka-dev.net${path}`))) throw new Error(`observer route rejected ${path}`);
+  }
+  for (const path of ["/devshard/metrics?x=1", "/devshard/metrics/", "/metrics", modelUrl.pathname + "?model_id=a&extra=1", modelUrl.pathname + "?model_id=%ZZ"]) {
+    if (validPath(new URL(`https://node2.gonka-dev.net${path}`))) throw new Error(`unsafe observer route accepted ${path}`);
+  }
+  if (modelHeightHeaders(modelUrl, "42")["x-cosmos-block-height"] !== "42") throw new Error("model height dropped");
+  if (Object.keys(modelHeightHeaders(modelUrl, undefined)).length) throw new Error("invented model height");
+  for (const [url, value] of [[modelUrl, "0"], [modelUrl, "42\r\nAuthorization: secret"], [new URL("https://node2.gonka-dev.net/devshard/metrics"), "42"]]) {
+    let rejected = false;
+    try { modelHeightHeaders(url, value); } catch { rejected = true; }
+    if (!rejected) throw new Error("unsafe height header accepted");
+  }
   const publicRecords = async () => [{address:"172.66.175.107"}, {address:"104.20.44.133"}];
   if (await resolvedPublicIpv4("ipwho.is", publicRecords) !== "172.66.175.107") throw new Error("public CDN DNS rejected");
   for (const records of [[], [{address:"8.8.8.8"}, {address:"127.0.0.1"}]]) {

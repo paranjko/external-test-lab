@@ -3,7 +3,7 @@ import http from "node:http";
 import net from "node:net";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -198,7 +198,11 @@ try {
   doubleViaWs.client.destroy();
   const changed = { ...selected, observed_at: "2026-10-13T00:00:05Z", nodes: [{ node_id: "peer" }, { node_id: "peer-2" }] };
   const changedFramePromise = readServerFrame(ws.client);
-  await writeFile(path.join(state, "networks/fixture-chain.json"), JSON.stringify(changed));
+  // The production collector publishes by rename, so a concurrent WebSocket
+  // reader must never observe the fixture's intermediate truncated file.
+  const nextSnapshot = path.join(state, "networks/fixture-chain.next");
+  await writeFile(nextSnapshot, JSON.stringify(changed));
+  await rename(nextSnapshot, path.join(state, "networks/fixture-chain.json"));
   await new Promise((resolve) => setTimeout(resolve, 5300));
   const changedFrame = await changedFramePromise;
   assert.deepEqual(JSON.parse(changedFrame.payload.toString()), { type: "network_snapshot", snapshot: changed });

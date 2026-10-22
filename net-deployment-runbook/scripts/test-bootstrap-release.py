@@ -293,12 +293,69 @@ shutil.copytree(sys.argv[-2], dest, dirs_exist_ok=True)
     def test_lineage_schema_requires_identity_and_trust_together(self):
         import jsonschema
         schema = json.loads((REPO / "schema/join-lineage-preflight.v1.schema.json").read_text())
-        # Target the actual subschema and retain its local reference definitions.
-        part = {**schema["$defs"]["bootstrap"], "$defs": schema["$defs"]}
-        errors = list(jsonschema.Draft202012Validator(part).iter_errors({}))
-        self.assertEqual(len(errors), 5)
-        for field in ("mode", "chain_id", "genesis_sha256", "trust", "snapshot"):
-            self.assertTrue(any(error.validator == "required" and repr(field) in error.message for error in errors))
+        mode_condition = schema["allOf"][0]
+
+        def bootstrap_branch(branch):
+            return {
+                "$defs": schema["$defs"],
+                "allOf": [
+                    schema["$defs"]["bootstrap"],
+                    mode_condition[branch]["properties"]["bootstrap"],
+                ],
+            }
+
+        state_sync = jsonschema.Draft202012Validator(bootstrap_branch("then"))
+        errors = list(state_sync.iter_errors({"mode": "state_sync"}))
+        missing = {
+            field
+            for error in errors
+            if error.validator == "required"
+            for field in set(error.validator_value) - set(error.instance)
+        }
+        self.assertEqual(missing, {"chain_id", "genesis_sha256", "trust", "snapshot"})
+
+        full_sync = jsonschema.Draft202012Validator(bootstrap_branch("else"))
+        errors = list(full_sync.iter_errors({"mode": "full_sync"}))
+        missing = {
+            field
+            for error in errors
+            if error.validator == "required"
+            for field in set(error.validator_value) - set(error.instance)
+        }
+        self.assertEqual(missing, {"chain_id", "genesis_sha256", "seed"})
+
+        complete_state_sync = {
+            "mode": "state_sync",
+            "chain_id": "fixture-chain",
+            "genesis_sha256": "a" * 64,
+            "trust": {
+                "height": 123,
+                "block_id": "b" * 64,
+                "app_hash": "c" * 64,
+                "expires_at": "2026-10-20T00:00:00Z",
+            },
+            "snapshot": {
+                "discovery": "p2p_canary_pending",
+                "providers": ["d" * 40 + "@tcp://seed-a.example.test:26656",
+                              "e" * 40 + "@tcp://seed-b.example.test:26656"],
+            },
+        }
+        self.assertFalse(list(state_sync.iter_errors(complete_state_sync)))
+        self.assertTrue(list(state_sync.iter_errors({**complete_state_sync, "seed": {}})))
+
+        complete_seed = {
+            "mode": "full_sync",
+            "chain_id": "fixture-chain",
+            "genesis_sha256": "a" * 64,
+            "seed": {
+                "node_id": "b" * 40,
+                "rpc_url": "https://seed.example.test/chain-rpc",
+                "p2p": "tcp://seed.example.test:26656",
+            },
+        }
+        self.assertFalse(list(full_sync.iter_errors(complete_seed)))
+        for forbidden in ({"trust": {}}, {"snapshot": {}}):
+            self.assertTrue(list(full_sync.iter_errors({**complete_seed, **forbidden})))
 
 
 if __name__ == "__main__":

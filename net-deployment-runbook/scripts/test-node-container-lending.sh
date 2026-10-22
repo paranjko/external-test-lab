@@ -22,10 +22,10 @@ cat >"$tmp/bin/ssh" <<'SH'
 set -Eeuo pipefail
 sed "s@/srv/dai/deploy@$CONTROL_TEST_DEPLOY@g; s@/srv/dai@$CONTROL_TEST_ROOT@g" >"$CONTROL_TEST_ROOT/remote.sh"
 case "$*" in
-  *"'stop'"*) bash "$CONTROL_TEST_ROOT/remote.sh" stop ;;
-  *"'start'"*) bash "$CONTROL_TEST_ROOT/remote.sh" start ;;
-  *"'lend'"*) bash "$CONTROL_TEST_ROOT/remote.sh" lend parent-alias gpu.example.test fixture-node ;;
-  *"'reclaim'"*) bash "$CONTROL_TEST_ROOT/remote.sh" reclaim ;;
+  *"'stop'"*) bash "$CONTROL_TEST_ROOT/remote.sh" stop '' '' '' fixture ;;
+  *"'start'"*) bash "$CONTROL_TEST_ROOT/remote.sh" start '' '' '' fixture ;;
+  *"'lend'"*) bash "$CONTROL_TEST_ROOT/remote.sh" lend parent-alias gpu.example.test fixture-node fixture ;;
+  *"'reclaim'"*) bash "$CONTROL_TEST_ROOT/remote.sh" reclaim '' '' '' fixture ;;
   *) exit 99 ;;
 esac
 SH

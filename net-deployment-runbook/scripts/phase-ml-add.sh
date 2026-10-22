@@ -149,6 +149,7 @@ start_stack "$ML_HOST" /srv/dai/deploy/monitoring-agent
 "$ROOT/scripts/capture-deployed-ml-evidence.sh" "$RUN/ml-runtime" "$bootstrap_model_id" "$ML_HOST"
 
 step "Add $ML_HOST to $NODE API endpoint configuration"
+bash "$ROOT/scripts/ensure-ml-callback.sh" "$NODE" "$ML_HOST" "$ML_ENDPOINT"
 REMOTE_CONFIG_DIR="/tmp/gdc-ml-config-${GDC_RUN_ID:-manual}-$NODE"
 REMOTE_CONFIG="$REMOTE_CONFIG_DIR/node-config.json"
 REMOTE_SYNC="$REMOTE_CONFIG_DIR/sync-node-config.sh"

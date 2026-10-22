@@ -34,11 +34,20 @@ async function test() {
   assert.match(inactiveCpoc.detail, /individual cPoC participation is not applicable/);
   assert.equal(state.activityState({...evidence, poc: {height: '100', commits: null, votes: null}}, 'alice').poc.label, 'Not reported');
   assert.equal(state.activityState({...evidence, poc: {...evidence.poc, votes: null}}, 'alice').poc.label, 'Committed');
-  assert.equal(state.inferenceState(null).label, 'Not observed');
-  assert.equal(state.inferenceState({state: 'observed', runtimes: []}).label, 'Not observed');
+  assert.equal(state.inferenceState(null).label, 'Unavailable');
+  assert.equal(state.inferenceState({state: 'observed', runtimes: []}).label, 'Unavailable');
   const running = state.inferenceState({state: 'observed', runtimes: [{name: 'v5', status: 'running'}]});
-  assert.equal(running.label, 'Not observed');
-  assert.match(running.detail, /no inference request routed to this Host was observed/);
+  assert.equal(running.label, 'Unavailable');
+  assert.match(running.detail, /traffic may still be flowing/);
+  const traffic = {state:'observed', scope:'primary_runtime', observed_at:new Date().toISOString(), handled:23, finished:20, active:2};
+  const trafficState = (changes = {}) => state.inferenceState({state:'observed', traffic:{...traffic, ...changes}});
+  assert.equal(trafficState().label, '2 active · 23 handled');
+  assert.match(trafficState().detail, /20 finish-published/);
+  assert.equal(trafficState({active:null}).label, '23 handled');
+  assert.equal(trafficState({handled:0, finished:0, active:0}).label, '0 active · 0 handled');
+  for (const changes of [{handled:-1}, {finished:24}, {active:'2'}, {state:'unavailable'},
+    {observed_at:new Date(Date.now()-90001).toISOString()}, {observed_at:new Date(Date.now()+10000).toISOString()}])
+    assert.equal(trafficState(changes).label, 'Unavailable');
   const reference = {nodeId: 'a'.repeat(40), statusBase: '/node', identityVerified: true, chainId: 'test', height: 7,
     catchingUp: false, blockTimeMs: 1000};
   assert.equal(state.selectFreshReference([reference], 'test', 2000), reference);

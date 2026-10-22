@@ -60,20 +60,54 @@ record_activation_guard() {
   rm -f "$input"
 }
 
+ensure_membership_funding() {
+  local onboarding_state="$1" address="$2" balance_body balance_stderr balance_http_status balance_curl_exit balance
+  case "$onboarding_state" in
+    registered)
+      step "Claim bounded public DevNet funding for $NODE"
+      "$ROOT/scripts/claim-devnet-faucet.sh" "$address"
+      return
+      ;;
+    active) ;;
+    *) echo 'membership resume refused: retained participant is no longer registered on chain' >&2; exit 1 ;;
+  esac
+
+  balance_body="$(mktemp)"; balance_stderr="$(mktemp)"
+  if balance_http_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$balance_body" -w '%{http_code}' \
+    "https://${GENESIS_PUBLIC_HOST}/chain-api/cosmos/bank/v1beta1/spendable_balances/$address" 2>"$balance_stderr")"; then
+    balance_curl_exit=0
+  else
+    balance_curl_exit=$?
+  fi
+  if (( balance_curl_exit != 0 )) || [[ ! "$balance_http_status" =~ ^2[0-9][0-9]$ ]]; then
+    rm -f "$balance_body" "$balance_stderr"
+    echo "membership resume cannot determine participant spendable balance (http_status=${balance_http_status:-000} curl_exit=$balance_curl_exit)" >&2
+    exit 1
+  fi
+  if ! balance="$(jq -er '
+    if type == "object" and (.balances | type) == "array" and
+       ([.balances[] | select(.denom == "ngonka")] | length) <= 1 and
+       all(.balances[]; (.denom | type) == "string" and (.amount | type) == "string" and (.amount | test("^[0-9]+$")))
+    then ([.balances[] | select(.denom == "ngonka") | .amount][0] // "0")
+    else error("malformed spendable balance response") end
+  ' "$balance_body")"; then
+    rm -f "$balance_body" "$balance_stderr"
+    echo 'membership resume received malformed participant spendable balance data' >&2
+    exit 1
+  fi
+  rm -f "$balance_body" "$balance_stderr"
+  balance="$(sed 's/^0*//' <<<"$balance")"; balance="${balance:-0}"
+  if [[ "$balance" == 0 ]]; then
+    step "Complete bounded public DevNet funding for active $NODE"
+    "$ROOT/scripts/claim-devnet-faucet.sh" "$address"
+  else
+    printf 'READY %s active participant has positive spendable balance; skip duplicate claim\n' "$NODE"
+  fi
+}
+
 participant_body="$(curl --connect-timeout 5 --max-time 15 -fsS "https://$GENESIS_PUBLIC_HOST/v2/participants/$ADDRESS" 2>/dev/null || true)"
 participant_status="$(jq -r '.participant.status // empty' <<<"$participant_body" 2>/dev/null || true)"
-case "$(participant_onboarding_state "$participant_status")" in
-  registered)
-    # The membership receipt is recorded immediately after registration.  A
-    # failure while the faucet settles therefore resumes here.  The faucet is
-    # idempotent per address and its own confirmed-claim readback prevents a
-    # duplicate transfer.
-    step "Claim bounded public DevNet funding for $NODE"
-    "$ROOT/scripts/claim-devnet-faucet.sh" "$ADDRESS"
-    ;;
-  active) ;;
-  *) echo 'membership resume refused: retained participant is no longer registered on chain' >&2; exit 1 ;;
-esac
+ensure_membership_funding "$(participant_onboarding_state "$participant_status")" "$ADDRESS"
 
 warm_address="$(jq -er .warm_address "$IDENTITY")"
 warm_endpoint="https://${GENESIS_PUBLIC_HOST}/chain-api/cosmos/auth/v1beta1/accounts/$warm_address"

@@ -10,10 +10,13 @@ cat >"$tmp/bin/ssh" <<'SH'
 set -Eeuo pipefail
 # The production script is executed unchanged except for its fixed Host paths.
 sed "s@/srv/dai/deploy@$CONTROL_TEST_ROOT/deploy@g; s@/srv/dai@$CONTROL_TEST_ROOT@g" >"$CONTROL_TEST_ROOT/remote.sh"
-case "$*" in
+remote_command="${*: -1}"
+node_alias="${remote_command##* }"
+node_alias="${node_alias//\'/}"
+case "$remote_command" in
   *gdc-lent-ml-record*) exit 0 ;;
-  *"'stop'"*) bash "$CONTROL_TEST_ROOT/remote.sh" stop ;;
-  *"'start'"*) bash "$CONTROL_TEST_ROOT/remote.sh" start ;;
+  *"'stop'"*) bash "$CONTROL_TEST_ROOT/remote.sh" stop '' '' '' "$node_alias" ;;
+  *"'start'"*) bash "$CONTROL_TEST_ROOT/remote.sh" start '' '' '' "$node_alias" ;;
   *) exit 99 ;;
 esac
 SH
@@ -71,7 +74,13 @@ jq -n --arg dir "$tmp/deploy" --arg node "$node_id" --arg signer "$signer_id" --
 # Exercise the operator-facing aliases. `host stop/start` must dispatch to the
 # same receipt-bound controller rather than retaining a second lifecycle path
 # behind the public CLI.
-run() { env -i HOME="$tmp/home" PATH="$PATH" CONTROL_TEST_ROOT="$tmp" GDC_HOME="$tmp/home" bash "$ROOT/gdc.sh" host "$1" fixture >"$tmp/$1.log" 2>&1; }
+run_for() {
+  local action="$1" alias="$2" log="$tmp/$1.log"
+  [[ "$alias" == fixture ]] || log="$tmp/$1-$alias.log"
+  env -i PATH="$PATH" CONTROL_TEST_ROOT="$tmp" GDC_HOME="$tmp/operator" \
+    bash "$ROOT/gdc.sh" host "$action" "$alias" >"$log" 2>&1
+}
+run() { run_for "$1" fixture; }
 run stop
 [[ "$(head -1 "$tmp/operations")" == "stop $signer_id" ]]
 jq -e 'all(.[]; .running == false)' "$tmp/containers.json" >/dev/null
@@ -113,7 +122,7 @@ jq -n --arg dir "$deploy" --arg node "$node_id" --arg signer "$signer_id" --arg 
 run stop
 jq -e --arg id "$unused_id" '.[] | select(.id==$id) | .running' "$tmp/containers.json" >/dev/null
 run start
-! grep -q "$unused_id" "$tmp/operations"
+if grep -q "$unused_id" "$tmp/operations"; then exit 1; fi
 jq -e 'all(.[]; .running)' "$tmp/containers.json" >/dev/null
 # A retired validator must also be refused alongside a canonical deployment
 cp "$tmp/containers.json" "$tmp/canonical.json"
@@ -121,7 +130,7 @@ cp "$tmp/operations" "$tmp/before"
 jq --arg dir "$tmp/deploy/retired" '. + [.[0] | .id=("d"*64) | .working_dir=$dir | .project="retired"]' "$tmp/canonical.json" >"$tmp/containers.json"
 if run stop; then echo 'mixed layouts unexpectedly stopped' >&2; exit 1; fi
 cmp "$tmp/before" "$tmp/operations"
-grep -Fq 'unsupported validator deployment directory' "$tmp/stop.log"
+grep -Fq 'unsupported or mixed validator deployment directories' "$tmp/stop.log"
 cp "$tmp/canonical.json" "$tmp/containers.json"
 # Two Core deployments are ambiguous even when the alias matches one of them.
 jq --arg dir "$tmp/deploy" '. + [.[0] | .id=("b"*64) | .working_dir=$dir | .project="fixture"]' "$tmp/containers.json" >"$tmp/changed"
@@ -171,4 +180,61 @@ for timing in before-lock under-lock; do
     rm "$tmp/deploy/.node-control/stopped.json"
   done
 done
+# The node4 legacy layout is supported only when the exact alias path is
+# bound to a Compose project with the same alias. Independent edge, broker,
+# faucet and OPS projects must remain outside the controller receipt.
+legacy_alias=gdc-node4
+legacy_deploy="$tmp/deploy/$legacy_alias"
+mkdir -p "$legacy_deploy"
+legacy_node_id="$(printf '%064d' 11)"
+legacy_signer_id="$(printf '%064d' 12)"
+legacy_api_id="$(printf '%064d' 13)"
+edge_id="$(printf '%064d' 14)"
+broker_id="$(printf '%064d' 15)"
+faucet_id="$(printf '%064d' 16)"
+ops_id="$(printf '%064d' 17)"
+jq -n --arg dir "$legacy_deploy" --arg node "$legacy_node_id" \
+  --arg signer "$legacy_signer_id" --arg api "$legacy_api_id" \
+  --arg edge "$edge_id" --arg broker "$broker_id" \
+  --arg faucet "$faucet_id" --arg ops "$ops_id" '([
+    {id:$node,project:"gdc-node4",working_dir:$dir,service:"node",running:true,status:"running"},
+    {id:$signer,project:"gdc-node4",working_dir:$dir,service:"tmkms",running:true,status:"running"},
+    {id:$api,project:"gdc-node4",working_dir:$dir,service:"api",running:true,status:"running"},
+    {id:$edge,project:"gdc-edge",working_dir:"/srv/dai/edge",service:"caddy",running:true,status:"running"},
+    {id:$broker,project:"gdc-v6-b",working_dir:"/srv/broker/b",service:"gateway",running:true,status:"running"},
+    {id:$faucet,project:"gdc-faucet",working_dir:"/srv/faucet",service:"faucet",running:true,status:"running"},
+    {id:$ops,project:"gdc-ops",working_dir:"/srv/dai/ops",service:"prometheus",running:true,status:"running"}
+  ])' >"$tmp/containers.json"
+: >"$tmp/operations"
+run_for stop "$legacy_alias"
+grep -Fq "READY discovered node deployment=$legacy_deploy" "$tmp/stop-$legacy_alias.log"
+jq -e --arg alias "$legacy_alias" --arg dir "$legacy_deploy" '
+  length == 3 and all(.[]; .project == $alias and .working_dir == $dir)
+' "$legacy_deploy/.node-control/stopped.json" >/dev/null
+for id in "$edge_id" "$broker_id" "$faucet_id" "$ops_id"; do
+  jq -e --arg id "$id" '.[] | select(.id == $id) | .running' "$tmp/containers.json" >/dev/null
+  if grep -q "$id" "$tmp/operations"; then exit 1; fi
+done
+run_for start "$legacy_alias"
+jq -e 'all(.[]; .running)' "$tmp/containers.json" >/dev/null
+for id in "$edge_id" "$broker_id" "$faucet_id" "$ops_id"; do
+  if grep -q "$id" "$tmp/operations"; then exit 1; fi
+done
+
+# A correctly named path with the wrong Compose project is not enough to
+# establish ownership, and a nested child path is never treated as legacy.
+cp "$tmp/containers.json" "$tmp/legacy-clean.json"
+jq --arg node "$legacy_node_id" '.[] |= (if .id == $node then .project="other-project" else . end)' \
+  "$tmp/legacy-clean.json" >"$tmp/containers.json"
+cp "$tmp/operations" "$tmp/before"
+if run_for stop "$legacy_alias"; then echo 'legacy project mismatch unexpectedly accepted' >&2; exit 1; fi
+cmp "$tmp/before" "$tmp/operations"
+grep -Fq 'legacy Host deployment project must match its SSH alias' "$tmp/stop-$legacy_alias.log"
+jq --arg node "$legacy_node_id" --arg dir "$legacy_deploy/child" \
+  '.[] |= (if .id == $node then .working_dir=$dir else . end)' \
+  "$tmp/legacy-clean.json" >"$tmp/containers.json"
+if run_for stop "$legacy_alias"; then echo 'nested legacy path unexpectedly accepted' >&2; exit 1; fi
+cmp "$tmp/before" "$tmp/operations"
+grep -Fq 'unsupported or mixed validator deployment directories' "$tmp/stop-$legacy_alias.log"
+
 printf 'PASS SSH-only stop/start preserves exact containers and refuses signer replacement\n'

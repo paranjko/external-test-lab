@@ -44,6 +44,15 @@ printf '%s\n' false >"$tmp/start/.local-ml"
 : >"$tmp/start/log"
 PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" >"$tmp/start/release.out"
 grep -Fq -- '--profile signer' "$tmp/start/log"
+# Genesis renders COMPOSE_PROFILES=edge-api and needs the signer profile too.
+# The CLI flags must carry both because explicit --profile arguments supersede
+# Compose's COMPOSE_PROFILES selection from the env file.
+printf '%s\n' 'GDC_PROFILE_KIND=release' 'COMPOSE_PROFILES=edge-api' >"$tmp/start/.env"
+: >"$tmp/start/log"
+PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" >"$tmp/start/genesis-edge-api.out"
+[[ "$(grep -Fc -- '--profile signer --profile edge-api' "$tmp/start/log")" == 3 ]]
+# A generated JOIN is signerless by default but must still start its selected
+# edge-api, since its participant/model bootstrap routes depend on that API.
 printf '%s\n' 'GDC_PROFILE_KIND=generated_join' >"$tmp/start/.env"
 : >"$tmp/start/log"
 PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" >"$tmp/start/join.out"
@@ -51,6 +60,52 @@ if grep -Fq -- '--profile signer' "$tmp/start/log"; then
   echo 'generated JOIN unexpectedly started its signer by default' >&2; exit 1
 fi
 grep -Fq 'signerless_listener=set' "$tmp/start/log"
+printf '%s\n' 'GDC_PROFILE_KIND=generated_join' 'COMPOSE_PROFILES=edge-api' >"$tmp/start/.env"
+: >"$tmp/start/log"
+PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" >"$tmp/start/join-edge-api.out"
+[[ "$(grep -Fc -- '--profile edge-api' "$tmp/start/log")" == 3 ]]
+if grep -Fq -- '--profile signer' "$tmp/start/log"; then
+  echo 'generated JOIN edge-api startup unexpectedly enabled its signer' >&2; exit 1
+fi
+# Unknown or compound profile selections fail before Docker can mutate a Host.
+printf '%s\n' 'GDC_PROFILE_KIND=generated_join' 'COMPOSE_PROFILES=edge-api,other' >"$tmp/start/.env"
+: >"$tmp/start/log"
+if PATH="$tmp/start/bin:$PATH" GDC_START_NODE_LOG="$tmp/start/log" "$tmp/start/start-node.sh" >"$tmp/start/invalid-profile.out" 2>&1; then
+  echo 'unsupported Compose profile selection was accepted' >&2; exit 1
+fi
+[[ ! -s "$tmp/start/log" ]]
+
+# Exercise Docker Compose's real profile selection semantics in an isolated
+# fixture. The .env profile is lost when a caller supplies only --profile
+# signer; start-node must therefore pass both profiles for the validator
+# stack's edge-api control plane to be included.
+mkdir -p "$tmp/compose"
+cat >"$tmp/compose/.env" <<'EOF'
+COMPOSE_PROFILES=edge-api
+EOF
+cat >"$tmp/compose/compose.yaml" <<'EOF'
+services:
+  node:
+    image: example.invalid/node:fixture
+  signer:
+    image: example.invalid/signer:fixture
+    profiles: [signer]
+  edge-api:
+    image: example.invalid/edge-api:fixture
+    profiles: [edge-api]
+EOF
+compose_services() {
+  env -i PATH="$PATH" docker compose --env-file "$tmp/compose/.env" \
+    -f "$tmp/compose/compose.yaml" "$@" config --services
+}
+compose_services --profile signer >"$tmp/compose/signer-only.services"
+if grep -Fxq edge-api "$tmp/compose/signer-only.services"; then
+  echo 'Compose unexpectedly retained COMPOSE_PROFILES alongside explicit signer profile' >&2; exit 1
+fi
+compose_services --profile signer --profile edge-api >"$tmp/compose/signer-edge-api.services"
+grep -Fxq node "$tmp/compose/signer-edge-api.services"
+grep -Fxq signer "$tmp/compose/signer-edge-api.services"
+grep -Fxq edge-api "$tmp/compose/signer-edge-api.services"
 
 # A local AMD MLNode must select its receipt-derived Compose fragment.  This
 # executes the startup boundary so an unset environment-file path cannot hide

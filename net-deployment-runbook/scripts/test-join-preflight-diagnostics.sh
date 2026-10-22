@@ -79,7 +79,8 @@ chmod 0755 "$tmp/bin/curl"
 cat >"$tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-if [[ "${!#}" == 'sudo -n bash -s' ]]; then
+if [[ $# -eq 3 && "$1" == -T && ( "$2" == validator-a || "$2" == validator-b ) \
+  && ( "$3" == 'sudo -n bash -s' || "$3" == "sudo -n bash -s -- --host-alias $2 --role validator" ) ]]; then
   cat >/dev/null
   printf 'READY Host readiness preflight\n'
   exit 0
@@ -120,7 +121,9 @@ if GDC_JOIN_PREFLIGHT_DEADLINE=5 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 PATH="$tmp/b
   echo 'unsafe mixed seed observation unexpectedly entered JOIN' >&2
   exit 1
 fi
-grep -Fq 'network_observation_insufficient_quorum:' "$tmp/err"
+grep -Fq 'network_observation_insufficient_quorum:' "$tmp/err" || {
+  cat "$tmp/out"; cat "$tmp/err" >&2; exit 1;
+}
 grep -Fq 'network_observation_timeout:' "$tmp/err"
 grep -Fq "preflight_receipt=$tmp/operator/gdc-node2/preflight-receipt.env" "$tmp/err" || \
   grep -Fq 'preflight_receipt=' "$tmp/err"

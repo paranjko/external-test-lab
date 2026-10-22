@@ -42,7 +42,9 @@ services:
       SEED_NODE_RPC_URL: ${SEED_NODE_RPC_URL:?SEED_NODE_RPC_URL is required}
       SEED_NODE_P2P_URL: ${SEED_NODE_P2P_URL:?SEED_NODE_P2P_URL is required}
       RPC_SERVER_URL_1: ${RPC_SERVER_URL_1:?RPC_SERVER_URL_1 is required}
-      RPC_SERVER_URL_2: ${RPC_SERVER_URL_2:?RPC_SERVER_URL_2 is required}
+      # Full-sync bootstrap has one authoritative seed RPC; state-sync JOIN
+      # validation still requires a distinct second witness before rendering.
+      RPC_SERVER_URL_2: ${RPC_SERVER_URL_2:-}
       SYNC_WITH_SNAPSHOTS: ${SYNC_WITH_SNAPSHOTS:-false}
       TRUSTED_BLOCK_PERIOD: ${TRUSTED_BLOCK_PERIOD:-2000}
       # The upstream init script otherwise derives these values from exactly

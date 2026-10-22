@@ -40,6 +40,7 @@ ssh -T "$ML_HOST" "sudo '$REMOTE/02-node/ml-only/install-ml.sh' --node-name '$ML
 start_stack "$ML_HOST" /srv/dai/deploy/monitoring-agent
 
 step "Restart $NODE API after network GPU readiness"
+bash "$ROOT/scripts/ensure-ml-callback.sh" "$NODE" "$ML_HOST" "$ML_ENDPOINT"
 "$ROOT/03-join/restart-api-after-sync.sh" "$NODE"
 
 step "Wait until $NODE has a chain-recorded INFERENCE hardware node"

@@ -13,14 +13,16 @@ case "$action" in
   *) exit 2 ;;
 esac
 [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 2
-ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$host" "sudo -n bash -s -- '$action' '${3:-}' '${4:-}' '${5:-}'" <<'REMOTE'
+ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$host" "sudo -n bash -s -- '$action' '${3:-}' '${4:-}' '${5:-}' '$host'" <<'REMOTE'
 set -Eeuo pipefail
 umask 077
 action="$1"
 parent="${2:-}"
 endpoint="${3:-}"
 node_id="${4:-}"
+node_alias="${5:-}"
 fail() { printf 'ERROR %s\n' "$*" >&2; exit 1; }
+[[ "$node_alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail 'invalid Host alias'
 for dependency in docker jq; do command -v "$dependency" >/dev/null || fail "missing Host dependency: $dependency"; done
 for path in /srv/dai /srv/dai/deploy; do
   [[ -d "$path" && ! -L "$path" ]] || fail "missing or unsafe deployment directory: $path"
@@ -38,21 +40,28 @@ read_containers() {
 }
 discover_deployment() {
 read_containers
-# Refuse retired validators, including those alongside a canonical deployment, before selecting or changing containers
-jq -e --arg root /srv/dai/deploy '[.[] | select(.service == "node") |
-  select(.working_dir | type == "string") |
-  select(.working_dir == "/srv/dai/node" or (.working_dir | startswith($root + "/")))] | length == 0' \
-  <<<"$inventory" >/dev/null || fail 'unsupported validator deployment directory; only /srv/dai/deploy is supported; no containers changed'
-# Discover exactly one Core deployment at /srv/dai/deploy independently of its SSH alias, without migration or ambiguous selection
-candidates="$(jq -c --arg root /srv/dai/deploy '[.[] | select(.service == "node") |
-  select(.working_dir | type == "string") |
-  select(.working_dir == $root)]' <<<"$inventory")"
+# Accept the canonical layout or this Host's exact legacy per-alias directory.
+# Other nested deployments and mixed layouts are refused before any container
+# is selected or changed.
+jq -e --arg root /srv/dai/deploy --arg alias "$node_alias" '
+  all(.[]; .service != "node" or (.working_dir | type == "string")) and
+  all(.[] | select(.service == "node");
+    .working_dir == $root or .working_dir == ($root + "/" + $alias)) and
+  all(.[] | select(.service == "node"); .working_dir != "/srv/dai/node" and
+    ((.working_dir | startswith("/srv/dai/node/")) | not))
+' <<<"$inventory" >/dev/null || fail 'unsupported or mixed validator deployment directories; no containers changed'
+candidates="$(jq -c --arg root /srv/dai/deploy --arg alias "$node_alias" '[.[] | select(.service == "node") |
+  select(.working_dir == $root or .working_dir == ($root + "/" + $alias))]' <<<"$inventory")"
 [[ "$(jq length <<<"$candidates")" == 1 ]] \
-  || fail 'expected one installed node deployment at /srv/dai/deploy; none or multiple found; no containers changed'
+  || fail 'expected exactly one installed node deployment in a supported layout; none or multiple found; no containers changed'
 discovered="$(jq -er '.[0].working_dir' <<<"$candidates")"
 [[ -z "${deploy:-}" || "$deploy" == "$discovered" ]] || fail 'deployment changed during discovery; no containers changed'
 deploy="$discovered"
-project="$(jq -er '.[0].project' <<<"$candidates")"
+project="$(jq -r '.[0].project' <<<"$candidates")"
+[[ "$project" != null && -n "$project" ]] || fail 'Core deployment has no Compose project label; no containers changed'
+if [[ "$deploy" == "/srv/dai/deploy/$node_alias" && "$project" != "$node_alias" ]]; then
+  fail 'legacy Host deployment project must match its SSH alias; no containers changed'
+fi
 [[ -d "$deploy" && ! -L "$deploy" ]] || fail 'missing or unsafe discovered deployment directory'
 inventory="$(jq -c --arg deploy "$deploy" --arg project "$project" '[.[] | select(.working_dir == $deploy or .project == $project)]' <<<"$inventory")"
 jq -e --arg deploy "$deploy" 'all(.[]; .working_dir == $deploy) and

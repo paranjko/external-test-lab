@@ -1,0 +1,1320 @@
+{
+  "app_name": "inferenced",
+  "app_version": "0.2.16",
+  "genesis_time": "2026-10-20T12:06:15Z",
+  "chain_id": "gonka-devnet-community",
+  "initial_height": 1,
+  "app_hash": null,
+  "app_state": {
+    "06-solomachine": null,
+    "07-tendermint": null,
+    "auth": {
+      "params": {
+        "max_memo_characters": "256",
+        "tx_sig_limit": "7",
+        "tx_size_cost_per_byte": "10",
+        "sig_verify_cost_ed25519": "590",
+        "sig_verify_cost_secp256k1": "1000"
+      },
+      "accounts": [
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "pub_key": null,
+          "account_number": "0",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka1xv247clk97rhcr43tzks73a4e7daam57u26pfy",
+          "pub_key": null,
+          "account_number": "1",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "address": "gonka184kcf2sjh77908mkzllxlcpjs9wsl0a007tham",
+          "pub_key": null,
+          "account_number": "2",
+          "sequence": "0"
+        },
+        {
+          "@type": "/cosmos.auth.v1beta1.BaseAccount",
+          "account_number": "3",
+          "address": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "pub_key": null,
+          "sequence": "0"
+        }
+      ]
+    },
+    "authz": {
+      "authorization": [
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgClaimRewards"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgSubmitPocBatch"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgSubmitPocValidationsV2"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgPoCV2StoreCommit"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgSubmitPoCChallengeValidations"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgPoCChallengeStoreCommit"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgMLNodeWeightDistribution"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgSubmitSeed"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgBridgeExchange"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgSubmitNewUnfundedParticipant"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgSubmitHardwareDiff"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.inference.MsgDeclarePoCIntent"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.bls.MsgSubmitDealerPart"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.bls.MsgSubmitVerificationVector"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.bls.MsgRespondDealerComplaints"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.bls.MsgSubmitPartialSignature"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        },
+        {
+          "granter": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "grantee": "gonka1pv6vzez9a5xx6wtzexpflyz3n796tteha5et9h",
+          "authorization": {
+            "@type": "/cosmos.authz.v1beta1.GenericAuthorization",
+            "msg": "/inference.bls.MsgSubmitGroupKeyValidationSignature"
+          },
+          "expiration": "2027-10-20T11:56:19Z"
+        }
+      ]
+    },
+    "bank": {
+      "params": {
+        "send_enabled": [],
+        "default_send_enabled": true
+      },
+      "balances": [
+        {
+          "address": "gonka1xv247clk97rhcr43tzks73a4e7daam57u26pfy",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "100000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka184kcf2sjh77908mkzllxlcpjs9wsl0a007tham",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "5000000000000"
+            }
+          ]
+        },
+        {
+          "address": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "coins": [
+            {
+              "denom": "ngonka",
+              "amount": "1000000000000"
+            }
+          ]
+        }
+      ],
+      "supply": [
+        {
+          "denom": "ngonka",
+          "amount": "6100000000000"
+        }
+      ],
+      "denom_metadata": [
+        {
+          "description": "Coins for the Gonka network.",
+          "denom_units": [
+            {
+              "denom": "ngonka",
+              "exponent": 0,
+              "aliases": [
+                "nanogonka"
+              ]
+            },
+            {
+              "denom": "ugonka",
+              "exponent": 3,
+              "aliases": [
+                "microgonka"
+              ]
+            },
+            {
+              "denom": "mgonka",
+              "exponent": 6,
+              "aliases": [
+                "milligonka"
+              ]
+            },
+            {
+              "denom": "gonka",
+              "exponent": 9,
+              "aliases": []
+            }
+          ],
+          "base": "ngonka",
+          "display": "ngonka",
+          "name": "Gonka",
+          "symbol": "GNK",
+          "uri": "",
+          "uri_hash": ""
+        }
+      ],
+      "send_enabled": []
+    },
+    "bls": {
+      "params": {
+        "i_total_slots": 100,
+        "t_slots_degree_offset": 50,
+        "dealing_phase_duration_blocks": "5",
+        "verification_phase_duration_blocks": "3",
+        "signing_deadline_blocks": "10",
+        "dispute_phase_duration_blocks": "3",
+        "completed_fallback_blocks": "0",
+        "max_signing_attempts": 3
+      },
+      "active_epoch_id": "0",
+      "current_signing_epoch_id": "0",
+      "bls_data_list": [],
+      "signing_requests": [],
+      "group_validation_states": []
+    },
+    "bookkeeper": {
+      "params": {}
+    },
+    "capability": {
+      "index": "1",
+      "owners": []
+    },
+    "circuit": {
+      "account_permissions": [],
+      "disabled_type_urls": []
+    },
+    "collateral": {
+      "params": {
+        "unbonding_period_epochs": "1"
+      },
+      "collateral_balance_list": [],
+      "unbonding_collateral_list": [],
+      "jailed_participant_list": []
+    },
+    "consensus": null,
+    "crisis": {
+      "constant_fee": {
+        "denom": "ngonka",
+        "amount": "1000"
+      }
+    },
+    "distribution": {
+      "params": {
+        "community_tax": "0.020000000000000000",
+        "base_proposer_reward": "0.000000000000000000",
+        "bonus_proposer_reward": "0.000000000000000000",
+        "withdraw_addr_enabled": true
+      },
+      "fee_pool": {
+        "community_pool": []
+      },
+      "delegator_withdraw_infos": [],
+      "previous_proposer": "",
+      "outstanding_rewards": [],
+      "validator_accumulated_commissions": [],
+      "validator_historical_rewards": [],
+      "validator_current_rewards": [],
+      "delegator_starting_infos": [],
+      "validator_slash_events": []
+    },
+    "evidence": {
+      "evidence": []
+    },
+    "feegrant": {
+      "allowances": []
+    },
+    "feeibc": {
+      "identified_fees": [],
+      "fee_enabled_channels": [],
+      "registered_payees": [],
+      "registered_counterparty_payees": [],
+      "forward_relayers": []
+    },
+    "genesistransfer": {
+      "params": {
+        "allowed_accounts": [],
+        "restrict_to_list": false
+      },
+      "transfer_records": []
+    },
+    "genutil": {
+      "gen_txs": [
+        {
+          "body": {
+            "messages": [
+              {
+                "@type": "/cosmos.staking.v1beta1.MsgCreateValidator",
+                "description": {
+                  "moniker": "gdc-node0",
+                  "identity": "",
+                  "website": "",
+                  "security_contact": "",
+                  "details": ""
+                },
+                "commission": {
+                  "rate": "0.100000000000000000",
+                  "max_rate": "0.200000000000000000",
+                  "max_change_rate": "0.010000000000000000"
+                },
+                "min_self_delegation": "1",
+                "delegator_address": "",
+                "validator_address": "gonkavaloper1aax4qrp8u5klnvmga8nv9gjq28v4czwg55s8m2",
+                "pubkey": {
+                  "@type": "/cosmos.crypto.ed25519.PubKey",
+                  "key": "6BJjdFzR1lfQfdQeGh+a0KkFSY3BcNMcyTjU49FLvnw="
+                },
+                "value": {
+                  "denom": "ngonka",
+                  "amount": "1"
+                }
+              }
+            ],
+            "memo": "",
+            "timeout_height": "0",
+            "unordered": false,
+            "timeout_timestamp": null,
+            "extension_options": [],
+            "non_critical_extension_options": []
+          },
+          "auth_info": {
+            "signer_infos": [
+              {
+                "public_key": {
+                  "@type": "/cosmos.crypto.secp256k1.PubKey",
+                  "key": "A8ESsAfbYRwmWPsfFUmGvrFJbAtaaGYT5c6J4sFOsxn+"
+                },
+                "mode_info": {
+                  "single": {
+                    "mode": "SIGN_MODE_DIRECT"
+                  }
+                },
+                "sequence": "0"
+              }
+            ],
+            "fee": {
+              "amount": [],
+              "gas_limit": "200000",
+              "payer": "",
+              "granter": ""
+            },
+            "tip": null
+          },
+          "signatures": [
+            "x23BZzE80H9wK8AJiiU0+Xmm12BXIFy/5G2sLv5/7NdAGtPzsc2thYjATeIVLGjdXhZl0vW+JhtB4AhKpVEqbw=="
+          ]
+        }
+      ]
+    },
+    "gov": {
+      "starting_proposal_id": "1",
+      "deposits": [],
+      "votes": [],
+      "proposals": [],
+      "deposit_params": null,
+      "voting_params": null,
+      "tally_params": null,
+      "params": {
+        "min_deposit": [
+          {
+            "denom": "ngonka",
+            "amount": "25000000"
+          }
+        ],
+        "max_deposit_period": "172800s",
+        "voting_period": "120s",
+        "quorum": "0.334000000000000000",
+        "threshold": "0.500000000000000000",
+        "veto_threshold": "0.334000000000000000",
+        "min_initial_deposit_ratio": "0.000000000000000000",
+        "proposal_cancel_ratio": "0.500000000000000000",
+        "proposal_cancel_dest": "",
+        "expedited_voting_period": "60s",
+        "expedited_threshold": "0.667000000000000000",
+        "expedited_min_deposit": [
+          {
+            "denom": "ngonka",
+            "amount": "50000000"
+          }
+        ],
+        "burn_vote_quorum": false,
+        "burn_proposal_deposit_prevote": false,
+        "burn_vote_veto": true,
+        "min_deposit_ratio": "0.010000000000000000"
+      },
+      "constitution": ""
+    },
+    "group": {
+      "group_seq": "0",
+      "groups": [],
+      "group_members": [],
+      "group_policy_seq": "0",
+      "group_policies": [],
+      "proposal_seq": "0",
+      "proposals": [],
+      "votes": []
+    },
+    "ibc": {
+      "client_genesis": {
+        "clients": [],
+        "clients_consensus": [],
+        "clients_metadata": [],
+        "params": {
+          "allowed_clients": [
+            "*"
+          ]
+        },
+        "create_localhost": false,
+        "next_client_sequence": "0"
+      },
+      "connection_genesis": {
+        "connections": [],
+        "client_connection_paths": [],
+        "next_connection_sequence": "0",
+        "params": {
+          "max_expected_time_per_block": "30000000000"
+        }
+      },
+      "channel_genesis": {
+        "channels": [],
+        "acknowledgements": [],
+        "commitments": [],
+        "receipts": [],
+        "send_sequences": [],
+        "recv_sequences": [],
+        "ack_sequences": [],
+        "next_channel_sequence": "0",
+        "params": {
+          "upgrade_timeout": {
+            "height": {
+              "revision_number": "0",
+              "revision_height": "0"
+            },
+            "timestamp": "600000000000"
+          }
+        }
+      }
+    },
+    "inference": {
+      "params": {
+        "epoch_params": {
+          "epoch_length": "1500",
+          "epoch_multiplier": "1",
+          "epoch_shift": "200",
+          "default_unit_of_compute_price": "100",
+          "poc_stage_duration": "60",
+          "poc_exchange_duration": "0",
+          "poc_validation_delay": "5",
+          "poc_validation_duration": "40",
+          "set_new_validators_delay": "20",
+          "inference_validation_cutoff": "20",
+          "inference_pruning_epoch_threshold": "2",
+          "inference_pruning_max": "0",
+          "poc_pruning_max": "0",
+          "poc_slot_allocation": {
+            "value": "5",
+            "exponent": -1
+          },
+          "confirmation_poc_safety_window": "10"
+        },
+        "validation_params": {
+          "false_positive_rate": {
+            "value": "5",
+            "exponent": -2
+          },
+          "min_ramp_up_measurements": 10,
+          "pass_value": {
+            "value": "99",
+            "exponent": -2
+          },
+          "min_validation_average": {
+            "value": "1",
+            "exponent": -2
+          },
+          "max_validation_average": {
+            "value": "1",
+            "exponent": 0
+          },
+          "expiration_blocks": "20",
+          "epochs_to_max": "30",
+          "full_validation_traffic_cutoff": "10000",
+          "min_validation_halfway": {
+            "value": "5",
+            "exponent": -2
+          },
+          "min_validation_traffic_cutoff": "100",
+          "miss_percentage_cutoff": {
+            "value": "1",
+            "exponent": -2
+          },
+          "miss_requests_penalty": {
+            "value": "1",
+            "exponent": 0
+          },
+          "timestamp_expiration": "60",
+          "timestamp_advance": "30",
+          "estimated_limits_per_block_kb": "0",
+          "invalid_reputation_preserve": {
+            "value": "0",
+            "exponent": 0
+          },
+          "bad_participant_invalidation_rate": {
+            "value": "2",
+            "exponent": -1
+          },
+          "invalidation_h_threshold": {
+            "value": "4",
+            "exponent": 0
+          },
+          "downtime_good_percentage": {
+            "value": "1",
+            "exponent": -1
+          },
+          "downtime_bad_percentage": {
+            "value": "2",
+            "exponent": -1
+          },
+          "downtime_h_threshold": {
+            "value": "4",
+            "exponent": 0
+          },
+          "downtime_reputation_preserve": {
+            "value": "0",
+            "exponent": 0
+          },
+          "quick_failure_threshold": {
+            "value": "1",
+            "exponent": -6
+          },
+          "binom_test_p0": {
+            "value": "4",
+            "exponent": -1
+          },
+          "claim_validation_enabled": false,
+          "logprobs_mode": "processed_logprobs"
+        },
+        "poc_params": {
+          "default_difficulty": 5,
+          "validation_sample_size": 20,
+          "poc_data_pruning_epoch_threshold": "1",
+          "weight_scale_factor": null,
+          "model_params": {
+            "dim": 1792,
+            "n_layers": 64,
+            "n_heads": 64,
+            "n_kv_heads": 64,
+            "vocab_size": 8196,
+            "ffn_dim_multiplier": {
+              "value": "1",
+              "exponent": 1
+            },
+            "multiple_of": 8192,
+            "norm_eps": {
+              "value": "1",
+              "exponent": -5
+            },
+            "rope_theta": 10000,
+            "use_scaled_rope": false,
+            "seq_len": 256,
+            "r_target": {
+              "value": "1398077",
+              "exponent": -6
+            }
+          },
+          "model_id": "Qwen/Qwen2.5-7B-Instruct",
+          "seq_len": "256",
+          "poc_v2_enabled": true,
+          "confirmation_poc_v2_enabled": true,
+          "stat_test": {
+            "dist_threshold": {
+              "value": "4",
+              "exponent": -1
+            },
+            "p_mismatch": {
+              "value": "1",
+              "exponent": -1
+            },
+            "p_value_threshold": {
+              "value": "5",
+              "exponent": -2
+            }
+          },
+          "validation_slots": 0,
+          "poc_normalization_enabled": true,
+          "poc_stronger_rng_enabled": false,
+          "models": [
+            {
+              "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+              "seq_len": "256",
+              "stat_test": {
+                "dist_threshold": {
+                  "value": "4",
+                  "exponent": -1
+                },
+                "p_mismatch": {
+                  "value": "1",
+                  "exponent": -1
+                },
+                "p_value_threshold": {
+                  "value": "5",
+                  "exponent": -2
+                }
+              },
+              "weight_scale_factor": null,
+              "penalty_start_epoch": "9417",
+              "dynamic_coefficient": {
+                "coeff_min": {
+                  "value": "225",
+                  "exponent": -2
+                },
+                "coeff_max": {
+                  "value": "275",
+                  "exponent": -2
+                },
+                "relative_difficulty": {
+                  "value": "1",
+                  "exponent": 0
+                },
+                "target_share_bps": 4500
+              }
+            },
+            {
+              "model_id": "Qwen/Qwen2.5-7B-Instruct",
+              "seq_len": "256",
+              "stat_test": {
+                "dist_threshold": {
+                  "value": "4",
+                  "exponent": -1
+                },
+                "p_mismatch": {
+                  "value": "1",
+                  "exponent": -1
+                },
+                "p_value_threshold": {
+                  "value": "5",
+                  "exponent": -2
+                }
+              },
+              "weight_scale_factor": null,
+              "penalty_start_epoch": "9417",
+              "dynamic_coefficient": {
+                "coeff_min": {
+                  "value": "40275",
+                  "exponent": -4
+                },
+                "coeff_max": {
+                  "value": "49225",
+                  "exponent": -4
+                },
+                "relative_difficulty": {
+                  "value": "1",
+                  "exponent": 0
+                },
+                "target_share_bps": 4500
+              }
+            },
+            {
+              "model_id": "Qwen/Qwen3-0.6B",
+              "seq_len": "1024",
+              "stat_test": {
+                "dist_threshold": {
+                  "value": "14",
+                  "exponent": -1
+                },
+                "p_mismatch": {
+                  "value": "1",
+                  "exponent": -1
+                },
+                "p_value_threshold": {
+                  "value": "5",
+                  "exponent": -2
+                }
+              },
+              "weight_scale_factor": null,
+              "penalty_start_epoch": "2",
+              "dynamic_coefficient": {
+                "coeff_min": {
+                  "value": "9",
+                  "exponent": -1
+                },
+                "coeff_max": {
+                  "value": "11",
+                  "exponent": -1
+                },
+                "relative_difficulty": {
+                  "value": "1",
+                  "exponent": 0
+                },
+                "target_share_bps": 1000
+              }
+            }
+          ],
+          "validation_vote_threshold_bps": 5000,
+          "dynamic_coefficient_params": {
+            "target_zone_bps": 500,
+            "step_min": {
+              "value": "5",
+              "exponent": -3
+            },
+            "step_max": {
+              "value": "5",
+              "exponent": -2
+            },
+            "bootstrap_step_max": {
+              "value": "25",
+              "exponent": -2
+            },
+            "bootstrap_share_bps": 100
+          }
+        },
+        "tokenomics_params": {
+          "subsidy_reduction_interval": {
+            "value": "5",
+            "exponent": -2
+          },
+          "subsidy_reduction_amount": {
+            "value": "2",
+            "exponent": -1
+          },
+          "current_subsidy_percentage": {
+            "value": "9",
+            "exponent": -1
+          },
+          "work_vesting_period": "0",
+          "reward_vesting_period": "0"
+        },
+        "collateral_params": {
+          "slash_fraction_invalid": {
+            "value": "2",
+            "exponent": -1
+          },
+          "slash_fraction_downtime": {
+            "value": "1",
+            "exponent": -1
+          },
+          "downtime_missed_percentage_threshold": {
+            "value": "5",
+            "exponent": -2
+          },
+          "grace_period_end_epoch": "180",
+          "base_weight_ratio": {
+            "value": "2",
+            "exponent": -1
+          },
+          "collateral_per_weight_unit": {
+            "value": "1",
+            "exponent": 0
+          }
+        },
+        "bitcoin_reward_params": {
+          "use_bitcoin_rewards": true,
+          "initial_epoch_reward": "285000000000000",
+          "decay_rate": {
+            "value": "-475",
+            "exponent": -6
+          },
+          "genesis_epoch": "1",
+          "utilization_bonus_factor": {
+            "value": "5",
+            "exponent": -1
+          },
+          "full_coverage_bonus_factor": {
+            "value": "12",
+            "exponent": -1
+          },
+          "partial_coverage_bonus_factor": {
+            "value": "1",
+            "exponent": -1
+          }
+        },
+        "dynamic_pricing_params": {
+          "stability_zone_lower_bound": {
+            "value": "4",
+            "exponent": -1
+          },
+          "stability_zone_upper_bound": {
+            "value": "6",
+            "exponent": -1
+          },
+          "price_elasticity": {
+            "value": "5",
+            "exponent": -2
+          },
+          "utilization_window_duration": "60",
+          "min_per_token_price": "1",
+          "base_per_token_price": "100",
+          "grace_period_end_epoch": "1000000",
+          "grace_period_per_token_price": "0"
+        },
+        "bandwidth_limits_params": {
+          "estimated_limits_per_block_kb": "10752",
+          "kb_per_input_token": {
+            "value": "23",
+            "exponent": -4
+          },
+          "kb_per_output_token": {
+            "value": "64",
+            "exponent": -2
+          },
+          "invalidations_limit": "500",
+          "invalidations_sample_period": "120",
+          "invalidations_limit_curve": "250",
+          "minimum_concurrent_invalidations": 1,
+          "max_inferences_per_block": "1000"
+        },
+        "confirmation_poc_params": {
+          "expected_confirmations_per_epoch": "1",
+          "alpha_threshold": {
+            "value": "0",
+            "exponent": 0
+          },
+          "slash_fraction": {
+            "value": "0",
+            "exponent": 0
+          },
+          "upgrade_protection_window": "500"
+        },
+        "genesis_guardian_params": {
+          "network_maturity_threshold": "2000000",
+          "network_maturity_min_height": "0",
+          "guardian_addresses": [
+            "gonkavaloper1aax4qrp8u5klnvmga8nv9gjq28v4czwg55s8m2"
+          ]
+        },
+        "developer_access_params": {
+          "until_block_height": "0",
+          "allowed_developer_addresses": []
+        },
+        "participant_access_params": {
+          "new_participant_registration_start_height": "0",
+          "blocked_participant_addresses": [
+            "gonka1etz82sefx67ev9v6xfk8rjzgu49qgjg3hxj673",
+            "gonka1hckqqlfnxmny9v9qrgrthczrk6gz4gqmg3lhg6",
+            "gonka15u464xe9ytk7psnpyslc8eudnggnzk3jeqrwae",
+            "gonka17dlt8p0ystz54s2p50wllzfg8kjq9afresjd67",
+            "gonka19fx3gsnx24wy99aagvtjepqw65kznp6y386elc",
+            "gonka1xgg3zzywpygd8avq84mga2023hvcw0ecmak7zn"
+          ],
+          "use_participant_allowlist": false,
+          "participant_allowlist_until_block_height": "0"
+        },
+        "transfer_agent_access_params": {
+          "allowed_transfer_addresses": []
+        },
+        "devshard_escrow_params": {
+          "min_amount": "5000000000",
+          "max_amount": "10000000000",
+          "max_escrows_per_epoch": 100,
+          "group_size": 16,
+          "allowed_creator_addresses": [
+            "gonka1yhsh05ljgnn4sjj3npwnpctvfwu57mdrqj39c3",
+            "gonka1z9gy5kh75e4dxqy2e782geyk6vllqaw5f8n3ev",
+            "gonka1mrm3xar9w858cd0dk697v9fdzuleey9a3lx2kl",
+            "gonka1nfzglarks20cr2y36dgwhdj6e8uyh8nkatx25s"
+          ],
+          "token_price": "1",
+          "approved_versions": [],
+          "max_nonce": 20000,
+          "devshard_requests_enabled": true,
+          "default_inference_seal_grace_nonces": 160,
+          "default_inference_seal_grace_seconds": 3600,
+          "create_devshard_fee": "10000",
+          "fee_per_nonce": "1000",
+          "refusal_timeout": "60",
+          "execution_timeout": "1920",
+          "validation_rate": 1000,
+          "vote_threshold_factor": 50,
+          "default_auto_seal_every_n_nonces": 0
+        },
+        "fee_params": {
+          "min_gas_price_ngonka": "0",
+          "base_validation_gas": "500000",
+          "gas_per_poc_count": "100",
+          "enabled_fee_groups": [
+            "epoch",
+            "cosmos"
+          ],
+          "groups": [
+            {
+              "name": "epoch",
+              "min_gas_price": "1",
+              "base": {
+                "gas": "0",
+                "period_type": "epoch",
+                "period_length": "1"
+              },
+              "msgs": [
+                {
+                  "type_url": "/inference.inference.MsgPoCV2StoreCommit",
+                  "base": {
+                    "gas": "500000",
+                    "period_type": "poc",
+                    "period_length": "1"
+                  },
+                  "stored_delta": {
+                    "gas_per_unit": "100",
+                    "items": "entries",
+                    "value_field": "count",
+                    "id_field": "model_id",
+                    "scope_fields": [
+                      "poc_stage_start_block_height"
+                    ]
+                  }
+                },
+                {
+                  "type_url": "/inference.inference.MsgSubmitHardwareDiff",
+                  "base": null,
+                  "stored_bytes": {
+                    "gas_per_unit": "100",
+                    "unit": "kb"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "cosmos",
+              "min_gas_price": "1",
+              "base": null,
+              "msgs": []
+            }
+          ]
+        },
+        "delegation_params": {
+          "deploy_window": "5",
+          "refusal_penalty": {
+            "value": "1",
+            "exponent": -1
+          },
+          "no_participation_penalty": {
+            "value": "15",
+            "exponent": -2
+          },
+          "delegation_share": {
+            "value": "5",
+            "exponent": -2
+          },
+          "w_threshold": {
+            "value": "0",
+            "exponent": 0
+          },
+          "v_min": "2",
+          "cap_factor": {
+            "value": "75",
+            "exponent": -2
+          },
+          "initial_model_id": "Qwen/Qwen2.5-7B-Instruct",
+          "max_model_voting_power_percentage": {
+            "value": "3",
+            "exponent": -1
+          }
+        },
+        "maintenance_params": {
+          "maintenance_enabled": false,
+          "maintenance_min_schedule_lead_blocks": "100",
+          "maintenance_max_window_blocks": "200",
+          "maintenance_max_concurrent_validators": 3,
+          "maintenance_max_concurrent_power_bps": 1000,
+          "maintenance_credit_cap_blocks": "400",
+          "maintenance_credit_earn_per_successful_epoch_blocks": "20"
+        },
+        "poc_challenge_params": {
+          "payment_ratio": {
+            "value": "1",
+            "exponent": -1
+          },
+          "max_active_challenges": 4,
+          "min_punishable_segment_blocks": "300"
+        }
+      },
+      "genesis_only_params": {
+        "total_supply": "1000000000000000000",
+        "originator_supply": "160000000000000000",
+        "standard_reward_amount": "600000000000000000",
+        "pre_programmed_sale_amount": "120000000000000000",
+        "supply_denom": "ngonka",
+        "max_individual_power_percentage": {
+          "value": "25",
+          "exponent": -2
+        },
+        "genesis_guardian_enabled": true,
+        "genesis_guardian_network_maturity_threshold": "2000000",
+        "genesis_guardian_multiplier": {
+          "value": "52",
+          "exponent": -2
+        },
+        "genesis_guardian_addresses": [
+          "gonkavaloper1aax4qrp8u5klnvmga8nv9gjq28v4czwg55s8m2"
+        ]
+      },
+      "model_list": [
+        {
+          "proposed_by": "genesis",
+          "id": "Qwen/Qwen2.5-7B-Instruct",
+          "units_of_compute_per_token": "100",
+          "context_window": "0",
+          "quantization": "",
+          "coins_per_input_token": "0",
+          "coins_per_output_token": "0",
+          "hf_repo": "Qwen/Qwen2.5-7B-Instruct",
+          "hf_commit": "a09a35458c702b33eeacc393d103063234e8bc28",
+          "model_args": [
+            "--enable-auto-tool-choice",
+            "--tool-call-parser",
+            "hermes",
+            "--max-model-len",
+            "4096"
+          ],
+          "v_ram": "24",
+          "throughput_per_nonce": "10000",
+          "validation_threshold": {
+            "value": "95",
+            "exponent": -2
+          }
+        },
+        {
+          "proposed_by": "genesis",
+          "id": "Qwen/Qwen3-0.6B",
+          "units_of_compute_per_token": "100",
+          "context_window": "0",
+          "quantization": "",
+          "coins_per_input_token": "0",
+          "coins_per_output_token": "0",
+          "hf_repo": "Qwen/Qwen3-0.6B",
+          "hf_commit": "c1899de289a04d12100db370d81485cdf75e47ca",
+          "model_args": [
+            "--max-model-len",
+            "2048"
+          ],
+          "v_ram": "16",
+          "throughput_per_nonce": "10000",
+          "validation_threshold": {
+            "value": "95",
+            "exponent": -2
+          }
+        },
+        {
+          "proposed_by": "genesis",
+          "id": "Qwen/Qwen3-4B-Instruct-2507",
+          "units_of_compute_per_token": "100",
+          "context_window": "0",
+          "quantization": "",
+          "coins_per_input_token": "0",
+          "coins_per_output_token": "0",
+          "hf_repo": "Qwen/Qwen3-4B-Instruct-2507",
+          "hf_commit": "cdbee75f17c01a7cc42f958dc650907174af0554",
+          "model_args": [
+            "--enable-auto-tool-choice",
+            "--tool-call-parser",
+            "hermes",
+            "--max-model-len",
+            "25000"
+          ],
+          "v_ram": "24",
+          "throughput_per_nonce": "10000",
+          "validation_threshold": {
+            "value": "95",
+            "exponent": -2
+          }
+        }
+      ],
+      "bridge": {
+        "contract_addresses": [],
+        "token_metadata": [],
+        "trade_approved_tokens": [],
+        "pending_mint_refunds": [],
+        "pending_withdrawal_refunds": []
+      },
+      "participant_list": [
+        {
+          "index": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "address": "gonka1aax4qrp8u5klnvmga8nv9gjq28v4czwgg5pqv8",
+          "weight": 1,
+          "join_time": 1792497380,
+          "last_inference_time": 1792497380,
+          "inference_url": "https://node0.gonka-dev.net",
+          "status": 1,
+          "validator_key": "6BJjdFzR1lfQfdQeGh+a0KkFSY3BcNMcyTjU49FLvnw=",
+          "current_epoch_stats": {}
+        }
+      ],
+      "mlnode_version": {
+        "current_version": "v3.0.8"
+      },
+      "devshard_approved_versions": [
+        {
+          "name": "v4.1",
+          "binary": "https://github.com/gonka-ai/gonka/releases/download/release%2Fdevshard%2Fv4.1.0/devshardd.zip",
+          "sha256": "69e58e6b6c124fc218d3ed1e38d7853c0a8ce20df660d348fc28ccd249a1ccf1"
+        },
+        {
+          "name": "v4.2",
+          "binary": "https://github.com/gonka-ai/gonka/releases/download/devshard%2Fv4.2.0/devshardd.zip",
+          "sha256": "068599a524d4f456b36c6a208aad05d962b6751752fc0cab5991b24cf5429625"
+        },
+        {
+          "name": "v6",
+          "binary": "https://github.com/paranjko/external-test-lab/releases/download/lab-gonka-pr-1792-3c924cbf6fd9/devshardd.zip",
+          "sha256": "6f00ec94dfab8b844289072c20052ed4b12235145701488cbd37d2602ec7245d"
+        }
+      ]
+    },
+    "interchainaccounts": {
+      "controller_genesis_state": {
+        "active_channels": [],
+        "interchain_accounts": [],
+        "ports": [],
+        "params": {
+          "controller_enabled": true
+        }
+      },
+      "host_genesis_state": {
+        "active_channels": [],
+        "interchain_accounts": [],
+        "port": "icahost",
+        "params": {
+          "host_enabled": true,
+          "allow_messages": [
+            "*"
+          ]
+        }
+      }
+    },
+    "mint": {
+      "minter": {
+        "inflation": "0.000000000000000000",
+        "annual_provisions": "0.000000000000000000"
+      },
+      "params": {
+        "mint_denom": "ngonka",
+        "inflation_rate_change": "0.000000000000000000",
+        "inflation_max": "0.000000000000000000",
+        "inflation_min": "0.000000000000000000",
+        "goal_bonded": "0.670000000000000000",
+        "blocks_per_year": "6311520"
+      }
+    },
+    "nft": {
+      "classes": [],
+      "entries": []
+    },
+    "params": null,
+    "restrictions": {
+      "params": {
+        "restriction_end_block": "0",
+        "emergency_transfer_exemptions": [],
+        "exemption_usage_tracking": []
+      }
+    },
+    "runtime": null,
+    "slashing": {
+      "params": {
+        "signed_blocks_window": "100",
+        "min_signed_per_window": "0.500000000000000000",
+        "downtime_jail_duration": "600s",
+        "slash_fraction_double_sign": "0.050000000000000000",
+        "slash_fraction_downtime": "0.010000000000000000"
+      },
+      "signing_infos": [],
+      "missed_blocks": []
+    },
+    "staking": {
+      "params": {
+        "unbonding_time": "3600s",
+        "max_validators": 100,
+        "max_entries": 7,
+        "historical_entries": 10000,
+        "bond_denom": "ngonka",
+        "min_commission_rate": "0.000000000000000000"
+      },
+      "last_total_power": "0",
+      "last_validator_powers": [],
+      "validators": [],
+      "delegations": [],
+      "unbonding_delegations": [],
+      "redelegations": [],
+      "exported": false
+    },
+    "streamvesting": {
+      "params": {
+        "reward_vesting_period": "180"
+      },
+      "vesting_schedule_list": []
+    },
+    "transfer": {
+      "port_id": "transfer",
+      "denom_traces": [],
+      "params": {
+        "send_enabled": true,
+        "receive_enabled": true
+      },
+      "total_escrowed": []
+    },
+    "upgrade": {},
+    "vesting": {},
+    "wasm": {
+      "params": {
+        "code_upload_access": {
+          "permission": "Everybody",
+          "addresses": []
+        },
+        "instantiate_default_permission": "Everybody"
+      },
+      "codes": [],
+      "contracts": [],
+      "sequences": []
+    }
+  },
+  "consensus": {
+    "params": {
+      "block": {
+        "max_bytes": "22020096",
+        "max_gas": "-1"
+      },
+      "evidence": {
+        "max_age_num_blocks": "100000",
+        "max_age_duration": "172800000000000",
+        "max_bytes": "1048576"
+      },
+      "validator": {
+        "pub_key_types": [
+          "ed25519"
+        ]
+      },
+      "version": {
+        "app": "0"
+      },
+      "abci": {
+        "vote_extensions_enable_height": "0"
+      }
+    }
+  }
+}

@@ -5,9 +5,25 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-cat >"$tmp/bootstrap.json" <<'EOF'
-{"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-devnet-community","genesis":{"sha256":"93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://node0.example.test/chain-rpc","p2p":"tcp://node0.example.test:5000","api":"https://node0.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://node1.example.test/chain-rpc","p2p":"tcp://node1.example.test:5000","api":"https://node1.example.test"}],"brokers":[]}
+cat >"$tmp/genesis.json" <<'EOF'
+{"app_name":"fixture","app_version":"v1","chain_id":"gonka-devnet-community","initial_height":1,"app_hash":null,"consensus":{"params":{"block":{"max_bytes":"22020096"}}}}
 EOF
+FIXTURE_GENESIS_FILE="$tmp/genesis.json"
+FIXTURE_GENESIS_SHA256="$(sha256sum "$FIXTURE_GENESIS_FILE" | awk '{print $1}')"
+FIXTURE_GENESIS_IDENTITY_SHA256="$(jq -eS 'del(.app_name,.app_version) | if has("app_hash") then .app_hash=(.app_hash//"") else . end | if has("initial_height") then .initial_height=(.initial_height|tostring) else . end | if .consensus.params? then .consensus_params=.consensus.params | del(.consensus) else . end' "$FIXTURE_GENESIS_FILE" | sha256sum | awk '{print $1}')"
+[[ "$FIXTURE_GENESIS_SHA256" != "$FIXTURE_GENESIS_IDENTITY_SHA256" ]] || {
+  echo 'run-log fixture must distinguish raw Genesis distribution bytes from canonical chain identity' >&2
+  exit 1
+}
+jq -n --arg sha "$FIXTURE_GENESIS_SHA256" '{
+  "$schema":"https://gonka-dev.net/v1.bootstrap.schema.json",chain_id:"gonka-devnet-community",
+  genesis:{sha256:$sha},
+  seeds:[
+    {node_id:"0123456789abcdef0123456789abcdef01234567",rpc:"https://node0.example.test/chain-rpc",p2p:"tcp://node0.example.test:5000",api:"https://node0.example.test"},
+    {node_id:"89abcdef0123456789abcdef0123456789abcdef",rpc:"https://node1.example.test/chain-rpc",p2p:"tcp://node1.example.test:5000",api:"https://node1.example.test"}
+  ],brokers:[]
+}' >"$tmp/bootstrap.json"
+export FIXTURE_GENESIS_FILE
 mkdir -p "$tmp/bin"
 python3 - "$tmp" <<'PY'
 import os
@@ -17,7 +33,7 @@ import zipfile
 root = sys.argv[1]
 binary = os.path.join(root, "inferenced")
 with open(binary, "w", encoding="utf-8") as handle:
-    handle.write("#!/usr/bin/env bash\nprintf 'inferenced v0.2.15\\n'\n")
+    handle.write("#!/usr/bin/env bash\nset -Eeuo pipefail\ncase \"${1:-}\" in\n  version) printf 'inferenced v0.2.15\\n' ;;\n  download-genesis) cp \"$FIXTURE_GENESIS_FILE\" \"$3\" ;;\n  *) exit 2 ;;\nesac\n")
 os.chmod(binary, 0o755)
 with zipfile.ZipFile(os.path.join(root, "inferenced-fixture.zip"), "w") as archive:
     archive.write(binary, "inferenced")
@@ -120,7 +136,9 @@ chmod 0755 "$tmp/bin/sha256sum"
 cat >"$tmp/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-if [[ "${!#}" == 'sudo -n bash -s' ]]; then
+if [[ $# == 3 && "$1" == '-T' && "$2" =~ ^validator-[a-z]+$ \
+  && ( "${!#}" == 'sudo -n bash -s' \
+    || "${!#}" == "sudo -n bash -s -- --host-alias $2 --role validator" ) ]]; then
   cat >/dev/null
   [[ "${READINESS_MODE:-fail}" == ok ]] || exit 1
   printf 'READY Host readiness preflight\n'

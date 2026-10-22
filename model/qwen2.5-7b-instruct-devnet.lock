@@ -1,0 +1,17 @@
+# Explicit network composition for the initial 7B group on the pinned
+# 0.2.16-post1 fresh-Genesis runtime. Not the qualification-only overlay.
+# Model loading and epoch admission remain separate acceptance checks.
+GDC_MODEL_PROFILE_SCOPE=network
+MODEL_ID=Qwen/Qwen2.5-7B-Instruct
+MODEL_REVISION=a09a35458c702b33eeacc393d103063234e8bc28
+MODEL_MIN_VRAM_MIB=24564
+MLNODE_DTYPE=bfloat16
+MLNODE_CONTEXT_LENGTH=4096
+MLNODE_MAX_NUM_SEQS=32
+MLNODE_GPU_MEMORY_UTILIZATION=0.92
+MLNODE_TENSOR_PARALLEL_SIZE=1
+MLNODE_VLLM_ARGS='--enable-auto-tool-choice --tool-call-parser hermes --kv-cache-dtype fp8 --kv-cache-memory-bytes 1073741824'
+GENESIS_SEQ_LEN=256
+GENESIS_V_RAM=24
+GENESIS_UNITS_OF_COMPUTE_PER_TOKEN=100
+GENESIS_THROUGHPUT_PER_NONCE=10000

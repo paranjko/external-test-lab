@@ -167,6 +167,34 @@ network_error() {
   fi
 }
 
+inference_traffic() {
+  local endpoint="${1%/}/devshard/metrics" metrics value observed_at
+  observed_at="$(timestamp)"
+  # The unversioned endpoint observes the primary runtime exactly once.
+  # Version-prefixed metric routes may alias that same runtime.
+  if metrics="$(http_json "$endpoint" 2>/dev/null)" && value="$(jq -Rsc '
+    split("\n") as $lines |
+    def samples($name): [$lines[] | select(startswith($name + "{")) |
+      capture("^[^{]+\\{(?<labels>[^}]*)\\} (?<value>[^ ]+)(?: [0-9]+)?$") |
+      .value = (.value | tonumber) |
+      if .value >= 0 and .value <= 9007199254740991 and (.value | floor) == .value
+      then . else error("invalid counter") end];
+    samples("devshard_request_terminal_total") as $terminal |
+    samples("devshardd_request_active_operations") |
+      map(select(.labels | test("(^|,)operation=\"devshardd[.]inference\"(,|$)"))) as $active |
+    if ($terminal|length)==0 then error("inference counters unavailable") else
+      {handled:($terminal|map(.value)|add),
+       finished:($terminal|map(select(.labels|test("(^|,)terminal=\"finish_published\"(,|$)"))|.value)|add // 0),
+       active:(if ($active|length)>0 then ($active|map(.value)|add) else null end)} end
+  ' <<<"$metrics" 2>/dev/null)"; then
+    jq -cn --arg endpoint "$endpoint" --arg at "$observed_at" --argjson value "$value" \
+      '$value + {state:"observed",source_endpoint:$endpoint,observed_at:$at,scope:"primary_runtime"}'
+  else
+    jq -cn --arg endpoint "$endpoint" --arg at "$observed_at" \
+      '{state:"unavailable",source_endpoint:$endpoint,observed_at:$at,error:"inference_metrics_unavailable"}'
+  fi
+}
+
 component() {
   local kind="$1" dapi_url="$2" response observed_at error endpoint value
   observed_at="$(timestamp)"
@@ -300,8 +328,10 @@ component() {
           stats="$(jq -cn --arg endpoint "$stats_endpoint" --arg observed_at "$stats_observed_at" \
             '{state:"not_exposed",source_endpoint:$endpoint,observed_at:$observed_at,error:"stats_requires_v4_or_newer_runtime"}')"
         fi
-        jq -cn --arg endpoint "$endpoint" --arg observed_at "$observed_at" --argjson value "$value" --argjson stats "$stats" \
-          '{state:"observed",source_endpoint:$endpoint,observed_at:$observed_at}+ $value + {stats:$stats}'
+        local traffic
+        traffic="$(inference_traffic "$dapi_url")"
+        jq -cn --arg endpoint "$endpoint" --arg observed_at "$observed_at" --argjson value "$value" --argjson stats "$stats" --argjson traffic "$traffic" \
+          '{state:"observed",source_endpoint:$endpoint,observed_at:$observed_at}+ $value + {stats:$stats,traffic:$traffic}'
         return
       fi
       ;;

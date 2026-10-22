@@ -58,7 +58,7 @@ while [[ "$command_text" =~ \'[^\']*\' ]]; do
   quoted+=("${quoted_match:1:${#quoted_match}-2}")
   command_text="${command_text#*"$quoted_match"}"
 done
-[[ "${#quoted[@]}" == 4 ]] || { echo "unexpected fixture SSH command: $command_text" >&2; exit 91; }
+[[ "${#quoted[@]}" == 5 ]] || { echo "unexpected fixture SSH command: $command_text" >&2; exit 91; }
 remote="$GDC_TEST_ROOT/remote-${quoted[0]}.sh"
 sed -e 's|/srv/dai/deploy|__GDC_TEST_DEPLOY__|g' \
   -e "s|/srv/dai|$GDC_TEST_ROOT/srv/dai|g" \

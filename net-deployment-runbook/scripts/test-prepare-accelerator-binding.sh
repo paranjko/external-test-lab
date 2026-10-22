@@ -126,8 +126,10 @@ if [[ "$*" =~ (^|[[:space:]])true$ ]]; then
   echo 'unexpected standalone SSH readiness probe' >&2
   exit 93
 fi
-if [[ "$*" == *'rm -rf /tmp/gdc-host-prep'* && -n "${GDC_TEST_TRANSFER_SSH_EXIT:-}" ]]; then
-  exit "$GDC_TEST_TRANSFER_SSH_EXIT"
+if [[ "$*" == *'rm -rf /tmp/gdc-host-prep'* ]]; then
+  [[ -z "${GDC_TEST_TRANSFER_SSH_EXIT:-}" ]] || exit "$GDC_TEST_TRANSFER_SSH_EXIT"
+  # A successful SSH transfer consumes the archive before returning.
+  cat >/dev/null
 fi
 if [[ "${GDC_TEST_RETAINED_HOST_PREPARATION:-false}" == true ]]; then
   case "$*" in

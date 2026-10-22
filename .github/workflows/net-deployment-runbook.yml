@@ -127,6 +127,14 @@ jobs:
         group: ${{ fromJSON(needs.route.outputs.groups) }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Set up Python for schema contracts
+        if: matrix.group == 'bootstrap' || matrix.group == 'core' || matrix.group == 'join'
+        uses: actions/setup-python@v5.0.0
+        with:
+          python-version: '3.12'
+      - name: Install Bootstrap schema test dependency
+        if: matrix.group == 'bootstrap' || matrix.group == 'core' || matrix.group == 'join'
+        run: make -C net-deployment-runbook bootstrap-schema-dependencies
       - name: Install declared Python test dependencies
         if: matrix.group == 'gateways'
         run: make -C net-deployment-runbook install-python-test-dependencies

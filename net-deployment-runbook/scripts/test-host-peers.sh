@@ -30,7 +30,9 @@ export PEER_TEST_LOG="$tmp/ssh.log"
 ssh() {
   local alias="${*: -2:1}" operation="${*: -1}"
   printf '%s %s\n' "$alias" "$operation" >>"$PEER_TEST_LOG"
-  cat >/dev/null
+  # Execute the delivered preamble, with no filesystem source path.
+  # Refuse the remote branch before Docker; helpers must already be present.
+  bash -c 'set -eu; source /dev/stdin; declare -F gdc_lock_acquire gdc_lock_release >/dev/null'
   [[ "$alias" == fixture.Anchor && "$operation" == *"--remote 'true'" ]] || exit 99
 }
 export -f ssh

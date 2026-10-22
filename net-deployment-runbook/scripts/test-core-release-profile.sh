@@ -24,6 +24,10 @@ done
 [[ "$DAPI_UPGRADE_SHA256" == f64b9433cd27d9ee433f1aede89d6be910f6deb8df644d55e2dfe30b8f873802 ]]
 [[ "$(profile_hash)" =~ ^[0-9a-f]{64}$ ]]
 bootstrap="$ROOT/../bootstrap/gonka-devnet-community.json"
+# Community bootstrap opts into the network-scoped 7B overlay; the release
+# itself retains its original model default.
+export GDC_MODEL_PROFILE=qwen2.5-7b-instruct-devnet
+load_profiles
 while read -r role variable; do
   [[ "$(jq -er --arg role "$role" '.software.components[$role].image' "$bootstrap")" == "${!variable}" ]]
 done <<'COMPONENTS'

@@ -1,25 +1,37 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-[[ $# -eq 8 ]] || {
-  echo "Usage: $0 NODE MODEL REVISION DTYPE TENSOR MAX_SEQS GPU_UTILIZATION CONTEXT_LENGTH" >&2
+[[ $# == 8 || $# == 9 ]] || {
+  echo "Usage: $0 NODE MODEL REVISION DTYPE TENSOR MAX_SEQS GPU_UTILIZATION CONTEXT_LENGTH [MODEL_ARGS_JSON]" >&2
   exit 2
 }
 NODE="$1"; MODEL="$2"; REVISION="$3"; DTYPE="$4"; TENSOR="$5"
 MAX_SEQS="$6"; GPU_UTILIZATION="$7"; CONTEXT_LENGTH="$8"
+MODEL_ARGS_JSON="${9:-}"
+if [[ -n "$MODEL_ARGS_JSON" ]]; then
+  jq -e 'type == "array" and all(.[]; type == "string")' <<<"$MODEL_ARGS_JSON" >/dev/null \
+    || { echo 'MODEL_ARGS_JSON must be an array of strings' >&2; exit 2; }
+fi
 
-ssh -T "$NODE" \
-  "NODE='$NODE' MODEL='$MODEL' REVISION='$REVISION' DTYPE='$DTYPE' TENSOR='$TENSOR' MAX_SEQS='$MAX_SEQS' GPU_UTILIZATION='$GPU_UTILIZATION' CONTEXT_LENGTH='$CONTEXT_LENGTH' bash -s" <<'REMOTE'
+printf -v remote_command 'NODE=%q MODEL=%q REVISION=%q DTYPE=%q TENSOR=%q MAX_SEQS=%q GPU_UTILIZATION=%q CONTEXT_LENGTH=%q MODEL_ARGS_JSON=%q bash -s' \
+  "$NODE" "$MODEL" "$REVISION" "$DTYPE" "$TENSOR" "$MAX_SEQS" "$GPU_UTILIZATION" "$CONTEXT_LENGTH" "$MODEL_ARGS_JSON"
+
+ssh -T "$NODE" "$remote_command" <<'REMOTE'
 set -Eeuo pipefail
 cd /srv/dai/deploy
 compose=(sudo docker compose --env-file .env -f compose.yaml -f compose.ml-local.yaml)
-request="$(jq -nc \
-  --arg model "$MODEL" --arg dtype "$DTYPE" --arg revision "$REVISION" \
-  --arg tensor "$TENSOR" --arg max "$MAX_SEQS" --arg util "$GPU_UTILIZATION" --arg context "$CONTEXT_LENGTH" \
-  '{model:$model,dtype:$dtype,additional_args:["--revision",$revision,"--tensor-parallel-size",$tensor,"--max-num-seqs",$max,"--gpu-memory-utilization",$util,"--max-model-len",$context]}')"
+if [[ -n "$MODEL_ARGS_JSON" ]]; then
+  request="$(jq -nc --arg model "$MODEL" --arg dtype "$DTYPE" --argjson args "$MODEL_ARGS_JSON" \
+    '{model:$model,dtype:$dtype,additional_args:$args}')"
+else
+  request="$(jq -nc \
+    --arg model "$MODEL" --arg dtype "$DTYPE" --arg revision "$REVISION" \
+    --arg tensor "$TENSOR" --arg max "$MAX_SEQS" --arg util "$GPU_UTILIZATION" --arg context "$CONTEXT_LENGTH" \
+    '{model:$model,dtype:$dtype,additional_args:["--revision",$revision,"--tensor-parallel-size",$tensor,"--max-num-seqs",$max,"--gpu-memory-utilization",$util,"--max-model-len",$context]}')"
+fi
 deadline=$((SECONDS + 1800))
 while (( SECONDS < deadline )); do
-  status="$("${compose[@]}" exec -T mlnode curl -fsS http://127.0.0.1:8080/api/v1/inference/up/status 2>/dev/null || true)"
+  status="$("${compose[@]}" exec -T mlnode curl -fsS http://127.0.0.1:8080/api/v1/inference/up/status </dev/null 2>/dev/null || true)"
   if jq -e '.is_running == true and (.error == null or .error == "")' <<<"$status" >/dev/null 2>&1; then
     break
   fi
@@ -42,7 +54,7 @@ fi
 # its listener. Require the configured model endpoint and one real local
 # completion before PoC registration is allowed to start.
 while (( SECONDS < deadline )); do
-  if "${compose[@]}" exec -T mlnode curl -fsS http://127.0.0.1:5000/v1/models 2>/dev/null \
+  if "${compose[@]}" exec -T mlnode curl -fsS http://127.0.0.1:5000/v1/models </dev/null 2>/dev/null \
     | jq -e --arg model "$MODEL" '.data[] | select(.id == $model)' >/dev/null 2>&1; then
     completion_request="$(jq -nc --arg model "$MODEL" \
       '{model:$model,messages:[{role:"user",content:"Reply exactly GDC_OK"}],max_tokens:16,temperature:0}')"

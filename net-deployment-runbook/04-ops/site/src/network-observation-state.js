@@ -390,12 +390,18 @@ const MAX_PARTICIPANT_PAGES = 100;
       return {poc: summarize(evidence.poc), cpoc};
     }
     function inferenceState(health: any): any {
-      if (health?.state !== "observed" || !Array.isArray(health.runtimes))
-        return {label: "Not observed", detail: "No inference request routed to this Host was observed"};
-      const running = health.runtimes.filter((runtime) => runtime?.status === "running");
-      return {label: "Not observed", detail: running.length
-        ? `${running.length} local DevShard runtime(s) are running, but no inference request routed to this Host was observed`
-        : "No local DevShard runtime is running and no inference request routed to this Host was observed"};
+      const traffic = health?.traffic;
+      const age = Date.now() - Date.parse(String(traffic?.observed_at || ""));
+      const count = (value: any): boolean => Number.isSafeInteger(value) && value >= 0;
+      if (health?.state !== "observed" || traffic?.state !== "observed" ||
+        traffic.scope !== "primary_runtime" || !Number.isFinite(age) || age < 0 || age > 90000 ||
+        !count(traffic.handled) || !count(traffic.finished) || traffic.finished > traffic.handled ||
+        (traffic.active !== null && !count(traffic.active)))
+        return {label: "Unavailable", detail: "No fresh inference counters are available; traffic may still be flowing."};
+      return {
+        label: `${traffic.active === null ? "" : `${traffic.active} active · `}${traffic.handled} handled`,
+        detail: `Primary runtime only. ${traffic.finished} finish-published outcomes out of ${traffic.handled} terminal request outcomes since runtime metrics reset; includes unsuccessful outcomes, not a request rate or proof of chain settlement. Active counts inference operations, not health checks or open escrows. Observed ${traffic.observed_at}.`,
+      };
     }
     return { nodeState, observeRpc, peerCount, loadCurrentValidatorSet, loadParticipants, verifyChainApiReference, participantAddressForNode, currentVotingPower, applyCurrentVotingPower, validatorSet, referenceProgressed, selectProgressingReference, selectFreshReference, effectiveValidatorCount, loadActivity, activityState, inferenceState };
   },

@@ -165,6 +165,7 @@ set -Eeuo pipefail
 cat >/dev/null
 case "${!#}" in
   'sudo -n bash -s') printf 'READY Host readiness preflight\n' ;;
+  'sudo -n bash -s -- --host-alias gdc-node2 --role validator') printf 'READY clean JOIN target\n' ;;
   'bash -s') printf 'vendor=nvidia\n' ;;
   *) echo 'unexpected SSH operation in Bootstrap chain test' >&2; exit 97 ;;
 esac

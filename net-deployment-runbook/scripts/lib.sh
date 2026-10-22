@@ -475,11 +475,35 @@ load_host_recovery_topology() {
 # Variables initialized here are consumed by scripts that source this library.
 # shellcheck disable=SC2034
 initialize_project_state_paths() {
+  local genesis_candidate_sha actual_candidate_sha candidate_account candidate_account_sha
   SECRETS="$STATE/secrets"
   IDENTITIES="$STATE/identities"
   GENERATED="$STATE/generated"
-  GENESIS="$GDC_HOME/genesis"
   ACCOUNTS="$GDC_HOME/accounts"
+  GENESIS="$GDC_HOME/genesis"
+  if [[ -n "${GDC_GENESIS_DIR:-}" ]]; then
+    [[ "$GDC_GENESIS_DIR" == "$GDC_HOME/genesis-candidate" \
+      && ! -L "$GDC_GENESIS_DIR" && ! -L "$GDC_GENESIS_DIR/genesis.json" ]] \
+      || die 'candidate Genesis path override is not the canonical operator candidate directory'
+    genesis_candidate_sha="${GDC_GENESIS_CANDIDATE_SHA256:-}"
+    [[ "$genesis_candidate_sha" =~ ^[0-9a-f]{64}$ \
+      && -s "$GDC_HOME/genesis-candidate.json" && -s "$GDC_GENESIS_DIR/genesis.json" ]] \
+      || die 'candidate Genesis path override lacks its approved hash or receipt'
+    actual_candidate_sha="$(sha256sum "$GDC_GENESIS_DIR/genesis.json" | awk '{print $1}')"
+    [[ "$actual_candidate_sha" == "$genesis_candidate_sha" ]] \
+      || die 'candidate Genesis path override hash does not match its approved artifact'
+    jq -e --arg sha "$genesis_candidate_sha" --arg node "$GENESIS_NODE" --arg chain "$CHAIN_ID" \
+      '.kind == "gdc-genesis-candidate" and .candidate_sha256 == $sha and .genesis_node == $node and .chain_id == $chain' \
+      "$GDC_HOME/genesis-candidate.json" >/dev/null \
+      || die 'candidate Genesis path override is not bound to the selected candidate, Host, and chain'
+    candidate_account="$(jq -er '.account_path' "$GDC_HOME/genesis-candidate.json")"
+    [[ "$candidate_account" == "$ACCOUNTS/$GENESIS_NODE-cold.json" && -s "$candidate_account" ]] \
+      || die 'candidate Genesis receipt account path does not match the Genesis Host account'
+    candidate_account_sha="$(jq -er '.account_sha256' "$GDC_HOME/genesis-candidate.json")"
+    [[ "$(sha256sum "$candidate_account" | awk '{print $1}')" == "$candidate_account_sha" ]] \
+      || die 'candidate Genesis receipt account artifact changed after preparation'
+    GENESIS="$GDC_GENESIS_DIR"
+  fi
   INVENTORY="$STATE/inventory.env"
   mkdir -p "$STATE" "$GDC_HOME"
   GDC_RUN_ID="${GDC_RUN_ID:-$(cat "$STATE/active-run-id" 2>/dev/null || true)}"
@@ -585,13 +609,15 @@ load_project() {
     ENV_FILE="$GDC_DATA_ROOT/.env"
   fi
   [[ -s "$ENV_FILE" ]] || die 'no role input is available; GENESIS and JOIN create it automatically, while OPS requires .env'
-  local caller_release_profile='' caller_genesis_node='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' caller_gateway_max_concurrent_requests='' caller_gateway_max_input_tokens_in_flight='' resolved_profile_key runtime_topology runtime_genesis_node runtime_public_edge_node runtime_gateway_node runtime_telegram_bot_host runtime_guardian_enabled runtime_home
-  local caller_release_profile_set=false caller_genesis_node_set=false caller_public_edge_node_set=false caller_gateway_node_set=false caller_telegram_bot_host_set=false caller_guardian_enabled_set=false caller_gateway_max_concurrent_requests_set=false caller_gateway_max_input_tokens_in_flight_set=false
+  local caller_release_profile='' caller_genesis_node='' caller_genesis_dir='' caller_genesis_candidate_sha256='' caller_public_edge_node='' caller_gateway_node='' caller_telegram_bot_host='' caller_guardian_enabled='' caller_gateway_max_concurrent_requests='' caller_gateway_max_input_tokens_in_flight='' resolved_profile_key runtime_topology runtime_genesis_node runtime_public_edge_node runtime_gateway_node runtime_telegram_bot_host runtime_guardian_enabled runtime_home
+  local caller_release_profile_set=false caller_genesis_node_set=false caller_genesis_dir_set=false caller_genesis_candidate_sha256_set=false caller_public_edge_node_set=false caller_gateway_node_set=false caller_telegram_bot_host_set=false caller_guardian_enabled_set=false caller_gateway_max_concurrent_requests_set=false caller_gateway_max_input_tokens_in_flight_set=false
   if [[ "${GDC_RELEASE_PROFILE_CLI_OVERRIDE:-false}" == true && ${GDC_RELEASE_PROFILE+x} ]]; then
     caller_release_profile="$GDC_RELEASE_PROFILE"
     caller_release_profile_set=true
   fi
   if [[ ${GDC_GENESIS_NODE+x} ]]; then caller_genesis_node="$GDC_GENESIS_NODE"; caller_genesis_node_set=true; fi
+  if [[ ${GDC_GENESIS_DIR+x} ]]; then caller_genesis_dir="$GDC_GENESIS_DIR"; caller_genesis_dir_set=true; fi
+  if [[ ${GDC_GENESIS_CANDIDATE_SHA256+x} ]]; then caller_genesis_candidate_sha256="$GDC_GENESIS_CANDIDATE_SHA256"; caller_genesis_candidate_sha256_set=true; fi
   if [[ ${GDC_PUBLIC_EDGE_NODE+x} ]]; then caller_public_edge_node="$GDC_PUBLIC_EDGE_NODE"; caller_public_edge_node_set=true; fi
   if [[ ${GDC_GATEWAY_NODE+x} ]]; then caller_gateway_node="$GDC_GATEWAY_NODE"; caller_gateway_node_set=true; fi
   if [[ ${GDC_TELEGRAM_BOT_HOST+x} ]]; then caller_telegram_bot_host="$GDC_TELEGRAM_BOT_HOST"; caller_telegram_bot_host_set=true; fi
@@ -646,6 +672,8 @@ load_project() {
   fi
   set +a
   if [[ "$caller_genesis_node_set" == true ]]; then export GDC_GENESIS_NODE="$caller_genesis_node"; fi
+  if [[ "$caller_genesis_dir_set" == true ]]; then export GDC_GENESIS_DIR="$caller_genesis_dir"; fi
+  if [[ "$caller_genesis_candidate_sha256_set" == true ]]; then export GDC_GENESIS_CANDIDATE_SHA256="$caller_genesis_candidate_sha256"; fi
   if [[ "$caller_release_profile_set" == true ]]; then export GDC_RELEASE_PROFILE="$caller_release_profile"; fi
   if [[ "$caller_public_edge_node_set" == true ]]; then export GDC_PUBLIC_EDGE_NODE="$caller_public_edge_node"; fi
   if [[ "$caller_gateway_node_set" == true ]]; then export GDC_GATEWAY_NODE="$caller_gateway_node"; fi
@@ -797,6 +825,50 @@ require_run_manifest_lineage() {
 }
 
 assert_baseline_release() {
+  if [[ "${GDC_GENESIS_RUNTIME_CONTEXT:-}" == verified-fragment ]]; then
+    local fragment="${GDC_GENESIS_SOFTWARE_FILE:-}" expected="${GDC_GENESIS_SOFTWARE_SHA256:-}" actual
+    [[ "${GDC_PROFILE_KIND:-}" == release && "${IS_GENESIS:-}" == true ]] \
+      || die 'Genesis runtime context is valid only for a release-profile Genesis node'
+    [[ "${GDC_GENESIS_PREPARE_ONLY:-false}" == true || -n "${GDC_GENESIS_APPLY_CANDIDATE:-}" \
+      || -n "${GDC_GENESIS_RESUME_CANDIDATE:-}" ]] \
+      || die 'Genesis runtime context is valid only inside the explicit candidate lifecycle'
+    [[ -s "$fragment" && "$expected" =~ ^[0-9a-f]{64}$ ]] \
+      || die 'verified Genesis runtime context lacks its fragment or SHA-256'
+    actual="$(sha256sum "$fragment" | awk '{print $1}')"
+    [[ "$actual" == "$expected" ]] || die 'verified Genesis runtime fragment changed after preflight'
+    local release_sha
+    release_sha="$(sha256sum "$ROOT/profiles/releases/v2026.10.06.lock" | awk '{print $1}')"
+    [[ "${GDC_GENESIS_RELEASE_LOCK_SHA256:-}" == "$release_sha" ]] \
+      || die 'Genesis runtime context release lock digest is not current'
+    local model_profile model_lock
+    model_profile="$(jq -er '.source.model_profile' "$fragment")"
+    [[ "$model_profile" == qwen2.5-7b-instruct-devnet ]] \
+      || die 'Genesis runtime context must use the approved 7B network model profile'
+    model_lock="$ROOT/../model/$model_profile.lock"
+    [[ -r "$model_lock" && "$(sha256sum "$model_lock" | awk '{print $1}')" == "$(jq -er '.source.model_lock_sha256' "$fragment")" ]] \
+      || die 'Genesis runtime context model lock is missing or changed'
+    grep -qx 'GDC_MODEL_PROFILE_SCOPE=network' "$model_lock" \
+      && grep -qx 'MODEL_ID=Qwen/Qwen2.5-7B-Instruct' "$model_lock" \
+      || die 'Genesis runtime model lock is not the approved network-scoped 7B profile'
+    (canonical_fragment="$(mktemp)"
+      trap 'rm -f -- "$canonical_fragment"' EXIT
+      "$ROOT/scripts/render-genesis-software.sh" "$model_profile" "$canonical_fragment" >/dev/null
+      cmp -s "$canonical_fragment" "$fragment") \
+      || die 'Genesis runtime fragment is not byte-identical to the canonical reviewed locks'
+    jq -e --arg commit 136041c81ea8ff38e7620d76af66a7c7fe7eec50 --arg release_sha "$release_sha" '
+      .schema_version == 1 and .kind == "gdc-genesis-software-fragment" and
+      .source.release_profile == "v2026.10.06" and
+      .source.release_lock_sha256 == $release_sha and
+      .spec.deployment.software.components.node.version == "0.2.16-post1" and
+      .spec.deployment.software.components.api.version == "0.2.16-post1" and
+      .spec.deployment.software.components.node.commit == $commit and
+      .spec.deployment.software.components.api.commit == $commit and
+      .binary_sha256.inferenced == "2f6a31c3ecda063a84fcfd80782fe5b00908f9b678da9204d6c7acba602260de" and
+      .binary_sha256.decentralized_api == "332699b4ec760569f5670c6e1feb9d579c2a0c4ec6e0cc5095bf74ea1a37007f" and
+      .spec.deployment.software.model.id == "Qwen/Qwen2.5-7B-Instruct"
+    ' "$fragment" >/dev/null || die 'Genesis runtime fragment does not match the exact approved Core/DAPI/model target'
+    return 0
+  fi
   [[ "$GDC_RELEASE_PROFILE" == v2026.07.23 ]] || die "baseline phases require v2026.07.23, got $GDC_RELEASE_PROFILE"
 }
 

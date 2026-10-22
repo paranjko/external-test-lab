@@ -184,6 +184,22 @@ caught_up_log="$(<"$scratch/join-caught-up.log")"
 [[ "$(tail -n 1 "$scratch/join-caught-up.log")" == 'END host join SUCCESS' ]]
 printf 'PASS caught-up canary resume reaches its receipt-bound signerless continuation\n'
 
+# A full-sync canary may stop in CANARY_RUNNING before its proof is recorded.
+# The dispatcher routes that retained state through the same guarded resume
+# phase; the phase itself enforces the full-sync-only mode and proof gates.
+cat >"$fixture/scripts/verify-join-resume-inputs.sh" <<'SH'
+#!/usr/bin/env bash
+printf '{"operation":"new","receipt_chain":{"last_state":"CANARY_RUNNING","signer_ever_started":false}}\n'
+SH
+if ! GDC_HOME="$home_dir" bash "$fixture/gdc.sh" host join --resume fixture-run --public-host peer.example.test fixture-peer >"$scratch/join-canary-running.log" 2>&1; then
+  cat "$scratch/join-canary-running.log" >&2
+  exit 1
+fi
+canary_running_log="$(<"$scratch/join-canary-running.log")"
+[[ "$canary_running_log" == *'fixture caught-up canary continuation completed'* ]]
+[[ "$(tail -n 1 "$scratch/join-canary-running.log")" == 'END host join SUCCESS' ]]
+printf 'PASS CANARY_RUNNING resume reaches its receipt-bound signerless continuation\n'
+
 # Test the real phase wrapper and real terminal-result writer call. Only the
 # external phase and receipt-writing script are mocked. A receipt failure
 # after a successful phase must change both phase END and command END to fail.

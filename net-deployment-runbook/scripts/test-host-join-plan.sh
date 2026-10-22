@@ -13,9 +13,25 @@ tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/bin"
 
-cat >"$tmp/bootstrap.json" <<'EOF'
-{"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-devnet-community","genesis":{"sha256":"93c32ec403d59af6337c0d79c3ee16010c99394f8ecd9aee4fc72a898f64a9a6"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://node0.example.test/chain-rpc","p2p":"tcp://node0.example.test:5000","api":"https://node0.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://node1.example.test/chain-rpc","p2p":"tcp://node1.example.test:5000","api":"https://node1.example.test"}],"brokers":[]}
+cat >"$tmp/genesis.json" <<'EOF'
+{"app_name":"fixture","app_version":"v1","chain_id":"gonka-devnet-community","initial_height":1,"app_hash":null,"consensus":{"params":{"block":{"max_bytes":"22020096"}}}}
 EOF
+FIXTURE_GENESIS_FILE="$tmp/genesis.json"
+FIXTURE_GENESIS_SHA256="$(sha256sum "$FIXTURE_GENESIS_FILE" | awk '{print $1}')"
+FIXTURE_GENESIS_IDENTITY_SHA256="$(jq -eS 'del(.app_name,.app_version) | if has("app_hash") then .app_hash=(.app_hash//"") else . end | if has("initial_height") then .initial_height=(.initial_height|tostring) else . end | if .consensus.params? then .consensus_params=.consensus.params | del(.consensus) else . end' "$FIXTURE_GENESIS_FILE" | sha256sum | awk '{print $1}')"
+[[ "$FIXTURE_GENESIS_SHA256" != "$FIXTURE_GENESIS_IDENTITY_SHA256" ]] || {
+  echo 'JOIN-plan fixture must distinguish raw Genesis bytes from canonical chain identity' >&2
+  exit 1
+}
+jq -n --arg sha "$FIXTURE_GENESIS_SHA256" '{
+  "$schema":"https://gonka-dev.net/v1.bootstrap.schema.json",chain_id:"gonka-devnet-community",
+  genesis:{sha256:$sha},
+  seeds:[
+    {node_id:"0123456789abcdef0123456789abcdef01234567",rpc:"https://node0.example.test/chain-rpc",p2p:"tcp://node0.example.test:5000",api:"https://node0.example.test"},
+    {node_id:"89abcdef0123456789abcdef0123456789abcdef",rpc:"https://node1.example.test/chain-rpc",p2p:"tcp://node1.example.test:5000",api:"https://node1.example.test"}
+  ],brokers:[]
+}' >"$tmp/bootstrap.json"
+export FIXTURE_GENESIS_FILE
 
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -92,15 +108,42 @@ chmod 0755 "$tmp/bin"/*
 
 # Completed-JOIN re-entry verifies a profile-bound CLI. Keep this fixture
 # hermetic: no-op regression coverage must not fetch a public release asset.
-# This minimal executable ZIP is a fixed test artifact. Do not construct it
-# with `zip`: it is not part of the declared runbook command baseline. Its
-# decoder, base64, is already declared and present in every test image.
-base64 -d >"$tmp/inferenced-linux-amd64.zip" <<'EOF'
-UEsDBAoAAAAAAM4BTF0wfLEgMgAAADIAAAAKABwAaW5mZXJlbmNlZFVUCQADRArMakQKzGp1eAsAAQToAwAABOgDAAAjIS91c3IvYmluL2VudiBiYXNoCnByaW50ZiAiaW5mZXJlbmNlZCB2MC4yLjE1XG4iClBLAQIeAwoAAAAAAM4BTF0wfLEgMgAAADIAAAAKABgAAAAAAAEAAADtgQAAAABpbmZlcmVuY2VkVVQFAANECsxqdXgLAAEE6AMAAAToAwAAUEsFBgAAAAABAAEAUAAAAHYAAAAAAA==
-EOF
+# Use Python's standard-library ZIP writer to create an executable fixture CLI;
+# its download-genesis response is exactly the reviewed raw bytes above.
+python3 - "$tmp/inferenced-linux-amd64.zip" "$tmp/inferenced" <<'PY'
+import sys
+import zipfile
+
+script = (
+    "#!/usr/bin/env bash\n"
+    "set -Eeuo pipefail\n"
+    "case \"${1:-}\" in\n"
+    "  version) printf 'inferenced v0.2.15\\n' ;;\n"
+    "  download-genesis) cp \"$FIXTURE_GENESIS_FILE\" \"$3\" ;;\n"
+    "  *) exit 2 ;;\n"
+    "esac\n"
+)
+info = zipfile.ZipInfo("inferenced")
+info.create_system = 3
+info.external_attr = 0o100755 << 16
+with open(sys.argv[2], "w", encoding="utf-8") as binary:
+    binary.write(script)
+with zipfile.ZipFile(sys.argv[1], "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr(info, script)
+PY
 export FIXTURE_INFERENCED_ARCHIVE="$tmp/inferenced-linux-amd64.zip"
 FIXTURE_INFERENCED_SHA256="$(sha256sum "$FIXTURE_INFERENCED_ARCHIVE" | awk '{print $1}')"
 export FIXTURE_INFERENCED_SHA256
+chmod 0755 "$tmp/inferenced"
+fixture_binary_sha256="$(sha256sum "$tmp/inferenced" | awk '{print $1}')"
+for operator_root in "$tmp/operator" "$tmp/reset-guard-operator"; do
+  fixture_cli_dir="$operator_root/bin/0.2.15"
+  mkdir -p "$fixture_cli_dir"
+  install -m 0755 "$tmp/inferenced" "$fixture_cli_dir/inferenced"
+  printf 'archive_sha256=%s\nplatform=LINUX_AMD64\nbinary_sha256=%s\n' \
+    "$FIXTURE_INFERENCED_SHA256" "$fixture_binary_sha256" >"$fixture_cli_dir/artifact.env"
+  chmod 0600 "$fixture_cli_dir/artifact.env"
+done
 
 printf 'retained validator archive\n' >"$tmp/validator-backup.tar"
 # Every fresh JOIN variant refuses an existing alias path before remote
@@ -217,7 +260,8 @@ host=${2:-}
 remote_command=${3:-}
 printf '%s|%s\n' "$host" "$remote_command" >>"$GDC_PLAN_REMOTE_EFFECT_LOG"
 input="$(cat)"
-if [[ "$host" == validator-a && "$remote_command" == 'sudo -n bash -s' ]]; then
+if [[ "$host" == validator-a && ( "$remote_command" == 'sudo -n bash -s' \
+  || "$remote_command" == 'sudo -n bash -s -- --host-alias validator-a --role validator' ) ]]; then
   if [[ "$input" == *'READY Host readiness preflight'* ]]; then
     printf 'READY Host readiness preflight\n'
     exit 0
@@ -242,11 +286,11 @@ if PATH="$tmp/bin:$PATH" GDC_PLAN_REMOTE_EFFECT_LOG="$plan_reentry_ssh_log" GDC_
     >"$tmp/plan-reentry.out" 2>"$tmp/plan-reentry.err"; then
   echo 'ordinary JOIN unexpectedly passed the unsupported accelerator fixture' >&2; exit 1
 fi
-grep -Fq 'PASS Host readiness preflight host=validator-a' "$tmp/plan-reentry.out"
-grep -Fq 'PASS JOIN target clean host=validator-a' "$tmp/plan-reentry.out"
+grep -Fq 'PASS Host readiness preflight host=validator-a' "$tmp/plan-reentry.out" || { cat "$tmp/plan-reentry.err" >&2; exit 1; }
+grep -Fq 'PASS JOIN target clean host=validator-a' "$tmp/plan-reentry.out" || { cat "$tmp/plan-reentry.err" >&2; exit 1; }
 grep -Fq 'ERROR JOIN preflight failed checkpoint=accelerator-profile' "$tmp/plan-reentry.err"
 ! grep -Fq 'retained local state requires explicit recovery or removal' "$tmp/plan-reentry.err"
-[[ "$(<"$plan_reentry_ssh_log")" == $'validator-a|sudo -n bash -s\nvalidator-a|sudo -n bash -s\nvalidator-a|bash -s' ]]
+[[ "$(<"$plan_reentry_ssh_log")" == $'validator-a|sudo -n bash -s\nvalidator-a|sudo -n bash -s -- --host-alias validator-a --role validator\nvalidator-a|bash -s' ]]
 plan_reentry_result="$(find "$tmp/operator/validator-a/runs" -type f -path '*/join-validator-a/join-result.v1.json' -print | LC_ALL=C sort | tail -n1)"
 [[ -n "$plan_reentry_result" ]]
 jq -e '.outcome == "refused" and .reason == "join_preflight_failed" and .mutation == "none"' "$plan_reentry_result" >/dev/null

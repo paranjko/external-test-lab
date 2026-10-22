@@ -11,7 +11,7 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
 fi
 
 profile="$tmp/join-profile.json"
-printf '%s\n' '{}' >"$profile"
+printf '%s\n' '{"spec":{"network":{"chain_id":"gonka-devnet-community","genesis_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}' >"$profile"
 profile_sha256="$(sha256sum "$profile" | awk '{print $1}')"
 
 write_receipt() {
@@ -26,13 +26,14 @@ write_receipt() {
 }
 
 make_receipts() {
-  local destination="$1"
+  local destination="$1" terminal="${2:-APPLICATION_ACTIVE}"
   mkdir -p "$destination"
   write_receipt "$destination" RUN_CREATED
   write_receipt "$destination" CANARY_VERIFIED
   write_receipt "$destination" PROMOTED
   write_receipt "$destination" CANONICAL_RUNNING
   write_receipt "$destination" APPLICATION_ACTIVE
+  [[ "$terminal" != CANONICAL_VERIFIED ]] || write_receipt "$destination" CANONICAL_VERIFIED
 }
 
 make_layout() {
@@ -137,6 +138,17 @@ verify() {
 
 mkdir -p "$tmp/run/receipts"
 make_receipts "$tmp/run/receipts"
+jq -cn '
+  {schema_version:1,kind:"gdc-host-join-lineage-preflight",
+   bootstrap:{mode:"state_sync",chain_id:"gonka-devnet-community",trust:{height:3000,hash:("e"*64),expires_at:"2000-01-01T00:00:00Z"},
+     snapshot:{discovery:"p2p_canary_pending",providers:[{id:"provider-a"},{id:"provider-b"}]}},
+   fault_domains:[{rpc_url:"https://rpc-a.fixture.test/chain-rpc",host:"rpc-a.fixture.test",port:443,ip:"192.0.2.10"},
+     {rpc_url:"https://rpc-b.fixture.test/chain-rpc",host:"rpc-b.fixture.test",port:443,ip:"192.0.2.11"}],
+   trust_authority:{kind:"quorum",rpc_url:null},checkpoints:{trust:{height:3000}},
+   signer:{state:"PREPARED"},result:{terminal_state:"prepared"}}' >"$tmp/run/lineage-preflight-canary.v1.json"
+jq '.bootstrap.snapshot={discovery:"p2p_canary_caught_up",providers:[{id:"provider-a"},{id:"provider-b"}],observed_at:"2026-10-20T12:00:00Z",canary_node_id:"0123456789abcdef0123456789abcdef01234567",canary_height:4990} | .signer.state="LINEAGE_VERIFIED" | .result.terminal_state="canary_verified"' \
+  "$tmp/run/lineage-preflight-canary.v1.json" >"$tmp/run/lineage-state-sync-receipt.json"
+[[ "$(sha256sum "$tmp/run/lineage-preflight-canary.v1.json" | awk '{print $1}')" != "$(sha256sum "$tmp/run/lineage-state-sync-receipt.json" | awk '{print $1}')" ]]
 make_layout flat
 export GDC_TEST_LAYOUT=flat
 if verify >"$tmp/flat.out" 2>"$tmp/flat.err"; then
@@ -198,7 +210,7 @@ fi
 # generation pass. This is an execution control: it proves the preceding
 # divergent assertion would catch that regression.
 missing_checkpoint_verifier="$negative_control_dir/verify-post-sync-missing-checkpoint.sh"
-sed 's|^bash "\$remote/verify-join-lineage-state.sh".*$|true # TEST-007 negative control removes the current-checkpoint proof|' \
+sed 's|^[[:space:]]*bash "[$]remote/verify-join-lineage-state.sh".*$|  true # TEST-007 negative control removes the current-checkpoint proof|' \
   "$ROOT/scripts/verify-post-sync-join-state.sh" >"$missing_checkpoint_verifier"
 chmod 0755 "$missing_checkpoint_verifier"
 if ! GDC_TEST_POST_SYNC_VERIFIER="$missing_checkpoint_verifier" verify >"$tmp/missing-checkpoint.out" 2>"$tmp/missing-checkpoint.err"; then
@@ -210,6 +222,32 @@ rm -f "$expiry_root/divergent"
 touch "$expiry_root/unavailable"
 if verify >"$tmp/unavailable.out" 2>"$tmp/unavailable.err"; then
   echo 'unavailable trusted origin unexpectedly passed post-sync verification' >&2
+  exit 1
+fi
+
+# An auxiliary service can fail after the canonical signerless proof has been
+# recorded. A same-run retry must accept that exact receipt head, recheck the
+# canonical runtime, and continue to the auxiliary-start gate. The legacy
+# flat-layout refusal still occurs before any remote runtime check.
+rm -f "$tmp/run/receipts"/*.json
+make_receipts "$tmp/run/receipts" CANONICAL_VERIFIED
+make_layout flat-canonical-verified
+export GDC_TEST_LAYOUT=flat-canonical-verified
+verify >"$tmp/canonical-verified.out"
+if [[ ! -f "$tmp/flat-canonical-verified/srv/dai/deploy/canonical-called" \
+  || ! -f "$tmp/flat-canonical-verified/srv/dai/deploy/lineage-called" ]]; then
+  echo 'CANONICAL_VERIFIED retry did not revalidate runtime and lineage' >&2
+  exit 1
+fi
+make_layout legacy-canonical-verified
+export GDC_TEST_LAYOUT=legacy-canonical-verified
+if verify >"$tmp/legacy-canonical-verified.out" 2>"$tmp/legacy-canonical-verified.err"; then
+  echo 'legacy CANONICAL_VERIFIED target unexpectedly passed post-sync verification' >&2
+  exit 1
+fi
+if [[ -e "$tmp/legacy-canonical-verified/srv/dai/deploy/canonical-called" \
+  || -e "$tmp/legacy-canonical-verified/srv/dai/deploy/lineage-called" ]]; then
+  echo 'legacy CANONICAL_VERIFIED target reached runtime check before layout guard' >&2
   exit 1
 fi
 

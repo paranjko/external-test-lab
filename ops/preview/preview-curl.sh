@@ -65,31 +65,18 @@ preview_chain_api_path_allowed() {
 preview_node_path_allowed() {
   local path="$1" query="$2"
   case "$path" in
-    /health|/v1/versions|/devshard/healthz|/chain-rpc/status|/chain-rpc/net_info|\
-    /chain-api/productscience/inference/inference/params)
+    /health|/v1/versions|/devshard/healthz|/devshard/metrics)
       [[ -z "$query" ]]
       return
       ;;
-    /chain-rpc/validators)
-      [[ -n "$query" ]] && preview_valid_validators_query "$query"
-      return
-      ;;
-    /chain-api/productscience/inference/inference/hardware_nodes/*)
-      [[ "$path" =~ ^/chain-api/productscience/inference/inference/hardware_nodes/gonka1[02-9ac-hj-np-z]{6,90}$ && -z "$query" ]]
-      return
-      ;;
-    /chain-api/productscience/inference/inference/participant)
-      [[ "$query" == 'pagination.limit=100&pagination.count_total=true' ]]
-      return
-      ;;
   esac
-  return 1
+  preview_chain_api_path_allowed "$path" "$query"
 }
 
 preview_curl_target() {
   local url="${1:-}" ip a b c d path query preview_number node_number
   if [[ "$url" =~ ^https://gonka-dev\.net/([A-Za-z0-9][A-Za-z0-9._-]{0,127})/bootstrap\.json$ ]]; then
-    printf '/gonka-api/%s/bootstrap.json\n' "${BASH_REMATCH[1]}"
+    printf '/observer/bootstrap/%s/bootstrap.json\n' "${BASH_REMATCH[1]}"
     return 0
   fi
   if [[ "$url" =~ ^https://api\.gonka-dev\.net(/[^?#]+)(\?([A-Za-z0-9._~%&=+-]+))?$ ]]; then
@@ -150,7 +137,7 @@ main() {
   local -a headers=()
   if [[ $# -eq 10 ]]; then
     [[ "$8" == -H && "$9" =~ ^x-cosmos-block-height:\ [1-9][0-9]{0,14}$ &&
-      "$url" =~ ^https://api\.gonka-dev\.net/chain-api/productscience/inference/inference/(current_epoch_group_data|epoch_group_data/[1-9][0-9]{0,14}\?model_id=.+)$ ]] || {
+      "$url" =~ ^https://(api|node[0-9]+)\.gonka-dev\.net/chain-api/productscience/inference/inference/(current_epoch_group_data|epoch_group_data/[1-9][0-9]{0,14}\?model_id=.+)$ ]] || {
       echo 'preview collector height header is outside the model query contract' >&2
       return 2
     }

@@ -31,11 +31,12 @@ validate() {
   jq -e . "$file" >/dev/null 2>&1 || die parse "$file" 'invalid JSON'
   jq --stream -e -s '[.[] | select(length == 2) | .[0] | @json] | length == (unique | length)' "$file" >/dev/null 2>&1 || die parse "$file" 'duplicate key'
   jq -e '
-    type == "object" and ((keys - ["software"]) | sort) == ["$schema","brokers","chain_id","genesis","seeds"] and
+    type == "object" and ((keys - ["software","bootstrap_mode"]) | sort) == ["$schema","brokers","chain_id","genesis","seeds"] and
+    ((has("bootstrap_mode") | not) or .bootstrap_mode == "genesis-single-seed") and
     .["$schema"] == "https://gonka-dev.net/v1.bootstrap.schema.json" and
     (.chain_id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")) and
     (.genesis | type == "object" and (keys | sort) == ["sha256"] and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))) and
-    (.seeds | type == "array" and length >= 2) and
+    (.seeds | type == "array") and
     (.brokers | type == "array") and
     all(.seeds[]; type == "object" and ((keys | sort) == ["node_id","p2p","rpc"] or (keys | sort) == ["api","node_id","p2p","rpc"]) and
       (.node_id | type == "string" and test("^[0-9a-f]{40}$")) and (.rpc | type == "string") and (.p2p | type == "string") and
@@ -44,6 +45,11 @@ validate() {
       (.api_urls | type == "array" and length >= 1 and all(.[]; type == "string")) and
       ((has("access_url") | not) or (.access_url | type == "string")))
   ' "$file" >/dev/null || die schema '$' 'does not match network bootstrap v1'
+  if jq -e 'has("bootstrap_mode") and .bootstrap_mode == "genesis-single-seed"' "$file" >/dev/null; then
+    [[ $(jq '.seeds | length' "$file") -eq 1 ]] || die semantics seeds 'genesis-single-seed requires exactly one seed'
+  else
+    [[ $(jq '.seeds | length' "$file") -ge 2 ]] || die semantics seeds 'at least two independent seeds are required'
+  fi
   if jq -e 'has("software")' "$file" >/dev/null; then
     jq -e -f "$(dirname "${BASH_SOURCE[0]}")/bootstrap-software.jq" "$file" >/dev/null ||
       die schema software 'does not match software v1'
@@ -79,14 +85,21 @@ validate() {
 }
 
 render_env() {
-  local file=$1 first_api registration_apis rpc0 rpc1 p2p
+  local file=$1 first_api registration_apis rpc0 rpc1 p2p single_seed
   first_api=$(jq -r '[.seeds[] | select(has("api")) | .api][0]' "$file")
   registration_apis=$(jq -r '[.seeds[] | select(has("api")) | .api] | join(",")' "$file")
   [[ -n "$registration_apis" ]] || die env seeds 'at least one registration API is required'
   rpc0=$(jq -r '[.seeds[].rpc] | unique | .[0]' "$file"); rpc1=$(jq -r '[.seeds[].rpc] | unique | .[1]' "$file")
-  [[ -n "$rpc0" && -n "$rpc1" && "$rpc1" != null ]] || die env seeds 'two distinct RPC URLs required'
+  if [[ "$(jq -r '.bootstrap_mode // empty' "$file")" == genesis-single-seed ]]; then
+    [[ -n "$rpc0" && "$rpc1" == null ]] || die env seeds 'genesis-single-seed requires one RPC URL'
+    rpc1=$rpc0; single_seed=true
+  else
+    [[ -n "$rpc0" && -n "$rpc1" && "$rpc1" != null ]] || die env seeds 'two distinct RPC URLs required'
+    single_seed=false
+  fi
   p2p=$(jq -r '.seeds[0].p2p' "$file")
   printf "export SEED_API_URL=%q\nexport GDC_JOIN_REGISTRATION_ENDPOINTS=%q\nexport SEED_NODE_RPC_URL=%q\nexport SEED_NODE_P2P_URL=%q\nexport RPC_SERVER_URL_1=%q\nexport RPC_SERVER_URL_2=%q\n" "$first_api" "$registration_apis" "$rpc0" "$p2p" "$rpc0" "$rpc1"
+  if [[ "$single_seed" == true ]]; then printf 'export BOOTSTRAP_RPC_REDUNDANCY=single-endpoint\n'; fi
 }
 
 # JOIN installs the CLI off PATH in the shared operator-root version cache.
@@ -107,7 +120,10 @@ download_genesis() {
   command -v "$cli" >/dev/null 2>&1 || die dependency inferenced 'a compatible inferenced CLI is required to download the exact Genesis'
   expected_sha=$(jq -r '.genesis.sha256' "$file"); expected_chain=$(jq -r '.chain_id' "$file")
   "$cli" download-genesis "$rpc" "$output" >/dev/null 2>&1 || return 1
-  actual_sha=$(sha256sum "$output" | awk '{print $1}'); actual_chain=$(jq -r '.chain_id // empty' "$output" 2>/dev/null || true)
+  # Bootstrap v1 defines this as the exact bytes emitted by the pinned
+  # inferenced download-genesis command, not GDC's canonical chain identity.
+  actual_sha=$(sha256sum "$output" | awk '{print $1}')
+  actual_chain=$(jq -r '.chain_id // empty' "$output" 2>/dev/null || true)
   [[ "$actual_sha" == "$expected_sha" && "$actual_chain" == "$expected_chain" ]]
 }
 
@@ -124,12 +140,15 @@ stage() {
 }
 
 online() {
-  local file=$1 seed_count broker_count i rpc node_id observed api p2p host port endpoint temporary
+  local file=$1 seed_count broker_count i rpc node_id status observed observed_chain api p2p host port endpoint temporary
   seed_count=$(jq '.seeds | length' "$file")
   for ((i=0; i<seed_count; i++)); do
     rpc=$(jq -r ".seeds[$i].rpc" "$file"); node_id=$(jq -r ".seeds[$i].node_id" "$file")
-    observed=$(curl -fsS --connect-timeout 10 --max-time 20 "${rpc%/}/status" | jq -r '.result.node_info.id // empty')
+    status=$(curl -fsS --connect-timeout 10 --max-time 20 "${rpc%/}/status")
+    observed=$(jq -r '.result.node_info.id // empty' <<<"$status")
     [[ "$observed" == "$node_id" ]] || die online "$rpc" '/status node ID does not match descriptor'
+    observed_chain=$(jq -r '.result.node_info.network // empty' <<<"$status")
+    [[ "$observed_chain" == "$(jq -r '.chain_id' "$file")" ]] || die online "$rpc" '/status chain ID does not match descriptor'
     temporary=$(mktemp)
     if ! download_genesis "$file" "$rpc" "$temporary"; then
       rm -f -- "$temporary"

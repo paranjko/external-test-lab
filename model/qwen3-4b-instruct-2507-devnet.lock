@@ -1,0 +1,12 @@
+# Explicit Community DevNet network profile derived from the pinned model
+# revision and runtime envelope. Qualification-only status is not admission.
+GDC_MODEL_PROFILE_SCOPE=network
+MODEL_ID=Qwen/Qwen3-4B-Instruct-2507
+MODEL_REVISION=cdbee75f17c01a7cc42f958dc650907174af0554
+MODEL_MIN_VRAM_MIB=15360
+MLNODE_DTYPE=bfloat16
+MLNODE_CONTEXT_LENGTH=25000
+MLNODE_MAX_NUM_SEQS=1
+MLNODE_GPU_MEMORY_UTILIZATION=0.85
+MLNODE_TENSOR_PARALLEL_SIZE=1
+MLNODE_VLLM_ARGS='--enable-auto-tool-choice --tool-call-parser hermes'

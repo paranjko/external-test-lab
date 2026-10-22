@@ -45,8 +45,8 @@ jq -e '
   and .mlnode == {
     image:"ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1",
     proxy_image:"nginx:1.28.0@sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609",
-    model_id:"Qwen/Qwen3-0.6B",model_revision:"c1899de289a04d12100db370d81485cdf75e47ca",
-    context_length:2048,max_num_seqs:64,gpu_memory_utilization:"0.85",dtype:"auto",tensor_parallel_size:1
+    model_id:"Qwen/Qwen2.5-7B-Instruct",model_revision:"a09a35458c702b33eeacc393d103063234e8bc28",
+    context_length:4096,max_num_seqs:32,gpu_memory_utilization:"0.92",dtype:"bfloat16",tensor_parallel_size:1
   }
 ' "$bootstrap_mlnode" >/dev/null
 bootstrap_digest='sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1'

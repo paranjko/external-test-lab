@@ -29,6 +29,7 @@ export function validPath(url) {
   if (url.pathname === "/health" && url.search === "") return true;
   if (url.pathname === "/v1/versions" && url.search === "") return true;
   if (url.pathname === "/devshard/healthz" && url.search === "") return true;
+  if (url.pathname === "/devshard/metrics" && url.search === "") return true;
   if (url.pathname === "/devshard/stats/shards" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/status" && url.search === "") return true;
   if (url.pathname === "/chain-rpc/net_info" && url.search === "") return true;
@@ -40,9 +41,11 @@ export function validPath(url) {
   const apiPath = "/chain-api/productscience/inference/inference/";
   const suffix = url.pathname.startsWith(apiPath) ? url.pathname.slice(apiPath.length) : "";
   if (
-    ["devshard_approved_versions", "models_all", "epoch_info", "active_confirmation_poc_event"].includes(suffix) &&
+    ["devshard_approved_versions", "models_all", "epoch_info", "current_epoch_group_data", "active_confirmation_poc_event"].includes(suffix) &&
     url.search === ""
   ) return true;
+  if (/^epoch_group_data\/[1-9]\d{0,14}$/.test(suffix) && url.search.length <= 778 &&
+    /^\?model_id=(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+$/.test(url.search)) return true;
   if (/^(?:epoch_group_data|all_poc_v2_store_commits|poc_v2_validations_for_stage|confirmation_poc_events)\/[1-9]\d*$/.test(suffix) && url.search === "") return true;
   if (url.pathname === `${apiPath}participant`) {
     return url.search === "?pagination.limit=100" ||
@@ -91,6 +94,15 @@ function reject(response, code, reason) {
   response.end(JSON.stringify({ error: reason }));
 }
 
+export function modelHeightHeaders(url, value) {
+  if (value === undefined) return {};
+  if (typeof value !== "string" || !/^[1-9]\d{0,14}$/.test(value) ||
+    !validPath(url) || !/^\/chain-api\/productscience\/inference\/inference\/(?:current_epoch_group_data|epoch_group_data\/[1-9]\d{0,14})$/.test(url.pathname)) {
+    throw new Error("invalid_model_height_header");
+  }
+  return { "x-cosmos-block-height": value };
+}
+
 export async function resolvedPublicIpv4(host, lookup = dns.promises.lookup) {
   const records = await lookup(host, { all: true, family: 4, verbatim: true });
   const addresses = records.map((record) => record.address);
@@ -99,6 +111,12 @@ export async function resolvedPublicIpv4(host, lookup = dns.promises.lookup) {
 }
 
 function proxyRequest(request, response, host, path, address) {
+  let heightHeaders;
+  try {
+    heightHeaders = modelHeightHeaders(new URL(`https://${host}${path}`), request.headers["x-cosmos-block-height"]);
+  } catch {
+    return reject(response, 400, "invalid_model_height_header");
+  }
   const upstream = https.request({
     hostname: host,
     port: 443,
@@ -109,7 +127,7 @@ function proxyRequest(request, response, host, path, address) {
     timeout: timeoutMs,
     autoSelectFamily: false,
     lookup: (_hostname, _options, callback) => callback(null, address, 4),
-    headers: { host, accept: "application/json" },
+    headers: { host, accept: "application/json", ...heightHeaders },
   }, (upstreamResponse) => {
     const headers = {
       "content-type": upstreamResponse.headers["content-type"] || "application/json",

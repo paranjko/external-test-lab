@@ -33,12 +33,15 @@ case "$url" in
     esac
     case "$url" in
       */abci_info)
-        [[ "${MODE:-}" == operator ]] || exit 22
-        printf '{"result":{"response":{"version":"0.2.15"}}}\n' ;;
+        case "${MODE:-}" in
+          operator) printf '{"result":{"response":{"version":"0.2.15"}}}\n' ;;
+          single_software|single_software_mismatch) printf '{"result":{"response":{"version":"0.2.16-post1"}}}\n' ;;
+          *) exit 22 ;;
+        esac ;;
       */status)
         catching=false
         [[ "${MODE:-good}:$node" == catching_root:0 ]] && catching=true
-        printf '{"result":{"node_info":{"id":"%s","network":"gonka-devnet-community","version":"0.38.19"},"sync_info":{"catching_up":%s}}}\n' "$id" "$catching"
+        printf '{"result":{"node_info":{"id":"%s","network":"gonka-devnet-community","version":"0.38.19"},"sync_info":{"catching_up":%s,"latest_block_height":"123"}}}\n' "$id" "$catching"
         ;;
       */net_info)
         printf '{"result":{"peers":['
@@ -53,9 +56,15 @@ case "$url" in
     remote_ip="8.8.4.$((node + 1))"
     ;;
   https://node0.example.test/v1/versions)
-    [[ "${MODE:-}" == operator ]] || exit 22
     remote_ip=8.8.4.1
-    printf '{"node_version":{"application_name":"inference-chain","version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"},"api_version":{"application_name":"decentralized-api","version":"0.2.15-post3","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}}\n'
+    case "${MODE:-}" in
+      operator) printf '{"node_version":{"application_name":"inference-chain","version":"0.2.15","commit":"4d687ed6782bcea3931d2d9135bf322f84e190ab"},"api_version":{"application_name":"decentralized-api","version":"0.2.15-post3","commit":"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}}\n' ;;
+      single_software|single_software_mismatch)
+        dapi=0.2.16-post1
+        [[ "${MODE:-}" != single_software_mismatch ]] || dapi=0.2.16-post2
+        printf '{"node_version":{"application_name":"inference-chain","version":"0.2.16-post1","commit":"136041c81ea8ff38e7620d76af66a7c7fe7eec50"},"api_version":{"application_name":"decentralized-api","version":"%s","commit":"136041c81ea8ff38e7620d76af66a7c7fe7eec50"}}\n' "$dapi" ;;
+      *) exit 22 ;;
+    esac
     ;;
   http://8.8.4.[1-5]:8000/chain-rpc/*)
     exit 22
@@ -149,3 +158,121 @@ jq -e '.policy.mode=="operator_source" and .policy.source_rpc=="https://node0.ex
 ! grep -Ev '^https://node0.example.test/' "$tmp/source-requests"
 ! grep -q '/net_info' "$tmp/source-requests"
 printf 'PASS explicit source selection is recorded as one authority without gossip or invented quorum\n'
+
+jq --arg id "${ids[0]}" --slurpfile release "$(dirname "$ROOT")/bootstrap/gonka-devnet-community.json" \
+  '.bootstrap_mode="genesis-single-seed" | .seeds=[{node_id:$id,rpc:"https://node0.example.test/chain-rpc",p2p:"tcp://node0.example.test:5000",api:"https://node0.example.test"}] | .software=$release[0].software' \
+  "$tmp/bootstrap.json" >"$tmp/single-software-bootstrap.json"
+MODE=single_software IDS_FILE="$tmp/ids" PATH="$tmp/bin:$PATH" "$OBSERVE" \
+  --bootstrap-file "$tmp/single-software-bootstrap.json" --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+  --chain-id gonka-devnet-community --run-id fixture-single-software --output "$tmp/single-software.json"
+jq -e '.policy.policy_id=="bootstrap-software/v1" and .policy.mode=="operator_source" and
+  .policy.source_rpc=="https://node0.example.test/chain-rpc" and (.seeds|length)==1 and .seeds[0].status=="usable" and
+  (.runtime_api_origins|length)==1 and .runtime_api_origins[0].seed_index==0 and .runtime_api_origins[0].status=="usable" and .runtime_api_origins[0].node_id==.seeds[0].expected_node_id and .runtime_api_origins[0].remote_ip=="8.8.4.1" and
+  .runtime.core.version==.software.components.node.version and .runtime.core.commit==.software.components.node.commit and
+  .runtime.dapi.version==.software.components.api.version and .runtime.dapi.commit==.software.components.api.commit' "$tmp/single-software.json" >/dev/null
+printf 'PASS explicit genesis single-seed software observation includes live identity and pinned runtime evidence\n'
+# This synthetic lineage fixture models the confirm-observation field; the
+# separate identity test below exercises deriving it from exact staged bytes.
+jq '.bootstrap.chain_identity_sha256 = .bootstrap.genesis_sha256' "$tmp/single-software.json" >"$tmp/single-software-confirm.json"
+mv "$tmp/single-software-confirm.json" "$tmp/single-software.json"
+GDC_JOIN_RPC_IP_MAP='node0.example.test=8.8.4.1' IDS_FILE="$tmp/ids" PATH="$tmp/bin:$PATH" \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/single-software-bootstrap.json" \
+  --observation "$tmp/single-software.json" --receipt "$tmp/single-software-lineage.json" \
+  --env "$tmp/single-software-lineage.env" --source-rpc https://node0.example.test/chain-rpc >/dev/null
+jq -e '.bootstrap.mode=="full_sync" and .result.terminal_state=="prepared" and .trust_authority.kind=="genesis_single_seed"' \
+  "$tmp/single-software-lineage.json" >/dev/null
+printf 'PASS observed single-seed runtime witness satisfies strict live full-sync lineage preflight\n'
+if MODE=single_software_mismatch IDS_FILE="$tmp/ids" PATH="$tmp/bin:$PATH" "$OBSERVE" \
+  --bootstrap-file "$tmp/single-software-bootstrap.json" --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+  --chain-id gonka-devnet-community --run-id fixture-single-software-mismatch --output "$tmp/single-software-mismatch.json" \
+  >"$tmp/single-software-mismatch.out" 2>"$tmp/single-software-mismatch.err"; then
+  echo 'single-seed software descriptor unexpectedly accepted a runtime mismatch' >&2
+  exit 1
+fi
+grep -Fq 'network_observation_bootstrap_runtime_mismatch:' "$tmp/single-software-mismatch.err"
+printf 'PASS genesis single-seed software observer rejects live runtime mismatch\n'
+
+# The confirmation observation must use the candidate profile's exact pinned
+# CLI to validate raw distribution bytes before adding canonical identity.
+identity_genesis="$tmp/identity-genesis.json"
+cat >"$identity_genesis" <<'EOF'
+{"app_name":"fixture","app_version":"v1","chain_id":"gonka-devnet-community","initial_height":1,"app_hash":null,"consensus":{"params":{"block":{"max_bytes":"22020096"}}}}
+EOF
+identity_raw="$(sha256sum "$identity_genesis" | awk '{print $1}')"
+jq --arg id "${ids[0]}" --arg raw "$identity_raw" --slurpfile release "$(dirname "$ROOT")/bootstrap/gonka-devnet-community.json" \
+  '.bootstrap_mode="genesis-single-seed" | .genesis.sha256=$raw | .seeds=[{node_id:$id,rpc:"https://node0.example.test/chain-rpc",p2p:"tcp://node0.example.test:5000",api:"https://node0.example.test"}] | .software=$release[0].software' \
+  "$tmp/bootstrap.json" >"$tmp/identity-bootstrap.json"
+identity_archive_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+identity_cli_version=9.9.9
+prepare_identity_cli() {
+  local cli_dir="$1/bin/$identity_cli_version" binary_sha
+  mkdir -p "$cli_dir"
+  cat >"$cli_dir/inferenced" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+case "${1:-}" in
+  version) printf 'inferenced v9.9.9\n' ;;
+  download-genesis)
+    if [[ "${GDC_TEST_BAD_GENESIS:-false}" == true ]]; then
+      cp "$GDC_TEST_BAD_GENESIS_FILE" "$3"
+    else
+      cp "$GDC_TEST_GENESIS_FILE" "$3"
+    fi
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+  chmod 0755 "$cli_dir/inferenced"
+  binary_sha="$(sha256sum "$cli_dir/inferenced" | awk '{print $1}')"
+  printf 'archive_sha256=%s\nplatform=LINUX_AMD64\nbinary_sha256=%s\n' "$identity_archive_sha" "$binary_sha" >"$cli_dir/artifact.env"
+  jq -n --arg version "$identity_cli_version" --arg archive "$identity_archive_sha" \
+    '{spec:{components:{core:{expected_runtime:{version:$version},installation:{binary:{sha256:$archive}}}}}}' >"$tmp/identity-profile.json"
+}
+identity_canonical="$(jq -eS 'del(.app_name,.app_version) | if has("app_hash") then .app_hash=(.app_hash//"") else . end | if has("initial_height") then .initial_height=(.initial_height|tostring) else . end | if .consensus.params? then .consensus_params=.consensus.params | del(.consensus) else . end' "$identity_genesis" | sha256sum | awk '{print $1}')"
+prepare_identity_cli "$tmp/identity-cli-home"
+jq --arg raw "$identity_raw" '.genesis.sha256=$raw' "$tmp/bootstrap.json" >"$tmp/identity-two-seed-bootstrap.json"
+GDC_TEST_GENESIS_FILE="$identity_genesis" IDS_FILE="$tmp/ids" MODE=good PATH="$tmp/bin:$PATH" \
+  "$OBSERVE" --bootstrap-file "$tmp/identity-two-seed-bootstrap.json" --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+    --chain-id gonka-devnet-community --run-id fixture-identity-unenriched --output "$tmp/identity-unenriched-observation.json"
+GDC_HOME="$tmp/identity-cli-home" GDC_TEST_GENESIS_FILE="$identity_genesis" IDS_FILE="$tmp/ids" MODE=single_software PATH="$tmp/bin:$PATH" \
+  "$OBSERVE" --bootstrap-file "$tmp/identity-two-seed-bootstrap.json" --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+    --chain-id gonka-devnet-community --run-id fixture-identity --output "$tmp/identity-observation.json" \
+    --join-profile "$tmp/identity-profile.json"
+jq -e --arg raw "$identity_raw" --arg canonical "$identity_canonical" \
+  '.bootstrap.genesis_sha256==$raw and .bootstrap.chain_identity_sha256==$canonical' "$tmp/identity-observation.json" >/dev/null
+expected_identity_state="$(jq -cS --arg identity "$identity_canonical" '
+  {prior_network_state_id:.network_state_id,
+   bootstrap:{chain_id:.bootstrap.chain_id,distribution_sha256:.bootstrap.genesis_sha256,
+     chain_identity_sha256:$identity,document_sha256:.bootstrap.document_sha256},
+   runtime:{core:.runtime.core,dapi:.runtime.dapi},software:(.software // null)}
+' "$tmp/identity-unenriched-observation.json" | sha256sum | awk '{print $1}')"
+[[ "$(jq -r .network_state_id "$tmp/identity-observation.json")" == "$expected_identity_state" ]] \
+  || { echo 'canonical identity enrichment did not preserve the prior policy/source fingerprint' >&2; exit 1; }
+GDC_HOME="$tmp/identity-cli-home" GDC_TEST_GENESIS_FILE="$identity_genesis" IDS_FILE="$tmp/ids" MODE=good PATH="$tmp/bin:$PATH" \
+  "$OBSERVE" --bootstrap-file "$tmp/identity-two-seed-bootstrap.json" --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+    --chain-id gonka-devnet-community --run-id fixture-identity-two-seed --output "$tmp/identity-two-seed-observation.json" \
+    --join-profile "$tmp/identity-profile.json"
+jq -e --arg raw "$identity_raw" --arg canonical "$identity_canonical" \
+  '.bootstrap.genesis_sha256==$raw and .bootstrap.chain_identity_sha256==$canonical and (.seeds|length)>=2' \
+  "$tmp/identity-two-seed-observation.json" >/dev/null
+printf '{"wrong":"genesis"}\n' >"$tmp/wrong-genesis.json"
+prepare_identity_cli "$tmp/wrong-cli-home" true
+if GDC_HOME="$tmp/wrong-cli-home" GDC_TEST_BAD_GENESIS=true GDC_TEST_BAD_GENESIS_FILE="$tmp/wrong-genesis.json" \
+  GDC_TEST_GENESIS_FILE="$identity_genesis" IDS_FILE="$tmp/ids" MODE=single_software PATH="$tmp/bin:$PATH" \
+  "$OBSERVE" --bootstrap-file "$tmp/identity-bootstrap.json" --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+    --chain-id gonka-devnet-community --run-id fixture-identity-bad --output "$tmp/identity-bad.json" \
+    --join-profile "$tmp/identity-profile.json" >"$tmp/identity-bad.out" 2>"$tmp/identity-bad.err"; then
+  echo 'identity confirmation accepted Genesis bytes that differ from the reviewed Bootstrap digest' >&2
+  exit 1
+fi
+[[ ! -e "$tmp/identity-bad.json" ]] || { echo 'failed identity confirmation left a partial promoted observation' >&2; exit 1; }
+if GDC_HOME="$tmp/missing-cli-home" GDC_TEST_GENESIS_FILE="$identity_genesis" IDS_FILE="$tmp/ids" MODE=single_software PATH="$tmp/bin:$PATH" \
+  "$OBSERVE" --bootstrap-file "$tmp/identity-bootstrap.json" --bootstrap-url https://gonka-dev.net/gonka-devnet-community/bootstrap.json \
+    --chain-id gonka-devnet-community --run-id fixture-identity-missing-cli --output "$tmp/identity-missing-cli.json" \
+    --join-profile "$tmp/identity-profile.json" >"$tmp/identity-missing-cli.out" 2>"$tmp/identity-missing-cli.err"; then
+  echo 'identity confirmation accepted a missing profile-bound CLI' >&2
+  exit 1
+fi
+[[ ! -e "$tmp/identity-missing-cli.json" ]] || { echo 'missing CLI left a partial promoted observation' >&2; exit 1; }
+grep -Fq 'shared inferenced CLI or metadata is missing or unsafe' "$tmp/identity-missing-cli.err"
+printf 'PASS confirmation binds exact pinned CLI, raw distribution and canonical Genesis identity; failures leave no promoted observation\n'

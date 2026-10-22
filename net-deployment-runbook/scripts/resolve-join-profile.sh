@@ -64,7 +64,8 @@ trap 'rm -f -- "$spec_tmp"' EXIT
 # complete bounded diagnostics remain in the receipt-bound observation.
 jq -cn \
   --arg chain "$(jq -r .bootstrap.chain_id "$observation")" \
-  --arg genesis "$(jq -r .bootstrap.genesis_sha256 "$observation")" \
+  --arg genesis "$(jq -r '.bootstrap.chain_identity_sha256 // .bootstrap.genesis_sha256' "$observation")" \
+  --arg bootstrap_genesis "$(jq -r .bootstrap.genesis_sha256 "$observation")" \
   --arg bootstrap "$(jq -r .bootstrap.document_sha256 "$observation")" \
   --arg bootstrap_url "$(jq -r .bootstrap.url "$observation")" \
   --arg node "$node_name" --arg host "$public_host" --argjson port "$p2p_port" \
@@ -77,5 +78,5 @@ jq -cn \
   --argjson unavailable '[]' \
   --argjson acquisition "$acquisition" \
   --argjson identity "$identity" --argjson fence "$([[ "$operation" == restore ]] && echo true || echo false)" \
-  '{network:{chain_id:$chain,genesis_sha256:$genesis,bootstrap_sha256:$bootstrap,bootstrap_url:$bootstrap_url},seeds:{usable:$usable,unavailable:$unavailable},target:{node_name:$node,public_host:$host,public_p2p_address:("tcp://" + $host + ":" + ($port|tostring)),platform:"linux-amd64",accelerator:$accelerator},deployment:({gdc_source_commit:$commit,data_layout:"gdc-data-layout/v2",host_envelope:$host_envelope} + (if $software == null then {} else {software:$software} end)),components:{core:$core,dapi:$dapi},state_acquisition:$acquisition,identity:$identity,activation_policy:{application_required_for_complete:true,signer_allowed_in_profile:false,old_signer_fence_required:$fence}}' | jq -cS . >"$spec_tmp"
+  '{network:{chain_id:$chain,genesis_sha256:$genesis,bootstrap_genesis_sha256:$bootstrap_genesis,bootstrap_sha256:$bootstrap,bootstrap_url:$bootstrap_url},seeds:{usable:$usable,unavailable:$unavailable},target:{node_name:$node,public_host:$host,public_p2p_address:("tcp://" + $host + ":" + ($port|tostring)),platform:"linux-amd64",accelerator:$accelerator},deployment:({gdc_source_commit:$commit,data_layout:"gdc-data-layout/v2",host_envelope:$host_envelope} + (if $software == null then {} else {software:$software} end)),components:{core:$core,dapi:$dapi},state_acquisition:$acquisition,identity:$identity,activation_policy:{application_required_for_complete:true,signer_allowed_in_profile:false,old_signer_fence_required:$fence}}' | jq -cS . >"$spec_tmp"
 "$ROOT/scripts/join-profile.sh" create --observation "$observation" --spec "$spec_tmp" --operation "$operation" --run-id "$run_id" --output "$output"
