@@ -8,6 +8,10 @@ EDGE_NODE="${2:-}"
 if [[ "$COMPONENT" == edge-node ]]; then
   topology_contains_node "$EDGE_NODE" || die "ops edge-node requires an alias from GDC_NODE_ALIASES: $EDGE_NODE"
 fi
+if [[ "$COMPONENT" == faucet ]]; then
+  GATEWAY_NODE="$GENESIS_NODE"
+  printf 'READY isolated faucet target is the Genesis Host %s\n' "$GATEWAY_NODE"
+fi
 if [[ "$COMPONENT" == explorer ]]; then
   exec "$ROOT/scripts/phase-explorer.sh"
 fi
@@ -51,6 +55,7 @@ BIFROST_ENV="$OPS_RENDER/bifrost.env"
 BIFROST_BROKER_ENV="$OPS_RENDER/bifrost-broker.env"
 BIFROST_EDGE_ENV="$OPS_RENDER/bifrost-edge.env"
 REMOTE="/tmp/gdc-ops-$$"
+OPS_START_LOG="/srv/dai/ops/start-$COMPONENT-${REMOTE##*/}.log"
 SITE_INDEX_RENDER=''
 SITE_ASSETS_RENDER=''
 FAUCET_OPTION=''
@@ -83,8 +88,16 @@ if [[ "$COMPONENT" == monitoring ]]; then
   [[ -n "${GDC_GRAFANA_ADMIN_PASSWORD:-}" ]] || die 'ops monitoring requires GDC_GRAFANA_ADMIN_PASSWORD owned by OPS'
 fi
 
-step 'Render monitoring and public status configuration'
-"$ROOT/04-ops/render-ops.sh" --inventory "$INVENTORY" --output-dir "$OPS_RENDER" >/dev/null
+if [[ "$COMPONENT" == faucet ]]; then
+  OPS_RENDER="$GENERATED/ops/faucet-only"
+  FAUCET_ENV="$OPS_RENDER/faucet.env"
+  GATEWAY_RESERVE_ENV="$OPS_RENDER/gateway-reserve-signer.env"
+  step 'Render isolated faucet Compose inputs without monitoring or L2 configuration'
+  "$ROOT/04-ops/render-ops.sh" --inventory "$INVENTORY" --output-dir "$OPS_RENDER" --faucet-only >/dev/null
+else
+  step 'Render monitoring and public status configuration'
+  "$ROOT/04-ops/render-ops.sh" --inventory "$INVENTORY" --output-dir "$OPS_RENDER" >/dev/null
+fi
 
 reconcile_public_grafana() {
   local node="$PUBLIC_EDGE_NODE" edge_env edge_remote edge_start_log
@@ -281,6 +294,7 @@ wait_gateway_admission_observer_ready() {
 }
 
 GATEWAY_OPTION=''
+INSTALL_OPTION=''
 CADDY_START_COMMAND='docker compose up -d --force-recreate caddy'
 POST_START_COMMAND=true
 if [[ "$COMPONENT" == edge ]]; then
@@ -417,7 +431,9 @@ case "$COMPONENT" in
       "FAUCET_GATEWAY_RESERVE_RECIPIENT=$gateway_recipient" "FAUCET_GATEWAY_RESERVE_TOKEN=$(<"$reserve_signer_token")" \
       "FAUCET_GATEWAY_RESERVE_MAX_NGONKA=${GDC_GATEWAY_MAX_REFILL_NGONKA:-500000000000}"
     FAUCET_OPTION="--faucet-env '$REMOTE/rendered/faucet.env' --gateway-reserve-env '$REMOTE/rendered/gateway-reserve-signer.env'"
-    START_COMMAND='docker compose --profile gateway-reserve up -d --build --force-recreate faucet gateway-reserve-signer'
+    INSTALL_OPTION='--faucet-only'
+    START_COMMAND='docker compose --project-directory faucet-runtime -f faucet-runtime/compose.yaml --profile gateway-reserve up -d --build --force-recreate faucet gateway-reserve-signer'
+    CADDY_START_COMMAND=true
     ENDPOINT="https://${GENESIS_PUBLIC_HOST}/faucet/health"
     ;;
   gateway)
@@ -861,7 +877,7 @@ rsync -a "$ROOT/04-ops/" "$GATEWAY_NODE:$REMOTE/04-ops/"
 scp -q "$ROOT/scripts/lib-lock.sh" "$GATEWAY_NODE:$REMOTE/04-ops/lib-lock.sh"
 scp -q "$ROOT/scripts/gateway-reserve-policy.sh" "$GATEWAY_NODE:$REMOTE/04-ops/gateway-reserve-policy.sh"
 [[ -z "${SITE_ASSETS_RENDER:-}" ]] || rsync -a --delete "$SITE_ASSETS_RENDER/" "$GATEWAY_NODE:$REMOTE/04-ops/site/"
-rsync -a "$OPS_RENDER/" "$GATEWAY_NODE:$REMOTE/rendered/"
+"$ROOT/scripts/stage-ops-render.sh" "$COMPONENT" "$GATEWAY_NODE" "$REMOTE" "$OPS_RENDER"
 if [[ -n "$FAUCET_SIGNER_HOME" ]]; then
   rsync -a "$FAUCET_SIGNER_HOME/" "$GATEWAY_NODE:$REMOTE/faucet-signer/"
 fi
@@ -884,14 +900,16 @@ if ssh -T "$GATEWAY_NODE" "set -Eeuo pipefail
     sudo cp -a '$REMOTE/faucet-signer/.' /srv/dai/gonka-devnet-faucet/operator-home/
     sudo chmod -R go-rwx /srv/dai/gonka-devnet-faucet
   fi
-  sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $GATEWAY_OPTION $FAUCET_OPTION $BIFROST_OPTION
+  sudo '$REMOTE/04-ops/install-ops.sh' --component '$COMPONENT' --render-dir '$REMOTE/rendered' $INSTALL_OPTION $GATEWAY_OPTION $FAUCET_OPTION $BIFROST_OPTION
   rm -rf '$REMOTE'
   {
     cd /srv/dai/ops && $START_COMMAND && $CADDY_START_COMMAND && $POST_START_COMMAND
-  } >/srv/dai/ops/start-$COMPONENT.log 2>&1"; then
+  } >'$OPS_START_LOG' 2>&1"; then
   printf 'READY %s endpoint %s\n' "$COMPONENT" "$ENDPOINT"
 else
-  ssh "$GATEWAY_NODE" "tail -100 /srv/dai/ops/start-$COMPONENT.log" >&2 || true
+  # Only show output written by this attempt. A retained generic log can be
+  # months old and must not make a failed install look like a new restart.
+  ssh "$GATEWAY_NODE" "[[ ! -s '$OPS_START_LOG' ]] || tail -100 '$OPS_START_LOG'" >&2 || true
   exit 1
 fi
 

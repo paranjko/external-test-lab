@@ -480,16 +480,16 @@ test-ci-gateways: test-command-dependency-contract test-devshard-two-gateways te
 # Each CI group runs sequentially in its own checkout. In particular, site
 # builders and fixed-port HTTP fixtures must not share a parallel checkout.
 RUNBOOK_CI_GROUPS := bootstrap core site join gateways
-HOST_LIFECYCLE_SHARED_TESTS := test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-phase-ml-add-ownership test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-hosts test-detach-network-ml-host test-validator-ml-lifecycle
+HOST_LIFECYCLE_SHARED_TESTS := test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-join-resume-membership-funding test-phase-ml-add-ownership test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-hosts test-detach-network-ml-host test-validator-ml-lifecycle
 .PHONY: $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) test-ci-layout
-test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(HOST_LIFECYCLE_SHARED_TESTS) test-host-upgrade-lifecycle
+test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(HOST_LIFECYCLE_SHARED_TESTS) test-host-upgrade-lifecycle test-clean-join-target-lifecycle
 
 test-ci-layout:
 	@python3 ./scripts/test-runbook-ci.py
 
 test-ci-bootstrap: test-command-dependency-contract test-bootstrap-publication test-network-bootstrap test-core-release-profile test-recovery-contract test-participants-proxy test-network-observer test-registration-failover test-proxy-ingress-layouts test-reconcile-proxy-ingress-remote
 
-test-ci-core: test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-ci-release-helpers test-host-models test-host-upgrade test-ml-callback test-start-ml-transport
+test-ci-core: test-command-dependency-contract test-ci-route test-devshard-release test-devshard-artifacts test-gonka-pr-unified-release test-ci-release-helpers test-host-models test-host-upgrade test-ml-callback test-start-ml-transport test-genesis-config-import test-genesis-config-builder test-genesis-candidate test-genesis-software test-verify-genesis test-profile-model-args test-host-special-cli test-model-worker-add test-model-primary-reconfigure test-ops-faucet-isolation test-genesis-runtime-install test-repair-genesis-startup test-replace-unstarted-genesis test-new-genesis-reset-join-gate test-clean-join-empty-generation-parent test-reset-genesis-host test-shared-gpu-layout-renderer
 	@bash ./scripts/test-node-container-lending.sh
 	@bash ./scripts/test-upstream-isolation.sh
 	@python3 ./scripts/test-release-candidate.py
@@ -600,7 +600,7 @@ test-ci-site: test-command-dependency-contract test-isolated-preview-ci-artifact
 	@./scripts/test-telegram-consumer-probe-loop.sh
 	@$(MAKE) test-telegram-delivery
 
-test-ci-join: test-command-dependency-contract test-register-join-monitoring-targets test-join-monitoring-runtime
+test-ci-join: test-command-dependency-contract test-register-join-monitoring-targets test-join-monitoring-runtime test-clean-join-target-lifecycle test-phase-join-full-sync-export test-compose-optional-second-rpc test-join-identity-ready-resume-dind
 	@bash ./scripts/test-join-model-selection.sh
 	@./scripts/test-genesis-identity-contract.sh
 	@./scripts/test-host-backup-context.sh
@@ -664,6 +664,65 @@ test-ci-join: test-command-dependency-contract test-register-join-monitoring-tar
 test-command-dependency-contract:
 	@./scripts/test-command-dependency-contract.sh
 
+.PHONY: test-genesis-config-import test-genesis-config-builder test-genesis-candidate test-genesis-software test-verify-genesis test-profile-model-args test-host-special-cli test-model-worker-add test-model-primary-reconfigure test-ops-faucet-isolation test-phase-join-full-sync-export test-compose-optional-second-rpc test-join-identity-ready-resume test-join-identity-ready-resume-dind test-repair-genesis-startup test-replace-unstarted-genesis test-new-genesis-reset-join-gate test-clean-join-empty-generation-parent test-reset-genesis-host test-reset-genesis-host-root test-shared-gpu-layout-renderer
+test-genesis-config-import:
+	@bash ./scripts/test-genesis-config-import.sh
+
+test-genesis-config-builder:
+	@bash ./scripts/test-genesis-config-builder.sh
+
+test-genesis-candidate:
+	@bash ./scripts/test-genesis-candidate.sh
+
+test-genesis-software:
+	@bash ./scripts/test-genesis-software.sh
+
+test-verify-genesis:
+	@bash ./scripts/test-verify-genesis.sh
+
+test-profile-model-args:
+	@bash ./scripts/test-profile-model-args.sh
+
+test-host-special-cli:
+	@bash ./scripts/test-host-special-cli.sh
+
+test-model-worker-add:
+	@bash ./scripts/test-model-worker-add.sh
+
+test-model-primary-reconfigure:
+	@bash ./scripts/test-model-primary-reconfigure.sh
+
+test-ops-faucet-isolation:
+	@bash ./scripts/test-ops-faucet-isolation.sh
+
+test-phase-join-full-sync-export:
+	@bash ./scripts/test-phase-join-full-sync-export.sh
+
+test-join-identity-ready-resume:
+	@bash ./scripts/test-join-identity-ready-resume.sh
+
+test-join-identity-ready-resume-dind:
+	@docker build --file test/Dockerfile.host-upgrade --tag gdc-clean-target-dind:local ..
+	@docker run --rm --entrypoint bash gdc-clean-target-dind:local scripts/test-join-identity-ready-resume.sh
+
+test-compose-optional-second-rpc:
+	@bash ./scripts/test-compose-optional-second-rpc.sh
+
+test-repair-genesis-startup:
+	@bash ./scripts/test-repair-genesis-startup.sh
+
+test-replace-unstarted-genesis:
+	@bash ./scripts/test-replace-unstarted-genesis.sh
+
+test-new-genesis-reset-join-gate:
+	@bash ./scripts/test-new-genesis-reset-join-gate.sh
+
+test-clean-join-empty-generation-parent:
+	@bash ./scripts/test-clean-join-empty-generation-parent.sh
+
+test-shared-gpu-layout-renderer:
+	@bash ../devnet/model-layouts/shared-gpu/test.sh
+
 test-gateway-settings-deployment:
 	@./scripts/test-gateway-settings-deployment.sh
 
@@ -681,13 +740,17 @@ test-install-inferenced:
 	@./scripts/test-install-inferenced.sh
 
 .PHONY: test-host-models
-.PHONY: test-host-upgrade test-host-upgrade-lifecycle
+.PHONY: test-host-upgrade test-host-upgrade-lifecycle test-clean-join-target-lifecycle
 test-host-upgrade:
 	@bash ./scripts/test-host-upgrade.sh
 
 test-host-upgrade-lifecycle:
 	@docker build --file test/Dockerfile.host-upgrade --tag gdc-host-upgrade-test:local ..
 	@docker run --rm --privileged -e GDC_HOST_UPGRADE_DIND=true --entrypoint bash gdc-host-upgrade-test:local scripts/test-host-upgrade-lifecycle.sh
+
+test-clean-join-target-lifecycle:
+	@docker build --file test/Dockerfile.host-upgrade --tag gdc-clean-target-dind:local ..
+	@docker run --rm --privileged -e GDC_CLEAN_TARGET_DIND=true -e DOCKER_DRIVER=vfs --entrypoint bash gdc-clean-target-dind:local scripts/test-join-target-clean-dind.sh
 
 test-host-models: bats-docker-image
 	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_HOST_MODELS_FIXTURE=true --entrypoint python3 $(BATS_DOCKER_IMAGE) scripts/test-host-models.py
@@ -710,13 +773,27 @@ edge-integration: site-vendor
 
 # The Bootstrap installer is only exercised in an ephemeral container with a
 # new /srv/dai mount, never against an operator Host
-.PHONY: test-bootstrap-install test-bootstrap-install-root
+.PHONY: test-bootstrap-install test-bootstrap-install-root test-genesis-runtime-install test-genesis-runtime-install-root
 test-bootstrap-install:
 	@docker build --file test/Dockerfile.bootstrap --tag gdc-bootstrap-install-test ..
 	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_TEST_DISPOSABLE_ROOT=true gdc-bootstrap-install-test
 
 test-bootstrap-install-root:
 	@python3 ./scripts/test-bootstrap-install.py
+
+test-genesis-runtime-install:
+	@docker build --file test/Dockerfile.bootstrap --tag gdc-genesis-runtime-install-test ..
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_TEST_DISPOSABLE_ROOT=true --entrypoint make gdc-genesis-runtime-install-test test-genesis-runtime-install-root
+
+test-genesis-runtime-install-root:
+	@bash ./scripts/test-genesis-runtime-install.sh
+
+test-reset-genesis-host:
+	@docker build --file test/Dockerfile.bootstrap --tag gdc-genesis-reset-host-test ..
+	@docker run --rm --network none --tmpfs /srv:rw,exec -e GDC_TEST_DISPOSABLE_ROOT=true --entrypoint make gdc-genesis-reset-host-test test-reset-genesis-host-root
+
+test-reset-genesis-host-root:
+	@bash ./scripts/test-reset-genesis-host.sh
 
 # Bats remains test-only. These two targets exercise the JOIN contracts in a
 # disposable host-shaped container; no production host, key or GPU is used.
@@ -753,7 +830,7 @@ test-recovery-contract: test-recover-incident
 .PHONY: bootstrap-schema-dependencies
 
 bootstrap-schema-dependencies:
-	@python3 -m pip install --disable-pip-version-check jsonschema==4.23.0
+	@python3 -m pip install --disable-pip-version-check --requirement dependencies/bootstrap-schema-requirements.txt
 
 .PHONY: bootstrap-publication-dependencies test-bootstrap-publication test-network-bootstrap test-core-release-profile prepare-bootstrap-release publish-bootstrap-release
 bootstrap_release_dir ?= $(CURDIR)/.data/bootstrap-release
@@ -783,7 +860,7 @@ prepare-bootstrap-release:
 publish-bootstrap-release:
 	@bash ./scripts/publish-bootstrap-release.sh "$(bootstrap_release_dir)" "$(deploy_host)" "$(deploy_user)"
 
-.PHONY: test-command-results test-post-sync-join-helper test-phase-ml-add-ownership test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-node-container-control test-node-container-lending-docker test-prepare-accelerator-binding test-reset-then-join-entry test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-ml-lend-generic-pairs test-ml-lending-two-hosts test-detach-network-ml-host test-wait-dapi-worker-removal test-validator-ml-lifecycle test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal test-host-lifecycle
+.PHONY: test-command-results test-post-sync-join-helper test-phase-ml-add-ownership test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-node-container-control test-node-container-lending-docker test-prepare-accelerator-binding test-reset-then-join-entry test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-join-resume-membership-funding test-ml-lend-generic-pairs test-ml-lending-two-hosts test-detach-network-ml-host test-wait-dapi-worker-removal test-validator-ml-lifecycle test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal test-host-lifecycle
 test-command-results:
 	@bash ./scripts/test-command-results.sh
 
@@ -843,7 +920,12 @@ test-two-host-lifecycle-locks:
 test-pinned-dapi-worker-removal: bats-docker-image
 	@bash ./scripts/test-pinned-dapi-worker-removal.sh
 
-test-host-lifecycle: $(HOST_LIFECYCLE_SHARED_TESTS) test-join-resume-caught-up-canary test-phase-join-caught-up-lineage test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-wait-dapi-worker-removal test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal
+test-host-lifecycle: $(HOST_LIFECYCLE_SHARED_TESTS) test-join-resume-caught-up-canary test-phase-join-caught-up-lineage test-phase-ml-remove-ownership test-phase-ml-status test-phase-node-stop-lifecycle test-wait-dapi-worker-removal test-read-lent-ml-record test-two-host-lifecycle-locks test-pinned-dapi-worker-removal test-host-peers-lifecycle
+
+.PHONY: test-host-peers-lifecycle
+test-host-peers-lifecycle:
+	@docker build --file test/Dockerfile.host-upgrade --tag gdc-host-peers-test:local ..
+	@docker run --rm --privileged -e GDC_PEERS_DIND=true --entrypoint bash gdc-host-peers-test:local scripts/test-host-peers-lifecycle.sh
 
 test-reset-then-join-entry:
 	@bash ./scripts/test-reset-then-join-entry.sh
@@ -871,6 +953,9 @@ test-join-resume-restore-post-sync-refusal:
 
 test-join-resume-restore-membership:
 	@bash ./scripts/test-join-resume-restore-membership.sh
+
+test-join-resume-membership-funding:
+	@bash ./scripts/test-join-resume-membership-funding.sh
 
 test-join-resume-caught-up-canary:
 	@bash ./scripts/test-join-resume-caught-up-canary.sh

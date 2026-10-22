@@ -14,6 +14,11 @@ jq -n --arg a "$seed_a" --arg b "$seed_b" '
      {node_id:$b,rpc:"http://seed-b.example.test:8000/chain-rpc",api:"http://seed-b.example.test:8000",p2p:"tcp://seed-b.example.test:5000"}
    ],brokers:[]}
 ' >"$tmp/bootstrap.json"
+jq --slurpfile release "$ROOT/../bootstrap/gonka-devnet-community.json" '
+  .bootstrap_mode = "genesis-single-seed" |
+  .seeds = [.seeds[0]] |
+  .software = $release[0].software
+' "$tmp/bootstrap.json" >"$tmp/single-software-bootstrap.json"
 jq '.seeds |= reverse' "$tmp/bootstrap.json" >"$tmp/bootstrap-reversed.json"
 jq '.chain_id = "gonka-devnet-community"' "$tmp/bootstrap.json" >"$tmp/bootstrap-community.json"
 jq '.chain_id = "gonka-mainnet"' "$tmp/bootstrap.json" >"$tmp/bootstrap-mainnet.json"
@@ -46,7 +51,9 @@ case "$url" in
     [[ "${SAME_SEED_REMOTE:-false}" == true ]] && remote_ip=8.8.4.1
     ;;
   https://seed-a.example.test/chain-rpc/abci_info|http://seed-b.example.test:8000/chain-rpc/abci_info)
-    printf '{"result":{"response":{"version":"0.2.15"}}}\n'
+    abci_version=0.2.15
+    [[ "${SINGLE_SOFTWARE:-false}" != true ]] || abci_version=0.2.16-post1
+    printf '{"result":{"response":{"version":"%s"}}}\n' "$abci_version"
     case "$url" in
       https://*) remote_ip=8.8.4.1 ;;
       http://*) remote_ip=8.8.4.2; [[ "${SAME_SEED_REMOTE:-false}" == true ]] && remote_ip=8.8.4.1 ;;
@@ -94,13 +101,22 @@ case "$url" in
     [[ "${SAME_SEED_REMOTE:-false}" == true && "$seed" == b ]] && remote_ip=8.8.4.1
     [[ "${SEED_API_DOWN:-}" == all || "${SEED_API_DOWN:-}" == "$seed" ]] && exit 22
     [[ "${MISMATCH_SEED_API:-}" == "$seed" ]] && remote_ip=8.8.4.9
+    core_version=0.2.15
+    core_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     dapi=0.2.15-post5
     dapi_commit=cccccccccccccccccccccccccccccccccccccccc
+    if [[ "${SINGLE_SOFTWARE:-false}" == true ]]; then
+      core_version=0.2.16-post1
+      core_commit=136041c81ea8ff38e7620d76af66a7c7fe7eec50
+      dapi=0.2.16-post1
+      dapi_commit=136041c81ea8ff38e7620d76af66a7c7fe7eec50
+    fi
     if [[ "${SEED_DAPI:-}" == post3 || "${SEED_SPLIT:-false}:$seed" == true:a ]]; then
       dapi=0.2.15-post3
       dapi_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     fi
-    printf '{"node_version":{"application_name":"inference-chain","version":"0.2.15","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"api_version":{"application_name":"decentralized-api","version":"%s","commit":"%s"}}\n' "$dapi" "$dapi_commit"
+    printf '{"node_version":{"application_name":"inference-chain","version":"%s","commit":"%s"},"api_version":{"application_name":"decentralized-api","version":"%s","commit":"%s"}}\n' \
+      "$core_version" "$core_commit" "$dapi" "$dapi_commit"
     ;;
   http://8.8.4.[12]:8000/v1/versions)
     [[ "${PEERS_DOWN:-false}" == true ]] && exit 7
@@ -160,6 +176,7 @@ run_case() {
   spy="${output}.curl-spy"
   : >"$spy"
   CURL_SPY="$spy" MOCK_CHAIN="$chain" \
+    SINGLE_SOFTWARE="${SINGLE_SOFTWARE:-false}" \
     PEER_COUNT="${PEER_COUNT:-21}" PEER_ORDER="${PEER_ORDER:-forward}" \
     CATCHING_SEED="${CATCHING_SEED:-}" GOSSIP_CONFLICT="${GOSSIP_CONFLICT:-false}" \
     SAME_SEED_REMOTE="${SAME_SEED_REMOTE:-false}" \
@@ -202,6 +219,19 @@ jq -e '
 [[ "$(grep -Ec '^http://8\.8\.8\.[0-9]+:8000/chain-rpc/status$' "$tmp/normal.json.curl-spy")" -eq 21 ]]
 [[ "$(grep -Ec '^http://8\.8\.8\.[0-9]+:8000/v1/epochs/current/participants$' "$tmp/normal.json.curl-spy")" -eq 21 ]]
 [[ "$(grep -Ec 'seed-[ab].*/v1/versions$' "$tmp/normal.json.curl-spy")" -eq 2 ]]
+
+SINGLE_SOFTWARE=true run_case "$tmp/single-software-bootstrap.json" "$tmp/single-software.json"
+jq -e '
+  .policy.policy_id == "bootstrap-software/v1" and
+  .policy.mode == "operator_source" and
+  .policy.quorum_policy.policy_id == "gdc-join-software-quorum/v1" and
+  .software.components.node.commit == .runtime.core.commit and
+  .software.components.api.commit == .runtime.dapi.commit and
+  .runtime_api_origins[0].status == "usable" and
+  .runtime_api_origins[0].reason == "none" and
+  .runtime_api_origins[0].node_id == .seeds[0].expected_node_id and
+  .runtime_api_origins[0].remote_ip == .policy.authority.selected.remote_ips[0]
+' "$tmp/single-software.json" >/dev/null
 
 PEER_ORDER=reverse run_case "$tmp/bootstrap-reversed.json" "$tmp/reversed.json"
 jq -e '.runtime.dapi.version == "0.2.15-post3" and .policy.authority.strict_majority_count == 17' "$tmp/reversed.json" >/dev/null
@@ -297,22 +327,48 @@ SEED_DAPI=post3 PEER_COUNT=1 run_case "$tmp/bootstrap-mainnet.json" "$tmp/mainne
 jq -e '.policy.minimum_valid_observations == 3 and .policy.quorum_policy.scope == "default" and .policy.authority.strict_majority_count == 3' "$tmp/mainnet-three.json" >/dev/null
 
 python3 - "$ROOT/../schema/network-observation.v1.schema.json" \
-  "$tmp/normal.json" "$tmp/reversed.json" "$tmp/seed-aliases.json" "$tmp/seed-peer-dedup.json" \
+  "$tmp/normal.json" "$tmp/single-software.json" "$tmp/reversed.json" "$tmp/seed-aliases.json" "$tmp/seed-peer-dedup.json" \
   "$tmp/unreachable.json" "$tmp/other-app.json" "$tmp/private-remote.json" "$tmp/other-chain.json" "$tmp/no-chain-evidence.json" \
   "$tmp/stale-conflicts.json" "$tmp/community-two.json" "$tmp/mainnet-three.json" <<'PY'
 import json
 import pathlib
 import sys
+import copy
 
 from jsonschema import Draft202012Validator
+from jsonschema.validators import RefResolver
 
 schema = json.loads(pathlib.Path(sys.argv[1]).read_text())
+bootstrap_schema = json.loads(pathlib.Path(sys.argv[1]).with_name("v1.bootstrap.schema.json").read_text())
 Draft202012Validator.check_schema(schema)
-validator = Draft202012Validator(schema)
+resolver = RefResolver.from_schema(schema, store={bootstrap_schema["$id"]: bootstrap_schema})
+validator = Draft202012Validator(schema, resolver=resolver)
 for path in map(pathlib.Path, sys.argv[2:]):
     errors = sorted(validator.iter_errors(json.loads(path.read_text())), key=lambda error: list(error.path))
     if errors:
         raise SystemExit(f"{path}: {errors[0].message}")
+
+normal = json.loads(pathlib.Path(sys.argv[2]).read_text())
+for field, value in (
+    ("node_id", "not-a-node-id"),
+    ("remote_ip", ""),
+    ("status", "unavailable"),
+    ("reason", "probe_failed"),
+):
+    invalid = copy.deepcopy(normal)
+    invalid["runtime_api_origins"][0][field] = value
+    if not list(validator.iter_errors(invalid)):
+        raise SystemExit(f"schema unexpectedly accepted invalid runtime_api_origins[0].{field}")
+
+invalid = copy.deepcopy(normal)
+del invalid["runtime_api_origins"][0]["node_id"]
+if not list(validator.iter_errors(invalid)):
+    raise SystemExit("schema unexpectedly accepted a runtime source without observed node identity")
+
+invalid = copy.deepcopy(normal)
+invalid["runtime_api_origins"][0]["unrecognized"] = True
+if not list(validator.iter_errors(invalid)):
+    raise SystemExit("schema unexpectedly accepted an unrecognized runtime source property")
 PY
 
 printf 'PASS peer discovery: chain-bound peer probing, root-span corroboration, one-root Sybil rejection, overlapping-root support, seed-order independence, conflict exclusion, local quorum policy, and stable network identity\n'

@@ -4,12 +4,13 @@
 # state-sync/quorum decision.
 set -Eeuo pipefail
 
-usage() { echo "Usage: $0 --bootstrap-file FILE --bootstrap-url URL --chain-id ID --run-id ID --output FILE" >&2; }
+usage() { echo "Usage: $0 --bootstrap-file FILE --bootstrap-url URL --chain-id ID --run-id ID --output FILE [--join-profile FILE]" >&2; }
 die() { printf 'network_observation_%s: %s\n' "$1" "$2" >&2; exit 1; }
 
 BOOTSTRAP=''; BOOTSTRAP_URL=''; CHAIN_ID=''; RUN_ID=''; OUTPUT=''
-SOURCE_RPC=''
+SOURCE_RPC=''; JOIN_PROFILE=''
 SELECTION_POLICY_ID='net-info-software-majority/v1'
+BOOTSTRAP_SOFTWARE_SINGLE=false
 while (($#)); do
   case "$1" in
     --bootstrap-file) BOOTSTRAP="${2:-}"; shift 2 ;;
@@ -18,6 +19,7 @@ while (($#)); do
     --run-id) RUN_ID="${2:-}"; shift 2 ;;
     --output) OUTPUT="${2:-}"; shift 2 ;;
     --source-rpc) SOURCE_RPC="${2%/}"; shift 2 ;;
+    --join-profile) JOIN_PROFILE="${2:-}"; shift 2 ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -29,8 +31,55 @@ QUORUM_POLICY_FILE="$ROOT/profiles/join-software-authority-policy.json"
 command -v curl >/dev/null || die dependency_missing 'curl is required'
 command -v jq >/dev/null || die dependency_missing 'jq is required'
 [[ "$(jq -r .chain_id "$BOOTSTRAP")" == "$CHAIN_ID" ]] || die chain_id_mismatch 'Bootstrap chain_id does not match --chain-id'
-if jq -e 'has("software")' "$BOOTSTRAP" >/dev/null; then
-  exec bash "$ROOT/scripts/resolve-bootstrap-software.sh" observation "$BOOTSTRAP" "$OUTPUT" "$BOOTSTRAP_URL" "$RUN_ID" "$SOURCE_RPC"
+[[ -z "$JOIN_PROFILE" || -r "$JOIN_PROFILE" ]] || die profile_missing 'the exact JOIN profile for Genesis identity verification is unreadable'
+tmp="$(mktemp -d)"
+temporary_output=''; output_tmp=''
+trap 'rm -rf -- "$tmp"; [[ -z "${temporary_output:-}" ]] || rm -f -- "$temporary_output"; [[ -z "${output_tmp:-}" ]] || rm -f -- "$output_tmp"' EXIT
+
+enrich_chain_identity() {
+  local document=$1 stage_dir="$tmp/genesis-stage" identity fingerprint
+  [[ -n "$JOIN_PROFILE" ]] || return 0
+  # `stage` verifies the exact distribution hash from Bootstrap before this
+  # canonical chain identity is calculated. Resolve inferenced only from the
+  # candidate profile's pinned artifact; do not inherit an arbitrary PATH CLI.
+  mkdir -p "$stage_dir"
+  env -u INFERENCED GDC_JOIN_PROFILE="$JOIN_PROFILE" \
+    "$ROOT/scripts/network-bootstrap.sh" stage "$BOOTSTRAP" "$stage_dir" >/dev/null
+  identity="$(jq -eS '
+    del(.app_name, .app_version)
+    | if has("app_hash") then .app_hash = (.app_hash // "") else . end
+    | if has("initial_height") then .initial_height = (.initial_height | tostring) else . end
+    | if .consensus.params? then .consensus_params = .consensus.params | del(.consensus) else . end
+  ' "$stage_dir/genesis.json" | sha256sum | awk '{print $1}')"
+  [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || die genesis_identity_invalid 'staged Genesis did not yield a canonical chain identity'
+  fingerprint="$(jq -cS --arg identity "$identity" '
+    {prior_network_state_id:.network_state_id,
+     bootstrap:{chain_id:.bootstrap.chain_id,distribution_sha256:.bootstrap.genesis_sha256,
+      chain_identity_sha256:$identity,document_sha256:.bootstrap.document_sha256},
+     runtime:{core:.runtime.core,dapi:.runtime.dapi},software:(.software // null)}
+  ' "$document" | sha256sum | awk '{print $1}')"
+  jq --arg identity "$identity" --arg fingerprint "$fingerprint" \
+    '.bootstrap.chain_identity_sha256=$identity | .network_state_id=$fingerprint' \
+    "$document" >"$document.identity"
+  mv -f -- "$document.identity" "$document"
+}
+
+if jq -e 'has("software")' "$BOOTSTRAP" >/dev/null && ! jq -e '.bootstrap_mode == "genesis-single-seed"' "$BOOTSTRAP" >/dev/null; then
+  if [[ -z "$JOIN_PROFILE" ]]; then
+    exec bash "$ROOT/scripts/resolve-bootstrap-software.sh" observation "$BOOTSTRAP" "$OUTPUT" "$BOOTSTRAP_URL" "$RUN_ID" "$SOURCE_RPC"
+  fi
+  mkdir -p "$(dirname "$OUTPUT")"
+  temporary_output="$(mktemp "$(dirname "$OUTPUT")/.bootstrap-observation.XXXXXX")"
+  bash "$ROOT/scripts/resolve-bootstrap-software.sh" observation "$BOOTSTRAP" "$temporary_output" "$BOOTSTRAP_URL" "$RUN_ID" "$SOURCE_RPC"
+  enrich_chain_identity "$temporary_output"
+  install -m 0600 "$temporary_output" "$OUTPUT"
+  printf 'PASS observed Bootstrap runtime and canonical Genesis identity observation=%s\n' "$OUTPUT"
+  exit 0
+fi
+if jq -e 'has("software") and .bootstrap_mode == "genesis-single-seed"' "$BOOTSTRAP" >/dev/null; then
+  BOOTSTRAP_SOFTWARE_SINGLE=true
+  SELECTION_POLICY_ID='bootstrap-software/v1'
+  [[ -n "$SOURCE_RPC" ]] || SOURCE_RPC="$(jq -r '.seeds[0].rpc | rtrimstr("/")' "$BOOTSTRAP")"
 fi
 [[ -r "$QUORUM_POLICY_FILE" ]] || die dependency_missing 'local JOIN software authority policy is missing'
 jq -e '
@@ -45,6 +94,9 @@ jq -e '
       (.minimum_valid_observations | type == "number" and floor == . and . >= 2) and
       (.minimum_independent_discovery_roots | type == "number" and floor == . and . >= 2)))
 ' "$QUORUM_POLICY_FILE" >/dev/null || die policy_invalid 'local JOIN software authority policy is malformed'
+if [[ "$BOOTSTRAP_SOFTWARE_SINGLE" == true ]]; then
+  quorum_policy_sha256="$(sha256sum "$BOOTSTRAP" | awk '{print $1}')"
+fi
 quorum_scope=default
 if jq -e --arg chain "$CHAIN_ID" '.networks | has($chain)' "$QUORUM_POLICY_FILE" >/dev/null; then
   quorum_scope=network
@@ -56,13 +108,11 @@ quorum_policy_sha256="$(sha256sum "$QUORUM_POLICY_FILE" | awk '{print $1}')"
 if [[ -n "$SOURCE_RPC" ]]; then
   jq -e --arg rpc "$SOURCE_RPC" '[.seeds[] | select((.rpc | rtrimstr("/")) == $rpc)] | length == 1' "$BOOTSTRAP" >/dev/null \
     || die source_invalid 'operator source must identify exactly one Bootstrap seed'
-  SELECTION_POLICY_ID=operator-source/v1
+  [[ "$BOOTSTRAP_SOFTWARE_SINGLE" == true ]] || SELECTION_POLICY_ID=operator-source/v1
   quorum_scope=operator_source
   quorum_min=1; root_min=1
 fi
 
-tmp="$(mktemp -d)"
-trap 'rm -rf -- "$tmp"' EXIT
 observed_at="$(date -u +%FT%TZ)"
 expires_at="$(date -u -d '+600 seconds' +%FT%TZ)"
 genesis_sha256="$(jq -r .genesis.sha256 "$BOOTSTRAP")"
@@ -336,11 +386,23 @@ selected="$(printf '%s\n' "${runtime_observations[@]}" | jq -sc --arg ip "$selec
   map(select(.remote_ip == $ip and .core == $tuple.core and .dapi == $tuple.dapi)) |
   sort_by([.node_id,.source,.api_url,.seed_index]) | .[0] |
   .cometbft = {version:$comet} |
-  {seed_index,expected_node_id,api_url,api_source,observed_at,
+  {seed_index,expected_node_id,node_id,remote_ip,status,reason,api_url,api_source,observed_at,
    core:{version:.core.version,commit:.core.commit},
    dapi:{version:.dapi.version,commit:.dapi.commit},cometbft,versions_response_sha256}
 ')"
 runtime="$(jq -cn --argjson selected "$selected" '{core:$selected.core,dapi:$selected.dapi,cometbft:$selected.cometbft}')"
+software='null'
+if [[ "$BOOTSTRAP_SOFTWARE_SINGLE" == true ]]; then
+  software="$(jq -c '.software' "$BOOTSTRAP")"
+  expected_core_version="$(jq -r '.software.components.node.version | ltrimstr("v")' "$BOOTSTRAP")"
+  expected_core_commit="$(jq -r '.software.components.node.commit' "$BOOTSTRAP")"
+  expected_dapi_version="$(jq -r '.software.components.api.version | ltrimstr("v")' "$BOOTSTRAP")"
+  expected_dapi_commit="$(jq -r '.software.components.api.commit' "$BOOTSTRAP")"
+  jq -e --arg core_version "$expected_core_version" --arg core_commit "$expected_core_commit" \
+    --arg dapi_version "$expected_dapi_version" --arg dapi_commit "$expected_dapi_commit" \
+    '$core_version == .core.version and $core_commit == .core.commit and $dapi_version == .dapi.version and $dapi_commit == .dapi.commit' \
+    <<<"$runtime" >/dev/null || die bootstrap_runtime_mismatch 'live node/API versions or commits differ from the pinned Bootstrap software declaration'
+fi
 bootstrap="$(jq -cn --arg url "$BOOTSTRAP_URL" --arg sha "$bootstrap_sha256" --arg chain "$CHAIN_ID" --arg genesis "$genesis_sha256" '{url:$url,document_sha256:$sha,chain_id:$chain,genesis_sha256:$genesis}')"
 peers_json='[]'
 if [[ -s "$tmp/peer-safe-inventory.json" ]]; then
@@ -367,11 +429,12 @@ state_basis="$(jq -cn --arg policy "$SELECTION_POLICY_ID" --arg quorum_policy "$
 [[ -z "$SOURCE_RPC" ]] || state_basis="$(jq -cS --arg rpc "$SOURCE_RPC" '. + {operator_source_rpc:$rpc}' <<<"$state_basis")"
 network_state_id="$(printf '%s\n' "$state_basis" | sha256sum | awk '{print $1}')"
 document="$(jq -cn --arg run_id "$RUN_ID" --arg observed_at "$observed_at" --arg expires_at "$expires_at" --arg state_id "$network_state_id" \
-  --argjson bootstrap "$bootstrap" --argjson policy "$policy" --argjson seeds "$seeds_json" --argjson selected "$selected" --argjson runtime "$runtime" \
-  '{schema_version:1,kind:"gdc-network-observation",run_id:$run_id,observed_at:$observed_at,expires_at:$expires_at,network_state_id:$state_id,bootstrap:$bootstrap,policy:$policy,seeds:$seeds,runtime_api_origins:[$selected],runtime:$runtime,result:{state:"ready",reason:"none"}}' | jq -cS .)"
+  --argjson bootstrap "$bootstrap" --argjson policy "$policy" --argjson seeds "$seeds_json" --argjson selected "$selected" --argjson runtime "$runtime" --argjson software "$software" \
+  '({schema_version:1,kind:"gdc-network-observation",run_id:$run_id,observed_at:$observed_at,expires_at:$expires_at,network_state_id:$state_id,bootstrap:$bootstrap,policy:$policy,seeds:$seeds,runtime_api_origins:[$selected],runtime:$runtime,result:{state:"ready",reason:"none"}} + (if $software == null then {} else {software:$software} end))' | jq -cS .)"
 mkdir -p "$(dirname "$OUTPUT")"
 output_tmp="$(mktemp "$(dirname "$OUTPUT")/.network-observation.XXXXXX")"
 printf '%s\n' "$document" >"$output_tmp"
+enrich_chain_identity "$output_tmp"
 chmod 0600 "$output_tmp"
 mv -f "$output_tmp" "$OUTPUT"
 source_index="$(jq -r .seed_index <<<"$selected")"

@@ -31,10 +31,13 @@ done
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 transport="$(awk '
-  BEGIN { IGNORECASE=1; result="command_failed" }
-  /connection reset by peer|connection refused|broken pipe/ { result="connection_reset"; exit }
-  /timed?[ _]?out|timeout/ { result="timeout"; exit }
-  /permission denied|authentication/ { result="auth_failed"; exit }
+  BEGIN { result="command_failed" }
+  {
+    line = tolower($0)
+    if (line ~ /connection reset by peer|connection refused|broken pipe/) { result="connection_reset"; exit }
+    if (line ~ /timed?[ _]?out|timeout/) { result="timeout"; exit }
+    if (line ~ /permission denied|authentication/) { result="auth_failed"; exit }
+  }
   END { print result }
 ' "$STDERR_FILE")"
 # Normalize the closed vocabulary after collection rather than letting

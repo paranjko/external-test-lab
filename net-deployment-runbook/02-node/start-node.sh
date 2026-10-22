@@ -61,6 +61,16 @@ fi
 [[ -e "$HERE/.ha-enabled" ]] && files+=(-f "$HERE/compose.devshard-ha.yaml")
 profiles=()
 [[ "$enable_signer" == true ]] && profiles=(--profile signer)
+# Supplying --profile replaces Compose's COMPOSE_PROFILES selection from the
+# env file, so preserve the declared validator edge API profile explicitly.
+# It is optional for legacy stacks, but required whenever the proxy routes
+# participant/model control-plane requests through edge-api.
+compose_profiles="$(awk -F= '$1 == "COMPOSE_PROFILES" {sub(/^[^=]*=/, ""); print; exit}' "$ENV_FILE")"
+case "$compose_profiles" in
+  '') ;;
+  edge-api) profiles+=(--profile edge-api) ;;
+  *) echo "unsupported Compose profile selection: $compose_profiles" >&2; exit 2 ;;
+esac
 # Any run without the signer must also disable the Core private-validator
 # listener. The canary uses an unregistered local key; without the listener
 # guard Core blocks waiting for a TMKMS socket that is correctly absent and

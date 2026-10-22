@@ -75,13 +75,16 @@ retains newest-published-release selection. See
 `flock` is required by the preview lifecycle controller and is declared in the
 CI command baseline.
 
-Bootstrap publication uses Python 3 with `jsonschema==4.23.0`, OpenSSH, and
-`rsync` on the GitHub-hosted Ubuntu runner. The named
-`bootstrap-publication-dependencies` target installs the validator and checks
-the transport tools. The destination requires Python 3 (standard library only)
+Bootstrap, recovery, and JOIN schema checks use the pinned
+`jsonschema==4.23.0` requirement from
+[`dependencies/bootstrap-schema-requirements.txt`](dependencies/bootstrap-schema-requirements.txt).
+CI provisions it before the `bootstrap`, `core`, and `join` groups through the
+named `bootstrap-schema-dependencies` target. Bootstrap publication also
+requires OpenSSH and `rsync`; the named `bootstrap-publication-dependencies`
+target checks the transport tools. The destination requires Python 3 (standard library only)
 and rsync. One-time root setup additionally uses the existing Docker Compose
-installation and the system's `getent` and `runuser`; delivery never uses sudo
-on the destination server.
+installation and the system's `getent` and `runuser`; delivery never uses
+sudo on the destination server.
 The publication tests replace SSH and rsync with local fixtures.
 The bootstrap monitor uses the public gonkactl installer and the installed
 Go CLI, not Python/jsonschema. Its Ubuntu composite Action uses the existing
@@ -101,12 +104,12 @@ They provide JSON assertions and the Unix-socket protocol transport; they are
 not operator or Host dependencies. The build checks that the TMKMS executable
 is unchanged, and the test runs without network access or Host mounts.
 
-Python contract dependencies are pinned in
+Gateway Python contract dependencies are pinned in
 [`dependencies/python-test-requirements.txt`](dependencies/python-test-requirements.txt).
 The CI workflow provisions them through the named
-`install-python-test-dependencies` Make target before `make test`; local
-operators run the same target when their Python environment lacks a declared
-module.
+`install-python-test-dependencies` Make target before the gateways group.
+Bootstrap, recovery, and JOIN schema checks use the dedicated manifest and
+target above.
 
 DevShard [archive builds](releases/README.md) require Python 3.11+, Docker
 Buildx, Go, binutils, `od` and `zipinfo`; publication also needs `gh`.

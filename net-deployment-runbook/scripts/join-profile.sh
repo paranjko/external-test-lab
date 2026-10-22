@@ -46,7 +46,8 @@ validate() {
     (.spec.network.bootstrap_url | test("^https://")) and
     (.spec.seeds.usable | type == "array" and length >= 1) and (.spec.seeds.unavailable | type == "array") and
     (.spec.deployment.host_envelope | type == "object" and
-      (keys | sort) == ["caddy_image","cadvisor_image","dashboard_port","edge_api_compose_profile","edge_api_image","edge_api_service_name","explorer_image","grafana_image","host_stack","join_effective_epochs","join_effective_timeout_seconds","mapping_source","mlnode_context_length","mlnode_dtype","mlnode_gpu_memory_utilization","mlnode_image","mlnode_max_num_seqs","mlnode_proxy_image","mlnode_tensor_parallel_size","model_id","model_revision","node_exporter_image","postgres_image","proxy_image","tmkms_image","versiond_image"] and
+      ((keys | sort) == ["caddy_image","cadvisor_image","dashboard_port","edge_api_compose_profile","edge_api_image","edge_api_service_name","explorer_image","grafana_image","host_stack","join_effective_epochs","join_effective_timeout_seconds","mapping_source","mlnode_context_length","mlnode_dtype","mlnode_gpu_memory_utilization","mlnode_image","mlnode_max_num_seqs","mlnode_proxy_image","mlnode_tensor_parallel_size","model_id","model_revision","node_exporter_image","postgres_image","proxy_image","tmkms_image","versiond_image"] or
+       (keys | sort) == ["caddy_image","cadvisor_image","dashboard_port","edge_api_compose_profile","edge_api_image","edge_api_service_name","explorer_image","grafana_image","host_stack","join_effective_epochs","join_effective_timeout_seconds","mapping_source","mlnode_context_length","mlnode_dtype","mlnode_gpu_memory_utilization","mlnode_image","mlnode_max_num_seqs","mlnode_proxy_image","mlnode_tensor_parallel_size","mlnode_vllm_args","model_id","model_revision","node_exporter_image","postgres_image","proxy_image","tmkms_image","versiond_image"]) and
       ([.tmkms_image,.postgres_image,.edge_api_image,.versiond_image,.proxy_image,.explorer_image,.mlnode_image,.mlnode_proxy_image,.caddy_image,.grafana_image,.node_exporter_image,.cadvisor_image][] | test("^[A-Za-z0-9./:_-]+@sha256:[a-f0-9]{64}$")) and
       (.host_stack | type == "object" and (keys | sort) == ["api_image","commit","compose_sha256","repository"] and .repository == "gonka-ai/gonka" and (.commit | test("^[a-f0-9]{40}$")) and (.compose_sha256 | test("^[a-f0-9]{64}$")) and (.api_image | test("^[A-Za-z0-9./:_-]+@sha256:[a-f0-9]{64}$"))) and
       (.dashboard_port | type == "number" and floor == . and . >= 1 and . <= 65535) and
@@ -61,6 +62,11 @@ validate() {
       (.mlnode_dtype | type == "string" and length > 0) and
       (.mlnode_tensor_parallel_size | type == "number" and floor == . and . > 0) and
       (.mlnode_gpu_memory_utilization | type == "string" and test("^0\\.[0-9]+$|^1(\\.0+)?$")) and
+      ((has("mlnode_vllm_args") | not) or
+        ((.mlnode_vllm_args | type == "string") and
+        ((.mlnode_vllm_args == "" and .model_id == "Qwen/Qwen3-0.6B" and .model_revision == "c1899de289a04d12100db370d81485cdf75e47ca") or
+         (.mlnode_vllm_args == "--enable-auto-tool-choice --tool-call-parser hermes" and .model_id == "Qwen/Qwen3-4B-Instruct-2507" and .model_revision == "cdbee75f17c01a7cc42f958dc650907174af0554") or
+         (.mlnode_vllm_args == "--enable-auto-tool-choice --tool-call-parser hermes --kv-cache-dtype fp8 --kv-cache-memory-bytes 1073741824" and .model_id == "Qwen/Qwen2.5-7B-Instruct" and .model_revision == "a09a35458c702b33eeacc393d103063234e8bc28")))) and
       (.mapping_source | type == "object" and (keys | sort) == ["definition_sha256","id","kind"] and
         (.kind | IN("qualified_catalog","release_lock_component","official_artifact","official_oci_runtime","dynamic_build")) and
         (.id | type == "string" and length > 0) and
@@ -90,8 +96,8 @@ validate() {
       || ! bash "$scripts/resolve-bootstrap-software.sh" components "$software_input" "$software_components" >/dev/null \
       || ! jq -e --slurpfile compiled "$software_components" '
         .spec.components == ($compiled[0] | {core,dapi}) and
-        (.spec.deployment.host_envelope | del(.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size)) ==
-          ($compiled[0].host_envelope | del(.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size)) and
+        (.spec.deployment.host_envelope | del(.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size,.mlnode_vllm_args)) ==
+          ($compiled[0].host_envelope | del(.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size,.mlnode_vllm_args)) and
         .spec.target.accelerator.qualification_backend == .spec.deployment.software.accelerator and
         .spec.components.core.observed == (.spec.deployment.software.components.node | {version:(.version|ltrimstr("v")),commit}) and
         .spec.components.dapi.observed == (.spec.deployment.software.components.api | {version:(.version|ltrimstr("v")),commit})

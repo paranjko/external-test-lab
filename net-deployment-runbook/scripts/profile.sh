@@ -193,6 +193,14 @@ load_profiles() {
   [[ "$MODEL_SOURCE_REVISION" =~ ^[a-f0-9]{40}$ ]] || { echo 'invalid model source revision' >&2; return 2; }
   case "$MLNODE_VLLM_ARGS" in
     ''|--enforce-eager|'--enable-auto-tool-choice --tool-call-parser hermes') ;;
+    '--enable-auto-tool-choice --tool-call-parser hermes --kv-cache-dtype fp8 --kv-cache-memory-bytes 1073741824')
+      [[ "$MODEL_ID" == Qwen/Qwen2.5-7B-Instruct \
+        && "$MODEL_SOURCE_REVISION" == a09a35458c702b33eeacc393d103063234e8bc28 \
+        && "$GDC_MODEL_PROFILE_SCOPE" == network ]] || {
+        echo 'FP8 KV-cache arguments are supported only by the pinned network 7B profile' >&2
+        return 2
+      }
+      ;;
     *) echo 'unsupported MLNode vLLM arguments' >&2; return 2 ;;
   esac
   [[ "$GDC_MODEL_PROFILE_SCOPE" == network || "$GDC_MODEL_PROFILE_SCOPE" == qualification-only ]] || { echo 'invalid model profile scope' >&2; return 2; }
@@ -371,7 +379,7 @@ load_join_profile() {
   # Generated JOIN profiles use the served model as their source
   MODEL_SOURCE_ID="$MODEL_ID"
   MODEL_SOURCE_REVISION="$MODEL_REVISION"
-  MLNODE_VLLM_ARGS=''
+  MLNODE_VLLM_ARGS="$(jq -r '.spec.deployment.host_envelope.mlnode_vllm_args // ""' "$profile")"
   MLNODE_CONTEXT_LENGTH="$(jq -r .spec.deployment.host_envelope.mlnode_context_length "$profile")"
   MLNODE_MAX_NUM_SEQS="$(jq -r .spec.deployment.host_envelope.mlnode_max_num_seqs "$profile")"
   MLNODE_GPU_MEMORY_UTILIZATION="$(jq -r .spec.deployment.host_envelope.mlnode_gpu_memory_utilization "$profile")"

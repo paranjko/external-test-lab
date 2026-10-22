@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
+GDC_HOME="$tmp/gdc"
+export GDC_HOME
 required_core_lock="$ROOT/profiles/releases/core-required-test.lock"
 cleanup() {
   rm -rf "$tmp"

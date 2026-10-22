@@ -6,9 +6,12 @@ PRODUCT_ROOT="$ROOT"
 test_canary_observation_refresh() (
   ROOT="$tmp/refresh-tools"; STATE="$tmp/refresh-state"; RUN="$tmp/refresh-run"
   export NODE=fixture GDC_RUN_ID=fixture-run
+  join_bootstrap_mode=state_sync
   mkdir -p "$ROOT/scripts" "$STATE" "$RUN"
   JOIN_OBSERVATION="$RUN/original.json"; GDC_JOIN_BOOTSTRAP_FILE="$RUN/bootstrap.json"
+  GDC_JOIN_PROFILE="$RUN/join-profile.json"
   printf '{}\n' >"$GDC_JOIN_BOOTSTRAP_FILE"
+  printf '{}\n' >"$GDC_JOIN_PROFILE"
   jq -cn '{network_state_id:("a" * 64),expires_at:"2000-01-01T00:00:00Z",
     bootstrap:{url:"https://example.test/bootstrap.json",chain_id:"fixture",document_sha256:("b" * 64),genesis_sha256:("c" * 64)},
     runtime:{core:{version:"0.2.15",commit:("d" * 40)},dapi:{version:"0.2.15-post3",commit:("e" * 40)}},
@@ -49,6 +52,7 @@ EOF
   export RUN JOIN_OBSERVATION
   step() { :; }
   die() { printf '%s\n' "$*" >&2; exit 1; }
+  verify_join_bootstrap_authority() { [[ "$join_bootstrap_mode" == state_sync ]]; }
   eval "$(sed -n '/^refresh_lineage_for_canary() {$/,/^}$/p' "$PRODUCT_ROOT/scripts/phase-join.sh")"
   refresh_lineage_for_canary
   cmp "$JOIN_OBSERVATION" "$RUN/original-before.json"

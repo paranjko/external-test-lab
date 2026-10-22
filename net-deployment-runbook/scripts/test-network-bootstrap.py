@@ -16,6 +16,8 @@ class TestBootstrap(unittest.TestCase):
    doc=json.loads((RELEASE/name).read_text());self.assertEqual(doc["chain_id"],chain);self.assertEqual(len(doc["seeds"]),seeds);self.assertEqual(self.tool("verify",RELEASE/name).returncode,0);self.assertEqual(self.tool("env",RELEASE/name).stdout.encode(),(RELEASE/(name.removesuffix(".json")+".env")).read_bytes())
   community=json.loads((RELEASE/"gonka-devnet-community.json").read_text());self.assertEqual([seed["node_id"] for seed in community["seeds"]],["7d6d21cb94c069e595a7b940a2a0c5221c6c8387","a7b63dfdf4ff16fa09c9dd74356f6accd753c135"])
   self.assertEqual([seed["api"] for seed in community["seeds"]],["https://node0.gonka-dev.net","https://node11.gonka-dev.net"]);self.assertEqual(community["brokers"][0]["api_urls"],["https://api.gonka-dev.net"])
+  self.assertEqual(community["genesis"]["sha256"],"30a1bb1732543d54ba418ed50e5bd47bd36c2e162fa44217c323c53eb8399bb2")
+  self.assertEqual(community["software"]["model"],{"id":"Qwen/Qwen2.5-7B-Instruct","revision":"a09a35458c702b33eeacc393d103063234e8bc28","context_length":4096,"max_num_seqs":32,"gpu_memory_utilization":0.92,"dtype":"bfloat16","tensor_parallel_size":1})
   self.assertEqual(self.tool("broker-urls",RELEASE/"gonka-devnet-community.json").stdout.splitlines(),["https://api.gonka-dev.net"])
  def test_http_network_control_but_https_brokers(self):
   with tempfile.TemporaryDirectory() as t:

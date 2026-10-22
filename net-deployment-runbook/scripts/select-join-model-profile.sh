@@ -53,19 +53,37 @@ target_model="$requested_model"
 jq -e --arg id "$target_model" 'any(.[]; .id == $id)' <<<"$registry" >/dev/null \
   || die model_not_registered "model $target_model is absent from the current network registry"
 selected=''
+legacy_selected=''
 for lock in "$ROOT"/../model/*.lock; do
   profile="${lock##*/}"; profile="${profile%.lock}"
   model_id="$(awk -F= '$1 == "MODEL_ID" {print $2; exit}' "$lock")"
   revision="$(awk -F= '$1 == "MODEL_SOURCE_REVISION" {print $2; found=1; exit} $1 == "MODEL_REVISION" {fallback=$2} END {if (!found && fallback) print fallback}' "$lock")"
   source_id="$(awk -F= '$1 == "MODEL_SOURCE_ID" {print $2; exit}' "$lock")"; source_id="${source_id:-$model_id}"
   minimum_vram_mib="$(awk -F= '$1 == "MODEL_MIN_VRAM_MIB" {print $2; exit}' "$lock")"
+  scope="$(awk -F= '$1 == "GDC_MODEL_PROFILE_SCOPE" {print $2; exit}' "$lock")"
   [[ "$model_id" == "$target_model" && "$minimum_vram_mib" =~ ^[1-9][0-9]*$ ]] || continue
+  # Qualification-only locks are evidence for testing, not JOIN admission.
+  # The original 0.6B lock predates scoped locks and remains the sole implicit
+  # legacy network profile; every newer model must declare network scope.
+  case "$scope" in
+    network) ;;
+    qualification-only) continue ;;
+    '') [[ "$model_id" == "Qwen/Qwen3-0.6B" ]] || continue ;;
+    *) continue ;;
+  esac
   [[ "$plan_only" == true || "$minimum_vram_mib" -le "$vram_mib" ]] || continue
   jq -e --arg id "$model_id" --arg source "$source_id" --arg revision "$revision" \
     'any(.[]; .id == $id and .hf_repo == $source and .hf_commit == $revision)' <<<"$registry" >/dev/null || continue
-  [[ -z "$selected" ]] || die profile_ambiguous "more than one eligible local profile matches $target_model"
-  selected="$(jq -cn --arg profile "$profile" --arg id "$model_id" --arg source "$source_id" --arg revision "$revision" --argjson minimum "$minimum_vram_mib" '{profile:$profile,model_id:$id,source_id:$source,source_revision:$revision,minimum_vram_mib:$minimum}')"
+  candidate="$(jq -cn --arg profile "$profile" --arg id "$model_id" --arg source "$source_id" --arg revision "$revision" --argjson minimum "$minimum_vram_mib" '{profile:$profile,model_id:$id,source_id:$source,source_revision:$revision,minimum_vram_mib:$minimum}')"
+  if [[ -z "$scope" ]]; then
+    [[ -z "$legacy_selected" ]] || die profile_ambiguous "more than one eligible legacy local profile matches $target_model"
+    legacy_selected="$candidate"
+  else
+    [[ -z "$selected" ]] || die profile_ambiguous "more than one eligible network local profile matches $target_model"
+    selected="$candidate"
+  fi
 done
+selected="${selected:-$legacy_selected}"
 if [[ -z "$selected" ]]; then
   [[ "$plan_only" != true ]] || die profile_unavailable "no registered local profile matches $target_model"
   die profile_unavailable "no registered local profile for $target_model fits ${vram_mib} MiB VRAM"

@@ -17,6 +17,21 @@ sed -i "s/__SHA__/$digest/" "$bootstrap"
 grep -Fq 'PASS offline network bootstrap' "$tmp/verify"
 "$TOOL" env "$bootstrap" >"$tmp/bootstrap.env"
 grep -Fq 'export SEED_NODE_RPC_URL=https://one.example/chain-rpc' "$tmp/bootstrap.env"
+! grep -q 'BOOTSTRAP_RPC_REDUNDANCY' "$tmp/bootstrap.env"
+single_bootstrap="$tmp/single-bootstrap.json"
+jq '.bootstrap_mode="genesis-single-seed" | .seeds=[.seeds[0]] | .seeds[0].p2p="tcp://127.0.0.1:5000"' "$bootstrap" >"$single_bootstrap"
+"$TOOL" verify "$single_bootstrap" >"$tmp/single-verify"
+grep -Fq 'seeds=1' "$tmp/single-verify"
+"$TOOL" env "$single_bootstrap" >"$tmp/single.env"
+grep -Fq 'export RPC_SERVER_URL_1=https://one.example/chain-rpc' "$tmp/single.env"
+grep -Fq 'export RPC_SERVER_URL_2=https://one.example/chain-rpc' "$tmp/single.env"
+grep -Fq 'export BOOTSTRAP_RPC_REDUNDANCY=single-endpoint' "$tmp/single.env"
+if jq 'del(.bootstrap_mode) | .seeds=[.seeds[0]]' "$bootstrap" >"$tmp/unmarked-single.json" && "$TOOL" verify "$tmp/unmarked-single.json" >/dev/null 2>&1; then
+  echo 'single seed without explicit genesis mode unexpectedly validated' >&2; exit 1
+fi
+if jq '.bootstrap_mode="genesis-single-seed"' "$bootstrap" >"$tmp/multi-in-single-mode.json" && "$TOOL" verify "$tmp/multi-in-single-mode.json" >/dev/null 2>&1; then
+  echo 'multiple seeds in genesis-single-seed mode unexpectedly validated' >&2; exit 1
+fi
 bad_path="$tmp/unsupported-rpc-path.json"
 sed 's#https://one.example/chain-rpc#https://one.example/rpc#' "$bootstrap" >"$bad_path"
 if "$TOOL" verify "$bad_path" >/dev/null 2>&1; then
@@ -30,9 +45,97 @@ cat >"$tmp/bin/inferenced" <<'EOF'
 cp "$BOOTSTRAP_TEST_GENESIS" "$3"
 EOF
 chmod 0755 "$tmp/bin/inferenced"
+
+# RPC and P2P probes are mocked because the operator test runs without network permissions.
+jq '.seeds[0].p2p="tcp://seed.example:5000" | .brokers=[]' "$single_bootstrap" >"$tmp/single-online.json"
+online_genesis="$tmp/rpc-genesis.json"
+printf '%s\n' '{"chain_id":"gonka-fixture","app_hash":null,"initial_height":1,"consensus":{"params":{"block":{"max_bytes":"22020096"}}}}' >"$online_genesis"
+online_genesis_raw_sha=$(sha256sum "$online_genesis" | awk '{print $1}')
+online_genesis_canonical_sha=$(jq -eS '
+  del(.app_name, .app_version)
+  | if has("app_hash") then .app_hash = (.app_hash // "") else . end
+  | if has("initial_height") then .initial_height = (.initial_height | tostring) else . end
+  | if .consensus.params? then .consensus_params = .consensus.params | del(.consensus) else . end
+' "$online_genesis" | sha256sum | awk '{print $1}')
+[[ "$online_genesis_raw_sha" != "$online_genesis_canonical_sha" ]] \
+  || { echo 'fixture must distinguish raw distribution hash from canonical identity hash' >&2; exit 1; }
+jq --arg sha "$online_genesis_raw_sha" '.genesis.sha256=$sha' "$tmp/single-online.json" >"$tmp/single-online-raw.json"
+mv "$tmp/single-online-raw.json" "$tmp/single-online.json"
+cat >"$tmp/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+url=${!#}
+case "$url" in
+  */one.example/chain-rpc/status) printf '{"result":{"node_info":{"id":"%s","network":"%s"}}}\n' "${BOOTSTRAP_TEST_NODE_ID:-0123456789abcdef0123456789abcdef01234567}" "$BOOTSTRAP_TEST_CHAIN_ID" ;;
+  */two.example/chain-rpc/status) printf '{"result":{"node_info":{"id":"89abcdef0123456789abcdef0123456789abcdef","network":"%s"}}}\n' "$BOOTSTRAP_TEST_CHAIN_ID" ;;
+  */v1/participants) printf '[]\n' ;;
+  */v1/models) printf '[]\n' ;;
+  *) echo "unexpected local fixture URL: $url" >&2; exit 1 ;;
+esac
+EOF
+chmod 0755 "$tmp/bin/curl"
+cat >"$tmp/bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$BOOTSTRAP_TEST_TIMEOUT_LOG"
+EOF
+chmod 0755 "$tmp/bin/timeout"
+PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" BOOTSTRAP_TEST_TIMEOUT_LOG="$tmp/timeout.log" BOOTSTRAP_TEST_NODE_ID=0123456789abcdef0123456789abcdef01234567 BOOTSTRAP_TEST_CHAIN_ID=gonka-fixture \
+  "$TOOL" online "$tmp/single-online.json" >"$tmp/single-online.out"
+grep -Fq 'PASS online network bootstrap chain_id=gonka-fixture seeds=1' "$tmp/single-online.out"
+grep -Fq 'seed.example/5000' "$tmp/timeout.log"
+if PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" BOOTSTRAP_TEST_TIMEOUT_LOG="$tmp/timeout.log" BOOTSTRAP_TEST_NODE_ID=89abcdef0123456789abcdef0123456789abcdef BOOTSTRAP_TEST_CHAIN_ID=gonka-fixture \
+  "$TOOL" online "$tmp/single-online.json" >/dev/null 2>&1; then
+  echo 'single-seed online accepted a mismatched live node ID' >&2; exit 1
+fi
+if PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" BOOTSTRAP_TEST_TIMEOUT_LOG="$tmp/timeout.log" BOOTSTRAP_TEST_NODE_ID=0123456789abcdef0123456789abcdef01234567 BOOTSTRAP_TEST_CHAIN_ID=wrong-chain \
+  "$TOOL" online "$tmp/single-online.json" >/dev/null 2>&1; then
+  echo 'single-seed online accepted a mismatched live chain ID' >&2; exit 1
+fi
+if jq '.genesis.sha256="1111111111111111111111111111111111111111111111111111111111111111"' "$tmp/single-online.json" >"$tmp/single-wrong-genesis.json" && \
+  PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" BOOTSTRAP_TEST_TIMEOUT_LOG="$tmp/timeout.log" BOOTSTRAP_TEST_NODE_ID=0123456789abcdef0123456789abcdef01234567 BOOTSTRAP_TEST_CHAIN_ID=gonka-fixture \
+  "$TOOL" online "$tmp/single-wrong-genesis.json" >/dev/null 2>&1; then
+  echo 'single-seed online accepted a mismatched Genesis hash' >&2; exit 1
+fi
+
+# A canonical identity digest is not a substitute for the published raw-byte
+# distribution digest. Both bootstrap modes must reject it when the actual
+# download has different bytes but the same canonical chain identity.
+jq --arg sha "$online_genesis_canonical_sha" '.genesis.sha256=$sha' "$tmp/single-online.json" >"$tmp/single-canonical-only.json"
+if PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" BOOTSTRAP_TEST_TIMEOUT_LOG="$tmp/timeout.log" BOOTSTRAP_TEST_NODE_ID=0123456789abcdef0123456789abcdef01234567 BOOTSTRAP_TEST_CHAIN_ID=gonka-fixture \
+  "$TOOL" online "$tmp/single-canonical-only.json" >/dev/null 2>&1; then
+  echo 'single-seed online accepted canonical hash in place of the raw distribution hash' >&2; exit 1
+fi
+two_seed_raw="$tmp/two-seed-raw.json"
+jq --arg sha "$online_genesis_raw_sha" '.genesis.sha256=$sha' "$bootstrap" >"$two_seed_raw"
+PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" BOOTSTRAP_TEST_TIMEOUT_LOG="$tmp/timeout.log" BOOTSTRAP_TEST_NODE_ID=0123456789abcdef0123456789abcdef01234567 BOOTSTRAP_TEST_CHAIN_ID=gonka-fixture \
+  "$TOOL" online "$two_seed_raw" >"$tmp/two-seed-online.out"
+grep -Fq 'PASS online network bootstrap chain_id=gonka-fixture seeds=2' "$tmp/two-seed-online.out"
+jq --arg sha "$online_genesis_canonical_sha" '.genesis.sha256=$sha' "$bootstrap" >"$tmp/two-seed-canonical-only.json"
+if PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" BOOTSTRAP_TEST_TIMEOUT_LOG="$tmp/timeout.log" BOOTSTRAP_TEST_NODE_ID=0123456789abcdef0123456789abcdef01234567 BOOTSTRAP_TEST_CHAIN_ID=gonka-fixture \
+  "$TOOL" online "$tmp/two-seed-canonical-only.json" >/dev/null 2>&1; then
+  echo 'two-seed online accepted canonical hash in place of the raw distribution hash' >&2; exit 1
+fi
+
+PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$genesis" "$TOOL" stage "$single_bootstrap" "$tmp/single-stage" >"$tmp/single-stage.out"
+cmp -s "$genesis" "$tmp/single-stage/genesis.json"
+grep -Fq 'export BOOTSTRAP_RPC_REDUNDANCY=single-endpoint' "$tmp/single-stage/bootstrap.env"
+grep -Fq '0123456789abcdef0123456789abcdef01234567@127.0.0.1:5000' "$tmp/single-stage/genesis-seeds.txt"
 PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$genesis" "$TOOL" stage "$bootstrap" "$tmp/stage" >"$tmp/stage.out"
 cmp -s "$genesis" "$tmp/stage/genesis.json"
 [[ "$(stat -c '%a' "$tmp/stage/genesis.json")" == 600 ]]
+
+# Stage the non-canonical RPC bytes through both descriptor modes and prove
+# the downloader preserves them byte-for-byte. A canonical-only digest must
+# not stage in either mode.
+PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" "$TOOL" stage "$tmp/single-online.json" "$tmp/single-online-stage" >"$tmp/single-online-stage.out"
+cmp -s "$online_genesis" "$tmp/single-online-stage/genesis.json"
+PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" "$TOOL" stage "$two_seed_raw" "$tmp/two-seed-stage" >"$tmp/two-seed-stage.out"
+cmp -s "$online_genesis" "$tmp/two-seed-stage/genesis.json"
+if PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" "$TOOL" stage "$tmp/single-canonical-only.json" "$tmp/canonical-stage" >/dev/null 2>&1; then
+  echo 'single-seed stage accepted canonical hash in place of the raw distribution hash' >&2; exit 1
+fi
+if PATH="$tmp/bin:$PATH" BOOTSTRAP_TEST_GENESIS="$online_genesis" "$TOOL" stage "$tmp/two-seed-canonical-only.json" "$tmp/canonical-stage" >/dev/null 2>&1; then
+  echo 'two-seed stage accepted canonical hash in place of the raw distribution hash' >&2; exit 1
+fi
 
 if INFERENCED=missing-inferenced "$TOOL" stage "$bootstrap" "$tmp/missing-cli-stage" >"$tmp/missing-cli.out" 2>"$tmp/missing-cli.err"; then
   echo 'bootstrap staging unexpectedly worked without inferenced' >&2

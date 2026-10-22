@@ -114,3 +114,5 @@ if grep -Fq '[[ -z "${GDC_PORTABLE_DAPI_IMAGE:-}" ]] || verify_host_args' "$ROOT
   exit 1
 fi
 echo 'PASS portable runtime is declared for both chain images or neither'
+
+"$ROOT/scripts/test-ops-faucet-isolation.sh"

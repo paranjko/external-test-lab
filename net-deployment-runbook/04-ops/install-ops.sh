@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet|bifrost --render-dir DIR [--gateway-env FILE] [--gateway-observer-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE] [--bifrost-env FILE] [--bifrost-broker-env FILE] [--bifrost-edge-env FILE]" >&2; }
-RENDER=""; GATEWAY=""; GATEWAY_OBSERVER=""; FAUCET=""; GATEWAY_RESERVE=""; BIFROST=""; BIFROST_BROKER=""; BIFROST_EDGE=""; COMPONENT=""
-while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--gateway-env) GATEWAY="$2";shift 2;;--gateway-observer-env) GATEWAY_OBSERVER="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;--bifrost-env) BIFROST="$2";shift 2;;--bifrost-broker-env) BIFROST_BROKER="$2";shift 2;;--bifrost-edge-env) BIFROST_EDGE="$2";shift 2;;*)usage;exit 2;;esac;done
+usage(){ echo "Usage: sudo $0 --component gateway|monitoring|site|faucet|bifrost --render-dir DIR [--faucet-only] [--gateway-env FILE] [--gateway-observer-env FILE] [--faucet-env FILE] [--gateway-reserve-env FILE] [--bifrost-env FILE] [--bifrost-broker-env FILE] [--bifrost-edge-env FILE]" >&2; }
+RENDER=""; GATEWAY=""; GATEWAY_OBSERVER=""; FAUCET=""; GATEWAY_RESERVE=""; BIFROST=""; BIFROST_BROKER=""; BIFROST_EDGE=""; COMPONENT=""; FAUCET_ONLY=false
+while (($#)); do case "$1" in --component) COMPONENT="$2";shift 2;;--render-dir) RENDER="$2";shift 2;;--faucet-only) FAUCET_ONLY=true;shift;;--gateway-env) GATEWAY="$2";shift 2;;--gateway-observer-env) GATEWAY_OBSERVER="$2";shift 2;;--faucet-env) FAUCET="$2";shift 2;;--gateway-reserve-env) GATEWAY_RESERVE="$2";shift 2;;--bifrost-env) BIFROST="$2";shift 2;;--bifrost-broker-env) BIFROST_BROKER="$2";shift 2;;--bifrost-edge-env) BIFROST_EDGE="$2";shift 2;;*)usage;exit 2;;esac;done
 [[ $EUID -eq 0 && -s "$RENDER/.env" ]] || { usage; exit 2; }
 case "$COMPONENT" in
   gateway) [[ -s "$GATEWAY" && -s "$GATEWAY_OBSERVER" ]] || { usage; exit 2; } ;;
@@ -13,6 +13,29 @@ case "$COMPONENT" in
   *) usage; exit 2 ;;
 esac
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; DEST=/srv/dai/ops
+if [[ "$FAUCET_ONLY" == true ]]; then
+  [[ "$EUID" -eq 0 && "$COMPONENT" == faucet \
+    && -s "$RENDER/.env" && -s "$FAUCET" && -s "$GATEWAY_RESERVE" \
+    && -s "$HERE/compose.faucet.yaml" && -s "$HERE/faucet/Dockerfile" && -s "$HERE/faucet/faucet.py" ]] \
+    || { usage; exit 2; }
+  [[ ! -L /srv/dai && ! -L "$DEST" && ! -L "$DEST/faucet-runtime" ]] \
+    || { echo 'refusing faucet-only install through a symbolic-link OPS path' >&2; exit 1; }
+  FAUCET_DEST="$DEST/faucet-runtime"
+  [[ ! -L "$FAUCET_DEST/faucet" ]] || { echo 'refusing faucet-only install through a symbolic-link build context' >&2; exit 1; }
+  for faucet_path in compose.yaml .env faucet.env gateway-reserve-signer.env faucet/Dockerfile faucet/faucet.py; do
+    [[ ! -L "$FAUCET_DEST/$faucet_path" ]] \
+      || { echo "refusing faucet-only install through a symbolic-link target: $faucet_path" >&2; exit 1; }
+  done
+  install -d -m 0755 "$DEST" "$FAUCET_DEST" "$FAUCET_DEST/faucet"
+  install -m 0644 "$HERE/compose.faucet.yaml" "$FAUCET_DEST/compose.yaml"
+  install -m 0644 "$HERE/faucet/Dockerfile" "$FAUCET_DEST/faucet/Dockerfile"
+  install -m 0644 "$HERE/faucet/faucet.py" "$FAUCET_DEST/faucet/faucet.py"
+  install -m 0600 "$RENDER/.env" "$FAUCET_DEST/.env"
+  install -m 0600 "$FAUCET" "$FAUCET_DEST/faucet.env"
+  install -m 0600 "$GATEWAY_RESERVE" "$FAUCET_DEST/gateway-reserve-signer.env"
+  printf 'READY installed faucet-only files; shared OPS, monitoring, gateway and Caddy configuration retained\n'
+  exit 0
+fi
 ops_shared_asset() {
   local name="$1"
   if [[ -s "$HERE/$name" ]]; then

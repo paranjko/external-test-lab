@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf -- "$tmp"' EXIT
 profile=v2026.08.28-rc.0
 definition="$ROOT/profiles/candidates/$profile.definition.json"
 sidecar="$ROOT/profiles/candidates/$profile.definition.sha256"
@@ -40,7 +42,7 @@ jq -e --arg profile "$profile" '
 ' "$definition" >/dev/null
 
 prepare="$(
-  "$ROOT/gdc.sh" release candidate prepare \
+  GDC_HOME="$tmp/gdc" "$ROOT/gdc.sh" release candidate prepare \
     --source-ref ak/height-sync-protocol-dapi --layer core
 )"
 grep -Fq "READY profile=$profile layer=core" <<<"$prepare"

@@ -38,6 +38,7 @@ if [[ -n "$OBSERVATION" ]]; then
     (.network_state_id | test("^[a-f0-9]{64}$")) and
     (.bootstrap.chain_id | type == "string" and length > 0) and
     (.bootstrap.genesis_sha256 | test("^[a-f0-9]{64}$")) and
+    (.bootstrap.chain_identity_sha256 | test("^[a-f0-9]{64}$")) and
     (.runtime.core.version | type == "string" and length > 0) and
     (.runtime.core.commit | test("^[a-f0-9]{40}$")) and
     (.runtime.dapi.version | type == "string" and length > 0) and
@@ -56,7 +57,8 @@ if [[ -n "$OBSERVATION" ]]; then
     || die observation_expired 'network observation is no longer fresh'
   GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$OBSERVATION")"
   GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$OBSERVATION")"
-  GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$OBSERVATION")"
+  GDC_NETWORK_BOOTSTRAP_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$OBSERVATION")"
+  GDC_NETWORK_GENESIS_SHA256="$(jq -r '.bootstrap.chain_identity_sha256 // .bootstrap.genesis_sha256' "$OBSERVATION")"
   GDC_NETWORK_CORE_VERSION="$(jq -r .runtime.core.version "$OBSERVATION")"
   GDC_NETWORK_CORE_COMMIT="$(jq -r .runtime.core.commit "$OBSERVATION")"
   GDC_NETWORK_DAPI_VERSION="$(jq -r .runtime.dapi.version "$OBSERVATION")"
@@ -76,6 +78,7 @@ else
   [[ "${GDC_NETWORK_FINGERPRINT:-}" =~ ^[0-9a-f]{64}$ ]] || die configuration 'missing network fingerprint'
   [[ "${GDC_NETWORK_CHAIN_ID:-}" == "$(jq -r .chain_id "$BOOTSTRAP")" ]] || die configuration 'composition and Bootstrap chain IDs differ'
   [[ "${GDC_NETWORK_GENESIS_SHA256:-}" == "$(jq -r .genesis.sha256 "$BOOTSTRAP")" ]] || die configuration 'composition and Bootstrap Genesis digests differ'
+  GDC_NETWORK_BOOTSTRAP_GENESIS_SHA256="$(jq -r .genesis.sha256 "$BOOTSTRAP")"
   # shellcheck disable=SC1091 # ROOT is resolved above.
   source "$ROOT/scripts/profile.sh"
   load_profiles
@@ -162,6 +165,78 @@ p2p_for_rpc() {
   [[ "$node_id" =~ ^[0-9a-f]{40}$ && "$p2p" =~ ^tcp://[A-Za-z0-9.-]+:[0-9]{2,5}$ ]] || return 1
   printf '%s@%s' "$node_id" "$p2p"
 }
+
+bootstrap_mode="$(jq -r '.bootstrap_mode // empty' "$BOOTSTRAP")"
+if [[ "$bootstrap_mode" == genesis-single-seed ]]; then
+  [[ -n "$OBSERVATION" && -n "$SOURCE_RPC" ]] \
+    || die configuration 'genesis-single-seed requires an observed, explicitly selected source RPC'
+  [[ "$(jq '.seeds | length' "$BOOTSTRAP")" == 1 ]] \
+    || die configuration 'genesis-single-seed must contain exactly one seed'
+  seed="$(jq -ce '.seeds[0]' "$BOOTSTRAP")"
+  seed_rpc="$(jq -er '.rpc | rtrimstr("/")' <<<"$seed")"
+  seed_node_id="$(jq -er '.node_id' <<<"$seed")"
+  seed_p2p="$(jq -er '.p2p' <<<"$seed")"
+  [[ "$SOURCE_RPC" == "$seed_rpc" ]] \
+    || die configuration 'selected source RPC does not identify the single declared seed'
+
+  # Full sync still requires a live, chain-bound source and a fresh runtime
+  # observation. It intentionally does not invent a second RPC witness,
+  # trusted header, or P2P snapshot provider.
+  jq -e --arg rpc "$seed_rpc" --arg node "$seed_node_id" '
+    .policy.mode == "operator_source" and .policy.source_rpc == $rpc and
+    .policy.authority.state == "operator_selected" and
+    (.seeds | type == "array" and length == 1 and .[0].status == "usable" and .[0].expected_node_id == $node) and
+    (.runtime_api_origins | type == "array" and length == 1 and
+      .[0].seed_index == 0 and .[0].status == "usable" and .[0].expected_node_id == $node and .[0].node_id == $node) and
+    .policy.authority.selected.remote_ips == [.runtime_api_origins[0].remote_ip]
+  ' "$OBSERVATION" >/dev/null \
+    || die source_unavailable 'the explicit single seed lacks live chain, node ID, or runtime evidence'
+  IFS=' ' read -r source_host source_port < <(rpc_connection "$seed_rpc") \
+    || die configuration 'single-seed RPC URL is malformed'
+  source_ip="$(resolved_ipv4 "$source_host" || true)"
+  [[ "$source_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+    || die source_unavailable 'single-seed RPC has no verified IPv4 address'
+  source_status="$tmp/genesis-single-seed-status.json"
+  pinned_get "$seed_rpc" "$source_host" "$source_port" "$source_ip" /status "$source_status" \
+    || die source_unavailable 'single-seed RPC status is unavailable'
+  jq -e --arg chain "$GDC_NETWORK_CHAIN_ID" --arg node "$seed_node_id" \
+    '.result.node_info.network == $chain and .result.node_info.id == $node and (.result.sync_info.latest_block_height | tonumber) > 0' \
+    "$source_status" >/dev/null \
+    || die source_unavailable 'single-seed RPC does not report the declared live chain and node ID'
+  seed_domain="$(jq -cn --arg rpc "$seed_rpc" --arg host "$source_host" --arg ip "$source_ip" \
+    --arg chain "$GDC_NETWORK_CHAIN_ID" \
+    --arg genesis "$GDC_NETWORK_GENESIS_SHA256" --argjson port "$source_port" \
+    '{id:"genesis-single-seed",rpc_url:$rpc,host:$host,port:$port,ip:$ip,chain_id:$chain,genesis_sha256:$genesis}')"
+  empty_digest="$(printf '' | sha256sum | awk '{print $1}')"
+  mkdir -p "$(dirname "$RECEIPT")" "$(dirname "$ENV_FILE")"
+  receipt_tmp="$(mktemp "$(dirname "$RECEIPT")/.join-lineage-receipt.XXXXXX")"
+  env_tmp="$(mktemp "$(dirname "$ENV_FILE")/.join-lineage-env.XXXXXX")"
+  jq -n \
+    --arg fingerprint "$GDC_NETWORK_FINGERPRINT" --arg observation_sha256 "$OBSERVATION_SHA256" --arg runtime_source_kind "$RUNTIME_SOURCE_KIND" --arg runtime_source_id "$RUNTIME_SOURCE_ID" \
+    --arg core_version "$GDC_NETWORK_CORE_VERSION" --arg core_commit "$GDC_NETWORK_CORE_COMMIT" \
+    --arg dapi_version "$GDC_NETWORK_DAPI_VERSION" --arg dapi_commit "$GDC_NETWORK_DAPI_COMMIT" \
+    --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" --arg distribution "$GDC_NETWORK_BOOTSTRAP_GENESIS_SHA256" \
+    --argjson seed_domain "$seed_domain" --arg empty "$empty_digest" --arg rpc "$seed_rpc" --arg node "$seed_node_id" --arg p2p "$seed_p2p" \
+    '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:$observation_sha256,source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:{mode:"full_sync",chain_id:$chain,genesis_sha256:$genesis,distribution_sha256:$distribution,seed:{node_id:$node,rpc_url:$rpc,p2p:$p2p}},fault_domains:[$seed_domain],trust_authority:{kind:"genesis_single_seed",rpc_url:$rpc},checkpoints:null,staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
+  {
+    printf 'GDC_JOIN_BOOTSTRAP_MODE=%q\n' full_sync
+    printf 'GDC_JOIN_TRUST_HEIGHT=%q\n' 0
+    printf 'GDC_JOIN_TRUST_HASH=%q\n' ''
+    printf 'GDC_JOIN_SNAPSHOT_PEERS=%q\n' ''
+    printf 'GDC_JOIN_RPC_SERVER_1=%q\n' "${seed_rpc}/"
+    printf 'GDC_JOIN_RPC_SERVER_2=%q\n' ''
+    printf 'GDC_JOIN_SOURCE_RPC=%q\n' "$seed_rpc"
+    printf 'GDC_JOIN_TRUSTED_BLOCK_PERIOD=%q\n' 0
+    printf 'GDC_JOIN_LINEAGE_RECEIPT=%q\n' "$RECEIPT"
+  } >"$env_tmp"
+  chmod 0600 "$receipt_tmp" "$env_tmp"
+  mv -f "$receipt_tmp" "$RECEIPT"
+  mv -f "$env_tmp" "$ENV_FILE"
+  printf 'PASS JOIN lineage preflight mode=full-sync source=%s independent_witnesses=0 receipt=%s\n' "$seed_rpc" "$RECEIPT"
+  exit 0
+elif [[ -n "$bootstrap_mode" ]]; then
+  die configuration "unsupported Bootstrap mode: $bootstrap_mode"
+fi
 
 mapfile -t rpcs < <(jq -r '.seeds[].rpc | rtrimstr("/")' "$BOOTSTRAP")
 (( ${#rpcs[@]} >= required_origins )) || die rpc_quorum_conflict 'Bootstrap lacks the required RPC origins'
@@ -365,15 +440,15 @@ empty_digest="$(printf '' | sha256sum | awk '{print $1}')"
 mkdir -p "$(dirname "$RECEIPT")" "$(dirname "$ENV_FILE")"
 receipt_tmp="$(mktemp "$(dirname "$RECEIPT")/.join-lineage-receipt.XXXXXX")"
 env_tmp="$(mktemp "$(dirname "$ENV_FILE")/.join-lineage-env.XXXXXX")"
-jq -n \
+  jq -n \
   --arg fingerprint "$GDC_NETWORK_FINGERPRINT" --arg observation_sha256 "$OBSERVATION_SHA256" --arg runtime_source_kind "$RUNTIME_SOURCE_KIND" --arg runtime_source_id "$RUNTIME_SOURCE_ID" \
   --arg core_version "$GDC_NETWORK_CORE_VERSION" --arg core_commit "$GDC_NETWORK_CORE_COMMIT" \
   --arg dapi_version "$GDC_NETWORK_DAPI_VERSION" --arg dapi_commit "$GDC_NETWORK_DAPI_COMMIT" \
-  --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" --arg expires "$expires_at" \
+  --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" --arg distribution "$GDC_NETWORK_BOOTSTRAP_GENESIS_SHA256" --arg expires "$expires_at" \
   --argjson early "$early" --argjson post "$post" --argjson trust "$trust" --argjson snapshot "$snapshot" \
   --argjson domains "$(for i in "${!quorum_rpcs[@]}"; do jq -cn --arg id "${quorum_domains[$i]}" --arg rpc "${quorum_rpcs[$i]}" --arg host "${quorum_hosts[$i]}" --argjson port "${quorum_ports[$i]}" --arg ip "${quorum_ips[$i]}" --arg chain "$GDC_NETWORK_CHAIN_ID" --arg genesis "$GDC_NETWORK_GENESIS_SHA256" '{id:$id,rpc_url:$rpc,host:$host,port:$port,ip:$ip,chain_id:$chain,genesis_sha256:$genesis}'; done | jq -s .)" \
   --arg empty "$empty_digest" \
-  '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:(if $observation_sha256 == "" then null else $observation_sha256 end),source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,trust:($trust+{expires_at:$expires}),snapshot:$snapshot},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
+  '{schema_version:1,kind:"gdc-host-join-lineage-preflight",runtime:{network_fingerprint:$fingerprint,observation_sha256:(if $observation_sha256 == "" then null else $observation_sha256 end),source:{kind:$runtime_source_kind,id:$runtime_source_id},core:{version:$core_version,commit:$core_commit},dapi:{version:$dapi_version,commit:$dapi_commit}},bootstrap:{mode:"state_sync",chain_id:$chain,genesis_sha256:$genesis,distribution_sha256:$distribution,trust:($trust+{expires_at:$expires}),snapshot:$snapshot},fault_domains:$domains,checkpoints:{early:$early,post_upgrade:$post,trust:$trust},staging:{previous_deployment_digest:$empty,rendered_config_digest:$empty,compose_validated:false},signer:{state:"PREPARED",tmkms_monotonic:false},result:{terminal_state:"prepared",category:"none",resume:"safe_exact_resume"}}' >"$receipt_tmp"
 jq --arg rpc "$selected_source_rpc" --arg kind "$([[ -n "$SOURCE_RPC" ]] && printf operator_source || printf bootstrap_archival_source)" \
   '. + {trust_authority:{kind:$kind,rpc_url:$rpc}}' "$receipt_tmp" >"$receipt_tmp.source"
 mv "$receipt_tmp.source" "$receipt_tmp"

@@ -27,6 +27,67 @@ join_operation=new
 state_acquisition_mode="$(jq -er .spec.state_acquisition.mode "$GDC_JOIN_PROFILE")"
 [[ "$state_acquisition_mode" == pending ]] \
   || die 'JOIN profile has an unsupported state acquisition mode'
+join_bootstrap_mode="$(jq -r '.bootstrap_mode // empty' "$GDC_JOIN_BOOTSTRAP_FILE")"
+verify_join_bootstrap_authority() {
+  local current_mode bootstrap_sha bootstrap_genesis bootstrap_chain bootstrap_distribution seed_node seed_rpc seed_p2p expected_seed staged_genesis_sha staged_distribution_sha
+  current_mode="$(jq -r '.bootstrap_mode // empty' "$GDC_JOIN_BOOTSTRAP_FILE")"
+  if [[ "$current_mode" != genesis-single-seed ]]; then
+    [[ "${GDC_JOIN_BOOTSTRAP_MODE:-}" != full_sync ]] \
+      || die 'full-sync preflight cannot be used without genesis-single-seed Bootstrap opt-in'
+    return 0
+  fi
+  [[ "${GDC_JOIN_BOOTSTRAP_MODE:-}" == full_sync ]] \
+    || die 'genesis-single-seed Bootstrap requires its full-sync lineage preflight; state sync is not a fallback'
+  [[ -r "$GDC_JOIN_PROFILE" && -s "$GENESIS/genesis.json" && -s "$GENESIS/genesis-seeds.txt" ]] \
+    || die 'full-sync JOIN lacks its reviewed profile or staged Genesis'
+  bootstrap_sha="$(sha256sum "$GDC_JOIN_BOOTSTRAP_FILE" | awk '{print $1}')"
+  bootstrap_distribution="$(jq -er '.genesis.sha256' "$GDC_JOIN_BOOTSTRAP_FILE")"
+  bootstrap_chain="$(jq -er '.chain_id' "$GDC_JOIN_BOOTSTRAP_FILE")"
+  seed_node="$(jq -er '.seeds[0].node_id' "$GDC_JOIN_BOOTSTRAP_FILE")"
+  seed_rpc="$(jq -er '.seeds[0].rpc | rtrimstr("/")' "$GDC_JOIN_BOOTSTRAP_FILE")"
+  seed_p2p="$(jq -er '.seeds[0].p2p' "$GDC_JOIN_BOOTSTRAP_FILE")"
+  staged_genesis_sha="$(genesis_sha256 "$GENESIS/genesis.json")" \
+    || die 'failed to calculate canonical staged Genesis hash'
+  staged_distribution_sha="$(sha256sum "$GENESIS/genesis.json" | awk '{print $1}')"
+  bootstrap_genesis="$(jq -er '.spec.network.genesis_sha256' "$GDC_JOIN_PROFILE")"
+  [[ "$(jq -r '.seeds | length' "$GDC_JOIN_BOOTSTRAP_FILE")" == 1 \
+    && "$bootstrap_chain" == "$CHAIN_ID" \
+    && "$staged_distribution_sha" == "$bootstrap_distribution" \
+    && "$(jq -er '.spec.network.bootstrap_genesis_sha256' "$GDC_JOIN_PROFILE")" == "$bootstrap_distribution" \
+    && "$staged_genesis_sha" == "$bootstrap_genesis" \
+    && "$(jq -er '.chain_id' "$GENESIS/genesis.json")" == "$bootstrap_chain" ]] \
+    || die 'single-seed Bootstrap raw distribution or canonical chain identity does not match the staged Genesis'
+  jq -e --arg chain "$bootstrap_chain" --arg genesis "$bootstrap_genesis" --arg distribution "$bootstrap_distribution" --arg bootstrap "$bootstrap_sha" \
+    '.spec.network.chain_id == $chain and .spec.network.genesis_sha256 == $genesis and .spec.network.bootstrap_genesis_sha256 == $distribution and .spec.network.bootstrap_sha256 == $bootstrap' \
+    "$GDC_JOIN_PROFILE" >/dev/null || die 'JOIN profile is not bound to the selected single-seed Bootstrap and Genesis'
+  expected_seed="${seed_node}@${seed_p2p#tcp://}"
+  [[ "$(wc -l <"$GENESIS/genesis-seeds.txt" | tr -d ' ')" == 1 \
+    && "$(<"$GENESIS/genesis-seeds.txt")" == "$expected_seed" ]] \
+    || die 'staged Genesis seed differs from the single-seed Bootstrap descriptor'
+  [[ "${GDC_JOIN_SOURCE_RPC:-}" == "$seed_rpc" \
+    && "${GDC_JOIN_RPC_SERVER_1:-}" == "$seed_rpc/" && -z "${GDC_JOIN_RPC_SERVER_2:-}" \
+    && "${GDC_JOIN_TRUST_HEIGHT:-}" == 0 && -z "${GDC_JOIN_TRUST_HASH:-}" \
+    && -z "${GDC_JOIN_SNAPSHOT_PEERS:-}" && "${GDC_JOIN_TRUSTED_BLOCK_PERIOD:-}" == 0 ]] \
+    || die 'full-sync preflight contains extra RPCs, state-sync trust, or snapshot providers'
+  [[ "${GDC_JOIN_LINEAGE_RECEIPT:-}" == "$STATE/lineage-preflight.json" \
+    && -r "$GDC_JOIN_LINEAGE_RECEIPT" && ! -L "$GDC_JOIN_LINEAGE_RECEIPT" \
+    && "${GDC_JOIN_LINEAGE_RECEIPT_SHA256:-}" =~ ^[0-9a-f]{64}$ \
+    && "$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')" == "$GDC_JOIN_LINEAGE_RECEIPT_SHA256" ]] \
+    || die 'full-sync lineage receipt is missing, changed, or outside this JOIN state'
+  jq -e --arg chain "$bootstrap_chain" --arg genesis "$bootstrap_genesis" --arg distribution "$bootstrap_distribution" --arg node "$seed_node" \
+    --arg rpc "$seed_rpc" --arg p2p "$seed_p2p" '
+      .schema_version == 1 and .kind == "gdc-host-join-lineage-preflight" and
+      (.runtime.observation_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      .bootstrap == {mode:"full_sync",chain_id:$chain,genesis_sha256:$genesis,distribution_sha256:$distribution,
+        seed:{node_id:$node,rpc_url:$rpc,p2p:$p2p}} and
+      .trust_authority == {kind:"genesis_single_seed",rpc_url:$rpc} and
+      (.fault_domains | length) == 1 and .fault_domains[0].id == "genesis-single-seed" and
+      .fault_domains[0].rpc_url == $rpc and .fault_domains[0].chain_id == $chain and
+      .fault_domains[0].genesis_sha256 == $genesis and .checkpoints == null
+    ' "$GDC_JOIN_LINEAGE_RECEIPT" >/dev/null \
+    || die 'full-sync lineage receipt does not prove the exact declared Genesis seed'
+}
+verify_join_bootstrap_authority
 restore_fence_method=''
 # shellcheck source=/dev/null # ROOT comes from the phase's loaded runbook library.
 source "$ROOT/scripts/lib-join-diagnostics.sh"
@@ -37,14 +98,20 @@ install_join_signer_boundary_exit_trap
 refresh_lineage_for_canary() {
   local receipt="$STATE/lineage-preflight.json" env="$STATE/lineage-preflight.env"
   local observation="$RUN/network-observation-canary.v1.json"
+  local source_rpc=''
   local -a observe_args=(--bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE"
     --bootstrap-url "$(jq -er .bootstrap.url "$JOIN_OBSERVATION")"
     --chain-id "$(jq -er .bootstrap.chain_id "$JOIN_OBSERVATION")"
-    --run-id "$GDC_RUN_ID" --output "$observation")
+    --run-id "$GDC_RUN_ID" --output "$observation" --join-profile "$GDC_JOIN_PROFILE")
   local -a args=(--bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE" --observation "$observation" --receipt "$receipt" --env "$env")
-  if [[ -n "${GDC_JOIN_OPERATOR_SOURCE_RPC:-}" ]]; then
-    observe_args+=(--source-rpc "$GDC_JOIN_OPERATOR_SOURCE_RPC")
-    args+=(--source-rpc "$GDC_JOIN_OPERATOR_SOURCE_RPC")
+  if [[ "$join_bootstrap_mode" == genesis-single-seed ]]; then
+    source_rpc="${GDC_JOIN_SOURCE_RPC:-}"
+  else
+    source_rpc="${GDC_JOIN_OPERATOR_SOURCE_RPC:-}"
+  fi
+  if [[ -n "$source_rpc" ]]; then
+    observe_args+=(--source-rpc "$source_rpc")
+    args+=(--source-rpc "$source_rpc")
   fi
   step "Refresh lineage trust immediately before signerless canary for $NODE"
   GDC_JOIN_LINEAGE_FAILURE_FILE="$RUN/lineage-preflight-canary.failure"
@@ -59,14 +126,15 @@ refresh_lineage_for_canary() {
     .runtime.dapi == $original[0].runtime.dapi
   ' "$observation" >/dev/null || die 'JOIN runtime changed during Host preparation; start a fresh JOIN before enabling the signer'
   "$ROOT/scripts/preflight-join-lineage.sh" "${args[@]}"
-  # The preflight writes this environment atomically after binding both RPC
-  # observations, P2P providers and the new trust tuple.
+  # The preflight writes this environment atomically after binding its
+  # bootstrap-mode-specific lineage evidence.
   # shellcheck disable=SC1090
   source "$env"
   export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
   export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
   GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
   export GDC_JOIN_LINEAGE_RECEIPT_SHA256
+  verify_join_bootstrap_authority
   install -m 0600 "$receipt" "$RUN/lineage-preflight-canary.v1.json"
   install -m 0600 "$env" "$RUN/lineage-preflight-canary.env"
 }
@@ -225,6 +293,31 @@ require_participant_status() {
   [[ -n "$status" ]] || die "participant endpoint answered 200 with an empty participant status for $NODE (url=$endpoint)"
   printf '%s\n' "$status"
 }
+if [[ "${GDC_JOIN_RESUME_IDENTITY_READY:-false}" == true ]]; then
+  [[ "${GDC_JOIN_RESUME:-false}" == true && "${GDC_RUN_ID:-}" != manual ]] \
+    || die 'IDENTITY_READY continuation requires an internal retained-run resume invocation'
+  resume_identity_context="$("$ROOT/scripts/verify-join-identity-ready-resume.sh" \
+    "$NODE" "$GDC_RUN_ID" "$RUN" "$GDC_JOIN_PROFILE" "$JOIN_OBSERVATION" \
+    "$GDC_JOIN_BOOTSTRAP_FILE" "$GENESIS/genesis.json" "$IDENTITIES/$NODE.json" "$ACCOUNTS/$NODE-cold.json")" \
+    || die 'retained IDENTITY_READY evidence or fresh Host target does not permit continuation'
+  ADDRESS="$(jq -er .participant_address <<<"$resume_identity_context")"
+  IDENTITY="$IDENTITIES/$NODE.json"
+  ACCOUNT="$ACCOUNTS/$NODE-cold.json"
+  RUNTIME_ID="$(runtime_id_for_participant "$ADDRESS")"
+  runtime_identity="$(runtime_identity_file "$RUNTIME_ID")"
+  [[ -f "$runtime_identity" && ! -L "$runtime_identity" \
+    && "$(awk -F= '$1 == "node" {print $2; exit}' "$runtime_identity")" == "$NODE" \
+    && "$(awk -F= '$1 == "participant_address" {print $2; exit}' "$runtime_identity")" == "$ADDRESS" ]] \
+    || die 'retained runtime identity mapping is missing or differs from the IDENTITY_READY receipt'
+  ML_TARGET="$(node_ml_host "$NODE" || printf '%s' "$NODE")"
+  URL="$(node_url "$NODE")"
+  PUBLIC_HOST="${URL#https://}"
+  GENESIS_SHA256="$(genesis_sha256 "$GENESIS/genesis.json")"
+  GENESIS_CHAIN_ID="$(jq -er .chain_id "$GENESIS/genesis.json")"
+  rebind_existing_participant=false
+  replace_retained_remote_identity=false
+  printf 'READY %s retained IDENTITY_READY receipt, account, keys, Bootstrap, Genesis, and clean Host boundary verified; continuing with render only\n' "$NODE"
+else
 record_join_transition RUN_CREATED
 record_join_state "$NODE" BOOTSTRAP_IMPORTED
 record_join_transition BOOTSTRAP_VERIFIED
@@ -657,6 +750,7 @@ if [[ "$bootstrap_tmkms_key" != "$canonical_tmkms_key" ]]; then
 fi
 record_join_state "$NODE" IDENTITY_CREATED "$ADDRESS"
 record_join_transition IDENTITY_READY
+fi
 
 step "Render $NODE"
 NODE_DIR="$GENERATED/nodes/$NODE"
@@ -667,6 +761,9 @@ env_args+=(--consensus-pubkey "$(jq -er .consensus_pubkey "$IDENTITY")")
 generation_dir="/srv/dai/data.generations/${GDC_RUN_ID}"
 [[ -r "${GDC_JOIN_LINEAGE_RECEIPT:-}" ]] || die 'JOIN lacks a completed lineage preflight receipt'
 env_args+=(--state-sync-env "$STATE/lineage-preflight.env" --data-dir "$generation_dir")
+if [[ "$join_bootstrap_mode" == genesis-single-seed ]]; then
+  env_args+=(--bootstrap-file "$GDC_JOIN_BOOTSTRAP_FILE" --genesis-file "$GENESIS/genesis.json")
+fi
 ML_HOST="$(node_ml_host "$NODE" || true)"
 if [[ -n "$ML_HOST" ]]; then
   # The public hostname may resolve to the shared edge.  The ML runtime must
@@ -713,6 +810,9 @@ scp -q "$GENERATED/agents/$NODE.env" "$NODE:$REMOTE/agent.env"
 scp -q "$GENESIS/genesis.json" "$NODE:$REMOTE/genesis.json"
 scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
 scp -q "$ROOT/scripts/verify-join-lineage-state.sh" "$NODE:$REMOTE/verify-join-lineage-state.sh"
+if [[ "$join_bootstrap_mode" == genesis-single-seed ]]; then
+  scp -q "$ROOT/scripts/verify-genesis-single-seed-canary.sh" "$NODE:$REMOTE/verify-genesis-single-seed-canary.sh"
+fi
 local_ml=(); gpu=()
 [[ -z "$ML_HOST" ]] && local_ml=(--local-ml) && gpu=(--gpu)
 if [[ "$NODE" == "$PUBLIC_EDGE_NODE" ]]; then
@@ -757,14 +857,41 @@ join_canary_transport_step canary_env_transfer canary_running \
 join_canary_transport_step canary_lineage_transfer canary_running \
   scp -q "$GDC_JOIN_LINEAGE_RECEIPT" "$NODE:$REMOTE/lineage-receipt.json"
 join_canary_transport_step canary_env_transfer canary_running ssh "$NODE" "owner=\$(id -u); group=\$(id -g); sudo install -o \$owner -g \$group -m 0600 '$REMOTE/node.env' '/srv/dai/deploy/.env'; cd '/srv/dai/deploy' && docker compose --env-file .env -f compose.yaml config --quiet"
-"$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
+  if [[ "$join_bootstrap_mode" != genesis-single-seed ]]; then
+    "$ROOT/scripts/verify-lineage-trust-fresh.sh" "$GDC_JOIN_LINEAGE_RECEIPT"
+  fi
 record_join_state "$NODE" SYNCING "$ADDRESS"
 join_canary_transport_step canary_start canary_running \
   ssh "$NODE" "cd /srv/dai/deploy && ./start-node.sh --canary --no-pull"
 record_join_transition CANARY_RUNNING
 join_canary_reached canary_running
-join_canary_transport_step canary_verify canary_caught_up \
-  ssh "$NODE" "cd /srv/dai/deploy && ./verify-state-sync-config.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
+verify_full_sync_runtime_config() {
+  join_canary_transport_step canary_verify canary_caught_up \
+    ssh "$NODE" "bash -s" <<'REMOTE'
+set -Eeuo pipefail
+cd /srv/dai/deploy
+grep -Fxq 'SYNC_WITH_SNAPSHOTS=false' .env
+grep -Fxq 'GDC_JOIN_STATESYNC_ENABLE=false' .env
+config=''
+for attempt in {1..30}; do
+  if config="$(docker compose --env-file .env -f compose.yaml exec -T node sh -c 'cat /root/.inference/config/config.toml' 2>/dev/null)" && [[ -n "$config" ]]; then
+    break
+  fi
+  sleep 2
+done
+[[ -n "$config" ]] || { echo 'full-sync node config did not become readable within 60 seconds' >&2; exit 1; }
+grep -Eq '^enable = false$' <<<"$config" \
+  && grep -Fq 'rpc_servers = ""' <<<"$config" \
+  && grep -Eq '^trust_height = 0$' <<<"$config" \
+  || { echo 'full-sync node config contains state-sync or trust settings' >&2; exit 1; }
+REMOTE
+}
+if [[ "$join_bootstrap_mode" == genesis-single-seed ]]; then
+  verify_full_sync_runtime_config
+else
+  join_canary_transport_step canary_verify canary_caught_up \
+    ssh "$NODE" "cd /srv/dai/deploy && ./verify-state-sync-config.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
+fi
 
 step "Wait until signerless P2P canary for $NODE is synchronized"
 join_canary_transport_step canary_wait canary_caught_up \
@@ -778,17 +905,31 @@ verify_caught_up_canary_lineage() {
   # signerless canary has caught up, verify its current common checkpoint
   # against the retained trusted origins instead of rejecting the consumed
   # receipt solely because synchronization took longer than its TTL.
-  join_canary_transport_step canary_verify canary_verified \
-    ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json' --resume-current"
+  if [[ "$join_bootstrap_mode" == genesis-single-seed ]]; then
+    join_canary_transport_step canary_verify canary_verified \
+      ssh "$NODE" "bash '$REMOTE/verify-genesis-single-seed-canary.sh' '$REMOTE/lineage-receipt.json' http://127.0.0.1:26657 '$(jq -er .node_id "$IDENTITY")' '$REMOTE/genesis-single-seed-canary.json'"
+  else
+    join_canary_transport_step canary_verify canary_verified \
+      ssh "$NODE" "bash '$REMOTE/verify-join-lineage-state.sh' http://127.0.0.1:26657 '$REMOTE/lineage-receipt.json' --resume-current"
+  fi
 }
 
 step "Verify $NODE acquired the selected source lineage before enabling its signer"
 verify_caught_up_canary_lineage
-join_canary_transport_step canary_verify canary_verified \
-  ssh "$NODE" "cd /srv/dai/deploy && ./record-state-sync-canary.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
+if [[ "$join_bootstrap_mode" != genesis-single-seed ]]; then
+  join_canary_transport_step canary_verify canary_verified \
+    ssh "$NODE" "cd /srv/dai/deploy && ./record-state-sync-canary.sh /srv/dai/deploy '$REMOTE/lineage-receipt.json'"
+else
+  join_canary_transport_step canary_lineage_transfer canary_verified \
+    scp -q "$NODE:$REMOTE/genesis-single-seed-canary.json" "$RUN/genesis-single-seed-canary.json"
+fi
 join_canary_transport_step canary_lineage_transfer canary_verified \
   scp -q "$NODE:$REMOTE/lineage-receipt.json" "$RUN/lineage-state-sync-receipt.json"
-printf 'READY retained verified signerless P2P canary receipt=%s\n' "$RUN/lineage-state-sync-receipt.json"
+if [[ "$join_bootstrap_mode" == genesis-single-seed ]]; then
+  printf 'READY retained verified signerless full-sync canary receipt=%s\n' "$RUN/genesis-single-seed-canary.json"
+else
+  printf 'READY retained verified signerless P2P canary receipt=%s\n' "$RUN/lineage-state-sync-receipt.json"
+fi
 record_join_state "$NODE" LINEAGE_VERIFIED "$ADDRESS"
 record_join_transition CANARY_VERIFIED
 join_canary_reached canary_verified

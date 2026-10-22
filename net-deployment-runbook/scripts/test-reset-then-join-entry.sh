@@ -107,7 +107,7 @@ home="$tmp/operator"
 run_gdc() {
   # The lifecycle fixture must never inherit an operator's aliases, GDC_HOME,
   # Bootstrap override or active run. Only the fixture transport is visible.
-  env -i PATH="$tmp/bin:$PATH" HOME="$tmp/home" GDC_HOME="$home" \
+  env -i PATH="$tmp/bin:$PATH" GDC_HOME="$home" \
     GDC_JOIN_PREFLIGHT_DEADLINE=30 GDC_JOIN_PREFLIGHT_RETRY_SECONDS=1 \
     "$ROOT/gdc.sh" "$@"
 }
@@ -129,4 +129,7 @@ join_output="$(<"$tmp/join.out")"
 profile="$(find "$home/fixture-node/runs" -type f -path '*/join-fixture-node/join-profile.v1.json' -print -quit)"
 [[ -n "$profile" ]]
 "$ROOT/scripts/join-profile.sh" validate "$profile"
+[[ ! -d "$home/bin" && ! -d "$home/fixture-node/genesis" ]]
+jq -e '.bootstrap | has("chain_identity_sha256") | not' \
+  "$(dirname "$profile")/network-observation.v1.json" >/dev/null
 printf 'PASS reset-then-JOIN retains recovery evidence and reaches a new immutable JOIN profile\n'

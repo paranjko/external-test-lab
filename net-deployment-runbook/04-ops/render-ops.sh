@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-usage() { echo "Usage: $0 --inventory FILE --output-dir DIR" >&2; }
-INVENTORY=''; OUTPUT=''
+usage() { echo "Usage: $0 --inventory FILE --output-dir DIR [--faucet-only]" >&2; }
+INVENTORY=''; OUTPUT=''; FAUCET_ONLY=false
 while (($#)); do case "$1" in
   --inventory) INVENTORY="$2"; shift 2 ;;
   --output-dir) OUTPUT="$2"; shift 2 ;;
+  --faucet-only) FAUCET_ONLY=true; shift ;;
   *) usage; exit 2 ;;
 esac; done
 [[ -n "$INVENTORY" && -n "$OUTPUT" ]] || { usage; exit 2; }
@@ -16,6 +17,12 @@ load_env "$INVENTORY"
 load_topology
 source "$ROOT/scripts/profile.sh"
 load_profiles
+if [[ "$FAUCET_ONLY" == true ]]; then
+  mkdir -p "$OUTPUT"
+  write_env "$OUTPUT/.env" "INFERENCED_IMAGE=$INFERENCED_IMAGE"
+  printf 'READY rendered isolated faucet Compose inputs\n'
+  exit 0
+fi
 GATEWAY_VERSION="${GDC_GATEWAY_VERSION:-$DEVSHARD_PROTOCOL_VERSION}"
 [[ "$GATEWAY_VERSION" =~ ^v[345]$ ]] || { echo 'GDC_GATEWAY_VERSION must be v3, v4 or v5' >&2; exit 2; }
 # Builder and Compose must select the same protocol-specific local image.

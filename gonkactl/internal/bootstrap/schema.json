@@ -22,6 +22,9 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
     },
+    "bootstrap_mode": {
+      "const": "genesis-single-seed"
+    },
     "genesis": {
       "type": "object",
       "additionalProperties": false,
@@ -37,7 +40,6 @@
     },
     "seeds": {
       "type": "array",
-      "minItems": 2,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -87,6 +89,33 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "bootstrap_mode": {
+            "const": "genesis-single-seed"
+          }
+        },
+        "required": ["bootstrap_mode"]
+      },
+      "then": {
+        "properties": {
+          "seeds": {
+            "minItems": 1,
+            "maxItems": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "seeds": {
+            "minItems": 2
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "sha256": {
       "type": "string",

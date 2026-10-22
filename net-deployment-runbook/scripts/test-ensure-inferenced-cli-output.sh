@@ -44,7 +44,11 @@ SH
 chmod +x "$tmp/runbook/scripts/join-profile.sh"
 cat >"$tmp/payload/inferenced" <<'SH'
 #!/usr/bin/env bash
-if [[ "${1:-}" == version || "${3:-}" == version ]]; then
+if [[ "${1:-}" == --home ]]; then
+  [[ "${3:-}" == --keyring-dir && "$2" == "$4" ]] || exit 91
+  shift 4
+fi
+if [[ "${1:-}" == version ]]; then
   printf 'inferenced v9.9.9\n'
   exit 0
 fi
@@ -66,7 +70,7 @@ archive_sha="$(sha256sum "$tmp/inferenced.zip" | awk '{print $1}')"
 
 TEST_INFERENCED_ARCHIVE="$tmp/inferenced.zip" \
 TEST_INFERENCED_ARCHIVE_SHA256="$archive_sha" \
-HOME="$tmp/home" \
+GDC_HOME="$tmp/home" \
 GDC_INFERENCED_BIN_DIR="$tmp/bin" \
 GDC_INFERENCED_CLI_QUIET=true \
   "$tmp/runbook/scripts/ensure-inferenced-cli.sh" >"$tmp/stdout" 2>"$tmp/stderr"

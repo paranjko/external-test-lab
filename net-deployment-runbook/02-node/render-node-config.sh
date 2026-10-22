@@ -21,7 +21,15 @@ mkdir -p "$(dirname "$OUTPUT")"
 jq --arg id "$RUNTIME_ID" --arg host "$ML_HOST" --argjson poc_port "$ML_POC_PORT" --arg model "$MODEL_ID" \
   --arg revision "$MODEL_REVISION" --argjson max "$MLNODE_MAX_NUM_SEQS" \
   --arg util "$MLNODE_GPU_MEMORY_UTILIZATION" --argjson context "$MLNODE_CONTEXT_LENGTH" \
-  --arg dtype "$MLNODE_DTYPE" --argjson parallel "$MLNODE_TENSOR_PARALLEL_SIZE" '
+  --arg dtype "$MLNODE_DTYPE" --argjson parallel "$MLNODE_TENSOR_PARALLEL_SIZE" \
+  --arg vllm_args "$MLNODE_VLLM_ARGS" '
+  def approved_extra_args($value):
+    if $value == "" then []
+    elif $value == "--enforce-eager" then ["--enforce-eager"]
+    elif $value == "--enable-auto-tool-choice --tool-call-parser hermes" then ["--enable-auto-tool-choice","--tool-call-parser","hermes"]
+    elif $value == "--enable-auto-tool-choice --tool-call-parser hermes --kv-cache-dtype fp8 --kv-cache-memory-bytes 1073741824" then
+      ["--enable-auto-tool-choice","--tool-call-parser","hermes","--kv-cache-dtype","fp8","--kv-cache-memory-bytes","1073741824"]
+    else error("unsupported MLNode runtime arguments") end;
   .[0].id = $id
   | .[0].host = $host
   | .[0].poc_port = $poc_port
@@ -41,5 +49,6 @@ jq --arg id "$RUNTIME_ID" --arg host "$ML_HOST" --argjson poc_port "$ML_POC_PORT
   | (.[0].models[$model].args | index("--tensor-parallel-size")) as $parallel_index
   | if $parallel_index == null then .[0].models[$model].args += ["--tensor-parallel-size",($parallel|tostring)]
     else .[0].models[$model].args[$parallel_index + 1] = ($parallel|tostring) end
+  | .[0].models[$model].args += approved_extra_args($vllm_args)
 ' "$SOURCE" >"$OUTPUT"
 echo "$OUTPUT"

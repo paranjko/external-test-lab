@@ -135,7 +135,7 @@ run_donor_control() {
   cat >"$remote"
   sed -i "s@/srv/dai/deploy@__GDC_TEST_DEPLOY__@g; s@/srv/dai@$root/srv/dai@g; s@__GDC_TEST_DEPLOY__@$deploy@g" "$remote"
   CONTROL_TEST_ROOT="$root" CONTROL_TEST_DEPLOY="$deploy" PATH="$(dirname "$0"):$PATH" \
-    bash "$remote" "$action" "$parent" "$endpoint" "$node_id"
+    bash "$remote" "$action" "$parent" "$endpoint" "$node_id" "$host"
 }
 
 if [[ "$host" == "$GDC_CASE_DONOR" && "$args" == *'sudo -n bash -s --'* && "$args" != *gdc-lent-ml-record* ]]; then

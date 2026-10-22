@@ -1,25 +1,56 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-[[ $# -eq 3 ]] || { echo "Usage: $0 genesis.json genesis.sha256 expected-chain-id" >&2; exit 2; }
-GENESIS="$1"; HASH_FILE="$2"; CHAIN_ID="$3"
+usage() { echo "Usage: $0 genesis.json genesis.sha256 expected-chain-id [--config-file reviewed-config.json]" >&2; }
+[[ $# -ge 3 && $# -le 5 ]] || { usage; exit 2; }
+GENESIS="$1"; HASH_FILE="$2"; CHAIN_ID="$3"; CONFIG_FILE=''
+if (($# == 5)); then
+  [[ "$4" == --config-file ]] || { usage; exit 2; }
+  CONFIG_FILE="$5"
+elif (($# != 3)); then
+  usage; exit 2
+fi
+if [[ -n "$CONFIG_FILE" ]]; then
+  [[ -s "$CONFIG_FILE" ]] || { echo 'reviewed Genesis config is missing or empty' >&2; exit 2; }
+  jq -e 'type == "object"' "$CONFIG_FILE" >/dev/null || { echo 'reviewed Genesis config must be a JSON object' >&2; exit 2; }
+fi
 (cd "$(dirname "$GENESIS")" && sha256sum -c "$(basename "$HASH_FILE")")
-jq -e --arg chain "$CHAIN_ID" '
- .chain_id==$chain and
- (.app_state.inference.participant_list|length)==1 and
- (.app_state.genutil.gen_txs|length)==1 and
- (.app_state.bank.denom_metadata | length)==1 and
- .app_state.bank.denom_metadata[0].base=="ngonka" and
- (.app_state.bank.denom_metadata[0].denom_units | map(select(.denom=="gonka" and .exponent==9)) | length)==1 and
- [.app_state.inference.model_list[].id]==["Qwen/Qwen3-0.6B"] and
- .app_state.inference.params.epoch_params.epoch_length=="70" and
- .app_state.inference.params.epoch_params.confirmation_poc_safety_window=="10" and
- .app_state.inference.params.epoch_params.epoch_shift=="0" and
- .app_state.inference.params.epoch_params.poc_stage_duration=="4" and
- .app_state.inference.params.epoch_params.poc_exchange_duration=="8" and
- .app_state.inference.params.epoch_params.poc_slot_allocation=={"value":"5","exponent":-1} and
- .app_state.inference.params.poc_params.validation_slots==2 and
- .app_state.inference.params.poc_params.poc_v2_enabled==true and
- .app_state.inference.params.devshard_escrow_params.allowed_creator_addresses == [] and
- .app_state.inference.params.devshard_escrow_params.approved_versions == []
-' "$GENESIS" >/dev/null
+if [[ -n "$CONFIG_FILE" ]]; then
+  jq -e --arg chain "$CHAIN_ID" --slurpfile config "$CONFIG_FILE" '
+    def native_config:
+      (if has("consensus_params") then .consensus = ((.consensus // {}) + {params:.consensus_params}) | del(.consensus_params) else . end)
+      | .app_state.inference.model_list |= map(.proposed_by = "genesis");
+    def leaves_match($want; $got):
+      if ($want|type) == "object" then
+        all($want|keys[]; . as $key | ($want[$key] | leaves_match(.; $got[$key])))
+      elif ($want|type) == "array" then $want == $got
+      else $want == $got end;
+    .chain_id == $chain and
+    (.app_state.inference.participant_list|length)==1 and
+    (.app_state.genutil.gen_txs|length)==1 and
+    (.app_state.bank.denom_metadata | length)==1 and
+    .app_state.bank.denom_metadata[0].base=="ngonka" and
+    (.app_state.bank.denom_metadata[0].denom_units | map(select(.denom=="gonka" and .exponent==9)) | length)==1 and
+    leaves_match(($config[0] | native_config); .)
+  ' "$GENESIS" >/dev/null
+else
+  jq -e --arg chain "$CHAIN_ID" '
+   .chain_id==$chain and
+   (.app_state.inference.participant_list|length)==1 and
+   (.app_state.genutil.gen_txs|length)==1 and
+   (.app_state.bank.denom_metadata | length)==1 and
+   .app_state.bank.denom_metadata[0].base=="ngonka" and
+   (.app_state.bank.denom_metadata[0].denom_units | map(select(.denom=="gonka" and .exponent==9)) | length)==1 and
+   [.app_state.inference.model_list[].id]==["Qwen/Qwen3-0.6B"] and
+   .app_state.inference.params.epoch_params.epoch_length=="70" and
+   .app_state.inference.params.epoch_params.confirmation_poc_safety_window=="10" and
+   .app_state.inference.params.epoch_params.epoch_shift=="0" and
+   .app_state.inference.params.epoch_params.poc_stage_duration=="4" and
+   .app_state.inference.params.epoch_params.poc_exchange_duration=="8" and
+   .app_state.inference.params.epoch_params.poc_slot_allocation=={"value":"5","exponent":-1} and
+   .app_state.inference.params.poc_params.validation_slots==2 and
+   .app_state.inference.params.poc_params.poc_v2_enabled==true and
+   .app_state.inference.params.devshard_escrow_params.allowed_creator_addresses == [] and
+   .app_state.inference.params.devshard_escrow_params.approved_versions == []
+  ' "$GENESIS" >/dev/null
+fi
 printf 'Genesis structure: PASS\n'

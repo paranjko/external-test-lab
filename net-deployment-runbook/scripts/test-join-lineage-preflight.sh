@@ -30,7 +30,7 @@ cat >"$tmp/bootstrap.json" <<'EOF'
 {"$schema":"https://gonka-dev.net/v1.bootstrap.schema.json","chain_id":"gonka-fixture","genesis":{"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},"seeds":[{"node_id":"0123456789abcdef0123456789abcdef01234567","rpc":"https://rpc-a.example.test/chain-rpc","p2p":"tcp://rpc-a.example.test:5000","api":"https://rpc-a.example.test"},{"node_id":"89abcdef0123456789abcdef0123456789abcdef","rpc":"https://rpc-b.example.test/chain-rpc/","p2p":"tcp://rpc-b.example.test:5000","api":"https://rpc-b.example.test"},{"node_id":"fedcba9876543210fedcba9876543210fedcba98","rpc":"https://rpc-c.example.test/chain-rpc","p2p":"tcp://rpc-c.example.test:5000"}],"brokers":[]}
 EOF
 jq -n --arg bootstrap_sha "$(sha256sum "$tmp/bootstrap.json" | awk '{print $1}')" '
-  {schema_version:1,kind:"gdc-network-observation",network_state_id:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",expires_at:"2999-01-01T00:00:00Z",bootstrap:{document_sha256:$bootstrap_sha,chain_id:"gonka-fixture",genesis_sha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},runtime:{core:{version:"0.2.15",commit:"4d687ed6782bcea3931d2d9135bf322f84e190ab"},dapi:{version:"0.2.15-post3",commit:"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}},runtime_api_origins:[{api_url:"https://rpc-a.example.test"}],result:{state:"ready",reason:"none"}}' >"$tmp/observation.json"
+  {schema_version:1,kind:"gdc-network-observation",network_state_id:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",expires_at:"2999-01-01T00:00:00Z",bootstrap:{document_sha256:$bootstrap_sha,chain_id:"gonka-fixture",genesis_sha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",chain_identity_sha256:"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},runtime:{core:{version:"0.2.15",commit:"4d687ed6782bcea3931d2d9135bf322f84e190ab"},dapi:{version:"0.2.15-post3",commit:"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}},runtime_api_origins:[{api_url:"https://rpc-a.example.test"}],result:{state:"ready",reason:"none"}}' >"$tmp/observation.json"
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -65,6 +65,7 @@ case "$url" in
       *rpc-c.example.test*) node_id=fedcba9876543210fedcba9876543210fedcba98 ;;
       *) exit 22 ;;
     esac
+    [[ "${GDC_TEST_BAD_STATUS_ID:-false}" != true ]] || node_id=fedcba9876543210fedcba9876543210fedcba98
     printf '{"result":{"node_info":{"id":"%s","network":"gonka-fixture"},"sync_info":{"latest_block_height":"5000"}}}\n' "$node_id"
     ;;
   */last_upgrade_height) printf '%s\n' '{"lastUpgradeHeight":"100","found":true}' ;;
@@ -194,6 +195,95 @@ assert len(receipt['bootstrap']['snapshot']['providers']) >= 2
 PY
 printf 'PASS explicit source preflight, bound checkpoint and strict default schema\n'
 
+# Genesis bootstrap has one genuine, explicitly selected live seed. Its
+# receipt binds that identity and the exact descriptor/genesis while carrying
+# no state-sync trust header, snapshot peers, or fictitious witness.
+jq '{"$schema": .["$schema"], chain_id, genesis, brokers:[], bootstrap_mode:"genesis-single-seed", seeds:[.seeds[0]]}' \
+  "$tmp/bootstrap.json" >"$tmp/single-bootstrap.json"
+single_rpc='https://rpc-a.example.test/chain-rpc'
+single_node='0123456789abcdef0123456789abcdef01234567'
+jq -n --arg bootstrap_sha "$(sha256sum "$tmp/single-bootstrap.json" | awk '{print $1}')" --arg rpc "$single_rpc" --arg node "$single_node" '
+  {schema_version:1,kind:"gdc-network-observation",network_state_id:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",expires_at:"2999-01-01T00:00:00Z",
+   bootstrap:{document_sha256:$bootstrap_sha,chain_id:"gonka-fixture",genesis_sha256:"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",chain_identity_sha256:"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+   runtime:{core:{version:"0.2.15",commit:"4d687ed6782bcea3931d2d9135bf322f84e190ab"},dapi:{version:"0.2.15-post3",commit:"5dbb53ddf3ddc42655fc04dc39d96003169bdbb0"}},
+   policy:{mode:"operator_source",source_rpc:$rpc,authority:{state:"operator_selected",selected:{remote_ips:["192.0.2.10"]}}},
+   seeds:[{seed_index:0,expected_node_id:$node,status:"usable"}],
+   runtime_api_origins:[{seed_index:0,expected_node_id:$node,node_id:$node,status:"usable",remote_ip:"192.0.2.10",api_url:"https://rpc-a.example.test"}],
+   result:{state:"ready",reason:"none"}}' >"$tmp/single-observation.json"
+before_single_requests="$(wc -l <"$tmp/curl-spy")"
+PATH="$tmp/bin:$PATH" CURL_SPY="$tmp/curl-spy" GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10' \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/single-bootstrap.json" \
+  --observation "$tmp/single-observation.json" --receipt "$tmp/full-sync-receipt.json" \
+  --env "$tmp/full-sync.env" --source-rpc "$single_rpc" >"$tmp/full-sync.out"
+[[ "$(wc -l <"$tmp/curl-spy")" == "$((before_single_requests + 1))" ]] || { echo 'full-sync preflight did not query exactly the selected live RPC' >&2; exit 1; }
+grep -Fqx 'https://rpc-a.example.test/chain-rpc/status' "$tmp/curl-spy"
+jq -e --arg node "$single_node" --arg rpc "$single_rpc" '
+  .bootstrap.mode == "full_sync" and .bootstrap.seed == {node_id:$node,rpc_url:$rpc,p2p:"tcp://rpc-a.example.test:5000"} and
+  (.bootstrap | has("trust") | not) and (.bootstrap | has("snapshot") | not) and
+  .checkpoints == null and .bootstrap.genesis_sha256 == "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" and
+  .bootstrap.distribution_sha256 == "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" and
+  .fault_domains == [{id:"genesis-single-seed",rpc_url:$rpc,host:"rpc-a.example.test",port:443,ip:"192.0.2.10",chain_id:"gonka-fixture",genesis_sha256:"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}] and
+  .trust_authority == {kind:"genesis_single_seed",rpc_url:$rpc} and
+  .runtime.observation_sha256 == "'"$(sha256sum "$tmp/single-observation.json" | awk '{print $1}')"'" and
+  .result.terminal_state == "prepared"
+' "$tmp/full-sync-receipt.json" >/dev/null
+python3 - "$ROOT/../schema/join-lineage-preflight.v1.schema.json" "$tmp/full-sync-receipt.json" <<'PY'
+import json, sys
+import copy
+from jsonschema import Draft202012Validator
+schema, receipt = [json.load(open(path)) for path in sys.argv[1:]]
+validator = Draft202012Validator(schema)
+errors = list(validator.iter_errors(receipt))
+if errors:
+    raise SystemExit("schema rejected full-sync receipt: " + errors[0].message)
+invalid = []
+missing_seed = copy.deepcopy(receipt); del missing_seed["bootstrap"]["seed"]; invalid.append(missing_seed)
+fabricated_trust = copy.deepcopy(receipt); fabricated_trust["bootstrap"]["trust"] = {}; invalid.append(fabricated_trust)
+fabricated_snapshot = copy.deepcopy(receipt); fabricated_snapshot["bootstrap"]["snapshot"] = {}; invalid.append(fabricated_snapshot)
+fabricated_checkpoint = copy.deepcopy(receipt); fabricated_checkpoint["checkpoints"] = {}; invalid.append(fabricated_checkpoint)
+second_domain = copy.deepcopy(receipt); second_domain["fault_domains"].append(copy.deepcopy(receipt["fault_domains"][0])); invalid.append(second_domain)
+missing_authority = copy.deepcopy(receipt); del missing_authority["trust_authority"]; invalid.append(missing_authority)
+if any(not list(validator.iter_errors(candidate)) for candidate in invalid):
+    raise SystemExit("schema accepted a full-sync receipt with missing seed or fabricated state-sync evidence")
+PY
+grep -qx 'GDC_JOIN_BOOTSTRAP_MODE=full_sync' "$tmp/full-sync.env"
+grep -qx 'GDC_JOIN_TRUST_HEIGHT=0' "$tmp/full-sync.env"
+grep -qx 'GDC_JOIN_RPC_SERVER_1=https://rpc-a.example.test/chain-rpc/' "$tmp/full-sync.env"
+grep -qx "GDC_JOIN_SOURCE_RPC=$single_rpc" "$tmp/full-sync.env"
+# shellcheck source=/dev/null
+source "$tmp/full-sync.env"
+[[ "$GDC_JOIN_TRUST_HASH" == '' && "$GDC_JOIN_SNAPSHOT_PEERS" == '' && "$GDC_JOIN_RPC_SERVER_2" == '' && "$GDC_JOIN_TRUSTED_BLOCK_PERIOD" == 0 ]]
+jq '.seeds += [.seeds[0]]' "$tmp/single-bootstrap.json" >"$tmp/fake-second-seed.json"
+if "$ROOT/scripts/network-bootstrap.sh" verify "$tmp/fake-second-seed.json" >"$tmp/fake-second-seed.out" 2>&1; then
+  echo 'genesis-single-seed descriptor accepted a fabricated second seed' >&2; exit 1
+fi
+
+for refusal in source-missing source-mismatch observation-mismatch chain-mismatch genesis-mismatch node-mismatch; do
+  refusal_observation="$tmp/single-observation.json"; refusal_rpc="$single_rpc"
+  case "$refusal" in
+    source-missing) refusal_rpc='' ;;
+    source-mismatch) refusal_rpc='https://rpc-b.example.test/chain-rpc' ;;
+    observation-mismatch) jq '.bootstrap.document_sha256 = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"' "$tmp/single-observation.json" >"$tmp/refusal-observation.json"; refusal_observation="$tmp/refusal-observation.json" ;;
+    chain-mismatch) jq '.bootstrap.chain_id = "other-chain"' "$tmp/single-observation.json" >"$tmp/refusal-observation.json"; refusal_observation="$tmp/refusal-observation.json" ;;
+    genesis-mismatch) jq '.bootstrap.genesis_sha256 = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"' "$tmp/single-observation.json" >"$tmp/refusal-observation.json"; refusal_observation="$tmp/refusal-observation.json" ;;
+    node-mismatch) jq '.runtime_api_origins[0].node_id = "fedcba9876543210fedcba9876543210fedcba98"' "$tmp/single-observation.json" >"$tmp/refusal-observation.json"; refusal_observation="$tmp/refusal-observation.json" ;;
+  esac
+  args=(--bootstrap-file "$tmp/single-bootstrap.json" --observation "$refusal_observation" --receipt "$tmp/$refusal-receipt.json" --env "$tmp/$refusal.env")
+  [[ -z "$refusal_rpc" ]] || args+=(--source-rpc "$refusal_rpc")
+  if PATH="$tmp/bin:$PATH" "$ROOT/scripts/preflight-join-lineage.sh" "${args[@]}" >"$tmp/$refusal.out" 2>&1; then
+    echo "unsafe full-sync evidence unexpectedly accepted ($refusal)" >&2; exit 1
+  fi
+  [[ ! -e "$tmp/$refusal-receipt.json" && ! -e "$tmp/$refusal.env" ]] || { echo "failed full-sync preflight wrote outputs ($refusal)" >&2; exit 1; }
+done
+if PATH="$tmp/bin:$PATH" GDC_JOIN_RPC_IP_MAP='rpc-a.example.test=192.0.2.10' GDC_TEST_BAD_STATUS_ID=true \
+  "$ROOT/scripts/preflight-join-lineage.sh" --bootstrap-file "$tmp/single-bootstrap.json" \
+  --observation "$tmp/single-observation.json" --receipt "$tmp/live-id-refused.json" \
+  --env "$tmp/live-id-refused.env" --source-rpc "$single_rpc" >"$tmp/live-id-refused.out" 2>&1; then
+  echo 'full-sync accepted an RPC serving the wrong node ID' >&2; exit 1
+fi
+[[ ! -e "$tmp/live-id-refused.json" && ! -e "$tmp/live-id-refused.env" ]]
+printf 'PASS explicit genesis single-seed full-sync receipt binds live identity without state-sync trust\n'
+
 # Software authority must not weaken chain authority. Compile a real declaration
 # with fixture endpoints, then require the same independent historical witnesses.
 jq --slurpfile fixture "$tmp/bootstrap.json" '
@@ -203,6 +293,9 @@ jq --slurpfile fixture "$tmp/bootstrap.json" '
 mv "$tmp/declared.json" "$tmp/bootstrap.json"
 bash "$ROOT/scripts/resolve-bootstrap-software.sh" observation "$tmp/bootstrap.json" "$tmp/observation.json" \
   https://example.test/bootstrap.json fixture '' >"$tmp/compiled.out"
+jq '.bootstrap.chain_identity_sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"' \
+  "$tmp/observation.json" >"$tmp/observation.with-identity.json"
+mv "$tmp/observation.with-identity.json" "$tmp/observation.json"
 run_preflight >"$tmp/declared.out"
 jq -e '.runtime.source.kind == "bootstrap_software" and (.fault_domains|length) == 2 and
   (.bootstrap.snapshot.providers|length) == 2 and .signer.state == "PREPARED"' "$tmp/receipt.json" >/dev/null

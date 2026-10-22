@@ -22,7 +22,7 @@ class BootstrapJoin(unittest.TestCase):
         self.tmp = Path(self.temporary.name)
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        self.env = {"PATH": str(self.bin) + ":" + os.environ["PATH"], "HOME": str(self.tmp)}
+        self.env = {"PATH": str(self.bin) + ":" + os.environ["PATH"], "TEST_TMP": str(self.tmp)}
         for tool in ("ssh", "scp", "curl", "wget", "inferenced"):
             stub = self.bin / tool
             stub.write_text("#!/bin/sh\necho unexpected external call >&2\nexit 97\n")
@@ -60,8 +60,15 @@ class BootstrapJoin(unittest.TestCase):
 
     def test_actual_join_preflight_uses_declaration_without_remote_calls(self):
         self.env["GDC_HOME"] = str(self.tmp / "operator")
+        self.env["MODEL_REGISTRY"] = json.dumps({"model": [
+            {"id": "Qwen/Qwen3-0.6B", "hf_repo": "Qwen/Qwen3-0.6B",
+             "hf_commit": "c1899de289a04d12100db370d81485cdf75e47ca"}
+        ]})
+        (self.bin / "curl").write_text("#!/bin/sh\nprintf '%s\\n' \"${MODEL_REGISTRY:?}\"\n")
+        (self.bin / "curl").chmod(0o755)
         result = self.run_command("bash", ROOT / "gdc.sh", "host", "join", "--preflight",
-            "--bootstrap-file", self.bootstrap, "--public-host", "fixture.example.test", "fixture")
+            "--model", "Qwen/Qwen3-0.6B", "--bootstrap-file", self.bootstrap,
+            "--public-host", "fixture.example.test", "fixture")
         self.assertIn("PASS JOIN preflight completed without Host mutation", result.stdout)
         self.assertNotIn("WAIT JOIN software observation", result.stdout)
         retained = list((self.tmp / "operator/fixture/runs").glob("*/join-fixture/join-profile.v1.json"))
@@ -84,6 +91,85 @@ class BootstrapJoin(unittest.TestCase):
         before = profile["profile_id"]
         self.assertEqual(self.compile(self.document["seeds"][0]["rpc"])["profile_id"], before)
 
+    def test_selected_7b_profile_preserves_allowlisted_vllm_args_through_rendering(self):
+        self.env["MODEL_REGISTRY"] = json.dumps({"model": [
+            {"id": "Qwen/Qwen2.5-7B-Instruct", "hf_repo": "Qwen/Qwen2.5-7B-Instruct",
+             "hf_commit": "a09a35458c702b33eeacc393d103063234e8bc28"}
+        ]})
+        (self.bin / "curl").write_text("#!/bin/sh\nprintf '%s\\n' \"${MODEL_REGISTRY:?}\"\n")
+        (self.bin / "curl").chmod(0o755)
+        accelerator = self.tmp / "accelerator.json"
+        accelerator.write_text('{"schema_version":1,"vendor":"nvidia","compose_variant":"nvidia","qualification_backend":"cuda","vram_mib":24564}')
+        observation = self.tmp / "software-observation.json"
+        self.run_command("bash", ROOT / "scripts/resolve-bootstrap-software.sh", "observation",
+                         self.bootstrap, observation, "https://example.test/bootstrap.json", "fixture", "")
+        selection = self.tmp / "model-selection.json"
+        self.run_command("bash", ROOT / "scripts/select-join-model-profile.sh", "--bootstrap-file",
+                         self.bootstrap, "--accelerator-receipt", accelerator, "--model-id",
+                         "Qwen/Qwen2.5-7B-Instruct", "--output", selection)
+        components = self.tmp / "selected-components.json"
+        self.run_command("bash", ROOT / "scripts/resolve-join-components.sh", "--observation",
+                         observation, "--model-selection", selection, "--output", components)
+        self.assertEqual(json.loads(components.read_text())["host_envelope"]["mlnode_vllm_args"],
+                         "--enable-auto-tool-choice --tool-call-parser hermes --kv-cache-dtype fp8 --kv-cache-memory-bytes 1073741824")
+        self.run_command("bash", ROOT / "scripts/resolve-join-profile.sh", "--observation", observation,
+                         "--components", components, "--accelerator-receipt", accelerator,
+                         "--node-name", "fixture", "--public-host", "fixture.example.test",
+                         "--operation", "new", "--run-id", "fixture", "--output", self.profile)
+        profile = json.loads(self.profile.read_text())
+        Draft202012Validator(json.loads((ROOT.parent / "schema/join-profile.v1.schema.json").read_text())).validate(profile)
+        self.assertEqual(profile["spec"]["deployment"]["host_envelope"]["model_id"], "Qwen/Qwen2.5-7B-Instruct")
+        loaded = self.run_command("bash", "-c",
+            '. "$1/scripts/profile.sh"; load_join_profile "$2"; printf "%s" "$MLNODE_VLLM_ARGS"',
+            "_", ROOT, self.profile).stdout
+        self.assertEqual(loaded, profile["spec"]["deployment"]["host_envelope"]["mlnode_vllm_args"])
+        config = self.tmp / "node-config.json"
+        self.run_command("bash", ROOT / "02-node/render-node-config.sh", "--node-name", "fixture",
+                         "--runtime-id", "qwen3-0.6b:gonka1" + "a" * 24,
+                         "--join-profile", self.profile, "--output", config)
+        rendered = json.loads(config.read_text())[0]
+        self.assertEqual(rendered["models"].keys(), {"Qwen/Qwen2.5-7B-Instruct"})
+        args = rendered["models"]["Qwen/Qwen2.5-7B-Instruct"]["args"]
+        self.assertIn("a09a35458c702b33eeacc393d103063234e8bc28", args)
+        self.assertIn("4096", args)
+        self.assertIn("32", args)
+        self.assertEqual(args[-7:], ["--enable-auto-tool-choice", "--tool-call-parser", "hermes",
+                                     "--kv-cache-dtype", "fp8", "--kv-cache-memory-bytes", "1073741824"])
+        components_doc = json.loads(components.read_text())
+        components_doc["host_envelope"]["mlnode_vllm_args"] = "--trust-remote-code"
+        bad_components = self.tmp / "bad-components.json"
+        bad_components.write_text(json.dumps(components_doc))
+        rejected = self.run_command("bash", ROOT / "scripts/resolve-join-profile.sh", "--observation",
+                                    observation, "--components", bad_components,
+                                    "--accelerator-receipt", accelerator, "--node-name", "fixture",
+                                    "--public-host", "fixture.example.test", "--operation", "new",
+                                    "--run-id", "fixture", "--output", self.tmp / "bad-profile.json",
+                                    success=False)
+        self.assertIn("invalid closed v1 shape", rejected.stderr)
+        self.env["MODEL_REGISTRY"] = json.dumps({"model": [
+            {"id": "Qwen/Qwen3-4B-Instruct-2507", "hf_repo": "Qwen/Qwen3-4B-Instruct-2507",
+             "hf_commit": "cdbee75f17c01a7cc42f958dc650907174af0554"}
+        ]})
+        self.run_command("bash", ROOT / "scripts/select-join-model-profile.sh", "--bootstrap-file",
+                         self.bootstrap, "--accelerator-receipt", accelerator, "--model-id",
+                         "Qwen/Qwen3-4B-Instruct-2507", "--output", selection)
+        self.run_command("bash", ROOT / "scripts/resolve-join-components.sh", "--observation",
+                         observation, "--model-selection", selection, "--output", components)
+        self.assertEqual(json.loads(components.read_text())["host_envelope"]["mlnode_vllm_args"],
+                         "--enable-auto-tool-choice --tool-call-parser hermes")
+        profile_4b = self.tmp / "profile-4b.json"
+        self.run_command("bash", ROOT / "scripts/resolve-join-profile.sh", "--observation", observation,
+                         "--components", components, "--accelerator-receipt", accelerator,
+                         "--node-name", "fixture", "--public-host", "fixture.example.test",
+                         "--operation", "new", "--run-id", "fixture", "--output", profile_4b)
+        self.assertEqual(json.loads(profile_4b.read_text())["spec"]["deployment"]["host_envelope"]["model_id"],
+                         "Qwen/Qwen3-4B-Instruct-2507")
+        config_4b = self.tmp / "node-config-4b.json"
+        self.run_command("bash", ROOT / "02-node/render-node-config.sh", "--node-name", "fixture",
+                         "--runtime-id", "qwen3-0.6b:gonka1" + "a" * 24,
+                         "--join-profile", profile_4b, "--output", config_4b)
+        args_4b = json.loads(config_4b.read_text())[0]["models"]["Qwen/Qwen3-4B-Instruct-2507"]["args"]
+        self.assertEqual(args_4b[-3:], ["--enable-auto-tool-choice", "--tool-call-parser", "hermes"])
     def test_unsupported_present_software_never_falls_back(self):
         for field, value in (("platform", "linux/arm64"), ("accelerator", "rocm"),
                              ("model", {**self.document["software"]["model"], "id": "Unknown/Model"}),
@@ -102,20 +188,19 @@ class BootstrapJoin(unittest.TestCase):
 
     def test_model_arguments_come_from_declaration(self):
         model = self.document["software"]["model"]
-        model.update(context_length=4096, max_num_seqs=17, gpu_memory_utilization=0.7,
-                     dtype="float16", tensor_parallel_size=2)
-        self.bootstrap.write_text(json.dumps(self.document))
         self.compile()
         output = self.tmp / "node-config.json"
         self.run_command("bash", ROOT / "02-node/render-node-config.sh", "--node-name", "fixture",
             "--runtime-id", "qwen3-0.6b:gonka1wz8n3avzmma55z880jdrn8h5dg6nd2lrse4ar3",
             "--join-profile", self.profile, "--output", output)
         config = json.loads(output.read_text())[0]
-        self.assertEqual(config["max_concurrent"], 17)
+        self.assertEqual(config["max_concurrent"], model["max_num_seqs"])
         args = config["models"][model["id"]]["args"]
-        for flag, expected in (("--revision", model["revision"]), ("--max-model-len", "4096"),
-                               ("--max-num-seqs", "17"), ("--gpu-memory-utilization", "0.7"),
-                               ("--dtype", "float16"), ("--tensor-parallel-size", "2")):
+        for flag, expected in (("--revision", model["revision"]), ("--max-model-len", str(model["context_length"])),
+                               ("--max-num-seqs", str(model["max_num_seqs"])),
+                               ("--gpu-memory-utilization", str(model["gpu_memory_utilization"])),
+                               ("--dtype", model["dtype"]),
+                               ("--tensor-parallel-size", str(model["tensor_parallel_size"]))):
             self.assertEqual(args[args.index(flag) + 1], expected)
 
     def test_devnet_declaration_matches_release_and_model_layers(self):
@@ -208,7 +293,7 @@ dpkg-query() {
   printf 'installed\n'
 }
 apt-get() {
-  printf '%s\n' "$*" >>"$HOME/apt.log"
+  printf '%s\n' "$*" >>"$TEST_TMP/apt.log"
   case "$*" in
     update) ;;
     'install -y --no-install-recommends unzip') installed=true ;;

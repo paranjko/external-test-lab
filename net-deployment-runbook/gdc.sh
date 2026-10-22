@@ -4,6 +4,12 @@ set -Eeuo pipefail
 LAUNCHER_SOURCE="${BASH_SOURCE[0]}"
 LAUNCHER_PATH="$(realpath -e -- "$LAUNCHER_SOURCE")"
 ROOT="$(cd "$(dirname "$LAUNCHER_PATH")" && pwd)"
+# Never accept a runtime-baseline bypass from the caller's shell. The Genesis
+# candidate parser below creates this context only after local hash and lock
+# verification, and the phase revalidates it before any remote work.
+unset GDC_GENESIS_RUNTIME_CONTEXT GDC_GENESIS_RELEASE_LOCK_SHA256
+unset GDC_GENESIS_PREPARE_ONLY GDC_GENESIS_APPLY_CANDIDATE
+unset GDC_GENESIS_RESUME_CANDIDATE
 # shellcheck disable=SC1091 # ROOT is resolved above.
 source "$ROOT/scripts/lib-lock.sh"
 if [[ "${LAUNCHER_SOURCE##*/}" == gdc.sh ]]; then
@@ -646,20 +652,20 @@ check_join_host_readiness() {
   case "$rc" in
     194)
       state=reboot_required
-      summary='The Host has pending package updates that require a reboot before JOIN can safely continue.'
+      summary='Pending Host package updates require reboot before JOIN.'
       GDC_JOIN_REBOOT_REQUIRED=true
       export GDC_JOIN_REBOOT_REQUIRED
       ;;
     195)
       state=operator_action_required
-      summary='The Host has a prerequisite GDC must not repair implicitly before JOIN can safely continue.'
+      summary='A Host prerequisite needs manual repair; JOIN will not repair it.'
       GDC_JOIN_HOST_READINESS_ACTION_REQUIRED=true
       GDC_USER_ERROR=true
       GDC_JOIN_USER_MESSAGE="$(host_readiness_action_message "$output")"
       export GDC_JOIN_HOST_READINESS_ACTION_REQUIRED GDC_USER_ERROR GDC_JOIN_USER_MESSAGE
       ;;
     *)
-      summary='The Host readiness preflight could not establish that JOIN may safely continue.'
+      summary='Host readiness could not be confirmed; JOIN stopped safely.'
       ;;
   esac
   run_join_preflight host-readiness "$state" host host-readiness "$summary" \
@@ -667,8 +673,18 @@ check_join_host_readiness() {
 }
 
 check_join_target_clean() {
-  local host="$1" rc=0 summary output
-  if output="$(ssh -T "$host" 'sudo -n bash -s' <"$ROOT/00-host-prep/check-join-target-clean.sh" 2>&1)"; then
+  local host="$1" role="$2" rc=0 summary output remote_command public_edge_owner=false configured_edge=''
+  [[ "$role" == validator || "$role" == ml-only-donor ]] || return 2
+  if [[ "$role" == validator && -s "$GDC_DATA_ROOT/.env" ]]; then
+    configured_edge="$(awk -F= '$1 == "GDC_PUBLIC_EDGE_NODE" { print $2; exit }' "$GDC_DATA_ROOT/.env")"
+    if [[ "$configured_edge" == "$host" ]] \
+      && [[ "$(verify_new_genesis_reset_receipt "$host" "$GDC_DATA_ROOT/$host" 2>/dev/null || true)" == true ]]; then
+      public_edge_owner=true
+    fi
+  fi
+  printf -v remote_command 'sudo -n bash -s -- --host-alias %q --role %q' "$host" "$role"
+  [[ "$public_edge_owner" == true ]] && remote_command+=' --public-edge-owner'
+  if output="$(ssh -T "$host" "$remote_command" <"$ROOT/00-host-prep/check-join-target-clean.sh" 2>&1)"; then
     [[ -z "$output" ]] || printf '%s\n' "$output"
     printf 'PASS JOIN target clean host=%s\n' "$host"
     return 0
@@ -745,10 +761,25 @@ join_observation_identity() {
 wait_for_join_software_observation() {
   local stage="$1" output="$2" deadline="$3" retry_seconds="$4" attempt=0 consecutive=0 previous_identity='' identity=''
   local attempt_dir attempt_observation attempt_stdout attempt_stderr rc remaining
+  local -a identity_profile_args=()
+  # Plans confirm public software observations without downloading the CLI.
+  # Execution additionally verifies the exact Genesis through the pinned CLI.
+  if [[ "$stage" == confirm-* && "${plan_only:-false}" != true ]]; then
+    [[ -r "${join_candidate_profile:-}" ]] || {
+      printf 'network_observation_profile_missing: confirm stage requires the pinned candidate profile\n' >&2
+      return 1
+    }
+    identity_profile_args+=(--join-profile "$join_candidate_profile")
+  fi
   unset GDC_JOIN_SOFTWARE_OBSERVATION_TIMEOUT
   if jq -e 'has("software")' "$join_bootstrap_file" >/dev/null; then
-    "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" \
-      --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID" --output "$output" "${join_source_args[@]}"
+    if ((${#identity_profile_args[@]})); then
+      GDC_JOIN_PROFILE="$join_candidate_profile" "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" \
+        --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID" --output "$output" "${join_source_args[@]}" "${identity_profile_args[@]}"
+    else
+      "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" \
+        --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID" --output "$output" "${join_source_args[@]}"
+    fi
     return $?
   fi
   attempt_dir="$STATE/network-observation-attempts/$GDC_RUN_ID/$stage"
@@ -769,9 +800,15 @@ wait_for_join_software_observation() {
     attempt_observation="$attempt_dir/attempt-$attempt.json"
     attempt_stdout="$attempt_dir/attempt-$attempt.stdout"
     attempt_stderr="$attempt_dir/attempt-$attempt.stderr"
-    if "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" \
-      --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID-$attempt" --output "$attempt_observation" \
-      "${join_source_args[@]}" >"$attempt_stdout" 2>"$attempt_stderr"; then
+    if { if ((${#identity_profile_args[@]})); then
+        GDC_JOIN_PROFILE="$join_candidate_profile" "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" \
+          --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID-$attempt" --output "$attempt_observation" \
+          "${join_source_args[@]}" "${identity_profile_args[@]}"
+      else
+        "$ROOT/scripts/observe-network-state.sh" --bootstrap-file "$join_bootstrap_file" --bootstrap-url "$join_bootstrap_url" \
+          --chain-id "$join_chain_id" --run-id "$GDC_RUN_ID-$attempt" --output "$attempt_observation" \
+          "${join_source_args[@]}"
+      fi; } >"$attempt_stdout" 2>"$attempt_stderr"; then
       cat "$attempt_stdout"
       identity="$(join_observation_identity "$attempt_observation")"
       if [[ "$identity" == "$previous_identity" ]]; then
@@ -824,6 +861,165 @@ wait_for_join_software_observation() {
 use_node_data_home() {
   select_node_data_home "$1"
 }
+
+# BEGIN verify-new-genesis-reset-receipt
+# A new-Genesis reset's authoritative receipt remains on the reset Host. Accept
+# its cleared local state only when the currently retained successful run,
+# its manifest/log binding, and a read-back of that exact remote receipt agree.
+verify_new_genesis_reset_receipt() {
+  local alias="$1" host_home="$2" active_file run_id run_dir manifest log pass_line
+  local receipt_path archive_path stamp remote_receipt classification local_state_policy="${3:-fresh-only}"
+  [[ "$alias" =~ ^gdc-node[0-9]+$ ]] || return 1
+  active_file="$host_home/state/active-run-id"
+  [[ -f "$active_file" && ! -L "$active_file" && -s "$active_file" ]] || return 1
+  run_id="$(<"$active_file")"
+  [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 1
+  run_dir="$host_home/runs/$run_id"
+  manifest="$run_dir/manifest.env"
+  log="$run_dir/run.log"
+  [[ -d "$run_dir" && ! -L "$run_dir" && -f "$manifest" && ! -L "$manifest" \
+    && -f "$log" && ! -L "$log" ]] || return 1
+  grep -qx "run_id=$run_id" "$manifest" \
+    && grep -qx "phase=host-reset-new-genesis-$alias" "$manifest" \
+    && grep -qx "operator_data_home=$host_home" "$manifest" || return 1
+  # The phase timestamp is separate from manifest creation time; bind the
+  # exact phase and run ID without assuming those timestamps are identical.
+  grep -Eq "^BEGIN phase=host-reset-new-genesis-${alias} timestamp=[^ ]+ run_id=${run_id}$" "$log" || return 1
+  grep -Eq "^END phase=host-reset-new-genesis-${alias} status=0 timestamp=[^ ]+$" "$log" || return 1
+  [[ "$(grep -Fc "PASS new-Genesis Host reset host=$alias " "$log" || true)" == 1 ]] || return 1
+  pass_line="$(grep -F "PASS new-Genesis Host reset host=$alias " "$log")"
+  [[ "$pass_line" =~ ^PASS\ new-Genesis\ Host\ reset\ host=${alias}\ archive=(/srv/dai-archives/[0-9]{8}T[0-9]{6}Z-${alias})\ receipt=(/srv/dai-archives/[0-9]{8}T[0-9]{6}Z-${alias}/reset-genesis-receipt\.json)$ ]] || return 1
+  archive_path="${BASH_REMATCH[1]}"
+  receipt_path="${BASH_REMATCH[2]}"
+  [[ "$receipt_path" == "$archive_path/reset-genesis-receipt.json" ]] || return 1
+  stamp="${archive_path##*/}"
+  stamp="${stamp%-${alias}}"
+  classification="$("$ROOT/scripts/classify-join-state.sh" \
+    "$host_home/state/identities/$alias.json" "$host_home/accounts/$alias-cold.json" \
+    "$host_home/state/joined/$alias" '' 2>/dev/null || true)"
+  case "$local_state_policy" in
+    fresh-only)
+      jq -e '.classification == "new"' <<<"$classification" >/dev/null 2>&1 || return 1
+      ;;
+    allow-partial-identity)
+      jq -e '.classification == "new" or
+        (.classification == "partial_identity" and .joined_present == false)' \
+        <<<"$classification" >/dev/null 2>&1 || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  remote_receipt="$(ssh -T "$alias" "sudo -n test -f '$receipt_path' && sudo -n test ! -L '$receipt_path' && sudo -n cat -- '$receipt_path'" 2>/dev/null)" || return 1
+  jq -e --arg host "$alias" --arg archive "$archive_path" --arg stamp "$stamp" \
+    --arg edge "gdc-edge-$alias" --arg monitoring "gdc-monitoring-agent-$alias" '
+      def valid_common:
+        .schema_version == 1 and .kind == "gdc-new-genesis-reset-receipt" and
+        .host == $host and .archive == $archive and .completed_utc == $stamp and
+        (.systemd_units | type == "array") and (.containers | type == "array") and
+        (.moved_paths | type == "array") and (.preserved_paths | type == "array");
+      def canonical:
+        .projects == [$host, $edge, $monitoring];
+      def ml_donor:
+        ($host | test("^gdc-node[0-9]+$")) and
+        (.projects | type == "array" and length == 1) and
+        (.projects[0] | type == "string" and test("^gdc-node[0-9]+-ml$")) and
+        (.projects[0] as $project |
+          (.moved_paths | length == 1 and
+            .[0].before == ("/srv/dai/deploy/" + $project) and
+            .[0].after == ($archive + "/deploy/" + $project) and
+            (.[0].device_inode | type == "string" and test("^[0-9]+:[0-9]+$"))) and
+          (.systemd_units | length == 1 and
+            .[0].unit == ("gdc-poc-winddown-watch@" + $project + ".service") and
+            .[0].final_state == "inactive") and
+          (.containers | length > 0 and all(.[];
+            .final_state == "exited" and .restart_policy == "no" and .legacy_sidecar == false)) and
+          ([.preserved_paths[] | select(. == "/srv/dai/backups" or . == "/srv/dai/hf-cache" or
+            . == "/srv/hf-cache" or . == "/srv/dai/ops" or . == "/srv/dai/monitoring-agent")] |
+            unique | sort) == ["/srv/dai/backups", "/srv/dai/hf-cache", "/srv/dai/monitoring-agent",
+              "/srv/dai/ops", "/srv/hf-cache"]);
+      valid_common and (canonical or ml_donor)
+    ' <<<"$remote_receipt" >/dev/null 2>&1 || return 1
+  printf 'true\n'
+}
+# END verify-new-genesis-reset-receipt
+
+# BEGIN archive-new-genesis-local-identity
+# A successful remote new-Genesis reset is the authority to clear only this
+# Host's stale local identity/account pair. Preserve each exact file inside the
+# reset run before permitting a fresh JOIN; never delete or overwrite it.
+archive_new_genesis_local_identity() {
+  local alias="$1" host_home="$2" run_id="$3" run_dir archive_dir identity account joined
+  local classification archived='[]' source destination kind digest mode parent_dir
+  [[ "$alias" =~ ^gdc-node[0-9]+$ && "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+    || { echo 'new-Genesis local archive has an invalid Host or run ID' >&2; return 1; }
+  [[ -d "$host_home" && ! -L "$host_home" ]] \
+    || { echo 'new-Genesis local archive lacks its canonical Host data home' >&2; return 1; }
+  [[ -f "$host_home/state/active-run-id" && ! -L "$host_home/state/active-run-id" \
+    && "$(<"$host_home/state/active-run-id")" == "$run_id" ]] \
+    || { echo 'new-Genesis local archive is not bound to the active reset run' >&2; return 1; }
+  run_dir="$host_home/runs/$run_id"
+  [[ -d "$run_dir" && ! -L "$run_dir" \
+    && -f "$run_dir/manifest.env" && ! -L "$run_dir/manifest.env" \
+    && "$(awk -F= '$1 == "phase" {print $2; exit}' "$run_dir/manifest.env")" == "host-reset-new-genesis-$alias" ]] \
+    || { echo 'new-Genesis local archive is not bound to the successful reset run manifest' >&2; return 1; }
+  [[ "$(verify_new_genesis_reset_receipt "$alias" "$host_home" allow-partial-identity)" == true ]] \
+    || { echo 'new-Genesis local archive requires a verified successful remote reset receipt' >&2; return 1; }
+  identity="$host_home/state/identities/$alias.json"
+  account="$host_home/accounts/$alias-cold.json"
+  joined="$host_home/state/joined/$alias"
+  for parent_dir in "$host_home/state" "$host_home/state/identities" "$host_home/accounts" "$host_home/state/joined"; do
+    [[ ! -e "$parent_dir" && ! -L "$parent_dir" ]] \
+      || [[ -d "$parent_dir" && ! -L "$parent_dir" ]] \
+      || { echo "new-Genesis local archive refuses an unsafe state directory: $parent_dir" >&2; return 1; }
+  done
+  [[ ! -e "$joined" && ! -L "$joined" ]] \
+    || { echo 'new-Genesis local archive refuses a retained joined marker' >&2; return 1; }
+  classification="$("$ROOT/scripts/classify-join-state.sh" "$identity" "$account" "$joined" '' 2>/dev/null)" \
+    || { echo 'new-Genesis local archive could not classify retained local identity state' >&2; return 1; }
+  jq -e '.classification == "new" or
+    (.classification == "partial_identity" and .joined_present == false)' \
+    <<<"$classification" >/dev/null \
+    || { echo 'new-Genesis local archive refuses matched or conflicting local state' >&2; return 1; }
+  archive_dir="$run_dir/local-reset-state"
+  [[ ! -e "$archive_dir" && ! -L "$archive_dir" ]] \
+    || { echo 'new-Genesis local archive destination already exists; refusing to overwrite' >&2; return 1; }
+  mkdir -m 0700 -- "$archive_dir" \
+    || { echo 'could not create private new-Genesis local archive directory' >&2; return 1; }
+  for kind in identity account; do
+    if [[ "$kind" == identity ]]; then source="$identity"; else source="$account"; fi
+    if [[ -e "$source" || -L "$source" ]]; then
+      [[ -f "$source" && ! -L "$source" && -s "$source" ]] \
+        || { echo "new-Genesis local archive refuses an unsafe or empty $kind record" >&2; return 1; }
+      destination="$archive_dir/$kind.json"
+      [[ ! -e "$destination" && ! -L "$destination" ]] \
+        || { echo "new-Genesis local archive destination exists for $kind" >&2; return 1; }
+      digest="$(sha256sum "$source" | awk '{print $1}')"
+      mode="$(stat -c %a "$source")"
+      mv -- "$source" "$destination" \
+        || { echo "could not preserve retained $kind record in reset archive" >&2; return 1; }
+      [[ ! -e "$source" && -f "$destination" && ! -L "$destination" \
+        && "$(sha256sum "$destination" | awk '{print $1}')" == "$digest" \
+        && "$(stat -c %a "$destination")" == "$mode" ]] \
+        || { echo "retained $kind record failed archive readback" >&2; return 1; }
+      archived="$(jq -c --arg kind "$kind" --arg source "$source" --arg path "$destination" \
+        --arg sha "$digest" --arg mode "$mode" \
+        '. + [{kind:$kind,source:$source,path:$path,sha256:$sha,mode:$mode}]' <<<"$archived")"
+    fi
+  done
+  jq -ne --arg host "$alias" --arg run "$run_id" --arg classification "$(jq -r .classification <<<"$classification")" \
+    --arg directory "$archive_dir" --argjson files "$archived" \
+    '{schema_version:1,kind:"gdc-new-genesis-local-reset-state",host:$host,reset_run_id:$run,
+      classification_before_archive:$classification,archive_directory:$directory,files:$files}' \
+    >"$archive_dir/receipt.json" \
+    || { echo 'could not write new-Genesis local archive receipt' >&2; return 1; }
+  chmod 0600 "$archive_dir/receipt.json"
+  classification="$("$ROOT/scripts/classify-join-state.sh" "$identity" "$account" "$joined" '' 2>/dev/null)" \
+    || { echo 'could not verify local identity state after archival' >&2; return 1; }
+  jq -e '.classification == "new"' <<<"$classification" >/dev/null \
+    || { echo 'new-Genesis local archive did not clear the stale identity classification' >&2; return 1; }
+  printf 'PASS new-Genesis local identity archive host=%s files=%s receipt=%s\n' \
+    "$alias" "$(jq 'length' <<<"$archived")" "$archive_dir/receipt.json"
+}
+# END archive-new-genesis-local-identity
 
 use_network_owner_data_home() {
   select_network_owner_data_home || return 0
@@ -887,6 +1083,9 @@ See the role guides for required input, then run:
   ./gdc.sh --release v2026.08.06 gateway ha v4
   ./gdc.sh network bootstrap verify FILE
   ./gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS>
+  ./gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS> --prepare-only --config-file <PATH> --config-sha256 <SHA256> --software-file <PATH> --software-sha256 <SHA256>
+  ./gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS> --apply-candidate <SHA256> --config-file <PATH> --config-sha256 <SHA256> --software-file <PATH> --software-sha256 <SHA256> --defer-services
+  ./gdc.sh --release v2026.07.23 network genesis <SSH_ALIAS> --resume-installed-candidate <SHA256> --config-file <PATH> --config-sha256 <SHA256> --software-file <PATH> --software-sha256 <SHA256>
   ./gdc.sh --release v2026.07.23 network verify
   ./gdc.sh --release v2026.07.23 network gate-b verify
   ./gdc.sh --release v2026.07.23 network confirmation-poc verify
@@ -912,6 +1111,9 @@ See the role guides for required input, then run:
   ./gdc.sh --model <PROFILE> prefetch-ml <SSH_ALIAS>
   ./gdc.sh host stop|start|verify <SSH_ALIAS>
   ./gdc.sh host reset <SSH_ALIAS> [<SSH_ALIAS> ...]
+      ./gdc.sh host reset --new-genesis <SSH_ALIAS>
+      ./gdc.sh host models add-worker <SSH_ALIAS> <DESCRIPTOR.json> [--apply|--reconcile-uncertain]
+      ./gdc.sh host models retune-primary plan|apply <SSH_ALIAS> <DESCRIPTOR.json> <DESIRED.json> <PLAN.json>
   ./gdc.sh --composition <COMPOSITION> governance devshard submit [--protocols v3,v4,v5]
   ./gdc.sh --composition <COMPOSITION> governance devshard verify <proposal-id> [--protocols v3,v4,v5]
   ./gdc.sh --release v2026.08.06 governance vote <proposal-id> [yes|no|abstain|no_with_veto]
@@ -1018,11 +1220,36 @@ if [[ -n "$RELEASE" ]]; then
 fi
 [[ -z "$MODEL" || "$MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "Invalid model overlay: $MODEL" >&2; exit 2; }
 [[ -z "$MODEL" || -r "$ROOT/../model/$MODEL.lock" ]] || { echo "Unknown model overlay: $MODEL" >&2; exit 2; }
-if [[ -n "$MODEL" && "$MODEL" != qwen3-0.6b ]]; then
-  [[ "${1:-}" == qualify-ml || "${1:-}" == prefetch-ml ]] || {
-    echo "Model overlay $MODEL is qualification-only; only prefetch-ml and qualify-ml are implemented" >&2
+if [[ -n "$MODEL" ]]; then
+  model_scope=''
+  if ! model_scope="$(awk -F= '
+    $1 == "GDC_MODEL_PROFILE_SCOPE" { if (found++) exit 1; print $2 }
+    END { if (found > 1) exit 1 }
+  ' "$ROOT/../model/$MODEL.lock")"; then
+    echo "Model overlay $MODEL has an invalid scope declaration" >&2
     exit 2
-  }
+  fi
+  # The original 0.6B lock predates explicit scope metadata. Keep that single
+  # local legacy profile usable; every other selectable model must declare its
+  # reviewed network or qualification-only scope in the lock.
+  if [[ -z "$model_scope" && "$MODEL" == qwen3-0.6b ]]; then model_scope=network; fi
+  case "$model_scope" in
+    network) ;;
+    qualification-only)
+      [[ "${1:-}" == qualify-ml || "${1:-}" == prefetch-ml ]] || {
+        echo "Model overlay $MODEL is qualification-only; only prefetch-ml and qualify-ml are implemented" >&2
+        exit 2
+      }
+      ;;
+    '')
+      echo "Model overlay $MODEL has no reviewed network or qualification-only scope" >&2
+      exit 2
+      ;;
+    *)
+      echo "Model overlay $MODEL has an unsupported scope: $model_scope" >&2
+      exit 2
+      ;;
+  esac
 fi
 [[ -z "$MODEL" ]] || export GDC_MODEL_PROFILE="$MODEL"
 
@@ -1231,7 +1458,17 @@ case "$COMMAND" in
       join) COMMAND='join' ;;
       backup) COMMAND='host-backup' ;;
       peers) COMMAND='host-peers' ;;
-      models) COMMAND='host-models' ;;
+      models)
+        if [[ "${1:-}" == add-worker ]]; then
+          shift
+          COMMAND='host-model-worker-add'
+        elif [[ "${1:-}" == retune-primary ]]; then
+          shift
+          COMMAND='host-model-primary-retune'
+        else
+          COMMAND='host-models'
+        fi
+        ;;
       upgrade)
         if [[ "${1:-}" =~ ^(prepare|watch)$ ]]; then
           upgrade_action="$1"; shift
@@ -1280,7 +1517,15 @@ case "$COMMAND" in
           *) usage; exit 2 ;;
         esac
         ;;
-      start|stop|verify|reset) COMMAND=node; set -- "$subcommand" "$@" ;;
+      reset)
+        if [[ "${1:-}" == --new-genesis ]]; then
+          shift
+          COMMAND='host-reset-new-genesis'
+        else
+          COMMAND=node; set -- reset "$@"
+        fi
+        ;;
+      start|stop|verify) COMMAND=node; set -- "$subcommand" "$@" ;;
       *) usage; exit 2 ;;
     esac
     ;;
@@ -1295,6 +1540,9 @@ case "$COMMAND" in
     fi
     ;;
   node) [[ "${1:-}" != reset ]] || GDC_END_COMMAND='host reset' ;;
+  host-reset-new-genesis) GDC_END_COMMAND='host reset --new-genesis' ;;
+  host-model-worker-add) GDC_END_COMMAND='host models add-worker' ;;
+  host-model-primary-retune) GDC_END_COMMAND='host models retune-primary' ;;
   host-peers) GDC_END_COMMAND='host peers' ;;
   network-recover)
     case "${1:-}" in bootstrap|check) GDC_END_COMMAND="$1" ;; esac
@@ -1317,6 +1565,87 @@ case "$COMMAND" in
     use_node_data_home "$2"
     acquire_operator_lock
     python3 "$ROOT/scripts/host-models.py" "$@"
+    ;;
+  host-model-worker-add)
+    [[ $# -ge 2 && $# -le 3 && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ \
+      && -f "$2" && ! -L "$2" && -r "$2" && -s "$2" ]] \
+      || { echo 'host models add-worker requires one SSH alias, a readable descriptor, and optional --apply or --reconcile-uncertain' >&2; exit 2; }
+    [[ $# -eq 2 || "$3" == --apply || "$3" == --reconcile-uncertain ]] \
+      || { echo 'host models add-worker accepts only --apply or --reconcile-uncertain' >&2; exit 2; }
+    [[ "$RELEASE_OPTION_SEEN" == false && "$COMPOSITION_OPTION_SEEN" == false && "$MODEL_OPTION_SEEN" == false ]] \
+      || { echo 'host models add-worker uses its descriptor, not a release, composition, or model overlay' >&2; exit 2; }
+    worker_alias="$1"
+    worker_descriptor="$2"
+    use_node_data_home "$worker_alias"
+    if [[ "${3:-}" == --apply ]]; then
+      acquire_operator_lock
+      unset GDC_RUN_ID GDC_RUN_LOG
+      export GDC_FORCE_NEW_RUN=true
+      run_phase "host-model-worker-add-$worker_alias" bash "$ROOT/scripts/phase-model-worker-add.sh" \
+        "$worker_alias" "$worker_descriptor" --apply
+    else
+      if [[ "${3:-}" == --reconcile-uncertain ]]; then
+        bash "$ROOT/scripts/phase-model-worker-add.sh" "$worker_alias" "$worker_descriptor" --reconcile-uncertain
+      else
+        bash "$ROOT/scripts/phase-model-worker-add.sh" "$worker_alias" "$worker_descriptor"
+      fi
+    fi
+    ;;
+  host-model-primary-retune)
+    [[ $# -eq 5 && "$1" =~ ^(plan|apply)$ && "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ \
+      && -f "$3" && ! -L "$3" && -r "$3" && -s "$3" \
+      && -f "$4" && ! -L "$4" && -r "$4" && -s "$4" && "$5" == /* ]] \
+      || { echo 'host models retune-primary requires plan|apply, one SSH alias, descriptor, desired-primary file, and absolute plan path' >&2; exit 2; }
+    if [[ "$1" == plan ]]; then
+      [[ ! -e "$5" && ! -L "$5" ]] || { echo 'host models retune-primary plan requires a new plan path' >&2; exit 2; }
+    else
+      [[ -f "$5" && ! -L "$5" && -r "$5" && -s "$5" ]] \
+        || { echo 'host models retune-primary apply requires an existing nonempty plan file' >&2; exit 2; }
+    fi
+    [[ "$RELEASE_OPTION_SEEN" == false && "$COMPOSITION_OPTION_SEEN" == false && "$MODEL_OPTION_SEEN" == false ]] \
+      || { echo 'host models retune-primary uses its reviewed descriptor, not a release, composition, or model overlay' >&2; exit 2; }
+    retune_action="$1"; retune_alias="$2"
+    retune_descriptor="$3"; retune_desired="$4"; retune_plan="$5"
+    use_node_data_home "$retune_alias"
+    if [[ "$retune_action" == apply ]]; then
+      acquire_operator_lock
+      unset GDC_RUN_ID GDC_RUN_LOG
+      export GDC_FORCE_NEW_RUN=true
+      run_phase "host-model-primary-retune-$retune_alias" bash "$ROOT/scripts/phase-model-primary-reconfigure.sh" \
+        "$retune_action" "$retune_alias" "$retune_descriptor" "$retune_desired" "$retune_plan"
+    else
+      bash "$ROOT/scripts/phase-model-primary-reconfigure.sh" \
+        "$retune_action" "$retune_alias" "$retune_descriptor" "$retune_desired" "$retune_plan"
+    fi
+    ;;
+  host-reset-new-genesis)
+    reset_ml_project=false
+    if [[ $# -eq 3 && "$1" == --ml-project && "$2" == gdc-node4-ml && "$3" == gdc-node9 ]]; then
+      reset_ml_project=true
+      reset_alias=gdc-node9
+    elif [[ $# -eq 1 && "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+      reset_alias="$1"
+    else
+      echo 'host reset --new-genesis requires one valid SSH alias; only gdc-node9 accepts --ml-project gdc-node4-ml before the alias' >&2
+      exit 2
+    fi
+    [[ "$RELEASE_OPTION_SEEN" == false && "$COMPOSITION_OPTION_SEEN" == false && "$MODEL_OPTION_SEEN" == false ]] \
+      || { echo 'host reset --new-genesis does not accept release, composition, or model overlays' >&2; exit 2; }
+    reset_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    use_node_data_home "$reset_alias"
+    acquire_operator_lock
+    unset GDC_RUN_ID GDC_RUN_LOG
+    export GDC_FORCE_NEW_RUN=true
+    run_phase "host-reset-new-genesis-$reset_alias" bash -c '
+      set -Eeuo pipefail
+      host="$1"; stamp="$2"; helper="$3"
+      [[ -s "$helper" && ! -L "$helper" ]] || { echo "new-Genesis reset helper is unavailable: $helper" >&2; exit 2; }
+      remote_command="sudo -n bash -s -- $(printf %q "$host") $(printf %q "$stamp")"
+      if [[ "$4" == true ]]; then remote_command+=" --ml-project gdc-node4-ml"; fi
+      printf "new-Genesis reset host=%s stamp=%s\\n" "$host" "$stamp"
+      ssh -T "$host" "$remote_command" <"$helper"
+    ' gdc-reset-new-genesis "$reset_alias" "$reset_stamp" "$ROOT/scripts/reset-genesis-host.sh" "$reset_ml_project"
+    archive_new_genesis_local_identity "$reset_alias" "$GDC_HOME" "$GDC_RUN_ID"
     ;;
   host-peers)
     bash "$ROOT/scripts/host-peers.sh" "$@"
@@ -1490,19 +1819,89 @@ case "$COMMAND" in
     ;;
   genesis)
     genesis_alias='' genesis_time='' bootstrap_access=true skip_qualification=false
-    genesis_public_host='' genesis_public_edge=''
+    genesis_public_host='' genesis_public_edge='' genesis_config_file='' genesis_config_sha256=''
+    genesis_software_file='' genesis_software_sha256=''
+    genesis_prepare_only=false genesis_apply_candidate='' genesis_resume_candidate='' genesis_defer_services=false
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --time=*) [[ -z "$genesis_time" ]] || { usage; exit 2; }; genesis_time="$1" ;;
         --no-bootstrap-access) bootstrap_access=false ;;
         --skip-qualification) skip_qualification=true ;;
+        --prepare-only) [[ "$genesis_prepare_only" == false ]] || { usage; exit 2; }; genesis_prepare_only=true ;;
+        --apply-candidate) [[ -z "$genesis_apply_candidate" && -n "${2:-}" ]] || { usage; exit 2; }; genesis_apply_candidate="$2"; shift ;;
+        --resume-installed-candidate) [[ -z "$genesis_resume_candidate" && -n "${2:-}" ]] || { usage; exit 2; }; genesis_resume_candidate="$2"; shift ;;
+        --config-sha256) [[ -z "$genesis_config_sha256" && -n "${2:-}" ]] || { usage; exit 2; }; genesis_config_sha256="$2"; shift ;;
+        --software-file)
+          [[ -z "$genesis_software_file" && -n "${2:-}" && -s "$2" ]] || {
+            echo 'genesis --software-file requires one readable nonempty JSON file' >&2; exit 2;
+          }
+          genesis_software_file="$(readlink -f -- "$2")"; shift ;;
+        --software-sha256) [[ -z "$genesis_software_sha256" && -n "${2:-}" ]] || { usage; exit 2; }; genesis_software_sha256="$2"; shift ;;
+        --defer-services) genesis_defer_services=true ;;
         --public-host) genesis_public_host="${2:-}"; shift ;;
         --public-edge) genesis_public_edge="${2:-}"; shift ;;
+        --config-file)
+          [[ -z "$genesis_config_file" && -n "${2:-}" && -s "$2" ]] || {
+            echo 'genesis --config-file requires one readable nonempty JSON file' >&2; exit 2;
+          }
+          genesis_config_file="$(readlink -f -- "$2")"
+          jq -e 'type == "object"' "$genesis_config_file" >/dev/null || {
+            echo 'genesis --config-file must contain a JSON object' >&2; exit 2;
+          }
+          shift ;;
         *) [[ -z "$genesis_alias" ]] || { usage; exit 2; }; genesis_alias="$1" ;;
       esac
       shift
     done
     [[ -n "$genesis_alias" ]] || { echo 'genesis requires an SSH alias' >&2; usage; exit 2; }
+    [[ "$genesis_prepare_only" == false || ( -z "$genesis_apply_candidate" && -z "$genesis_resume_candidate" ) ]] || { echo 'genesis prepare, apply, and resume modes are mutually exclusive' >&2; exit 2; }
+    [[ -z "$genesis_apply_candidate" || -z "$genesis_resume_candidate" ]] || { echo 'genesis apply and resume modes are mutually exclusive' >&2; exit 2; }
+    [[ "$genesis_prepare_only" == false || -n "$genesis_config_file" ]] || { echo 'genesis --prepare-only requires --config-file' >&2; exit 2; }
+    [[ "$genesis_prepare_only" == false || -n "$genesis_config_sha256" ]] || { echo 'genesis --prepare-only requires --config-sha256' >&2; exit 2; }
+    [[ "$genesis_prepare_only" == false || -n "$genesis_software_file" ]] || { echo 'genesis --prepare-only requires --software-file' >&2; exit 2; }
+    [[ "$genesis_prepare_only" == false || -n "$genesis_software_sha256" ]] || { echo 'genesis --prepare-only requires --software-sha256' >&2; exit 2; }
+    if [[ "$genesis_prepare_only" == false && -z "$genesis_apply_candidate" && -z "$genesis_resume_candidate" && ( -n "$genesis_software_file" || -n "$genesis_software_sha256" ) ]]; then
+      echo 'genesis software overrides are valid only with --prepare-only, --apply-candidate, or --resume-installed-candidate' >&2; exit 2
+    fi
+    [[ -z "$genesis_apply_candidate" || "$genesis_apply_candidate" =~ ^[0-9a-f]{64}$ ]] || { echo 'genesis --apply-candidate requires a lowercase SHA-256' >&2; exit 2; }
+    [[ -z "$genesis_resume_candidate" || "$genesis_resume_candidate" =~ ^[0-9a-f]{64}$ ]] || { echo 'genesis --resume-installed-candidate requires a lowercase SHA-256' >&2; exit 2; }
+    [[ -z "$genesis_config_sha256" || "$genesis_config_sha256" =~ ^[0-9a-f]{64}$ ]] || { echo 'genesis --config-sha256 requires a lowercase SHA-256' >&2; exit 2; }
+    [[ -z "$genesis_software_sha256" || "$genesis_software_sha256" =~ ^[0-9a-f]{64}$ ]] || { echo 'genesis --software-sha256 requires a lowercase SHA-256' >&2; exit 2; }
+    if [[ -n "$genesis_software_file" ]]; then
+      [[ -n "$genesis_software_sha256" ]] || { echo 'genesis --software-file requires --software-sha256' >&2; exit 2; }
+      actual_software_sha256="$(sha256sum "$genesis_software_file" | awk '{print $1}')"
+      [[ "$actual_software_sha256" == "$genesis_software_sha256" ]] || {
+        echo "genesis software SHA-256 mismatch: expected $genesis_software_sha256, got $actual_software_sha256" >&2; exit 2;
+      }
+    elif [[ -n "$genesis_software_sha256" ]]; then
+      echo 'genesis --software-sha256 requires --software-file' >&2; exit 2
+    fi
+    if [[ -n "$genesis_config_file" ]]; then
+      [[ -n "$genesis_config_sha256" ]] || { echo 'genesis --config-file requires --config-sha256' >&2; exit 2; }
+      actual_config_sha256="$(sha256sum "$genesis_config_file" | awk '{print $1}')"
+      [[ "$actual_config_sha256" == "$genesis_config_sha256" ]] || {
+        echo "genesis config SHA-256 mismatch: expected $genesis_config_sha256, got $actual_config_sha256" >&2; exit 2;
+      }
+    elif [[ -n "$genesis_config_sha256" ]]; then
+      echo 'genesis --config-sha256 requires --config-file' >&2; exit 2
+    fi
+    if [[ -n "$genesis_apply_candidate" ]]; then
+      [[ -n "$genesis_config_file" && -n "$genesis_config_sha256" && -n "$genesis_software_file" && -n "$genesis_software_sha256" && "$genesis_defer_services" == true ]] || {
+        echo 'genesis --apply-candidate requires config and software files with reviewed SHA-256 values, and --defer-services' >&2; exit 2;
+      }
+      [[ -z "$genesis_time" && "$skip_qualification" == false && "$bootstrap_access" == true ]] || {
+        echo 'genesis --apply-candidate does not accept time, qualification, or bootstrap overrides' >&2; exit 2;
+      }
+    elif [[ -n "$genesis_resume_candidate" ]]; then
+      [[ -n "$genesis_config_file" && -n "$genesis_config_sha256" && -n "$genesis_software_file" && -n "$genesis_software_sha256" && "$genesis_defer_services" == false ]] || {
+        echo 'genesis --resume-installed-candidate requires config and software files with reviewed SHA-256 values and does not accept --defer-services' >&2; exit 2;
+      }
+      [[ -z "$genesis_time" && "$skip_qualification" == false && "$bootstrap_access" == true ]] || {
+        echo 'genesis --resume-installed-candidate does not accept time, qualification, or bootstrap overrides' >&2; exit 2;
+      }
+    elif [[ "$genesis_defer_services" == true ]]; then
+      echo 'genesis --defer-services is valid only with --apply-candidate' >&2; exit 2
+    fi
     [[ -z "$genesis_public_edge" || "$genesis_public_edge" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
       echo "invalid public edge SSH alias: $genesis_public_edge" >&2; exit 2;
     }
@@ -1521,6 +1920,15 @@ case "$COMMAND" in
     topology_contains_node "$genesis_public_edge" || { echo "public edge expects an alias from GDC_NODE_ALIASES, got: $genesis_public_edge" >&2; exit 2; }
     export GDC_GENESIS_NODE="$genesis_alias" GDC_PUBLIC_EDGE_NODE="$genesis_public_edge" GDC_GATEWAY_NODE="$genesis_alias" GDC_TELEGRAM_BOT_HOST="$genesis_alias"
     export GDC_GENESIS_SKIP_QUALIFICATION="$skip_qualification"
+    # Do not inherit a package from an unrelated shell or earlier invocation.
+    export GDC_GENESIS_CONFIG_FILE="$genesis_config_file"
+    export GDC_GENESIS_CONFIG_SHA256="$genesis_config_sha256"
+    export GDC_GENESIS_SOFTWARE_FILE="$genesis_software_file"
+    export GDC_GENESIS_SOFTWARE_SHA256="$genesis_software_sha256"
+    export GDC_GENESIS_PREPARE_ONLY="$genesis_prepare_only"
+    export GDC_GENESIS_APPLY_CANDIDATE="$genesis_apply_candidate"
+    export GDC_GENESIS_RESUME_CANDIDATE="$genesis_resume_candidate"
+    export GDC_GENESIS_DEFER_SERVICES="$genesis_defer_services"
     if [[ "$bootstrap_access" == true ]]; then
       export GDC_GENESIS_GUARDIAN_ENABLED=true GDC_GENESIS_BOOTSTRAP_ACCESS=true
     else
@@ -2042,6 +2450,10 @@ case "$COMMAND" in
       && jq -e '.schema_version == 1 and .kind == "gdc-reset-dai-backup" and .signer_stopped == true and (.identity_present | type == "boolean")' "$join_reset_metadata" >/dev/null 2>&1; then
       join_reset_only=true
     fi
+    if [[ "$join_reset_only" != true ]]; then
+      verified_new_genesis_reset="$(verify_new_genesis_reset_receipt "$join_alias" "$join_existing_home" || true)"
+      [[ "$verified_new_genesis_reset" != true ]] || join_reset_only=true
+    fi
     if [[ -z "$join_resume_run" && ( -e "$join_existing_home" || -L "$join_existing_home" ) && "$join_preflight_complete" != true && "$join_reset_only" != true ]]; then
       GDC_USER_ERROR=true
       export GDC_USER_ERROR
@@ -2154,8 +2566,51 @@ case "$COMMAND" in
       }
       # shellcheck disable=SC1090 # retained role input was created by the original JOIN.
       source "$join_role_config"
+      # The phase re-loads project state in a child process. Bind that reload
+      # to this validated one-host input, even when the caller supplied GDC_ENV.
+      export GDC_ENV="$join_role_config"
       join_resume_state="$(jq -er .receipt_chain.last_state <<<"$join_resume_verification")"
       join_resume_operation="$(jq -er .operation <<<"$join_resume_verification")"
+      if [[ "$join_resume_state" == IDENTITY_READY ]]; then
+        [[ "$join_resume_operation" == new && "$join_recovery_start" != true ]] || {
+          echo 'IDENTITY_READY continuation is supported only for a retained new JOIN run' >&2; exit 2;
+        }
+        join_bootstrap_file="$STATE/network-bootstrap.json"
+        [[ -r "$join_bootstrap_file" && -f "$join_bootstrap_file" && ! -L "$join_bootstrap_file" ]] || {
+          echo 'IDENTITY_READY continuation lacks its retained validated Bootstrap file' >&2; exit 2;
+        }
+        GDC_JOIN_BOOTSTRAP_FILE="$join_bootstrap_file"
+        "$ROOT/scripts/network-bootstrap.sh" verify "$GDC_JOIN_BOOTSTRAP_FILE" >/dev/null || {
+          echo 'IDENTITY_READY continuation retained Bootstrap is invalid' >&2; exit 2;
+        }
+        GDC_JOIN_BOOTSTRAP_SHA256="$(sha256sum "$GDC_JOIN_BOOTSTRAP_FILE" | awk '{print $1}')"
+        GDC_JOIN_BOOTSTRAP_SCHEMA=https://gonka-dev.net/v1.bootstrap.schema.json
+        GDC_JOIN_LINEAGE_RECEIPT="$STATE/lineage-preflight.json"
+        GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
+        GDC_JOIN_RESUME_IDENTITY_READY=true
+        export GDC_JOIN_BOOTSTRAP_FILE GDC_JOIN_BOOTSTRAP_SHA256 GDC_JOIN_BOOTSTRAP_SCHEMA
+        export GDC_JOIN_LINEAGE_RECEIPT GDC_JOIN_LINEAGE_RECEIPT_SHA256 GDC_JOIN_RESUME_IDENTITY_READY
+        [[ -r "$STATE/lineage-preflight.env" && -f "$STATE/lineage-preflight.env" && ! -L "$STATE/lineage-preflight.env" ]] || {
+          echo 'IDENTITY_READY continuation lacks its retained lineage environment' >&2; exit 2;
+        }
+        # Validate the retained proof and fresh remote boundary before
+        # continuing any phase work.
+        "$ROOT/scripts/verify-join-identity-ready-resume.sh" \
+          "$join_alias" "$join_resume_run" "$join_run" "$GDC_JOIN_PROFILE" "$GDC_JOIN_OBSERVATION" \
+          "$GDC_JOIN_BOOTSTRAP_FILE" "$GDC_HOME/genesis/genesis.json" "$STATE/identities/$join_alias.json" \
+          "$GDC_HOME/accounts/$join_alias-cold.json" >/dev/null || {
+            echo 'retained IDENTITY_READY continuation failed receipt or fresh target verification' >&2; exit 2;
+          }
+        GDC_JOIN_BOOTSTRAP_MODE=full_sync
+        GDC_JOIN_SOURCE_RPC="$(jq -er '.seeds[0].rpc | rtrimstr("/")' "$GDC_JOIN_BOOTSTRAP_FILE")"
+        GDC_JOIN_TRUST_HEIGHT=0 GDC_JOIN_TRUST_HASH='' GDC_JOIN_SNAPSHOT_PEERS=''
+        GDC_JOIN_RPC_SERVER_1="${GDC_JOIN_SOURCE_RPC}/" GDC_JOIN_RPC_SERVER_2=''
+        GDC_JOIN_TRUSTED_BLOCK_PERIOD=0
+        export GDC_JOIN_SOURCE_RPC GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
+        export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD
+        run_phase "join-resume-identity-ready-$join_alias" "$ROOT/scripts/phase-join.sh" "$join_alias"
+        exit 0
+      fi
       if [[ -e "$join_run/recovery-parent.json" ]]; then
         join_recovery_mode=readback
         [[ "$join_recovery_start" != true ]] || join_recovery_mode=start
@@ -2169,7 +2624,7 @@ case "$COMMAND" in
         exit 0
       fi
       case "$join_resume_state" in
-        CANARY_CAUGHT_UP)
+        CANARY_RUNNING|CANARY_CAUGHT_UP)
           case "$join_resume_operation" in
             new|restore)
               run_phase "join-resume-caught-up-$join_alias" "$ROOT/scripts/phase-join-resume-caught-up-canary.sh" \
@@ -2212,6 +2667,16 @@ case "$COMMAND" in
               exit 2
               ;;
           esac
+          ;;
+        CANONICAL_VERIFIED)
+          [[ "$join_resume_operation" == new ]] || {
+            echo 'CANONICAL_VERIFIED resume is supported only for a new JOIN' >&2; exit 2;
+          }
+          "$ROOT/scripts/preserve-join-result-before-resume.sh" \
+            --result "$GDC_JOIN_RESULT_OUTPUT" \
+            --profile-sha256 "$(sha256sum "$GDC_JOIN_PROFILE" | awk '{print $1}')" >/dev/null
+          run_phase "join-resume-new-canonical-$join_alias" "$ROOT/scripts/phase-join-resume-new-canonical.sh" \
+            "$join_alias" "$join_run"
           ;;
         SIGNER_ACTIVATING)
           run_phase "join-resume-signer-readback-$join_alias" "$ROOT/scripts/phase-join-resume-signer-readback.sh" \
@@ -2280,10 +2745,10 @@ case "$COMMAND" in
     # blocklist guard can reject a blocked account before its first SSH call.
     if [[ "${GDC_JOIN_REBIND_EXISTING_PARTICIPANT:-false}" != true && "$plan_only" != true ]]; then
       check_join_host_readiness "$join_alias"
-      check_join_target_clean "$join_alias"
+      check_join_target_clean "$join_alias" validator
       if [[ -n "$join_gpu_alias" ]]; then
         check_join_host_readiness "$join_gpu_alias"
-        check_join_target_clean "$join_gpu_alias"
+        check_join_target_clean "$join_gpu_alias" ml-only-donor
       fi
     fi
     # Bootstrap observation precedes both CLI installation and role-input
@@ -2343,10 +2808,10 @@ case "$COMMAND" in
     # already completed the same checks before contacting the network.
     if [[ "${GDC_JOIN_REBIND_EXISTING_PARTICIPANT:-false}" == true && "$plan_only" != true ]]; then
       check_join_host_readiness "$join_alias"
-      check_join_target_clean "$join_alias"
+      check_join_target_clean "$join_alias" validator
       if [[ -n "$join_gpu_alias" ]]; then
         check_join_host_readiness "$join_gpu_alias"
-        check_join_target_clean "$join_gpu_alias"
+        check_join_target_clean "$join_gpu_alias" ml-only-donor
       fi
     fi
     join_accelerator_inspection="$join_run/accelerator-inspection.env"
@@ -2386,7 +2851,7 @@ case "$COMMAND" in
         wait_for_join_software_observation "candidate-$join_preflight_cycle" "$join_candidate_observation" "$join_preflight_deadline_at" "$join_preflight_retry_seconds"
       GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$join_candidate_observation")"
       GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$join_candidate_observation")"
-      GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$join_candidate_observation")"
+      GDC_NETWORK_GENESIS_SHA256="$(jq -r '.bootstrap.chain_identity_sha256 // .bootstrap.genesis_sha256' "$join_candidate_observation")"
       export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
       join_model_args=(--bootstrap-file "$join_bootstrap_file" --output "$join_candidate_model_selection")
       join_model_args+=(--model-id "$join_model_id")
@@ -2439,7 +2904,7 @@ case "$COMMAND" in
     done
     GDC_NETWORK_FINGERPRINT="$(jq -r .network_state_id "$join_observation")"
     GDC_NETWORK_CHAIN_ID="$(jq -r .bootstrap.chain_id "$join_observation")"
-    GDC_NETWORK_GENESIS_SHA256="$(jq -r .bootstrap.genesis_sha256 "$join_observation")"
+    GDC_NETWORK_GENESIS_SHA256="$(jq -r '.bootstrap.chain_identity_sha256 // .bootstrap.genesis_sha256' "$join_observation")"
     export GDC_NETWORK_FINGERPRINT GDC_NETWORK_CHAIN_ID GDC_NETWORK_GENESIS_SHA256
     write_join_preflight_receipt software-observation passed unavailable seed-observer
     join_components="$join_candidate_components"
@@ -2556,7 +3021,7 @@ case "$COMMAND" in
     # shellcheck disable=SC1090
     source "$join_lineage_env"
     export GDC_JOIN_BOOTSTRAP_MODE GDC_JOIN_TRUST_HEIGHT GDC_JOIN_TRUST_HASH GDC_JOIN_SNAPSHOT_PEERS
-    export GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
+    export GDC_JOIN_SOURCE_RPC GDC_JOIN_RPC_SERVER_1 GDC_JOIN_RPC_SERVER_2 GDC_JOIN_TRUSTED_BLOCK_PERIOD GDC_JOIN_LINEAGE_RECEIPT
     GDC_JOIN_LINEAGE_RECEIPT_SHA256="$(sha256sum "$GDC_JOIN_LINEAGE_RECEIPT" | awk '{print $1}')"
     export GDC_JOIN_LINEAGE_RECEIPT_SHA256
     write_join_preflight_receipt lineage-preflight passed unavailable lineage-preflight

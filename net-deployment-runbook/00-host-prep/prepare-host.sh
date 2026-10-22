@@ -230,31 +230,37 @@ ensure_nvidia_modules_for_installed_kernels() {
     | awk '$2 ~ /^ii/ {sub(/^linux-image-/, "", $1); print $1}' || true)
 }
 
+prepare_nvidia_driver_stack() {
+  if [[ -z "$NVIDIA_DRIVER_CANDIDATE" ]]; then
+    # nvidia-smi was successful and the loaded driver met MIN_DRIVER. Do not
+    # mutate packages for kernels this Host is not currently running: that can
+    # update user space and force a reboot without improving JOIN readiness.
+    status "KEEP  NVIDIA driver $NVIDIA_DRIVER_VERSION"
+    return 0
+  fi
+  if [[ "$NVIDIA_DRIVER_VERSION" =~ ^[0-9]+([.][0-9]+)+$ ]]; then
+    status "INSTALL  NVIDIA driver: $NVIDIA_DRIVER_VERSION -> $NVIDIA_DRIVER_CANDIDATE"
+  else
+    status "INSTALL  NVIDIA driver $NVIDIA_DRIVER_CANDIDATE; current driver is unavailable"
+  fi
+  while IFS= read -r dkms_version; do
+    dkms_major=${dkms_version%%.*}
+    if [[ "$dkms_major" =~ ^[0-9]+$ ]] && (( dkms_major < MIN_DRIVER )); then
+      status "REMOVE  stale NVIDIA DKMS $dkms_version"
+      dkms remove -m nvidia -v "$dkms_version" --all
+    fi
+  done < <((dkms status -m nvidia 2>/dev/null || true) | sed -n 's#^nvidia/\([^,]*\),.*#\1#p' | sort -u)
+  ensure_packages "$NVIDIA_DRIVER_CANDIDATE"
+  ensure_nvidia_modules_for_installed_kernels
+  depmod -a
+  update-initramfs -u
+  DRIVER_CHANGED=true
+}
+
 if [[ "$AMD_ACCELERATOR" == true && "$AMD_NEEDS_PROVISIONING" == true ]]; then
   install_amd_rocm
 elif [[ "$GPU_ROLE" == true && "$AMD_ACCELERATOR" == false ]]; then
-  if [[ -z "$NVIDIA_DRIVER_CANDIDATE" ]]; then
-    status "KEEP  NVIDIA driver $NVIDIA_DRIVER_VERSION"
-    ensure_nvidia_modules_for_installed_kernels
-  else
-    if [[ "$NVIDIA_DRIVER_VERSION" =~ ^[0-9]+([.][0-9]+)+$ ]]; then
-      status "INSTALL  NVIDIA driver: $NVIDIA_DRIVER_VERSION -> $NVIDIA_DRIVER_CANDIDATE"
-    else
-      status "INSTALL  NVIDIA driver $NVIDIA_DRIVER_CANDIDATE; current driver is unavailable"
-    fi
-    while IFS= read -r dkms_version; do
-      dkms_major=${dkms_version%%.*}
-      if [[ "$dkms_major" =~ ^[0-9]+$ ]] && (( dkms_major < MIN_DRIVER )); then
-        status "REMOVE  stale NVIDIA DKMS $dkms_version"
-        dkms remove -m nvidia -v "$dkms_version" --all
-      fi
-    done < <((dkms status -m nvidia 2>/dev/null || true) | sed -n 's#^nvidia/\([^,]*\),.*#\1#p' | sort -u)
-    ensure_packages "$NVIDIA_DRIVER_CANDIDATE"
-    ensure_nvidia_modules_for_installed_kernels
-    depmod -a
-    update-initramfs -u
-    DRIVER_CHANGED=true
-  fi
+  prepare_nvidia_driver_stack
 fi
 
 # Do not touch Docker after package work has changed a kernel or accelerator

@@ -9,16 +9,20 @@ PREPARE="$ROOT/00-host-prep/prepare-host.sh"
 # the initramfs is rebuilt. AMD provisioning is a distinct branch and must not
 # run this NVIDIA-only helper.
 grep -Fq 'ensure_nvidia_modules_for_installed_kernels()' "$PREPARE"
-[[ "$(grep -c '^    ensure_nvidia_modules_for_installed_kernels$' "$PREPARE")" == 2 ]]
-# A retained adequate driver still repairs modules for newly installed kernels.
-awk '/if \[\[ -z "\$NVIDIA_DRIVER_CANDIDATE" \]\]; then/ {retained=NR} /^    ensure_nvidia_modules_for_installed_kernels$/ && retained && !repair {repair=NR} /^  else$/ && retained {branch=NR; exit} END {exit !(retained < repair && repair < branch)}' "$PREPARE"
+[[ "$(grep -c '^  ensure_nvidia_modules_for_installed_kernels$' "$PREPARE")" == 1 ]]
+grep -Fq 'prepare_nvidia_driver_stack()' "$PREPARE"
+# A retained healthy driver returns before installing modules for dormant
+# kernels; module repair stays in the selected-driver install/upgrade branch.
+awk '/^prepare_nvidia_driver_stack\(\)/ {inside=1} inside && /if \[\[ -z "\$NVIDIA_DRIVER_CANDIDATE" \]\]; then/ {retained=NR} inside && /^    return 0$/ {retained_end=NR} inside && /^  ensure_nvidia_modules_for_installed_kernels$/ {install=NR} inside && /^}$/ {exit !(retained < retained_end && retained_end < install)}' "$PREPARE"
 # The selected driver metapackage is installed first, then its modules are
 # resolved for every installed kernel, and only then is the module map rebuilt.
-awk 'index($0, "ensure_packages \"$NVIDIA_DRIVER_CANDIDATE\"") {u=NR} /^    ensure_nvidia_modules_for_installed_kernels$/ && u && !e {e=NR} /^    depmod -a$/ {d=NR} END {exit !(u && e && d && u < e && e < d)}' "$PREPARE"
+awk '/^prepare_nvidia_driver_stack\(\)/ {inside=1} inside && index($0, "ensure_packages \"$NVIDIA_DRIVER_CANDIDATE\"") {u=NR} inside && /^  ensure_nvidia_modules_for_installed_kernels$/ && u && !e {e=NR} inside && /^  depmod -a$/ {d=NR} inside && /^}$/ {exit !(u && e && d && u < e && e < d)}' "$PREPARE"
 ! grep -Fq 'NVIDIA_UTILS_CANDIDATE' "$PREPARE"
 
 # shellcheck source=/dev/null
 source <(sed -n '/^ensure_nvidia_modules_for_installed_kernels()/,/^}/p' "$PREPARE")
+# shellcheck source=/dev/null
+source <(sed -n '/^prepare_nvidia_driver_stack()/,/^}/p' "$PREPARE")
 
 INSTALLED=''; AVAILABLE=''; RUNNING=''; UNRESOLVABLE=''; BROKEN=''; UPDATE_RC=0
 status() { printf '%s\n' "$*" >>"$tmp/status.log"; }
@@ -65,6 +69,50 @@ dpkg() {
   [[ "$2" != "$4" && "$(printf '%s\n%s\n' "$2" "$4" | sort -V | head -n1)" == "$2" ]]
 }
 reset_case() { : >"$tmp/status.log"; : >"$tmp/apt.log"; : >"$tmp/apt-update.log"; : >"$tmp/apt-probe.log"; DRIVER_CHANGED=false; UNRESOLVABLE=''; BROKEN=''; UPDATE_RC=0; }
+
+# Exercise the actual retained-driver policy with a successful nvidia-smi
+# result. The running 147 kernel already has a working loaded driver; apt can
+# install the missing 146 package, but prepare must not touch it or request a
+# reboot merely because that dormant kernel is still installed.
+nvidia-smi() {
+  [[ "$*" == '--query-gpu=driver_version --format=csv,noheader' ]] || return 2
+  printf '615.71.09\n'
+}
+reset_case
+INSTALLED=$'linux-modules-nvidia-615-server-open-generic\nlinux-modules-nvidia-615-server-open-6.8.0-147-generic\nlinux-image-6.8.0-146-generic\nlinux-image-6.8.0-147-generic'
+AVAILABLE='linux-modules-nvidia-615-server-open-6.8.0-146-generic'
+RUNNING=6.8.0-147-generic
+NVIDIA_DRIVER_VERSION="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n1)"
+NVIDIA_DRIVER_MAJOR="${NVIDIA_DRIVER_VERSION%%.*}"
+MIN_DRIVER=580
+[[ "$NVIDIA_DRIVER_VERSION" == 615.71.09 && "$NVIDIA_DRIVER_MAJOR" -ge "$MIN_DRIVER" ]]
+NVIDIA_DRIVER_CANDIDATE=''
+ensure_packages() { printf '%s\n' "$*" >>"$tmp/ensure-packages.log"; }
+dkms() { [[ "$1" == status ]] || return 1; }
+depmod() { printf '%s\n' "$*" >>"$tmp/driver-tools.log"; }
+update-initramfs() { printf '%s\n' "$*" >>"$tmp/driver-tools.log"; }
+prepare_nvidia_driver_stack
+grep -Fxq 'KEEP  NVIDIA driver 615.71.09' "$tmp/status.log"
+[[ ! -s "$tmp/apt.log" && ! -s "$tmp/apt-update.log" \
+  && ! -s "$tmp/ensure-packages.log" && ! -s "$tmp/driver-tools.log" \
+  && "$DRIVER_CHANGED" == false ]]
+REBOOT_PENDING=false; reboot_rc=0
+if [[ "$DRIVER_CHANGED" == true || "$REBOOT_PENDING" == true ]]; then reboot_rc=194; fi
+[[ "$reboot_rc" == 0 ]]
+
+# Installing/upgrading a selected driver still repairs installed-kernel
+# modules and marks the Host for reboot when package changes occur.
+reset_case
+INSTALLED=$'linux-modules-nvidia-615-server-open-generic\nlinux-image-6.8.0-146-generic\nlinux-image-6.8.0-147-generic'
+AVAILABLE='linux-modules-nvidia-615-server-open-6.8.0-146-generic'
+RUNNING=6.8.0-147-generic
+NVIDIA_DRIVER_VERSION=''
+# shellcheck disable=SC2034 # Consumed by the sourced prepare_nvidia_driver_stack function.
+NVIDIA_DRIVER_CANDIDATE=nvidia-driver-615-server-open
+prepare_nvidia_driver_stack
+grep -Fxq 'nvidia-driver-615-server-open' "$tmp/ensure-packages.log"
+grep -Fxq 'linux-modules-nvidia-615-server-open-6.8.0-146-generic' "$tmp/apt.log"
+[[ "$DRIVER_CHANGED" == true ]]
 
 base=$'linux-modules-nvidia-595-server-open-generic\nlinux-modules-nvidia-595-server-open-6.8.0-138-generic\nlinux-image-6.8.0-138-generic\nlinux-image-6.8.0-139-generic\nlinux-image-generic'
 
@@ -156,4 +204,4 @@ ensure_nvidia_modules_for_installed_kernels
 grep -Fxq 'WARN  package lists were not refreshed' "$tmp/status.log"
 [[ "$(<"$tmp/apt.log")" == linux-modules-nvidia-595-server-open-6.8.0-139-generic ]]
 
-printf 'PASS prepare installs NVIDIA modules for every installed kernel and skips only an older kernel whose modules do not resolve\n'
+printf 'PASS retained healthy NVIDIA driver skips dormant-kernel installs; driver upgrades still prepare kernel modules\n'

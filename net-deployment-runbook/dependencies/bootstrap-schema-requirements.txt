@@ -1,0 +1,2 @@
+# Required by Bootstrap and recovery schema validation in CI and publication.
+jsonschema==4.23.0

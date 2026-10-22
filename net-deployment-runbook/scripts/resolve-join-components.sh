@@ -33,10 +33,21 @@ if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$observation" >/dev/nul
     selected="$(bash -c '
       set -Eeuo pipefail
       source "$1"
+      model_source_revision="${MODEL_SOURCE_REVISION:-$MODEL_REVISION}"
+      model_scope="${GDC_MODEL_PROFILE_SCOPE:-network}"
+      model_args="${MLNODE_VLLM_ARGS:-}"
+      case "$model_scope:$MODEL_ID:$model_source_revision" in
+        network:Qwen/Qwen3-0.6B:c1899de289a04d12100db370d81485cdf75e47ca) expected_args='' ;;
+        network:Qwen/Qwen2.5-7B-Instruct:a09a35458c702b33eeacc393d103063234e8bc28) expected_args="--enable-auto-tool-choice --tool-call-parser hermes --kv-cache-dtype fp8 --kv-cache-memory-bytes 1073741824" ;;
+        network:Qwen/Qwen3-4B-Instruct-2507:cdbee75f17c01a7cc42f958dc650907174af0554) expected_args="--enable-auto-tool-choice --tool-call-parser hermes" ;;
+        *) echo "selected model profile has unsupported scope, identity, revision, or vLLM arguments" >&2; exit 2 ;;
+      esac
+      [[ "$model_args" == "$expected_args" ]] || { echo "selected model profile vLLM arguments differ from its approved recipe" >&2; exit 2; }
       jq -cn --arg id "$MODEL_ID" --arg revision "${MODEL_SOURCE_REVISION:-$MODEL_REVISION}" \
         --arg dtype "$MLNODE_DTYPE" --argjson context "$MLNODE_CONTEXT_LENGTH" --argjson seqs "$MLNODE_MAX_NUM_SEQS" \
         --arg utilization "$MLNODE_GPU_MEMORY_UTILIZATION" --argjson parallel "$MLNODE_TENSOR_PARALLEL_SIZE" \
-        "{model_id:\$id,model_source_revision:\$revision,mlnode_dtype:\$dtype,mlnode_context_length:\$context,mlnode_max_num_seqs:\$seqs,mlnode_gpu_memory_utilization:\$utilization,mlnode_tensor_parallel_size:\$parallel}"
+        --arg vllm_args "$model_args" \
+        "{model_id:\$id,model_source_revision:\$revision,mlnode_dtype:\$dtype,mlnode_context_length:\$context,mlnode_max_num_seqs:\$seqs,mlnode_gpu_memory_utilization:\$utilization,mlnode_tensor_parallel_size:\$parallel,mlnode_vllm_args:\$vllm_args}"
     ' _ "$lock")"
     temporary="$(mktemp "$(dirname "$output")/.join-components-model.XXXXXX")"
     jq --argjson selected "$selected" '
@@ -46,7 +57,8 @@ if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$observation" >/dev/nul
       .host_envelope.mlnode_max_num_seqs=$selected.mlnode_max_num_seqs |
       .host_envelope.mlnode_gpu_memory_utilization=$selected.mlnode_gpu_memory_utilization |
       .host_envelope.mlnode_dtype=$selected.mlnode_dtype |
-      .host_envelope.mlnode_tensor_parallel_size=$selected.mlnode_tensor_parallel_size
+      .host_envelope.mlnode_tensor_parallel_size=$selected.mlnode_tensor_parallel_size |
+      .host_envelope.mlnode_vllm_args=$selected.mlnode_vllm_args
     ' "$output" >"$temporary"
     chmod 0600 "$temporary"; mv -f "$temporary" "$output"
   fi

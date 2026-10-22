@@ -1,0 +1,30 @@
+name: gdc-ops
+services:
+  faucet:
+    build:
+      context: ./faucet
+      args:
+        INFERENCED_IMAGE: ${INFERENCED_IMAGE:?INFERENCED_IMAGE is required}
+    restart: unless-stopped
+    env_file: [./faucet.env]
+    network_mode: host
+    volumes:
+      - /srv/dai/gonka-devnet-faucet/operator-home:/home/faucet/.inference
+      - /srv/dai/gonka-devnet-faucet/data:/data
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:18081/health', timeout=3).status == 200"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  gateway-reserve-signer:
+    build:
+      context: ./faucet
+      args:
+        INFERENCED_IMAGE: ${INFERENCED_IMAGE:?INFERENCED_IMAGE is required}
+    restart: unless-stopped
+    env_file: [./gateway-reserve-signer.env]
+    network_mode: host
+    volumes:
+      - /srv/dai/gonka-devnet-faucet/operator-home:/home/faucet/.inference:ro
+      - /srv/dai/gonka-devnet-gateway-reserve/data:/data
