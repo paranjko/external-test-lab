@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fetch the official v4.2 host stack, the v6 rc1 gateway and a v6 devshardd, and write three build files
-# for the compat-v42 scenarios. Usage: fetch-compat-build.sh <empty directory> [v6 lab candidate tag]
+# Fetch the official 0.2.16 host stack, devshardd v4.2, a v6 devshardd and two gateways, and write the build
+# files for the compat scenarios. Usage: fetch-compat-build.sh <empty directory> [v6 lab candidate tag]
 set -euo pipefail
 
 dir=${1:?empty output directory}
@@ -25,40 +25,43 @@ curl -fsSL -o v42/devshardd.zip "$v42_zip"
 echo "$v42_sha256  v42/devshardd.zip" | sha256sum -c --quiet
 unzip -q -d v42 v42/devshardd.zip devshardd
 v42_binary=$(strings v42/devshardd | grep -o -m1 -E 'main\.BinaryVersion=[^ "]+' | cut -d= -f2 || true)
-v42_binary=${v42_binary:-devshard-v4.2.0}
+v42_binary=${v42_binary:-v4.2.0}
 
+# v6 devshardd from the lab candidate; there is no official v6 devshardd yet.
 bash "$here/fetch-build.sh" "$v6_tag" "$dir/v6" >/dev/null
+v6_binary=$(sed -n 's/^binary_version: //p' v6/build.yaml)
 
 for image in "$versiond" "$versiond_router" "$gateway_v6_rc1" "$gateway_v42"; do
   docker pull -q "$image" >/dev/null
 done
 
-# Peer transport of the DevNet v6 gateway: no HTTP/2 upgrade, no native gRPC.
-peer_rpc='peer_rpc:\n  grpc: false\n  h2_upgrade: false\n'
-
-write() {
-  cat > "$1" <<EOF
-name: $2
+# Mainnet today: v4.2 gateway in front of hosts that run v4.2 on the 0.2.16 wrapping.
+cat > build-baseline.yaml <<EOF
+name: compat-baseline
 protocol: v4.2
 binary_version: $v42_binary
 devshardd: v42/devshardd
 images:
   versiond: $versiond
   versiond_router: $versiond_router
-  gateway: $3
+  gateway: $gateway_v42
 EOF
-}
-# Mainnet today: v4.2 gateway in front of v4.2 hosts.
-write build-baseline.yaml compat-v42-baseline "$gateway_v42"
-# Only the gateway moves to v6 rc1; it keeps serving v4.2 routes.
-write build-all.yaml compat-v42-all "$gateway_v6_rc1"
-printf 'gateway:\n  route_prefix: /devshard/v4.2\n  escrow_route_prefix: /devshard/v4.2\n' >> build-all.yaml
-printf "$peer_rpc" >> build-all.yaml
-# The same with the gateway's height-seed gate off: does only the gate stop v4.2 escrows?
-awk '{ sub(/^name: compat-v42-all$/, "name: compat-v42-all-noseed"); print }
-  /^  escrow_route_prefix:/ { print "  env:"; print "    DEVSHARD_REQUIRE_HEIGHT_SEED: \"false\"" }' build-all.yaml > build-all-noseed.yaml
-# Rollout: hosts also run v6; starting escrows stay on v4.2, the gateway creates new ones on v6.
-write build-rollover.yaml compat-v42-rollover "$gateway_v6_rc1"
-printf 'versions:\n  - {name: v6, devshardd: v6/devshardd}\ngateway:\n  route_prefix: /devshard/v6\n  escrow_route_prefix: /devshard/v4.2\n' >> build-rollover.yaml
-printf "$peer_rpc" >> build-rollover.yaml
+
+# Mainnet once v6 is approved: hosts run v6 next to v4.2, the v6 rc1 gateway sends load to v6.
+# Peer transport of the DevNet v6 gateway: no HTTP/2 upgrade, no native gRPC.
+cat > build-coexist.yaml <<EOF
+name: compat-coexist
+protocol: v6
+binary_version: $v6_binary
+devshardd: v6/devshardd
+images:
+  versiond: $versiond
+  versiond_router: $versiond_router
+  gateway: $gateway_v6_rc1
+versions:
+  - {name: v4.2, devshardd: v42/devshardd}
+peer_rpc:
+  grpc: false
+  h2_upgrade: false
+EOF
 ls build-*.yaml
