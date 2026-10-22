@@ -23,7 +23,7 @@ if [[ "${1:-}" == --remote ]]; then
   container="${node_ids[0]}"
   deploy="$(docker inspect "$container" | jq -er '.[0].Config.Labels["com.docker.compose.project.working_dir"]')"
   [[ "$deploy" == /srv/dai/deploy && -f "$deploy/compose.yaml" && -f "$deploy/.env" ]] || die 'invalid managed deployment'
-  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-lock.sh"
+  declare -F gdc_lock_acquire gdc_lock_release >/dev/null || die 'remote lock helpers missing'
   gdc_lock_acquire "$deploy/.gdc-peers.lock" 0 'another peer update is running' || die 'another peer update is running'
   peers_lock_dir="$GDC_LOCK_DIR"
   next="$(mktemp "$deploy/.peers.XXXXXX.json")"
@@ -68,4 +68,10 @@ while (($#)); do
   esac
 done
 valid_alias "$target" && [[ "$pex" =~ ^(true|false)$ ]] || die 'expected --pex true|false TARGET_ALIAS'
-ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$target" "sudo -n bash -s -- --remote '$pex'" <"${BASH_SOURCE[0]}"
+# bash -s has no source path: send the helpers with the remote program.
+# shellcheck source=lib-lock.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-lock.sh"
+{
+  declare -f gdc_lock_acquire gdc_lock_release
+  cat "${BASH_SOURCE[0]}"
+} | ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$target" "sudo -n bash -s -- --remote '$pex'"
