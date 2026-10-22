@@ -143,13 +143,13 @@ if [[ -n "${GDC_GATEWAY_METRICS_TARGETS:-}" ]]; then
     | if ([.[].id] | unique | length) != $count then error("duplicate gateway id") else . end
     | if ([.[].node] | unique | length) != $count then error("duplicate gateway node") else . end
     | [ .[] | select(.node == $node) | .port ]
-    | if length == 1 then .[0] else error("node has no unique target") end
+    | if length == 0 then 9 elif length == 1 then .[0] else error("node has no unique target") end
   ' <<<"$GDC_GATEWAY_METRICS_TARGETS")" \
     || { echo 'GDC_GATEWAY_METRICS_TARGETS must define one valid target for this edge node' >&2; exit 2; }
   gateway_metrics_upstream="http://127.0.0.1:$gateway_metrics_port"
   gateway_metrics_id="$(jq -er --arg node "$NODE" '
     [ .[] | select(.node == $node) | .id ]
-    | if length == 1 then .[0] else error("node has no unique target") end
+    | if length == 0 then "" elif length == 1 then .[0] else error("node has no unique target") end
   ' <<<"$GDC_GATEWAY_METRICS_TARGETS")" \
     || { echo 'GDC_GATEWAY_METRICS_TARGETS must define one valid target for this edge node' >&2; exit 2; }
   if [[ "$gateway_metrics_id" == 'B' ]]; then
@@ -162,6 +162,8 @@ if [[ -n "${GDC_GATEWAY_METRICS_TARGETS:-}" ]]; then
     gateway_b_readiness_upstream="http://127.0.0.1:$readiness_port"
   fi
   gateway_route_id="$gateway_metrics_id"
+  # An edge without a local gateway is valid. Leave its gateway routes on
+  # the closed loopback sink; do not invent a scrape target or serving route.
 fi
 gateway_admission_upstream="http://${gateway_public_host}:$gateway_upstream_port"
 # The admission proxy shares the gateway Host network namespace.  Reaching the

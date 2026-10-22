@@ -72,6 +72,9 @@ if [[ "$COMPONENT" == monitoring && -e "$DEST/compose.yaml" ]]; then
     chmod -R a+rX "$DEST/prometheus/targets/static"
   fi
   install -m 0644 "$HERE/compose.chain-poller.yaml" "$DEST/compose.chain-poller.yaml"
+  if [[ -f "$RENDER/prometheus/retired-hosts.txt" ]]; then
+    bash "$HERE/reconcile-monitoring-targets.sh" "$DEST/prometheus/targets" "$RENDER/prometheus/retired-hosts.txt"
+  fi
   install -d -m 0755 "$DEST/chain-poller"
   install -m 0644 "$HERE"/chain-poller/{Dockerfile,poller.py,requirements.txt} "$RENDER/chain-poller/config.yml" "$DEST/chain-poller/"
   chown -R "$service_user:$service_group" "$DEST/grafana" "$DEST/prometheus"

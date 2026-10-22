@@ -15,6 +15,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib.sh"
 load_env "$INVENTORY"
 load_topology
+monitoring_only() { [[ " ${GDC_MONITORING_ONLY_NODES:-} " == *" $1 "* ]]; }
+for node in ${GDC_MONITORING_ONLY_NODES:-}; do
+  topology_contains_node "$node" || die "monitoring-only host is outside inventory: $node"
+done
 source "$ROOT/scripts/profile.sh"
 load_profiles
 if [[ "$FAUCET_ONLY" == true ]]; then
@@ -43,6 +47,16 @@ grafana_public_dashboard_token="${GDC_GRAFANA_PUBLIC_DASHBOARD_TOKEN:-321a0d961e
 mkdir -p "$OUTPUT"
 target_root="$OUTPUT/prometheus/targets/static"
 mkdir -p "$target_root/host" "$target_root/cadvisor" "$target_root/gonka-node" "$target_root/public-node-endpoints"
+# This directory is generated inventory, not JOIN discovery. A repeated render
+# must remove a host/service that no longer belongs to the configured role.
+for job in host cadvisor gonka-node public-node-endpoints; do
+  [[ ! -L "$target_root/$job" ]] || die 'refusing symlinked generated targets'
+  for target_file in "$target_root/$job/"*.json; do
+    [[ -f "$target_file" && ! -L "$target_file" ]] || continue
+    rm -- "$target_file"
+  done
+done
+printf '%s\n' "${GDC_MONITORING_RETIRED_HOSTS:-}" >"$OUTPUT/prometheus/retired-hosts.txt"
 
 write_target() {
   local job="$1" name="$2" address="$3" labels="$4" output
@@ -76,6 +90,17 @@ while IFS= read -r gateway_metrics_node; do
   topology_contains_node "$gateway_metrics_node" \
     || { echo "GDC_GATEWAY_METRICS_TARGETS names a node outside the inventory: $gateway_metrics_node" >&2; exit 2; }
 done < <(jq -r '.[].node' <<<"$gateway_metrics_targets")
+# Optional multi-version observation is independent of the legacy serving
+# gateway selection. Render one restricted fragment per host from this map.
+observation_targets="${GDC_GATEWAY_OBSERVATION_TARGETS:-}"
+if [[ -n "$observation_targets" ]]; then
+  bash "$ROOT/04-ops/render-gateway-observation.sh" "$observation_targets" "$GENESIS_NODE" "$MONITORING_CIDR" >/dev/null
+  mkdir -p "$OUTPUT/gateway-observation"
+  while IFS= read -r node; do
+    topology_contains_node "$node" || die "gateway observation host is outside inventory: $node"
+    bash "$ROOT/04-ops/render-gateway-observation.sh" "$observation_targets" "$node" "$MONITORING_CIDR" >"$OUTPUT/gateway-observation/$node.caddy"
+  done < <(jq -r '.[].node' <<<"$observation_targets" | sort -u)
+fi
 write_env "$OUTPUT/.env" \
   "SITE_HOST=$SITE_HOST" "API_HOST=$API_HOST" "GRAFANA_HOST=$GRAFANA_HOST" "ACME_EMAIL=${ACME_EMAIL:-}" \
   "TELEGRAM_BOT_URL=$telegram_bot_url" "GATEWAY_PUBLIC_HOST=$gateway_public_host" "PUBLIC_EDGE_CIDR=$PUBLIC_EDGE_CIDR" \
@@ -337,6 +362,7 @@ YAML
           - /etc/prometheus/targets/join/gonka-node/*.json
 YAML
   for node in "${GDC_NODES[@]}"; do
+    monitoring_only "$node" && continue
     write_target gonka-node "$node" "$(node_public_host "$node"):26660" "$(jq -cn --arg host "$node" '{host:$host}')"
   done
   cat <<'YAML'
@@ -361,6 +387,7 @@ YAML
 YAML
   for node in "${GDC_NODES[@]}"; do
     # node_url can point the genesis node at the public edge; probe the node itself.
+    monitoring_only "$node" && continue
     url="https://$(node_public_host "$node")"
     write_target public-node-endpoints "$node-rpc" "$url/chain-rpc/status" "$(jq -cn --arg host "$node" '{host:$host,kind:"rpc"}')"
     write_target public-node-endpoints "$node-lcd" "$url/chain-api/cosmos/base/tendermint/v1beta1/node_info" "$(jq -cn --arg host "$node" '{host:$host,kind:"lcd"}')"
@@ -371,10 +398,18 @@ YAML
     metrics_path: /ops-gateway-metrics
     static_configs:
 YAML
+if [[ -n "$observation_targets" ]]; then
+  while IFS=$'\t' read -r gateway_id gateway_node; do
+    printf "      - targets: ['%s:443']\n        labels: {gateway: '%s', host: '%s', __metrics_path__: '/ops-gateways/%s/metrics'}\n" \
+      "$(node_public_host "$gateway_node")" "$gateway_id" "$gateway_node" "$gateway_id"
+  done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$observation_targets")
+else
 while IFS=$'\t' read -r gateway_id gateway_node; do
   printf "      - targets: ['%s:443']\n        labels: {gateway: '%s', host: '%s'}\n" \
     "$(node_public_host "$gateway_node")" "$gateway_id" "$gateway_node"
 done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$gateway_metrics_targets")
+fi
+if [[ -z "$observation_targets" ]]; then
 cat <<YAML
   - job_name: gateway-admission-route
     scheme: https
@@ -399,6 +434,9 @@ cat <<YAML
     static_configs:
       - targets: ['host.docker.internal:8081']
         labels: {host: '$GATEWAY_NODE'}
+YAML
+fi
+cat <<YAML
   - job_name: telegram-consumer
     scheme: https
     metrics_path: /ops-telegram-metrics
@@ -413,13 +451,24 @@ YAML
 mkdir -p "$OUTPUT/chain-poller"
 {
   printf 'nodes:\n'
-  for node in "${GDC_NODES[@]}"; do printf '  %s: https://%s\n' "$node" "$(node_public_host "$node")"; done
-  printf 'chain_sources: [%s]\n' "$(IFS=,; echo "${GDC_NODES[*]}")"
+  for node in "${GDC_NODES[@]}"; do
+    monitoring_only "$node" && continue
+    printf '  %s: https://%s\n' "$node" "$(node_public_host "$node")"
+  done
+  chain_nodes=()
+  for node in "${GDC_NODES[@]}"; do monitoring_only "$node" || chain_nodes+=("$node"); done
+  printf 'chain_sources: [%s]\n' "$(IFS=,; echo "${chain_nodes[*]}")"
   printf 'gateways:\n'
+  if [[ -n "$observation_targets" ]]; then
+    while IFS=$'\t' read -r gateway_id gateway_node; do
+      printf '  %s: https://%s/ops-gateways/%s/status\n' "$gateway_id" "$(node_public_host "$gateway_node")" "$gateway_id"
+    done < <(jq -r '.[] | [.id, .node] | @tsv' <<<"$observation_targets")
+  else
   for pair in ${GDC_OPS_GATEWAY_STATUS_URLS:-default=https://$API_HOST/v1/status}; do
     [[ "$pair" =~ ^[A-Za-z0-9_-]+=https://[^[:space:]]+$ ]] || die "invalid GDC_OPS_GATEWAY_STATUS_URLS entry: $pair"
     printf '  %s: %s\n' "${pair%%=*}" "${pair#*=}"
   done
+  fi
   printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300}\ntimeout: 8\nmax_block_catchup: 30\n'
 } >"$OUTPUT/chain-poller/config.yml"
 

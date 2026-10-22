@@ -1051,6 +1051,16 @@ if [[ "$COMPONENT" == gateway ]]; then
 fi
 
 if [[ "$COMPONENT" == monitoring ]]; then
+  if [[ -n "${GDC_GATEWAY_OBSERVATION_TARGETS:-}" ]]; then
+    step 'Reconcile read-only gateway observation without replacing serving routes'
+    while IFS= read -r observation_node; do
+      observation_remote="${REMOTE}-observation-$observation_node"
+      ssh -n "$observation_node" "mkdir -p '$observation_remote'"
+      scp -q "$ROOT/04-ops/install-gateway-observation.sh" "$observation_node:$observation_remote/install.sh"
+      scp -q "$OPS_RENDER/gateway-observation/$observation_node.caddy" "$observation_node:$observation_remote/routes.caddy"
+      ssh -nT "$observation_node" "sudo bash '$observation_remote/install.sh' '$(node_public_host "$observation_node")' '$observation_remote/routes.caddy'"
+    done < <(jq -r '.[].node' <<<"$GDC_GATEWAY_OBSERVATION_TARGETS" | sort -u)
+  fi
   step 'Reconcile the anonymous public dashboards with the monitoring source'
   reconcile_public_grafana false
   step 'Verify the separate public Grafana runtime'
