@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 SPEC = importlib.util.spec_from_file_location("traffic", Path(__file__).parent / "telegram-bot/gateway_traffic.py")
@@ -25,6 +25,25 @@ def row(gateway="A", value="3", **labels):
 
 
 class TrafficTest(unittest.TestCase):
+    def test_versioned_gateway_labels_map_to_consumer_identities(self):
+        counts, source = row(gateway="A_V6", outcome="success"), row(gateway="A_V6", value="1000")
+        counts["value"][0] = source["value"][0] = 1001
+        opener = Mock(side_effect=[BytesIO(json.dumps(payload([counts])).encode()),
+                                  BytesIO(json.dumps(payload([source])).encode())])
+        with patch.dict(TRAFFIC.os.environ, {"GATEWAY_TRAFFIC_A_LABEL": "A_V6", "GATEWAY_TRAFFIC_B_LABEL": "B_V6"}):
+            result = TRAFFIC.collect("https://metrics.example/query", MODEL, opener=opener, clock=lambda: 1001)
+        self.assertEqual(result["backends"][0]["backend"], "A")
+        self.assertEqual(result["backends"][0]["state"], "FRESH")
+        query = parse_qs(urlsplit(opener.call_args_list[0].args[0].full_url).query)["query"][0]
+        self.assertIn('gateway=~"A_V6|B_V6"', query)
+
+    def test_duplicate_metric_labels_fail_before_request(self):
+        opener = Mock()
+        with patch.dict(TRAFFIC.os.environ, {"GATEWAY_TRAFFIC_A_LABEL": "A_V6", "GATEWAY_TRAFFIC_B_LABEL": "A_V6"}):
+            result = TRAFFIC.collect("https://metrics.example/query", MODEL, opener=opener)
+        self.assertEqual(result["state"], "UNVERIFIED")
+        opener.assert_not_called()
+
     def snapshot(self, value="3", observed="1000", previous=None):
         return TRAFFIC.parse_snapshot(payload([row(value=value, outcome="success")]),
                                       payload([row(value=observed)]), MODEL, 1001, previous)

@@ -46,7 +46,33 @@ retired aliases are moved to `prometheus/retired-targets.*`, not discarded.
 Unconfigured, non-retired JOIN Hosts remain discoverable. Prometheus historical
 series are retained and may remain visible briefly after target reconciliation.
 
-Checks:
+For a Telegram consumer using versioned native gateways, configure its existing
+operator environment explicitly, then run `gdc ops consumer telegram apply`:
+
+```sh
+GDC_TELEGRAM_A_API_BASE_URL=https://node0.gonka-dev.net/gateway/v6/v1
+GDC_TELEGRAM_B_API_BASE_URL=https://node2.gonka-dev.net/gateway/v6/v1
+GDC_TELEGRAM_A_STATUS_URL=https://node0.gonka-dev.net/ops-gateways/A_V6/status
+GDC_TELEGRAM_B_STATUS_URL=https://node2.gonka-dev.net/ops-gateways/B_V6/status
+GDC_TELEGRAM_STATUS_MODE=native
+GDC_TELEGRAM_MODEL_ID=Qwen/Qwen3-4B-Instruct-2507
+GDC_TELEGRAM_A_METRICS_LABEL=A_V6
+GDC_TELEGRAM_B_METRICS_LABEL=B_V6
+GDC_TELEGRAM_A_KEY_FILE=/secure/operator/gateway-a-client.key
+GDC_TELEGRAM_B_KEY_FILE=/secure/operator/gateway-b-client.key
+```
+
+The consumer Host must be allowed to read these source-restricted status routes.
+Native mode checks model capacity, access, limiter slots and an active unblocked
+Inference-phase runtime before dispatch. It does not fabricate an admission
+summary or retry an uncertain dispatched request. Existing credentials and
+conversation storage are retained. Without these overrides, the existing
+public admission-governor configuration remains the default.
+Key-file overrides must reference existing authorized client keys, never admin
+or signer credentials. A successful models listing alone does not prove that
+the key authorizes inference; deployment verifies a real completion.
+
+Focused checks:
 
 ```sh
 make test-monitoring-firewall-deployment test-join-monitoring-runtime

@@ -2,6 +2,7 @@
 """Read native gateway request counters, never add consumer attempts again."""
 import json
 import math
+import os
 import re
 import time
 from urllib.parse import urlencode, urlsplit
@@ -184,7 +185,11 @@ def collect(endpoint, model, previous=None, opener=urlopen, clock=time.time, mon
             raise ValueError("invalid metrics endpoint")
         if not isinstance(model, str) or not model or len(model) > 256:
             raise ValueError("invalid model")
-        selector = "devshard_gateway_requests_total{model=" + json.dumps(model) + ',gateway=~"A|B"}'
+        labels = {"A": os.environ.get("GATEWAY_TRAFFIC_A_LABEL", "A"),
+                  "B": os.environ.get("GATEWAY_TRAFFIC_B_LABEL", "B")}
+        if len(set(labels.values())) != 2 or any(not re.fullmatch(r"[A-Z][A-Z0-9_]*", value) for value in labels.values()):
+            raise ValueError("invalid gateway metric identities")
+        selector = "devshard_gateway_requests_total{model=" + json.dumps(model) + ',gateway=~"' + "|".join(labels.values()) + '"}'
         queries = ("sum by (gateway,model,outcome,reason) (" + selector + ")",
                    "min by (gateway,model) (timestamp(" + selector + "))")
         deadline = monotonic() + 6
@@ -200,6 +205,10 @@ def collect(endpoint, model, previous=None, opener=urlopen, clock=time.time, mon
                 for row in vector(result):
                     if abs(number(row["value"][0]) - evaluation) > 0.001:
                         raise ValueError("metrics evaluation time mismatch")
+                    native_label = row["metric"]["gateway"]
+                    if native_label not in labels.values():
+                        raise ValueError("unexpected gateway metric identity")
+                    row["metric"]["gateway"] = next(name for name, label in labels.items() if label == native_label)
                 payloads.append(result)
             if monotonic() >= deadline:
                 raise TimeoutError("metrics deadline elapsed")
