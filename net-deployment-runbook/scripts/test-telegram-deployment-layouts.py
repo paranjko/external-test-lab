@@ -117,7 +117,6 @@ class DeploymentLayouts(unittest.TestCase):
                             stream.write(f'GDC_TELEGRAM_{name}_API_BASE_URL=https://{name.lower()}.example/gateway/v6/v1\n')
                             stream.write(f'GDC_TELEGRAM_{name}_STATUS_URL=https://{name.lower()}.example/ops-gateways/{name}_V6/status\n')
                             stream.write(f'GDC_TELEGRAM_{name}_METRICS_LABEL={name}_V6\n')
-                            stream.write(f'GDC_TELEGRAM_{name}_KEY_FILE={secrets / (name.lower() + ".key")}\n')
                 # Deployer owns a fixed standalone bot path, neither Host layout.
                 host = fixture / "host/deploy"
                 if layout == "legacy": host /= "ops"
@@ -133,6 +132,9 @@ class DeploymentLayouts(unittest.TestCase):
                                "FIXTURE_PROBE": str(ROOT / "scripts/telegram-consumer-probe-loop.sh")}
                 if "HOME" in os.environ:
                     environment["HOME"] = os.environ["HOME"]
+                if native:
+                    for name in ("A", "B"):
+                        environment[f'GDC_TELEGRAM_{name}_KEY_FILE'] = str(secrets / (name.lower() + ".key"))
                 result = subprocess.run(["bash", environment["FIXTURE_DEPLOY"]], env=environment,
                                         text=True, capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
