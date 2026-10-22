@@ -30,6 +30,8 @@ if [[ -z "$PUBLIC_EDGE_HOST" ]]; then
   PUBLIC_EDGE_HOST="$("$(dirname "$0")/detect-public-host.sh" "$PUBLIC_EDGE_SSH_ALIAS")"
 fi
 [[ "$PUBLIC_EDGE_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'invalid public edge host' >&2; exit 2; }
+monitoring_host="${GDC_MONITORING_HOST:-$PUBLIC_EDGE_HOST}"
+[[ "$monitoring_host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo 'invalid monitoring host' >&2; exit 2; }
 
 node_aliases="$SSH_ALIAS"
 node_hosts="$SSH_ALIAS=$PUBLIC_HOST"
@@ -49,6 +51,9 @@ umask 077
   printf 'GDC_GENESIS_NODE=%q\n' "$SSH_ALIAS"
   printf 'GDC_PUBLIC_EDGE_NODE=%q\n' "$PUBLIC_EDGE_SSH_ALIAS"
   printf 'GDC_GATEWAY_NODE=%q\n' "$SSH_ALIAS"
+  # Genesis and the collector may be different machines. Persist the role
+  # instead of allowing later preparation to fall back to the Genesis IP.
+  printf 'GDC_MONITORING_HOST=%q\n' "$monitoring_host"
   printf 'GDC_DEPLOYMENT_PROFILE=%q\n' community-lab
   printf 'GDC_OPERATOR_SERVICES_PROFILE=%q\n' gdc-lab
   printf 'GDC_GENESIS_ROLE_INPUT=true\n'

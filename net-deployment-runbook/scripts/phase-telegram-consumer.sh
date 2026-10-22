@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 load_project
+MODEL_ID="${GDC_TELEGRAM_MODEL_ID:-$MODEL_ID}"
 
 action="${1:-}"
 [[ "$action" =~ ^(apply|status|verify)$ ]] || die 'expected: ops consumer telegram apply, status, or verify'

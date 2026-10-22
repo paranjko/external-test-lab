@@ -12,6 +12,7 @@ trap 'rm -rf "$tmp"' EXIT
   --public-edge-host node4.example.net
 
 source "$tmp/genesis-input"
+[[ "$GDC_MONITORING_HOST" == node4.example.net ]]
 [[ "$GDC_NODE_ALIASES" == 'gdc-node0 gdc-node4' ]]
 [[ "$GDC_NODE_PUBLIC_HOSTS" == 'gdc-node0=node0.example.net gdc-node4=node4.example.net' ]]
 [[ "$GDC_NODE_P2P_PORTS" == 'gdc-node0=5000 gdc-node4=5000' ]]
@@ -34,6 +35,7 @@ chmod +x "$tmp/bin/getent"
   export STATE="$runtime_state"
   load_project
   [[ "$PUBLIC_EDGE_NODE" == gdc-node4 ]]
+  [[ "$(monitoring_source_host)" == node4.example.net ]]
 )
 grep -Fq 'write-genesis-role-config.sh' "$ROOT/gdc.sh"
 grep -Fq 'detect-public-host.sh' "$ROOT/scripts/write-genesis-role-config.sh"

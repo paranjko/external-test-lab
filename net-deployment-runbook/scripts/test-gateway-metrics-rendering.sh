@@ -77,3 +77,20 @@ if "$ROOT/04-ops/render-ops.sh" --inventory "$tmp/duplicate.env" --output-dir "$
   exit 1
 fi
 grep -Fq 'GDC_GATEWAY_METRICS_TARGETS must be a non-empty unique id/node/port JSON array' "$tmp/duplicate.out"
+
+# A public edge can retain host monitoring without a gateway or validator.
+cat >>"$inventory" <<'EOF'
+GDC_GATEWAY_METRICS_TARGETS='[{"id":"B","node":"gdc-node0","port":18146}]'
+GDC_MONITORING_ONLY_NODES=gdc-node4
+GDC_GATEWAY_OBSERVATION_TARGETS='[{"id":"B_V41","node":"gdc-node0","port":18141},{"id":"B_V6","node":"gdc-node0","port":18146}]'
+EOF
+"$ROOT/04-ops/edge-node/render-env.sh" --inventory "$inventory" --node-name gdc-node4 --output "$tmp/no-gateway.env" >/dev/null
+grep -Fxq 'GDC_GATEWAY_METRICS_UPSTREAM=http://127.0.0.1:9' "$tmp/no-gateway.env"
+"$ROOT/04-ops/render-ops.sh" --inventory "$inventory" --output-dir "$tmp/observed" >/dev/null
+[[ -f "$tmp/observed/prometheus/targets/static/host/gdc-node4.json" ]]
+[[ ! -e "$tmp/observed/prometheus/targets/static/gonka-node/gdc-node4.json" ]]
+grep -Fq "__metrics_path__: '/ops-gateways/B_V6/metrics'" "$tmp/observed/prometheus.yml"
+grep -Fq 'B_V41: https://gdc-node0.example.test/ops-gateways/B_V41/status' "$tmp/observed/chain-poller/config.yml"
+grep -Fq 'chain_sources: [gdc-node0]' "$tmp/observed/chain-poller/config.yml"
+grep -Fq 'reverse_proxy 127.0.0.1:18146' "$tmp/observed/gateway-observation/gdc-node0.caddy"
+printf 'PASS legacy and multi-version gateway monitoring renders\n'

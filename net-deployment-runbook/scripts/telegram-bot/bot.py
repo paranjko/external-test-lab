@@ -43,6 +43,8 @@ if _backends_json:
             raise RuntimeError("each gateway backend requires base_url, admission_url and api_key")
         if not item["base_url"].startswith("https://") or not item["admission_url"].startswith("https://"):
             raise RuntimeError("gateway backend URLs must use HTTPS")
+        if item.get("status_mode", "admission") not in {"admission", "native"}:
+            raise RuntimeError("gateway status_mode must be admission or native")
 else:
     if not GATEWAY_API_KEY:
         raise RuntimeError("GATEWAY_API_KEY is required without GATEWAY_BACKENDS_JSON")
@@ -443,6 +445,38 @@ def read_readiness_projection(db: sqlite3.Connection) -> dict:
             "telemetry": telemetry}
 
 
+def gateway_model_eligible(status) -> bool:
+    """Read model-bound capacity; malformed or incomplete status fails closed."""
+    capacity = status["capacity"]["models"][MODEL]
+    limiter = status["limiter"]["models"][MODEL]
+    weight = float(capacity.get("current_weight", capacity.get("total_weight", 0)))
+    slots = float(limiter["effective_max_concurrent_requests"])
+    if (not math.isfinite(weight) or not math.isfinite(slots)
+            or type(capacity.get("current_weight", capacity.get("total_weight", 0))) is bool
+            or type(limiter["effective_max_concurrent_requests"]) is bool
+            or type(capacity.get("routable")) is not bool
+            or type(capacity.get("access_enabled")) is not bool):
+        raise ValueError("invalid model capacity")
+    runtimes = status["devshards"]
+    if not isinstance(runtimes, list) or not all(isinstance(item, dict) for item in runtimes):
+        raise ValueError("invalid current runtime observation")
+
+    def active(item):
+        runtime = item.get("runtime", item)
+        if not (isinstance(runtime, dict) and item.get("active") is True
+                and runtime.get("phase") == "active" and runtime.get("requests_blocked") is False
+                and (item.get("chain_phase") or runtime.get("chain_phase")) == "Inference"):
+            return False
+        models = [value["model"] for value in (item, runtime) if "model" in value]
+        if not models or any(not isinstance(model, str) or not model for model in models) or len(set(models)) != 1:
+            raise ValueError("missing or contradictory runtime model")
+        return models[0] == MODEL
+
+    model_runtimes = [active(item) for item in runtimes]
+    return (weight > 0 and slots > 0 and capacity["routable"]
+            and capacity["access_enabled"] and any(model_runtimes))
+
+
 def observe_backend(db: sqlite3.Connection, backend) -> None:
     receipt = begin_status_observation(db, "backend_" + backend["name"])
     deadline = time.monotonic() + 6
@@ -458,6 +492,11 @@ def observe_backend(db: sqlite3.Connection, backend) -> None:
         return payload
     try:
         admission = read(backend["admission_url"])
+        if backend.get("status_mode") == "native":
+            eligible = gateway_model_eligible(admission)
+            finish_status_observation(db, receipt, "ELIGIBLE" if eligible else "UNAVAILABLE",
+                                      "model_eligible" if eligible else "model_capacity_unavailable")
+            return
         if not isinstance(admission, dict) or type(admission.get("available")) is not bool:
             raise ValueError("invalid admission observation")
         if admission["available"] is False:
@@ -478,34 +517,7 @@ def observe_backend(db: sqlite3.Connection, backend) -> None:
             finish_status_observation(db, receipt, "ELIGIBLE", "model_eligible")
             return
         status = read(backend["base_url"] + "/status")
-        capacity = status["capacity"]["models"][MODEL]
-        limiter = status["limiter"]["models"][MODEL]
-        weight = float(capacity.get("current_weight", capacity.get("total_weight", 0)))
-        slots = float(limiter["effective_max_concurrent_requests"])
-        if (not math.isfinite(weight) or not math.isfinite(slots)
-                or type(capacity.get("current_weight", capacity.get("total_weight", 0))) is bool
-                or type(limiter["effective_max_concurrent_requests"]) is bool
-                or type(capacity.get("routable")) is not bool
-                or type(capacity.get("access_enabled")) is not bool):
-            raise ValueError("invalid model capacity")
-        runtimes = status["devshards"]
-        if not isinstance(runtimes, list) or not all(isinstance(item, dict) for item in runtimes):
-            raise ValueError("invalid current runtime observation")
-        def active(item):
-            runtime = item.get("runtime", item)
-            if not (isinstance(runtime, dict) and item.get("active") is True
-                    and runtime.get("phase") == "active" and runtime.get("requests_blocked") is False
-                    and (item.get("chain_phase") or runtime.get("chain_phase")) == "Inference"):
-                return False
-            # Both supported layouts carry a runtime model, never infer its
-            # identity from positive capacity for a different model.
-            models = [value["model"] for value in (item, runtime) if "model" in value]
-            if not models or any(not isinstance(model, str) or not model for model in models) or len(set(models)) != 1:
-                raise ValueError("missing or contradictory runtime model")
-            return models[0] == MODEL
-        model_runtimes = [active(item) for item in runtimes]
-        eligible = (weight > 0 and slots > 0 and capacity["routable"]
-                    and capacity["access_enabled"] and any(model_runtimes))
+        eligible = gateway_model_eligible(status)
         if time.monotonic() >= deadline:
             raise TimeoutError("status deadline elapsed")
         finish_status_observation(db, receipt, "ELIGIBLE" if eligible else "UNAVAILABLE",
@@ -739,7 +751,9 @@ def require_gateway_admission(db: sqlite3.Connection, backend, timeout_seconds=N
     try:
         with urlopen(request, timeout=timeout_seconds or GATEWAY_ADMISSION_TIMEOUT_SECONDS) as response:
             payload = json.load(response)
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
+        if backend.get("status_mode") == "native":
+            payload = {"available": gateway_model_eligible(payload)}
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError) as error:
         record_inference(db, "pre_dispatch_status_unavailable", backend=backend["name"])
         raise GatewayPreDispatchRejected("gateway pre dispatch rejected") from error
     if not isinstance(payload, dict) or payload.get("available") is not True:

@@ -22,11 +22,23 @@ BOT_HOST="$TELEGRAM_BOT_HOST"
 # through the public-edge admission governor with every other inference probe.
 BOT_A_API_BASE_URL="https://${API_HOST}/a/v1"
 BOT_B_API_BASE_URL="https://${API_HOST}/b/v1"
+BOT_A_API_BASE_URL="${GDC_TELEGRAM_A_API_BASE_URL:-$BOT_A_API_BASE_URL}"
+BOT_B_API_BASE_URL="${GDC_TELEGRAM_B_API_BASE_URL:-$BOT_B_API_BASE_URL}"
+BOT_A_STATUS_URL="${GDC_TELEGRAM_A_STATUS_URL:-$BOT_A_API_BASE_URL/admission-status}"
+BOT_B_STATUS_URL="${GDC_TELEGRAM_B_STATUS_URL:-$BOT_B_API_BASE_URL/admission-status}"
+BOT_STATUS_MODE="${GDC_TELEGRAM_STATUS_MODE:-admission}"
+[[ "$BOT_STATUS_MODE" == admission || "$BOT_STATUS_MODE" == native ]] || die 'invalid Telegram status mode'
+for url in "$BOT_A_API_BASE_URL" "$BOT_B_API_BASE_URL" "$BOT_A_STATUS_URL" "$BOT_B_STATUS_URL"; do
+  [[ "$url" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]+)?$ ]] || die 'Telegram backend URLs must be explicit HTTPS origins/paths'
+done
+MODEL_ID="${GDC_TELEGRAM_MODEL_ID:-$MODEL_ID}"
 BOT_TRAFFIC_METRICS_URL="https://${GRAFANA_HOST}/api/datasources/proxy/uid/prometheus/api/v1/query"
 BOT_STATE_DB=/data/bot.sqlite3
 BOT_METRICS_FILE=/metrics/telegram-bot.prom
 BOT_A_KEY_FILE="$SECRETS/gateway.telegram-a-client-key"
 BOT_B_KEY_FILE="$SECRETS/gateway.telegram-b-client-key"
+BOT_A_KEY_FILE="${GDC_TELEGRAM_A_KEY_FILE:-$BOT_A_KEY_FILE}"
+BOT_B_KEY_FILE="${GDC_TELEGRAM_B_KEY_FILE:-$BOT_B_KEY_FILE}"
 BOT_INTERNAL_TOKEN_FILE="$SECRETS/telegram.conversation-api-token"
 BOT_FAUCET_TOKEN_FILE="$SECRETS/telegram.faucet-token"
 BOT_KEY_BROKER_TOKEN_FILE="$SECRETS/bifrost.broker-token"
@@ -51,9 +63,10 @@ BOT_KEY_BROKER_TOKEN="$(<"$BOT_KEY_BROKER_TOKEN_FILE")"
 BOT_GATEWAY_BACKENDS_JSON="$(jq -cn \
   --arg a_url "$BOT_A_API_BASE_URL" --arg a_key "$BOT_A_GATEWAY_API_KEY" \
   --arg b_url "$BOT_B_API_BASE_URL" --arg b_key "$BOT_B_GATEWAY_API_KEY" \
+  --arg a_status "$BOT_A_STATUS_URL" --arg b_status "$BOT_B_STATUS_URL" --arg mode "$BOT_STATUS_MODE" \
   '[
-    {name:"A", base_url:$a_url, admission_url:($a_url + "/admission-status"), api_key:$a_key},
-    {name:"B", base_url:$b_url, admission_url:($b_url + "/admission-status"), api_key:$b_key}
+    {name:"A", base_url:$a_url, admission_url:$a_status, status_mode:$mode, api_key:$a_key},
+    {name:"B", base_url:$b_url, admission_url:$b_status, status_mode:$mode, api_key:$b_key}
   ]')"
 
 remote="/tmp/gdc-telegram-bot-$$"
@@ -67,6 +80,8 @@ printf '%s\n' \
   "TELEGRAM_FAUCET_TIMEOUT_SECONDS=${GDC_TELEGRAM_FAUCET_TIMEOUT_SECONDS:-12}" \
   "GATEWAY_BACKENDS_JSON=$BOT_GATEWAY_BACKENDS_JSON" \
   "GATEWAY_TRAFFIC_METRICS_URL=$BOT_TRAFFIC_METRICS_URL" \
+  "GATEWAY_TRAFFIC_A_LABEL=${GDC_TELEGRAM_A_METRICS_LABEL:-A}" \
+  "GATEWAY_TRAFFIC_B_LABEL=${GDC_TELEGRAM_B_METRICS_LABEL:-B}" \
   "INTERNAL_API_TOKEN=$BOT_INTERNAL_API_TOKEN" \
   "INTERNAL_API_BASE_URL=http://127.0.0.1:9464" \
   "TELEGRAM_KEY_BROKER_URL=http://127.0.0.1:9465" \

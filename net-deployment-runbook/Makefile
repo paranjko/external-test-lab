@@ -733,7 +733,16 @@ test-gateway-readiness:
 test-gateway-readiness-lifecycle:
 	@python3 ./scripts/test-gateway-readiness-lifecycle.py
 
-test-monitoring-firewall-deployment:
+test-gateway-observation:
+	bash scripts/test-gateway-observation.sh
+
+test-gateway-observation-runtime:
+	bash scripts/test-gateway-observation-runtime.sh
+
+test-monitoring-target-reconcile:
+	bash scripts/test-monitoring-target-reconcile.sh
+
+test-monitoring-firewall-deployment: test-monitoring-target-reconcile test-gateway-observation test-gateway-observation-runtime
 	@./scripts/test-monitoring-firewall-deployment.sh
 
 test-install-inferenced:

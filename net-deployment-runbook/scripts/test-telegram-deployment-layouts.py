@@ -87,8 +87,8 @@ else: require(False)
 
 class DeploymentLayouts(unittest.TestCase):
     def test_flat_and_legacy_preserve_host_state(self):
-        for layout in ("flat", "legacy"):
-            with self.subTest(layout=layout), tempfile.TemporaryDirectory(prefix="gdc-bot-layout-") as temporary:
+        for layout, native in (("flat", False), ("legacy", False), ("flat", True), ("legacy", True)):
+            with self.subTest(layout=layout, native=native), tempfile.TemporaryDirectory(prefix="gdc-bot-layout-") as temporary:
                 fixture = Path(temporary)
                 tools = fixture / "bin"
                 tools.mkdir()
@@ -97,8 +97,6 @@ class DeploymentLayouts(unittest.TestCase):
                 dispatcher.chmod(0o755)
                 for name in ("ssh", "scp", "rsync", "getent"):
                     (tools / name).symlink_to(dispatcher)
-                home = fixture / "empty-home"
-                home.mkdir()
                 data = fixture / "gdc"
                 secrets = data / "state/secrets"
                 secrets.mkdir(parents=True)
@@ -110,6 +108,15 @@ class DeploymentLayouts(unittest.TestCase):
                                   'GDC_NODE_P2P_PORTS="ops=5000 old=5000"\nGDC_NODE_GPU_PROFILES="ops=a5000-24g old=t4-16g"\n'
                                   'GDC_GATEWAY_NODE=ops\nGDC_TELEGRAM_BOT_HOST=ops\nTELEGRAM_BOT_TOKEN=fixture-token\n'
                                   'GDC_GRAFANA_HOST=metrics.example.test\n')
+                if native:
+                    for name in ("a", "b"):
+                        (secrets / (name + ".key")).write_text("fixture-native-" + name)
+                    with config.open("a") as stream:
+                        stream.write('GDC_TELEGRAM_STATUS_MODE=native\nGDC_TELEGRAM_MODEL_ID=fixture-model\n')
+                        for name in ("A", "B"):
+                            stream.write(f'GDC_TELEGRAM_{name}_API_BASE_URL=https://{name.lower()}.example/gateway/v6/v1\n')
+                            stream.write(f'GDC_TELEGRAM_{name}_STATUS_URL=https://{name.lower()}.example/ops-gateways/{name}_V6/status\n')
+                            stream.write(f'GDC_TELEGRAM_{name}_METRICS_LABEL={name}_V6\n')
                 # Deployer owns a fixed standalone bot path, neither Host layout.
                 host = fixture / "host/deploy"
                 if layout == "legacy": host /= "ops"
@@ -119,10 +126,15 @@ class DeploymentLayouts(unittest.TestCase):
                 (fixture / "bot/data").mkdir(parents=True)
                 (fixture / "bot/data/bot.sqlite3").write_bytes(b"retained bot database")
                 before = {p: p.read_bytes() for p in (host / "compose.yaml", host / "identity", fixture / "bot/data/bot.sqlite3")}
-                environment = {"HOME": str(home), "PATH": str(tools) + ":/usr/local/bin:/usr/bin:/bin",
+                environment = {"PATH": str(tools) + ":/usr/local/bin:/usr/bin:/bin",
                                "GDC_HOME": str(data), "FIXTURE_ROOT": str(fixture),
                                "FIXTURE_DEPLOY": str(ROOT / "scripts/deploy-telegram-bot.sh"),
                                "FIXTURE_PROBE": str(ROOT / "scripts/telegram-consumer-probe-loop.sh")}
+                if "HOME" in os.environ:
+                    environment["HOME"] = os.environ["HOME"]
+                if native:
+                    for name in ("A", "B"):
+                        environment[f'GDC_TELEGRAM_{name}_KEY_FILE'] = str(secrets / (name.lower() + ".key"))
                 result = subprocess.run(["bash", environment["FIXTURE_DEPLOY"]], env=environment,
                                         text=True, capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -134,6 +146,15 @@ class DeploymentLayouts(unittest.TestCase):
                 self.assertEqual(env["GATEWAY_TRAFFIC_METRICS_URL"], "https://metrics.example.test/api/datasources/proxy/uid/prometheus/api/v1/query")
                 backends = json.loads(env["GATEWAY_BACKENDS_JSON"])
                 self.assertEqual([b["name"] for b in backends], ["A", "B"])
+                if native:
+                    self.assertEqual(env["MODEL"], "fixture-model")
+                    for backend in backends:
+                        name = backend["name"]
+                        self.assertEqual(backend["status_mode"], "native")
+                        self.assertEqual(backend["api_key"], "fixture-native-" + name.lower())
+                        self.assertEqual(backend["base_url"], f'https://{name.lower()}.example/gateway/v6/v1')
+                        self.assertEqual(backend["admission_url"], f'https://{name.lower()}.example/ops-gateways/{name}_V6/status')
+                        self.assertEqual(env[f'GATEWAY_TRAFFIC_{name}_LABEL'], name + "_V6")
                 self.assertTrue((fixture / "bot/gateway_traffic.py").is_file())
                 self.assertNotIn("fixture-token", result.stdout + result.stderr)
 
