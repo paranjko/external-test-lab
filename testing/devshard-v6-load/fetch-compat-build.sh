@@ -33,6 +33,9 @@ for image in "$versiond" "$versiond_router" "$gateway_v6_rc1" "$gateway_v42"; do
   docker pull -q "$image" >/dev/null
 done
 
+# Peer transport of the DevNet v6 gateway: no HTTP/2 upgrade, no native gRPC.
+peer_rpc='peer_rpc:\n  grpc: false\n  h2_upgrade: false\n'
+
 write() {
   cat > "$1" <<EOF
 name: $2
@@ -50,7 +53,9 @@ write build-baseline.yaml compat-v42-baseline "$gateway_v42"
 # Only the gateway moves to v6 rc1; it keeps serving v4.2 routes.
 write build-all.yaml compat-v42-all "$gateway_v6_rc1"
 printf 'gateway:\n  route_prefix: /devshard/v4.2\n  escrow_route_prefix: /devshard/v4.2\n' >> build-all.yaml
+printf "$peer_rpc" >> build-all.yaml
 # Rollout: hosts also run v6; starting escrows stay on v4.2, the gateway creates new ones on v6.
 write build-rollover.yaml compat-v42-rollover "$gateway_v6_rc1"
 printf 'versions:\n  - {name: v6, devshardd: v6/devshardd}\ngateway:\n  route_prefix: /devshard/v6\n  escrow_route_prefix: /devshard/v4.2\n' >> build-rollover.yaml
+printf "$peer_rpc" >> build-rollover.yaml
 ls build-*.yaml
