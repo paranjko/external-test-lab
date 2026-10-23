@@ -2746,6 +2746,626 @@
       "description": "Running only while Prometheus scrapes the bot exporter. A stopped bot drops out of the scrape instead of keeping its last state."
     },
     {
+      "id": 260,
+      "type": "row",
+      "title": "Escrow spend",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 76
+      },
+      "panels": []
+    },
+    {
+      "id": 121,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Nonces per inference",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no gateway reports nonce accounting",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (gateway) (devshard_accounting_assigned_nonces) / sum by (gateway) (devshard_accounting_disposition{disposition=\"finished_used\"})",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{gateway}}"
+        }
+      ],
+      "description": "Nonces each gateway assigned in its current escrow per nonce that produced a used result. Both counts restart when the gateway rotates its escrow."
+    },
+    {
+      "id": 122,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Burned nonces",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no gateway reports nonce accounting"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (gateway) (devshard_accounting_disposition{disposition=\"ghost\"})",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{gateway}}"
+        }
+      ],
+      "description": "Nonces committed in the current escrow and never sent to a host. They are paid but carry no inference. The count restarts at rotation."
+    },
+    {
+      "id": 123,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Cost per inference (24h)",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix: ngonka",
+          "noValue": "no escrow was settled in the last 24 hours, or no request succeeded",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "(sum(increase(gdc_chain_escrow_payout_ngonka_total[24h])) + sum(increase(gdc_chain_escrow_fees_ngonka_total[24h]))) / sum(increase(devshard_gateway_requests_total{outcome=\"success\"}[24h]))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Host payout plus nonce fees of the escrows settled in the last day, divided by the requests the gateways completed. An estimate: an escrow settles after its requests, so the two windows do not line up exactly."
+    },
+    {
+      "id": 124,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Settled nonces per inference (24h)",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no escrow was settled in the last 24 hours, or no request succeeded",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(gdc_chain_escrow_settled_nonces_total[24h])) / sum(increase(devshard_gateway_requests_total{outcome=\"success\"}[24h]))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Nonces paid at settlement in the last day, fees divided by fee_per_nonce, per completed request. The same estimate as the cost to its left."
+    },
+    {
+      "id": 125,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Escrows created (24h)",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no escrow was created since the chain poller started",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (creator) (increase(gdc_chain_escrows_created_total[24h]))",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "Escrows each creator wallet opened in the last day, read from the chain. Counting starts when the chain poller starts."
+    },
+    {
+      "id": 126,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Open escrows",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "the chain poller reports no escrow of the current epoch"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (creator) (gdc_chain_escrows_epoch{state=\"open\"})",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "Unsettled escrows of the current epoch per creator wallet."
+    },
+    {
+      "id": 127,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "Escrow rotations per hour",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 81
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no escrow was created since the chain poller started"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (creator) (increase(gdc_chain_escrows_created_total[1h]))",
+          "refId": "A",
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "New escrows per creator wallet in each hour. A gateway rotates when its escrow nears max_nonce or its epoch ends."
+    },
+    {
+      "id": 128,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "Held in open escrows",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 81
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "the chain poller reports no open escrow"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "gdc_chain_escrow_locked_ngonka",
+          "refId": "A",
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "Amount of the unsettled escrows of the current epoch per creator wallet, in ngonka."
+    },
+    {
+      "id": 129,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "Creator wallet balance",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 81
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "the chain poller reports no creator wallet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "gdc_chain_escrow_creator_balance_ngonka",
+          "refId": "A",
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "ngonka left in each wallet allowed to create escrows. A falling line is escrow spending; a flat one at zero stops new escrows."
+    },
+    {
       "id": 99,
       "type": "text",
       "title": "Data contract",
@@ -2753,10 +3373,10 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 76
+        "y": 89
       },
       "options": {
-        "content": "**Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even when the gateway metrics scrape succeeds. That tile is gated on the age of the readiness observation, shown by **Readiness observation age**: past thirty seconds it stops showing a number instead of freezing on its last one. The gateway began exporting its per-routing request, attempt, win, hidden-failure and first-content counters on 2026-09-22, so a window that reaches further back is empty for them rather than idle. It does export an HTTP-level request counter, but that counts every request the listener sees, including probes and scanner traffic, so it is not a measure of inference. The one counter still missing is the gateway-wide rejection total, so the rejection panels read the participant-scoped one instead. Any panel that can return nothing says so in its body rather than drawing a zero. Most counted requests are cache hits, which are served without a routed completion, so **Requests served** runs well ahead of the routed ones. Every Telegram panel reads the bot exporter and is shown only while Prometheus scrapes it; the metrics file the bot also writes changes only on activity, so its age says nothing about the bot. **Telegram exporter age** in the Data passport row shows how fresh that scrape is. Telegram panels carry aggregate activity and API-reported token counts, with no user identifiers and no message content. Counters start when the gateway process starts, and Prometheus keeps up to 30 days of samples, so a longer window shows only what is stored rather than an empty result. GNK notional value and archive-node SQL are not available, so this board does not fabricate those panels.",
+        "content": "**Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even when the gateway metrics scrape succeeds. That tile is gated on the age of the readiness observation, shown by **Readiness observation age**: past thirty seconds it stops showing a number instead of freezing on its last one. The gateway began exporting its per-routing request, attempt, win, hidden-failure and first-content counters on 2026-09-22, so a window that reaches further back is empty for them rather than idle. It does export an HTTP-level request counter, but that counts every request the listener sees, including probes and scanner traffic, so it is not a measure of inference. The one counter still missing is the gateway-wide rejection total, so the rejection panels read the participant-scoped one instead. Any panel that can return nothing says so in its body rather than drawing a zero. Most counted requests are cache hits, which are served without a routed completion, so **Requests served** runs well ahead of the routed ones. Every Telegram panel reads the bot exporter and is shown only while Prometheus scrapes it; the metrics file the bot also writes changes only on activity, so its age says nothing about the bot. **Telegram exporter age** in the Data passport row shows how fresh that scrape is. Telegram panels carry aggregate activity and API-reported token counts, with no user identifiers and no message content. Counters start when the gateway process starts, and Prometheus keeps up to 30 days of samples, so a longer window shows only what is stored rather than an empty result. GNK notional value and archive-node SQL are not available, so this board does not fabricate those panels. The escrow spend row joins two sources: nonce accounting comes from each gateway and restarts at every escrow rotation, while cost, rotations and balances come from the chain through the chain poller and count only from when it started.",
         "mode": "markdown"
       }
     }

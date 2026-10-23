@@ -87,6 +87,15 @@ gw_runtimes = G("gdc_chain_gateway_runtimes", "Gateway runtimes", ["gateway"])
 gw_inflight = G("gdc_chain_gateway_in_flight_requests", "Requests in flight", ["gateway"])
 gw_limit = G("gdc_chain_gateway_max_concurrent_requests", "Effective concurrent request limit", ["gateway"])
 
+esc_created = Counter("gdc_chain_escrows_created", "Escrow creations seen since the poller started", ["creator"])
+esc_epoch = G("gdc_chain_escrows_epoch", "Escrows of the current epoch by state", ["creator", "state"])
+esc_locked = G("gdc_chain_escrow_locked_ngonka", "Amount held in unsettled escrows of the current epoch", ["creator"])
+esc_settled = Counter("gdc_chain_escrows_settled", "Escrow settlements seen since the poller started", ["creator"])
+esc_payout = Counter("gdc_chain_escrow_payout_ngonka", "Payout to hosts at settlement", ["creator"])
+esc_fees = Counter("gdc_chain_escrow_fees_ngonka", "Nonce fees at settlement", ["creator"])
+esc_nonces = Counter("gdc_chain_escrow_settled_nonces", "Nonces paid at settlement: fees / fee_per_nonce", ["creator"])
+creator_balance = G("gdc_chain_escrow_creator_balance_ngonka", "Wallet balance of an allowed escrow creator", ["creator"])
+
 task_ok = G("gdc_chain_poller_last_success_timestamp", "Last successful task run", ["task"])
 task_err = Counter("gdc_chain_poller_errors", "Task errors", ["task"])
 
@@ -397,6 +406,80 @@ def task_gateway():
     mark("gateway")
 
 
+CREATORS = {addr: name for name, addr in (CFG.get("escrow_creators") or {}).items()}
+# Escrow ids already seen; None until the first pass, which only records what exists.
+ESC = {"created": None, "settled": None}
+
+
+def creator_name(addr):
+    return CREATORS.get(addr) or (addr[-6:] if addr else "unknown")
+
+
+def tx_events(src, query, kind, pages=5, per_page=100):
+    out = []
+    for page in range(1, pages + 1):
+        res = rpc(src, "tx_search", query=f'"{query}"', page=page, per_page=per_page, order_by='"desc"')
+        for tx in res.get("txs", []):
+            for ev in tx["tx_result"].get("events", []):
+                if ev.get("type") == kind:
+                    out.append({a["key"]: a.get("value", "") for a in ev.get("attributes", [])})
+        if page * per_page >= int(res.get("total_count", 0)):
+            break
+    return out
+
+
+def escrow(src, eid):
+    return lcd(src, f"productscience/inference/inference/devshard_escrow/{eid}").get("escrow") or {}
+
+
+def task_escrow():
+    src = chain_node()
+    params = lcd(src, "productscience/inference/inference/params")["params"].get("devshard_escrow_params", {})
+    for addr in params.get("allowed_creator_addresses", []):
+        coins = lcd(src, f"cosmos/bank/v1beta1/balances/{addr}").get("balances", [])
+        creator_balance.labels(creator_name(addr)).set(sum(int(c["amount"]) for c in coins if c.get("denom") == "ngonka"))
+
+    epoch = int(lcd(src, "productscience/inference/inference/epoch_info")["latest_epoch"]["index"])
+    first, seen = ESC["created"] is None, ESC["created"] or set()
+    states, locked = {}, {}
+    for ev in tx_events(src, f"devshard_escrow_created.epoch_index='{epoch}'", "devshard_escrow_created"):
+        eid, who = ev.get("escrow_id"), creator_name(ev.get("creator", ""))
+        if eid not in seen:
+            seen.add(eid)
+            if not first:
+                esc_created.labels(who).inc()
+        e = escrow(src, eid)
+        state = "settled" if e.get("settled") else "open"
+        states[(who, state)] = states.get((who, state), 0) + 1
+        if state == "open":
+            locked[who] = locked.get(who, 0) + int(e.get("amount", 0) or 0)
+    ESC["created"] = seen
+    esc_epoch.clear(); esc_locked.clear()
+    for (who, state), n in states.items():
+        esc_epoch.labels(who, state).set(n)
+    for who, amount in locked.items():
+        esc_locked.labels(who).set(amount)
+
+    first, seen = ESC["settled"] is None, ESC["settled"] or set()
+    for ev in tx_events(src, "devshard_escrow_settled.escrow_id EXISTS", "devshard_escrow_settled", pages=1):
+        eid = ev.get("escrow_id")
+        if eid in seen:
+            continue
+        seen.add(eid)
+        if first:
+            continue
+        e = escrow(src, eid)
+        who = creator_name(e.get("creator") or ev.get("settler", ""))
+        fees, fee = int(ev.get("fees", 0) or 0), int(e.get("fee_per_nonce") or params.get("fee_per_nonce") or 0)
+        esc_settled.labels(who).inc()
+        esc_payout.labels(who).inc(int(ev.get("total_payout", 0) or 0))
+        esc_fees.labels(who).inc(fees)
+        if fee:
+            esc_nonces.labels(who).inc(fees // fee)
+    ESC["settled"] = seen
+    mark("escrow")
+
+
 def task_slow():
     src = chain_node()
     refresh_book(src)
@@ -426,7 +509,7 @@ def task_slow():
 
 TASKS = [("slow", task_slow, IV["slow"]), ("nodes", task_nodes, IV["nodes"]),
          ("chain", task_chain, IV["chain"]), ("gateway", task_gateway, IV["chain"]),
-         ("blocks", task_blocks, IV["blocks"])]
+         ("blocks", task_blocks, IV["blocks"]), ("escrow", task_escrow, IV.get("escrow", 120))]
 
 
 def main():

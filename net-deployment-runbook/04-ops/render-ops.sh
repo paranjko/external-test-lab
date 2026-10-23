@@ -470,7 +470,15 @@ mkdir -p "$OUTPUT/chain-poller"
     printf '  %s: %s\n' "${pair%%=*}" "${pair#*=}"
   done
   fi
-  printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300}\ntimeout: 8\nmax_block_catchup: 30\n'
+  # Optional names for escrow creator wallets, "name=address" pairs; unnamed ones keep a short address.
+  if [[ -n "${GDC_OPS_ESCROW_CREATORS:-}" ]]; then
+    printf 'escrow_creators:\n'
+    for pair in $GDC_OPS_ESCROW_CREATORS; do
+      [[ "$pair" =~ ^[A-Za-z0-9_-]+=gonka1[a-z0-9]{38}$ ]] || die "invalid GDC_OPS_ESCROW_CREATORS entry: $pair"
+      printf '  %s: %s\n' "${pair%%=*}" "${pair#*=}"
+    done
+  fi
+  printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300, escrow: 120}\ntimeout: 8\nmax_block_catchup: 30\n'
 } >"$OUTPUT/chain-poller/config.yml"
 
 echo "$OUTPUT"
