@@ -87,13 +87,13 @@ gw_runtimes = G("gdc_chain_gateway_runtimes", "Gateway runtimes", ["gateway"])
 gw_inflight = G("gdc_chain_gateway_in_flight_requests", "Requests in flight", ["gateway"])
 gw_limit = G("gdc_chain_gateway_max_concurrent_requests", "Effective concurrent request limit", ["gateway"])
 
-esc_created = Counter("gdc_chain_escrows_created", "Escrow creations seen since the poller started", ["creator"])
-esc_epoch = G("gdc_chain_escrows_epoch", "Escrows of the current epoch by state", ["creator", "state"])
-esc_locked = G("gdc_chain_escrow_locked_ngonka", "Amount held in unsettled escrows of the current epoch", ["creator"])
-esc_settled = Counter("gdc_chain_escrows_settled", "Escrow settlements seen since the poller started", ["creator"])
-esc_payout = Counter("gdc_chain_escrow_payout_ngonka", "Payout to hosts at settlement", ["creator"])
-esc_fees = Counter("gdc_chain_escrow_fees_ngonka", "Nonce fees at settlement", ["creator"])
-esc_nonces = Counter("gdc_chain_escrow_settled_nonces", "Nonces paid at settlement: fees / fee_per_nonce", ["creator"])
+esc_open = G("gdc_chain_escrows_open", "Escrows created and not settled", ["creator"])
+esc_locked = G("gdc_chain_escrow_locked_ngonka", "Amount held in unsettled escrows", ["creator"])
+esc_recent = G("gdc_chain_escrows_created_recent", "Escrows created within the window", ["creator", "window"])
+esc_settled = G("gdc_chain_escrows_settled", "Settled escrows", ["creator"])
+esc_payout = G("gdc_chain_escrow_payout_ngonka", "Payout to hosts over all settlements", ["creator"])
+esc_fees = G("gdc_chain_escrow_fees_ngonka", "Nonce fees over all settlements", ["creator"])
+esc_nonces = G("gdc_chain_escrow_settled_nonces", "Nonces paid over all settlements: fees / fee_per_nonce", ["creator"])
 creator_balance = G("gdc_chain_escrow_creator_balance_ngonka", "Wallet balance of an allowed escrow creator", ["creator"])
 
 task_ok = G("gdc_chain_poller_last_success_timestamp", "Last successful task run", ["task"])
@@ -407,29 +407,39 @@ def task_gateway():
 
 
 CREATORS = {addr: name for name, addr in (CFG.get("escrow_creators") or {}).items()}
-# Escrow ids already seen; None until the first pass, which only records what exists.
-ESC = {"created": None, "settled": None}
+# Creations, settlements and block times never change: each is read once and kept.
+CREATED, SETTLED, BLOCK_TIME = {}, {}, {}
 
 
 def creator_name(addr):
     return CREATORS.get(addr) or (addr[-6:] if addr else "unknown")
 
 
-def tx_events(src, query, kind, pages=5, per_page=100):
+def new_events(src, kind, known, per_page=100):
+    """Events of kind newest first, read until a page reaches an already known escrow."""
     out = []
-    for page in range(1, pages + 1):
-        res = rpc(src, "tx_search", query=f'"{query}"', page=page, per_page=per_page, order_by='"desc"')
+    for page in range(1, 1000):
+        res = rpc(src, "tx_search", query=f'"{kind}.escrow_id EXISTS"', page=page, per_page=per_page, order_by='"desc"')
+        hit = False
         for tx in res.get("txs", []):
             for ev in tx["tx_result"].get("events", []):
-                if ev.get("type") == kind:
-                    out.append({a["key"]: a.get("value", "") for a in ev.get("attributes", [])})
-        if page * per_page >= int(res.get("total_count", 0)):
-            break
+                if ev.get("type") != kind:
+                    continue
+                attrs = {a["key"]: a.get("value", "") for a in ev.get("attributes", [])}
+                if attrs.get("escrow_id") in known:
+                    hit = True
+                    continue
+                attrs["height"] = int(tx["height"])
+                out.append(attrs)
+        if hit or page * per_page >= int(res.get("total_count", 0)):
+            return out
     return out
 
 
-def escrow(src, eid):
-    return lcd(src, f"productscience/inference/inference/devshard_escrow/{eid}").get("escrow") or {}
+def block_time(src, height):
+    if height not in BLOCK_TIME:
+        BLOCK_TIME[height] = parse_ts(rpc(src, "block", height=height)["block"]["header"]["time"])
+    return BLOCK_TIME[height]
 
 
 def task_escrow():
@@ -439,44 +449,43 @@ def task_escrow():
         coins = lcd(src, f"cosmos/bank/v1beta1/balances/{addr}").get("balances", [])
         creator_balance.labels(creator_name(addr)).set(sum(int(c["amount"]) for c in coins if c.get("denom") == "ngonka"))
 
-    epoch = int(lcd(src, "productscience/inference/inference/epoch_info")["latest_epoch"]["index"])
-    first, seen = ESC["created"] is None, ESC["created"] or set()
-    states, locked = {}, {}
-    for ev in tx_events(src, f"devshard_escrow_created.epoch_index='{epoch}'", "devshard_escrow_created"):
-        eid, who = ev.get("escrow_id"), creator_name(ev.get("creator", ""))
-        if eid not in seen:
-            seen.add(eid)
-            if not first:
-                esc_created.labels(who).inc()
-        e = escrow(src, eid)
-        state = "settled" if e.get("settled") else "open"
-        states[(who, state)] = states.get((who, state), 0) + 1
-        if state == "open":
-            locked[who] = locked.get(who, 0) + int(e.get("amount", 0) or 0)
-    ESC["created"] = seen
-    esc_epoch.clear(); esc_locked.clear()
-    for (who, state), n in states.items():
-        esc_epoch.labels(who, state).set(n)
-    for who, amount in locked.items():
-        esc_locked.labels(who).set(amount)
-
-    first, seen = ESC["settled"] is None, ESC["settled"] or set()
-    for ev in tx_events(src, "devshard_escrow_settled.escrow_id EXISTS", "devshard_escrow_settled", pages=1):
-        eid = ev.get("escrow_id")
-        if eid in seen:
-            continue
-        seen.add(eid)
-        if first:
-            continue
-        e = escrow(src, eid)
-        who = creator_name(e.get("creator") or ev.get("settler", ""))
+    for ev in new_events(src, "devshard_escrow_created", CREATED):
+        CREATED[ev["escrow_id"]] = (creator_name(ev.get("creator", "")), int(ev.get("amount", 0) or 0), ev["height"])
+    for ev in new_events(src, "devshard_escrow_settled", SETTLED):
+        e = lcd(src, f"productscience/inference/inference/devshard_escrow/{ev['escrow_id']}").get("escrow") or {}
         fees, fee = int(ev.get("fees", 0) or 0), int(e.get("fee_per_nonce") or params.get("fee_per_nonce") or 0)
-        esc_settled.labels(who).inc()
-        esc_payout.labels(who).inc(int(ev.get("total_payout", 0) or 0))
-        esc_fees.labels(who).inc(fees)
-        if fee:
-            esc_nonces.labels(who).inc(fees // fee)
-    ESC["settled"] = seen
+        SETTLED[ev["escrow_id"]] = (creator_name(e.get("creator") or ev.get("settler", "")),
+                                    int(ev.get("total_payout", 0) or 0), fees, fees // fee if fee else 0)
+
+    opened, locked, recent = {}, {}, {}
+    for eid, (who, amount, _) in CREATED.items():
+        if eid not in SETTLED:
+            opened[who] = opened.get(who, 0) + 1
+            locked[who] = locked.get(who, 0) + amount
+    now = time.time()
+    for who, _, height in sorted(CREATED.values(), key=lambda c: -c[2]):
+        age = now - block_time(src, height)
+        if age > 86400:
+            break
+        for window, seconds in (("1h", 3600), ("24h", 86400)):
+            if age <= seconds:
+                recent[(who, window)] = recent.get((who, window), 0) + 1
+    sums = {}
+    for who, payout, fees, nonces in SETTLED.values():
+        row = sums.setdefault(who, [0, 0, 0, 0])
+        for i, v in enumerate((1, payout, fees, nonces)):
+            row[i] += v
+
+    for g in (esc_open, esc_locked, esc_recent, esc_settled, esc_payout, esc_fees, esc_nonces):
+        g.clear()
+    for who in opened:
+        esc_open.labels(who).set(opened[who]); esc_locked.labels(who).set(locked[who])
+    for who in {w for w, _, _ in CREATED.values()}:
+        for window in ("1h", "24h"):
+            esc_recent.labels(who, window).set(recent.get((who, window), 0))
+    for who, (n, payout, fees, nonces) in sums.items():
+        esc_settled.labels(who).set(n); esc_payout.labels(who).set(payout)
+        esc_fees.labels(who).set(fees); esc_nonces.labels(who).set(nonces)
     mark("escrow")
 
 

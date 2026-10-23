@@ -2867,13 +2867,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (gateway) (devshard_accounting_disposition{disposition=\"ghost\"})",
+          "expr": "sum by (gateway) (devshard_accounting_disposition{disposition=\"ghost\"}) or 0 * sum by (gateway) (devshard_accounting_assigned_nonces)",
           "refId": "A",
           "instant": true,
           "legendFormat": "{{gateway}}"
         }
       ],
-      "description": "Nonces committed in the current escrow and never sent to a host. They are paid but carry no inference. The count restarts at rotation."
+      "description": "Nonces committed in the current escrow and never sent to a host: paid, with no inference behind them. The count restarts at rotation."
     },
     {
       "id": 123,
@@ -2882,7 +2882,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Cost per inference (24h)",
+      "title": "Cost per nonce",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -2904,7 +2904,7 @@
             ]
           },
           "unit": "suffix: ngonka",
-          "noValue": "no escrow was settled in the last 24 hours, or no request succeeded",
+          "noValue": "no escrow has been settled yet",
           "decimals": 0
         },
         "overrides": []
@@ -2926,12 +2926,12 @@
       },
       "targets": [
         {
-          "expr": "(sum(increase(gdc_chain_escrow_payout_ngonka_total[24h])) + sum(increase(gdc_chain_escrow_fees_ngonka_total[24h]))) / sum(increase(devshard_gateway_requests_total{outcome=\"success\"}[24h]))",
+          "expr": "(sum(gdc_chain_escrow_payout_ngonka) + sum(gdc_chain_escrow_fees_ngonka)) / sum(gdc_chain_escrow_settled_nonces)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Host payout plus nonce fees of the escrows settled in the last day, divided by the requests the gateways completed. An estimate: an escrow settles after its requests, so the two windows do not line up exactly."
+      "description": "Host payout plus nonce fees divided by the nonces paid, over every settled escrow on the chain."
     },
     {
       "id": 124,
@@ -2940,7 +2940,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Settled nonces per inference (24h)",
+      "title": "Cost per inference",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -2961,9 +2961,9 @@
               }
             ]
           },
-          "unit": "none",
-          "noValue": "no escrow was settled in the last 24 hours, or no request succeeded",
-          "decimals": 2
+          "unit": "suffix: ngonka",
+          "noValue": "no escrow has been settled yet, or no gateway reports nonce accounting",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -2984,12 +2984,13 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(gdc_chain_escrow_settled_nonces_total[24h])) / sum(increase(devshard_gateway_requests_total{outcome=\"success\"}[24h]))",
+          "expr": "(sum by (gateway) (devshard_accounting_assigned_nonces) / sum by (gateway) (devshard_accounting_disposition{disposition=\"finished_used\"})) * on() group_left() ((sum(gdc_chain_escrow_payout_ngonka) + sum(gdc_chain_escrow_fees_ngonka)) / sum(gdc_chain_escrow_settled_nonces))",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{gateway}}"
         }
       ],
-      "description": "Nonces paid at settlement in the last day, fees divided by fee_per_nonce, per completed request. The same estimate as the cost to its left."
+      "description": "Cost per nonce times the nonces each gateway spends per used result. An estimate that follows the current escrow of each gateway."
     },
     {
       "id": 125,
@@ -3020,8 +3021,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "no escrow was created since the chain poller started",
-          "decimals": 0
+          "noValue": "the chain poller reports no escrow creation"
         },
         "overrides": []
       },
@@ -3042,13 +3042,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (creator) (increase(gdc_chain_escrows_created_total[24h]))",
+          "expr": "sum by (creator) (gdc_chain_escrows_created_recent{window=\"24h\"})",
           "refId": "A",
           "instant": true,
           "legendFormat": "{{creator}}"
         }
       ],
-      "description": "Escrows each creator wallet opened in the last day, read from the chain. Counting starts when the chain poller starts."
+      "description": "Escrows each creator wallet opened in the last day, by block time."
     },
     {
       "id": 126,
@@ -3057,7 +3057,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Open escrows",
+      "title": "Unsettled escrows",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -3079,7 +3079,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the chain poller reports no escrow of the current epoch"
+          "noValue": "the chain poller reports no escrow creation"
         },
         "overrides": []
       },
@@ -3100,13 +3100,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (creator) (gdc_chain_escrows_epoch{state=\"open\"})",
+          "expr": "sum by (creator) (gdc_chain_escrows_open)",
           "refId": "A",
           "instant": true,
           "legendFormat": "{{creator}}"
         }
       ],
-      "description": "Unsettled escrows of the current epoch per creator wallet."
+      "description": "Escrows created and not settled. Their amount stays held until settlement."
     },
     {
       "id": 127,
@@ -3115,7 +3115,7 @@
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Escrow rotations per hour",
+      "title": "Escrows created per hour",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -3166,7 +3166,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "no escrow was created since the chain poller started"
+          "noValue": "the chain poller reports no escrow creation"
         },
         "overrides": []
       },
@@ -3187,12 +3187,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (creator) (increase(gdc_chain_escrows_created_total[1h]))",
+          "expr": "sum by (creator) (gdc_chain_escrows_created_recent{window=\"1h\"})",
           "refId": "A",
           "legendFormat": "{{creator}}"
         }
       ],
-      "description": "New escrows per creator wallet in each hour. A gateway rotates when its escrow nears max_nonce or its epoch ends."
+      "description": "Escrows each creator wallet opened in the past hour, by block time. A gateway opens a new escrow when the current one nears max_nonce or its epoch ends."
     },
     {
       "id": 128,
@@ -3201,7 +3201,7 @@
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Held in open escrows",
+      "title": "Held in unsettled escrows",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -3252,7 +3252,7 @@
             ]
           },
           "unit": "short",
-          "noValue": "the chain poller reports no open escrow"
+          "noValue": "the chain poller reports no unsettled escrow"
         },
         "overrides": []
       },
@@ -3277,7 +3277,7 @@
           "legendFormat": "{{creator}}"
         }
       ],
-      "description": "Amount of the unsettled escrows of the current epoch per creator wallet, in ngonka."
+      "description": "Amount of the escrows not yet settled per creator wallet, in ngonka."
     },
     {
       "id": 129,
@@ -3363,22 +3363,7 @@
           "legendFormat": "{{creator}}"
         }
       ],
-      "description": "ngonka left in each wallet allowed to create escrows. A falling line is escrow spending; a flat one at zero stops new escrows."
-    },
-    {
-      "id": 99,
-      "type": "text",
-      "title": "Data contract",
-      "gridPos": {
-        "h": 5,
-        "w": 24,
-        "x": 0,
-        "y": 89
-      },
-      "options": {
-        "content": "**Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even when the gateway metrics scrape succeeds. That tile is gated on the age of the readiness observation, shown by **Readiness observation age**: past thirty seconds it stops showing a number instead of freezing on its last one. The gateway began exporting its per-routing request, attempt, win, hidden-failure and first-content counters on 2026-09-22, so a window that reaches further back is empty for them rather than idle. It does export an HTTP-level request counter, but that counts every request the listener sees, including probes and scanner traffic, so it is not a measure of inference. The one counter still missing is the gateway-wide rejection total, so the rejection panels read the participant-scoped one instead. Any panel that can return nothing says so in its body rather than drawing a zero. Most counted requests are cache hits, which are served without a routed completion, so **Requests served** runs well ahead of the routed ones. Every Telegram panel reads the bot exporter and is shown only while Prometheus scrapes it; the metrics file the bot also writes changes only on activity, so its age says nothing about the bot. **Telegram exporter age** in the Data passport row shows how fresh that scrape is. Telegram panels carry aggregate activity and API-reported token counts, with no user identifiers and no message content. Counters start when the gateway process starts, and Prometheus keeps up to 30 days of samples, so a longer window shows only what is stored rather than an empty result. GNK notional value and archive-node SQL are not available, so this board does not fabricate those panels. The escrow spend row joins two sources: nonce accounting comes from each gateway and restarts at every escrow rotation, while cost, rotations and balances come from the chain through the chain poller and count only from when it started.",
-        "mode": "markdown"
-      }
+      "description": "ngonka left in each wallet allowed to create escrows. Each new escrow takes its amount from here."
     }
   ],
   "refresh": "15s",
