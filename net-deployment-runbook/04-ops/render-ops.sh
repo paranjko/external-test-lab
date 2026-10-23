@@ -182,9 +182,10 @@ jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$AP
   --arg direct "http://$gateway_public_host:8082/v1" --arg telegram "$telegram_bot_url" \
   --arg grafanaNetwork "https://$GRAFANA_HOST/d/gdc-network/gonka-devnet-network?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
   --arg grafanaInference "https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
+  --arg grafanaOverview "https://$GRAFANA_HOST/d/gdc-overview/gonka-devnet-community-overview?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
   --arg grafanaChain "https://$GRAFANA_HOST/d/gdc-chain/gonka-devnet-chain?orgId=1&from=now-6h&to=now&timezone=utc&kiosk" \
   --arg gatewayNode "$GATEWAY_NODE" --arg chainRpcHost "$(node_public_host "$GENESIS_NODE")" --argjson nodes "$nodes" --argjson validators "$validators" --argjson nodeCatalog "$node_catalog" \
-  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,grafanaChain:$grafanaChain,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
+  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,grafanaChain:$grafanaChain,grafanaOverview:$grafanaOverview,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
   | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
 
 write_env "$OUTPUT/network-observer.env" \
@@ -469,7 +470,15 @@ mkdir -p "$OUTPUT/chain-poller"
     printf '  %s: %s\n' "${pair%%=*}" "${pair#*=}"
   done
   fi
-  printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300}\ntimeout: 8\nmax_block_catchup: 30\n'
+  # Optional names for escrow creator wallets, "name=address" pairs; unnamed ones keep a short address.
+  if [[ -n "${GDC_OPS_ESCROW_CREATORS:-}" ]]; then
+    printf 'escrow_creators:\n'
+    for pair in $GDC_OPS_ESCROW_CREATORS; do
+      [[ "$pair" =~ ^[A-Za-z0-9_-]+=gonka1[a-z0-9]{38}$ ]] || die "invalid GDC_OPS_ESCROW_CREATORS entry: $pair"
+      printf '  %s: %s\n' "${pair%%=*}" "${pair#*=}"
+    done
+  fi
+  printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300, escrow: 120}\ntimeout: 8\nmax_block_catchup: 30\n'
 } >"$OUTPUT/chain-poller/config.yml"
 
 echo "$OUTPUT"

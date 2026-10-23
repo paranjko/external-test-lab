@@ -41,14 +41,14 @@ render() {
        + (if $desc == "" then {} else {description:$desc} end));
     def table($id;$title;$expr;$x;$y;$w;$h): table($id;$title;$expr;$x;$y;$w;$h;"";{});
     def row($id;$title;$y): {id:$id,type:"row",title:$title,collapsed:false,gridPos:{h:1,w:24,x:0,y:$y},panels:[]};
-    def textpanel($id;$title;$markdown;$y):
-      {id:$id,type:"text",title:$title,gridPos:{h:5,w:24,x:0,y:$y},options:{content:$markdown,mode:"markdown"}};
     # $extra shallow-replaces top-level board keys; it does not deep-merge.
     def base($uid;$title;$from;$panels;$extra):
       {annotations:{list:[]},editable:false,fiscalYearStartMonth:0,graphTooltip:1,id:null,
        links:[{asDropdown:true,icon:"dashboard",includeVars:false,keepTime:true,tags:["gdc"],targetBlank:false,title:"Community DevNet dashboards",type:"dashboards"}],
        liveNow:true,panels:$panels,refresh:"15s",schemaVersion:41,tags:["gonka","gdc"],templating:{list:[]},time:{from:$from,to:"now"},timepicker:{refresh_intervals:["5s","10s","15s","30s","1m","5m"]},timezone:"utc",title:$title,uid:$uid,version:1} + $extra;
     def base($uid;$title;$from;$panels): base($uid;$title;$from;$panels;{});
+    def phases: [{type:"value",options:{"0":{text:"PoC generation",color:"purple",index:0},"1":{text:"batch exchange and wait",color:"blue",index:1},"2":{text:"PoC validation",color:"orange",index:2},"3":{text:"validator set switch",color:"yellow",index:3},"4":{text:"inference",color:"green",index:4}}}];
+    def phasedesc: "Cycle counted from the PoC start P read from epoch_info: PoC generation, batch exchange and wait, PoC validation, validator set switch (group written at P+19, the new set signs from P+23), then inference until the next PoC.";
 
     if $kind == "network" then
       base("gdc-network";"Gonka DevNet Network";"now-24h";[
@@ -95,13 +95,9 @@ render() {
         (table(47;"Collector freshness";"max by (file) (time() - node_textfile_mtime_seconds)";8;58;8;7;"Seconds since each textfile was last written. A value that keeps growing is a collector that stopped while its last values are still being served.";{noValue:"no collector file is exported",unit:"s"})
           | .transformations=[{id:"organize",options:{excludeByName:{Time:true},renameByName:{file:"File",Value:"Age"}}}]),
         (table(48;"Scraped hosts without GPU telemetry";"count by (host) (up{job=\"host\"} == 1) unless on(host) count by (host) (gdc_nvidia_available)";16;58;8;7;"Hosts that answer the host scrape but export no NVIDIA telemetry. Empty means either every scraped host reports it, or no host target is configured.";{noValue:"no row: every scraped host reports NVIDIA telemetry, or none is configured"})
-          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,job:true,instance:true},renameByName:{host:"Host"}}}]),
-
-        textpanel(49;"Data contract";"Every panel here either shows a measured value or says in its body why it has none. Emptiness has four causes on this board: a metric this build never exports, a collector that stopped writing its file, a Host that is not in the monitoring inventory, and a scrape that is failing. The **Collection** row names the last three. The board measures only what is scraped: a validator that is not a scrape target appears in no host, CPU, memory, disk or GPU panel, and **Validators beyond the monitored set** counts how many are missing. Prometheus keeps up to 30 days of samples, so a window longer than the stored history shows only what is kept, not a fault. Archive-only epoch economics, rewards and historical transaction decoding are not collected and are not invented here.";65)
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,job:true,instance:true},renameByName:{host:"Host"}}}])
       ])
     elif $kind == "chain" then
-      def phases: [{type:"value",options:{"0":{text:"PoC generation",color:"purple",index:0},"1":{text:"batch exchange and wait",color:"blue",index:1},"2":{text:"PoC validation",color:"orange",index:2},"3":{text:"validator set switch",color:"yellow",index:3},"4":{text:"inference",color:"green",index:4}}}];
-      def phasedesc: "Cycle counted from the PoC start P read from epoch_info: PoC generation, batch exchange and wait, PoC validation, validator set switch (group written at P+19, the new set signs from P+23), then inference until the next PoC.";
       def bar($id;$title;$expr;$legend;$unit;$x;$y;$w;$h;$desc;$fc):
         {id:$id,datasource:ds,type:"bargauge",title:$title,description:$desc,gridPos:{h:$h,w:$w,x:$x,y:$y},
          fieldConfig:{defaults:({color:{mode:"thresholds"},thresholds:{mode:"absolute",steps:[{color:"green",value:null}]}} + (if $unit == "" then {} else {unit:$unit} end) + $fc),overrides:[]},
@@ -145,48 +141,77 @@ render() {
         timeline(41;"External probes";"probe_success{job=\"public-node-endpoints\"}";"{{host}} {{kind}}";48;9;"blackbox HTTPS probes of every node public RPC and LCD, the way a client reaches them.";{noValue:"no public node endpoint is probed",mappings:[{type:"value",options:{"0":{text:"down",color:"red",index:0},"1":{text:"ok",color:"green",index:1}}}],thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"green",value:1}]}})
       ])
     elif $kind == "overview" then
+      # Filters default to All, whose value is the regex .* in every matcher.
+      def filtervar($name;$label;$query):
+        {name:$name,label:$label,type:"query",datasource:ds,definition:$query,query:{query:$query,refId:$name},
+         multi:true,includeAll:true,allValue:".*",current:{selected:true,text:["All"],value:["$__all"]},
+         options:[],refresh:2,regex:"",sort:1,hide:0};
+      def override($name;$props): {matcher:{id:"byName",options:$name},properties:$props};
+      def updown: [{id:"mappings",value:[{type:"value",options:{"0":{text:"down",color:"red",index:0},"1":{text:"up",color:"green",index:1}}}]},{id:"custom.cellOptions",value:{type:"color-text"}}];
+      def pctgauge: [{id:"unit",value:"percent"},{id:"decimals",value:0},{id:"min",value:0},{id:"max",value:100},{id:"custom.cellOptions",value:{type:"gauge",mode:"basic",valueDisplayMode:"text"}},{id:"thresholds",value:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:70},{color:"red",value:90}]}}];
+      def tabletarget($expr;$ref): target($expr;"") + {refId:$ref,format:"table",instant:true};
+      def hosts: "host=~\"$host\"";
+      def gpus: "host=~\"$host\",gpu_name=~\"$gpu\"";
       base("gdc-overview";"Gonka DevNet Community Overview";"now-24h";[
-        stat(1;"Healthy targets";"sum(up)";"none";0;0;6;
-          "Scrape targets that answered their last attempt, across every job.";
-          {noValue:"no target is configured"};{}),
-        stat(2;"Failed targets";"sum(up == bool 0)";"none";6;0;6;
-          "Scrape targets that failed their last attempt. Counting the targets, not summing their values: a sum of zeros can only ever be zero.";
-          {noValue:"no target is configured",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"red",value:1}]}};{colorMode:"value"}),
-        stat(3;"Public endpoints up";"sum(probe_success{job=\"public-https\"})";"none";12;0;6;
-          "Public URLs answering the blackbox probe. This counts successes, so compare it with the number of probes configured.";
-          {noValue:"no public endpoint is probed"};{}),
-        stat(4;"GPUs available";"count(gdc_nvidia_utilization_percent)";"none";18;0;6;
-          "Accelerators reporting utilization. Counts cards, not hosts: a host answers once, each of its cards reports separately.";
-          {noValue:"no accelerator is reporting"};{}),
-        ts(5;"Consensus height";"cometbft_consensus_height";"{{host}}";"none";0;4;12;8;
-          "";{};["lastNotNull"]),
-        ts(6;"CPU busy";"100 - avg by(host)(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100";"{{host}}";"percent";12;4;12;8;
-          "";{};["lastNotNull"]),
-        ts(7;"Memory used";"(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100";"{{host}}";"percent";0;12;12;8;
-          "";{};["lastNotNull"]),
-        ts(8;"GPU utilization";"gdc_nvidia_utilization_percent";"{{host}} · {{gpu_name}}";"percent";12;12;12;8;
-          "Empty when no accelerator host reports to the collector.";
-          {noValue:"no accelerator host is reporting"};["lastNotNull"]),
-        ts(9;"GPU memory used";"gdc_nvidia_memory_used_bytes";"{{host}} · {{gpu_name}}";"bytes";0;20;12;8;
-          "Empty when no accelerator host reports to the collector.";
-          {noValue:"no accelerator host is reporting"};["lastNotNull"]),
-        ts(10;"Operational disk free";"min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\"} * 100)";"{{host}}";"percent";12;20;12;8;
-          "Free space on the fullest real volume of each host. The dashed lines are the 15% and 8% disk alert levels; the alerts also watch /boot volumes, which this panel leaves out.";
-          {noValue:"no matching filesystem on any scraped host",min:0,max:100,thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"orange",value:8},{color:"green",value:15}]},custom:{thresholdsStyle:{mode:"dashed"}}};["lastNotNull"]),
-        ts(11;"P2P peers";"cometbft_p2p_peers";"{{host}}";"none";0;28;12;8;
-          "";{};["lastNotNull"]),
-        ts(12;"Consensus height spread";"max(cometbft_consensus_height) - min(cometbft_consensus_height)";"spread";"none";12;28;12;8;
-          "Difference between the highest and lowest scraped node. It only compares nodes that are scraped.";
-          {noValue:"no chain sample in the window"};["lastNotNull"]),
-        (table(13;"Scrape targets and locations";"up{job=\"host\"}";0;36;12;8;
-          "Every configured host target, with its location when one was resolved. A Host absent from the monitoring inventory does not appear here at all.";
-          {noValue:"no host target is configured"})
-          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",validator:"Validator",city:"City",country:"Country",latitude:"Lat",longitude:"Lon",Value:"Scrape"}}}]),
-        (table(14;"Software inventory";"gdc_component_info";12;36;12;8;
-          "Rows appear once the version collector has written its first inventory on a Host.";
-          {noValue:"no Host has reported its software inventory"})
-          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,__name__:true,job:true,instance:true},renameByName:{host:"Host",component:"Component",component_instance:"Instance",version:"Version",commit:"Commit",image:"Image",source:"Source"}}}])
-      ])
+        row(100;"Network now";0),
+        stat(1;"Chain nodes online";"sum(max by (host) (up{job=\"gonka-node\"}))";"none";0;1;3;"Chain nodes of the monitoring inventory that answered their last scrape, counted once per host. A validator outside the inventory is not counted.";{noValue:"no chain node is configured"};{}),
+        stat(2;"Validators";"max(gdc_chain_validators_count)";"none";3;1;3;"Validators in the CometBFT set at the latest block, read by the chain poller from public RPC.";{noValue:"the chain poller is not scraped"};{}),
+        stat(3;"Epoch";"max(gdc_chain_epoch_index)";"none";6;1;3;"Latest epoch index from epoch_info.";{noValue:"the chain poller is not scraped"};{}),
+        stat(4;"Current phase";"max(gdc_chain_epoch_phase_code)";"none";9;1;4;phasedesc;{noValue:"the chain poller is not scraped",mappings:phases};{colorMode:"background"}),
+        stat(5;"Until next PoC";"max(gdc_chain_epoch_blocks_to_next_poc)";"none";13;1;3;"Blocks from the current height to the next PoC start.";{noValue:"the chain poller is not scraped",unit:"suffix: blocks"};{}),
+        stat(6;"Block time";"histogram_quantile(0.50, sum by (le) (rate(cometbft_consensus_block_interval_seconds_bucket[10m])))";"s";16;1;3;"Median block interval over the last ten minutes.";{noValue:"no block-interval histogram in the window",decimals:1};{}),
+        stat(7;"Gateways working";"sum(gdc_chain_gateway_working)";"none";19;1;2;"Gateways whose public status reports an active DevShard.";{noValue:"no gateway status URL answers"};{}),
+        stat(8;"Endpoints failing";"sum(1 - probe_success{job=~\"public-https|public-node-endpoints\"})";"none";21;1;3;"Public site, API, Grafana, node RPC and LCD probes that failed their last attempt. Zero is measured; empty means nothing is probed.";{noValue:"no public endpoint is probed",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"red",value:1}]}};{colorMode:"value"}),
+
+        row(110;"Nodes";5),
+        (table(11;"Nodes";"max by (host) (up{job=\"host\",\(hosts)})";0;6;24;10;"One row per monitored host. GPU columns follow the GPU model filter; a host without a matching GPU keeps its row with those cells empty. A separate ML host of a validator is its own row.";{noValue:"no host matches the filter"})
+          | .targets=[tabletarget("max by (host) (up{job=\"host\",\(hosts)})";"A"),
+              tabletarget("max by (host) (up{job=\"gonka-node\",\(hosts)})";"B"),
+              tabletarget("scalar(max(cometbft_consensus_height)) - max by (host) (cometbft_consensus_height{\(hosts)})";"C"),
+              tabletarget("max by (host) (cometbft_p2p_peers{\(hosts)})";"D"),
+              tabletarget("100 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\",\(hosts)}[5m])) * 100";"E"),
+              tabletarget("max by (host) ((1 - node_memory_MemAvailable_bytes{\(hosts)} / node_memory_MemTotal_bytes{\(hosts)}) * 100)";"F"),
+              tabletarget("min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\",\(hosts)} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\",\(hosts)} * 100)";"G"),
+              tabletarget("max by (host, gpu_name) (gdc_nvidia_utilization_percent{\(gpus)})";"H"),
+              tabletarget("max by (host, version) (gdc_component_info{component=\"inference-chain\",source=\"runtime\",\(hosts)})";"I"),
+              tabletarget("topk by (host) (1, max by (host, city, country) (up{job=\"host\",city!=\"\",\(hosts)}))";"J")]
+          | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
+              excludeByName:{Time:true,"Value #I":true,"Value #J":true},
+              indexByName:{host:0,city:1,country:2,"Value #A":4,"Value #B":5,"Value #C":6,"Value #D":7,"Value #E":8,"Value #F":9,"Value #G":10,gpu_name:11,"Value #H":12,version:13},
+              renameByName:{host:"Node",city:"City",country:"Country","Value #A":"Host","Value #B":"Chain","Value #C":"Blocks behind","Value #D":"Peers","Value #E":"CPU","Value #F":"Memory","Value #G":"Disk free",gpu_name:"GPU","Value #H":"GPU busy",version:"Chain version"}}}]
+          | .fieldConfig.overrides=[override("Host";updown),override("Chain";updown),
+              override("Blocks behind";[{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:3},{color:"red",value:20}]}}]),
+              override("CPU";pctgauge),override("Memory";pctgauge),override("GPU busy";pctgauge),
+              override("Disk free";[{id:"unit",value:"percent"},{id:"decimals",value:0},{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:{mode:"absolute",steps:[{color:"red",value:null},{color:"orange",value:8},{color:"green",value:15}]}}])]),
+
+        row(120;"Resources";16),
+        ts(21;"CPU busy";"100 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\",\(hosts)}[5m])) * 100";"{{host}}";"percent";0;17;8;8;"Share of CPU time not idle, averaged over cores.";{noValue:"no host matches the filter",min:0,max:100};["lastNotNull","max"]),
+        ts(22;"Memory used";"max by (host) ((1 - node_memory_MemAvailable_bytes{\(hosts)} / node_memory_MemTotal_bytes{\(hosts)}) * 100)";"{{host}}";"percent";8;17;8;8;"Memory in use, excluding reclaimable cache.";{noValue:"no host matches the filter",min:0,max:100};["lastNotNull","max"]),
+        ts(23;"Operational disk free";"min by (host) (node_filesystem_avail_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\",\(hosts)} / node_filesystem_size_bytes{fstype=~\"ext4|xfs|btrfs|zfs\",mountpoint!~\"/boot.*\",\(hosts)} * 100)";"{{host}}";"percent";16;17;8;8;"Free space on the fullest real volume of each host. The dashed lines are the 15% and 8% disk alert levels.";{noValue:"no host matches the filter",min:0,max:100,thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"orange",value:8},{color:"green",value:15}]},custom:{thresholdsStyle:{mode:"dashed"}}};["lastNotNull","min"]),
+        ts(24;"GPU utilization";"max by (host, gpu, gpu_name) (gdc_nvidia_utilization_percent{\(gpus)})";"{{host}}/{{gpu}} · {{gpu_name}}";"percent";0;25;8;8;"Per card. Empty when no card matches the node and GPU model filters.";{noValue:"no GPU matches the filters",min:0,max:100};["lastNotNull","max"]),
+        ts(25;"GPU memory used";"100 * max by (host, gpu, gpu_name) (gdc_nvidia_memory_used_bytes{\(gpus)}) / max by (host, gpu, gpu_name) (gdc_nvidia_memory_total_bytes{\(gpus)})";"{{host}}/{{gpu}} · {{gpu_name}}";"percent";8;25;8;8;"Share of card memory in use. A loaded model holds its memory while idle.";{noValue:"no GPU matches the filters",min:0,max:100};["lastNotNull","max"]),
+        ts(26;"GPU temperature";"max by (host, gpu, gpu_name) (gdc_nvidia_temperature_celsius{\(gpus)})";"{{host}}/{{gpu}} · {{gpu_name}}";"celsius";16;25;8;8;"Card temperature.";{noValue:"no GPU matches the filters"};["lastNotNull","max"]),
+
+        row(130;"GPUs";33),
+        (table(31;"GPU cards";"max by (host, gpu, gpu_name) (gdc_nvidia_utilization_percent{\(gpus)})";0;34;24;7;"One row per card on the hosts that report NVIDIA telemetry.";{noValue:"no GPU matches the filters"})
+          | .targets=[tabletarget("max by (host, gpu, gpu_name) (gdc_nvidia_utilization_percent{\(gpus)})";"A"),
+              tabletarget("max by (host, gpu, gpu_name) (gdc_nvidia_memory_used_bytes{\(gpus)})";"B"),
+              tabletarget("max by (host, gpu, gpu_name) (gdc_nvidia_memory_total_bytes{\(gpus)})";"C"),
+              tabletarget("max by (host, gpu, gpu_name) (gdc_nvidia_temperature_celsius{\(gpus)})";"D"),
+              tabletarget("max by (host, gpu, gpu_name) (gdc_nvidia_power_watts{\(gpus)})";"E")]
+          | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
+              excludeByName:{Time:true},
+              indexByName:{host:0,gpu:1,gpu_name:2,"Value #A":3,"Value #B":4,"Value #C":5,"Value #D":6,"Value #E":7},
+              renameByName:{host:"Node",gpu:"Card",gpu_name:"Model","Value #A":"Busy","Value #B":"Memory used","Value #C":"Memory total","Value #D":"Temperature","Value #E":"Power"}}}]
+          | .fieldConfig.overrides=[override("Busy";pctgauge),
+              override("Memory used";[{id:"unit",value:"bytes"}]),override("Memory total";[{id:"unit",value:"bytes"}]),
+              override("Temperature";[{id:"unit",value:"celsius"}]),override("Power";[{id:"unit",value:"watt"}])]),
+
+        row(140;"Consensus";41),
+        ts(41;"Height spread";"max(cometbft_consensus_height) - min(cometbft_consensus_height)";"spread";"none";0;42;8;8;"Blocks between the highest and the lowest scraped chain node. It ignores the node filter: it compares the whole monitored set.";{noValue:"no chain sample in the window"};["lastNotNull","max"]),
+        ts(42;"Blocks behind";"scalar(max(cometbft_consensus_height)) - max by (host) (cometbft_consensus_height{\(hosts)})";"{{host}}";"none";8;42;8;8;"How far each chain node is behind the highest scraped node.";{noValue:"no chain node matches the filter"};["lastNotNull","max"]),
+        ts(43;"P2P peers";"max by (host) (cometbft_p2p_peers{\(hosts)})";"{{host}}";"none";16;42;8;8;"Peer connections per chain node.";{noValue:"no chain node matches the filter"};["lastNotNull","min"])
+      ];{templating:{list:[filtervar("host";"Node";"label_values(up{job=\"host\"},host)"),filtervar("gpu";"GPU model";"label_values(gdc_nvidia_utilization_percent{host=~\"$host\"},gpu_name)")]}})
     else
       base("gdc-inference";"Gonka DevNet Inference";"now-24h";[
         row(200;"Inference now";0),
@@ -229,22 +254,31 @@ render() {
         stat(92;"Executors tracked";"max(devshard_gateway_participants_tracked)";"none";4;55;4;"Executors the gateway is currently tracking, as the gateway itself reports.";{noValue:"the gateway is not scraped"};{}),
         stat(93;"Models observed";"count(count by (model) (devshard_gateway_requests_total))";"none";8;55;4;"Models the gateway has counted a request for.";{noValue:"the gateway has counted no request yet"};{}),
         stat(94;"Transport errors (7d)";"round(sum(increase(devshard_gateway_participant_transport_errors_total[7d])))";"none";12;55;4;"Executor transport failures in the window.";{noValue:"no transport error counter was scraped"};{}),
-        stat(95;"Telegram exporter age";"max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"})";"s";16;55;4;"Seconds since the consumer last wrote its metrics file. The whole Telegram row below is gated on this.";{noValue:"the consumer exporter is not present",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:900},{color:"red",value:3600}]}};{colorMode:"value"}),
+        stat(95;"Telegram exporter age";"time() - max(timestamp(gdc_telegram_bot_up{job=\"telegram-consumer\"}))";"s";16;55;4;"Seconds since Prometheus last scraped the bot exporter. The whole Telegram row below is gated on that scrape.";{noValue:"the bot exporter is not scraped",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:60},{color:"red",value:300}]}};{colorMode:"value"}),
         stat(96;"Readiness observation age";"time() - max(gdc_gateway_readiness_observed_timestamp_seconds)";"s";20;55;4;"Seconds since the readiness probe last observed the gateway. Traffic ready is gated on this: past thirty seconds that tile stops showing a number rather than freezing on its last one.";{noValue:"the readiness probe has never written an observation",thresholds:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:30},{color:"red",value:120}]}};{colorMode:"value"}),
 
         row(250;"Telegram inference consumer";59),
-        stat(101;"Unique users";"sum(gdc_telegram_bot_unique_users) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"none";0;60;4;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};{}),
-        stat(102;"Premium users";"sum(gdc_telegram_bot_unique_users{premium=\"true\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"none";4;60;4;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};{}),
-        stat(103;"Conversations";"sum(gdc_telegram_bot_conversations) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"none";8;60;4;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};{}),
-        stat(104;"Interactions";"sum(gdc_telegram_bot_interactions_total) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"none";12;60;4;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};{}),
-        stat(105;"Input tokens";"sum(gdc_telegram_bot_tokens_total{direction=\"input\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"none";16;60;4;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};{}),
-        stat(106;"Output tokens";"sum(gdc_telegram_bot_tokens_total{direction=\"output\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"none";20;60;4;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};{}),
-        ts(111;"Interaction rate by outcome and Premium state";"sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total[15m])) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"{{outcome}} · premium={{premium}}";"reqps";0;64;12;8;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};["lastNotNull"]),
-        ts(112;"Inference request rate by outcome";"sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total[15m])) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"{{outcome}}";"reqps";12;64;12;8;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};["lastNotNull"]),
-        stat(113;"Time since last successful bot inference";"(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"s";0;72;8;"Zero would have read as a success just now, the most reassuring possible value for a consumer that never answered. Empty now means the exporter is stale.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};{colorMode:"value"}),
-        stat(114;"Responses without token usage";"sum(gdc_telegram_bot_usage_missing_total) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"none";8;72;8;"Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current.";{noValue:"the consumer exporter is stale; this value would be a frozen snapshot"};{}),
-        stat(115;"Consumer process";"max(gdc_telegram_bot_up) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)";"none";16;72;8;"The value comes from a file the consumer writes, which node-exporter republishes on every scrape. Without the freshness gate a stopped consumer reads as running.";{noValue:"the consumer exporter is stale; the state of the bot is unknown",mappings:[{type:"value",options:{"0":{text:"Stopped",color:"red",index:0},"1":{text:"Running",color:"green",index:1}}}]};{colorMode:"background"}),
-        textpanel(99;"Data contract";"**Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even when the gateway metrics scrape succeeds. That tile is gated on the age of the readiness observation, shown by **Readiness observation age**: past thirty seconds it stops showing a number instead of freezing on its last one. The gateway began exporting its per-routing request, attempt, win, hidden-failure and first-content counters on 2026-09-22, so a window that reaches further back is empty for them rather than idle. It does export an HTTP-level request counter, but that counts every request the listener sees, including probes and scanner traffic, so it is not a measure of inference. The one counter still missing is the gateway-wide rejection total, so the rejection panels read the participant-scoped one instead. Any panel that can return nothing says so in its body rather than drawing a zero. Most counted requests are cache hits, which are served without a routed completion, so **Requests served** runs well ahead of the routed ones. Every Telegram panel is gated on the age of the file the consumer writes: node-exporter republishes the contents of that file on every scrape, so without the gate a stopped consumer would keep reporting its last numbers as current. **Telegram exporter age** in the Data passport row shows that age. Telegram panels carry aggregate activity and API-reported token counts, with no user identifiers and no message content. Counters start when the gateway process starts, and Prometheus keeps up to 30 days of samples, so a longer window shows only what is stored rather than an empty result. GNK notional value and archive-node SQL are not available, so this board does not fabricate those panels.";76)
+        stat(101;"Unique users";"sum(gdc_telegram_bot_unique_users{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"none";0;60;4;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};{}),
+        stat(102;"Premium users";"sum(gdc_telegram_bot_unique_users{job=\"telegram-consumer\",premium=\"true\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"none";4;60;4;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};{}),
+        stat(103;"Conversations";"sum(gdc_telegram_bot_conversations{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"none";8;60;4;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};{}),
+        stat(104;"Interactions";"sum(gdc_telegram_bot_interactions_total{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"none";12;60;4;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};{}),
+        stat(105;"Input tokens";"sum(gdc_telegram_bot_tokens_total{job=\"telegram-consumer\",direction=\"input\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"none";16;60;4;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};{}),
+        stat(106;"Output tokens";"sum(gdc_telegram_bot_tokens_total{job=\"telegram-consumer\",direction=\"output\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"none";20;60;4;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};{}),
+        ts(111;"Interaction rate by outcome and Premium state";"sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total{job=\"telegram-consumer\"}[15m])) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"{{outcome}} · premium={{premium}}";"reqps";0;64;12;8;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};["lastNotNull"]),
+        ts(112;"Inference request rate by outcome";"sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total{job=\"telegram-consumer\"}[15m])) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"{{outcome}}";"reqps";12;64;12;8;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};["lastNotNull"]),
+        stat(113;"Time since last successful bot inference";"(time() - max(gdc_telegram_bot_last_success_timestamp_seconds{job=\"telegram-consumer\"})) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"s";0;72;8;"Zero would have read as a success just now, the most reassuring possible value for a consumer that never answered. Empty now means the bot exporter is not scraped.";{noValue:"the bot exporter is not scraped"};{colorMode:"value"}),
+        stat(114;"Responses without token usage";"sum(gdc_telegram_bot_usage_missing_total{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"none";8;72;8;"Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal.";{noValue:"the bot exporter is not scraped"};{}),
+        stat(115;"Consumer process";"max(gdc_telegram_bot_up{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)";"none";16;72;8;"Running only while Prometheus scrapes the bot exporter. A stopped bot drops out of the scrape instead of keeping its last state.";{noValue:"the bot exporter is not scraped; the state of the bot is unknown",mappings:[{type:"value",options:{"0":{text:"Stopped",color:"red",index:0},"1":{text:"Running",color:"green",index:1}}}]};{colorMode:"background"}),
+        row(260;"Escrow spend";76),
+        (stat(121;"Nonces per inference";"sum by (gateway) (devshard_accounting_assigned_nonces) / sum by (gateway) (devshard_accounting_disposition{disposition=\"finished_used\"})";"none";0;77;4;"Nonces each gateway assigned in its current escrow per nonce that produced a used result. Both counts restart when the gateway rotates its escrow.";{noValue:"no gateway reports nonce accounting",decimals:2};{}) | .targets[0].legendFormat="{{gateway}}"),
+        (stat(122;"Burned nonces";"sum by (gateway) (devshard_accounting_disposition{disposition=\"ghost\"}) or 0 * sum by (gateway) (devshard_accounting_assigned_nonces)";"none";4;77;4;"Nonces committed in the current escrow and never sent to a host: paid, with no inference behind them. The count restarts at rotation.";{noValue:"no gateway reports nonce accounting"};{}) | .targets[0].legendFormat="{{gateway}}"),
+        stat(123;"Cost per nonce";"(sum(gdc_chain_escrow_payout_ngonka) + sum(gdc_chain_escrow_fees_ngonka)) / sum(gdc_chain_escrow_settled_nonces)";"none";8;77;4;"Host payout plus nonce fees divided by the nonces paid, over every settled escrow on the chain.";{noValue:"no escrow has been settled yet",unit:"suffix: ngonka",decimals:0};{}),
+        (stat(124;"Cost per inference";"(sum by (gateway) (devshard_accounting_assigned_nonces) / sum by (gateway) (devshard_accounting_disposition{disposition=\"finished_used\"})) * on() group_left() ((sum(gdc_chain_escrow_payout_ngonka) + sum(gdc_chain_escrow_fees_ngonka)) / sum(gdc_chain_escrow_settled_nonces))";"none";12;77;4;"Cost per nonce times the nonces each gateway spends per used result. An estimate that follows the current escrow of each gateway.";{noValue:"no escrow has been settled yet, or no gateway reports nonce accounting",unit:"suffix: ngonka",decimals:0};{}) | .targets[0].legendFormat="{{gateway}}"),
+        (stat(125;"Escrows created (24h)";"sum by (creator) (gdc_chain_escrows_created_recent{window=\"24h\"})";"none";16;77;4;"Escrows each creator wallet opened in the last day, by block time.";{noValue:"the chain poller reports no escrow creation"};{}) | .targets[0].legendFormat="{{creator}}"),
+        (stat(126;"Unsettled escrows";"sum by (creator) (gdc_chain_escrows_open)";"none";20;77;4;"Escrows created and not settled. Their amount stays held until settlement.";{noValue:"the chain poller reports no escrow creation"};{}) | .targets[0].legendFormat="{{creator}}"),
+        ts(127;"Escrows created per hour";"sum by (creator) (gdc_chain_escrows_created_recent{window=\"1h\"})";"{{creator}}";"none";0;81;8;8;"Escrows each creator wallet opened in the past hour, by block time. A gateway opens a new escrow when the current one nears max_nonce or its epoch ends.";{noValue:"the chain poller reports no escrow creation"};["lastNotNull","max"]),
+        ts(128;"Held in unsettled escrows";"gdc_chain_escrow_locked_ngonka";"{{creator}}";"short";8;81;8;8;"Amount of the escrows not yet settled per creator wallet, in ngonka.";{noValue:"the chain poller reports no unsettled escrow"};["lastNotNull"]),
+        ts(129;"Creator wallet balance";"gdc_chain_escrow_creator_balance_ngonka";"{{creator}}";"short";16;81;8;8;"ngonka left in each wallet allowed to create escrows. Each new escrow takes its amount from here.";{noValue:"the chain poller reports no creator wallet"};["lastNotNull","min"])
       ])
     end
   ' >"$output"
@@ -260,6 +294,6 @@ for board in gdc-network gdc-inference gdc-overview gdc-chain; do
 done
 jq -e '.uid == "gdc-network" and (.panels | length >= 20)' "$HERE/dashboards/gdc-network.json" >/dev/null
 jq -e '.uid == "gdc-inference" and (.panels | length >= 20)' "$HERE/dashboards/gdc-inference.json" >/dev/null
-jq -e '.uid == "gdc-overview" and (.panels | length >= 14)' "$HERE/dashboards/gdc-overview.json" >/dev/null
+jq -e '.uid == "gdc-overview" and (.panels | length >= 20) and (.templating.list | map(.name) == ["host", "gpu"])' "$HERE/dashboards/gdc-overview.json" >/dev/null
 jq -e '.uid == "gdc-chain" and (.panels | length >= 20)' "$HERE/dashboards/gdc-chain.json" >/dev/null
 printf 'READY generated gdc-network, gdc-inference, gdc-overview and gdc-chain dashboards\n'

@@ -83,6 +83,7 @@ type SiteConfig = {
   grafanaNetwork?: string,
   grafanaInference: string,
   grafanaChain?: string,
+  grafanaOverview?: string,
   statusBase?: string,
   bootstrapOrigin?: string,
   publicBootstrap?: boolean,
@@ -362,6 +363,8 @@ function configureNetwork(): void {
   $("grafana-network").href = cfg.grafanaNetwork || cfg.grafana || "#";
   $("grafana-inference").href = cfg.grafanaInference || "#";
   $("grafana-chain").href = cfg.grafanaChain || "#";
+  // A site config rendered before this link existed keeps the committed URL.
+  if (cfg.grafanaOverview) $("grafana-overview").href = cfg.grafanaOverview;
   const source = $("network-source");
   if (source) source.textContent = "LIVE NETWORK";
   const networkHeading = document.querySelector("#network .section-title h2");

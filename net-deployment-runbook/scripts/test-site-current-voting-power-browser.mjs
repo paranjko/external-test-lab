@@ -65,6 +65,7 @@ const configObject = {
   grafanaNetwork: "/",
   grafanaInference: "/",
   grafanaChain: "/",
+  grafanaOverview: "/",
   statusBase: "/preview/215/status",
   gatewayNode: "node4",
   chainRpcHost: "node0.gonka-dev.net",

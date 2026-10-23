@@ -1930,16 +1930,16 @@
               },
               {
                 "color": "orange",
-                "value": 900
+                "value": 60
               },
               {
                 "color": "red",
-                "value": 3600
+                "value": 300
               }
             ]
           },
           "unit": "s",
-          "noValue": "the consumer exporter is not present"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -1960,12 +1960,12 @@
       },
       "targets": [
         {
-          "expr": "max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"})",
+          "expr": "time() - max(timestamp(gdc_telegram_bot_up{job=\"telegram-consumer\"}))",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Seconds since the consumer last wrote its metrics file. The whole Telegram row below is gated on this."
+      "description": "Seconds since Prometheus last scraped the bot exporter. The whole Telegram row below is gated on that scrape."
     },
     {
       "id": 96,
@@ -2074,7 +2074,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2095,12 +2095,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_unique_users) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_unique_users{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 102,
@@ -2131,7 +2131,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2152,12 +2152,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_unique_users{premium=\"true\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_unique_users{job=\"telegram-consumer\",premium=\"true\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 103,
@@ -2188,7 +2188,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2209,12 +2209,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_conversations) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_conversations{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 104,
@@ -2245,7 +2245,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2266,12 +2266,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_interactions_total) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_interactions_total{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 105,
@@ -2302,7 +2302,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2323,12 +2323,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_tokens_total{direction=\"input\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_tokens_total{job=\"telegram-consumer\",direction=\"input\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 106,
@@ -2359,7 +2359,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2380,12 +2380,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_tokens_total{direction=\"output\"}) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_tokens_total{job=\"telegram-consumer\",direction=\"output\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 111,
@@ -2445,7 +2445,7 @@
             ]
           },
           "unit": "reqps",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2465,12 +2465,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total[15m])) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum by (outcome,premium) (rate(gdc_telegram_bot_interactions_total{job=\"telegram-consumer\"}[15m])) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "legendFormat": "{{outcome}} · premium={{premium}}"
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 112,
@@ -2530,7 +2530,7 @@
             ]
           },
           "unit": "reqps",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2550,12 +2550,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total[15m])) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum by (outcome) (rate(gdc_telegram_bot_inference_requests_total{job=\"telegram-consumer\"}[15m])) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "legendFormat": "{{outcome}}"
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 113,
@@ -2586,7 +2586,7 @@
             ]
           },
           "unit": "s",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2607,12 +2607,12 @@
       },
       "targets": [
         {
-          "expr": "(time() - max(gdc_telegram_bot_last_success_timestamp_seconds)) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "(time() - max(gdc_telegram_bot_last_success_timestamp_seconds{job=\"telegram-consumer\"})) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Zero would have read as a success just now, the most reassuring possible value for a consumer that never answered. Empty now means the exporter is stale."
+      "description": "Zero would have read as a success just now, the most reassuring possible value for a consumer that never answered. Empty now means the bot exporter is not scraped."
     },
     {
       "id": 114,
@@ -2643,7 +2643,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; this value would be a frozen snapshot"
+          "noValue": "the bot exporter is not scraped"
         },
         "overrides": []
       },
@@ -2664,12 +2664,12 @@
       },
       "targets": [
         {
-          "expr": "sum(gdc_telegram_bot_usage_missing_total) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "sum(gdc_telegram_bot_usage_missing_total{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Gated on the freshness of the file the consumer writes. node-exporter republishes that file on every scrape, so without the gate a stopped consumer keeps reporting its last numbers as current."
+      "description": "Read from the bot exporter and shown only while Prometheus scrapes it. The metrics file the bot also writes changes only on activity, so its age is not a liveness signal."
     },
     {
       "id": 115,
@@ -2700,7 +2700,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the consumer exporter is stale; the state of the bot is unknown",
+          "noValue": "the bot exporter is not scraped; the state of the bot is unknown",
           "mappings": [
             {
               "type": "value",
@@ -2738,27 +2738,632 @@
       },
       "targets": [
         {
-          "expr": "max(gdc_telegram_bot_up) and on() (max(time() - node_textfile_mtime_seconds{file=~\".*telegram-bot[.]prom\"}) < 900)",
+          "expr": "max(gdc_telegram_bot_up{job=\"telegram-consumer\"}) and on() (max(up{job=\"telegram-consumer\"}) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "The value comes from a file the consumer writes, which node-exporter republishes on every scrape. Without the freshness gate a stopped consumer reads as running."
+      "description": "Running only while Prometheus scrapes the bot exporter. A stopped bot drops out of the scrape instead of keeping its last state."
     },
     {
-      "id": 99,
-      "type": "text",
-      "title": "Data contract",
+      "id": 260,
+      "type": "row",
+      "title": "Escrow spend",
+      "collapsed": false,
       "gridPos": {
-        "h": 5,
+        "h": 1,
         "w": 24,
         "x": 0,
         "y": 76
       },
+      "panels": []
+    },
+    {
+      "id": 121,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Nonces per inference",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no gateway reports nonce accounting",
+          "decimals": 2
+        },
+        "overrides": []
+      },
       "options": {
-        "content": "**Traffic ready** is the authoritative readiness signal: zero means no verified routed completion is currently available, even when the gateway metrics scrape succeeds. That tile is gated on the age of the readiness observation, shown by **Readiness observation age**: past thirty seconds it stops showing a number instead of freezing on its last one. The gateway began exporting its per-routing request, attempt, win, hidden-failure and first-content counters on 2026-09-22, so a window that reaches further back is empty for them rather than idle. It does export an HTTP-level request counter, but that counts every request the listener sees, including probes and scanner traffic, so it is not a measure of inference. The one counter still missing is the gateway-wide rejection total, so the rejection panels read the participant-scoped one instead. Any panel that can return nothing says so in its body rather than drawing a zero. Most counted requests are cache hits, which are served without a routed completion, so **Requests served** runs well ahead of the routed ones. Every Telegram panel is gated on the age of the file the consumer writes: node-exporter republishes the contents of that file on every scrape, so without the gate a stopped consumer would keep reporting its last numbers as current. **Telegram exporter age** in the Data passport row shows that age. Telegram panels carry aggregate activity and API-reported token counts, with no user identifiers and no message content. Counters start when the gateway process starts, and Prometheus keeps up to 30 days of samples, so a longer window shows only what is stored rather than an empty result. GNK notional value and archive-node SQL are not available, so this board does not fabricate those panels.",
-        "mode": "markdown"
-      }
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (gateway) (devshard_accounting_assigned_nonces) / sum by (gateway) (devshard_accounting_disposition{disposition=\"finished_used\"})",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{gateway}}"
+        }
+      ],
+      "description": "Nonces each gateway assigned in its current escrow per nonce that produced a used result. Both counts restart when the gateway rotates its escrow."
+    },
+    {
+      "id": 122,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Burned nonces",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "no gateway reports nonce accounting"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (gateway) (devshard_accounting_disposition{disposition=\"ghost\"}) or 0 * sum by (gateway) (devshard_accounting_assigned_nonces)",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{gateway}}"
+        }
+      ],
+      "description": "Nonces committed in the current escrow and never sent to a host: paid, with no inference behind them. The count restarts at rotation."
+    },
+    {
+      "id": 123,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Cost per nonce",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix: ngonka",
+          "noValue": "no escrow has been settled yet",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "(sum(gdc_chain_escrow_payout_ngonka) + sum(gdc_chain_escrow_fees_ngonka)) / sum(gdc_chain_escrow_settled_nonces)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Host payout plus nonce fees divided by the nonces paid, over every settled escrow on the chain."
+    },
+    {
+      "id": 124,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Cost per inference",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix: ngonka",
+          "noValue": "no escrow has been settled yet, or no gateway reports nonce accounting",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "(sum by (gateway) (devshard_accounting_assigned_nonces) / sum by (gateway) (devshard_accounting_disposition{disposition=\"finished_used\"})) * on() group_left() ((sum(gdc_chain_escrow_payout_ngonka) + sum(gdc_chain_escrow_fees_ngonka)) / sum(gdc_chain_escrow_settled_nonces))",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{gateway}}"
+        }
+      ],
+      "description": "Cost per nonce times the nonces each gateway spends per used result. An estimate that follows the current escrow of each gateway."
+    },
+    {
+      "id": 125,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Escrows created (24h)",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "the chain poller reports no escrow creation"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (creator) (gdc_chain_escrows_created_recent{window=\"24h\"})",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "Escrows each creator wallet opened in the last day, by block time."
+    },
+    {
+      "id": 126,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Unsettled escrows",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 77
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "the chain poller reports no escrow creation"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "expr": "sum by (creator) (gdc_chain_escrows_open)",
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "Escrows created and not settled. Their amount stays held until settlement."
+    },
+    {
+      "id": 127,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "Escrows created per hour",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 81
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "the chain poller reports no escrow creation"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (creator) (gdc_chain_escrows_created_recent{window=\"1h\"})",
+          "refId": "A",
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "Escrows each creator wallet opened in the past hour, by block time. A gateway opens a new escrow when the current one nears max_nonce or its epoch ends."
+    },
+    {
+      "id": 128,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "Held in unsettled escrows",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 81
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "the chain poller reports no unsettled escrow"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "gdc_chain_escrow_locked_ngonka",
+          "refId": "A",
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "Amount of the escrows not yet settled per creator wallet, in ngonka."
+    },
+    {
+      "id": 129,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "Creator wallet balance",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 81
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "noValue": "the chain poller reports no creator wallet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "gdc_chain_escrow_creator_balance_ngonka",
+          "refId": "A",
+          "legendFormat": "{{creator}}"
+        }
+      ],
+      "description": "ngonka left in each wallet allowed to create escrows. Each new escrow takes its amount from here."
     }
   ],
   "refresh": "15s",
