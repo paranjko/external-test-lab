@@ -16,8 +16,8 @@ file="$out/nodes.tsv"
 host_probe='printf "cpu_pct\t%s\n" "$(vmstat 1 2 | tail -1 | awk "{print 100-\$15}")"
 free -m | awk "/^Mem:/{printf \"mem_used_mib\t%s/%s\n\", \$3, \$2}"
 printf "load1\t%s\n" "$(cut -d" " -f1 /proc/loadavg)"
-command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits |
-  awk -F", " "{printf \"gpu%s_util_pct\t%s\ngpu%s_mem_mib\t%s/%s\n\", \$1, \$2, \$1, \$3, \$4}"'
+command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,temperature.gpu,clocks.sm,clocks_throttle_reasons.active --format=csv,noheader,nounits |
+  awk -F", " "{printf \"gpu%s_util_pct\t%s\ngpu%s_mem_mib\t%s/%s\ngpu%s_temp_c\t%s\ngpu%s_sm_mhz\t%s\ngpu%s_throttle\t%s\n\", \$1, \$2, \$1, \$3, \$4, \$1, \$5, \$1, \$6, \$1, \$7}"'
 gw_probe='docker stats --no-stream --format "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" | awk -F"\t" "/park-gateway|gateway/{printf \"%s_cpu\t%s\n%s_mem\t%s\n\", \$1, \$2, \$1, \$3}"'
 
 sample() {
