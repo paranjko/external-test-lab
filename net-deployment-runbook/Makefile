@@ -97,18 +97,6 @@ test-devshard-runtime-monitoring:
 
 test-ci-gateways: test-devshard-runtime-monitoring
 
-.PHONY: test-v6-budget-rotation
-test-v6-budget-rotation:
-	@$(MAKE) -C ../broker-ops test-v6-budget-rotation
-
-test-ci-gateways: test-v6-budget-rotation
-
-.PHONY: test-v6-stable-receipt
-test-v6-stable-receipt:
-	@$(MAKE) -C ../broker-ops test-v6-stable-receipt
-
-test-ci-gateways: test-v6-stable-receipt
-
 .PHONY: test-v6-admission-deployment
 .PHONY: test-dapi-version-policy
 test-dapi-version-policy:

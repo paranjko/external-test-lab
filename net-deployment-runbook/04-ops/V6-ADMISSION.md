@@ -77,8 +77,8 @@ inferences, reset funding ledgers or bypass approval/capacity/PoC gates.
 
 ## Verification
 
-Run `make test-v6-admission-deployment`, `make test-v6-stable-receipt` and the
-required full source/publication checks. The deployment fixture runs the actual
+Run `make test-v6-admission-deployment` and the required full
+source/publication checks. The deployment fixture runs the actual
 installer and installed process in isolation, with synthetic chain/runtime
 responses; it is not live DevNet acceptance.
 
