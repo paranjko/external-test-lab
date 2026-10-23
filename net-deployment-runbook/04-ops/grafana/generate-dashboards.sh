@@ -41,8 +41,6 @@ render() {
        + (if $desc == "" then {} else {description:$desc} end));
     def table($id;$title;$expr;$x;$y;$w;$h): table($id;$title;$expr;$x;$y;$w;$h;"";{});
     def row($id;$title;$y): {id:$id,type:"row",title:$title,collapsed:false,gridPos:{h:1,w:24,x:0,y:$y},panels:[]};
-    def textpanel($id;$title;$markdown;$y):
-      {id:$id,type:"text",title:$title,gridPos:{h:5,w:24,x:0,y:$y},options:{content:$markdown,mode:"markdown"}};
     # $extra shallow-replaces top-level board keys; it does not deep-merge.
     def base($uid;$title;$from;$panels;$extra):
       {annotations:{list:[]},editable:false,fiscalYearStartMonth:0,graphTooltip:1,id:null,
@@ -97,9 +95,7 @@ render() {
         (table(47;"Collector freshness";"max by (file) (time() - node_textfile_mtime_seconds)";8;58;8;7;"Seconds since each textfile was last written. A value that keeps growing is a collector that stopped while its last values are still being served.";{noValue:"no collector file is exported",unit:"s"})
           | .transformations=[{id:"organize",options:{excludeByName:{Time:true},renameByName:{file:"File",Value:"Age"}}}]),
         (table(48;"Scraped hosts without GPU telemetry";"count by (host) (up{job=\"host\"} == 1) unless on(host) count by (host) (gdc_nvidia_available)";16;58;8;7;"Hosts that answer the host scrape but export no NVIDIA telemetry. Empty means either every scraped host reports it, or no host target is configured.";{noValue:"no row: every scraped host reports NVIDIA telemetry, or none is configured"})
-          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,job:true,instance:true},renameByName:{host:"Host"}}}]),
-
-        textpanel(49;"Data contract";"Every panel here either shows a measured value or says in its body why it has none. Emptiness has four causes on this board: a metric this build never exports, a collector that stopped writing its file, a Host that is not in the monitoring inventory, and a scrape that is failing. The **Collection** row names the last three. The board measures only what is scraped: a validator that is not a scrape target appears in no host, CPU, memory, disk or GPU panel, and **Validators beyond the monitored set** counts how many are missing. Prometheus keeps up to 30 days of samples, so a window longer than the stored history shows only what is kept, not a fault. Archive-only epoch economics, rewards and historical transaction decoding are not collected and are not invented here.";65)
+          | .transformations=[{id:"organize",options:{excludeByName:{Time:true,Value:true,job:true,instance:true},renameByName:{host:"Host"}}}])
       ])
     elif $kind == "chain" then
       def bar($id;$title;$expr;$legend;$unit;$x;$y;$w;$h;$desc;$fc):
