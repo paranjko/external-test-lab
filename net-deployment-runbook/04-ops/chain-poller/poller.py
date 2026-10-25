@@ -375,12 +375,19 @@ def poll_gateway(name, url):
         log.debug("gateway %s: %s", name, e)
 
 
-def apply_gateway_status(name, st):
-    gw_up.labels(name).set(1)
-    for g in (gw_devshards, gw_error):
+def drop_gateway(gauges, name):
+    for g in gauges:
         for labels in [m for m in list(g._metrics) if m[0] == name]:
             g.remove(*labels)
+
+
+def apply_gateway_status(name, st):
+    gw_up.labels(name).set(1)
+    drop_gateway((gw_devshards, gw_error, gw_avail, gw_hosts, gw_runtimes, gw_inflight, gw_limit), name)
     phases = {}
+    if "devshards" not in st and st.get("escrow_id"):
+        # v4 gateways report their single escrow instead of a devshard list
+        phases[st.get("phase") or "unknown"] = 1
     for d in st.get("devshards") or []:
         ph = d.get("phase") or "unknown"
         phases[ph] = phases.get(ph, 0) + 1
@@ -391,13 +398,16 @@ def apply_gateway_status(name, st):
     if err:
         kind = err.get("type") if isinstance(err, dict) else err
         gw_error.labels(name, str(kind or "error")).set(1)
-    cap, lim = st.get("capacity") or {}, st.get("limiter") or {}
-    gw_avail.labels(name).set(float(cap.get("available_percent", 0) or 0))
-    gw_hosts.labels(name, "available").set(int(cap.get("available_host_count", 0) or 0))
-    gw_hosts.labels(name, "unavailable").set(int(cap.get("unavailable_host_count", 0) or 0))
-    gw_runtimes.labels(name).set(int(st.get("runtimes", 0) or 0))
-    gw_inflight.labels(name).set(int(lim.get("in_flight_requests", 0) or 0))
-    gw_limit.labels(name).set(int(lim.get("effective_max_concurrent_requests", 0) or 0))
+    cap, lim = st.get("capacity"), st.get("limiter")
+    if isinstance(cap, dict):
+        gw_avail.labels(name).set(float(cap.get("available_percent", 0) or 0))
+        gw_hosts.labels(name, "available").set(int(cap.get("available_host_count", 0) or 0))
+        gw_hosts.labels(name, "unavailable").set(int(cap.get("unavailable_host_count", 0) or 0))
+    if "runtimes" in st:
+        gw_runtimes.labels(name).set(int(st.get("runtimes") or 0))
+    if isinstance(lim, dict):
+        gw_inflight.labels(name).set(int(lim.get("in_flight_requests", 0) or 0))
+        gw_limit.labels(name).set(int(lim.get("effective_max_concurrent_requests", 0) or 0))
 
 
 def task_gateway():
