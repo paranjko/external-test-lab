@@ -9,6 +9,8 @@ Optional inventory settings:
 
 - `GDC_MONITORING_ONLY_NODES`: space-separated aliases with host/container
   metrics but no consensus or participant-endpoint targets.
+- `GDC_MONITORING_NO_GPU_HOSTS`: space-separated aliases whose GPU telemetry
+  is dropped; their host metrics stay.
 - `GDC_MONITORING_RETIRED_HOSTS`: aliases explicitly removed from JOIN discovery.
   A retired alias must not also appear in the configured inventory.
 - `GDC_GATEWAY_OBSERVATION_TARGETS`: JSON array of `{id,node,port}` entries.
