@@ -64,9 +64,9 @@ grep -Fq 'reverse_proxy 127.0.0.1:18100' "$ROOT/04-ops/edge-node/Caddyfile"
 dashboard="$ROOT/04-ops/grafana/dashboards/gdc-inference.json"
 jq -e '
   ([.panels[] | select(.id == 51) | .targets[0].expr] == ["min(up{job=\"gateway\"})"])
-  and ([.panels[] | select(.id == 52) | .targets[0].expr] == ["sum by (gateway) (devshard_gateway_requests_total)"])
-  and ([.panels[] | select(.id == 55) | .targets[0].expr] == ["max by (gateway) (devshard_gateway_capacity_scale) * 100"])
-  and ([.panels[] | select(.id == 57) | .targets[0].expr] == ["sum by (route) (gdc_gateway_route_requests_total)"])
+  and ([.panels[] | select(.id == 52) | .targets[0].expr] == ["sum by (gateway) (rate(devshard_gateway_requests_total[15m])) * 60"])
+  and ([.panels[] | select(.id == 55) | .targets[0].expr] == ["max by (gateway) (devshard_gateway_capacity_scale) * 100 and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)"])
+  and ([.panels[] | select(.id == 57) | .targets[0].expr] == ["sum by (reason) (increase(devshard_gateway_requests_total{outcome!=\"success\"}[15m]))"])
   and ([.panels[] | select(.id == 61) | .targets[0].expr] == ["sum by (gateway,outcome) (rate(devshard_gateway_requests_total[15m]))"])
   and ([.panels[] | select(.id == 91) | .targets[0].expr] == ["(time() - min(timestamp(up{job=\"gateway\"}) and up{job=\"gateway\"} == 1)) and on() (min(up{job=\"gateway\"}) == 1)"])
 ' "$dashboard" >/dev/null

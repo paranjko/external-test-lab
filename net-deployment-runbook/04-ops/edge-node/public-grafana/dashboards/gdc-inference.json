@@ -116,7 +116,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Requests served",
+      "title": "Requests per minute",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -138,7 +138,8 @@
             ]
           },
           "unit": "none",
-          "noValue": "the gateway has counted no request yet"
+          "noValue": "the gateway was not scraped",
+          "decimals": 1
         },
         "overrides": []
       },
@@ -159,12 +160,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (gateway) (devshard_gateway_requests_total)",
+          "expr": "sum by (gateway) (rate(devshard_gateway_requests_total[15m])) * 60",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{gateway}}"
         }
       ],
-      "description": "Chat requests each gateway has counted since it started, by user-visible outcome. A cache hit counts here without a routed completion; separate A/B values must not be added by a proxy scrape."
+      "description": "Chat requests per minute each gateway handled over the last fifteen minutes, every outcome counted."
     },
     {
       "id": 53,
@@ -195,7 +197,7 @@
             ]
           },
           "unit": "none",
-          "noValue": "the gateway limiter was not scraped"
+          "noValue": "no gateway has an active DevShard"
         },
         "overrides": []
       },
@@ -216,12 +218,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (gateway) (devshard_gateway_inflight_requests)",
+          "expr": "sum by (gateway) (devshard_gateway_inflight_requests) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{gateway}}"
         }
       ],
-      "description": "A zero is a measured idle gateway. Separate values preserve which limiter was scraped; empty means no gateway limiter was scraped."
+      "description": "Requests each active gateway is serving right now. Gateways without an active DevShard are hidden."
     },
     {
       "id": 54,
@@ -230,7 +233,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Traffic ready",
+      "title": "Success rate (15m)",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -246,18 +249,27 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 90
+              },
+              {
+                "color": "green",
+                "value": 99
               }
             ]
           },
-          "unit": "none",
-          "noValue": "the readiness probe is missing or stale; this value would be a frozen snapshot"
+          "unit": "percent",
+          "noValue": "no gateway received a request in fifteen minutes",
+          "decimals": 1
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -273,12 +285,13 @@
       },
       "targets": [
         {
-          "expr": "max(gdc_gateway_readiness_state{state=\"TRAFFIC_READY\"}) and on() (time() - max(gdc_gateway_readiness_observed_timestamp_seconds) < 30)",
+          "expr": "100 * sum by (gateway) (rate(devshard_gateway_requests_total{outcome=\"success\"}[15m])) / (sum by (gateway) (rate(devshard_gateway_requests_total[15m])) > 0)",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{gateway}}"
         }
       ],
-      "description": "One when a verified routed completion is currently available. Gated on the age of the probe observation, so a stopped probe stops the tile instead of freezing it."
+      "description": "Share of requests each gateway answered successfully over fifteen minutes. Empty for a gateway with no requests."
     },
     {
       "id": 55,
@@ -303,18 +316,26 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 90
               }
             ]
           },
           "unit": "percent",
-          "noValue": "the gateway was not scraped"
+          "noValue": "no gateway has an active DevShard"
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -330,12 +351,13 @@
       },
       "targets": [
         {
-          "expr": "max by (gateway) (devshard_gateway_capacity_scale) * 100",
+          "expr": "max by (gateway) (devshard_gateway_capacity_scale) * 100 and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{gateway}}"
         }
       ],
-      "description": "Share of baseline capacity each gateway can currently route to. Separate values preserve a degraded A/B target; empty means that gateway was not scraped."
+      "description": "Share of baseline capacity each active gateway can route to. Gateways without an active DevShard are hidden."
     },
     {
       "id": 56,
@@ -584,7 +606,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Public route entries",
+      "title": "Failed requests (15m)",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -606,7 +628,8 @@
             ]
           },
           "unit": "none",
-          "noValue": "no public route counter was scraped"
+          "noValue": "no request failed in fifteen minutes",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -627,12 +650,13 @@
       },
       "targets": [
         {
-          "expr": "sum by (route) (gdc_gateway_route_requests_total)",
+          "expr": "sum by (reason) (increase(devshard_gateway_requests_total{outcome!=\"success\"}[15m]))",
           "refId": "A",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{reason}}"
         }
       ],
-      "description": "Requests accepted by the public stable, A and B entry routes. These edge counters prove entrypoint movement only and must not be added to native gateway request counters."
+      "description": "Requests the gateways failed in fifteen minutes, by reason."
     },
     {
       "id": 63,
@@ -1303,12 +1327,12 @@
         {
           "expr": "devshard_gateway_capacity_total_weight",
           "refId": "A",
-          "legendFormat": "effective"
+          "legendFormat": "{{gateway}} effective"
         },
         {
           "expr": "devshard_gateway_capacity_baseline_weight",
           "refId": "B",
-          "legendFormat": "baseline"
+          "legendFormat": "{{gateway}} baseline"
         }
       ],
       "description": "Both weights carry the same labels, so joining them with or showed only the effective one."
@@ -1974,7 +1998,7 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Readiness observation age",
+      "title": "Active gateways",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -1992,24 +2016,16 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "orange",
-                "value": 30
-              },
-              {
-                "color": "red",
-                "value": 120
               }
             ]
           },
-          "unit": "s",
-          "noValue": "the readiness probe has never written an observation"
+          "unit": "none",
+          "noValue": "no gateway reports an active DevShard"
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
+        "colorMode": "none",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -2025,12 +2041,12 @@
       },
       "targets": [
         {
-          "expr": "time() - max(gdc_gateway_readiness_observed_timestamp_seconds)",
+          "expr": "count(max by (gateway) (gdc_chain_gateway_working) == 1)",
           "refId": "A",
           "instant": true
         }
       ],
-      "description": "Seconds since the readiness probe last observed the gateway. Traffic ready is gated on this: past thirty seconds that tile stops showing a number rather than freezing on its last one."
+      "description": "Gateways that report an active DevShard in their status."
     },
     {
       "id": 250,
