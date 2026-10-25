@@ -2,9 +2,10 @@
 """One row per step of remote-ladder.sh, with the stop verdict against the previous good step.
 
 Usage: remote-ladder-table.py <ladder output directory> [--errors]
+       remote-ladder-table.py <run directory> --windows <seconds>
 Stop rules: errors above 2 %, p95 above twice the previous step, or throughput up by less than 5 %.
 """
-import collections, json, pathlib, re, sys
+import collections, datetime, json, pathlib, re, sys
 
 ERROR_LIMIT, P95_FACTOR, RPS_GAIN = 0.02, 2.0, 1.05
 
@@ -39,8 +40,30 @@ def step(d):
     }
 
 
+def windows(run, seconds):
+    rows = [json.loads(l) for l in (run / "requests.jsonl").open()]
+    when = lambda r: datetime.datetime.strptime(r["started_at"][:19], "%Y-%m-%dT%H:%M:%S")
+    start = min(map(when, rows))
+    groups = collections.defaultdict(list)
+    for r in rows:
+        groups[int((when(r) - start).total_seconds() // seconds)].append(r)
+    print("window_start_utc\trequests\tok\trps\tp50_s\tp95_s\terrors_pct\terror_codes")
+    for i in sorted(groups):
+        g = groups[i]
+        ok = [r for r in g if r["outcome"] not in ("error", "dropped_by_generator")]
+        lat = sorted(r["duration"] / 1e9 for r in ok)
+        q = lambda p: lat[int((len(lat) - 1) * p)] if lat else 0.0
+        codes = collections.Counter(kind(r) for r in g if r["outcome"] == "error")
+        print(f'{(start + datetime.timedelta(seconds=i * seconds)).isoformat()}Z\t{len(g)}\t{len(ok)}\t{len(ok) / seconds:.2f}'
+              f'\t{q(.5):.1f}\t{q(.95):.1f}\t{100 * (1 - len(ok) / len(g)):.2f}'
+              f'\t{" ".join(f"{k}:{v}" for k, v in sorted(codes.items())) or "-"}')
+
+
 def main():
     root = pathlib.Path(sys.argv[1])
+    if "--windows" in sys.argv:
+        windows(root, int(sys.argv[sys.argv.index("--windows") + 1]))
+        return
     steps = [step(d) for d in sorted(root.glob("w[0-9][0-9][0-9]")) if (d / "summary.json").exists()]
     if "--errors" in sys.argv:
         for s in steps:
