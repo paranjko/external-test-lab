@@ -4,7 +4,8 @@
 # next PoC; a PoC or cPoC during the run stops it, keeps the partial artifacts and starts the run again.
 # Usage: remote-soak.sh <gonka-devshard-contrib checkout> <output directory>
 # Env: GONKA_BASE, GONKA_API_KEY, LOAD_DATASET; WORKERS (32), MINUTES (60), SETTLE (300), ATTEMPTS (3),
-# REQUEST_TIMEOUT (3m), POLL (15), CHAIN_API (https://node2.gonka-dev.net/chain-api), POC_BLOCKS (130), BLOCK_SECONDS (5.5).
+# MARGIN (2, minutes left before the next PoC), REQUEST_TIMEOUT (3m), POLL (15),
+# CHAIN_API (https://node2.gonka-dev.net/chain-api), POC_BLOCKS (130), BLOCK_SECONDS (5.5).
 set -euo pipefail
 
 gonka=${1:?gonka-devshard-contrib checkout with devshard/testenv/cmd/wrap-load}
@@ -40,7 +41,7 @@ chain_state() {
   else echo "clear $next"; fi
 }
 
-need_blocks=$(awk -v m="$minutes" -v b="$block_seconds" 'BEGIN { printf "%d", (m + 5) * 60 / b + 20 }')
+need_blocks=$(awk -v m="$minutes" -v x="${MARGIN:-2}" -v b="$block_seconds" 'BEGIN { printf "%d", (m + x) * 60 / b + 20 }')
 last_blocked=0
 wait_window() {
   local state next said=""
