@@ -178,6 +178,8 @@ for layout in flat legacy; do
     cmp "$tmp/render/prometheus.yml" /srv/dai/ops/prometheus/prometheus.yml
     cmp "$tmp/render/chain-poller/config.yml" /srv/dai/ops/chain-poller/config.yml
     test -s /srv/dai/ops/compose.chain-poller.yaml
+    test -s /srv/dai/ops/compose.loki.yaml
+    cmp "$ROOT/04-ops/loki/config.yaml" /srv/dai/ops/loki/config.yaml
     test -s /srv/dai/ops/prometheus/targets/join/retained.json
     grep -Fxq 'retained host' "$host_root/monitoring-test-marker"
   done

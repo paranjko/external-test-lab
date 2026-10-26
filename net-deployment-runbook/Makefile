@@ -730,7 +730,16 @@ test-gateway-observation-runtime:
 test-monitoring-target-reconcile:
 	bash scripts/test-monitoring-target-reconcile.sh
 
-test-monitoring-firewall-deployment: test-monitoring-target-reconcile test-gateway-observation test-gateway-observation-runtime
+test-log-intake:
+	bash scripts/test-log-intake.sh
+
+test-log-intake-runtime:
+	bash scripts/test-log-intake-runtime.sh
+
+test-log-store:
+	bash scripts/test-log-store.sh
+
+test-monitoring-firewall-deployment: test-monitoring-target-reconcile test-gateway-observation test-gateway-observation-runtime test-log-intake test-log-intake-runtime test-log-store
 	@./scripts/test-monitoring-firewall-deployment.sh
 
 test-install-inferenced:

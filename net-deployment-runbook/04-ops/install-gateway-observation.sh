@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-# Patch only the observation block in the currently running participant edge.
+# Patch only one named monitoring block in the currently running participant edge.
 # Both a single-file bind mount and a directory bind mount are supported.
 host="${1:?public host required}"
-fragment="${2:?rendered observation fragment required}"
+fragment="${2:?rendered fragment required}"
+block="${3:-gateway observation}"
 [[ "$host" =~ ^[A-Za-z0-9.-]+$ && -s "$fragment" && ! -L "$fragment" ]] || exit 2
+block_pattern='^[a-z][a-z ]{2,40}$'
+[[ "$block" =~ $block_pattern ]] || { echo 'invalid monitoring block name' >&2; exit 2; }
 matches=()
 while IFS= read -r id; do
   if docker inspect "$id" | jq -e --arg host "PUBLIC_HOST=$host" '.[0].Config.Env | index($host) != null' >/dev/null; then
@@ -28,22 +31,27 @@ flock -n 9 || { echo 'another monitoring route update is active' >&2; exit 1; }
 backup="$(mktemp -d "${source_path%/*}/.gdc-monitoring.XXXXXX")"
 chmod 700 "$backup"
 cp -p "$source_path" "$backup/Caddyfile.before"
-awk -v fragment="$fragment" '
-  $0 == "  # BEGIN GDC gateway observation" { skip=1; next }
-  $0 == "  # END GDC gateway observation" { skip=0; next }
+# An existing block is replaced where it stands, so other named blocks keep their order.
+present="$(grep -Fxc "  # BEGIN GDC $block" "$source_path" || true)"
+awk -v fragment="$fragment" -v begin="  # BEGIN GDC $block" -v end="  # END GDC $block" -v present="$present" '
+  function emit() {
+    print begin
+    while ((getline line < fragment) > 0) print line
+    close(fragment)
+    print end
+  }
+  $0 == begin { skip=1; emit(); next }
+  $0 == end { skip=0; next }
   skip { next }
   { print }
   $0 == "  route {" {
     count++
-    print "  # BEGIN GDC gateway observation"
-    while ((getline line < fragment) > 0) print line
-    close(fragment)
-    print "  # END GDC gateway observation"
+    if (present == 0) emit()
   }
-  END { if (count != 1 || skip) exit 2 }
+  END { if (count != 1 || skip || present > 1) exit 2 }
 ' "$source_path" >"$backup/Caddyfile.after"
 if cmp -s "$source_path" "$backup/Caddyfile.after"; then
-  printf 'PASS observation routes unchanged host=%s receipt=%s\n' "$host" "$backup"
+  printf 'PASS %s routes unchanged host=%s receipt=%s\n' "$block" "$host" "$backup"
   exit 0
 fi
 # Do not print Caddy diagnostics: existing routes may contain credentials.
@@ -58,4 +66,4 @@ if ! docker exec -i "$container" caddy reload --adapter caddyfile --config /dev/
   echo "Caddy reload failed; original configuration restored; receipt=$backup" >&2
   exit 1
 fi
-printf 'PASS observation routes reloaded host=%s container=%s receipt=%s\n' "$host" "$container" "$backup"
+printf 'PASS %s routes reloaded host=%s container=%s receipt=%s\n' "$block" "$host" "$container" "$backup"
