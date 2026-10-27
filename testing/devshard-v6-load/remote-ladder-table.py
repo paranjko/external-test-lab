@@ -3,6 +3,7 @@
 
 Usage: remote-ladder-table.py <ladder output directory> [--errors]
        remote-ladder-table.py <run directory> --windows <seconds>
+       remote-ladder-table.py <remote-switch.sh output directory> --runs
 Stop rules: errors above 2 %, p95 above twice the previous step, or throughput up by less than 5 %.
 """
 import collections, datetime, json, pathlib, re, sys
@@ -17,7 +18,7 @@ def kind(r):
     return "timeout" if re.search(r"Timeout|deadline exceeded", e) else "noresp"
 
 
-def step(d):
+def stats(d):
     summary = json.loads((d / "summary.json").read_text())
     rows = [json.loads(l) for l in (d / "requests.jsonl").open()]
     sent = [r for r in rows if r["outcome"] != "dropped_by_generator"]
@@ -27,7 +28,7 @@ def step(d):
     q = lambda p: lat[int((len(lat) - 1) * p)] if lat else 0.0
     seconds = summary["duration"] / 1e9 or 1
     return {
-        "workers": int(d.name[1:]),
+        "name": d.name,
         "start": summary["started_at"][:19] + "Z",
         "requests": len(rows),
         "ok": len(ok),
@@ -64,11 +65,20 @@ def main():
     if "--windows" in sys.argv:
         windows(root, int(sys.argv[sys.argv.index("--windows") + 1]))
         return
-    steps = [step(d) for d in sorted(root.glob("w[0-9][0-9][0-9]")) if (d / "summary.json").exists()]
+    if "--runs" in sys.argv:
+        print("run\tstart_utc\trequests\tok\trps\tp50_s\tp95_s\tp99_s\terrors_pct\terror_codes")
+        for d in sorted(root.glob("[A-Z]-*")):
+            if (d / "summary.json").exists():
+                s = stats(d)
+                codes = " ".join(f"{k}:{v}" for k, v in sorted(s["codes"].items())) or "-"
+                print(f'{s["name"]}\t{s["start"]}\t{s["requests"]}\t{s["ok"]}\t{s["rps"]:.2f}\t{s["p50"]:.1f}'
+                      f'\t{s["p95"]:.1f}\t{s["p99"]:.1f}\t{100 * s["err"]:.2f}\t{codes}')
+        return
+    steps = [dict(stats(d), workers=int(d.name[1:])) for d in sorted(root.glob("w[0-9][0-9][0-9]")) if (d / "summary.json").exists()]
     if "--errors" in sys.argv:
         for s in steps:
             for m, n in s["messages"].most_common(5):
-                print(f'w{s["workers"]}\t{n}\t{m}')
+                print(f'{s["name"]}\t{n}\t{m}')
         return
     print("workers\tstart_utc\trequests\tok\trps\tp50_s\tp95_s\tp99_s\terrors_pct\terror_codes\tverdict")
     prev = None
