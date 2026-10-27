@@ -9,6 +9,8 @@ api="${ids[0]}"
 deploy="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$api")"
 [[ "$deploy" == /srv/dai/deploy || "$deploy" =~ ^/srv/dai/deploy/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 1
 [[ -d "$deploy" && ! -L "$deploy" && -f "$deploy/.env" && ! -L "$deploy/.env" ]] || exit 1
+compose_file="$deploy/compose.yaml"
+[[ -f "$compose_file" && ! -L "$compose_file" ]] || exit 1
 files="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$api")"
 compose=(docker compose --project-directory "$deploy" --env-file "$deploy/.env")
 IFS=, read -ra configs <<<"$files"
@@ -17,8 +19,24 @@ for file in "${configs[@]}"; do
   compose+=(-f "$file")
 done
 [[ "${#configs[@]}" -gt 0 && -f /etc/gonka/host.env && ! -L /etc/gonka/host.env ]] || exit 1
-grep -Fq 'DAPI_API__POC_CALLBACK_URL' "$deploy/compose.yaml"
-grep -Fq 'ML_CALLBACK_BIND' "$deploy/compose.yaml"
+json_compose=false
+if jq -e . "$compose_file" >/dev/null 2>&1; then
+  json_compose=true
+  jq -e '
+    .services.api as $api |
+    ($api.environment | type == "object") and
+    ($api.environment.DAPI_API__POC_CALLBACK_URL | type == "string") and
+    ($api.ports | type == "array") and
+    ([$api.ports[] | select(.target == 9100 and (.published | tostring) == "9100" and
+      (.protocol // "tcp") == "tcp" and (.host_ip == "127.0.0.1" or .host_ip == "0.0.0.0"))] | length) == 1
+  ' "$compose_file" >/dev/null || {
+    echo 'Unsupported normalized Compose JSON callback shape; no configuration changed' >&2
+    exit 1
+  }
+else
+  grep -Fq 'DAPI_API__POC_CALLBACK_URL' "$compose_file" || exit 1
+  grep -Fq 'ML_CALLBACK_BIND' "$compose_file" || exit 1
+fi
 exec 9>"$deploy/.ml-callback.lock"
 flock -n 9 || { echo 'Another callback configuration is running' >&2; exit 1; }
 peers=/etc/gonka/ml-callback-peers
@@ -34,24 +52,51 @@ install -m 0755 "$firewall" /usr/local/sbin/gonka-firewall
 desired="DAPI_API__POC_CALLBACK_URL=http://$callback_ip:9100"
 current="$(docker inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "DAPI_API__POC_CALLBACK_URL"}}{{println .}}{{end}}{{end}}' "$api")"
 binding="$(docker inspect --format '{{range (index .HostConfig.PortBindings "9100/tcp")}}{{println .HostIp}}{{end}}' "$api")"
-if grep -Fxq "$desired" "$deploy/.env" && grep -Fxq 'ML_CALLBACK_BIND=0.0.0.0' "$deploy/.env" && [[ "$current" == "$desired" && "$binding" == 0.0.0.0 ]]; then
+compose_callback=''
+compose_binding=''
+if [[ "$json_compose" == true ]]; then
+  compose_callback="$(jq -r '.services.api.environment.DAPI_API__POC_CALLBACK_URL' "$compose_file")"
+  compose_binding="$(jq -r '[.services.api.ports[] | select(.target == 9100 and (.published | tostring) == "9100" and (.protocol // "tcp") == "tcp")][0].host_ip' "$compose_file")"
+  [[ "${desired#*=}" == "$compose_callback" && "$compose_binding" == 0.0.0.0 ]] &&
+    compose_matches=true || compose_matches=false
+else
+  grep -Fq 'ML_CALLBACK_BIND' "$compose_file" || exit 1
+  compose_matches=true
+fi
+if [[ "$compose_matches" == true ]] && grep -Fxq "$desired" "$deploy/.env" && grep -Fxq 'ML_CALLBACK_BIND=0.0.0.0' "$deploy/.env" && [[ "$current" == "$desired" && "$binding" == 0.0.0.0 ]]; then
   echo 'READY callback configuration already active'
   exit 0
 fi
 backup="$(mktemp -d "$deploy/.ml-callback-backup.XXXXXXXX")"
 cp -p "$deploy/.env" "$backup/env"
+cp -p "$compose_file" "$backup/compose.yaml"
 rewrite_tmp=''
+rewrite_compose_tmp=''
+# shellcheck disable=SC2317 # Called indirectly by the EXIT trap below.
 rollback() {
   rc=$?
   [[ -z "$rewrite_tmp" ]] || rm -f -- "$rewrite_tmp"
+  [[ -z "$rewrite_compose_tmp" ]] || rm -f -- "$rewrite_compose_tmp"
   if ((rc != 0)); then
     cp -p "$backup/env" "$deploy/.env"
+    cp -p "$backup/compose.yaml" "$compose_file"
     "${compose[@]}" up -d --no-deps --pull never api >/dev/null 2>&1 || true
-    printf 'Callback apply failed; restored environment; retained backup: %s\n' "$backup" >&2
+    printf 'Callback apply failed; restored environment and Compose file; retained backup: %s\n' "$backup" >&2
   fi
   exit "$rc"
 }
 trap rollback EXIT
+if [[ "$json_compose" == true ]]; then
+  rewrite_compose_tmp="$(mktemp "$deploy/.callback-compose.XXXXXXXX")"
+  cp -p "$compose_file" "$rewrite_compose_tmp"
+  jq --arg callback "${desired#*=}" '
+    .services.api.environment.DAPI_API__POC_CALLBACK_URL = $callback |
+    .services.api.ports |= map(if .target == 9100 and (.published | tostring) == "9100" and
+      (.protocol // "tcp") == "tcp" then .host_ip = "0.0.0.0" else . end)
+  ' "$compose_file" >"$rewrite_compose_tmp"
+  mv -f -- "$rewrite_compose_tmp" "$compose_file"
+  rewrite_compose_tmp=''
+fi
 rewrite_tmp="$(mktemp "$deploy/.callback-env.XXXXXXXX")"
 cp -p "$deploy/.env" "$rewrite_tmp"
 awk -v desired="$desired" '

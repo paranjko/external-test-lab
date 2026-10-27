@@ -16,11 +16,11 @@ make_script_fixture() {
 }
 
 run_apply_case() {
-  local layout="$1" should_fail="$2" base
+  local layout="$1" should_fail="$2" format="$3" base
   base="$tmp/$layout-$should_fail"
   local deploy="$base/srv/dai/deploy" conf="$base/etc/gonka" bin="$base/bin"
-  local env_file original firewall apply events rules mode owner rc
-  [[ "$layout" == legacy ]] && deploy="$deploy/old-project"
+  local env_file original firewall apply events rules mode owner compose_mode compose_owner rc
+  [[ "$layout" == legacy || "$layout" == legacy-json ]] && deploy="$deploy/old-project"
   mkdir -p "$deploy" "$conf" "$base/usr/local/sbin" "$bin"
   env_file="$deploy/.env"
   original=$'KEYRING_PASSWORD=fixture-only\nDAPI_API__POC_CALLBACK_URL=http://api:9100\nML_CALLBACK_BIND=127.0.0.1\n'
@@ -28,7 +28,16 @@ run_apply_case() {
   chmod 0600 "$env_file"
   mode="$(stat -c %a "$env_file")"
   owner="$(stat -c %u "$env_file")"
-  printf '%s\n' DAPI_API__POC_CALLBACK_URL ML_CALLBACK_BIND >"$deploy/compose.yaml"
+  if [[ "$format" == json ]]; then
+    cat >"$deploy/compose.yaml" <<'JSON'
+{"services":{"api":{"environment":{"DAPI_API__POC_CALLBACK_URL":"http://api:9100","KEYRING_PASSWORD":"fixture-only"},"ports":[{"mode":"ingress","host_ip":"127.0.0.1","target":9100,"published":"9100","protocol":"tcp"},{"mode":"ingress","host_ip":"127.0.0.1","target":9000,"published":"9000","protocol":"tcp"},{"mode":"ingress","host_ip":"127.0.0.1","target":9200,"published":"9200","protocol":"tcp"},{"mode":"ingress","host_ip":"127.0.0.1","target":9400,"published":"9400","protocol":"tcp"}]}},"x-fixture":{"preserve":"unchanged"}}
+JSON
+  else
+    printf '%s\n' DAPI_API__POC_CALLBACK_URL ML_CALLBACK_BIND >"$deploy/compose.yaml"
+  fi
+  cp -p "$deploy/compose.yaml" "$base/compose.original"
+  compose_mode="$(stat -c %a "$deploy/compose.yaml")"
+  compose_owner="$(stat -c %u "$deploy/compose.yaml")"
   : >"$deploy/compose.ml-local.yaml"
   printf '%s\n' unchanged >"$deploy/identity-sentinel"
   printf '%s\n' 'ROLE=network-gpu' 'SSH_PORT=22' 'MONITORING_CIDR=192.0.2.9/32' 'ML_CALLBACK_CIDR=192.0.2.8/32' >"$conf/host.env"
@@ -94,6 +103,7 @@ SH
   if [[ "$should_fail" == true ]]; then
     (( rc != 0 )) || fail "$layout failure fixture unexpectedly succeeded"
     cmp -s "$env_file" <(printf '%s' "$original") || fail "$layout failure fixture did not restore .env"
+    cmp -s "$deploy/compose.yaml" "$base/compose.original" || fail "$layout failure fixture did not restore Compose file"
     has "$base/stderr" 'restored environment'
     [[ "$(stat -c %a "$env_file")" == "$mode" && "$(stat -c %u "$env_file")" == "$owner" ]] || fail 'rollback changed .env ownership or mode'
     return
@@ -101,11 +111,24 @@ SH
   (( rc == 0 )) || fail "$layout callback apply exited $rc: $(<"$base/stderr")"
   has "$env_file" DAPI_API__POC_CALLBACK_URL=http://192.0.2.1:9100
   has "$env_file" KEYRING_PASSWORD=fixture-only
+  if [[ "$format" == json ]]; then
+    jq -e '
+      .services.api.environment.DAPI_API__POC_CALLBACK_URL == "http://192.0.2.1:9100" and
+      .services.api.environment.KEYRING_PASSWORD == "fixture-only" and
+      ([.services.api.ports[] | select(.target == 9100)][0].host_ip == "0.0.0.0") and
+      ([.services.api.ports[] | select(.target == 9000 or .target == 9200 or .target == 9400) |
+        .host_ip == "127.0.0.1"] | all) and
+      .["x-fixture"].preserve == "unchanged"
+    ' "$deploy/compose.yaml" >/dev/null || fail 'JSON callback migration changed unrelated Compose settings'
+  fi
   [[ "$(stat -c %a "$env_file")" == "$mode" && "$(stat -c %u "$env_file")" == "$owner" ]] || fail 'apply changed .env ownership or mode'
+  [[ "$(stat -c %a "$deploy/compose.yaml")" == "$compose_mode" && "$(stat -c %u "$deploy/compose.yaml")" == "$compose_owner" ]] || fail 'apply changed Compose ownership or mode'
   [[ "$(<"$deploy/identity-sentinel")" == unchanged ]] || fail 'identity sentinel changed'
+  cp -p "$deploy/compose.yaml" "$base/compose.applied"
   PATH="$bin:$PATH" FIXTURE="$base" DEPLOY="$deploy" FAIL=false \
     bash "$apply" 192.0.2.1 192.0.2.2 "$firewall" >"$base/repeat.out" 2>"$base/repeat.err" || fail "idempotent apply failed: $(<"$base/repeat.err")"
   has "$base/repeat.out" 'already active'
+  cmp -s "$deploy/compose.yaml" "$base/compose.applied" || fail 'idempotent apply rewrote Compose file'
   [[ "$(grep -Fc 'up -d --no-deps --pull never api' "$events")" == 1 ]] || fail 'idempotent apply recreated API'
   [[ "$(<"$conf/ml-callback-peers")" == $'192.0.2.7/32\n192.0.2.2/32' ]] || fail 'callback peer list was not additive'
   for peer in 192.0.2.8 192.0.2.7 192.0.2.2; do
@@ -157,10 +180,12 @@ SH
   fi
 }
 
-run_apply_case flat false
-run_apply_case legacy false
-run_apply_case flat true
-run_apply_case legacy true
+run_apply_case flat false yaml
+run_apply_case legacy false yaml
+run_apply_case legacy-json false json
+run_apply_case flat true yaml
+run_apply_case legacy true yaml
+run_apply_case legacy-json true json
 run_transport_case false
 run_transport_case true
 printf 'PASS remote ML callback apply, rollback, flat/legacy layouts, idempotency and transport failure checks\n'
