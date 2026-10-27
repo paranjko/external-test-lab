@@ -37,9 +37,30 @@ cat >"$temporary/bin/stat" <<'SH'
 #!/usr/bin/env bash
 if [[ "$1 $2" == '-c %u' ]]; then printf '0\n'; else /usr/bin/stat "$@"; fi
 SH
-chmod 0755 "$temporary/bin/ssh" "$temporary/bin/stat"
+cat >"$temporary/bin/docker" <<'SH'
+#!/usr/bin/env bash
+# The real controller inventories every Compose container on its Docker host.
+# Keep its view inside this fixture's validator and independent-service
+# projects so unrelated local Docker deployments cannot appear as mixed-host
+# layouts.
+set -Eeuo pipefail
+if [[ "${1:-}" == ps ]]; then
+  [[ "$*" == 'ps -aq --no-trunc --filter label=com.docker.compose.project' ]] || exit 93
+  for project in $REPAIR_TEST_PROJECTS; do
+    "$REPAIR_REAL_DOCKER" ps -aq --no-trunc --filter "label=com.docker.compose.project=$project"
+  done | sort -u
+  exit
+fi
+exec "$REPAIR_REAL_DOCKER" "$@"
+SH
+chmod 0755 "$temporary/bin/ssh" "$temporary/bin/stat" "$temporary/bin/docker"
 export REPAIR_TEST_ROOT="$temporary"
-run() { PATH="$temporary/bin:$PATH" bash "$ROOT/scripts/node-container-control.sh" "$1" fixture; }
+real_docker="$(command -v docker)"
+run() {
+  PATH="$temporary/bin:$PATH" REPAIR_REAL_DOCKER="$real_docker" \
+    REPAIR_TEST_PROJECTS="$project $project-edge" \
+    bash "$ROOT/scripts/node-container-control.sh" "$1" fixture
+}
 fingerprint() { docker inspect --format '{{.Id}} {{.State.Running}} {{.State.Pid}} {{.State.StartedAt}}' "$@"; }
 create() {
   local name="$1" service="$2" project="$3" directory="$4"
