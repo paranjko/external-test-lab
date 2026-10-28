@@ -20,7 +20,7 @@ probe() { jq -ne "$helpers $1"; }
 mkdir -p "$tmp/tree/04-ops/edge-node/public-grafana/dashboards"
 cp -R "$ROOT/04-ops/grafana" "$tmp/tree/04-ops/grafana"
 bash "$tmp/tree/04-ops/grafana/generate-dashboards.sh" >/dev/null
-for board in gdc-network gdc-inference gdc-overview gdc-chain; do
+for board in gdc-network gdc-inference gdc-overview gdc-chain gdc-components; do
   cmp -s "$ROOT/04-ops/grafana/dashboards/$board.json" "$tmp/tree/04-ops/grafana/dashboards/$board.json" \
     || { echo "the committed monitoring definition of $board is not what the generator produces" >&2; exit 1; }
   cmp -s "$ROOT/04-ops/edge-node/public-grafana/dashboards/$board.json" "$tmp/tree/04-ops/edge-node/public-grafana/dashboards/$board.json" \
@@ -86,7 +86,7 @@ probe 'base("u";"t";"now-1h";[];{editable:true}) | .editable == true' >/dev/null
 
 # A duplicate panel id makes Grafana drop a panel silently, and a panel wider than
 # the grid is clipped on the public board.
-for board in gdc-network gdc-inference gdc-overview; do
+for board in gdc-network gdc-inference gdc-overview gdc-components; do
   file="$ROOT/04-ops/grafana/dashboards/$board.json"
   jq -e '[.panels[].id] | length == (unique | length)' "$file" >/dev/null \
     || { echo "$board has duplicate panel ids" >&2; exit 1; }
@@ -98,11 +98,16 @@ for board in gdc-network gdc-inference gdc-overview; do
     || { echo "$board is editable or does not render in UTC" >&2; exit 1; }
 done
 
-for board in gdc-network gdc-inference gdc-overview; do
+for board in gdc-network gdc-inference gdc-overview gdc-components; do
   file="$ROOT/04-ops/grafana/dashboards/$board.json"
   jq -e '[.panels[] | select((.fieldConfig.defaults.noValue // "") != "") | select((.description // "") == "")] | length == 0' "$file" >/dev/null \
     || { echo "$board declares an empty state without documenting why it can happen" >&2; exit 1; }
 done
+
+# The host filter of the components board must narrow every query on it.
+jq -e '[.panels[].targets[]?.expr | select(contains("host=~\"$host\"") | not)] | length == 0' \
+  "$ROOT/04-ops/grafana/dashboards/gdc-components.json" >/dev/null \
+  || { echo 'gdc-components has a query that ignores the host filter' >&2; exit 1; }
 
 # A text panel points the reader at other panels by name, in bold. A name that no
 # panel carries sends the reader looking for something that is not there.

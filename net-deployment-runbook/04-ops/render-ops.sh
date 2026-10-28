@@ -184,8 +184,9 @@ jq -n --arg chain "$CHAIN_ID" --arg model "$MODEL_ID" --arg gateway "https://$AP
   --arg grafanaInference "https://$GRAFANA_HOST/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
   --arg grafanaOverview "https://$GRAFANA_HOST/d/gdc-overview/gonka-devnet-community-overview?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
   --arg grafanaChain "https://$GRAFANA_HOST/d/gdc-chain/gonka-devnet-chain?orgId=1&from=now-6h&to=now&timezone=utc&kiosk" \
+  --arg grafanaComponents "https://$GRAFANA_HOST/d/gdc-components/gonka-devnet-components?orgId=1&from=now-24h&to=now&timezone=utc&kiosk" \
   --arg gatewayNode "$GATEWAY_NODE" --arg chainRpcHost "$(node_public_host "$GENESIS_NODE")" --argjson nodes "$nodes" --argjson validators "$validators" --argjson nodeCatalog "$node_catalog" \
-  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,grafanaChain:$grafanaChain,grafanaOverview:$grafanaOverview,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
+  '{chainId:$chain,model:$model,apiBase:$gateway,gatewayApiBase:$gateway,directMlApiBase:$direct,telegramBot:$telegram,grafanaNetwork:$grafanaNetwork,grafanaInference:$grafanaInference,grafanaChain:$grafanaChain,grafanaOverview:$grafanaOverview,grafanaComponents:$grafanaComponents,gatewayNode:$gatewayNode,chainRpcHost:$chainRpcHost,nodes:$nodes,nodeCatalog:$nodeCatalog,validators:$validators}' \
   | sed '1s/^/window.GDC_CONFIG = /;$s/$/;/' >"$OUTPUT/config.js"
 
 write_env "$OUTPUT/network-observer.env" \

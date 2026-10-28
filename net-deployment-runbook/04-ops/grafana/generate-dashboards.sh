@@ -47,6 +47,11 @@ render() {
        links:[{asDropdown:true,icon:"dashboard",includeVars:false,keepTime:true,tags:["gdc"],targetBlank:false,title:"Community DevNet dashboards",type:"dashboards"}],
        liveNow:true,panels:$panels,refresh:"15s",schemaVersion:41,tags:["gonka","gdc"],templating:{list:[]},time:{from:$from,to:"now"},timepicker:{refresh_intervals:["5s","10s","15s","30s","1m","5m"]},timezone:"utc",title:$title,uid:$uid,version:1} + $extra;
     def base($uid;$title;$from;$panels): base($uid;$title;$from;$panels;{});
+    # Filters default to All, whose value is the regex .* in every matcher.
+    def filtervar($name;$label;$query):
+      {name:$name,label:$label,type:"query",datasource:ds,definition:$query,query:{query:$query,refId:$name},
+       multi:true,includeAll:true,allValue:".*",current:{selected:true,text:["All"],value:["$__all"]},
+       options:[],refresh:2,regex:"",sort:1,hide:0};
     def phases: [{type:"value",options:{"0":{text:"PoC generation",color:"purple",index:0},"1":{text:"batch exchange and wait",color:"blue",index:1},"2":{text:"PoC validation",color:"orange",index:2},"3":{text:"validator set switch",color:"yellow",index:3},"4":{text:"inference",color:"green",index:4}}}];
     def phasedesc: "Cycle counted from the PoC start P read from epoch_info: PoC generation, batch exchange and wait, PoC validation, validator set switch (group written at P+19, the new set signs from P+23), then inference until the next PoC.";
 
@@ -179,12 +184,88 @@ render() {
         row(140;"Public node endpoints";54),
         timeline(41;"External probes";"probe_success{job=\"public-node-endpoints\"}";"{{host}} {{kind}}";55;9;"blackbox HTTPS probes of every node public RPC and LCD, the way a client reaches them.";{noValue:"no public node endpoint is probed",mappings:[{type:"value",options:{"0":{text:"down",color:"red",index:0},"1":{text:"ok",color:"green",index:1}}}],thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"green",value:1}]}})
       ])
+    elif $kind == "components" then
+      def sel: "job=\"devshard-host\",host=~\"$host\"";
+      def nodata: {noValue:"no DevShard host metrics are scraped"};
+      def override($name;$props): {matcher:{id:"byName",options:$name},properties:$props};
+      def color($name;$c): override($name;[{id:"color",value:{mode:"fixed",fixedColor:$c}}]);
+      def tabletarget($expr;$ref): target($expr;"") + {refId:$ref,format:"table",instant:true};
+      def spark: .targets[0].instant=false;
+      def steps($s): {thresholds:{mode:"absolute",steps:$s}};
+      def share: steps([{color:"red",value:null},{color:"orange",value:0.9},{color:"green",value:0.98}]);
+      def bad: steps([{color:"green",value:null},{color:"red",value:1}]);
+      def stacked: {custom:{stacking:{group:"A",mode:"normal"},fillOpacity:35}};
+      def finished: "devshard_request_terminal_total{\(sel),terminal=\"finish_published\"}";
+      def executed: "devshard_request_terminal_total{\(sel),terminal=~\"finish_published|execution_no_finish\"}";
+      def vfinished($status): "devshard_validation_total{\(sel),stage=\"validation_finished\",status=~\"\($status)\"}";
+      base("gdc-components";"Gonka DevNet Components";"now-6h";[
+        row(100;"DevShard hosts now";0),
+        stat(1;"Hosts up";"sum(up{\(sel)})";"none";0;1;4;"DevShard hosts that answered their last scrape of /devshard/metrics.";{noValue:"no DevShard host is a scrape target"};{colorMode:"value"}),
+        (stat(2;"Inferences finished";"sum(rate(\(finished)[5m])) * 60";"opm";4;1;4;"Inferences that published their finish, per minute, summed over the selected hosts.";nodata + {decimals:0};{graphMode:"area"}) | spark),
+        (stat(3;"Execution success";"sum(rate(\(finished)[15m])) / sum(rate(\(executed)[15m]))";"percentunit";8;1;4;"Executions that published a finish among all executions over fifteen minutes. Requests where no receipt was expected are not counted.";nodata + share + {decimals:1,min:0,max:1};{colorMode:"value",graphMode:"area"}) | spark),
+        (stat(4;"Acquire errors";"sum(rate(devshard_mlnode_attempts_total{\(sel),outcome=\"acquire_err\"}[5m])) * 60";"opm";12;1;4;"Times per minute a host could not acquire an ML node for a call. Such calls never reach a model.";nodata + steps([{color:"green",value:null},{color:"orange",value:1},{color:"red",value:60}]) + {decimals:0};{colorMode:"value",graphMode:"area"}) | spark),
+        (stat(5;"Validation success";"sum(rate(\(vfinished("ok"))[15m])) / sum(rate(\(vfinished("ok|error"))[15m]))";"percentunit";16;1;4;"Validations that finished ok among those that finished ok or with an error over fifteen minutes. Deferred validations are not counted.";nodata + share + {decimals:1,min:0,max:1};{colorMode:"value",graphMode:"area"}) | spark),
+        stat(6;"Peers not ready";"count(devshard_peer_session_state{\(sel),state!=\"ready\"} == 1) or vector(0)";"none";20;1;4;"Peer sessions that are attaching or unauthenticated. Zero when every peer session is ready.";bad;{colorMode:"value"}),
+
+        row(110;"Hosts";5),
+        (table(10;"DevShard hosts";"max by (host) (up{\(sel)})";0;6;24;9;"One row per host: scrape state, finished inferences and execution success, ML node acquire errors and call p95, work in flight, live inferences, owed validations, ready peer sessions, process memory and the Postgres pool.";{noValue:"no DevShard host metrics are scraped"})
+          | .targets=[tabletarget("max by (host) (up{\(sel)})";"A"),
+              tabletarget("sum by (host) (rate(\(finished)[5m])) * 60";"B"),
+              tabletarget("sum by (host) (rate(\(finished)[15m])) / sum by (host) (rate(\(executed)[15m]))";"C"),
+              tabletarget("sum by (host) (rate(devshard_mlnode_attempts_total{\(sel),outcome=\"acquire_err\"}[5m])) * 60";"D"),
+              tabletarget("histogram_quantile(0.95, sum by (le, host) (rate(devshard_mlnode_call_seconds_bucket{\(sel)}[5m])))";"E"),
+              tabletarget("max by (host) (devshardd_lifecycle_inflight_requests{\(sel)})";"F"),
+              tabletarget("max by (host) (devshard_memory_live_inferences{\(sel)})";"G"),
+              tabletarget("sum by (host) (devshard_validation_owed{\(sel)})";"I"),
+              tabletarget("sum by (host) (devshard_peer_session_state{\(sel),state=\"ready\"})";"J"),
+              tabletarget("max by (host) (process_resident_memory_bytes{\(sel)})";"K"),
+              tabletarget("max by (host) (devshard_postgres_pool_saturated{\(sel)})";"L")]
+          | .fieldConfig.defaults.noValue="–"
+          | .fieldConfig.defaults.custom.minWidth=80
+          | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
+              excludeByName:{Time:true},
+              indexByName:{host:0,"Value #A":1,"Value #B":2,"Value #C":3,"Value #D":4,"Value #E":5,"Value #F":6,"Value #G":7,"Value #I":8,"Value #J":9,"Value #K":10,"Value #L":11},
+              renameByName:{host:"Host","Value #A":"Scrape","Value #B":"Finished /min","Value #C":"Success","Value #D":"Acquire err /min","Value #E":"ML node p95","Value #F":"In flight","Value #G":"Live inferences","Value #I":"Owed validations","Value #J":"Ready peers","Value #K":"Memory","Value #L":"Postgres pool"}}}]
+          | .fieldConfig.overrides=[
+              override("Scrape";[{id:"mappings",value:[{type:"value",options:{"0":{text:"down",color:"red",index:0},"1":{text:"up",color:"green",index:1}}}]},{id:"custom.cellOptions",value:{type:"color-text"}}]),
+              override("Finished /min";[{id:"decimals",value:0}]),
+              override("Success";[{id:"unit",value:"percentunit"},{id:"decimals",value:1},{id:"min",value:0},{id:"max",value:1},{id:"custom.cellOptions",value:{type:"gauge",mode:"basic",valueDisplayMode:"text"}},{id:"thresholds",value:share.thresholds}]),
+              override("Acquire err /min";[{id:"decimals",value:0},{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:1},{color:"red",value:60}]}}]),
+              override("ML node p95";[{id:"unit",value:"s"},{id:"decimals",value:1}]),
+              override("Memory";[{id:"unit",value:"bytes"}]),
+              override("Postgres pool";[{id:"mappings",value:[{type:"value",options:{"0":{text:"free",color:"green",index:0},"1":{text:"saturated",color:"red",index:1}}}]},{id:"custom.cellOptions",value:{type:"color-text"}}])]),
+
+        row(120;"Inference execution";15),
+        ts(11;"Inferences finished per minute";"sum by (host) (rate(\(finished)[5m])) * 60";"{{host}}";"opm";0;16;12;11;"Inferences each host finished and published, per minute.";nodata;["lastNotNull","max"]),
+        ts(12;"Execution success";"sum by (host) (rate(\(finished)[15m])) / sum by (host) (rate(\(executed)[15m]))";"{{host}}";"percentunit";8;27;8;8;"Share of executions that published a finish on each host over fifteen minutes. The dashed line is 98 percent.";nodata + {min:0,max:1,thresholds:{mode:"absolute",steps:[{color:"transparent",value:null},{color:"orange",value:0.98}]},custom:{thresholdsStyle:{mode:"dashed"},fillOpacity:0}};["lastNotNull","min"]),
+        ts(13;"Requests without a finish";"sum by (reason) (rate(devshard_request_terminal_total{\(sel),terminal!=\"finish_published\"}[5m])) * 60";"{{reason}}";"opm";12;16;12;11;"Requests that ended without a published finish, per minute and reason, over the selected hosts. payload_absent and target_diff_absent expect no receipt; acquire_err, process_response_err, http_5xx and transport_err are executions that failed.";nodata + stacked;["lastNotNull","max"]),
+        ts(14;"ML node call failures";"sum by (host, outcome) (rate(devshard_mlnode_attempts_total{\(sel),outcome!=\"ok\"}[5m])) * 60";"{{host}} · {{outcome}}";"opm";0;27;8;8;"Calls from a host to its ML nodes that did not succeed, per minute. acquire_err means the host could not acquire an ML node for the call.";nodata;["lastNotNull","max"]),
+        ts(15;"ML node call p95";"histogram_quantile(0.95, sum by (le, host) (rate(devshard_mlnode_call_seconds_bucket{\(sel)}[5m])))";"{{host}}";"s";0;35;24;10;"95th percentile duration of a call from a host to its ML node over five minutes.";nodata;["lastNotNull","max"]),
+        ts(16;"Completion tokens per second";"sum by (host) (rate(devshard_mlnode_tokens_sum{\(sel),kind=\"completion\"}[5m]))";"{{host}}";"short";16;27;8;8;"Tokens the ML nodes of each host generated per second.";nodata;["lastNotNull","max"]),
+
+        row(130;"Validation";45),
+        (ts(17;"Validation outcomes per minute";"sum by (status) (rate(\(vfinished(".*"))[5m])) * 60";"{{status}}";"opm";0;46;8;9;"Finished validations per minute by status over the selected hosts. deferred is a validation postponed to a later attempt.";nodata + stacked;["lastNotNull","max"])
+          | .fieldConfig.overrides=[color("ok";"green"),color("error";"red"),color("deferred";"orange")]),
+        (ts(18;"Validation queue";"sum by (host) (devshard_validation_queue_depth{\(sel)})";"{{host}} queued";"short";8;46;8;9;"Validations queued and owed by each host across its escrows. Owed validations that keep growing are work the host falls behind on.";nodata;["lastNotNull","max"])
+          | .targets += [{expr:"sum by (host) (devshard_validation_owed{\(sel)})",refId:"B",legendFormat:"{{host}} owed"}]),
+        ts(19;"Validation executor faults";"sum by (host, reason) (rate(devshard_validation_executor_fault_total{\(sel)}[5m])) * 60";"{{host}} · {{reason}}";"opm";16;46;8;9;"Validations the executor could not run, per minute and reason.";nodata;["lastNotNull","max"]),
+
+        row(140;"Memory and process";55),
+        ts(20;"Live inferences";"max by (host) (devshard_memory_live_inferences{\(sel)})";"{{host}}";"short";0;56;11;9;"Inferences each host keeps in memory across its DevShard sessions. A count that keeps rising under steady load is retained state.";nodata;["lastNotNull","max"]),
+        (ts(21;"Executing and validating";"sum by (host) (devshard_memory_executing{\(sel)})";"{{host}} executing";"short";0;86;8;8;"Inferences each host is executing and validating right now.";nodata;["lastNotNull","max"])
+          | .targets += [{expr:"sum by (host) (devshard_memory_validating{\(sel)})",refId:"B",legendFormat:"{{host}} validating"}]),
+        ts(22;"Mempool entries";"max by (host) (devshard_memory_mempool_entries{\(sel)})";"{{host}}";"short";11;56;13;9;"Entries waiting in the DevShard mempool of each host.";nodata;["lastNotNull","max"]),
+        ts(23;"Process memory";"max by (host) (process_resident_memory_bytes{\(sel)})";"{{host}}";"bytes";0;76;24;10;"Resident memory of the DevShard process on each host.";nodata;["lastNotNull","max"]),
+        ts(24;"Sessions";"max by (host) (devshard_memory_sessions{\(sel)})";"{{host}}";"short";8;86;8;8;"DevShard sessions open on each host, one per escrow it serves.";nodata;["lastNotNull","max"]),
+        ts(25;"Request errors";"sum by (host, operation) (rate(devshardd_request_errors_total{\(sel)}[5m])) * 60";"{{host}} · {{operation}}";"opm";0;65;24;11;"Errors per minute of each DevShard operation on a host.";nodata;["lastNotNull","max"]),
+
+        row(150;"Peers and storage";94),
+        (ts(26;"Peer sessions by state";"sum by (state) (devshard_peer_session_state{\(sel)})";"{{state}}";"short";0;95;8;8;"Peer sessions of the selected hosts by state. Every session should be ready.";nodata + stacked;["lastNotNull","max"])
+          | .fieldConfig.overrides=[color("ready";"green"),color("attaching";"orange"),color("unauthenticated";"red")]),
+        ts(27;"Peer RPC refused";"sum by (host, endpoint, result) (rate(devshard_peer_rpc_requests_total{\(sel),result!=\"ok\"}[5m])) * 60";"{{host}} · {{endpoint}} · {{result}}";"opm";8;95;8;8;"Peer RPC calls a host refused, per minute, by endpoint and result.";nodata;["lastNotNull","max"]),
+        ts(28;"Postgres pool saturated";"max by (host) (devshard_postgres_pool_saturated{\(sel)})";"{{host}}";"short";16;95;8;8;"One while the payload Postgres pool of a host has no free connection.";nodata + {min:0,max:1};["lastNotNull","max"])
+      ];{templating:{list:[filtervar("host";"Node";"label_values(up{job=\"devshard-host\"},host)"),{name:"filters",label:"Filters",type:"adhoc",datasource:ds,filters:[],baseFilters:[],hide:0}]}})
     elif $kind == "overview" then
-      # Filters default to All, whose value is the regex .* in every matcher.
-      def filtervar($name;$label;$query):
-        {name:$name,label:$label,type:"query",datasource:ds,definition:$query,query:{query:$query,refId:$name},
-         multi:true,includeAll:true,allValue:".*",current:{selected:true,text:["All"],value:["$__all"]},
-         options:[],refresh:2,regex:"",sort:1,hide:0};
       def override($name;$props): {matcher:{id:"byName",options:$name},properties:$props};
       def updown: [{id:"mappings",value:[{type:"value",options:{"0":{text:"down",color:"red",index:0},"1":{text:"up",color:"green",index:1}}}]},{id:"custom.cellOptions",value:{type:"color-text"}}];
       def pctgauge: [{id:"unit",value:"percent"},{id:"decimals",value:0},{id:"min",value:0},{id:"max",value:100},{id:"custom.cellOptions",value:{type:"gauge",mode:"basic",valueDisplayMode:"text"}},{id:"thresholds",value:{mode:"absolute",steps:[{color:"green",value:null},{color:"orange",value:70},{color:"red",value:90}]}}];
@@ -332,18 +413,7 @@ render() {
         ts(137;"Garbage collections per minute";"max by (gateway) (rate(go_gc_duration_seconds_count{job=\"gateway\"}[5m])) * 60 and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"{{gateway}}";"short";0;142;8;8;"How often each gateway runs garbage collection.";{noValue:"no gateway with an active DevShard exports this metric"};["lastNotNull","max"]),
         ts(138;"Requests in flight";"sum by (gateway) (devshard_gateway_inflight_requests) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"{{gateway}}";"short";8;142;8;8;"Requests each gateway is serving, to compare with its memory.";{noValue:"no gateway with an active DevShard exports this metric"};["lastNotNull","max"]),
         ts(139;"Requests per second";"sum by (gateway) (rate(devshard_gateway_requests_total[5m])) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"{{gateway}}";"reqps";16;142;8;8;"Requests each gateway handled per second over five minutes.";{noValue:"no gateway with an active DevShard exports this metric"};["lastNotNull","max"]),
-        ts(140;"Response cache";"sum by (gateway, result) (rate(devshard_gateway_chat_cache_total[5m])) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"{{gateway}} · {{result}}";"ops";0;150;24;8;"Cache outcomes per second: hit is served from cache, stored is a new entry, skipped_* is not cached. Only v6 gateways export these outcomes, and no gateway exports a cache size.";{noValue:"no gateway with an active DevShard exports this metric"};["lastNotNull","max"]),
-        row(280;"DevShard hosts";158),
-        ts(151;"Live inferences";"max by (host) (devshard_memory_live_inferences)";"{{host}}";"short";0;159;8;8;"Inferences each Host keeps in memory across its DevShard sessions. A count that keeps rising under steady load is retained state.";{noValue:"no DevShard host metrics are scraped"};["lastNotNull","max"]),
-        ts(152;"Sessions";"max by (host) (devshard_memory_sessions)";"{{host}}";"short";8;159;8;8;"DevShard sessions open on each Host, one per escrow it serves.";{noValue:"no DevShard host metrics are scraped"};["lastNotNull","max"]),
-        ts(153;"Mempool entries";"max by (host) (devshard_memory_mempool_entries)";"{{host}}";"short";16;159;8;8;"Entries waiting in the DevShard mempool of each Host.";{noValue:"no DevShard host metrics are scraped"};["lastNotNull","max"]),
-        ts(154;"ML node call failures";"sum by (host, outcome) (rate(devshard_mlnode_attempts_total{outcome!=\"ok\"}[5m]))";"{{host}} · {{outcome}}";"ops";0;167;8;8;"Calls from the Host to its ML nodes that did not succeed, per second. acquire_err means the Host could not acquire an ML node for the call.";{noValue:"no DevShard host metrics are scraped"};["lastNotNull","max"]),
-        ts(155;"ML node call p95";"histogram_quantile(0.95, sum by (le, host) (rate(devshard_mlnode_call_seconds_bucket[5m])))";"{{host}}";"s";8;167;8;8;"95th percentile duration of a call from the Host to its ML node over five minutes.";{noValue:"no DevShard host metrics are scraped"};["lastNotNull","max"]),
-        ts(156;"Request errors";"sum by (host, operation) (rate(devshardd_request_errors_total[5m]))";"{{host}} · {{operation}}";"ops";16;167;8;8;"Errors per second of each DevShard operation on the Host.";{noValue:"no DevShard host metrics are scraped"};["lastNotNull","max"]),
-        ts(157;"Interrupted executions";"sum by (host, reason) (rate(devshard_interruption_total[5m]))";"{{host}} · {{reason}}";"ops";0;175;8;8;"Executions that ended without a finish, per second and reason.";{noValue:"no DevShard host metrics are scraped"};["lastNotNull","max"]),
-        (ts(158;"Validation queue";"sum by (host) (devshard_validation_queue_depth)";"{{host}} queued";"short";8;175;8;8;"Validations queued and owed by each Host across its escrows. Owed validations that keep growing are work the Host falls behind on.";{noValue:"no DevShard host metrics are scraped"};["lastNotNull","max"])
-          | .targets += [{expr:"sum by (host) (devshard_validation_owed)",refId:"B",legendFormat:"{{host}} owed"}]),
-        ts(159;"Postgres pool saturated";"max by (host) (devshard_postgres_pool_saturated)";"{{host}}";"short";16;175;8;8;"One while the payload Postgres pool of the Host has no free connection.";{noValue:"no DevShard host metrics are scraped",min:0,max:1};["lastNotNull","max"])
+        ts(140;"Response cache";"sum by (gateway, result) (rate(devshard_gateway_chat_cache_total[5m])) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"{{gateway}} · {{result}}";"ops";0;150;24;8;"Cache outcomes per second: hit is served from cache, stored is a new entry, skipped_* is not cached. Only v6 gateways export these outcomes, and no gateway exports a cache size.";{noValue:"no gateway with an active DevShard exports this metric"};["lastNotNull","max"])
       ])
     end
   ' >"$output"
@@ -354,11 +424,13 @@ render network "$HERE/dashboards/gdc-network.json"
 render inference "$HERE/dashboards/gdc-inference.json"
 render overview "$HERE/dashboards/gdc-overview.json"
 render chain "$HERE/dashboards/gdc-chain.json"
-for board in gdc-network gdc-inference gdc-overview gdc-chain; do
+render components "$HERE/dashboards/gdc-components.json"
+for board in gdc-network gdc-inference gdc-overview gdc-chain gdc-components; do
   install -m 0644 "$HERE/dashboards/$board.json" "$PUBLIC/$board.json"
 done
 jq -e '.uid == "gdc-network" and (.panels | length >= 20)' "$HERE/dashboards/gdc-network.json" >/dev/null
 jq -e '.uid == "gdc-inference" and (.panels | length >= 20)' "$HERE/dashboards/gdc-inference.json" >/dev/null
 jq -e '.uid == "gdc-overview" and (.panels | length >= 20) and (.templating.list | map(.name) == ["host", "gpu"])' "$HERE/dashboards/gdc-overview.json" >/dev/null
 jq -e '.uid == "gdc-chain" and (.panels | length >= 20)' "$HERE/dashboards/gdc-chain.json" >/dev/null
-printf 'READY generated gdc-network, gdc-inference, gdc-overview and gdc-chain dashboards\n'
+jq -e '.uid == "gdc-components" and (.panels | length >= 10) and (.templating.list | map(.name) == ["host", "filters"])' "$HERE/dashboards/gdc-components.json" >/dev/null
+printf 'READY generated gdc-network, gdc-inference, gdc-overview, gdc-chain and gdc-components dashboards\n'
