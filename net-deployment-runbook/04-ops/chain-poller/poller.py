@@ -367,17 +367,23 @@ def task_chain():
     mark("chain")
 
 
+def gateway_down(name):
+    gw_up.labels(name).set(0)
+    gw_working.labels(name).set(0)
+    drop_gateway((gw_devshards, gw_error, gw_avail, gw_hosts, gw_runtimes, gw_inflight, gw_limit), name)
+
+
 def poll_gateway(name, url):
     try:
         r = S.get(url, timeout=TIMEOUT)
         st = r.json()
     except Exception:
-        gw_up.labels(name).set(0)
+        gateway_down(name)
         return
     try:
         apply_gateway_status(name, st)
     except Exception as e:
-        gw_up.labels(name).set(0)
+        gateway_down(name)
         log.debug("gateway %s: %s", name, e)
 
 
