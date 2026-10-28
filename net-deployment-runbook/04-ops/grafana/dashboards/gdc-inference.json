@@ -439,7 +439,7 @@
       "title": "Request rate by gateway and outcome",
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 6
       },
@@ -521,11 +521,11 @@
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Attempts started by role",
+      "title": "Attempts by gateway and role",
       "gridPos": {
         "h": 8,
-        "w": 4,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 6
       },
       "fieldConfig": {
@@ -579,7 +579,8 @@
       "options": {
         "legend": {
           "calcs": [
-            "lastNotNull"
+            "lastNotNull",
+            "max"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -592,12 +593,98 @@
       },
       "targets": [
         {
-          "expr": "sum by (role) (rate(devshard_gateway_attempts_started_total[1h]))",
+          "expr": "sum by (gateway, role) (rate(devshard_gateway_attempts_started_total[5m]))",
           "refId": "A",
-          "legendFormat": "{{role}}"
+          "legendFormat": "{{gateway}} · {{role}}"
         }
       ],
-      "description": "Attempts the gateway started per second, by the role it gave the executor. Averaged over an hour because attempts arrive in bursts."
+      "description": "Attempts each gateway started per second over five minutes. Primary attempts follow requests one to one; secondary ones are extra attempts the gateway starts on another executor."
+    },
+    {
+      "id": 65,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "timeseries",
+      "title": "Secondary attempts by reason",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "reqps",
+          "noValue": "no gateway started a secondary attempt in five minutes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (gateway, reason) (rate(devshard_gateway_attempts_started_total{role=\"secondary\"}[5m])) > 0",
+          "refId": "A",
+          "legendFormat": "{{gateway}} · {{reason}}"
+        }
+      ],
+      "description": "Why each gateway started a second attempt: a speedup or A/B sample it planned, or a primary that looked slow, suspicious or failed. Gateways that start none are not drawn."
     },
     {
       "id": 57,
@@ -610,8 +697,8 @@
       "gridPos": {
         "h": 4,
         "w": 4,
-        "x": 16,
-        "y": 6
+        "x": 20,
+        "y": 14
       },
       "fieldConfig": {
         "defaults": {
@@ -668,7 +755,7 @@
       "title": "Requests by gateway, model and outcome",
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 10,
         "x": 0,
         "y": 14
       },
@@ -734,8 +821,8 @@
       "title": "Current model executors",
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 10,
+        "x": 10,
         "y": 14
       },
       "fieldConfig": {
