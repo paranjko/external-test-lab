@@ -228,6 +228,7 @@ install -m 0755 "$(dirname "$0")/verify-state-sync-config.sh" "$STAGE/verify-sta
 install -m 0755 "$(dirname "$0")/fence-existing-signer.sh" "$STAGE/fence-existing-signer.sh"
 install -m 0755 "$(dirname "$0")/promote-state-sync-generation.sh" "$STAGE/promote-state-sync-generation.sh"
 install -m 0755 "$(dirname "$0")/sync-node-config.sh" "$STAGE/sync-node-config.sh"
+install -m 0755 "$(dirname "$0")/mlnode-max_concurrent.sh" "$STAGE/mlnode-max_concurrent.sh"
 if [[ "$LOCAL_ML" == true ]]; then
   install -m 0755 "$(dirname "$0")/poc-winddown-watch.sh" "$STAGE/poc-winddown-watch.sh"
 fi

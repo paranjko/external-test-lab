@@ -899,6 +899,22 @@ test-ml-callback:
 test-start-ml-transport:
 	@bash ./scripts/test-start-ml-transport.sh
 
+.PHONY: test-mlnode-concurrency
+test-mlnode-concurrency:
+	@bash ./scripts/test-mlnode-concurrency.sh
+
+test-ci-core: test-mlnode-concurrency
+
+.PHONY: test-mlnode-concurrency-install test-mlnode-concurrency-install-root
+test-mlnode-concurrency-install:
+	@docker build --file test/Dockerfile.bootstrap --tag gdc-mlnode-concurrency-test ..
+	@docker run --rm --network none --tmpfs /srv/dai:rw,exec -e GDC_TEST_DISPOSABLE_ROOT=true --entrypoint make gdc-mlnode-concurrency-test test-mlnode-concurrency-install-root
+
+test-mlnode-concurrency-install-root:
+	@bash ./scripts/test-mlnode-concurrency.sh --install
+
+test-host-lifecycle: test-mlnode-concurrency-install
+
 test-detach-network-ml-host:
 	@bash ./scripts/test-detach-network-ml-host.sh
 
