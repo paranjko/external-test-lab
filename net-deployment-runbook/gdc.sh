@@ -1054,6 +1054,7 @@ See the role guides for required input, then run:
   ./gdc.sh ops gateway-settings preview|apply
   ./gdc.sh ops gateway-readiness preview|apply
   ./gdc.sh ops monitoring-firewall preview|apply
+  ./gdc.sh ops monitoring-agent <SSH_ALIAS>
   ./gdc.sh ops monitoring
   ./gdc.sh ops monitoring check
   ./gdc.sh ops site
@@ -2002,6 +2003,9 @@ case "$COMMAND" in
     elif [[ "$1" == monitoring-firewall ]]; then
       [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
       run_phase "ops-monitoring-firewall-$2" "$ROOT/scripts/phase-monitoring-firewall.sh" "$2"
+    elif [[ "$1" == monitoring-agent ]]; then
+      [[ $# -eq 2 && "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { usage; exit 2; }
+      run_phase "ops-monitoring-agent-$2" "$ROOT/scripts/phase-monitoring-agent.sh" "$2"
     elif [[ "$1" == bifrost ]]; then
       [[ $# -eq 2 && "$2" =~ ^(preview|apply)$ ]] || { usage; exit 2; }
       run_phase "ops-bifrost-$2" "$ROOT/scripts/phase-bifrost.sh" "$2"

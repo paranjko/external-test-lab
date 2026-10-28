@@ -213,7 +213,11 @@ test-bifrost-gdc-preview-launcher:
 
 # The pinned Bifrost runtime lifecycle is manual-only while Bifrost is suspended
 # on the stand, keep its explicit target for requalification before re-enabling
-test-ci-gateways: test-command-dependency-contract test-devshard-two-gateways test-devshard-502-fixture-contract test-gateway-settings-deployment test-monitoring-firewall-deployment test-install-inferenced test-bifrost-key-broker test-bifrost-protocol-edge test-bifrost-provision test-bifrost-broker-container test-bifrost-deployment-contract test-bifrost-gdc-preview-launcher
+test-ci-gateways: test-command-dependency-contract test-devshard-two-gateways test-devshard-502-fixture-contract test-gateway-settings-deployment test-monitoring-firewall-deployment test-monitoring-agent-deployment test-install-inferenced test-bifrost-key-broker test-bifrost-protocol-edge test-bifrost-provision test-bifrost-broker-container test-bifrost-deployment-contract test-bifrost-gdc-preview-launcher
+
+.PHONY: test-monitoring-agent-deployment
+test-monitoring-agent-deployment:
+	@./scripts/test-monitoring-agent-deployment.sh
 
 # Each CI group runs sequentially in its own checkout. In particular, site
 # builders and fixed-port HTTP fixtures must not share a parallel checkout.
