@@ -182,9 +182,11 @@ load_profiles() {
   fi
   # shellcheck disable=SC1090
   source "$root/profiles/deployments/$deployment.lock"
-  unset MODEL_SOURCE_ID MODEL_SOURCE_REVISION MLNODE_VLLM_ARGS GDC_MODEL_PROFILE_SCOPE
+  unset MODEL_SOURCE_ID MODEL_SOURCE_REVISION MLNODE_VLLM_ARGS GDC_MODEL_PROFILE_SCOPE MLNODE_MAX_CONCURRENT
   # shellcheck disable=SC1090
   source "$root/../model/$model.lock"
+  MLNODE_MAX_CONCURRENT="${MLNODE_MAX_CONCURRENT:-$MLNODE_MAX_NUM_SEQS}"
+  [[ "$MLNODE_MAX_CONCURRENT" =~ ^[1-9][0-9]{0,8}$ ]] || { echo 'invalid MLNode concurrency' >&2; return 2; }
   MODEL_SOURCE_ID="${MODEL_SOURCE_ID:-$MODEL_ID}"
   MODEL_SOURCE_REVISION="${MODEL_SOURCE_REVISION:-$MODEL_REVISION}"
   MLNODE_VLLM_ARGS="${MLNODE_VLLM_ARGS:-}"
@@ -269,7 +271,7 @@ load_profiles() {
   export GDC_MODEL_PROFILE="$model" GDC_OPERATOR_SERVICES_PROFILE="$operator"
   export GONKA_REPOSITORY GONKA_SOURCE_REF GONKA_COMMIT MODEL_ID MODEL_REVISION
   export MODEL_SOURCE_ID MODEL_SOURCE_REVISION
-  export MLNODE_VLLM_ARGS GDC_MODEL_PROFILE_SCOPE
+  export MLNODE_VLLM_ARGS GDC_MODEL_PROFILE_SCOPE MLNODE_MAX_CONCURRENT
   export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
 }
 
@@ -382,6 +384,7 @@ load_join_profile() {
   MLNODE_VLLM_ARGS="$(jq -r '.spec.deployment.host_envelope.mlnode_vllm_args // ""' "$profile")"
   MLNODE_CONTEXT_LENGTH="$(jq -r .spec.deployment.host_envelope.mlnode_context_length "$profile")"
   MLNODE_MAX_NUM_SEQS="$(jq -r .spec.deployment.host_envelope.mlnode_max_num_seqs "$profile")"
+  MLNODE_MAX_CONCURRENT="$(jq -r '.spec.deployment.host_envelope | .mlnode_max_concurrent // .mlnode_max_num_seqs' "$profile")"
   MLNODE_GPU_MEMORY_UTILIZATION="$(jq -r .spec.deployment.host_envelope.mlnode_gpu_memory_utilization "$profile")"
   MLNODE_DTYPE="$(jq -r .spec.deployment.host_envelope.mlnode_dtype "$profile")"
   MLNODE_TENSOR_PARALLEL_SIZE="$(jq -r .spec.deployment.host_envelope.mlnode_tensor_parallel_size "$profile")"
@@ -394,7 +397,7 @@ load_join_profile() {
   export CADDY_IMAGE GRAFANA_IMAGE NODE_EXPORTER_IMAGE CADVISOR_IMAGE DASHBOARD_PORT
   export EDGE_API_COMPOSE_PROFILE EDGE_API_SERVICE_NAME
   export MODEL_ID MODEL_REVISION MODEL_SOURCE_ID MODEL_SOURCE_REVISION MLNODE_VLLM_ARGS MLNODE_CONTEXT_LENGTH MLNODE_MAX_NUM_SEQS MLNODE_GPU_MEMORY_UTILIZATION
-  export MLNODE_DTYPE MLNODE_TENSOR_PARALLEL_SIZE GDC_JOIN_EFFECTIVE_EPOCHS GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS
+  export MLNODE_DTYPE MLNODE_TENSOR_PARALLEL_SIZE GDC_JOIN_EFFECTIVE_EPOCHS GDC_JOIN_EFFECTIVE_TIMEOUT_SECONDS MLNODE_MAX_CONCURRENT
   export ACCELERATOR_VENDOR ACCELERATOR_ARCHITECTURE ACCELERATOR_READINESS ACCELERATOR_QUALIFICATION_BACKEND MLNODE_COMPOSE_VARIANT
   export AMD_KFD_DEVICE AMD_RENDER_DEVICE AMD_KFD_GROUP_ID AMD_RENDER_GROUP_ID
 }

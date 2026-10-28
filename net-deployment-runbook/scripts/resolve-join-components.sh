@@ -32,7 +32,10 @@ if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$observation" >/dev/nul
     [[ -r "$lock" ]] || die artifact_unavailable 'selected model profile is unavailable'
     selected="$(bash -c '
       set -Eeuo pipefail
+      unset MLNODE_MAX_CONCURRENT
       source "$1"
+      MLNODE_MAX_CONCURRENT="${MLNODE_MAX_CONCURRENT:-$MLNODE_MAX_NUM_SEQS}"
+      [[ "$MLNODE_MAX_CONCURRENT" =~ ^[1-9][0-9]{0,8}$ ]] || { echo "invalid MLNode concurrency" >&2; exit 2; }
       model_source_revision="${MODEL_SOURCE_REVISION:-$MODEL_REVISION}"
       model_scope="${GDC_MODEL_PROFILE_SCOPE:-network}"
       model_args="${MLNODE_VLLM_ARGS:-}"
@@ -46,8 +49,9 @@ if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$observation" >/dev/nul
       jq -cn --arg id "$MODEL_ID" --arg revision "${MODEL_SOURCE_REVISION:-$MODEL_REVISION}" \
         --arg dtype "$MLNODE_DTYPE" --argjson context "$MLNODE_CONTEXT_LENGTH" --argjson seqs "$MLNODE_MAX_NUM_SEQS" \
         --arg utilization "$MLNODE_GPU_MEMORY_UTILIZATION" --argjson parallel "$MLNODE_TENSOR_PARALLEL_SIZE" \
+        --argjson concurrent "$MLNODE_MAX_CONCURRENT" \
         --arg vllm_args "$model_args" \
-        "{model_id:\$id,model_source_revision:\$revision,mlnode_dtype:\$dtype,mlnode_context_length:\$context,mlnode_max_num_seqs:\$seqs,mlnode_gpu_memory_utilization:\$utilization,mlnode_tensor_parallel_size:\$parallel,mlnode_vllm_args:\$vllm_args}"
+        "{model_id:\$id,model_source_revision:\$revision,mlnode_dtype:\$dtype,mlnode_context_length:\$context,mlnode_max_num_seqs:\$seqs,mlnode_max_concurrent:\$concurrent,mlnode_gpu_memory_utilization:\$utilization,mlnode_tensor_parallel_size:\$parallel,mlnode_vllm_args:\$vllm_args}"
     ' _ "$lock")"
     temporary="$(mktemp "$(dirname "$output")/.join-components-model.XXXXXX")"
     jq --argjson selected "$selected" '
@@ -55,6 +59,7 @@ if jq -e '.policy.policy_id == "bootstrap-software/v1"' "$observation" >/dev/nul
       .host_envelope.model_revision=$selected.model_source_revision |
       .host_envelope.mlnode_context_length=$selected.mlnode_context_length |
       .host_envelope.mlnode_max_num_seqs=$selected.mlnode_max_num_seqs |
+      .host_envelope.mlnode_max_concurrent=$selected.mlnode_max_concurrent |
       .host_envelope.mlnode_gpu_memory_utilization=$selected.mlnode_gpu_memory_utilization |
       .host_envelope.mlnode_dtype=$selected.mlnode_dtype |
       .host_envelope.mlnode_tensor_parallel_size=$selected.mlnode_tensor_parallel_size |
