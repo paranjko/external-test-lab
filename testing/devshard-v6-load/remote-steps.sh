@@ -73,7 +73,8 @@ follow_gz() {
   gzips+=($!)
   (exec > "$fifo"; rm -f "$fifo"
   while [ ! -e "$out/.followers-stop" ]; do
-    ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=30 "$@" < /dev/null 2>&1 || true
+    # Own connection: a shared ControlMaster keeps the fifo open after this ssh is killed.
+    ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=30 -o ControlPath=none "$@" < /dev/null 2>&1 || true
     sleep 5
   done) &
   followers+=($!)
