@@ -4,7 +4,7 @@ set -Eeuo pipefail
 action="${1:-}"
 host="${2:-}"
 case "$action" in
-  start|stop|reclaim)
+  start|stop|reclaim|repair-plan|repair)
     [[ $# == 2 ]]
     ;;
   lend)
@@ -74,6 +74,25 @@ discover_deployment
 printf 'READY discovered node deployment=%s\n' "$deploy"
 control="$deploy/.node-control"
 [[ ! -L "$control" ]] || fail 'unsafe node control directory'
+repair_selection() {
+  [[ ! -e "$control/stopped.json" && ! -L "$control/stopped.json" &&
+     ! -e "$control/lent-ml.json" && ! -L "$control/lent-ml.json" ]] \
+    || fail 'controlled stop or ML lending is recorded; use its ordinary lifecycle'
+  jq -e '
+    ([.[] | select(.service == "tmkms")] | length) == 1 and
+    all(.[]; ((.service == "node" or .service == "tmkms") | not) or .running)
+  ' <<<"$inventory" >/dev/null || fail 'service repair requires an already running Core and signer'
+  repair_targets="$(jq -c '[.[] | select(.status == "exited") |
+    select(.service == "mlnode" or .service == "inference" or .service == "proxy" or
+      .service == "versiond-router" or .service == "edge-api" or .service == "explorer")] |
+    sort_by(if .service == "mlnode" then 0 elif .service == "inference" then 1 else 2 end)' <<<"$inventory")"
+}
+if [[ "$action" == repair-plan ]]; then
+  repair_selection
+  jq -r '.[] | "PLAN start service=\(.service) container=\(.id)"' <<<"$repair_targets"
+  printf 'PLAN existing containers only; Core, signer, configurations and independent services remain unchanged\n'
+  exit 0
+fi
 mkdir -p "$control"
 [[ "$(stat -c %u "$control")" == 0 && "$(stat -c %a "$control")" == 700 ]] || fail 'node control directory must be root-owned mode 0700'
 mkdir "$control/lock" 2>/dev/null || fail 'another node control operation is running; inspect the Host before removing a stale .node-control/lock'
@@ -126,6 +145,33 @@ stop_receipted_containers() {
 # Discovery runs before locking; refresh state under the lock so a concurrent
 # completed start cannot leave stop acting on an earlier stopped snapshot.
 discover_deployment
+
+if [[ "$action" == repair ]]; then
+  repair_selection
+  consensus_ids="$(jq -r '.[] | select(.service == "node" or .service == "tmkms") | .id' <<<"$inventory")"
+  consensus_identity() {
+    local consensus_id
+    while IFS= read -r consensus_id; do
+      docker inspect --format '{{.Id}} {{.State.Running}} {{.State.Pid}} {{.State.StartedAt}}' "$consensus_id"
+    done <<<"$consensus_ids"
+  }
+  consensus_before="$(consensus_identity)"
+  repair_receipt="$(mktemp "$control/service-repair.XXXXXXXX.json")"
+  jq -n --arg deployment "$deploy" --arg consensus "$consensus_before" \
+    --argjson targets "$repair_targets" \
+    '{kind:"gdc-service-repair",deployment:$deployment,consensus_before:$consensus,targets:$targets}' >"$repair_receipt"
+  printf 'RECEIPT %s\n' "$repair_receipt"
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    [[ "$(consensus_identity)" == "$consensus_before" ]] || fail 'consensus changed during service repair; remaining starts cancelled'
+    printf 'WAIT starting non-consensus container=%s\n' "$id"
+    docker start "$id" >/dev/null
+    [[ "$(docker inspect --format '{{.State.Running}}' "$id")" == true ]] || fail "service did not remain running: $id"
+  done < <(jq -r '.[].id' <<<"$repair_targets")
+  [[ "$(consensus_identity)" == "$consensus_before" ]] || fail 'consensus changed during service repair; inspect receipt'
+  printf 'PASS existing service containers started without restarting Core or signer; readiness requires separate verification\n'
+  exit 0
+fi
 
 # Lending owns the controlled stop.  Validate the local ML runtime while the
 # validator is still running; otherwise a missing overlay or ML container

@@ -185,6 +185,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Test isolated Host JOIN and ML lifecycle
         run: make -C net-deployment-runbook test-host-lifecycle
+      - name: Test existing service repair without restarting consensus
+        run: make test-service-repair
 
   upstream-profiles:
     needs: route

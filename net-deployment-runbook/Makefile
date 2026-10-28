@@ -468,7 +468,7 @@ test-ci-gateways: test-command-dependency-contract test-devshard-two-gateways te
 # Each CI group runs sequentially in its own checkout. In particular, site
 # builders and fixed-port HTTP fixtures must not share a parallel checkout.
 RUNBOOK_CI_GROUPS := bootstrap core site join gateways
-HOST_LIFECYCLE_SHARED_TESTS := test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-join-resume-membership-funding test-phase-ml-add-ownership test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-hosts test-detach-network-ml-host test-validator-ml-lifecycle
+HOST_LIFECYCLE_SHARED_TESTS := test-command-results test-verify-lineage-trust-fresh-boundaries test-verify-state-sync-config test-wait-state-sync-canary test-post-sync-join-helper test-verify-post-sync-join-state test-verify-post-sync-join-state-layouts test-reset-then-join-entry test-join-resume-new-canonical test-join-resume-post-sync-shared test-join-resume-restore-post-sync-refusal test-join-resume-restore-membership test-join-resume-membership-funding test-phase-ml-add-ownership test-node-container-control test-prepare-accelerator-binding test-node-container-lending-docker test-ml-lend-generic-pairs test-ml-lending-two-hosts test-detach-network-ml-host test-validator-ml-lifecycle test-ml-callback-lifecycle
 .PHONY: $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) test-ci-layout
 test: test-ci-layout $(addprefix test-ci-,$(RUNBOOK_CI_GROUPS)) $(HOST_LIFECYCLE_SHARED_TESTS) test-host-upgrade-lifecycle test-clean-join-target-lifecycle
 
@@ -923,6 +923,11 @@ test-host-lifecycle: $(HOST_LIFECYCLE_SHARED_TESTS) test-join-resume-caught-up-c
 test-host-peers-lifecycle:
 	@docker build --file test/Dockerfile.host-upgrade --tag gdc-host-peers-test:local ..
 	@docker run --rm --privileged -e GDC_PEERS_DIND=true --entrypoint bash gdc-host-peers-test:local scripts/test-host-peers-lifecycle.sh
+
+.PHONY: test-ml-callback-lifecycle
+test-ml-callback-lifecycle:
+	@docker build --file test/Dockerfile.host-upgrade --tag gdc-ml-callback-test:local ..
+	@docker run --rm --privileged -e GDC_ML_CALLBACK_DIND=true --entrypoint bash gdc-ml-callback-test:local scripts/test-ml-callback-lifecycle.sh
 
 test-reset-then-join-entry:
 	@bash ./scripts/test-reset-then-join-entry.sh
