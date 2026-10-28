@@ -6,7 +6,9 @@
 # Usage: remote-steps.sh <gonka-devshard-contrib checkout> <output directory> <env file with GONKA_BASE and GONKA_API_KEY>
 # Env: LOAD_DATASET; STEPS ("5 10 15 20 25 30"), RAMP (60), RAMP_SLICES (6), HOLD (300), LAST_HOLD (3600),
 # MAX_IN_FLIGHT (1024, per run), STOP_PCT (20), REQUEST_TIMEOUT (3m), START_AFTER (file to wait for), START_DELAY (0),
-# GATEWAY_SSH and GATEWAY_CONTAINER (follow the gateway log), CHAIN_API (https://node2.gonka-dev.net/chain-api), POLL (15).
+# GATEWAY_SSH and GATEWAY_CONTAINER (follow the gateway log), LOG_HOSTS (ssh hosts whose wrapper, API and ML node logs are
+# followed), LOG_CONTAINERS (mlnode|versiond|proxy|-api-1), CHAIN_API (https://node2.gonka-dev.net/chain-api), POLL (15).
+# Logs are followed from the start of the steps and written as .log.gz that stays complete if the run is killed.
 set -euo pipefail
 
 gonka=${1:?gonka-devshard-contrib checkout with devshard/testenv/cmd/wrap-load}
@@ -48,17 +50,35 @@ printf 'base=%s\nsteps=%s\nramp_s=%s slices=%s hold_s=%s last_hold_s=%s\nmax_in_
 
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$out/events.log"; }
 
-followers=()
-if [ -n "${GATEWAY_SSH:-}" ] && [ -n "${GATEWAY_CONTAINER:-}" ]; then
-  (while [ ! -e "$out/DONE" ]; do
-    timeout 4h ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=30 "$GATEWAY_SSH" \
-      "docker logs -f --since $(date -u +%FT%TZ) $GATEWAY_CONTAINER" < /dev/null >> "$out/gateway.log" 2>&1 || true
+followers=() gzips=()
+kill_tree() { local c; for c in $(pgrep -P "$1"); do kill_tree "$c"; done; kill "$1" 2>/dev/null || true; }
+stop_followers() {
+  touch "$out/.followers-stop"
+  for p in "${followers[@]}"; do kill_tree "$p"; done
+  for p in "${gzips[@]}"; do wait "$p" 2>/dev/null || true; done
+  followers=() gzips=()
+}
+trap stop_followers EXIT
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+
+# gzip ignores HUP, INT and TERM and ends when its writer closes, so the file gets its trailer even in a killed session.
+follow_gz() {
+  local file=$1 fifo
+  shift
+  fifo=$(mktemp -u "$out/.fifo.XXXXXX")
+  mkfifo "$fifo"
+  (trap '' HUP INT TERM; exec gzip -c < "$fifo" > "$file") &
+  gzips+=($!)
+  (exec > "$fifo"; rm -f "$fifo"
+  while [ ! -e "$out/.followers-stop" ]; do
+    ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=30 "$@" < /dev/null 2>&1 || true
     sleep 5
   done) &
   followers+=($!)
-fi
+}
+
 (printf 'time_utc\theight\tpoc_start\tcpoc_active\n' > "$out/chain.tsv"
-while [ ! -e "$out/DONE" ]; do
+while [ ! -e "$out/.followers-stop" ]; do
   info=$(curl -fsS -m 15 "$chain/productscience/inference/inference/epoch_info" 2>/dev/null || echo '{}')
   printf '%s\t%s\n' "$(date -u +%FT%TZ)" \
     "$(jq -r '[.block_height, .latest_epoch.poc_start_block_height, .is_confirmation_poc_active] | @tsv' <<<"$info" 2>/dev/null)" >> "$out/chain.tsv"
@@ -71,6 +91,15 @@ if [ -n "${START_AFTER:-}" ]; then
   until [ -e "$START_AFTER" ]; do sleep 5; done
 fi
 [ "${START_DELAY:-0}" = 0 ] || { log "waiting ${START_DELAY}s"; sleep "$START_DELAY"; }
+
+if [ -n "${GATEWAY_SSH:-}" ] && [ -n "${GATEWAY_CONTAINER:-}" ]; then
+  follow_gz "$out/gateway.log.gz" "$GATEWAY_SSH" "docker logs -f -t --since 10s $GATEWAY_CONTAINER"
+fi
+host_cmd='for c in $(docker ps --format "{{.Names}}" | grep -E "PATTERN" | grep -v edge-api); do
+  (t=1m; while :; do docker logs -f -t --since $t $c 2>&1; t=$(date -u +%Y-%m-%dT%H:%M:%SZ); echo "=== detached $t"; sleep 2; done) |
+  sed -u "s/^/$c /" & done; wait'
+host_cmd=${host_cmd/PATTERN/${LOG_CONTAINERS:-mlnode|versiond|proxy|-api-1}}
+for h in ${LOG_HOSTS:-}; do follow_gz "$out/host-$h.log.gz" "$h" "$host_cmd"; done
 
 # Share of a finished hold that failed or was dropped, PoC and cPoC refusals left out.
 failed_pct() {
@@ -128,8 +157,6 @@ for d in "$out"/.runs/*/run-*; do
 done
 python3 "$here/remote-ladder-table.py" "$out" --runs | tee "$out/runs.tsv"
 python3 "$here/remote-ladder-table.py" "$out/all" --windows 60 > "$out/windows.tsv"
+stop_followers
 date -u +%FT%TZ > "$out/DONE"
-for p in "${followers[@]}"; do pkill -P "$p" 2>/dev/null || true; done
-wait 2>/dev/null || true
-[ ! -e "$out/gateway.log" ] || gzip -f "$out/gateway.log"
 log "done"
