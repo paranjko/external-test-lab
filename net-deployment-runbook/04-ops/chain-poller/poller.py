@@ -232,6 +232,12 @@ def poll_node(node):
             pass
     except Exception as e:
         rpc_up.labels(node).set(0)
+        # an unreachable node must not keep its last height and peers on the board
+        for g in (rpc_latency, node_height, node_block_ts, node_catching_up, node_earliest, node_vp, node_peers):
+            if (node,) in g._metrics:
+                g.remove(node)
+        if node in PREV_INFO:
+            node_info.remove(node, *PREV_INFO.pop(node))
         log.debug("node %s: %s", node, e)
 
 
