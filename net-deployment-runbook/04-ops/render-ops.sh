@@ -330,6 +330,15 @@ YAML
     [[ -n "$ml_address" ]] || die "cannot resolve monitoring address for GPU host $ml_host"
     write_target host "$ml_host" "$ml_address:9101" "$(jq -cn --arg host "$ml_host" --arg validator "$node" '{host:$host,validator:$validator}')"
   done
+  # Hosts whose accelerator does not serve inference keep host metrics, not GPU telemetry.
+  if [[ -n "${GDC_MONITORING_NO_GPU_HOSTS:-}" ]]; then
+    no_gpu_hosts=''
+    for node in $GDC_MONITORING_NO_GPU_HOSTS; do
+      [[ "$node" =~ ^[A-Za-z0-9_-]+$ ]] || die "invalid GDC_MONITORING_NO_GPU_HOSTS entry: $node"
+      no_gpu_hosts+="${no_gpu_hosts:+|}$node"
+    done
+    printf "    metric_relabel_configs:\n      - source_labels: [host, __name__]\n        regex: '(%s);gdc_nvidia_.*'\n        action: drop\n" "$no_gpu_hosts"
+  fi
   cat <<'YAML'
   - job_name: cadvisor
     file_sd_configs:

@@ -1207,10 +1207,10 @@
         "uid": "prometheus"
       },
       "type": "table",
-      "title": "Gateways now",
+      "title": "Gateways",
       "gridPos": {
-        "h": 6,
-        "w": 12,
+        "h": 7,
+        "w": 24,
         "x": 0,
         "y": 41
       },
@@ -1223,9 +1223,136 @@
             },
             "inspect": false
           },
-          "noValue": "no gateway status URL answers"
+          "noValue": "–"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Version"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "6": {
+                        "text": "v6",
+                        "index": 0
+                      },
+                      "42": {
+                        "text": "v4.2",
+                        "index": 1
+                      },
+                      "41": {
+                        "text": "v4.1",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Capacity"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50
+                    },
+                    {
+                      "color": "green",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Requests/s"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Errors"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "cellHeight": "sm",
@@ -1241,31 +1368,55 @@
       },
       "targets": [
         {
-          "expr": "max by (gateway) (gdc_chain_gateway_working)",
+          "expr": "label_replace(max by (gateway) (gdc_chain_gateway_devshards{phase=\"active\"}), \"version\", \"$1\", \"gateway\", \".*_V([0-9]+)\") and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
           "refId": "A",
           "format": "table",
           "instant": true
         },
         {
-          "expr": "max by (gateway) (gdc_chain_gateway_available_percent)",
+          "expr": "max by (gateway) (gdc_chain_gateway_hosts{state=\"available\"}) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
           "refId": "B",
           "format": "table",
           "instant": true
         },
         {
-          "expr": "max by (gateway) (gdc_chain_gateway_hosts{state=\"available\"})",
+          "expr": "sum by (gateway) (gdc_chain_gateway_hosts) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
           "refId": "C",
           "format": "table",
           "instant": true
         },
         {
-          "expr": "max by (gateway) (gdc_chain_gateway_in_flight_requests)",
+          "expr": "max by (gateway) (gdc_chain_gateway_available_percent) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
           "refId": "D",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "sum by (gateway) (rate(devshard_gateway_requests_total[5m])) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
+          "refId": "E",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "100 * sum by (gateway) (rate(devshard_gateway_requests_total{outcome!=\"success\"}[5m])) / (sum by (gateway) (rate(devshard_gateway_requests_total[5m])) > 0) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
+          "refId": "F",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "sum by (gateway) (devshard_gateway_inflight_requests) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
+          "refId": "G",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "max by (gateway) (devshard_gateway_effective_max_concurrent_requests) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
+          "refId": "H",
           "format": "table",
           "instant": true
         }
       ],
-      "description": "Available capacity per configured gateway status URL.",
+      "description": "One row per gateway with an active DevShard; gateways without one are hidden. DevShards, hosts and capacity come from the gateway status, traffic, errors and limits from its own metrics over five minutes.",
       "transformations": [
         {
           "id": "merge",
@@ -1277,12 +1428,29 @@
             "excludeByName": {
               "Time": true
             },
+            "indexByName": {
+              "gateway": 0,
+              "version": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "Value #E": 6,
+              "Value #F": 7,
+              "Value #G": 8,
+              "Value #H": 9
+            },
             "renameByName": {
               "gateway": "Gateway",
-              "Value #A": "Active devshard",
-              "Value #B": "Available capacity, %",
-              "Value #C": "Hosts available",
-              "Value #D": "Requests in flight"
+              "version": "Version",
+              "Value #A": "Active DevShards",
+              "Value #B": "Hosts available",
+              "Value #C": "Hosts",
+              "Value #D": "Capacity",
+              "Value #E": "Requests/s",
+              "Value #F": "Errors",
+              "Value #G": "In flight",
+              "Value #H": "Limit"
             }
           }
         }
@@ -1295,12 +1463,12 @@
         "uid": "prometheus"
       },
       "type": "timeseries",
-      "title": "Gateway available capacity",
+      "title": "Gateway capacity",
       "gridPos": {
         "h": 6,
-        "w": 12,
-        "x": 12,
-        "y": 41
+        "w": 24,
+        "x": 0,
+        "y": 48
       },
       "fieldConfig": {
         "defaults": {
@@ -1346,14 +1514,17 @@
             ]
           },
           "unit": "percent",
-          "noValue": "no gateway status URL answers"
+          "noValue": "no gateway with an active DevShard reports capacity",
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
       "options": {
         "legend": {
           "calcs": [
-            "lastNotNull"
+            "lastNotNull",
+            "min"
           ],
           "displayMode": "table",
           "placement": "bottom",
@@ -1366,12 +1537,12 @@
       },
       "targets": [
         {
-          "expr": "gdc_chain_gateway_available_percent",
+          "expr": "max by (gateway) (gdc_chain_gateway_available_percent) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)",
           "refId": "A",
           "legendFormat": "{{gateway}}"
         }
       ],
-      "description": "capacity.available_percent from the gateway status."
+      "description": "available_percent from the gateway status for gateways with an active DevShard. v4 gateways report their escrow instead and have no capacity line."
     },
     {
       "id": 140,
@@ -1382,7 +1553,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 54
       },
       "panels": []
     },
@@ -1399,7 +1570,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 55
       },
       "fieldConfig": {
         "defaults": {

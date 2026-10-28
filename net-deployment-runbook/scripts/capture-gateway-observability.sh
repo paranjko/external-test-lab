@@ -238,7 +238,7 @@ for dashboard in gdc-network gdc-inference; do
   # Every expression is recorded. A panel that declares an empty state is allowed
   # to return nothing, exactly as the deploy gate allows; asserting otherwise
   # would contradict it, and dropping those rows would shrink the evidence.
-  jq -r '.dashboard.panels[]? | ((.fieldConfig.defaults.noValue // "") != "") as $declared | .targets[]?.expr | select(type == "string" and length > 0) | [(if $declared then "declared" else "required" end), .] | @tsv' "$out/$dashboard.json" | sort -u \
+  jq -r '.dashboard.panels[]? | ((.fieldConfig.defaults.noValue // "") != "") as $declared | .targets[]?.expr | select(type == "string" and length > 0) | gsub("\\$[A-Za-z_][A-Za-z0-9_]*"; ".*") | [(if $declared then "declared" else "required" end), .] | @tsv' "$out/$dashboard.json" | sort -u \
     | while IFS=$'\t' read -r declared expression; do
         result="$(prom_query "$expression")"
         count=0
