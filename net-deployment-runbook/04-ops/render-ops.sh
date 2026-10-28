@@ -46,10 +46,10 @@ grafana_public_dashboard_share_uid="${GDC_GRAFANA_PUBLIC_DASHBOARD_SHARE_UID:-5f
 grafana_public_dashboard_token="${GDC_GRAFANA_PUBLIC_DASHBOARD_TOKEN:-321a0d961e7f4b4ea6da843777c032eb}"
 mkdir -p "$OUTPUT"
 target_root="$OUTPUT/prometheus/targets/static"
-mkdir -p "$target_root/host" "$target_root/cadvisor" "$target_root/gonka-node" "$target_root/public-node-endpoints"
+mkdir -p "$target_root/host" "$target_root/cadvisor" "$target_root/gonka-node" "$target_root/public-node-endpoints" "$target_root/devshard-host"
 # This directory is generated inventory, not JOIN discovery. A repeated render
 # must remove a host/service that no longer belongs to the configured role.
-for job in host cadvisor gonka-node public-node-endpoints; do
+for job in host cadvisor gonka-node public-node-endpoints devshard-host; do
   [[ ! -L "$target_root/$job" ]] || die 'refusing symlinked generated targets'
   for target_file in "$target_root/$job/"*.json; do
     [[ -f "$target_file" && ! -L "$target_file" ]] || continue
@@ -60,7 +60,7 @@ printf '%s\n' "${GDC_MONITORING_RETIRED_HOSTS:-}" >"$OUTPUT/prometheus/retired-h
 
 write_target() {
   local job="$1" name="$2" address="$3" labels="$4" output
-  [[ "$job" =~ ^(host|cadvisor|gonka-node|public-node-endpoints)$ ]] || die "invalid Prometheus target job: $job"
+  [[ "$job" =~ ^(host|cadvisor|gonka-node|public-node-endpoints|devshard-host)$ ]] || die "invalid Prometheus target job: $job"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid Prometheus target name: $name"
   output="$target_root/$job/$name.json"
   jq -cn --arg address "$address" --argjson labels "$labels" \
@@ -374,6 +374,19 @@ YAML
   for node in "${GDC_NODES[@]}"; do
     monitoring_only "$node" && continue
     write_target gonka-node "$node" "$(node_public_host "$node"):26660" "$(jq -cn --arg host "$node" '{host:$host}')"
+  done
+  # Each chain Host publishes its DevShard host metrics on its public edge.
+  cat <<'YAML'
+  - job_name: devshard-host
+    scheme: https
+    metrics_path: /devshard/metrics
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/static/devshard-host/*.json
+YAML
+  for node in "${GDC_NODES[@]}"; do
+    monitoring_only "$node" && continue
+    write_target devshard-host "$node" "$(node_public_host "$node"):443" "$(jq -cn --arg host "$node" '{host:$host}')"
   done
   cat <<'YAML'
   - job_name: chain-poller

@@ -89,6 +89,9 @@ grep -Fxq 'GDC_GATEWAY_METRICS_UPSTREAM=http://127.0.0.1:9' "$tmp/no-gateway.env
 "$ROOT/04-ops/render-ops.sh" --inventory "$inventory" --output-dir "$tmp/observed" >/dev/null
 [[ -f "$tmp/observed/prometheus/targets/static/host/gdc-node4.json" ]]
 [[ ! -e "$tmp/observed/prometheus/targets/static/gonka-node/gdc-node4.json" ]]
+[[ ! -e "$tmp/observed/prometheus/targets/static/devshard-host/gdc-node4.json" ]]
+jq -e '.[0].targets == ["gdc-node0.example.test:443"] and .[0].labels.host == "gdc-node0"' "$tmp/observed/prometheus/targets/static/devshard-host/gdc-node0.json" >/dev/null
+grep -Fq 'metrics_path: /devshard/metrics' "$tmp/observed/prometheus.yml"
 grep -Fq "__metrics_path__: '/ops-gateways/B_V6/metrics'" "$tmp/observed/prometheus.yml"
 grep -Fq 'B_V41: https://gdc-node0.example.test/ops-gateways/B_V41/status' "$tmp/observed/chain-poller/config.yml"
 grep -Fq 'chain_sources: [gdc-node0]' "$tmp/observed/chain-poller/config.yml"
