@@ -20,6 +20,7 @@ SOURCE="$ROOT/02-node/node-config-qwen3-0.6B.source.json"
 mkdir -p "$(dirname "$OUTPUT")"
 jq --arg id "$RUNTIME_ID" --arg host "$ML_HOST" --argjson poc_port "$ML_POC_PORT" --arg model "$MODEL_ID" \
   --arg revision "$MODEL_REVISION" --argjson max "$MLNODE_MAX_NUM_SEQS" \
+  --argjson concurrent "$MLNODE_MAX_CONCURRENT" \
   --arg util "$MLNODE_GPU_MEMORY_UTILIZATION" --argjson context "$MLNODE_CONTEXT_LENGTH" \
   --arg dtype "$MLNODE_DTYPE" --argjson parallel "$MLNODE_TENSOR_PARALLEL_SIZE" \
   --arg vllm_args "$MLNODE_VLLM_ARGS" '
@@ -33,7 +34,7 @@ jq --arg id "$RUNTIME_ID" --arg host "$ML_HOST" --argjson poc_port "$ML_POC_PORT
   .[0].id = $id
   | .[0].host = $host
   | .[0].poc_port = $poc_port
-  | .[0].max_concurrent = $max
+  | .[0].max_concurrent = $concurrent
   | .[0].models as $models | .[0].models = {($model): $models["Qwen/Qwen3-0.6B"]}
   | (.[0].models[$model].args | index("--revision")) as $revision_index
   | (.[0].models[$model].args | index("--max-num-seqs")) as $seq

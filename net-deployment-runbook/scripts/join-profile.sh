@@ -46,8 +46,8 @@ validate() {
     (.spec.network.bootstrap_url | test("^https://")) and
     (.spec.seeds.usable | type == "array" and length >= 1) and (.spec.seeds.unavailable | type == "array") and
     (.spec.deployment.host_envelope | type == "object" and
-      ((keys | sort) == ["caddy_image","cadvisor_image","dashboard_port","edge_api_compose_profile","edge_api_image","edge_api_service_name","explorer_image","grafana_image","host_stack","join_effective_epochs","join_effective_timeout_seconds","mapping_source","mlnode_context_length","mlnode_dtype","mlnode_gpu_memory_utilization","mlnode_image","mlnode_max_num_seqs","mlnode_proxy_image","mlnode_tensor_parallel_size","model_id","model_revision","node_exporter_image","postgres_image","proxy_image","tmkms_image","versiond_image"] or
-       (keys | sort) == ["caddy_image","cadvisor_image","dashboard_port","edge_api_compose_profile","edge_api_image","edge_api_service_name","explorer_image","grafana_image","host_stack","join_effective_epochs","join_effective_timeout_seconds","mapping_source","mlnode_context_length","mlnode_dtype","mlnode_gpu_memory_utilization","mlnode_image","mlnode_max_num_seqs","mlnode_proxy_image","mlnode_tensor_parallel_size","mlnode_vllm_args","model_id","model_revision","node_exporter_image","postgres_image","proxy_image","tmkms_image","versiond_image"]) and
+      ((del(.mlnode_max_concurrent) | keys | sort) == ["caddy_image","cadvisor_image","dashboard_port","edge_api_compose_profile","edge_api_image","edge_api_service_name","explorer_image","grafana_image","host_stack","join_effective_epochs","join_effective_timeout_seconds","mapping_source","mlnode_context_length","mlnode_dtype","mlnode_gpu_memory_utilization","mlnode_image","mlnode_max_num_seqs","mlnode_proxy_image","mlnode_tensor_parallel_size","model_id","model_revision","node_exporter_image","postgres_image","proxy_image","tmkms_image","versiond_image"] or
+       (del(.mlnode_max_concurrent) | keys | sort) == ["caddy_image","cadvisor_image","dashboard_port","edge_api_compose_profile","edge_api_image","edge_api_service_name","explorer_image","grafana_image","host_stack","join_effective_epochs","join_effective_timeout_seconds","mapping_source","mlnode_context_length","mlnode_dtype","mlnode_gpu_memory_utilization","mlnode_image","mlnode_max_num_seqs","mlnode_proxy_image","mlnode_tensor_parallel_size","mlnode_vllm_args","model_id","model_revision","node_exporter_image","postgres_image","proxy_image","tmkms_image","versiond_image"]) and
       ([.tmkms_image,.postgres_image,.edge_api_image,.versiond_image,.proxy_image,.explorer_image,.mlnode_image,.mlnode_proxy_image,.caddy_image,.grafana_image,.node_exporter_image,.cadvisor_image][] | test("^[A-Za-z0-9./:_-]+@sha256:[a-f0-9]{64}$")) and
       (.host_stack | type == "object" and (keys | sort) == ["api_image","commit","compose_sha256","repository"] and .repository == "gonka-ai/gonka" and (.commit | test("^[a-f0-9]{40}$")) and (.compose_sha256 | test("^[a-f0-9]{64}$")) and (.api_image | test("^[A-Za-z0-9./:_-]+@sha256:[a-f0-9]{64}$"))) and
       (.dashboard_port | type == "number" and floor == . and . >= 1 and . <= 65535) and
@@ -59,6 +59,7 @@ validate() {
       (.model_revision | test("^[a-f0-9]{40}$")) and
       (.mlnode_context_length | type == "number" and floor == . and . > 0) and
       (.mlnode_max_num_seqs | type == "number" and floor == . and . > 0) and
+      ((has("mlnode_max_concurrent") | not) or (.mlnode_max_concurrent | type == "number" and floor == . and . > 0 and . <= 999999999)) and
       (.mlnode_dtype | type == "string" and length > 0) and
       (.mlnode_tensor_parallel_size | type == "number" and floor == . and . > 0) and
       (.mlnode_gpu_memory_utilization | type == "string" and test("^0\\.[0-9]+$|^1(\\.0+)?$")) and
@@ -96,8 +97,8 @@ validate() {
       || ! bash "$scripts/resolve-bootstrap-software.sh" components "$software_input" "$software_components" >/dev/null \
       || ! jq -e --slurpfile compiled "$software_components" '
         .spec.components == ($compiled[0] | {core,dapi}) and
-        (.spec.deployment.host_envelope | del(.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size,.mlnode_vllm_args)) ==
-          ($compiled[0].host_envelope | del(.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size,.mlnode_vllm_args)) and
+        (.spec.deployment.host_envelope | del(.mlnode_max_concurrent,.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size,.mlnode_vllm_args)) ==
+          ($compiled[0].host_envelope | del(.mlnode_max_concurrent,.model_id,.model_revision,.mlnode_context_length,.mlnode_max_num_seqs,.mlnode_gpu_memory_utilization,.mlnode_dtype,.mlnode_tensor_parallel_size,.mlnode_vllm_args)) and
         .spec.target.accelerator.qualification_backend == .spec.deployment.software.accelerator and
         .spec.components.core.observed == (.spec.deployment.software.components.node | {version:(.version|ltrimstr("v")),commit}) and
         .spec.components.dapi.observed == (.spec.deployment.software.components.api | {version:(.version|ltrimstr("v")),commit})

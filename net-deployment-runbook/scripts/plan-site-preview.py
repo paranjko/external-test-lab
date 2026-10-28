@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 STATIC_PREFIXES = (
+    "net-deployment-runbook/make/site.mk",
     "net-deployment-runbook/04-ops/site/",
     "net-deployment-runbook/scripts/build-site-js.sh",
     "net-deployment-runbook/scripts/render-site-build-info.sh",

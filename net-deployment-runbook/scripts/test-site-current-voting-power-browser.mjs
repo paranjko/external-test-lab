@@ -929,7 +929,7 @@ try {
   );
   holdValidatorSets = true;
   await evaluate(
-    `window.__vpApplied=[]; const __load=GDC_NETWORK_OBSERVATION.loadCurrentValidatorSet; GDC_NETWORK_OBSERVATION.loadCurrentValidatorSet=async(...a)=>{try{const v=await __load(...a);window.__vpSet=v;return v}catch(e){window.__vpError=String(e);throw e}}; const __apply=GDC_NETWORK_OBSERVATION.applyCurrentVotingPower; GDC_NETWORK_OBSERVATION.applyCurrentVotingPower=(n,s)=>{const v=__apply(n,s);window.__vpApplied.push([n.validatorAddress,v,s?.verified,s?.blockHeight]);return v};`,
+    `window.__vpApplied=[]; window.__vpReferences=[]; const __load=GDC_NETWORK_OBSERVATION.loadCurrentValidatorSet; GDC_NETWORK_OBSERVATION.loadCurrentValidatorSet=async(...a)=>{window.__vpReferences.push({...a[0]});try{const v=await __load(...a);window.__vpSet=v;return v}catch(e){window.__vpError=String(e);throw e}}; const __apply=GDC_NETWORK_OBSERVATION.applyCurrentVotingPower; GDC_NETWORK_OBSERVATION.applyCurrentVotingPower=(n,s)=>{const v=__apply(n,s);window.__vpApplied.push([n.validatorAddress,v,s?.verified,s?.blockHeight]);return v};`,
   );
   await evaluate("window.__refresh(); true");
   await waitForNode(
@@ -946,10 +946,17 @@ try {
     "32",
     "unverified local status power must never appear during reference load",
   );
-  assert.match(
-    validatorSets[0].url,
-    /^\/preview\/215\/status\/node0\/chain-rpc\/validators\?height=\d+&page=1&per_page=100$/,
-  );
+  const requestedReference = await evaluate("window.__vpReferences[0]");
+  const referenceName = new Map([[NODE0, "node0"], [NODE1, "node1"], [NODE4, "node4"]])
+    .get(requestedReference.nodeId.toLowerCase());
+  assert.ok(referenceName, "reference must belong to the synthetic node inventory");
+  assert.equal(requestedReference.identityVerified, true);
+  assert.equal(requestedReference.chainId, configObject.chainId);
+  assert.equal(requestedReference.statusBase, `/preview/215/status/${referenceName}`);
+  assert.equal(validatorSets[0].height, requestedReference.height);
+  assert.equal(validatorSets[0].url,
+    `${requestedReference.validatorRpcBase || requestedReference.statusBase}/chain-rpc/validators?height=${requestedReference.height}&page=1&per_page=100`,
+    "validator reads must use the selected reference and its sampled height");
   await validatorSets[0].fulfill({
     result: {
       block_height: String(validatorSets[0].height),

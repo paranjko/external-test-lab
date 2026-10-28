@@ -9,7 +9,16 @@ trap 'rm -rf -- "$tmp"' EXIT
 release="$tmp/release"
 mkdir -p "$release" "$tmp/bin"
 
-grep -Fq 'site_origin ?= https://gonka-dev.net' "$root/Makefile"
+# Inspect Make's effective default rather than the file containing its declaration
+for makefile in Makefile make/site.mk; do
+  # shellcheck disable=SC2016 # Expand the Make variable inside make, not Bash
+  origin=$(make --no-print-directory -s -C "$root" -f "$makefile" \
+    --eval 'print-preview-origin:;@printf "%s\n" "$(site_origin)"' print-preview-origin)
+  [[ "$origin" == https://gonka-dev.net ]] || {
+    echo "Unexpected public site origin via $makefile: $origin" >&2
+    exit 1
+  }
+done
 grep -Fq 'url: https://preview.gonka-dev.net/${{ needs.publish-context.outputs.number }}/' \
   "$root/../.github/workflows/site-preview-publish.yml"
 

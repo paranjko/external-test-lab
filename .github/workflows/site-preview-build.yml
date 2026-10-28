@@ -22,6 +22,8 @@ on:
       - 'net-deployment-runbook/scripts/chrome-devtools.mjs'
       - 'net-deployment-runbook/scripts/test-production-network-browser.mjs'
       - 'net-deployment-runbook/scripts/test-site-snapshot-acceptance.mjs'
+      - 'net-deployment-runbook/scripts/test-site-current-voting-power-browser.mjs'
+      - 'net-deployment-runbook/scripts/test-site-make-isolation.sh'
       - 'net-deployment-runbook/scripts/prepare-site-preview-artifact.sh'
       - 'net-deployment-runbook/scripts/prepare-isolated-site-preview-artifact.sh'
       - 'net-deployment-runbook/scripts/prepare-isolated-preview-ci.sh'
@@ -38,7 +40,7 @@ on:
       - 'net-deployment-runbook/scripts/test-validator-map-fixture.mjs'
       - 'net-deployment-runbook/package.json'
       - 'net-deployment-runbook/package-lock.json'
-      - 'net-deployment-runbook/Makefile'
+      - 'net-deployment-runbook/make/site.mk'
       - 'ops/preview/**'
       - '.github/workflows/site-preview-build.yml'
       - '.github/workflows/site-preview-publish.yml'
@@ -75,7 +77,8 @@ jobs:
           # not an operator login's /run/user directory on the hosted runner
           XDG_RUNTIME_DIR: ${{ runner.temp }}
         run: >-
-          make -C net-deployment-runbook
+          make -C net-deployment-runbook -f make/site.mk
+          test-site-make-isolation
           test-gateway-site-state
           test-site-release-paths
           test-site-preview-context
@@ -88,7 +91,7 @@ jobs:
 
       - name: Run validator-map CDP regression
         run: >-
-          make -C net-deployment-runbook test-validator-map
+          make -C net-deployment-runbook -f make/site.mk test-validator-map
           map_evidence_dir="$RUNNER_TEMP/validator-map-regressions"
 
       - name: Build the source-bound preview artifact without deployment credentials
@@ -101,7 +104,7 @@ jobs:
           PREVIEW_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
           PREVIEW_REVISION: ${{ github.event.pull_request.head.sha }}
           PREVIEW_BACKEND_IMAGE: gdc-preview-backend-ci:${{ github.event.pull_request.head.sha }}
-        run: make -C net-deployment-runbook prepare-isolated-preview-ci-artifact
+        run: make -C net-deployment-runbook -f make/site.mk prepare-isolated-preview-ci-artifact
 
       - name: Upload the source-bound preview artifact
         uses: actions/upload-artifact@v7.0.1

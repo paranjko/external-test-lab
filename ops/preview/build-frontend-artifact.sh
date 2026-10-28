@@ -57,7 +57,7 @@ if ! docker run --rm --network bridge --read-only --user "$build_uid:$build_gid"
     git -C /workspace init -q
     cd /workspace/net-deployment-runbook
     ./scripts/install-site-vendor.sh
-    make prepare-static-site site_release_dir=/out site_revision="$PREVIEW_SOURCE_REVISION"
+    make -f make/site.mk prepare-static-site site_release_dir=/out site_revision="$PREVIEW_SOURCE_REVISION"
   ' >"$build_log" 2>&1; then
   install -m 0644 "$build_log" "$failure_log"
   sed -n '1,240p' "$build_log" >&2

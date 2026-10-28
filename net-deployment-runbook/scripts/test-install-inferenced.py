@@ -45,8 +45,9 @@ else: sys.exit("unexpected URL: " + url)
 pathlib.Path(args[args.index("-o") + 1]).write_bytes(src.read_bytes())
 ''')
         self.env = {
+            **os.environ,
             "PATH": str(self.bin) + ":" + os.environ["PATH"],
-            "HOME": str(self.root), "INSTALL_DIR": str(self.dest),
+            "INSTALL_DIR": str(self.dest),
             "FIXTURES": str(self.fixtures), "CURL_LOG": str(self.log),
         }
 

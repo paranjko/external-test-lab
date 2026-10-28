@@ -18,7 +18,7 @@ on:
       - 'net-deployment-runbook/scripts/test-site-publisher.sh'
       - 'net-deployment-runbook/scripts/verify-network-observer.mjs'
       - 'net-deployment-runbook/scripts/test-verify-network-observer.mjs'
-      - 'net-deployment-runbook/Makefile'
+      - 'net-deployment-runbook/make/site.mk'
       - 'install_inferenced.sh'
       - '.github/workflows/site-publish.yml'
 
@@ -48,11 +48,11 @@ jobs:
           node-version: 22
 
       - name: Build and validate browser assets
-        run: make -C net-deployment-runbook test-gateway-site-state test-site-release-paths test-site-release-verifier test-site-publisher test-verify-network-observer
+        run: make -C net-deployment-runbook -f make/site.mk test-gateway-site-state test-site-release-paths test-site-release-verifier test-site-publisher test-verify-network-observer
 
       - name: Prepare the exact static site release
         run: >-
-          make -C net-deployment-runbook prepare-static-site
+          make -C net-deployment-runbook -f make/site.mk prepare-static-site
           site_release_dir="$RUNNER_TEMP/gonka-dev-site"
 
       - name: Attest the published installer source
@@ -61,7 +61,7 @@ jobs:
           subject-path: install_inferenced.sh
 
       - name: Verify production network observer capability
-        run: make -C net-deployment-runbook verify-network-observer
+        run: make -C net-deployment-runbook -f make/site.mk verify-network-observer
 
       - name: Publish the verified release
         env:
@@ -70,11 +70,11 @@ jobs:
           DEPLOY_PRIVATE_KEY: ${{ secrets.GONKA_DEV_SITE_DEPLOY_PRIVATE_KEY }}
           DEPLOY_USER: ${{ secrets.GONKA_DEV_SITE_DEPLOY_USER }}
         run: >-
-          make -C net-deployment-runbook publish-site-release
+          make -C net-deployment-runbook -f make/site.mk publish-site-release
           site_release_dir="$RUNNER_TEMP/gonka-dev-site"
           deploy_host="$DEPLOY_HOST" deploy_user="$DEPLOY_USER"
 
       - name: Verify the public deployment
         run: >-
-          make -C net-deployment-runbook verify-site-release
+          make -C net-deployment-runbook -f make/site.mk verify-site-release
           site_release_dir="$RUNNER_TEMP/gonka-dev-site"
