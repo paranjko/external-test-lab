@@ -79,6 +79,7 @@ render() {
               tabletarget("sum by (host) (rate(cometbft_p2p_peer_receive_bytes_total{\(hosts)}[5m]))";"H"),
               tabletarget("sum by (host) (rate(cometbft_p2p_peer_send_bytes_total{\(hosts)}[5m]))";"I"),
               tabletarget("max by (host, version) (gdc_component_info{component=\"inference-chain\",source=\"runtime\",\(hosts)})";"J")]
+          | .fieldConfig.defaults.noValue="–"
           | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
               excludeByName:{Time:true,"Value #J":true},
               indexByName:{host:0,"Value #A":1,"Value #B":2,"Value #C":3,"Value #D":4,"Value #E":5,"Value #F":6,"Value #G":7,"Value #H":8,"Value #I":9,version:10},
@@ -163,6 +164,7 @@ render() {
         row(130;"Gateways";40),
         (table(31;"Gateways";"label_replace(max by (gateway) (gdc_chain_gateway_devshards{phase=\"active\"}), \"version\", \"$1\", \"gateway\", \".*_V([0-9]+)\") and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";0;41;24;7;"One row per gateway with an active DevShard; gateways without one are hidden. DevShards, hosts and capacity come from the gateway status, traffic, errors and limits from its own metrics over five minutes.";{noValue:"no gateway has an active DevShard"})
           | .targets=[target("label_replace(max by (gateway) (gdc_chain_gateway_devshards{phase=\"active\"}), \"version\", \"$1\", \"gateway\", \".*_V([0-9]+)\") and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"") + {refId:"A",format:"table",instant:true}, target("max by (gateway) (gdc_chain_gateway_hosts{state=\"available\"}) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"") + {refId:"B",format:"table",instant:true}, target("sum by (gateway) (gdc_chain_gateway_hosts) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"") + {refId:"C",format:"table",instant:true}, target("max by (gateway) (gdc_chain_gateway_available_percent) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"") + {refId:"D",format:"table",instant:true}, target("sum by (gateway) (rate(devshard_gateway_requests_total[5m])) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"") + {refId:"E",format:"table",instant:true}, target("100 * sum by (gateway) (rate(devshard_gateway_requests_total{outcome!=\"success\"}[5m])) / (sum by (gateway) (rate(devshard_gateway_requests_total[5m])) > 0) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"") + {refId:"F",format:"table",instant:true}, target("sum by (gateway) (devshard_gateway_inflight_requests) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"") + {refId:"G",format:"table",instant:true}, target("max by (gateway) (devshard_gateway_effective_max_concurrent_requests) and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)";"") + {refId:"H",format:"table",instant:true}]
+          | .fieldConfig.defaults.noValue="–"
           | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
               excludeByName:{Time:true},
               indexByName:{gateway:0,version:1,"Value #A":2,"Value #B":3,"Value #C":4,"Value #D":5,"Value #E":6,"Value #F":7,"Value #G":8,"Value #H":9},
@@ -212,6 +214,7 @@ render() {
               tabletarget("max by (host, gpu_name) (gdc_nvidia_utilization_percent{\(gpus)})";"H"),
               tabletarget("max by (host, version) (gdc_component_info{component=\"inference-chain\",source=\"runtime\",\(hosts)})";"I"),
               tabletarget("topk by (host) (1, max by (host, city, country) (up{job=\"host\",city!=\"\",\(hosts)}))";"J")]
+          | .fieldConfig.defaults.noValue="–"
           | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
               excludeByName:{Time:true,"Value #I":true,"Value #J":true},
               indexByName:{host:0,city:1,country:2,"Value #A":4,"Value #B":5,"Value #C":6,"Value #D":7,"Value #E":8,"Value #F":9,"Value #G":10,gpu_name:11,"Value #H":12,version:13},
@@ -236,6 +239,7 @@ render() {
               tabletarget("max by (host, gpu, gpu_name) (gdc_nvidia_memory_total_bytes{\(gpus)})";"C"),
               tabletarget("max by (host, gpu, gpu_name) (gdc_nvidia_temperature_celsius{\(gpus)})";"D"),
               tabletarget("max by (host, gpu, gpu_name) (gdc_nvidia_power_watts{\(gpus)})";"E")]
+          | .fieldConfig.defaults.noValue="–"
           | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
               excludeByName:{Time:true},
               indexByName:{host:0,gpu:1,gpu_name:2,"Value #A":3,"Value #B":4,"Value #C":5,"Value #D":6,"Value #E":7},

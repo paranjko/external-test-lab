@@ -564,7 +564,7 @@
             },
             "inspect": false
           },
-          "noValue": "no host matches the filter"
+          "noValue": "–"
         },
         "overrides": [
           {
@@ -1574,7 +1574,7 @@
             },
             "inspect": false
           },
-          "noValue": "no GPU matches the filters"
+          "noValue": "–"
         },
         "overrides": [
           {

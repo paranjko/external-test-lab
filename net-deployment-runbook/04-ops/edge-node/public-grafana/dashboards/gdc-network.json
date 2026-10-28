@@ -540,7 +540,7 @@
             },
             "inspect": false
           },
-          "noValue": "no chain node matches the filter"
+          "noValue": "–"
         },
         "overrides": [
           {
