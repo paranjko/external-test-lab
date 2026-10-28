@@ -2,12 +2,14 @@
 # Constant-rate steps through one live gateway with cmd/wrap-load: ramp to each rate, hold it, hold the last rate longest.
 # wrap-load takes one rate per run, so every ramp slice and every hold is its own run, started on schedule; a run that
 # is still draining overlaps the next one. A hold whose errors pass STOP_PCT (PoC and cPoC 503 not counted) stops the
-# steps: running runs are interrupted and no new ones start.
+# steps: running runs are interrupted and no new ones start; STOP_PCT 100 or more never stops. After the steps a tail of
+# TAIL seconds keeps the logs going, idle or at TAIL_RPS.
 # Usage: remote-steps.sh <gonka-devshard-contrib checkout> <output directory> <env file with GONKA_BASE and GONKA_API_KEY>
 # Env: LOAD_DATASET; STEPS ("5 10 15 20 25 30"), RAMP (60), RAMP_SLICES (6), HOLD (300), LAST_HOLD (3600),
 # MAX_IN_FLIGHT (1024, per run), STOP_PCT (20), REQUEST_TIMEOUT (3m), START_AFTER (file to wait for), START_DELAY (0),
 # GATEWAY_SSH and GATEWAY_CONTAINER (follow the gateway log), LOG_HOSTS (ssh hosts whose wrapper, API and ML node logs are
-# followed), LOG_CONTAINERS (mlnode|versiond|proxy|-api-1), CHAIN_API (https://node2.gonka-dev.net/chain-api), POLL (15).
+# followed), LOG_CONTAINERS (mlnode|versiond|proxy|-api-1), GATEWAY_METRICS_PORT (sample the gateway /metrics every POLL),
+# TAIL (0), TAIL_RPS (0), CHAIN_API (https://node2.gonka-dev.net/chain-api), POLL (15).
 # Logs are followed from the start of the steps and written as .log.gz that stays complete if the run is killed.
 set -euo pipefail
 
@@ -18,7 +20,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 : "${LOAD_DATASET:?}"
 read -ra steps <<<"${STEPS:-5 10 15 20 25 30}"
 ramp=${RAMP:-60} slices=${RAMP_SLICES:-6} hold=${HOLD:-300} last_hold=${LAST_HOLD:-3600}
-inflight=${MAX_IN_FLIGHT:-1024} stop_pct=${STOP_PCT:-20} poll=${POLL:-15}
+inflight=${MAX_IN_FLIGHT:-1024} stop_pct=${STOP_PCT:-20} poll=${POLL:-15} tail_s=${TAIL:-0} tail_rps=${TAIL_RPS:-0}
 chain=${CHAIN_API:-https://node2.gonka-dev.net/chain-api}
 env -i bash -c 'set -a; . "$1"; : "${GONKA_BASE:?}" "${GONKA_API_KEY:?}"' _ "$envfile" ||
   { echo "$envfile needs GONKA_BASE and GONKA_API_KEY" >&2; exit 1; }
@@ -44,9 +46,9 @@ for s in "${steps[@]}"; do
   printf 'S-%02d\t%d\t%d\t%s\n' "$s" "$t" "$d" "$s" >> "$out/plan.tsv"
   t=$((t + d)) prev=$s
 done
-printf 'base=%s\nsteps=%s\nramp_s=%s slices=%s hold_s=%s last_hold_s=%s\nmax_in_flight=%s stop_pct=%s\ntotal_s=%s\n' \
+printf 'base=%s\nsteps=%s\nramp_s=%s slices=%s hold_s=%s last_hold_s=%s\nmax_in_flight=%s stop_pct=%s\ntotal_s=%s\ntail_s=%s tail_rps=%s\n' \
   "$(env -i bash -c 'set -a; . "$1"; echo "$GONKA_BASE"' _ "$envfile")" "${steps[*]}" "$ramp" "$slices" "$hold" \
-  "$last_hold" "$inflight" "$stop_pct" "$t" > "$out/steps.conf"
+  "$last_hold" "$inflight" "$stop_pct" "$t" "$tail_s" "$tail_rps" > "$out/steps.conf"
 
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$out/events.log"; }
 
@@ -100,6 +102,15 @@ host_cmd='for c in $(docker ps --format "{{.Names}}" | grep -E "PATTERN" | grep 
   sed -u "s/^/$c /" & done; wait'
 host_cmd=${host_cmd/PATTERN/${LOG_CONTAINERS:-mlnode|versiond|proxy|-api-1}}
 for h in ${LOG_HOSTS:-}; do follow_gz "$out/host-$h.log.gz" "$h" "$host_cmd"; done
+if [ -n "${GATEWAY_SSH:-}" ] && [ -n "${GATEWAY_METRICS_PORT:-}" ]; then
+  metrics_re='^(devshard_gateway_(participant_quarantine_state|participant_quarantine_transitions_total|participant_transport_errors_total|attempt_failures_total|timeout_actions_total|participants_tracked)|devshard_inference_timeouts_total|go_memstats_(heap_inuse|sys)_bytes|process_resident_memory_bytes)'
+  (while [ ! -e "$out/.followers-stop" ]; do
+    ssh -o BatchMode=yes -o ConnectTimeout=8 "$GATEWAY_SSH" "curl -s -m 10 localhost:$GATEWAY_METRICS_PORT/metrics" < /dev/null |
+      grep -E "$metrics_re" | sed "s#^#$(date -u +%FT%TZ) #" >> "$out/gateway-metrics.log" || true
+    sleep "$poll"
+  done) &
+  followers+=($!)
+fi
 
 # Share of a finished hold that failed or was dropped, PoC and cPoC refusals left out.
 failed_pct() {
@@ -147,6 +158,20 @@ if [ -e "$out/STOP" ]; then
   for p in "${pids[@]}"; do kill -INT "$p" 2>/dev/null || true; done
 fi
 for p in "${pids[@]}" "${watchers[@]}"; do wait "$p" 2>/dev/null || true; done
+if [ "$tail_s" -gt 0 ]; then
+  if awk -v r="$tail_rps" 'BEGIN { exit !(r > 0) }'; then
+    log "start T-tail: ${tail_rps} rps, ${tail_s}s"
+    mkdir -p "$out/.runs/T-tail"
+    (unset "${!GONKA_@}"; set -a; . "$envfile"; set +a
+    cd "$gonka/devshard/testenv" && exec "$out/wrap-load" -scenario loadtest/scenarios/normal-load.yaml \
+      -dataset "$dataset" -rps "$tail_rps" -max-in-flight "$inflight" -duration "${tail_s}s" \
+      -request-timeout "${REQUEST_TIMEOUT:-3m}" -source-revision "$(cat "$out/gonka.sha")" \
+      -output-parent "$out/.runs/T-tail" < /dev/null > "$out/T-tail.log" 2>&1) || true
+  else
+    log "tail: idle ${tail_s}s, logs still followed"
+    sleep "$tail_s"
+  fi
+fi
 mkdir -p "$out/all"
 : > "$out/all/requests.jsonl"
 for d in "$out"/.runs/*/run-*; do
