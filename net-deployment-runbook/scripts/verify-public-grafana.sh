@@ -199,7 +199,6 @@ max(cometbft_consensus_height)
 sum(up{job="gonka-node"})
 count(max by (host) (up{job="host"}) == 1)
 min(up{job="gateway"})
-sum by (gateway) (rate(devshard_gateway_requests_total[15m])) * 60
 max by (gateway) (devshard_gateway_capacity_scale) * 100 and on (gateway) (max by (gateway) (gdc_chain_gateway_working) == 1)
 EOF
 # A pinned expression that no longer appears on any board keeps this gate green

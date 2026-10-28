@@ -683,7 +683,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (gateway, reason) (rate(devshard_gateway_attempts_started_total{role=\"secondary\"}[5m])) > 0",
+          "expr": "sum by (gateway, reason) (rate(devshard_gateway_attempts_started_total{role=~\"secondary|extra\"}[5m])) > 0",
           "refId": "A",
           "legendFormat": "{{gateway}} · {{reason}}"
         }
@@ -4343,7 +4343,7 @@
           "legendFormat": "{{gateway}} · {{result}}"
         }
       ],
-      "description": "Cache outcomes per second: hit is served from cache, stored is a new entry, skipped_* is not cached. The gateway exports no cache size, only these outcomes."
+      "description": "Cache outcomes per second: hit is served from cache, stored is a new entry, skipped_* is not cached. Only v6 gateways export these outcomes, and no gateway exports a cache size."
     }
   ],
   "refresh": "15s",
