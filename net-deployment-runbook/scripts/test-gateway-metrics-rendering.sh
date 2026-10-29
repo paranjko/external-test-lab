@@ -95,5 +95,6 @@ grep -Fq 'metrics_path: /devshard/metrics' "$tmp/observed/prometheus.yml"
 grep -Fq "__metrics_path__: '/ops-gateways/B_V6/metrics'" "$tmp/observed/prometheus.yml"
 grep -Fq 'B_V41: https://gdc-node0.example.test/ops-gateways/B_V41/status' "$tmp/observed/chain-poller/config.yml"
 grep -Fq 'chain_sources: [gdc-node0]' "$tmp/observed/chain-poller/config.yml"
+grep -Fq 'devshard: 15, devshard_escrows: 60' "$tmp/observed/chain-poller/config.yml"
 grep -Fq 'reverse_proxy 127.0.0.1:18146' "$tmp/observed/gateway-observation/gdc-node0.caddy"
 printf 'PASS legacy and multi-version gateway monitoring renders\n'

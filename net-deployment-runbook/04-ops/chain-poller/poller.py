@@ -1,4 +1,4 @@
-"""Chain poller: reads public node RPC and LCD and exposes Prometheus metrics on :9800.
+"""Chain poller: reads public node RPC, LCD and DevShard stats and exposes Prometheus metrics on :9800.
 
 It needs no access to the hosts: every request is a GET to a published endpoint."""
 
@@ -95,6 +95,20 @@ esc_payout = G("gdc_chain_escrow_payout_ngonka", "Payout to hosts over all settl
 esc_fees = G("gdc_chain_escrow_fees_ngonka", "Nonce fees over all settlements", ["creator"])
 esc_nonces = G("gdc_chain_escrow_settled_nonces", "Nonces paid over all settlements: fees / fee_per_nonce", ["creator"])
 creator_balance = G("gdc_chain_escrow_creator_balance_ngonka", "Wallet balance of an allowed escrow creator", ["creator"])
+
+ds_up = G("gdc_devshard_stats_up", "DevShard stats of the host answer", ["host"])
+ds_healthz = G("gdc_devshard_healthz_up", "DevShard healthz of the host answers 200", ["host"])
+ds_clock = G("gdc_devshard_clock_offset_seconds", "Host clock minus poller clock, from x-server-send-ns", ["host"])
+ds_info = G("gdc_devshard_info", "DevShard versions of the host", ["host", "protocol_version", "binary_version"])
+ds_epoch = G("gdc_devshard_current_epoch", "Current epoch the host reports", ["host"])
+ds_escrows = G("gdc_devshard_active_escrows", "Active escrows of the host", ["host"])
+ds_rpc = G("gdc_devshard_rpc_requests", "Peer RPC requests to the host in the current minute", ["host", "endpoint", "zone", "result"])
+ds_escrow_rpc = G("gdc_devshard_escrow_rpc_requests", "Peer RPC requests per escrow in the current minute", ["host", "escrow_id", "result"])
+ds_nonce = G("gdc_devshard_escrow_nonce", "Latest nonce of the escrow", ["host", "escrow_id", "epoch"])
+ds_slot = G("gdc_devshard_escrow_slot", "host_stats of each slot the host holds in the escrow", ["host", "escrow_id", "slot", "stat"])
+ds_validations = G("gdc_devshard_escrow_validations", "Validation totals of the escrow on the host", ["host", "escrow_id", "state"])
+DS_STATE = (ds_info, ds_epoch, ds_escrows, ds_rpc, ds_escrow_rpc)
+DS_ESCROW = (ds_nonce, ds_slot, ds_validations)
 
 task_ok = G("gdc_chain_poller_last_success_timestamp", "Last successful task run", ["task"])
 task_err = Counter("gdc_chain_poller_errors", "Task errors", ["task"])
@@ -370,7 +384,7 @@ def task_chain():
 def gateway_down(name):
     gw_up.labels(name).set(0)
     gw_working.labels(name).set(0)
-    drop_gateway((gw_devshards, gw_error, gw_avail, gw_hosts, gw_runtimes, gw_inflight, gw_limit), name)
+    drop_series((gw_devshards, gw_error, gw_avail, gw_hosts, gw_runtimes, gw_inflight, gw_limit), name)
 
 
 def poll_gateway(name, url):
@@ -387,7 +401,7 @@ def poll_gateway(name, url):
         log.debug("gateway %s: %s", name, e)
 
 
-def drop_gateway(gauges, name):
+def drop_series(gauges, name):
     for g in gauges:
         for labels in [m for m in list(g._metrics) if m[0] == name]:
             g.remove(*labels)
@@ -395,7 +409,7 @@ def drop_gateway(gauges, name):
 
 def apply_gateway_status(name, st):
     gw_up.labels(name).set(1)
-    drop_gateway((gw_devshards, gw_error, gw_avail, gw_hosts, gw_runtimes, gw_inflight, gw_limit), name)
+    drop_series((gw_devshards, gw_error, gw_avail, gw_hosts, gw_runtimes, gw_inflight, gw_limit), name)
     phases = {}
     if "devshards" not in st and st.get("escrow_id"):
         # v4 gateways report their single escrow instead of a devshard list
@@ -426,6 +440,93 @@ def task_gateway():
     for name, url in (CFG.get("gateways") or {}).items():
         poll_gateway(name, url)
     mark("gateway")
+
+
+# DevShard read checks on the public edge of each Host. RPC counts cover only the current minute.
+DS = {}
+
+
+def poll_devshard(host):
+    base = f"{NODES[host]}/devshard"
+    try:
+        shards, rpcs = get(f"{base}/stats/shards"), get(f"{base}/stats/rpc")
+        apply_devshard_stats(host, shards, rpcs)
+    except Exception as e:
+        ds_up.labels(host).set(0)
+        drop_series(DS_STATE + DS_ESCROW, host)
+        DS.pop(host, None)
+        log.debug("devshard %s: %s", host, e)
+    version = (DS.get(host) or {}).get("version") or "v6"
+    try:
+        ds_healthz.labels(host).set(1 if S.get(f"{base}/{version}/healthz", timeout=TIMEOUT).status_code == 200 else 0)
+    except Exception:
+        ds_healthz.labels(host).set(0)
+    try:
+        t0 = time.time_ns()
+        r = S.get(f"{base}/{version}/clock", timeout=TIMEOUT)
+        sent = int(r.headers["x-server-send-ns"])
+        ds_clock.labels(host).set((sent - (t0 + time.time_ns()) / 2) / 1e9)
+    except Exception:
+        drop_series((ds_clock,), host)
+
+
+def apply_devshard_stats(host, shards, rpcs):
+    ds_up.labels(host).set(1)
+    drop_series(DS_STATE, host)
+    version = shards.get("protocol_version") or rpcs.get("protocol_version") or "v6"
+    DS[host] = {"version": version, "address": rpcs.get("host_address"), "escrows": shards.get("active_escrows") or []}
+    ds_info.labels(host, version, shards.get("binary_version") or rpcs.get("binary_version") or "?").set(1)
+    ds_epoch.labels(host).set(int(shards.get("current_epoch_id") or 0))
+    ds_escrows.labels(host).set(len(DS[host]["escrows"]))
+    for e in (rpcs.get("host") or {}).get("endpoints") or []:
+        for result in ("requests", "banned"):
+            ds_rpc.labels(host, e.get("endpoint") or "?", e.get("zone") or "?", result).set(int(e.get(result) or 0))
+    for s in rpcs.get("shards") or []:
+        for result in ("requests", "banned"):
+            ds_escrow_rpc.labels(host, str(s.get("escrow_id")), result).set(int(s.get(result) or 0))
+
+
+def apply_devshard_escrow(host, address, esc):
+    eid = str(esc["escrow_id"])
+    ds_nonce.labels(host, eid, str(esc.get("epoch_id", ""))).set(int(esc.get("nonce") or 0))
+    own = {str(g["SlotID"]) for g in esc.get("group") or [] if g.get("ValidatorAddress") == address}
+    for slot, stats in (esc.get("host_stats") or {}).items():
+        if slot in own:
+            for stat in ("missed", "invalid", "cost", "required_validations", "completed_validations"):
+                ds_slot.labels(host, eid, slot, stat).set(int(stats.get(stat) or 0))
+    totals = (esc.get("validation_observability") or {}).get("totals") or {}
+    for state in ("required", "completed"):
+        ds_validations.labels(host, eid, state).set(int(totals.get(f"{state}_validations") or 0))
+
+
+def poll_devshard_escrows(host):
+    state = DS.get(host)
+    if not state:
+        drop_series(DS_ESCROW, host)
+        return
+    found = []
+    for eid in state["escrows"]:
+        try:
+            found.append(get(f"{NODES[host]}/devshard/stats/shards/{eid}"))
+        except Exception as e:
+            log.debug("devshard %s escrow %s: %s", host, eid, e)
+    drop_series(DS_ESCROW, host)
+    for esc in found:
+        apply_devshard_escrow(host, state["address"], esc)
+
+
+def task_devshard():
+    if NODES:
+        with ThreadPoolExecutor(max_workers=len(NODES)) as ex:
+            list(ex.map(poll_devshard, NODES))
+    mark("devshard")
+
+
+def task_devshard_escrows():
+    if NODES:
+        with ThreadPoolExecutor(max_workers=len(NODES)) as ex:
+            list(ex.map(poll_devshard_escrows, NODES))
+    mark("devshard_escrows")
 
 
 CREATORS = {addr: name for name, addr in (CFG.get("escrow_creators") or {}).items()}
@@ -540,7 +641,9 @@ def task_slow():
 
 TASKS = [("slow", task_slow, IV["slow"]), ("nodes", task_nodes, IV["nodes"]),
          ("chain", task_chain, IV["chain"]), ("gateway", task_gateway, IV["chain"]),
-         ("blocks", task_blocks, IV["blocks"]), ("escrow", task_escrow, IV.get("escrow", 120))]
+         ("blocks", task_blocks, IV["blocks"]), ("escrow", task_escrow, IV.get("escrow", 120)),
+         ("devshard", task_devshard, IV.get("devshard", 15)),
+         ("devshard_escrows", task_devshard_escrows, IV.get("devshard_escrows", 60))]
 
 
 def main():

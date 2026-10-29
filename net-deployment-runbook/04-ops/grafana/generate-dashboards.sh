@@ -198,6 +198,14 @@ render() {
       def finished: "devshard_request_terminal_total{\(sel),terminal=\"finish_published\"}";
       def executed: "devshard_request_terminal_total{\(sel),terminal=~\"finish_published|execution_no_finish\"}";
       def vfinished($status): "devshard_validation_total{\(sel),stage=\"validation_finished\",status=~\"\($status)\"}";
+      def hosts: "host=~\"$host\"";
+      def polled: {noValue:"the chain poller reports no DevShard read checks"};
+      def clock: steps([{color:"red",value:null},{color:"green",value:-0.5},{color:"red",value:0.5}]);
+      def updown: [{id:"mappings",value:[{type:"value",options:{"0":{text:"down",color:"red",index:0},"1":{text:"up",color:"green",index:1}}}]},{id:"custom.cellOptions",value:{type:"color-text"}}];
+      def timeline($id;$title;$expr;$legend;$y;$h;$desc;$fc):
+        {id:$id,datasource:ds,type:"state-timeline",title:$title,description:$desc,gridPos:{h:$h,w:24,x:0,y:$y},
+         fieldConfig:{defaults:({color:{mode:"thresholds"},thresholds:{mode:"absolute",steps:[{color:"green",value:null}]}} + $fc),overrides:[]},
+         options:{showValue:"never",mergeValues:true,rowHeight:0.85,legend:{showLegend:false}},targets:[target($expr;$legend)]};
       base("gdc-components";"Gonka DevNet Components";"now-6h";[
         row(100;"DevShard hosts now";0),
         stat(1;"Hosts up";"sum(up{\(sel)})";"none";0;1;4;"DevShard hosts that answered their last scrape of /devshard/metrics.";{noValue:"no DevShard host is a scrape target"};{colorMode:"value"}),
@@ -263,7 +271,68 @@ render() {
         (ts(26;"Peer sessions by state";"sum by (state) (devshard_peer_session_state{\(sel)})";"{{state}}";"short";0;95;8;8;"Peer sessions of the selected hosts by state. Every session should be ready.";nodata + stacked;["lastNotNull","max"])
           | .fieldConfig.overrides=[color("ready";"green"),color("attaching";"orange"),color("unauthenticated";"red")]),
         ts(27;"Peer RPC refused";"sum by (host, endpoint, result) (rate(devshard_peer_rpc_requests_total{\(sel),result!=\"ok\"}[5m])) * 60";"{{host}} · {{endpoint}} · {{result}}";"opm";8;95;8;8;"Peer RPC calls a host refused, per minute, by endpoint and result.";nodata;["lastNotNull","max"]),
-        ts(28;"Postgres pool saturated";"max by (host) (devshard_postgres_pool_saturated{\(sel)})";"{{host}}";"short";16;95;8;8;"One while the payload Postgres pool of a host has no free connection.";nodata + {min:0,max:1};["lastNotNull","max"])
+        ts(28;"Postgres pool saturated";"max by (host) (devshard_postgres_pool_saturated{\(sel)})";"{{host}}";"short";16;95;8;8;"One while the payload Postgres pool of a host has no free connection.";nodata + {min:0,max:1};["lastNotNull","max"]),
+
+        row(160;"DevShard read checks by host";103),
+        (table(30;"Host read checks";"max by (host) (gdc_devshard_stats_up{\(hosts)})";0;104;24;8;"One row per host from its public DevShard read checks: stats and health answer, clock offset, DevShard version, current epoch, active escrows, and peer RPC requests and bans in the last minute.";polled)
+          | .targets=[tabletarget("max by (host) (gdc_devshard_stats_up{\(hosts)})";"A"),
+              tabletarget("max by (host) (gdc_devshard_healthz_up{\(hosts)})";"B"),
+              tabletarget("max by (host) (gdc_devshard_clock_offset_seconds{\(hosts)})";"C"),
+              tabletarget("max by (host, binary_version) (gdc_devshard_info{\(hosts)})";"D"),
+              tabletarget("max by (host) (gdc_devshard_current_epoch{\(hosts)})";"E"),
+              tabletarget("max by (host) (gdc_devshard_active_escrows{\(hosts)})";"F"),
+              tabletarget("sum by (host) (max_over_time(gdc_devshard_rpc_requests{\(hosts),result=\"requests\"}[1m]))";"G"),
+              tabletarget("sum by (host) (max_over_time(gdc_devshard_rpc_requests{\(hosts),result=\"banned\"}[1m]))";"H")]
+          | .fieldConfig.defaults.noValue="–"
+          | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
+              excludeByName:{Time:true,"Value #D":true},
+              indexByName:{host:0,"Value #A":1,"Value #B":2,"Value #C":3,binary_version:4,"Value #E":5,"Value #F":6,"Value #G":7,"Value #H":8},
+              renameByName:{host:"Host","Value #A":"Stats","Value #B":"Health","Value #C":"Clock offset",binary_version:"Version","Value #E":"Epoch","Value #F":"Active escrows","Value #G":"RPC /min","Value #H":"Banned /min"}}}]
+          | .fieldConfig.overrides=[override("Stats";updown),override("Health";updown),
+              override("Clock offset";[{id:"unit",value:"s"},{id:"decimals",value:3},{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:clock.thresholds}]),
+              override("Banned /min";[{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:bad.thresholds}])]),
+        timeline(31;"DevShard health";"max by (host) (gdc_devshard_healthz_up{\(hosts)})";"{{host}}";112;5;"Whether the healthz of the running DevShard version on each host answered 200 when polled.";polled + {mappings:[{type:"value",options:{"0":{text:"down",color:"red",index:0},"1":{text:"ok",color:"green",index:1}}}],thresholds:{mode:"absolute",steps:[{color:"red",value:null},{color:"green",value:1}]}}),
+        ts(32;"Clock offset";"max by (host) (gdc_devshard_clock_offset_seconds{\(hosts)})";"{{host}}";"s";0;117;8;8;"Host clock minus the clock of the monitoring host, from the server send time of the clock check at the middle of the request. The error is up to half the round trip. The dashed lines are 0.5 seconds either way.";polled + clock + {custom:{thresholdsStyle:{mode:"dashed"},fillOpacity:0}};["lastNotNull","max"]),
+        ts(33;"Peer RPC requests per minute";"sum by (host, endpoint) (max_over_time(gdc_devshard_rpc_requests{\(hosts),result=\"requests\"}[1m]))";"{{host}} · {{endpoint}}";"short";8;117;8;8;"Peer RPC requests each host served, by endpoint. The host counts only the current minute, so this is the highest count seen in the last minute.";polled;["lastNotNull","max"]),
+        ts(34;"Peer RPC banned per minute";"sum by (host, endpoint) (max_over_time(gdc_devshard_rpc_requests{\(hosts),result=\"banned\"}[1m]))";"{{host}} · {{endpoint}}";"short";16;117;8;8;"Peer RPC requests each host refused by its rate limits, by endpoint, counted the same way as requests.";polled;["lastNotNull","max"]),
+
+        row(170;"DevShard read checks by escrow";125),
+        (table(35;"Escrows";"max by (host, escrow_id, epoch) (gdc_devshard_escrow_nonce{\(hosts)})";0;126;24;10;"One row per active escrow of each host: epoch and nonce, the slots the host holds in its group with their missed and invalid counts and cost, the validations the host required and completed, and peer RPC requests and bans for the escrow in the last minute.";polled)
+          | .targets=[tabletarget("max by (host, escrow_id, epoch) (gdc_devshard_escrow_nonce{\(hosts)})";"A"),
+              tabletarget("count by (host, escrow_id) (gdc_devshard_escrow_slot{\(hosts),stat=\"missed\"})";"B"),
+              tabletarget("sum by (host, escrow_id) (gdc_devshard_escrow_slot{\(hosts),stat=\"missed\"})";"C"),
+              tabletarget("sum by (host, escrow_id) (gdc_devshard_escrow_slot{\(hosts),stat=\"invalid\"})";"D"),
+              tabletarget("sum by (host, escrow_id) (gdc_devshard_escrow_slot{\(hosts),stat=\"cost\"})";"E"),
+              tabletarget("max by (host, escrow_id) (gdc_devshard_escrow_validations{\(hosts),state=\"required\"})";"F"),
+              tabletarget("max by (host, escrow_id) (gdc_devshard_escrow_validations{\(hosts),state=\"completed\"})";"G"),
+              tabletarget("max by (host, escrow_id) (max_over_time(gdc_devshard_escrow_rpc_requests{\(hosts),result=\"requests\"}[1m]))";"H"),
+              tabletarget("max by (host, escrow_id) (max_over_time(gdc_devshard_escrow_rpc_requests{\(hosts),result=\"banned\"}[1m]))";"I")]
+          | .fieldConfig.defaults.noValue="–"
+          | .transformations=[{id:"merge",options:{}},{id:"filterByValue",options:{filters:[{fieldName:"Value #A",config:{id:"isNull",options:{}}}],type:"exclude",match:"any"}},{id:"organize",options:{
+              excludeByName:{Time:true},
+              indexByName:{host:0,escrow_id:1,epoch:2,"Value #A":3,"Value #B":4,"Value #C":5,"Value #D":6,"Value #E":7,"Value #F":8,"Value #G":9,"Value #H":10,"Value #I":11},
+              renameByName:{host:"Host",escrow_id:"Escrow",epoch:"Epoch","Value #A":"Nonce","Value #B":"Host slots","Value #C":"Missed","Value #D":"Invalid","Value #E":"Cost","Value #F":"Validations required","Value #G":"Validations completed","Value #H":"RPC /min","Value #I":"Banned /min"}}},
+            {id:"sortBy",options:{sort:[{field:"Escrow",desc:true}]}}]
+          | .fieldConfig.overrides=[override("Missed";[{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:bad.thresholds}]),
+              override("Invalid";[{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:bad.thresholds}]),
+              override("Banned /min";[{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:bad.thresholds}])]),
+        ts(36;"Nonces per minute";"sum by (host) (rate(gdc_devshard_escrow_nonce{\(hosts)}[5m])) * 60";"{{host}}";"short";0;136;8;8;"How fast the nonces of the active escrows of each host grow, summed over its escrows. Zero under load means the escrows of the host make no progress.";polled;["lastNotNull","max"]),
+        ts(37;"Missed in host slots";"sum by (host) (gdc_devshard_escrow_slot{\(hosts),stat=\"missed\"})";"{{host}}";"short";8;136;8;8;"Missed count of the slots each host holds, summed over its active escrows. It falls when an escrow ends.";polled;["lastNotNull","max"]),
+        ts(38;"Invalid in host slots";"sum by (host) (gdc_devshard_escrow_slot{\(hosts),stat=\"invalid\"})";"{{host}}";"short";16;136;8;8;"Invalid count of the slots each host holds, summed over its active escrows. It falls when an escrow ends.";polled;["lastNotNull","max"]),
+        (table(39;"Host slots";"max by (host, escrow_id, slot) (gdc_devshard_escrow_slot{\(hosts),stat=\"missed\"})";0;144;24;10;"One row per slot a host holds in an active escrow, with the missed and invalid counts, cost and validations the escrow records for it.";polled)
+          | .targets=[tabletarget("max by (host, escrow_id, slot) (gdc_devshard_escrow_slot{\(hosts),stat=\"missed\"})";"A"),
+              tabletarget("max by (host, escrow_id, slot) (gdc_devshard_escrow_slot{\(hosts),stat=\"invalid\"})";"B"),
+              tabletarget("max by (host, escrow_id, slot) (gdc_devshard_escrow_slot{\(hosts),stat=\"cost\"})";"C"),
+              tabletarget("max by (host, escrow_id, slot) (gdc_devshard_escrow_slot{\(hosts),stat=\"required_validations\"})";"D"),
+              tabletarget("max by (host, escrow_id, slot) (gdc_devshard_escrow_slot{\(hosts),stat=\"completed_validations\"})";"E")]
+          | .fieldConfig.defaults.noValue="–"
+          | .transformations=[{id:"merge",options:{}},{id:"organize",options:{
+              excludeByName:{Time:true},
+              indexByName:{host:0,escrow_id:1,slot:2,"Value #A":3,"Value #B":4,"Value #C":5,"Value #D":6,"Value #E":7},
+              renameByName:{host:"Host",escrow_id:"Escrow",slot:"Slot","Value #A":"Missed","Value #B":"Invalid","Value #C":"Cost","Value #D":"Validations required","Value #E":"Validations completed"}}},
+            {id:"sortBy",options:{sort:[{field:"Escrow",desc:true}]}}]
+          | .fieldConfig.overrides=[override("Missed";[{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:bad.thresholds}]),
+              override("Invalid";[{id:"custom.cellOptions",value:{type:"color-text"}},{id:"thresholds",value:bad.thresholds}])])
       ];{templating:{list:[filtervar("host";"Node";"label_values(up{job=\"devshard-host\"},host)"),{name:"filters",label:"Filters",type:"adhoc",datasource:ds,filters:[],baseFilters:[],hide:0}]}})
     elif $kind == "overview" then
       def override($name;$props): {matcher:{id:"byName",options:$name},properties:$props};
