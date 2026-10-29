@@ -501,7 +501,7 @@ mkdir -p "$OUTPUT/chain-poller"
       printf '  %s: %s\n' "${pair%%=*}" "${pair#*=}"
     done
   fi
-  printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300, escrow: 120}\ntimeout: 8\nmax_block_catchup: 30\n'
+  printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300, escrow: 120, devshard: 15, devshard_escrows: 60}\ntimeout: 8\nmax_block_catchup: 30\n'
 } >"$OUTPUT/chain-poller/config.yml"
 
 echo "$OUTPUT"
