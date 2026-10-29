@@ -9,6 +9,7 @@ type SiteConfig = {
   grafanaInference: string,
   grafanaChain: string,
   grafanaOverview: string,
+  grafanaComponents: string,
   nodes: Array<mixed>,
 };
 declare var window: any;
@@ -22,5 +23,6 @@ declare var window: any;
   grafanaInference: "/",
   grafanaChain: "/",
   grafanaOverview: "/",
+  grafanaComponents: "/",
   nodes: [],
 }: SiteConfig);

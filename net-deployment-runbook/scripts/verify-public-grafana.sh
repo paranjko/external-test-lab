@@ -178,7 +178,7 @@ done <"$expected_targets"
 # mount or a skipped reconcile keeps an older definition online while the
 # repository already carries the new one; compare the served definition with
 # the committed file before judging its panels.
-for dashboard in gdc-network gdc-inference gdc-overview gdc-chain; do
+for dashboard in gdc-network gdc-inference gdc-overview gdc-chain gdc-components; do
   curl -fsS "https://$GRAFANA_HOST/api/dashboards/uid/$dashboard" >"$RUN/$dashboard.json"
   verify_dashboard_matches_source "$ROOT/04-ops/edge-node/public-grafana/dashboards/$dashboard.json" <"$RUN/$dashboard.json" \
     || die "public Grafana dashboard $dashboard differs from the committed definition"
@@ -206,7 +206,7 @@ EOF
 while IFS= read -r expression; do
   [[ -n "$expression" ]] || continue
   pinned_panel_found=false
-  for dashboard in gdc-network gdc-inference gdc-overview gdc-chain; do
+  for dashboard in gdc-network gdc-inference gdc-overview gdc-chain gdc-components; do
     if verify_required_expression_on_board "$expression" <"$RUN/$dashboard.json" >/dev/null; then
       pinned_panel_found=true
       break
@@ -276,7 +276,7 @@ done
 # declares that state with a noValue text; an undeclared empty panel is a
 # deployment failure, whatever the browser renders.
 : >"$RUN/panel-inventory.tsv"
-for dashboard in gdc-network gdc-inference gdc-overview gdc-chain; do
+for dashboard in gdc-network gdc-inference gdc-overview gdc-chain gdc-components; do
   dashboard_panel_inventory "$dashboard" <"$RUN/$dashboard.json" >>"$RUN/panel-inventory.tsv"
 done
 cut -f6 "$RUN/panel-inventory.tsv" >"$RUN/panel-inventory.b64"
@@ -386,7 +386,7 @@ cat >"$RUN/finalize.md" <<EOF
 
 - Network: $NETWORK_URL
 - Inference: $INFERENCE_URL
-- Dashboards: gdc-network, gdc-inference, gdc-overview, gdc-chain match the committed definitions
+- Dashboards: gdc-network, gdc-inference, gdc-overview, gdc-chain, gdc-components match the committed definitions
 - Expected Prometheus targets: $(wc -l <"$expected_targets") are up; linked GPU inventory is fresh.
 - Prometheus panel expressions: $(wc -l <"$RUN/required-panel-expressions.txt") returned live data.
 - Served panels: $(wc -l <"$RUN/panel-inventory.tsv") judged, $(wc -l <"$RUN/explained-empty-panels.txt") empty and explained, none empty and unexplained.

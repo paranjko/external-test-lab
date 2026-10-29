@@ -120,6 +120,7 @@ const config = (port) =>
       "https://grafana.gonka-dev.net/d/gdc-inference/fixture?kiosk",
     grafanaChain: "https://grafana.gonka-dev.net/d/gdc-chain/fixture?kiosk",
     grafanaOverview: "https://grafana.gonka-dev.net/d/gdc-overview/fixture?kiosk",
+    grafanaComponents: "https://grafana.gonka-dev.net/d/gdc-components/fixture?kiosk",
     nodes: [
       {
         name: "fixture-a",

@@ -96,6 +96,7 @@ const server = createServer(async (request, response) => {
       grafanaInference: 'https://grafana.gonka-dev.net/d/gdc-inference/?kiosk',
       grafanaChain: 'https://grafana.gonka-dev.net/d/gdc-chain/?kiosk',
       grafanaOverview: 'https://grafana.gonka-dev.net/d/gdc-overview/?kiosk',
+      grafanaComponents: 'https://grafana.gonka-dev.net/d/gdc-components/?kiosk',
       publicBootstrap: false, nodes: [],
       nodeCatalog: [{ name: 'node0', statusAlias: 'node0', publicHost: 'node0.gonka-dev.net' }],
       locationCatalog: locations,

@@ -8,6 +8,7 @@ GRAFANA_NETWORK_URL="${GDC_GRAFANA_NETWORK_URL:-https://grafana.gonka-dev.net/d/
 GRAFANA_INFERENCE_URL="${GDC_GRAFANA_INFERENCE_URL:-https://grafana.gonka-dev.net/d/gdc-inference/gonka-devnet-inference?orgId=1&from=now-24h&to=now&timezone=utc&kiosk}"
 GRAFANA_OVERVIEW_URL="${GDC_GRAFANA_OVERVIEW_URL:-https://grafana.gonka-dev.net/d/gdc-overview/gonka-devnet-community-overview?orgId=1&from=now-24h&to=now&timezone=utc&kiosk}"
 GRAFANA_CHAIN_URL="${GDC_GRAFANA_CHAIN_URL:-https://grafana.gonka-dev.net/d/gdc-chain/gonka-devnet-chain?orgId=1&from=now-6h&to=now&timezone=utc&kiosk}"
+GRAFANA_COMPONENTS_URL="${GDC_GRAFANA_COMPONENTS_URL:-https://grafana.gonka-dev.net/d/gdc-components/gonka-devnet-components?orgId=1&from=now-24h&to=now&timezone=utc&kiosk}"
 RUN_ID="${GDC_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-homepage}"
 OUT="${GDC_HOMEPAGE_EVIDENCE_DIR:-$GDC_HOME/runs/$RUN_ID-homepage}"
 CHROME="${CHROME_BIN:-google-chrome}"
@@ -31,6 +32,7 @@ test "$(grep -o 'grafana.gonka-dev.net/d/gdc-network' "$OUT/homepage.html" | wc 
 test "$(grep -o 'grafana.gonka-dev.net/d/gdc-inference' "$OUT/homepage.html" | wc -l)" -eq 1
 test "$(grep -o 'grafana.gonka-dev.net/d/gdc-chain' "$OUT/homepage.html" | wc -l)" -eq 1
 test "$(grep -o 'grafana.gonka-dev.net/d/gdc-overview' "$OUT/homepage.html" | wc -l)" -eq 1
+test "$(grep -o 'grafana.gonka-dev.net/d/gdc-components' "$OUT/homepage.html" | wc -l)" -eq 1
 ! grep -qi 'proxy\.gonka\.gg\|node0\.gonka-dev\.net:3000' "$OUT/homepage.html"
 test "$(grep -o '<pre><code>' "$OUT/homepage.html" | wc -l)" -eq 1
 grep -Fq '<section id="join-node"' "$OUT/homepage.html"
@@ -181,14 +183,17 @@ curl -fsS "$GRAFANA_NETWORK_URL" -o "$OUT/grafana-network.html"
 curl -fsS "$GRAFANA_INFERENCE_URL" -o "$OUT/grafana-inference.html"
 curl -fsS "$GRAFANA_CHAIN_URL" -o "$OUT/grafana-chain.html"
 curl -fsS "$GRAFANA_OVERVIEW_URL" -o "$OUT/grafana-overview.html"
+curl -fsS "$GRAFANA_COMPONENTS_URL" -o "$OUT/grafana-components.html"
 grep -qi '<!doctype html>' "$OUT/grafana-network.html"
 grep -qi '<!doctype html>' "$OUT/grafana-inference.html"
 grep -qi '<!doctype html>' "$OUT/grafana-chain.html"
 grep -qi '<!doctype html>' "$OUT/grafana-overview.html"
+grep -qi '<!doctype html>' "$OUT/grafana-components.html"
 curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-network' | jq -e '.dashboard.title == "Gonka DevNet Network"' >"$OUT/grafana-dashboard.json"
 curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-inference' | jq -e '.dashboard.title == "Gonka DevNet Inference"' >"$OUT/grafana-inference-dashboard.json"
 curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-chain' | jq -e '.dashboard.title == "Gonka DevNet Chain"' >"$OUT/grafana-chain-dashboard.json"
 curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-overview' | jq -e '.dashboard.title == "Gonka DevNet Community Overview"' >"$OUT/grafana-overview-dashboard.json"
+curl -fsS 'https://grafana.gonka-dev.net/api/dashboards/uid/gdc-components' | jq -e '.dashboard.title == "Gonka DevNet Components"' >"$OUT/grafana-components-dashboard.json"
 ! grep -Eqi 'token price|price comparison|real spend|cost per' "$OUT/homepage.html"
 
 GDC_EXPECT_RESET_STATE="$EXPECT_RESET_STATE" CHROME_BIN="$CHROME" node "$ROOT/scripts/capture-homepage-viewport.mjs" \
