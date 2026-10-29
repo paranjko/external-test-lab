@@ -456,6 +456,11 @@ def poll_devshard(host):
         drop_series(DS_STATE + DS_ESCROW, host)
         DS.pop(host, None)
         log.debug("devshard %s: %s", host, e)
+        if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+            # an unreachable host would time out on every probe below
+            ds_healthz.labels(host).set(0)
+            drop_series((ds_clock,), host)
+            return
     version = (DS.get(host) or {}).get("version") or "v6"
     try:
         ds_healthz.labels(host).set(1 if S.get(f"{base}/{version}/healthz", timeout=TIMEOUT).status_code == 200 else 0)
@@ -464,6 +469,7 @@ def poll_devshard(host):
     try:
         t0 = time.time_ns()
         r = S.get(f"{base}/{version}/clock", timeout=TIMEOUT)
+        r.raise_for_status()
         sent = int(r.headers["x-server-send-ns"])
         ds_clock.labels(host).set((sent - (t0 + time.time_ns()) / 2) / 1e9)
     except Exception:
@@ -486,10 +492,10 @@ def apply_devshard_stats(host, shards, rpcs):
             ds_escrow_rpc.labels(host, str(s.get("escrow_id")), result).set(int(s.get(result) or 0))
 
 
-def apply_devshard_escrow(host, address, esc):
-    eid = str(esc["escrow_id"])
+def apply_devshard_escrow(host, address, eid, esc):
     ds_nonce.labels(host, eid, str(esc.get("epoch_id", ""))).set(int(esc.get("nonce") or 0))
-    own = {str(g["SlotID"]) for g in esc.get("group") or [] if g.get("ValidatorAddress") == address}
+    own = {str(g.get("SlotID")) for g in esc.get("group") or []
+           if address and g.get("ValidatorAddress") == address and g.get("SlotID") is not None}
     for slot, stats in (esc.get("host_stats") or {}).items():
         if slot in own:
             for stat in ("missed", "invalid", "cost", "required_validations", "completed_validations"):
@@ -507,12 +513,15 @@ def poll_devshard_escrows(host):
     found = []
     for eid in state["escrows"]:
         try:
-            found.append(get(f"{NODES[host]}/devshard/stats/shards/{eid}"))
+            found.append((str(eid), get(f"{NODES[host]}/devshard/stats/shards/{eid}")))
         except Exception as e:
             log.debug("devshard %s escrow %s: %s", host, eid, e)
     drop_series(DS_ESCROW, host)
-    for esc in found:
-        apply_devshard_escrow(host, state["address"], esc)
+    for eid, esc in found:
+        try:
+            apply_devshard_escrow(host, state["address"], eid, esc)
+        except Exception as e:
+            log.warning("devshard %s escrow %s: %s", host, eid, e)
 
 
 def task_devshard():
