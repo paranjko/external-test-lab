@@ -504,4 +504,22 @@ mkdir -p "$OUTPUT/chain-poller"
   printf 'intervals: {nodes: 15, blocks: 3, chain: 30, slow: 300, escrow: 120}\ntimeout: 8\nmax_block_catchup: 30\n'
 } >"$OUTPUT/chain-poller/config.yml"
 
+# Hosts of the inventory push their logs to the OPS edge; nothing else may.
+if [[ -n "${GDC_LOG_PUSH_TOKEN_FILE:-}" ]]; then
+  log_sources=()
+  for node in "${GDC_NODES[@]}"; do
+    mapfile -t ips < <(getent ahostsv4 "$(node_public_host "$node")" 2>/dev/null | awk '{print $1}' | sort -u)
+    for ip in "${ips[@]}"; do log_sources+=("$ip/32"); done
+    ml_host="$(node_ml_host "$node" || true)"
+    [[ -n "$ml_host" ]] || continue
+    ml_address="$(ssh -G "$ml_host" 2>/dev/null | awk '$1 == "hostname" {print $2; exit}')"
+    mapfile -t ips < <(getent ahostsv4 "$ml_address" 2>/dev/null | awk '{print $1}' | sort -u)
+    for ip in "${ips[@]}"; do log_sources+=("$ip/32"); done
+  done
+  ((${#log_sources[@]})) || die 'no log source address resolved from the inventory'
+  mapfile -t log_sources < <(printf '%s\n' "${log_sources[@]}" | sort -u)
+  bash "$ROOT/04-ops/render-log-intake.sh" "$GDC_LOG_PUSH_TOKEN_FILE" "${log_sources[@]}" >"$OUTPUT/log-intake.caddy"
+  chmod 600 "$OUTPUT/log-intake.caddy"
+fi
+
 echo "$OUTPUT"

@@ -1,0 +1,14 @@
+# Monitoring refresh keeps the shared compose.yaml; the log store ships as an overlay.
+services:
+  loki:
+    image: ${LOKI_IMAGE:-grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193}
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    ports:
+      - 127.0.0.1:3100:3100
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+
+volumes:
+  loki-data: {}

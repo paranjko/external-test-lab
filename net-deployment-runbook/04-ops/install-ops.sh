@@ -77,6 +77,8 @@ if [[ "$COMPONENT" == monitoring && -e "$DEST/compose.yaml" ]]; then
   fi
   install -d -m 0755 "$DEST/chain-poller"
   install -m 0644 "$HERE"/chain-poller/{Dockerfile,poller.py,requirements.txt} "$RENDER/chain-poller/config.yml" "$DEST/chain-poller/"
+  install -m 0644 "$HERE/compose.loki.yaml" "$DEST/compose.loki.yaml"
+  install -D -m 0644 "$HERE/loki/config.yaml" "$DEST/loki/config.yaml"
   chown -R "$service_user:$service_group" "$DEST/grafana" "$DEST/prometheus"
   printf 'READY refreshed monitoring assets; shared OPS configuration and services retained\n'
   exit 0
