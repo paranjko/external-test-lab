@@ -1,0 +1,17 @@
+[Unit]
+Description=Constant background load through one gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=STAND_LOAD_ENV=/etc/stand-load.env
+ExecStart=/usr/local/bin/stand-load _run
+Restart=on-failure
+RestartSec=10
+KillMode=control-group
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
