@@ -1,0 +1,17 @@
+# DevShard v6 load scenarios
+
+Scenarios for the load harness of `gonka-ai/gonka` (`devshard/testenv/loadtest`, gonka-ai/gonka#1989). Each file asks one question.
+
+| Scenario | Question |
+|---|---|
+| `remote-512.yaml` | `remote-long-load` of gonka-ai/gonka#2009 for a live gateway, with 512 output tokens (DevNet models have a 4096-token context); run with `cmd/remote-loadtest` |
+| `remote-ladder.sh` | Where does a live gateway degrade? One `cmd/remote-loadtest` run per step of workers (`TOOL=wrap-load`: `cmd/wrap-load` of `ilyar/gonka-devshard-contrib`, unique requests past the response cache), stop at errors above 2 %, p95 doubled or throughput flat; `remote-ladder-table.py` makes the table |
+| `remote-soak.sh` | Does a live gateway hold a steady load for an hour? `cmd/wrap-load` between PoC windows; a PoC or cPoC stops the run, which starts again after it; `remote-ladder-table.py --windows 300` makes the table |
+| `remote-switch.sh` | Does the same load hold while traffic moves from the v4.2 gateway to the v6 gateway? 30 minutes all on v4.2, half on each, all on v6, then an idle tail; a cPoC does not stop the run; gateway logs and chain state for the whole run; `remote-ladder-table.py --runs` makes the table |
+| `remote-parallel.sh` | Does the stand hold the same load through several gateways at once? One `cmd/wrap-load` run per gateway, each with its own key and workers; a cPoC does not stop the run; gateway logs and chain state for the whole run |
+| `remote-steps.sh` | Where does a live gateway choke under a fixed request rate? Constant-rate steps (5, 10 … 30 rps by default): a 1-minute ramp to each, 5 minutes on it, an hour on the last; a hold with errors above `STOP_PCT` stops the steps (100 never), PoC and cPoC refusals not counted; an optional tail (`TAIL`, `TAIL_RPS`) keeps logs and gateway metrics going after the steps; chain state, the gateway log and host logs (`LOG_HOSTS`) as `.log.gz` that stay complete if the run is killed; `runs.tsv` per run and `windows.tsv` per minute |
+| `remote-one-token.py` | Which dataset rows get an answer of one token with no text, and does the gateway count it as an empty stream? Chosen rows one at a time through each gateway, raw SSE per answer (text, tool calls, finish reason, usage in the finish event or not); with `--gw-ssh` the gateway log of the window and its `empty_stream` lines and streaks; `summary.tsv` |
+| `remote-wrapper-watch.sh` | What happens to each wrapper container during an update? Logs by container ID, so a recreated container gets its own stream; docker events, inspect before and after, health every second, metrics every 5 s; nothing is written on the host; ends with an archive and `SHA256SUMS`; run it next to `remote-steps.sh`, which gives the load and the gateway log |
+| `stand-load/` | A constant background load through one gateway as a systemd service, not tied to one host: settings in `stand-load.env`, the key in a file; `stand-load start`, `stop [--now]`, `status`; one dataset row per step with a per-request suffix; old steps removed by age |
+| `remote-node-sampler.sh`, `remote-preflight.sh` | Read-only: host CPU, memory and GPU and gateway containers during a run; idle check, versions and escrow before and after |
+| `cap-dataset.py` | Fits a captured request dataset to a 4096-token context: drops long prompts, caps `max_tokens` |
