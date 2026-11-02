@@ -37,25 +37,10 @@ date -u +%FT%TZ > "$out/STARTED"
 trap '' PIPE
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$out/watch.log"; }
 
-# Public addresses become a stable hash for this run, private ones stay; values after key words are hidden.
+# Public addresses become a stable hash for this run, private ones stay; secret values are hidden.
 MASK_SALT=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
 export MASK_SALT
-mask_py='
-import hashlib, os, re, sys
-salt = os.environ["MASK_SALT"].encode()
-ip = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])")
-private = re.compile(r"(10\.|127\.|0\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)")
-auth = re.compile(r"(?i)(authorization:\s*)\S+(?:\s+[^\s\"\x27,]+)?")
-secret = re.compile(r"(?i)(bearer\s+|(?:api[_-]?key|password|secret|token)[\"\x27=:\s]+)[^\s\"\x27,]+")
-def one(m):
-    a = m.group(0)
-    return a if private.match(a) else "ip-" + hashlib.sha256(salt + a.encode()).hexdigest()[:8]
-for raw in sys.stdin.buffer:
-    line = secret.sub(r"\1<hidden>", auth.sub(r"\1<hidden>", ip.sub(one, raw.decode("utf-8", "replace"))))
-    sys.stdout.buffer.write(line.encode())
-    sys.stdout.buffer.flush()
-'
-mask() { python3 -u -c "$mask_py"; }
+mask() { python3 -u "$here/remote-mask.py"; }
 
 # The remote command runs in the background; when the channel closes, stdin ends and the command is killed.
 held() {
