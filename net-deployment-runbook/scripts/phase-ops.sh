@@ -86,6 +86,10 @@ if [[ "$COMPONENT" == monitoring ]]; then
     export GDC_GRAFANA_ADMIN_PASSWORD
   fi
   [[ -n "${GDC_GRAFANA_ADMIN_PASSWORD:-}" ]] || die 'ops monitoring requires GDC_GRAFANA_ADMIN_PASSWORD owned by OPS'
+  # Hosts push logs with this token; it is created once with the other OPS secrets.
+  [[ -s "$SECRETS/loki.push-token" ]] || "$ROOT/scripts/make-secrets.sh" "$SECRETS" "$GENESIS_NODE" >/dev/null
+  GDC_LOG_PUSH_TOKEN_FILE="$SECRETS/loki.push-token"
+  export GDC_LOG_PUSH_TOKEN_FILE
 fi
 
 if [[ "$COMPONENT" == faucet ]]; then
@@ -841,7 +845,7 @@ case "$COMPONENT" in
     # Prometheus and Grafana mount generated provisioning/configuration files.
     # `up -d` alone does not reload an already-running container, leaving a
     # newly rendered dashboard/scrape config silently stale.
-    START_COMMAND='docker compose -f compose.yaml -f compose.chain-poller.yaml up -d --build --no-deps --force-recreate prometheus alertmanager blackbox chain-poller grafana'
+    START_COMMAND='docker compose -f compose.yaml -f compose.chain-poller.yaml -f compose.loki.yaml up -d --build --no-deps --force-recreate prometheus alertmanager blackbox chain-poller loki grafana'
     # Bootstrap an absent listener, but never recreate an existing route owner.
     CADDY_START_COMMAND='docker compose up -d --no-deps --no-recreate caddy'
     ENDPOINT="http://$(node_public_host "$GATEWAY_NODE"):3000"
@@ -1061,6 +1065,12 @@ if [[ "$COMPONENT" == monitoring ]]; then
       ssh -nT "$observation_node" "sudo bash '$observation_remote/install.sh' '$(node_public_host "$observation_node")' '$observation_remote/routes.caddy'"
     done < <(jq -r '.[].node' <<<"$GDC_GATEWAY_OBSERVATION_TARGETS" | sort -u)
   fi
+  step 'Reconcile the log intake route on the OPS edge'
+  intake_remote="${REMOTE}-log-intake"
+  ssh -n "$GATEWAY_NODE" "install -d -m 0700 '$intake_remote'"
+  scp -q "$ROOT/04-ops/install-gateway-observation.sh" "$ROOT/04-ops/verify-log-intake.sh" "$GATEWAY_NODE:$intake_remote/"
+  scp -q "$OPS_RENDER/log-intake.caddy" "$GATEWAY_NODE:$intake_remote/routes.caddy"
+  ssh -nT "$GATEWAY_NODE" "set -Eeuo pipefail; trap \"rm -rf '$intake_remote'\" EXIT; sudo bash '$intake_remote/install-gateway-observation.sh' '$(node_public_host "$GATEWAY_NODE")' '$intake_remote/routes.caddy' 'log intake'; bash '$intake_remote/verify-log-intake.sh' '$(node_public_host "$GATEWAY_NODE")' '$intake_remote/routes.caddy'"
   step 'Reconcile the anonymous public dashboards with the monitoring source'
   reconcile_public_grafana false
   step 'Verify the separate public Grafana runtime'
