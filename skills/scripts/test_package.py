@@ -153,9 +153,6 @@ class PackageTests(unittest.TestCase):
         reference = (SOURCE / "references/trace-collection.md").read_text()
         self.assertNotRegex(reference, r"(?m)^gonkactl-trace\s")
         self.assertIn("/approved/absolute/path/gonkactl-trace report", reference)
-        readme = (ROOT / "gonkactl-trace/README.md").read_text()
-        self.assertNotRegex(readme, r"(?m)^(?:\./)?gonkactl-trace\s")
-        self.assertNotIn("install.sh | sh", readme)
 
 
 if __name__ == "__main__":
