@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'skills/**'
-      - 'gonkactl-trace/README.md'
       - 'net-deployment-runbook/04-ops/site/trace/**'
       - '.github/workflows/skills-ref.yml'
   pull_request:
@@ -17,7 +16,6 @@ on:
       - synchronize
     paths:
       - 'skills/**'
-      - 'gonkactl-trace/README.md'
       - 'net-deployment-runbook/04-ops/site/trace/**'
       - '.github/workflows/skills-ref.yml'
   workflow_dispatch:

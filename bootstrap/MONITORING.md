@@ -73,7 +73,7 @@ The CLI performs read-only requests and prints its JSON report. It does not
 send Telegram messages. Exit codes are `0` for success, `1` for failed checks
 and `2` for invalid inputs or local execution errors.
 
-The local composite Action `.github/actions/gonkactl-bootstrap` accepts a
+The composite Action [`.github/actions/gonkactl-bootstrap`](https://github.com/paranjko/external-test-lab/tree/59cf1961170b678be1b76527de3c071994f0f46c/.github/actions/gonkactl-bootstrap) accepts a
 `chain-id`, `inventory`, `report`, `timeout` and `origin`. It downloads the public
 installer, selects an immutable release and verifies the installed source commit.
 Its Make targets only install, invoke the CLI and transport reports/notifications;
