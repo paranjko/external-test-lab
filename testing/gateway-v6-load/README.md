@@ -24,7 +24,10 @@ unzip -j -o "$L/devshardd.zip" -d "$L/bin" && test -x "$L/bin/devshardd"
 for f in "$L"/build-*.yaml; do grep -oE '[a-z0-9./-]+:[a-z0-9.-]+@sha256:[0-9a-f]{64}' "$f"; done | sort -u | xargs -n1 docker pull
 git clone https://github.com/gonka-ai/gonka.git && git -C gonka checkout 751080d9718bd03ce2998c57e8096c9c51f719fe
 cd gonka/devshard/testenv
+printf 'hosts:\n  - id: versiond-0\n  - id: versiond-1\n  - id: versiond-2\nescrows:\n  - id: 1\n    model_id: test-model\nmock_openai:\n  http_port: 18088\n' > config/config.yaml
 go run ./cmd/loadtest -scenario "$L/kovec-smoke.yaml" -build "$L/build-kovec-v6.yaml" -output "$L/results/kovec-smoke"
 ```
 
 For rc1, use `rc1-*.yaml` with `build-rc1.yaml`. Each run writes `report.md` to its output directory.
+
+`config/config.yaml` keeps the harness defaults and moves the mock ML nodes from 8088 to 18088–18092: cAdvisor holds 8088 on the load host.
