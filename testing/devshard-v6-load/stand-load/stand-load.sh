@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Constant background load through one gateway, as a systemd service. Every step is one remote-loadtest run with its own
 # scenario: one dataset row and a per-request suffix, because -load-dataset sends rows without a suffix and the gateway
-# answers them from its cache. The next step starts on schedule, so a step that is still draining leaves no gap.
+# answers them from its cache. With REPEATS=N every step sends the same N rows that way instead, as a client repeating a
+# request would. The next step starts on schedule, so a step that is still draining leaves no gap.
 # Usage: stand-load install | check | start | stop [--now] | status
 # Settings: stand-load.env.example. stop finishes the current step; stop --now ends it at once. Both also stay stopped after a reboot.
 set -uo pipefail
@@ -21,12 +22,14 @@ load_env() {
   : "${GATEWAY_BASE:?}" "${MODEL:?}" "${DATASET:?}" "${KEY_FILE:?}"
   rps=${RPS:-6} step=${STEP:-5m} timeout=${REQUEST_TIMEOUT:-3m} keep_days=${KEEP_DAYS:-7}
   state=${STATE_DIR:-/srv/stand-load} bin=${LOADTEST_BIN:-/usr/local/bin/remote-loadtest}
+  repeats=${REPEATS:-0}
   inflight=${MAX_IN_FLIGHT:-$(awk -v r="$rps" 'BEGIN { n = int(r * 32 + 0.999); print n < 32 ? 32 : n }')}
   [[ $rps =~ ^[0-9]+([.][0-9]+)?$ ]] || die "RPS must be a number"
   [[ $step =~ ^[1-9][0-9]*[smh]$ ]] || die "STEP must look like 5m"
+  [[ $repeats =~ ^[0-9]+$ ]] || die "REPEATS must be a whole number"
   [[ $keep_days =~ ^[1-9][0-9]*$ ]] || die "KEEP_DAYS must be a whole number of days"
   [[ $state =~ ^/.+/.+ ]] || die "STATE_DIR must be an absolute path below a directory"
-  results=$state/results stop_flag=$state/stop-after-step
+  results=$state/results stop_flag=$state/stop-after-step repeat_file=$state/repeats.jsonl
 }
 
 read_key() {
@@ -71,6 +74,26 @@ drain_timeout: 3m
 PY
 }
 
+# Kept across steps and restarts, so a repeat finds the answer cached for it.
+pick_repeats() {
+  [ "$(grep -c . "$repeat_file" 2>/dev/null)" = "$repeats" ] && return 0
+  python3 -I - "$DATASET" "$repeats" "$repeat_file" <<'PY'
+import json, random, sys
+dataset, count, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+rows, seen = [], set()
+for line in open(dataset, encoding="utf-8"):
+    if line.strip():
+        messages = json.dumps(json.loads(line)["messages"], sort_keys=True)
+        if messages not in seen:
+            seen.add(messages)
+            rows.append(line.strip())
+if len(rows) < count:
+    sys.exit(f"{dataset} has {len(rows)} distinct rows, fewer than REPEATS={count}")
+with open(out, "w", encoding="utf-8") as f:
+    f.write("\n".join(random.sample(rows, count)) + "\n")
+PY
+}
+
 run_service() {
   load_env
   read_key
@@ -79,9 +102,14 @@ run_service() {
   mkdir -p "$results" || exit 1
   exec 7>"$state/run.lock"
   flock -n 7 || die "already running"
+  replay=()
+  if [ "$repeats" -gt 0 ]; then
+    pick_repeats || die "cannot write $repeat_file"
+    replay=(-load-dataset "$repeat_file")
+  fi
   stopping=''
   trap 'stopping=1; kill $(jobs -p) 2>/dev/null' TERM INT
-  echo "start: $rps rps, $MODEL, $GATEWAY_BASE, step $step"
+  echo "start: $rps rps, $MODEL, $GATEWAY_BASE, step $step$([ "$repeats" -gt 0 ] && echo ", repeats of $repeats rows")"
   while [ -z "$stopping" ] && [ ! -e "$stop_flag" ]; do
     find "$results" -mindepth 1 -maxdepth 1 -type d -name '20*' -mmin +$((keep_days * 1440)) -exec rm -rf {} +
     id=$(date -u +%Y%m%dT%H%M%SZ)
@@ -91,7 +119,7 @@ run_service() {
     if write_scenario "$name" "$dir/scenario.yaml"; then
       echo "step $id"
       GONKA_API_KEY=$key "$bin" -base "$GATEWAY_BASE" -model "$MODEL" -scenario "$dir/scenario.yaml" -duration "$step" \
-        -output "$dir/run" > "$dir/run.log" 2>&1 7>&- </dev/null &
+        ${replay[@]+"${replay[@]}"} -output "$dir/run" > "$dir/run.log" 2>&1 7>&- </dev/null &
     else
       echo "step $id: no scenario written"
     fi
@@ -107,7 +135,7 @@ status() {
   load_env
   echo "service: $(systemctl is-active $unit) / $(systemctl is-enabled $unit 2>/dev/null)$([ -e "$stop_flag" ] && echo ', stops after this step')"
   echo "processes: $(pgrep -f "[r]emote-loadtest -base" | wc -l)"
-  echo "config: $rps rps, $MODEL, $GATEWAY_BASE, step $step, kept $keep_days days, $(du -sh "$results" 2>/dev/null | cut -f1)"
+  echo "config: $rps rps, $MODEL, $GATEWAY_BASE, step $step,$([ "$repeats" -gt 0 ] && echo " repeats of $repeats rows,") kept $keep_days days, $(du -sh "$results" 2>/dev/null | cut -f1)"
   printf '%-18s %8s %8s %6s %6s %6s %6s %7s %7s\n' step offered "done" failed drop rps err% p50_s p95_s
   find "$results" -mindepth 1 -maxdepth 1 -type d -name '20*' 2>/dev/null | LC_ALL=C sort | tail -n "${1:-6}" | while read -r d; do
     if [ -s "$d/run/summary.json" ]; then
