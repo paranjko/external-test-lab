@@ -1,0 +1,10 @@
+# The same hosts with the v6.0.0-rc1 gateway that DevNet runs today: the baseline for build-kovec-v6.yaml.
+name: devshard-gateway-v6.0.0-rc1-on-devshard-v6.0.0
+protocol: v6
+binary_version: devshard-v6.0.0
+# devshardd from the devshard/v6.0.0 release (devshardd.zip, sha256 531eb433392a56d009c14c63a74070cac410110f4c761437614af1a4360722e2).
+devshardd: bin/devshardd
+images:
+  versiond: ghcr.io/gonka-ai/versiond:0.2.16-devshard-v6@sha256:6b925dcb29380e35c6149c70d83437a5daf4654f56258ba8cf9f4632ed62ee81
+  versiond_router: ghcr.io/gonka-ai/versiond-router:0.2.16-devshard-v6@sha256:c05d1913bf605ce9754c4b49472d587df5daa9d6984008b082b8f833c0cdabe5
+  gateway: ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.16-v6.0.0-rc1@sha256:b5b68d93a6b4477eccee07b84584b39b02ae36b2b6e50449da3af385b5566608

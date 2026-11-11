@@ -1,0 +1,64 @@
+schema_version: v1
+scenario: kovec-smoke
+seed: 47
+# gateway-v7-smoke of gonka-ai/gonka#2232 (751080d) on devshard v6.0.0 hosts; run with -build build-kovec-v6.yaml.
+
+# Four identities, five containers: versiond-0/1 are one HA participant.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 4
+  chain:
+    escrow_amount: 2000000000000000
+    max_nonce: 1000000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - {name: mock-openai-0, profile: prod-like, host: versiond-0}
+      - {name: mock-openai-1, profile: prod-like, host: versiond-1}
+      - {name: mock-openai-2, profile: prod-like, host: versiond-2}
+      - {name: mock-openai-3, profile: prod-like, host: versiond-3}
+      - {name: mock-openai-4, profile: prod-like, host: versiond-4}
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 90s
+
+workload:
+  # Short wiring check before the PoC run.
+  duration: 30s
+  request_timeout: 2m
+  report_interval: 30s
+  max_in_flight: 128
+  traffic:
+    type: constant
+    rps: 2
+  request:
+    model: test-model
+    stream: true
+    mix: {stream_ratio: 0.5}
+    max_tokens: 32
+    messages:
+      - {role: user, content: "Explain why a distributed inference network needs redundancy."}
+gateway:
+  implementation: gateway
+  image: docker.io/kovec/gateway:v6@sha256:586edb53f4034935445e43aa33b1437dd58d3e3c100218b02e36d3d14842d4cd
+  protocol: v6
+  poc_request_mode: relaxed
+  engine_loser_grace: 30s
+  escrow_rotation:
+    enabled: false
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.02
+    dropped_rate: 0.10
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+drain_timeout: 3m
+
+diagnostics:
+  logs: {tail: all}
