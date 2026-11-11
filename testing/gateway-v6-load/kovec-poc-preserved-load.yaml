@@ -64,7 +64,8 @@ assertions:
   requests:
     http_status: 200
     terminal_outcome: completed
-    error_rate: 0.10
+    error_rate: 0.02
+    dropped_rate: 0.10
   devshard:
     no_orphaned_work: true
     max_ghost_rate: 0.02
@@ -77,7 +78,8 @@ assertions:
     trend_early: {from: 30s, to: 1m30s}
     trend_late: {from: 8m30s, to: 9m30s}
 
-drain_timeout: 3m
+# Covers the timeout votes on the second PoC window's nonces: up to ~3m10s on kovec.
+drain_timeout: 5m
 
 diagnostics:
   logs: {tail: all}

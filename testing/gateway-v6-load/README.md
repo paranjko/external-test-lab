@@ -10,7 +10,7 @@
 | `kovec-poc.yaml`, `rc1-poc.yaml` | 8 rps for 8 min, one PoC and one cPoC window |
 | `kovec-poc-preserved-load.yaml`, `rc1-poc-preserved-load.yaml` | 32 rps for 16 min, two PoC windows |
 
-Each scenario differs from its source in #2232 only in the name and the `gateway` block.
+Each scenario differs from its source in #2232 in the name, the `gateway` block and the request bounds: `error_rate` is 0.02, as in #306, and `dropped_rate` stays at the source's 0.10, now set explicitly. The 32 rps pair waits 5 min for the drain check instead of 3.
 
 ## Run
 
