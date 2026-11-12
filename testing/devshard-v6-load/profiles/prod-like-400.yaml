@@ -1,0 +1,11 @@
+schema_version: v1
+profile: prod-like-400
+
+# The prod-like profile of the harness with four times its workers and queue.
+ttft: 300ms
+ttft_p99: 1500ms
+token_interval: 25ms
+token_interval_p99: 80ms
+workers: 400
+queue: 2000
+failures: []

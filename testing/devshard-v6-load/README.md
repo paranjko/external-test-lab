@@ -4,6 +4,19 @@ Scenarios for the load harness of `gonka-ai/gonka` (`devshard/testenv/loadtest`,
 
 | Scenario | Question |
 |---|---|
+| `ladder-high.yaml` | Where does the gateway break between 32 and 100 rps? |
+| `ladder-high-n20k.yaml` | The same with the DevNet `max_nonce` of 20,000 |
+| `ladder-high-w400.yaml` | The same with mock model servers of 400 workers; run with `-profiles-dir <this directory>/profiles` |
+| `ladder-200.yaml` | Where does the gateway itself degrade up to 200 rps? Mock model servers of 800 workers; run with `-profiles-dir <this directory>/profiles` |
+| `soak-60m.yaml` | Do memory, goroutines and rotation errors grow over one hour? |
+| `group-16.yaml` | Does a group of 16 participants hold 24 rps? |
+| `storm.yaml` | Does the end state stay correct after several faults at a peak? |
+| `host-flapping.yaml` | Does a host that pauses every minute get back to work? |
+| `long-pause.yaml` | Does a host catch up after a 25-minute pause? |
+| `slow-hosts.yaml` | Do slow but alive hosts get penalized? |
+| `slow-host-1.yaml` | Does one slow host recover once its CPU limit is lifted? |
+| `slow-host-1-pool16.yaml`, `slow-hosts-pool16.yaml` | The same with 16 Postgres connections per host instead of 4 |
+| `faults-host-prod.yaml` | `faults-host` of the harness without its two trip-file faults, which need a devshardd built with `-tags devshard_testenv` |
 | `remote-512.yaml` | `remote-long-load` of gonka-ai/gonka#2009 for a live gateway, with 512 output tokens (DevNet models have a 4096-token context); run with `cmd/remote-loadtest` |
 | `remote-ladder.sh` | Where does a live gateway degrade? One `cmd/remote-loadtest` run per step of workers (`TOOL=wrap-load`: `cmd/wrap-load` of `ilyar/gonka-devshard-contrib`, unique requests past the response cache), stop at errors above 2 %, p95 doubled or throughput flat; `remote-ladder-table.py` makes the table |
 | `remote-soak.sh` | Does a live gateway hold a steady load for an hour? `cmd/wrap-load` between PoC windows; a PoC or cPoC stops the run, which starts again after it; `remote-ladder-table.py --windows 300` makes the table |
@@ -16,3 +29,24 @@ Scenarios for the load harness of `gonka-ai/gonka` (`devshard/testenv/loadtest`,
 | `stand-load/` | A constant background load through one gateway as a systemd service, not tied to one host: settings in `stand-load.env`, the key in a file; `stand-load start`, `stop [--now]`, `status`; one dataset row per step with a per-request suffix; old steps removed by age |
 | `remote-node-sampler.sh`, `remote-preflight.sh` | Read-only: host CPU, memory and GPU and gateway containers during a run; idle check, versions and escrow before and after |
 | `cap-dataset.py` | Fits a captured request dataset to a 4096-token context: drops long prompts, caps `max_tokens` |
+| `fetch-build.sh` | Fetches a lab candidate release of this repository and writes its `build.yaml` |
+| `fetch-compat-build.sh` | Builds for the official 0.2.16 host stack: `build-baseline.yaml` (v4.2 gateway, v4.2 hosts), `build-coexist.yaml` (v6 rc1 gateway, hosts run v6 next to v4.2) |
+
+## Run the local scenarios
+
+The `.yaml` scenarios above `remote-512.yaml` run on one Linux host with Docker and Go, on mocked chain and ML nodes. Run them from `devshard/testenv` of a `gonka-ai/gonka` checkout that has the harness:
+
+```bash
+go run ./cmd/loadtest -scenario <path to this directory>/<name>.yaml -profiles-dir loadtest/profiles -output <dir>
+```
+
+That builds devshardd from the checkout. Against a release build, add `-build` with a build file. No scenario here uses a fault that needs a devshardd built with `-tags devshard_testenv`.
+
+```bash
+# a lab candidate release of this repository
+./fetch-build.sh lab-gonka-pr-1792-939200e086f0 /path/to/empty/dir
+go run ./cmd/loadtest -build /path/to/empty/dir/build.yaml -scenario <path to this directory>/<name>.yaml -profiles-dir loadtest/profiles -output <dir>
+
+# an official release: a build file as in ../gateway-v6-load/build-rc1.yaml, set up as its README says
+go run ./cmd/loadtest -build <path to>/gateway-v6-load/build-rc1.yaml -scenario <path to this directory>/<name>.yaml -profiles-dir loadtest/profiles -output <dir>
+```
