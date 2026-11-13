@@ -1,28 +1,8 @@
 name: skills-ref
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'skills/**'
-      - 'net-deployment-runbook/04-ops/site/trace/**'
-      - '.github/workflows/skills-ref.yml'
-  pull_request:
-    types:
-      - opened
-      - reopened
-      - ready_for_review
-      - synchronize
-    paths:
-      - 'skills/**'
-      - 'net-deployment-runbook/04-ops/site/trace/**'
-      - '.github/workflows/skills-ref.yml'
+  workflow_call:
   workflow_dispatch:
-
-concurrency:
-  group: skills-ref-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
