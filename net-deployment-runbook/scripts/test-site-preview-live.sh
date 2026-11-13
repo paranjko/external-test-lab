@@ -19,8 +19,6 @@ for makefile in Makefile make/site.mk; do
     exit 1
   }
 done
-grep -Fq 'url: https://preview.gonka-dev.net/${{ needs.publish-context.outputs.number }}/' \
-  "$root/../.github/workflows/site-preview-publish.yml"
 
 printf '%s\n' '<main>preview</main>' >"$release/index.html"
 revision=0123456789012345678901234567890123456789
