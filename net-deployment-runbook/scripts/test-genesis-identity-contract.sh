@@ -22,6 +22,7 @@ expected=(
   gdc-node0.keyring
   gdc-node0.postgres
   grafana.admin
+  loki.push-token
   operator.keyring
   telegram.conversation-api-token
   telegram.faucet-token
