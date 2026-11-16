@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Constant background load through one gateway, as a systemd service. Every step is one remote-loadtest run with its own
 # scenario: one dataset row and a per-request suffix, because -load-dataset sends rows without a suffix and the gateway
-# answers them from its cache. The next step starts on schedule, so a step that is still draining leaves no gap.
+# answers them from its cache. With REPEATS=N every step sends the same N rows that way instead, as a client repeating a
+# request would. The next step starts on schedule, so a step that is still draining leaves no gap.
 # Usage: stand-load install | check | start | stop [--now] | status
 # Settings: stand-load.env.example. stop finishes the current step; stop --now ends it at once. Both also stay stopped after a reboot.
 set -uo pipefail
@@ -21,12 +22,18 @@ load_env() {
   : "${GATEWAY_BASE:?}" "${MODEL:?}" "${DATASET:?}" "${KEY_FILE:?}"
   rps=${RPS:-6} step=${STEP:-5m} timeout=${REQUEST_TIMEOUT:-3m} keep_days=${KEEP_DAYS:-7}
   state=${STATE_DIR:-/srv/stand-load} bin=${LOADTEST_BIN:-/usr/local/bin/remote-loadtest}
+  repeats=${REPEATS:-0} attempts=${CONNECT_ATTEMPTS:-3} retry_delay=${CONNECT_RETRY_DELAY:-10}
   inflight=${MAX_IN_FLIGHT:-$(awk -v r="$rps" 'BEGIN { n = int(r * 32 + 0.999); print n < 32 ? 32 : n }')}
   [[ $rps =~ ^[0-9]+([.][0-9]+)?$ ]] || die "RPS must be a number"
   [[ $step =~ ^[1-9][0-9]*[smh]$ ]] || die "STEP must look like 5m"
+  [[ $repeats =~ ^[0-9]+$ ]] || die "REPEATS must be a whole number"
+  case $step in *h) step_s=3600 ;; *m) step_s=60 ;; *) step_s=1 ;; esac
+  step_s=$((${step%?} * step_s))
+  [[ $attempts =~ ^[1-9][0-9]*$ ]] || die "CONNECT_ATTEMPTS must be 1 or more"
+  [[ $retry_delay =~ ^[0-9]+$ ]] || die "CONNECT_RETRY_DELAY must be whole seconds"
   [[ $keep_days =~ ^[1-9][0-9]*$ ]] || die "KEEP_DAYS must be a whole number of days"
   [[ $state =~ ^/.+/.+ ]] || die "STATE_DIR must be an absolute path below a directory"
-  results=$state/results stop_flag=$state/stop-after-step
+  results=$state/results stop_flag=$state/stop-after-step repeat_file=$state/repeats.jsonl
 }
 
 read_key() {
@@ -71,6 +78,48 @@ drain_timeout: 3m
 PY
 }
 
+# Kept across steps and restarts, so a repeat finds the answer cached for it.
+pick_repeats() {
+  [ "$(grep -c . "$repeat_file" 2>/dev/null)" = "$repeats" ] && return 0
+  python3 -I - "$DATASET" "$repeats" "$repeat_file" <<'PY'
+import json, random, sys
+dataset, count, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+rows, seen = [], set()
+for line in open(dataset, encoding="utf-8"):
+    if line.strip():
+        messages = json.dumps(json.loads(line)["messages"], sort_keys=True)
+        if messages not in seen:
+            seen.add(messages)
+            rows.append(line.strip())
+if len(rows) < count:
+    sys.exit(f"{dataset} has {len(rows)} distinct rows, fewer than REPEATS={count}")
+with open(out, "w", encoding="utf-8") as f:
+    f.write("\n".join(random.sample(rows, count)) + "\n")
+PY
+}
+
+# remote-loadtest gives up after one 5 s connect; without a retry a short network fault idles the whole step.
+run_step() {
+  local id=$1 dir=$2 end=$((SECONDS + step_s)) n=1 pid
+  trap '[ -n "${pid:-}" ] && kill "$pid" 2>/dev/null; exit 143' TERM INT
+  while :; do
+    GONKA_API_KEY=$key "$bin" -base "$GATEWAY_BASE" -model "$MODEL" -scenario "$dir/scenario.yaml" -duration "$((end - SECONDS))s" \
+      ${replay[@]+"${replay[@]}"} -output "$dir/run" >> "$dir/run.log" 2>&1 </dev/null &
+    pid=$!
+    wait "$pid" && return
+    tail -n 2 "$dir/run.log" | grep -q 'connectivity check failed' || return
+    if [ "$n" -ge "$attempts" ] || [ $((end - SECONDS - retry_delay)) -lt 30 ]; then
+      echo "$n" > "$dir/unreachable"
+      echo "step $id: gateway unreachable after $n attempts"
+      return
+    fi
+    n=$((n + 1))
+    sleep "$retry_delay"
+    rm -rf "$dir/run"
+    echo "step $id: connect attempt $n"
+  done
+}
+
 run_service() {
   load_env
   read_key
@@ -79,9 +128,14 @@ run_service() {
   mkdir -p "$results" || exit 1
   exec 7>"$state/run.lock"
   flock -n 7 || die "already running"
+  replay=()
+  if [ "$repeats" -gt 0 ]; then
+    pick_repeats || die "cannot write $repeat_file"
+    replay=(-load-dataset "$repeat_file")
+  fi
   stopping=''
   trap 'stopping=1; kill $(jobs -p) 2>/dev/null' TERM INT
-  echo "start: $rps rps, $MODEL, $GATEWAY_BASE, step $step"
+  echo "start: $rps rps, $MODEL, $GATEWAY_BASE, step $step$([ "$repeats" -gt 0 ] && echo ", repeats of $repeats rows")"
   while [ -z "$stopping" ] && [ ! -e "$stop_flag" ]; do
     find "$results" -mindepth 1 -maxdepth 1 -type d -name '20*' -mmin +$((keep_days * 1440)) -exec rm -rf {} +
     id=$(date -u +%Y%m%dT%H%M%SZ)
@@ -90,8 +144,7 @@ run_service() {
     mkdir "$dir" || { sleep 1; continue; }
     if write_scenario "$name" "$dir/scenario.yaml"; then
       echo "step $id"
-      GONKA_API_KEY=$key "$bin" -base "$GATEWAY_BASE" -model "$MODEL" -scenario "$dir/scenario.yaml" -duration "$step" \
-        -output "$dir/run" > "$dir/run.log" 2>&1 7>&- </dev/null &
+      run_step "$id" "$dir" 7>&- &
     else
       echo "step $id: no scenario written"
     fi
@@ -107,7 +160,7 @@ status() {
   load_env
   echo "service: $(systemctl is-active $unit) / $(systemctl is-enabled $unit 2>/dev/null)$([ -e "$stop_flag" ] && echo ', stops after this step')"
   echo "processes: $(pgrep -f "[r]emote-loadtest -base" | wc -l)"
-  echo "config: $rps rps, $MODEL, $GATEWAY_BASE, step $step, kept $keep_days days, $(du -sh "$results" 2>/dev/null | cut -f1)"
+  echo "config: $rps rps, $MODEL, $GATEWAY_BASE, step $step,$([ "$repeats" -gt 0 ] && echo " repeats of $repeats rows,") kept $keep_days days, $(du -sh "$results" 2>/dev/null | cut -f1)"
   printf '%-18s %8s %8s %6s %6s %6s %6s %7s %7s\n' step offered "done" failed drop rps err% p50_s p95_s
   find "$results" -mindepth 1 -maxdepth 1 -type d -name '20*' 2>/dev/null | LC_ALL=C sort | tail -n "${1:-6}" | while read -r d; do
     if [ -s "$d/run/summary.json" ]; then
@@ -115,6 +168,8 @@ status() {
         (.completed / (.duration / 1e9) * 100 | round / 100), (.error_rate * 10000 | round / 100),
         (.p50_latency / 1e7 | round / 100), (.p95_latency / 1e7 | round / 100)] | @tsv' "$d/run/summary.json" |
         awk -F'\t' '{printf "%-18s %8s %8s %6s %6s %6s %6s %7s %7s\n", $1,$2,$3,$4,$5,$6,$7,$8,$9}'
+    elif [ -s "$d/unreachable" ]; then
+      echo "${d##*/}  gateway unreachable after $(cat "$d/unreachable") connect attempts; $d/run.log"
     else
       echo "${d##*/}  running or ended without a summary; $d/run.log"
     fi
