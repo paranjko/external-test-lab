@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      testing: ${{ steps.paths.outputs.testing }}
+      skills: ${{ steps.paths.outputs.skills }}
+      workflows: ${{ steps.paths.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # A pull request is checked out as its merge commit; the first parent is the base
+          case "$EVENT" in
+            pull_request) base=HEAD^1 ;;
+            push) base=$BEFORE ;;
+            *) base= ;;
+          esac
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            files=$(git diff --name-only "$base" HEAD)
+          else
+            files=$(git ls-files)
+          fi
+          printf '%s\n' "$files"
+          has() { if grep -qE "$1" <<<"$files"; then echo true; else echo false; fi; }
+          {
+            echo "testing=$(has '^testing/|^\.github/workflows/ci(-testing)?\.yml$')"
+            echo "skills=$(has '^skills/|^net-deployment-runbook/04-ops/site/trace/|^\.github/workflows/(ci|skills-ref)\.yml$')"
+            echo "workflows=$(has '^\.github/workflows/')"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  testing:
+    needs: changes
+    if: needs.changes.outputs.testing == 'true'
+    uses: ./.github/workflows/ci-testing.yml
+
+  skills:
+    needs: changes
+    if: needs.changes.outputs.skills == 'true'
+    uses: ./.github/workflows/skills-ref.yml
+
+  actionlint:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # 1.7.12
+        with:
+          args: -color
+
+  ci-ok:
+    if: always()
+    needs: [changes, testing, skills, actionlint]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          jq -e '[.[].result] | all(. == "success" or . == "skipped")' <<<"$NEEDS" >/dev/null
