@@ -5,8 +5,10 @@ Shows answers of one generated token with no text: the client view (content, too
 usage and whether usage came in the finish event) and, with --gw-ssh, the gateway view (stage=empty_stream
 with output chunks, empty_stream streaks and quarantines) for the same window.
 Usage: remote-one-token.py --dataset D --out DIR --gateway v6=ENV [--gateway v42=ENV] [--rows 247,234]
-       [--repeats 50] [--temperature T] [--pause 0.5] [--gw-ssh gdc-node0 --container v6=NAME ...]
+       [--repeats 50] [--temperature T] [--set top_p=1 --set temperature=null ...] [--pause 0.5]
+       [--gw-ssh gdc-node0 --container v6=NAME ...]
 ENV holds GONKA_BASE and GONKA_API_KEY; rows are 0-based dataset lines (sample_index of wrap-load).
+--set KEY=JSON puts a field into every request body and null removes it, to compare sampler settings on one row.
 """
 import argparse, collections, datetime, gzip, json, pathlib, re, shutil, subprocess, time, urllib.error, urllib.request
 
@@ -81,11 +83,13 @@ def main():
     ap.add_argument("--rows", default="247,234")
     ap.add_argument("--repeats", type=int, default=50)
     ap.add_argument("--temperature", type=float)
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=JSON")
     ap.add_argument("--pause", type=float, default=0.5)
     ap.add_argument("--timeout", type=float, default=180)
     ap.add_argument("--gw-ssh")
     ap.add_argument("--container", action="append", default=[], help="name=container on --gw-ssh")
     a = ap.parse_args()
+    fields = {k: json.loads(v) for k, v in (spec.split("=", 1) for spec in a.set)}
 
     out = pathlib.Path(a.out)
     out.mkdir(parents=True, exist_ok=False)
@@ -94,7 +98,7 @@ def main():
     start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     gateways = [(g.split("=", 1)[0], env_file(g.split("=", 1)[1])) for g in a.gateway]
     (out / "conf.json").write_text(json.dumps({"run": run, "start": start, "rows": a.rows, "repeats": a.repeats,
-        "temperature": a.temperature, "gateways": {n: e.get("GONKA_BASE") for n, e in gateways}}, indent=1))
+        "temperature": a.temperature, "set": fields, "gateways": {n: e.get("GONKA_BASE") for n, e in gateways}}, indent=1))
     results = out / "results.jsonl"
     for n in range(1, a.repeats + 1):
         for name, env in gateways:
@@ -103,6 +107,11 @@ def main():
                 body["stream"] = True
                 if a.temperature is not None:
                     body["temperature"] = a.temperature
+                for k, v in fields.items():
+                    if v is None:
+                        body.pop(k, None)
+                    else:
+                        body[k] = v
                 body["messages"] = [dict(m) for m in body["messages"]]
                 last = max(i for i, m in enumerate(body["messages"]) if m["role"] == "user")
                 body["messages"][last]["content"] += f"\n[R:{run}:{name}:{row}:{n:04d}]"
