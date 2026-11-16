@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fetch a DevShard lab candidate release and write build.yaml for `go run ./cmd/loadtest -build`.
 # Usage: fetch-build.sh <release tag> <empty directory>
+# shellcheck disable=SC2154  # protocol, binary_version and the image names come from build.vars
 set -euo pipefail
 
 tag=${1:?release tag, e.g. lab-gonka-pr-1792-67230e4dcc0a}
