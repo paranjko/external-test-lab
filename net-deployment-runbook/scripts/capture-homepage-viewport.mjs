@@ -10,6 +10,9 @@ const height = Number(heightText);
 const visibleNodes = Number(visibleNodesText);
 const screenshotScroll = Number(screenshotScrollText);
 const expectResetState = process.env.GDC_EXPECT_RESET_STATE === 'true';
+// The page hides these approved DevShard versions; keep in step with site/src/app.js
+// and with the fresh chain query below.
+const unsupportedDevShardVersions = ['v4.1', 'v4.2'];
 const expectNetworkSnapshot = process.env.GDC_EXPECT_NETWORK_SNAPSHOT === 'true';
 const checkMapFullscreen = process.env.GDC_CHECK_MAP_FULLSCREEN === 'true';
 const expectedGatewayState = process.env.GDC_EXPECT_GATEWAY_STATE || '';
@@ -517,11 +520,12 @@ try {
     const observedAt = Date.parse(String(chain?.observed_at || ''));
     const age = Date.now() - observedAt;
     const fresh = chain?.state === 'observed' && Number.isFinite(age) && age >= 0 && age <= 90000;
-    const approvals = Array.isArray(chain?.approved_devshards) ? chain.approved_devshards : [];
-    const expectedText = !fresh ? 'Unavailable' : approvals.length ? approvals.map(item => String(item?.name || '').trim() + ' ' + String(item?.sha256 || '').trim().toLowerCase().slice(0, 6)).join('') : 'None approved';
+    const approved = Array.isArray(chain?.approved_devshards) ? chain.approved_devshards : [];
+    const approvals = approved.filter(item => !unsupportedDevShardVersions.includes(String(item?.name || '').trim()));
+    const expectedText = !fresh ? 'Unavailable' : approvals.length ? approvals.map(item => String(item?.name || '').trim() + ' ' + String(item?.sha256 || '').trim().toLowerCase().slice(0, 6)).join('') : approved.length ? 'None supported' : 'None approved';
     const expectedTitle = !fresh ? 'Approved DevShard versions could not be read from verified chain state' : approvals.length
       ? approvals.map(item => `${String(item?.name || '').trim()}: ${String(item?.sha256 || '').trim().toLowerCase()}`).join('\n')
-      : 'Chain state reports no approved DevShard versions';
+      : approved.length ? 'Chain state approves only DevShard versions the stand no longer supports' : 'Chain state reports no approved DevShard versions';
     if (state.devshardVersions.text !== expectedText || state.devshardVersions.title !== expectedTitle) {
       throw new Error(`approved DevShard versions did not match the HTTP network snapshot ${JSON.stringify({ rendered: state.devshardVersions, expectedText, expectedTitle })}`);
     }
@@ -539,7 +543,7 @@ try {
     });
     if (!approvalRequest) throw new Error('legacy homepage did not request the dedicated current DevShard approvals query');
     const { result: approvalReadResult } = await call('Runtime.evaluate', {
-      expression: `fetch(${JSON.stringify(approvalRequest.url)}, { cache: 'no-store' }).then(async response => { let payload = null; try { payload = await response.json(); } catch {} const records = payload?.versions; const seen = new Set(); let versions = []; let valid = response.ok && Array.isArray(records); if (valid) { for (const item of records) { const name = String(item?.name || '').trim(); const binary = String(item?.binary || '').trim(); const sha256 = String(item?.sha256 || '').trim().toLowerCase(); if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name) || !binary || !/^[0-9a-f]{64}$/.test(sha256) || seen.has(name)) { valid = false; break; } seen.add(name); versions.push({ name, sha256 }); } } versions.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true })); return JSON.stringify({ expectedText: !valid ? 'Unavailable' : versions.length ? versions.map(item => item.name + ' ' + item.sha256.slice(0, 6)).join('') : 'None approved', expectedTitle: !valid ? 'Approved DevShard versions could not be read from verified chain state' : versions.length ? versions.map(item => item.name + ': ' + item.sha256).join('\\n') : 'Chain state reports no approved DevShard versions', status: response.status }); }).catch(() => JSON.stringify({ expectedText: 'Unavailable', expectedTitle: 'Approved DevShard versions could not be read from verified chain state', status: 0 }))`,
+      expression: `fetch(${JSON.stringify(approvalRequest.url)}, { cache: 'no-store' }).then(async response => { let payload = null; try { payload = await response.json(); } catch {} const records = payload?.versions; const seen = new Set(); let versions = []; let valid = response.ok && Array.isArray(records); if (valid) { for (const item of records) { const name = String(item?.name || '').trim(); const binary = String(item?.binary || '').trim(); const sha256 = String(item?.sha256 || '').trim().toLowerCase(); if (!/^v[0-9][A-Za-z0-9._-]*$/.test(name) || !binary || !/^[0-9a-f]{64}$/.test(sha256) || seen.has(name)) { valid = false; break; } seen.add(name); versions.push({ name, sha256 }); } } versions.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true })); const approved = versions.length; versions = versions.filter(item => !['v4.1', 'v4.2'].includes(item.name)); return JSON.stringify({ expectedText: !valid ? 'Unavailable' : versions.length ? versions.map(item => item.name + ' ' + item.sha256.slice(0, 6)).join('') : approved ? 'None supported' : 'None approved', expectedTitle: !valid ? 'Approved DevShard versions could not be read from verified chain state' : versions.length ? versions.map(item => item.name + ': ' + item.sha256).join('\\n') : approved ? 'Chain state approves only DevShard versions the stand no longer supports' : 'Chain state reports no approved DevShard versions', status: response.status }); }).catch(() => JSON.stringify({ expectedText: 'Unavailable', expectedTitle: 'Approved DevShard versions could not be read from verified chain state', status: 0 }))`,
       awaitPromise: true,
       returnByValue: true,
     }, sessionId);

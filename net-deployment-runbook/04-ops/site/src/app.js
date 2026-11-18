@@ -815,16 +815,22 @@ function copyValue(value: string, target: HTMLElement, label: string, success: s
   try { if (document.execCommand("copy")) copied(); } finally { input.remove(); }
 }
 
+// Still approved on chain, but the stand no longer supports them.
+const UNSUPPORTED_DEVSHARD_VERSIONS: Set<string> = new Set(["v4.1", "v4.2"]);
+
 function updateDevShardVersions(
-  versions: Array<DevShardVersion>,
+  approved: Array<DevShardVersion>,
 ): void {
   const target = $("devshard-versions");
   target.replaceChildren();
+  const versions = approved.filter((version) => !UNSUPPORTED_DEVSHARD_VERSIONS.has(version.name));
   if (!versions.length) {
     const item = document.createElement("li");
-    item.textContent = "None approved";
+    item.textContent = approved.length ? "None supported" : "None approved";
     target.append(item);
-    target.title = "Chain state reports no approved DevShard versions";
+    target.title = approved.length
+      ? "Chain state approves only DevShard versions the stand no longer supports"
+      : "Chain state reports no approved DevShard versions";
     return;
   }
   for (const version of versions) {

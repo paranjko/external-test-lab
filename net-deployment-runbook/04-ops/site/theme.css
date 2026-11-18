@@ -184,7 +184,7 @@ code{font-family:var(--mono);letter-spacing:0}
 .traffic-share i{display:block;height:100%;border-radius:999px}
 .traffic-share i[data-gateway="A"],.traffic-card[data-gateway="A"] .traffic-name:before{background:linear-gradient(90deg,var(--accent-2),var(--accent))}
 .traffic-share i[data-gateway="B"],.traffic-card[data-gateway="B"] .traffic-name:before{background:linear-gradient(90deg,var(--pink),var(--violet-2))}
-.traffic-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}
+.traffic-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:20px}
 .traffic-card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:var(--shadow-md);transition:transform .18s,box-shadow .18s}
 .traffic-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
 .traffic-card header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}

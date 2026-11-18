@@ -885,8 +885,8 @@ try {
   let approvalQueryCount = fixtureEvents.filter((event) => event === "approved versions query").length;
   await evaluate("window.__refresh()");
   assert.equal(fixtureEvents.filter((event) => event === "approved versions query").length, approvalQueryCount + 1);
-  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('#devshard-versions li'), item => item.textContent.trim())`), ["v4.1 aaaaaa", "v5 bbbbbb"],
-    "dedicated approvals must win when the deprecated params field is empty");
+  assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('#devshard-versions li'), item => item.textContent.trim())`), ["v5 bbbbbb"],
+    "dedicated approvals must win when the deprecated params field is empty; unsupported v4.1 stays hidden");
   assert.ok(!fixtureEvents.includes("deprecated params query"),
     "the deprecated params endpoint must not be queried as a fallback");
   approvalScenario = "malformed";
@@ -1144,7 +1144,7 @@ try {
     heading: "Participant status",
     statuses: ["Validating", "Active", "Active"],
     models: ["model/gonka-testnet-devshards"],
-    approvedDevShards: "v3 aaaaaav4.1 bbbbbb",
+    approvedDevShards: "v3 aaaaaa",
     mlnodes: ["local · 3.0.16 · Fixture GPU · 24 GiB"],
     poc: "Committed",
     removedSections: [],
