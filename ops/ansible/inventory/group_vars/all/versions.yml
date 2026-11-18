@@ -1,0 +1,24 @@
+# What the network runs. Testing a new release is a pull request to this file.
+chain_id: gonka-devnet-community
+genesis_sha256: 7c76efc566f094fad5b221f331596673a206d79af79e5325cec6b40a9f78262e
+
+chain:
+  ref: release/v0.2.16-post1
+  commit: 136041c81ea8ff38e7620d76af66a7c7fe7eec50
+  release_url: https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1
+  binaries:
+    inferenced-amd64.zip: d2ef13374fb15518a02ae5fac83d139d66fb79a8c93d97f4e78b43ce30e14f98
+    decentralized-api-amd64.zip: f64b9433cd27d9ee433f1aede89d6be910f6deb8df644d55e2dfe30b8f873802
+    inferenced-linux-amd64.zip: 50b333ea4680a05f18a69f30f284357b173c9d68b193e9028b603c67c1d5697f
+
+devshard:
+  approved_versions: [v4.1, v4.2, v6]
+  versiond_image: ghcr.io/gonka-ai/versiond:0.2.16-devshard-v6@sha256:6b925dcb29380e35c6149c70d83437a5daf4654f56258ba8cf9f4632ed62ee81
+  proxy_router_image: ghcr.io/gonka-ai/proxy-router:0.2.16-devshard-v6@sha256:e2cc592a75d746ec37d888052700bc93b8986e18a14e19da4391d4b685181dda
+  proxy_policy_image: ghcr.io/gonka-ai/proxy:0.2.16-devshard-v6@sha256:a8b0a5440f6921e44df236e5a0066451806b3ea9dc616f62b923f7fce321c842
+
+mlnode_image: ghcr.io/gonka-ai/mlnode:4.0.0-sigma3@sha256:ce449de9545b55a8c55d495eaa512beebb72cd29478d4f4b672a1c231ce89d1f
+
+models:
+  Qwen/Qwen2.5-7B-Instruct: model/qwen2.5-7b-instruct-devnet.lock
+  Qwen/Qwen3-4B-Instruct-2507: model/qwen3-4b-instruct-2507-devnet.lock
