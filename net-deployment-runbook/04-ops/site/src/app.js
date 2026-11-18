@@ -37,6 +37,7 @@ type SiteNode = {
   participantState?: string,
   participantKnown?: boolean,
   validatorKnown?: boolean,
+  chainValidatorPower?: ?string,
   observationComplete?: boolean,
   networkObserved?: boolean,
   networkActive?: boolean,
@@ -376,6 +377,7 @@ function configureNetwork(): void {
 function renderNetworkObservationStatus(status: "pending" | "unavailable" | "invalid"): void {
   const source = $("network-source");
   const updated = $("updated");
+  delete updated.dataset.state;
   if (status === "pending") {
     if (source) source.textContent = "NETWORK OBSERVATION PENDING";
     updated.removeAttribute("datetime");
@@ -403,6 +405,7 @@ let telegramProjection: any = null;
 let telegramProjectionRevision = -1;
 function renderTelegramProjection(): void {
   const link = $("contact");
+  if (!link) return;
   const projection = telegramProjection;
   const timestamp = Date.now() / 1000;
   const fresh = (input: any, maxAge: number = 30): boolean =>
@@ -473,6 +476,7 @@ function renderTelegramProjection(): void {
 }
 async function refreshTelegramConsumer(): Promise<void> {
   const link = $("contact");
+  if (!link) return;
   link.hidden = true;
   link.removeAttribute("href");
   if (!cfg.telegramBot) return;
@@ -603,7 +607,8 @@ function layoutHostCards(): void {
   expandedCardKeys = expandedCardKeys.filter((key) => liveKeys.has(key));
   if (!selectedCardKey || !liveKeys.has(selectedCardKey))
     selectedCardKey = expandedCardKeys[0] || orderedKeys[0];
-  const capacity = hostCardCapacity(orderedKeys.length);
+  // Cards sit in a wrapping grid, so every Host card stays open.
+  const capacity = orderedKeys.length;
   if (!expandedCardKeys.length) {
     expandedCardKeys = orderedKeys.slice(0, capacity);
   } else {
@@ -1980,6 +1985,7 @@ function renderHostState(card: HTMLElement, node: SiteNode): boolean {
   updateCardToggleLabel(card);
   set(card, "vp", display.votingPower);
   set(card, "sync", display.syncLabel);
+  if (node.chainValidatorPower && node.endpointState !== "reachable") set(card, "height", "–");
   set(card, "endpoint", display.endpointLabel);
   renderNodeIdentity(card, node);
   // Update both views in the same turn, including pending and failed reads.
@@ -1997,6 +2003,7 @@ function displayHostState(node: SiteNode): any {
       endpointDiagnostic: node.endpointDiagnostic,
       chainDiagnostic: node.chainDiagnostic,
       validatorKnown: node.validatorKnown,
+      chainValidatorPower: node.chainValidatorPower,
       observationComplete: node.observationComplete,
       votingPower: node.votingPower,
       catchingUp: node.catchingUp,
@@ -2221,6 +2228,46 @@ function updateNodeModels(node: SiteNode, card: HTMLElement): void {
     target.append(item);
   }
   target.title = available ? `Effective epoch ${String(assignment.epoch_index)} · PW: participant PoC weight for this model, not a serving-health check` : "Model assignments unavailable";
+  card.dataset.modelGroup = models.length ? [...models].sort().join(" + ") : "Model not reported";
+}
+
+function groupHostCards(): void {
+  const deck = $("nodes");
+  if (!deck) return;
+  const groups: Map<string, HTMLElement> = new Map();
+  for (const section of deck.querySelectorAll(".model-group"))
+    groups.set(section.dataset.model || "", section);
+  const allCards = [...deck.querySelectorAll(".node")];
+  const byModel: Map<string, Array<HTMLElement>> = new Map();
+  for (const card of allCards) {
+    const model = card.dataset.modelGroup || "Model not reported";
+    const list = byModel.get(model) || [];
+    list.push(card);
+    byModel.set(model, list);
+  }
+  const order = [...byModel.keys()].sort((a, b) =>
+    a === "Model not reported" ? 1 : b === "Model not reported" ? -1 : a.localeCompare(b));
+  for (const model of order) {
+    let section = groups.get(model);
+    if (!section) {
+      section = document.createElement("section");
+      section.className = "model-group";
+      section.dataset.model = model;
+      section.innerHTML = '<h3 class="model-group-title"><span></span><small></small></h3><div class="model-group-cards"></div>';
+      groups.set(model, section);
+    }
+    const hostCards = (byModel.get(model) || []).sort((a, b) =>
+      String(a.dataset.nodeName || "").localeCompare(String(b.dataset.nodeName || ""), "en", {numeric: true}));
+    const title = section.querySelector(".model-group-title span");
+    const count = section.querySelector(".model-group-title small");
+    if (title) title.textContent = model;
+    if (count) count.textContent = `${hostCards.length} host${hostCards.length === 1 ? "" : "s"}`;
+    const row = section.querySelector(".model-group-cards");
+    if (row) for (const card of hostCards) row.append(card);
+    deck.append(section);
+  }
+  for (const [model, section] of groups)
+    if (!byModel.has(model)) section.remove();
 }
 
 function updatePublicModelRegistry(nodes: Array<SiteNode>): void {
@@ -2230,6 +2277,7 @@ function updatePublicModelRegistry(nodes: Array<SiteNode>): void {
     const card = cards.get(nodeKey(node));
     if (card) updateNodeModels(node, card);
   }
+  groupHostCards();
   if (!observerSnapshotMode || !["observed", "partial"].includes(assignment?.state) || !Array.isArray(assignment?.groups)) {
     renderModelList([], "Effective network model assignments unavailable");
     return;
@@ -2259,6 +2307,7 @@ function applyPublicChainState(chain: any): void {
   const age = Date.now() - Date.parse(String(chain?.observed_at || ""));
   publicChainState = observerSnapshotMode && chain?.state === "observed" && Number.isFinite(age) && age >= 0 && age <= 90000 ? chain : null;
   if (!publicChainState) {
+    for (const node of observedNodes) node.chainValidatorPower = null;
     updatePublicModelRegistry(observedNodes);
     retainedValidatorSet = null;
     validatorSetObservedAt = 0;
@@ -2328,6 +2377,10 @@ function applyPublicChainState(chain: any): void {
     node.participantAddress = String(participant?.address || "") || null;
     node.participantStatus = String(participant?.status || "") || undefined;
     node.participantKnown = Boolean(participant);
+    const keyValidators = !validator && participant?.validator_key
+      ? validators.filter((entry) => entry.validator_key === participant.validator_key)
+      : [];
+    node.chainValidatorPower = keyValidators.length === 1 ? String(keyValidators[0].voting_power) : null;
     node.activity = activity;
     const nodeAddress = String(node.address || "");
     if (nodeAddress) {
@@ -2433,6 +2486,8 @@ async function reconcileNetwork(): Promise<{status: "observed" | "pending", heig
       validatorMapController?.update(observedNodes);
     }).catch(() => {});
   }
+  // Cards created in this pass join their model row at once.
+  groupHostCards();
   layoutHostCards();
   return {
     status: "observed",
@@ -2980,7 +3035,7 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
         finalizePopupClose();
       });
   });
-  const gridStyle = { color: "#73788e", weight: 1, opacity: 0.35 };
+  const gridStyle = { color: "#c3c8e4", weight: 1, opacity: 0.6, className: "validator-map-grid" };
   for (let latitude = -60; latitude <= 60; latitude += 30)
     L.polyline(
       [
@@ -3266,6 +3321,15 @@ async function initValidatorMap(): Promise<?ValidatorMapController> {
     container.dataset.currentValidatorCount = latestValidatorSet?.verified === true ? String(currentValidatorCount) : "unavailable";
     container.dataset.validatorHeight = latestValidatorSet?.verified === true ? String(latestValidatorSet.blockHeight) : "";
     container.dataset.markerCount = String(groups.size);
+    const mapStats = [
+      ["map-stat-hosts", String(validators.length)],
+      ["map-stat-locations", String(groups.size)],
+      ["map-stat-gpus", String(validators.reduce((total, validator) => total + validator.gpuCount, 0))],
+    ];
+    for (const [id, value] of mapStats) {
+      const target = document.getElementById(id);
+      if (target) target.textContent = value;
+    }
     if (retainedPopupKey && markerRegistry.has(retainedPopupKey)) {
       openMarkerPopup(
         retainedPopupKey,
@@ -3575,6 +3639,8 @@ async function refreshNetwork(): Promise<void> {
   validatorMapController?.update(observedNodes, currentValidatorSet);
   $("best-height").textContent = best ? best.toLocaleString() : "–";
   setUtcTime("updated", new Date(), "Updated");
+  // Kept for assistive technology; the theme hides a fresh timestamp visually.
+  $("updated").dataset.state = "fresh";
   try {
     if (currentValidatorSet?.verified !== true) throw new Error("complete pinned validator set is unavailable");
     const vals = currentValidatorSet.validators;
@@ -3588,173 +3654,76 @@ async function refreshNetwork(): Promise<void> {
   } catch {
     $("power-share").textContent = "–";
   }
-  if (cfg.publicBootstrap === true) {
-    $("quality-updated").textContent = "Not reported for the selected network";
-    [...$("quality-metrics").children].forEach((card) => {
-      card.querySelector("strong").textContent = "–";
-    });
-    $("quality-active").textContent = "–";
-    $("quality-accepted").textContent = "–";
-    $("quality-rejected").textContent = "–";
-    $("quality-health").dataset.state = "unknown";
-    $("quality-health-state").textContent = "NOT REPORTED";
-    $("quality-recovery").hidden = true;
-    $("gateway-access").hidden = true;
+  await refreshGatewayTraffic();
+}
+type GatewayTraffic = {id: string, host: string, rps: number, inflight: number, ok: number, failed: number};
+
+// One fixed Prometheus query per status route; every series carries an `m` label.
+async function refreshGatewayTraffic(): Promise<void> {
+  const container = $("traffic-cards");
+  if (!container) return;
+  let result: Array<any> = [];
+  try {
+    const response = await json(statusUrl("/gateway-traffic"));
+    result = Array.isArray(response?.data?.result) ? response.data.result : [];
+  } catch {
+    $("traffic-updated").textContent = "Gateway metrics unavailable";
+    $("gateway-traffic").dataset.state = "unavailable";
+    $("traffic-total-rps").textContent = "–";
+    $("traffic-share").replaceChildren();
+    container.replaceChildren();
     return;
   }
-  let gatewayState: any = null;
-  let gatewayProbe: any = null;
-  let gatewayAdmission: any = null;
-  try {
-    [gatewayState, gatewayProbe, gatewayAdmission] = await Promise.all([
-      json(statusUrl("/gateway/v1/status")),
-      json(statusUrl("/gateway-health")),
-      json(statusUrl("/gateway/v1/admission-status")),
-    ]);
-  } catch {
-    gatewayAdmission = {
-      available: false,
-      reason: "admission_status_unavailable",
-    };
+  const byId: Map<string, GatewayTraffic> = new Map();
+  for (const series of result) {
+    const id = String(series?.metric?.gateway || "");
+    if (!id) continue;
+    const entry = byId.get(id) || {id, host: String(series?.metric?.host || "").replace(/^gdc-/, ""), rps: 0, inflight: 0, ok: 0, failed: 0};
+    const value = Number(series?.value?.[1]);
+    const metric = String(series?.metric?.m || "");
+    if (Number.isFinite(value)) {
+      if (metric === "rps") entry.rps = value;
+      else if (metric === "inflight") entry.inflight = value;
+      else if (metric === "ok_1h") entry.ok = value;
+      else if (metric === "fail_1h") entry.failed = value;
+    }
+    byId.set(id, entry);
   }
-  try {
-    const availability = gatewayStatus.classify(
-      gatewayState,
-      healthy,
-      gatewayProbe,
-      undefined,
-      undefined,
-      gatewayAdmission,
-    );
-    if (availability.available !== true || availability.state !== "TRAFFIC_READY")
-      throw new Error("gateway unavailable");
-    const runtime = gatewayState.escrow_id
-      ? gatewayState
-      : (gatewayState.devshards || []).find(
-          (item) =>
-            item.active && item.phase === "active" && !item.requests_blocked,
-        );
-    if (!runtime?.id && !runtime?.escrow_id)
-      throw new Error("no active unblocked escrow");
-    const escrowId = runtime.id || runtime.escrow_id;
-    $("gateway-access").hidden = false;
-    $("gateway-detail").textContent =
-      `Escrow #${escrowId} is ACTIVE – authenticated chain-accounted inference is accepting requests`;
-  } catch (error) {
-    $("gateway-access").hidden = true;
+  const gateways = [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+  const total = gateways.reduce((sum, item) => sum + item.rps, 0);
+  $("traffic-total-rps").textContent = `${total.toFixed(1)} req/s`;
+  const share = $("traffic-share");
+  share.replaceChildren();
+  for (const item of gateways) {
+    const part = document.createElement("i");
+    part.dataset.gateway = item.id.slice(0, 1);
+    part.style.width = `${total > 0 ? (item.rps / total) * 100 : 100 / Math.max(gateways.length, 1)}%`;
+    share.append(part);
   }
-  if (cfg.telegramBot) return renderTelegramProjection();
-  try {
-    const availability = gatewayStatus.classify(
-      gatewayState,
-      healthy,
-      gatewayProbe,
-      undefined,
-      undefined,
-      gatewayAdmission,
-    );
-    if (availability.available !== true || availability.state !== "TRAFFIC_READY")
-      throw new Error(availability.message);
-    const metricText = await text(statusUrl("/gateway/metrics"));
-    const metricValue = (name: string): number =>
-      [
-        ...metricText.matchAll(
-          new RegExp(`^${name}(?:\\{[^}]*\\})?\\s+([0-9.e+-]+)$`, "gm"),
-        ),
-      ].reduce((total, match) => total + Number(match[1]), 0);
-    const inflight = metricValue("devshard_gateway_inflight_requests");
-    const tokens = metricValue("devshard_gateway_inflight_input_tokens");
-    const accepted = metricValue("devshard_gateway_requests_total");
-    const rejected = metricValue("devshard_gateway_limit_rejections_total");
-    const capacity = metricValue("devshard_gateway_capacity_scale");
-    const values = [
-      String(inflight),
-      tokens.toLocaleString(),
-      accepted.toLocaleString(),
-      rejected.toLocaleString(),
-      `${Math.round(capacity * 100)}%`,
-    ];
-    [...$("quality-metrics").children].forEach(
-      (card, index) =>
-        (card.querySelector("strong").textContent = values[index]),
-    );
-    $("quality-active").textContent = inflight;
-    $("quality-accepted").textContent = accepted;
-    $("quality-rejected").textContent = rejected;
-    const health = $("quality-health");
-    const state = inflight > 0 ? "active" : "idle";
-    health.dataset.state = state;
-    $("quality-health-state").textContent =
-      inflight > 0
-        ? "TRAFFIC_READY – verified inference; processing requests"
-        : "TRAFFIC_READY – verified inference; no requests in flight";
-    $("quality-recovery").hidden = true;
-    setUtcTime("quality-updated", new Date(), "Updated");
-  } catch (error) {
-    const availability = gatewayStatus.classify(
-      gatewayState,
-      healthy,
-      gatewayProbe,
-      undefined,
-      undefined,
-      gatewayAdmission,
-    );
-    [...$("quality-metrics").children].forEach((card) => {
-      card.querySelector("strong").textContent = "–";
-    });
-    for (const id of ["quality-active", "quality-accepted", "quality-rejected"])
-      $(id).textContent = "–";
-    const recovery = $("quality-recovery");
-    $("quality-health-state").textContent = availability.state;
-    $("quality-health").dataset.state =
-      availability.state === "PENDING" || availability.state === "RECOVERING"
-        ? "degraded"
-        : "down";
-    setRecoveryMessage(recovery, availability);
-    recovery.hidden = false;
-    if (gatewayProbe?.checked_at)
-      setUtcTime(
-        "quality-updated",
-        new Date(gatewayProbe.checked_at),
-        "Checked",
-      );
-    else
-      $("quality-updated").textContent =
-      "Gateway health has not been checked yet";
+  container.replaceChildren();
+  for (const item of gateways) {
+    const card = document.createElement("article");
+    card.className = "traffic-card";
+    card.dataset.gateway = item.id.slice(0, 1);
+    const requests = item.ok + item.failed;
+    const successRate = requests > 0 ? (item.ok / requests) * 100 : null;
+    const name = item.id.replace(/_V(\d+)$/, " · v$1");
+    card.innerHTML = '<header><span class="traffic-name"></span><small class="traffic-host"></small></header>' +
+      '<strong class="traffic-rps"></strong><span class="traffic-rps-label">requests per second, last 5 min</span>' +
+      '<dl><div><dt>In flight</dt><dd data-k="inflight"></dd></div><div><dt>Last hour</dt><dd data-k="hour"></dd></div>' +
+      '<div><dt>Failed, last hour</dt><dd data-k="failed"></dd></div><div><dt>Success rate</dt><dd data-k="rate"></dd></div></dl>';
+    card.querySelector(".traffic-name").textContent = `Gateway ${name}`;
+    card.querySelector(".traffic-host").textContent = item.host || "";
+    card.querySelector(".traffic-rps").textContent = item.rps.toFixed(1);
+    card.querySelector('[data-k="inflight"]').textContent = String(Math.round(item.inflight));
+    card.querySelector('[data-k="hour"]').textContent = Math.round(requests).toLocaleString("en-US");
+    card.querySelector('[data-k="failed"]').textContent = Math.round(item.failed).toLocaleString("en-US");
+    card.querySelector('[data-k="rate"]').textContent = successRate === null ? "–" : `${successRate.toFixed(2)}%`;
+    container.append(card);
   }
-  if (cfg.telegramBot) return; // A/B labels share the bot's timed projection.
-  await Promise.all(
-    ["a", "b"].map(async (route) => {
-      const state = $("gateway-" + route + "-state");
-      const detail = $("gateway-" + route + "-detail");
-      try {
-        const [routeStatus, routeAdmission] = await Promise.all([
-          json(statusUrl(`/gateways/${route}/v1/status`)),
-          json(statusUrl(`/gateways/${route}/v1/admission-status`)),
-        ]);
-        const modelCapacity = routeStatus?.capacity?.models?.[cfg.model] || {};
-        const limiter = routeStatus?.limiter || {};
-        const inFlight = Number(limiter.in_flight_requests);
-        const effective = Number(limiter.effective_max_concurrent_requests);
-        if (routeAdmission?.available !== true) {
-          const reason = String(routeAdmission?.reason || "admission unavailable").replaceAll("_", " ");
-          state.textContent = reason === "poc fence" ? "PROTOCOL PAUSE" : "UNAVAILABLE";
-          detail.textContent = `admission: ${reason}; ${Number.isFinite(inFlight) ? inFlight : "–"} requests in flight`;
-        } else if (modelCapacity.routable !== true || effective <= 0) {
-          state.textContent = "NO MODEL CAPACITY";
-          detail.textContent = `admission responded, but effective model capacity is ${Number.isFinite(effective) ? effective : "unknown"}`;
-        } else {
-          // This is an admission snapshot, not a claim of a completed model
-          // response. The main traffic state remains gated by its receipt.
-          state.textContent = "ADMISSION AVAILABLE";
-          detail.textContent = `${Number.isFinite(inFlight) ? inFlight : "–"} requests in flight; effective concurrency ${effective}`;
-        }
-      } catch {
-        state.textContent = "STATUS ERROR";
-        detail.textContent = "read-only A/B status is unavailable";
-      }
-    }),
-  );
+  if (!gateways.length) container.textContent = "No gateway reported traffic in the last scrape.";
+  $("traffic-updated").textContent = "";
+  $("gateway-traffic").dataset.state = "observed";
 }
 Promise.resolve((window: any).GDC_SITE_CONFIG_READY)
   .then(() => {
@@ -3767,9 +3736,6 @@ Promise.resolve((window: any).GDC_SITE_CONFIG_READY)
     connectNetworkObservation();
     refresh();
     setInterval(refresh, 15000);
-    refreshTelegramConsumer();
-    setInterval(refreshTelegramConsumer, 5000);
-    setInterval(() => { if (cfg.telegramBot) renderTelegramProjection(); }, 1000);
     setInterval(renderDevShardInventory, 1000);
   })
   .catch((error) => {

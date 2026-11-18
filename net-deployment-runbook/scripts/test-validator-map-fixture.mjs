@@ -54,7 +54,7 @@ function validateWorldSvg(svg) {
     /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" version="1\.2" baseProfile="tiny" width="2000" height="1000" viewBox="0 0 2000 1000" stroke-linecap="round" stroke-linejoin="round">$/u.test(
       tag,
     ) ||
-    tag === '<g id="land" fill="#292c39" stroke="#73788e" stroke-width="1.3">' ||
+    tag === '<g id="land" fill="#eceef8" stroke="#c3c8e4" stroke-width="1.3">' ||
     /^<path d="[MLZ0-9 .-]+"(?: fill-rule="evenodd")?\/>$/u.test(tag) ||
     tag === "</g>" ||
     tag === "</svg>";
@@ -705,303 +705,28 @@ try {
   const reports = [];
   const mapStateExpression =
     'JSON.stringify((()=>{const map=document.querySelector("#validator-map"),rect=map?.getBoundingClientRect(),world=map?.querySelector(".validator-map-world"),worldRect=world?.getBoundingClientRect(),markers=[...map.querySelectorAll(".validator-marker")].map(marker=>{const r=marker.getBoundingClientRect(),face=marker.querySelector(".validator-marker-face"),number=marker.querySelector(".validator-marker-number");return{label:marker.getAttribute("aria-label")||"",classes:[...marker.classList],background:getComputedStyle(face).backgroundImage,left:r.left+r.width/2,top:r.top+r.height/2,width:r.width,height:r.height,count:number?.textContent||""}});return{world:Boolean(world?.complete&&world?.naturalWidth),worldRatio:worldRect?worldRect.width/worldRect.height:0,hosts:Number(map?.dataset.hostCount),markerCount:Number(map?.dataset.markerCount),hitTargetCount:map?.querySelectorAll(".validator-marker-hit").length||0,centersInside:markers.every(marker=>marker.left>=rect.left-.1&&marker.left<=rect.right+.1&&marker.top>=rect.top-.1&&marker.top<=rect.bottom+.1),markerNodes:markers,mapRect:rect&&{left:rect.left,top:rect.top,right:rect.right,bottom:rect.bottom},worldRect:worldRect&&{left:worldRect.left,top:worldRect.top,width:worldRect.width,height:worldRect.height},scrollWidth:document.documentElement.scrollWidth,width:innerWidth}})())';
-  const hostGeometryExpression = `JSON.stringify((() => {
+  // Host cards sit in model rows; every card is open and none may clip or overlap.
+  const hostRowsExpression = `JSON.stringify((() => {
     const deck = document.querySelector("#nodes");
     const cards = [...document.querySelectorAll("#nodes .node")];
-    const expandedCards = cards.filter(card => card.classList.contains("is-expanded"));
-    const collapsedCards = cards.filter(card => card.classList.contains("is-collapsed"));
-    const card = expandedCards[0];
-    if (!deck || !card) return { pass: false, error: "no expanded Host card" };
-    const setText = (selector, value) => {
-      const element = card.querySelector(selector);
-      if (element) element.textContent = value;
-      return element;
-    };
-    const bounds = element => {
-      const rect = element?.getBoundingClientRect();
-      return rect && { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
-    };
-    const geometrySnapshot = () => Object.fromEntries([
-      ...cards.map((candidate, index) => [\`card-\${index}\`, bounds(candidate)]),
-      ["header", bounds(card.querySelector("h3"))],
-      ["host", bounds(card.querySelector('[data-k="host"]'))],
-      ["status", bounds(card.querySelector('[data-k="status"]'))],
-      ...[...(card.querySelector(".node-details")?.children || [])].map((element, index) => [\`detail-\${index}-\${element.dataset.kRow || element.dataset.k || element.tagName.toLowerCase()}\`, bounds(element)]),
-    ]);
-    const statusProbe = {
-      participantKnown: true,
-      participantState: "ACTIVE",
-      validatorKnown: true,
-      votingPower: "10",
-      catchingUp: false,
-      blocksBehind: 0,
-      blockAgeSeconds: 0,
-      progressing: true,
-      referenceKnown: true,
-      referenceAgrees: true,
-    };
-    renderHostState(card, { ...statusProbe, endpointState: "reachable" });
-    const validatingGeometry = geometrySnapshot();
-    renderHostState(card, { ...statusProbe, endpointState: "unavailable", endpointDiagnostic: "Network error" });
-    const activeGeometry = geometrySnapshot();
-    const statusLayoutShifts = Object.keys(validatingGeometry).flatMap(key => {
-      const before = validatingGeometry[key];
-      const after = activeGeometry[key];
-      if (!before || !after) return [{ key, before, after }];
-      return ["top", "left", "width", "height"].some(metric => Math.abs(before[metric] - after[metric]) > 0.1)
-        ? [{ key, before, after }]
-        : [];
-    });
-    const longHost = "node0.example.test with a deliberately long hostname";
-    set(card, "host", longHost);
-    set(card, "status", "VALIDATING");
-    setText('[data-k="node-id"]', "0123456789abcdef0123456789abcdef01234567");
-    setText('[data-k="height"]', "123456789");
-    setText('[data-k="vp"]', "9223372036854775807");
-    setText('[data-k="sync"]', "Synced");
-    setText('[data-k="endpoint"]', "Unavailable – Network error");
-    setText('[data-k="peers"]', "123");
-    setText('[data-k="poc"]', "12 accept · 0 reject");
-    const cpocRow = card.querySelector('[data-k-row="cpoc"]');
-    const inactiveCpocHidden = Boolean(cpocRow?.hidden);
-    // The production card hides inactive cPoC contributions. Exercise the
-    // larger active-event layout as well as that initial visibility contract.
-    if (cpocRow) cpocRow.hidden = false;
-    setText('[data-k="cpoc"]', "12 accept · 0 reject");
-    setText('[data-k="inference"]', "Not observed");
-    setText('[data-k="inferenced"]', "0.2.15");
-    setText('[data-k="dapi"]', "0.2.15-post3");
-    setText('[data-k="devshard"]', "v3 · v4 · v5");
-    const mlnodeRow = card.querySelector('[data-k-row="mlnode"]');
-    if (mlnodeRow) mlnodeRow.hidden = false;
-    const longMlNode = "gpu.example.test:5000 · 3.0.15 · RTX PRO 2000 Blackwell 16 GiB ×8";
-    const mlNodeItem = document.createElement("li");
-    mlNodeItem.textContent = longMlNode;
-    card.querySelector('[data-k="mlnode"]')?.replaceChildren(mlNodeItem);
-    const textBounds = element => {
-      if (!element) return null;
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      return bounds(range);
-    };
-    const fieldInfo = selector => {
-      const element = card.querySelector(selector);
-      const rect = bounds(element);
-      const text = textBounds(element);
-      const visible = Boolean(element && element.offsetParent !== null && rect && rect.right > rect.left && rect.bottom > rect.top && text && text.right > text.left && text.bottom > text.top);
-      const style = element && getComputedStyle(element);
-      return {
-        text: element?.textContent?.trim() || "",
-        visible,
-        clipped: Boolean(!visible || element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight || text.left < rect.left - 2 || text.right > rect.right + 2 || text.top < rect.top - 2 || text.bottom > rect.bottom + 2),
-        singleLineEllipsis: Boolean(visible && style.whiteSpace === "nowrap" && style.overflowX === "hidden" && style.textOverflow === "ellipsis" && element.scrollHeight <= element.clientHeight && text.top >= rect.top - 2 && text.bottom <= rect.bottom + 2),
-      };
-    };
-    const details = card.querySelector(".node-details");
-    const rows = [card.querySelector("h3"), ...(details?.children || [])]
-      .filter(row => row && row.offsetParent !== null)
-      .map(element => ({
-        key: element.dataset.kRow || element.dataset.k || element.tagName.toLowerCase(),
-        bounds: bounds(element),
-        // Copy controls include an off-screen accessible label. Measure the
-        // displayed value, not that intentionally hidden assistive text.
-        textBounds: textBounds(element.querySelector("code") || element),
-      }));
-    const rowOverlaps = rows.slice(0, -1).flatMap((row, index) => {
-      const next = rows[index + 1];
-      return row.textBounds && next.bounds && row.textBounds.bottom > next.bounds.top + 0.5
-        ? [{ from: row.key, to: next.key, textBottom: row.textBounds.bottom, nextTop: next.bounds.top }]
-        : [];
-    });
-    const cardRect = card.getBoundingClientRect();
-    const contentBottom = rows.reduce((bottom, row) => Math.max(bottom, row.textBounds?.bottom ?? -Infinity), -Infinity);
-    const deckRect = deck.getBoundingClientRect();
-    const cardRects = cards.map(candidate => candidate.getBoundingClientRect());
-    const deckStyle = getComputedStyle(deck);
-    const mobile = innerWidth <= 700;
-    let expectedExpandedCount = Math.min(innerWidth <= 900 ? 1 : innerWidth < 1200 ? 2 : 4, cards.length);
-    while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 320) expectedExpandedCount -= 1;
-    const oneRow = cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5);
-    const cardsInside = cardRects.every(rect => rect.left >= deckRect.left - 1 && rect.right <= deckRect.right + 1);
-    const initialDeckScrollLeft = deck.scrollLeft;
-    deck.scrollLeft = 0;
-    const firstCardAtStart = (() => {
-      const rect = cards[0]?.getBoundingClientRect();
-      return Boolean(rect && rect.left >= deckRect.left - 1 && rect.right <= deckRect.right + 1);
-    })();
-    const maximumDeckScrollLeft = Math.max(0, deck.scrollWidth - deck.clientWidth);
-    deck.scrollLeft = maximumDeckScrollLeft;
-    const lastCardAtEnd = (() => {
-      const rect = cards.at(-1)?.getBoundingClientRect();
-      return Boolean(rect && rect.left >= deckRect.left - 1 && rect.right <= deckRect.right + 1);
-    })();
-    const appliedDeckScrollLeft = deck.scrollLeft;
-    deck.scrollLeft = initialDeckScrollLeft;
-    const deckOverflows = maximumDeckScrollLeft > 1;
-    const minimumDeckWidth = mobile
-      ? deck.clientWidth
-      : expectedExpandedCount * 320 + (cards.length - expectedExpandedCount) * 32;
-    const overflowExpected = !mobile && minimumDeckWidth > deck.clientWidth + 1;
-    const cardsReachable = firstCardAtStart && (!deckOverflows || (appliedDeckScrollLeft > 1 && lastCardAtEnd));
-    const expandedGeometry = expandedCards.every(candidate => {
-      const rect = candidate.getBoundingClientRect();
-      return mobile
-        ? Math.abs(rect.width - deck.clientWidth) <= 1
-        : rect.height >= 350 && rect.width >= 319;
-    });
-    const collapsedGeometry = collapsedCards.every(candidate => {
-      const rect = candidate.getBoundingClientRect();
-      return mobile
-        ? Math.abs(rect.height - 52) <= 0.5 && Math.abs(rect.width - deck.clientWidth) <= 1
-        : rect.height >= 350 && rect.width >= 31 && rect.width <= 33;
-    });
-    const collapsedSemantics = collapsedCards.every(candidate => {
-      const host = candidate.querySelector('[data-k="host"]');
-      const status = candidate.querySelector('[data-k="status"]');
-      const candidateDetails = candidate.querySelector(".node-details");
-      const button = candidate.querySelector(".node-toggle");
-      if (status) status.textContent = "VALIDATING";
-      return Boolean(host?.offsetParent && status?.offsetParent && status.scrollWidth <= status.clientWidth && status.scrollHeight <= status.clientHeight && candidateDetails?.hidden && button?.getAttribute("aria-expanded") === "false" && button?.getAttribute("aria-controls") === candidateDetails?.id);
-    });
-    const fields = {
-      host: fieldInfo('[data-k="host"]'),
-      status: fieldInfo('[data-k="status"]'),
-      nodeId: fieldInfo('[data-k="node-id"]'),
-      height: fieldInfo('[data-k="height"]'),
-      votingPower: fieldInfo('[data-k="vp"]'),
-      sync: fieldInfo('[data-k="sync"]'),
-      endpoint: fieldInfo('[data-k="endpoint"]'),
-      peers: fieldInfo('[data-k="peers"]'),
-      poc: fieldInfo('[data-k="poc"]'),
-      cpoc: fieldInfo('[data-k="cpoc"]'),
-      inference: fieldInfo('[data-k="inference"]'),
-      inferenced: fieldInfo('[data-k="inferenced"]'),
-      dapi: fieldInfo('[data-k="dapi"]'),
-      devshard: fieldInfo('[data-k="devshard"]'),
-      mlnode: fieldInfo('[data-k="mlnode"]'),
-    };
-    const skippedCard = cards.find((candidate) => candidate.classList.contains("skip"));
-    const skippedMlNodeRow = skippedCard?.querySelector('[data-k-row="mlnode"]');
-    const skippedMlNodeValue = skippedMlNodeRow?.querySelector('[data-k="mlnode"]');
-    const skippedMlNode = {
-      exists: Boolean(skippedCard),
-      hidden: Boolean(skippedMlNodeRow?.hidden),
-      display: skippedMlNodeRow ? getComputedStyle(skippedMlNodeRow).display : null,
-      text: skippedMlNodeValue?.textContent?.trim() || "",
-      clientHeight: skippedMlNodeRow?.clientHeight || 0,
-    };
-    const initialExpandedKey = expandedCards[0]?.dataset.nodeKey;
-    const activatedCard = collapsedCards[0];
-    const activatedKey = activatedCard?.dataset.nodeKey;
-    activatedCard?.querySelector(".node-toggle")?.click();
-    const afterExpanded = cards.filter(candidate => candidate.classList.contains("is-expanded"));
-    const activated = cards.find(candidate => candidate.dataset.nodeKey === activatedKey);
-    const evicted = cards.find(candidate => candidate.dataset.nodeKey === initialExpandedKey);
-    const activationValid = Boolean(
-      activated &&
-      activated.classList.contains("is-expanded") &&
-      activated.querySelector(".node-toggle")?.getAttribute("aria-expanded") === "true" &&
-      !activated.querySelector(".node-details")?.hidden &&
-      evicted &&
-      evicted.classList.contains("is-collapsed") &&
-      evicted.querySelector(".node-toggle")?.getAttribute("aria-expanded") === "false" &&
-      evicted.querySelector(".node-details")?.hidden &&
-      afterExpanded.length === expectedExpandedCount
-    );
-    const activatedButton = activated?.querySelector(".node-toggle");
-    activatedButton?.focus();
-    activatedButton?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
-    const activatedIndex = cards.indexOf(activated);
-    const expectedFocusedKey = cards[(activatedIndex + 1) % cards.length]?.dataset.nodeKey;
-    const focusedKey = document.activeElement?.closest(".node")?.dataset.nodeKey;
-    const keyboardValid = Boolean(activatedButton && focusedKey === expectedFocusedKey);
-    // Long identities retain their complete DOM value and are deliberately
-    // single-line clipped, while ordinary metrics must remain fully visible.
-    const longIdentityContract = fields.host.text === longHost &&
-      fields.mlnode.text === longMlNode &&
-      card.querySelector(".node-toggle")?.getAttribute("aria-label")?.includes(longHost) &&
-      card.querySelector(".node-toggle")?.title.includes(longHost);
-    const complete = Object.entries(fields).every(([key, field]) =>
-      field.text && field.visible &&
-      (["host", "mlnode"].includes(key) ? field.singleLineEllipsis : !field.clipped)
-    ) && longIdentityContract && inactiveCpocHidden;
-    const devshardValue = document.querySelector('#devshard-versions');
-    const devshardContract =
-      JSON.stringify([...devshardValue.querySelectorAll('li')].map(item => item.textContent.trim())) === JSON.stringify(["v3 333333", "v4 444444", "v5 555555"]) &&
-      devshardValue.title.includes("v3: " + "3".repeat(64)) &&
-      devshardValue.title.includes("v4: " + "4".repeat(64)) &&
-      devshardValue.title.includes("v5: " + "5".repeat(64));
-    const negativeTracking = [...document.querySelectorAll("body *")]
-      .filter(element => {
-        const spacing = getComputedStyle(element).letterSpacing;
-        return spacing !== "normal" && Number.parseFloat(spacing) < 0;
-      })
-      .map(element => element.tagName + "." + element.className);
-    const desktopLayout = !mobile && deckStyle.flexDirection === "row" && oneRow;
-    const mobileLayout = mobile && deckStyle.flexDirection === "column" && !oneRow;
-    return {
-      pass: cards.length > 5 && expandedCards.length === expectedExpandedCount && collapsedCards.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && deck.getAttribute("role") === "list" && deck.getAttribute("aria-label")?.includes("Host accordion") && deckStyle.overflowX === (mobile ? "visible" : "auto") && deckOverflows === overflowExpected && cardsReachable && (deckOverflows || cardsInside) && expandedGeometry && collapsedGeometry && collapsedSemantics && (mobile ? mobileLayout : desktopLayout) && card.scrollHeight <= card.clientHeight && rowOverlaps.length === 0 && contentBottom <= cardRect.bottom + 0.5 && complete && devshardContract && negativeTracking.length === 0 && statusLayoutShifts.length === 0 && skippedMlNode.exists && !skippedMlNode.hidden && skippedMlNode.display !== "none" && skippedMlNode.text.includes("GPU not reported") && activationValid && keyboardValid && document.documentElement.scrollWidth <= innerWidth,
-      expectedExpandedCount,
-      initialExpandedCount: expandedCards.length,
-      collapsedCount: collapsedCards.length,
-      layout: { mobile, flexDirection: deckStyle.flexDirection, oneRow, cardsInside, cardsReachable, firstCardAtStart, lastCardAtEnd, deckOverflows, overflowExpected, maximumDeckScrollLeft, appliedDeckScrollLeft, minimumDeckWidth, expandedGeometry, collapsedGeometry, clientWidth: deck.clientWidth, scrollWidth: deck.scrollWidth, cardWidths: cardRects.map(rect => rect.width), cardHeights: cardRects.map(rect => rect.height) },
-      fields,
-      inactiveCpocHidden,
-      longIdentityContract,
-      devshardContract,
-      devshardTitle: devshardValue?.title || "",
-      negativeTracking,
-      statusLayoutShifts,
-      rowOverlaps,
-      skippedMlNode,
-      card: { height: cardRect.height, clientHeight: card.clientHeight, scrollHeight: card.scrollHeight, contentBottom },
-      interaction: { initialExpandedKey, activatedKey, activationValid, expectedFocusedKey, focusedKey, keyboardValid },
-      documentScrollWidth: document.documentElement.scrollWidth,
-      viewportWidth: innerWidth,
-    };
-  })())`;
-  const denseHostDeckExpression = `JSON.stringify((() => {
-    const deck = document.querySelector("#nodes");
-    const cards = [...document.querySelectorAll("#nodes .node")];
-    if (!deck || cards.length !== 22) return { pass: false, error: "dense Host fixture did not render", count: cards.length };
-    const mobile = innerWidth <= 700;
-    const expanded = cards.filter(card => card.classList.contains("is-expanded"));
-    const collapsed = cards.filter(card => card.classList.contains("is-collapsed"));
-    const style = getComputedStyle(deck);
-    const deckRect = deck.getBoundingClientRect();
-    const cardRects = cards.map(card => card.getBoundingClientRect());
-    let expectedExpandedCount = Math.min(innerWidth <= 900 ? 1 : innerWidth < 1200 ? 2 : 4, cards.length);
-    while (expectedExpandedCount > 1 && (deck.clientWidth - (cards.length - expectedExpandedCount) * 32) / expectedExpandedCount < 320) expectedExpandedCount -= 1;
-    deck.scrollLeft = 0;
-    const firstRect = cards[0].getBoundingClientRect();
-    const firstAtStart = firstRect.left >= deckRect.left - 1 && firstRect.right <= deckRect.right + 1;
-    const maximumScrollLeft = Math.max(0, deck.scrollWidth - deck.clientWidth);
-    deck.scrollLeft = maximumScrollLeft;
-    const lastRect = cards.at(-1).getBoundingClientRect();
-    const lastAtEnd = lastRect.left >= deckRect.left - 1 && lastRect.right <= deckRect.right + 1;
-    const appliedScrollLeft = deck.scrollLeft;
-    deck.scrollLeft = 0;
-    const desktopGeometry = !mobile && style.flexDirection === "row" && cardRects.every(rect => Math.abs(rect.top - cardRects[0].top) <= 0.5 && Math.abs(rect.bottom - cardRects[0].bottom) <= 0.5) && expanded.every(card => card.getBoundingClientRect().width >= 319) && collapsed.every(card => { const rect = card.getBoundingClientRect(); return rect.width >= 31 && rect.width <= 33; });
-    const mobileGeometry = mobile && style.flexDirection === "column" && deck.scrollWidth <= deck.clientWidth + 1 && expanded.every(card => Math.abs(card.getBoundingClientRect().width - deck.clientWidth) <= 1) && collapsed.every(card => { const rect = card.getBoundingClientRect(); return Math.abs(rect.width - deck.clientWidth) <= 1 && Math.abs(rect.height - 52) <= 0.5; });
-    const desktopReachability = !mobile && style.overflowX === "auto" && maximumScrollLeft > 1 && appliedScrollLeft > 1 && firstAtStart && lastAtEnd;
-    const mobileReachability = mobile && style.overflowX === "visible" && maximumScrollLeft <= 1 && firstAtStart && lastAtEnd;
-    return {
-      pass: expanded.length === expectedExpandedCount && collapsed.length === cards.length - expectedExpandedCount && Number(deck.dataset.expandedCount) === expectedExpandedCount && (mobile ? mobileGeometry && mobileReachability : desktopGeometry && desktopReachability) && document.documentElement.scrollWidth <= innerWidth,
-      mobile,
+    const rects = cards.map(card => card.getBoundingClientRect());
+    const intersects = (first, second) => first.left < second.right - 1 && second.left < first.right - 1 && first.top < second.bottom - 1 && second.top < first.bottom - 1;
+    const result = {
       count: cards.length,
-      expandedCount: expanded.length,
-      collapsedCount: collapsed.length,
-      expectedExpandedCount,
-      overflowX: style.overflowX,
-      clientWidth: deck.clientWidth,
-      scrollWidth: deck.scrollWidth,
-      maximumScrollLeft,
-      appliedScrollLeft,
-      firstAtStart,
-      lastAtEnd,
-      documentScrollWidth: document.documentElement.scrollWidth,
-      viewportWidth: innerWidth,
+      open: cards.filter(card => card.classList.contains("is-expanded") && !card.querySelector(".node-details")?.hidden).length,
+      rows: [...document.querySelectorAll("#nodes .model-group")].map(group => group.querySelectorAll(".node").length),
+      loose: [...deck.children].filter(child => child.classList.contains("node")).length,
+      deckOverflows: deck.scrollWidth > deck.clientWidth + 1,
+      pageOverflows: document.documentElement.scrollWidth > innerWidth,
+      overlapping: rects.some((rect, index) => rects.slice(index + 1).some(other => intersects(rect, other))),
+      clipped: cards.filter(card => card.scrollHeight > card.clientHeight + 1 || card.scrollWidth > card.clientWidth + 1).length,
+      minimumWidth: rects.length ? Math.min(...rects.map(rect => rect.width)) : 0,
     };
+    result.pass = result.count > 0 && result.open === result.count && result.loose === 0 &&
+      result.rows.length > 0 && result.rows.reduce((total, value) => total + value, 0) === result.count &&
+      !result.deckOverflows && !result.pageOverflows && !result.overlapping && result.clipped === 0 &&
+      result.minimumWidth >= Math.min(280, innerWidth - 48);
+    return result;
   })())`;
   const bubbleNodes = [1, 2, 4, 9].map((gpuCapacity) =>
     ({
@@ -1571,11 +1296,11 @@ try {
       if (
         mobileHostResize.layout !== "mobile" ||
         mobileHostResize.flexDirection !== "column" ||
-        mobileHostResize.expanded !== 1 ||
-        mobileHostResize.collapsed !== 10
+        mobileHostResize.expanded !== 11 ||
+        mobileHostResize.collapsed !== 0
       )
         throw new Error(
-          `Host accordion mobile resize failed: ${JSON.stringify(mobileHostResize)}`,
+          `Host cards mobile resize failed: ${JSON.stringify(mobileHostResize)}`,
         );
       await call("Emulation.setDeviceMetricsOverride", {
         width,
@@ -1595,12 +1320,12 @@ try {
       const desktopHostResize = JSON.parse(desktopHostResizeResult.value);
       if (
         desktopHostResize.layout !== "rail" ||
-        desktopHostResize.flexDirection !== "row" ||
-        desktopHostResize.expanded !== 3 ||
-        desktopHostResize.collapsed !== 8
+        desktopHostResize.flexDirection !== "column" ||
+        desktopHostResize.expanded !== 11 ||
+        desktopHostResize.collapsed !== 0
       )
         throw new Error(
-          `Host accordion desktop resize failed: ${JSON.stringify(desktopHostResize)}`,
+          `Host cards desktop resize failed: ${JSON.stringify(desktopHostResize)}`,
         );
     }
     if (width === 390) {
@@ -1769,9 +1494,9 @@ try {
         london.countLabel ||
         !kansas.label.includes("2 nodes; 2 GPUs; 2 Active") ||
         !london.label.includes("2 nodes; 3 GPUs; 1 Active, 1 Wait") ||
-        !kansas.background.includes("rgb(255, 157, 74)") ||
-        !london.background.includes("rgb(255, 157, 74)") ||
-        !london.background.includes("rgb(154, 160, 173)")
+        !kansas.background.includes("rgb(64, 81, 181)") ||
+        !london.background.includes("rgb(64, 81, 181)") ||
+        !london.background.includes("rgb(176, 125, 20)")
       )
         throw new Error(
           `grouped marker encoding failed: ${JSON.stringify(groupedState)}`,
@@ -1815,7 +1540,7 @@ try {
         !reduced.markers[0].label.includes("IO91; 1 node; 0 GPUs; 1 Wait") ||
         reduced.markers[0].gpus !== 0 ||
         Math.abs(reduced.markers[0].radius - 6) > 0.1 ||
-        !reduced.markers[0].background.includes("rgb(154, 160, 173)") ||
+        !reduced.markers[0].background.includes("rgb(176, 125, 20)") ||
         reduced.markers[0].countLabel ||
         reduced.countLabels !== 0
       )
@@ -1849,10 +1574,10 @@ try {
         Math.abs(paris.radius - 7.5 * Math.sqrt(3)) > 0.15 ||
         !milan.label.includes("2 nodes; 3 GPUs; 1 Validating, 1 Wait") ||
         !paris.label.includes("4 nodes; 3 GPUs; 2 Active, 2 Wait") ||
-        !milan.background.includes("rgb(120, 184, 61)") ||
-        !milan.background.includes("rgb(154, 160, 173)") ||
-        !paris.background.includes("rgb(255, 157, 74)") ||
-        !paris.background.includes("rgb(154, 160, 173)")
+        !milan.background.includes("rgb(18, 146, 95)") ||
+        !milan.background.includes("rgb(176, 125, 20)") ||
+        !paris.background.includes("rgb(64, 81, 181)") ||
+        !paris.background.includes("rgb(176, 125, 20)")
       )
         throw new Error(
           `state distribution encoding failed: ${JSON.stringify(distributions)}`,
@@ -2549,90 +2274,28 @@ try {
           'document.querySelector("#nodes")?.scrollIntoView({behavior:"instant",block:"start"})',
       });
       await saveScreenshot(`host-row-${width}x${height}.png`, 80);
-      const { result: fiveHostInitialResult } = await call(
-        "Runtime.evaluate",
-        {
-          expression:
-            'JSON.stringify((()=>{const cards=[...document.querySelectorAll("#nodes .node")];cards.slice(5).forEach(card=>card.remove());layoutHostCards();const remaining=[...document.querySelectorAll("#nodes .node")];return{count:remaining.length,capacity:hostCardCapacity(remaining.length),expanded:remaining.filter(card=>card.classList.contains("is-expanded")).map(card=>card.dataset.nodeKey),collapsed:remaining.filter(card=>card.classList.contains("is-collapsed")).map(card=>card.dataset.nodeKey)}})())',
-          returnByValue: true,
-        },
-      );
-      const fiveHostInitial = JSON.parse(fiveHostInitialResult.value);
-      const fiveHostExpectedExpanded = fiveHostInitial.capacity;
+      const { result: hostRowsResult } = await call("Runtime.evaluate", {
+        expression:
+          'JSON.stringify((()=>{const deck=document.querySelector("#nodes"),cards=[...document.querySelectorAll("#nodes .node")];return{count:cards.length,expanded:cards.filter(card=>card.classList.contains("is-expanded")&&!card.querySelector(".node-details")?.hidden).length,rows:document.querySelectorAll("#nodes .model-group").length,loose:[...deck.children].filter(child=>child.classList.contains("node")).length,overflows:deck.scrollWidth>deck.clientWidth+1,widths:cards.map(card=>card.getBoundingClientRect().width)}})())',
+        returnByValue: true,
+      });
+      const hostRows = JSON.parse(hostRowsResult.value);
       if (
-        fiveHostInitial.count !== 5 ||
-        fiveHostInitial.expanded.length !== fiveHostExpectedExpanded ||
-        fiveHostInitial.collapsed.length !== 5 - fiveHostExpectedExpanded
+        hostRows.count < 1 ||
+        hostRows.expanded !== hostRows.count ||
+        hostRows.rows < 1 ||
+        hostRows.loose !== 0 ||
+        hostRows.overflows ||
+        hostRows.widths.some((value) => value < 200)
       )
         throw new Error(
-          `five-Host initial accordion contract failed at ${width}x${height}: ${JSON.stringify(fiveHostInitial)}`,
-        );
-      await saveScreenshot(`host-row-five-${width}x${height}.png`, 380);
-      const { result: fiveHostActivatedResult } = await call(
-        "Runtime.evaluate",
-        {
-          expression:
-            'JSON.stringify((()=>{const cards=[...document.querySelectorAll("#nodes .node")],first=cards[0],fifth=cards[4];fifth?.querySelector(".node-toggle")?.click();return{expanded:cards.filter(card=>card.classList.contains("is-expanded")).map(card=>card.dataset.nodeKey),firstCollapsed:first?.classList.contains("is-collapsed"),firstHidden:Boolean(first?.querySelector(".node-details")?.hidden),fifthExpanded:fifth?.classList.contains("is-expanded"),fifthOpen:fifth?.querySelector(".node-toggle")?.getAttribute("aria-expanded")}})())',
-          returnByValue: true,
-        },
-      );
-      const fiveHostActivated = JSON.parse(fiveHostActivatedResult.value);
-      if (
-        fiveHostActivated.expanded.length !== fiveHostExpectedExpanded ||
-        !fiveHostActivated.firstCollapsed ||
-        !fiveHostActivated.firstHidden ||
-        !fiveHostActivated.fifthExpanded ||
-        fiveHostActivated.fifthOpen !== "true"
-      )
-        throw new Error(
-          `five-Host activation contract failed at ${width}x${height}: ${JSON.stringify(fiveHostActivated)}`,
-        );
-      await saveScreenshot(`host-row-five-selected-${width}x${height}.png`, 380);
-      const { result: fourHostResult } = await call(
-        "Runtime.evaluate",
-        {
-          expression:
-            'JSON.stringify((()=>{const deck=document.querySelector("#nodes"),cards=[...document.querySelectorAll("#nodes .node")];cards.slice(4).forEach(card=>card.remove());layoutHostCards();const remaining=[...document.querySelectorAll("#nodes .node")];return{count:remaining.length,capacity:hostCardCapacity(remaining.length),expanded:remaining.filter(card=>card.classList.contains("is-expanded")).length,collapsed:remaining.filter(card=>card.classList.contains("is-collapsed")).length,fourthOpen:remaining[3]?.querySelector(".node-details")?.hidden===false}})())',
-          returnByValue: true,
-        },
-      );
-      await delay(380);
-      const { result: fourHostGeometryResult } = await call(
-        "Runtime.evaluate",
-        {
-          expression:
-            'JSON.stringify((()=>{const deck=document.querySelector("#nodes"),cards=[...document.querySelectorAll("#nodes .node")];return{overflows:deck.scrollWidth>deck.clientWidth+1,widths:cards.map(card=>card.getBoundingClientRect().width)}})())',
-          returnByValue: true,
-        },
-      );
-      const fourHost = { ...JSON.parse(fourHostResult.value), ...JSON.parse(fourHostGeometryResult.value) };
-      const desktop = width > 900;
-      if (
-        fourHost.count !== 4 ||
-        (desktop && (fourHost.capacity !== 4 || fourHost.expanded !== 4 || fourHost.collapsed !== 0 || !fourHost.fourthOpen || fourHost.overflows || fourHost.widths.some((value) => value < 200)))
-      )
-        throw new Error(
-          `four-Host full-card contract failed at ${width}x${height}: ${JSON.stringify(fourHost)}`,
+          `Host model rows contract failed at ${width}x${height}: ${JSON.stringify(hostRows)}`,
         );
       await call("Page.navigate", {
         url: `http://127.0.0.1:${server.address().port}/`,
       });
       await waitForInitialMap();
       await delay(500);
-    }
-    if (captureScreenshots && [1280, 390, 320].includes(width)) {
-      await call("Runtime.evaluate", {
-        expression:
-          '(()=>{const details=document.querySelector(".join-requirements");if(details)details.open=true;document.querySelector("#join-node")?.scrollIntoView({behavior:"instant",block:"start"})})()',
-      });
-      await saveScreenshot(`join-requirements-${width}x${height}.png`, 80);
-      if (width <= 390) {
-        await call("Runtime.evaluate", {
-          expression:
-            'document.querySelector(".join-requirements-note")?.scrollIntoView({behavior:"instant",block:"end"})',
-        });
-        await saveScreenshot(`join-requirements-note-${width}x${height}.png`, 80);
-      }
     }
     if ([701, 700].includes(width)) {
       participantLimit = 22;
@@ -2644,14 +2307,14 @@ try {
       const { result: denseHostGeometryResult } = await call(
         "Runtime.evaluate",
         {
-          expression: denseHostDeckExpression,
+          expression: hostRowsExpression,
           returnByValue: true,
         },
       );
       denseHostGeometry = JSON.parse(denseHostGeometryResult.value);
-      if (!denseHostGeometry.pass)
+      if (!denseHostGeometry.pass || denseHostGeometry.count !== 22)
         throw new Error(
-          `Dense Host-deck reachability failed at ${width}x${height}: ${JSON.stringify(denseHostGeometry)}`,
+          `Dense Host rows contract failed at ${width}x${height}: ${JSON.stringify(denseHostGeometry)}`,
         );
       participantLimit = 11;
       await call("Runtime.evaluate", {
@@ -2669,13 +2332,13 @@ try {
         awaitPromise: true,
       });
       const { result: hostGeometryResult } = await call("Runtime.evaluate", {
-        expression: hostGeometryExpression,
+        expression: hostRowsExpression,
         returnByValue: true,
       });
       hostGeometry = JSON.parse(hostGeometryResult.value);
       if (!hostGeometry.pass)
         throw new Error(
-          `Host-card geometry contract failed at ${width}x${height}: ${JSON.stringify({ ...hostGeometry, chainApiRequestCount: requests.filter((url) => url.includes("/chain-api/")).length, chainStatusRequestCount: requests.filter((url) => url.includes("/chain-rpc/status")).length })}`,
+          `Host rows contract failed at ${width}x${height}: ${JSON.stringify({ ...hostGeometry, chainApiRequestCount: requests.filter((url) => url.includes("/chain-api/")).length, chainStatusRequestCount: requests.filter((url) => url.includes("/chain-rpc/status")).length })}`,
         );
     }
     if (width === 1280) {

@@ -10,6 +10,7 @@ Babel, Flow or a Node.js runtime
 - `gateway-state.js` converts gateway and probe payloads into public states
 - `software-versions.js` formats component versions
 - `config.js` documents the rendered configuration contract
+- `theme.js` applies a stored light or dark theme and drives the theme switch
 
 Validate the Flow source and confirm that generated files are current:
 

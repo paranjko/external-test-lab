@@ -361,9 +361,28 @@ component() {
     '{state:"unavailable",source_endpoint:$endpoint,observed_at:$observed_at,error:$error}'
 }
 
+# Peer discovery assumes the seed's scheme. A Host that publishes its DAPI over
+# plain HTTP only is still a network member, so use HTTP when HTTPS is silent.
+reachable_dapi_url() {
+  local dapi_url="$1" fallback
+  if [[ "$dapi_url" =~ ^https://([A-Za-z0-9][A-Za-z0-9.-]{0,253})$ ]] &&
+    ! http_json "$dapi_url/v1/versions" >/dev/null 2>&1; then
+    fallback="http://${BASH_REMATCH[1]}"
+    if http_json "$fallback/v1/versions" >/dev/null 2>&1; then
+      printf '%s\n' "$fallback"
+      return
+    fi
+  fi
+  printf '%s\n' "$dapi_url"
+}
+
 enrich_node() {
   local node="$1" dapi_url versions chain_rpc peers inferenced devshard models observed_node_id components_dir
   dapi_url="$(jq -r '.dapi_url // empty' <<<"$node")"
+  if [[ -n "$dapi_url" ]]; then
+    dapi_url="$(reachable_dapi_url "$dapi_url")"
+    node="$(jq -c --arg dapi_url "$dapi_url" '.dapi_url = $dapi_url' <<<"$node")"
+  fi
   if [[ -z "$dapi_url" ]]; then
     jq -c '. + {components:{versions:{state:"not_exposed",error:"missing_dapi_url"},chain_rpc:{state:"not_exposed",error:"missing_dapi_url"},peers:{state:"not_exposed",error:"missing_dapi_url"},inferenced:{state:"not_exposed",error:"missing_dapi_url"},devshard:{state:"not_exposed",error:"missing_dapi_url"},models:{state:"not_exposed",error:"missing_dapi_url"}}}' <<<"$node"
     return

@@ -104,7 +104,7 @@ const server = createServer(async (request, response) => {
   } else if (pathname === '/status/network') {
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify(snapshot()));
-  } else if (pathname === '/status/gateway/v1/status' || pathname === '/status/gateway-health' || pathname === '/status/gateway/v1/admission-status') {
+  } else if (pathname === '/status/gateway-traffic') {
     response.writeHead(503, { 'Content-Type': 'application/json' });
     response.end(gatewayUnavailable);
   } else if (pathname.startsWith('/status/')) {
@@ -181,10 +181,9 @@ try {
   assert(report.nodes.some(node => node.name === '31.192.105.46'), 'IPv4 must not be truncated to its first octet');
   assert.deepEqual(report.screenshot_scroll, { x: 0, y: 0 }, 'capture helper did not honor top-of-page screenshot position');
   assert(requests.includes('/status/network/ws'), 'fixture did not exercise the live network WebSocket');
-  for (const path of ['/status/gateway/v1/status', '/status/gateway-health', '/status/gateway/v1/admission-status']) {
-    assert(requests.includes(path), `fixture did not exercise ${path}`);
-  }
-  console.log('PASS snapshot browser acceptance allows only the explicit preview gateway 503 contract');
+  assert(requests.includes('/status/gateway-traffic'), 'fixture did not exercise /status/gateway-traffic');
+  assert(!requests.some(path => path.startsWith('/status/gateway/')), 'the page must not read a gateway API');
+  console.log('PASS snapshot browser acceptance renders model rows and accepts an unavailable gateway traffic route');
 } finally {
   if (child && child.exitCode === null) child.kill('SIGTERM');
   for (const socket of websocketClients) socket.destroy();

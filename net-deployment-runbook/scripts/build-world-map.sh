@@ -41,5 +41,5 @@ npx --yes mapshaper@0.7.55 "$shape" \
   -rectangle bbox=-180,-90,180,90 name=world \
   -o target=land format=svg width=2000 height=1000 margin=0 fit-extent=world \
   "$output"
-sed -i 's/<g id="land">/<g id="land" fill="#292c39" stroke="#73788e" stroke-width="1.3">/' "$output"
+sed -i 's/<g id="land">/<g id="land" fill="#eceef8" stroke="#c3c8e4" stroke-width="1.3">/' "$output"
 printf '\n' >>"$output"

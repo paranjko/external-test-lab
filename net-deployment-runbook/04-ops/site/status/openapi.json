@@ -99,6 +99,25 @@
         }
       }
     },
+    "/status/gateway-traffic": {
+      "get": {
+        "tags": ["Gateway"],
+        "summary": "Get inference traffic per gateway",
+        "description": "Returns one series per gateway and measure. The label m names the measure: rps is the request rate over 5 minutes, inflight the requests in flight, ok_1h and fail_1h the successful and failed requests of the last hour.",
+        "operationId": "getGatewayTraffic",
+        "responses": {
+          "200": {
+            "description": "Prometheus instant-vector response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PrometheusVector" }
+              }
+            }
+          },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/status/devshard-runtime": {
       "get": {
         "tags": ["Inventory"],

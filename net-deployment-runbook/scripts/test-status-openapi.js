@@ -24,6 +24,7 @@ for (const endpoint of [
   '/status/gpus',
   '/status/software',
   '/status/devshard-runtime',
+  '/status/gateway-traffic',
 
   '/status/network',
   '/status/participants',
