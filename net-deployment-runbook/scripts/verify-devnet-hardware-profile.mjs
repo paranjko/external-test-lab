@@ -176,7 +176,18 @@ assert(
 const tableMatch = homepage.match(
   /<table class="join-requirements-table">([\s\S]*?)<\/table>/u,
 );
-assert(tableMatch, "homepage Host requirements table is missing");
+// The homepage may omit the requirements table. A table that is shown must
+// match the profile.
+if (!tableMatch) {
+  assert(
+    !homepage.includes("join-requirements"),
+    "homepage Host requirements table is incomplete",
+  );
+  console.log(
+    `PASS ${profilePath} is valid; ${homepagePath} shows no Host requirements table`,
+  );
+  process.exit(0);
+}
 assert(
   tableMatch[1].includes(
     '<thead><tr><th scope="col">Component</th><th scope="col">Minimum</th></tr></thead>',

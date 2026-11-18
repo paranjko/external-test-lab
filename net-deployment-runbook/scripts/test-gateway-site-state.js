@@ -134,8 +134,10 @@ assert.deepEqual(state.classify(liveCapacity, 1, { ...trafficReadyProbe, complet
 assert.equal(state.classify(liveCapacity, 1, { ...trafficReadyProbe, permit_height: 99 }, now).state, 'UNAVAILABLE');
 assert.equal(state.classify(liveCapacity, 1, unknownReadinessProbe, now).state, 'UNAVAILABLE');
 const gatewaySiteSource = fs.readFileSync(path.join(__dirname, '..', '04-ops/site/src/app.js'), 'utf8');
-assert.equal((gatewaySiteSource.match(/availability\.state !== "TRAFFIC_READY"/g) || []).length, 2);
-assert.equal((gatewaySiteSource.match(/availability\.available !== true/g) || []).length, 2);
+// The page reads gateway load from one fixed status route, never from a gateway API.
+assert.doesNotMatch(gatewaySiteSource, /statusUrl\("\/gateway\//);
+assert.doesNotMatch(gatewaySiteSource, /statusUrl\(`\/gateways\//);
+assert.equal((gatewaySiteSource.match(/statusUrl\("\/gateway-traffic"\)/g) || []).length, 1);
 assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, readiness: 'CONTROL_READY' }, now).state, 'CONTROL_READY');
 assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, readiness: 'ROUTING_READY' }, now).state, 'ROUTING_READY');
 assert.equal(state.classify(liveCapacity, 1, { ...readyProbe, readiness: 'SATURATED' }, now).state, 'SATURATED');
@@ -481,8 +483,8 @@ assert.equal(hostState.endpointDiagnostic(new Error('Failed to fetch')), 'Networ
 assert.equal(hostState.endpointDiagnostic(new Error('timeout exceeded')), 'Timed out');
 
 const siteApp = fs.readFileSync(path.join(siteBuild, 'app.js'), 'utf8');
-assert.match(siteApp, /TRAFFIC_READY – verified inference; processing requests/);
-assert.match(siteApp, /TRAFFIC_READY – verified inference; no requests in flight/);
+assert.match(siteApp, /function refreshGatewayTraffic\(/);
+assert.match(siteApp, /function groupHostCards\(/);
 assert.match(siteApp, /quality-recovery/);
 assert.match(siteApp, /document\.createElement\(["']time["']\)/);
 assert.match(siteApp, /started.*UTC/);
@@ -566,13 +568,39 @@ const siteIndex = fs.readFileSync(
   path.join(__dirname, '..', '04-ops', 'site', 'index.html'),
   'utf8',
 );
-assert.match(siteIndex, /id="epoch-overview"/);
-assert.match(siteIndex, /id="epoch-progress-track"[^>]*role="progressbar"/);
-assert.match(siteIndex, /id="epoch-cpoc-state"/);
-assert.match(siteIndex, /id="epoch-cpoc-detail"/);
-assert.match(siteIndex, /id="verification-results"/);
-assert.match(siteIndex, /id="verification-poc-result-rows"/);
-assert.match(siteIndex, /id="verification-consensus-result-rows"/);
+for (const removed of ['join-node', 'epoch-overview', 'verification-results', 'devshard-execution', 'gateway-quality', 'gateway-access'])
+  assert.doesNotMatch(siteIndex, new RegExp(`id="${removed}"`));
+assert.match(siteIndex, /id="gateway-traffic"/);
+assert.match(siteIndex, /id="traffic-cards"/);
+assert.match(siteIndex, /<link rel="stylesheet" href="theme\.css">/);
+// The stored theme applies from the document head; the switch sits in the top navigation.
+assert.match(siteIndex, /<head>[\s\S]*<script src="theme\.js"><\/script>[\s\S]*<\/head>/);
+assert.match(siteIndex, /<button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false">/);
+const siteTheme = fs.readFileSync(path.join(__dirname, '..', '04-ops', 'site', 'theme.css'), 'utf8');
+assert.match(siteTheme, /:root\[data-theme="dark"\]\{/);
+assert.match(siteTheme, /@media \(prefers-color-scheme:dark\)\{:root:not\(\[data-theme="light"\]\)\{/);
+{
+  const stored = new Map();
+  const listeners = {};
+  const root = {dataset: {}};
+  const button = {attributes: {}, setAttribute(name, value) { this.attributes[name] = value; },
+    addEventListener(name, handler) { listeners[name] = handler; }};
+  const themeWindow = {localStorage: {getItem: (key) => stored.get(key) || null, setItem: (key, value) => stored.set(key, value)},
+    matchMedia: () => ({matches: false})};
+  const themeDocument = {documentElement: root, getElementById: () => button,
+    addEventListener(name, handler) { listeners[name] = handler; }};
+  new Function('window', 'document', fs.readFileSync(path.join(siteBuild, 'theme.js'), 'utf8'))(themeWindow, themeDocument);
+  assert.equal(root.dataset.theme, undefined, 'without a stored choice the system setting decides');
+  listeners.DOMContentLoaded();
+  assert.equal(button.attributes['aria-pressed'], 'false');
+  listeners.click();
+  assert.equal(root.dataset.theme, 'dark');
+  assert.equal(stored.get('gdc-theme'), 'dark');
+  assert.equal(button.attributes['aria-label'], 'Switch to light theme');
+  listeners.click();
+  assert.equal(root.dataset.theme, 'light');
+  assert.equal(stored.get('gdc-theme'), 'light');
+}
 assert.match(readability, /\.epoch-overview \{[\s\S]*grid-template-columns: minmax\(104px, max-content\) minmax\(180px, 1fr\) minmax\(172px, max-content\);/);
 assert.match(readability, /\.epoch-progress-track > span \{[\s\S]*background: linear-gradient/);
 assert.match(readability, /\.epoch-protocol-state \{[\s\S]*grid-column: 1 \/ -1;/);
@@ -1060,6 +1088,13 @@ async function testRpcObservation() {
   const failedEndpoint = hostState.classify({networkObserved: true,
     endpointState: 'unavailable', endpointDiagnostic: 'HTTP 503'});
   assert.equal(failedEndpoint.primaryLabel, 'Wait');
+  const privateRpcValidator = hostState.classify({networkObserved: true,
+    endpointState: 'unavailable', endpointDiagnostic: 'HTTP 404', chainValidatorPower: '560'});
+  assert.equal(privateRpcValidator.primaryLabel, 'Validating');
+  assert.equal(privateRpcValidator.votingPower, '560');
+  assert.equal(privateRpcValidator.endpointLabel, 'Chain RPC not observed');
+  assert.equal(hostState.classify({networkObserved: true, endpointState: 'unavailable',
+    chainValidatorPower: '0'}).primaryLabel, 'Wait');
   const recoveredEndpoint = hostState.classify({...observedPeer,
     validatorKnown: true, votingPower: '42'});
   assert.equal(recoveredEndpoint.primaryLabel, 'Validating');

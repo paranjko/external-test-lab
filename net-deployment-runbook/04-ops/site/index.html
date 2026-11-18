@@ -13,38 +13,31 @@
   <link rel="stylesheet" href="contract.css">
   <link rel="stylesheet" href="readability.css">
   <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="preload" href="fonts/Inter-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="theme.css">
+  <script src="theme.js"></script>
 </head>
 <body>
+  <nav class="site-nav" aria-label="Site">
+    <div class="site-nav-inner">
+      <a class="site-brand" href="#top"><i aria-hidden="true"></i>Gonka <small>DevNet</small></a>
+      <div class="site-links">
+        <a href="#network">Hosts</a>
+        <a href="#network-map-title">Map</a>
+        <a href="#gateway-traffic">Traffic</a>
+        <a href="https://github.com/paranjko/external-test-lab/tree/main/reports/monthly" target="_blank" rel="noopener">Reports</a>
+        <a class="site-cta" href="https://github.com/paranjko/external-test-lab" target="_blank" rel="noopener">GitHub ↗</a>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false">
+          <svg class="theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+          <svg class="theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
   <main>
     <header id="top" class="hero">
-      <div class="hero-copy"><span class="eyebrow">EXTERNAL TEST LAB</span><h1>Test network changes<br><em>before they ship</em></h1><p>A test environment for protocol upgrades, DevShards, inference flows, integrations and operational changes – before governance decisions or production rollout</p><div class="hero-actions"><a id="grafana-overview" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-overview/gonka-devnet-community-overview?orgId=1&amp;from=now-24h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Overview dashboard ↗</a><a id="grafana-network" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-network/gonka-devnet-network?orgId=1&amp;from=now-24h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Network dashboard ↗</a><a id="grafana-inference" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-inference/gonka-devnet-inference?orgId=1&amp;from=now-7d&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Inference dashboard ↗</a><a id="grafana-chain" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-chain/gonka-devnet-chain?orgId=1&amp;from=now-6h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Chain dashboard ↗</a><a id="grafana-components" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-components/gonka-devnet-components?orgId=1&amp;from=now-24h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Components dashboard ↗</a></div></div>
+      <div class="hero-copy"><span class="eyebrow">EXTERNAL TEST LAB</span><h1>Gonka <em>DevNet</em></h1><p>Test network changes before they ship. A test environment for protocol upgrades, DevShards, inference flows, integrations and operational changes – before governance decisions or production rollout</p><div class="hero-actions"><a id="grafana-overview" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-overview/gonka-devnet-community-overview?orgId=1&amp;from=now-24h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Overview dashboard ↗</a><a id="grafana-network" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-network/gonka-devnet-network?orgId=1&amp;from=now-24h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Network dashboard ↗</a><a id="grafana-inference" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-inference/gonka-devnet-inference?orgId=1&amp;from=now-7d&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Inference dashboard ↗</a><a id="grafana-chain" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-chain/gonka-devnet-chain?orgId=1&amp;from=now-6h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Chain dashboard ↗</a><a id="grafana-components" class="button secondary" href="https://grafana.gonka-dev.net/d/gdc-components/gonka-devnet-components?orgId=1&amp;from=now-24h&amp;to=now&amp;timezone=utc&amp;kiosk" target="_blank" rel="noopener">Components dashboard ↗</a></div></div>
     </header>
-    <section id="join-node" class="join-node" aria-labelledby="join-node-title">
-      <div class="section-title"><div><span class="eyebrow">OPERATE A HOST</span><h2 id="join-node-title">How to Join node</h2></div></div>
-      <pre><code>git clone https://github.com/paranjko/external-test-lab.git
-alias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"
-gdc host join --model=&lt;MODEL_ID&gt; --public-host &lt;IP_or_DOMAIN&gt; &lt;ssh-alias&gt;</code></pre>
-      <details class="join-requirements">
-        <summary><span class="join-requirements-toggle">Minimum Host requirements</span> <span class="join-requirements-guide">For more details, read <a href="https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host" target="_blank" rel="noopener">Community DevNet runbook/JOIN: add a Host</a></span></summary>
-        <table class="join-requirements-table">
-          <colgroup><col class="join-requirements-component"><col></colgroup>
-          <thead><tr><th scope="col">Component</th><th scope="col">Minimum</th></tr></thead>
-          <tbody>
-            <tr><th scope="row">OS</th><td>Ubuntu 22.04, 24.04, or 26.04 (amd64)</td></tr>
-            <tr><th scope="row">GPU</th><td>NVIDIA GPU with 16 GB VRAM</td></tr>
-            <tr><th scope="row">Driver</th><td>NVIDIA R580 or newer</td></tr>
-            <tr><th scope="row">CUDA</th><td>GPU works in a CUDA 12.8 Docker container</td></tr>
-            <tr><th scope="row">CPU</th><td>8 threads or more (practical baseline)</td></tr>
-            <tr><th scope="row">Memory</th><td>32 GB RAM or more (practical baseline)</td></tr>
-            <tr><th scope="row">Storage</th><td>50 GiB free required, with 100–150 GB NVMe recommended</td></tr>
-            <tr><th scope="row">Network</th><td>Stable internet with a stable public IPv4 address or a DNS name that resolves to it</td></tr>
-            <tr><th scope="row">Ingress</th><td>TCP 80, 443, 5000, and the configured SSH port, plus UDP 443</td></tr>
-            <tr><th scope="row">Uptime</th><td>Always on with sleep and address changes disabled</td></tr>
-          </tbody>
-        </table>
-        <p class="join-requirements-note">Choose <code>MODEL_ID</code> from the <a href="https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all" target="_blank" rel="noopener">live model registry</a>, JOIN rejects an ID absent from the registry before Host preparation</p>
-      </details>
-    </section>
     <section class="summary" aria-label="Network summary">
       <article><span>Chain ID</span><strong id="chain-id">–</strong></article>
       <article><span id="model-label">Allocated models</span><ul id="model-id" class="model-list"><li>–</li></ul></article>
@@ -52,122 +45,36 @@ gdc host join --model=&lt;MODEL_ID&gt; --public-host &lt;IP_or_DOMAIN&gt; &lt;ss
       <article><span>Latest height</span><strong id="best-height">–</strong></article>
       <article><span>Largest voting share</span><strong id="power-share">–</strong></article>
     </section>
-    <section id="epoch-overview" class="epoch-overview" aria-live="polite" hidden>
-      <div class="epoch-overview-title"><span>Current epoch</span><strong id="epoch-label">–</strong></div>
-      <div class="epoch-progress">
-        <div id="epoch-progress-track" class="epoch-progress-track" role="progressbar" aria-labelledby="epoch-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="epoch-progress-bar"></span></div>
-        <small id="epoch-progress-detail">Waiting for a chain observation</small>
-      </div>
-      <div class="epoch-countdown"><strong id="epoch-remaining">–</strong><small id="epoch-end">–</small></div>
-      <div class="epoch-protocol-state">
-        <div><span>PoC stage</span><strong id="epoch-poc-state">–</strong></div>
-        <div><span>cPoC</span><strong id="epoch-cpoc-state">–</strong><small id="epoch-cpoc-detail">Waiting for a chain observation</small></div>
-      </div>
-    </section>
-    <section id="verification-results" class="verification-results" aria-labelledby="verification-results-title" hidden>
-      <div class="verification-results-title">
-        <div><span class="eyebrow">CHAIN-RECORDED EPOCH TRANSITION</span><h2 id="verification-results-title">Previous epoch <strong id="verification-epoch-label">–</strong></h2></div>
-        <small id="verification-results-summary">Waiting for a finalized epoch</small>
-      </div>
-      <div class="verification-results-overview">
-        <div><span>PoC evidence</span><strong id="verification-poc-state">–</strong><small id="verification-poc-detail">Waiting for a chain observation</small></div>
-        <div><span>cPoC</span><strong id="verification-cpoc-events">–</strong><small id="verification-cpoc-detail">Waiting for a chain observation</small></div>
-        <div><span>Consensus transition</span><strong id="verification-consensus-state">–</strong><small id="verification-consensus-detail">Waiting for a validator-set observation</small></div>
-      </div>
-      <details class="verification-evidence">
-        <summary>Inspect chain evidence</summary>
-        <div class="verification-evidence-grid">
-          <section aria-labelledby="verification-poc-evidence-title">
-            <h3 id="verification-poc-evidence-title">PoC evidence</h3>
-            <div class="verification-results-table-shell">
-              <table class="verification-results-table">
-                <thead><tr><th scope="col">Participant</th><th scope="col">Committed artifacts</th><th scope="col">Validator attestations</th></tr></thead>
-                <tbody id="verification-poc-result-rows"></tbody>
-              </table>
-            </div>
-          </section>
-          <section aria-labelledby="verification-consensus-evidence-title">
-            <h3 id="verification-consensus-evidence-title">Consensus set at activation</h3>
-            <div class="verification-results-table-shell">
-              <table class="verification-results-table">
-                <thead><tr><th scope="col">Participant</th><th scope="col">Previous power</th><th scope="col">Effective power</th><th scope="col">Observed change</th></tr></thead>
-                <tbody id="verification-consensus-result-rows"></tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-      </details>
-    </section>
-    <section id="devshard-execution" class="devshard-execution" aria-labelledby="devshard-execution-title" hidden>
-      <div class="devshard-execution-title">
-        <div><span class="eyebrow">PUBLIC DEVSHARD OBSERVATIONS</span><h2 id="devshard-execution-title">DevShard execution</h2></div>
-        <small id="devshard-execution-summary">Waiting for a network observation</small>
-      </div>
-      <div class="devshard-execution-overview">
-        <div><span>Public endpoints</span><strong id="devshard-endpoint-state">–</strong><small id="devshard-endpoint-detail">Health and runtime inventory</small></div>
-        <div><span>Runtime inventory</span><strong id="devshard-runtime-state">–</strong><small id="devshard-runtime-detail">Compared with the chain-approved catalog</small></div>
-        <div><span>Host-local sessions</span><strong id="devshard-session-state">–</strong><small id="devshard-session-detail">Not a fleet or GPU-utilisation measure</small></div>
-      </div>
-      <details class="devshard-execution-evidence">
-        <summary>Inspect public endpoint observations</summary>
-        <div class="devshard-execution-table-shell">
-          <table class="devshard-execution-table">
-            <thead><tr><th scope="col">Public endpoint</th><th scope="col">Running runtimes</th><th scope="col">Host-local sessions</th></tr></thead>
-            <tbody id="devshard-execution-rows"></tbody>
-          </table>
-        </div>
-      </details>
-    </section>
     <section id="network" class="network-section">
       <div class="section-title"><div><span id="network-source" class="eyebrow">LIVE DEVNET</span><h2>Participant status</h2></div><time id="updated">Waiting for status refresh</time></div>
-      <div id="nodes" class="nodes compact" role="list" aria-label="Participant status Host accordion"></div>
+      <div id="nodes" class="nodes compact" role="list" aria-label="Participant status Hosts by model"></div>
     </section>
     <section class="network-map-section" aria-labelledby="network-map-title">
       <div class="section-title"><div><span class="eyebrow">OBSERVED NETWORK HOSTS</span><h2 id="network-map-title">Network node map</h2></div></div>
-      <ul class="validator-map-legend" aria-label="Validator status legend">
-        <li class="validator-map-legend--validating">Validating</li>
-        <li class="validator-map-legend--active">Active</li>
-        <li class="validator-map-legend--waiting">Wait</li>
-      </ul>
-      <div id="validator-map-shell" class="validator-map-shell">
-        <div id="validator-map" class="validator-map" aria-label="Interactive map of observed network hosts by approximate public IP location"></div>
-        <button id="validator-map-fullscreen" class="validator-map-fullscreen" type="button" aria-label="Open validator map fullscreen" aria-pressed="false">Fullscreen</button>
+      <div class="validator-map-frame">
+        <div class="validator-map-bar">
+          <ul class="validator-map-legend" aria-label="Validator status legend">
+            <li class="validator-map-legend--validating">Validating</li>
+            <li class="validator-map-legend--active">Active</li>
+            <li class="validator-map-legend--waiting">Wait</li>
+          </ul>
+          <dl class="validator-map-stats" aria-label="Map totals">
+            <div><dt>Hosts</dt><dd id="map-stat-hosts">–</dd></div>
+            <div><dt>Locations</dt><dd id="map-stat-locations">–</dd></div>
+            <div><dt>GPUs</dt><dd id="map-stat-gpus">–</dd></div>
+          </dl>
+        </div>
+        <div id="validator-map-shell" class="validator-map-shell">
+          <div id="validator-map" class="validator-map" aria-label="Interactive map of observed network hosts by approximate public IP location"></div>
+          <button id="validator-map-fullscreen" class="validator-map-fullscreen" type="button" aria-label="Open validator map fullscreen" aria-pressed="false">Fullscreen</button>
+        </div>
       </div>
     </section>
-    <section id="gateway-quality" class="quality" aria-live="polite">
-      <div class="section-title"><div><span class="eyebrow">LIVE GATEWAY LOAD</span><h2>Inference traffic</h2></div><time id="quality-updated">Loading gateway metrics…</time></div>
-      <div id="quality-metrics" class="quality-metrics">
-        <article><span>Active requests</span><strong>–</strong><small>currently in flight</small></article>
-        <article><span>Input tokens</span><strong>–</strong><small>currently in flight</small></article>
-        <article><span>Successful requests</span><strong>–</strong><small>completed since gateway restart</small></article>
-        <article><span>Rate-limited requests</span><strong>–</strong><small>rejected since gateway restart</small></article>
-        <article><span>Network capacity</span><strong>–</strong><small>available model weight</small></article>
-      </div>
-      <div id="gateway-routes" class="quality-metrics">
-        <article><span>Gateway A</span><strong id="gateway-a-state">CHECKING</strong><small id="gateway-a-detail">waiting for read-only route status</small></article>
-        <article><span>Gateway B</span><strong id="gateway-b-state">CHECKING</strong><small id="gateway-b-detail">waiting for read-only route status</small></article>
-      </div>
-      <div id="quality-health" class="quality-health" aria-label="Gateway traffic state">
-        <span>Gateway traffic</span><strong id="quality-health-state">CHECKING</strong>
-        <div class="quality-health-counts"><span><b id="quality-active">–</b> active now</span><span><b id="quality-accepted">–</b> successful since restart</span><span><b id="quality-rejected">–</b> <span id="quality-failure-label">rate-limited since restart</span></span></div>
-      </div>
-      <p id="quality-recovery" class="quality-recovery" hidden></p>
+    <section id="gateway-traffic" class="traffic" aria-live="polite">
+      <div class="section-title"><div><span class="eyebrow">LIVE GATEWAY LOAD</span><h2>Inference traffic</h2></div><time id="traffic-updated">Loading gateway metrics</time></div>
+      <div id="traffic-total" class="traffic-total"><span>Through all gateways</span><strong id="traffic-total-rps">–</strong><div id="traffic-share" class="traffic-share" aria-hidden="true"></div></div>
+      <div id="traffic-cards" class="traffic-cards"></div>
     </section>
-    <section id="gateway-access" class="access" hidden aria-live="polite">
-      <div class="access-copy">
-        <span class="eyebrow">OPENAI-COMPATIBLE ACCESS</span>
-        <div class="access-heading"><h2>Inference gateway</h2><span class="gateway-live"><i></i>LIVE</span></div>
-        <p id="gateway-detail">Status: checking gateway endpoint…</p>
-        <p class="access-intro">Use the Telegram conversation client or an operator-provisioned OpenAI-compatible credential – both send inference through an active DevShard escrow</p>
-        <ol class="access-steps">
-          <li><b>Telegram client</b><span>Public conversation interface and first reference consumer</span></li>
-          <li><b>OpenAI-compatible API</b><span>Integration credentials are provisioned by the gateway operator</span></li>
-          <li><b>Chain accounting</b><span>Accepted inference is tied to the active DevShard escrow</span></li>
-        </ol>
-        <a id="contact" class="key-link" href="#" hidden>Open Telegram conversation client <span aria-hidden="true">↗</span></a>
-        <small class="access-note">The Telegram bot consumes inference and does not issue API keys – direct MLNode responses remain diagnostic only</small>
-      </div>
-  </section>
   <footer>
     <div class="footer-identity">
       <a class="wordmark" href="#top">EXTERNAL TEST LAB</a>

@@ -266,6 +266,12 @@ CADDY
     rewrite * /api/v1/query?query=max_over_time(timestamp(gdc_component_info)%5B24h%3A15s%5D)
     reverse_proxy 127.0.0.1:9099
   }
+  # Gateway load for the site: request rate, in-flight requests and the last
+  # hour of outcomes per gateway. One fixed query; the query API stays private.
+  handle /status/gateway-traffic {
+    rewrite * /api/v1/query?query=label_replace(sum%20by%20(gateway,host)(rate(devshard_gateway_requests_total%5B5m%5D)),%22m%22,%22rps%22,%22%22,%22%22)%20or%20label_replace(sum%20by%20(gateway,host)(devshard_gateway_inflight_requests),%22m%22,%22inflight%22,%22%22,%22%22)%20or%20label_replace(sum%20by%20(gateway,host)(increase(devshard_gateway_requests_total%7Boutcome%3D%22success%22%7D%5B1h%5D)),%22m%22,%22ok_1h%22,%22%22,%22%22)%20or%20label_replace(sum%20by%20(gateway,host)(increase(devshard_gateway_requests_total%7Boutcome%21%3D%22success%22%7D%5B1h%5D)),%22m%22,%22fail_1h%22,%22%22,%22%22)
+    reverse_proxy 127.0.0.1:9099
+  }
   # Unlike retained software inventory, DevShard identity is a current process
   # observation. Return its source time, discard failed/stale/future collectors.
   handle /status/devshard-runtime {

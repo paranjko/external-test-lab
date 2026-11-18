@@ -778,8 +778,8 @@ try {
     "63",
     "a verified current validator must expose its observed voting power",
   );
-  await assertStatus(NODE0, "Validating", "rgb(120, 184, 61)");
-  await assertStatus(NODE1, "Active", "rgb(255, 157, 74)");
+  await assertStatus(NODE0, "Validating", "rgb(18, 146, 95)");
+  await assertStatus(NODE1, "Active", "rgb(64, 81, 181)");
   assert.ok(heldDetails.length > 0, "slow optional endpoints must actually be held");
   holdDetails = false;
   for (const release of heldDetails.splice(0)) release();
@@ -937,7 +937,7 @@ try {
     () => validatorSets.length >= 1,
     "held current validator-set request",
   );
-  await assertStatus(NODE1, "Active", "rgb(255, 157, 74)");
+  await assertStatus(NODE1, "Active", "rgb(64, 81, 181)");
   const readsWhileHeld = requests.filter(path => path.endsWith('/status/network')).length;
   await evaluate("window.__refresh(); true");
   assert.equal(requests.filter(path => path.endsWith('/status/network')).length, readsWhileHeld,
@@ -972,15 +972,15 @@ try {
     "node1 absent from the verified current set",
   );
   await evaluate("refreshInFlight");
-  await assertStatus(NODE0, "Validating", "rgb(120, 184, 61)");
-  await assertStatus(NODE1, "Active", "rgb(255, 157, 74)");
+  await assertStatus(NODE0, "Validating", "rgb(18, 146, 95)");
+  await assertStatus(NODE1, "Active", "rgb(64, 81, 181)");
 
   await evaluate("window.__refresh(); true");
   await waitForNode(
     () => validatorSets.length >= 2,
     "second held validator-set request",
   );
-  await assertStatus(NODE0, "Validating", "rgb(120, 184, 61)");
+  await assertStatus(NODE0, "Validating", "rgb(18, 146, 95)");
   assert.equal(
     await evaluate(cardValue),
     "0",
@@ -1005,11 +1005,11 @@ try {
   assert.match(await evaluate("window.__vpError"), /503|fetch|network|TypeError/i);
   assert.equal(await evaluate(cardValue), "0");
   await evaluate("refreshInFlight");
-  await assertStatus(NODE0, "Validating", "rgb(120, 184, 61)");
-  await assertStatus(NODE1, "Active", "rgb(255, 157, 74)");
+  await assertStatus(NODE0, "Validating", "rgb(18, 146, 95)");
+  await assertStatus(NODE1, "Active", "rgb(64, 81, 181)");
   await evaluate("validatorSetObservedAt=Date.now()-45001; for(const node of observedNodes) {applyRetainedMembership(node); renderHostState(cards.get(nodeKey(node)),node)}; true");
   assert.equal(await evaluate(cardValue), "Unavailable", "expired membership must not remain current");
-  await assertStatus(NODE0, "Wait", "rgb(154, 160, 173)");
+  await assertStatus(NODE0, "Wait", "rgb(176, 125, 20)");
   holdValidatorSets = false;
   for (const scenario of ["stale", "mismatch"]) {
     versionScenario = scenario;
@@ -1022,8 +1022,8 @@ try {
   versionScenario = "fresh";
   await evaluate("window.__refresh()");
   await waitForValue(node0Inference, "0.2.16-post1", "fresh node-info recovery after invalid observations");
-  await assertStatus(NODE0, "Validating", "rgb(120, 184, 61)");
-  await assertStatus(NODE1, "Active", "rgb(255, 157, 74)");
+  await assertStatus(NODE0, "Validating", "rgb(18, 146, 95)");
+  await assertStatus(NODE1, "Active", "rgb(64, 81, 181)");
   const hostPreviewRequestStart = requests.length;
   await call("Page.navigate", { url: "https://preview.gonka-dev.net/215/" });
   await waitFor(
@@ -1134,29 +1134,10 @@ try {
     statuses: [...document.querySelectorAll('[data-k="status"]')].map((item) => item.textContent?.trim()),
     models: [...document.querySelectorAll('#model-id li')].map((item) => item.textContent?.trim()),
     approvedDevShards: document.querySelector('#devshard-versions')?.textContent?.trim(),
-    devShardHidden: document.querySelector('#devshard-execution')?.hidden,
-    devShardEndpoints: document.querySelector('#devshard-endpoint-state')?.textContent?.trim(),
-    devShardRuntime: document.querySelector('#devshard-runtime-state')?.textContent?.trim(),
-    devShardSessions: document.querySelector('#devshard-session-state')?.textContent?.trim(),
-    devShardRows: [...document.querySelectorAll('#devshard-execution-rows tr')].map((row) =>
-      [...row.querySelectorAll('td')].map((cell) => cell.textContent?.trim())),
     mlnodes: [...document.querySelectorAll('[data-node-key="${NODE0}"] [data-k="mlnode"] li')].map((item) => item.textContent?.trim()),
     poc: document.querySelector('[data-node-key="${NODE0}"] [data-k="poc"]')?.textContent?.trim(),
-    cpoc: document.querySelector('#epoch-cpoc-state')?.textContent?.trim(),
-    cpocHistory: document.querySelector('#epoch-cpoc-detail')?.textContent?.trim(),
-    verificationHidden: document.querySelector('#verification-results')?.hidden,
-    verificationEpoch: document.querySelector('#verification-epoch-label')?.textContent?.trim(),
-    verificationSummary: document.querySelector('#verification-results-summary')?.textContent?.trim(),
-    verificationPoc: document.querySelector('#verification-poc-state')?.textContent?.trim(),
-    verificationPocDetail: document.querySelector('#verification-poc-detail')?.textContent?.trim(),
-    verificationCpoc: document.querySelector('#verification-cpoc-events')?.textContent?.trim(),
-    verificationCpocDetail: document.querySelector('#verification-cpoc-detail')?.textContent?.trim(),
-    verificationConsensus: document.querySelector('#verification-consensus-state')?.textContent?.trim(),
-    verificationConsensusDetail: document.querySelector('#verification-consensus-detail')?.textContent?.trim(),
-    verificationPocRows: [...document.querySelectorAll('#verification-poc-result-rows td')].map((item) => item.textContent?.trim()),
-    verificationConsensusRows: [...document.querySelectorAll('#verification-consensus-result-rows td')].map((item) => item.textContent?.trim()),
-    gatewayHidden: document.querySelector('#gateway-quality')?.hidden,
-    gatewayState: document.querySelector('#quality-health-state')?.textContent?.trim(),
+    removedSections: ['epoch-overview', 'verification-results', 'devshard-execution', 'gateway-quality'].filter((id) => document.getElementById(id)),
+    modelRows: [...document.querySelectorAll('#nodes .model-group')].map((group) => group.querySelectorAll('.node').length),
   })`));
   assert.deepEqual(selectedNetworkPresentation, {
     source: "LIVE NETWORK",
@@ -1164,69 +1145,11 @@ try {
     statuses: ["Validating", "Active", "Active"],
     models: ["model/gonka-testnet-devshards"],
     approvedDevShards: "v3 aaaaaav4.1 bbbbbb",
-    devShardHidden: false,
-    devShardEndpoints: "3 / 3 observed",
-    devShardRuntime: "4 / 4 SHA match",
-    devShardSessions: "1 reported escrow",
-    devShardRows: [
-      ["node0.gonka-dev.net", "v3 · SHA match\nv4.1 (v4.1.3) · SHA match", "1 active escrow\nv4.1 (v4.1.3)\n#52 · E7"],
-      ["node1.gonka-dev.net", "v4.1 (v4.1.3) · SHA match", "1 active escrow\nv4.1 (v4.1.3)\n#52 · E7"],
-      ["node4.gonka-dev.net", "v3 · SHA match", "Not exposed"],
-    ],
     mlnodes: ["local · 3.0.16 · Fixture GPU · 24 GiB"],
     poc: "Committed",
-    cpoc: "No active event",
-    cpocHistory: "Latest recorded: E6 #0 completed; trigger 91; generation 92.",
-    verificationHidden: false,
-    verificationEpoch: "E6",
-    verificationSummary: "PoC stage 80 · effective at 95 · previous effective height 75",
-    verificationPoc: "1 participant committed · 2 validator attestations",
-    verificationPocDetail: "1 accepted · 1 rejected",
-    verificationCpoc: "1 event",
-    verificationCpocDetail: "1 completed · #0 completed at trigger 91",
-    verificationConsensus: "1 member",
-    verificationConsensusDetail: "1 membership change · 0 power changes",
-    verificationPocRows: [ACCOUNT0.slice(0, 10) + "…" + ACCOUNT0.slice(-6), "fixture/model: 12 artifacts", "1 accepted · 1 rejected"],
-    verificationConsensusRows: [ACCOUNT0.slice(0, 10) + "…" + ACCOUNT0.slice(-6), "Not in set", "11", "Not in set → 11"],
-    gatewayHidden: false,
-    gatewayState: "NOT REPORTED",
+    removedSections: [],
+    modelRows: [1, 2],
   }, "a selected bootstrap changes the observed data source, not the page contract or status semantics");
-  const renderDevShardScenario = async expression => JSON.parse(await evaluate(`JSON.stringify((() => {
-    const nodes = JSON.parse(JSON.stringify(observedNodes));
-    let approvals = [{name: "v3", sha256: "a".repeat(64)}, {name: "v4.1", sha256: "b".repeat(64)}];
-    ${expression}
-    renderDevShardExecution(approvals, nodes);
-    return {
-      endpoints: document.querySelector('#devshard-endpoint-state').textContent,
-      runtimes: document.querySelector('#devshard-runtime-state').textContent,
-      sessions: document.querySelector('#devshard-session-state').textContent,
-      rows: [...document.querySelectorAll('#devshard-execution-rows tr')].map(row =>
-        [...row.querySelectorAll('td')].map(cell => cell.textContent)),
-    };
-  })())`));
-  const duplicateEndpoint = await renderDevShardScenario('nodes.unshift({...nodes[0], name: "another participant", devShardHealth: null});');
-  assert.equal(duplicateEndpoint.endpoints, "3 / 3 observed", "one public endpoint must not be counted again for a different peer");
-  assert.equal(duplicateEndpoint.runtimes, "4 / 4 SHA match");
-  assert.equal(duplicateEndpoint.sessions, "1 reported escrow", "the same escrow on two endpoints is one reported escrow");
-  const missingApproval = await renderDevShardScenario('approvals = null;');
-  assert.equal(missingApproval.runtimes, "Approval unavailable");
-  assert.match(missingApproval.rows[0][1], /SHA unverified/);
-  assert.equal(missingApproval.sessions, "1 reported escrow", "chain query failure does not discard available host-local sessions");
-  const changedHash = await renderDevShardScenario('nodes[0].devShardHealth.runtimes[0].sha256 = "c".repeat(64);');
-  assert.equal(changedHash.runtimes, "3 / 4 SHA match");
-  assert.match(changedHash.rows[0][1], /v3 · SHA differs/);
-  const missingHash = await renderDevShardScenario('delete nodes[0].devShardHealth.runtimes[0].sha256;');
-  assert.match(missingHash.rows[0][1], /v3 · SHA unavailable/);
-  const expired = await renderDevShardScenario(`for (const node of nodes) {
-    node.devShardHealth.stats = {state: "observed", observed_at: new Date().toISOString(),
-      cached_at: Math.floor(Date.now() / 1000) - 600, cache_ttl_seconds: 60, active_escrows: ["52"]};
-  }`);
-  assert.equal(expired.sessions, "Not observed", "expired snapshots must not present a current escrow count");
-  assert.ok(expired.rows.every(row => row[2] === "Stale snapshot"));
-  const unavailable = await renderDevShardScenario('for (const node of nodes) node.devShardHealth.state = "unavailable";');
-  assert.equal(unavailable.endpoints, "0 / 3 observed");
-  assert.equal(unavailable.runtimes, "Unavailable");
-  assert.equal(unavailable.sessions, "Not observed", "unavailable endpoints must not report zero sessions");
   process.stdout.write(
     "PASS browser app keeps one participant page contract for configured and selected bootstrap networks, binds preview and explicit non-preview origins to a unique catalog peer, and fails closed on stale or mismatched identity\n",
   );

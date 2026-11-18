@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startChromeDevTools, stopChromeDevTools } from './chrome-devtools.mjs';
 import { compareHostIdentitySets } from './preview-host-identities.mjs';
@@ -26,10 +26,6 @@ const expectedNodeStates = (process.env.GDC_EXPECT_NODE_STATES || '')
     const [name, state] = item.split('=', 2);
     return { name, state };
   });
-const hostRequirementsProfile = JSON.parse(await readFile(new URL('../profiles/devnet-hadware.json', import.meta.url), 'utf8'));
-const expectedJoinRequirements = hostRequirementsProfile.requirements.map(({ label, description }) => ({ label, value: description }));
-const expectedJoinSummary = 'Minimum Host requirements For more details, read Community DevNet runbook/JOIN: add a Host';
-const expectedJoinRequirementsNote = hostRequirementsProfile.model_context.description;
 const reportBrowserFailure = error => {
   const detail = String(error?.message || error).replace(/\s+/g, ' ').trim();
   process.stderr.write(`WAIT homepage browser check unavailable reason=${detail}\n`);
@@ -95,67 +91,38 @@ const homepageStateExpression = `JSON.stringify({
     width: element?.getBoundingClientRect().width || 0,
     height: element?.getBoundingClientRect().height || 0,
   }))(document.querySelector("#footer-github")),
-  epoch: document.querySelector("#epoch-label")?.textContent?.trim() || "",
-  epochOverviewHidden: document.querySelector("#epoch-overview")?.hidden !== false,
-  gatewayAccessHidden: document.querySelector("#gateway-access")?.hidden,
-  join: ((element) => ({
-    exists: Boolean(element),
-    title: element?.querySelector("h2")?.textContent,
-    code: element?.querySelector("code")?.textContent,
-    link: element?.querySelector("a")?.href,
-    summary: element?.querySelector("summary")?.textContent?.replace(/\\s+/g, " ").trim(),
-    requirementsOpen: element?.querySelector(".join-requirements")?.open,
-    requirements: [...(element?.querySelectorAll(".join-requirements-table tbody > tr") || [])].map(item => ({
-      label: item.querySelector("th")?.textContent,
-      value: item.querySelector("td")?.textContent,
+  removedSections: ["join-node", "epoch-overview", "verification-results", "devshard-execution", "gateway-quality", "gateway-access"].filter(id => document.getElementById(id)),
+  traffic: ((section) => ({
+    state: section?.dataset.state || "",
+    total: section?.querySelector("#traffic-total-rps")?.textContent?.trim() || "",
+    cards: [...(section?.querySelectorAll(".traffic-card") || [])].map(card => ({
+      name: card.querySelector(".traffic-name")?.textContent?.trim() || "",
+      rps: card.querySelector(".traffic-rps")?.textContent?.trim() || "",
+      values: [...card.querySelectorAll("dd")].map(value => value.textContent?.trim() || ""),
     })),
-    requirementsNote: element?.querySelector(".join-requirements-note")?.textContent?.trim(),
-    modelLink: element?.querySelector(".join-requirements-note a")?.href,
-  }))(document.querySelector("#join-node")),
+  }))(document.querySelector("#gateway-traffic")),
   nodeDeck: ((element) => {
-    const rect = element?.getBoundingClientRect();
-    const cards = [...(element?.querySelectorAll(".node") || [])];
-    const cardRects = cards.map(card => card.getBoundingClientRect());
-    const first = cardRects[0];
-    const style = element && getComputedStyle(element);
-    const initialScrollLeft = element?.scrollLeft || 0;
-    if (element) element.scrollLeft = 0;
-    const firstAtStartRect = cards[0]?.getBoundingClientRect();
-    const firstAtStart = Boolean(rect && firstAtStartRect && firstAtStartRect.left >= rect.left - 1 && firstAtStartRect.right <= rect.right + 1);
-    const maximumScrollLeft = Math.max(0, (element?.scrollWidth || 0) - (element?.clientWidth || 0));
-    if (element) element.scrollLeft = maximumScrollLeft;
-    const lastAtEndRect = cards.at(-1)?.getBoundingClientRect();
-    const lastAtEnd = Boolean(rect && lastAtEndRect && lastAtEndRect.left >= rect.left - 1 && lastAtEndRect.right <= rect.right + 1);
-    const appliedScrollLeft = element?.scrollLeft || 0;
-    if (element) element.scrollLeft = initialScrollLeft;
+    const intersects = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
     return {
       exists: Boolean(element),
       role: element?.getAttribute("role"),
       label: element?.getAttribute("aria-label"),
-      overflowX: style?.overflowX,
-      flexDirection: style?.flexDirection,
       clientWidth: element?.clientWidth || 0,
       scrollWidth: element?.scrollWidth || 0,
-      maximumScrollLeft,
-      appliedScrollLeft,
-      firstAtStart,
-      lastAtEnd,
-      oneRow: Boolean(first && cardRects.every(card => Math.abs(card.top - first.top) <= 0.5)),
-      cardsInside: Boolean(rect && cardRects.every(card => card.left >= rect.left - 1 && card.right <= rect.right + 1)),
-      expandedCount: cards.filter(card => card.classList.contains("is-expanded")).length,
-      collapsedCount: cards.filter(card => card.classList.contains("is-collapsed")).length,
-      declaredExpandedCount: Number(element?.dataset.expandedCount || 0),
-      layout: element?.dataset.layout,
-      cards: cards.map((card, index) => ({
-        key: card.dataset.nodeKey,
-        expanded: card.classList.contains("is-expanded"),
-        left: cardRects[index].left,
-        right: cardRects[index].right,
-        top: cardRects[index].top,
-        bottom: cardRects[index].bottom,
-        width: cardRects[index].width,
-        height: cardRects[index].height,
-      })),
+      looseCards: [...(element?.children || [])].filter(child => child.classList.contains("node")).length,
+      rows: [...(element?.querySelectorAll(".model-group") || [])].map(group => {
+        const bounds = group.getBoundingClientRect();
+        const cards = [...group.querySelectorAll(".node")].map(card => card.getBoundingClientRect());
+        return {
+          model: group.dataset.model || "",
+          title: group.querySelector(".model-group-title span")?.textContent?.trim() || "",
+          declared: group.querySelector(".model-group-title small")?.textContent?.trim() || "",
+          count: cards.length,
+          cardsInside: cards.every(card => card.left >= bounds.left - 1 && card.right <= bounds.right + 1),
+          overlap: cards.some((card, index) => cards.slice(index + 1).some(other => intersects(card, other))),
+          minimumWidth: cards.length ? Math.min(...cards.map(card => card.width)) : 0,
+        };
+      }),
     };
   })(document.querySelector("#nodes")),
   nodes: [...document.querySelectorAll("#nodes .node")].map(node => {
@@ -247,9 +214,12 @@ const homepageStateExpression = `JSON.stringify({
     const rows = [node.querySelector("h3"), ...(details?.children || [])]
       .filter(row => row && row.offsetParent !== null)
       .map((row, index) => ({ key: index === 0 ? "heading" : row.dataset.kRow || row.dataset.k || row.tagName.toLowerCase(), ...rowInfo(row) }));
-    const rowOverlapDetails = rows.slice(0, -1).flatMap((row, index) => row.textBounds && rows[index + 1].bounds && row.textBounds.bottom > rows[index + 1].bounds.top + 0.5
-      ? [{ from: row.key, to: rows[index + 1].key, textBottom: row.textBounds.bottom, nextTop: rows[index + 1].bounds.top }]
-      : []);
+    const rowOverlapDetails = rows.flatMap((row, index) => rows.slice(index + 1).flatMap(other =>
+      row.textBounds && other.textBounds &&
+      row.textBounds.left < other.textBounds.right - 0.5 && other.textBounds.left < row.textBounds.right - 0.5 &&
+      row.textBounds.top < other.textBounds.bottom - 0.5 && other.textBounds.top < row.textBounds.bottom - 0.5
+        ? [{ from: row.key, to: other.key, first: row.textBounds, second: other.textBounds }]
+        : []));
     const rowOverlap = rowOverlapDetails.length > 0;
     const contentBottom = rows.reduce((bottom, row) => Math.max(bottom, row.textBounds?.bottom ?? -Infinity), -Infinity);
     return {
@@ -374,16 +344,14 @@ try {
   await call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true }, sessionId);
   await call('Emulation.setVisibleSize', { width, height }, sessionId);
   await call('Page.navigate', { url }, sessionId);
-  const gatewayStateReadyExpression = expectGatewayReady
-    ? '/^TRAFFIC_READY – /.test(document.querySelector("#quality-health-state")?.textContent || "")'
-    : '["TRAFFIC_READY – verified inference; processing requests","TRAFFIC_READY – verified inference; no requests in flight","CONTROL_READY","ROUTING_READY","RECOVERING","SATURATED","PENDING","UNAVAILABLE","OFFLINE","NOT REPORTED"].includes(document.querySelector("#quality-health-state")?.textContent || "")';
+  const gatewayStateReadyExpression = '["observed","unavailable"].includes(document.querySelector("#gateway-traffic")?.dataset.state || "")';
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const { result } = await call('Runtime.evaluate', {
       expression: `Boolean(document.querySelector("#updated")?.dateTime && /^Updated .* UTC$/.test(document.querySelector("#updated")?.textContent || "") && document.querySelector("#validator-map .validator-map-world")?.complete && document.querySelector("#validator-map .validator-map-world")?.naturalWidth && ${gatewayStateReadyExpression})`,
       returnByValue: true,
     }, sessionId);
     if (result.value) break;
-    if (attempt === 29) throw new Error('homepage status, live gateway, and validator map refresh did not complete within 30 seconds');
+    if (attempt === 29) throw new Error('homepage status, gateway traffic, and validator map refresh did not complete within 30 seconds');
     await delay(1000);
   }
   const { result } = await call('Runtime.evaluate', {
@@ -430,8 +398,8 @@ try {
           !Number.isFinite(chainAgeMs) || chainAgeMs < 0 || chainAgeMs > 90000 ||
           !/^[1-9]\d*$/.test(epochIndex) || !Number.isSafeInteger(stageHeight) || !Number.isSafeInteger(endHeight) ||
           !Number.isSafeInteger(referenceHeight) || stageHeight <= 0 || endHeight <= stageHeight || referenceHeight < stageHeight ||
-          chainMismatches.length || state.epoch !== `Epoch ${epochIndex}` || state.epochOverviewHidden) {
-        throw new Error(`live HTTP network snapshot does not provide matching fresh chain and meaningful rendered epoch ${JSON.stringify({ status: networkIdentity.status, schema_version: payload?.schema_version, chain_id: chainId, configured_chain_id: state.configuredChainId, chain_state: chain?.state, chain_age_ms: chainAgeMs, chain_mismatches: chainMismatches, epoch: epochIndex, stage_height: stageHeight, end_height: endHeight, reference_height: referenceHeight, rendered_epoch: state.epoch, epoch_hidden: state.epochOverviewHidden })}`);
+          chainMismatches.length) {
+        throw new Error(`live HTTP network snapshot does not provide a matching fresh chain ${JSON.stringify({ status: networkIdentity.status, schema_version: payload?.schema_version, chain_id: chainId, configured_chain_id: state.configuredChainId, chain_state: chain?.state, chain_age_ms: chainAgeMs, chain_mismatches: chainMismatches, epoch: epochIndex, stage_height: stageHeight, end_height: endHeight, reference_height: referenceHeight })}`);
       }
       const isNetworkSocket = request => {
         try { return new URL(request.url).pathname === `${expectedStatusPrefix}network/ws`; }
@@ -509,7 +477,7 @@ try {
     // unavailable component is rendered as a bounded card diagnostic.
     const requiredPaths = [
       ...(hasEmbeddedChainSnapshot ? [] : ["participants", "gpus", "software"]),
-      ...(state.publicBootstrap ? [] : ["gateway/v1/status", "gateway-health", "gateway/v1/admission-status"]),
+      ...(state.publicBootstrap ? [] : ["gateway-traffic"]),
     ].map(path => `${expectedStatusPrefix}${path}`);
     const expectedPreviewGatewayUnavailable = expectedGatewayState === 'UNAVAILABLE' && !state.publicBootstrap;
     const requiredFailures = requiredPaths.flatMap(path => {
@@ -520,7 +488,7 @@ try {
           return false;
         }
       });
-      const isGatewayPath = path.includes('/gateway/') || path.endsWith('/gateway-health');
+      const isGatewayPath = path.endsWith('/gateway-traffic');
       const expected503 = expectedPreviewGatewayUnavailable && isGatewayPath;
       return !requests.length || requests.some(request => request.error || (expected503
         ? Number(request.status) !== 503
@@ -531,17 +499,6 @@ try {
     if (requiredFailures.length) {
       throw new Error(`preview shared status request failed ${JSON.stringify(requiredFailures)}`);
     }
-    if (expectedPreviewGatewayUnavailable) {
-      const { result: unavailableGatewayResult } = await call('Runtime.evaluate', {
-        expression: `Promise.all(${JSON.stringify(requiredPaths.filter(path => path.includes('/gateway/') || path.endsWith('/gateway-health')))}.map(async path => { try { const response = await fetch(path, { cache: 'no-store' }); let payload = null; try { payload = await response.json(); } catch {} return { path, status: response.status, reason: payload?.error || '' }; } catch (error) { return { path, status: 0, reason: String(error) }; } })).then(JSON.stringify)`,
-        awaitPromise: true,
-        returnByValue: true,
-      }, sessionId);
-      const unavailableGatewayResponses = JSON.parse(unavailableGatewayResult.value || '[]');
-      if (state.publicBootstrap || unavailableGatewayResponses.length !== 3 || unavailableGatewayResponses.some(response => response.status !== 503 || response.reason !== 'preview_gateway_status_unavailable')) {
-        throw new Error(`preview gateway unavailability did not match the explicit read-only backend contract ${JSON.stringify({ publicBootstrap: state.publicBootstrap, responses: unavailableGatewayResponses })}`);
-      }
-    }
   }
   if (expectedCardCount && state.nodes.length !== expectedCardCount) {
     throw new Error(`homepage rendered ${state.nodes.length}/${expectedCardCount} required Host cards`);
@@ -549,20 +506,7 @@ try {
   if (state.mapMarkerDetails.some(marker => marker.width < 12 || marker.height < 12 || marker.width > 36 || marker.height > 36 || marker.filter !== 'none')) throw new Error(`validator marker geometry or halo contract failed ${JSON.stringify(state.mapMarkerDetails)}`);
   if (state.scrollWidth > state.width) throw new Error(`horizontal overflow ${state.scrollWidth}>${state.width}`);
   if ((!expectResetState && state.nodes.length < 1) || state.updatedTag !== 'TIME' || !/^Updated .* UTC$/.test(state.updated || '') || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedDateTime || '') || !state.mapWorld) throw new Error(`homepage status or validator map did not render ${JSON.stringify(state)}`);
-  if (!state.join.exists || state.join.title !== 'How to Join node' || state.join.code !== 'git clone https://github.com/paranjko/external-test-lab.git\nalias gdc="$PWD/external-test-lab/net-deployment-runbook/gdc.sh"\ngdc host join --model=<MODEL_ID> --public-host <IP_or_DOMAIN> <ssh-alias>' || state.join.link !== 'https://github.com/paranjko/external-test-lab/blob/main/net-deployment-runbook/ROLE-JOIN.md#join-add-a-host' || state.join.summary !== expectedJoinSummary || state.join.requirementsOpen || JSON.stringify(state.join.requirements) !== JSON.stringify(expectedJoinRequirements) || state.join.requirementsNote !== expectedJoinRequirementsNote || state.join.modelLink !== 'https://node0.gonka-dev.net/chain-api/productscience/inference/inference/models_all') throw new Error(`JOIN guide did not render ${JSON.stringify(state.join)}`);
-  await call('Runtime.evaluate', { expression: 'document.querySelector(".join-requirements-toggle")?.click()' }, sessionId);
-  await delay(100);
-  const { result: joinRequirementsResult } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify((()=>{const details=document.querySelector(".join-requirements"),summary=details?.querySelector("summary"),toggle=details?.querySelector(".join-requirements-toggle"),guide=details?.querySelector(".join-requirements-guide"),table=details?.querySelector(".join-requirements-table"),rect=e=>{const r=e?.getBoundingClientRect();return r&&{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width}};return{open:details?.open,page:document.documentElement.scrollWidth,viewport:innerWidth,nested:[...document.querySelectorAll(".join-requirements,.join-requirements *")].some(e=>e.scrollWidth>e.clientWidth),summary:rect(summary),toggle:rect(toggle),guide:rect(guide),table:{tag:table?.tagName,rect:rect(table),columns:[...table?.querySelectorAll("thead th")||[]].map(e=>e.textContent),rows:table?.querySelectorAll("tbody tr").length}}})())',
-    returnByValue: true,
-  }, sessionId);
-  const joinRequirements = JSON.parse(joinRequirementsResult.value);
-  if (!joinRequirements.open || joinRequirements.page > joinRequirements.viewport || joinRequirements.nested) throw new Error(`JOIN requirements interaction or overflow failed ${JSON.stringify(joinRequirements)}`);
-  if (joinRequirements.table.tag !== 'TABLE' || JSON.stringify(joinRequirements.table.columns) !== JSON.stringify(['Component', 'Minimum']) || joinRequirements.table.rows !== expectedJoinRequirements.length || joinRequirements.table.rect.width > joinRequirements.summary.width) throw new Error(`JOIN requirements table contract failed ${JSON.stringify(joinRequirements)}`);
-  const summarySpacingValid = width <= 520
-    ? joinRequirements.guide.top - joinRequirements.toggle.bottom >= 5 && Math.abs(joinRequirements.guide.left - joinRequirements.toggle.left) <= 2
-    : joinRequirements.guide.left - joinRequirements.toggle.right >= 12 && Math.abs(joinRequirements.guide.top - joinRequirements.toggle.top) <= 2;
-  if (!summarySpacingValid) throw new Error(`JOIN requirements summary spacing failed ${JSON.stringify(joinRequirements)}`);
+  if (state.removedSections.length) throw new Error(`homepage still renders removed sections ${JSON.stringify(state.removedSections)}`);
   const mappedNodes = state.nodes;
   if (!expectResetState && state.mapHosts > mappedNodes.length) throw new Error(`network node map has more geographic Hosts than live participant cards ${JSON.stringify({ mapHosts: state.mapHosts, cards: mappedNodes.length })}`);
   if (state.mapPoints !== state.mapMarkers) throw new Error(`validator map rendered ${state.mapPoints} visible points for ${state.mapMarkers} geographic groups ${JSON.stringify(state)}`);
@@ -607,57 +551,22 @@ try {
     return /Failed to fetch|timeout|dns/i.test(`${node.status} ${endpoint}`)
       || (/\b[45]\d\d\b/.test(endpoint) && !/^Unavailable – HTTP [45]\d\d$/.test(endpoint));
   };
-  let expectedExpandedCards = mappedNodes.length
-    ? width <= 900 ? 1 : mappedNodes.length <= 4 ? mappedNodes.length : Math.min(width < 1200 ? 2 : 4, mappedNodes.length)
-    : 0;
-  while (expectedExpandedCards > 1 && (state.nodeDeck.clientWidth - (mappedNodes.length - expectedExpandedCards) * 32) / expectedExpandedCards < 320) expectedExpandedCards -= 1;
-  const expandedNodes = mappedNodes.filter(node => node.expanded);
-  const collapsedNodes = mappedNodes.filter(node => node.collapsed);
   if (mappedNodes.some(node => !node.key || !node.name || !node.hostVisible || !node.status || !node.statusVisible || !node.toggleControls || node.toggleControls !== node.detailsId || !node.toggleLabel?.includes(node.name) || hasUnboundedHostDiagnostic(node))) throw new Error(`Host-card identity contract failed ${JSON.stringify(mappedNodes)}`);
-  if (expandedNodes.some(node => node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusTitle || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || [node.inferenced, node.dapi, node.devshard, node.mlnodes].some(field => !field.visible || !field.text || field.clipped))) throw new Error(`Expanded Host-card detail contract failed ${JSON.stringify(expandedNodes)}`);
-  if (collapsedNodes.some(node => node.toggleExpanded !== 'false' || !node.detailsHidden || node.statusClipped)) throw new Error(`Collapsed Host-tab contract failed ${JSON.stringify(collapsedNodes)}`);
+  if (mappedNodes.some(node => !node.expanded || node.collapsed || node.toggleExpanded !== 'true' || node.detailsHidden || node.hostClipped || node.statusClipped || node.scrollHeight > node.clientHeight || node.rowOverlap || node.contentOverflowsCard || !node.statusTitle || node.valueFields.some(field => !field.text || !field.visible || field.clipped) || [node.inferenced, node.dapi, node.devshard, node.mlnodes].some(field => !field.visible || !field.text || field.clipped))) throw new Error(`Host card contract failed ${JSON.stringify(mappedNodes)}`);
   const deck = state.nodeDeck;
-  const desktopDeckValid = width > 700 && deck.flexDirection === 'row' && deck.oneRow && deck.cards.every(card => card.height >= 350) && deck.cards.filter(card => !card.expanded).every(card => card.width >= 31 && card.width <= 33);
-  const mobileDeckValid = width <= 700 && deck.flexDirection === 'column' && deck.cards.filter(card => !card.expanded).every(card => Math.abs(card.height - 52) <= 0.5 && Math.abs(card.width - deck.clientWidth) <= 1);
-  const deckInternalOverflow = deck.scrollWidth > deck.clientWidth + 1;
-  const deckOverflowValid = width <= 700 ? deck.overflowX === 'visible' : deck.overflowX === 'auto';
-  const deckReachabilityValid = !deckInternalOverflow || (width > 700 && deck.firstAtStart && deck.lastAtEnd && deck.appliedScrollLeft > 1);
-  const deckGeometryValid = mappedNodes.length === 0 || (width <= 700 ? mobileDeckValid : desktopDeckValid);
-  if (!deck.exists || deck.role !== 'list' || !deck.label?.includes('Host accordion') || !deckOverflowValid || !deckReachabilityValid || (!deckInternalOverflow && !deck.cardsInside) || deck.expandedCount !== expectedExpandedCards || deck.declaredExpandedCount !== expectedExpandedCards || deck.collapsedCount !== mappedNodes.length - expectedExpandedCards || !deckGeometryValid) throw new Error(`Host accordion layout contract failed ${JSON.stringify(deck)}`);
-  if (expectedCardCount && deck.cards.length === expectedCardCount) {
-    const heights = deck.cards.map(card => card.height);
-    if (Math.max(...heights) - Math.min(...heights) > 1) {
-      throw new Error(`Host cards do not have equal heights ${JSON.stringify(heights)}`);
-    }
-  }
+  const rowsValid = deck.rows.every(row => row.model && row.title === row.model && row.count >= 1 && row.declared === `${row.count} host${row.count === 1 ? '' : 's'}` && row.cardsInside && !row.overlap && row.minimumWidth >= Math.min(300, deck.clientWidth - 2));
+  if (!deck.exists || deck.role !== 'list' || !deck.label?.includes('Hosts by model') || deck.scrollWidth > deck.clientWidth + 1 || deck.looseCards !== 0 || !rowsValid || deck.rows.reduce((total, row) => total + row.count, 0) !== mappedNodes.length || new Set(deck.rows.map(row => row.model)).size !== deck.rows.length) throw new Error(`Host model rows layout contract failed ${JSON.stringify(deck)}`);
   for (const expected of expectedNodeStates) {
     const node = mappedNodes.find(item => item.name === expected.name);
     if (!node || node.status !== expected.state) {
       throw new Error(`Host state does not match expected ${expected.name}=${expected.state}: ${JSON.stringify(mappedNodes)}`);
     }
   }
-  if (collapsedNodes.length) {
-    const activatedKey = collapsedNodes[0].key;
-    const evictedKey = expandedNodes[0].key;
-    await call('Runtime.evaluate', { expression: `document.querySelector('.node[data-node-key=${JSON.stringify(activatedKey)}] .node-toggle')?.click()` }, sessionId);
-    await delay(380);
-    const { result: accordionResult } = await call('Runtime.evaluate', {
-      expression: 'JSON.stringify([...document.querySelectorAll("#nodes .node")].map(card=>({key:card.dataset.nodeKey,expanded:card.classList.contains("is-expanded"),detailsHidden:Boolean(card.querySelector(".node-details")?.hidden),aria:card.querySelector(".node-toggle")?.getAttribute("aria-expanded")})))',
-      returnByValue: true,
-    }, sessionId);
-    const accordion = JSON.parse(accordionResult.value);
-    const activated = accordion.find(card => card.key === activatedKey);
-    const evicted = accordion.find(card => card.key === evictedKey);
-    if (accordion.filter(card => card.expanded).length !== expectedExpandedCards || !activated?.expanded || activated.detailsHidden || activated.aria !== 'true' || evicted?.expanded || !evicted?.detailsHidden || evicted?.aria !== 'false') throw new Error(`Host accordion activation contract failed ${JSON.stringify({ activatedKey, evictedKey, accordion })}`);
-  }
   if (expectResetState) {
     const active = state.nodes;
-    if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || !state.gatewayAccessHidden || state.mapHosts !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {
+    if (active.some(node => !/^offline \(\d+\)$/.test(node.status || '')) || state.bestHeight !== '–' || state.mapHosts !== 0 || state.mapMarkers !== 0 || state.mapPoints !== 0) {
       throw new Error(`homepage does not show the real reset/offline state ${JSON.stringify(state)}`);
     }
-  }
-  if (expectedGatewayState === 'UNAVAILABLE' && !state.gatewayAccessHidden) {
-    throw new Error(`gateway access card must be hidden while unavailable ${JSON.stringify(state)}`);
   }
   if (checkMapFullscreen) {
     await call('Runtime.evaluate', { expression: 'document.querySelector("#validator-map-fullscreen")?.click()' }, sessionId);
@@ -681,12 +590,6 @@ try {
       await delay(100);
     }
   }
-  const { result: accessResult } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({code:document.querySelectorAll("#gateway-access pre,#gateway-access code").length,scroll:[...document.querySelectorAll("#gateway-access,#gateway-access *")].some(e=>{const s=getComputedStyle(e);return (s.overflowX==="auto"||s.overflowX==="scroll"||s.overflowY==="auto"||s.overflowY==="scroll")&&(e.scrollWidth>e.clientWidth||e.scrollHeight>e.clientHeight)})})',
-    returnByValue: true,
-  }, sessionId);
-  const access = JSON.parse(accessResult.value);
-  if (access.code || access.scroll) throw new Error('access card contains code or a nested scroll area');
   const { result: grafanaResult } = await call('Runtime.evaluate', {
     expression: 'JSON.stringify(["grafana-overview","grafana-network","grafana-inference","grafana-chain","grafana-components"].map(id=>{const e=document.getElementById(id);return {id,href:e?.href,target:e?.target}}))',
     returnByValue: true,
@@ -694,30 +597,22 @@ try {
   const grafana = JSON.parse(grafanaResult.value);
   const expectedGrafanaPaths = ["/d/gdc-overview/", "/d/gdc-network/", "/d/gdc-inference/", "/d/gdc-chain/", "/d/gdc-components/"];
   if (grafana.length !== 5 || grafana.some((link,index)=>{const url=new URL(link.href);return url.hostname!=="grafana.gonka-dev.net"||!url.pathname.startsWith(expectedGrafanaPaths[index])||!url.searchParams.has("kiosk")||link.target!=="_blank"})) throw new Error(`invalid public Grafana links ${JSON.stringify(grafana)}`);
-  const { result: gatewayResult } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({metrics:[...document.querySelectorAll("#quality-metrics article")].map(e=>e.textContent),health:document.querySelector("#quality-health-state")?.textContent,counts:["quality-active","quality-accepted","quality-rejected"].map(id=>document.getElementById(id)?.textContent)})',
-    returnByValue: true,
-  }, sessionId);
-  const gateway = JSON.parse(gatewayResult.value);
-  const readyGateway = /^TRAFFIC_READY – /.test(gateway.health || '');
-  const numericGatewayCounts = gateway.counts.every(value => /^\d+$/.test(value || ''));
-  const unavailableGatewayCounts = gateway.counts.every(value => value === '–');
-  const gatewayCountsValid = expectResetState || (readyGateway ? numericGatewayCounts : unavailableGatewayCounts);
-  if (gateway.metrics.length !== 5 || !gateway.metrics.some(text => text.includes("Active requests") && text.includes("currently in flight")) || !gateway.metrics.some(text => text.includes("Successful requests") && text.includes("completed since gateway restart")) || !gateway.metrics.some(text => text.includes("Rate-limited requests") && text.includes("rejected since gateway restart")) || !["TRAFFIC_READY – verified inference; processing requests", "TRAFFIC_READY – verified inference; no requests in flight", "CONTROL_READY", "ROUTING_READY", "RECOVERING", "SATURATED", "PENDING", "UNAVAILABLE", "OFFLINE", "NOT REPORTED"].includes(gateway.health) || !gatewayCountsValid) throw new Error(`incomplete live gateway contract ${JSON.stringify({ ...gateway, gatewayCountsValid, publicBootstrap: state.publicBootstrap })}`);
-  if ((gateway.health === 'NOT REPORTED') !== state.publicBootstrap) throw new Error(`gateway reporting state does not match selected network capability ${JSON.stringify({ health: gateway.health, publicBootstrap: state.publicBootstrap })}`);
-  if (state.publicBootstrap && !state.gatewayAccessHidden) throw new Error(`gateway access details must be hidden when the selected network does not report gateway state`);
-  if (expectResetState && gateway.health !== 'OFFLINE') throw new Error(`gateway must be OFFLINE after reset ${JSON.stringify(gateway)}`);
-  if (expectedGatewayState && gateway.health !== expectedGatewayState) throw new Error(`gateway state ${gateway.health} does not match expected ${expectedGatewayState}`);
-  if (expectGatewayReady && !/^TRAFFIC_READY – /.test(gateway.health || '')) {
-    throw new Error(`public page shows a non-ready gateway state ${gateway.health}`);
+  const traffic = state.traffic;
+  const trafficCardsValid = traffic.cards.every(card => /^Gateway \S/.test(card.name) && /^\d+\.\d$/.test(card.rps) && card.values.length === 4 && card.values.every(Boolean));
+  if (!['observed', 'unavailable'].includes(traffic.state)) throw new Error(`gateway traffic block did not settle ${JSON.stringify(traffic)}`);
+  if (traffic.state === 'observed' && (!/^\d+\.\d req\/s$/.test(traffic.total) || !trafficCardsValid)) throw new Error(`gateway traffic contract failed ${JSON.stringify(traffic)}`);
+  if (traffic.state === 'unavailable' && (traffic.total !== '–' || traffic.cards.length)) throw new Error(`unavailable gateway traffic must not show numbers ${JSON.stringify(traffic)}`);
+  if (expectedGatewayState === 'UNAVAILABLE' && traffic.state !== 'unavailable') throw new Error(`gateway traffic ${traffic.state} does not match expected unavailable`);
+  if (expectGatewayReady && (traffic.state !== 'observed' || !traffic.cards.length)) {
+    throw new Error(`public page shows no gateway traffic ${JSON.stringify(traffic)}`);
   }
   const { result: typeResult } = await call('Runtime.evaluate', {
-    expression: 'JSON.stringify({heading:(s=>s==="normal"?0:Number.parseFloat(s))(getComputedStyle(document.querySelector(".hero h1")).letterSpacing),prose:Number.parseFloat(getComputedStyle(document.querySelector(".hero p")).wordSpacing),footer:Number.parseFloat(getComputedStyle(document.querySelector("footer")).wordSpacing),footerSize:Number.parseFloat(getComputedStyle(document.querySelector("footer")).fontSize),negativeTracking:[...document.querySelectorAll("body *")].filter(e=>{const s=getComputedStyle(e).letterSpacing;return s!=="normal"&&Number.parseFloat(s)<0}).map(e=>e.tagName+"."+e.className),footerChildren:[...document.querySelector("footer").children].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}})})',
+    expression: 'JSON.stringify({prose:Number.parseFloat(getComputedStyle(document.querySelector(".hero p")).fontSize),footerSize:Number.parseFloat(getComputedStyle(document.querySelector("footer")).fontSize),bodyFont:getComputedStyle(document.body).fontFamily,footerChildren:[...document.querySelector("footer").children].map(e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}})})',
     returnByValue: true,
   }, sessionId);
   const typography = JSON.parse(typeResult.value);
   const footerOverlap = typography.footerChildren.some((box, index, boxes) => boxes.slice(index + 1).some(other => box.left < other.right && other.left < box.right && box.top < other.bottom && other.top < box.bottom));
-  if (typography.heading < 0 || typography.prose <= 0 || typography.footer <= 0 || typography.footerSize < 13 || typography.negativeTracking.length || footerOverlap) throw new Error(`unreadable typography contract ${JSON.stringify(typography)}`);
+  if (typography.prose < 16 || typography.footerSize < 13 || !/Inter/.test(typography.bodyFont) || footerOverlap) throw new Error(`unreadable typography contract ${JSON.stringify(typography)}`);
   await call('Runtime.evaluate', { expression: 'document.querySelector("#nodes")?.scrollIntoView({block:"start",behavior:"instant"})' }, sessionId);
   await delay(300);
   const { result: nodeViewportResult } = await call('Runtime.evaluate', {

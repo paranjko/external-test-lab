@@ -58,6 +58,13 @@ const server = createServer(async (request,response) => {
       response.writeHead(503);
       response.end('{"state":"network_observation_unavailable"}');
     } else response.end(JSON.stringify(snapshot()));
+  } else if (pathname === "/status/gateway-traffic") {
+    const series=(gateway,host,m,value)=>({metric:{gateway,host,m},value:[0,String(value)]});
+    response.setHeader("Content-Type","application/json");
+    response.end(JSON.stringify({status:"success",data:{resultType:"vector",result:[
+      series("A_V6","gdc-node0","rps",5),series("A_V6","gdc-node0","inflight",3),series("A_V6","gdc-node0","ok_1h",1198),series("A_V6","gdc-node0","fail_1h",2),
+      series("B_V6","gdc-node2","rps",2.5),series("B_V6","gdc-node2","inflight",1),series("B_V6","gdc-node2","ok_1h",600),series("B_V6","gdc-node2","fail_1h",0),
+    ]}}));
   } else if (pathname.startsWith("/status/")) {
     response.writeHead(503,{"Content-Type":"application/json"});
     response.end('{"available":false}');
@@ -98,7 +105,7 @@ try {
     assert.equal(result.exceptionDetails,undefined,JSON.stringify(result.exceptionDetails));
     return result.result.value;
   };
-  const state=()=>evaluate(`JSON.stringify({epoch:document.querySelector('#epoch-label').textContent,hidden:document.querySelector('#epoch-overview').hidden,cpoc:document.querySelector('#epoch-cpoc-state').textContent,shards:document.querySelector('#devshard-execution').hidden,node:document.querySelector('#nodes')?.innerText,nodeCount:document.querySelectorAll('#nodes .node').length,source:document.querySelector('#network-source').textContent,updated:document.querySelector('#updated').textContent,updatedAt:document.querySelector('#updated').getAttribute('datetime'),bestHeight:document.querySelector('#best-height').textContent,gateway:document.querySelector('#quality-health-state').textContent,recovery:document.querySelector('#quality-recovery').textContent,chain:publicChainState?.state})`);
+  const state=()=>evaluate(`JSON.stringify({removed:['epoch-overview','verification-results','devshard-execution','gateway-quality'].filter(id=>document.getElementById(id)),rows:[...document.querySelectorAll('#nodes .model-group')].map(group=>group.dataset.model),node:document.querySelector('#nodes')?.innerText,nodeCount:document.querySelectorAll('#nodes .node').length,source:document.querySelector('#network-source').textContent,updated:document.querySelector('#updated').textContent,updatedAt:document.querySelector('#updated').getAttribute('datetime'),updatedState:document.querySelector('#updated').dataset.state||null,bestHeight:document.querySelector('#best-height').textContent,traffic:document.querySelector('#traffic-total-rps').textContent,trafficCards:[...document.querySelectorAll('#traffic-cards .traffic-card')].map(card=>card.innerText.replace(/\\s+/g,' ')),chain:publicChainState?.state})`);
   let unavailable;
   for(let attempt=0;attempt<100;attempt++) {
     unavailable=JSON.parse(await state().catch(()=>'{}'));
@@ -108,20 +115,19 @@ try {
   assert.equal(unavailable.source,"NETWORK OBSERVATION UNAVAILABLE",JSON.stringify(unavailable));
   assert.equal(unavailable.updated,"Network observer unavailable");
   assert.equal(unavailable.updatedAt,null,"an unavailable snapshot must not have a successful-observation timestamp");
-  assert.notEqual(unavailable.gateway,"OFFLINE","an unavailable observer is not proof of a reset network");
-  assert.notEqual(unavailable.recovery,"Network reset – no nodes online");
+  assert.equal(unavailable.updatedState,null,"an observer error stays visible");
+  assert.deepEqual(unavailable.removed,[]);
   observation="current";
   await evaluate("networkSnapshot=null; refresh()");
   let current;
   for(let attempt=0;attempt<100;attempt++) {
     current=JSON.parse(await state().catch(()=>"{}"));
-    if(current.epoch==="Epoch 7") break;
+    if(current.chain==="observed"&&current.nodeCount>0) break;
     await new Promise(resolve=>setTimeout(resolve,100));
   }
-  assert.equal(current.epoch,"Epoch 7",JSON.stringify(current));
-  assert.equal(current.hidden,false);
-  assert.equal(current.cpoc,"No active event");
-  assert.equal(current.shards,false);
+  assert.equal(current.chain,"observed",JSON.stringify(current));
+  assert.deepEqual(current.rows,["Allocated"],"Hosts are grouped into one row per allocated model");
+  assert.equal(current.updatedState,"fresh","a fresh timestamp is kept for assistive technology only");
   assert.match(current.node,/VALIDATING/);
   assert.match(current.node,/Fixture GPU/);
   assert.equal(current.chain,"observed");
@@ -179,7 +185,10 @@ try {
   assert.equal(await modelText(), "Not reported");
   await evaluate("networkSnapshot=null; refresh()");
   assert.match(current.node,/Synced/,"chain snapshot supplies the sync reference without browser RPC routes");
-  assert(requests.includes("/status/gateway/v1/status"),"production gateway must remain enabled");
+  assert(requests.includes("/status/gateway-traffic"),"gateway load comes from the fixed status route");
+  assert(!requests.some(url=>url.startsWith("/status/gateway/")||url.startsWith("/status/gateways/")),"the page must not read a gateway API");
+  assert.equal(current.traffic,"7.5 req/s");
+  assert.deepEqual(current.trafficCards,["Gateway A · v6 node0 5.0 requests per second, last 5 min In flight 3 Last hour 1,200 Failed, last hour 2 Success rate 99.83%","Gateway B · v6 node2 2.5 requests per second, last 5 min In flight 1 Last hour 600 Failed, last hour 0 Success rate 100.00%"]);
   assert(!requests.some(url=>/\/chain-(rpc|api)\//.test(url)),"snapshot must not be overwritten by legacy per-Host requests");
   observation="empty";
   await evaluate("networkSnapshot=null; refresh()");
@@ -189,8 +198,7 @@ try {
   assert.match(current.updated,/^Updated .* UTC$/,"a verified empty snapshot is still a successful observation");
   assert.ok(current.updatedAt,"a verified empty snapshot keeps its successful-observation timestamp");
   assert.equal(current.bestHeight,"–");
-  assert.equal(current.gateway,"OFFLINE");
-  assert.equal(current.recovery,"Network reset – no nodes online","observed empty state retains its reset behavior");
+  assert.deepEqual(current.rows,[],"an empty snapshot leaves no model row behind");
   observation="current";
   await evaluate("networkSnapshot=null; refresh()");
   await evaluate(`networkSnapshot=${JSON.stringify({...snapshot(), observed_at:new Date(Date.now()-120000).toISOString(), nodes:[]})}`);
@@ -204,7 +212,6 @@ try {
   current=JSON.parse(await state());
   assert.equal(current.chain,undefined,"stale chain observations must not retain effective membership");
   assert.equal(await modelText(), "Not reported", "stale allocations must disappear");
-  assert.equal(current.hidden,true);
   observation="current";
   await evaluate("refresh()");
   assert.equal(JSON.parse(await state()).chain,"observed");
@@ -217,10 +224,8 @@ try {
   observation="current";
   await evaluate("cfg.publicBootstrap=true; configureNetwork(); refresh()");
   current=JSON.parse(await state());
-  assert.equal(current.epoch,"Epoch 7");
   assert.match(current.node,/Synced/,"selected networks must use the observer reference even without status routes");
-  assert.equal(await evaluate("document.querySelector('#quality-health-state').textContent"),"NOT REPORTED");
-  console.log("PASS production consumes fresh peer, epoch, cPoC, MLNode and DevShard snapshots without disabling gateway evidence");
+  console.log("PASS production consumes fresh peer, MLNode and model snapshots and reads gateway load from one status route");
 } finally {
   socket?.close();
   await stopChromeDevTools(chrome?.browser);

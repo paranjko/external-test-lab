@@ -84,6 +84,26 @@
         // Membership and endpoint health are different facts. The primary
         // badge describes the verified current set; sync remains a detail.
         const validating = power != null && BigInt(power) > 0n;
+        // A Host may keep its chain RPC private. Its participant validator key
+        // in the current validator set is chain evidence of membership.
+        const chainPower =
+          endpointState !== "reachable"
+            ? normalizedVotingPower(input.chainValidatorPower)
+            : null;
+        if (chainPower != null && BigInt(chainPower) > 0n) {
+          return {
+            state: "validating",
+            stateLabel: "Validating",
+            reason:
+              "Validator key is in the current validator set; the chain RPC of this Host is not observed",
+            primaryLabel: "Validating",
+            primaryClass: "status validating",
+            votingPower: String(chainPower),
+            endpointLabel: "Chain RPC not observed",
+            syncLabel: "Not observed",
+            validatorEffective: true,
+          };
+        }
         if (endpointState === "unavailable") {
           return {
             state: "unavailable",
