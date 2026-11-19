@@ -65,9 +65,11 @@
   check_mode: false
 
 - name: Apply the firewall with an automatic rollback
-  when: >-
-    host_prep_env is changed or host_prep_fw_scripts is changed or host_prep_fw_unit is changed
-    or host_prep_fw_active.stdout != 'active'
+  when:
+    - not ansible_check_mode
+    - >-
+      host_prep_env is changed or host_prep_fw_scripts is changed or host_prep_fw_unit is changed
+      or host_prep_fw_active.stdout != 'active'
   block:
     - name: Arm the rollback in two minutes  # noqa: command-instead-of-module
       ansible.builtin.shell: |
