@@ -1,0 +1,33 @@
+- name: Build the target files from the host list
+  ansible.builtin.set_fact:
+    monitoring_targets: "{{ lookup('ansible.builtin.template', 'targets.json.j2') | from_json }}"
+
+- name: Target directories exist
+  ansible.builtin.file:
+    path: "{{ monitoring_targets_dir }}/{{ item }}"
+    state: directory
+    mode: "0775"
+  loop: "{{ monitoring_targets_jobs }}"
+
+- name: Write the target files
+  ansible.builtin.copy:
+    dest: "{{ monitoring_targets_dir }}/{{ item.key }}.json"
+    content: "{{ item.value | to_json(separators=(',', ':')) }}\n"
+    mode: "0664"
+  loop: "{{ monitoring_targets | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Find the target files on the host
+  ansible.builtin.find:
+    paths: "{{ monitoring_targets_jobs | map('regex_replace', '^', monitoring_targets_dir ~ '/') | list }}"
+    patterns: "*.json"
+  register: monitoring_targets_found
+
+- name: Remove the targets of hosts no longer in the list
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ monitoring_targets_found.files | map(attribute='path') | difference(monitoring_targets_paths) }}"
+  vars:
+    monitoring_targets_paths: "{{ monitoring_targets.keys() | map('regex_replace', '^(.*)$', monitoring_targets_dir ~ '/\\1.json') | list }}"

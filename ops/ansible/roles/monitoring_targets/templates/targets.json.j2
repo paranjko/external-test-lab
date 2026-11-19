@@ -1,0 +1,31 @@
+{% set files = {} %}
+{% for name in groups['all'] %}
+{%   set h = hostvars[name] %}
+{%   set alias = h.monitoring_alias %}
+{%   set geo = {} %}
+{%   for k in ['city', 'country', 'latitude', 'longitude'] if (h.geo | default({}))[k] is defined %}
+{%     set _ = geo.update({k: h.geo[k] | string}) %}
+{%   endfor %}
+{%   set _ = files.update({
+       'host/' ~ alias: [{'targets': [h.public_host ~ ':' ~ monitoring_ports.node_exporter], 'labels': {'host': alias} | combine(geo)}],
+       'cadvisor/' ~ alias: [{'targets': [h.public_host ~ ':' ~ monitoring_ports.cadvisor], 'labels': {'host': alias}}],
+     }) %}
+{% endfor %}
+{% for name in groups['validators'] %}
+{%   set h = hostvars[name] %}
+{%   set alias = h.monitoring_alias %}
+{%   set http = h.scheme | default('https') == 'http' %}
+{%   set _ = files.update({
+       'gonka-node/' ~ alias: [{'targets': [h.public_host ~ ':' ~ monitoring_ports.chain_metrics], 'labels': {'host': alias}}],
+       'devshard-host/' ~ alias: [{'targets': [h.public_host ~ (':80' if http else ':443')],
+                                   'labels': {'host': alias, '__scheme__': 'http'} if http else {'host': alias}}],
+     }) %}
+{%   if h.chain_public | default(true) %}
+{%     set base = h.scheme | default('https') ~ '://' ~ h.public_host %}
+{%     set _ = files.update({
+         'public-node-endpoints/' ~ alias ~ '-rpc': [{'targets': [base ~ '/chain-rpc/status'], 'labels': {'host': alias, 'kind': 'rpc'}}],
+         'public-node-endpoints/' ~ alias ~ '-lcd': [{'targets': [base ~ '/chain-api/cosmos/base/tendermint/v1beta1/node_info'], 'labels': {'host': alias, 'kind': 'lcd'}}],
+       }) %}
+{%   endif %}
+{% endfor %}
+{{ files | to_json }}

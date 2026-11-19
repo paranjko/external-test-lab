@@ -1,0 +1,9 @@
+# Exporter ports. The host firewall opens them to the monitoring host only.
+monitoring_ports:
+  node_exporter: 9101
+  cadvisor: 8088
+  chain_metrics: 26660
+monitoring_ops_dir: /srv/dai/ops
+# The SSH alias of a host on the operator machine; also the host label on the boards.
+monitoring_alias: "gdc-{{ inventory_hostname }}"
+ansible_host: "{{ monitoring_alias }}"
