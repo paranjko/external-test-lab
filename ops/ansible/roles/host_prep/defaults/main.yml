@@ -1,0 +1,15 @@
+host_prep_runbook: "{{ playbook_dir }}/../../net-deployment-runbook/00-host-prep"
+host_prep_architectures: [x86_64]
+host_prep_deb_arch: {x86_64: amd64, aarch64: arm64}
+host_prep_min_driver: 580
+host_prep_ctk_key: /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+host_prep_gateway_services: false
+host_prep_monitoring_host: "{{ groups['ops'][0] }}"
+host_prep_packages: [ca-certificates, curl, gnupg, jq, rsync, pciutils, iptables, iproute2, unzip, ubuntu-drivers-common, mokutil]
+host_prep_docker_packages: [docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin]
+host_prep_dirs: [/srv/dai, /srv/dai/shared, /srv/dai/backups, /srv/hf-cache]
+host_prep_daemon:
+  live-restore: true
+  log-driver: local
+  log-opts: {max-size: 100m, max-file: "5"}
+host_prep_nofile: {Name: nofile, Soft: 1048576, Hard: 1048576}

@@ -1,0 +1,6 @@
+- name: Prepare and harden DevNet hosts
+  hosts: all
+  become: true
+  roles:
+    - host_prep
+    - harden

@@ -1,0 +1,15 @@
+- name: Restart fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted
+
+- name: Check the SSH settings
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  listen: SSH settings changed
+
+- name: Reload ssh
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: reloaded
+  listen: SSH settings changed

@@ -1,0 +1,94 @@
+- name: Settings directory
+  ansible.builtin.file:
+    path: /etc/gonka
+    state: directory
+    mode: "0755"
+
+- name: Host settings
+  ansible.builtin.template:
+    src: host.env.j2
+    dest: /etc/gonka/host.env
+    mode: "0600"
+  register: host_prep_env
+
+- name: UFW is installed
+  ansible.builtin.stat:
+    path: /usr/sbin/ufw
+  register: host_prep_ufw
+
+- name: UFW status
+  ansible.builtin.command: ufw status
+  register: host_prep_ufw_status
+  changed_when: false
+  check_mode: false
+  when: host_prep_ufw.stat.exists
+
+# UFW does not control ports published by Docker; the firewall filters before Docker DNAT.
+- name: Disable UFW
+  ansible.builtin.command: ufw --force disable
+  changed_when: true
+  when: "host_prep_ufw.stat.exists and 'Status: active' in host_prep_ufw_status.stdout"
+
+- name: UFW service disabled
+  ansible.builtin.systemd_service:
+    name: ufw
+    enabled: false
+  when: host_prep_ufw.stat.exists
+
+- name: Firewall scripts
+  ansible.builtin.copy:
+    src: "{{ host_prep_runbook }}/{{ item }}.sh"
+    dest: /usr/local/sbin/{{ item }}
+    mode: "0755"
+  loop: [gonka-firewall, gonka-firewall-rollback]
+  register: host_prep_fw_scripts
+
+- name: Firewall unit
+  ansible.builtin.template:
+    src: gonka-firewall.service.j2
+    dest: /etc/systemd/system/gonka-firewall.service
+    mode: "0644"
+  register: host_prep_fw_unit
+
+- name: Firewall enabled
+  ansible.builtin.systemd_service:
+    name: gonka-firewall.service
+    enabled: true
+    daemon_reload: "{{ host_prep_fw_unit is changed }}"
+  when: not (ansible_check_mode and host_prep_fw_unit is changed)
+
+- name: Firewall state
+  ansible.builtin.command: systemctl is-active gonka-firewall.service  # noqa: command-instead-of-module
+  register: host_prep_fw_active
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Apply the firewall with an automatic rollback
+  when: >-
+    host_prep_env is changed or host_prep_fw_scripts is changed or host_prep_fw_unit is changed
+    or host_prep_fw_active.stdout != 'active'
+  block:
+    - name: Arm the rollback in two minutes  # noqa: command-instead-of-module
+      ansible.builtin.shell: |
+        systemctl stop gonka-firewall-rollback.timer gonka-firewall-rollback.service 2>/dev/null || true
+        systemctl reset-failed gonka-firewall-rollback.service 2>/dev/null || true
+        systemd-run --unit=gonka-firewall-rollback --on-active=2m /usr/local/sbin/gonka-firewall-rollback
+      changed_when: true
+
+    - name: Restart the firewall
+      ansible.builtin.systemd_service:
+        name: gonka-firewall.service
+        state: restarted
+
+    - name: New SSH connection
+      ansible.builtin.meta: reset_connection
+
+    - name: Host still reachable
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+
+    - name: Disarm the rollback
+      ansible.builtin.systemd_service:
+        name: gonka-firewall-rollback.timer
+        state: stopped

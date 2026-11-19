@@ -1,0 +1,42 @@
+- name: Fail2ban and security updates
+  ansible.builtin.apt:
+    name: [fail2ban, unattended-upgrades]
+
+- name: SSH jail
+  ansible.builtin.template:
+    src: gdc-sshd.local.j2
+    dest: /etc/fail2ban/jail.d/gdc-sshd.local
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Fail2ban and security updates running
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [fail2ban, unattended-upgrades]
+
+- name: Find SSH settings that allow passwords
+  ansible.builtin.find:
+    paths: /etc/ssh/sshd_config.d
+    patterns: "*.conf"
+    contains: "^PasswordAuthentication yes"
+  register: harden_password_files
+
+- name: Turn password login off in them
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: "^PasswordAuthentication yes"
+    replace: "PasswordAuthentication no"
+    backup: true
+  loop: "{{ harden_password_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  notify: SSH settings changed
+
+- name: SSH by key only
+  ansible.builtin.template:
+    src: 10-gdc.conf.j2
+    dest: /etc/ssh/sshd_config.d/10-gdc.conf
+    mode: "0644"
+  notify: SSH settings changed

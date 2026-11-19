@@ -1,0 +1,41 @@
+- name: Read the Docker daemon settings
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: host_prep_daemon_before
+  failed_when: false
+
+- name: Register the NVIDIA runtime with Docker
+  ansible.builtin.command: nvidia-ctk runtime configure --runtime=docker
+  when:
+    - host_prep_gpu
+    - "'nvidia' not in ((host_prep_daemon_before.content | default('e30=') | b64decode | from_json).runtimes | default({}))"
+  changed_when: true
+  notify: Restart docker
+
+- name: Read the Docker daemon settings after the runtime step
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: host_prep_daemon_after
+  failed_when: false
+
+- name: Docker daemon settings
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: "{{ host_prep_daemon_wanted | to_nice_json(indent=2) }}\n"
+    mode: "0644"
+  when: host_prep_daemon_wanted != host_prep_daemon_current
+  notify: Restart docker
+  vars:
+    host_prep_daemon_current: "{{ host_prep_daemon_after.content | default('e30=') | b64decode | from_json }}"
+    host_prep_daemon_wanted: >-
+      {{ host_prep_daemon_current | combine(host_prep_daemon)
+         | combine({'default-ulimits': (host_prep_daemon_current['default-ulimits'] | default({})) | combine({'nofile': host_prep_nofile})}) }}
+
+- name: Docker services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [containerd, docker.socket, docker.service]
+  # Check mode on a new host: Docker is not installed yet.
+  when: not ansible_check_mode or host_prep_docker_root.rc == 0
