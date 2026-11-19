@@ -1,0 +1,2 @@
+monitoring_targets_dir: "{{ monitoring_ops_dir }}/prometheus/targets/static"
+monitoring_targets_jobs: [host, cadvisor, gonka-node, devshard-host, public-node-endpoints]

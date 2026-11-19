@@ -1,0 +1,5 @@
+- name: Prometheus targets from the host list
+  hosts: ops
+  gather_facts: false
+  roles:
+    - monitoring_targets
