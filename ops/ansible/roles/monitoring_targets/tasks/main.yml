@@ -6,14 +6,14 @@
   ansible.builtin.file:
     path: "{{ monitoring_targets_dir }}/{{ item }}"
     state: directory
-    mode: "0755"
+    mode: "0775"
   loop: "{{ monitoring_targets_jobs }}"
 
 - name: Write the target files
   ansible.builtin.copy:
     dest: "{{ monitoring_targets_dir }}/{{ item.key }}.json"
     content: "{{ item.value | to_json(separators=(',', ':')) }}\n"
-    mode: "0644"
+    mode: "0664"
   loop: "{{ monitoring_targets | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
