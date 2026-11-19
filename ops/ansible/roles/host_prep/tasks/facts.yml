@@ -6,7 +6,7 @@
   failed_when: host_prep_dpkg_audit.stdout | length > 0
 
 - name: SSH port in use
-  ansible.builtin.shell: set -o pipefail && sshd -T | awk '$1 == "port" { print $2; exit }'
+  ansible.builtin.shell: set -o pipefail && sshd -T | awk '$1 == "port" && !seen { print $2; seen = 1 }'
   args:
     executable: /bin/bash
   register: host_prep_sshd_port
