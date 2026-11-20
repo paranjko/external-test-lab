@@ -1,0 +1,8 @@
+[sshd]
+enabled = true
+backend = systemd
+port = {{ host_prep_ssh_port }}
+banaction = iptables-multiport
+maxretry = {{ harden_jail.maxretry }}
+findtime = {{ harden_jail.findtime }}
+bantime = {{ harden_jail.bantime }}

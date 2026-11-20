@@ -1,0 +1,11 @@
+[Unit]
+Description=GDC ingress firewall before Docker DNAT
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gonka-firewall
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+- name: Prepare and harden DevNet hosts
+  hosts: all
+  become: true
+  pre_tasks:
+    - name: Skip hosts the role does not cover yet
+      ansible.builtin.meta: end_host
+      when: not (host_prep | default(true))
+  roles:
+    - host_prep
+    - harden

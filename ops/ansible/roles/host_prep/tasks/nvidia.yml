@@ -1,0 +1,55 @@
+- name: Select the NVIDIA driver
+  ansible.builtin.script: "{{ host_prep_runbook }}/select-nvidia-driver.sh {{ host_prep_min_driver }}"
+  register: host_prep_driver_candidate
+  changed_when: false
+  check_mode: false
+  when: host_prep_driver_major | int < host_prep_min_driver
+
+- name: Install the NVIDIA driver
+  when: host_prep_driver_major | int < host_prep_min_driver
+  block:
+    - name: Driver package
+      ansible.builtin.apt:
+        name: "{{ host_prep_driver_candidate.stdout | trim }}"
+
+    - name: Driver modules for every installed kernel
+      ansible.builtin.script: nvidia-kernel-modules.sh
+      changed_when: "'changed' in (host_prep_modules.stdout | default(''))"
+      register: host_prep_modules
+
+    - name: Rebuild the initramfs
+      ansible.builtin.command: update-initramfs -u
+      changed_when: true
+
+    - name: Reboot before the rest of the preparation
+      ansible.builtin.fail:
+        msg: "REBOOT {{ inventory_hostname }} to load NVIDIA driver {{ host_prep_driver_candidate.stdout | trim }}, then run the playbook again"
+      when: not ansible_check_mode
+
+- name: NVIDIA container toolkit key
+  ansible.builtin.shell: >-
+    set -o pipefail && curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey
+    | gpg --dearmor --yes -o {{ host_prep_ctk_key }}
+  args:
+    executable: /bin/bash
+    creates: "{{ host_prep_ctk_key }}"
+
+- name: NVIDIA container toolkit repository list
+  ansible.builtin.uri:
+    url: https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list
+    return_content: true
+  register: host_prep_ctk_list
+  check_mode: false
+
+- name: NVIDIA container toolkit repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    content: "{{ host_prep_ctk_list.content | regex_replace('deb https://', 'deb [signed-by=' ~ host_prep_ctk_key ~ '] https://') }}"
+    mode: "0644"
+  register: host_prep_ctk_repo
+
+- name: NVIDIA container toolkit
+  ansible.builtin.apt:
+    name: nvidia-container-toolkit
+    update_cache: "{{ host_prep_ctk_repo is changed }}"
+  when: not (ansible_check_mode and host_prep_ctk_repo is changed)

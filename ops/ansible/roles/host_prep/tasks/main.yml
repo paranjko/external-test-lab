@@ -1,0 +1,58 @@
+- name: Supported system
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - ansible_facts.distribution_version in ['22.04', '24.04', '26.04']
+      - ansible_facts.architecture in host_prep_architectures
+    quiet: true
+
+- name: Read the host state
+  ansible.builtin.include_tasks: facts.yml
+
+- name: Required packages
+  ansible.builtin.apt:
+    name: "{{ host_prep_packages }}"
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 86400
+
+- name: Docker
+  ansible.builtin.include_tasks: docker.yml
+
+- name: NVIDIA driver and container toolkit
+  ansible.builtin.include_tasks: nvidia.yml
+  when: host_prep_gpu
+
+- name: Docker daemon settings
+  ansible.builtin.include_tasks: daemon.yml
+
+- name: Operator user in the docker group
+  ansible.builtin.user:
+    name: "{{ host_prep_operator }}"
+    groups: docker
+    append: true
+
+- name: Data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ host_prep_operator }}"
+    group: "{{ host_prep_operator }}"
+    mode: "0750"
+  loop: "{{ host_prep_dirs }}"
+
+- name: Kernel settings
+  ansible.builtin.copy:
+    src: "{{ host_prep_runbook }}/sysctl-gonka.conf"
+    dest: /etc/sysctl.d/99-gonka.conf
+    mode: "0644"
+  notify: Apply sysctl
+
+- name: Open file limits
+  ansible.builtin.template:
+    src: limits.conf.j2
+    dest: /etc/security/limits.d/90-gonka.conf
+    mode: "0644"
+
+- name: Firewall
+  ansible.builtin.include_tasks: firewall.yml

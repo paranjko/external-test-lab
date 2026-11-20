@@ -1,0 +1,34 @@
+- name: No interrupted package transaction
+  ansible.builtin.command: dpkg --audit
+  register: host_prep_dpkg_audit
+  changed_when: false
+  check_mode: false
+  failed_when: host_prep_dpkg_audit.stdout | length > 0
+
+- name: SSH port in use
+  ansible.builtin.shell: set -o pipefail && sshd -T | awk '$1 == "port" && !seen { print $2; seen = 1 }'
+  args:
+    executable: /bin/bash
+  register: host_prep_sshd_port
+  changed_when: false
+  check_mode: false
+
+- name: Loaded NVIDIA driver
+  ansible.builtin.command: nvidia-smi --query-gpu=driver_version --format=csv,noheader
+  register: host_prep_nvidia_smi
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Host settings from the host list
+  ansible.builtin.set_fact:
+    host_prep_role: "{{ 'network-gpu' if inventory_hostname in groups['validators'] else 'ml-only' if inventory_hostname in groups['ml'] else 'network-only' }}"
+    host_prep_gpu: "{{ inventory_hostname in groups['validators'] + groups['ml'] }}"
+    host_prep_operator: "{{ ansible_facts.env.SUDO_USER | default('root') }}"
+    host_prep_ssh_port: "{{ host_prep_sshd_port.stdout | int }}"
+    host_prep_driver_major: "{{ (host_prep_nvidia_smi.stdout_lines | first | default('0')).split('.') | first | int if host_prep_nvidia_smi.rc == 0 else 0 }}"
+    host_prep_monitoring_cidr: "{{ lookup('ansible.builtin.pipe', host_prep_resolve ~ hostvars[host_prep_monitoring_host].public_host) }}/32"
+    host_prep_ml_client_cidr: "{{ (lookup('ansible.builtin.pipe', host_prep_resolve ~ hostvars[ml_for].public_host) ~ '/32') if ml_for is defined else '' }}"
+    host_prep_ml_callback_cidr: ""
+  vars:
+    host_prep_resolve: "python3 -c 'import socket,sys; print(socket.gethostbyname(sys.argv[1]))' "

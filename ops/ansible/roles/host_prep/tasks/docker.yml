@@ -1,0 +1,55 @@
+- name: Keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Docker repository key
+  ansible.builtin.shell: set -o pipefail && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+  args:
+    executable: /bin/bash
+    creates: /etc/apt/keyrings/docker.gpg
+
+- name: Docker repository key is readable
+  ansible.builtin.file:
+    path: /etc/apt/keyrings/docker.gpg
+    mode: "0644"
+  when: not ansible_check_mode
+
+- name: Docker repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.list
+    content: |
+      deb [arch={{ host_prep_arch }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ host_prep_release }} stable
+    mode: "0644"
+  register: host_prep_docker_repo
+  vars:
+    host_prep_arch: "{{ host_prep_deb_arch[ansible_facts.architecture] }}"
+    host_prep_release: "{{ ansible_facts.distribution_release }}"
+
+- name: Docker packages
+  ansible.builtin.apt:
+    name: "{{ host_prep_docker_packages }}"
+    update_cache: "{{ host_prep_docker_repo is changed }}"
+  # A repository that check mode only pretends to add has no packages to look at.
+  when: not (ansible_check_mode and host_prep_docker_repo is changed)
+
+- name: Docker root directory
+  ansible.builtin.command: !unsafe "docker info --format '{{.DockerRootDir}}'"
+  register: host_prep_docker_root
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Docker storage is complete
+  ansible.builtin.stat:
+    path: "{{ host_prep_docker_root.stdout | trim }}/tmp"
+  register: host_prep_docker_tmp
+  when: host_prep_docker_root.rc == 0 and host_prep_docker_root.stdout | trim | length > 0
+
+- name: Docker storage check
+  ansible.builtin.assert:
+    that: host_prep_docker_tmp.stat.exists
+    fail_msg: "docker_storage_unhealthy: Docker root is incomplete; repair Docker storage before JOIN"
+    quiet: true
+  when: host_prep_docker_tmp.stat is defined
