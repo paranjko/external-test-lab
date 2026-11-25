@@ -1,25 +1,58 @@
-# Devshard gateway v6 — upgrade from 4.2.0
-
-Run v6 with a new volume and new escrows. Keep 4.2.0 available for
-rollback and settlement of its existing escrows.
+# Devshard gateway v6.0.1
 
 Image:
 ```text
-ghcr.io/qdanik/gateway:mainnet-v0.2.16-v6.0.0-rc6
+ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.16-v6.0.1
 ```
 
 Pinned digest:
 ```text
-ghcr.io/qdanik/gateway@sha256:ba1e4aa06c2b3f24d61cbf543b133f337dc8d0de28e73b0a62d1a5225b84e06d
+ghcr.io/gonka-ai/devshard-gateway@sha256:c76de1bdc341273fa749597294b9b4db807c29821959424351cd171cdfd08e0f
 ```
 Session protocol: `v6`. Route: `/devshard/v6`.
 
-## What is new
+Pin the digest: the `-latest` tag moves. `mainnet-v0.2.16-v6.0.0` is
+devshardctl, a different program with its own store.
+
+## From a v6 release candidate
+
+The store, environment and settings stay. Only the image changes.
+
+1. Pick the moment: no confirmation PoC running, and the escrows of the
+   previous epoch already settled (no row with that `chain_epoch` left in
+   `GET /v1/admin/devshards`). On restart the gateway reattaches every
+   escrow, and large hosts limit attaches: the first 10–15 minutes serve
+   slower.
+2. Save the Compose file, the current image digest and the admin settings.
+3. Put the pinned digest into the service and recreate only it. Clients get
+   connection errors for about 30 seconds.
+```bash
+docker compose -f docker-compose.yml -f docker-compose.v6.yml pull gateway-v6
+docker compose -f docker-compose.yml -f docker-compose.v6.yml \
+  up -d --no-deps --no-build gateway-v6
+```
+4. Check the log for `gateway started` with `version v6`, the same escrows in
+   `GET /v1/admin/devshards`, the same admin settings, and chat through the
+   front.
+5. Every `rotation_models_json` entry must have `"amount": 2500000000` and
+   `"temp_count": 4`. If yours differ, post the full array with these values
+   through `POST /v1/admin/settings` and mirror it into the environment.
+
+Rollback: put the previous digest back and run the same `up`.
+
+## From 4.2.0
+
+Run v6 with a new volume and new escrows. Keep 4.2.0 available for
+rollback and settlement of its existing escrows.
+
+### What is new
 
 - **New store.** The gateway reads none of the 4.2.0 state. Do not import v4.2
   escrows or attach both gateways to the same storage.
-- **Client access is closed by default.** A model that `model_access` does not
-  name answers only the admin key.
+- **Client access is closed by default.** A model with no `access` under
+  `models` answers only the admin key. Client keys are created through the
+  admin API and kept in `gateway.db` in plain text: the volume and its backups
+  are secret.
 - **Settings.** `POST /v1/admin/settings` changes only the fields it names.
   `PUT` replaces the whole document and drops what it omits. Use `POST`.
 - **Keys by name.** `private_key_env` names the environment variable that
@@ -36,7 +69,7 @@ Session protocol: `v6`. Route: `/devshard/v6`.
 - **Ignored variables.** `DEVSHARD_ROUTE_PREFIX`, `DEVSHARD_CAPACITY_AWARE_LIMITS`,
   `DEVSHARD_MODEL`, `DEVSHARD_ESCROW_ID` and the Postgres settings are not read.
 
-## 1. Prepare
+### 1. Prepare
 
 - Save the current Compose configuration, image digest and full admin settings.
 - Check free disk/RAM and choose two unused loopback ports: API and accounting.
@@ -64,7 +97,7 @@ curl -fsS https://rpc.gonka.gg/chain-api/productscience/inference/inference/devs
   `devshards[].active_requests`: it also counts requests that wait for timeout
   votes and runs above the limiter's figure, 1.3–1.5 times in our case.
 
-## 2. Start the new gateway
+### 2. Start the new gateway
 
 Set `GATEWAY_V6_PORT`, `GATEWAY_V6_STATS_PORT`, `GATEWAY_V6_GOMEMLIMIT`,
 `GATEWAY_V6_ROTATION_MODELS_JSON` (section 3) and the required keys in your
@@ -73,13 +106,12 @@ deployment environment. Add `docker-compose.v6.yml`:
 ```yaml
 services:
   gateway-v6:
-    image: ghcr.io/qdanik/gateway@sha256:ba1e4aa06c2b3f24d61cbf543b133f337dc8d0de28e73b0a62d1a5225b84e06d
+    image: ghcr.io/gonka-ai/devshard-gateway@sha256:c76de1bdc341273fa749597294b9b4db807c29821959424351cd171cdfd08e0f
     restart: unless-stopped
     stop_grace_period: 30s
     environment:
       GOMEMLIMIT: ${GATEWAY_V6_GOMEMLIMIT:?required}
       DEVSHARD_PORT: "8080"
-      DEVSHARD_API_KEYS: ${GATEWAY_API_KEY:?required}
       DEVSHARD_ADMIN_API_KEY: ${DEVSHARD_ADMIN_API_KEY:?required}
       DEVSHARD_PRIVATE_KEY: ${DEVSHARD_PRIVATE_KEY:?required}
       DEVSHARDS_JSON: ""
@@ -146,15 +178,22 @@ curl -fsS "$A/v1/status"
 The log must show `gateway started` with `version v6`. A `healthy` container
 means the process answers, not that it serves chat.
 
-## 3. Configure
+### 3. Configure
 
-### Required settings
+#### Required settings
 
-**Open the models to clients.** Until this is posted, client keys get 401:
+**Open the models to clients.** Create the client key first, then set
+`access` for every offered model. In the other order the settings write answers
+400: an `api_key` model needs an active key. Until both are done, client keys
+get 401.
 ```bash
+curl -fsS -X POST "$A/v1/admin/api-keys" -H "$H" -H 'Content-Type: application/json' \
+  -d '{"label":"front","key":"<FRONT_KEY>"}'
 curl -fsS -X POST "$A/v1/admin/settings" -H "$H" -H 'Content-Type: application/json' \
-  -d '{"model_access":{"<MODEL_ID>":"api_key"}}'
+  -d '{"models":{"<MODEL_ID>":{"access":"api_key"}}}'
 ```
+`<FRONT_KEY>` is the key your front already sends: at least 16 characters, not
+the admin key. Without `key` the gateway generates one and returns it.
 
 **Use the gateway defaults for concurrency per 10,000 weight. Do not set the
 variables, do not add overrides and do not copy higher values from the old
@@ -179,11 +218,15 @@ of the previous epoch must be enabled:**
 
 **The accounting API must be enabled:** `DEVSHARD_STATS_ENABLED: "true"`.
 
-### Rotation models
+**Every escrow is 2.5 GNK and every model keeps 4 temp escrows:**
+`"amount": 2500000000` and `"temp_count": 4` in every `rotation_models_json`
+entry.
+
+#### Rotation models
 
 `GATEWAY_V6_ROTATION_MODELS_JSON` is one JSON array with an entry per offered
 model. In a Compose `.env` file put the array on one line inside single quotes.
-The values we run:
+The values to run:
 
 ```json
 [{"model_id": "<MODEL_ID>", "target_count": 8, "temp_count": 4, "reserve_count": 1,
@@ -192,10 +235,10 @@ The values we run:
 
 | Field | Value | Why |
 | --- | --- | --- |
-| `target_count` | 8 | Regular escrows the model keeps. Size it and `amount` to your load. |
-| `temp_count` | 4 | Temp escrows bought 300 blocks before the epoch switch. **Never 0**: with 0 the gateway parked every regular and reserve escrow in the window before the switch and bought nothing, and all models answered 503 `no escrow capacity` for 25 minutes. |
+| `target_count` | 8 | Regular escrows the model keeps. Size it to your load. |
+| `temp_count` | 4 | Temp escrows bought 300 blocks before the epoch switch. Use 4. **Never 0**: with 0 the gateway parked every regular and reserve escrow in the window before the switch and bought nothing, and all models answered 503 `no escrow capacity` for 25 minutes. |
 | `reserve_count` | 1 | A full standby escrow, taken only when no regular one can pay for a request. Once taken, the planner buys another. |
-| `amount` | 2500000000 | Deposit in ngonka. It must pay for at least one full-context request, or the log says `model amount cannot fund a full escrow`. |
+| `amount` | 2500000000 | 2.5 GNK, the deposit in ngonka. Use this value. |
 | `private_key_env` | `DEVSHARD_PRIVATE_KEY` | Required in every entry. Without it no create can be signed. |
 | `max_unsettled` | 512 | Parked escrows count against it until they are settled, which happens only after the epoch ends. The default (target + temp + reserve + 4) filled on the first day under load: the planner stopped creating and models answered 503 `no escrow capacity: insufficient escrow balance`. |
 
@@ -208,14 +251,14 @@ Always send the full array with `private_key_env` in every entry.
 curl -fsS "$A/v1/admin/settings" -H "$H" > settings-v6-confirmed.json
 ```
 
-## 4. Create and check new escrows
+### 4. Create and check new escrows
 
-Rotation is still off. Create one small escrow per offered model. Set `MODEL`
-to the exact model ID and `AMOUNT_NGONKA` to the deposit in ngonka:
+Rotation is still off. Create one 2.5 GNK escrow per offered model. Set
+`MODEL` to the exact model ID:
 ```bash
 curl -fsS -X POST "$A/v1/admin/escrows" -H "$H" \
   -H 'Content-Type: application/json' \
-  -d "{\"model_id\":\"${MODEL:?required}\",\"amount\":${AMOUNT_NGONKA:?required},\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\",\"activate\":true}"
+  -d "{\"model_id\":\"${MODEL:?required}\",\"amount\":2500000000,\"private_key_env\":\"DEVSHARD_PRIVATE_KEY\",\"activate\":true}"
 ```
 402 means the wallet cannot pay the amount plus the fee; nothing was broadcast.
 Save each ID and transaction hash. Confirm `code=0`, creator, epoch, model and
@@ -235,7 +278,7 @@ Check `session_version: v6`, nonce advancement and `phase: active` in
 `GET /api/v1/epochs` answers on the accounting port. Resolve failures before
 moving traffic.
 
-## 5. Switch traffic
+### 5. Switch traffic
 
 Pick the moment: Inference phase, no confirmation PoC running, more than 1500
 blocks before the epoch switch, wallet funded.
@@ -265,7 +308,7 @@ GONKA_ACCOUNTING_URL=http://gateway-v6:9091
    to the new slot. Metric names, admin API fields and the store schema differ
    from 4.2.0.
 
-## Rollback
+### Rollback
 
 1. Check that the old pool can serve traffic. After an epoch switch with old
    rotation off, 4.2.0 holds no escrows of the current epoch.
