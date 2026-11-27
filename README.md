@@ -87,6 +87,7 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | M3 | Monthly public report #3 | [`reports/monthly/2026-10-month-3.md`](reports/monthly/2026-10-month-3.md) | published |
 | M3 | Test automation scripts (smoke-level) | [`testing/gonka-check/`](testing/gonka-check/), [`testing/e2e.md`](testing/e2e.md) | published — scheduled execution in progress |
 | M3 | Incident log, participant onboarding guide | [`net-deployment-runbook/RECOVER-INCIDENT.md`](net-deployment-runbook/RECOVER-INCIDENT.md), [`ROLE-JOIN.md`](net-deployment-runbook/ROLE-JOIN.md) | recovery and onboarding guides published; incident-log consolidation in progress |
+| M4 | Monthly public report #4 | [`reports/monthly/2026-11-month-4.md`](reports/monthly/2026-11-month-4.md) | published |
 | M4 | Final reports, lessons learned, handoff package | `reports/`, `docs/` | planned |
 
 Folders are created together with their first real artifact — an absent folder means the milestone that delivers it has not been reached yet.
