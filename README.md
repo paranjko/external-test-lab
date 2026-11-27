@@ -74,7 +74,7 @@ Artifacts appear in this repository as the pilot milestones deliver them, per th
 | Milestone | Artifact | Location | Status |
 |---|---|---|---|
 | M1 | DevNet architecture note | [`devnet/architecture.md`](devnet/architecture.md) | published |
-| M1 | QA hiring | [`jobs/`](jobs/) | filled — 2 engineers |
+| M1 | QA hiring | [`jobs/`](jobs/) | filled — 1 engineer |
 | M1 | Initial test strategy | [`testing/test-strategy.md`](testing/test-strategy.md) | published |
 | M1 | Node deployment runbook | [`net-deployment-runbook/`](net-deployment-runbook/) | published — `1.0.0-alpha.0` |
 | M1→M2 | Monthly public report #1 | [`reports/monthly/2026-08-month-1.md`](reports/monthly/2026-08-month-1.md) | published |
